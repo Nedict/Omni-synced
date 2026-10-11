@@ -137,6 +137,8 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 
 ## View navigation
 
+- OpenSCAD navigation preset: left drag orbits, right/middle drag pans, Shift+right/middle
+  drag zooms, and the wheel zooms. Available in the shared desktop/web Navigation preferences.
 - Compact clickable signed X/Y/Z axis tips, smooth drag-to-orbit, and Shift-orbit snapping
   to 26 standard and diagonal views. Pointer motion accumulates independently of a lightly
   damped spring, with a boundary margin to prevent flicker. Z-up/Y-up and the nearest square

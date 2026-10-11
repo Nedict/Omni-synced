@@ -81,7 +81,7 @@ use NavButton::{Left, Middle, Right};
 use NavMode::{Orbit, Pan, Zoom};
 
 /// The mouse mappings. The first is the default.
-pub const NAV_PRESETS: [NavPreset; 5] = [
+pub const NAV_PRESETS: [NavPreset; 6] = [
     NavPreset {
         id: "fusion",
         label: "Fusion",
@@ -133,6 +133,19 @@ pub const NAV_PRESETS: [NavPreset; 5] = [
         help: "Right drag orbits, middle or Shift+right drag pans",
         reverse_zoom: false,
         bindings: &[bind(Right, NavKeys::SHIFT, Pan), bind(Right, NavKeys::NONE, Orbit), bind(Middle, NavKeys::NONE, Pan)],
+    },
+    NavPreset {
+        id: "openscad",
+        label: "OpenSCAD",
+        help: "Left drag orbits, right or middle drag pans, Shift+right or Shift+middle drag zooms",
+        reverse_zoom: false,
+        bindings: &[
+            bind(Left, NavKeys::NONE, Orbit),
+            bind(Right, NavKeys::SHIFT, Zoom),
+            bind(Middle, NavKeys::SHIFT, Zoom),
+            bind(Right, NavKeys::NONE, Pan),
+            bind(Middle, NavKeys::NONE, Pan),
+        ],
     },
 ];
 
@@ -714,7 +727,8 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 }
             });
             ui.end_row();
-            note(ui, &format!("{}; hold Shift during orbit to snap; the wheel zooms", nav_preset(&app.preferences.nav).help));
+            let snap_help = if app.preferences.nav == "openscad" { "" } else { "; hold Shift during orbit to snap" };
+            note(ui, &format!("{}{snap_help}; the wheel zooms", nav_preset(&app.preferences.nav).help));
             ui.label("Context menu");
             ui.checkbox(&mut app.preferences.radial_context_menu, "Radial context menu");
             ui.end_row();
@@ -871,7 +885,7 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
         return Err(format!("units must be one of {}", UNITS.join(", ")));
     }
     if !NAV_PRESETS.iter().any(|p| p.id == new.nav) || !MSAA.contains(&new.msaa) {
-        return Err("`nav` must be fusion, solidworks, inventor, alias or tinkercad and `msaa` 1, 2, 4 or 8".into());
+        return Err("`nav` must be fusion, solidworks, inventor, alias, tinkercad or openscad and `msaa` 1, 2, 4 or 8".into());
     }
     if !THEMES.iter().any(|(id, _)| *id == new.theme) || !["z", "y"].contains(&new.up_axis.as_str()) {
         return Err("`theme` must be dark, light or system and `up_axis` z or y".into());
@@ -957,6 +971,20 @@ mod tests {
         assert!(app.preferences.smooth_wheel_zoom);
         control(&mut app, &json!({"button":"cancel"})).unwrap();
         assert!(!app.preferences.smooth_wheel_zoom);
+    }
+
+    #[test]
+    fn openscad_preset_maps_navigation_and_persists() {
+        let mut app = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        set(&mut app, &json!({"nav": "openscad"})).unwrap();
+        for button in [NavButton::Middle, NavButton::Right] {
+            assert_eq!(nav_mode(&app, button, Modifiers::default()), Some(NavMode::Pan));
+            assert_eq!(nav_mode(&app, button, Modifiers { shift: true, ..Default::default() }), Some(NavMode::Zoom));
+        }
+        assert_eq!(nav_mode(&app, NavButton::Left, Modifiers::default()), Some(NavMode::Orbit));
+        let mut other = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        other.load_prefs(&app.prefs());
+        assert_eq!(other.preferences.nav, "openscad");
     }
 
     #[test]

@@ -1622,7 +1622,12 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // A left press with the preset's keys (Alias: Shift+Alt) navigates until the button is let
     // go (kept through the release frame, so the end of the drag doesn't select either).
     if primary_pressed && inside {
-        app.viewport.primary_nav = crate::prefs::nav_mode(app, crate::prefs::NavButton::Left, mods);
+        app.viewport.primary_nav =
+            if app.preferences.nav != "openscad" || (app.tool.is_none() && app.dialog.is_none() && app.viewport.context_menu.is_none()) {
+                crate::prefs::nav_mode(app, crate::prefs::NavButton::Left, mods)
+            } else {
+                None
+            };
     } else if !primary_down && !primary_released {
         app.viewport.primary_nav = None;
     }
@@ -1651,7 +1656,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         // Shift can be required to enter orbit (Fusion/Inventor middle drag, Alias Shift+Alt),
         // rather than an additional request for snapping. Only an extra modifier snaps.
         let without_shift = egui::Modifiers { shift: false, ..mods };
-        let snap = mods.shift
+        let snap = app.preferences.nav != "openscad"
+            && mods.shift
             && match button {
                 Some(b) => crate::prefs::nav_mode(app, b, without_shift) == Some(NavMode::Orbit),
                 None => app.viewport.nav.is_some(),
@@ -1723,6 +1729,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         || middle
         || secondary_down
         || (primary_nav.is_some() && primary_down)
+        || mode.is_some()
         || app.viewport.axis_drag.is_some()
         || app.viewport.spin
         || app.viewport.orbit_snap.is_some()
@@ -1881,7 +1888,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
     }
     // Dragging a sketch point of the active sketch moves it; the solver keeps the constraints.
-    if app.tool.is_none() && app.dialog.is_none() && primary_nav.is_none() && app.session.active_sketch.is_some() {
+    if app.tool.is_none() && app.dialog.is_none() && primary_nav.is_none() && mode.is_none() && app.session.active_sketch.is_some() {
         let on_plane = |app: &SolveApp, p: Pos2| {
             let ss = app.session.active_sketch.and_then(|sid| app.session.world_state().sketch(sid).cloned())?;
             let (o, d) = proj.ray(p);
@@ -1972,6 +1979,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()
         && primary_nav.is_none()
+        && mode.is_none()
         && app.viewport.point_drag.is_none()
         && !crate::dim_view::dragging()
         && !crate::sketch3d::dragging()
@@ -2685,7 +2693,7 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
     }
     let t = Tokens::get();
     let items: [(&str, &str); 10] = [
-        ("orbit", "Orbit (right drag; hold Shift to snap)"),
+        ("orbit", if app.preferences.nav == "openscad" { "Orbit (left drag)" } else { "Orbit (right drag; hold Shift to snap)" }),
         ("spin", "Continuous orbit (stops at the next click or key)"),
         ("pan", "Pan (drag; or middle drag)"),
         ("zoom", "Zoom (drag; or wheel)"),
@@ -2941,6 +2949,56 @@ mod tests {
             app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1 });
         }
         app
+    }
+
+    #[test]
+    fn openscad_drags_navigate_without_editing_or_box_selecting() {
+        for (button, shift) in [
+            (egui::PointerButton::Primary, false),
+            (egui::PointerButton::Secondary, false),
+            (egui::PointerButton::Middle, false),
+            (egui::PointerButton::Secondary, true),
+            (egui::PointerButton::Middle, true),
+        ] {
+            let ctx = egui::Context::default();
+            let mut app = hover_app(false);
+            app.preferences.nav = "openscad".into();
+            hover_frame(&mut app, &ctx, vec![]);
+            let p = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
+            let before = app.cam;
+            let undo = app.session.undo.len();
+            let modifiers = egui::Modifiers { shift, ..Default::default() };
+            let frame = |app: &mut SolveApp, mut events: Vec<egui::Event>| {
+                events.insert(0, egui::Event::ModifiersChanged(modifiers));
+                let _ = ctx.run_ui(
+                    egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))), events, ..Default::default() },
+                    |ui| show(app, ui),
+                );
+            };
+            frame(&mut app, vec![egui::Event::PointerMoved(p), egui::Event::PointerButton { pos: p, button, pressed: true, modifiers }]);
+            let end = p + vec2(30.0, 20.0);
+            frame(&mut app, vec![egui::Event::PointerMoved(end)]);
+            frame(&mut app, vec![]);
+            assert!(app.viewport.hover.is_none());
+            assert!(app.viewport.boxsel.is_none() && app.viewport.point_drag.is_none());
+            frame(&mut app, vec![egui::Event::PointerButton { pos: end, button, pressed: false, modifiers }]);
+            assert_eq!(app.session.undo.len(), undo);
+            assert!(app.session.selection.is_empty());
+            assert!(app.viewport.context_menu.is_none());
+            if button == egui::PointerButton::Primary {
+                assert_ne!(app.cam.yaw, before.yaw);
+                assert_eq!(app.cam.target, before.target);
+                assert_eq!(app.cam.distance, before.distance);
+            } else if shift {
+                assert_ne!(app.cam.distance, before.distance);
+                assert_eq!(app.cam.target, before.target);
+                assert_eq!(app.cam.yaw, before.yaw);
+            } else {
+                assert_ne!(app.cam.target, before.target);
+                assert_eq!(app.cam.distance, before.distance);
+                assert_eq!(app.cam.yaw, before.yaw);
+            }
+        }
     }
 
     #[test]
