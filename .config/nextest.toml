@@ -1,0 +1,13 @@
+# cargo-nextest settings for CI (`cargo xtask test` does not use nextest).
+# PR runs build the tests once and run them in 4 shards (.github/workflows/ci.yml).
+
+[profile.ci]
+fail-fast = false
+# Every test's time in the log, so the slow ones are easy to find.
+status-level = "pass"
+final-status-level = "slow"
+failure-output = "immediate-final"
+slow-timeout = { period = "60s" }
+
+[profile.ci.junit]
+path = "junit.xml"
