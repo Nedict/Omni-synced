@@ -39,13 +39,20 @@
 //! - 13: exact planar shell face anchors retain the shell producer, original certified
 //!   source and distinct inner/outer role. Version 12 anchors retain their identities;
 //!   migration never guesses attachments for older designs.
+//! - 14: persistent names follow the kernel's exact face history. Pieces of a split face are
+//!   named by the faces around them (`F2:top#[F2:side:l4,F4:side:l4]`) instead of numbered by
+//!   where their centres lay (`F2:top#2`). Names stored by older formats were worked out from
+//!   geometry, and a few of them name a face that history names differently; they get the
+//!   legacy mark (`?F2:top#2`) and are found again as the build that saved them found them.
+//!   Pieces a feature splits a body into are named after their faces; features saved before
+//!   keep the kernel's shell order (`shell_piece_order`), which their stored body names mean.
 
 use serde_json::Value;
 
 use crate::{DocError, Document, Result};
 
 /// The format this build writes.
-pub const FORMAT: u32 = 13;
+pub const FORMAT: u32 = 14;
 
 pub fn format_string(n: u32) -> String {
     format!("solvecraft/{n}")
@@ -58,8 +65,129 @@ pub fn version_of(s: &str) -> Option<u32> {
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
 type JsonStep = fn(&mut Value) -> Result<()>;
-const JSON_STEPS: [JsonStep; 12] =
-    [|_| Ok(()), v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, |_| Ok(()), |_| Ok(()), |_| Ok(()), |_| Ok(()), |_| Ok(()), |_| Ok(()), |_| Ok(())];
+const JSON_STEPS: [JsonStep; 13] = [
+    |_| Ok(()),
+    v2_to_v3,
+    v3_to_v4,
+    v4_to_v5,
+    v5_to_v6,
+    |_| Ok(()),
+    |_| Ok(()),
+    |_| Ok(()),
+    |_| Ok(()),
+    |_| Ok(()),
+    |_| Ok(()),
+    |_| Ok(()),
+    v13_to_v14,
+];
+
+/// Stored face and edge names were worked out from geometry before format 14; they get the
+/// legacy mark (`?`, see `naming::LEGACY_MARK`) so they are found again as those builds found
+/// them, and an older design evaluates as it was saved. The step marks the fields that store
+/// such a name, by their place in the schema:
+/// - each feature's `face_names`, and fillets' and chamfers' `edge_names` (other features' edge
+///   names are sheet metal's own);
+/// - a sketch feature's links' `face_name`;
+/// - face and edge references (`PlaneRef::Face`, `GeoRef::Face`, `GeoRef::Edge`: tagged
+///   `"type": "face"|"edge"`, picked `at` a point), wherever a feature holds one;
+/// - joint snaps on a face (`face_center`, `circle_center`), in joints and named origins;
+/// - face appearances, but not strict ones, whose names are certified lineage.
+///
+/// Every feature also keeps naming the pieces it splits a body into in the kernel's shell order
+/// (`Feature::shell_piece_order`): the body names stored after it (bodies, targets, participants,
+/// materials, appearances, joints) mean the pieces in that order.
+fn v13_to_v14(v: &mut Value) -> Result<()> {
+    if let Some(Value::Array(features)) = v.get_mut("features") {
+        for f in features.iter_mut() {
+            let Value::Object(o) = f else { continue };
+            let kind = o.get("type").and_then(Value::as_str).map(str::to_string);
+            if matches!(kind.as_deref(), Some("fillet" | "chamfer")) {
+                mark_all(o.get_mut("edge_names"));
+            }
+            mark_all(o.get_mut("face_names"));
+            if kind.as_deref() == Some("sketch")
+                && let Some(Value::Array(links)) = o.get_mut("sketch").and_then(|s| s.get_mut("links"))
+            {
+                links.iter_mut().filter_map(|l| l.get_mut("face_name")).for_each(mark);
+            }
+            o.insert("shell_piece_order".into(), Value::Bool(true));
+            references(f);
+        }
+    }
+    if let Some(Value::Array(joints)) = v.get_mut("assembly").and_then(|a| a.get_mut("joints")) {
+        for j in joints.iter_mut() {
+            for side in ["a", "b"] {
+                snap(j.get_mut(side));
+            }
+        }
+    }
+    if let Some(Value::Array(origins)) = v.get_mut("assembly").and_then(|a| a.get_mut("origins")) {
+        origins.iter_mut().for_each(|o| snap(o.get_mut("origin")));
+    }
+    // Face appearances carry the face's name without a type tag.
+    if let Some(Value::Array(faces)) = v.get_mut("appearances").and_then(|a| a.get_mut("faces")) {
+        for face in faces.iter_mut().filter(|f| f.get("strict_name").and_then(Value::as_bool) != Some(true)) {
+            if let Some(n) = face.get_mut("name") {
+                mark(n);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Mark the `name` of every face or edge reference in `v` (see [`v13_to_v14`]).
+fn references(v: &mut Value) {
+    match v {
+        Value::Object(o) => {
+            let reference = matches!(o.get("type").and_then(Value::as_str), Some("face" | "edge")) && o.contains_key("at");
+            for (key, x) in o.iter_mut() {
+                if reference && key == "name" {
+                    mark(x);
+                } else {
+                    references(x);
+                }
+            }
+        }
+        Value::Array(a) => a.iter_mut().for_each(references),
+        _ => {}
+    }
+}
+
+/// Mark the face name of a joint origin's snap on a face.
+fn snap(origin: Option<&mut Value>) {
+    if let Some(snap) = origin.and_then(|o| o.get_mut("snap"))
+        && matches!(snap.get("type").and_then(Value::as_str), Some("face_center" | "circle_center"))
+        && let Some(n) = snap.get_mut("face")
+    {
+        mark(n);
+    }
+}
+
+/// Mark every name in a list of stored names.
+fn mark_all(names: Option<&mut Value>) {
+    if let Some(Value::Array(names)) = names {
+        names.iter_mut().for_each(mark);
+    }
+}
+
+/// `features` (a design's, as JSON) as an upgrade from before format 14 leaves them: each keeps
+/// the shell order of the pieces it makes (see [`v13_to_v14`]).
+#[cfg(test)]
+pub(crate) fn pieces_in_shell_order(features: &mut Value) {
+    for f in features.as_array_mut().into_iter().flatten().filter_map(Value::as_object_mut) {
+        f.insert("shell_piece_order".into(), Value::Bool(true));
+    }
+}
+
+/// A stored name with the legacy mark (an empty name stays empty: no reference).
+fn mark(n: &mut Value) {
+    if let Value::String(s) = n
+        && !s.is_empty()
+        && crate::naming::legacy_name(s).is_none()
+    {
+        s.insert(0, crate::naming::LEGACY_MARK);
+    }
+}
 
 /// Old XZ references retain their exact frame, including nested offset and angled planes.
 /// New origin references use +Y; freezing the old frame avoids changing sketch coordinates,
@@ -597,6 +725,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn version_thirteen_names_keep_their_meaning_under_the_legacy_mark() {
+        let file = serde_json::json!({
+            "format": "solvecraft/13",
+            "features": [
+                {"type": "fillet", "edge_names": ["F2:side:l2|F2:top#2~1", ""], "face_names": ["F2:top#1", ""]},
+                {"type": "sheet_flange", "edge_names": ["base:l1:top"]},
+                {"type": "sketch", "plane": {"type": "face", "plane": {}, "at": [0, 0, 0], "name": "F2:top#1"},
+                 "sketch": {"links": [{"id": "l1", "face_name": "F2:top#2"}]}},
+                {"type": "construction_axis", "def": {"type": "two_points",
+                 "a": {"type": "edge", "at": [0, 0, 0], "name": "F2:start|F2:side:l1"},
+                 "b": {"type": "face", "at": [0, 0, 0], "name": "F2:start"}}},
+                {"name": "Hole #2", "type": "extrude"},
+                {"type": "thread", "face": [1, 2, 3]}
+            ],
+            "assembly": {
+                "joints": [{"a": {"occurrence": 0, "snap": {"type": "face_center", "pick": [0, 0, 0], "face": "F2:top#2"}},
+                            "b": {"occurrence": 1, "snap": {"type": "point", "point": [0, 0, 0]}}}],
+                "origins": [{"name": "O1", "origin": {"occurrence": 0, "snap": {"type": "circle_center", "pick": [0, 0, 0], "face": "F3:side"}}}]
+            },
+            "appearances": {"faces": [{"body": "Body1", "name": "F2:top#1"}, {"body": "Body1", "name": "F2:+x", "strict_name": true}]}
+        });
+        let mut v = file.clone();
+        v13_to_v14(&mut v).unwrap();
+        assert_eq!(v["features"][0]["edge_names"], serde_json::json!(["?F2:side:l2|F2:top#2~1", ""]));
+        assert_eq!(v["features"][0]["face_names"], serde_json::json!(["?F2:top#1", ""]));
+        assert_eq!(v["features"][1]["edge_names"][0], "base:l1:top", "sheet metal's edge names are its own");
+        assert_eq!(v["features"][2]["plane"]["name"], "?F2:top#1");
+        assert_eq!(v["features"][2]["sketch"]["links"][0]["face_name"], "?F2:top#2");
+        assert_eq!(v["features"][3]["def"]["a"]["name"], "?F2:start|F2:side:l1");
+        assert_eq!(v["features"][3]["def"]["b"]["name"], "?F2:start");
+        assert_eq!(v["features"][4]["name"], "Hole #2", "a feature's own name is not a face name");
+        assert_eq!(v["features"][5]["face"], serde_json::json!([1, 2, 3]));
+        assert_eq!(v["assembly"]["joints"][0]["a"]["snap"]["face"], "?F2:top#2");
+        assert_eq!(v["assembly"]["origins"][0]["origin"]["snap"]["face"], "?F3:side");
+        assert_eq!(v["appearances"]["faces"][0]["name"], "?F2:top#1");
+        assert_eq!(v["appearances"]["faces"][1]["name"], "F2:+x", "strict appearance names are certified lineage");
+        // Every feature keeps naming the pieces it splits a body into as the saving build did.
+        assert!(v["features"].as_array().unwrap().iter().all(|f| f["shell_piece_order"] == true));
+        // The step never marks twice.
+        let once = v.clone();
+        v13_to_v14(&mut v).unwrap();
+        assert_eq!(v, once);
+    }
+
+    /// Only the fields that store a face or edge name are marked: other fields with the same key
+    /// names, and objects tagged `face` or `edge` that are not references, are left alone.
+    #[test]
+    fn version_thirteen_marking_targets_name_fields_not_key_names() {
+        let file = serde_json::json!({
+            "format": "solvecraft/13",
+            "features": [
+                {"type": "extrude", "options": {"face": "flat", "face_name": "label", "face_names": ["a"]}},
+                {"type": "fillet", "settings": {"edge_names": ["kept"]}},
+                {"type": "sketch", "sketch": {"style": {"face_name": "kept"}}},
+                {"type": "split_body", "tool": {"type": "face", "name": "not a reference"}}
+            ],
+            "assembly": {"joints": [{"a": {"occurrence": 0, "snap": {"type": "frame", "face": "kept"}}}]},
+            "notes": {"face": "F2:top", "face_name": "F2:top", "face_names": ["F2:top"]}
+        });
+        let mut v = file.clone();
+        v13_to_v14(&mut v).unwrap();
+        for f in v["features"].as_array_mut().unwrap() {
+            f.as_object_mut().unwrap().remove("shell_piece_order");
+        }
+        assert_eq!(v, file);
+    }
+
+    #[test]
     fn version_nine_wire_spaces_preserve_saved_points_and_explicit_markers() {
         use solvecraft_geom::Vec3;
         use solvecraft_sketch::{LinkKind, LinkSource, Sketch, WireSpace};
@@ -1006,6 +1202,7 @@ mod tests {
         legacy["format"] = Value::from("solvecraft/6");
         let original_table = legacy["configs"].clone();
         let upgraded = read(&legacy.to_string()).unwrap();
+        d.features.iter_mut().for_each(|f| f.shell_piece_order = true);
         assert_eq!(upgraded, d, "the identity migration preserves the complete design");
         assert_eq!(serde_json::to_value(&upgraded.configs).unwrap(), original_table);
         assert_eq!(upgraded.format, format_string(FORMAT));
@@ -1057,9 +1254,11 @@ mod tests {
         d.add_feature(crate::FeatureKind::Sketch { plane: crate::PlaneRef::Origin { name: "XY".into() }, sketch }, Some("Dimensioned")).unwrap();
         let mut legacy: Value = serde_json::from_str(&d.to_json()).unwrap();
         legacy["format"] = Value::from("solvecraft/7");
-        let features = legacy["features"].clone();
+        let mut features = legacy["features"].clone();
+        pieces_in_shell_order(&mut features);
         let params = legacy["params"].clone();
         let upgraded = read(&legacy.to_string()).unwrap();
+        d.features.iter_mut().for_each(|f| f.shell_piece_order = true);
         assert_eq!(upgraded, d);
         let upgraded_json: Value = serde_json::from_str(&upgraded.to_json()).unwrap();
         assert_eq!(upgraded_json["features"], features);

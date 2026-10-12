@@ -10,7 +10,6 @@
 pub mod cmd;
 pub mod frames;
 pub mod fuzz;
-pub mod legacy_ids;
 pub mod licences;
 pub mod occurrences;
 pub mod params;
@@ -105,6 +104,15 @@ pub enum Sel {
         id: String,
     },
     SketchPoint {
+        id: String,
+    },
+    /// Geometry of a different sketch, retained for projection preselection.
+    ExternalSketchCurve {
+        sketch: u64,
+        id: String,
+    },
+    ExternalSketchPoint {
+        sketch: u64,
         id: String,
     },
     /// A constraint or dimension (by id) of the active sketch.
@@ -662,6 +670,8 @@ mod construct_tests;
 mod delete_face_tests;
 #[cfg(test)]
 mod extent_tests;
+#[cfg(test)]
+mod naming_history_tests;
 #[cfg(test)]
 mod pattern_suppress_tests;
 #[cfg(test)]

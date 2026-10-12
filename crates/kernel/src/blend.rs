@@ -13,6 +13,8 @@ use solvecraft_geom::Vec3;
 use truck_modeling::{self as mt, builder};
 
 use crate::body::{Body, Solid, from_p3, p3, v3};
+use crate::history::{FaceOrigin, History};
+use crate::record::{self, Rebuild};
 use crate::{KernelError, Result, guard};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -43,10 +45,15 @@ pub(crate) fn plane_normal(f: &mt::Face) -> Option<Vec3> {
 /// Replace edges in a face's oriented boundary (by id, keeping orientation), and insert extra
 /// edges where consecutive edges no longer connect.
 pub(crate) fn rebuild_face(f: &mt::Face, subst: &HashMap<mt::EdgeID, mt::Edge>, connectors: &[mt::Edge]) -> Result<mt::Face> {
+    rebuild_face_dropping(f, subst, &[], connectors)
+}
+
+/// [`rebuild_face`], also leaving out the `dropped` edges (consumed by a blend).
+fn rebuild_face_dropping(f: &mt::Face, subst: &HashMap<mt::EdgeID, mt::Edge>, dropped: &[mt::EdgeID], connectors: &[mt::Edge]) -> Result<mt::Face> {
     let mut wires = Vec::new();
     for w in f.absolute_boundaries() {
         let mut edges: Vec<mt::Edge> = Vec::new();
-        for e in w.edge_iter() {
+        for e in w.edge_iter().filter(|e| !dropped.contains(&e.id())) {
             let ne = match subst.get(&e.id()) {
                 Some(n) => {
                     // `n` was built in the orientation of the stored edge; match this use.
@@ -84,7 +91,8 @@ pub(crate) fn rebuild_face(f: &mt::Face, subst: &HashMap<mt::EdgeID, mt::Edge>, 
     crate::heal::absolute_face(f, wires).ok_or_else(|| KernelError::Failed("blend: a face could not be rebuilt".into()))
 }
 
-fn blend_one(solid: &Solid, edge: &mt::Edge, size: f64, r: f64, shape: Shape) -> Result<Solid> {
+/// Blend one edge of `solid`, with what was built from it (see [`Rebuild`]).
+fn blend_one(solid: &Solid, edge: &mt::Edge, size: f64, r: f64, shape: Shape) -> Result<(Solid, Rebuild)> {
     if !matches!(edge.curve(), mt::Curve::Line(_)) {
         return Err(unsupported("only straight edges can be blended"));
     }
@@ -198,10 +206,11 @@ fn blend_geometry(
     size: f64,
     r: f64,
     shape: Shape,
-) -> Result<Solid> {
+) -> Result<(Solid, Rebuild)> {
     let s = setback(r, phi, shape);
     let tol = (size * 1e-7).max(1e-9);
-    // End faces and the side edges at each end.
+    // End faces and the side edges at each end. A side edge that the fillet's setback uses up
+    // exactly is consumed: the rail ends at its far vertex (`ca`, `cb`).
     struct End {
         v: mt::Vertex,
         g: usize,
@@ -209,6 +218,8 @@ fn blend_geometry(
         e2: mt::Edge,
         a: Vec3,
         b: Vec3,
+        ca: Option<mt::Vertex>,
+        cb: Option<mt::Vertex>,
     }
     let mut ends: Vec<End> = Vec::new();
     for (v, p) in [(&v0, p0), (&v1, p1)] {
@@ -238,18 +249,26 @@ fn blend_geometry(
                 .ok_or_else(|| unsupported("unexpected corner topology"))
         };
         let (e1, e2) = (shared(i1)?, shared(i2)?);
-        for (e, q, t, fi) in [(&e1, a, t1, i1), (&e2, b, t2, i2)] {
+        let mut consumed: [Option<mt::Vertex>; 2] = [None, None];
+        for (k, (e, q, t, fi)) in [(&e1, a, t1, i1), (&e2, b, t2, i2)].into_iter().enumerate() {
             if !matches!(e.curve(), mt::Curve::Line(_)) {
                 return Err(unsupported("the edges at the corners must be straight"));
             }
-            let other = if e.front() == v { vtx(e.back()) } else { vtx(e.front()) };
+            let far = if e.front() == v { e.back().clone() } else { e.front().clone() };
+            let other = vtx(&far);
             let delta = other - p;
             if shape == Shape::Round {
                 // Fillets retain the square-end check: the original corner edge
-                // must run in the setback direction and have enough length left.
+                // must run in the setback direction and have enough length left,
+                // or exactly the setback (the edge is consumed).
                 let along = delta.dot(t);
-                if (delta - t * along).len() > tol * 100.0 + 1e-7 || along <= s + tol {
+                if (delta - t * along).len() > tol * 100.0 + 1e-7 || along < s - tol {
                     return Err(unsupported("the blend is larger than the neighbouring faces"));
+                }
+                if along <= s + tol
+                    && let Some(slot) = consumed.get_mut(k)
+                {
+                    *slot = Some(far);
                 }
                 continue;
             }
@@ -265,7 +284,8 @@ fn blend_geometry(
                 return Err(unsupported("the blend is larger than the neighbouring faces"));
             }
         }
-        ends.push(End { v: v.clone(), g, e1, e2, a, b });
+        let [ca, cb] = consumed;
+        ends.push(End { v: v.clone(), g, e1, e2, a, b, ca, cb });
     }
     let [end0, end1] = &ends[..] else { return Err(KernelError::Failed("ends".into())) };
     if end0.g == end1.g {
@@ -274,10 +294,32 @@ fn blend_geometry(
     if (end1.a - end0.a).dot(d) <= tol || (end1.b - end0.b).dot(d) <= tol {
         return Err(unsupported("the blend is larger than the neighbouring faces"));
     }
-    let a0 = builder::vertex(p3(end0.a));
-    let b0 = builder::vertex(p3(end0.b));
-    let a1 = builder::vertex(p3(end1.a));
-    let b1 = builder::vertex(p3(end1.b));
+    // A side face whose corner edges are consumed at both ends is used up: its remaining edge,
+    // parallel to the old edge at the setback, becomes the rail and the face is removed.
+    let used_up = |fi: usize, c0: &Option<mt::Vertex>, c1: &Option<mt::Vertex>| -> Result<Option<mt::Edge>> {
+        let (Some(x0), Some(x1)) = (c0, c1) else {
+            return match (c0, c1) {
+                (None, None) => Ok(None),
+                _ => Err(unsupported("the blend uses up a neighbouring face at one end only")),
+            };
+        };
+        let f = faces.get(fi).ok_or_else(|| KernelError::Failed("face".into()))?;
+        if f.boundaries().len() != 1 || f.edge_iter().count() != 4 {
+            return Err(unsupported("the blend uses up a neighbouring face with more edges"));
+        }
+        let rail = f
+            .edge_iter()
+            .find(|e| matches!(e.curve(), mt::Curve::Line(_)) && ((e.front() == x0 && e.back() == x1) || (e.front() == x1 && e.back() == x0)))
+            .ok_or_else(|| unsupported("the blend uses up a neighbouring face with more edges"))?;
+        Ok(Some(if rail.front() == x0 { rail.clone() } else { rail.inverse() }))
+    };
+    let rail_a = used_up(i1, &end0.ca, &end1.ca)?;
+    let rail_b = used_up(i2, &end0.cb, &end1.cb)?;
+    let vertex = |c: &Option<mt::Vertex>, p: Vec3| c.clone().unwrap_or_else(|| builder::vertex(p3(p)));
+    let a0 = vertex(&end0.ca, end0.a);
+    let b0 = vertex(&end0.cb, end0.b);
+    let a1 = vertex(&end1.ca, end1.a);
+    let b1 = vertex(&end1.cb, end1.b);
     // Corner curves on the end faces (A → B) and the blend surface. The arc centre is r from
     // both faces (inside the material for a convex edge, outside for a concave one); the arc's
     // middle is the point nearest the old edge.
@@ -294,20 +336,32 @@ fn blend_geometry(
     };
     let c0 = corner(&a0, &b0, p0);
     let c1 = corner(&a1, &b1, p1);
-    let la = builder::line(&a0, &a1);
-    let lb = builder::line(&b0, &b1);
+    let la = rail_a.clone().unwrap_or_else(|| builder::line(&a0, &a1));
+    let lb = rail_b.clone().unwrap_or_else(|| builder::line(&b0, &b1));
 
-    // Substitutions: side edges at the ends now stop at A/B; the blended edge moves to A or B.
+    // Substitutions: side edges at the ends now stop at A/B (consumed ones are dropped); the
+    // blended edge moves to A or B.
     let mut subst: HashMap<mt::EdgeID, mt::Edge> = HashMap::new();
+    let mut dropped: Vec<mt::EdgeID> = Vec::new();
     for (end, a, b) in [(end0, &a0, &b0), (end1, &a1, &b1)] {
-        for (e, nv) in [(&end.e1, a), (&end.e2, b)] {
+        for (e, nv, used) in [(&end.e1, a, &end.ca), (&end.e2, b, &end.cb)] {
+            if used.is_some() {
+                dropped.push(e.id());
+                continue;
+            }
             let (f, bk) = (e.absolute_front(), e.absolute_back());
             let ne = if f == &end.v { builder::line(nv, bk) } else { builder::line(f, nv) };
             subst.insert(e.id(), ne);
         }
     }
+    // The side edges at the ends are pieces of themselves; the rails and corner curves are new.
+    let mut rec = Rebuild::default();
+    rec.pieces(&subst);
     let mut new_faces: Vec<mt::Face> = Vec::with_capacity(faces.len() + 1);
     for (i, f) in faces.iter().enumerate() {
+        if (i == i1 && rail_a.is_some()) || (i == i2 && rail_b.is_some()) {
+            continue;
+        }
         let nf = if i == i1 {
             let mut m = subst.clone();
             m.insert(edge.id(), la.clone());
@@ -317,12 +371,13 @@ fn blend_geometry(
             m.insert(edge.id(), lb.clone());
             rebuild_face(f, &m, &[])?
         } else if i == end0.g {
-            rebuild_face(f, &subst, std::slice::from_ref(&c0))?
+            rebuild_face_dropping(f, &subst, &dropped, std::slice::from_ref(&c0))?
         } else if i == end1.g {
-            rebuild_face(f, &subst, std::slice::from_ref(&c1))?
+            rebuild_face_dropping(f, &subst, &dropped, std::slice::from_ref(&c1))?
         } else {
             (*f).clone()
         };
+        rec.face(&nf, f);
         new_faces.push(nf);
     }
     // The blend face uses each new edge opposite to its neighbour.
@@ -351,13 +406,15 @@ fn blend_geometry(
             mt::Face::try_new(vec![wire], surf).map_err(|e| KernelError::Failed(format!("fillet face: {e}")))?
         }
     };
+    rec.blend(&blend_face, [edge.id()]);
     new_faces.push(blend_face);
     let mut shells = solid.boundaries().clone();
     let new_shell: mt::Shell = new_faces.into();
     if let Some(sh) = shells.get_mut(si) {
         *sh = new_shell;
     }
-    Solid::try_new(shells).map_err(|e| KernelError::Failed(format!("blend produced an invalid solid: {e}")))
+    let solid = Solid::try_new(shells).map_err(|e| KernelError::Failed(format!("blend produced an invalid solid: {e}")))?;
+    Ok((solid, rec))
 }
 
 fn blend(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str) -> Result<Body> {
@@ -370,8 +427,10 @@ fn blend(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str) -> Resul
     if edges.len() > 1000 {
         return Err(KernelError::Invalid("too many edges".into()));
     }
+    // Each step's result carries its history over `[body]`.
+    let counts = record::counts(&[body]);
     // Coplanar neighbours as one face (as after a join), so corners look as they should.
-    let mut cur = Body::new(crate::heal::heal_keep(body.deep_copy(), body.size(), body.split_keep()))?;
+    let mut cur = crate::boolean_record::healed(body)?;
     // Every edge of a convex planar body: rounded as a whole (sphere corners).
     if shape == Shape::Round && edges.len() >= 6 {
         let solid = cur.deep_copy();
@@ -388,7 +447,7 @@ fn blend(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str) -> Resul
             if hit.len() == all.len()
                 && let Ok(b) = crate::polyhedron::round_all_edges(&cur, r)
             {
-                return Ok(b);
+                return Ok(record::after(b, &cur, &counts));
             }
         }
     }
@@ -401,8 +460,8 @@ fn blend(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str) -> Resul
     {
         let _ = groups;
         let loop_pts: Vec<Vec3> = edges.iter().filter(|p| !rest.iter().any(|q| q.dist(**p) < 1e-12)).copied().collect();
-        cur = blend(&cur, &rest, r, shape, what)?;
-        return blend(&cur, &loop_pts, r, shape, what);
+        cur = record::after(blend(&cur, &rest, r, shape, what)?, &cur, &counts);
+        return Ok(record::after(blend(&cur, &loop_pts, r, shape, what)?, &cur, &counts));
     }
     if let Some(groups) = loop_groups(&cur, edges)? {
         for g in groups {
@@ -410,7 +469,10 @@ fn blend(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str) -> Resul
             let solid = cur.deep_copy();
             let ids = edge_ids(&cur, &solid, &g)?;
             match crate::loopblend::loop_blend(&solid, &ids, size, r, shape == Shape::Round) {
-                Some(res) => cur = Body::new(guard(what, || res)?)?,
+                Some(res) => {
+                    let (made, rec) = guard(what, || res)?;
+                    cur = record::after(record::rebuilt(made, &[&solid], &rec)?, &cur, &counts);
+                }
                 None => return Err(unsupported("the edges are not a whole loop of a planar face")),
             }
         }
@@ -429,10 +491,10 @@ fn blend(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str) -> Resul
         let solid = cur.deep_copy();
         if todo.len() >= 2
             && let Some((ids, covered)) = run_on_loop(&cur, &solid, &todo)?
-            && let Some(Ok(res)) = crate::loopblend::loop_blend(&solid, &ids, size, r, shape == Shape::Round)
-            && let Ok(b) = guard(what, || Ok(res)).and_then(Body::new)
+            && let Some(Ok((res, rec))) = crate::loopblend::loop_blend(&solid, &ids, size, r, shape == Shape::Round)
+            && let Ok(b) = guard(what, || Ok(res)).and_then(|res| record::rebuilt(res, &[&solid], &rec))
         {
-            cur = b;
+            cur = record::after(b, &cur, &counts);
             todo.retain(|p| !covered.iter().any(|q| q.dist(*p) < 1e-12));
             continue;
         }
@@ -469,7 +531,7 @@ fn blend(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str) -> Resul
                     None => Err(e),
                 },
             };
-            match attempt.and_then(|(o, js)| Body::new(o).map(|b| (b, js))) {
+            match attempt.and_then(|((o, rec), js)| record::rebuilt(o, &[&solid], &rec).map(|b| (b, js))) {
                 Ok(x) => {
                     done = Some(x);
                     break;
@@ -483,7 +545,7 @@ fn blend(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str) -> Resul
         }
         match done {
             Some((b, js)) => {
-                cur = b;
+                cur = record::after(b, &cur, &counts);
                 let mut k = 0;
                 todo.retain(|_| {
                     let keep = !js.contains(&k);
@@ -636,7 +698,7 @@ fn smooth_chain(solid: &Solid, edge: &mt::Edge) -> Option<Vec<mt::EdgeID>> {
     Some(ids)
 }
 
-fn edge_mid(e: &mt::Edge) -> Option<Vec3> {
+pub(crate) fn edge_mid(e: &mt::Edge) -> Option<Vec3> {
     use mt::{BoundedCurve, ParametricCurve};
     let c = e.curve();
     let (t0, t1) = c.range_tuple();
@@ -762,15 +824,21 @@ pub fn chamfer(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
     if edges.is_empty() || edges.len() > 1000 {
         return Err(KernelError::Invalid("select 1…1000 edges".into()));
     }
+    // Each step's result carries its history over `[body]`.
+    let counts = record::counts(&[body]);
     // All cutters at once (their union mitres the corners), else one edge at a time.
-    let tools: Result<Vec<Body>> = edges.iter().enumerate().map(|(i, p)| chamfer_tool(body, *p, distance, i)).collect();
+    let tools: Result<Vec<Cutter>> = edges.iter().enumerate().map(|(i, p)| chamfer_tool(body, *p, distance, i)).collect();
     if let Ok(tools) = tools {
-        let mut acc: Option<Body> = None;
+        // The union so far, with its history over the cutters it joined.
+        let mut acc: Option<(Body, Option<History>)> = None;
         let mut ok = true;
-        for t in tools {
+        for t in &tools {
             let next = match &acc {
-                None => Some(t),
-                Some(a) => crate::ops::boolean(a, &t, crate::BoolOp::Union).ok().flatten(),
+                None => Some((t.body.clone(), Some(History::identity(&t.body)))),
+                Some((a, h)) => crate::ops::boolean(a, &t.body, crate::BoolOp::Union).ok().flatten().map(|u| {
+                    let h = crate::boolean_record::through(&u, 0, h.as_ref());
+                    (u, h)
+                }),
             };
             if next.is_none() {
                 ok = false;
@@ -779,10 +847,11 @@ pub fn chamfer(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
             acc = next;
         }
         if ok
-            && let Some(tool) = acc
+            && let Some((tool, h)) = acc
             && let Ok(Some(r)) = crate::ops::boolean(body, &tool, crate::BoolOp::Cut)
         {
-            return Ok(r);
+            let h = cut_history(crate::boolean_record::through(&r, 1, h.as_ref()), body, &tools);
+            return Ok(r.with_checked_history(h, &counts));
         }
     }
     // At a pocket rim the cutters cannot extend beyond the selected edges. Rebuild
@@ -794,26 +863,47 @@ pub fn chamfer(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
         return Ok(result);
     }
     // Coplanar neighbours as one face (as after a join), so corners look as they should.
-    let mut cur = Body::new(crate::heal::heal_keep(body.deep_copy(), body.size(), body.split_keep()))?;
+    let mut cur = crate::boolean_record::healed(body)?;
     if let Some(groups) = loop_groups(&cur, edges)? {
         for g in groups {
             let size = cur.size();
             let solid = cur.deep_copy();
             let ids = edge_ids(&cur, &solid, &g)?;
             match crate::loopblend::loop_blend(&solid, &ids, size, distance, false) {
-                Some(res) => cur = Body::new(guard("chamfer", || res)?)?,
+                Some(res) => {
+                    let (made, rec) = guard("chamfer", || res)?;
+                    cur = record::after(record::rebuilt(made, &[&solid], &rec)?, &cur, &counts);
+                }
                 None => return Err(unsupported("the edges are not a whole loop of a planar face")),
             }
         }
         return Ok(cur);
     }
     for p in edges {
-        cur = match chamfer_tool(&cur, *p, distance, 0).and_then(|t| crate::ops::boolean(&cur, &t, crate::BoolOp::Cut)) {
+        let step = match chamfer_tool(&cur, *p, distance, 0).and_then(|t| cut_one(&cur, &t)) {
             Ok(Some(b)) => b,
             _ => blend(&cur, std::slice::from_ref(p), distance, Shape::Flat, "chamfer")?,
         };
+        cur = record::after(step, &cur, &counts);
     }
     Ok(cur)
+}
+
+/// `cur` cut by one cutter, with its history over `[cur]` (`None`: nothing left).
+fn cut_one(cur: &Body, t: &Cutter) -> Result<Option<Body>> {
+    let counts = record::counts(&[cur]);
+    Ok(crate::ops::boolean(cur, &t.body, crate::BoolOp::Cut)?.map(|r| {
+        let h = cut_history(r.history().cloned(), cur, std::slice::from_ref(t));
+        r.with_checked_history(h, &counts)
+    }))
+}
+
+/// A cut of `cur` by cutters (their union), from its history `h` over `[cur, cutter 0, …]`, as
+/// over `[cur]`: each cutter's chamfer face is made in place of its edge, and nothing else of a
+/// cutter may be left (`None` where something is).
+fn cut_history(h: Option<History>, cur: &Body, tools: &[Cutter]) -> Option<History> {
+    let parts: Vec<History> = std::iter::once(History::identity(cur)).chain(tools.iter().map(Cutter::history)).collect();
+    crate::boolean_record::composed(h?.over(&parts.iter().collect::<Vec<_>>()))
 }
 
 /// Geometry of a straight convex edge between two planar faces.
@@ -827,7 +917,8 @@ struct EdgeFrame {
     t2: Vec3,
 }
 
-fn edge_frame(cur: &Body, p: Vec3) -> Result<EdgeFrame> {
+/// The edge nearest `p` (its index in `cur`'s edge order) and its frame.
+fn edge_frame(cur: &Body, p: Vec3) -> Result<(usize, EdgeFrame)> {
     let size = cur.size();
     let tol = (size * 2e-3).max(1e-3);
     let Some((idx, dist)) = cur.nearest_edge(p, tol)? else { return Err(KernelError::Invalid("the body has no edges".into())) };
@@ -855,7 +946,7 @@ fn edge_frame(cur: &Body, p: Vec3) -> Result<EdgeFrame> {
     if n1.dot(t2) > 1e-9 || n2.dot(t1) > 1e-9 || t1.dot(t2) < -1.0 + 1e-6 {
         return Err(unsupported("only convex edges"));
     }
-    Ok(EdgeFrame { p0, p1, d, n1, n2, t1, t2 })
+    Ok((idx, EdgeFrame { p0, p1, d, n1, n2, t1, t2 }))
 }
 
 /// The prism that cuts a chamfer of size `s` on the edge nearest `p`. `k` varies the parts that
@@ -885,20 +976,41 @@ pub fn chamfer_sides(body: &Body, edges: &[Vec3], d1: f64, side: ChamferSide, fl
     if edges.is_empty() || edges.len() > 1000 {
         return Err(KernelError::Invalid("select 1…1000 edges".into()));
     }
-    let mut cur = body.clone();
+    let counts = record::counts(&[body]);
+    let mut cur = crate::boolean_record::operand(body, 0, &counts);
     for (k, p) in edges.iter().enumerate() {
         let t = chamfer_tool_sides(&cur, *p, d1, Some((side, flip)), k)?;
-        cur = crate::ops::boolean(&cur, &t, crate::BoolOp::Cut)?.ok_or_else(|| KernelError::Failed("the chamfer removed everything".into()))?;
+        let step = cut_one(&cur, &t)?.ok_or_else(|| KernelError::Failed("the chamfer removed everything".into()))?;
+        cur = record::after(step, &cur, &counts);
     }
     Ok(cur)
 }
 
-pub(crate) fn chamfer_tool(cur: &Body, p: Vec3, s: f64, k: usize) -> Result<Body> {
+/// The prism that cuts a chamfer: the body, which of its faces is the chamfer plane, and the
+/// edge (of the body it chamfers, in its edge order) that face is made in place of.
+pub(crate) struct Cutter {
+    body: Body,
+    face: Option<usize>,
+    edge: usize,
+}
+
+impl Cutter {
+    /// The cutter as made from the body it chamfers: its chamfer face in place of the edge, its
+    /// other faces (all outside that body) from nothing of it.
+    fn history(&self) -> History {
+        let faces = (0..self.body.face_count())
+            .map(|i| record::generated(if Some(i) == self.face { vec![FaceOrigin::Edge { operand: 0, edge: self.edge }] } else { Vec::new() }))
+            .collect();
+        record::from_faces(&self.body.solid, 1, faces)
+    }
+}
+
+pub(crate) fn chamfer_tool(cur: &Body, p: Vec3, s: f64, k: usize) -> Result<Cutter> {
     chamfer_tool_sides(cur, p, s, None, k)
 }
 
-fn chamfer_tool_sides(cur: &Body, p: Vec3, s: f64, sides: Option<(ChamferSide, bool)>, k: usize) -> Result<Body> {
-    let mut f = edge_frame(cur, p)?;
+fn chamfer_tool_sides(cur: &Body, p: Vec3, s: f64, sides: Option<(ChamferSide, bool)>, k: usize) -> Result<Cutter> {
+    let (edge, mut f) = edge_frame(cur, p)?;
     // Setbacks along each face: equal, or by the second side's rule.
     let (s1, s2) = match sides {
         None => (s, s),
@@ -949,11 +1061,16 @@ fn chamfer_tool_sides(cur: &Body, p: Vec3, s: f64, sides: Option<(ChamferSide, b
     }
     let loc: Vec<solvecraft_geom::Vec2> = [a_ext, b_ext, e_far].iter().map(|q| plane.to_local(*q)).collect();
     let mut lp = solvecraft_geom::Loop2::polygon(&loc);
+    // The chamfer plane is swept from the segment a → b: first, or last once turned round.
+    let mut chamfer_segment = 0;
     if lp.signed_area() < 0.0 {
         lp = lp.reversed();
+        chamfer_segment = lp.segs.len().saturating_sub(1);
     }
     let region = solvecraft_geom::Region2 { outer: lp, holes: vec![] };
-    crate::build::extrude(&plane, &[region], 0.0, len + 2.0 * ext)?.pop().ok_or_else(|| KernelError::Failed("chamfer tool".into()))
+    let body = crate::build::extrude(&plane, &[region], 0.0, len + 2.0 * ext)?.pop().ok_or_else(|| KernelError::Failed("chamfer tool".into()))?;
+    let face = body.history().and_then(|h| h.faces.iter().position(|f| f.origins == [FaceOrigin::Profile { segment: chamfer_segment }]));
+    Ok(Cutter { body, face, edge })
 }
 
 #[cfg(test)]

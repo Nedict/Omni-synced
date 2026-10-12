@@ -19,6 +19,15 @@ Changes:
   boolean's faces came out in a different order on every run).
 - `lib.rs`: `tr!` reports where an operation gives up when `SHAPEOPS_TRACE` is set; compiler
   warnings no longer fail the build.
+- Face and edge history (`transversal/history.rs`, new): `and_with_history` / `or_with_history`
+  also return, for each face of the result (in `face_iter` order), the operand face it is a
+  region of and whether it is that face unchanged, and for each edge (distinct edges in order
+  of first use along the faces) the operand edge it is (a piece of) or the two operand faces
+  whose intersection made it. The code that creates faces and edges records them as it goes:
+  `divide_face` (face pieces), `loops_store` (intersection edges, split edges, edges rebuilt on
+  a moved vertex), across the passes that fold in the operands' extra shells. `and` / `or` are
+  wrappers that drop the history; the `*_with_history` forms return the same solid with the
+  history as an `Option` (`None` where a face or edge went unrecorded).
 
 ## truck-stepio 0.3.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/truck)
 
@@ -37,6 +46,9 @@ Changes:
 ## truck-meshalgo 0.4.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/truck)
 
 Changes:
+- `tessellation/triangulation.rs`: the inside test of a face's boundary skips loops whose
+  parameter box is clear of the point (it tested every segment of every loop, so a face with
+  hundreds of holes meshed in quadratic time).
 - `tessellation/triangulation.rs`: meshed faces and edges are built unchecked: faces whose loop
   runs along a seam edge both ways and closed edges (a full circle on one vertex) are valid,
   but the debug-build checks rejected them (debug builds could not mesh them).

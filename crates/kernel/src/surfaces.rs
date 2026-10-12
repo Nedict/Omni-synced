@@ -10,6 +10,8 @@ use solvecraft_geom::{Plane, Region2, Vec3};
 use truck_modeling as mt;
 
 use crate::body::{Body, from_p3, p3};
+use crate::history::{Change, EdgeOrigin, FaceOrigin};
+use crate::record::{Rebuild, rebuilt_body};
 use crate::{KernelError, Result, guard};
 
 impl Body {
@@ -21,7 +23,11 @@ impl Body {
 
 /// A body of faces as they are (no orientation fix: a surface has no inside).
 fn surface_body(faces: Vec<mt::Face>) -> Body {
-    let shell = mt::Shell::from(faces);
+    surface_of(mt::Shell::from(faces))
+}
+
+/// A body of a shell as it is.
+fn surface_of(shell: mt::Shell) -> Body {
     Body {
         solid: std::sync::Arc::new(mt::Solid::new_unchecked(vec![shell])),
         coarse_missing: None,
@@ -30,33 +36,28 @@ fn surface_body(faces: Vec<mt::Face>) -> Body {
         paint: None,
         splits: None,
         face_sources: None,
+        history: None,
         regularization_protected: false,
     }
 }
 
-/// A body from faces: a solid when they close, else a surface.
-fn body_of(faces: Vec<mt::Face>) -> Result<Body> {
+/// A body from faces: a solid when they close, else a surface; with the history of the
+/// operation that made the faces from `operands` as `rec` records.
+fn body_of(faces: Vec<mt::Face>, operands: &[&mt::Solid], rec: &Rebuild) -> Result<Body> {
     let shell = mt::Shell::from(faces);
     if shell.shell_condition() == mt::ShellCondition::Closed {
-        Body::new(mt::Solid::new_unchecked(vec![shell]))
+        crate::record::rebuilt(mt::Solid::new_unchecked(vec![shell]), operands, rec)
     } else {
-        Ok(Body {
-            solid: std::sync::Arc::new(mt::Solid::new_unchecked(vec![shell])),
-            coarse_missing: None,
-            mesh: None,
-            color: None,
-            paint: None,
-            splits: None,
-            face_sources: None,
-            regularization_protected: false,
-        })
+        Ok(rebuilt_body(surface_of(shell), operands, rec))
     }
 }
 
-/// A planar surface filling a sketch region.
+/// A planar surface filling a sketch region. Its history has no operands: the face is new.
 pub fn patch_region(plane: &Plane, region: &Region2) -> Result<Body> {
     let f = crate::build::face(plane, region)?;
-    Ok(surface_body(vec![f]))
+    let mut rec = Rebuild::default();
+    rec.made(&f, Vec::new());
+    Ok(rebuilt_body(surface_body(vec![f]), &[], &rec))
 }
 
 /// The edge of a body nearest a point (by samples along each edge).
@@ -75,7 +76,8 @@ pub(crate) fn edge_near(body: &Body, p: Vec3) -> Option<mt::Edge> {
     best.filter(|(d, _)| *d <= body.size() * 0.05 + 1e-6).map(|(_, e)| e)
 }
 
-/// A planar surface filling a closed loop of a body's edges (each picked by a point on it).
+/// A planar surface filling a closed loop of a body's edges (each picked by a point on it). Its
+/// history is over `[body]`: the face is new, its edges the body's.
 pub fn patch_edges(body: &Body, at: &[Vec3]) -> Result<Body> {
     body.require_brep("patch")?;
     if at.is_empty() || at.len() > 10_000 {
@@ -111,11 +113,15 @@ pub fn patch_edges(body: &Body, at: &[Vec3]) -> Result<Body> {
         let wire: mt::Wire = chain.into();
         let face = mt::builder::try_attach_plane(&[wire])
             .map_err(|_| KernelError::Invalid("not supported yet: patching a loop that is not planar".into()))?;
-        Ok(surface_body(vec![face]))
+        // A new face on the body's own edges.
+        let mut rec = Rebuild::default();
+        rec.made(&face, Vec::new());
+        Ok(rebuilt_body(surface_body(vec![face]), &[&body.solid], &rec))
     })
 }
 
-/// Faces of a body copied out as a surface body (faces picked by points on them).
+/// Faces of a body copied out as a surface body (faces picked by points on them). Its history is
+/// over `[body]`: the faces and their edges are the body's.
 pub fn copy_faces(body: &Body, at: &[Vec3]) -> Result<Body> {
     body.require_brep("copy faces")?;
     let faces: Vec<&mt::Face> = body.solid.face_iter().collect();
@@ -127,7 +133,8 @@ pub fn copy_faces(body: &Body, at: &[Vec3]) -> Result<Body> {
             chosen.push(i);
         }
     }
-    Ok(surface_body(chosen.into_iter().filter_map(|i| faces.get(i).map(|f| (*f).clone())).collect()))
+    let copied = surface_body(chosen.into_iter().filter_map(|i| faces.get(i).map(|f| (*f).clone())).collect());
+    Ok(rebuilt_body(copied, &[&body.solid], &Rebuild::default()))
 }
 
 /// Index of the face nearest a point (over its mesh triangles).
@@ -145,7 +152,8 @@ fn nearest_face(body: &Body, p: Vec3) -> Result<usize> {
 }
 
 /// Sew surface bodies along edges that coincide (within `tol`): one body, a solid when the
-/// faces close up. Faces are turned so that neighbours agree.
+/// faces close up. Faces are turned so that neighbours agree. The result's history is over
+/// `bodies`: each face the one it was sewn from, each edge the edges sewn into it.
 pub fn stitch(bodies: &[&Body], tol: f64) -> Result<Body> {
     if bodies.is_empty() {
         return Err(KernelError::Invalid("nothing to stitch".into()));
@@ -177,6 +185,7 @@ pub fn stitch(bodies: &[&Body], tol: f64) -> Result<Body> {
         };
         let mut edges: Vec<(mt::Edge, mt::Point3)> = Vec::new();
         let mut out = Vec::with_capacity(faces.len());
+        let mut rec = Rebuild::default();
         for f in &faces {
             let mut wires = Vec::new();
             for w in f.absolute_boundaries() {
@@ -207,6 +216,7 @@ pub fn stitch(bodies: &[&Body], tol: f64) -> Result<Body> {
                             x
                         }
                     };
+                    rec.piece(&ne, &abs);
                     nw.push(if e.orientation() { ne } else { ne.inverse() });
                 }
                 wires.push(mt::Wire::from(nw));
@@ -215,6 +225,7 @@ pub fn stitch(bodies: &[&Body], tol: f64) -> Result<Body> {
             if !f.orientation() {
                 nf.invert();
             }
+            rec.whole(&nf, f);
             out.push(nf);
         }
         // Neighbours run their shared edges opposite ways.
@@ -246,7 +257,8 @@ pub fn stitch(bodies: &[&Body], tol: f64) -> Result<Body> {
             }
         }
         let out: Vec<mt::Face> = out.into_iter().zip(flip).map(|(f, fl)| if fl == Some(true) { f.inverse() } else { f }).collect();
-        body_of(out)
+        let operands: Vec<&mt::Solid> = bodies.iter().map(|b| &*b.solid).collect();
+        body_of(out, &operands, &rec)
     })
 }
 
@@ -428,10 +440,23 @@ pub fn thicken(body: &Body, thickness: f64, symmetric: bool) -> Result<Body> {
             Ok(nf)
         };
         let mut out = Vec::new();
-        for (f, off) in faces.iter().zip(&offs) {
+        // History (one operand, the surface): a copy at no distance is the face itself, a copy
+        // further out its offset, a wall is made along its free edge.
+        let operand = crate::record::Operand::new(body);
+        let edge_index = &operand.edges;
+        let mut history = Vec::new();
+        let copy = |i: usize, d: f64| {
+            if d == 0.0 {
+                crate::record::from_face(0, i, Change::Kept)
+            } else {
+                crate::record::generated(vec![FaceOrigin::Offset { operand: 0, face: i }])
+            }
+        };
+        for (i, (f, off)) in faces.iter().zip(&offs).enumerate() {
             // The lower copy faces back, the upper one forward.
             out.push(moved_face(f, off, 0, lo)?.inverse());
             out.push(moved_face(f, off, 1, hi)?);
+            history.extend([copy(i, lo), copy(i, hi)]);
             // Walls along free edges, outward across the edge.
             for w in f.boundaries() {
                 for e in w.edge_iter() {
@@ -464,6 +489,8 @@ pub fn thicken(body: &Body, thickness: f64, symmetric: bool) -> Result<Body> {
                         x
                     };
                     out.push(wall);
+                    let edge = edge_index.get(&abs_id).copied().ok_or_else(|| KernelError::Failed("thicken: an edge outside the surface".into()))?;
+                    history.push(crate::record::generated(vec![FaceOrigin::Edge { operand: 0, edge }]));
                 }
             }
         }
@@ -471,12 +498,23 @@ pub fn thicken(body: &Body, thickness: f64, symmetric: bool) -> Result<Body> {
         if shell.shell_condition() != mt::ShellCondition::Closed {
             return Err(KernelError::Failed("the thickened surface does not close".into()));
         }
-        Body::new(mt::Solid::new_unchecked(vec![shell]))
+        // The edges copied at no distance are the surface's own edges, rebuilt.
+        let mut copies = HashMap::new();
+        for (id, (low, high)) in &emoved {
+            for (copy, d) in [(low, lo), (high, hi)] {
+                if let Some(&edge) = edge_index.get(id)
+                    && d == 0.0
+                {
+                    copies.insert(copy.id(), EdgeOrigin::Edge { operand: 0, edge });
+                }
+            }
+        }
+        crate::record::attach(Body::new(mt::Solid::new_unchecked(vec![shell]))?, &[operand], Some(history), copies)
     })
 }
 
 /// A surface body trimmed by a tool: its faces are cut where the tool meets them and the
-/// pieces on the side of `keep` are kept.
+/// pieces on the side of `keep` are kept. The result's history is over `[body]`.
 pub fn trim(body: &Body, tool: &crate::SplitTool, keep: Vec3) -> Result<Body> {
     body.require_brep("trim")?;
     let total = body.solid.face_iter().count();
@@ -494,12 +532,15 @@ pub fn trim(body: &Body, tool: &crate::SplitTool, keep: Vec3) -> Result<Body> {
         if kept.is_empty() {
             return Err(KernelError::Invalid("nothing is left on that side of the tool".into()));
         }
-        Ok(surface_body(kept))
+        // The kept pieces are the split's own; its history carries them back to `body`.
+        let trimmed = rebuilt_body(surface_body(kept), &[&split.solid], &Rebuild::default());
+        Ok(crate::record::after(trimmed, &split, &crate::record::counts(&[body])))
     })
 }
 
 /// A planar surface extended: the chosen straight edges (picked by points on them) move
-/// outward in the face's plane by `distance`, their neighbours lengthened to meet them.
+/// outward in the face's plane by `distance`, their neighbours lengthened to meet them. The
+/// result's history is over `[body]`: the face and each edge the one it was moved from.
 pub fn extend(body: &Body, at: &[Vec3], distance: f64) -> Result<Body> {
     body.require_brep("extend")?;
     if !(distance.is_finite() && distance > 0.0) {
@@ -548,10 +589,13 @@ pub fn extend(body: &Body, at: &[Vec3], distance: f64) -> Result<Body> {
             let p = meet(*prev, *cur).unwrap_or(cur.0);
             corners.push(mt::Vertex::new(p3(p)));
         }
+        let mut rec = Rebuild::default();
         let wire: mt::Wire = (0..m)
             .filter_map(|i| {
-                let (a, b) = (corners.get(i)?, corners.get((i + 1) % m)?);
-                Some(mt::Edge::new_unchecked(a, b, mt::Curve::Line(mt::Line(a.point(), b.point()))))
+                let (a, b, old) = (corners.get(i)?, corners.get((i + 1) % m)?, edges.get(i)?);
+                let e = mt::Edge::new_unchecked(a, b, mt::Curve::Line(mt::Line(a.point(), b.point())));
+                rec.piece(&e, old);
+                Some(e)
             })
             .collect::<Vec<_>>()
             .into();
@@ -559,7 +603,8 @@ pub fn extend(body: &Body, at: &[Vec3], distance: f64) -> Result<Body> {
         if f.oriented_surface().normal(0.0, 0.0).dot(crate::body::v3(n)) < 0.0 {
             f = f.inverse();
         }
-        Ok(surface_body(vec![f]))
+        rec.face(&f, face);
+        Ok(rebuilt_body(surface_body(vec![f]), &[&body.solid], &rec))
     })
 }
 

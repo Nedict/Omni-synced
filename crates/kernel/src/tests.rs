@@ -182,6 +182,70 @@ fn fillets_on_several_edges_and_angles() {
 }
 
 #[test]
+fn loop_fillet_as_tall_as_its_wall_consumes_it() {
+    // The removed cross-section (a square of side r less a quarter disc) and its centroid's
+    // distance from the wall: r(10 − 3π) / (3(4 − π)).
+    let spandrel = |r: f64| ((1.0 - PI / 4.0) * r * r, r * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI)));
+    // #190: a disc 13 in radius and 2 high, its top circle rounded by 2. Pappus for the ring.
+    let disc = cylinder(Vec3::ZERO, Vec3::Z, 13.0, 2.0).unwrap();
+    let f = fillet(&disc, &[Vec3::new(0.0, 13.0, 2.0), Vec3::new(0.0, -13.0, 2.0)], 2.0).unwrap();
+    let (a, c) = spandrel(2.0);
+    let want = PI * 169.0 * 2.0 - a * 2.0 * PI * (13.0 - c);
+    let m = measure(&f).unwrap();
+    assert!(rel(m.volume, want) < 2e-4, "{} vs {want}", m.volume);
+    // Top, round and bottom: the wall is gone.
+    assert_eq!(m.merged.faces, 3, "{:?}", m.merged);
+    assert!(f.validity().is_empty(), "{:?}", f.validity());
+    // A 40 x 30 x 5 plate, its whole top outline rounded by 5 (mitred at the corners).
+    let plate = box_solid(Vec3::ZERO, Vec3::new(40.0, 30.0, 5.0)).unwrap();
+    let top = [Vec3::new(20.0, 0.0, 5.0), Vec3::new(40.0, 15.0, 5.0), Vec3::new(20.0, 30.0, 5.0), Vec3::new(0.0, 15.0, 5.0)];
+    let f = fillet(&plate, &top, 5.0).unwrap();
+    let (a, c) = spandrel(5.0);
+    let want = 6000.0 - a * 2.0 * ((40.0 - 2.0 * c) + (30.0 - 2.0 * c));
+    let m = measure(&f).unwrap();
+    assert!(rel(m.volume, want) < 2e-4, "{} vs {want}", m.volume);
+    assert!(f.validity().is_empty(), "{:?}", f.validity());
+    // Taller than the wall: still refused, the body unchanged.
+    for r in [2.0 + 1e-3, 2.5] {
+        let e = fillet(&disc, &[Vec3::new(0.0, 13.0, 2.0), Vec3::new(0.0, -13.0, 2.0)], r).unwrap_err();
+        assert!(e.to_string().contains("taller than the walls"), "{r}: {e}");
+    }
+}
+
+#[test]
+fn fillet_consuming_a_side_face_makes_a_full_round() {
+    // 14 x 6 x 10: r = 3 on the four vertical edges uses up both 6 mm end faces (#199).
+    let b = box_solid(Vec3::new(14.0, 0.0, 0.0), Vec3::new(28.0, 6.0, 10.0)).unwrap();
+    let mids = [Vec3::new(14.0, 0.0, 5.0), Vec3::new(28.0, 0.0, 5.0), Vec3::new(14.0, 6.0, 5.0), Vec3::new(28.0, 6.0, 5.0)];
+    let full = 840.0 - (4.0 - PI) * 9.0 * 10.0;
+    for order in [mids.to_vec(), mids.iter().rev().copied().collect()] {
+        let f = fillet(&b, &order, 3.0).unwrap();
+        let m = measure(&f).unwrap();
+        assert!(rel(m.volume, full) < 2e-4, "{} vs {full}", m.volume);
+        // Top, bottom, the two long sides and four quarter rounds; the end faces are gone.
+        assert_eq!(m.faces, 8, "{m:?}");
+        assert_eq!(f.lumps().unwrap().len(), 1);
+        assert!(f.validity().is_empty(), "{:?}", f.validity());
+    }
+    // One end only: two rounds meeting on one end face.
+    let f = fillet(&b, &mids[1..4].iter().step_by(2).copied().collect::<Vec<_>>(), 3.0).unwrap();
+    assert!(rel(measure(&f).unwrap().volume, 840.0 - (4.0 - PI) * 9.0 * 5.0) < 2e-4);
+    assert!(f.validity().is_empty());
+    // A 6 x 6 post rounded on all four edges with r = 3 is a cylinder.
+    let post = box_solid(Vec3::ZERO, Vec3::new(6.0, 6.0, 10.0)).unwrap();
+    let corners = [Vec3::new(0.0, 0.0, 5.0), Vec3::new(6.0, 0.0, 5.0), Vec3::new(6.0, 6.0, 5.0), Vec3::new(0.0, 6.0, 5.0)];
+    let c = fillet(&post, &corners, 3.0).unwrap();
+    assert!(rel(measure(&c).unwrap().volume, PI * 9.0 * 10.0) < 2e-4, "{}", measure(&c).unwrap().volume);
+    assert!(c.validity().is_empty());
+    // Past the limit there is no face left to consume: still refused, the body unchanged.
+    for r in [3.0 + 1e-3, 3.5] {
+        let e = fillet(&b, &mids, r).unwrap_err();
+        assert!(e.to_string().contains("larger than the neighbouring faces"), "{r}: {e}");
+    }
+    assert_eq!(measure(&b).unwrap().volume, 840.0);
+}
+
+#[test]
 fn tapered_extrudes() {
     // 40 x 40 square, 30 up, 10° outward: a frustum.
     let sq = Region2 {
@@ -324,7 +388,10 @@ fn drain_pads_flush_under_a_floor_with_a_hole() {
     // The ring's part inside the floor adds nothing: 5 mm of ring below it either way.
     let v_ring = PI * (400.0 - 100.0) * 5.0;
     for (z0, z1) in [(-5.0, 0.0), (-5.0, 2.0)] {
-        let u = boolean(&floor, &ring(z0, z1), BoolOp::Union).unwrap().unwrap();
+        let (result, diagnostics) = capture_boolean_diagnostics(|| boolean(&floor, &ring(z0, z1), BoolOp::Union));
+        let u = result.unwrap().unwrap();
+        assert!(diagnostics.events.iter().any(|event| event.strategy == BooleanStrategy::CommonBore), "{diagnostics:?}");
+        assert!(diagnostics.events.iter().all(|event| event.translation_mm.is_finite() && event.face_shift_mm.is_finite()));
         let v = measure(&u).unwrap().volume;
         assert!(rel(v, v_floor + v_ring) < 2e-5, "ring {z0}..{z1}: {v} vs {}", v_floor + v_ring);
         assert!(u.validity().is_empty(), "{:?}", u.validity());
@@ -1926,4 +1993,21 @@ fn shell_of_a_pocket_whose_floor_falls_to_a_drain() {
     let want = 140.0 * 90.0 * top - pocket_vol - cavity;
     let m = measure(&s).unwrap();
     assert!(rel(m.volume, want) < 1e-4, "{} vs {want}", m.volume);
+}
+
+#[test]
+fn shell_open_beside_a_round_as_large_as_the_wall_is_refused() {
+    // Opening the bottom of a box whose bottom outline is rounded: the cavity's side walls stand
+    // the thickness in from the outside, where a round at least that large meets the bottom, so
+    // the rim would have no thickness. Smaller rounds leave a rim.
+    let b = box_solid(Vec3::ZERO, Vec3::new(40.0, 30.0, 10.0)).unwrap();
+    let loop_ = [Vec3::new(20.0, 0.0, 0.0), Vec3::new(40.0, 15.0, 0.0), Vec3::new(20.0, 30.0, 0.0), Vec3::new(0.0, 15.0, 0.0)];
+    let bottom = [Vec3::new(20.0, 15.0, 0.0)];
+    for r in [2.0, 2.4] {
+        let f = fillet(&b, &loop_, r).unwrap();
+        let e = shell(&f, &bottom, 2.0).unwrap_err();
+        assert!(e.to_string().starts_with("the operation failed: not supported yet: the rim"), "{r}: {e}");
+    }
+    let f = fillet(&b, &loop_, 1.5).unwrap();
+    assert!(shell(&f, &bottom, 2.0).unwrap().validity().is_empty());
 }

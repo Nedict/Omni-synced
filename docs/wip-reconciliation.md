@@ -1,7 +1,7 @@
 # WIP branch reconciliation (#6)
 
-The branches predate the dotted command IDs. Their remaining changes were ported through
-`crates/engine/src/legacy_ids.rs` and reconciled with the current implementation.
+The branches predate the dotted command IDs. Their remaining changes were ported to the
+dotted ids and reconciled with the current implementation.
 
 | Branches | Result |
 |---|---|

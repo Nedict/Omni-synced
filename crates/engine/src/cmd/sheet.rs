@@ -16,7 +16,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("sheet.flange", "Flange", flange).at("SHEET METAL", "CREATE").icon("flange").params(
         "base: sketch + profiles? (rule?, flip?) | contour: sketch + curves (open chain of lines) + distance (rule?, flip?, reverse?) | \
          edge: edges: [[x,y,z] on top/bottom edges] + height (to the outer face), angle? (default 90 deg), radius? (default: rule), \
-         position?: inside|outside|middle, flip?, body?; type?: base|edge|contour (default from the inputs)",
+         position?: inside|outside|middle, flip?, body?; type?: base|edge|contour (default from the inputs); name?, body_name? (the new body)",
     ),
     CommandSpec::new("sheet.hem", "Hem", hem)
         .at("SHEET METAL", "CREATE")

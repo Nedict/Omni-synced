@@ -46,7 +46,7 @@ pub(crate) fn evaluate(doc: &Document, st: &mut ModelState, bodies: &[String], f
         body.source_name = old.source_name.clone();
         body.source_transform = crate::mat_mul(&transform, &old.source_transform);
         body.imported = old.imported.clone();
-        body.names = crate::naming::NameCell::known(crate::naming::face_names(old));
+        body.names = crate::naming::NameCell::same(old);
         let slot = next.bodies.iter_mut().find(|b| b.name == *name).ok_or_else(|| DocError::Unknown(format!("transferred body `{name}`")))?;
         *slot = body;
     }

@@ -482,12 +482,32 @@ pub fn paint(p: &Painter, r: Rect, name: &str, ink: Color32, fill: Color32, acce
             pen.circle(4.0, 20.0, 2.0, ink, ink);
         }
         "settings" => {
-            pen.circle(12.0, 12.0, 6.5, pen.fill, ink);
-            pen.circle(12.0, 12.0, 2.5, Color32::WHITE, ink);
-            for i in 0..8 {
-                let t = i as f32 / 8.0 * std::f32::consts::TAU;
-                pen.line(&[(12.0 + 6.5 * t.cos(), 12.0 + 6.5 * t.sin()), (12.0 + 9.0 * t.cos(), 12.0 + 9.0 * t.sin())], ink);
+            // A gear: a solid ring with six chunky, square-ish teeth and a see-through centre
+            // hole (#290; thin rays read as a sun).
+            let (teeth, root, tip, hole) = (6usize, 7.0f32, 10.5f32, 3.2f32);
+            let pitch = std::f32::consts::TAU / teeth as f32;
+            // Half-widths (radians) of a tooth at its root and at its tip: nearly parallel sides.
+            let (half_root, half_tip) = (pitch * 0.3, pitch * 0.22);
+            let polar = |a: f32, r: f32| (12.0 + r * a.cos(), 12.0 + r * a.sin());
+            let start = -std::f32::consts::FRAC_PI_2;
+            let mut outline = Vec::new();
+            for i in 0..teeth {
+                let c = start + i as f32 * pitch;
+                // The tooth, filled; it reaches into the ring so no seam shows.
+                let quad = [polar(c - half_root, root - 1.0), polar(c - half_tip, tip), polar(c + half_tip, tip), polar(c + half_root, root - 1.0)];
+                let v: Vec<Pos2> = quad.iter().map(|(x, y)| pen.at(*x, *y)).collect();
+                p.add(Shape::convex_polygon(v, pen.fill, Stroke::NONE));
+                outline.extend([polar(c - half_root, root), polar(c - half_tip, tip), polar(c + half_tip, tip), polar(c + half_root, root)]);
+                // The root circle up to the next tooth.
+                for k in 1..4 {
+                    let a = c + half_root + (pitch - 2.0 * half_root) * k as f32 / 4.0;
+                    outline.push(polar(a, root));
+                }
             }
+            // The ring: a thick stroke, so the hole stays transparent on any background.
+            p.circle_stroke(pen.at(12.0, 12.0), (root + hole) * 0.5 * pen.s(), Stroke::new((root - hole) * pen.s(), pen.fill));
+            pen.closed(&outline, ink);
+            pen.circle(12.0, 12.0, hole, Color32::TRANSPARENT, ink);
         }
         // Sketch tools (sketch-style: thin outlines, accent for what the tool makes).
         "canvas" | "decal" => {

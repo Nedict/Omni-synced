@@ -21,12 +21,12 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.sweep", "Sweep", sweep)
         .at("SOLID", "CREATE")
         .icon("sweep")
-        .params("sketch: profile sketch; profiles?; path_sketch: sketch; path: [curve ids in order]; operation?"),
-    CommandSpec::new("solid.loft", "Loft", loft).at("SOLID", "CREATE").icon("loft").params("sections: [{sketch, profiles?} | {sketch, point: id} (an apex)] (2 or more, in order); operation?"),
-    CommandSpec::new("solid.box", "Box", prim_box).at("SOLID", "CREATE").icon("box").params("length, width, height: expr; corner?: [x,y,z] | center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?; targets?: [body]"),
-    CommandSpec::new("solid.cylinder", "Cylinder", prim_cylinder).at("SOLID", "CREATE").icon("cylinder").params("radius | diameter, height: expr; base?: [x,y,z] (centre of the bottom: numbers in mm or length expressions; default: the origin); axis?: X|Y|Z|[x,y,z] (default Z); operation?; targets?: [body]"),
-    CommandSpec::new("solid.sphere", "Sphere", prim_sphere).at("SOLID", "CREATE").icon("sphere").params("radius | diameter: expr; center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?; targets?: [body]"),
-    CommandSpec::new("solid.torus", "Torus", prim_torus).at("SOLID", "CREATE").icon("torus").params("major, minor: expr (radii); center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?; targets?: [body]"),
+        .params("sketch: profile sketch; profiles?; path_sketch: sketch; path: [curve ids in order]; operation?, targets?, name?, body_name?"),
+    CommandSpec::new("solid.loft", "Loft", loft).at("SOLID", "CREATE").icon("loft").params("sections: [{sketch, profiles?} | {sketch, point: id} (an apex)] (2 or more, in order); operation?, targets?, name?, body_name?"),
+    CommandSpec::new("solid.box", "Box", prim_box).at("SOLID", "CREATE").icon("box").params("length, width, height: expr; corner?: [x,y,z] | center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
+    CommandSpec::new("solid.cylinder", "Cylinder", prim_cylinder).at("SOLID", "CREATE").icon("cylinder").params("radius | diameter, height: expr; base?: [x,y,z] (centre of the bottom: numbers in mm or length expressions; default: the origin); axis?: X|Y|Z|[x,y,z] (default Z); operation?, targets?: [body], name?, body_name?"),
+    CommandSpec::new("solid.sphere", "Sphere", prim_sphere).at("SOLID", "CREATE").icon("sphere").params("radius | diameter: expr; center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
+    CommandSpec::new("solid.torus", "Torus", prim_torus).at("SOLID", "CREATE").icon("torus").params("major, minor: expr (radii); center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
     CommandSpec::new("solid.fillet", "Fillet", fillet)
         .at("SOLID", "MODIFY")
         .icon("fillet")
@@ -87,7 +87,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("construct.plane.offset", "Offset Plane", plane_offset)
         .at("SOLID", "CONSTRUCT")
         .icon("plane")
-        .params("base: XY|XZ|YZ|plane name; offset: expr; name?"),
+        .params("base: XY|XZ|YZ|plane name, or a planar face {face: [x,y,z], body?, index?, path?}; offset: expr; name?"),
     CommandSpec::new("construct.plane.at_angle", "Plane at Angle", plane_angle)
         .at("SOLID", "CONSTRUCT")
         .icon("plane")
@@ -359,10 +359,17 @@ pub(super) fn check_expr(s: &Session, e: &str, kind: Kind, cmd: &str, what: &str
 
 /// Add a feature, evaluate, and report its result (an evaluation error fails the command).
 pub(super) fn add_feature(s: &mut Session, p: &Value, kind: FeatureKind) -> Result<Value> {
+    add_feature_in(s, p, kind, true)
+}
+
+/// `add_feature`; `world` is false when `kind` is already in the active component's frame.
+fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) -> Result<Value> {
     let name = str_(p, "name");
     // Commands speak world coordinates; the feature is authored in the active component.
     let mut kind = kind;
-    super::component::to_active_frame(s, &mut kind);
+    if world {
+        super::component::to_active_frame(s, &mut kind);
+    }
     // Bare lengths typed in an inch (or cm…) design mean that unit.
     if s.doc.units.trim() != "mm" {
         let doc = s.doc.clone();
@@ -415,6 +422,11 @@ pub(super) fn add_feature(s: &mut Session, p: &Value, kind: FeatureKind) -> Resu
     if participants.len() > 10_000 || participants.iter().any(|b| b != "*" && s.model.state().body(b).is_none()) {
         return Err(EngineError::Other(format!("`{key}` must list existing bodies")));
     }
+    if matches!(kind, FeatureKind::ConstructionPlane { .. })
+        && let Some(n) = name
+    {
+        check_plane_name(n, "construct.plane")?;
+    }
     let id = s.doc_mut().add_feature(kind, name)?;
     if let Some(f) = s.doc_mut().feature_mut(id) {
         f.participants = participants;
@@ -436,10 +448,33 @@ pub(super) fn add_feature(s: &mut Session, p: &Value, kind: FeatureKind) -> Resu
     if !names.is_empty()
         && let Some(f) = s.doc_mut().feature_mut(id)
     {
-        f.body_names = names;
+        f.body_names = names.clone();
     }
     s.active_sketch = None;
     s.refresh();
+    // A feature that makes more bodies than it was given names (a multi-profile extrude with one
+    // `body_name`) names the rest after the first: `Ribs`, `Ribs (2)`, `Ribs (3)`… (#266). The
+    // names are stored on the feature, so recomputes and saved designs keep them.
+    if let Some(base) = names.first().map(|n| n.trim().to_string()).filter(|n| !n.is_empty()) {
+        let st = s.model.state();
+        let made = st.bodies.iter().filter(|b| b.feature == id).count();
+        if made > names.len() {
+            let mut taken: std::collections::BTreeSet<String> = st.bodies.iter().map(|b| b.name.clone()).collect();
+            taken.extend(names.iter().cloned());
+            let mut i = 1usize;
+            while names.len() < made {
+                i += 1;
+                let n = format!("{base} ({i})");
+                if taken.insert(n.clone()) {
+                    names.push(n);
+                }
+            }
+            if let Some(f) = s.doc_mut().feature_mut(id) {
+                f.body_names = names;
+            }
+            s.refresh();
+        }
+    }
     let r = s.model.result(id).cloned();
     if let Some(e) = r.as_ref().and_then(|r| r.error.clone()) {
         return Err(EngineError::Other(e));
@@ -859,7 +894,12 @@ fn axis_line(p: &Value, cmd: &str) -> Result<(Vec3, Vec3)> {
             _ => Err(bad(cmd, "axis must be X, Y, Z or {origin, dir}")),
         },
         Some(o @ Value::Object(_)) => {
-            let origin = o.get("origin").and_then(vec3).unwrap_or(Vec3::ZERO);
+            let origin = match o.get("origin") {
+                None => Vec3::ZERO,
+                Some(v) => vec3(v).ok_or_else(|| {
+                    bad(cmd, "axis.origin must contain three finite numeric coordinates in millimetres; expressions are not supported")
+                })?,
+            };
             let dir = o.get("dir").and_then(vec3).and_then(|d| d.normalized()).ok_or_else(|| bad(cmd, "axis needs a non-zero `dir`"))?;
             Ok((origin, dir))
         }
@@ -970,6 +1010,31 @@ fn mirror(s: &mut Session, p: &Value) -> Result<Value> {
     add_feature(s, p, FeatureKind::Mirror { features, plane, bodies, combine })
 }
 
+/// The other name of an origin plane (`Top` for `XY`, `XY` for `Top`...), if `name` is one.
+pub(super) fn origin_plane_alias(name: &str) -> Option<&'static str> {
+    match name.trim().to_ascii_uppercase().as_str() {
+        "XY" => Some("Top"),
+        "TOP" => Some("XY"),
+        "XZ" => Some("Front"),
+        "FRONT" => Some("XZ"),
+        "YZ" => Some("Right"),
+        "RIGHT" => Some("YZ"),
+        _ => None,
+    }
+}
+
+/// A construction plane may not take an origin plane's name (`XY`, `Top`...): a plane
+/// parameter could then mean either.
+pub(super) fn check_plane_name(name: &str, cmd: &str) -> Result<()> {
+    if solvecraft_geom::Plane::named(name.trim()).is_some() {
+        return Err(bad(
+            cmd,
+            format!("`{}` is reserved for an origin plane (XY, XZ, YZ, Top, Front, Right); give the construction plane another name", name.trim()),
+        ));
+    }
+    Ok(())
+}
+
 /// A plane reference from a parameter: an origin plane, a construction plane (by name or
 /// feature id; kept by name, so the feature follows the plane when it changes), or an
 /// explicit plane `{origin, x_dir, y_dir}` / `{origin, normal}`. Every command that takes a
@@ -983,7 +1048,22 @@ pub(super) fn plane_param(s: &Session, v: Option<&Value>, cmd: &str) -> Result<s
         None => Err(bad(cmd, format!("no plane `{r}` (a plane is {WANT})"))),
     };
     match v {
-        Some(Value::String(n)) if solvecraft_geom::Plane::named(n.trim()).is_some() => Ok(PlaneRef::Origin { name: n.trim().to_ascii_uppercase() }),
+        Some(Value::String(n)) if solvecraft_geom::Plane::named(n.trim()).is_some() => {
+            if let Some(f) = s.doc.find_feature(n.trim())
+                && matches!(f.kind, FeatureKind::ConstructionPlane { .. })
+            {
+                return Err(bad(
+                    cmd,
+                    format!(
+                        "plane `{}` is ambiguous: an origin-plane alias and a construction plane; use `{}` for the origin plane, construction plane feature id {}, or an explicit {{origin, normal}} plane",
+                        n.trim(),
+                        origin_plane_alias(n).unwrap_or("XY"),
+                        f.id
+                    ),
+                ));
+            }
+            Ok(PlaneRef::Origin { name: n.trim().to_ascii_uppercase() })
+        }
         Some(Value::String(n)) => construction(n.trim()),
         Some(Value::Number(id)) => match id.as_u64() {
             Some(id) => construction(&id.to_string()),
@@ -1007,9 +1087,17 @@ pub(super) fn plane_param(s: &Session, v: Option<&Value>, cmd: &str) -> Result<s
 
 fn plane_offset(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "construct.plane.offset";
-    let base = plane_param(s, p.get("base"), cmd)?;
     let d = req_expr(cmd, p, "offset")?;
     check_expr(s, &d, Kind::Length, cmd, "offset")?;
+    // A planar body face: attached exactly, as a sketch on that face is, so the plane follows it.
+    if let Some(face) = p.get("base").filter(|b| b.get("face").is_some()) {
+        let base = super::sketch::face::capture(s, face, cmd)?;
+        super::sketch::face::capture_positions(s, &base)?;
+        let kind = FeatureKind::ConstructionPlane { plane: solvecraft_doc::PlaneRef::Offset { base: Box::new(base), distance: d } };
+        // The capture is already in the authoring frame.
+        return add_feature_in(s, p, kind, false);
+    }
+    let base = plane_param(s, p.get("base"), cmd)?;
     add_feature(s, p, FeatureKind::ConstructionPlane { plane: solvecraft_doc::PlaneRef::Offset { base: Box::new(base), distance: d } })
 }
 
@@ -1434,3 +1522,7 @@ mod offset_identity_tests;
 #[cfg(test)]
 #[path = "offset_edit_guard_tests.rs"]
 mod offset_edit_guard_tests;
+
+#[cfg(test)]
+#[path = "offset_plane_face_tests.rs"]
+mod offset_plane_face_tests;

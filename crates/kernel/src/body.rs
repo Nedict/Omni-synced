@@ -35,6 +35,9 @@ pub struct Body {
     pub(crate) face_sources: Option<std::sync::Arc<Vec<Option<FaceSource>>>>,
     /// Sticky transient veto: authored face boundaries must survive later rebuilds.
     pub(crate) regularization_protected: bool,
+    /// Exact history of the operation that made this body, relative to that operation's
+    /// operands; `None` when the operation does not report one.
+    pub(crate) history: Option<std::sync::Arc<crate::history::History>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -334,6 +337,31 @@ pub(crate) fn from_p3(p: mt::Point3) -> Vec3 {
     Vec3::new(p.x, p.y, p.z)
 }
 
+/// The distinct edges of `faces` in order of first use, and the faces (by position) each one
+/// bounds: the one edge order of a body, used by [`Body::edges`], tessellations and
+/// [`crate::history`].
+pub(crate) fn edge_order<'a, P: 'a, C: 'a, S: 'a>(
+    faces: impl IntoIterator<Item = &'a truck_topology::Face<P, C, S>>,
+) -> (Vec<truck_topology::Edge<P, C>>, Vec<Vec<usize>>) {
+    let mut index = std::collections::HashMap::new();
+    let (mut edges, mut bounds): (Vec<truck_topology::Edge<P, C>>, Vec<Vec<usize>>) = (Vec::new(), Vec::new());
+    for (fi, f) in faces.into_iter().enumerate() {
+        for e in f.edge_iter() {
+            let i = *index.entry(e.id()).or_insert_with(|| {
+                edges.push(e.clone());
+                bounds.push(Vec::new());
+                edges.len() - 1
+            });
+            if let Some(slot) = bounds.get_mut(i)
+                && !slot.contains(&fi)
+            {
+                slot.push(fi);
+            }
+        }
+    }
+    (edges, bounds)
+}
+
 fn polyline_mid(pts: &[Vec3]) -> (Vec3, f64) {
     let len: f64 = pts.windows(2).map(|w| w.first().zip(w.get(1)).map(|(a, b)| a.dist(*b)).unwrap_or(0.0)).sum();
     let mut acc = 0.0;
@@ -350,7 +378,9 @@ fn polyline_mid(pts: &[Vec3]) -> (Vec3, f64) {
 }
 
 impl Body {
-    /// The very same body (shared data), not just an equal-looking one.
+    /// The very same body (shared data), not just an equal-looking one. Its history (how an
+    /// operation made it) is not part of it: an operation that leaves a body as it is (a cut by
+    /// a tool clear of it) gives the same body, with that operation's history.
     pub fn same(&self, other: &Body) -> bool {
         std::sync::Arc::ptr_eq(&self.solid, &other.solid)
             && match (&self.mesh, &other.mesh) {
@@ -402,11 +432,54 @@ impl Body {
             splits: None,
             face_sources: None,
             regularization_protected: false,
+            history: None,
         })
     }
 
     pub(crate) fn inherit_regularization_protection(mut self, input: &Body) -> Self {
         self.regularization_protected |= input.regularization_protected;
+        self
+    }
+
+    /// Exact history of the operation that made this body, relative to that operation's
+    /// operands (see [`crate::history`]); `None` when the operation does not report one.
+    pub fn history(&self) -> Option<&crate::history::History> {
+        self.history.as_deref()
+    }
+
+    /// Attach the history of the operation that made this body from `operands`, after checking
+    /// it describes this body.
+    pub(crate) fn with_history(mut self, history: crate::history::History, operands: &[&Body]) -> Result<Self> {
+        history.check(&self, operands)?;
+        self.history = Some(std::sync::Arc::new(history));
+        Ok(self)
+    }
+
+    /// [`Body::with_history`], given the operands' face and edge counts.
+    pub(crate) fn with_history_counts(mut self, history: crate::history::History, operands: &[(usize, usize)]) -> Result<Self> {
+        history.check_counts((self.face_count(), self.edge_count()), operands)?;
+        self.history = Some(std::sync::Arc::new(history));
+        Ok(self)
+    }
+
+    /// This body with `history` if it describes the body made from operands with these face
+    /// and edge counts, else with none: an operation whose history could not be recorded still
+    /// gives its result.
+    pub(crate) fn with_checked_history(mut self, history: Option<crate::history::History>, operands: &[(usize, usize)]) -> Self {
+        let counts = (self.face_count(), self.edge_count());
+        self.history = history.and_then(|h| match h.check_counts(counts, operands) {
+            Ok(()) => Some(std::sync::Arc::new(h)),
+            Err(e) => {
+                log::debug!("no history: {e}");
+                None
+            }
+        });
+        self
+    }
+
+    /// This body with no history: an operation whose history is not known.
+    pub(crate) fn without_history(mut self) -> Self {
+        self.history = None;
         self
     }
 
@@ -768,27 +841,9 @@ impl Body {
                     }
                 }
             }
-            let mut seen = std::collections::HashMap::new();
-            for e in meshed.iter().flat_map(|s| s.edge_iter()) {
-                if seen.contains_key(&e.id()) {
-                    continue;
-                }
-                seen.insert(e.id(), out.edges.len());
-                let c = e.oriented_curve();
-                out.edges.push(c.0.iter().map(|p| Vec3::new(p.x, p.y, p.z)).collect());
-            }
-            // Which faces each edge bounds.
-            out.edge_faces = vec![Vec::new(); out.edges.len()];
-            for (fi, face) in meshed.iter().flat_map(|s| s.face_iter()).enumerate() {
-                for e in face.edge_iter() {
-                    if let Some(slot) = seen.get(&e.id()).and_then(|i| out.edge_faces.get_mut(*i)) {
-                        let f = u32::try_from(fi).unwrap_or(u32::MAX);
-                        if !slot.contains(&f) {
-                            slot.push(f);
-                        }
-                    }
-                }
-            }
+            let (edges, faces) = edge_order(meshed.iter().flat_map(|s| s.face_iter()));
+            out.edges = edges.iter().map(|e| e.oriented_curve().0.iter().map(|p| Vec3::new(p.x, p.y, p.z)).collect()).collect();
+            out.edge_faces = faces.into_iter().map(|fs| fs.into_iter().map(|f| u32::try_from(f).unwrap_or(u32::MAX)).collect()).collect();
             Ok(out)
         })
     }
@@ -950,9 +1005,16 @@ impl Body {
 
 impl Body {
     /// The separate pieces of a body: each outer shell with the voids inside it. A body in one
-    /// piece comes back as itself.
+    /// piece comes back as itself. Pieces of a body in several carry their history over
+    /// `[self]` (their faces and edges are its own), so whoever names them can follow it.
     pub fn lumps(&self) -> Result<Vec<Body>> {
-        self.lumps_with_clearance(0.0)
+        let pieces = self.lumps_with_clearance(0.0)?;
+        if pieces.len() < 2 {
+            return Ok(pieces);
+        }
+        let counts = [(self.face_count(), self.edge_count())];
+        let histories = crate::boolean_record::parts_of(&pieces, self);
+        Ok(pieces.into_iter().zip(histories).map(|(piece, history)| piece.with_checked_history(history, &counts)).collect())
     }
 
     /// Whether this body and `other` share material or touch (within a fine mesh tolerance).

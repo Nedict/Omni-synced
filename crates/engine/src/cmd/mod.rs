@@ -1,6 +1,6 @@
 //! The command registry. Ids are SolveCraft's own dotted ids (`solid.extrude`,
 //! `sketch.rectangle.two_point`); the toolbar placement (`tab`, `panel`) follows the familiar
-//! Design workspace layout. Ids used before the rename still resolve (`legacy_ids`).
+//! Design workspace layout.
 
 /// The params-doc note of every command that adds sketch geometry (see `sketch::created`).
 macro_rules! created_doc {
@@ -26,6 +26,7 @@ mod file;
 mod inspect;
 pub(crate) mod joints;
 mod measure_sel;
+mod mesh;
 pub(crate) mod motion;
 mod parts;
 mod section;
@@ -157,6 +158,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(sketch_project::COMMANDS.iter());
     v.extend(features::COMMANDS.iter());
     v.extend(features_more::COMMANDS.iter());
+    v.extend(mesh::COMMANDS.iter());
     v.extend(construct::COMMANDS.iter());
     v.extend(sheet::COMMANDS.iter());
     v.extend(plastic::COMMANDS.iter());
@@ -178,7 +180,5 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
 
 pub fn find_command(id: &str) -> Option<&'static CommandSpec> {
     let all = command_specs();
-    // Ids from before the rename still find their command.
-    let id = crate::legacy_ids::current_id(id);
     all.iter().find(|c| c.id == id).or_else(|| all.iter().find(|c| c.id.eq_ignore_ascii_case(id))).copied()
 }
