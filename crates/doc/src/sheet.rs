@@ -1355,7 +1355,29 @@ impl SheetBody {
             }
             (None, Some(p)) => {
                 let q = apply_point(&inv, p);
-                Vec2::new(q.x, q.y).dot(n) < l0
+                let q2 = Vec2::new(q.x, q.y);
+                // A point in the panel's slab must be on material: inside the outline and
+                // outside every cut-out (a side face of either counts as material).
+                let near = |poly: &[Vec2]| {
+                    let m = poly.len();
+                    (0..m).any(|i| match (poly.get(i), poly.get((i + 1) % m)) {
+                        (Some(&a), Some(&b)) => {
+                            let d = b - a;
+                            let t = if d.len2() > 1e-18 { ((q2 - a).dot(d) / d.len2()).clamp(0.0, 1.0) } else { 0.0 };
+                            (a + d * t).dist(q2) < 1e-3
+                        }
+                        _ => false,
+                    })
+                };
+                let in_slab = q.z > -1e-4 && q.z < self.t + 1e-4;
+                let in_hole = self.holes.iter().any(|h| h.contains(q2) && !near(&h.outer.ccw().polyline(1e-3)));
+                if in_slab && ((!point_in(&pts, q2) && !near(&pts)) || in_hole) {
+                    return Err(DocError::Invalid(format!(
+                        "the fixed point ({:.3}, {:.3}, {:.3}) is not on the sheet: pick a point on the face of the side that stays",
+                        p.x, p.y, p.z
+                    )));
+                }
+                q2.dot(n) < l0
             }
             (None, None) => side_area(n) <= side_area(n * -1.0),
         };
