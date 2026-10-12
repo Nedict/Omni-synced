@@ -227,7 +227,7 @@ pub enum Kind {
     },
     /// Delete a feature that others depend on.
     ConfirmDelete {
-        feature: u64,
+        features: Vec<u64>,
         with: Vec<String>,
         fail: Vec<String>,
     },
@@ -617,7 +617,11 @@ impl Dialog {
     }
 
     pub fn confirm_delete(feature: u64, with: Vec<String>, fail: Vec<String>) -> Dialog {
-        Dialog::new(Kind::ConfirmDelete { feature, with, fail }, vec![])
+        Dialog::confirm_delete_many(vec![feature], with, fail)
+    }
+
+    pub fn confirm_delete_many(features: Vec<u64>, with: Vec<String>, fail: Vec<String>) -> Dialog {
+        Dialog::new(Kind::ConfirmDelete { features, with, fail }, vec![])
     }
 
     pub fn edit_param(s: &Session, name: &str) -> Dialog {
@@ -3166,7 +3170,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         }
         Kind::EditParam { name, expr } => ("parameters.change", json!({"name": name, "expression": expr})),
         Kind::Rename { feature, name } => ("timeline.rename", json!({"feature": feature, "name": name})),
-        Kind::ConfirmDelete { feature, .. } => ("timeline.delete", json!({ "features": [feature.to_string()] })),
+        Kind::ConfirmDelete { features, .. } => ("timeline.delete", json!({ "features": features })),
         Kind::Sketch | Kind::Params { .. } | Kind::Measure { .. } => return Ok(Vec::new()),
         Kind::Assembly(k) => return crate::dialogs_assembly::commands(app, k, &d.inputs),
         Kind::Sheet(k) => return crate::dialogs_sheet::commands(app, k, &d.inputs, &d.extra),

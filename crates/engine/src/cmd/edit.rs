@@ -29,9 +29,9 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("folder")
         .doc_only()
         .params("name?; features?: [id|name] (features leave any other timeline folder)"),
-    CommandSpec::new("timeline.ungroup", "Remove Feature Folder", ungroup)
+    CommandSpec::new("timeline.ungroup", "Remove Feature Folders", ungroup)
         .doc_only()
-        .params("group: id (features remain in the timeline)"),
+        .params("group: id | groups: [ids] (features remain in the timeline)"),
     CommandSpec::new("timeline.rename_group", "Rename Feature Folder", rename_group).doc_only().params("group: id, name"),
     CommandSpec::new("timeline.move_to_group", "Move Features to Folder", move_to_group)
         .doc_only()
@@ -41,6 +41,9 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("position: number of features to keep active (omit = end) | feature: id|name (the marker goes right after it)"),
     CommandSpec::new("timeline.reorder", "Reorder Feature", reorder)
         .params("feature: id|name, position: its new index; refused when a feature that worked would fail"),
+    CommandSpec::new("timeline.reorder_many", "Reorder Features", reorder_many).params(
+        "features: [id|name], position: insertion slot in the current history; selected features keep their relative order; refused when a feature that worked would fail",
+    ),
     CommandSpec::new("timeline.redefine", "Edit Feature", redefine)
         .params("feature: id|name, command: the feature's command id, params: its parameters (the feature is rebuilt in place)"),
     CommandSpec::new("timeline.dependents", "Feature Dependents", dependents)
@@ -252,9 +255,26 @@ fn group(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn ungroup(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "timeline.ungroup";
-    let id = timeline_group_id(s, p, cmd)?;
-    s.doc_mut().timeline_groups.retain(|group| group.id != id);
-    Ok(json!({"group": id}))
+    let ids = match p.get("groups") {
+        Some(Value::Array(values)) if !values.is_empty() && values.len() <= 10_000 => {
+            let mut ids = Vec::new();
+            for value in values {
+                let id = value.as_u64().ok_or_else(|| bad(cmd, "`groups` must contain timeline folder ids"))?;
+                if !s.doc.timeline_groups.iter().any(|group| group.id == id) {
+                    return Err(bad(cmd, format!("no timeline folder {id}")));
+                }
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+            ids
+        }
+        Some(Value::Array(_)) => return Err(bad(cmd, "`groups` must list 1…10000 timeline folder ids")),
+        Some(_) => return Err(bad(cmd, "`groups` must be a list of timeline folder ids")),
+        None => vec![timeline_group_id(s, p, cmd)?],
+    };
+    s.doc_mut().timeline_groups.retain(|group| !ids.contains(&group.id));
+    Ok(json!({"groups": ids}))
 }
 
 fn rename_group(s: &mut Session, p: &Value) -> Result<Value> {
@@ -533,6 +553,46 @@ fn reorder(s: &mut Session, p: &Value) -> Result<Value> {
     }
     *s.doc_mut() = next;
     Ok(json!({"feature": id, "position": to}))
+}
+
+fn reorder_many(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "timeline.reorder_many";
+    let ids = group_features(s, p, true, cmd)?;
+    let n = s.doc.features.len();
+    let slot = num(p, "position").map(|x| x.max(0.0) as usize).ok_or_else(|| bad(cmd, "`position` must be a number"))?.min(n);
+    let selected: std::collections::BTreeSet<u64> = ids.iter().copied().collect();
+    let ordered: Vec<u64> = s.doc.features.iter().filter(|feature| selected.contains(&feature.id)).map(|feature| feature.id).collect();
+    let before_slot = s.doc.features.iter().take(slot).filter(|feature| selected.contains(&feature.id)).count();
+    let insert_at = slot.saturating_sub(before_slot).min(n.saturating_sub(ordered.len()));
+
+    let mut next = (*s.doc).clone();
+    let mut moving = Vec::new();
+    next.features.retain(|feature| {
+        if selected.contains(&feature.id) {
+            moving.push(feature.clone());
+            false
+        } else {
+            true
+        }
+    });
+    let unchanged = s.doc.features.iter().map(|feature| feature.id).eq(next.features[..insert_at]
+        .iter()
+        .chain(moving.iter())
+        .chain(next.features[insert_at..].iter())
+        .map(|feature| feature.id));
+    if unchanged {
+        return Ok(json!({"features": ordered, "position": slot}));
+    }
+    next.features.splice(insert_at..insert_at, moving);
+    let mut after = solidcraft_doc::Model::new();
+    after.evaluate(&next);
+    let broken = newly_broken(&s.model, &after);
+    if !broken.is_empty() {
+        let list: Vec<String> = broken.iter().map(|(name, error)| format!("{name} ({error})")).collect();
+        return Err(bad(cmd, format!("moving the selected features there breaks {}", list.join("; "))));
+    }
+    *s.doc_mut() = next;
+    Ok(json!({"features": ordered, "position": slot}))
 }
 
 fn input_keys(kind: &FeatureKind) -> Vec<(String, solidcraft_doc::expr::Kind)> {

@@ -337,3 +337,29 @@ fn timeline_folders_are_command_backed_saved_undoable_and_follow_feature_ids() {
     run(&mut s, "timeline.ungroup", json!({"group": group}));
     assert!(s.doc.timeline_groups.is_empty());
 }
+
+#[test]
+fn timeline_reorders_selected_features_as_one_block_and_removes_folders_in_one_step() {
+    let mut s = Session::default();
+    for (name, body, x) in [("First", "FirstBody", 0), ("Second", "SecondBody", 20), ("Third", "ThirdBody", 40)] {
+        run(
+            &mut s,
+            "solid.box",
+            json!({"length": 10, "width": 10, "height": 10, "corner": [x, 0, 0], "operation": "new_body", "name": name, "body_name": body}),
+        );
+    }
+    let names = |session: &Session| session.doc.features.iter().map(|feature| feature.name.clone()).collect::<Vec<_>>();
+    assert_eq!(names(&s), vec!["First", "Second", "Third"]);
+
+    run(&mut s, "timeline.reorder_many", json!({"features": ["First", "Third"], "position": 3}));
+    assert_eq!(names(&s), vec!["Second", "First", "Third"], "selected features keep their relative order");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(names(&s), vec!["First", "Second", "Third"]);
+
+    let first = run(&mut s, "timeline.group", json!({"name": "One", "features": ["First"]}))["group"].as_u64().unwrap();
+    let second = run(&mut s, "timeline.group", json!({"name": "Two", "features": ["Second"]}))["group"].as_u64().unwrap();
+    run(&mut s, "timeline.ungroup", json!({"groups": [first, second]}));
+    assert!(s.doc.timeline_groups.is_empty());
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.doc.timeline_groups.len(), 2, "removing several folders is one undoable command");
+}

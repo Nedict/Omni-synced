@@ -55,6 +55,10 @@ pub struct TreeState {
     pub picked_components: Vec<u64>,
     /// Canvases picked in the tree.
     pub picked_canvases: Vec<u64>,
+    /// Folders picked in the feature history (features use the engine selection).
+    pub picked_timeline_groups: Vec<u64>,
+    /// Last feature-history item clicked, for Shift ranges (`f:<id>` or `g:<id>`).
+    pub timeline_anchor: Option<String>,
     /// The Edit Canvas / Calibrate panel.
     pub canvas_panel: Option<CanvasPanel>,
     /// What waits for the Capture Position question: a command id, or [`SAVE`].
