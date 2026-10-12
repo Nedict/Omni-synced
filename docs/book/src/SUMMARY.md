@@ -26,6 +26,7 @@
 - [Test harnesses](dev/testing.md)
 - [Control protocol](dev/control-protocol.md)
 - [Fusion oracle](dev/oracle.md)
+- [Solver oracle](dev/solver-oracle.md)
 - [Command parity](dev/parity.md)
 - [STEP import](dev/step-import.md)
 

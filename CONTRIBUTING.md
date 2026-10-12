@@ -120,6 +120,7 @@ the most complete description of the house style.
 | Unit and engine tests | next to the code, or `*_tests.rs` files | `cargo xtask test` (or `cargo test --workspace --profile ci`) |
 | UI scenarios | `crates/ui-egui/tests/scenarios/*.json` | part of `cargo test` |
 | Fusion oracle | `cargo xtask oracle` | needs the local oracle data (see below) |
+| Solver oracle | `cargo xtask solver-oracle` | dimension-edit behaviour vs Fusion; needs local measurements (`plan/fusion/solver-oracle/`) |
 
 **UI scenarios** drive the real app headless: start a tool, click a plane or a sketch point,
 press keys, then assert on the result.

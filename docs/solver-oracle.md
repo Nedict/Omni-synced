@@ -17,6 +17,6 @@ Mirrored, different and we-refused edits need a reason in `xtask/data/solver-ora
 | 02-two-link-arm | 24 | – | – | – | – | – | – | not measured in Fusion yet; SolveCraft took 24 |
 | 03-fan-octagon | 24 | – | – | – | – | – | – | not measured in Fusion yet; SolveCraft took 24 |
 | 04-bracket | 24 | – | – | – | – | – | – | not measured in Fusion yet; SolveCraft took 13 |
-| 05-linkage-triconnected | 30 | – | – | – | – | – | – | not measured in Fusion yet; SolveCraft took 24 |
+| 05-linkage-triconnected | 30 | – | – | – | – | – | – | not measured in Fusion yet; SolveCraft took 27 |
 | 06-filleted-rectangle | 24 | – | – | – | – | – | – | not measured in Fusion yet; SolveCraft took 24 |
 | 07-small-offset | 16 | – | – | – | – | – | – | not measured in Fusion yet; SolveCraft took 16 |
