@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use solvecraft_geom::{Plane, Vec2, Vec3};
-use solvecraft_sketch::Sketch;
+use solidcraft_geom::{Plane, Vec2, Vec3};
+use solidcraft_sketch::Sketch;
 
 use crate::construct::{AxisDef, GeoRef, PointDef};
 use crate::expr::{self, Kind};
@@ -884,7 +884,7 @@ pub enum FeatureKind {
         step: String,
         /// The file's product/assembly tree, kept for components.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        components: Vec<solvecraft_kernel::StepNode>,
+        components: Vec<solidcraft_kernel::StepNode>,
     },
     /// Rebuild an upstream constant-section mesh with analytic planar/cylindrical faces.
     MeshConvert {
@@ -1697,7 +1697,7 @@ pub struct Document {
 pub struct NamedView {
     #[serde(default)]
     pub name: String,
-    pub target: solvecraft_geom::Vec3,
+    pub target: solidcraft_geom::Vec3,
     pub yaw: f64,
     pub pitch: f64,
     pub distance: f64,
@@ -1774,13 +1774,13 @@ impl Document {
         let mut st = state.clone();
         for b in &mut st.bodies {
             let c = self.body_color(b);
-            let faces: Vec<solvecraft_kernel::FacePaint> = self
+            let faces: Vec<solidcraft_kernel::FacePaint> = self
                 .face_colors(b)
                 .into_iter()
-                .map(|(face, l)| solvecraft_kernel::FacePaint { face, color: l.rgb(), opacity: l.opacity as f32 })
+                .map(|(face, l)| solidcraft_kernel::FacePaint { face, color: l.rgb(), opacity: l.opacity as f32 })
                 .collect();
             let opacity = self.model_body_opacity(b) as f32;
-            let paint = solvecraft_kernel::Paint { opacity, faces };
+            let paint = solidcraft_kernel::Paint { opacity, faces };
             if c != b.body.color() || b.body.paint() != Some(&paint) {
                 b.body = b.body.clone().with_color(c).with_paint(Some(paint));
             }
@@ -2214,14 +2214,14 @@ impl Document {
         &self,
         vals: &std::collections::BTreeMap<String, expr::Value>,
         sk: &mut Sketch,
-        stored: &solvecraft_sketch::DrivingValues,
-    ) -> Result<solvecraft_sketch::SolveReport> {
+        stored: &solidcraft_sketch::DrivingValues,
+    ) -> Result<solidcraft_sketch::SolveReport> {
         self.apply_dimension_values(vals, sk)?;
-        let mut report = solvecraft_sketch::solve_after_value_edit(sk, stored);
+        let mut report = solidcraft_sketch::solve_after_value_edit(sk, stored);
         if !sk.offsets.is_empty() || !sk.freeform_offsets.is_empty() {
             // Source dimensions may have moved curves during the solve.
             sk.refresh_offsets()?;
-            report = if report.ok() { solvecraft_sketch::solve(sk) } else { solvecraft_sketch::solve_after_value_edit(sk, stored) };
+            report = if report.ok() { solidcraft_sketch::solve(sk) } else { solidcraft_sketch::solve_after_value_edit(sk, stored) };
         }
         Ok(report)
     }

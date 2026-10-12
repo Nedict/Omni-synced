@@ -85,7 +85,7 @@ fn circular_numeric_axis_origin_preserves_hole_geometry_and_reopens() {
         assert_eq!(s.doc.to_json(), before);
         run(&mut s, "edit.redo", json!({}));
         assert_eq!(s.doc.to_json(), saved);
-        let mut reopened = Session::new(solvecraft_doc::Document::from_json(&saved).unwrap());
+        let mut reopened = Session::new(solidcraft_doc::Document::from_json(&saved).unwrap());
         assert!(rel(volume(&mut reopened), expected) < 1e-4);
     }
     // The documented omission of origin still means zero.
@@ -94,7 +94,7 @@ fn circular_numeric_axis_origin_preserves_hole_geometry_and_reopens() {
     let before = s.doc.to_json();
     run(&mut s, "solid.pattern.circular", json!({"bodies":["Cube"],"axis":{"dir":[0,0,1]},"count":4}));
     let implicit = s.doc.to_json();
-    let mut explicit = Session::new(solvecraft_doc::Document::from_json(&before).unwrap());
+    let mut explicit = Session::new(solidcraft_doc::Document::from_json(&before).unwrap());
     run(&mut explicit, "solid.pattern.circular", json!({"bodies":["Cube"],"axis":{"origin":[0,0,0],"dir":[0,0,1]},"count":4}));
     assert_eq!(implicit, explicit.doc.to_json());
 }

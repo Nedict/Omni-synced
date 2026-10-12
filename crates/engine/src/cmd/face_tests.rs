@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use crate::Session;
 use serde_json::{Value, json};
-use solvecraft_doc::{Document, FeatureKind, PlaneRef};
-use solvecraft_geom::Vec3;
+use solidcraft_doc::{Document, FeatureKind, PlaneRef};
+use solidcraft_geom::Vec3;
 use std::f64::consts::PI;
 
 fn run(s: &mut Session, command: &str, params: Value) -> Value {
@@ -12,7 +12,7 @@ fn check(s: &mut Session, want: f64, hole: bool, height: f64) {
     s.refresh();
     assert!(s.model.results.iter().all(|result| result.error.is_none() && result.warning.is_none()), "{:?}", s.model.results);
     let state = s.model.state();
-    let got: f64 = state.bodies.iter().map(|b| solvecraft_kernel::measure(&b.body).unwrap().volume).sum();
+    let got: f64 = state.bodies.iter().map(|b| solidcraft_kernel::measure(&b.body).unwrap().volume).sum();
     // Legacy linked outlines fit tessellated curves; enforce the existing 1e-4 material envelope.
     assert!((got - want).abs() < want * 1e-4, "{got} vs {want}");
     assert!(state.bodies.iter().any(|b| b.body.contains(Vec3::new(5.0, 5.0, height - 1.0))));
@@ -39,7 +39,7 @@ fn generated_face_profiles_keep_exact_links_live_after_edit_and_reopen() {
         let FeatureKind::Sketch { plane, sketch: profile } = &generated.kind else { panic!("sketch") };
         let PlaneRef::Face { anchor: Some(anchor), .. } = plane else { panic!("the original Box cap remains exact after a hole cut") };
         assert_eq!(anchor.target.origin_feature, base);
-        assert!(matches!(anchor.target.certificate, Some(solvecraft_doc::config::FaceCertificate::Box { axis: 2, high: true })));
+        assert!(matches!(anchor.target.certificate, Some(solidcraft_doc::config::FaceCertificate::Box { axis: 2, high: true })));
         assert!(!profile.links.is_empty());
         assert!(profile.links.iter().all(|link| link.auto_face && !link.lost));
         let area = 1200.0 - if hole { 25.0 * PI } else { 0.0 };
@@ -54,12 +54,12 @@ fn generated_face_profiles_keep_exact_links_live_after_edit_and_reopen() {
         let solved = edited.sketch(sketch).unwrap().plane;
         assert!((solved.origin.z - 25.0).abs() < 1e-6);
         let before = s.model.state();
-        let before_volume: f64 = before.bodies.iter().map(|body| solvecraft_kernel::measure(&body.body).unwrap().volume).sum();
+        let before_volume: f64 = before.bodies.iter().map(|body| solidcraft_kernel::measure(&body.body).unwrap().volume).sum();
         let before_bounds: Vec<_> = before.bodies.iter().map(|body| (body.name.clone(), body.mesh().bounds())).collect();
         let mut reopened = Session::new(Document::from_json(&s.doc.to_json()).unwrap());
         check(&mut reopened, area * 35.0, hole, 35.0);
         let after = reopened.model.state();
-        let after_volume: f64 = after.bodies.iter().map(|body| solvecraft_kernel::measure(&body.body).unwrap().volume).sum();
+        let after_volume: f64 = after.bodies.iter().map(|body| solidcraft_kernel::measure(&body.body).unwrap().volume).sum();
         assert!((before_volume - after_volume).abs() < 1e-6);
         for (name, bounds) in before_bounds {
             let cold = after.body(&name).unwrap().mesh().bounds();
@@ -121,12 +121,12 @@ fn generated_profiles_and_press_pull_convert_rotated_occurrence_picks_once() {
         if hole {
             assert!(!world.bodies.iter().any(|body| body.body.contains(Vec3::new(50.0, 21.0 - height, 25.0))));
         }
-        let before_volume: f64 = world.bodies.iter().map(|body| solvecraft_kernel::measure(&body.body).unwrap().volume).sum();
+        let before_volume: f64 = world.bodies.iter().map(|body| solidcraft_kernel::measure(&body.body).unwrap().volume).sum();
         let before_bounds: Vec<_> = world.bodies.iter().map(|body| (body.name.clone(), body.mesh().bounds())).collect();
         let reopened = Session::new(Document::from_json(&s.doc.to_json()).unwrap());
         let after = reopened.world_state();
         assert!(after.bodies.iter().any(|body| body.body.contains(occupied)));
-        let v: f64 = after.bodies.iter().map(|body| solvecraft_kernel::measure(&body.body).unwrap().volume).sum();
+        let v: f64 = after.bodies.iter().map(|body| solidcraft_kernel::measure(&body.body).unwrap().volume).sum();
         assert!((v - area * height).abs() < area * height * 1e-4);
         assert!((v - before_volume).abs() < 1e-6);
         for (name, bounds) in before_bounds {

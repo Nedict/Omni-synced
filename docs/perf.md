@@ -39,14 +39,14 @@ Cross-part scheduling, parallel B-rep reconstruction and later display meshes re
 Reproduce after compiling, without other builds running:
 
 ```sh
-cargo test -p solvecraft-kernel --profile ci benchmark_independent_step_solids --no-run
-SOLVECRAFT_STEP_BENCH_COUNT=512 SOLVECRAFT_STEP_BENCH_KIND=cylinder \
-  cargo test -p solvecraft-kernel --profile ci benchmark_independent_step_solids \
+cargo test -p solidcraft-kernel --profile ci benchmark_independent_step_solids --no-run
+SOLIDCRAFT_STEP_BENCH_COUNT=512 SOLIDCRAFT_STEP_BENCH_KIND=cylinder \
+  cargo test -p solidcraft-kernel --profile ci benchmark_independent_step_solids \
   -- --ignored --nocapture --test-threads=1
 ```
 
 Use `torus` or `box` for the other fixtures and repeat in three fresh processes.
-`SOLVECRAFT_STEP_BENCH_FIXTURE` optionally writes the original STEP for native inspection.
+`SOLIDCRAFT_STEP_BENCH_FIXTURE` optionally writes the original STEP for native inspection.
 No timing threshold runs in CI. Regressions compare serial and threaded imports with
 different worker counts: exact display meshes, measures, body/face source identities,
 names, colours/opacity, units, rotated assembly placements, duplicates and partial failures
@@ -64,7 +64,7 @@ across edits.
 The reproducible microbenchmark is:
 
 ```sh
-cargo test -p solvecraft-doc --profile ci benchmark_prepared_extrude_sources -- --ignored --nocapture
+cargo test -p solidcraft-doc --profile ci benchmark_prepared_extrude_sources -- --ignored --nocapture
 ```
 
 Three Windows x64 optimized `ci` runs, during other compilation, compared the previous
@@ -89,9 +89,9 @@ straight-line projection and exact surface-refinement reuse changes:
 | Local Pi case assembly, 25 features, 2,990 bodies | 14.75 s | 11.57 s | 21.6% |
 
 These are geometry rebuild times, not complete desktop opening times. The public fixture
-can be generated with `solvecraft-cli run examples/acceptance/sensor_enclosure.json
---save sensor.solvecraft --quiet`, then measured with `solvecraft-cli bench-open
-sensor.solvecraft`. Each benchmark starts a new process; this does not measure a warm
+can be generated with `solidcraft-cli run examples/acceptance/sensor_enclosure.json
+--save sensor.solidcraft --quiet`, then measured with `solidcraft-cli bench-open
+sensor.solidcraft`. Each benchmark starts a new process; this does not measure a warm
 timeline-cache hit. The local assembly is private and is not part of the repository.
 
 Straight segments now use guarded algebraic closest-point projection instead of sampling
@@ -109,7 +109,7 @@ Both saved fixtures retain exactly the same body names, face/edge/vertex/shell c
 bounds, volumes, and surface areas. Focused tests compare cached and uncached refinement
 coordinates and normals bit for bit on periodic, singular and transformed surfaces.
 
-For desktop phase profiling, set `SOLVECRAFT_PROFILE_OPEN=1` before launching the app.
+For desktop phase profiling, set `SOLIDCRAFT_PROFILE_OPEN=1` before launching the app.
 Interactive Open reports geometry, placement, tessellation, thumbnail and total worker
 times to stderr without logging the source path. Thumbnails were about 0.1 seconds of
 the slow assembly's open and were not the main bottleneck. Further cold Boolean and
@@ -132,7 +132,7 @@ ready: 13.04 s geometry, 2.20 s placement, 0.53 s meshing and 0.07 s thumbnails.
 the optimized `ci` profile and actual Vulkan rendering, with isolated settings and caches.
 Linux and Windows timings are separate measurements and must not be compared as a speedup.
 
-`solvecraft-cli bench-open design.solvecraft` reports JSON lines for file reading,
+`solidcraft-cli bench-open design.solidcraft` reports JSON lines for file reading,
 JSON decoding and migrations (including input-name repair), timeline evaluation, individual
 features, and world placement/display meshing. `--parse-only` stops before geometry evaluation.
 The parse timer includes document validation and repair, not just the JSON parser.
@@ -205,7 +205,7 @@ every row's place.
 
 # Recompute performance
 
-`solvecraft-cli bench-edit <script> <param> "(<old>) * 1.02"` builds a design from its script
+`solidcraft-cli bench-edit <script> <param> "(<old>) * 1.02"` builds a design from its script
 (timing the build), then times a parameter edit, setting the parameter back to its old
 expression, undo and redo. Each cell is before → after the evaluation cache, with the number of
 features recomputed in parentheses. Release build, on a machine shared with other build jobs (load average about 45; the
@@ -268,7 +268,7 @@ Pi case in 15.2 s and 10.5 s. During those jobs, median `ui.inspect` round trips
 and 8.3 ms; the slowest were 33.7 ms and 28.6 ms. This fixes the window freeze, not the
 remaining cost of cold geometry evaluation.
 
-Recent thumbnails are 240 × 150 PNG files in `SolveCraft/thumbnails` under the platform
+Recent thumbnails are 240 × 150 PNG files in `SolidCraft/thumbnails` under the platform
 cache directory (`LOCALAPPDATA` on Windows). Their keys include the source path, file size
 and modification time. Open and Save render from the model already in memory. Cached
 recents decode the PNG without reading or rebuilding a document, and run before cold
@@ -277,7 +277,7 @@ No thumbnail or base64 image is added to the design JSON. A regression test veri
 source bytes remain unchanged, a cached picture works even without a parseable source
 file, and changing the source invalidates the cache.
 
-`solvecraft-cli bench-open` also accepts STEP/IGES. For exchange files its `parse` phase
+`solidcraft-cli bench-open` also accepts STEP/IGES. For exchange files its `parse` phase
 includes constructing and checking the imported B-rep, not merely decoding STEP syntax.
 
 The live test loaded both cached recent cards in 21 ms and inserted the 2 MB lightweight
@@ -299,7 +299,7 @@ drag's steps are a quarter of the smallest held size instead of an eighth, excep
 ran out of budget: the rest of that drag goes in eighths, as before, and continuation keeps
 the branch the seed no longer places.
 
-`cargo run --release -p solvecraft-sketch --example solve_bench`, macOS arm64, load average
+`cargo run --release -p solidcraft-sketch --example solve_bench`, macOS arm64, load average
 45–75 (best of 5):
 
 | Grid (origin corner fixed, rows horizontal, columns vertical, every edge a distance) | Start | Before | After |

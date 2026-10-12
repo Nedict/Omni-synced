@@ -97,9 +97,9 @@ pub fn fit(widths: &[f32], room: f32) -> Vec<Fit> {
 /// The commands a panel's drop-down (or its » submenu) lists: its own, then any button moved
 /// into it from another panel.
 fn menu_commands(
-    cmds: &[&'static solvecraft_engine::CommandSpec],
-    shown: &[&'static solvecraft_engine::CommandSpec],
-) -> Vec<&'static solvecraft_engine::CommandSpec> {
+    cmds: &[&'static solidcraft_engine::CommandSpec],
+    shown: &[&'static solidcraft_engine::CommandSpec],
+) -> Vec<&'static solidcraft_engine::CommandSpec> {
     let mut out = cmds.to_vec();
     for c in shown {
         if !out.iter().any(|o| o.id == c.id) {
@@ -340,7 +340,7 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                 }
                 ui.menu_button(app.tr("ui.open_recent"), |ui| {
                     for path in app.home.recent.clone() {
-                        let missing = !solvecraft_engine::io::vfs::exists(&path);
+                        let missing = !solidcraft_engine::io::vfs::exists(&path);
                         let label = format!("{path}{}", if missing { " (missing)" } else { "" });
                         if ui.button(label).clicked() {
                             crate::home::open_recent(app, &path);
@@ -430,8 +430,8 @@ pub fn save(app: &mut SolveApp) {
 }
 
 fn save_as(app: &mut SolveApp) {
-    let name = format!("{}.{}", app.session.doc.name, solvecraft_engine::io::DESIGN_EXT);
-    if let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name, &[solvecraft_engine::io::DESIGN_EXT])) {
+    let name = format!("{}.{}", app.session.doc.name, solidcraft_engine::io::DESIGN_EXT);
+    if let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name, &[solidcraft_engine::io::DESIGN_EXT])) {
         let _ = app.run("file.save_as", json!({"path": p}));
     }
 }
@@ -802,7 +802,7 @@ fn dropdown_row_id(id: &str) -> egui::Id {
 }
 
 /// How wide a panel drop-down's rows are: the widest label and shortcut, at least 200.
-fn dropdown_width(app: &SolveApp, ui: &egui::Ui, cmds: &[&'static solvecraft_engine::CommandSpec]) -> f32 {
+fn dropdown_width(app: &SolveApp, ui: &egui::Ui, cmds: &[&'static solidcraft_engine::CommandSpec]) -> f32 {
     let t = Tokens::get();
     let font = FontId::proportional(13.0);
     cmds.iter()
@@ -816,7 +816,7 @@ fn dropdown_width(app: &SolveApp, ui: &egui::Ui, cmds: &[&'static solvecraft_eng
 
 /// One command row of a panel drop-down: icon, label and shortcut, with the hover background
 /// under the pointer or keyboard focus (like every menu).
-fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solvecraft_engine::CommandSpec, width: f32, pinned: bool) -> RowAction {
+fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solidcraft_engine::CommandSpec, width: f32, pinned: bool) -> RowAction {
     let t = Tokens::get();
     let info = c.info(&app.session);
     let (rect, _) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::hover());
@@ -886,7 +886,7 @@ struct ToolbarDrag {
 /// The dragged command's icon under the pointer, crossed out when releasing removes it.
 fn drag_ghost(ctx: &egui::Context, id: &str, at: egui::Pos2, removing: bool) {
     let t = Tokens::get();
-    let Some(c) = solvecraft_engine::find_command(id) else { return };
+    let Some(c) = solidcraft_engine::find_command(id) else { return };
     let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("sc_toolbar_drag")));
     let r = Rect::from_center_size(at + vec2(14.0, 16.0), vec2(30.0, 30.0));
     p.rect(r, 4.0, t.toolbar.gamma_multiply(0.92), Stroke::new(1.0, if removing { t.error } else { t.accent }), egui::StrokeKind::Inside);
@@ -1115,7 +1115,7 @@ mod header_report_tests {
         h.app.run("sketch.line", json!({"points":[[0,0],[20,0]]})).unwrap();
         h.call("ui.view", json!({"view":"top"}));
         h.app.cam.distance = 80.0;
-        h.app.cam.target = solvecraft_engine::geom::Vec3::new(10.0, 0.0, 0.0);
+        h.app.cam.target = solidcraft_engine::geom::Vec3::new(10.0, 0.0, 0.0);
         h.settle();
         h.step(&json!({"start":"sketch.dimension"})).unwrap();
         for point in [[0, 0, 0], [20, 0, 0], [10, 5, 0]] {
@@ -1158,7 +1158,7 @@ mod home_tests {
             h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Main"})).unwrap();
             h.app.run("solid.box", json!({"length": 5, "width": 5, "height": 5, "corner": [20, 0, 0]})).unwrap();
             h.app.run("edit.undo", json!({})).unwrap();
-            h.app.session.selection = vec![solvecraft_engine::Sel::Body { name: "Main".into() }];
+            h.app.session.selection = vec![solidcraft_engine::Sel::Body { name: "Main".into() }];
             let rev = h.app.session.revision;
             h.app.home.show(rev);
             h.frames(2);

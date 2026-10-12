@@ -8,8 +8,8 @@ use std::cell::{Cell, RefCell};
 
 use egui::{Align2, FontId, Shape, Stroke};
 use serde_json::{Value, json};
-use solvecraft_engine::geom::Vec2;
-use solvecraft_engine::sketch::{CurveKind, Sketch};
+use solidcraft_engine::geom::Vec2;
+use solidcraft_engine::sketch::{CurveKind, Sketch};
 
 use crate::SolveApp;
 use crate::theme::Tokens;

@@ -2,7 +2,7 @@
 
 | Format | Read | Write |
 |---|---|---|
-| `.solvecraft` (JSON design, versioned) | yes | yes |
+| `.solidcraft` (JSON design, versioned) | yes | yes |
 | STEP (AP203, AP214, AP242) | solids, assemblies, units, names, colours | AP242 with names, colours and the component tree |
 | IGES 5.3 | manifold solids, or trimmed surfaces sewn into solids | manifold solids with names and colours |
 | 3MF, STL, OBJ | mesh bodies | yes |
@@ -53,7 +53,7 @@ another device.
 1. Open the File menu and choose **Open** to show **Files in this browser**.
 2. Choose **Download open design** for the current design, including its unsaved changes,
    or **Download** beside a stored file for its last saved contents.
-3. Find the `.solvecraft` file in your browser's downloads. Whether a folder chooser appears
+3. Find the `.solidcraft` file in your browser's downloads. Whether a folder chooser appears
    depends on your browser's download settings.
 
 Use **Open from computer…** in the same panel to reopen a downloaded design. The web app

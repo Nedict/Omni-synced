@@ -25,8 +25,8 @@
       # that is the driver stack the compositor runs on. Verified on an Intel LNL iGPU under
       # Wayland: wgpu picks the GL backend through this loader and draws.
       # The X11 libraries are the ones the app actually uses on a Wayland desktop: with `DISPLAY`
-      # set and `SOLVECRAFT_WAYLAND` unset, winit runs through XWayland (file drag and drop exists
-      # only there). The Wayland ones are for `SOLVECRAFT_WAYLAND=1`, and both are needed under
+      # set and `SOLIDCRAFT_WAYLAND` unset, winit runs through XWayland (file drag and drop exists
+      # only there). The Wayland ones are for `SOLIDCRAFT_WAYLAND=1`, and both are needed under
       # `xvfb-run` on a machine with no display at all.
       runtimeLibs =
         pkgs:

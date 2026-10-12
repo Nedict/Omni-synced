@@ -6,7 +6,7 @@
 
 use serde_json::{Value, json};
 
-use solvecraft_doc::FeatureKind;
+use solidcraft_doc::FeatureKind;
 
 use super::CommandSpec;
 use crate::params::{bad, bool_, str_};
@@ -92,7 +92,7 @@ fn group(s: &mut Session, p: &Value) -> Result<Value> {
     for g in d.browser_groups.iter_mut().filter(|g| g.component == component && g.folder == folder) {
         g.items.retain(|k| !items.contains(k));
     }
-    d.browser_groups.push(solvecraft_doc::BrowserGroup { id, name: name.clone(), component, folder, items });
+    d.browser_groups.push(solidcraft_doc::BrowserGroup { id, name: name.clone(), component, folder, items });
     Ok(json!({ "group": id, "name": name }))
 }
 
@@ -326,7 +326,7 @@ fn document_units(s: &mut Session, p: &Value) -> Result<Value> {
             .doc
             .params
             .iter()
-            .filter(|p| !p.model && p.unit.is_empty() && solvecraft_doc::expr::is_literal(&p.expr) && p.expr.trim().parse::<f64>().is_ok())
+            .filter(|p| !p.model && p.unit.is_empty() && solidcraft_doc::expr::is_literal(&p.expr) && p.expr.trim().parse::<f64>().is_ok())
             .map(|p| (p.name.clone(), p.expr.trim().to_string()))
             .collect();
         for (name, e) in bare {
@@ -354,7 +354,7 @@ fn document_units(s: &mut Session, p: &Value) -> Result<Value> {
 fn view_save(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "view.save";
     let c = p.get("camera").ok_or_else(|| bad(cmd, "`camera` is required"))?;
-    let mut v: solvecraft_doc::NamedView = serde_json::from_value(c.clone()).map_err(|e| bad(cmd, format!("bad camera: {e}")))?;
+    let mut v: solidcraft_doc::NamedView = serde_json::from_value(c.clone()).map_err(|e| bad(cmd, format!("bad camera: {e}")))?;
     let ok = [v.target.x, v.target.y, v.target.z, v.yaw, v.pitch, v.distance, v.fov].iter().all(|x| x.is_finite()) && v.distance > 0.0;
     if !ok {
         return Err(bad(cmd, "the camera must be finite with a positive distance"));
@@ -405,7 +405,7 @@ fn view_list(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 /// Rename an item key in the browser's groups and orders of a folder.
-fn rename_key(d: &mut solvecraft_doc::Document, folder: &str, old: &str, new: &str) {
+fn rename_key(d: &mut solidcraft_doc::Document, folder: &str, old: &str, new: &str) {
     for g in d.browser_groups.iter_mut().filter(|g| g.folder == folder) {
         for k in g.items.iter_mut().filter(|k| *k == old) {
             *k = new.to_string();
@@ -472,7 +472,7 @@ fn rename_body(s: &mut Session, p: &Value) -> Result<Value> {
             let bodies = std::collections::BTreeMap::from([(old.clone(), name.to_string())]);
             anchor.remap_target(&ids, &bodies)?;
             for link in &mut sketch.links {
-                if link.auto_face && matches!(&link.source,solvecraft_sketch::LinkSource::Face {body,..} if *body==old) {
+                if link.auto_face && matches!(&link.source,solidcraft_sketch::LinkSource::Face {body,..} if *body==old) {
                     link.face_name = Some(anchor.target.name.clone());
                 }
             }
@@ -499,10 +499,10 @@ fn rename_body(s: &mut Session, p: &Value) -> Result<Value> {
     }
     for column in &mut d.configs.columns {
         match column {
-            solvecraft_doc::config::Column::Material(body) | solvecraft_doc::config::Column::Appearance(body) if *body == old => {
+            solidcraft_doc::config::Column::Material(body) | solidcraft_doc::config::Column::Appearance(body) if *body == old => {
                 *body = name.to_string();
             }
-            solvecraft_doc::config::Column::FaceAppearance(target) if target.body == old => {
+            solidcraft_doc::config::Column::FaceAppearance(target) if target.body == old => {
                 target.body = name.to_string();
             }
             _ => {}
@@ -592,7 +592,7 @@ fn redefine_sketch(s: &mut Session, p: &Value) -> Result<Value> {
             .filter(|link| {
                 link.auto_face
                     && link.face_name.as_ref() == Some(&anchor.target.name)
-                    && matches!(&link.source,solvecraft_sketch::LinkSource::Face {body,..} if *body==anchor.target.body)
+                    && matches!(&link.source,solidcraft_sketch::LinkSource::Face {body,..} if *body==anchor.target.body)
             })
             .map(|link| link.id.clone())
             .collect();
@@ -723,7 +723,7 @@ mod tests {
         run(&mut s, "view.save", json!({"camera": cam, "name": "Detail"}));
         run(&mut s, "view.rename", json!({"view": "Named View1", "name": "Overview"}));
         assert!(s.execute("view.rename", &json!({"view": "Overview", "name": "Detail"})).is_err());
-        let back: solvecraft_doc::Document = serde_json::from_str(&serde_json::to_string(&*s.doc).unwrap()).unwrap();
+        let back: solidcraft_doc::Document = serde_json::from_str(&serde_json::to_string(&*s.doc).unwrap()).unwrap();
         assert_eq!(back.named_views.len(), 2);
         assert_eq!(back.named_views[0].target.z, 3.0);
         run(&mut s, "view.delete", json!({"view": "Detail"}));
@@ -748,7 +748,7 @@ mod tests {
         run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 5, "name": "Floor"}));
         let body = s.model.state().bodies[0].name.clone();
         let drain_name = s.doc.feature(drain).unwrap().name.clone();
-        let cam = solvecraft_render::Camera::default();
+        let cam = solidcraft_render::Camera::default();
         let lines = |s: &Session| crate::view::scene(s, &cam).lines.len();
         let shown = |s: &mut Session| {
             let d = run(s, "document.inspect", json!({}));
@@ -806,7 +806,7 @@ mod tests {
         run(&mut s, "browser.move", json!({"folder": "bodies", "items": [b.clone()]}));
         assert_eq!(s.doc.browser_groups[0].items, vec!["Bolt".to_string()]);
         run(&mut s, "browser.order", json!({"folder": "bodies", "order": [b.clone(), "Bolt"]}));
-        let saved: solvecraft_doc::Document = serde_json::from_str(&serde_json::to_string(&*s.doc).unwrap()).unwrap();
+        let saved: solidcraft_doc::Document = serde_json::from_str(&serde_json::to_string(&*s.doc).unwrap()).unwrap();
         assert_eq!(saved.browser_groups, s.doc.browser_groups);
         assert_eq!(saved.browser_order["0/bodies"], vec![b, "Bolt".to_string()]);
         run(&mut s, "browser.ungroup", json!({"group": g}));

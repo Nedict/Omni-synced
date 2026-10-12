@@ -5,7 +5,7 @@ use super::*;
 use crate::EmbossFace;
 use crate::apply_point;
 use crate::sheet;
-use solvecraft_geom::{Loop2, Seg2};
+use solidcraft_geom::{Loop2, Seg2};
 
 pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut ModelState) -> Result<()> {
     match &f.kind {
@@ -357,7 +357,7 @@ pub(super) fn sheet_eval(
     match &f.kind {
         FeatureKind::SheetBase { sketch, profiles, rule, flip } => {
             let ss = st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch}")))?.clone();
-            let regions = solvecraft_sketch::merge_regions(&select_profiles(&ss, profiles)?);
+            let regions = solidcraft_sketch::merge_regions(&select_profiles(&ss, profiles)?);
             let r = doc.sheet_rule(rule.as_deref());
             let rv = doc.rule_values(vals, &r)?;
             for (k, region) in regions.into_iter().enumerate() {
@@ -631,7 +631,7 @@ pub(super) fn sheet_cut(
         return Ok(Vec::new());
     }
     let Some(ss) = st.sketch(*sketch).cloned() else { return Ok(Vec::new()) };
-    let regions = solvecraft_sketch::merge_regions(&select_profiles(&ss, profiles)?);
+    let regions = solidcraft_sketch::merge_regions(&select_profiles(&ss, profiles)?);
     let n = ss.plane.normal();
     let mut work = sheet::FlatWork::new();
     let faces = tools.iter().fold(0usize, |count, body| count.saturating_add(body.face_count()));
@@ -836,7 +836,7 @@ pub(super) fn sheet_cut(
 
 /// Outline loops (in `plane` coordinates) of the mesh triangles lying in the plane at distance
 /// `level` from `at` along `n`: the edges used by one of them only, chained.
-fn face_loops(mesh: &solvecraft_geom::Mesh, plane: &Plane, at: Vec3, n: Vec3, level: f64, tol: f64) -> Vec<Vec<Vec2>> {
+fn face_loops(mesh: &solidcraft_geom::Mesh, plane: &Plane, at: Vec3, n: Vec3, level: f64, tol: f64) -> Vec<Vec<Vec2>> {
     let on: Vec<[u32; 3]> = mesh
         .triangles
         .iter()

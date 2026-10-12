@@ -4,8 +4,8 @@
 //! or Joint appear on several tabs. Commands registered on such a panel but not listed follow at
 //! the end.
 
-use solvecraft_engine::CommandSpec;
-use solvecraft_engine::doc::FeatureKind;
+use solidcraft_engine::CommandSpec;
+use solidcraft_engine::doc::FeatureKind;
 
 const ASSEMBLE: &[&str] = &[
     "component.create",
@@ -143,7 +143,7 @@ mod tests {
     use super::*;
 
     fn ids(tab: &str, panel: &str) -> Vec<&'static str> {
-        let specs = solvecraft_engine::command_specs();
+        let specs = solidcraft_engine::command_specs();
         layout(tab, panel, &specs).map(|(v, _)| v.iter().map(|c| c.id).collect()).unwrap_or_default()
     }
 

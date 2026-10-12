@@ -2,8 +2,8 @@
 //! type, whether the command starts from a shortcut, the toolbar or a menu.
 
 use serde_json::json;
-use solvecraft_engine::geom::Vec3;
-use solvecraft_engine::{Sel, Session};
+use solidcraft_engine::geom::Vec3;
+use solidcraft_engine::{Sel, Session};
 
 use crate::dialogs::{Dialog, Kind, apply_commands};
 use crate::{Services, SolveApp};
@@ -36,7 +36,7 @@ fn path_plane_click_retains_source_and_previews_then_edits_in_place() {
     let built = crate::preview::compute(&h.app.session, &commands, crate::preview::Colors::from_tokens(&crate::theme::Tokens::dark())).unwrap();
     assert!(!built.scene.xray.is_empty(), "construction preview must contain visible geometry");
     let plane = preview.after.construct.last().unwrap();
-    let solvecraft_engine::doc::construct::ConstructGeom::Plane(pl) = plane.geom else { panic!("plane") };
+    let solidcraft_engine::doc::construct::ConstructGeom::Plane(pl) = plane.geom else { panic!("plane") };
     assert!(pl.origin.dist(Vec3::new(20.0, 27.5, 25.0)) < 1e-6);
     assert_eq!(h.app.session.doc.features.len(), count);
     assert_eq!(h.app.session.undo.len(), history);
@@ -54,7 +54,7 @@ fn path_plane_click_retains_source_and_previews_then_edits_in_place() {
     h.step(&json!({"key":"Enter"})).unwrap();
     assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog);
     assert_eq!(h.app.session.doc.features.len(), count + 1);
-    let p = solvecraft_engine::view::construction_planes(&h.app.session).into_iter().find(|p| p.0 == feature.id).unwrap().2;
+    let p = solidcraft_engine::view::construction_planes(&h.app.session).into_iter().find(|p| p.0 == feature.id).unwrap().2;
     assert!(p.origin.dist(Vec3::new(15.0, 23.75, 17.5)) < 1e-6, "{p:?}");
     h.app.run("edit.undo", json!({})).unwrap();
     assert_eq!(h.app.session.doc.feature(feature.id).unwrap().kind, feature.kind);
@@ -94,7 +94,7 @@ fn cylinder_emboss_empty_target_face_applies_automatic_wrap_and_deboss() {
         h.step(&json!({"key":"Enter"})).unwrap();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog);
         let feature = h.app.session.doc.features.last().unwrap().clone();
-        let solvecraft_engine::doc::FeatureKind::Emboss { face: Some(face), deboss: actual, .. } = &feature.kind else {
+        let solidcraft_engine::doc::FeatureKind::Emboss { face: Some(face), deboss: actual, .. } = &feature.kind else {
             panic!("automatic Apply must save its cylinder anchor: {:?}", feature.kind)
         };
         assert_eq!(*actual, deboss);
@@ -172,7 +172,7 @@ fn cylinder_emboss_edit_retains_second_source_and_author_paths_and_all_profiles(
         .as_u64()
         .unwrap();
     let before = h.app.session.doc.feature(feature).unwrap().clone();
-    let solvecraft_engine::doc::FeatureKind::Emboss { face: Some(face), .. } = &before.kind else { panic!("selected face") };
+    let solidcraft_engine::doc::FeatureKind::Emboss { face: Some(face), .. } = &before.kind else { panic!("selected face") };
     assert_eq!(face.path, vec![source_second]);
     assert_eq!(face.author_path, vec![author_second]);
     h.app.run("component.activate", json!({"component":"root"})).unwrap();
@@ -396,7 +396,7 @@ fn hole_at_sketch_points() {
         {"command": "sketch.point", "params": {"point": [30, 20], "id": "h2"}},
         {"command": "sketch.finish", "params": {}},
     ]));
-    let sk = app.session.doc.features.iter().find(|f| matches!(f.kind, solvecraft_engine::doc::FeatureKind::Sketch { .. })).unwrap().id;
+    let sk = app.session.doc.features.iter().find(|f| matches!(f.kind, solidcraft_engine::doc::FeatureKind::Sketch { .. })).unwrap().id;
     app.start("solid.hole");
     let mut d = app.dialog.clone().unwrap();
     if let Kind::Hole { opts, .. } = &mut d.kind {

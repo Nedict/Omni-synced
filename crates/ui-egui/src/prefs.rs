@@ -11,7 +11,18 @@
 use egui::{Modifiers, Pos2, RichText};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use solvecraft_engine::geom::Vec3;
+use solidcraft_engine::geom::Vec3;
+
+/// The key the apps keep the preferences under in eframe's storage.
+pub const STORAGE_KEY: &str = "solidcraft.prefs";
+/// The key earlier releases used. Compatibility shim (docs/compatibility.md): read when the
+/// current key is missing, never written.
+pub const LEGACY_STORAGE_KEY: &str = "solvecraft.prefs";
+
+/// The stored preferences, from the current key or else the legacy one.
+pub fn stored(get: impl Fn(&str) -> Option<String>) -> Option<String> {
+    get(STORAGE_KEY).or_else(|| get(LEGACY_STORAGE_KEY))
+}
 
 use crate::SolveApp;
 use crate::theme::Tokens;
@@ -483,12 +494,12 @@ pub fn length_drag<'a>(value: &'a mut f64, units: &str, decimals: u8) -> egui::D
 /// A length typed into a field, in millimetres: a bare number is in the design's units (`scale`
 /// units per millimetre); an explicit unit ("10 mm", "0.5 in", "2 cm + 3 mm") is honoured.
 pub fn parse_length_mm(text: &str, scale: f64) -> Option<f64> {
-    use solvecraft_engine::doc::expr;
+    use solidcraft_engine::doc::expr;
     if !(scale.is_finite() && scale > 0.0) {
         return None;
     }
     let defaults = expr::Defaults { len: 1.0 / scale, ..expr::Defaults::default() };
-    let no_params = |n: &str| Err(solvecraft_engine::doc::DocError::Expr(format!("unknown parameter `{n}`")));
+    let no_params = |n: &str| Err(solidcraft_engine::doc::DocError::Expr(format!("unknown parameter `{n}`")));
     let value = expr::eval_with_defaults(text.trim(), &no_params, defaults).ok()?.to_kind_in(expr::Kind::Length, defaults).ok()?;
     value.is_finite().then_some(value)
 }
@@ -706,7 +717,7 @@ fn close(app: &mut SolveApp, revert: bool) {
 
 /// The default orientation changed: the view turns to match.
 fn up_axis_changed(app: &mut SolveApp) {
-    use solvecraft_engine::render::UpAxis;
+    use solidcraft_engine::render::UpAxis;
     app.prefs_window.applied_up = Some(app.preferences.up_axis.clone());
     let up = if app.preferences.up_axis.eq_ignore_ascii_case("y") { UpAxis::Y } else { UpAxis::Z };
     if app.ui.up_axis != up || app.cam.up != up {
@@ -1001,6 +1012,15 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stored_prefs_fall_back_to_the_legacy_key() {
+        let only_old = |k: &str| (k == super::LEGACY_STORAGE_KEY).then(|| "old".to_string());
+        assert_eq!(super::stored(only_old).as_deref(), Some("old"));
+        let both = |k: &str| Some(if k == super::STORAGE_KEY { "new" } else { "old" }.to_string());
+        assert_eq!(super::stored(both).as_deref(), Some("new"));
+        assert_eq!(super::stored(|_| None), None);
+    }
+
     use super::*;
 
     #[test]
@@ -1009,7 +1029,7 @@ mod tests {
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("graphics.json");
         let services = crate::Services { graphics_path: Some(path.to_string_lossy().to_string()), ..Default::default() };
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), services);
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), services);
         // WebGPU's guarantee for the surface format: 8x saved, the device can only do 1x and 4x.
         app.msaa_supported = vec![1, 4];
         app.preferences.msaa = 8;
@@ -1048,7 +1068,7 @@ mod tests {
 
     #[test]
     fn control_channel_rejects_msaa_the_device_cannot_do_and_bad_saved_msaa_loads_as_default() {
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), crate::Services::default());
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
         app.msaa_supported = vec![1, 4];
         assert!(set(&mut app, &serde_json::json!({ "msaa": 8 })).is_err());
         assert!(set(&mut app, &serde_json::json!({ "msaa": 1 })).is_ok());
@@ -1081,7 +1101,7 @@ mod tests {
         h.call("ui.prefs", json!({"open":"Navigation"}));
         h.step(&json!({"widget":"Radial context menu"})).unwrap();
         assert!(h.app.preferences.radial_context_menu, "the actual checkbox enables radial menus");
-        let mut restored = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut restored = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         restored.load_prefs(&h.app.prefs());
         assert!(restored.preferences.radial_context_menu, "enabled preference survives save/load");
         h.call("ui.prefs", json!({"button":"cancel"}));
@@ -1097,7 +1117,7 @@ mod tests {
     #[test]
     fn wheel_smoothing_persists_and_follows_dialog_buttons() {
         assert!(serde_json::from_value::<Prefs>(json!({})).unwrap().smooth_wheel_zoom);
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         control(&mut app, &json!({"open":"Navigation", "smooth_wheel_zoom":false})).unwrap();
         control(&mut app, &json!({"button":"cancel"})).unwrap();
         assert!(app.preferences.smooth_wheel_zoom);
@@ -1105,7 +1125,7 @@ mod tests {
         control(&mut app, &json!({"button":"apply"})).unwrap();
         control(&mut app, &json!({"smooth_wheel_zoom":true, "button":"cancel"})).unwrap();
         assert!(!app.preferences.smooth_wheel_zoom);
-        let mut other = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         other.load_prefs(&app.prefs());
         assert!(!other.preferences.smooth_wheel_zoom);
         control(&mut app, &json!({"open":"Navigation", "button":"defaults"})).unwrap();
@@ -1116,14 +1136,14 @@ mod tests {
 
     #[test]
     fn openscad_preset_maps_navigation_and_persists() {
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         set(&mut app, &json!({"nav": OPENSCAD_NAV})).unwrap();
         for button in [NavButton::Middle, NavButton::Right] {
             assert_eq!(nav_mode(&app, button, Modifiers::default()), Some(NavMode::Pan));
             assert_eq!(nav_mode(&app, button, Modifiers { shift: true, ..Default::default() }), Some(NavMode::Zoom));
         }
         assert_eq!(nav_mode(&app, NavButton::Left, Modifiers::default()), Some(NavMode::Orbit));
-        let mut other = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         other.load_prefs(&app.prefs());
         assert_eq!(other.preferences.nav, OPENSCAD_NAV);
     }
@@ -1132,14 +1152,14 @@ mod tests {
     fn trackpad_pan_defaults_on_persists_and_follows_dialog_buttons() {
         assert!(serde_json::from_value::<Prefs>(json!({})).unwrap().trackpad_pan);
         assert!(Prefs::default().trackpad_pan);
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         control(&mut app, &json!({"open":"Navigation", "trackpad_pan":false})).unwrap();
         control(&mut app, &json!({"button":"cancel"})).unwrap();
         assert!(app.preferences.trackpad_pan);
         control(&mut app, &json!({"open":"Navigation", "trackpad_pan":false})).unwrap();
         control(&mut app, &json!({"button":"apply"})).unwrap();
         assert!(!app.preferences.trackpad_pan);
-        let mut other = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         other.load_prefs(&app.prefs());
         assert!(!other.preferences.trackpad_pan);
         control(&mut app, &json!({"open":"Navigation", "button":"defaults"})).unwrap();
@@ -1150,7 +1170,7 @@ mod tests {
 
     #[test]
     fn presets_map_the_mouse_and_prefs_round_trip() {
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         let shift = Modifiers { shift: true, ..Default::default() };
         let ctrl = Modifiers { ctrl: true, ..Default::default() };
         let none = Modifiers::default();
@@ -1177,7 +1197,7 @@ mod tests {
         assert!(set(&mut app, &json!({"default_units": "furlong"})).is_err());
         assert!(set(&mut app, &json!({"nope": 1})).is_err());
         // Kept between runs.
-        let mut other = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         other.load_prefs(&app.prefs());
         assert_eq!(other.preferences, app.preferences);
         assert_eq!(format_length(25.4, "in", 3), "1.000 in");
@@ -1187,7 +1207,7 @@ mod tests {
     /// keeps them, Restore Defaults resets one page, and the shortcuts menus open its page.
     #[test]
     fn preferences_dialog_cancel_apply_and_defaults() {
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         control(&mut app, &json!({"open": "general"})).unwrap();
         assert!(app.prefs_window.open && app.prefs_window.section == 0);
         control(&mut app, &json!({"theme": "light", "ui_scale": 1.25, "zoom_to_cursor": false})).unwrap();
@@ -1205,7 +1225,7 @@ mod tests {
         assert_eq!(app.preferences.nav, "alias", "Cancel goes back to the last Apply");
         let to = {
             let mut c = app.cam;
-            c.set_view(solvecraft_engine::render::StandardView::Top);
+            c.set_view(solidcraft_engine::render::StandardView::Top);
             c
         };
         app.animate_to(to);
@@ -1232,7 +1252,7 @@ mod tests {
 
     #[test]
     fn language_preference_switches_and_persists() {
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         assert_eq!(app.preferences.language, "en");
         assert_eq!(app.tr("ui.preferences"), "Preferences");
         assert_eq!(app.tr("ui.extrude"), "Extrude");
@@ -1244,7 +1264,7 @@ mod tests {
         assert_eq!(app.tr("ui.extrude"), "押し出し");
 
         // Preferences round-trip
-        let mut other = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         other.load_prefs(&app.prefs());
         assert_eq!(other.preferences.language, "ja");
         assert_eq!(other.tr("ui.preferences"), "環境設定");
@@ -1253,18 +1273,18 @@ mod tests {
     /// A STEP file opened Z-up is offered to be stood up: a quarter turn about X, undoable.
     #[test]
     fn a_y_up_step_file_can_be_stood_up() {
-        let dir = std::env::temp_dir().join(format!("solvecraft-standup-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("solidcraft-standup-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("tall_in_y.step").to_string_lossy().to_string();
-        let mut src = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut src = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         src.run("solid.box", json!({"length": 10, "width": 40, "height": 5})).unwrap();
         src.run("file.export", json!({"path": path})).unwrap();
 
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         app.open_path(&path);
         let offered = app.stand_up.clone().unwrap_or_default();
         assert_eq!(offered.len(), 1, "the file's body is offered");
-        let size = |app: &SolveApp| solvecraft_engine::view::bounds(&app.session);
+        let size = |app: &SolveApp| solidcraft_engine::view::bounds(&app.session);
         assert!((size(&app).max.y - size(&app).min.y - 40.0).abs() < 1e-6);
         control(&mut app, &json!({"stand_up": true})).unwrap();
         let b = size(&app);
@@ -1274,11 +1294,11 @@ mod tests {
         assert!((size(&app).max.y - size(&app).min.y - 40.0).abs() < 1e-6, "one undo step");
 
         // Not offered when turned off, or with Y up as the default orientation.
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         app.preferences.offer_stand_up = false;
         app.open_path(&path);
         assert!(app.stand_up.is_none());
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         app.preferences.up_axis = "y".into();
         app.open_path(&path);
         assert!(app.stand_up.is_none());
@@ -1287,7 +1307,7 @@ mod tests {
 
     #[test]
     fn orbiting_around_the_cursor_keeps_that_point_still() {
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         app.run("solid.box", json!({"length": 40, "width": 40, "height": 40})).unwrap();
         app.preferences.orbit_cursor = true;
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
@@ -1302,8 +1322,8 @@ mod tests {
     /// The Y up preference turns the view: the camera's up axis follows it, startup included.
     #[test]
     fn up_axis_preference_turns_the_view() {
-        use solvecraft_engine::render::UpAxis;
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), crate::Services::default());
+        use solidcraft_engine::render::UpAxis;
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
         let ctx = egui::Context::default();
         apply(&mut app, &ctx);
         assert_eq!(app.cam.up, UpAxis::Z);

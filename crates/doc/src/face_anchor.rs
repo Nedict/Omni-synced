@@ -3,7 +3,7 @@ use crate::config::ConfigFaceTarget;
 use crate::{DocError, Document, EmbossFace, FeatureKind, Model, ModelBody, ModelState, PlaneRef, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use solvecraft_geom::Plane;
+use solidcraft_geom::Plane;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -311,7 +311,7 @@ pub fn validate_face_anchors_json(value: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use solvecraft_geom::Vec3;
+    use solidcraft_geom::Vec3;
     fn fixture() -> (Document, ModelBody, usize, Plane) {
         let mut doc = Document::default();
         let kind: FeatureKind =
@@ -319,7 +319,7 @@ mod tests {
         let id = doc.add_feature(kind, Some("Base")).unwrap();
         let body = ModelBody::new(
             "Base".into(),
-            solvecraft_kernel::box_solid(Vec3::default(), Vec3::new(10., 10., 10.)).unwrap().with_box_certificate(id).unwrap(),
+            solidcraft_kernel::box_solid(Vec3::default(), Vec3::new(10., 10., 10.)).unwrap().with_box_certificate(id).unwrap(),
             id,
         );
         let index = body
@@ -327,7 +327,7 @@ mod tests {
             .face_sources()
             .unwrap()
             .iter()
-            .position(|source| matches!(source, Some(solvecraft_kernel::FaceSource::Box { axis: 2, high: true, .. })))
+            .position(|source| matches!(source, Some(solidcraft_kernel::FaceSource::Box { axis: 2, high: true, .. })))
             .unwrap();
         let canonical = body.body.face_plane(index).unwrap();
         let picked = Plane::new(canonical.origin + canonical.x * 2. + canonical.y * 3., canonical.y, -canonical.x).unwrap();
@@ -350,7 +350,7 @@ mod tests {
         assert!((initial.x - picked.x).len() < 1e-9);
         state.bodies[0] = ModelBody::new(
             "Base".into(),
-            solvecraft_kernel::box_solid(Vec3::default(), Vec3::new(10., 10., 20.))
+            solidcraft_kernel::box_solid(Vec3::default(), Vec3::new(10., 10., 20.))
                 .unwrap()
                 .with_box_certificate(anchor.target.origin_feature)
                 .unwrap(),
@@ -361,7 +361,7 @@ mod tests {
         assert!((changed.origin.x - initial.origin.x).abs() < 1e-9);
         state.bodies[0] = ModelBody::new(
             "Control".into(),
-            solvecraft_kernel::box_solid(Vec3::default(), Vec3::new(10., 10., 30.))
+            solidcraft_kernel::box_solid(Vec3::default(), Vec3::new(10., 10., 30.))
                 .unwrap()
                 .with_box_certificate(anchor.target.origin_feature)
                 .unwrap(),
@@ -369,7 +369,7 @@ mod tests {
         );
         assert!(doc.resolve_face_anchor(&anchor, 0, &state).is_err());
         state.bodies[0].name = "Base".into();
-        state.bodies[0].body = solvecraft_kernel::box_solid(Vec3::default(), Vec3::new(10., 10., 30.))
+        state.bodies[0].body = solidcraft_kernel::box_solid(Vec3::default(), Vec3::new(10., 10., 30.))
             .unwrap()
             .with_box_certificate(anchor.target.origin_feature + 1)
             .unwrap();
@@ -400,8 +400,8 @@ mod tests {
     }
     #[test]
     fn extrude_cap_profile_reordering_never_retargets_an_ordinal_body() {
-        use solvecraft_geom::Vec2;
-        let mut sketch = solvecraft_sketch::Sketch::new();
+        use solidcraft_geom::Vec2;
+        let mut sketch = solidcraft_sketch::Sketch::new();
         for offset in [0., 30.] {
             let points: Vec<_> = [(0., 0.), (10., 0.), (10., 10.), (0., 10.)]
                 .iter()
@@ -432,7 +432,7 @@ mod tests {
         assert_eq!(state.bodies.len(), 2);
         let solved = state.sketch(source).unwrap();
         let regions = crate::select_profiles(solved, &crate::ProfileSel::All).unwrap();
-        let raw = solvecraft_kernel::extrude(&solved.plane, &regions, 0., 10.).unwrap();
+        let raw = solidcraft_kernel::extrude(&solved.plane, &regions, 0., 10.).unwrap();
         assert!(
             crate::config::extrude_cap_bindings(solved, &raw, 0).is_none(),
             "exhausted certification work must leave the complete producer uncertified"
@@ -449,7 +449,7 @@ mod tests {
             .face_sources()
             .unwrap()
             .iter()
-            .position(|source| matches!(source, Some(solvecraft_kernel::FaceSource::CertifiedExtrudeCap { high: true, .. })))
+            .position(|source| matches!(source, Some(solidcraft_kernel::FaceSource::CertifiedExtrudeCap { high: true, .. })))
             .unwrap();
         let picked = body.body.face_plane(index).unwrap();
         let anchor = doc.capture_face_anchor(body, index, &picked, &[], 0, &[]).unwrap();
@@ -476,7 +476,7 @@ mod tests {
                         base: Box::new(PlaneRef::Face { plane: picked, at: picked.origin, name: None, anchor: None }),
                         distance: "2".into(),
                     },
-                    sketch: solvecraft_sketch::Sketch::new(),
+                    sketch: solidcraft_sketch::Sketch::new(),
                 },
                 None,
             )
@@ -492,7 +492,7 @@ mod tests {
     }
     #[test]
     fn warm_root_body_offset_edit_matches_cold_attached_sketch_and_downstream_bounds() {
-        use solvecraft_geom::Vec2;
+        use solidcraft_geom::Vec2;
         let (mut doc, _, _, _) = fixture();
         let mut warm = Model::new();
         warm.evaluate(&doc);
@@ -503,12 +503,12 @@ mod tests {
             .face_sources()
             .unwrap()
             .iter()
-            .position(|source| matches!(source, Some(solvecraft_kernel::FaceSource::Box { axis: 2, high: true, .. })))
+            .position(|source| matches!(source, Some(solidcraft_kernel::FaceSource::Box { axis: 2, high: true, .. })))
             .unwrap();
         let picked = body.body.face_plane(index).unwrap();
         let anchor = doc.capture_face_anchor(body, index, &picked, &[], 0, &[]).unwrap();
         let source_name = body.name.clone();
-        let mut sketch = solvecraft_sketch::Sketch::new();
+        let mut sketch = solidcraft_sketch::Sketch::new();
         let points: Vec<_> =
             [(2., 2.), (4., 2.), (4., 4.), (2., 4.)].iter().map(|(x, y)| sketch.add_point(Vec2::new(*x, *y), None).unwrap()).collect();
         for edge in 0..4 {

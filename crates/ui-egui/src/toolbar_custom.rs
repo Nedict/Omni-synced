@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
-use solvecraft_engine::{CommandSpec, command_specs};
+use solidcraft_engine::{CommandSpec, command_specs};
 
 use crate::SolveApp;
 use crate::context_menu::Item;
@@ -55,7 +55,7 @@ fn key(tab: &str, panel: &str) -> String {
 /// The buttons a panel shows: the user's list, or the first `promoted` commands of the panel.
 pub fn buttons(app: &SolveApp, tab: &str, panel: &str, cmds: &[&'static CommandSpec], promoted: usize) -> Vec<&'static CommandSpec> {
     match app.toolbar_custom.panels.get(&key(tab, panel)) {
-        Some(ids) => ids.iter().filter_map(|id| solvecraft_engine::find_command(id)).collect(),
+        Some(ids) => ids.iter().filter_map(|id| solidcraft_engine::find_command(id)).collect(),
         None => cmds.iter().take(promoted).copied().collect(),
     }
 }
@@ -101,7 +101,7 @@ fn home_panel(tab: &str, id: &str) -> Option<&'static str> {
 
 /// Pin a command to the toolbar of a tab (as a button of its panel, at the end).
 pub fn pin(app: &mut SolveApp, tab: &str, id: &str) -> Result<(), String> {
-    if solvecraft_engine::find_command(id).is_none() {
+    if solidcraft_engine::find_command(id).is_none() {
         return Err(format!("no command `{id}`"));
     }
     if pinned_on(app, tab, id).is_some() {
@@ -197,11 +197,12 @@ pub fn run(app: &mut SolveApp, action: &str, p: &Value) {
 
 /// Shortcut keys, S box favourites and the toolbar as one file (Keyboard Shortcuts › Export).
 pub fn export(app: &SolveApp) -> Value {
-    json!({ "format": "solvecraft-shortcuts/1", "shortcuts": app.keymap.prefs(), "favourites": app.sbox.pinned, "toolbar": app.toolbar_custom.prefs() })
+    json!({ "format": "solidcraft-shortcuts/1", "shortcuts": app.keymap.prefs(), "favourites": app.sbox.pinned, "toolbar": app.toolbar_custom.prefs() })
 }
 
 pub fn import(app: &mut SolveApp, v: &Value) -> Result<(), String> {
-    if v.get("format").and_then(Value::as_str) != Some("solvecraft-shortcuts/1") {
+    // "solvecraft-shortcuts/1": files exported before the rename (compatibility shim).
+    if !matches!(v.get("format").and_then(Value::as_str), Some("solidcraft-shortcuts/1" | "solvecraft-shortcuts/1")) {
         return Err("not a SolidCraft shortcuts file".into());
     }
     if let Some(s) = v.get("shortcuts") {

@@ -11,7 +11,7 @@ use std::sync::{
 use serde_json::Value;
 #[cfg(not(target_arch = "wasm32"))]
 use serde_json::json;
-use solvecraft_engine::{Session, doc::Document};
+use solidcraft_engine::{Session, doc::Document};
 
 use crate::SolveApp;
 
@@ -102,14 +102,14 @@ fn start(app: &mut SolveApp) {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn compute(mut session: Session, path: &str, insert: bool, phase: &AtomicU8, cancelled: &AtomicBool) -> Job {
-    let profile = std::env::var_os("SOLVECRAFT_PROFILE_OPEN").is_some();
+    let profile = solidcraft_engine::geom::env::var_os("PROFILE_OPEN").is_some();
     let began = std::time::Instant::now();
     if cancelled.load(Ordering::Relaxed) {
         return Err("file operation cancelled".into());
     }
     let command = if !insert {
         "doc.open"
-    } else if solvecraft_engine::io::is_mesh_path(path) {
+    } else if solidcraft_engine::io::is_mesh_path(path) {
         "file.insert_mesh"
     } else {
         "file.insert_step"

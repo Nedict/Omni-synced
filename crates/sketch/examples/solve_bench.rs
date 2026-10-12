@@ -1,12 +1,12 @@
 //! Solve times of an n×n grid (origin corner fixed, every row and column edge horizontal or
 //! vertical with a distance), started at the solution and ±1 mm off it, and of one held drag
 //! frame on a strip of rectangles. Run with
-//! `cargo run --release -p solvecraft-sketch --example solve_bench`; results go in docs/perf.md.
+//! `cargo run --release -p solidcraft-sketch --example solve_bench`; results go in docs/perf.md.
 
 use std::time::Instant;
 
-use solvecraft_geom::Vec2;
-use solvecraft_sketch::{Analysis, Budget, ConstraintKind, Hold, Sketch, SolveReport, solve, solve_with};
+use solidcraft_geom::Vec2;
+use solidcraft_sketch::{Analysis, Budget, ConstraintKind, Hold, Sketch, SolveReport, solve, solve_with};
 
 /// A small deterministic generator for the start offsets.
 struct Lcg(u64);

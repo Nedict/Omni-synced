@@ -1,4 +1,4 @@
-//! Random modelling sessions for robustness testing (`solvecraft-cli fuzz`, docs/robustness.md).
+//! Random modelling sessions for robustness testing (`solidcraft-cli fuzz`, docs/robustness.md).
 //!
 //! A seeded generator builds realistic feature sequences: a base (box, extruded sketch profile
 //! with an arc, revolved section), then joins and cuts of boxes, cylinders and spheres placed on
@@ -8,9 +8,9 @@
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use solvecraft_geom::Vec3;
-use solvecraft_kernel::fuzz::Rng;
-pub use solvecraft_kernel::fuzz::{BoolCase, boolean_case, boolean_shapes};
+use solidcraft_geom::Vec3;
+use solidcraft_kernel::fuzz::Rng;
+pub use solidcraft_kernel::fuzz::{BoolCase, boolean_case, boolean_shapes};
 
 use crate::{EngineError, Session};
 
@@ -64,19 +64,19 @@ pub struct Run {
     pub unsupported: Vec<(String, String)>,
     /// Steps whose generated parameters a command refused.
     pub rejected: usize,
-    pub boolean_fallbacks: std::collections::BTreeMap<solvecraft_kernel::BooleanStrategy, usize>,
+    pub boolean_fallbacks: std::collections::BTreeMap<solidcraft_kernel::BooleanStrategy, usize>,
     pub boolean_reports_truncated: bool,
 }
 
 impl Run {
-    /// The commands as a script for `solvecraft-cli run`.
+    /// The commands as a script for `solidcraft-cli run`.
     pub fn script(&self) -> Value {
         Value::Array(self.steps.iter().flat_map(|s| s.commands.iter().map(|(c, p)| json!({"command": c, "params": p}))).collect())
     }
 }
 
 fn total_volume(s: &Session) -> f64 {
-    s.model.state().bodies.iter().filter_map(|b| solvecraft_kernel::measure(&b.body).ok()).map(|m| m.volume).sum()
+    s.model.state().bodies.iter().filter_map(|b| solidcraft_kernel::measure(&b.body).ok()).map(|m| m.volume).sum()
 }
 
 fn classify(e: &EngineError) -> Outcome {

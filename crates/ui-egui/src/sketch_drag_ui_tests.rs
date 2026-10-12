@@ -2,7 +2,7 @@
 //! brings the model up to date in the drag's one undo step, and the grab stays on the geometry.
 
 use serde_json::{Value, json};
-use solvecraft_engine::geom::Vec2;
+use solidcraft_engine::geom::Vec2;
 
 use crate::scenario::Harness;
 

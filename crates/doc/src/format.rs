@@ -1,6 +1,6 @@
 //! The design file format version and the migrations that bring older files up to date.
 //!
-//! A design file starts with `"format": "solvecraft/N"`. A file of an older format is read and
+//! A design file starts with `"format": "solidcraft/N"`. A file of an older format is read and
 //! upgraded step by step (N → N+1 → … → current): JSON-level steps first, for changes in the
 //! file's shape, then document-level steps. A file of a newer format than this build knows is
 //! refused with a message saying so, never guessed at.
@@ -55,12 +55,16 @@ use crate::{DocError, Document, Result};
 pub const FORMAT: u32 = 14;
 
 pub fn format_string(n: u32) -> String {
-    format!("solvecraft/{n}")
+    format!("solidcraft/{n}")
 }
 
-/// The version in a format string (`solvecraft/N`).
+/// The format tag of designs saved before the rename. Compatibility shim (docs/compatibility.md):
+/// read, never written.
+pub const LEGACY_FORMAT_PREFIX: &str = "solvecraft/";
+
+/// The version in a format string (`solidcraft/N`, or the legacy `solvecraft/N`).
 pub fn version_of(s: &str) -> Option<u32> {
-    s.strip_prefix("solvecraft/")?.parse().ok()
+    s.strip_prefix("solidcraft/").or_else(|| s.strip_prefix(LEGACY_FORMAT_PREFIX))?.parse().ok()
 }
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
@@ -300,7 +304,7 @@ pub fn read(s: &str) -> Result<Document> {
         if let Some(crate::Feature { kind: crate::FeatureKind::Sketch { sketch, .. }, .. }) = d.features.get_mut(feature_index) {
             let mut spaces = std::collections::BTreeMap::new();
             for link in &sketch.links {
-                spaces.entry(link.id.as_str()).or_insert_with(|| solvecraft_sketch::WireSpace::from_legacy_link(link));
+                spaces.entry(link.id.as_str()).or_insert_with(|| solidcraft_sketch::WireSpace::from_legacy_link(link));
             }
             for wire_index in wire_indices {
                 if let Some(wire) = sketch.wires.get_mut(wire_index) {
@@ -358,9 +362,9 @@ fn validate_sketch_sizes(value: &Value) -> Result<()> {
         }
         let Some(sketch) = feature.get("sketch") else { continue };
         let len = |key: &str| sketch.get(key).and_then(Value::as_array).map_or(0, Vec::len);
-        if len("points") > solvecraft_sketch::MAX_POINTS
-            || len("curves") > solvecraft_sketch::MAX_CURVES
-            || len("constraints") > solvecraft_sketch::MAX_CONSTRAINTS
+        if len("points") > solidcraft_sketch::MAX_POINTS
+            || len("curves") > solidcraft_sketch::MAX_CURVES
+            || len("constraints") > solidcraft_sketch::MAX_CONSTRAINTS
         {
             return Err(invalid());
         }
@@ -553,7 +557,7 @@ fn validate_versioned_geometry(value: &Value) -> Result<()> {
             }
             let indices = curve.get("pts").and_then(Value::as_array).ok_or_else(invalid)?;
             work = work.saturating_add(indices.len());
-            if !(4..=solvecraft_sketch::MAX_SPLINE_POINTS).contains(&indices.len())
+            if !(4..=solidcraft_sketch::MAX_SPLINE_POINTS).contains(&indices.len())
                 || work > 1_000_000
                 || curve.get("control").is_some_and(|control| control.as_bool() != Some(false))
                 || curve.get("degree").is_some_and(|degree| degree.as_u64() != Some(3))
@@ -630,7 +634,7 @@ fn validate_freeform_offsets(value: &Value) -> Result<()> {
             if !(1..=256).contains(&divisions)
                 || !divisions.is_power_of_two()
                 || !(1..=256).contains(&pieces)
-                || pieces * divisions >= solvecraft_sketch::MAX_SPLINE_POINTS as u64
+                || pieces * divisions >= solidcraft_sketch::MAX_SPLINE_POINTS as u64
                 || !distance.is_finite()
                 || !(1e-9..=MAX_REAL).contains(&distance.abs())
                 || !tolerance.is_finite()
@@ -727,7 +731,7 @@ mod tests {
     #[test]
     fn version_thirteen_names_keep_their_meaning_under_the_legacy_mark() {
         let file = serde_json::json!({
-            "format": "solvecraft/13",
+            "format": "solidcraft/13",
             "features": [
                 {"type": "fillet", "edge_names": ["F2:side:l2|F2:top#2~1", ""], "face_names": ["F2:top#1", ""]},
                 {"type": "sheet_flange", "edge_names": ["base:l1:top"]},
@@ -774,7 +778,7 @@ mod tests {
     #[test]
     fn version_thirteen_marking_targets_name_fields_not_key_names() {
         let file = serde_json::json!({
-            "format": "solvecraft/13",
+            "format": "solidcraft/13",
             "features": [
                 {"type": "extrude", "options": {"face": "flat", "face_name": "label", "face_names": ["a"]}},
                 {"type": "fillet", "settings": {"edge_names": ["kept"]}},
@@ -794,8 +798,8 @@ mod tests {
 
     #[test]
     fn version_nine_wire_spaces_preserve_saved_points_and_explicit_markers() {
-        use solvecraft_geom::Vec3;
-        use solvecraft_sketch::{LinkKind, LinkSource, Sketch, WireSpace};
+        use solidcraft_geom::Vec3;
+        use solidcraft_sketch::{LinkKind, LinkSource, Sketch, WireSpace};
         let mut sketch = Sketch::new();
         sketch.add_drawn_wire(&[Vec3::new(12.0, 3.0, 4.0)]).unwrap();
         let link = sketch
@@ -810,7 +814,7 @@ mod tests {
         let mut doc = Document::new("legacy wire spaces");
         doc.add_feature(crate::FeatureKind::Sketch { plane: crate::PlaneRef::Origin { name: "XY".into() }, sketch }, None).unwrap();
         let mut json: Value = serde_json::from_str(&doc.to_json()).unwrap();
-        json["format"] = Value::from("solvecraft/9");
+        json["format"] = Value::from("solidcraft/9");
         for wire in json["features"][0]["sketch"]["wires"].as_array_mut().unwrap() {
             wire.as_object_mut().unwrap().remove("space");
         }
@@ -891,7 +895,7 @@ mod tests {
         let mut document = Document::new("legacy named extent");
         document.set_param("offset", "2", Some("mm"), None).unwrap();
         let sketch = document
-            .add_feature(FeatureKind::Sketch { plane: PlaneRef::Origin { name: "XY".into() }, sketch: solvecraft_sketch::Sketch::new() }, None)
+            .add_feature(FeatureKind::Sketch { plane: PlaneRef::Origin { name: "XY".into() }, sketch: solidcraft_sketch::Sketch::new() }, None)
             .unwrap();
         document
             .add_feature(
@@ -905,9 +909,9 @@ mod tests {
                         start_offset: None,
                         through_all: false,
                         taper: Some("0 deg".into()),
-                        to: Some(solvecraft_geom::Vec3::new(0.0, 0.0, 10.0)),
+                        to: Some(solidcraft_geom::Vec3::new(0.0, 0.0, 10.0)),
                         to_offset: Some("offset + 1 mm".into()),
-                        from: Some(solvecraft_geom::Vec3::new(0.0, 0.0, 5.0)),
+                        from: Some(solidcraft_geom::Vec3::new(0.0, 0.0, 5.0)),
                     },
                     operation: Operation::NewBody,
                     targets: vec![],
@@ -928,7 +932,7 @@ mod tests {
             )
             .unwrap();
         let mut legacy: Value = serde_json::from_str(&document.to_json()).unwrap();
-        legacy["format"] = Value::from("solvecraft/8");
+        legacy["format"] = Value::from("solidcraft/8");
         // Version 8 exposed distance and taper, but had no model slot for To Offset.
         legacy["features"][1]["param_names"] = serde_json::json!(["d1", "d2"]);
         legacy["features"][2]["param_names"] = serde_json::json!(["d3", "d4", "d5"]);
@@ -952,8 +956,8 @@ mod tests {
 
     #[test]
     fn saved_offset_cannot_alias_and_overwrite_its_source_geometry() {
-        use solvecraft_geom::Vec2;
-        use solvecraft_sketch::{CurveKind, Sketch};
+        use solidcraft_geom::Vec2;
+        use solidcraft_sketch::{CurveKind, Sketch};
         let mut sketch = Sketch::new();
         let center = sketch.add_point(Vec2::ZERO, None).unwrap();
         let major = sketch.add_point(Vec2::new(10.0, 0.0), None).unwrap();
@@ -976,7 +980,7 @@ mod tests {
         let mut document = Document::new("missing offset geometry");
         document
             .add_feature(
-                crate::FeatureKind::Sketch { plane: crate::PlaneRef::Origin { name: "XY".into() }, sketch: solvecraft_sketch::Sketch::new() },
+                crate::FeatureKind::Sketch { plane: crate::PlaneRef::Origin { name: "XY".into() }, sketch: solidcraft_sketch::Sketch::new() },
                 None,
             )
             .unwrap();
@@ -1052,7 +1056,7 @@ mod tests {
             ("degree", serde_json::json!(2)),
             ("pts", serde_json::json!([0, 1, 2])),
             ("pts", serde_json::json!([0, 1, 2, u64::MAX])),
-            ("pts", serde_json::json!(vec![0; solvecraft_sketch::MAX_SPLINE_POINTS + 1])),
+            ("pts", serde_json::json!(vec![0; solidcraft_sketch::MAX_SPLINE_POINTS + 1])),
         ] {
             let mut damaged = curve.clone();
             damaged[key] = malformed;
@@ -1091,8 +1095,8 @@ mod tests {
 
     #[test]
     fn periodic_file_validation_refuses_damaged_closed_geometry() {
-        use solvecraft_geom::Vec2;
-        use solvecraft_sketch::{CurveKind, Sketch};
+        use solidcraft_geom::Vec2;
+        use solidcraft_sketch::{CurveKind, Sketch};
         let mut sketch = Sketch::new();
         let mut pts = Vec::new();
         for point in [Vec2::ZERO, Vec2::new(10.0, 0.0), Vec2::new(0.0, 10.0), Vec2::ZERO] {
@@ -1199,7 +1203,7 @@ mod tests {
         ];
         d.configs.active = Some("Default".into());
         let mut legacy: Value = serde_json::from_str(&d.to_json()).unwrap();
-        legacy["format"] = Value::from("solvecraft/6");
+        legacy["format"] = Value::from("solidcraft/6");
         let original_table = legacy["configs"].clone();
         let upgraded = read(&legacy.to_string()).unwrap();
         d.features.iter_mut().for_each(|f| f.shell_piece_order = true);
@@ -1224,7 +1228,7 @@ mod tests {
         }];
         d.apply_configuration("Blue steel").unwrap();
         let mut value: Value = serde_json::from_str(&d.to_json()).unwrap();
-        value["format"] = Value::from("solvecraft/7");
+        value["format"] = Value::from("solidcraft/7");
         let original_table = value["configs"].clone();
         let roundtrip = read(&value.to_string()).unwrap();
         assert_eq!(roundtrip, d);
@@ -1241,8 +1245,8 @@ mod tests {
 
     #[test]
     fn version_seven_origin_sketch_keeps_geometry_dimension_ids_and_expressions() {
-        use solvecraft_geom::Vec2;
-        use solvecraft_sketch::{ConstraintKind, Sketch};
+        use solidcraft_geom::Vec2;
+        use solidcraft_sketch::{ConstraintKind, Sketch};
         let mut d = Document::new("legacy origin dimensions");
         d.set_param("reach", "25 mm", Some("mm"), None).unwrap();
         let dim = d.new_model_param("reach", "mm");
@@ -1253,7 +1257,7 @@ mod tests {
         sketch.add_constraint(ConstraintKind::Length { l: line, value: 25.0 }, Some(dim)).unwrap();
         d.add_feature(crate::FeatureKind::Sketch { plane: crate::PlaneRef::Origin { name: "XY".into() }, sketch }, Some("Dimensioned")).unwrap();
         let mut legacy: Value = serde_json::from_str(&d.to_json()).unwrap();
-        legacy["format"] = Value::from("solvecraft/7");
+        legacy["format"] = Value::from("solidcraft/7");
         let mut features = legacy["features"].clone();
         pieces_in_shell_order(&mut features);
         let params = legacy["params"].clone();
@@ -1268,8 +1272,8 @@ mod tests {
 
     #[test]
     fn version_eight_persistent_angle_sweep_and_slot_dimensions_roundtrip() {
-        use solvecraft_geom::Vec2;
-        use solvecraft_sketch::{ConstraintKind, Sketch};
+        use solidcraft_geom::Vec2;
+        use solidcraft_sketch::{ConstraintKind, Sketch};
         let mut d = Document::new("persistent typed dimensions");
         let heading = d.new_model_param("45 deg", "deg");
         let sweep = d.new_model_param("180 deg", "deg");
@@ -1358,8 +1362,11 @@ mod tests {
 
     #[test]
     fn versions() {
-        assert_eq!(version_of("solvecraft/1"), Some(1));
-        assert_eq!(version_of("solvecraft/x"), None);
+        assert_eq!(version_of("solidcraft/1"), Some(1));
+        assert_eq!(version_of("solidcraft/x"), None);
+        // Compatibility shim: files saved before the rename carry the legacy tag.
+        assert_eq!(version_of("solvecraft/13"), Some(13));
+        assert_eq!(version_of("solvecraftx/13"), None);
         let d = Document::new("A");
         assert_eq!(d.format, format_string(FORMAT));
         let back = read(&d.to_json()).unwrap();
@@ -1378,44 +1385,44 @@ mod tests {
             )
             .unwrap();
         let mut json: Value = serde_json::from_str(&doc.to_json()).unwrap();
-        json["format"] = Value::from("solvecraft/5");
+        json["format"] = Value::from("solidcraft/5");
         let migrated = read(&json.to_string()).unwrap();
         let crate::FeatureKind::ConstructionPlane { plane } = &migrated.feature(id).unwrap().kind else { panic!("plane") };
         let (values, errors) = migrated.param_values();
         assert!(errors.is_empty());
         let p = migrated.resolve_plane(&values, plane, 0).unwrap();
-        assert_eq!(p.y, solvecraft_geom::Vec3::Z);
-        assert_eq!(p.normal(), -solvecraft_geom::Vec3::Y);
-        assert_eq!(p.origin, solvecraft_geom::Vec3::new(0.0, -7.0, 0.0));
+        assert_eq!(p.y, solidcraft_geom::Vec3::Z);
+        assert_eq!(p.normal(), -solidcraft_geom::Vec3::Y);
+        assert_eq!(p.origin, solidcraft_geom::Vec3::new(0.0, -7.0, 0.0));
         assert_eq!(read(&migrated.to_json()).unwrap(), migrated);
         let fresh = doc.resolve_plane(&values, &crate::PlaneRef::Origin { name: "XZ".into() }, 0).unwrap();
-        assert_eq!(fresh.normal(), solvecraft_geom::Vec3::Y);
+        assert_eq!(fresh.normal(), solidcraft_geom::Vec3::Y);
     }
 
     #[test]
     fn older_upgraded_newer_refused_others_rejected() {
         let mut v: Value = serde_json::from_str(&Document::new("A").to_json()).unwrap();
-        v["format"] = Value::from("solvecraft/1");
+        v["format"] = Value::from("solidcraft/1");
         assert_eq!(read(&v.to_string()).unwrap().format, format_string(FORMAT));
         v.as_object_mut().unwrap().remove("format");
         assert!(read(&v.to_string()).is_ok(), "a file without a format is format 1");
         v["format"] = Value::from(format_string(FORMAT + 1));
         let e = read(&v.to_string()).unwrap_err().to_string();
         assert!(e.contains("newer SolidCraft"), "{e}");
-        for bad in ["solvecraft/0", "acad/3", "solvecraft/-1", "solvecraft/99999999999999999999"] {
+        for bad in ["solidcraft/0", "acad/3", "solidcraft/-1", "solidcraft/99999999999999999999"] {
             v["format"] = Value::from(bad);
             assert!(read(&v.to_string()).is_err(), "{bad}");
         }
         assert!(read("[]").is_err());
         // Format 2 body colours become body appearances.
         let mut old: Value = serde_json::from_str(&Document::new("A").to_json()).unwrap();
-        old["format"] = Value::from("solvecraft/2");
+        old["format"] = Value::from("solidcraft/2");
         old["appearances"] = serde_json::json!({"Body1": [200, 10, 20]});
         let d = read(&old.to_string()).unwrap();
         let l = d.appearances.bodies.get("Body1").unwrap();
         // Format 3 joints (aligned unless flipped) keep their placement.
         let mut j: Value = serde_json::from_str(&Document::new("A").to_json()).unwrap();
-        j["format"] = Value::from("solvecraft/3");
+        j["format"] = Value::from("solidcraft/3");
         j["assembly"] = serde_json::json!({"joints": [{"id": 1, "name": "J", "kind": "rigid", "a": {"occurrence": 0, "snap": {"type": "point", "point": [0, 0, 0]}}, "b": {"occurrence": 0, "snap": {"type": "point", "point": [0, 0, 0]}}}]});
         let dj = read(&j.to_string()).unwrap();
         assert!(dj.assembly.joints[0].flip, "aligned before = not mated now");
@@ -1431,14 +1438,14 @@ mod tests {
     /// file too, before the arrays are deserialised.
     #[test]
     fn oversized_sketches_are_refused_before_typed_decoding() {
-        use solvecraft_sketch::{MAX_CONSTRAINTS, MAX_CURVES, MAX_POINTS, Sketch};
+        use solidcraft_sketch::{MAX_CONSTRAINTS, MAX_CURVES, MAX_POINTS, Sketch};
 
         // A sketch right at the point cap, chained by coincident constraints.
         let mut sketch = Sketch::new();
         let mut previous = 0;
         while sketch.points.len() < MAX_POINTS {
-            let i = sketch.add_point(solvecraft_geom::Vec2::new(0.001 * sketch.points.len() as f64, 0.0), None).unwrap();
-            sketch.add_constraint(solvecraft_sketch::ConstraintKind::Coincident { p: previous, q: i }, None).unwrap();
+            let i = sketch.add_point(solidcraft_geom::Vec2::new(0.001 * sketch.points.len() as f64, 0.0), None).unwrap();
+            sketch.add_constraint(solidcraft_sketch::ConstraintKind::Coincident { p: previous, q: i }, None).unwrap();
             previous = i;
         }
         let mut doc = Document::new("big sketch");

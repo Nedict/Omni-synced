@@ -2,7 +2,7 @@
 //! rank analysis, and evaluates nothing after it; the gesture's end evaluates the model once.
 
 use serde_json::{Value, json};
-use solvecraft_geom::Vec3;
+use solidcraft_geom::Vec3;
 
 use super::solve_counts;
 use crate::Session;
@@ -49,12 +49,12 @@ fn body_contains(s: &Session, p: Vec3) -> bool {
     s.model.state().bodies.first().expect("a body").body.contains(p)
 }
 
-fn pt(s: &Session, id: &str) -> solvecraft_geom::Vec2 {
+fn pt(s: &Session, id: &str) -> solidcraft_geom::Vec2 {
     let sk = s.active_sketch.and_then(|i| s.doc.sketch(i).ok()).expect("sketch mode");
     sk.resolve_point(id).and_then(|i| sk.point(i)).expect("the point")
 }
 
-fn corner(s: &Session) -> solvecraft_geom::Vec2 {
+fn corner(s: &Session) -> solidcraft_geom::Vec2 {
     let id = s.active_sketch.expect("sketch mode");
     let st = s.world_state();
     let sk = &st.sketch(id).expect("the shown sketch").sketch;
@@ -73,7 +73,7 @@ fn a_live_frame_solves_once_and_leaves_the_features_after_the_sketch_stale() {
     assert_eq!(r["sketch"]["solved"], json!(true));
     assert_eq!(r["sketch"]["dof"], json!(2), "the degrees of freedom from before the drag");
     // The sketch shows its new place; the extrude keeps its last result.
-    assert!(corner(&s).dist(solvecraft_geom::Vec2::new(4.0, 5.0)) < 1e-9);
+    assert!(corner(&s).dist(solidcraft_geom::Vec2::new(4.0, 5.0)) < 1e-9);
     let result = s.model.result(extrude).expect("the extrude's result");
     assert!(result.stale);
     assert!(s.model.state().bodies.first().expect("a body").body.same(&body), "the body is not rebuilt");
@@ -100,7 +100,7 @@ fn the_drag_end_evaluates_once_to_the_scripted_drags_result() {
     assert!(live.model.result(extrude).is_some_and(|r| !r.stale && r.error.is_none()));
     // One undo step for the gesture is the UI's business; each frame is still undoable.
     run(&mut live, "edit.undo", json!({}));
-    assert!(corner(&live).dist(solvecraft_geom::Vec2::new(3.0, 5.0)) < 1e-9);
+    assert!(corner(&live).dist(solidcraft_geom::Vec2::new(3.0, 5.0)) < 1e-9);
 }
 
 #[test]
@@ -150,7 +150,7 @@ fn a_drag_reports_how_far_the_geometry_followed() {
         assert_eq!(r["reached"], json!(0.0), "{r}");
         let moved = pt(&s, "l1.end") - before;
         let at = crate::params::vec2(&r["at"]).expect("`at`");
-        assert!(at.dist(solvecraft_geom::Vec2::new(25.0, 10.0) + moved) < 1e-9 && at.y < 20.0, "{r}");
+        assert!(at.dist(solidcraft_geom::Vec2::new(25.0, 10.0) + moved) < 1e-9 && at.y < 20.0, "{r}");
         let to = 40 + 10 * usize::from(live);
         let r = run(&mut s, "sketch.drag", json!({"entity": "l2", "from": [25, to - 10], "to": [25, to]}));
         assert_eq!((&r["reached"], &r["at"]), (&json!(1.0), &json!([25.0, to as f64])), "{r}");
@@ -170,7 +170,7 @@ fn a_live_drag_of_a_lone_sketch_shows_it_without_evaluating() {
     assert_eq!(s.evaluations, 0);
     assert_eq!(solve_counts::take(), (2, 0));
     // The free rectangle's corner moves alone; its profile follows.
-    assert!(corner(&s).dist(solvecraft_geom::Vec2::new(3.0, 5.0)) < 1e-9);
+    assert!(corner(&s).dist(solidcraft_geom::Vec2::new(3.0, 5.0)) < 1e-9);
     let st = s.model.state();
     let profile = st.sketches[0].profiles.first().expect("a profile");
     assert!((profile.area - 22.0 * 15.0).abs() < 1e-9, "{}", profile.area);
@@ -199,8 +199,8 @@ fn the_grab_follows_the_points_that_move() {
     run(&mut s, "sketch.line", json!({"points": [[10, 10], [30, 10]]}));
     run(&mut s, "sketch.constraint.fix", json!({"entities": ["l1.start"]}));
     ui_frames(&mut s, "l1", [20.0, 10.0], &[[0.0, 1.0]; 6]);
-    assert!(pt(&s, "l1.end").dist(solvecraft_geom::Vec2::new(30.0, 16.0)) < 1e-9, "{:?}", pt(&s, "l1.end"));
-    assert!(pt(&s, "l1.start").dist(solvecraft_geom::Vec2::new(10.0, 10.0)) < 1e-12);
+    assert!(pt(&s, "l1.end").dist(solidcraft_geom::Vec2::new(30.0, 16.0)) < 1e-9, "{:?}", pt(&s, "l1.end"));
+    assert!(pt(&s, "l1.start").dist(solidcraft_geom::Vec2::new(10.0, 10.0)) < 1e-12);
 }
 
 #[test]
@@ -219,7 +219,7 @@ fn a_query_during_a_live_drag_does_not_evaluate_the_model() {
     assert_eq!(s.evaluations, 0);
 }
 
-fn sketch_of(s: &Session) -> solvecraft_sketch::Sketch {
+fn sketch_of(s: &Session) -> solidcraft_sketch::Sketch {
     s.active_sketch.and_then(|i| s.doc.sketch(i).ok()).cloned().expect("sketch mode")
 }
 
@@ -232,7 +232,7 @@ fn a_live_frame_solves_the_dimensions_current_values() {
     let param = sk
         .constraints
         .iter()
-        .find(|c| matches!(c.kind, solvecraft_sketch::ConstraintKind::Length { l, .. } if l == l1))
+        .find(|c| matches!(c.kind, solidcraft_sketch::ConstraintKind::Length { l, .. } if l == l1))
         .and_then(|c| c.param.clone())
         .expect("l1's dimension");
     if let Some(p) = s.doc_mut().params.iter_mut().find(|p| p.name == param) {

@@ -8,7 +8,7 @@
 //! was worked out from geometry, found where the reference's point no longer lies, is reported:
 //! only geometry decided.
 
-use solvecraft_geom::{Mesh, Vec3};
+use solidcraft_geom::{Mesh, Vec3};
 
 use crate::history_names::{Match, Names};
 use crate::naming::{self, closest, edge_names, face_names, legacy_edge_names, legacy_face_names, strip_piece};

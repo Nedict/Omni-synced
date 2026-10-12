@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use solvecraft_engine::doc::ModelState;
-use solvecraft_engine::geom::{Loop2, Plane, Region2, Vec2, Vec3};
-use solvecraft_engine::render::{PixelCurveView, SampledPath, SamplingBudget, SamplingQuality, sample_segment, sample_segment_unclipped};
-use solvecraft_engine::sketch::Sketch;
+use solidcraft_engine::doc::ModelState;
+use solidcraft_engine::geom::{Loop2, Plane, Region2, Vec2, Vec3};
+use solidcraft_engine::render::{PixelCurveView, SampledPath, SamplingBudget, SamplingQuality, sample_segment, sample_segment_unclipped};
+use solidcraft_engine::sketch::Sketch;
 
 use crate::SolveApp;
 use crate::viewport::Proj;

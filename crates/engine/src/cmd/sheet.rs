@@ -2,10 +2,10 @@
 //! the flat pattern (outline, bend lines, bend table) and its DXF export.
 
 use serde_json::{Value, json};
-use solvecraft_doc::FeatureKind;
-use solvecraft_doc::expr::Kind;
-use solvecraft_doc::sheet::{SheetBody, SheetRule};
-use solvecraft_geom::{Vec2, Vec3};
+use solidcraft_doc::FeatureKind;
+use solidcraft_doc::expr::Kind;
+use solidcraft_doc::sheet::{SheetBody, SheetRule};
+use solidcraft_geom::{Vec2, Vec3};
 
 use super::CommandSpec;
 use super::features::{add_feature, check_expr, feature_sketch, profiles, sketch_id};
@@ -157,7 +157,7 @@ fn fold(s: &mut Session, p: &Value) -> Result<Value> {
             let ss = st.sketch(sk).ok_or_else(|| bad(cmd, "no such sketch"))?;
             let ci = ss.sketch.curve_index(&c).ok_or_else(|| bad(cmd, format!("no curve `{c}` in the sketch")))?;
             let (a, b) = match ss.sketch.segs(ci).as_slice() {
-                [solvecraft_geom::Seg2::Line { a, b }] => (ss.plane.to_world(*a), ss.plane.to_world(*b)),
+                [solidcraft_geom::Seg2::Line { a, b }] => (ss.plane.to_world(*a), ss.plane.to_world(*b)),
                 _ => return Err(bad(cmd, "the fold line must be a sketch line")),
             };
             (Some(sk), Some(c), a, b)
@@ -323,7 +323,7 @@ fn flat_pattern(s: &mut Session, p: &Value) -> Result<Value> {
 pub fn flat_dxf(sh: &SheetBody) -> Result<String> {
     let regions = sh.flat_regions()?;
     let pockets = sh.machining()?;
-    let pocket_layer = |p: &solvecraft_doc::sheet::SheetPocket| {
+    let pocket_layer = |p: &solidcraft_doc::sheet::SheetPocket| {
         let side = if p.z0 == 0.0 {
             "BOTTOM"
         } else if p.z1 == sh.t {
@@ -384,9 +384,9 @@ pub fn flat_dxf(sh: &SheetBody) -> Result<String> {
     for (h, layer) in loops {
         // A circle is often represented by two semicircles. Keep the whole analytic
         // boundary as one CIRCLE rather than approximating outer boundaries with chords.
-        if let Some(solvecraft_geom::Seg2::Arc { center, radius, sweep, .. }) = h.segs.first() {
-            let total: f64 = h.segs.iter().filter_map(|s| if let solvecraft_geom::Seg2::Arc { sweep, .. } = s { Some(*sweep) } else { None }).sum();
-            let circular = h.segs.iter().all(|s| matches!(s, solvecraft_geom::Seg2::Arc { center: c, radius: r, sweep: a, .. } if c.dist(*center) < 1e-9 && (*r-*radius).abs() < 1e-9 && a.signum() == sweep.signum()));
+        if let Some(solidcraft_geom::Seg2::Arc { center, radius, sweep, .. }) = h.segs.first() {
+            let total: f64 = h.segs.iter().filter_map(|s| if let solidcraft_geom::Seg2::Arc { sweep, .. } = s { Some(*sweep) } else { None }).sum();
+            let circular = h.segs.iter().all(|s| matches!(s, solidcraft_geom::Seg2::Arc { center: c, radius: r, sweep: a, .. } if c.dist(*center) < 1e-9 && (*r-*radius).abs() < 1e-9 && a.signum() == sweep.signum()));
             if circular && (total.abs() - std::f64::consts::TAU).abs() < 1e-9 {
                 w(0, "CIRCLE");
                 w(8, &layer);
@@ -398,7 +398,7 @@ pub fn flat_dxf(sh: &SheetBody) -> Result<String> {
         }
         for seg in &h.segs {
             match *seg {
-                solvecraft_geom::Seg2::Arc { center, radius, start, sweep } => {
+                solidcraft_geom::Seg2::Arc { center, radius, start, sweep } => {
                     if (sweep.abs() - std::f64::consts::TAU).abs() < 1e-9 {
                         w(0, "CIRCLE");
                         w(8, &layer);
@@ -438,7 +438,7 @@ fn export_dxf(s: &mut Session, p: &Value) -> Result<Value> {
     let sh = sheet_of(s, p, cmd)?;
     let text = flat_dxf(&sh)?;
     if let Some(path) = str_(p, "path").filter(|x| !x.trim().is_empty()) {
-        solvecraft_io::vfs::write(path, text.as_bytes()).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+        solidcraft_io::vfs::write(path, text.as_bytes()).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
         return Ok(json!({"path": path, "bends": sh.bends().len()}));
     }
     Ok(json!({"dxf": text, "bends": sh.bends().len()}))
@@ -482,7 +482,7 @@ fn export_bend_table(s: &mut Session, p: &Value) -> Result<Value> {
         csv
     };
     if let Some(path) = str_(p, "path").filter(|x| !x.trim().is_empty()) {
-        solvecraft_io::vfs::write(path, text.as_bytes()).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+        solidcraft_io::vfs::write(path, text.as_bytes()).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
         return Ok(json!({"path": path, "format": format, "bends": sh.bends().len()}));
     }
     Ok(json!({"format": format, "text": text, "bends": sh.bends().len()}))

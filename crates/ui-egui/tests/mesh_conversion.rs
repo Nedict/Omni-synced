@@ -1,12 +1,12 @@
 use serde_json::json;
-use solvecraft_engine::doc::{Document, FeatureKind, MeshData};
-use solvecraft_engine::geom::Vec3;
-use solvecraft_engine::{Sel, Session};
-use solvecraft_ui_egui::scenario::Harness;
+use solidcraft_engine::doc::{Document, FeatureKind, MeshData};
+use solidcraft_engine::geom::Vec3;
+use solidcraft_engine::{Sel, Session};
+use solidcraft_ui_egui::scenario::Harness;
 
 #[test]
 fn convert_mesh_uses_preselection_and_reopens_its_timeline_dialog() {
-    let body = solvecraft_engine::kernel::box_solid(Vec3::ZERO, Vec3::new(10., 20., 30.)).unwrap();
+    let body = solidcraft_engine::kernel::box_solid(Vec3::ZERO, Vec3::new(10., 20., 30.)).unwrap();
     let mesh = body.tessellate(0.01).unwrap();
     let mut doc = Document::default();
     doc.add_feature(
@@ -36,7 +36,7 @@ fn convert_mesh_uses_preselection_and_reopens_its_timeline_dialog() {
     assert_eq!(response["ok"], true, "{response}");
     let dialog = h.app.dialog.as_ref().unwrap();
     assert!(
-        matches!(&dialog.kind,solvecraft_ui_egui::dialogs::Kind::Surface(solvecraft_ui_egui::dialogs_surface::Surf::ConvertMesh { tolerance }) if tolerance=="0.05 mm")
+        matches!(&dialog.kind,solidcraft_ui_egui::dialogs::Kind::Surface(solidcraft_ui_egui::dialogs_surface::Surf::ConvertMesh { tolerance }) if tolerance=="0.05 mm")
     );
     assert!(h.app.session.model.state().body("Mesh").unwrap().body.is_mesh());
     h.step(&json!({"key":"Escape"})).unwrap();

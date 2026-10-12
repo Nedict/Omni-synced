@@ -3,11 +3,11 @@
 
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, pos2, vec2};
 use serde_json::json;
-use solvecraft_engine::Sel;
-use solvecraft_engine::geom::{Vec2, Vec3};
-use solvecraft_engine::render::{Camera, Mat4, Rgb};
-use solvecraft_engine::sketch::CurveKind;
-use solvecraft_engine::view::{colors, grid_step, sketch_consumed, sketch_lines_with_sampler};
+use solidcraft_engine::Sel;
+use solidcraft_engine::geom::{Vec2, Vec3};
+use solidcraft_engine::render::{Camera, Mat4, Rgb};
+use solidcraft_engine::sketch::CurveKind;
+use solidcraft_engine::view::{colors, grid_step, sketch_consumed, sketch_lines_with_sampler};
 use std::hash::{Hash, Hasher};
 
 use crate::gpu::{GpuScene, GpuTarget, SceneSlot, ViewportCallback};
@@ -29,7 +29,7 @@ pub enum NavMode {
 #[derive(Default)]
 pub struct ViewportState {
     /// Per-body bounding boxes for fast picking, keyed by the model they were taken from.
-    pick_bounds: std::sync::Mutex<Option<(usize, std::sync::Arc<Vec<(String, solvecraft_engine::geom::Aabb3)>>)>>,
+    pick_bounds: std::sync::Mutex<Option<(usize, std::sync::Arc<Vec<(String, solidcraft_engine::geom::Aabb3)>>)>>,
     /// The last pick (its key and hits): reused while nothing it depends on changed.
     last_pick: Option<(u64, Vec<Hit>)>,
     pub rect: Option<Rect>,
@@ -325,7 +325,7 @@ fn build_scene(app: &SolveApp) -> GpuScene {
         let hidden_col = c4(tk.text.gamma_multiply(0.35));
         // Appearances: the body's opacity, and faces with looks of their own.
         let opacity = s.doc.model_body_opacity(b);
-        let face_looks: std::collections::HashMap<usize, solvecraft_engine::doc::appearance::Look> =
+        let face_looks: std::collections::HashMap<usize, solidcraft_engine::doc::appearance::Look> =
             if shaded { s.doc.face_colors(b).into_iter().collect() } else { Default::default() };
         for (ti, t) in m.triangles.iter().enumerate().filter(|_| shaded) {
             let (mut col, a) = match m.tri_face.get(ti).and_then(|f| face_looks.get(&(*f as usize))) {
@@ -371,7 +371,7 @@ fn build_scene(app: &SolveApp) -> GpuScene {
     if let Some((o, n)) = section_plane(app) {
         let col = c4(tk.text.gamma_multiply(0.9));
         for b in st.bodies.iter().filter(|b| app.session.body_visible(&b.name)) {
-            for (a, c) in solvecraft_engine::view::section_segments(&b.mesh(), o, n) {
+            for (a, c) in solidcraft_engine::view::section_segments(&b.mesh(), o, n) {
                 sc.line(a.to_f32(), c.to_f32(), col, 1.8, false);
             }
         }
@@ -444,9 +444,9 @@ fn build_sketch_scene(app: &SolveApp, proj: &Proj) -> GpuScene {
     sc
 }
 
-fn ground_shadow(sc: &mut GpuScene, app: &SolveApp, st: &solvecraft_engine::doc::ModelState) {
+fn ground_shadow(sc: &mut GpuScene, app: &SolveApp, st: &solidcraft_engine::doc::ModelState) {
     // The bodies' box in the camera's Z-up frame (the ground is its XY plane).
-    let mut b = solvecraft_engine::geom::Aabb3::EMPTY;
+    let mut b = solidcraft_engine::geom::Aabb3::EMPTY;
     for x in st.bodies.iter().filter(|x| app.session.body_visible(&x.name)) {
         let bb = x.mesh().bounds();
         if bb.is_empty() {
@@ -561,8 +561,8 @@ pub fn origin_axes(app: &SolveApp) -> Vec<(&'static str, Vec3)> {
 /// from, to).
 pub fn construction_axis_segments(app: &SolveApp) -> Vec<(String, Vec3, Vec3)> {
     let h = origin_size(app.cam.half_height()) * AXIS_LEN;
-    let bb = solvecraft_engine::view::bounds(&app.session);
-    solvecraft_engine::view::construction_axes(&app.session)
+    let bb = solidcraft_engine::view::bounds(&app.session);
+    solidcraft_engine::view::construction_axes(&app.session)
         .into_iter()
         .filter(|(_, n, _, _)| !app.session.visibility.hidden_origin.contains(n))
         .map(|(_, name, o, d)| {
@@ -586,7 +586,7 @@ pub fn construction_axis_segments(app: &SolveApp) -> Vec<(String, Vec3, Vec3)> {
 
 /// Construction points shown: (name, position).
 pub fn construction_points(app: &SolveApp) -> Vec<(String, Vec3)> {
-    solvecraft_engine::view::construction_points(&app.session)
+    solidcraft_engine::view::construction_points(&app.session)
         .into_iter()
         .filter(|(_, n, _)| !app.session.visibility.hidden_origin.contains(n))
         .map(|(_, n, p)| (n, p))
@@ -596,7 +596,7 @@ pub fn construction_points(app: &SolveApp) -> Vec<(String, Vec3)> {
 /// Construction planes drawn as squares around their origin: (name, normal, quad).
 pub fn construction_quads(app: &SolveApp) -> Vec<(String, Vec3, [Vec3; 4])> {
     let h = origin_size(app.cam.half_height()) * 1.2;
-    solvecraft_engine::view::construction_planes(&app.session)
+    solidcraft_engine::view::construction_planes(&app.session)
         .into_iter()
         .filter(|(_, n, _)| !app.session.visibility.hidden_origin.contains(n))
         .map(|(_, name, pl)| {
@@ -611,8 +611,8 @@ pub fn construction_quads(app: &SolveApp) -> Vec<(String, Vec3, [Vec3; 4])> {
 /// Bounding boxes of the shown model's bodies (cached until the model changes).
 fn body_bounds(
     app: &SolveApp,
-    st: &std::sync::Arc<solvecraft_engine::doc::ModelState>,
-) -> std::sync::Arc<Vec<(String, solvecraft_engine::geom::Aabb3)>> {
+    st: &std::sync::Arc<solidcraft_engine::doc::ModelState>,
+) -> std::sync::Arc<Vec<(String, solidcraft_engine::geom::Aabb3)>> {
     let key = std::sync::Arc::as_ptr(st) as usize;
     if let Ok(mut g) = app.viewport.pick_bounds.lock() {
         if let Some((k, b)) = g.as_ref()
@@ -628,9 +628,9 @@ fn body_bounds(
 }
 
 /// The model's extent: bodies (from the cached boxes) and sketches.
-pub fn model_bounds(app: &SolveApp) -> solvecraft_engine::geom::Aabb3 {
+pub fn model_bounds(app: &SolveApp) -> solidcraft_engine::geom::Aabb3 {
     let st = app.session.world_state();
-    let mut b = body_bounds(app, &st).iter().fold(solvecraft_engine::geom::Aabb3::EMPTY, |a, (_, x)| a.union(x));
+    let mut b = body_bounds(app, &st).iter().fold(solidcraft_engine::geom::Aabb3::EMPTY, |a, (_, x)| a.union(x));
     for ss in &st.sketches {
         if let Some((lo, hi)) = ss.sketch.bounds() {
             for p in [lo, hi] {
@@ -645,7 +645,7 @@ pub fn model_bounds(app: &SolveApp) -> solvecraft_engine::geom::Aabb3 {
 }
 
 /// Where a ray enters a box (None: it misses).
-fn ray_box(o: Vec3, d: Vec3, b: &solvecraft_engine::geom::Aabb3, pad: f64) -> Option<f64> {
+fn ray_box(o: Vec3, d: Vec3, b: &solidcraft_engine::geom::Aabb3, pad: f64) -> Option<f64> {
     let (mut t0, mut t1) = (f64::NEG_INFINITY, f64::INFINITY);
     for (oo, dd, lo, hi) in [(o.x, d.x, b.min.x, b.max.x), (o.y, d.y, b.min.y, b.max.y), (o.z, d.z, b.min.z, b.max.z)] {
         let (lo, hi) = (lo - pad, hi + pad);
@@ -663,7 +663,7 @@ fn ray_box(o: Vec3, d: Vec3, b: &solvecraft_engine::geom::Aabb3, pad: f64) -> Op
 }
 
 /// A box's outline on screen, grown by `px` (None: behind the eye).
-fn screen_box(proj: &Proj, b: &solvecraft_engine::geom::Aabb3, px: f32) -> Option<Rect> {
+fn screen_box(proj: &Proj, b: &solidcraft_engine::geom::Aabb3, px: f32) -> Option<Rect> {
     let mut r = Rect::NOTHING;
     for i in 0..8 {
         let p = Vec3::new(
@@ -917,7 +917,7 @@ fn pick_with_sketch_points(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_
 
 /// The section cut shown now: the open Section Analysis dialog's plane, else the session's.
 /// The active sketch's display options (defaults when not sketching).
-pub fn active_view(app: &SolveApp) -> solvecraft_engine::sketch::SketchView {
+pub fn active_view(app: &SolveApp) -> solidcraft_engine::sketch::SketchView {
     let st = app.session.world_state();
     app.session.active_sketch.and_then(|s| st.sketch(s)).map(|ss| ss.sketch.view.clone()).unwrap_or_default()
 }
@@ -959,7 +959,7 @@ fn feature_geometry(app: &SolveApp, id: u64) -> Vec<Sel> {
             out.push(Sel::Body { name: b.name.clone() });
             continue;
         }
-        let names = solvecraft_engine::doc::naming::face_names(b);
+        let names = solidcraft_engine::doc::naming::face_names(b);
         let m = b.mesh();
         for (index, _) in names.iter().enumerate().filter(|(_, n)| n.starts_with(&prefix)) {
             if let Some(point) = m.triangles.iter().zip(&m.tri_face).find_map(|(t, f)| {
@@ -992,9 +992,9 @@ fn displayed_selection(app: &SolveApp, item: &Sel) -> Vec<Sel> {
 
 /// The box around what is selected (bodies, faces, edges, vertices, sketch curves and the
 /// bodies of selected features), where it is shown.
-pub fn selection_bounds(app: &SolveApp) -> Option<solvecraft_engine::geom::Aabb3> {
+pub fn selection_bounds(app: &SolveApp) -> Option<solidcraft_engine::geom::Aabb3> {
     let st = app.session.world_state();
-    let mut b = solvecraft_engine::geom::Aabb3::EMPTY;
+    let mut b = solidcraft_engine::geom::Aabb3::EMPTY;
     for s in app.session.selection.iter().flat_map(|item| displayed_selection(app, item)) {
         match &s {
             Sel::Body { name } => {
@@ -1056,7 +1056,7 @@ pub fn selection_bounds(app: &SolveApp) -> Option<solvecraft_engine::geom::Aabb3
 /// The section as the shader's clip plane (normal, d), zero when there is none.
 /// The surface analysis for the shader (see `gpu::ViewportCallback::analysis`).
 fn analysis_uniform(app: &SolveApp) -> [f32; 8] {
-    use solvecraft_engine::SurfaceAnalysis as A;
+    use solidcraft_engine::SurfaceAnalysis as A;
     match app.session.analysis {
         Some(A::Zebra { stripes }) => [1.0, stripes as f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
         Some(A::Draft { pull, angle }) => [2.0, angle as f32, 0.0, 0.0, pull.x as f32, pull.y as f32, pull.z as f32, 0.0],
@@ -1128,7 +1128,7 @@ pub fn candidate(app: &SolveApp, hits: &[Hit]) -> Option<(Hit, Sel)> {
 
 /// The edge a selection refers to now: by index if it still passes through the stored point,
 /// otherwise the edge nearest the point.
-fn edge_of(m: &solvecraft_engine::geom::Mesh, index: usize, point: Vec3) -> Option<&Vec<Vec3>> {
+fn edge_of(m: &solidcraft_engine::geom::Mesh, index: usize, point: Vec3) -> Option<&Vec<Vec3>> {
     let tol = m.bounds().diagonal().max(1.0) * 1e-6;
     let near = |e: &Vec<Vec3>| e.windows(2).map(|w| point.dist_to_segment(w[0], w[1])).fold(f64::INFINITY, f64::min);
     if let Some(e) = m.edges.get(index)
@@ -1139,7 +1139,7 @@ fn edge_of(m: &solvecraft_engine::geom::Mesh, index: usize, point: Vec3) -> Opti
     m.edges.iter().min_by(|a, b| near(a).total_cmp(&near(b))).filter(|e| near(e) < tol * 1e3)
 }
 
-fn face_tris(sc: &mut GpuScene, m: &solvecraft_engine::geom::Mesh, face: usize, col: [u8; 4], lit: bool) {
+fn face_tris(sc: &mut GpuScene, m: &solidcraft_engine::geom::Mesh, face: usize, col: [u8; 4], lit: bool) {
     for (t, f) in m.triangles.iter().zip(&m.tri_face) {
         if *f as usize != face {
             continue;
@@ -1167,7 +1167,7 @@ fn edge_lines(sc: &mut GpuScene, e: &[Vec3], core: Color32, halo: Color32, w: f3
 }
 
 /// The outline of a highlighted face where the model hides it (dimmed).
-fn hidden_face_outline(sc: &mut GpuScene, m: &solvecraft_engine::geom::Mesh, face: usize, col: Color32) {
+fn hidden_face_outline(sc: &mut GpuScene, m: &solidcraft_engine::geom::Mesh, face: usize, col: Color32) {
     for (ei, e) in m.edges.iter().enumerate() {
         let on = m.edge_faces.get(ei).is_some_and(|f| f.iter().any(|x| *x as usize == face));
         if on && m.edge_pickable(ei) {
@@ -1189,7 +1189,7 @@ pub(crate) fn profile_fill(sc: &mut GpuScene, app: &SolveApp, sketch: u64, index
     };
     // Lift toward the eye so a profile on a face shows over it.
     let lift = app.cam.back() * (app.cam.half_height() * 0.002);
-    let w = |q: solvecraft_engine::geom::Vec2| (plane.to_world(q) + lift).to_f32();
+    let w = |q: solidcraft_engine::geom::Vec2| (plane.to_world(q) + lift).to_f32();
     let col = c4(fill);
     // In the translucent pass (after the grid and edges) so it covers them.
     let proj = display_proj(app);
@@ -1467,7 +1467,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
 }
 
 /// A body's display colour (appearance, material or imported colour), if it has one.
-fn body_color(doc: &solvecraft_engine::doc::Document, b: &solvecraft_engine::doc::ModelBody) -> Option<Color32> {
+fn body_color(doc: &solidcraft_engine::doc::Document, b: &solidcraft_engine::doc::ModelBody) -> Option<Color32> {
     let to8 = |x: f32| (x.clamp(0.0, 1.0) * 255.0).round() as u8;
     doc.body_color(b).map(|[r, g, b]| Color32::from_rgb(to8(r), to8(g), to8(b)))
 }
@@ -2080,7 +2080,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             let at = match app.session.execute("sketch.drag", &json!({"entity": id, "from": [from.x, from.y], "to": [q.x, q.y], "live": true})) {
                 Ok(r) => {
                     app.session.undo.truncate(depth + 1);
-                    r.get("at").and_then(solvecraft_engine::params::vec2).unwrap_or(q)
+                    r.get("at").and_then(solidcraft_engine::params::vec2).unwrap_or(q)
                 }
                 Err(_) => from,
             };
@@ -2147,7 +2147,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     points_2d(app, &painter, &proj);
     if let Some((plane, sketch)) = crate::sketch_attachment_ui::lost_guide(app)
         && let Some((low, high)) = sketch.bounds()
-        && let Some(at) = proj.to_screen(plane.to_world(solvecraft_engine::geom::Vec2::new((low.x + high.x) * 0.5, high.y)))
+        && let Some(at) = proj.to_screen(plane.to_world(solidcraft_engine::geom::Vec2::new((low.x + high.x) * 0.5, high.y)))
     {
         painter.text(at - vec2(0.0, 12.0), Align2::CENTER_BOTTOM, "Saved sketch plane — attachment lost", FontId::proportional(12.0), t.warning);
     }
@@ -2209,7 +2209,7 @@ fn select(app: &mut SolveApp, sel: Option<Sel>, add: bool) {
 
 /// Expand a visible rim or surface into the kernel pieces a command needs. The original
 /// face pick keeps its point (used by tools such as Hole and construction geometry).
-pub(crate) fn grouped_selection(s: &solvecraft_engine::Session, sel: &Sel) -> Vec<Sel> {
+pub(crate) fn grouped_selection(s: &solidcraft_engine::Session, sel: &Sel) -> Vec<Sel> {
     let st = s.world_state();
     match sel {
         Sel::Edge { body, index, .. } => {
@@ -2250,7 +2250,7 @@ pub(crate) fn grouped_selection(s: &solvecraft_engine::Session, sel: &Sel) -> Ve
 }
 
 /// Measure keeps one entry per visible item, rather than using its two slots for kernel halves.
-pub(crate) fn measurement_selection(s: &solvecraft_engine::Session, sel: &Sel) -> Sel {
+pub(crate) fn measurement_selection(s: &solidcraft_engine::Session, sel: &Sel) -> Sel {
     let pieces = grouped_selection(s, sel);
     let mut representative = sel.clone();
     match &mut representative {
@@ -2301,7 +2301,7 @@ fn box_select(app: &mut SolveApp, proj: &Proj, bx: BoxSel, add: bool) {
             let takes = if bx.crossing {
                 parts.iter().any(|part| bx.takes(part))
             } else {
-                sampled.quality == solvecraft_engine::render::SamplingQuality::Complete
+                sampled.quality == solidcraft_engine::render::SamplingQuality::Complete
                     && !parts.is_empty()
                     && parts.iter().all(|part| bx.takes(part))
             };
@@ -2310,7 +2310,7 @@ fn box_select(app: &mut SolveApp, proj: &Proj, bx: BoxSel, add: bool) {
             }
         }
         for (i, p) in ss.sketch.points.iter().enumerate().filter(|_| !off("sketch") && !off("sketch_points")) {
-            if i != 0 && solvecraft_engine::view::sketch_point_visible(&ss.sketch, i) && bx.takes(&to2(&[ss.plane.to_world(p.pos)])) {
+            if i != 0 && solidcraft_engine::view::sketch_point_visible(&ss.sketch, i) && bx.takes(&to2(&[ss.plane.to_world(p.pos)])) {
                 out.push(Sel::SketchPoint { id: p.id.clone() });
             }
         }
@@ -2483,7 +2483,7 @@ fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let locked = sk.locked_points();
     let virtual_corners: Vec<usize> = sk.virtual_corners().into_iter().map(|(i, _)| i).collect();
     for (i, p) in sk.points.iter().enumerate() {
-        if !solvecraft_engine::view::sketch_point_visible(sk, i) {
+        if !solidcraft_engine::view::sketch_point_visible(sk, i) {
             continue;
         }
         let hidden = (sk.view.hide_points && i != 0) || (sk.view.hide_projected && p.link.is_some());
@@ -2531,14 +2531,14 @@ fn cpu_render(app: &mut SolveApp, ctx: &egui::Context, painter: &egui::Painter, 
     (rect.width() as u32, rect.height() as u32).hash(&mut h);
     let key = h.finish();
     if app.viewport.cpu.as_ref().is_none_or(|(k, _)| *k != key) {
-        let mut budget = solvecraft_engine::render::SamplingBudget::new(131_072, 1_048_576);
+        let mut budget = solidcraft_engine::render::SamplingBudget::new(131_072, 1_048_576);
         let scene =
-            solvecraft_engine::view::scene_with_section_and_sketch_sampler(&app.session, &proj.cam, section_plane(app), |sk, index, plane| {
+            solidcraft_engine::view::scene_with_section_and_sketch_sampler(&app.session, &proj.cam, section_plane(app), |sk, index, plane| {
                 crate::sketch_display::curve_with_budget(sk, index, plane, proj, app.viewport.pixels_per_point(), &mut budget).parts
             });
         let w = (rect.width() as usize).clamp(16, 4096);
         let hh = (rect.height() as usize).clamp(16, 4096);
-        let c = solvecraft_engine::render::render(&scene, &proj.cam, w, hh);
+        let c = solidcraft_engine::render::render(&scene, &proj.cam, w, hh);
         let img = egui::ColorImage::from_rgba_unmultiplied([c.w, c.h], &c.rgba);
         let tex = ctx.load_texture("sc_cpu_viewport", img, egui::TextureOptions::LINEAR);
         app.viewport.cpu = Some((key, tex));
@@ -2810,7 +2810,7 @@ fn nearest_quarter_turn(yaw: f64) -> f64 {
 pub fn look_at_selection(app: &mut SolveApp) {
     let target = app.session.selection.iter().find_map(|s| match s {
         Sel::Face { body, index, point } => crate::dialogs::planar_face(&app.session, body, *index).map(|(_, n)| (*point, n)),
-        Sel::Plane { name } => solvecraft_engine::geom::Plane::named(name).map(|p| (p.origin, p.normal())),
+        Sel::Plane { name } => solidcraft_engine::geom::Plane::named(name).map(|p| (p.origin, p.normal())),
         _ => None,
     });
     match target {
@@ -2963,7 +2963,7 @@ mod tests {
         }
         let mut h = crate::scenario::Harness::new();
         h.app.run("solid.box", json!({"length":40,"width":30,"height":20})).unwrap();
-        let cam = solvecraft_engine::view::home_camera(&h.app.session);
+        let cam = solidcraft_engine::view::home_camera(&h.app.session);
         let whole = pixels(&mut h, cam);
         let before = h.app.session.doc.clone();
         let undo = h.app.session.undo.len();
@@ -3031,7 +3031,7 @@ mod tests {
 
     #[test]
     fn timeline_modifier_highlight_follows_edits_and_rollback() {
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), crate::Services::default());
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
         app.run("solid.box", json!({"length":20,"width":20,"height":20})).unwrap();
         let id = app.run("solid.fillet", json!({"edges":[[0,0,10]],"radius":2})).unwrap()["feature"].as_u64().unwrap();
         // A later chamfer changes the same body without consuming the fillet.
@@ -3052,7 +3052,7 @@ mod tests {
 
     #[test]
     fn timeline_modifier_highlight_follows_component_instances() {
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), crate::Services::default());
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
         app.run("component.create", json!({"name":"Part"})).unwrap();
         app.run("solid.box", json!({"length":20,"width":20,"height":20})).unwrap();
         let id = app.run("solid.fillet", json!({"edges":[[0,0,10]],"radius":2})).unwrap()["feature"].as_u64().unwrap();
@@ -3082,7 +3082,7 @@ mod tests {
     }
 
     fn hover_app(gpu: bool) -> SolveApp {
-        let mut s = solvecraft_engine::Session::default();
+        let mut s = solidcraft_engine::Session::default();
         s.execute("sketch.create", &json!({"plane": "XY"})).unwrap();
         s.execute("sketch.point", &json!({"point": [0, 0]})).unwrap();
         let mut app = SolveApp::new(s, crate::Services::default());
@@ -3242,7 +3242,7 @@ mod tests {
         app.viewport.spin = false;
         hover_frame(&mut app, &ctx, vec![]);
         assert!(app.viewport.hover.is_some());
-        app.cam_anim = Some(solvecraft_engine::render::CameraAnim::new(app.cam, app.cam, 0.0));
+        app.cam_anim = Some(solidcraft_engine::render::CameraAnim::new(app.cam, app.cam, 0.0));
         for _ in 0..3 {
             hover_frame(&mut app, &ctx, vec![]);
             assert!(app.viewport.hover.is_none());
@@ -3253,7 +3253,7 @@ mod tests {
     }
 
     fn cylinder_app() -> SolveApp {
-        let mut s = solvecraft_engine::Session::default();
+        let mut s = solidcraft_engine::Session::default();
         s.execute("solid.cylinder", &json!({"radius": 10, "height": 20})).unwrap();
         let mut app = SolveApp::new(s, crate::Services::default());
         app.ui.show_origin = false;
@@ -3262,7 +3262,7 @@ mod tests {
 
     #[test]
     fn smooth_wall_display_preserves_wireframe_and_edge_selection() {
-        let mut s = solvecraft_engine::Session::default();
+        let mut s = solidcraft_engine::Session::default();
         let sketch = s.execute("sketch.create", &json!({"plane":"XY"})).unwrap()["sketch"].as_u64().unwrap();
         s.execute("sketch.ellipse", &json!({"center":[0,0],"major":[25,0],"minor_radius":5})).unwrap();
         let inner =
@@ -3299,22 +3299,22 @@ mod tests {
         let mut without_display_mask = (*mesh).clone();
         without_display_mask.smooth_edges.clear();
         assert_eq!(mesh.surface_patch(mesh.edge_faces[smooth][0] as usize), without_display_mask.surface_patch(mesh.edge_faces[smooth][0] as usize));
-        let cam = solvecraft_engine::view::home_camera(&app.session);
-        let cpu = solvecraft_engine::view::scene(&app.session, &cam);
-        let actual_edges = cpu.lines.iter().filter(|line| line.color == solvecraft_engine::view::colors::EDGE).count();
+        let cam = solidcraft_engine::view::home_camera(&app.session);
+        let cpu = solidcraft_engine::view::scene(&app.session, &cam);
+        let actual_edges = cpu.lines.iter().filter(|line| line.color == solidcraft_engine::view::colors::EDGE).count();
         assert_eq!(actual_edges, mesh.edges.iter().enumerate().filter(|(i, _)| mesh.shaded_edge_visible(*i)).count());
-        if let Ok(directory) = std::env::var("SOLVECRAFT_SMOOTH_SCREENSHOTS") {
+        if let Ok(directory) = solidcraft_engine::geom::env::var("SMOOTH_SCREENSHOTS").ok_or(()) {
             std::fs::create_dir_all(&directory).unwrap();
             for (name, old_edges, wireframe) in [("after", false, false), ("before", true, false), ("wireframe", true, true)] {
-                let mut scene = solvecraft_engine::view::scene(&app.session, &cam);
-                scene.lines.retain(|line| line.color == solvecraft_engine::view::colors::EDGE);
+                let mut scene = solidcraft_engine::view::scene(&app.session, &cam);
+                scene.lines.retain(|line| line.color == solidcraft_engine::view::colors::EDGE);
                 if old_edges {
                     scene.lines.clear();
                     for (i, edge) in mesh.edges.iter().enumerate() {
                         if mesh.edge_pickable(i) {
-                            scene.lines.push(solvecraft_engine::render::SceneLine {
+                            scene.lines.push(solidcraft_engine::render::SceneLine {
                                 points: edge.clone(),
-                                color: solvecraft_engine::view::colors::EDGE,
+                                color: solidcraft_engine::view::colors::EDGE,
                                 width: 1.2,
                                 on_top: false,
                             });
@@ -3324,7 +3324,7 @@ mod tests {
                 if wireframe {
                     scene.meshes.clear();
                 }
-                let png = solvecraft_engine::render::render_png(&scene, &cam, 1200, 800).unwrap();
+                let png = solidcraft_engine::render::render_png(&scene, &cam, 1200, 800).unwrap();
                 std::fs::write(std::path::Path::new(&directory).join(format!("smooth-ring-{name}.png")), png).unwrap();
             }
         }
@@ -3332,7 +3332,7 @@ mod tests {
 
     #[test]
     fn certified_small_crease_overrides_old_seam_fit_for_picking_and_patches() {
-        let mut s = solvecraft_engine::Session::default();
+        let mut s = solidcraft_engine::Session::default();
         let sketch = s.execute("sketch.create", &json!({"plane":"XY"})).unwrap()["sketch"].as_u64().unwrap();
         let step = std::f64::consts::TAU / 8.;
         let k = 4. / 3. * (step / 4.).tan() * 10.;
@@ -3683,7 +3683,7 @@ mod tests {
     #[test]
     fn trackpad_gestures_over_dialogs_do_not_move_the_view() {
         let ctx = egui::Context::default();
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), crate::Services::default());
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
         assert!(app.preferences.trackpad_pan);
         app.viewport.no_pixels = true;
         crate::help::run(&mut app, &ctx, "shortcuts");
@@ -3741,7 +3741,7 @@ mod tests {
     fn shortcuts_window_wheel_does_not_zoom_the_viewport() {
         for smooth in [true, false] {
             let ctx = egui::Context::default();
-            let mut app = SolveApp::new(solvecraft_engine::Session::default(), crate::Services::default());
+            let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
             app.preferences.smooth_wheel_zoom = smooth;
             app.preferences.trackpad_pan = false;
             app.viewport.no_pixels = true;
@@ -3883,12 +3883,12 @@ mod tests {
 
     #[test]
     fn section_outlines_follow_the_cut() {
-        let mut s = solvecraft_engine::Session::default();
+        let mut s = solidcraft_engine::Session::default();
         s.execute("solid.box", &json!({"length": 40, "width": 30, "height": 20})).unwrap();
         let st = s.model.state();
         let m = st.bodies[0].mesh();
         let (o, n) = (Vec3::new(0.0, 15.0, 0.0), Vec3::new(0.0, -1.0, 0.0));
-        let segs = solvecraft_engine::view::section_segments(&m, o, n);
+        let segs = solidcraft_engine::view::section_segments(&m, o, n);
         assert!(segs.len() >= 4, "{segs:?}");
         // On the plane (a hair to the kept side) and around the 40 x 20 cut.
         let mut len = 0.0;
@@ -3898,12 +3898,12 @@ mod tests {
         }
         assert!((len - 120.0).abs() < 0.5, "outline length {len}");
         // A plane that misses the body cuts nothing.
-        assert!(solvecraft_engine::view::section_segments(&m, Vec3::new(0.0, 99.0, 0.0), n).is_empty());
+        assert!(solidcraft_engine::view::section_segments(&m, Vec3::new(0.0, 99.0, 0.0), n).is_empty());
     }
 
     #[test]
     fn selection_shows_where_the_model_hides_it() {
-        let mut s = solvecraft_engine::Session::default();
+        let mut s = solidcraft_engine::Session::default();
         s.execute("solid.box", &json!({"length": 40, "width": 30, "height": 20})).unwrap();
         let mut app = SolveApp::new(s, crate::Services::default());
         assert!(build_highlight(&app).hidden.is_empty());
@@ -3963,7 +3963,7 @@ mod tests {
     #[test]
     fn axis_snap_selects_all_directions_in_both_up_frames() {
         assert_eq!(snap_directions().count(), 26);
-        for up in [solvecraft_engine::render::UpAxis::Z, solvecraft_engine::render::UpAxis::Y] {
+        for up in [solidcraft_engine::render::UpAxis::Z, solidcraft_engine::render::UpAxis::Y] {
             for d in snap_directions() {
                 let mut cam = Camera { up, ..Camera::default() };
                 cam = cam.looking_from(cam.from_frame(d + Vec3::new(0.05, 0.03, 0.02)));
@@ -3986,7 +3986,7 @@ mod tests {
             assert!(h.app.viewport.orbit_snap.is_some());
             match reset {
                 0 => h.app.fit_view(),
-                1 => h.app.set_up_axis(solvecraft_engine::render::UpAxis::Y),
+                1 => h.app.set_up_axis(solidcraft_engine::render::UpAxis::Y),
                 _ => crate::documents::new_design(&mut h.app),
             }
             let before = h.app.cam;
@@ -4092,7 +4092,7 @@ mod tests {
 
     #[test]
     fn construction_axes_span_the_model_and_points_show() {
-        let mut s = solvecraft_engine::Session::default();
+        let mut s = solidcraft_engine::Session::default();
         s.execute("solid.box", &json!({"length": 40, "width": 30, "height": 20})).unwrap();
         s.execute("construct.axis.two_points", &json!({"a": {"vertex": [0, 0, 20]}, "b": {"vertex": [40, 30, 20]}})).unwrap();
         s.execute("construct.point.vertex", &json!({"point": {"vertex": [40, 0, 20]}})).unwrap();

@@ -343,7 +343,7 @@ pub fn setup_fonts(ctx: &egui::Context) {
 }
 
 /// On web, setup_fonts does not perform synchronous disk reads.
-/// Use asynchronous loading through [`solvecraft_web`] or host scripts.
+/// Use asynchronous loading through [`solidcraft_web`] or host scripts.
 #[cfg(target_arch = "wasm32")]
 pub fn setup_fonts(_ctx: &egui::Context) {}
 

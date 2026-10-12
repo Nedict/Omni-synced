@@ -5,17 +5,17 @@
 # gets synthetic pointer events, so the screen's own pointer never moves). Needs ffmpeg with
 # x11grab and libass.
 # PLAYBACK_RATE defaults to 1; label accelerated previews with their rate when publishing.
-# SOLVECRAFT_DEMO_NAME overrides the filename stem; PAUSE scales UI pauses, CAPTION is the
+# SOLIDCRAFT_DEMO_NAME overrides the filename stem; PAUSE scales UI pauses, CAPTION is the
 # minimum real-time caption duration, and HOLD keeps the live completed model on screen.
-# For a readable 4x preview use SOLVECRAFT_DEMO_CAPTION=4 and SOLVECRAFT_DEMO_HOLD=8.
+# For a readable 4x preview use SOLIDCRAFT_DEMO_CAPTION=4 and SOLIDCRAFT_DEMO_HOLD=8.
 set -e
 DISP=${1:-:0}; PORT=${2:-7878}; OUT=$(cd "${3:-.}" && pwd); STORY=${4:-v3}; RATE=${5:-1}
 HERE=$(cd "$(dirname "$0")" && pwd)
-CLI=${SOLVECRAFT_CLI:-solvecraft-cli}
-NAME=${SOLVECRAFT_DEMO_NAME:-enclosure-demo-$STORY}
-PAUSE=${SOLVECRAFT_DEMO_PAUSE:-0.55}
-CAPTION=${SOLVECRAFT_DEMO_CAPTION:-1.4}
-HOLD=${SOLVECRAFT_DEMO_HOLD:-1}
+CLI=${SOLIDCRAFT_CLI:-solidcraft-cli}
+NAME=${SOLIDCRAFT_DEMO_NAME:-enclosure-demo-$STORY}
+PAUSE=${SOLIDCRAFT_DEMO_PAUSE:-0.55}
+CAPTION=${SOLIDCRAFT_DEMO_CAPTION:-1.4}
+HOLD=${SOLIDCRAFT_DEMO_HOLD:-1}
 python3 -c 'import math,sys; r=float(sys.argv[1]); assert math.isfinite(r) and 0<r<=16' "$RATE"
 # Frame the actual app at capture resolution before the first recorded blank viewport.
 python3 - "$HERE" "$PORT" <<'PY'
@@ -38,7 +38,7 @@ FF=$!
 # Waiting lets ffmpeg write the MP4 index so the failed take remains inspectable.
 trap 'kill -INT $FF 2>/dev/null || true; wait $FF 2>/dev/null || true' EXIT
 sleep 1
-python3 "$HERE/enclosure_ui_mcp.py" --port "$PORT" --cli "$CLI" --story "$STORY" --speed "$PAUSE" --minimum-caption "$CAPTION" --log "$OUT/steps.log" --save "$OUT/enclosure-$STORY.solvecraft"
+python3 "$HERE/enclosure_ui_mcp.py" --port "$PORT" --cli "$CLI" --story "$STORY" --speed "$PAUSE" --minimum-caption "$CAPTION" --log "$OUT/steps.log" --save "$OUT/enclosure-$STORY.solidcraft"
 sleep "$HOLD"
 kill -INT $FF; wait $FF || true
 START=$(grep -o "start: [0-9.]*" "$OUT/ffmpeg.log" | head -1 | cut -d" " -f2)

@@ -166,8 +166,8 @@ def probe(gl_saved_four=False):
     shell = SANDBOX_PROBE
     if gl_saved_four:
         shell = shell.replace('solidcraft --control',
-                              'mkdir -p "$XDG_DATA_HOME/solvecraft"\n'
-                              'printf \'{"msaa":4}\' >"$XDG_DATA_HOME/solvecraft/graphics.json"\n'
+                              'mkdir -p "$XDG_DATA_HOME/solidcraft"\n'
+                              'printf \'{"msaa":4}\' >"$XDG_DATA_HOME/solidcraft/graphics.json"\n'
                               'export WGPU_BACKEND=gl\nsolidcraft --control')
     result = subprocess.run(["flatpak", "run", "--user", "--command=bash", APP_ID, "-c", shell],
                             text=True, capture_output=True, timeout=125)
@@ -202,7 +202,7 @@ def run_backend(backend):
         env.pop("WAYLAND_SOCKET", None)
         env.pop("DISPLAY", None)
         env.pop("SOLIDCRAFT_WAYLAND", None)
-        env.pop("SOLVECRAFT_WAYLAND", None)
+        env.pop("SOLVECRAFT_WAYLAND", None)  # the legacy name is still read
         command = ["dbus-run-session", "--"]
         compositor = None
         with (Path(temporary) / "weston.log").open("wb") as log:

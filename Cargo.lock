@@ -3300,8 +3300,8 @@ dependencies = [
  "quick-xml 0.38.4",
  "rfd",
  "serde_json",
- "solvecraft-engine",
- "solvecraft-ui-egui",
+ "solidcraft-engine",
+ "solidcraft-ui-egui",
  "winit",
 ]
 
@@ -3310,43 +3310,43 @@ name = "solidcraft-cli"
 version = "0.5.0"
 dependencies = [
  "serde_json",
- "solvecraft-engine",
- "solvecraft-mcp",
+ "solidcraft-engine",
+ "solidcraft-mcp",
 ]
 
 [[package]]
-name = "solvecraft-doc"
+name = "solidcraft-doc"
 version = "0.5.0"
 dependencies = [
  "log",
  "serde",
  "serde_json",
  "sha2",
- "solvecraft-geom",
- "solvecraft-kernel",
- "solvecraft-sketch",
+ "solidcraft-geom",
+ "solidcraft-kernel",
+ "solidcraft-sketch",
  "thiserror 2.0.21",
  "web-time",
 ]
 
 [[package]]
-name = "solvecraft-engine"
+name = "solidcraft-engine"
 version = "0.5.0"
 dependencies = [
  "log",
  "serde",
  "serde_json",
- "solvecraft-doc",
- "solvecraft-geom",
- "solvecraft-io",
- "solvecraft-kernel",
- "solvecraft-render",
- "solvecraft-sketch",
+ "solidcraft-doc",
+ "solidcraft-geom",
+ "solidcraft-io",
+ "solidcraft-kernel",
+ "solidcraft-render",
+ "solidcraft-sketch",
  "thiserror 2.0.21",
 ]
 
 [[package]]
-name = "solvecraft-geom"
+name = "solidcraft-geom"
 version = "0.5.0"
 dependencies = [
  "serde",
@@ -3355,24 +3355,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "solvecraft-io"
+name = "solidcraft-io"
 version = "0.5.0"
 dependencies = [
  "quick-xml 0.38.4",
- "solvecraft-doc",
- "solvecraft-geom",
- "solvecraft-kernel",
+ "solidcraft-doc",
+ "solidcraft-geom",
+ "solidcraft-kernel",
  "thiserror 2.0.21",
  "zip",
 ]
 
 [[package]]
-name = "solvecraft-kernel"
+name = "solidcraft-kernel"
 version = "0.5.0"
 dependencies = [
  "log",
  "serde",
- "solvecraft-geom",
+ "solidcraft-geom",
  "thiserror 2.0.21",
  "truck-meshalgo",
  "truck-modeling",
@@ -3382,36 +3382,36 @@ dependencies = [
 ]
 
 [[package]]
-name = "solvecraft-mcp"
+name = "solidcraft-mcp"
 version = "0.5.0"
 dependencies = [
  "serde_json",
- "solvecraft-engine",
+ "solidcraft-engine",
 ]
 
 [[package]]
-name = "solvecraft-render"
+name = "solidcraft-render"
 version = "0.5.0"
 dependencies = [
  "image",
  "serde",
  "serde_json",
- "solvecraft-geom",
+ "solidcraft-geom",
 ]
 
 [[package]]
-name = "solvecraft-sketch"
+name = "solidcraft-sketch"
 version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
- "solvecraft-geom",
+ "solidcraft-geom",
  "thiserror 2.0.21",
  "ttf-parser",
 ]
 
 [[package]]
-name = "solvecraft-ui-egui"
+name = "solidcraft-ui-egui"
 version = "0.5.0"
 dependencies = [
  "egui",
@@ -3420,13 +3420,13 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
- "solvecraft-engine",
+ "solidcraft-engine",
  "ttf-parser",
  "web-time",
 ]
 
 [[package]]
-name = "solvecraft-web"
+name = "solidcraft-web"
 version = "0.5.0"
 dependencies = [
  "eframe",
@@ -3434,8 +3434,8 @@ dependencies = [
  "js-sys",
  "log",
  "serde_json",
- "solvecraft-engine",
- "solvecraft-ui-egui",
+ "solidcraft-engine",
+ "solidcraft-ui-egui",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

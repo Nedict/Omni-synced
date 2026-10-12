@@ -1,8 +1,8 @@
 //! Parametric reconstruction of imported mechanical mesh bodies.
 
 use serde_json::Value;
-use solvecraft_doc::FeatureKind;
-use solvecraft_doc::expr::Kind;
+use solidcraft_doc::FeatureKind;
+use solidcraft_doc::expr::Kind;
 
 use super::{
     CommandSpec,

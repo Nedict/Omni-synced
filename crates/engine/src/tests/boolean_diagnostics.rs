@@ -1,5 +1,5 @@
 use super::*;
-use solvecraft_kernel::BooleanStrategy;
+use solidcraft_kernel::BooleanStrategy;
 
 #[test]
 fn boolean_retry_warning_and_details_survive_cache_undo_and_reopen() {
@@ -41,7 +41,7 @@ fn boolean_retry_warning_and_details_survive_cache_undo_and_reopen() {
     run(&mut session, "edit.undo", json!({}));
     run(&mut session, "edit.redo", json!({}));
     assert_eq!(check(&session), original);
-    let reopened_doc = solvecraft_doc::Document::from_json(&session.doc.to_json()).unwrap();
+    let reopened_doc = solidcraft_doc::Document::from_json(&session.doc.to_json()).unwrap();
     let reopened = Session::new(reopened_doc);
     assert_eq!(check(&reopened), original);
     // A later independent feature must not inherit the earlier retry's warning.

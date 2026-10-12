@@ -3,7 +3,7 @@
 //! graph, CSV/JSON import and export, expression evaluation and autocomplete.
 
 use serde_json::{Value, json};
-use solvecraft_doc::expr::{self, Kind};
+use solidcraft_doc::expr::{self, Kind};
 
 use super::CommandSpec;
 use crate::params::{bad, bool_, str_};
@@ -123,7 +123,7 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
         (_, Some(f)) => f.to_ascii_lowercase(),
         _ => "all".to_string(),
     };
-    let mut rows: Vec<solvecraft_doc::ParamRow> = s
+    let mut rows: Vec<solidcraft_doc::ParamRow> = s
         .doc
         .param_rows()
         .into_iter()
@@ -136,7 +136,7 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
         .collect();
     // Favourites first; otherwise the table order (user, sketch, feature).
     rows.sort_by_key(|r| !r.favorite);
-    let cycles = solvecraft_doc::cycles(&s.doc.all_param_exprs());
+    let cycles = solidcraft_doc::cycles(&s.doc.all_param_exprs());
     Ok(json!({"parameters": rows, "count": rows.len(), "cycles": cycles}))
 }
 
@@ -203,7 +203,7 @@ fn graph(s: &mut Session, _p: &Value) -> Result<Value> {
     let (_, errs) = s.doc.param_values();
     let nodes: Vec<String> = s.doc.param_defs().into_iter().map(|d| d.name).collect();
     let edges: Vec<[String; 2]> = s.doc.param_graph().into_iter().map(|(a, b)| [a, b]).collect();
-    let cycles = solvecraft_doc::cycles(&s.doc.all_param_exprs());
+    let cycles = solidcraft_doc::cycles(&s.doc.all_param_exprs());
     Ok(json!({"nodes": nodes, "edges": edges, "cycles": cycles, "errors": errs}))
 }
 
@@ -229,7 +229,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         other => return Err(bad(cmd, format!("unknown format `{other}` (csv or json)"))),
     };
     if let Some(path) = path {
-        solvecraft_io::vfs::write(path, text.as_bytes()).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+        solidcraft_io::vfs::write(path, text.as_bytes()).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     }
     Ok(json!({"format": format, "path": path, "text": text}))
 }
@@ -242,7 +242,7 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
     let text = match (str_(p, "text"), str_(p, "path")) {
         (Some(t), _) => t.to_string(),
         (None, Some(path)) => {
-            solvecraft_io::vfs::read_to_string(path, MAX_PARAMETER_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?
+            solidcraft_io::vfs::read_to_string(path, MAX_PARAMETER_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?
         }
         _ => return Err(bad(cmd, "give `text` or `path`")),
     };
@@ -272,10 +272,10 @@ fn evaluate(s: &mut Session, p: &Value) -> Result<Value> {
     let (vals, _) = s.doc.param_values();
     let defaults = expr::Defaults::for_unit(unit.unwrap_or(""), 1.0);
     let refs = expr::references(&e);
-    let lookup = |n: &str| vals.get(n).copied().ok_or_else(|| solvecraft_doc::DocError::Expr(format!("unknown parameter `{n}`")));
+    let lookup = |n: &str| vals.get(n).copied().ok_or_else(|| solidcraft_doc::DocError::Expr(format!("unknown parameter `{n}`")));
     let r = expr::eval_with_defaults(&e, &lookup, defaults).and_then(|v| match kind {
         Some(k) => v.to_kind_in(k, defaults).map(|x| (x, k)),
-        None => v.kind().map(|k| (v.v, k)).ok_or_else(|| solvecraft_doc::DocError::Expr(format!("the result is {}", v.describe()))),
+        None => v.kind().map(|k| (v.v, k)).ok_or_else(|| solidcraft_doc::DocError::Expr(format!("the result is {}", v.describe()))),
     });
     Ok(match r {
         Ok((v, k)) => {
@@ -301,7 +301,7 @@ fn complete(s: &mut Session, p: &Value) -> Result<Value> {
     let word: String = text.chars().rev().take_while(|c| c.is_alphanumeric() || *c == '_').collect::<Vec<_>>().into_iter().rev().collect();
     let starts = |n: &str| word.is_empty() || n.to_ascii_lowercase().starts_with(&word.to_ascii_lowercase());
     let mut out: Vec<Value> = Vec::new();
-    let mut rows: Vec<solvecraft_doc::ParamRow> = s.doc.param_rows().into_iter().filter(|r| starts(&r.name)).collect();
+    let mut rows: Vec<solidcraft_doc::ParamRow> = s.doc.param_rows().into_iter().filter(|r| starts(&r.name)).collect();
     // Favourites, then user parameters, then the rest.
     rows.sort_by_key(|r| (!r.favorite, r.source != "user"));
     for r in rows.into_iter().take(200) {

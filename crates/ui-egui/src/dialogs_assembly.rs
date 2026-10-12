@@ -7,11 +7,11 @@
 
 use egui::{Color32, Pos2, RichText, Stroke, vec2};
 use serde_json::{Value, json};
-use solvecraft_engine::Sel;
-use solvecraft_engine::Session;
-use solvecraft_engine::doc::expr::Kind as ValueKind;
-use solvecraft_engine::doc::joints::JointKind;
-use solvecraft_engine::geom::{Aabb3, Mesh, Vec3};
+use solidcraft_engine::Sel;
+use solidcraft_engine::Session;
+use solidcraft_engine::doc::expr::Kind as ValueKind;
+use solidcraft_engine::doc::joints::JointKind;
+use solidcraft_engine::geom::{Aabb3, Mesh, Vec3};
 
 use crate::SolveApp;
 use crate::dialogs::{Dialog, Kind, combo, field, row_label};
@@ -335,7 +335,7 @@ pub fn snap_of(s: &Session, sel: &Sel) -> Option<SnapPt> {
             match f.plane_normal {
                 Some(n) => (body, SnapPt { at: f.centroid, z: n, kind: SnapKind::FaceCenter, param: json!({"face": pt(*point)}) }),
                 None => {
-                    let c = solvecraft_engine::kernel::cylinder_face_at(&b.body, *point)?;
+                    let c = solidcraft_engine::kernel::cylinder_face_at(&b.body, *point)?;
                     let sv = (*point - c.axis_point).dot(c.axis);
                     let (at, dir) = if (sv - c.start).abs() <= (c.end - sv).abs() { (c.start, -1.0) } else { (c.end, 1.0) };
                     (
@@ -614,7 +614,7 @@ fn interference(app: &mut SolveApp, picked: &[Sel]) -> (Value, Vec<Mesh>) {
     let mut meshes = Vec::new();
     for hit in r["interferences"].as_array().into_iter().flatten() {
         let (Some(a), Some(b)) = (hit["a"].as_str().and_then(|n| st.body(n)), hit["b"].as_str().and_then(|n| st.body(n))) else { continue };
-        if let Ok(Some(o)) = solvecraft_engine::kernel::boolean(&a.body, &b.body, solvecraft_engine::kernel::BoolOp::Intersect)
+        if let Ok(Some(o)) = solidcraft_engine::kernel::boolean(&a.body, &b.body, solidcraft_engine::kernel::BoolOp::Intersect)
             && let Ok(m) = o.tessellate((o.size() * 2e-3).max(1e-3))
         {
             meshes.push(m);
@@ -816,7 +816,7 @@ pub fn world_preview(s: &Session, cmds: &[(String, Value)], colors: Colors) -> O
     // Any feature, when components are placed away from their frames: the preview must show
     // the world the viewport shows.
     let moves = cmds.iter().all(|(c, _)| MOVES.contains(&c.as_str()));
-    if cmds.is_empty() || !(moves || solvecraft_engine::frames::placed(s)) {
+    if cmds.is_empty() || !(moves || solidcraft_engine::frames::placed(s)) {
         return None;
     }
     let preview = match s.preview_visible_world(cmds) {
@@ -1086,12 +1086,12 @@ mod tests;
 
 thread_local! {
     /// Named joint origins in the world, for the design state they were found in.
-    static ORIGINS: std::cell::RefCell<Option<(String, Vec<(String, solvecraft_engine::doc::Mat)>)>> = const { std::cell::RefCell::new(None) };
+    static ORIGINS: std::cell::RefCell<Option<(String, Vec<(String, solidcraft_engine::doc::Mat)>)>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Named joint origins in the world: on their occurrence's component, so they move with it
 /// (joint drives, free moves not captured yet, Capture Position).
-pub fn origins_world(s: &Session) -> Vec<(String, solvecraft_engine::doc::Mat)> {
+pub fn origins_world(s: &Session) -> Vec<(String, solidcraft_engine::doc::Mat)> {
     if s.doc.assembly.origins.is_empty() {
         return Vec::new();
     }
@@ -1099,7 +1099,7 @@ pub fn origins_world(s: &Session) -> Vec<(String, solvecraft_engine::doc::Mat)> 
     if let Some(v) = ORIGINS.with(|o| o.borrow().as_ref().filter(|(k, _)| *k == key).map(|(_, v)| v.clone())) {
         return v;
     }
-    let doc: std::borrow::Cow<solvecraft_engine::doc::Document> = if s.pending_moves.is_empty() {
+    let doc: std::borrow::Cow<solidcraft_engine::doc::Document> = if s.pending_moves.is_empty() {
         std::borrow::Cow::Borrowed(&*s.doc)
     } else {
         let mut d = (*s.doc).clone();
@@ -1121,10 +1121,10 @@ pub fn origins(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let t = Tokens::get();
     let len = app.cam.half_height() * 2.0 * 0.04;
     for (_, m) in origins_world(&app.session) {
-        let at = solvecraft_engine::doc::apply_point(&m, Vec3::ZERO);
+        let at = solidcraft_engine::doc::apply_point(&m, Vec3::ZERO);
         let Some(c) = proj.to_screen(at) else { continue };
         for (axis, col) in [(Vec3::X, t.axis_x), (Vec3::Y, t.axis_y), (Vec3::Z, t.axis_z)] {
-            if let Some(tip) = proj.to_screen(at + solvecraft_engine::doc::apply_vector(&m, axis) * len) {
+            if let Some(tip) = proj.to_screen(at + solidcraft_engine::doc::apply_vector(&m, axis) * len) {
                 painter.line_segment([c, tip], Stroke::new(2.0, col));
             }
         }
