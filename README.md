@@ -81,11 +81,15 @@ and help is welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
   the boundary and keeps existing extrusions usable.
   Curve drawing and picking adapt together to zoom and display scale, including small circles
   at Fit and sketches in placed components.
-- **Constraints and dimensions** solved by our own solver (damped Gauss–Newton with
-  degree-of-freedom analysis): coincident, horizontal/vertical, parallel, perpendicular, tangent,
-  equal, concentric, collinear, midpoint, symmetry, fix; linear, aligned, horizontal, vertical,
-  radius, diameter and angle dimensions driven by parameters. Over-constraining edits are
-  rejected; fully constrained geometry turns black.
+- **Constraints and dimensions** solved by our own solver. Points the constraints fix relative
+  to known geometry are placed exactly by construction (loci intersections and rigid-cluster
+  decomposition, after Owen 1991 and Fudos–Hoffmann 1997); Levenberg–Marquardt solves the rest,
+  and the rank of its Jacobian gives the remaining degrees of freedom. Constraints: coincident,
+  point on curve, horizontal/vertical, parallel, perpendicular, tangent, curvature (G2), equal,
+  concentric, collinear, midpoint, symmetry, fix; linear, aligned, horizontal, vertical,
+  point-to-line, radius, diameter, angle, arc sweep, arc length and slot length dimensions driven
+  by parameters. Over-constraining edits are rejected; fully constrained geometry turns black.
+  Dragging solves the sketch every frame and rebuilds the model once, when the drag ends.
   Select a line or its two endpoints, type its dimension and press Enter to commit one undo
   step. Fit keeps sketch geometry clear of the palette and navigation controls.
 - **Profiles** found automatically, including regions split by lines and holes inside outlines.
