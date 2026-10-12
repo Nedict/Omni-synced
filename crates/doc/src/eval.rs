@@ -1122,6 +1122,21 @@ fn apply_op(state: &mut ModelState, f: &Feature, tools: Vec<Body>, op: Operation
     apply_traced(state, f, tools.into_iter().map(Traced::unnamed).collect(), op, targets)
 }
 
+/// Many cut tools clear of each other (a pattern's copies, the circles of a vent field in one
+/// sketch) as one tool of many pieces, so the target is cut once instead of rebuilding an ever
+/// more complex body for every tool (#261, #368). Tools that may meet are left as they are.
+fn clear_tools_as_one(tools: Vec<Traced>) -> Vec<Traced> {
+    if tools.len() < 8 {
+        return tools;
+    }
+    let bodies: Vec<Body> = tools.iter().map(|t| t.body.clone()).collect();
+    match kernel::union_apart(&bodies) {
+        // Each piece's faces keep the names of the tool it is.
+        Ok(Some(one)) => vec![Traced::step(one, &tools.iter().collect::<Vec<_>>())],
+        _ => tools,
+    }
+}
+
 /// [`apply_op`] with tools whose lineage is known: the bodies it makes or changes keep theirs.
 fn apply_traced(state: &mut ModelState, f: &Feature, tools: Vec<Traced>, op: Operation, targets: &[String]) -> Result<()> {
     let tools = if op == Operation::Intersect { intersection_tool_union(tools)? } else { tools };
@@ -1203,6 +1218,7 @@ fn apply_traced(state: &mut ModelState, f: &Feature, tools: Vec<Traced>, op: Ope
         }
         Operation::Cut | Operation::Intersect => {
             let bop = if op == Operation::Cut { BoolOp::Cut } else { BoolOp::Intersect };
+            let tools = if op == Operation::Cut { clear_tools_as_one(tools) } else { tools };
             let affected: std::collections::BTreeSet<String> =
                 target_idx.iter().filter_map(|i| state.bodies.get(*i).map(|b| b.name.clone())).collect();
             let mut remove = Vec::new();
@@ -2786,16 +2802,6 @@ fn replay(
                 for t in &tools {
                     copies.push(t.copied(kernel::transform_matrix(&t.body, *m)?, src.id, k + 1));
                 }
-            }
-        }
-        // Many cut copies clear of each other: one tool of many pieces, so the target is cut
-        // once instead of rebuilding an ever more complex body for every copy (#261).
-        if op == Operation::Cut && copies.len() >= 8 {
-            let bodies: Vec<Body> = copies.iter().map(|t| t.body.clone()).collect();
-            if let Ok(Some(one)) = kernel::union_apart(&bodies) {
-                // Each piece's faces keep the names of the copy it is.
-                let joined = Traced::step(one, &copies.iter().collect::<Vec<_>>());
-                copies = vec![joined];
             }
         }
         // New bodies from a pattern join their source when they touch it (as one feature would).
