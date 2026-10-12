@@ -19,6 +19,17 @@ cargo run --release -p solvecraft -- --sample   # opens with a sample part
 `solvecraft design.solvecraft` opens a saved design. Windows builds cross-compile from Linux with
 `cargo xwin build --release --target x86_64-pc-windows-msvc -p solvecraft`.
 
+### macOS
+
+Open the release `.dmg` and drag `SolidCraft.app` onto Applications.
+
+When updating from an older `SolveCraft.app`, quit the app and rename the existing
+app in Applications to `SolidCraft.app` first. Then drag the new app onto Applications
+and choose **Replace**. If you already have both names installed, move the old
+`SolveCraft.app` to the Trash. The DMG does not remove old installations automatically.
+Remove any Dock shortcut with the old name, open the new app from Applications, and
+choose **Options > Keep in Dock**. Designs, settings and the bundle ID are unchanged.
+
 ### Linux Flatpak
 
 Install Flatpak using your distribution's package manager. For an installation that receives

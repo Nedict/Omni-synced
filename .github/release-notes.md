@@ -13,13 +13,19 @@ SolidCraft project Pages URLs; old-name Pages addresses are not permanent aliase
 **Which file?**
 - **Windows:** `SolveCraft-{version}-windows-x64.exe` runs as is. Or install the `.msi`, or unzip the
   `-portable.zip` (x64, x86 and arm64).
-- **macOS 11+** (Apple silicon and Intel): open the `.dmg` and drag `SolveCraft.app` onto Applications.
+- **macOS 11+** (Apple silicon and Intel): open the `.dmg` and drag `SolidCraft.app` onto Applications.
   The CLI is in `solvecraft-cli-{version}-macos-universal.zip`.
 - **Linux** (x86_64 and aarch64, glibc 2.35+): the `.AppImage` (`chmod +x`, then run it), the
   `.deb` or `.rpm`, the `.flatpak` (`flatpak install --user <file>`), or the `.tar.gz`.
 - **FreeBSD:** `tar -xzf solvecraft-{version}-freebsd-x86_64.tar.gz --strip-components 1 -C /usr/local`.
 - **Web:** `solvecraft-web-{version}.zip` is a static site to host yourself.
 - `SHA256SUMS.txt`: `sha256sum -c SHA256SUMS.txt --ignore-missing`.
+
+**Updating macOS from SolveCraft.app:** quit the app, rename the existing app in
+Applications to `SolidCraft.app`, then drag the new app from the DMG onto Applications
+and choose **Replace**. If both names are already installed, move the old `SolveCraft.app`
+to the Trash. Remove any Dock shortcut with the old name and pin the new app. Designs,
+settings and the bundle identifier are unchanged. The DMG includes these instructions.
 
 For Flatpak feed installation and updates, add Flathub for the required runtime before
 installing SolidCraft; keep both remotes in the same user installation:
@@ -34,8 +40,8 @@ flatpak run ai.storyteller.solvecraft
 Single-file `.flatpak` bundles include the runtime repository address; missing runtimes
 still need an internet connection. [Linux installation details](https://bherbruck.github.io/solidcraft/guide/getting-started.html#linux-flatpak).
 
-The builds aren't signed yet. On macOS, right-click `SolveCraft.app` in Applications and choose
-**Open** the first time (or run `xattr -dr com.apple.quarantine /Applications/SolveCraft.app`).
+The builds aren't signed yet. On macOS, right-click `SolidCraft.app` in Applications and choose
+**Open** the first time (or run `xattr -dr com.apple.quarantine /Applications/SolidCraft.app`).
 On Windows, SmartScreen may say "Windows protected your PC": **More info**, then **Run anyway**.
 Licences are built in (Help ▸ About ▸ Licences, `solvecraft-cli licences`); the packages also
 install `THIRD-PARTY-LICENSES.txt`. Known limitations:

@@ -9,8 +9,12 @@ version bump and no patch release for every merge.
 ## Compatibility names and deployment
 
 SolidCraft is the product display name. Keep existing release asset filenames, including
-`SolveCraft-{version}-windows-x64.exe`, `SolveCraft.app` and `solvecraft-cli` archives, together
-with installed package IDs and settings paths. Do not rewrite published 0.2.0 or 0.2.1 assets,
+`SolveCraft-{version}-windows-x64.exe` and `solvecraft-cli` archives, together
+with installed package IDs and settings paths. The macOS DMG now contains `SolidCraft.app`
+with a `SolidCraft` bundle executable and icon; its bundle ID remains
+`ai.storyteller.solvecraft`. Include the one-time macOS upgrade instructions from
+`.github/release-notes.md` so users replace an existing `SolveCraft.app` rather than
+installing a second copy. Do not rewrite published 0.2.0 or 0.2.1 assets,
 checksums, tags or historical release notes.
 
 Project Pages publishes the documentation, browser app and published-release Flatpak

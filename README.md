@@ -33,6 +33,9 @@ Cargo package names, settings/recovery locations and package IDs keep their exis
 Published 0.2.0 and 0.2.1 packages and demo recordings retain their original SolveCraft branding
 and filenames.
 
+On macOS, the DMG contains `SolidCraft.app`. To replace an older `SolveCraft.app`
+without installing a second copy, follow the [macOS upgrade instructions](https://bherbruck.github.io/solidcraft/guide/getting-started.html#macos).
+
 Use the SolidCraft documentation and web-app URLs above. GitHub redirects links to the
 renamed repository; old-name Pages and Flatpak URLs are not maintained as permanent aliases.
 
