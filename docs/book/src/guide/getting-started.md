@@ -6,7 +6,8 @@ working (see the [compatibility notes](https://github.com/bherbruck/solidcraft/b
 
 ## Desktop
 
-Download the latest build from the
+Download the installer for your system from the
+[Download section of the README](https://github.com/bherbruck/solidcraft#download) or the
 [releases page](https://github.com/bherbruck/solidcraft/releases), or build it yourself with
 stable Rust (1.95 or newer):
 
@@ -50,6 +51,22 @@ missing runtime. Launch with `flatpak run ai.storyteller.solvecraft`, rather tha
 a host `solidcraft` binary. Files chosen through Open/Save use the desktop file-chooser portal;
 command-line paths outside Documents may need a specific additional filesystem permission.
 
+### Linux Snap
+
+On Ubuntu and other distributions with snapd:
+
+```sh
+sudo snap install solidcraft
+solidcraft                # or open SolidCraft from the app menu
+solidcraft.cli --version  # the CLI, for scripts and `solidcraft.cli mcp`
+```
+
+The snap can open designs in your home folder (not hidden folders) and, through the file
+chooser, anywhere else. For USB drives and other mounted disks, run
+`sudo snap connect solidcraft:removable-media` once. A release's `.snap` file installs without
+the store with `sudo snap install --dangerous ./solidcraft-VERSION-linux-ARCH.snap`; it then
+doesn't update automatically.
+
 ## Web
 
 The same app runs in the browser: [open SolidCraft on the web](../app/) (`?sample` opens the sample
@@ -87,5 +104,22 @@ A script is a list of commands:
 
 ![The bracket example, rendered by solidcraft-cli snapshot](../generated/bracket.png)
 
+A command that fails stops the script. A feature can also fail later, when a parameter change
+rebuilds it; `run` then exits with status 1, lists the failing features and writes none of
+its `--out` and `--save` files, because the bodies lack what those features should have made.
+`--allow-errors` writes them anyway.
+
 Units are millimetres and degrees unless an expression says otherwise (`"1 in"`, `"30 deg"`),
 and Z is up.
+
+## Name and compatibility
+
+SolidCraft was renamed from an earlier working name. Since 0.5.0 everything uses the new
+name: the `solidcraft` and `solidcraft-cli` programs, `.solidcraft` designs, `SOLIDCRAFT_*`
+environment variables, settings folders and the `solidcraft` MCP server. Upgrading keeps
+working: designs, settings, recovery files, environment variables and CLI/MCP setups from
+earlier builds carry over. Every compatibility shim is listed in the
+[compatibility notes](https://github.com/bherbruck/solidcraft/blob/main/docs/compatibility.md).
+
+Use the SolidCraft documentation and web-app URLs. GitHub redirects links to the renamed
+repository; old-name Pages and Flatpak URLs are not maintained as permanent aliases.

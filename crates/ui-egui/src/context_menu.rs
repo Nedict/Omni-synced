@@ -304,7 +304,7 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
         Target::Toolbar => crate::toolbar_custom::toolbar_items(app),
         Target::Workspace => {
             let mut v = vec![act("ui.workspace", "Design", "box").key("current")];
-            for w in ["Generative Design", "Render", "Animation", "Simulation", "Manufacture", "Drawing"] {
+            for w in ["Render", "Animation", "Simulation", "Manufacture", "Drawing"] {
                 v.push(act("ui.workspace", w, "").key("coming later").on(false));
             }
             v
