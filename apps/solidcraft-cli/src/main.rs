@@ -9,7 +9,8 @@
 //! solidcraft-cli commands                                     the command registry as JSON
 //! solidcraft-cli recipe <recipe.json>                         translate an oracle recipe to a script
 //! solidcraft-cli oracle <case-dir>...                         replay recipes and compare with expected.json
-//! solidcraft-cli mcp [--in design|script] [--connect HOST:PORT] MCP server on stdio (docs/mcp.md)
+//! solidcraft-cli mcp [--in design|script] [--connect HOST:PORT] [--allow-path DIR]... [--allow-any-path]
+//!                                                             MCP server on stdio (docs/mcp.md)
 //! solidcraft-cli licences                                     SolidCraft's licence and the third-party licences
 //! solidcraft-cli icon --out F.png|F.ico [--size N]             the app icon (packaging; drawn, not a file)
 //! ```
@@ -42,7 +43,7 @@ const USAGE: &str = "usage:
   solidcraft-cli recipe <recipe.json>
   solidcraft-cli oracle <case-dir>... [--json]
   solidcraft-cli fuzz [--from N] [--count N] [--jobs J] [--timeout S] [--steps N] [--minimise] [--out DIR] [--report FILE]
-  solidcraft-cli mcp [--in design.solidcraft|script.json] [--connect 127.0.0.1:PORT]
+  solidcraft-cli mcp [--in design.solidcraft|script.json] [--connect 127.0.0.1:PORT] [--allow-path DIR]... [--allow-any-path]
   solidcraft-cli crashes [list [--json] | show <id> | replay <id> | dir | clear [<id>]]
   solidcraft-cli licences
   solidcraft-cli icon --out icon.png [--size 256] | --out icon.ico
@@ -285,8 +286,19 @@ fn cmd_exec(args: &[String]) -> Result<(), String> {
 }
 
 /// MCP server on stdio: headless (optionally starting from a design or script) or bridged to
-/// a running app's control port. stdout carries only protocol messages.
+/// a running app's control port. stdout carries only protocol messages. Files the agent's tool
+/// calls reach are confined to `solidcraft_mcp::agent_scope` unless `--allow-any-path` is given.
 fn cmd_mcp(args: &[String]) -> Result<(), String> {
+    let scope = (!args.iter().any(|a| a == "--allow-any-path")).then(|| {
+        let design_dir = flag(args, "--in")
+            .and_then(|p| std::path::Path::new(p).parent())
+            .map(|d| if d.as_os_str().is_empty() { ".".into() } else { d.to_path_buf() });
+        solidcraft_mcp::agent_scope(design_dir.into_iter().chain(flags(args, "--allow-path").into_iter().map(std::path::PathBuf::from)))
+    });
+    if let Some(s) = &scope {
+        let roots: Vec<String> = s.roots().iter().map(|r| r.display().to_string()).collect();
+        eprintln!("solidcraft mcp: files limited to {} (--allow-path DIR adds one, --allow-any-path lifts the limit)", roots.join(", "));
+    }
     let backend: Box<dyn solidcraft_mcp::Backend> = match (flag(args, "--connect"), flag(args, "--in")) {
         (Some(_), Some(_)) => return Err("mcp: use either --connect or --in, not both".into()),
         (Some(addr), None) => Box::new(solidcraft_mcp::Remote::connect(addr).map_err(|e| {
@@ -301,7 +313,7 @@ fn cmd_mcp(args: &[String]) -> Result<(), String> {
     };
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    solidcraft_mcp::Server::new(backend).serve(stdin.lock(), stdout.lock()).map_err(|e| e.to_string())
+    solidcraft_mcp::Server::new(backend).with_path_scope(scope).serve(stdin.lock(), stdout.lock()).map_err(|e| e.to_string())
 }
 
 /// `save-stress <path> <rounds>`: save a design of a few hundred kilobytes `rounds` times, its

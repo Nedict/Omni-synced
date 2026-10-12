@@ -177,7 +177,8 @@ stdio. Headless it runs its own design session; with `--connect 127.0.0.1:PORT` 
 started with `solidcraft --control PORT`, so you can watch the agent model. Tools:
 `list_commands`, `execute`, `batch`, `inspect_design`, `measure`, `body_topology`,
 `set_parameter`, `screenshot` (returns the image), `export`, `undo`, `redo`, `new_design`, `open`,
-`save`. Claude Code: `claude mcp add solidcraft -- solidcraft-cli mcp`. Details, client
+`save`. Tool calls reach files only in the working folder, the temporary folder and folders given
+with `--allow-path DIR`. Claude Code: `claude mcp add solidcraft -- solidcraft-cli mcp`. Details, client
 configuration and an example session: [docs/mcp.md](docs/mcp.md).
 
 ## Architecture

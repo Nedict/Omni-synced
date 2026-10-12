@@ -22,6 +22,27 @@ solidcraft-cli mcp --connect 127.0.0.1:7878
 stdout carries only protocol messages; errors go to stderr. Bridged screenshots are written to a
 temporary file by the app and read back by the server, so both must run on the same machine.
 
+### Which files the agent can reach
+
+Tool calls read, write and delete files only inside the server's folders: the folder it was
+started in (unless that is a drive's root, `/`), the system's temporary folders (`/tmp` and the
+platform's temp folder, where screenshots go), the folder of the `--in` design and every
+`--allow-path DIR` (repeat it for more). Paths are resolved first, so `..` and symlinks that lead
+out are refused too, as are Windows UNC paths (`\\server\share`). A refused path is a tool error
+saying the path is outside the folders this agent may use; stderr lists the folders at start-up.
+The recovery folder is outside them, so `doc.recovery_*` work for an agent only with
+`--allow-path` on it.
+
+```sh
+solidcraft-cli mcp --allow-path ~/designs --allow-path ~/exports
+solidcraft-cli mcp --allow-any-path   # no limit (the behaviour before this option existed)
+```
+
+Bridged, the server sends its folders with every request (`allow_paths`, see
+[control-protocol.md](control-protocol.md)) and the app applies the same rule, so give absolute
+paths: a relative one resolves against the app's working folder, not the server's. The app's own
+file dialogs are never limited.
+
 ### Client configuration
 
 Claude Code (project `.mcp.json`, or `claude mcp add solidcraft -- solidcraft-cli mcp`; a setup

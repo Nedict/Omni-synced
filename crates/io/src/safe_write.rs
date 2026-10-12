@@ -85,7 +85,9 @@ fn write_steps(path: &Path, bytes: &[u8], backup: bool, stop: Option<Step>) -> s
 }
 
 /// Write `bytes` to `path` atomically; with `backup`, the file being replaced is kept as
-/// `<path>.bak` first.
+/// `<path>.bak` first. The app's own folders (autosave, crash reports) write through this
+/// without a [`crate::vfs::PathScope`]; a command writing a path it was given calls
+/// [`crate::vfs::check`] first.
 pub fn write_atomic(path: &Path, bytes: &[u8], backup: bool) -> std::io::Result<()> {
     // In the browser the host stores files (one write is already atomic there).
     if cfg!(target_arch = "wasm32") {

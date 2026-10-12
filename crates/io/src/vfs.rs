@@ -14,6 +14,7 @@ mod imp {
     /// blocks the caller instead. Refuse anything that is not a regular file, and never read
     /// more than the caller's cap plus the byte that proves it was exceeded.
     pub fn read(path: &str, max: usize) -> Result<Vec<u8>> {
+        check(path)?;
         // Cheap and non-blocking: refuse before opening, in case the open itself would block.
         let meta = std::fs::metadata(path)?;
         if !meta.is_file() {
@@ -35,15 +36,18 @@ mod imp {
         Ok(out)
     }
     pub fn write(path: &str, bytes: &[u8]) -> Result<()> {
+        check(path)?;
         std::fs::write(path, bytes)
     }
     pub fn len(path: &str) -> Result<u64> {
+        check(path)?;
         std::fs::metadata(path).map(|m| m.len())
     }
     pub fn exists(path: &str) -> bool {
-        std::path::Path::new(path).exists()
+        check(path).is_ok() && std::path::Path::new(path).exists()
     }
     pub fn remove(path: &str) -> Result<()> {
+        check(path)?;
         std::fs::remove_file(path)
     }
 }
@@ -104,6 +108,103 @@ mod imp {
 
 pub use imp::*;
 
+/// The folders an agent's commands may read, write and delete in (an MCP server's, see
+/// docs/mcp.md). While a scope is active on this thread ([`scoped`]), every file call here
+/// refuses paths outside it; without one (the user's own file dialogs, the CLI) nothing changes.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PathScope {
+    roots: Vec<std::path::PathBuf>,
+}
+
+thread_local! {
+    static SCOPE: std::cell::RefCell<Option<PathScope>> = const { std::cell::RefCell::new(None) };
+}
+
+impl PathScope {
+    /// Confine file access to `roots` (resolved now; folders that don't exist are left out, so an
+    /// empty scope refuses every path).
+    pub fn new(roots: impl IntoIterator<Item = std::path::PathBuf>) -> PathScope {
+        let mut out: Vec<std::path::PathBuf> = Vec::new();
+        for r in roots {
+            if let Ok(r) = std::fs::canonicalize(&r)
+                && !out.contains(&r)
+            {
+                out.push(r);
+            }
+        }
+        PathScope { roots: out }
+    }
+
+    pub fn roots(&self) -> &[std::path::PathBuf] {
+        &self.roots
+    }
+
+    /// Whether `path` lies inside one of the roots, after following symlinks and `..`.
+    pub fn check(&self, path: &str) -> Result<()> {
+        let refused = || {
+            let roots: Vec<String> = self.roots.iter().map(|r| r.display().to_string()).collect();
+            Error::new(
+                ErrorKind::PermissionDenied,
+                format!(
+                    "{path}: outside the folders this agent may use ({}); allow another folder with `--allow-path DIR`",
+                    if roots.is_empty() { "none".into() } else { roots.join(", ") }
+                ),
+            )
+        };
+        // A UNC path (`\\server\share`) would make Windows connect out before any check could run.
+        if cfg!(windows) && matches!(path.as_bytes().get(..2), Some([b'\\' | b'/', b'\\' | b'/'])) {
+            return Err(refused());
+        }
+        let resolved = resolve(std::path::Path::new(path)).map_err(|_| refused())?;
+        if self.roots.iter().any(|r| resolved.starts_with(r)) { Ok(()) } else { Err(refused()) }
+    }
+}
+
+/// `path` with symlinks and `..` resolved. A file that doesn't exist yet resolves through its
+/// folder, which must exist; a symlink whose target is missing is refused (writing through it
+/// would land wherever it points).
+fn resolve(path: &std::path::Path) -> Result<std::path::PathBuf> {
+    match std::fs::canonicalize(path) {
+        Ok(p) => Ok(p),
+        Err(e) if e.kind() == ErrorKind::NotFound && std::fs::symlink_metadata(path).is_err() => {
+            let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else { return Err(e) };
+            let parent = if parent.as_os_str().is_empty() { std::path::Path::new(".") } else { parent };
+            Ok(std::fs::canonicalize(parent)?.join(name))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Run `f` with file access confined to `scope` on this thread (`None`: unconfined).
+pub fn scoped<T>(scope: Option<PathScope>, f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<PathScope>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let prev = self.0.take();
+            SCOPE.with(|s| *s.borrow_mut() = prev);
+        }
+    }
+    let _restore = Restore(SCOPE.with(|s| s.replace(scope)));
+    f()
+}
+
+/// The scope active on this thread.
+pub fn current_scope() -> Option<PathScope> {
+    SCOPE.with(|s| s.borrow().clone())
+}
+
+/// Refuse `path` if a scope is active and it lies outside. Code that reaches the disk without
+/// going through this module calls it first. In the browser files are the host's, never the
+/// disk, so there is nothing to confine.
+// ponytail: checked then opened, so a local process racing a symlink swap in an allowed folder
+// could still redirect one call; opening by handle (openat/O_NOFOLLOW) would close that.
+pub fn check(path: &str) -> Result<()> {
+    if cfg!(target_arch = "wasm32") {
+        return Ok(());
+    }
+    SCOPE.with(|s| s.borrow().as_ref().map_or(Ok(()), |scope| scope.check(path)))
+}
+
 /// A file's text, at most `max` bytes.
 pub fn read_to_string(path: &str, max: usize) -> Result<String> {
     String::from_utf8(read(path, max)?).map_err(|e| Error::new(ErrorKind::InvalidData, e))
@@ -154,6 +255,49 @@ mod tests {
             assert_eq!(refused, Ok(true), "reading a FIFO must be refused, not block");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An agent's scope (#205): inside its folders files work as before; outside, through `..`
+    /// or through a symlink that leads out, every call is refused with a clear error and the
+    /// disk is left alone. Without a scope nothing is confined.
+    #[cfg(all(unix, not(target_arch = "wasm32")))]
+    #[test]
+    fn a_scope_confines_every_call_to_its_folders() {
+        use super::{PathScope, scoped};
+        let base = std::env::temp_dir().join(format!("solidcraft-vfs-scope-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (root, out) = (base.join("root"), base.join("out"));
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("secret.txt"), "secret").unwrap();
+        std::os::unix::fs::symlink(&out, root.join("link")).unwrap();
+        std::os::unix::fs::symlink(out.join("missing.txt"), root.join("dangling")).unwrap();
+        let s = |p: std::path::PathBuf| p.to_string_lossy().to_string();
+        let scope = PathScope::new([root.clone()]);
+        scoped(Some(scope.clone()), || {
+            let inside = s(root.join("sub/a.txt"));
+            super::write(&inside, b"ok").unwrap();
+            assert_eq!(super::read(&inside, 16).unwrap(), b"ok");
+            assert_eq!(super::len(&inside).unwrap(), 2);
+            assert!(super::exists(&inside));
+            super::remove(&inside).unwrap();
+            for escape in [out.join("secret.txt"), root.join("../out/secret.txt"), root.join("link/secret.txt"), root.join("dangling")] {
+                let p = s(escape);
+                let e = super::read(&p, 16).unwrap_err();
+                assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied, "{p}: {e}");
+                assert!(e.to_string().contains("outside the folders this agent may use"), "{e}");
+                assert!(super::write(&p, b"x").is_err() && super::remove(&p).is_err() && super::len(&p).is_err() && !super::exists(&p), "{p}");
+            }
+            assert!(super::write(&s(out.join("new.txt")), b"x").is_err());
+            assert!(super::check(&s(root.join("sub/../sub/b.txt"))).is_ok(), "`..` that stays inside is fine");
+        });
+        assert_eq!(std::fs::read_to_string(out.join("secret.txt")).unwrap(), "secret");
+        assert!(!out.join("new.txt").exists() && !out.join("missing.txt").exists());
+        // The scope ends with the call; an empty one refuses everything.
+        assert!(super::current_scope().is_none());
+        assert_eq!(super::read(&s(out.join("secret.txt")), 16).unwrap(), b"secret");
+        assert!(PathScope::new([base.join("nonexistent")]).check(&s(root.join("sub/a.txt"))).is_err());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// A directory is not a file either.

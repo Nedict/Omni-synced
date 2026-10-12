@@ -133,6 +133,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn write(s: &mut Session, path: &str) -> Result<Value> {
+    solidcraft_io::vfs::check(path).map_err(|e| EngineError::Other(e.to_string()))?;
     let bytes = solidcraft_io::write_design(&s.doc);
     // Atomic, keeping the version being replaced as `<file>.bak`.
     solidcraft_io::write_atomic(std::path::Path::new(path), &bytes, true).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
@@ -180,10 +181,13 @@ fn save_stl(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn recovery_dir(p: &Value, cmd: &str) -> Result<std::path::PathBuf> {
-    match str_(p, "dir").filter(|d| !d.trim().is_empty() && d.len() < 4096) {
-        Some(d) => Ok(d.into()),
-        None => crate::recovery::default_dir().ok_or_else(|| bad(cmd, "no recovery folder on this system (give `dir`)")),
-    }
+    let dir = match str_(p, "dir").filter(|d| !d.trim().is_empty() && d.len() < 4096) {
+        Some(d) => d.into(),
+        None => crate::recovery::default_dir().ok_or_else(|| bad(cmd, "no recovery folder on this system (give `dir`)"))?,
+    };
+    // An agent's commands reach the recovery folder only when it is one of their folders.
+    solidcraft_io::vfs::check(&dir.to_string_lossy()).map_err(|e| EngineError::Other(e.to_string()))?;
+    Ok(dir)
 }
 
 fn recovery_list(_s: &mut Session, p: &Value) -> Result<Value> {
@@ -200,7 +204,7 @@ fn recover(s: &mut Session, p: &Value) -> Result<Value> {
     s.path = entry.path.clone();
     s.mark_unsaved();
     if bool_(p, "discard").unwrap_or(false) {
-        crate::recovery::remove(&dir, id);
+        crate::recovery::remove(&dir, id)?;
     }
     let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
     Ok(json!({"id": id, "path": entry.path, "name": entry.name, "features": s.doc.features.len(), "errors": errors}))
@@ -215,7 +219,7 @@ fn recovery_discard(_s: &mut Session, p: &Value) -> Result<Value> {
         vec![str_(p, "id").ok_or_else(|| bad(cmd, "`id` or `all` is required"))?.to_string()]
     };
     for id in &ids {
-        crate::recovery::remove(&dir, id);
+        crate::recovery::remove(&dir, id)?;
     }
     Ok(json!({"discarded": ids}))
 }

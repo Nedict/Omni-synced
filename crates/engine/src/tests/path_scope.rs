@@ -1,0 +1,50 @@
+//! Commands run for an agent (#205): with a `vfs::PathScope` active, every command that reads,
+//! writes or deletes a file it was given a path for stays inside the scope's folders.
+
+use serde_json::json;
+use solidcraft_io::vfs::{PathScope, scoped};
+
+use crate::*;
+
+#[test]
+fn file_commands_stay_inside_the_agents_folders() {
+    let base = std::env::temp_dir().join(format!("solidcraft-path-scope-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (root, out) = (base.join("root"), base.join("out"));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let at = |d: &std::path::Path, f: &str| d.join(f).to_string_lossy().to_string();
+    let mut s = Session::default();
+    s.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10})).unwrap();
+    std::fs::write(out.join("part.solidcraft"), solidcraft_io::write_design(&s.doc)).unwrap();
+    std::fs::write(out.join("p.csv"), "name,expression\nw,5 mm\n").unwrap();
+
+    scoped(Some(PathScope::new([root.clone()])), || {
+        // Inside: the usual workflow.
+        s.execute("file.save_as", &json!({"path": at(&root, "part.solidcraft")})).unwrap();
+        s.execute("file.export", &json!({"path": at(&root, "part.step")})).unwrap();
+        s.execute("doc.open", &json!({"path": at(&root, "part.solidcraft")})).unwrap();
+        // Outside, directly or through `..`: refused, with the reason.
+        for (cmd, p) in [
+            ("file.save_as", json!({"path": at(&out, "x.solidcraft")})),
+            ("file.save", json!({"path": at(&root, "../out/x.solidcraft")})),
+            ("file.export", json!({"path": at(&out, "x.stl")})),
+            ("parameters.export", json!({"path": at(&out, "x.csv")})),
+            ("doc.open", json!({"path": at(&out, "part.solidcraft")})),
+            ("parameters.import", json!({"path": at(&out, "p.csv")})),
+            ("sketch.insert_dxf", json!({"path": at(&out, "a.dxf")})),
+            ("doc.recovery_list", json!({"dir": out.to_string_lossy()})),
+            ("doc.recovery_discard", json!({"dir": out.to_string_lossy(), "id": "part"})),
+        ] {
+            let e = s.execute(cmd, &p).unwrap_err().to_string();
+            assert!(e.contains("outside the folders this agent may use"), "{cmd}: {e}");
+        }
+        // The default recovery folder isn't one of the agent's folders either.
+        assert!(s.execute("doc.recovery_list", &json!({})).is_err());
+    });
+    let left: Vec<_> = std::fs::read_dir(&out).unwrap().flatten().map(|e| e.file_name()).collect();
+    assert_eq!(left.len(), 2, "nothing written or deleted outside: {left:?}");
+    // Without a scope (the user's own dialogs) nothing changes.
+    s.execute("file.export", &json!({"path": at(&out, "x.stl")})).unwrap();
+    let _ = std::fs::remove_dir_all(&base);
+}

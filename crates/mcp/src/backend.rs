@@ -85,6 +85,11 @@ impl Backend for Remote {
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id += 1;
+        let mut params = params;
+        // The app confines the files this request reaches to the agent's folders (control.rs).
+        if let (Some(scope), Some(o)) = (solidcraft_engine::io::vfs::current_scope(), params.as_object_mut()) {
+            o.insert("allow_paths".into(), json!(scope.roots().iter().map(|r| r.to_string_lossy()).collect::<Vec<_>>()));
+        }
         let line = json!({"id": id, "method": method, "params": params}).to_string();
         let reply = match self.roundtrip(&line) {
             Ok(r) => r,
@@ -157,7 +162,7 @@ impl Backend for Headless {
                 let scene = solidcraft_engine::view::scene(s, &cam);
                 let png = render_png(&scene, &cam, w, h).ok_or("render failed")?;
                 let path = str_p("path").ok_or("missing `path`")?;
-                std::fs::write(path, &png).map_err(|e| format!("{path}: {e}"))?;
+                solidcraft_engine::io::vfs::write(path, &png).map_err(|e| format!("{path}: {e}"))?;
                 Ok(json!({"path": path, "bytes": png.len(), "width": w, "height": h}))
             }
             "ui.screenshot" => Err("no window in headless mode; use ui.render".into()),
