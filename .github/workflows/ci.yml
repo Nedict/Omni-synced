@@ -160,7 +160,9 @@ jobs:
           # Pull requests skip the heavy tests (default-filter in .config/nextest.toml).
           all=()
           if [ "$EVENT_NAME" != pull_request ]; then all=(--ignore-default-filter); fi
-          cargo nextest run --archive-file tests.tar.zst --workspace-remap . \
+          # Extract into ./target: tests that run a built binary (env!("CARGO_BIN_EXE_*")) have
+          # the build job's path, which is the same checkout path here.
+          cargo nextest run --archive-file tests.tar.zst --workspace-remap . --extract-to . --extract-overwrite \
             --profile ci --partition "slice:$SHARD/4" "${all[@]}"
       - name: Upload test timings
         if: always()
