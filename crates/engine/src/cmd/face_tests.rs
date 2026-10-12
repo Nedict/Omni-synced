@@ -185,3 +185,30 @@ fn repeated_source_face_profile_requires_and_uses_the_exact_active_occurrence() 
         assert!(!state.bodies.iter().any(|body| body.body.contains(Vec3::new(x, 5.0, 16.0))));
     }
 }
+
+/// #308: a blind cut ending inside a cylinder leaves thin strips of the cylinder wall beside
+/// the cut; they must count as cylinder, not as a sphere or a freeform face.
+#[test]
+fn blind_cut_inside_a_cylinder_keeps_only_planes_and_cylinders() {
+    let mut s = Session::default();
+    let side = json!({"origin":[0,0,0],"x_dir":[0,0,-1],"y_dir":[0,1,0]});
+    s.execute("solid.box", &json!({"length":40,"width":30,"height":3,"body_name":"Hinge"})).unwrap();
+    for (name, radius, operation, extent) in
+        [("Knuckle", 4, "join", json!({"distance":40})), ("Pin", 2, "cut", json!({"distance":100,"direction":"symmetric"}))]
+    {
+        s.execute("sketch.create", &json!({"name":name,"plane":side})).unwrap();
+        s.execute("sketch.circle.center", &json!({"center":[-4,33],"radius":radius})).unwrap();
+        s.execute("sketch.finish", &json!({})).unwrap();
+        let mut p = json!({"sketch":name,"operation":operation,"body_names":["Hinge"]});
+        p.as_object_mut().unwrap().extend(extent.as_object().unwrap().clone());
+        s.execute("solid.extrude", &p).unwrap();
+    }
+    s.execute("sketch.create", &json!({"name":"Gap","plane":"XY"})).unwrap();
+    s.execute("sketch.rectangle.two_point", &json!({"p0":[12,29],"p1":[28,40]})).unwrap();
+    s.execute("sketch.finish", &json!({})).unwrap();
+    s.execute("solid.extrude", &json!({"sketch":"Gap","operation":"cut","distance":3.3,"body_names":["Hinge"]})).unwrap();
+    let m = s.execute("inspect.measure", &json!({})).unwrap();
+    let body = &m["bodies"][0];
+    assert_eq!(body["face_types"], json!({"cylinder": 2, "plane": 12}), "{m}");
+    assert_eq!(body["faces"], 14, "{m}");
+}
