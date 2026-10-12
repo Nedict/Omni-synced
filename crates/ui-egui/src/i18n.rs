@@ -260,10 +260,7 @@ mod tests {
         assert_eq!(ko.label("Extrude"), "돌출");
         assert_eq!(ko.label("CREATE SKETCH"), "스케치 만들기");
         assert_eq!(ko.label("NonExistentKey"), "NonExistentKey");
-        assert_eq!(
-            ko.format("document.save_changes", &[("name", "My {design}")]),
-            "My {design}의 변경 사항을 저장하시겠습니까?"
-        );
+        assert_eq!(ko.format("document.save_changes", &[("name", "My {design}")]), "My {design}의 변경 사항을 저장하시겠습니까?");
         assert_eq!(ko.format("dialog.selected_count", &[("count", "2")]), "↖ 2개 선택됨");
         assert_eq!(ko.dynamic("Sketch1"), "스케치1");
         assert_eq!(ko.dynamic("Body2"), "바디2");
