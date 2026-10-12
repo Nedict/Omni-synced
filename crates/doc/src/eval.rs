@@ -2501,6 +2501,14 @@ fn replay(
                 }
             }
         }
+        // Many cut copies clear of each other: one tool of many pieces, so the target is cut
+        // once instead of rebuilding an ever more complex body for every copy (#261).
+        if op == Operation::Cut
+            && copies.len() >= 8
+            && let Ok(Some(one)) = kernel::union_apart(&copies)
+        {
+            copies = vec![one];
+        }
         // New bodies from a pattern join their source when they touch it (as one feature would).
         if f.body_names.is_empty() {
             apply_op(st, f, copies, op, &targets)?;
