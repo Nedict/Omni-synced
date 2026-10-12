@@ -106,11 +106,13 @@ fn enclosure_arc_extinction_keeps_a_real_sharp_inner_lip_after_resize_and_reopen
         let errors = session.model.results.iter().filter_map(|r| r.error.as_ref().map(|e| (&r.name, e))).collect::<Vec<_>>();
         let warnings = session.model.results.iter().filter_map(|r| r.warning.as_ref().map(|e| (&r.name, e))).collect::<Vec<_>>();
         assert!(errors.is_empty(), "errors {errors:?}");
-        // The earlier snap-fit operation retains its documented legacy split-face
-        // notice. Offset/projection failures or frozen borders are not accepted.
+        // The earlier snap-fit operation retains its notice about its face reference: the
+        // shell's inner wall it sits on, which the resized boss join (no exact history there)
+        // leaves to be found by geometry. Offset/projection failures or frozen borders are not
+        // accepted.
         assert!(
             warnings.iter().all(|(name, message)| name.as_str() == "SnapFit1"
-                && message.as_str() == "face `F11:side:bs#7` was split; using the piece nearest the picked point"),
+                && message.as_str() == "face `F4:inner:F2:side:l1` was found by geometry, not exact history; check it"),
             "warnings {warnings:?}"
         );
         assert!(session.model.results.iter().filter(|r| r.name == "Lid lip").all(|r| r.warning.is_none()));

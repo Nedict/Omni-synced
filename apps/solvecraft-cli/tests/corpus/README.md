@@ -15,6 +15,7 @@ hostile variants of it never panic.
 | `modern-sheet-metal` | bd98035 | sheet metal contour flange (oracle 72) |
 | `modern-path-pattern` | bd98035 | pattern on path (oracle 53) |
 | `modern-plastic` | bd98035 | shell, lip, boss, rest, snap fit, plastic rule |
+| `naming-split-pieces` | 9a979cf | format 13 names: a slot splits the top; fillet, chamfer and offset face name its pieces by number (`F2:top#2`) |
 
 The scripts that made them are in `scripts/`. Never regenerate a file with a newer build: the
 point is that it was written by the old one. Add new files for new eras instead.

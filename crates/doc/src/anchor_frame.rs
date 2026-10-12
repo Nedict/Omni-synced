@@ -14,7 +14,7 @@ pub fn state_in_face_anchor_frame<'a>(doc: &Document, state: &'a ModelState, anc
     body.source_name = raw.source_name.clone();
     body.source_transform = crate::mat_mul(&relative, &raw.source_transform);
     body.imported = raw.imported.clone();
-    body.names = crate::naming::NameCell::known(crate::naming::face_names(raw));
+    body.names = crate::naming::NameCell::same(raw);
     let slot = output.bodies.iter_mut().find(|body| body.name == raw.name).ok_or_else(|| DocError::Unknown("anchored body frame".into()))?;
     *slot = body;
     Ok(Cow::Owned(output))

@@ -51,7 +51,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
                     }
                     let (index, _, _) = crate::project::nearest_face(&mb.mesh(), picked)
                         .ok_or_else(|| DocError::Invalid("selected cylinder face cannot be resolved".into()))?;
-                    if crate::naming::face_names(&mb).get(index as usize) != Some(name) {
+                    if !crate::naming::face_has_name(&mb, index as usize, name) {
                         return Err(DocError::Invalid("selected cylinder face is ambiguous".into()));
                     }
                     at = kernel::cylinder_emboss_anchor(&mb.body, index as usize, picked)?;

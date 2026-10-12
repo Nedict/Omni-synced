@@ -80,6 +80,10 @@ impl FeatureKind {
 
 /// Remap persistent topology tokens without rewriting arbitrary user expressions or labels.
 pub fn remap_topology(name: &str, ids: &BTreeMap<u64, u64>, bodies: &BTreeMap<String, String>) -> String {
+    // An older design's name keeps its mark; what follows it is remapped as any name.
+    if let Some(old) = crate::naming::legacy_name(name) {
+        return format!("{}{}", crate::naming::LEGACY_MARK, remap_topology(old, ids, bodies));
+    }
     // Imported names belong to the complete canonical body prefix, even when that prefix
     // happens to contain text resembling a feature token.
     if let Some((body, suffix)) = name.rsplit_once(":face:")
@@ -91,7 +95,9 @@ pub fn remap_topology(name: &str, ids: &BTreeMap<u64, u64>, bodies: &BTreeMap<St
     let mut at = 0;
     while at < name.len() {
         let rest = &name[at..];
-        if rest.starts_with('F') && (at == 0 || matches!(name.as_bytes().get(at - 1), Some(b'@') | Some(b':') | Some(b'|'))) {
+        // A feature token starts a name, or one inside it: after `@`, `:` or `|`, or in a
+        // piece's list of the faces around it (`[`, `,`).
+        if rest.starts_with('F') && (at == 0 || matches!(name.as_bytes().get(at - 1), Some(b'@' | b':' | b'|' | b'[' | b','))) {
             let end = rest.as_bytes().iter().skip(1).take_while(|b| b.is_ascii_digit()).count() + 1;
             if end > 1
                 && matches!(rest.as_bytes().get(end), Some(b':') | Some(b'.'))

@@ -39,13 +39,18 @@
 //! - 13: exact planar shell face anchors retain the shell producer, original certified
 //!   source and distinct inner/outer role. Version 12 anchors retain their identities;
 //!   migration never guesses attachments for older designs.
+//! - 14: persistent names follow the kernel's exact face history. Pieces of a split face are
+//!   named by the faces around them (`F2:top#[F2:side:l4,F4:side:l4]`) instead of numbered by
+//!   where their centres lay (`F2:top#2`). Names stored by older formats were worked out from
+//!   geometry, and a few of them name a face that history names differently; they get the
+//!   legacy mark (`?F2:top#2`) and are found again as the build that saved them found them.
 
 use serde_json::Value;
 
 use crate::{DocError, Document, Result};
 
 /// The format this build writes.
-pub const FORMAT: u32 = 13;
+pub const FORMAT: u32 = 14;
 
 pub fn format_string(n: u32) -> String {
     format!("solvecraft/{n}")
@@ -58,8 +63,70 @@ pub fn version_of(s: &str) -> Option<u32> {
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
 type JsonStep = fn(&mut Value) -> Result<()>;
-const JSON_STEPS: [JsonStep; 12] =
-    [|_| Ok(()), v2_to_v3, v3_to_v4, v4_to_v5, v5_to_v6, |_| Ok(()), |_| Ok(()), |_| Ok(()), |_| Ok(()), |_| Ok(()), |_| Ok(()), |_| Ok(())];
+const JSON_STEPS: [JsonStep; 13] = [
+    |_| Ok(()),
+    v2_to_v3,
+    v3_to_v4,
+    v4_to_v5,
+    v5_to_v6,
+    |_| Ok(()),
+    |_| Ok(()),
+    |_| Ok(()),
+    |_| Ok(()),
+    |_| Ok(()),
+    |_| Ok(()),
+    |_| Ok(()),
+    v13_to_v14,
+];
+
+/// Stored face and edge names were worked out from geometry before format 14; they get the
+/// legacy mark (`?`, see `naming::LEGACY_MARK`) so they are found again as those builds found
+/// them, and an older design evaluates as it was saved. Every place a design stores such a name
+/// is marked: fillets' and chamfers' `edge_names`, features' `face_names`, face and edge
+/// references (`"type": "face"|"edge"` with a `name`), sketch links' `face_name`, joint snaps'
+/// `face`, and face appearances (but not strict ones, whose names are certified lineage).
+fn v13_to_v14(v: &mut Value) -> Result<()> {
+    fn walk(v: &mut Value) {
+        match v {
+            Value::Object(o) => {
+                let kind = o.get("type").and_then(Value::as_str).map(str::to_string);
+                let blend = matches!(kind.as_deref(), Some("fillet" | "chamfer"));
+                for (key, x) in o.iter_mut() {
+                    match (key.as_str(), x) {
+                        // Other features' edge names are sheet metal's own, not these.
+                        ("edge_names", Value::Array(names)) if blend => names.iter_mut().for_each(mark),
+                        ("face_names", Value::Array(names)) => names.iter_mut().for_each(mark),
+                        ("face_name" | "face", n @ Value::String(_)) => mark(n),
+                        ("name", n @ Value::String(_)) if matches!(kind.as_deref(), Some("face" | "edge")) => mark(n),
+                        (_, x) => walk(x),
+                    }
+                }
+            }
+            Value::Array(a) => a.iter_mut().for_each(walk),
+            _ => {}
+        }
+    }
+    walk(v);
+    // Face appearances carry the face's name without a type tag.
+    if let Some(Value::Array(faces)) = v.get_mut("appearances").and_then(|a| a.get_mut("faces")) {
+        for face in faces.iter_mut().filter(|f| f.get("strict_name").and_then(Value::as_bool) != Some(true)) {
+            if let Some(n) = face.get_mut("name") {
+                mark(n);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A stored name with the legacy mark (an empty name stays empty: no reference).
+fn mark(n: &mut Value) {
+    if let Value::String(s) = n
+        && !s.is_empty()
+        && crate::naming::legacy_name(s).is_none()
+    {
+        s.insert(0, crate::naming::LEGACY_MARK);
+    }
+}
 
 /// Old XZ references retain their exact frame, including nested offset and angled planes.
 /// New origin references use +Y; freezing the old frame avoids changing sketch coordinates,
@@ -595,6 +662,42 @@ fn normalise(d: &mut Document) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn version_thirteen_names_keep_their_meaning_under_the_legacy_mark() {
+        let file = serde_json::json!({
+            "format": "solvecraft/13",
+            "features": [
+                {"type": "fillet", "edge_names": ["F2:side:l2|F2:top#2~1", ""], "face_names": ["F2:top#1", ""]},
+                {"type": "sheet_flange", "edge_names": ["base:l1:top"]},
+                {"type": "sketch", "plane": {"type": "face", "name": "F2:top#1", "at": [0, 0, 0]},
+                 "sketch": {"links": [{"face_name": "F2:top#2"}]}},
+                {"type": "construction_axis", "def": {"a": {"type": "edge", "name": "F2:start|F2:side:l1"}, "b": {"type": "face", "name": "F2:start"}}},
+                {"name": "Hole #2", "type": "extrude"},
+                {"type": "thread", "face": [1, 2, 3]}
+            ],
+            "assembly": {"joints": [{"snap": {"type": "face_center", "face": "F2:top#2"}}]},
+            "appearances": {"faces": [{"body": "Body1", "name": "F2:top#1"}, {"body": "Body1", "name": "F2:+x", "strict_name": true}]}
+        });
+        let mut v = file.clone();
+        v13_to_v14(&mut v).unwrap();
+        assert_eq!(v["features"][0]["edge_names"], serde_json::json!(["?F2:side:l2|F2:top#2~1", ""]));
+        assert_eq!(v["features"][0]["face_names"], serde_json::json!(["?F2:top#1", ""]));
+        assert_eq!(v["features"][1]["edge_names"][0], "base:l1:top", "sheet metal's edge names are its own");
+        assert_eq!(v["features"][2]["plane"]["name"], "?F2:top#1");
+        assert_eq!(v["features"][2]["sketch"]["links"][0]["face_name"], "?F2:top#2");
+        assert_eq!(v["features"][3]["def"]["a"]["name"], "?F2:start|F2:side:l1");
+        assert_eq!(v["features"][3]["def"]["b"]["name"], "?F2:start");
+        assert_eq!(v["features"][4]["name"], "Hole #2", "a feature's own name is not a face name");
+        assert_eq!(v["features"][5]["face"], serde_json::json!([1, 2, 3]));
+        assert_eq!(v["assembly"]["joints"][0]["snap"]["face"], "?F2:top#2");
+        assert_eq!(v["appearances"]["faces"][0]["name"], "?F2:top#1");
+        assert_eq!(v["appearances"]["faces"][1]["name"], "F2:+x", "strict appearance names are certified lineage");
+        // The step never marks twice.
+        let once = v.clone();
+        v13_to_v14(&mut v).unwrap();
+        assert_eq!(v, once);
+    }
 
     #[test]
     fn version_nine_wire_spaces_preserve_saved_points_and_explicit_markers() {

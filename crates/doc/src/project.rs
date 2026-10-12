@@ -497,7 +497,7 @@ fn refresh_links_in(
                     && name != stem
                     && st.body(body).is_some_and(|target| {
                         (certified_planar_construction(target, index) || target.body.face_was_coalesced(index))
-                            && crate::naming::face_names(target).get(index).is_some_and(|current| current == stem)
+                            && crate::naming::face_has_name(target, index, stem)
                     });
                 if removed_piece {
                     sk.set_link_lost(&l.id, true);

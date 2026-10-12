@@ -262,7 +262,10 @@ fn model_faces(s: &mut Session, p: &Value) -> Result<Value> {
         .body
         .faces(tol)?
         .iter()
-        .map(|f| json!({"index": f.index, "name": names.get(f.index), "area": f.area, "centroid": f.centroid, "plane_normal": f.plane_normal}))
+        .map(|f| {
+            json!({"index": f.index, "name": names.get(f.index), "exact": solvecraft_doc::naming::face_name_exact(b, f.index),
+                   "area": f.area, "centroid": f.centroid, "plane_normal": f.plane_normal})
+        })
         .collect();
     Ok(json!({"body": b.name, "faces": faces}))
 }

@@ -671,6 +671,8 @@ mod delete_face_tests;
 #[cfg(test)]
 mod extent_tests;
 #[cfg(test)]
+mod naming_history_tests;
+#[cfg(test)]
 mod pattern_suppress_tests;
 #[cfg(test)]
 mod profile_curves_tests;

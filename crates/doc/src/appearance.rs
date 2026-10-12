@@ -217,8 +217,7 @@ impl Document {
             }
             // By name (every piece of a split face), else by the point.
             if let Some(n) = &f.name {
-                let stem = crate::naming::strip_piece(n);
-                let hits: Vec<usize> = (0..names.len()).filter(|i| names.get(*i).is_some_and(|x| crate::naming::strip_piece(x) == stem)).collect();
+                let hits = crate::naming::faces_with_stem(b, n);
                 if !hits.is_empty() {
                     for i in hits {
                         out.retain(|(j, _)| *j != i);
