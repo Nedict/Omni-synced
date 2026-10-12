@@ -2350,3 +2350,20 @@ fn special_files_are_refused_by_every_file_command() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Parameters that work are listed in the command's params doc, which is all agents see (#271).
+#[test]
+fn params_docs_list_working_parameters() {
+    let mut s = Session::default();
+    let cmds = run(&mut s, "engine.commands", json!({}));
+    let params =
+        |id: &str| cmds.as_array().unwrap().iter().find(|c| c["id"] == id).and_then(|c| c["params"].as_str()).unwrap_or_default().to_string();
+    // Both work today: a named base flange, and a loft cut limited to its targets.
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "A"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [50, 50]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "sheet.flange", json!({"sketch": "A", "body_name": "Panel A"}));
+    assert!(s.model.state().body("Panel A").is_some());
+    assert!(params("sheet.flange").contains("body_name"), "sheet.flange: {}", params("sheet.flange"));
+    assert!(params("solid.loft").contains("targets"), "solid.loft: {}", params("solid.loft"));
+}
