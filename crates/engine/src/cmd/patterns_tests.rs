@@ -168,9 +168,11 @@ fn pattern_of_512_hole_cuts_finishes_in_reasonable_time() {
         let v = r.map(|_| volume(&mut s)).map_err(|e| e.to_string());
         let _ = tx.send((v, t.elapsed()));
     });
-    let (v, took) = rx.recv_timeout(Duration::from_secs(60)).expect("the 512-hole pattern did not finish within 60 s");
+    // About 6 s alone. CI runs every test binary at once and is ten times slower there (many
+    // tests pass 60 s), so the budget only has to catch the quadratic slope, not a tight time.
+    let (v, took) = rx.recv_timeout(Duration::from_secs(300)).expect("the 512-hole pattern did not finish within 300 s");
     let v = v.expect("pattern");
     // The measure meshes the bores: each hole reads about 0.06 % small, so allow 0.1 % a hole.
     assert!((v - (200.0 * 100.0 - 512.0 * PI)).abs() < 512.0 * PI * 1e-3, "{v}");
-    assert!(took < Duration::from_secs(20), "512 holes took {took:?}");
+    assert!(took < Duration::from_secs(120), "512 holes took {took:?}");
 }
