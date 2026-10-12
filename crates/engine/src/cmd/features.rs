@@ -431,7 +431,7 @@ pub(super) fn add_feature(s: &mut Session, p: &Value, kind: FeatureKind) -> Resu
     if !names.is_empty()
         && let Some(f) = s.doc_mut().feature_mut(id)
     {
-        f.body_names = names;
+        f.body_names = names.clone();
     }
     s.active_sketch = None;
     s.refresh();
