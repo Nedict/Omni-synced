@@ -323,3 +323,28 @@ fn inch_dimension_entry_survives_unit_changes_undo_and_reopen() {
     assert_eq!(reopened.world_state().sketch(sketch).unwrap().sketch, before);
     crate::dim_view::cancel();
 }
+
+/// Placing the dimension of two unaligned points above them gives the horizontal distance,
+/// beside them the vertical one, and across from them the distance between them (#257).
+#[test]
+fn placing_a_two_point_dimension_picks_horizontal_vertical_or_aligned() {
+    // What each placement fixes at 10 mm: the X span, the Y span, or the length.
+    let spans = |a: solvecraft_engine::geom::Vec2, b: solvecraft_engine::geom::Vec2| [(b.x - a.x).abs(), (b.y - a.y).abs(), a.dist(b)];
+    for (at, measured) in [([6., 25.], 0), ([-10., 1.], 1), ([-5., 12.], 2)] {
+        let mut h = line([12., 16.]);
+        place(&mut h, &[[0., 0.], [12., 16.]], at);
+        type_value(&mut h, "10 mm");
+        h.step(&json!({"key":"Enter"})).unwrap();
+        assert!(!crate::dim_view::editing());
+        let state = h.app.session.world_state();
+        let sk = &state.sketch(h.app.session.active_sketch.unwrap()).unwrap().sketch;
+        let a = sk.point(sk.resolve_point("l1.start").unwrap()).unwrap();
+        let b = sk.point(sk.resolve_point("l1.end").unwrap()).unwrap();
+        let spans = spans(a, b);
+        assert!((spans[measured] - 10.0).abs() < 1e-6, "placed at {at:?}: {a:?} {b:?}");
+        // A horizontal or vertical dimension leaves the other span as drawn.
+        if measured < 2 {
+            assert!((spans[1 - measured] - [12.0, 16.0][1 - measured]).abs() < 1e-6, "placed at {at:?}: {a:?} {b:?}");
+        }
+    }
+}
