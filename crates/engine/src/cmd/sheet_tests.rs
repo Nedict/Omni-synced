@@ -1558,3 +1558,55 @@ fn partial_depth_intersect_sub_extrusion_resolution_layers_refuse_atomically() {
         assert!((solvecraft_kernel::measure(&s.world_state().body(&name).unwrap().body).unwrap().volume - 15000.0).abs() < 1e-5);
     }
 }
+
+/// A 0.8 mm steel rule and a base flange from a closed outline on XY (the sheet spans z 0..0.8).
+fn outline_blank(s: &mut Session, outline: Value) {
+    run(s, "sheet.manage_rules", json!({"name": "Steel 0.8", "thickness": "0.8", "active": true}));
+    run(s, "sketch.create", json!({"plane": "XY", "name": "Blank"}));
+    run(s, "sketch.line", json!({"points": outline, "closed": true}));
+    run(s, "sketch.finish", json!({}));
+    run(s, "sheet.flange", json!({"sketch": "Blank"}));
+}
+
+/// A 100 x 40 blank with two 15 mm tabs on its right edge (y 5..12 and y 28..35), on one bend line.
+fn two_tab_blank(s: &mut Session) {
+    outline_blank(
+        s,
+        json!([[0, 0], [100, 0], [100, 5], [115, 5], [115, 12], [100, 12], [100, 28], [115, 28], [115, 35], [100, 35], [100, 40], [0, 40]]),
+    );
+}
+
+/// Folding one tab must not be refused because another tab lies on the same line (#264).
+#[test]
+fn fold_one_of_two_collinear_tabs() {
+    let mut s = Session::default();
+    two_tab_blank(&mut s);
+    let flat = volume(&mut s);
+    run(&mut s, "sheet.fold", json!({"points": [[107, 5, 0.8], [107, 12, 0.8]], "fixed": [50, 20, 0.8]}));
+    assert!(rel(volume(&mut s), flat) < 1e-3, "a fold keeps the material");
+}
+
+/// One fold line across both tabs bends both (#264).
+#[test]
+fn fold_across_two_collinear_tabs() {
+    let mut s = Session::default();
+    two_tab_blank(&mut s);
+    let flat = volume(&mut s);
+    run(&mut s, "sheet.fold", json!({"points": [[107, 5, 0.8], [107, 35, 0.8]], "fixed": [50, 20, 0.8]}));
+    assert!(rel(volume(&mut s), flat) < 1e-3);
+    let bb = &run(&mut s, "inspect.measure", json!({}))["bodies"][0]["bbox"];
+    assert!(bb["max"][2].as_f64().unwrap() > 7.0, "both tabs stand up: {bb}");
+}
+
+/// Edge flanges on both tab ends in one feature (two separate features already work) (#264).
+#[test]
+fn edge_flanges_on_two_collinear_tab_ends_in_one_feature() {
+    let mut s = Session::default();
+    two_tab_blank(&mut s);
+    run(&mut s, "sheet.flange", json!({"edges": [[115, 8, 0.8], [115, 31, 0.8]], "height": "10"}));
+    let mut separate = Session::default();
+    two_tab_blank(&mut separate);
+    run(&mut separate, "sheet.flange", json!({"edges": [[115, 8, 0.8]], "height": "10"}));
+    run(&mut separate, "sheet.flange", json!({"edges": [[115, 31, 0.8]], "height": "10"}));
+    assert!(rel(volume(&mut s), volume(&mut separate)) < 1e-6);
+}
