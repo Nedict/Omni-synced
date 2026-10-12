@@ -2732,6 +2732,65 @@ fn raising_a_pattern_count_after_a_rename_numbers_the_new_copy_after_the_others(
     assert_eq!(fourth["bodies"][0]["bbox"]["min"][0].as_f64().map(f64::round), Some(60.0), "{fourth}");
 }
 
+/// A profile added to the sketch after a named multi-profile extrude is named after `body_name`
+/// too (#373).
+#[test]
+fn a_profile_added_later_is_named_after_body_name() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "R"}));
+    for x in [0, 10, 20] {
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [x, 0], "p1": [x + 5, 30]}));
+    }
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "R", "distance": "10", "operation": "new_body", "body_name": "Ribs"}));
+    run(&mut s, "sketch.edit", json!({"sketch": "R"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [30, 0], "p1": [35, 30]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names, ["Ribs", "Ribs (2)", "Ribs (3)", "Ribs (4)"]);
+}
+
+/// The reply names the bodies the feature created, apart from the ones already there (#374).
+#[test]
+#[ignore = "fails until #374 is fixed"]
+fn extrude_reply_lists_the_bodies_it_created() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5, "corner": [0, 50, 0], "operation": "new_body", "body_name": "Base"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "R"}));
+    for x in [0, 10, 20] {
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [x, 0], "p1": [x + 5, 30]}));
+    }
+    run(&mut s, "sketch.finish", json!({}));
+    let r = run(&mut s, "solid.extrude", json!({"sketch": "R", "distance": "10", "operation": "new_body", "body_name": "Ribs"}));
+    assert_eq!(r["created_bodies"], json!(["Ribs", "Ribs (2)", "Ribs (3)"]), "{r}");
+}
+
+/// A design saved before format 14 names the bodies past its stored names `BodyN`, as it did when
+/// it was saved, so later features that name them still find them (#373).
+#[test]
+fn a_design_saved_before_format_14_keeps_generic_names_past_body_name() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "R"}));
+    for x in [0, 10, 20] {
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [x, 0], "p1": [x + 5, 30]}));
+    }
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "R", "distance": "10", "operation": "new_body", "body_name": "Ribs"}));
+    let mut legacy: Value = serde_json::from_str(&s.doc.to_json()).unwrap();
+    legacy["format"] = json!("solvecraft/13");
+    let extrude = legacy["features"].as_array_mut().unwrap().iter_mut().find(|f| f["type"] == "extrude").unwrap();
+    extrude["body_names"] = json!(["Ribs"]);
+    let dir = std::env::temp_dir().join(format!("solvecraft-373-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let design = dir.join("ribs.solvecraft");
+    std::fs::write(&design, legacy.to_string()).unwrap();
+    let mut old = Session::default();
+    run(&mut old, "doc.open", json!({"path": design.to_string_lossy()}));
+    let names: Vec<String> = old.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names, ["Ribs", "Body1", "Body2"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn fillet_fit_reduce_uses_the_largest_radius_that_fits() {
     // #293: 3.5 is too large for the 6 mm end faces of a 14 x 6 x 10 box; reduce gives 3 (a full

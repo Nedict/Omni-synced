@@ -100,16 +100,16 @@ renamed repository; old-name Pages and Flatpak URLs are not maintained as perman
 ## Build and run
 
 ```sh
-cargo run --release -p solvecraft -- --sample          # desktop app with a sample part
-cargo run --release -p solvecraft-cli -- commands      # the command registry
-cargo run --release -p solvecraft-cli -- run examples/bracket.json --out bracket.step
-cargo run --release -p solvecraft-cli -- snapshot examples/bracket.json --out bracket.png
-cargo run --release -p solvecraft -- part.step          # open a STEP file as a new design
-cargo run --release -p solvecraft-cli -- eval part.step # measure an imported STEP file
+cargo run --release -p solidcraft -- --sample          # desktop app with a sample part
+cargo run --release -p solidcraft-cli -- commands      # the command registry
+cargo run --release -p solidcraft-cli -- run examples/bracket.json --out bracket.step
+cargo run --release -p solidcraft-cli -- snapshot examples/bracket.json --out bracket.png
+cargo run --release -p solidcraft -- part.step          # open a STEP file as a new design
+cargo run --release -p solidcraft-cli -- eval part.step # measure an imported STEP file
 cargo xtask ci                                          # fmt, clippy, tests, assets, layers, wasm
 ```
 
-Windows builds: `cargo xwin build --release --target x86_64-pc-windows-msvc -p solvecraft`.
+Windows builds: `cargo xwin build --release --target x86_64-pc-windows-msvc -p solidcraft`.
 
 On Windows and Linux, SolidCraft detects a connected 3Dconnexion SpaceNavigator or SpaceMouse through its
 multi-axis HID interface. Move the cap to pan and zoom, and tilt or twist it to rotate the 3D view.

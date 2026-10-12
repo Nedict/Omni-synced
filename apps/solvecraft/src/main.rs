@@ -155,11 +155,11 @@ fn main() -> eframe::Result {
             "--control" => control_port = args.next().and_then(|p| p.parse().ok()),
             "--sample" => sample = true,
             "--version" | "-V" => {
-                println!("solvecraft {}", env!("CARGO_PKG_VERSION"));
+                println!("solidcraft {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             "--help" | "-h" => {
-                println!("usage: solvecraft [--control PORT] [--sample] [design.solvecraft | part.step]");
+                println!("usage: solidcraft [--control PORT] [--sample] [design.solvecraft | part.step]");
                 return Ok(());
             }
             _ => files.push(a),

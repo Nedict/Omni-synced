@@ -56,6 +56,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rc = out.join("solidcraft.rc");
     std::fs::write(&rc, format!("1 ICON \"{}\"\n", icon.display().to_string().replace('\\', "/")))?;
     // Missing resource tools are a build error, rather than silently shipping a generic icon.
-    embed_resource::compile_for(&rc, ["solvecraft"], embed_resource::NONE).manifest_required()?;
+    embed_resource::compile_for(&rc, ["solidcraft"], embed_resource::NONE).manifest_required()?;
     Ok(())
 }

@@ -30,7 +30,7 @@ const AREAS: &[(&str, &str)] = &[
 
 pub fn run(root: &Path) -> Result<(), String> {
     let out = crate::cargo()
-        .args(["run", "-q", "--release", "-p", "solvecraft-cli", "--", "commands"])
+        .args(["run", "-q", "--release", "-p", "solidcraft-cli", "--", "commands"])
         .output()
         .map_err(|e| format!("solvecraft-cli: {e}"))?;
     if !out.status.success() {

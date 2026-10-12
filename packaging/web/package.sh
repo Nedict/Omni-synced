@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Build the browser version and zip it:  $DIST/solvecraft-web-<version>.zip
+# Build the browser version and zip it:  $DIST/solidcraft-web-<version>.zip
 #
 # Usage: packaging/web/package.sh [--skip-build]
 #
 # Needs: trunk and the wasm32-unknown-unknown target. The zip holds a self-contained static site
-# in solvecraft-web-<version>/ that works from any URL path (public_url = "./" in Trunk.toml).
+# in solidcraft-web-<version>/ that works from any URL path (public_url = "./" in Trunk.toml).
 # Saving designs needs HTTPS or localhost (the browser's private file storage).
 # Adapted from PhotoCraft's packaging (storytold/photocraft, Apache-2.0; see ATTRIBUTION.md).
 set -euo pipefail
@@ -24,7 +24,7 @@ if grep -Eq '(src|href)="/[^/]' "$SITE/index.html"; then
   exit 1
 fi
 
-NAME="solvecraft-web-$VERSION"
+NAME="solidcraft-web-$VERSION"
 WORK="$CARGO_TARGET_DIR/web-package"
 rm -rf "$WORK"
 mkdir -p "$WORK/$NAME"

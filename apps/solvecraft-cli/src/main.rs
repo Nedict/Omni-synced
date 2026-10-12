@@ -1,17 +1,17 @@
 //! SolveCraft headless command line.
 //!
 //! ```text
-//! solvecraft-cli run <script.json|design.solvecraft|part.step|mesh.3mf> [--in design|part.step|mesh.3mf] [--out FILE]... [--save FILE] [--quiet]
-//! solvecraft-cli eval <script.json|design.solvecraft|part.step> (alias: inspect) measurements as JSON
-//! solvecraft-cli bench-open <design.solvecraft | part.step> [--parse-only] loading timings as JSON lines
-//! solvecraft-cli snapshot <script|design> --out shot.png [--width W] [--height H] [--view iso|front|top|…]
-//! solvecraft-cli exec <command> [json-params]                 run one command on an empty design
-//! solvecraft-cli commands                                     the command registry as JSON
-//! solvecraft-cli recipe <recipe.json>                         translate an oracle recipe to a script
-//! solvecraft-cli oracle <case-dir>...                         replay recipes and compare with expected.json
-//! solvecraft-cli mcp [--in design|script] [--connect HOST:PORT] MCP server on stdio (docs/mcp.md)
-//! solvecraft-cli licences                                     SolveCraft's licence and the third-party licences
-//! solvecraft-cli icon --out F.png|F.ico [--size N]             the app icon (packaging; drawn, not a file)
+//! solidcraft-cli run <script.json|design.solvecraft|part.step|mesh.3mf> [--in design|part.step|mesh.3mf] [--out FILE]... [--save FILE] [--quiet]
+//! solidcraft-cli eval <script.json|design.solvecraft|part.step> (alias: inspect) measurements as JSON
+//! solidcraft-cli bench-open <design.solvecraft | part.step> [--parse-only] loading timings as JSON lines
+//! solidcraft-cli snapshot <script|design> --out shot.png [--width W] [--height H] [--view iso|front|top|…]
+//! solidcraft-cli exec <command> [json-params]                 run one command on an empty design
+//! solidcraft-cli commands                                     the command registry as JSON
+//! solidcraft-cli recipe <recipe.json>                         translate an oracle recipe to a script
+//! solidcraft-cli oracle <case-dir>...                         replay recipes and compare with expected.json
+//! solidcraft-cli mcp [--in design|script] [--connect HOST:PORT] MCP server on stdio (docs/mcp.md)
+//! solidcraft-cli licences                                     SolveCraft's licence and the third-party licences
+//! solidcraft-cli icon --out F.png|F.ico [--size N]             the app icon (packaging; drawn, not a file)
 //! ```
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
@@ -31,19 +31,19 @@ use solvecraft_engine::Session;
 use solvecraft_engine::render::{StandardView, render_png};
 
 const USAGE: &str = "usage:
-  solvecraft-cli run <script.json|design.solvecraft|part.step> [--in design.solvecraft|part.step] [--out FILE]... [--save FILE] [--quiet] [--results]
-  solvecraft-cli run --in <design.solvecraft|part.step> [--out FILE]...
-  solvecraft-cli eval <script.json|design.solvecraft|part.step>     (alias: inspect; or --in FILE)
-  solvecraft-cli bench-open <design.solvecraft | part.step> [--parse-only]
-  solvecraft-cli snapshot <script|design> --out shot.png [--width W] [--height H] [--view iso|front|back|top|bottom|left|right]
-  solvecraft-cli exec <command> [json-params]
-  solvecraft-cli commands
-  solvecraft-cli recipe <recipe.json>
-  solvecraft-cli oracle <case-dir>... [--json]
-  solvecraft-cli fuzz [--from N] [--count N] [--jobs J] [--timeout S] [--steps N] [--minimise] [--out DIR] [--report FILE]
-  solvecraft-cli mcp [--in design.solvecraft|script.json] [--connect 127.0.0.1:PORT]
-  solvecraft-cli licences
-  solvecraft-cli icon --out icon.png [--size 256] | --out icon.ico
+  solidcraft-cli run <script.json|design.solvecraft|part.step> [--in design.solvecraft|part.step] [--out FILE]... [--save FILE] [--quiet] [--results]
+  solidcraft-cli run --in <design.solvecraft|part.step> [--out FILE]...
+  solidcraft-cli eval <script.json|design.solvecraft|part.step>     (alias: inspect; or --in FILE)
+  solidcraft-cli bench-open <design.solvecraft | part.step> [--parse-only]
+  solidcraft-cli snapshot <script|design> --out shot.png [--width W] [--height H] [--view iso|front|back|top|bottom|left|right]
+  solidcraft-cli exec <command> [json-params]
+  solidcraft-cli commands
+  solidcraft-cli recipe <recipe.json>
+  solidcraft-cli oracle <case-dir>... [--json]
+  solidcraft-cli fuzz [--from N] [--count N] [--jobs J] [--timeout S] [--steps N] [--minimise] [--out DIR] [--report FILE]
+  solidcraft-cli mcp [--in design.solvecraft|script.json] [--connect 127.0.0.1:PORT]
+  solidcraft-cli licences
+  solidcraft-cli icon --out icon.png [--size 256] | --out icon.ico
 ";
 
 fn main() -> ExitCode {
@@ -87,7 +87,7 @@ fn main() -> ExitCode {
         Some("bench-edit") => cmd_bench_edit(&args[1..]),
         Some("bench-open") => cmd_bench_open(&args[1..]),
         Some("--version" | "-V") => {
-            println!("solvecraft-cli {}", env!("CARGO_PKG_VERSION"));
+            println!("solidcraft-cli {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         _ => Err(USAGE.to_string()),
@@ -305,7 +305,7 @@ fn cmd_mcp(args: &[String]) -> Result<(), String> {
 /// parameter `save_round` set to the round number each time.
 fn cmd_save_stress(args: &[String]) -> Result<(), String> {
     let (Some(path), Some(rounds)) = (args.first(), args.get(1).and_then(|n| n.parse::<u64>().ok())) else {
-        return Err("usage: solvecraft-cli save-stress <path> <rounds>".into());
+        return Err("usage: solidcraft-cli save-stress <path> <rounds>".into());
     };
     let mut s = Session::default();
     let filler = (0..3000).map(|i| solvecraft_engine::doc::Param {
@@ -327,7 +327,7 @@ fn cmd_save_stress(args: &[String]) -> Result<(), String> {
 /// parameter edit, setting it back, undo and redo (ms and features recomputed each).
 fn cmd_bench_edit(args: &[String]) -> Result<(), String> {
     let (Some(path), Some(param), Some(expr)) = (args.first(), args.get(1), args.get(2)) else {
-        return Err("usage: solvecraft-cli bench-edit <script.json|recipe.json> <param> <expr>".into());
+        return Err("usage: solidcraft-cli bench-edit <script.json|recipe.json> <param> <expr>".into());
     };
     let v = read_json(path)?;
     let script = if v.get("features").is_some() { recipe::to_script(&v)? } else { v };
@@ -355,7 +355,7 @@ fn cmd_bench_edit(args: &[String]) -> Result<(), String> {
 
 /// Separate file reading, JSON decoding/repair, timeline evaluation and display meshing.
 fn cmd_bench_open(args: &[String]) -> Result<(), String> {
-    let path = args.first().ok_or("usage: solvecraft-cli bench-open <design.solvecraft | part.step> [--parse-only]")?;
+    let path = args.first().ok_or("usage: solidcraft-cli bench-open <design.solvecraft | part.step> [--parse-only]")?;
     let t = std::time::Instant::now();
     let step = solvecraft_engine::io::is_step_path(path);
     let limit = if step { solvecraft_engine::io::MAX_STEP_BYTES } else { solvecraft_engine::io::MAX_DESIGN_BYTES };
