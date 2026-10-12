@@ -27,6 +27,10 @@ const MAX_FLAT_SAMPLES: usize = 65_536;
 const MAX_FLAT_PIECES: usize = 4096;
 const MAX_FLAT_WORK: usize = 500_000_000;
 
+/// Starts the warning a fold gives when its `fixed` point touches no material: a recompute keeps
+/// the side the point lies on, and the `sheet.fold` command refuses such a point (#263).
+pub const FOLD_FIXED_OFF_SHEET: &str = "the fold's fixed point is not on the sheet";
+
 fn flat_budget_error() -> DocError {
     DocError::Invalid("sheet metal flat geometry exceeds the bounded processing budget".into())
 }

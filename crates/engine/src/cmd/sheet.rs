@@ -3,7 +3,7 @@
 
 use serde_json::{Value, json};
 use solidcraft_doc::expr::Kind;
-use solidcraft_doc::sheet::{SheetBody, SheetRule};
+use solidcraft_doc::sheet::{self, SheetBody, SheetRule};
 use solidcraft_doc::{FeatureKind, FlangeEdge};
 use solidcraft_geom::{Vec2, Vec3};
 
@@ -218,7 +218,25 @@ fn fold(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     let body = str_(p, "body").map(str::to_string);
-    add_feature(s, p, FeatureKind::SheetFold { sketch, curve, a, b, angle, radius, position, flip: bool_(p, "flip").unwrap_or(false), fixed, body })
+    let r = add_feature(
+        s,
+        p,
+        FeatureKind::SheetFold { sketch, curve, a, b, angle, radius, position, flip: bool_(p, "flip").unwrap_or(false), fixed, body },
+    )?;
+    // A recompute keeps a stored fold whose fixed point no longer touches the sheet (with a
+    // warning); a new fold refuses one, since it picks no side (#263).
+    if let Some(f) = fixed {
+        let id = r.get("feature").and_then(Value::as_u64);
+        let off =
+            id.and_then(|id| s.model.result(id)).and_then(|res| res.warning.as_deref()).is_some_and(|w| w.contains(sheet::FOLD_FIXED_OFF_SHEET));
+        if off {
+            return Err(bad(
+                cmd,
+                format!("the fixed point ({:.3}, {:.3}, {:.3}) is not on the sheet: pick a point on the face of the side that stays", f.x, f.y, f.z),
+            ));
+        }
+    }
+    Ok(r)
 }
 
 fn unfold(s: &mut Session, p: &Value) -> Result<Value> {

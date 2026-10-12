@@ -1991,7 +1991,6 @@ fn fold_keeps_working_when_a_parameter_moves_the_sheet_off_its_fixed_point() {
 /// `fixed` 20 mm above a 2.5 mm sheet touches no material: refuse it or say so, like a point in a
 /// cut-out (#371).
 #[test]
-#[ignore = "fails until #371 is fixed"]
 fn fold_fixed_point_above_the_sheet_is_not_silently_accepted() {
     let mut s = Session::default();
     base(&mut s, 100.0, 60.0);
@@ -2466,4 +2465,44 @@ fn designs_without_per_edge_values_are_read_and_written_as_before() {
     // A key this build doesn't know is refused, not dropped.
     design["features"][flange]["edges"][3] = json!({"point": [0.0, 45.0, 2.0], "twist": "3 deg"});
     assert!(solidcraft_doc::Document::from_json(&design.to_string()).is_err());
+}
+
+/// Points away from the sheet are refused atomically; points on any face of it, on a flange's
+/// leg, or a hair off a face still pick the side that stays (#371).
+#[test]
+fn fold_fixed_point_must_touch_the_sheet_but_any_face_will_do() {
+    let mut s = Session::default();
+    base(&mut s, 100.0, 60.0);
+    let before = s.doc.to_json();
+    let undo = s.undo.len();
+    for fixed in [json!([90, 30, 20]), json!([90, 30, -10])] {
+        let e = s.execute("sheet.fold", &json!({"points": [[40, 0, 2.5], [40, 60, 2.5]], "fixed": fixed})).unwrap_err().to_string();
+        assert!(e.contains("fixed") && e.contains("not on the sheet"), "{fixed}: {e}");
+        assert_eq!(s.doc.to_json(), before);
+        assert_eq!(s.undo.len(), undo);
+    }
+    // The left (smaller) side stays: the right part stands up.
+    for fixed in [json!([10, 30, 2.5]), json!([10, 30, 0]), json!([0, 30, 1.25]), json!([10, 30, 2.500001])] {
+        let mut s = Session::default();
+        base(&mut s, 100.0, 60.0);
+        run(&mut s, "sheet.fold", json!({"points": [[40, 0, 2.5], [40, 60, 2.5]], "fixed": fixed, "name": "Fold1"}));
+        let bb = bbox(&mut s);
+        assert!(bb["min"][0].as_f64().unwrap_or(f64::NAN).abs() < 1e-6 && bb["max"][0].as_f64().unwrap_or(f64::NAN) < 50.0, "{fixed}: {bb}");
+        assert!(run(&mut s, "timeline.inspect", json!({"feature": "Fold1"}))["warning"].is_null(), "{fixed}");
+    }
+    // A point on an edge flange's leg (far above the base panel's slab) is on the sheet.
+    let mut f = Session::default();
+    run(&mut f, "parameters.change", json!({"name": "h", "expression": "20 mm"}));
+    base(&mut f, 100.0, 60.0);
+    run(&mut f, "sheet.flange", json!({"edges": [[100, 30, 2.5]], "height": "h"}));
+    let bb = bbox(&mut f);
+    let x = bb["max"][0].as_f64().unwrap_or(f64::NAN);
+    run(&mut f, "sheet.fold", json!({"points": [[40, 0, 2.5], [40, 60, 2.5]], "fixed": [x, 30, 15], "name": "Fold1"}));
+    assert!(run(&mut f, "timeline.inspect", json!({"feature": "Fold1"}))["warning"].is_null());
+    // A shorter leg leaves the stored point in the air: the fold recomputes, keeps its side and warns.
+    run(&mut f, "parameters.change", json!({"name": "h", "expression": "10 mm"}));
+    let fold = run(&mut f, "timeline.inspect", json!({"feature": "Fold1"}));
+    assert!(fold["error"].is_null(), "{fold}");
+    assert!(fold["warning"].as_str().is_some_and(|w| w.contains("fixed point is not on the sheet")), "{fold}");
+    assert!((bbox(&mut f)["max"][0].as_f64().unwrap_or(f64::NAN) - x).abs() < 1e-6, "the right side stays");
 }
