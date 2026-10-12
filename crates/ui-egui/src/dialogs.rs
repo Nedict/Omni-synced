@@ -2510,9 +2510,10 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::Mirror => {
             need(0, "objects")?;
             need(1, "the mirror plane")?;
-            let features = pattern_features(s, sels(d, 0));
             let plane = plane_value(s, sels(d, 1).first()).ok_or("the mirror plane must be a plane or a planar face")?;
-            ("solid.mirror", json!({"features": features, "plane": plane}))
+            let mut p = json!({"plane": plane});
+            pattern_objects(s, sels(d, 0), &mut p);
+            ("solid.mirror", p)
         }
         Kind::PatternRect { count, spacing, count2, spacing2 } => {
             need(0, "objects")?;
@@ -2522,7 +2523,8 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                 (None, Some(k)) => k,
                 (None, None) => return Err("select a direction (an axis, a sketch line or a straight edge) first".into()),
             };
-            let mut p = json!({"features": pattern_features(s, sels(d, 0)), "dir1": pt(d1), "count1": count, "spacing1": spacing});
+            let mut p = json!({"dir1": pt(d1), "count1": count, "spacing1": spacing});
+            pattern_objects(s, sels(d, 0), &mut p);
             if let Some((_, d2)) = sels(d, 2).first().and_then(|x| axis_of(app, x)) {
                 p["dir2"] = pt(d2);
                 p["count2"] = json!(count2);
@@ -2541,7 +2543,9 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                 }
                 None => return Err("select an axis".into()),
             };
-            ("solid.pattern.circular", json!({"features": pattern_features(s, sels(d, 0)), "axis": axis, "count": count, "angle": angle}))
+            let mut p = json!({"axis": axis, "count": count, "angle": angle});
+            pattern_objects(s, sels(d, 0), &mut p);
+            ("solid.pattern.circular", p)
         }
         Kind::Loft { operation } => {
             need(0, "profiles of two or more sketches")?;
@@ -2657,11 +2661,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             let path = curve_ids(d, 1);
             let sketch = curves_sketch(app, &path, None).ok_or("the path curves must be in one sketch")?;
             let mut p = json!({"path_sketch": sketch, "path": path, "count": count, "spacing": spacing});
-            if sels(d, 0).iter().any(|x| matches!(x, Sel::Feature { .. })) {
-                p["features"] = json!(pattern_features(s, sels(d, 0)));
-            } else {
-                p["bodies"] = json!(body_names(0));
-            }
+            pattern_objects(s, sels(d, 0), &mut p);
             ("solid.pattern.path", p)
         }
         Kind::Pipe { diameter, wall } => {
@@ -2855,6 +2855,17 @@ fn curve_ids(d: &Dialog, i: usize) -> Vec<String> {
 /// The features that made these bodies (what patterns and mirrors copy).
 /// The features a pattern repeats: picked features as they are, picked bodies by the features
 /// that made them.
+/// What a pattern or mirror copies: picked features are replayed; picked bodies are copied as
+/// they are now, with every feature that shaped them (a fillet after the extrude included).
+fn pattern_objects(s: &Session, objects: &[Sel], p: &mut Value) {
+    if objects.iter().any(|x| matches!(x, Sel::Feature { .. })) {
+        p["features"] = json!(pattern_features(s, objects));
+    } else {
+        let bodies: Vec<&str> = objects.iter().filter_map(|x| if let Sel::Body { name } = x { Some(name.as_str()) } else { None }).collect();
+        p["bodies"] = json!(bodies);
+    }
+}
+
 fn pattern_features(s: &Session, objects: &[Sel]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let bodies: Vec<String> = objects.iter().filter_map(|x| if let Sel::Body { name } = x { Some(name.clone()) } else { None }).collect();
@@ -3368,13 +3379,15 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             d
         }
-        FeatureKind::Mirror { features, plane, .. } => {
+        FeatureKind::Mirror { features, plane, bodies, .. } => {
             let mut d = start("solid.mirror")?;
             let ids: Vec<u64> = features.iter().filter_map(|n| s.doc.find_feature(n).map(|f| f.id)).collect();
             // Features that made no body of their own (a hole) were picked as features.
             let as_features = ids.iter().any(|id| !st.bodies.iter().any(|b| b.feature == *id));
             if let Some(inp) = d.inputs.get_mut(0) {
-                if as_features {
+                if !bodies.is_empty() {
+                    inp.items = bodies.iter().map(|name| Sel::Body { name: name.clone() }).collect();
+                } else if as_features {
                     inp.accept = selection::FEATURES;
                     inp.label = objects_label(inp.accept);
                     inp.items = ids.iter().map(|id| Sel::Feature { id: *id }).collect();
@@ -3387,9 +3400,13 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             d
         }
-        FeatureKind::Pattern { features, pattern, .. } => {
+        FeatureKind::Pattern { features, pattern, bodies: copied } => {
             let ids: Vec<u64> = features.iter().filter_map(|n| s.doc.find_feature(n).map(|f| f.id)).collect();
-            let bodies: Vec<Sel> = st.bodies.iter().filter(|b| ids.contains(&b.feature)).map(|b| Sel::Body { name: b.name.clone() }).collect();
+            let bodies: Vec<Sel> = if copied.is_empty() {
+                st.bodies.iter().filter(|b| ids.contains(&b.feature)).map(|b| Sel::Body { name: b.name.clone() }).collect()
+            } else {
+                copied.iter().map(|name| Sel::Body { name: name.clone() }).collect()
+            };
             let mut d = match pattern {
                 PatternKind::Rectangular { dir1, count1, spacing1, dir2, count2, spacing2 } => {
                     let mut d = start("solid.pattern.rectangular")?;
@@ -3434,7 +3451,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 PatternKind::Path { .. } => return None,
             };
             // Features that made no body of their own (a hole, a fillet) were picked as features.
-            let as_features = ids.iter().any(|id| !st.bodies.iter().any(|b| b.feature == *id));
+            let as_features = copied.is_empty() && ids.iter().any(|id| !st.bodies.iter().any(|b| b.feature == *id));
             if let Some(inp) = d.inputs.first_mut() {
                 if as_features {
                     inp.accept = selection::FEATURES;
