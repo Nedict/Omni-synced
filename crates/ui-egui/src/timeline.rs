@@ -42,7 +42,27 @@ fn icon_of(k: &FeatureKind) -> &'static str {
 enum Drag {
     Marker,
     Feature(u64),
-    Items(Vec<u64>),
+    Items(DragItems),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct DragItems {
+    /// Every feature that moves in timeline order, including contents of selected folders.
+    reorder: Vec<u64>,
+    /// Features selected directly, whose folder membership changes on an indented drop.
+    features: Vec<u64>,
+    /// Folders selected directly, whose parent changes on an indented drop.
+    groups: Vec<u64>,
+    /// Horizontal pointer position where the drag began, used to detect intentional nesting.
+    origin_x: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct VerticalSlot {
+    y: f32,
+    position: usize,
+    before_group: Option<u64>,
+    after_group: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,8 +181,26 @@ fn timeline_transport(app: &mut SolveApp, ui: &mut egui::Ui) {
     });
 }
 
-fn nearest_vertical_slot(slots: &[(f32, usize)], y: f32, fallback: usize) -> usize {
-    slots.iter().min_by(|a, b| (a.0 - y).abs().total_cmp(&(b.0 - y).abs())).map(|slot| slot.1).unwrap_or(fallback)
+fn nearest_vertical_slot(slots: &[VerticalSlot], y: f32) -> Option<VerticalSlot> {
+    slots.iter().min_by(|a, b| (a.y - y).abs().total_cmp(&(b.y - y).abs())).copied()
+}
+
+fn valid_folder_target(items: &DragItems, groups: &[solidcraft_engine::doc::TimelineGroup], target: u64) -> bool {
+    !items.groups.iter().any(|source| *source == target || group_is_descendant(groups, target, *source))
+}
+
+/// Resolve the folder implied by a vertical drop. A folder row is always a target. Slots
+/// between two children of the same folder are targets too; at a folder boundary the pointer
+/// must be moved one indentation level to the right so an ordinary reorder remains possible.
+fn vertical_drop_group(pointer: egui::Pos2, slot: VerticalSlot, folder_drop_zones: &[(Rect, u64)], origin_x: f32) -> Option<u64> {
+    if let Some((_, group)) = folder_drop_zones.iter().find(|(rect, _)| rect.contains(pointer)) {
+        return Some(*group);
+    }
+    if slot.before_group.is_some() && slot.before_group == slot.after_group {
+        return slot.before_group;
+    }
+    let group = slot.before_group.or(slot.after_group)?;
+    (pointer.x >= origin_x + 12.0).then_some(group)
 }
 
 fn vertical_marker(app: &mut SolveApp, ui: &mut egui::Ui, drag: &mut Option<Drag>) {
@@ -205,6 +243,15 @@ fn action_feature_ids(app: &SolveApp, groups: &[solidcraft_engine::doc::Timeline
         }
     }
     app.session.doc.features.iter().filter(|feature| picked.contains(&feature.id)).map(|feature| feature.id).collect()
+}
+
+fn selected_drag_items(app: &SolveApp, groups: &[solidcraft_engine::doc::TimelineGroup], origin_x: f32) -> DragItems {
+    DragItems {
+        reorder: action_feature_ids(app, groups),
+        features: selected_feature_ids(app),
+        groups: app.tree.picked_timeline_groups.clone(),
+        origin_x,
+    }
 }
 
 fn select_only(app: &mut SolveApp, item: TimelineItem) {
@@ -296,25 +343,6 @@ fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft
     let has_selection = !features.is_empty() || !selected_groups.is_empty();
     let directly_selected = selected_feature_ids(app);
     if has_selection {
-        ui.menu_button("Add to Folder", |ui| {
-            for group in groups {
-                if ui.button(&group.name).clicked() {
-                    let mut params = json!({"group": group.id});
-                    if !features.is_empty() {
-                        params["features"] = json!(features);
-                    }
-                    if !selected_groups.is_empty() {
-                        params["groups"] = json!(selected_groups);
-                    }
-                    let _ = app.run("timeline.move_to_group", params);
-                    app.tree.collapsed.remove(&format!("timeline_group:{}", group.id));
-                    ui.close();
-                }
-            }
-            if groups.is_empty() {
-                ui.label("No folders yet");
-            }
-        });
         if ui.button("Add to New Folder").clicked() {
             let result = app.run("timeline.group", json!({"features": features}));
             if let Ok(result) = result
@@ -483,12 +511,14 @@ fn vertical_group_row(
     order: &[TimelineItem],
     drag: &mut Option<Drag>,
     depth: usize,
+    drop_zones: &mut Vec<(Rect, u64)>,
 ) -> bool {
     let t = Tokens::get();
     let key = format!("timeline_group:{}", group.id);
     let open = !app.tree.collapsed.contains(&key);
     let selected = app.tree.picked_timeline_groups.contains(&group.id);
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 23.0), Sense::click_and_drag());
+    drop_zones.push((rect, group.id));
     if selected || response.hovered() {
         ui.painter().rect_filled(rect, 3.0, if selected { t.accent_soft } else { t.hover });
     }
@@ -526,7 +556,8 @@ fn vertical_group_row(
         if !app.tree.picked_timeline_groups.contains(&group.id) {
             select_only(app, TimelineItem::Group(group.id));
         }
-        *drag = Some(Drag::Items(action_feature_ids(app, groups)));
+        let origin_x = response.interact_pointer_pos().map_or(rect.center().x, |pointer| pointer.x);
+        *drag = Some(Drag::Items(selected_drag_items(app, groups, origin_x)));
     }
     if response.double_clicked() {
         crate::context_menu::start_rename(app, crate::context_menu::RenameWhat::TimelineGroup(group.id), rect.center());
@@ -571,7 +602,9 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut drag: Option<Drag> = ui.data(|data| data.get_temp(drag_id));
     let pointer = ui.input(|input| input.pointer.hover_pos());
     let mut slots = Vec::new();
+    let mut folder_drop_zones = Vec::new();
     let mut shown_groups = std::collections::BTreeSet::new();
+    let mut previous_visible_group = None;
     let mut hovered = None;
     let mut edit = None;
 
@@ -581,18 +614,23 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
         at_index.sort_by_key(|group| (group_depth(&groups, group.id), group.id));
         for group in at_index {
             if group_ancestors_are_open(app, &groups, group.id) && shown_groups.insert(group.id) {
-                vertical_group_row(app, ui, group, &groups, &order, &mut drag, group_depth(&groups, group.id));
+                vertical_group_row(app, ui, group, &groups, &order, &mut drag, group_depth(&groups, group.id), &mut folder_drop_zones);
             }
         }
         let group_open = group_id.is_none_or(|id| group_is_open(app, &groups, id));
         if index == marker {
-            slots.push((ui.cursor().top(), index));
+            slots.push(VerticalSlot {
+                y: ui.cursor().top(),
+                position: index,
+                before_group: previous_visible_group,
+                after_group: group_open.then_some(group_id).flatten(),
+            });
             vertical_marker(app, ui, &mut drag);
         }
         if !group_open {
             continue;
         }
-        slots.push((ui.cursor().top(), index));
+        slots.push(VerticalSlot { y: ui.cursor().top(), position: index, before_group: previous_visible_group, after_group: group_id });
         let indent = group_id.map(|id| (group_depth(&groups, id) + 1) as f32 * 14.0).unwrap_or(0.0);
         let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click_and_drag());
         crate::scenario::publish_handle(&format!("timeline:{name}"), rect.center());
@@ -645,7 +683,8 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             if !selected {
                 select_only(app, TimelineItem::Feature(*id));
             }
-            drag = Some(Drag::Items(action_feature_ids(app, &groups)));
+            let origin_x = response.interact_pointer_pos().map_or(rect.center().x, |pointer| pointer.x);
+            drag = Some(Drag::Items(selected_drag_items(app, &groups, origin_x)));
         }
         let mut tip = format!("{name}  ({ty})");
         if let Some(error) = &error {
@@ -700,44 +739,73 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
                 ui.close();
             }
         });
+        previous_visible_group = group_id;
     }
     let mut trailing: Vec<_> = groups.iter().filter(|group| !shown_groups.contains(&group.id)).collect();
     trailing.sort_by_key(|group| (first_indices.get(&group.id).copied().flatten().unwrap_or(usize::MAX), group_depth(&groups, group.id), group.id));
     for group in trailing {
         if group_ancestors_are_open(app, &groups, group.id) && shown_groups.insert(group.id) {
-            vertical_group_row(app, ui, group, &groups, &order, &mut drag, group_depth(&groups, group.id));
+            vertical_group_row(app, ui, group, &groups, &order, &mut drag, group_depth(&groups, group.id), &mut folder_drop_zones);
         }
     }
-    slots.push((ui.cursor().top(), n));
+    slots.push(VerticalSlot { y: ui.cursor().top(), position: n, before_group: previous_visible_group, after_group: None });
     if marker >= n {
         vertical_marker(app, ui, &mut drag);
     }
     crate::dialogs_assembly::timeline_joints_vertical(app, ui);
 
     if let (Some(active), Some(pointer)) = (drag.as_ref(), pointer) {
-        let slot = nearest_vertical_slot(&slots, pointer.y, n);
-        let y = slots.iter().find(|(_, position)| *position == slot).map(|(y, _)| *y).unwrap_or(ui.cursor().top());
-        ui.painter().line_segment(
-            [pos2(ui.min_rect().left() + 4.0, y), pos2(ui.max_rect().right() - 5.0, y)],
-            Stroke::new(2.0, if matches!(active, Drag::Marker) { t.accent } else { t.sketch_accent }),
-        );
+        if let Some(slot) = nearest_vertical_slot(&slots, pointer.y) {
+            let folder_target = match active {
+                Drag::Items(items) => vertical_drop_group(pointer, slot, &folder_drop_zones, items.origin_x)
+                    .filter(|target| valid_folder_target(items, &groups, *target)),
+                Drag::Marker | Drag::Feature(_) => None,
+            };
+            let hovered_folder = folder_target
+                .and_then(|target| folder_drop_zones.iter().find(|(rect, group)| *group == target && rect.contains(pointer)).map(|(rect, _)| *rect));
+            if let Some(rect) = hovered_folder {
+                ui.painter().rect_stroke(rect.shrink(1.0), 3.0, Stroke::new(2.0, t.sketch_accent), egui::StrokeKind::Inside);
+            } else {
+                let left = folder_target
+                    .map(|group| ui.min_rect().left() + 12.0 + (group_depth(&groups, group) + 1) as f32 * 14.0)
+                    .unwrap_or(ui.min_rect().left() + 4.0);
+                ui.painter().line_segment(
+                    [pos2(left, slot.y), pos2(ui.max_rect().right() - 5.0, slot.y)],
+                    Stroke::new(2.0, if matches!(active, Drag::Marker) { t.accent } else { t.sketch_accent }),
+                );
+            }
+        }
     }
     if ui.input(|input| input.pointer.any_released())
         && let Some(active) = drag.take()
         && let Some(pointer) = pointer
     {
-        let slot = nearest_vertical_slot(&slots, pointer.y, n);
-        match active {
-            Drag::Marker => {
-                let _ = app.run("timeline.roll_to", if slot >= n { json!({}) } else { json!({"position": slot}) });
-            }
-            Drag::Items(ids) => {
-                if !ids.is_empty() {
-                    let _ = app.run("timeline.reorder_many", json!({"features": ids, "position": slot}));
+        if let Some(slot) = nearest_vertical_slot(&slots, pointer.y) {
+            match active {
+                Drag::Marker => {
+                    let _ = app.run("timeline.roll_to", if slot.position >= n { json!({}) } else { json!({"position": slot.position}) });
                 }
-            }
-            Drag::Feature(id) => {
-                let _ = app.run("timeline.reorder_many", json!({"features": [id], "position": slot}));
+                Drag::Items(items) => {
+                    let folder_target = vertical_drop_group(pointer, slot, &folder_drop_zones, items.origin_x)
+                        .filter(|target| valid_folder_target(&items, &groups, *target));
+                    if let Some(group) = folder_target {
+                        let mut params = json!({"group": group});
+                        if !items.features.is_empty() {
+                            params["features"] = json!(items.features);
+                        }
+                        if !items.groups.is_empty() {
+                            params["groups"] = json!(items.groups);
+                        }
+                        let _ = app.run("timeline.move_to_group", params);
+                        app.tree.collapsed.remove(&format!("timeline_group:{group}"));
+                    }
+                    if !items.reorder.is_empty() {
+                        let _ = app.run("timeline.reorder_many", json!({"features": items.reorder, "position": slot.position}));
+                    }
+                }
+                Drag::Feature(id) => {
+                    let _ = app.run("timeline.reorder_many", json!({"features": [id], "position": slot.position}));
+                }
             }
         }
     }
@@ -991,8 +1059,8 @@ pub fn timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
                                 let _ = app.run("timeline.reorder", json!({ "feature": id, "position": to }));
                             }
                         }
-                        Drag::Items(ids) => {
-                            let _ = app.run("timeline.reorder_many", json!({"features": ids, "position": slot}));
+                        Drag::Items(items) => {
+                            let _ = app.run("timeline.reorder_many", json!({"features": items.reorder, "position": slot}));
                         }
                     }
                 }
@@ -1103,7 +1171,7 @@ mod tests {
     }
 
     #[test]
-    fn folders_and_features_support_ctrl_multi_selection() {
+    fn selected_folders_and_features_can_be_dragged_into_a_folder() {
         let mut harness = Harness::new();
         harness.app.preferences.timeline_left = true;
         harness.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "name": "Grouped"})).unwrap();
@@ -1112,6 +1180,7 @@ mod tests {
             .run("solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [20, 0, 0], "operation": "new_body", "name": "Loose"}))
             .unwrap();
         let group = harness.app.run("timeline.group", json!({"name": "Folder", "features": ["Grouped"]})).unwrap()["group"].as_u64().unwrap();
+        let destination = harness.app.run("timeline.group", json!({"name": "Destination"})).unwrap()["group"].as_u64().unwrap();
         harness.frames(4);
 
         harness.step(&json!({"click": {"handle": "timeline-folder:Folder"}})).unwrap();
@@ -1123,10 +1192,24 @@ mod tests {
             .selection
             .iter()
             .any(|selection| matches!(selection, solidcraft_engine::Sel::Feature { id } if harness.app.session.doc.feature(*id).is_some_and(|feature| feature.name == "Loose"))));
-        harness.step(&json!({"widget": "2 selected"})).unwrap();
-        harness.step(&json!({"widget": "Add to New Folder"})).unwrap();
-        let new_group = harness.app.session.doc.timeline_groups.iter().find(|entry| entry.id != group).unwrap();
-        assert_eq!(new_group.features.len(), 2, "the action applies to selected features and selected folder contents");
+        harness.step(&json!({"drag": [{"handle": "timeline:Loose"}, {"handle": "timeline-folder:Destination"}]})).unwrap();
+        let source = harness.app.session.doc.timeline_groups.iter().find(|entry| entry.id == group).unwrap();
+        let target = harness.app.session.doc.timeline_groups.iter().find(|entry| entry.id == destination).unwrap();
+        let loose = harness.app.session.doc.find_feature("Loose").unwrap().id;
+        assert_eq!(source.parent, Some(destination), "the selected folder should nest in the drop target");
+        assert!(target.features.contains(&loose), "the selected feature should move into the drop target");
+    }
+
+    #[test]
+    fn vertical_folder_drop_targets_match_the_three_visual_drop_modes() {
+        let inside = VerticalSlot { y: 40.0, position: 1, before_group: Some(7), after_group: Some(7) };
+        let at_end = VerticalSlot { y: 60.0, position: 2, before_group: Some(7), after_group: None };
+        let folder_rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(200.0, 20.0));
+
+        assert_eq!(vertical_drop_group(pos2(80.0, 10.0), at_end, &[(folder_rect, 7)], 80.0), Some(7), "dropping over a folder row");
+        assert_eq!(vertical_drop_group(pos2(80.0, 40.0), inside, &[], 80.0), Some(7), "dropping between expanded folder items");
+        assert_eq!(vertical_drop_group(pos2(91.0, 60.0), at_end, &[], 80.0), None, "small horizontal movement remains a plain reorder");
+        assert_eq!(vertical_drop_group(pos2(92.0, 60.0), at_end, &[], 80.0), Some(7), "moving right at the folder end nests the item");
     }
 
     #[test]
