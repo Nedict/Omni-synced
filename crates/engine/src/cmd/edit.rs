@@ -21,7 +21,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "MODIFY")
         .icon("delete")
         .key("Delete")
-        .params("features: [id or name] (a sketch takes its dependent features with it)"),
+        .params("features: [id or name] (a sketch takes its dependent features with it) → deleted: [ids]; failing?: [{feature, error}] (later features that worked and now fail)"),
     CommandSpec::new("timeline.rename", "Rename", rename).params("feature: id|name, name"),
     CommandSpec::new("timeline.rollback", "Move Timeline Marker", rollback).params("position: number of features to keep active (omit = end)"),
     CommandSpec::new("timeline.roll_to", "Roll History Marker", rollback)
@@ -120,6 +120,9 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     if keys.is_empty() {
         return Err(bad(cmd, "`features` must list features"));
     }
+    // Features that work now; any of them failing after the delete is reported (a later
+    // feature that names a deleted body, #267).
+    let worked: std::collections::BTreeSet<u64> = s.model.results.iter().filter(|r| r.error.is_none() && !r.skipped).map(|r| r.id).collect();
     let mut gone = Vec::new();
     for k in keys {
         let Some(id) = s.doc.find_feature(&k).map(|f| f.id) else {
@@ -134,7 +137,18 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
         s.active_sketch = None;
     }
     s.selection.clear();
-    Ok(json!({"deleted": gone}))
+    s.refresh();
+    let failing: Vec<Value> = s
+        .model
+        .results
+        .iter()
+        .filter(|r| worked.contains(&r.id))
+        .filter_map(|r| r.error.as_ref().map(|e| json!({"feature": r.name, "error": e})))
+        .collect();
+    if failing.is_empty() {
+        return Ok(json!({"deleted": gone}));
+    }
+    Ok(json!({"deleted": gone, "failing": failing}))
 }
 
 fn rename(s: &mut Session, p: &Value) -> Result<Value> {
