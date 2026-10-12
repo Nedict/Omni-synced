@@ -32,7 +32,8 @@ old-name Pages addresses are not permanent aliases.
 - **macOS 11+** (Apple silicon and Intel): open the `.dmg` and drag `SolidCraft.app` onto Applications.
   The CLI is in `solidcraft-cli-{version}-macos-universal.zip`.
 - **Linux** (x86_64 and aarch64, glibc 2.35+): the `.AppImage` (`chmod +x`, then run it), the
-  `.deb` or `.rpm`, the `.flatpak` (`flatpak install --user <file>`), or the `.tar.gz`.
+  `.deb` or `.rpm`, the `.flatpak` (`flatpak install --user <file>`), the `.snap`
+  (`sudo snap install --dangerous <file>`, or `sudo snap install solidcraft` from the Snap Store), or the `.tar.gz`.
 - **FreeBSD:** `tar -xzf solidcraft-{version}-freebsd-x86_64.tar.gz --strip-components 1 -C /usr/local`.
 - **Web:** `solidcraft-web-{version}.zip` is a static site to host yourself.
 - `SHA256SUMS.txt`: `sha256sum -c SHA256SUMS.txt --ignore-missing`.

@@ -15,6 +15,7 @@ model through the built-in MCP server.
 [![Download for Windows][badge-windows]][windows-msi]
 [![Download for macOS][badge-macos]][macos-dmg]
 [![Download for Linux][badge-linux]][linux-appimage]
+[![Get it from the Snap Store][badge-snap]][snap-store]
 [![Try it in your browser][badge-web]][web-app]
 
 - **Windows:** download and run the [installer][windows-msi].
@@ -25,6 +26,7 @@ model through the built-in MCP server.
 - **Linux:** download the [AppImage][linux-appimage], allow it to run as a program and open it.
   Or install the [.deb][linux-deb] (Ubuntu, Debian, Mint) or [.rpm][linux-rpm] (Fedora,
   openSUSE), or use [Flatpak](https://bherbruck.github.io/solidcraft/guide/getting-started.html#linux-flatpak).
+  With Snap: `sudo snap install solidcraft` ([Snap Store][snap-store], or the [.snap file][linux-snap]).
   For ARM64: [AppImage][linux-arm64-appimage], [.deb][linux-arm64-deb], [.rpm][linux-arm64-rpm].
 - **Web:** [try it in your browser][web-app], no install.
 
@@ -38,6 +40,7 @@ Install details, upgrading from earlier builds and building from source are in
 [badge-windows]: https://img.shields.io/badge/Windows-Download-0078D6?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0yIDJoOS41djkuNUgyek0xMi41IDJIMjJ2OS41aC05LjV6TTIgMTIuNWg5LjVWMjJIMnpNMTIuNSAxMi41SDIyVjIyaC05LjV6Ii8%2BPC9zdmc%2B
 [badge-macos]: https://img.shields.io/badge/macOS-Download-333333?style=for-the-badge&logo=apple&logoColor=white
 [badge-linux]: https://img.shields.io/badge/Linux-AppImage-E95420?style=for-the-badge&logo=linux&logoColor=white
+[badge-snap]: https://img.shields.io/badge/Snap-Snap_Store-82BEA0?style=for-the-badge&logo=snapcraft&logoColor=white
 [badge-web]: https://img.shields.io/badge/Web-Try_in_browser-2EA44F?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIj48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIxMCIvPjxwYXRoIGQ9Ik0yIDEyaDIwTTEyIDJhMTUgMTUgMCAwIDEgMCAyME0xMiAyYTE1IDE1IDAgMCAwIDAgMjAiLz48L3N2Zz4%3D
 [windows-msi]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-windows-x64.msi
 [windows-arm64-msi]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-windows-arm64.msi
@@ -50,6 +53,8 @@ Install details, upgrading from earlier builds and building from source are in
 [linux-arm64-appimage]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-linux-aarch64.AppImage
 [linux-arm64-deb]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-linux-aarch64.deb
 [linux-arm64-rpm]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-linux-aarch64.rpm
+[linux-snap]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-linux-x86_64.snap
+[snap-store]: https://snapcraft.io/solidcraft
 [web-app]: https://bherbruck.github.io/solidcraft/app/
 
 **Documentation:** the [SolidCraft book](https://bherbruck.github.io/solidcraft/) (user guide,
