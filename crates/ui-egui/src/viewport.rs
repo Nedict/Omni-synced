@@ -67,6 +67,12 @@ pub struct ViewportState {
     pub spin: bool,
     /// After immediate zoom, ignore egui's outstanding smoothing until the gesture ends.
     wheel_zoom_raw_until_idle: bool,
+    /// While trackpad scrolling runs, ignore egui's smoothing tail for zoom so
+    /// two-finger input is not replayed as zoom after it pans.
+    trackpad_until_idle: bool,
+    /// Inside a bracketed trackpad scroll (`Start` without its `End` yet):
+    /// point moves pan, bare moves are a mouse.
+    trackpad_gesture: bool,
     /// A primary press on the axis gizmo: the pointer position used by its last orbit step.
     pub axis_drag: Option<Pos2>,
     /// Unsnapped camera while Shift-orbit previews a standard or diagonal view.
@@ -1529,32 +1535,110 @@ pub fn delete_selection(app: &mut SolveApp) {
     crate::delete::delete_selection(app);
 }
 
+/// Raw wheel/trackpad input for one frame, split by source.
+///
+/// Mouse wheels report lines or pages; trackpads report points. Trackpad
+/// scrolls arrive bracketed (`Start` … `Move` … `End`, momentum included)
+/// while mouse wheels send bare `Move` events, so phases tell them apart.
+struct RawWheel {
+    /// Vertical mouse-wheel input in points (zooms).
+    zoom: f32,
+    /// Trackpad point input, routed like the wheel (zooms when panning is off).
+    point_zoom: f32,
+    /// Bracketed two-finger scroll in points (pans when panning is on).
+    pan: egui::Vec2,
+    /// Bare horizontal input in points (thumb wheel: always pans sideways).
+    mouse_pan: egui::Vec2,
+}
+
+/// Route wheel points to the vertical axis, matching egui's scroll modifiers.
+fn route_wheel_vertical(points: egui::Vec2, modifiers: egui::Modifiers, options: egui::InputOptions) -> f32 {
+    let horizontal = modifiers.matches_any(options.horizontal_scroll_modifier);
+    let vertical = modifiers.matches_any(options.vertical_scroll_modifier);
+    if horizontal && !vertical {
+        0.0
+    } else if vertical && !horizontal {
+        points.x + points.y
+    } else {
+        points.y
+    }
+}
+
 /// Match egui's wheel units and modifier routing, without its temporal smoothing.
-fn immediate_wheel_delta(input: &egui::InputState, options: egui::InputOptions, page_height: f32) -> f32 {
+///
+/// `gesture` tracks an ongoing bracketed trackpad scroll (`Start` … `End`):
+/// moves inside one pan, bare `Move` input is a mouse (vertical zooms,
+/// horizontal pans). Only point input brackets; line/page input always zooms.
+fn immediate_wheel(input: &egui::InputState, options: egui::InputOptions, page_height: f32, gesture: &mut bool) -> RawWheel {
+    let mut out = RawWheel { zoom: 0.0, point_zoom: 0.0, pan: egui::Vec2::ZERO, mouse_pan: egui::Vec2::ZERO };
+    for event in &input.events {
+        let egui::Event::MouseWheel { unit, delta, modifiers, phase } = event else { continue };
+        if modifiers.matches_any(options.zoom_modifier) {
+            continue;
+        }
+        let point = matches!(unit, egui::MouseWheelUnit::Point);
+        match phase {
+            egui::TouchPhase::Start => {
+                if point {
+                    *gesture = true;
+                }
+                continue;
+            }
+            egui::TouchPhase::End | egui::TouchPhase::Cancel => {
+                if point {
+                    *gesture = false;
+                }
+                continue;
+            }
+            egui::TouchPhase::Move => {}
+        }
+        let points = match unit {
+            egui::MouseWheelUnit::Point => *delta,
+            egui::MouseWheelUnit::Line => *delta * options.line_scroll_speed,
+            egui::MouseWheelUnit::Page => *delta * page_height,
+        };
+        if point && *gesture {
+            out.pan += points;
+            // Legacy path only (ignored while panning is on).
+            out.point_zoom += route_wheel_vertical(points, *modifiers, options);
+        } else if point {
+            // Bare moves are a mouse: vertical zooms, horizontal pans sideways.
+            // A wheel needs the opposite sign of fingers for the same motion.
+            out.zoom += route_wheel_vertical(points, *modifiers, options);
+            out.mouse_pan += egui::vec2(-points.x, 0.0);
+        } else {
+            out.zoom += route_wheel_vertical(points, *modifiers, options);
+        }
+    }
+    out
+}
+
+/// Combined pinch-to-zoom factor for one frame (1 = no pinch input).
+fn pinch_factor(input: &egui::InputState) -> f32 {
     input
         .events
         .iter()
         .filter_map(|event| {
-            let egui::Event::MouseWheel { unit, delta, modifiers, phase: egui::TouchPhase::Move } = event else { return None };
-            if modifiers.matches_any(options.zoom_modifier) {
-                return None;
-            }
-            let delta = match unit {
-                egui::MouseWheelUnit::Point => *delta,
-                egui::MouseWheelUnit::Line => *delta * options.line_scroll_speed,
-                egui::MouseWheelUnit::Page => *delta * page_height,
-            };
-            let horizontal = modifiers.matches_any(options.horizontal_scroll_modifier);
-            let vertical = modifiers.matches_any(options.vertical_scroll_modifier);
-            Some(if horizontal && !vertical {
-                0.0
-            } else if vertical && !horizontal {
-                delta.x + delta.y
-            } else {
-                delta.y
-            })
+            let egui::Event::Zoom(f) = event else { return None };
+            (*f).is_finite().then_some(*f).filter(|f| *f > 0.0)
         })
-        .sum()
+        .fold(1.0, |acc, f| acc * f)
+}
+
+/// Zoom anchor: the model point under the cursor, else the target's depth.
+/// Preferences › Navigation › Zoom to the cursor (off: toward the view's centre).
+fn zoom_anchor(app: &mut SolveApp, rect: egui::Rect, hover: Option<egui::Pos2>) -> Option<Vec3> {
+    hover.filter(|_| app.preferences.zoom_to_cursor).map(|p| {
+        let proj = projection(app, rect);
+        // Toward the model's surface under the cursor, else the target's depth.
+        if let Some(q) = pick_cached(app, &proj, p).iter().find_map(|h| if let Hit::Face { point, .. } = h { Some(*point) } else { None }) {
+            return q;
+        }
+        let (o, d) = proj.ray(p);
+        let n = app.cam.back();
+        let den = d.dot(n);
+        if den.abs() > 1e-9 { o + d * ((app.cam.target - o).dot(n) / den) } else { app.cam.target }
+    })
 }
 
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
@@ -1587,37 +1671,57 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::drag_snap::set_suppressed(mods.ctrl || mods.alt || mods.command);
 
     // ---- navigation ----
+    let trackpad_pan = app.preferences.trackpad_pan;
     if !app.preferences.smooth_wheel_zoom {
         app.viewport.wheel_zoom_raw_until_idle = true;
     } else if !ui.input(|i| i.is_scrolling()) {
         app.viewport.wheel_zoom_raw_until_idle = false;
     }
-    let scroll = if app.viewport.wheel_zoom_raw_until_idle {
-        let options = ui.ctx().options(|o| o.input_options);
-        let page_height = ui.ctx().viewport_rect().height();
-        ui.input(|i| immediate_wheel_delta(i, options, page_height))
+    let options = ui.ctx().options(|o| o.input_options);
+    let page_height = ui.ctx().viewport_rect().height();
+    let raw = ui.input(|i| immediate_wheel(i, options, page_height, &mut app.viewport.trackpad_gesture));
+    if trackpad_pan && raw.pan != egui::Vec2::ZERO {
+        // Swallow egui's smoothing tail while the trackpad runs (a wheel-only
+        // tail ends the moment trackpad input starts; mixed input is rare).
+        app.viewport.trackpad_until_idle = true;
+    } else if !ui.input(|i| i.is_scrolling()) {
+        app.viewport.trackpad_until_idle = false;
+        // Self-healing: with no scroll activity no gesture can be mid-flight
+        // (its End was lost); a stuck flag would pan future mouse input.
+        app.viewport.trackpad_gesture = false;
+    }
+    let pan = if trackpad_pan { raw.pan } else { egui::Vec2::ZERO } + raw.mouse_pan;
+    let scroll = if app.viewport.wheel_zoom_raw_until_idle || (trackpad_pan && app.viewport.trackpad_until_idle) {
+        raw.zoom + if trackpad_pan { 0.0 } else { raw.point_zoom }
     } else {
         scroll
     };
+    // Pinch-to-zoom (trackpad): direct manipulation, never smoothed.
+    let pinch = ui.input(pinch_factor);
     let h = rect.height().max(1.0) as f64;
+    if inside && pinch != 1.0 {
+        app.viewport.orbit_snap = None;
+        app.viewport.orbit_free = None;
+        // Spread zooms in: the camera distance shrinks by the pinch factor.
+        let f = f64::from(pinch).powf(-crate::prefs::zoom_sign(app));
+        let anchor = zoom_anchor(app, rect, hover);
+        app.cancel_view_animation();
+        app.cam.zoom_at(f, anchor);
+    }
     if inside && scroll != 0.0 {
         app.viewport.orbit_snap = None;
         app.viewport.orbit_free = None;
         let f = (-scroll as f64 * 0.0015 * crate::prefs::zoom_sign(app)).exp();
-        // Preferences › Navigation › Zoom to the cursor (off: toward the view's centre).
-        let anchor = hover.filter(|_| app.preferences.zoom_to_cursor).map(|p| {
-            let proj = projection(app, rect);
-            // Toward the model's surface under the cursor, else the target's depth.
-            if let Some(q) = pick_cached(app, &proj, p).iter().find_map(|h| if let Hit::Face { point, .. } = h { Some(*point) } else { None }) {
-                return q;
-            }
-            let (o, d) = proj.ray(p);
-            let n = app.cam.back();
-            let den = d.dot(n);
-            if den.abs() > 1e-9 { o + d * ((app.cam.target - o).dot(n) / den) } else { app.cam.target }
-        });
+        let anchor = zoom_anchor(app, rect, hover);
         app.cancel_view_animation();
         app.cam.zoom_at(f, anchor);
+    }
+    // Two-finger scroll pans the model with the fingers.
+    if inside && pan != egui::Vec2::ZERO {
+        app.viewport.orbit_snap = None;
+        app.viewport.orbit_free = None;
+        app.cancel_view_animation();
+        app.cam.pan(f64::from(pan.x), f64::from(pan.y), h);
     }
     // A left press with the preset's keys (Alias: Shift+Alt) navigates until the button is let
     // go (kept through the release frame, so the end of the drag doesn't select either).
@@ -1734,6 +1838,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // events. Testing delta made the highlight reappear whenever a held drag paused.
     // Resolve it before rendering so the GPU scene and screen overlays use the same hit.
     let navigating = scroll != 0.0
+        || pinch != 1.0
+        || pan != egui::Vec2::ZERO
         || middle
         || secondary_down
         || (primary_nav.is_some() && primary_down)
@@ -3401,6 +3507,7 @@ mod tests {
     fn immediate_wheel_zoom_applies_normalized_input_once() {
         let mut h = crate::scenario::Harness::new();
         h.app.preferences.smooth_wheel_zoom = false;
+        h.app.preferences.trackpad_pan = false;
         h.app.preferences.zoom_to_cursor = false;
         h.call("ui.move", json!({"x":800,"y":500}));
         let before = h.app.cam;
@@ -3433,6 +3540,7 @@ mod tests {
     fn wheel_zoom_setting_changes_do_not_replay_smoothing() {
         let mut h = crate::scenario::Harness::new();
         h.app.preferences.zoom_to_cursor = false;
+        h.app.preferences.trackpad_pan = false;
         h.call("ui.move", json!({"x":800,"y":500}));
         h.app.synthetic.push(egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Point,
@@ -3467,11 +3575,175 @@ mod tests {
     }
 
     #[test]
+    fn trackpad_two_finger_scroll_pans_without_zooming() {
+        let mut h = crate::scenario::Harness::new();
+        assert!(h.app.preferences.trackpad_pan, "two-finger pan is the default");
+        h.app.preferences.zoom_to_cursor = false;
+        h.call("ui.move", json!({"x":800,"y":500}));
+        let gesture =
+            |phase| egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: vec2(60.0, -40.0), modifiers: egui::Modifiers::NONE, phase };
+        // A bracketed trackpad gesture pans (measured macOS Start…End bracketing).
+        let before = h.app.cam;
+        h.app.synthetic.push(gesture(egui::TouchPhase::Start));
+        h.frame();
+        h.app.synthetic.push(gesture(egui::TouchPhase::Move));
+        h.frame();
+        assert_eq!(h.app.cam.half_height(), before.half_height(), "trackpad scroll must not zoom");
+        assert_ne!(h.app.cam.target, before.target, "trackpad scroll must pan");
+        h.app.synthetic.push(gesture(egui::TouchPhase::End));
+        h.frame();
+        let after = h.app.cam;
+        h.frames(30);
+        assert_eq!(h.app.cam, after, "pan must not drift once input stops");
+        // Bare moves are a mouse: vertical zooms…
+        h.app.preferences.smooth_wheel_zoom = false;
+        h.app.synthetic.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, 120.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        h.frame();
+        assert!((h.app.cam.half_height() - after.half_height() * (-0.18_f64).exp()).abs() < 1e-6);
+        // …and horizontal pans without zooming (thumb wheel).
+        let zoomed = h.app.cam;
+        h.app.synthetic.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(40.0, 0.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        h.frame();
+        assert_eq!(h.app.cam.half_height(), zoomed.half_height());
+        assert_ne!(h.app.cam.target, zoomed.target);
+        // Opting out restores the legacy wheel behaviour for all point input.
+        h.app.preferences.trackpad_pan = false;
+        h.app.synthetic.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, 120.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        h.frame();
+        assert!((h.app.cam.half_height() - zoomed.half_height() * (-0.18_f64).exp()).abs() < 1e-6);
+        // Legacy mode also zooms bracketed input instead of panning it.
+        let legacy = h.app.cam.half_height();
+        let legacy_target = h.app.cam.target;
+        for phase in [egui::TouchPhase::Start, egui::TouchPhase::Move, egui::TouchPhase::End] {
+            h.app.synthetic.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, 120.0),
+                modifiers: egui::Modifiers::NONE,
+                phase,
+            });
+            h.frame();
+        }
+        assert!((h.app.cam.half_height() - legacy * (-0.18_f64).exp()).abs() < 1e-6);
+        assert_eq!(h.app.cam.target, legacy_target);
+        // The thumb wheel pans sideways even with panning off: it is a mouse.
+        let h0 = h.app.cam.half_height();
+        h.app.synthetic.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(40.0, 0.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        h.frame();
+        assert_eq!(h.app.cam.half_height(), h0);
+        assert_ne!(h.app.cam.target, legacy_target);
+    }
+
+    #[test]
+    fn pinch_gesture_zooms_and_ignores_noise() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.preferences.smooth_wheel_zoom = false;
+        h.app.preferences.zoom_to_cursor = false;
+        h.call("ui.move", json!({"x":800,"y":500}));
+        let height = h.app.cam.half_height();
+        let target = h.app.cam.target;
+        h.app.synthetic.push(egui::Event::Zoom(1.2));
+        h.frame();
+        let zoomed = h.app.cam.half_height();
+        assert!(((zoomed - height / 1.2) / (height / 1.2)).abs() < 1e-6, "spread must zoom in");
+        assert_eq!(h.app.cam.target, target, "centre zoom keeps the target");
+        h.app.preferences.zoom_reverse = true;
+        let height = h.app.cam.half_height();
+        h.app.synthetic.push(egui::Event::Zoom(1.2));
+        h.frame();
+        let flipped = h.app.cam.half_height();
+        assert!(((flipped - height * 1.2) / (height * 1.2)).abs() < 1e-6, "reverse flips the pinch direction");
+        h.app.synthetic.push(egui::Event::Zoom(f32::NAN));
+        h.app.synthetic.push(egui::Event::Zoom(0.0));
+        h.app.synthetic.push(egui::Event::Zoom(1.0));
+        let stopped = h.app.cam;
+        h.frame();
+        assert_eq!(h.app.cam, stopped, "noise must leave the camera still");
+    }
+
+    #[test]
+    fn trackpad_gestures_over_dialogs_do_not_move_the_view() {
+        let ctx = egui::Context::default();
+        let mut app = SolveApp::new(solvecraft_engine::Session::default(), crate::Services::default());
+        assert!(app.preferences.trackpad_pan);
+        app.viewport.no_pixels = true;
+        crate::help::run(&mut app, &ctx, "shortcuts");
+        let mut time = 0.0;
+        let pan =
+            |phase| egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: vec2(40.0, -20.0), modifiers: egui::Modifiers::NONE, phase };
+        let mut frame = |app: &mut SolveApp, pointer: Option<Pos2>, events: Vec<egui::Event>| {
+            time += 1.0 / 60.0;
+            let mut input = events;
+            if let Some(p) = pointer {
+                input.insert(0, egui::Event::PointerMoved(p));
+            }
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1100.0, 800.0))),
+                    time: Some(time),
+                    events: input,
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| show(app, ui));
+                    crate::prefs::show(app, ui.ctx());
+                },
+            );
+            output.textures_delta.clear();
+        };
+        for _ in 0..4 {
+            frame(&mut app, None, Vec::new());
+        }
+        let window = ctx.memory(|m| m.area_rect(egui::Id::new("sc_prefs"))).unwrap();
+        let over = window.center();
+        let height = app.cam.half_height();
+        let target = app.cam.target;
+        // A full gesture plus pinch over the dialog stays in the popup.
+        for events in
+            [vec![pan(egui::TouchPhase::Start)], vec![pan(egui::TouchPhase::Move), egui::Event::Zoom(1.2)], vec![pan(egui::TouchPhase::End)]]
+        {
+            frame(&mut app, Some(over), events);
+            assert_eq!(app.cam.half_height(), height, "trackpad input over a dialog must stay in the popup");
+            assert_eq!(app.cam.target, target);
+        }
+        let exposed = pos2(40.0, 700.0);
+        assert!(!window.contains(exposed));
+        frame(&mut app, Some(exposed), Vec::new());
+        frame(&mut app, Some(exposed), vec![pan(egui::TouchPhase::Start)]);
+        frame(&mut app, Some(exposed), vec![pan(egui::TouchPhase::Move)]);
+        assert_eq!(app.cam.half_height(), height);
+        assert_ne!(app.cam.target, target, "the exposed viewport still pans");
+        frame(&mut app, Some(exposed), vec![egui::Event::Zoom(1.2)]);
+        assert_ne!(app.cam.half_height(), height, "the exposed viewport still pinch-zooms");
+        frame(&mut app, Some(exposed), vec![pan(egui::TouchPhase::End)]);
+    }
+
+    #[test]
     fn shortcuts_window_wheel_does_not_zoom_the_viewport() {
         for smooth in [true, false] {
             let ctx = egui::Context::default();
             let mut app = SolveApp::new(solvecraft_engine::Session::default(), crate::Services::default());
             app.preferences.smooth_wheel_zoom = smooth;
+            app.preferences.trackpad_pan = false;
             app.viewport.no_pixels = true;
             crate::help::run(&mut app, &ctx, "shortcuts");
             let mut time = 0.0;

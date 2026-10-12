@@ -12,8 +12,9 @@
 //!   `ui.sketchToScreen {points: [[x,y]…]}` (screen points of active-sketch coordinates); `ui.editFeature {feature}` (edit dialog)
 //! - `ui.set {...UiState fields}`; `ui.view {view: front|back|top|bottom|left|right|iso|home|fit, animate?: bool}` (snaps unless animate)
 //! - `ui.start {command}`: like clicking the toolbar button (starts tools/dialogs)
-//! - `ui.click {x, y, button?, shift?}`, `ui.move {x, y}`, `ui.scroll {x, y, delta}`: real
-//!   pointer input in screen points; `ui.key {key, cmd?, shift?}`, `ui.text {text}`
+//! - `ui.click {x, y, button?, shift?}`, `ui.move {x, y}`: real
+//!   pointer input in screen points; `ui.scroll {x, y, delta}`: mouse-wheel input in
+//!   points (zooms); `ui.key {key, cmd?, shift?}`, `ui.text {text}`
 //! - `ui.screenshot {path?}`: PNG of the window; `ui.render {path, width?, height?}`: headless
 //!   CPU render of the model with the current camera and the section the viewport shows (no
 //!   window needed)
@@ -414,9 +415,13 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
         "ui.scroll" => {
             let (Some(x), Some(y)) = (f("x"), f("y")) else { return err("missing x/y") };
             app.synthetic.push(egui::Event::PointerMoved(egui::pos2(x as f32, y as f32)));
+            // Mouse-wheel semantics (lines): zooms regardless of the trackpad pan
+            // preference, so scripts and agents keep working. Trackpads report points.
+            let speed = ctx.options(|o| o.input_options.line_scroll_speed).max(1.0);
+            let lines = f("delta").unwrap_or(-100.0) / f64::from(speed);
             app.synthetic.push(egui::Event::MouseWheel {
-                unit: egui::MouseWheelUnit::Point,
-                delta: egui::vec2(0.0, f("delta").unwrap_or(-100.0) as f32),
+                unit: egui::MouseWheelUnit::Line,
+                delta: egui::vec2(0.0, lines as f32),
                 modifiers: Default::default(),
                 phase: egui::TouchPhase::Move,
             });
