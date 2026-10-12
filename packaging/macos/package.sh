@@ -62,14 +62,10 @@ done
 echo "==> assembling $APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$WORK/bin/solidcraft" "$APP/Contents/MacOS/SolidCraft"
-# The icon, drawn by the CLI (no image files are committed).
-SET="$WORK/SolidCraft.iconset"
-mkdir -p "$SET"
-for s in 16 32 128 256 512; do
-  "$WORK/bin/solidcraft-cli" icon --size "$s" --out "$SET/icon_${s}x${s}.png" >/dev/null
-  "$WORK/bin/solidcraft-cli" icon --size $((s * 2)) --out "$SET/icon_${s}x${s}@2x.png" >/dev/null
-done
-iconutil -c icns -o "$APP/Contents/Resources/SolidCraft.icns" "$SET"
+# Apple-compiled layered icon and older-macOS fallback (regeneration: assets/README.md).
+# Keep compiled resources so packaging also works on runners with older Xcode versions.
+cp "$ROOT/assets/Assets.car" "$APP/Contents/Resources/Assets.car"
+cp "$ROOT/assets/icon.icns" "$APP/Contents/Resources/SolidCraft.icns"
 mkdir -p "$APP/Contents/Resources/Licenses"
 copy_docs "$APP/Contents/Resources/Licenses"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHORT_VERSION@/$SHORT_VERSION/g" "$HERE/Info.plist.in" >"$APP/Contents/Info.plist"
@@ -100,11 +96,13 @@ ls -la "$MNT" "$MNT/SolidCraft.app/Contents" "$MNT/SolidCraft.app/Contents/MacOS
 test -L "$MNT/Applications" && test "$(readlink "$MNT/Applications")" = /Applications
 plutil -lint "$MNT/SolidCraft.app/Contents/Info.plist"
 # Check the names Finder/LaunchServices actually use, and the bundle identity.
-for key in CFBundleName CFBundleDisplayName CFBundleExecutable CFBundleIconFile; do
+for key in CFBundleName CFBundleDisplayName CFBundleExecutable CFBundleIconFile CFBundleIconName; do
   test "$(/usr/libexec/PlistBuddy -c "Print :$key" "$MNT/SolidCraft.app/Contents/Info.plist")" = SolidCraft
 done
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$MNT/SolidCraft.app/Contents/Info.plist")" = "$MACOS_BUNDLE_ID"
 test -s "$MNT/SolidCraft.app/Contents/Resources/SolidCraft.icns"
+cmp "$ROOT/assets/icon.icns" "$MNT/SolidCraft.app/Contents/Resources/SolidCraft.icns"
+cmp "$ROOT/assets/Assets.car" "$MNT/SolidCraft.app/Contents/Resources/Assets.car"
 cmp "$HERE/README.txt" "$MNT/README.txt"
 case "$ARCH" in universal) WANT=(arm64 x86_64) ;; aarch64) WANT=(arm64) ;; *) WANT=(x86_64) ;; esac
 for arch in "${WANT[@]}"; do

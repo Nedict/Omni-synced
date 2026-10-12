@@ -12,6 +12,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+#[cfg(not(target_os = "macos"))]
 #[path = "../../app_icon.rs"]
 mod app_icon;
 mod control_server;
@@ -127,13 +128,15 @@ const STENCIL_BITS: u8 = 8;
 const MSAA: u16 = 4;
 
 fn app_viewport() -> Result<egui::ViewportBuilder, eframe::Error> {
+    // Let macOS use the bundle's layered icon; eframe's default bitmap would replace it.
+    #[cfg(target_os = "macos")]
+    let icon = egui::IconData::default();
+    #[cfg(not(target_os = "macos"))]
+    let icon =
+        egui::IconData { rgba: app_icon::rgba(64).map_err(|e| eframe::Error::AppCreation(std::io::Error::other(e).into()))?, width: 64, height: 64 };
     Ok(egui::ViewportBuilder::default()
         .with_title("SolidCraft")
-        .with_icon(egui::IconData {
-            rgba: app_icon::rgba(64).map_err(|e| eframe::Error::AppCreation(std::io::Error::other(e).into()))?,
-            width: 64,
-            height: 64,
-        })
+        .with_icon(icon)
         .with_inner_size([1600.0, 1000.0])
         .with_min_inner_size([960.0, 600.0])
         .with_drag_and_drop(true)
@@ -281,6 +284,15 @@ mod backend_tests {
 
 #[cfg(test)]
 mod icon_tests {
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_preserves_the_bundle_icon_instead_of_setting_a_runtime_bitmap() {
+        let viewport = super::app_viewport().expect("viewport");
+        assert_eq!(viewport.icon.as_deref(), Some(&eframe::egui::IconData::default()));
+        assert_eq!(viewport.app_id.as_deref(), Some("ai.storyteller.solvecraft"));
+    }
+
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn desktop_viewport_supplies_the_original_mark_to_the_window() {
         let viewport = super::app_viewport().expect("viewport");

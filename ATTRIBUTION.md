@@ -17,6 +17,25 @@ Generated-in-code assets are original and have no file to list:
 
 | File | Author | Source | Licence |
 |---|---|---|---|
+| assets/icon.svg | SolidCraft contributors | original macOS adaptation of the code-drawn SolidCraft mark, edited and exported with VectorCraft; Apple HIG and production templates consulted as layout references only | MIT OR Apache-2.0 |
+| assets/SolidCraft.icon/icon.json | SolidCraft contributors | approved Icon Composer composition and appearance settings for the original SolidCraft artwork | MIT OR Apache-2.0 |
+| assets/SolidCraft.icon/Assets/01-background.svg | SolidCraft contributors | original full-square porcelain background exported from VectorCraft for system masking | MIT OR Apache-2.0 |
+| assets/SolidCraft.icon/Assets/02-grid.svg | SolidCraft contributors | original perspective grid with elliptical radial alpha, exported from VectorCraft | MIT OR Apache-2.0 |
+| assets/SolidCraft.icon/Assets/03-solid.svg | SolidCraft contributors | original blue CAD solid with white edges clipped to its silhouette, exported from VectorCraft | MIT OR Apache-2.0 |
+| assets/Assets.car | SolidCraft contributors | Apple actool compilation of assets/SolidCraft.icon for macOS; contains original artwork only | MIT OR Apache-2.0 |
+| assets/icon.vectorcraft | SolidCraft contributors | editable VectorCraft source for assets/icon.svg, with named face and background layers | MIT OR Apache-2.0 |
+| assets/icon.png | SolidCraft contributors | 1024 × 1024 transparent sRGB export of assets/icon.svg from VectorCraft | MIT OR Apache-2.0 |
+| assets/icon.icns | SolidCraft contributors | traditional macOS fallback packaged from assets/icon.png by Apple's iconutil | MIT OR Apache-2.0 |
+| assets/icon.iconset/icon_16x16.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
+| assets/icon.iconset/icon_16x16@2x.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
+| assets/icon.iconset/icon_32x32.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
+| assets/icon.iconset/icon_32x32@2x.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
+| assets/icon.iconset/icon_128x128.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
+| assets/icon.iconset/icon_128x128@2x.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
+| assets/icon.iconset/icon_256x256.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
+| assets/icon.iconset/icon_256x256@2x.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
+| assets/icon.iconset/icon_512x512.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
+| assets/icon.iconset/icon_512x512@2x.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
 | docs/screenshots/sample-plate.png | SolveCraft contributors | screenshot of SolveCraft itself (`solvecraft --sample`) | MIT OR Apache-2.0 |
 | docs/screenshots/enclosure-demo-0.2.1.gif | SolveCraft contributors | original electronics enclosure screen recording of the actual SolveCraft 0.2.1 English desktop UI, generated with examples/demo/record_ui.sh and its original animated pointer overlay (4× playback) | MIT OR Apache-2.0 |
 | docs/screenshots/enclosure-demo-0.2.1.mp4 | SolveCraft contributors | original electronics enclosure screen recording of the actual SolveCraft 0.2.1 English desktop UI, generated with examples/demo/record_ui.sh and its original animated pointer overlay (4× playback) | MIT OR Apache-2.0 |
