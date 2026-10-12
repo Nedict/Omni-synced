@@ -81,32 +81,42 @@ const JSON_STEPS: [JsonStep; 13] = [
 
 /// Stored face and edge names were worked out from geometry before format 14; they get the
 /// legacy mark (`?`, see `naming::LEGACY_MARK`) so they are found again as those builds found
-/// them, and an older design evaluates as it was saved. Every place a design stores such a name
-/// is marked: fillets' and chamfers' `edge_names`, features' `face_names`, face and edge
-/// references (`"type": "face"|"edge"` with a `name`), sketch links' `face_name`, joint snaps'
-/// `face`, and face appearances (but not strict ones, whose names are certified lineage).
+/// them, and an older design evaluates as it was saved. The step marks the fields that store
+/// such a name, by their place in the schema:
+/// - each feature's `face_names`, and fillets' and chamfers' `edge_names` (other features' edge
+///   names are sheet metal's own);
+/// - a sketch feature's links' `face_name`;
+/// - face and edge references (`PlaneRef::Face`, `GeoRef::Face`, `GeoRef::Edge`: tagged
+///   `"type": "face"|"edge"`, picked `at` a point), wherever a feature holds one;
+/// - joint snaps on a face (`face_center`, `circle_center`), in joints and named origins;
+/// - face appearances, but not strict ones, whose names are certified lineage.
 fn v13_to_v14(v: &mut Value) -> Result<()> {
-    fn walk(v: &mut Value) {
-        match v {
-            Value::Object(o) => {
-                let kind = o.get("type").and_then(Value::as_str).map(str::to_string);
-                let blend = matches!(kind.as_deref(), Some("fillet" | "chamfer"));
-                for (key, x) in o.iter_mut() {
-                    match (key.as_str(), x) {
-                        // Other features' edge names are sheet metal's own, not these.
-                        ("edge_names", Value::Array(names)) if blend => names.iter_mut().for_each(mark),
-                        ("face_names", Value::Array(names)) => names.iter_mut().for_each(mark),
-                        ("face_name" | "face", n @ Value::String(_)) => mark(n),
-                        ("name", n @ Value::String(_)) if matches!(kind.as_deref(), Some("face" | "edge")) => mark(n),
-                        (_, x) => walk(x),
-                    }
-                }
+    if let Some(Value::Array(features)) = v.get_mut("features") {
+        for f in features.iter_mut() {
+            let Value::Object(o) = f else { continue };
+            let kind = o.get("type").and_then(Value::as_str).map(str::to_string);
+            if matches!(kind.as_deref(), Some("fillet" | "chamfer")) {
+                mark_all(o.get_mut("edge_names"));
             }
-            Value::Array(a) => a.iter_mut().for_each(walk),
-            _ => {}
+            mark_all(o.get_mut("face_names"));
+            if kind.as_deref() == Some("sketch")
+                && let Some(Value::Array(links)) = o.get_mut("sketch").and_then(|s| s.get_mut("links"))
+            {
+                links.iter_mut().filter_map(|l| l.get_mut("face_name")).for_each(mark);
+            }
+            references(f);
         }
     }
-    walk(v);
+    if let Some(Value::Array(joints)) = v.get_mut("assembly").and_then(|a| a.get_mut("joints")) {
+        for j in joints.iter_mut() {
+            for side in ["a", "b"] {
+                snap(j.get_mut(side));
+            }
+        }
+    }
+    if let Some(Value::Array(origins)) = v.get_mut("assembly").and_then(|a| a.get_mut("origins")) {
+        origins.iter_mut().for_each(|o| snap(o.get_mut("origin")));
+    }
     // Face appearances carry the face's name without a type tag.
     if let Some(Value::Array(faces)) = v.get_mut("appearances").and_then(|a| a.get_mut("faces")) {
         for face in faces.iter_mut().filter(|f| f.get("strict_name").and_then(Value::as_bool) != Some(true)) {
@@ -116,6 +126,41 @@ fn v13_to_v14(v: &mut Value) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Mark the `name` of every face or edge reference in `v` (see [`v13_to_v14`]).
+fn references(v: &mut Value) {
+    match v {
+        Value::Object(o) => {
+            let reference = matches!(o.get("type").and_then(Value::as_str), Some("face" | "edge")) && o.contains_key("at");
+            for (key, x) in o.iter_mut() {
+                if reference && key == "name" {
+                    mark(x);
+                } else {
+                    references(x);
+                }
+            }
+        }
+        Value::Array(a) => a.iter_mut().for_each(references),
+        _ => {}
+    }
+}
+
+/// Mark the face name of a joint origin's snap on a face.
+fn snap(origin: Option<&mut Value>) {
+    if let Some(snap) = origin.and_then(|o| o.get_mut("snap"))
+        && matches!(snap.get("type").and_then(Value::as_str), Some("face_center" | "circle_center"))
+        && let Some(n) = snap.get_mut("face")
+    {
+        mark(n);
+    }
+}
+
+/// Mark every name in a list of stored names.
+fn mark_all(names: Option<&mut Value>) {
+    if let Some(Value::Array(names)) = names {
+        names.iter_mut().for_each(mark);
+    }
 }
 
 /// A stored name with the legacy mark (an empty name stays empty: no reference).
@@ -670,13 +715,19 @@ mod tests {
             "features": [
                 {"type": "fillet", "edge_names": ["F2:side:l2|F2:top#2~1", ""], "face_names": ["F2:top#1", ""]},
                 {"type": "sheet_flange", "edge_names": ["base:l1:top"]},
-                {"type": "sketch", "plane": {"type": "face", "name": "F2:top#1", "at": [0, 0, 0]},
-                 "sketch": {"links": [{"face_name": "F2:top#2"}]}},
-                {"type": "construction_axis", "def": {"a": {"type": "edge", "name": "F2:start|F2:side:l1"}, "b": {"type": "face", "name": "F2:start"}}},
+                {"type": "sketch", "plane": {"type": "face", "plane": {}, "at": [0, 0, 0], "name": "F2:top#1"},
+                 "sketch": {"links": [{"id": "l1", "face_name": "F2:top#2"}]}},
+                {"type": "construction_axis", "def": {"type": "two_points",
+                 "a": {"type": "edge", "at": [0, 0, 0], "name": "F2:start|F2:side:l1"},
+                 "b": {"type": "face", "at": [0, 0, 0], "name": "F2:start"}}},
                 {"name": "Hole #2", "type": "extrude"},
                 {"type": "thread", "face": [1, 2, 3]}
             ],
-            "assembly": {"joints": [{"snap": {"type": "face_center", "face": "F2:top#2"}}]},
+            "assembly": {
+                "joints": [{"a": {"occurrence": 0, "snap": {"type": "face_center", "pick": [0, 0, 0], "face": "F2:top#2"}},
+                            "b": {"occurrence": 1, "snap": {"type": "point", "point": [0, 0, 0]}}}],
+                "origins": [{"name": "O1", "origin": {"occurrence": 0, "snap": {"type": "circle_center", "pick": [0, 0, 0], "face": "F3:side"}}}]
+            },
             "appearances": {"faces": [{"body": "Body1", "name": "F2:top#1"}, {"body": "Body1", "name": "F2:+x", "strict_name": true}]}
         });
         let mut v = file.clone();
@@ -690,13 +741,34 @@ mod tests {
         assert_eq!(v["features"][3]["def"]["b"]["name"], "?F2:start");
         assert_eq!(v["features"][4]["name"], "Hole #2", "a feature's own name is not a face name");
         assert_eq!(v["features"][5]["face"], serde_json::json!([1, 2, 3]));
-        assert_eq!(v["assembly"]["joints"][0]["snap"]["face"], "?F2:top#2");
+        assert_eq!(v["assembly"]["joints"][0]["a"]["snap"]["face"], "?F2:top#2");
+        assert_eq!(v["assembly"]["origins"][0]["origin"]["snap"]["face"], "?F3:side");
         assert_eq!(v["appearances"]["faces"][0]["name"], "?F2:top#1");
         assert_eq!(v["appearances"]["faces"][1]["name"], "F2:+x", "strict appearance names are certified lineage");
         // The step never marks twice.
         let once = v.clone();
         v13_to_v14(&mut v).unwrap();
         assert_eq!(v, once);
+    }
+
+    /// Only the fields that store a face or edge name are marked: other fields with the same key
+    /// names, and objects tagged `face` or `edge` that are not references, are left alone.
+    #[test]
+    fn version_thirteen_marking_targets_name_fields_not_key_names() {
+        let file = serde_json::json!({
+            "format": "solvecraft/13",
+            "features": [
+                {"type": "extrude", "options": {"face": "flat", "face_name": "label", "face_names": ["a"]}},
+                {"type": "fillet", "settings": {"edge_names": ["kept"]}},
+                {"type": "sketch", "sketch": {"style": {"face_name": "kept"}}},
+                {"type": "split_body", "tool": {"type": "face", "name": "not a reference"}}
+            ],
+            "assembly": {"joints": [{"a": {"occurrence": 0, "snap": {"type": "frame", "face": "kept"}}}]},
+            "notes": {"face": "F2:top", "face_name": "F2:top", "face_names": ["F2:top"]}
+        });
+        let mut v = file.clone();
+        v13_to_v14(&mut v).unwrap();
+        assert_eq!(v, file);
     }
 
     #[test]
