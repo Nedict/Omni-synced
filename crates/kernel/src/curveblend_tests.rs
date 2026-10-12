@@ -281,3 +281,21 @@ fn rolling_ball_along_a_straight_edge_between_cylinders_trims_curved_end_seams()
     }
     assert!(worst < 1e-3, "blend surface is {worst} mm off the analytic round");
 }
+
+#[test]
+fn closed_curved_seam_is_not_supported() {
+    // A closed seam (one edge starting and ending at the same vertex, as a full cap circle can
+    // be in imported geometry) has no "between" two contacts, so trimming it is refused rather
+    // than guessed.
+    let body = cylinder(Vec3::ZERO, Vec3::Z, 10.0, 5.0).unwrap();
+    let arc = body.solid.edge_iter().find(|e| !matches!(e.curve(), mt::Curve::Line(_))).expect("a cap arc");
+    let circle = mt::Edge::new_unchecked(arc.front(), arc.front(), arc.curve());
+    assert_eq!(circle.front(), circle.back());
+    // Contacts on the circle itself: a third and two thirds of the way round.
+    let (lo, hi) = circle.curve().range_tuple();
+    let on = |f: f64| mt::Vertex::new(circle.curve().subs(lo + (hi - lo) * f));
+    for (a, b) in [(Some(on(1.0 / 3.0)), None), (None, Some(on(2.0 / 3.0))), (Some(on(1.0 / 3.0)), Some(on(2.0 / 3.0))), (None, None)] {
+        let err = trim_curved_seam(&circle, a, b, 20.0).unwrap_err();
+        assert!(err.to_string().contains("not supported yet: a closed curved edge"), "{err}");
+    }
+}

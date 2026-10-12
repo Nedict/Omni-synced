@@ -272,6 +272,50 @@ fn section_controls(s: &Section, round: bool) -> Option<[mt::Vector4; 3]> {
     Some([h(s.q1, 1.0), h(m, half), h(s.q2, 1.0)])
 }
 
+/// A curved seam (an arc of an end face) shortened to the blend's contacts: the part of its
+/// curve between the new ends `a` and `b` (`None` keeps that end), which must lie on it, in
+/// order, short of each other.
+fn trim_curved_seam(seam: &mt::Edge, a: Option<mt::Vertex>, b: Option<mt::Vertex>, size: f64) -> Result<mt::Edge> {
+    // A closed seam (a full circle starting and ending at one vertex) has no "between": which
+    // end a contact replaces, and which way round the kept piece runs, are both ambiguous.
+    if seam.front() == seam.back() {
+        return Err(unsupported("a closed curved edge where the blend ends"));
+    }
+    use mt::{BoundedCurve, Cut, SearchNearestParameter};
+    let mut curve = seam.curve();
+    let (lo, hi) = curve.range_tuple();
+    let at = |v: &Option<mt::Vertex>, end: f64| -> Result<f64> {
+        let Some(v) = v else { return Ok(end) };
+        // Start from the nearest of a few samples: from the far end of a long arc
+        // the search can settle on the opposite side of the circle.
+        let q = from_p3(v.point());
+        let hint = (0..=32)
+            .map(|i| lo + (hi - lo) * i as f64 / 32.0)
+            .min_by(|x, y| {
+                let d = |t: f64| from_p3(mt::ParametricCurve::subs(&curve, t)).dist(q);
+                d(*x).total_cmp(&d(*y))
+            })
+            .unwrap_or(end);
+        let t = curve.search_nearest_parameter(v.point(), hint, 100).ok_or_else(|| unsupported("the blend is larger than the neighbouring faces"))?;
+        if !(t.is_finite() && from_p3(mt::ParametricCurve::subs(&curve, t)).dist(from_p3(v.point())) <= size * 1e-5) {
+            return Err(unsupported("the blend is larger than the neighbouring faces"));
+        }
+        Ok(t)
+    };
+    let (ta, tb) = (at(&a, lo)?, at(&b, hi)?);
+    let margin = (hi - lo) * 1e-9;
+    if ta < lo - margin || tb > hi + margin || tb - ta < (hi - lo) * 1e-6 {
+        return Err(unsupported("the blend is larger than the neighbouring faces"));
+    }
+    if tb < hi {
+        let _ = curve.cut(tb);
+    }
+    let piece = if ta > lo { curve.cut(ta) } else { curve };
+    let a = a.unwrap_or_else(|| seam.front().clone());
+    let b = b.unwrap_or_else(|| seam.back().clone());
+    mt::Edge::try_new(&a, &b, piece).map_err(|e| KernelError::Failed(format!("curve blend: seam: {e}")))
+}
+
 /// Blend the closed chain of edges (ids in any order) with radius `r`.
 pub(crate) fn curve_blend(solid: &Solid, ids: &[mt::EdgeID], size: f64, r: f64, round: bool) -> Result<Solid> {
     curve_blend_with_limit(solid, ids, size, r, round, MAX_SAMPLES)
@@ -632,43 +676,7 @@ fn curve_blend_with_limit(solid: &Solid, ids: &[mt::EdgeID], size: f64, r: f64, 
         let mut seam_subst: HashMap<mt::EdgeID, mt::Edge> = HashMap::new();
         for (id, (seam, a, b)) in ends {
             if !matches!(seam.curve(), mt::Curve::Line(_)) {
-                // A curved seam (an arc of an end face): keep the part of its curve between
-                // the new ends, which must lie on it, in order, short of each other.
-                use mt::{BoundedCurve, Cut, SearchNearestParameter};
-                let mut curve = seam.curve();
-                let (lo, hi) = curve.range_tuple();
-                let at = |v: &Option<mt::Vertex>, end: f64| -> Result<f64> {
-                    let Some(v) = v else { return Ok(end) };
-                    // Start from the nearest of a few samples: from the far end of a long arc
-                    // the search can settle on the opposite side of the circle.
-                    let q = from_p3(v.point());
-                    let hint = (0..=32)
-                        .map(|i| lo + (hi - lo) * i as f64 / 32.0)
-                        .min_by(|x, y| {
-                            let d = |t: f64| from_p3(mt::ParametricCurve::subs(&curve, t)).dist(q);
-                            d(*x).total_cmp(&d(*y))
-                        })
-                        .unwrap_or(end);
-                    let t = curve
-                        .search_nearest_parameter(v.point(), hint, 100)
-                        .ok_or_else(|| unsupported("the blend is larger than the neighbouring faces"))?;
-                    if !(t.is_finite() && from_p3(mt::ParametricCurve::subs(&curve, t)).dist(from_p3(v.point())) <= size * 1e-5) {
-                        return Err(unsupported("the blend is larger than the neighbouring faces"));
-                    }
-                    Ok(t)
-                };
-                let (ta, tb) = (at(&a, lo)?, at(&b, hi)?);
-                let margin = (hi - lo) * 1e-9;
-                if ta < lo - margin || tb > hi + margin || tb - ta < (hi - lo) * 1e-6 {
-                    return Err(unsupported("the blend is larger than the neighbouring faces"));
-                }
-                if tb < hi {
-                    let _ = curve.cut(tb);
-                }
-                let piece = if ta > lo { curve.cut(ta) } else { curve };
-                let a = a.unwrap_or_else(|| seam.front().clone());
-                let b = b.unwrap_or_else(|| seam.back().clone());
-                seam_subst.insert(id, mt::Edge::try_new(&a, &b, piece).map_err(|e| fail(&format!("seam: {e}")))?);
+                seam_subst.insert(id, trim_curved_seam(&seam, a, b, size)?);
                 continue;
             }
             // The new ends must stay on the seam, in order, short of each other.
