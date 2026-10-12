@@ -555,7 +555,11 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             // Dropped on the panel's free space (all of a collapsed panel): the button goes to
             // its end.
             let drawn = if collapsed { 0 } else { shown.len() };
-            let free = Rect::from_min_size(pos2(px + 4.0 + drawn as f32 * 40.0, top + 2.0), vec2((width - 8.0 - drawn as f32 * 40.0).max(8.0), 38.0));
+            // Buttons narrower than the panel's minimum width (a one-button panel) are centred.
+            let inset = if drawn == 0 { 0.0 } else { ((width - 8.0 - (drawn as f32 * 40.0 - 2.0)) / 2.0).max(0.0).floor() };
+            let bx = px + 4.0 + inset;
+            let free_x = bx + drawn as f32 * 40.0;
+            let free = Rect::from_min_size(pos2(free_x, top + 2.0), vec2((px + width - 4.0 - free_x).max(8.0), 38.0));
             let fresp = ui.interact(free, ui.id().with(("panel_free", panel)), if collapsed { Sense::click() } else { Sense::hover() });
             if fresp.dnd_hover_payload::<ToolbarDrag>().is_some() {
                 painter.line_segment([pos2(free.left(), free.top() + 2.0), pos2(free.left(), free.bottom() - 2.0)], Stroke::new(2.0, t.accent));
@@ -584,7 +588,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
             }
             for (i, c) in shown.iter().enumerate().take(drawn) {
-                let br = Rect::from_min_size(pos2(px + 4.0 + i as f32 * 40.0, top + 2.0), vec2(38.0, 38.0));
+                let br = Rect::from_min_size(pos2(bx + i as f32 * 40.0, top + 2.0), vec2(38.0, 38.0));
                 let info = c.info(&app.session);
                 let resp = ui.interact(br, ui.id().with(("cmd", c.id)), Sense::click_and_drag());
                 crate::scenario::publish_handle(&format!("toolbar:{}", c.id), br.center());
@@ -644,13 +648,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 painter.text(br.center(), Align2::CENTER_CENTER, "—", FontId::proportional(14.0), t.border);
             }
             // Panel label with drop-down.
-            let lr = Rect::from_min_size(pos2(px, top + 42.0), vec2(width, 18.0));
             let label = app.tr_label(panel).to_string();
-            let lresp = ui.interact(lr, ui.id().with(("panel", panel)), Sense::click());
-            crate::scenario::publish_handle(&format!("panel:{tab}:{panel}"), lr.center());
-            if lresp.hovered() && enabled_panel {
-                painter.rect_filled(lr, 3.0, t.hover);
-            }
             let lc = if *panel == "FINISH SKETCH" {
                 t.sketch_accent
             } else if enabled_panel {
@@ -658,12 +656,27 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             } else {
                 t.text_dim
             };
-            let g = painter.layout_no_wrap(label, FontId::proportional(10.5), lc);
-            let gx = lr.center().x - (g.size().x + 9.0) / 2.0;
-            let gy = lr.center().y - g.size().y / 2.0;
+            // A label too wide for its panel (beside the caret) wraps between words onto a
+            // second line; a single word wider than the panel stays whole. Each line is
+            // centred, and the hover area grows to hold them.
+            let font = FontId::proportional(10.5);
+            let widest_word = label.split_whitespace().map(|w| painter.layout_no_wrap(w.to_string(), font.clone(), lc).size().x).fold(0.0, f32::max);
+            let mut job = egui::text::LayoutJob::simple(label, font, lc, (width - 14.0).max(widest_word + 1.0));
+            job.wrap.max_rows = 2;
+            job.halign = egui::Align::Center;
+            let g = painter.layout_job(job);
             let gw = g.size().x;
+            let lr = Rect::from_center_size(pos2(px + width / 2.0, top + 51.0), vec2(width, (g.size().y + 2.0).max(18.0)));
+            let lresp = ui.interact(lr, ui.id().with(("panel", panel)), Sense::click());
+            crate::scenario::publish_handle(&format!("panel:{tab}:{panel}"), lr.center());
+            if lresp.hovered() && enabled_panel {
+                painter.rect_filled(lr, 3.0, t.hover);
+            }
+            // Centred rows sit around x = 0, so the galley is placed at the text's centre.
+            let gx = lr.center().x - 4.5;
+            let gy = lr.center().y - g.size().y / 2.0;
             painter.galley(pos2(gx, gy), g, lc);
-            caret(&painter, pos2(gx + gw + 6.0, lr.center().y), lc);
+            caret(&painter, pos2(gx + gw / 2.0 + 6.0, lr.center().y), lc);
             if lresp.clicked() {
                 ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("sc_panel_open"), popup_id));
             }

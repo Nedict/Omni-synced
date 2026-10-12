@@ -55,3 +55,47 @@ fn translated_dialog_buttons_do_not_wrap() {
     assert_eq!(out.shapes.iter().find_map(|shape| cancel_rows(&shape.shape)), Some(1));
     out.textures_delta.clear();
 }
+
+#[test]
+fn long_panel_label_wraps_centred_and_its_button_is_centred() {
+    fn label_rows(shape: &egui::Shape) -> Option<Vec<egui::Rect>> {
+        match shape {
+            egui::Shape::Text(text) if text.galley.job.text == "SKIZZE BEENDEN" => {
+                Some(text.galley.rows.iter().map(|row| row.rect().translate(text.pos.to_vec2())).collect())
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(label_rows),
+            _ => None,
+        }
+    }
+    fn hover_rect(shape: &egui::Shape, hover: egui::Color32, at: egui::Pos2) -> Option<egui::Rect> {
+        match shape {
+            egui::Shape::Rect(r) if r.fill == hover && r.rect.contains(at) => Some(r.rect),
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| hover_rect(s, hover, at)),
+            _ => None,
+        }
+    }
+    let mut h = Harness::new();
+    h.app.preferences.language = "de".into();
+    h.app.home.open = false;
+    h.app.run("sketch.create", json!({"plane":"xy"})).unwrap();
+    h.frames(2);
+    let label = scenario::handles("panel:SKETCH:FINISH SKETCH")[0].1;
+    let button = scenario::handles("button:sketch.finish")[0].1;
+    assert!((label.x - button.x).abs() < 1.0, "the only button sits centred over its label: {label:?} {button:?}");
+
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0));
+    let mut out =
+        h.ctx.run_ui(egui::RawInput { screen_rect: Some(screen), events: vec![egui::Event::PointerMoved(label)], ..Default::default() }, |ui| {
+            h.app.ui(ui)
+        });
+    out.textures_delta.clear();
+    let mut out = h.ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| h.app.ui(ui));
+    let rows = out.shapes.iter().find_map(|shape| label_rows(&shape.shape)).expect("the Finish Sketch panel label is drawn");
+    assert_eq!(rows.len(), 2, "the label wider than its one-button panel wraps: {rows:?}");
+    assert!(rows[0].width() != rows[1].width(), "the lines differ in width: {rows:?}");
+    assert!((rows[0].center().x - rows[1].center().x).abs() < 1.0, "each line is centred: {rows:?}");
+    let hover = crate::theme::Tokens::get().hover;
+    let lr = out.shapes.iter().find_map(|shape| hover_rect(&shape.shape, hover, label)).expect("the hovered label is highlighted");
+    assert!(rows.iter().all(|row| lr.contains_rect(*row)), "the highlight holds both lines: {lr:?} {rows:?}");
+    out.textures_delta.clear();
+}
