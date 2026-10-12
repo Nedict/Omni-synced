@@ -118,8 +118,15 @@ fn narrow_toolbar_reaches_collapsed_commands() {
     use serde_json::json;
     let mut h = Harness::new();
     h.run(&json!([
+        // Too narrow for every button: the last panels collapse into their drop-down.
         {"call":"ui.resize","params":{"width":640,"height":800}},
-        {"expect":{"shown_handles":["toolbar:overflow"]}},
+        {"expect":{"shown_handles":["collapsed:SOLID:CONSTRUCT"],"hidden_handles":["button:construct.plane.offset"]}},
+        {"click":{"handle":"collapsed:SOLID:CONSTRUCT"}},
+        {"expect":{"shown_handles":["dropdown:construct.plane.offset"]}},
+        {"key":"Escape"},
+        // Narrower: they go into the » menu.
+        {"call":"ui.resize","params":{"width":480,"height":800}},
+        {"expect":{"shown_handles":["toolbar:overflow"],"hidden_handles":["collapsed:SOLID:CONSTRUCT"]}},
         {"click":{"handle":"toolbar:overflow"}},
         {"widget":"CONSTRUCT"},
         {"expect":{"shown_handles":["toolbar:construct.plane.offset"]}},
