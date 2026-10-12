@@ -1383,6 +1383,19 @@ impl SheetBody {
         let us: Vec<f64> = strip.iter().map(|q| q.dot(d)).collect();
         let (u0, u1) = (us.iter().cloned().fold(f64::MAX, f64::min), us.iter().cloned().fold(f64::MIN, f64::max));
         if ((u1 - u0) * ba - signed_area(&strip).abs()).abs() > 1e-6 * (u1 - u0).max(1.0) * ba.max(1.0) {
+            // A corner of the outline inside the zone (e.g. a fold right at a tab's root): name
+            // it and how far the line has to move to clear it.
+            let corners: Vec<(Vec2, f64)> = pts.iter().map(|q| (*q, q.dot(n) - s0)).filter(|(_, s)| *s > 1e-6 && *s < ba - 1e-6).collect();
+            if let Some(&(c, _)) = corners.first() {
+                let on = corners.iter().fold(0.0_f64, |m, (_, s)| m.max(*s));
+                let back = corners.iter().fold(0.0_f64, |m, (_, s)| m.max(ba - *s));
+                let w = apply_point(&self.world(panel), Vec3::new(c.x, c.y, self.t));
+                return Err(DocError::Invalid(format!(
+                    "the bend zone ({ba:.3} mm wide) reaches a corner of the sheet's outline at ({:.3}, {:.3}, {:.3}): \
+                     move the fold line at least {on:.3} mm toward the side that folds or {back:.3} mm toward the side that stays",
+                    w.x, w.y, w.z
+                )));
+            }
             return Err(DocError::Invalid("not supported yet: folds whose bend zone crosses a slanted or curved edge of the sheet".into()));
         }
         let up = !flip;
