@@ -145,8 +145,9 @@ pub fn panel(app: &mut SolveApp, ctx: &egui::Context, at: Pos2) {
     .scroll([false, true])
     .show(ctx, |ui| {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-        ui.strong(format!("Redefine Sketch Plane: {name}"));
-        ui.separator();
+        // The wrapped notes below fill the width anyway, so the band may too.
+        let width = ui.available_width();
+        crate::frame::heading(ui, crate::frame::Level::Title, width, |ui| ui.strong(format!("Redefine Sketch Plane: {name}")));
         let saved_plane = match &status {
             FaceAttachmentStatus::Healthy { plane, target, path } => {
                 ui.label(format!("Attached to {} / {}", target.body, path_label(app, path)));

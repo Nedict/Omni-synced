@@ -1350,8 +1350,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         ui.set_max_width(if wide { DIALOG_WIDE_MAX_W } else { DIALOG_MAX_W } - margin);
         // Rows that end at the right edge line up with last frame's content width.
         let total = crate::frame::content_width(ui, wkey, min_w);
-        // Header: "−" folds the dialog, the command name, "»" at the right.
-        ui.horizontal(|ui| {
+        // Header: "−" folds the dialog, the command name, "»" at the right, on the title band.
+        crate::frame::heading(ui, crate::frame::Level::Title, total, |ui| {
+            let total = total - 2.0 * crate::frame::HEADING_MARGIN;
             let fold = if d.collapsed { "+" } else { "−" };
             if ui
                 .add(egui::Button::new(RichText::new(fold).size(14.0)).frame(false))

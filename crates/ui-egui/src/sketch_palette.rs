@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use solidcraft_engine::Sel;
 
 use crate::SolveApp;
+use crate::frame::Level;
 use crate::theme::Tokens;
 
 thread_local! {
@@ -205,6 +206,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let mut look = false;
     let mut finish = false;
     let has_curves = !selected_curves(app).is_empty();
+    let margin_bottom = f32::from(frame.inner_margin.bottom);
     let response = crate::frame::docked(
         app.tr("ui.heading_sketch_palette"),
         egui::Id::new("sc_sketch_palette"),
@@ -217,7 +219,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         let width = WIDTH.min((vp.width() * 0.46 - 16.0).max(120.0));
         ui.set_width(width);
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-        ui.horizontal(|ui| {
+        let line = ui.text_style_height(&egui::TextStyle::Body);
+        let gap = ui.spacing().item_spacing.y;
+        crate::frame::heading(ui, Level::Title, width, |ui| {
             let folded = FOLDED.with(Cell::get);
             if ui.add(egui::Button::new(RichText::new(if folded { "+" } else { "−" }).size(14.0)).frame(false)).clicked() {
                 FOLDED.with(|f| f.set(!folded));
@@ -228,14 +232,18 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             return;
         }
         let ofold = OPTIONS_FOLDED.with(Cell::get);
-        if ui
-            .add(egui::Button::new(RichText::new(format!("{} {}", if ofold { "+" } else { "−" }, app.tr("ui.options"))).size(12.0)).frame(false))
-            .clicked()
-        {
-            OPTIONS_FOLDED.with(|f| f.set(!ofold));
-        }
+        crate::frame::heading(ui, Level::Section, width, |ui| {
+            if ui
+                .add(egui::Button::new(RichText::new(format!("{} {}", if ofold { "+" } else { "−" }, app.tr("ui.options"))).size(12.0)).frame(false))
+                .clicked()
+            {
+                OPTIONS_FOLDED.with(|f| f.set(!ofold));
+            }
+        });
         if !ofold {
-            let options_height = (bottom - ui.cursor().top() - 68.0).max(24.0);
+            // Keep room for the footer: status heading and line, a line, Finish Sketch, a line.
+            let footer = 5.0 * line + ui.spacing().interact_size.y + 6.0 * gap + 8.0;
+            let options_height = (bottom - ui.cursor().top() - footer).max(24.0);
             let options =
                 egui::ScrollArea::vertical().id_salt("sc_palette_options").max_height(options_height).auto_shrink([false, true]).show(ui, |ui| {
                     ui.vertical(|ui| {
@@ -272,9 +280,15 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             crate::scenario::publish_rect("sketch_palette:options", options.inner_rect);
         }
         ui.add_space(4.0);
+        // The status changes when the sketch needs attention, so it gets its own heading.
+        crate::frame::heading(ui, Level::Section, width, |ui| {
+            ui.label(RichText::new(app.tr("ui.sketch_status")).size(12.0));
+        });
         ui.label(RichText::new(crate::i18n::tr_dyn(&dof_line)).color(if ok { t.sketch_accent } else { t.text_dim }));
-        ui.add_space(4.0);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        // One line between the status and Finish Sketch, and below it to the edge.
+        ui.add_space((line - gap).max(0.0));
+        // A row as tall as the button, so the gap below it is just the line.
+        ui.allocate_ui_with_layout(vec2(ui.available_width(), 0.0), egui::Layout::right_to_left(egui::Align::Min), |ui| {
             let button = ui.add(egui::Button::new(RichText::new(app.tr("ui.finish_sketch")).color(Color32::WHITE)).fill(t.accent));
             crate::scenario::publish_rect("sketch_palette:finish", button.rect);
             crate::scenario::publish_handle("sketch_palette:finish", button.rect.center());
@@ -282,6 +296,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 finish = true;
             }
         });
+        ui.add_space((line - margin_bottom).max(0.0));
     });
     app.viewport.palette_rect = response.map(|r| r.response.rect);
     if let Some(r) = app.viewport.palette_rect {
