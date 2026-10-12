@@ -2716,3 +2716,22 @@ fn a_pattern_repeats_a_fillet_on_the_edges_it_found() {
     let expect = 150.0 * 422.275 * 19.05 - n * pocket;
     assert!(rel(volume(&mut s), expect) < 1e-5, "{} vs {expect}", volume(&mut s));
 }
+
+/// A profile added to the sketch after a named multi-profile extrude is named after `body_name`
+/// too (#373).
+#[test]
+#[ignore = "fails until #373 is fixed"]
+fn a_profile_added_later_is_named_after_body_name() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "R"}));
+    for x in [0, 10, 20] {
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [x, 0], "p1": [x + 5, 30]}));
+    }
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "R", "distance": "10", "operation": "new_body", "body_name": "Ribs"}));
+    run(&mut s, "sketch.edit", json!({"sketch": "R"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [30, 0], "p1": [35, 30]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names, ["Ribs", "Ribs (2)", "Ribs (3)", "Ribs (4)"]);
+}
