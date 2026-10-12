@@ -2350,3 +2350,20 @@ fn special_files_are_refused_by_every_file_command() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A join with explicit `targets` merges into those bodies only; a touched non-target stays (#259).
+#[test]
+fn join_with_targets_leaves_other_touched_bodies_alone() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "operation": "new_body", "body_name": "A"}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [10, 0, 0], "operation": "new_body", "body_name": "B"}));
+    // Straddles the face between A and B; only A is a target.
+    run(&mut s, "solid.box", json!({"length": 4, "width": 4, "height": 4, "corner": [8, 3, 3], "operation": "join", "targets": ["A"]}));
+    let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names, ["A", "B"], "B is not a target and must stay a body");
+    let b = run(&mut s, "inspect.measure", json!({"bodies": ["B"]}))["total"]["volume_mm3"].as_f64().unwrap();
+    assert!(rel(b, 1000.0) < 1e-6, "B is unchanged: {b}");
+    // A gains the half of the tool outside it.
+    let a = run(&mut s, "inspect.measure", json!({"bodies": ["A"]}))["total"]["volume_mm3"].as_f64().unwrap();
+    assert!(rel(a, 1032.0) < 1e-6, "A: {a}");
+}
