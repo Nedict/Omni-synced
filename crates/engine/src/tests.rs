@@ -209,6 +209,42 @@ fn fillet_the_edges_between_two_overlapping_cylinders() {
     assert!(rel(v, expect) < 2e-4, "{v} vs {expect}");
 }
 
+/// The top outline of two overlapping cylinders whose concave edges were rounded: the walls of
+/// the rounds meet the cylinders along the rolling-ball contact lines, straight but not lines.
+#[test]
+fn fillet_and_chamfer_the_top_loop_of_rounded_overlapping_cylinders() {
+    use std::f64::consts::{PI, TAU};
+    let (big, round, h) = (25.0_f64, 5.0_f64, 10.0);
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": big}));
+    run(&mut s, "sketch.circle.center", json!({"center": [-big, 0], "radius": big}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": h, "profiles": [0, 1, 2]}));
+    // Plan view: ball centres at x = −12.5, |y| = yb; each round's arc turns by th, each big arc by
+    // TAU − 2·a1, and the loop turns by TAU in all.
+    let half = big / 2.0;
+    let yb = ((big + round).powi(2) - half * half).sqrt();
+    run(&mut s, "solid.fillet", json!({"edges": [[-half, half * 3f64.sqrt(), 5], [-half, -half * 3f64.sqrt(), 5]], "radius": round}));
+    let (a1, th) = (yb.atan2(half), 2.0 * (half / (big + round)).asin());
+    let base = volume(&mut s);
+    let top = [[big, 0.0, h], [-2.0 * big, 0.0, h], [-half, yb - round, h], [-half, round - yb, h]];
+    // Removed volume by Pappus: the corner's section swept along the loop at its centroid's offset.
+    let removed = |area: f64, xb: f64| area * (2.0 * (TAU - 2.0 * a1) * (big - xb) + 2.0 * th * (round + xb));
+    run(&mut s, "solid.fillet", json!({"edges": top, "radius": 2}));
+    let r: f64 = 2.0;
+    let expect = base - removed(r * r * (1.0 - PI / 4.0), (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI)) * r);
+    let v = volume(&mut s);
+    assert!((v - expect).abs() < 1.5, "{v} vs {expect}");
+    let m = run(&mut s, "inspect.measure", json!({}));
+    assert_eq!(m["bodies"][0]["kernel"]["faces"].as_u64(), Some(10), "{m}");
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "solid.chamfer", json!({"edges": top, "distance": 2}));
+    let expect = base - removed(2.0, 2.0 / 3.0);
+    let v = volume(&mut s);
+    assert!((v - expect).abs() < 1.5, "{v} vs {expect}");
+}
+
 /// Sketch a 40 x 30 rectangle with dimensions, extrude 20, fillet a vertical edge, cut a hole.
 #[test]
 fn box_fillet_cut_part() {
