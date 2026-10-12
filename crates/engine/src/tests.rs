@@ -23,6 +23,17 @@ fn rel(a: f64, b: f64) -> f64 {
 }
 
 #[test]
+fn fillet_as_wide_as_a_face_rounds_it_off() {
+    // #199: 14 x 6 x 10 box, the four vertical edges at r = 3 (half the 6 mm end faces).
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 14, "width": 6, "height": 10, "corner": [14, 0, 0]}));
+    run(&mut s, "solid.fillet", json!({"edges": [[14, 0, 5], [28, 0, 5], [14, 6, 5], [28, 6, 5]], "radius": "3"}));
+    let expect = 840.0 - (4.0 - PI) * 9.0 * 10.0;
+    assert!(rel(volume(&mut s), expect) < 2e-4, "{} vs {expect}", volume(&mut s));
+    assert!(s.execute("solid.fillet", &json!({"edges": [[21, 0, 10]], "radius": 3.5})).is_err());
+}
+
+#[test]
 fn join_extrude_from_a_chamfered_top_face() {
     let mut s = Session::default();
     run(&mut s, "parameters.add", json!({"name":"height","expression":"20 mm"}));
