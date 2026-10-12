@@ -142,3 +142,34 @@ fn patterns_of_a_blind_hole_drill_every_copy() {
     ));
     assert!((c - 2.0 * one).abs() < 1e-3 * one, "{c} vs 2 × {one}");
 }
+
+/// 512 identical through-holes from a feature pattern of one cut (#261). 128 took 30 s and 512 did
+/// not finish in 150 s; the pattern runs on its own thread so a hang fails the test instead of CI.
+#[test]
+fn pattern_of_512_hole_cuts_finishes_in_reasonable_time() {
+    use std::time::{Duration, Instant};
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 200, "width": 100, "height": 1, "operation": "new_body", "body_name": "Plate"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "offset": "2", "name": "H"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [4, 4], "diameter": 2}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(
+        &mut s,
+        "solid.extrude",
+        json!({"sketch": "H", "distance": "4", "direction": "negative", "operation": "cut", "targets": ["Plate"], "name": "Hole"}),
+    );
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let t = Instant::now();
+        let r = s.execute(
+            "solid.pattern.rectangular",
+            &json!({"features": ["Hole"], "dir1": [1, 0, 0], "count1": 32, "spacing1": 6, "dir2": [0, 1, 0], "count2": 16, "spacing2": 6}),
+        );
+        let v = r.map(|_| volume(&mut s)).map_err(|e| e.to_string());
+        let _ = tx.send((v, t.elapsed()));
+    });
+    let (v, took) = rx.recv_timeout(Duration::from_secs(60)).expect("the 512-hole pattern did not finish within 60 s");
+    let v = v.expect("pattern");
+    assert!(rel(v, 200.0 * 100.0 - 512.0 * PI) < 1e-6, "{v}");
+    assert!(took < Duration::from_secs(20), "512 holes took {took:?}");
+}
