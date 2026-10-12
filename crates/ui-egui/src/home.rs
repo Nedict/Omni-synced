@@ -393,8 +393,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.add_space(24.0);
             ui.horizontal_wrapped(|ui| {
                 ui.hyperlink_to("Documentation", crate::help::DOCS_URL);
-                ui.hyperlink_to("Report an Issue", "https://github.com/bherbruck/solvecraft/issues/new");
-                ui.hyperlink_to("What's new", "https://github.com/bherbruck/solvecraft/releases/latest");
+                ui.hyperlink_to("Report an Issue", "https://github.com/bherbruck/solidcraft/issues/new");
+                ui.hyperlink_to("What's new", "https://github.com/bherbruck/solidcraft/releases/latest");
                 if ui.link("Keyboard Shortcuts").clicked() {
                     app.keymap.open = true;
                     app.keymap.read_only = true;

@@ -26,8 +26,8 @@ and help is welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Name and compatibility
 
-SolidCraft was previously called SolveCraft. The product display name and repository are
-changing; existing identifiers remain compatible: `.solvecraft` designs, `solvecraft-cli`,
+SolidCraft was previously called SolveCraft. The product display name and repository have
+changed; existing identifiers remain compatible: `.solvecraft` designs, `solvecraft-cli`,
 Cargo package names, settings/recovery locations and package IDs keep their existing names.
 Published 0.2.0 and 0.2.1 packages and demo recordings retain their original SolveCraft branding
 and filenames.
