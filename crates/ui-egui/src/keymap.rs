@@ -38,13 +38,8 @@ impl Keymap {
     }
     pub fn load(&mut self, v: &Value) {
         self.custom =
-            v.as_object().map(|o| o.iter().take(2000).filter_map(|(k, v)| Some((current(k), v.as_str()?.to_string()))).collect()).unwrap_or_default();
+            v.as_object().map(|o| o.iter().take(2000).filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect()).unwrap_or_default();
     }
-}
-
-/// Saved before the command ids were renamed: the current id.
-fn current(id: &str) -> String {
-    solvecraft_engine::legacy_ids::current_id(id).to_string()
 }
 
 /// A key press as a shortcut name: `E`, `Shift+E`, `Ctrl+Alt+K`, `F5`, `Delete`.

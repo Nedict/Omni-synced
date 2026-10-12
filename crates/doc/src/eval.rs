@@ -352,6 +352,7 @@ pub struct EvalCache {
 struct CachedEval {
     error: Option<String>,
     warning: Option<String>,
+    boolean_diagnostics: kernel::BooleanDiagnostics,
     ms: f64,
     state: Arc<ModelState>,
 }
@@ -395,6 +396,7 @@ pub struct FeatureResult {
     pub name: String,
     pub error: Option<String>,
     pub warning: Option<String>,
+    pub boolean_diagnostics: kernel::BooleanDiagnostics,
     pub ms: f64,
     pub skipped: bool,
     #[serde(skip)]
@@ -635,6 +637,7 @@ impl Model {
                     name: f.name.clone(),
                     error: None,
                     warning: None,
+                    boolean_diagnostics: Default::default(),
                     ms: 0.0,
                     skipped: true,
                     fingerprint: fp,
@@ -656,6 +659,7 @@ impl Model {
                     name: f.name.clone(),
                     error: c.error,
                     warning: c.warning,
+                    boolean_diagnostics: c.boolean_diagnostics,
                     ms: c.ms,
                     skipped: false,
                     fingerprint: fp,
@@ -699,12 +703,22 @@ impl Model {
             };
             // A parameter with an error fails the features using it, with that error.
             let bad_param = param_names(f).into_iter().find_map(|n| self.param_errors.get(&n).map(|e| format!("parameter `{n}`: {e}")));
-            let r = match bad_param {
+            let (r, mut boolean_diagnostics) = kernel::capture_boolean_diagnostics(|| match bad_param {
                 Some(e) => Err(kernel::KernelError::Failed(e)),
                 None => kernel::guard(&f.name, || {
                     eval_feature(doc, &vals, f, &mut next, &mut warning).map_err(|e| kernel::KernelError::Failed(e.to_string()))
                 }),
-            };
+            });
+            if r.is_ok() {
+                if let Some(note) = boolean_diagnostics.warning() {
+                    warning = Some(match warning {
+                        Some(existing) => format!("{existing}; {note}"),
+                        None => note,
+                    });
+                }
+            } else {
+                boolean_diagnostics = Default::default();
+            }
             let ms = t0.elapsed().as_secs_f64() * 1000.0;
             let error = match r {
                 Ok(()) => {
@@ -730,9 +744,28 @@ impl Model {
             if !self.no_cache
                 && let Ok(mut m) = self.cache.lock()
             {
-                m.put(key, CachedEval { error: error.clone(), warning: warning.clone(), ms, state: state.clone() });
+                m.put(
+                    key,
+                    CachedEval {
+                        error: error.clone(),
+                        warning: warning.clone(),
+                        boolean_diagnostics: boolean_diagnostics.clone(),
+                        ms,
+                        state: state.clone(),
+                    },
+                );
             }
-            out.push(FeatureResult { id: f.id, name: f.name.clone(), error, warning, ms, skipped: false, fingerprint: fp, state: state.clone() });
+            out.push(FeatureResult {
+                id: f.id,
+                name: f.name.clone(),
+                error,
+                warning,
+                boolean_diagnostics,
+                ms,
+                skipped: false,
+                fingerprint: fp,
+                state: state.clone(),
+            });
         }
         self.results = out;
         self.last_recomputed = recomputed;
@@ -1767,6 +1800,7 @@ fn feature_tools_with_constructor(
             }
             if *operation == Operation::NewBody && extent.taper.is_none() {
                 let cap_bindings = crate::config::extrude_cap_bindings(&ss, &tools, 10_000_000);
+                let source_curves = cap_bindings.as_ref().map(|_| crate::config::ExactSketchCurves::new(&ss));
                 tools = tools
                     .into_iter()
                     .enumerate()
@@ -1777,7 +1811,7 @@ fn feature_tools_with_constructor(
                             .flatten()
                             .map(|source| match source {
                                 Some(kernel::FaceSource::ExtrudeSide { segment, .. }) if cap_bindings.is_some() => {
-                                    crate::config::exact_sketch_curve(&ss, segment)
+                                    source_curves.as_ref().and_then(|curves| curves.find(segment))
                                 }
                                 _ => None,
                             })
@@ -2500,6 +2534,14 @@ fn replay(
                     copies.push(kernel::transform_matrix(t, *m)?);
                 }
             }
+        }
+        // Many cut copies clear of each other: one tool of many pieces, so the target is cut
+        // once instead of rebuilding an ever more complex body for every copy (#261).
+        if op == Operation::Cut
+            && copies.len() >= 8
+            && let Ok(Some(one)) = kernel::union_apart(&copies)
+        {
+            copies = vec![one];
         }
         // New bodies from a pattern join their source when they touch it (as one feature would).
         if f.body_names.is_empty() {

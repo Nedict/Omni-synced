@@ -1568,6 +1568,68 @@ fn outline_blank(s: &mut Session, outline: Value) {
     run(s, "sheet.flange", json!({"sketch": "Blank"}));
 }
 
+/// A 100 x 40 blank with two 15 mm tabs on its right edge (y 5..12 and y 28..35), on one bend line.
+fn two_tab_blank(s: &mut Session) {
+    outline_blank(
+        s,
+        json!([[0, 0], [100, 0], [100, 5], [115, 5], [115, 12], [100, 12], [100, 28], [115, 28], [115, 35], [100, 35], [100, 40], [0, 40]]),
+    );
+}
+
+/// Folding one tab must not be refused because another tab lies on the same line (#264).
+#[test]
+fn fold_one_of_two_collinear_tabs() {
+    let mut s = Session::default();
+    two_tab_blank(&mut s);
+    let flat = volume(&mut s);
+    run(&mut s, "sheet.fold", json!({"points": [[107, 5, 0.8], [107, 12, 0.8]], "fixed": [50, 20, 0.8]}));
+    assert!(rel(volume(&mut s), flat) < 1e-3, "a fold keeps the material");
+}
+
+/// One fold line across both tabs bends both (#264).
+#[test]
+fn fold_across_two_collinear_tabs() {
+    let mut s = Session::default();
+    two_tab_blank(&mut s);
+    let flat = volume(&mut s);
+    run(&mut s, "sheet.fold", json!({"points": [[107, 5, 0.8], [107, 35, 0.8]], "fixed": [50, 20, 0.8]}));
+    assert!(rel(volume(&mut s), flat) < 1e-3);
+    let bb = &run(&mut s, "inspect.measure", json!({}))["bodies"][0]["bbox"];
+    assert!(bb["max"][2].as_f64().unwrap() > 7.0, "both tabs stand up: {bb}");
+}
+
+/// Edge flanges on both tab ends in one feature (two separate features already work) (#264).
+#[test]
+fn edge_flanges_on_two_collinear_tab_ends_in_one_feature() {
+    let mut s = Session::default();
+    two_tab_blank(&mut s);
+    run(&mut s, "sheet.flange", json!({"edges": [[115, 8, 0.8], [115, 31, 0.8]], "height": "10"}));
+    let mut separate = Session::default();
+    two_tab_blank(&mut separate);
+    run(&mut separate, "sheet.flange", json!({"edges": [[115, 8, 0.8]], "height": "10"}));
+    run(&mut separate, "sheet.flange", json!({"edges": [[115, 31, 0.8]], "height": "10"}));
+    assert!(rel(volume(&mut s), volume(&mut separate)) < 1e-6);
+}
+
+/// `fixed` inside a cut-out touches no material: the fold must refuse it or say which side it kept (#263).
+#[test]
+fn fold_fixed_point_off_the_sheet_is_not_silently_ignored() {
+    let mut s = Session::default();
+    outline_blank(&mut s, json!([[0, 0], [100, 0], [100, 60], [0, 60]]));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "offset": "2", "name": "Window"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [10, 15], "p1": [40, 45]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Window", "distance": "4", "direction": "negative", "operation": "cut"}));
+    match s.execute("sheet.fold", &json!({"points": [[80, 0, 0.8], [80, 60, 0.8]], "fixed": [25, 30, 0.8]})) {
+        Err(e) => assert!(e.to_string().contains("fixed"), "{e}"),
+        Ok(r) => {
+            let warned =
+                ["warning", "warnings"].iter().any(|k| r.get(*k).is_some_and(|w| !w.is_null() && w != &json!([]) && w.to_string().contains("fixed")));
+            assert!(warned, "fixed [25, 30] is inside the window, yet the fold succeeded silently: {r}");
+        }
+    }
+}
+
 /// A tab whose fold line sits exactly at its root: the bend zone reaches the blank outline beside
 /// the tab. Every edge is straight, so the error must not blame a slanted or curved edge (#262).
 #[test]

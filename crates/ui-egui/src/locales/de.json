@@ -187,6 +187,7 @@
   "ui.multiple": "Mehrfach",
   "ui.named_views": "Benannte Ansichten",
   "ui.navigation": "Navigation",
+  "ui.needs_design": "{command}: Öffnen Sie zuerst ein Design",
   "ui.new_body": "Neuer Körper",
   "ui.new_design": "Neues Design",
   "ui.normal": "Normal",

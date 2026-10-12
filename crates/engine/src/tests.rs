@@ -34,6 +34,17 @@ fn round_as_tall_as_a_disc_uses_up_its_wall() {
 }
 
 #[test]
+fn fillet_as_wide_as_a_face_rounds_it_off() {
+    // #199: 14 x 6 x 10 box, the four vertical edges at r = 3 (half the 6 mm end faces).
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 14, "width": 6, "height": 10, "corner": [14, 0, 0]}));
+    run(&mut s, "solid.fillet", json!({"edges": [[14, 0, 5], [28, 0, 5], [14, 6, 5], [28, 6, 5]], "radius": "3"}));
+    let expect = 840.0 - (4.0 - PI) * 9.0 * 10.0;
+    assert!(rel(volume(&mut s), expect) < 2e-4, "{} vs {expect}", volume(&mut s));
+    assert!(s.execute("solid.fillet", &json!({"edges": [[21, 0, 10]], "radius": 3.5})).is_err());
+}
+
+#[test]
 fn join_extrude_from_a_chamfered_top_face() {
     let mut s = Session::default();
     run(&mut s, "parameters.add", json!({"name":"height","expression":"20 mm"}));
@@ -129,6 +140,7 @@ fn join_meeting_nothing_keeps_the_first_body() {
     assert!(rel(volume(&mut s), 1064.0) < 1e-6);
 }
 
+mod boolean_diagnostics;
 mod component_frames;
 mod mirror_planes;
 mod primitive_points;
@@ -522,9 +534,20 @@ fn registry_is_consistent() {
     let n = ids.len();
     ids.dedup();
     assert_eq!(ids.len(), n, "duplicate command ids");
-    assert!(find_command("extrude").is_some(), "case-insensitive lookup");
+    assert_eq!(find_command("Solid.Extrude").map(|c| c.id), Some("solid.extrude"), "case-insensitive lookup");
     let s = Session::default();
     assert!(!find_command("sketch.line").unwrap().info(&s).enabled);
+}
+
+/// Only SolidCraft's own dotted ids name commands; other ids are unknown commands.
+#[test]
+fn only_own_ids_name_commands() {
+    for old in ["Extrude", "SketchCreate", "FusionFilletEdgesCommand"] {
+        assert!(find_command(old).is_none(), "{old}");
+        let mut s = Session::default();
+        let err = s.execute(old, &serde_json::json!({})).unwrap_err();
+        assert!(matches!(err, crate::EngineError::UnknownCommand(_)), "{old}: {err}");
+    }
 }
 
 #[test]
@@ -2346,15 +2369,15 @@ fn boundary_fill_cells() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 20, "body_name": "A"}));
     run(&mut s, "solid.box", json!({"corner": [10, 0, 0], "length": 20, "width": 20, "height": 20, "body_name": "B"}));
-    let r = run(&mut s, "SurfaceSculpt", json!({"tools": ["A", "B"], "cells": [[15, 10, 10]], "remove_tools": true}));
+    let r = run(&mut s, "solid.boundary_fill", json!({"tools": ["A", "B"], "cells": [[15, 10, 10]], "remove_tools": true}));
     let m = run(&mut s, "inspect.measure", json!({}));
     assert_eq!(m["body_count"], 1, "{r} {m}");
     assert!(rel(m["total"]["volume_mm3"].as_f64().unwrap_or(0.0), 10.0 * 20.0 * 20.0) < 1e-9);
     run(&mut s, "edit.undo", json!({}));
-    run(&mut s, "SurfaceSculpt", json!({"tools": ["A", "B"], "cells": [[5, 10, 10], [25, 10, 10]], "remove_tools": true}));
+    run(&mut s, "solid.boundary_fill", json!({"tools": ["A", "B"], "cells": [[5, 10, 10], [25, 10, 10]], "remove_tools": true}));
     let m = run(&mut s, "inspect.measure", json!({}));
     assert!(rel(m["total"]["volume_mm3"].as_f64().unwrap_or(0.0), 2.0 * 10.0 * 20.0 * 20.0) < 1e-9, "{m}");
-    assert!(s.execute("SurfaceSculpt", &json!({"tools": ["A"], "cells": [[100, 100, 100]]})).is_err());
+    assert!(s.execute("solid.boundary_fill", &json!({"tools": ["A"], "cells": [[100, 100, 100]]})).is_err());
 }
 
 /// Rectangles name their sides and corners, so they can be dimensioned without inspecting the
@@ -2486,6 +2509,56 @@ fn special_files_are_refused_by_every_file_command() {
         assert!(r.as_ref().is_err_and(|e| e.to_string().contains("not a regular file")), "{cmd}: {r:?}");
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Deleting a sketch takes its extrude with it; a later combine that names the extrude's body must
+/// not be left failing silently: it is deleted too, or the reply reports it (#267).
+#[test]
+fn deleting_a_sketch_leaves_no_silently_failing_feature() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [20, 20]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "S", "distance": "10", "body_name": "P"}));
+    run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5, "corner": [18, 5, 0], "operation": "new_body", "body_name": "Q"}));
+    run(&mut s, "solid.combine", json!({"target": "P", "tools": ["Q"], "name": "JoinPQ"}));
+    let reply = run(&mut s, "timeline.delete", json!({"features": ["S"]}));
+    if let Ok(join) = s.execute("timeline.inspect", &json!({"feature": "JoinPQ"})) {
+        assert!(
+            join["error"].is_null() || reply.to_string().contains("JoinPQ"),
+            "JoinPQ now fails ({}) but the reply only says {reply}",
+            join["error"]
+        );
+    }
+}
+
+/// Every body a multi-profile `new` extrude creates carries its `body_name`, not a generic BodyN (#266).
+#[test]
+fn multi_profile_extrude_names_every_body_after_body_name() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "R"}));
+    for x in [0, 10, 20] {
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [x, 0], "p1": [x + 5, 30]}));
+    }
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": "10", "operation": "new_body", "body_name": "Ribs"}));
+    let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert!(names.iter().all(|n| n.starts_with("Ribs")), "{names:?}");
+    assert!(rel(volume(&mut s), 4500.0) < 1e-6);
+}
+
+/// Renaming one pattern copy leaves the other copies' names alone (#265).
+#[test]
+fn renaming_a_pattern_copy_keeps_the_other_copies_names() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "operation": "new_body", "body_name": "X"}));
+    run(&mut s, "solid.pattern.rectangular", json!({"bodies": ["X"], "dir1": [1, 0, 0], "count1": 3, "spacing1": 20}));
+    run(&mut s, "body.rename", json!({"body": "X (2)", "name": "Second"}));
+    let third = run(&mut s, "inspect.measure", json!({"bodies": ["X (3)"]}));
+    assert_eq!(third["bodies"][0]["bbox"]["min"][0].as_f64().map(f64::round), Some(40.0), "X (3) is still the copy at x = 40: {third}");
+    run(&mut s, "body.rename", json!({"body": "X (3)", "name": "Third"}));
+    let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names, ["X", "Second", "Third"]);
 }
 
 /// Parameters that work are listed in the command's params doc, which is all agents see (#271).

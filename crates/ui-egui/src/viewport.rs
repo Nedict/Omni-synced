@@ -682,6 +682,7 @@ fn pick_cached(app: &mut SolveApp, proj: &Proj, pos: Pos2) -> Vec<Hit> {
     app.session.revision.hash(&mut h);
     (std::sync::Arc::as_ptr(&app.session.world_state()) as usize).hash(&mut h);
     app.session.active_sketch.hash(&mut h);
+    crate::sketch3d::drawing(app).hash(&mut h);
     app.dialog.as_ref().and_then(|d| d.active_input()).map(|i| i.accept).hash(&mut h);
     app.session.visibility.hidden_bodies.hash(&mut h);
     app.session.visibility.hidden_occurrences.hash(&mut h);
@@ -694,21 +695,37 @@ fn pick_cached(app: &mut SolveApp, proj: &Proj, pos: Pos2) -> Vec<Hit> {
     {
         return hits.clone();
     }
-    let hits = pick(app, proj, pos);
+    // Hover feedback mirrors what a 3D bridge click will snap to; clicks still go through `pick`.
+    let hits = pick_with_sketch_points(app, proj, pos, crate::sketch3d::drawing(app));
     app.viewport.last_pick = Some((key, hits.clone()));
     hits
 }
 
+/// What is under `pos`. Sketch points come from the active sketch only (from every shown sketch
+/// while a dialog input takes points, while idle, or while projecting), so sketch tools never get
+/// another sketch's local point and id. The 3D bridge snap asks for cross-sketch points explicitly with [`pick_3d`].
 pub fn pick(app: &SolveApp, proj: &Proj, pos: Pos2) -> Vec<Hit> {
+    pick_with_sketch_points(app, proj, pos, false)
+}
+
+/// Like [`pick`], but also returns points of every visible sketch: only for the 3D drawing snap,
+/// which converts them to world space through their own sketch's plane.
+pub fn pick_3d(app: &SolveApp, proj: &Proj, pos: Pos2) -> Vec<Hit> {
+    pick_with_sketch_points(app, proj, pos, true)
+}
+
+fn pick_with_sketch_points(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool) -> Vec<Hit> {
     let s = &app.session;
     let st = s.world_state();
     let bounds = body_bounds(app, &st);
     let bound = |name: &str| bounds.iter().find(|(n, _)| n == name).map(|(_, b)| *b);
     let mut hits = Vec::new();
     let (o, d) = proj.ray(pos);
-    // Sketch points of the active sketch (of every shown sketch while a command takes points).
+    // Sketch points of the active sketch (of every shown sketch while a command takes points,
+    // while idle or projecting, and while 3D drawing snaps to points on other visible sketches).
     let wants_points = app.dialog.as_ref().and_then(|d| d.active_input()).is_some_and(|i| i.accept & crate::selection::POINTS != 0);
-    let external_points = wants_points || (app.dialog.is_none() && app.tool.as_ref().is_none_or(|tool| tool.cmd == "sketch.project"));
+    let external_points =
+        wants_points || other_sketch_points || (app.dialog.is_none() && app.tool.as_ref().is_none_or(|tool| tool.cmd == "sketch.project"));
     let point_sketches: Vec<u64> = if external_points { visible_sketches(app) } else { s.active_sketch.into_iter().collect() };
     let mut best: Option<(f32, Hit)> = None;
     for ss in point_sketches.iter().filter_map(|sid| st.sketch(*sid)) {
@@ -1792,10 +1809,17 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             if app.tool.is_some() {
                 crate::tools::on_click(app, &proj, p);
             } else if app.dialog.as_ref().is_some_and(|d| d.wants_picks()) {
-                if let Some(sel) = cand.and_then(|c| c.1)
+                if let Some((hit, Some(sel))) = cand
                     && let Some(mut d) = app.dialog.take()
                 {
                     d.pick(&app.session, sel);
+                    if let crate::dialogs::Kind::PathPlane { sketch, .. } = &mut d.kind {
+                        *sketch = match hit {
+                            Hit::SketchCurve { sketch, .. } => Some(sketch),
+                            _ => None,
+                        };
+                        d.extra.remove("path");
+                    }
                     app.dialog = Some(d);
                 }
             } else {

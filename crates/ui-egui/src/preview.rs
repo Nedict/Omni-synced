@@ -186,7 +186,11 @@ fn spawn(pv: &mut PreviewState, key: u64, scratch: Session, cmds: Vec<(String, V
 /// show their result in place of the bodies they change. When the feature fails (a boolean the
 /// kernel can't do yet), the tool body is still shown, with the error.
 pub fn compute(s: &Session, cmds: &[(String, Value)], colors: Colors) -> Job {
-    if cmds.iter().any(|(command, _)| command == "sketch.redefine") {
+    if cmds.iter().any(|(command, params)| {
+        command == "sketch.redefine"
+            || command == "construct.plane.along_path"
+            || params.get("command").and_then(Value::as_str) == Some("construct.plane.along_path")
+    }) {
         let preview = s.preview_visible_world(cmds).map_err(|error| error.to_string())?;
         return std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut built = build(&preview.before, &preview.after, colors);
@@ -281,6 +285,24 @@ fn same(a: &Mesh, b: &Mesh) -> bool {
 pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
     let mut sc = GpuScene::default();
     let mut replaced = Vec::new();
+    for construct in &after.construct {
+        if before.construct.iter().any(|old| old == construct) {
+            continue;
+        }
+        if let solvecraft_engine::doc::construct::ConstructGeom::Plane(plane) = construct.geom {
+            let (o, x, y) = (plane.origin, plane.x * 10.0, plane.y * 10.0);
+            let quad = [o - x - y, o + x - y, o + x + y, o - x + y];
+            let color = [c.added[0], c.added[1], c.added[2], 64];
+            for triangle in [[quad[0], quad[1], quad[2]], [quad[0], quad[2], quad[3]]] {
+                for p in triangle {
+                    sc.xray_tri(p.to_f32(), plane.normal().to_f32(), color);
+                }
+            }
+            for (a, b) in quad.iter().zip(quad.iter().cycle().skip(1)).take(4) {
+                sc.line(a.to_f32(), b.to_f32(), c.added, 1.3, true);
+            }
+        }
+    }
     for a in &after.bodies {
         let am = a.mesh();
         let old = before.body(&a.name).map(|b| b.mesh());

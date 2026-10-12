@@ -1134,7 +1134,29 @@ impl SheetBody {
         match panel {
             None => {
                 let pts = self.base.outer.ccw().polyline(1e-3);
-                let cut = clip(&pts, a + inward * by, inward);
+                let o = a + inward * by;
+                let mut cut = clip(&pts, o, inward);
+                // Only the material along this edge goes: other parts of the outline past the
+                // line (tabs side by side on one line) stay.
+                let mut work = FlatWork::new();
+                let off = merge_loops(&[clip(&pts, o, inward * -1.0)], &mut work)?;
+                if off.len() > 1 {
+                    let mid = (a + b) * 0.5;
+                    let touches = |p: &Vec<Vec2>| {
+                        let m = p.len();
+                        (0..m).filter_map(|i| Some((*p.get(i)?, *p.get((i + 1) % m)?))).any(|(p0, p1)| {
+                            let e = p1 - p0;
+                            let t = if e.len2() > 1e-18 { ((mid - p0).dot(e) / e.len2()).clamp(0.0, 1.0) } else { 0.0 };
+                            (p0 + e * t).dist(mid) < 1e-6
+                        })
+                    };
+                    let mut keep = vec![cut];
+                    keep.extend(off.into_iter().filter(|p| !touches(p)));
+                    cut = match merge_loops(&keep, &mut work)?.as_slice() {
+                        [one] => one.clone(),
+                        _ => return Err(DocError::Invalid("not supported yet: a flange setback that splits the sheet".into())),
+                    };
+                }
                 if cut.len() < 3 {
                     return Err(DocError::Invalid("the flange's setback removes the whole panel".into()));
                 }
@@ -1190,13 +1212,13 @@ impl SheetBody {
                 return Err(DocError::Invalid("pick an edge of the sheet's top or bottom face".into()));
             }
             let d = (b - a).normalized().ok_or_else(|| DocError::Invalid("edge".into()))?;
-            found.push((panel, a, d, top));
+            found.push((panel, a, b, d, top));
         }
-        for (panel, a, d, _) in &found {
-            self.trim(*panel, *a, *a + *d, setback)?;
+        for (panel, a, b, _, _) in &found {
+            self.trim(*panel, *a, *b, setback)?;
         }
         let mut made = Vec::new();
-        for (panel, a, d, top) in found {
+        for (panel, a, b, d, top) in found {
             let outward = Vec2::new(d.y, -d.x);
             let line_o = a - outward * setback;
             // The trimmed edge: along d, on the moved line.
@@ -1204,14 +1226,21 @@ impl SheetBody {
                 None => {
                     let pts = self.base.outer.ccw().polyline(1e-3);
                     let m = pts.len();
-                    (0..m)
+                    let on_line: Vec<(Vec2, f64)> = (0..m)
                         .filter_map(|k| {
                             let (p0, p1) = (*pts.get(k)?, *pts.get((k + 1) % m)?);
                             let e = p1 - p0;
                             let on = (p0 - line_o).dot(outward).abs() < 1e-6 && (p1 - line_o).dot(outward).abs() < 1e-6;
                             (on && e.dot(d) > 0.0).then_some((p0, e.len()))
                         })
-                        .next()
+                        .collect();
+                    // Of several edges on the line (tabs side by side), the one the pick was on.
+                    let (ua, ub) = (a.dot(d), b.dot(d));
+                    on_line
+                        .iter()
+                        .find(|(p0, len)| (p0.dot(d) + len).min(ub) - p0.dot(d).max(ua) > 1e-9)
+                        .or_else(|| on_line.first())
+                        .copied()
                         .ok_or_else(|| DocError::Invalid("the flange's edge was trimmed away".into()))?
                 }
                 Some(i) => {
@@ -1355,7 +1384,29 @@ impl SheetBody {
             }
             (None, Some(p)) => {
                 let q = apply_point(&inv, p);
-                Vec2::new(q.x, q.y).dot(n) < l0
+                let q2 = Vec2::new(q.x, q.y);
+                // A point in the panel's slab must be on material: inside the outline and
+                // outside every cut-out (a side face of either counts as material).
+                let near = |poly: &[Vec2]| {
+                    let m = poly.len();
+                    (0..m).any(|i| match (poly.get(i), poly.get((i + 1) % m)) {
+                        (Some(&a), Some(&b)) => {
+                            let d = b - a;
+                            let t = if d.len2() > 1e-18 { ((q2 - a).dot(d) / d.len2()).clamp(0.0, 1.0) } else { 0.0 };
+                            (a + d * t).dist(q2) < 1e-3
+                        }
+                        _ => false,
+                    })
+                };
+                let in_slab = q.z > -1e-4 && q.z < self.t + 1e-4;
+                let in_hole = self.holes.iter().any(|h| h.contains(q2) && !near(&h.outer.ccw().polyline(1e-3)));
+                if in_slab && ((!point_in(&pts, q2) && !near(&pts)) || in_hole) {
+                    return Err(DocError::Invalid(format!(
+                        "the fixed point ({:.3}, {:.3}, {:.3}) is not on the sheet: pick a point on the face of the side that stays",
+                        p.x, p.y, p.z
+                    )));
+                }
+                q2.dot(n) < l0
             }
             (None, None) => side_area(n) <= side_area(n * -1.0),
         };
@@ -1377,6 +1428,14 @@ impl SheetBody {
         let strip = clip(&clip(&pts, n * s0, n), n * (s0 + ba), n * -1.0);
         if signed_area(&fixed_part).abs() < 1e-9 || signed_area(&moving).abs() < 1e-9 {
             return Err(DocError::Invalid("the fold line must cross the sheet with material on both sides of the bend".into()));
+        }
+        // Separate tabs on one line (the zone falls apart into several pieces): fold the ones
+        // the line's points span, each as its own bend.
+        let strips = merge_loops(std::slice::from_ref(&strip), &mut FlatWork::new())?;
+        if strips.len() > 1 {
+            let span = (a2.dot(d).min(b2.dot(d)), a2.dot(d).max(b2.dot(d)));
+            let angle = if flip { -angle } else { angle };
+            return self.fold_tabs(panel, &pts, (n, d), (s0, ba), span, (angle, radius), &strips);
         }
         // The bend zone must be a rectangle across the panel (a slanted or curved edge would
         // run across the bend as a helix, which the sheet's faces can't carry yet).
@@ -1447,6 +1506,135 @@ impl SheetBody {
         // Cut-outs may cross the bend where their edges run along or across it (the faces
         // check the rest when the sheet is built).
         Ok(i)
+    }
+
+    /// A fold whose bend zone falls apart into several pieces (`strips`: tabs on one line). The
+    /// pieces the line's points span (`span`, along `d`) bend, each with the material beyond it;
+    /// the rest of the panel stays put. `n` points to the moving side, the zone is `s0..s0 + ba`.
+    #[allow(clippy::too_many_arguments)]
+    fn fold_tabs(
+        &mut self,
+        panel: Option<usize>,
+        pts: &[Vec2],
+        (n, d): (Vec2, Vec2),
+        (s0, ba): (f64, f64),
+        span: (f64, f64),
+        (angle, radius): (f64, f64),
+        strips: &[Vec<Vec2>],
+    ) -> Result<usize> {
+        const EPS: f64 = 1e-6;
+        let urange = |p: &[Vec2]| p.iter().fold((f64::MAX, f64::MIN), |(lo, hi), q| (lo.min(q.dot(d)), hi.max(q.dot(d))));
+        let overlap = |a: (f64, f64), b: (f64, f64)| a.1.min(b.1) - a.0.max(b.0);
+        let mut work = FlatWork::new();
+        // The material beyond the zone, piece by piece, and the zone piece each one hangs from.
+        let beyond = merge_loops(&[clip(pts, n * (s0 + ba), n)], &mut work)?;
+        let far_edges = |p: &[Vec2]| -> Vec<(f64, f64)> {
+            let m = p.len();
+            (0..m)
+                .filter_map(|i| Some((*p.get(i)?, *p.get((i + 1) % m)?)))
+                .filter(|(a, b)| (a.dot(n) - s0 - ba).abs() < EPS && (b.dot(n) - s0 - ba).abs() < EPS)
+                .map(|(a, b)| (a.dot(d).min(b.dot(d)), a.dot(d).max(b.dot(d))))
+                .collect()
+        };
+        let strip_u: Vec<(f64, f64)> = strips.iter().map(|s| urange(s)).collect();
+        let mut hangs: Vec<Vec<usize>> = vec![Vec::new(); strips.len()];
+        for (k, part) in beyond.iter().enumerate() {
+            let edges = far_edges(part);
+            let on: Vec<usize> = (0..strips.len()).filter(|&i| strip_u.get(i).is_some_and(|&u| edges.iter().any(|&e| overlap(e, u) > EPS))).collect();
+            match on.as_slice() {
+                [i] => {
+                    if let Some(h) = hangs.get_mut(*i) {
+                        h.push(k);
+                    }
+                }
+                _ => return Err(DocError::Invalid("not supported yet: folding tabs that join again beyond the bend".into())),
+            }
+        }
+        let chosen: Vec<usize> = (0..strips.len()).filter(|&i| strip_u.get(i).is_some_and(|&u| overlap(u, span) > EPS)).collect();
+        if chosen.is_empty() {
+            return Err(DocError::Invalid("the fold line must cross the sheet with material on both sides of the bend".into()));
+        }
+        // What stays: the panel short of the zone plus the zone pieces (and what hangs from
+        // them) that don't fold.
+        let mut keep = vec![clip(pts, n * s0, n * -1.0)];
+        for i in 0..strips.len() {
+            if chosen.contains(&i) {
+                continue;
+            }
+            keep.extend(strips.get(i).cloned());
+            keep.extend(hangs.get(i).into_iter().flatten().filter_map(|&k| beyond.get(k).cloned()));
+        }
+        let fixed = match merge_loops(&keep, &mut work)?.as_slice() {
+            [one] if signed_area(one) > 1e-9 => one.clone(),
+            _ => return Err(DocError::Invalid("not supported yet: a fold that splits the part that stays".into())),
+        };
+        let mut made = Vec::new();
+        for &i in &chosen {
+            let (Some(strip), Some(&(u0, u1))) = (strips.get(i), strip_u.get(i)) else { continue };
+            // Each piece of the zone must be a rectangle (see `add_fold`).
+            if ((u1 - u0) * ba - signed_area(strip).abs()).abs() > 1e-6 * (u1 - u0).max(1.0) * ba.max(1.0) {
+                return Err(DocError::Invalid("not supported yet: folds whose bend zone crosses a slanted or curved edge of the sheet".into()));
+            }
+            let moving = match hangs.get(i).map(Vec::as_slice) {
+                Some([k]) => beyond.get(*k).cloned().ok_or_else(|| DocError::Invalid("fold".into()))?,
+                _ => return Err(DocError::Invalid("the fold line must cross the sheet with material on both sides of the bend".into())),
+            };
+            let leg = moving.iter().map(|q| q.dot(n) - s0 - ba).fold(0.0, f64::max);
+            made.push((u0, u1, n * s0 + d * u0, leg, moving));
+        }
+        // Flanges already on this panel: those beyond a folding tab move with it.
+        let mut moves = Vec::new();
+        for k in 0..self.flanges.len() {
+            let Some(f) = self.flanges.get(k) else { continue };
+            if f.parent != panel {
+                continue;
+            }
+            let (e0, e1) = (f.p.dot(n) - s0, (f.p + f.d * f.len).dot(n) - s0);
+            let fu = (f.p.dot(d).min((f.p + f.d * f.len).dot(d)), f.p.dot(d).max((f.p + f.d * f.len).dot(d)));
+            let crosses = Err(DocError::Invalid("not supported yet: a fold through a flange's bend".into()));
+            match made.iter().position(|m| fu.0 >= m.0 - 1e-9 && fu.1 <= m.1 + 1e-9) {
+                Some(j) if e0.min(e1) >= ba - 1e-9 => moves.push((k, j)),
+                Some(_) if e0.max(e1) > 1e-9 => return crosses,
+                None if e0.max(e1) > 1e-9 && made.iter().any(|m| overlap((m.0, m.1), fu) > EPS) => return crosses,
+                _ => {}
+            }
+        }
+        let ccw = |mut v: Vec<Vec2>| {
+            if signed_area(&v) < 0.0 {
+                v.reverse();
+            }
+            v.into_iter().map(snap).collect::<Vec<_>>()
+        };
+        match panel {
+            None => self.base = Region2 { outer: Loop2::polygon(&fixed).ccw(), holes: self.base.holes.clone() },
+            Some(j) => {
+                if let Some(f) = self.flanges.get_mut(j) {
+                    f.shape = Some(ccw(fixed));
+                }
+            }
+        }
+        let first = self.flanges.len();
+        for (u0, u1, p0, leg, moving) in made {
+            self.flanges.push(SheetFlange {
+                parent: panel,
+                p: snap(p0),
+                d,
+                len: u1 - u0,
+                n,
+                angle,
+                radius,
+                leg,
+                ext: (0.0, 0.0),
+                shape: Some(ccw(moving)),
+                tag: String::new(),
+            });
+        }
+        for (k, j) in moves {
+            if let Some(f) = self.flanges.get_mut(k) {
+                f.parent = Some(first + j);
+            }
+        }
+        Ok(first)
     }
 
     /// Name a panel edge (flat coordinates a→b on `panel`, top or bottom face): base edges by the

@@ -213,6 +213,39 @@ fn loop_fillet_as_tall_as_its_wall_consumes_it() {
 }
 
 #[test]
+fn fillet_consuming_a_side_face_makes_a_full_round() {
+    // 14 x 6 x 10: r = 3 on the four vertical edges uses up both 6 mm end faces (#199).
+    let b = box_solid(Vec3::new(14.0, 0.0, 0.0), Vec3::new(28.0, 6.0, 10.0)).unwrap();
+    let mids = [Vec3::new(14.0, 0.0, 5.0), Vec3::new(28.0, 0.0, 5.0), Vec3::new(14.0, 6.0, 5.0), Vec3::new(28.0, 6.0, 5.0)];
+    let full = 840.0 - (4.0 - PI) * 9.0 * 10.0;
+    for order in [mids.to_vec(), mids.iter().rev().copied().collect()] {
+        let f = fillet(&b, &order, 3.0).unwrap();
+        let m = measure(&f).unwrap();
+        assert!(rel(m.volume, full) < 2e-4, "{} vs {full}", m.volume);
+        // Top, bottom, the two long sides and four quarter rounds; the end faces are gone.
+        assert_eq!(m.faces, 8, "{m:?}");
+        assert_eq!(f.lumps().unwrap().len(), 1);
+        assert!(f.validity().is_empty(), "{:?}", f.validity());
+    }
+    // One end only: two rounds meeting on one end face.
+    let f = fillet(&b, &mids[1..4].iter().step_by(2).copied().collect::<Vec<_>>(), 3.0).unwrap();
+    assert!(rel(measure(&f).unwrap().volume, 840.0 - (4.0 - PI) * 9.0 * 5.0) < 2e-4);
+    assert!(f.validity().is_empty());
+    // A 6 x 6 post rounded on all four edges with r = 3 is a cylinder.
+    let post = box_solid(Vec3::ZERO, Vec3::new(6.0, 6.0, 10.0)).unwrap();
+    let corners = [Vec3::new(0.0, 0.0, 5.0), Vec3::new(6.0, 0.0, 5.0), Vec3::new(6.0, 6.0, 5.0), Vec3::new(0.0, 6.0, 5.0)];
+    let c = fillet(&post, &corners, 3.0).unwrap();
+    assert!(rel(measure(&c).unwrap().volume, PI * 9.0 * 10.0) < 2e-4, "{}", measure(&c).unwrap().volume);
+    assert!(c.validity().is_empty());
+    // Past the limit there is no face left to consume: still refused, the body unchanged.
+    for r in [3.0 + 1e-3, 3.5] {
+        let e = fillet(&b, &mids, r).unwrap_err();
+        assert!(e.to_string().contains("larger than the neighbouring faces"), "{r}: {e}");
+    }
+    assert_eq!(measure(&b).unwrap().volume, 840.0);
+}
+
+#[test]
 fn tapered_extrudes() {
     // 40 x 40 square, 30 up, 10° outward: a frustum.
     let sq = Region2 {
@@ -355,7 +388,10 @@ fn drain_pads_flush_under_a_floor_with_a_hole() {
     // The ring's part inside the floor adds nothing: 5 mm of ring below it either way.
     let v_ring = PI * (400.0 - 100.0) * 5.0;
     for (z0, z1) in [(-5.0, 0.0), (-5.0, 2.0)] {
-        let u = boolean(&floor, &ring(z0, z1), BoolOp::Union).unwrap().unwrap();
+        let (result, diagnostics) = capture_boolean_diagnostics(|| boolean(&floor, &ring(z0, z1), BoolOp::Union));
+        let u = result.unwrap().unwrap();
+        assert!(diagnostics.events.iter().any(|event| event.strategy == BooleanStrategy::CommonBore), "{diagnostics:?}");
+        assert!(diagnostics.events.iter().all(|event| event.translation_mm.is_finite() && event.face_shift_mm.is_finite()));
         let v = measure(&u).unwrap().volume;
         assert!(rel(v, v_floor + v_ring) < 2e-5, "ring {z0}..{z1}: {v} vs {}", v_floor + v_ring);
         assert!(u.validity().is_empty(), "{:?}", u.validity());

@@ -1,12 +1,17 @@
-//! System font loading and fallback setup for multi-language (CJK/Japanese) support.
+//! System font loading and fallback setup for multi-language (CJK: Japanese, Chinese, Korean) support.
 //!
-//! The UI's Latin font always comes first; a CJK font is only ever appended as a fallback, so
-//! English text renders exactly as before and only glyphs the Latin font lacks use the CJK face.
+//! The UI's Latin font always comes first; a CJK font (then a Hangul font) is only ever appended as
+//! a fallback, so English text renders exactly as before and only glyphs the Latin font lacks use
+//! the CJK face. The Hangul fallback covers Korean where the CJK font found (Meiryo, Hiragino)
+//! lacks Hangul.
 
 use std::sync::Arc;
 
 /// Name of the CJK fallback entry in [`egui::FontDefinitions`].
 pub const CJK_FALLBACK: &str = "cjk_fallback";
+
+/// Name of the Hangul fallback entry in [`egui::FontDefinitions`], after [`CJK_FALLBACK`].
+pub const HANGUL_FALLBACK: &str = "hangul_fallback";
 
 /// UI languages whose text needs the CJK font. The web app's bundled font covers Japanese only;
 /// add Chinese or Korean here together with a font that covers them.
@@ -19,13 +24,19 @@ pub fn needs_cjk_font(language: &str) -> bool {
 
 /// `fonts` with `bytes` appended as the last fallback of the Proportional and Monospace
 /// families, after the Latin UI font. `None` when the bytes are not a font.
-pub fn with_cjk_fallback(mut fonts: egui::FontDefinitions, bytes: Vec<u8>) -> Option<egui::FontDefinitions> {
+pub fn with_cjk_fallback(fonts: egui::FontDefinitions, bytes: Vec<u8>) -> Option<egui::FontDefinitions> {
+    with_fallback(fonts, CJK_FALLBACK, bytes)
+}
+
+/// `fonts` with `bytes` appended under `name` as the last fallback of the Proportional and
+/// Monospace families. `None` when the bytes are not a font.
+fn with_fallback(mut fonts: egui::FontDefinitions, name: &str, bytes: Vec<u8>) -> Option<egui::FontDefinitions> {
     ttf_parser::Face::parse(&bytes, 0).ok()?;
-    fonts.font_data.insert(CJK_FALLBACK.to_owned(), Arc::new(egui::FontData::from_owned(bytes)));
+    fonts.font_data.insert(name.to_owned(), Arc::new(egui::FontData::from_owned(bytes)));
     for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
         let list = fonts.families.entry(family).or_default();
-        list.retain(|name| name != CJK_FALLBACK);
-        list.push(CJK_FALLBACK.to_owned());
+        list.retain(|entry| entry != name);
+        list.push(name.to_owned());
     }
     Some(fonts)
 }
@@ -183,6 +194,20 @@ const FONT_CANDIDATES: &[&str] = &[
     "/usr/share/fonts/cjkuni-uming/uming.ttc",
 ];
 
+/// Hangul fonts, appended after the CJK fallback so Korean renders even when the CJK font found
+/// is a Japanese one without Hangul (Meiryo, Hiragino).
+#[cfg(not(target_arch = "wasm32"))]
+const HANGUL_FONT_CANDIDATES: &[&str] = &[
+    // Windows: Malgun Gothic
+    "C:\\Windows\\Fonts\\malgun.ttf",
+    // macOS: Apple SD Gothic Neo
+    "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+    "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
+    // Linux: Nanum Gothic (Noto Sans CJK already covers Hangul)
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+    "/usr/share/fonts/nanum/NanumGothic.ttf",
+];
+
 #[cfg(not(target_arch = "wasm32"))]
 fn try_read_font(path: &std::path::Path) -> Option<Vec<u8>> {
     if let Ok(bytes) = std::fs::read(path)
@@ -298,11 +323,22 @@ fn find_system_cjk_font() -> Option<Vec<u8>> {
     None
 }
 
-/// Configure font definitions with system CJK fallback if available.
+/// Configure font definitions with system CJK and Hangul fallbacks where available.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn setup_fonts(ctx: &egui::Context) {
-    if let Some(bytes) = find_system_cjk_font() {
-        install_cjk_font(ctx, bytes);
+    let mut fonts = egui::FontDefinitions::default();
+    let mut found = false;
+    if let Some(cjk) = find_system_cjk_font().and_then(|bytes| with_cjk_fallback(fonts.clone(), bytes)) {
+        fonts = cjk;
+        found = true;
+    }
+    let hangul = HANGUL_FONT_CANDIDATES.iter().find_map(|path| try_read_font(std::path::Path::new(path)));
+    if let Some(with_hangul) = hangul.and_then(|bytes| with_fallback(fonts.clone(), HANGUL_FALLBACK, bytes)) {
+        fonts = with_hangul;
+        found = true;
+    }
+    if found {
+        ctx.set_fonts(fonts);
     }
 }
 
@@ -337,6 +373,18 @@ mod tests {
             assert_eq!(list.last().map(String::as_str), Some(CJK_FALLBACK), "CJK is the last fallback");
         }
         assert!(with_cjk_fallback(defaults, b"not a font".to_vec()).is_none());
+    }
+
+    #[test]
+    fn hangul_font_falls_back_after_the_cjk_font() {
+        let defaults = egui::FontDefinitions::default();
+        let cjk = with_cjk_fallback(defaults.clone(), latin_font_bytes()).unwrap();
+        let fonts = with_fallback(cjk, HANGUL_FALLBACK, latin_font_bytes()).unwrap();
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            let list = &fonts.families[&family];
+            assert_eq!(list.first(), defaults.families[&family].first(), "the Latin UI font stays first");
+            assert_eq!(&list[list.len() - 2..], [CJK_FALLBACK, HANGUL_FALLBACK], "Hangul follows the CJK fallback");
+        }
     }
 
     #[test]

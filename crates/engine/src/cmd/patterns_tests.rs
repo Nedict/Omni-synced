@@ -207,3 +207,48 @@ fn patterns_of_a_blind_hole_drill_every_copy() {
     ));
     assert!((c - 2.0 * one).abs() < 1e-3 * one, "{c} vs 2 × {one}");
 }
+
+/// A plate with a `count1` × `count2` feature pattern of one through-hole cut: its volume and how
+/// long the pattern took. It runs on its own thread so a hang fails the test instead of CI.
+fn hole_pattern(count1: usize, count2: usize) -> (f64, std::time::Duration) {
+    use std::time::{Duration, Instant};
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 200, "width": 100, "height": 1, "operation": "new_body", "body_name": "Plate"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "offset": "2", "name": "H"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [4, 4], "diameter": 2}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(
+        &mut s,
+        "solid.extrude",
+        json!({"sketch": "H", "distance": "4", "direction": "negative", "operation": "cut", "targets": ["Plate"], "name": "Hole"}),
+    );
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let t = Instant::now();
+        let r = s.execute(
+            "solid.pattern.rectangular",
+            &json!({"features": ["Hole"], "dir1": [1, 0, 0], "count1": count1, "spacing1": 6, "dir2": [0, 1, 0], "count2": count2, "spacing2": 6}),
+        );
+        let took = t.elapsed();
+        let v = r.map(|_| volume(&mut s)).map_err(|e| e.to_string());
+        let _ = tx.send((v, took));
+    });
+    let (v, took) = rx.recv_timeout(Duration::from_secs(900)).expect("the hole pattern did not finish within 900 s");
+    let n = (count1 * count2) as f64;
+    let v = v.expect("pattern");
+    // The measure meshes the bores: each hole reads about 0.06 % small, so allow 0.1 % a hole.
+    assert!((v - (200.0 * 100.0 - n * PI)).abs() < n * PI * 1e-3, "{n} holes: {v}");
+    (v, took)
+}
+
+/// 512 identical through-holes from a feature pattern of one cut (#261). 128 took 30 s and 512 did
+/// not finish in 150 s: each copy was cut into an ever more complex plate. The time must grow about
+/// linearly with the count. A ratio, not a time: CI runs every test binary at once and is many
+/// times slower than a machine running this alone (about 6 s for 512 holes there).
+#[test]
+fn pattern_of_512_hole_cuts_finishes_in_reasonable_time() {
+    let (_, t128) = hole_pattern(16, 8);
+    let (_, t512) = hole_pattern(32, 16);
+    // Linear is 4×, the old quadratic cost 16× or more.
+    assert!(t512.as_secs_f64() < 8.0 * t128.as_secs_f64() + 2.0, "128 holes took {t128:?}, 512 took {t512:?}");
+}

@@ -34,7 +34,8 @@ impl Catalog {
 static ENGLISH: Catalog = Catalog::new("en", "English", include_str!("locales/en.json"));
 static JAPANESE: Catalog = Catalog::new("ja", "日本語", include_str!("locales/ja.json"));
 static GERMAN: Catalog = Catalog::new("de", "Deutsch", include_str!("locales/de.json"));
-pub const LOCALES: &[&Catalog] = &[&ENGLISH, &JAPANESE, &GERMAN];
+static KOREAN: Catalog = Catalog::new("ko", "한국어", include_str!("locales/ko.json"));
+pub const LOCALES: &[&Catalog] = &[&ENGLISH, &JAPANESE, &GERMAN, &KOREAN];
 
 pub fn is_supported(id: &str) -> bool {
     LOCALES.iter().any(|catalog| catalog.id == id)
@@ -248,6 +249,27 @@ mod tests {
         assert_eq!(ja.dynamic("4 degrees of freedom"), "自由度 4");
         assert_eq!(ja.dynamic("Sketch of bracket"), "Sketch of bracket");
         assert_eq!(Locale::for_language("en").dynamic("Sketch1"), "Sketch1");
+    }
+
+    #[test]
+    fn korean_catalog_translates_keys_labels_and_browser_patterns() {
+        let ko = Locale::for_language("ko");
+        assert_eq!(ko.name(), "한국어");
+        assert!(is_supported("ko"));
+        assert_eq!(ko.text("ui.preferences"), "환경 설정");
+        assert_eq!(ko.label("Extrude"), "돌출");
+        assert_eq!(ko.label("CREATE SKETCH"), "스케치 만들기");
+        assert_eq!(ko.label("NonExistentKey"), "NonExistentKey");
+        assert_eq!(ko.format("document.save_changes", &[("name", "My {design}")]), "My {design}의 변경 사항을 저장하시겠습니까?");
+        assert_eq!(ko.format("dialog.selected_count", &[("count", "2")]), "↖ 2개 선택됨");
+        assert_eq!(ko.dynamic("Sketch1"), "스케치1");
+        assert_eq!(ko.dynamic("Body2"), "바디2");
+        assert_eq!(ko.dynamic("Component12"), "컴포넌트12");
+        assert_eq!(ko.dynamic("Units: mm"), "단위: mm");
+        assert_eq!(ko.dynamic("Precision: 3"), "정밀도: 3");
+        assert_eq!(ko.dynamic("Parameters (5)"), "매개변수 (5)");
+        assert_eq!(ko.dynamic("4 degrees of freedom"), "자유도 4개");
+        assert_eq!(ko.dynamic("Sketch of bracket"), "Sketch of bracket");
     }
 
     #[test]
