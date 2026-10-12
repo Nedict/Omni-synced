@@ -200,6 +200,9 @@ fn action_feature_ids(app: &SolveApp, groups: &[solidcraft_engine::doc::Timeline
     let mut picked: std::collections::BTreeSet<u64> = selected_feature_ids(app).into_iter().collect();
     for group in groups.iter().filter(|group| app.tree.picked_timeline_groups.contains(&group.id)) {
         picked.extend(group.features.iter().copied());
+        for descendant in groups.iter().filter(|candidate| group_is_descendant(groups, candidate.id, group.id)) {
+            picked.extend(descendant.features.iter().copied());
+        }
     }
     app.session.doc.features.iter().filter(|feature| picked.contains(&feature.id)).map(|feature| feature.id).collect()
 }
@@ -288,13 +291,22 @@ fn select_item(app: &mut SolveApp, ui: &egui::Ui, item: TimelineItem, order: &[T
 }
 
 fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft_engine::doc::TimelineGroup]) {
-    let features = action_feature_ids(app, groups);
+    let features = selected_feature_ids(app);
+    let selected_groups = app.tree.picked_timeline_groups.clone();
+    let has_selection = !features.is_empty() || !selected_groups.is_empty();
     let directly_selected = selected_feature_ids(app);
-    if !features.is_empty() {
+    if has_selection {
         ui.menu_button("Add to Folder", |ui| {
             for group in groups {
                 if ui.button(&group.name).clicked() {
-                    let _ = app.run("timeline.move_to_group", json!({"features": features, "group": group.id}));
+                    let mut params = json!({"group": group.id});
+                    if !features.is_empty() {
+                        params["features"] = json!(features);
+                    }
+                    if !selected_groups.is_empty() {
+                        params["groups"] = json!(selected_groups);
+                    }
+                    let _ = app.run("timeline.move_to_group", params);
                     app.tree.collapsed.remove(&format!("timeline_group:{}", group.id));
                     ui.close();
                 }
@@ -304,24 +316,35 @@ fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft
             }
         });
         if ui.button("Add to New Folder").clicked() {
-            if let Ok(result) = app.run("timeline.group", json!({"features": features}))
+            let result = app.run("timeline.group", json!({"features": features}));
+            if let Ok(result) = result
                 && let Some(group) = result.get("group").and_then(serde_json::Value::as_u64)
             {
                 app.tree.collapsed.remove(&format!("timeline_group:{group}"));
+                if !selected_groups.is_empty() {
+                    let _ = app.run("timeline.move_to_group", json!({"groups": selected_groups, "group": group}));
+                }
             }
             ui.close();
         }
-        let grouped = features.iter().any(|feature| group_for(groups, *feature).is_some());
+        let grouped = features.iter().any(|feature| group_for(groups, *feature).is_some()) || !selected_groups.is_empty();
         if grouped && ui.button("Remove from Folder").clicked() {
-            let _ = app.run("timeline.move_to_group", json!({"features": features, "group": null}));
+            let mut params = json!({"group": null});
+            if !features.is_empty() {
+                params["features"] = json!(features);
+            }
+            if !selected_groups.is_empty() {
+                params["groups"] = json!(selected_groups);
+            }
+            let _ = app.run("timeline.move_to_group", params);
             ui.close();
         }
     }
     if !app.tree.picked_timeline_groups.is_empty() {
-        if !features.is_empty() {
+        if !features.is_empty() || !selected_groups.is_empty() {
             ui.separator();
         }
-        if ui.button("Remove Selected Folders").on_hover_text("Keep their features in the history").clicked() {
+        if ui.button("Delete Selected Folders").on_hover_text("Keep their features and nested folders in the history").clicked() {
             let ids = app.tree.picked_timeline_groups.clone();
             let _ = app.run("timeline.ungroup", json!({"groups": ids}));
             app.tree.picked_timeline_groups.clear();
@@ -337,6 +360,74 @@ fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft
     }
 }
 
+/// Delete selected timeline folders while preserving their features and nested folders.
+pub fn delete_selected_folders(app: &mut SolveApp) -> bool {
+    if app.tree.picked_timeline_groups.is_empty() {
+        return false;
+    }
+    let groups = app.tree.picked_timeline_groups.clone();
+    if app.run("timeline.ungroup", json!({"groups": groups})).is_ok() {
+        app.tree.picked_timeline_groups.clear();
+    }
+    true
+}
+
+fn group_is_descendant(groups: &[solidcraft_engine::doc::TimelineGroup], group: u64, ancestor: u64) -> bool {
+    let mut current = groups.iter().find(|candidate| candidate.id == group).and_then(|candidate| candidate.parent);
+    let mut steps = 0usize;
+    while let Some(id) = current {
+        if id == ancestor {
+            return true;
+        }
+        steps += 1;
+        if steps > groups.len() {
+            return true;
+        }
+        current = groups.iter().find(|candidate| candidate.id == id).and_then(|candidate| candidate.parent);
+    }
+    false
+}
+
+fn group_depth(groups: &[solidcraft_engine::doc::TimelineGroup], id: u64) -> usize {
+    let mut depth = 0;
+    let mut current = groups.iter().find(|group| group.id == id).and_then(|group| group.parent);
+    while let Some(parent) = current {
+        depth += 1;
+        if depth > groups.len() {
+            break;
+        }
+        current = groups.iter().find(|group| group.id == parent).and_then(|group| group.parent);
+    }
+    depth
+}
+
+fn group_is_open(app: &SolveApp, groups: &[solidcraft_engine::doc::TimelineGroup], id: u64) -> bool {
+    let mut current = Some(id);
+    let mut steps = 0usize;
+    while let Some(group_id) = current {
+        if app.tree.collapsed.contains(&format!("timeline_group:{group_id}")) {
+            return false;
+        }
+        steps += 1;
+        if steps > groups.len() {
+            return false;
+        }
+        current = groups.iter().find(|group| group.id == group_id).and_then(|group| group.parent);
+    }
+    true
+}
+
+fn group_first_feature(
+    groups: &[solidcraft_engine::doc::TimelineGroup],
+    features: &[(u64, String, &'static str, bool, &'static str, FeatureKind)],
+    id: u64,
+) -> Option<usize> {
+    let group = groups.iter().find(|group| group.id == id)?;
+    let direct = group.features.iter().filter_map(|feature| features.iter().position(|item| item.0 == *feature)).min();
+    let children = groups.iter().filter(|child| child.parent == Some(id)).filter_map(|child| group_first_feature(groups, features, child.id)).min();
+    direct.into_iter().chain(children).min()
+}
+
 fn visible_order(
     app: &SolveApp,
     features: &[(u64, String, &'static str, bool, &'static str, FeatureKind)],
@@ -344,19 +435,23 @@ fn visible_order(
 ) -> Vec<TimelineItem> {
     let mut order = Vec::new();
     let mut shown = std::collections::BTreeSet::new();
-    for (id, ..) in features {
-        let group_id = group_for(groups, *id);
-        if let Some(group_id) = group_id
-            && shown.insert(group_id)
-        {
-            order.push(TimelineItem::Group(group_id));
+    for (index, (id, ..)) in features.iter().enumerate() {
+        let mut at_index: Vec<_> = groups.iter().filter(|group| group_first_feature(groups, features, group.id) == Some(index)).collect();
+        at_index.sort_by_key(|group| (group_depth(groups, group.id), group.id));
+        for group in at_index {
+            if group_is_open(app, groups, group.id) && shown.insert(group.id) {
+                order.push(TimelineItem::Group(group.id));
+            }
         }
-        let open = group_id.is_none_or(|group_id| !app.tree.collapsed.contains(&format!("timeline_group:{group_id}")));
+        let group_id = group_for(groups, *id);
+        let open = group_id.is_none_or(|group_id| group_is_open(app, groups, group_id));
         if open {
             order.push(TimelineItem::Feature(*id));
         }
     }
-    for group in groups {
+    let mut trailing: Vec<_> = groups.iter().filter(|group| !shown.contains(&group.id)).collect();
+    trailing.sort_by_key(|group| (group_first_feature(groups, features, group.id).unwrap_or(usize::MAX), group_depth(groups, group.id), group.id));
+    for group in trailing {
         if shown.insert(group.id) {
             order.push(TimelineItem::Group(group.id));
         }
@@ -371,6 +466,7 @@ fn vertical_group_row(
     groups: &[solidcraft_engine::doc::TimelineGroup],
     order: &[TimelineItem],
     drag: &mut Option<Drag>,
+    depth: usize,
 ) -> bool {
     let t = Tokens::get();
     let key = format!("timeline_group:{}", group.id);
@@ -380,18 +476,25 @@ fn vertical_group_row(
     if selected || response.hovered() {
         ui.painter().rect_filled(rect, 3.0, if selected { t.accent_soft } else { t.hover });
     }
-    let centre = pos2(rect.left() + 9.0, rect.center().y);
+    let offset = depth as f32 * 14.0;
+    let centre = pos2(rect.left() + 9.0 + offset, rect.center().y);
     let arrow = if open {
         vec![centre + vec2(-4.0, -2.0), centre + vec2(4.0, -2.0), centre + vec2(0.0, 3.0)]
     } else {
         vec![centre + vec2(-2.0, -4.0), centre + vec2(-2.0, 4.0), centre + vec2(3.0, 0.0)]
     };
     ui.painter().add(egui::Shape::convex_polygon(arrow, t.text_dim, Stroke::NONE));
-    let icon = Rect::from_center_size(pos2(rect.left() + 27.5, rect.center().y), vec2(17.0, 17.0));
+    let icon = Rect::from_center_size(pos2(rect.left() + 27.5 + offset, rect.center().y), vec2(17.0, 17.0));
     icons::paint(ui.painter(), icon, "folder", t.icon, t.icon_fill, t.accent);
-    ui.painter().text(pos2(rect.left() + 40.0, rect.center().y), egui::Align2::LEFT_CENTER, &group.name, egui::FontId::proportional(12.0), t.text);
+    ui.painter().text(
+        pos2(rect.left() + 40.0 + offset, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        &group.name,
+        egui::FontId::proportional(12.0),
+        t.text,
+    );
     crate::scenario::publish_handle(&format!("timeline-folder:{}", group.name), rect.center());
-    let fold_rect = Rect::from_min_max(rect.left_top(), pos2(rect.left() + 18.0, rect.bottom()));
+    let fold_rect = Rect::from_min_max(pos2(rect.left() + offset, rect.top()), pos2(rect.left() + offset + 18.0, rect.bottom()));
     let fold = ui.interact(fold_rect, ui.id().with(("timeline_group_fold", group.id)), Sense::click());
     if fold.clicked() {
         if open {
@@ -437,6 +540,8 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
         .collect();
     let groups = app.session.doc.timeline_groups.clone();
     let order = visible_order(app, &features, &groups);
+    let first_indices: std::collections::BTreeMap<u64, Option<usize>> =
+        groups.iter().map(|group| (group.id, group_first_feature(&groups, &features, group.id))).collect();
     let n = features.len();
     let marker = app.session.doc.marker.unwrap_or(n);
     let from_view = match &app.viewport.hover {
@@ -450,19 +555,19 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
     let pointer = ui.input(|input| input.pointer.hover_pos());
     let mut slots = Vec::new();
     let mut shown_groups = std::collections::BTreeSet::new();
-    let mut open_groups = std::collections::BTreeMap::new();
     let mut hovered = None;
     let mut edit = None;
 
     for (index, (id, name, icon, suppressed, ty, kind)) in features.iter().enumerate() {
         let group_id = group_for(&groups, *id);
-        if let Some(group_id) = group_id
-            && shown_groups.insert(group_id)
-            && let Some(group) = groups.iter().find(|group| group.id == group_id)
-        {
-            open_groups.insert(group_id, vertical_group_row(app, ui, group, &groups, &order, &mut drag));
+        let mut at_index: Vec<_> = groups.iter().filter(|group| first_indices.get(&group.id).copied().flatten() == Some(index)).collect();
+        at_index.sort_by_key(|group| (group_depth(&groups, group.id), group.id));
+        for group in at_index {
+            if group_is_open(app, &groups, group.id) && shown_groups.insert(group.id) {
+                vertical_group_row(app, ui, group, &groups, &order, &mut drag, group_depth(&groups, group.id));
+            }
         }
-        let group_open = group_id.and_then(|id| open_groups.get(&id).copied()).unwrap_or(true);
+        let group_open = group_id.is_none_or(|id| group_is_open(app, &groups, id));
         if index == marker {
             slots.push((ui.cursor().top(), index));
             vertical_marker(app, ui, &mut drag);
@@ -471,7 +576,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             continue;
         }
         slots.push((ui.cursor().top(), index));
-        let indent = if group_id.is_some() { 16.0 } else { 0.0 };
+        let indent = group_id.map(|id| (group_depth(&groups, id) + 1) as f32 * 14.0).unwrap_or(0.0);
         let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click_and_drag());
         crate::scenario::publish_handle(&format!("timeline:{name}"), rect.center());
         let result = app.session.model.result(*id);
@@ -579,9 +684,11 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
         });
     }
-    for group in groups.iter().filter(|group| group.features.iter().all(|feature| !features.iter().any(|item| item.0 == *feature))) {
-        if shown_groups.insert(group.id) {
-            vertical_group_row(app, ui, group, &groups, &order, &mut drag);
+    let mut trailing: Vec<_> = groups.iter().filter(|group| !shown_groups.contains(&group.id)).collect();
+    trailing.sort_by_key(|group| (first_indices.get(&group.id).copied().flatten().unwrap_or(usize::MAX), group_depth(&groups, group.id), group.id));
+    for group in trailing {
+        if group_is_open(app, &groups, group.id) && shown_groups.insert(group.id) {
+            vertical_group_row(app, ui, group, &groups, &order, &mut drag, group_depth(&groups, group.id));
         }
     }
     slots.push((ui.cursor().top(), n));
@@ -1016,5 +1123,21 @@ mod tests {
         harness.step(&json!({"click": {"handle": "timeline:Fixed"}})).unwrap();
         let after = handle_at("timeline:Fixed").unwrap();
         assert!((after.y - before.y).abs() < 0.5, "selection count shifted the row from {} to {}", before.y, after.y);
+    }
+
+    #[test]
+    fn nested_folder_delete_keeps_parent_and_features() {
+        let mut harness = Harness::new();
+        harness.app.preferences.timeline_left = true;
+        harness.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "name": "Feature"})).unwrap();
+        let root = harness.app.run("timeline.group", json!({"name": "Root"})).unwrap()["group"].as_u64().unwrap();
+        let child =
+            harness.app.run("timeline.group", json!({"name": "Child", "parent": root, "features": ["Feature"]})).unwrap()["group"].as_u64().unwrap();
+        harness.frames(4);
+        harness.step(&json!({"click": {"handle": "timeline-folder:Child"}})).unwrap();
+        harness.step(&json!({"key": "Delete"})).unwrap();
+        assert!(harness.app.session.doc.timeline_groups.iter().all(|group| group.id != child));
+        assert!(harness.app.session.doc.timeline_groups.iter().any(|group| group.id == root));
+        assert!(harness.app.session.doc.find_feature("Feature").is_some());
     }
 }

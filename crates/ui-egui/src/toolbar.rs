@@ -1235,7 +1235,11 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                 crate::context_menu::rename_selection(app, at);
             }
             Key::F6 => app.animate_view("fit"),
-            Key::Delete | Key::Backspace => crate::viewport::delete_selection(app),
+            Key::Delete | Key::Backspace => {
+                if !crate::timeline::delete_selected_folders(app) {
+                    crate::viewport::delete_selection(app);
+                }
+            }
             _ => crate::keymap::press(app, &crate::keymap::key_name(k, mods)),
         }
     }

@@ -376,8 +376,26 @@ pub fn read(s: &str) -> Result<Document> {
         if group.name.trim().is_empty() || group.name.len() > 128 || !group_ids.insert(group.id) {
             return Err(DocError::Invalid("damaged design: invalid timeline folder".into()));
         }
+        if group.parent.is_some_and(|parent| parent == group.id) {
+            return Err(DocError::Invalid("damaged design: timeline folder cannot contain itself".into()));
+        }
         if group.features.iter().any(|feature| !feature_ids.contains(feature) || !grouped_features.insert(*feature)) {
             return Err(DocError::Invalid("damaged design: invalid feature in a timeline folder".into()));
+        }
+    }
+    for group in &d.timeline_groups {
+        if let Some(parent) = group.parent {
+            if !group_ids.contains(&parent) {
+                return Err(DocError::Invalid("damaged design: timeline folder has an unknown parent".into()));
+            }
+            let mut seen = std::collections::BTreeSet::new();
+            let mut current = Some(parent);
+            while let Some(id) = current {
+                if !seen.insert(id) {
+                    return Err(DocError::Invalid("damaged design: cyclic timeline folders".into()));
+                }
+                current = d.timeline_groups.iter().find(|candidate| candidate.id == id).and_then(|candidate| candidate.parent);
+            }
         }
     }
     for o in &d.occurrences {

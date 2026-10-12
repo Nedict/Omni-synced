@@ -363,3 +363,21 @@ fn timeline_reorders_selected_features_as_one_block_and_removes_folders_in_one_s
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(s.doc.timeline_groups.len(), 2, "removing several folders is one undoable command");
 }
+
+#[test]
+fn timeline_folders_can_nest_and_reject_cycles() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "name": "Base"}));
+    let root = run(&mut s, "timeline.group", json!({"name": "Root"}))["group"].as_u64().unwrap();
+    let child = run(&mut s, "timeline.group", json!({"name": "Child", "parent": root}))["group"].as_u64().unwrap();
+    assert_eq!(s.doc.timeline_groups.iter().find(|group| group.id == child).unwrap().parent, Some(root));
+    run(&mut s, "timeline.move_to_group", json!({"groups": [child], "group": null}));
+    assert_eq!(s.doc.timeline_groups.iter().find(|group| group.id == child).unwrap().parent, None);
+    run(&mut s, "timeline.move_to_group", json!({"groups": [child], "group": root}));
+    let error = s.execute("timeline.move_to_group", &json!({"groups": [root], "group": child})).unwrap_err().to_string();
+    assert!(error.contains("itself") || error.contains("descendant"), "{error}");
+    let reopened = solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap();
+    assert_eq!(reopened.timeline_groups, s.doc.timeline_groups);
+    run(&mut s, "timeline.ungroup", json!({"group": root}));
+    assert_eq!(s.doc.timeline_groups.iter().find(|group| group.id == child).unwrap().parent, None, "deleting a folder promotes its children");
+}

@@ -28,14 +28,14 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("timeline.group", "New Feature Folder", group)
         .icon("folder")
         .doc_only()
-        .params("name?; features?: [id|name] (features leave any other timeline folder)"),
+        .params("name?; features?: [id|name]; parent?: folder id (features leave any other timeline folder)"),
     CommandSpec::new("timeline.ungroup", "Remove Feature Folders", ungroup)
         .doc_only()
         .params("group: id | groups: [ids] (features remain in the timeline)"),
     CommandSpec::new("timeline.rename_group", "Rename Feature Folder", rename_group).doc_only().params("group: id, name"),
     CommandSpec::new("timeline.move_to_group", "Move Features to Folder", move_to_group)
         .doc_only()
-        .params("features: [id|name], group?: id (omit or null to remove from folders)"),
+        .params("features?: [id|name], groups?: [ids], group?: id (omit or null to move to the timeline root)"),
     CommandSpec::new("timeline.rollback", "Move Timeline Marker", rollback).params("position: number of features to keep active (omit = end)"),
     CommandSpec::new("timeline.roll_to", "Roll History Marker", rollback)
         .params("position: number of features to keep active (omit = end) | feature: id|name (the marker goes right after it)"),
@@ -202,7 +202,11 @@ fn rename(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn timeline_group_id(s: &Session, p: &Value, cmd: &str) -> Result<u64> {
-    let id = p.get("group").and_then(Value::as_u64).ok_or_else(|| bad(cmd, "`group` must be a timeline folder id"))?;
+    timeline_group_id_field(s, p, "group", cmd)
+}
+
+fn timeline_group_id_field(s: &Session, p: &Value, field: &str, cmd: &str) -> Result<u64> {
+    let id = p.get(field).and_then(Value::as_u64).ok_or_else(|| bad(cmd, format!("`{field}` must be a timeline folder id")))?;
     if s.doc.timeline_groups.iter().any(|group| group.id == id) { Ok(id) } else { Err(bad(cmd, format!("no timeline folder {id}"))) }
 }
 
@@ -228,6 +232,48 @@ fn group_features(s: &Session, p: &Value, required: bool, cmd: &str) -> Result<V
     Ok(ids)
 }
 
+fn group_ids(s: &Session, p: &Value, required: bool, cmd: &str) -> Result<Vec<u64>> {
+    let values = match p.get("groups") {
+        Some(Value::Array(values)) => values,
+        None if !required => return Ok(Vec::new()),
+        None => return Err(bad(cmd, "`groups` must be a list of timeline folder ids")),
+        _ => return Err(bad(cmd, "`groups` must be a list of timeline folder ids")),
+    };
+    if values.is_empty() && required {
+        return Err(bad(cmd, "`groups` must list at least one folder"));
+    }
+    if values.len() > 10_000 {
+        return Err(bad(cmd, "too many folders"));
+    }
+    let mut ids = Vec::new();
+    for value in values {
+        let id = value.as_u64().ok_or_else(|| bad(cmd, "`groups` must contain folder ids"))?;
+        if !s.doc.timeline_groups.iter().any(|group| group.id == id) {
+            return Err(bad(cmd, format!("no timeline folder {id}")));
+        }
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+fn group_descends_from(s: &Session, group: u64, ancestor: u64) -> bool {
+    let mut current = s.doc.timeline_groups.iter().find(|candidate| candidate.id == group).and_then(|candidate| candidate.parent);
+    let mut steps = 0usize;
+    while let Some(id) = current {
+        if id == ancestor {
+            return true;
+        }
+        steps += 1;
+        if steps > s.doc.timeline_groups.len() {
+            return true;
+        }
+        current = s.doc.timeline_groups.iter().find(|candidate| candidate.id == id).and_then(|candidate| candidate.parent);
+    }
+    false
+}
+
 fn group(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "timeline.group";
     let features = group_features(s, p, false, cmd)?;
@@ -245,12 +291,16 @@ fn group(s: &mut Session, p: &Value) -> Result<Value> {
         .unwrap_or(0)
         .checked_add(1)
         .ok_or_else(|| bad(cmd, "no more timeline folder ids are available"))?;
+    let parent = match p.get("parent") {
+        Some(Value::Null) | None => None,
+        Some(_) => Some(timeline_group_id_field(s, p, "parent", cmd)?),
+    };
     let doc = s.doc_mut();
     for group in &mut doc.timeline_groups {
         group.features.retain(|feature| !features.contains(feature));
     }
-    doc.timeline_groups.push(solidcraft_doc::TimelineGroup { id, name: name.clone(), features });
-    Ok(json!({"group": id, "name": name}))
+    doc.timeline_groups.push(solidcraft_doc::TimelineGroup { id, name: name.clone(), parent, features });
+    Ok(json!({"group": id, "name": name, "parent": parent}))
 }
 
 fn ungroup(s: &mut Session, p: &Value) -> Result<Value> {
@@ -273,7 +323,15 @@ fn ungroup(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) => return Err(bad(cmd, "`groups` must be a list of timeline folder ids")),
         None => vec![timeline_group_id(s, p, cmd)?],
     };
-    s.doc_mut().timeline_groups.retain(|group| !ids.contains(&group.id));
+    let parents: std::collections::BTreeMap<u64, Option<u64>> =
+        s.doc.timeline_groups.iter().filter(|group| ids.contains(&group.id)).map(|group| (group.id, group.parent)).collect();
+    let doc = s.doc_mut();
+    for group in &mut doc.timeline_groups {
+        if let Some(parent) = group.parent.filter(|parent| ids.contains(parent)) {
+            group.parent = parents.get(&parent).copied().flatten();
+        }
+    }
+    doc.timeline_groups.retain(|group| !ids.contains(&group.id));
     Ok(json!({"groups": ids}))
 }
 
@@ -292,11 +350,20 @@ fn rename_group(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn move_to_group(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "timeline.move_to_group";
-    let features = group_features(s, p, true, cmd)?;
+    let features = group_features(s, p, false, cmd)?;
+    let groups = group_ids(s, p, false, cmd)?;
+    if features.is_empty() && groups.is_empty() {
+        return Err(bad(cmd, "list at least one feature or folder"));
+    }
     let target = match p.get("group") {
         Some(Value::Null) | None => None,
         Some(_) => Some(timeline_group_id(s, p, cmd)?),
     };
+    if let Some(target) = target {
+        if groups.iter().any(|source| *source == target || group_descends_from(s, target, *source)) {
+            return Err(bad(cmd, "a folder cannot be moved into itself or one of its descendants"));
+        }
+    }
     let doc = s.doc_mut();
     for group in &mut doc.timeline_groups {
         group.features.retain(|feature| !features.contains(feature));
@@ -304,7 +371,12 @@ fn move_to_group(s: &mut Session, p: &Value) -> Result<Value> {
             group.features.extend(features.iter().copied());
         }
     }
-    Ok(json!({"features": features, "group": target}))
+    for group in &mut doc.timeline_groups {
+        if groups.contains(&group.id) {
+            group.parent = target;
+        }
+    }
+    Ok(json!({"features": features, "groups": groups, "group": target}))
 }
 
 fn rollback(s: &mut Session, p: &Value) -> Result<Value> {

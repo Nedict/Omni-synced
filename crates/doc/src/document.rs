@@ -1857,11 +1857,14 @@ pub struct BrowserGroup {
     pub items: Vec<String>,
 }
 
-/// A saved feature-history folder. A feature can belong to at most one folder.
+/// A saved feature-history folder. Folders may nest, and a feature can belong to at most one folder.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TimelineGroup {
     pub id: u64,
     pub name: String,
+    /// The containing feature folder. `None` places the folder at the timeline root.
+    #[serde(default)]
+    pub parent: Option<u64>,
     #[serde(default)]
     pub features: Vec<u64>,
 }
