@@ -486,7 +486,7 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
         },
         "ui.prefs" => wrap(crate::prefs::control(app, p)),
         "ui.help" => match s("item") {
-            Some(i @ ("about" | "shortcuts" | "report")) => {
+            Some(i @ ("about" | "shortcuts" | "report" | "crashes")) => {
                 crate::help::run(app, ctx, i);
                 ok(
                     json!({"diagnostics": crate::help::diagnostics(app), "version": crate::help::VERSION, "commit": crate::help::COMMIT, "built": crate::help::BUILD_DATE}),

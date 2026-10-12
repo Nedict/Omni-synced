@@ -16,6 +16,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod crashes;
 mod fuzz;
 mod oracle;
 mod recipe;
@@ -42,6 +43,7 @@ const USAGE: &str = "usage:
   solvecraft-cli oracle <case-dir>... [--json]
   solvecraft-cli fuzz [--from N] [--count N] [--jobs J] [--timeout S] [--steps N] [--minimise] [--out DIR] [--report FILE]
   solvecraft-cli mcp [--in design.solvecraft|script.json] [--connect 127.0.0.1:PORT]
+  solvecraft-cli crashes [list [--json] | show <id> | replay <id> | dir | clear [<id>]]
   solvecraft-cli licences
   solvecraft-cli icon --out icon.png [--size 256] | --out icon.ico
 ";
@@ -74,6 +76,7 @@ fn main() -> ExitCode {
         Some("fuzz") => fuzz::run(&args[1..]),
         Some("fuzz-one") => fuzz::one(&args[1..]),
         Some("mcp") => cmd_mcp(&args[1..]),
+        Some("crashes") => crashes::run(&args[1..]),
         Some("icon") => cmd_icon(&args[1..]),
         Some("licences" | "licenses") => {
             // Written, not print!ed: a closed pipe (`| head`) is not a crash.

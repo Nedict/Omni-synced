@@ -92,7 +92,9 @@ opt-level = 2
 opt-level = 3
 lto = "thin"
 codegen-units = 16
-debug = 0
+# Line tables only: crash reports name file:line in their backtraces (no runtime cost; a larger
+# binary). See docs/crash-reports.md.
+debug = "line-tables-only"
 
 # truck-shapeops with SolveCraft fixes (Apache-2.0, see vendor/truck-shapeops and ATTRIBUTION.md).
 [patch.crates-io]

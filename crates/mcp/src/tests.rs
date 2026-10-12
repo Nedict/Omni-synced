@@ -29,6 +29,18 @@ fn tool(s: &mut Server, name: &str, args: Value) -> Value {
     if c["type"] == "text" { serde_json::from_str(c["text"].as_str().unwrap()).unwrap_or(Value::Null) } else { c.clone() }
 }
 
+#[test]
+fn crash_reports_are_listed_and_read_without_changing_the_design() {
+    let mut s = server();
+    let list = tool(&mut s, "crash_reports", json!({"limit": 3}));
+    assert!(list["reports"].as_array().is_some_and(|r| r.len() <= 3), "{list}");
+    assert!(list["dir"].is_string(), "{list}");
+    let r = raw_tool(&mut s, "crash_reports", json!({"id": "../../etc"}));
+    assert_eq!(r["result"]["isError"], json!(true), "{r}");
+    let r = raw_tool(&mut s, "crash_reports", json!({"id": 5}));
+    assert!(r.get("error").is_some() || r["result"]["isError"] == json!(true), "{r}");
+}
+
 fn volume(s: &mut Server) -> f64 {
     tool(s, "measure", json!({}))["total"]["volume_mm3"].as_f64().unwrap()
 }
@@ -67,6 +79,7 @@ fn handshake_and_tools_list() {
         "export",
         "undo",
         "redo",
+        "crash_reports",
         "new_design",
         "open",
         "save",

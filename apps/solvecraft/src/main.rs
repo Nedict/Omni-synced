@@ -1,6 +1,6 @@
 //! SolveCraft desktop app.
 //!
-//! Usage: `solvecraft [--control <port>] [--sample] [design.solvecraft | part.step]`
+//! Usage: `solvecraft [--control <port>] [--sample] [--crash-log] [design.solvecraft | part.step]`
 //!
 //! A `.step`/`.stp` file opens as a new design holding the file's bodies (an Import feature); a
 //! `.3mf`/`.stl` file as a new design holding mesh bodies.
@@ -29,6 +29,8 @@ struct App {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // The design on screen is the one whose commands a crash report replays.
+        self.solve.session.crash_journal = solvecraft_engine::crash::enabled();
         // The OS closing the window (Alt+F4, Cmd+Q, the window manager): ask about unsaved
         // designs first; the window closes once they are answered (`quit_requested`).
         if ctx.input(|i| i.viewport().close_requested()) && !self.solve.quit_requested {
@@ -53,6 +55,7 @@ impl eframe::App for App {
     }
     fn on_exit(&mut self) {
         solvecraft_ui_egui::recovery_ui::close(&mut self.solve);
+        solvecraft_engine::crash::end_session();
     }
 }
 
@@ -158,13 +161,37 @@ fn main() -> eframe::Result {
                 println!("solvecraft {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
+            "--crash-log" => {
+                match solvecraft_engine::crash::default_dir() {
+                    Some(dir) => {
+                        println!("crash reports: {}", dir.display());
+                        for r in solvecraft_engine::crash::list(&dir).iter().take(5) {
+                            println!("  {}  {}  {}", r.id, r.kind, r.message);
+                        }
+                        println!("more: solvecraft-cli crashes");
+                    }
+                    None => println!("no crash folder on this system"),
+                }
+                return Ok(());
+            }
             "--help" | "-h" => {
-                println!("usage: solvecraft [--control PORT] [--sample] [design.solvecraft | part.step]");
+                println!("usage: solvecraft [--control PORT] [--sample] [--crash-log] [design.solvecraft | part.step]");
                 return Ok(());
             }
             _ => files.push(a),
         }
     }
+    // Crashes leave a report in the crash folder (solvecraft_engine::crash, docs/crash-reports.md).
+    let crashed = solvecraft_engine::crash::default_dir()
+        .map(|dir| {
+            let build = solvecraft_engine::crash::Build {
+                version: solvecraft_ui_egui::help::VERSION,
+                commit: solvecraft_ui_egui::help::COMMIT,
+                built: solvecraft_ui_egui::help::BUILD_DATE,
+            };
+            solvecraft_engine::crash::install(dir, build)
+        })
+        .unwrap_or_default();
     let options = eframe::NativeOptions {
         viewport: app_viewport()?,
         depth_buffer: DEPTH_BITS,
@@ -202,6 +229,11 @@ fn main() -> eframe::Result {
                 app.set_wgpu(rs, DEPTH_BITS, STENCIL_BITS, rs.msaa_samples);
                 // A saved anti-aliasing the device can't do: back to the default, with a notice.
                 solvecraft_ui_egui::prefs::check_msaa(&mut app, u32::from(samples));
+                let info = rs.adapter.get_info();
+                solvecraft_engine::crash::set_environment(&format!(
+                    "Renderer: {:?} {} ({}), MSAA {}x",
+                    info.backend, info.name, info.driver, rs.msaa_samples
+                ));
             }
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
@@ -229,6 +261,8 @@ fn main() -> eframe::Result {
                 let every = if app.autosave_minutes > 0.0 { app.autosave_minutes * 60.0 } else { f64::MAX / 4.0 };
                 solvecraft_ui_egui::recovery_ui::start(&mut app, &dir, std::time::Duration::from_secs_f64(every.min(1e9)));
             }
+            // Tell the user about crashes since the last start (after the recovery offer is set up).
+            solvecraft_ui_egui::crash_ui::announce(&mut app, &crashed);
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             let space_mouse = space_mouse::SpaceMouse::start(&cc.egui_ctx);
             Ok(Box::new(App {

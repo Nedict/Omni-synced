@@ -289,6 +289,81 @@ pub fn draft_for(app: &SolveApp, dialog: Option<&dialogs::Dialog>, error: Option
     Draft { title, body, image: None, texture: None, note: String::new(), source_signature: source_signature(app, dialog) }
 }
 
+/// A draft from a crash report (`solvecraft_engine::crash`): what happened, where, the command
+/// and how to replay it. The design stays on this computer; the draft says how to share it.
+pub fn crash_draft(report: &serde_json::Value) -> Draft {
+    let s = |k: &str| report.get(k).and_then(serde_json::Value::as_str).unwrap_or("?").to_string();
+    let what = match report.get("kind").and_then(serde_json::Value::as_str) {
+        Some("command_panic") => "An internal error stopped a command (the design was left unchanged)",
+        Some("kernel_panic_recovered") => "The geometry kernel hit an internal error (caught; the operation failed)",
+        Some("unclean_exit") => "SolidCraft closed unexpectedly (abort, stack overflow or the process was killed)",
+        _ => "SolidCraft hit an internal error",
+    };
+    let command = report.get("command").and_then(|c| c.get("command")).and_then(serde_json::Value::as_str);
+    let frames: Vec<&str> =
+        report.get("backtrace").and_then(serde_json::Value::as_array).into_iter().flatten().filter_map(serde_json::Value::as_str).take(25).collect();
+    let recent: Vec<String> = report
+        .get("recent_commands")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|c| {
+            let id = c.get("command")?.as_str()?;
+            Some(if c.get("ok").and_then(serde_json::Value::as_bool) == Some(false) { format!("{id} (failed)") } else { id.to_string() })
+        })
+        .collect();
+    let app = report.get("app");
+    let field = |o: Option<&serde_json::Value>, k: &str| o.and_then(|o| o.get(k)).and_then(serde_json::Value::as_str).unwrap_or("?").to_string();
+    let system = report.get("system");
+    let mut body = format!(
+        "## What happened\n{what}{}.\n\nMessage: {}\nLocation: {}\nThread: {}\nHappened {} time(s), first {}\n\n## Backtrace\n{}\n## Command\n{}\n## Recent commands\n{}\n\n## Reproduction\nCrash report `{}` on the reporter's computer holds {}. Replay it with `solvecraft-cli crashes replay {}`.\nOnly attach the design if it can be shared publicly.\n\n## Environment\n{}\n",
+        command.map(|c| format!(" while running `{c}`")).unwrap_or_default(),
+        limited(&s("message"), 2000),
+        s("location"),
+        s("thread"),
+        report.get("count").and_then(serde_json::Value::as_u64).unwrap_or(1),
+        s("first_seen"),
+        block(&frames.join("\n")),
+        block(&json_context(&report.get("command"), 4000)),
+        if recent.is_empty() { "(none recorded)".to_string() } else { recent.join(", ") },
+        s("id"),
+        match (report.get("design_path").is_some(), report.get("replay_path").is_some()) {
+            (true, true) => "the design as it was before the crash (design.solvecraft) and the commands that crash it (replay.json)",
+            (false, true) => "the commands that crash it on a new design (replay.json)",
+            _ => "no replay (see its notes)",
+        },
+        s("id"),
+        block(&format!(
+            "SolidCraft {} ({}, built {})\nOS: {} {}\n{}",
+            field(app, "version"),
+            field(app, "commit"),
+            field(app, "built"),
+            field(system, "os"),
+            field(system, "arch"),
+            field(system, "environment")
+        )),
+    );
+    if body.len() > MAX_BODY {
+        truncate(&mut body, MAX_BODY - 32);
+        body.push_str("\n[report context truncated]\n");
+    }
+    let mut title = format!("Crash: {}", s("message").lines().next().unwrap_or_default());
+    truncate(&mut title, 160);
+    Draft { title, body, image: None, texture: None, note: String::new(), source_signature: 0 }
+}
+
+/// Open a reviewed draft for a crash report (no screenshot: the view shows nothing of it).
+pub fn begin_crash(app: &mut SolveApp, ctx: &egui::Context, report: &serde_json::Value) {
+    if app.issue_report.draft.is_none() {
+        app.issue_report.cad_focus = ctx.memory(|m| m.focused());
+    }
+    cancel_capture(app);
+    let mut draft = crash_draft(report);
+    // A screenshot can still be added of the view as it is now.
+    draft.source_signature = source_signature(app, None);
+    app.issue_report.draft = Some(draft);
+}
+
 fn encode(value: &str) -> String {
     let mut out = String::new();
     for b in value.bytes() {

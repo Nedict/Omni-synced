@@ -14,6 +14,7 @@ pub mod browser;
 pub mod canvas;
 pub mod context_menu;
 pub mod control;
+pub mod crash_ui;
 pub mod delete;
 pub mod dialogs;
 pub mod dialogs_appearance;
@@ -221,6 +222,8 @@ pub struct SolveApp {
     pub help: help::HelpState,
     /// An editable local issue draft and optional captured app frame.
     pub issue_report: issue_report::ReportState,
+    /// The Crash Reports window.
+    pub crashes: crash_ui::CrashUi,
     /// Toolbar buttons the user pinned, removed or reordered.
     pub toolbar_custom: toolbar_custom::ToolbarCustom,
     /// Preferences kept between runs, and their window.
@@ -294,6 +297,7 @@ impl SolveApp {
             keymap: keymap::Keymap::default(),
             help: help::HelpState::default(),
             issue_report: issue_report::ReportState::default(),
+            crashes: crash_ui::CrashUi::default(),
             toolbar_custom: toolbar_custom::ToolbarCustom::default(),
             preferences: prefs::Prefs::default(),
             prefs_window: prefs::PrefsWindow::default(),

@@ -43,7 +43,7 @@ pub fn diagnostics(app: &SolveApp) -> String {
     )
 }
 
-/// Run a Help menu item: `docs`, `about`, `shortcuts`, `report`.
+/// Run a Help menu item: `docs`, `about`, `shortcuts`, `report`, `crashes`.
 pub fn run(app: &mut SolveApp, ctx: &egui::Context, item: &str) {
     app.help.menu = false;
     match item {
@@ -53,6 +53,7 @@ pub fn run(app: &mut SolveApp, ctx: &egui::Context, item: &str) {
             app.keymap.open = true;
             app.keymap.read_only = true;
         }
+        "crashes" => crate::crash_ui::open(app),
         "report" => {
             let dialog = app.dialog.clone();
             let error = dialog.as_ref().and_then(|d| d.error.clone()).or_else(|| app.preview.error.clone());
@@ -74,6 +75,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context, anchor: egui::Pos2) {
                         ("about", "About SolidCraft"),
                         ("shortcuts", "Keyboard Shortcuts"),
                         ("report", "Report an Issue…"),
+                        ("crashes", "Crash Reports…"),
                     ] {
                         if crate::context_menu::list_row(ui, &crate::context_menu::Item::action(id, label, "")).is_some() {
                             pick = Some(id);
@@ -92,6 +94,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context, anchor: egui::Pos2) {
         ctx.data_mut(|d| d.insert_temp(egui::Id::new("sc_help_opened"), false));
     }
     about(app, ctx);
+    crate::crash_ui::show(app, ctx);
 }
 
 fn about(app: &mut SolveApp, ctx: &egui::Context) {
