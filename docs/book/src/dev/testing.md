@@ -45,3 +45,23 @@ Run `cargo xtask test` to build with this profile and run the test binaries conc
 with doc tests alongside. Arguments after `--` go to each test binary, for example
 `cargo xtask test -- shell`. To run the test binaries sequentially instead, use
 `cargo test --workspace --profile ci`.
+
+## CI sharding and heavy tests
+
+On GitHub, one job builds the tests into a
+[cargo-nextest](https://nexte.st/) archive and four jobs run a quarter of the tests each
+(`--partition slice:N/4`, settings in `.config/nextest.toml`); doc tests run in their own job.
+Pull requests skip a few heavy tests (each takes one to four minutes); they run on every push to
+`main`, nightly, and in `cargo xtask test`:
+
+- `solvecraft-engine`: `tests::hostile_params_never_panic`, everything in `tests::robustness`,
+  `pattern_suppress_tests::enclosure_arc_extinction_keeps_a_real_sharp_inner_lip_after_resize_and_reopen`,
+  `pattern_suppress_tests::enclosure_datums_follow_wall_height_and_board_depth_with_material_proofs`,
+  `cmd::plastic::tests::enclosure_snap_fit_follows_resized_front_wall`
+- `solvecraft-kernel`: `tests::boolean_identity_on_tangent_primitives`
+- `solvecraft-ui-egui` scenarios: `acceptance_sensor_enclosure`
+
+To run exactly what a pull request runs: `cargo nextest run --cargo-profile ci --profile ci`;
+add `--ignore-default-filter` for the full set. A new test that takes over a minute on CI can
+join the list (the `default-filter` in `.config/nextest.toml`) if it guards robustness rather
+than everyday behaviour.
