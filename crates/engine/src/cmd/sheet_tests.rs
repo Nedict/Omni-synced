@@ -1715,3 +1715,19 @@ fn hole_beside_two_adjacent_edge_flanges_cuts_and_bends_stay_guarded() {
     let error = hole(&mut bend, "Bend", [78.5, 20.0]).unwrap_err().to_string();
     assert!(error.contains("bend"), "{error}");
 }
+
+/// `fixed` 20 mm above a 2.5 mm sheet touches no material: refuse it or say so, like a point in a
+/// cut-out (#371).
+#[test]
+#[ignore = "fails until #371 is fixed"]
+fn fold_fixed_point_above_the_sheet_is_not_silently_accepted() {
+    let mut s = Session::default();
+    base(&mut s, 100.0, 60.0);
+    match s.execute("sheet.fold", &json!({"points": [[40, 0, 2.5], [40, 60, 2.5]], "fixed": [90, 30, 20]})) {
+        Err(e) => assert!(e.to_string().contains("fixed"), "{e}"),
+        Ok(r) => {
+            let warned = ["warning", "warnings"].iter().any(|k| r.get(*k).is_some_and(|w| w.to_string().contains("fixed")));
+            assert!(warned, "fixed [90, 30, 20] is 17.5 mm above the sheet, yet the fold succeeded silently: {r}");
+        }
+    }
+}
