@@ -141,7 +141,8 @@ headline counts in-scope tabs only and lists the deferred ones separately.
   convex planar body or of an extruded part; fillets inside patterns; closed chains of curved
   edges between any two smooth sides (a branch pipe on a main pipe), by a rolling ball (the
   blend a rational B-spline through exact arcs), closed or ending at planar faces square to the
-  edges.
+  edges, where straight or curved cap edges are trimmed to the contacts (the straight edge
+  between two overlapping extruded arcs).
 - Booleans: prisms along one direction (plates with holes, slots, patterns of them, equal
   sections stacked end to end) are combined exactly in 2D. Qualified axial cuts preserve
   annular holes with overrun cutters, including inward Press Pull after a joined extrusion;
