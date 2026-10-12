@@ -616,4 +616,5 @@ fn the_workspace_menu_lists_design_and_greys_the_rest() {
     let items = context_menu::items(&app, &Target::Workspace);
     assert!(find(&items, "Design").enabled);
     assert!(!find(&items, "Render").enabled && find(&items, "Render").shortcut == "coming later");
+    assert!(!items.iter().any(|i| i.label.contains("Generative")));
 }
