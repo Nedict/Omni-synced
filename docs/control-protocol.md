@@ -37,6 +37,12 @@ rolls the numbering back with the design), so they can go straight into later co
 {"id":8,"method":"engine.execute","params":{"command":"sketch.dimension","params":{"entities":["l1"],"value":50}}}
 ```
 
+A bare numeric `value` given to `sketch.dimension` (from the control channel, scripts or MCP) is
+read in the design's units, exactly as if it were typed into the dimension box: in an inch design
+`"value": 2` makes the line 2 in (50.8 mm) long. Point coordinates stay in millimetres. To pin a
+unit regardless of the design, pass an expression with one: `"value": "50 mm"` or
+`"value": "0.5 in"`. Angles are degrees unless the expression says otherwise.
+
 ## UI
 
 | Method | Params | Notes |

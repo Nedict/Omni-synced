@@ -138,6 +138,10 @@ press keys, then assert on the result.
 A new `.json` file in that folder is picked up automatically. To record a bug before it's fixed,
 put `{"pending": "why"}` in the scenario, and remove it in the PR that fixes the bug.
 
+**A failing test without its fix can't merge as-is:** it would turn `main`'s CI red for everyone.
+Either include the fix in the same PR, or mark the test `#[ignore = "fails until #123 is fixed"]`
+(it can then merge right away), and remove that line in the PR that fixes the bug.
+
 **Use the `ci` profile.** CI runs the tests with `--profile ci`: light optimisation, line tables,
 no LTO, and debug assertions off (truck has debug-only assertions that reject valid geometry). It
 builds several times faster than `--release`. If a test fails only in a plain debug build, say so

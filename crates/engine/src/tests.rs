@@ -4,6 +4,8 @@ use serde_json::{Value, json};
 
 use crate::*;
 
+mod mesh_convert;
+
 fn run(s: &mut Session, id: &str, p: Value) -> Value {
     match s.execute(id, &p) {
         Ok(v) => v,
@@ -2051,6 +2053,67 @@ fn appearances_survive_later_features() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The original #2 RGB import acceptance, including later topology and placement edits.
+#[test]
+fn imported_rgb_appearances_survive_edits_reopen_and_step_export() {
+    let dir = std::env::temp_dir().join(format!("solvecraft-imported-rgb-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("rgb.step");
+    let saved = dir.join("edited.solvecraft");
+    let output = dir.join("edited.step");
+    let mut source = Session::default();
+    for (name, x, color) in [("Red", 0, "#ff0000"), ("Green", 40, "#00ff00"), ("Blue", 80, "#0000ff")] {
+        run(&mut source, "solid.box", json!({"corner":[x,0,0],"length":30,"width":20,"height":20,"body_name":name}));
+        run(&mut source, "appearance.assign", json!({"bodies":[name],"color":color}));
+    }
+    run(&mut source, "appearance.assign", json!({"faces":[[15,10,20]],"color":"#ffff00"}));
+    run(&mut source, "file.export", json!({"path":input}));
+    let check = |session: &Session| {
+        let state = session.model.state();
+        assert_eq!(state.bodies.len(), 3);
+        for (name, color) in [("Red", [1., 0., 0.]), ("Green", [0., 1., 0.]), ("Blue", [0., 0., 1.])] {
+            let body = state.body(name).unwrap();
+            assert_eq!(session.doc.body_color(body), Some(color), "{name} retains its imported body colour");
+        }
+        let red = state.body("Red").unwrap();
+        assert!(session.doc.face_colors(red).iter().any(|(_, look)| look.color == [255, 255, 0]), "Red retains its yellow top face");
+        assert!(session.model.results.iter().all(|result| result.error.is_none()));
+    };
+    let mut edited = Session::default();
+    run(&mut edited, "doc.open", json!({"path":input}));
+    check(&edited);
+    let initial_volume = volume(&mut edited);
+    run(&mut edited, "solid.fillet", json!({"bodies":["Red"],"edges":[[0,10,20]],"radius":2}));
+    check(&edited);
+    run(&mut edited, "solid.move", json!({"bodies":["Red"],"translate":[0,0,5]}));
+    check(&edited);
+    run(&mut edited, "solid.box", json!({"corner":[85,5,15],"length":10,"width":10,"height":10,"body_name":"Cutter"}));
+    run(&mut edited, "solid.combine", json!({"target":"Blue","tools":["Cutter"],"operation":"cut"}));
+    check(&edited);
+    run(&mut edited, "solid.box", json!({"corner":[65,0,0],"length":10,"width":20,"height":20,"body_name":"Joiner"}));
+    run(&mut edited, "solid.combine", json!({"target":"Green","tools":["Joiner"],"operation":"join"}));
+    check(&edited);
+    let edited_volume = volume(&mut edited);
+    // The join adds 5*20*20, the pocket removes 10*10*5, and the
+    // radius-2 quarter-round replaces a 2*2 square along a 20 mm edge.
+    let expected_volume = initial_volume + 2000. - 500. - (4. - PI) * 20.;
+    assert!((edited_volume - expected_volume).abs() < 0.1, "{edited_volume} vs {expected_volume}");
+    run(&mut edited, "edit.undo", json!({}));
+    run(&mut edited, "edit.redo", json!({}));
+    check(&edited);
+    run(&mut edited, "file.save_as", json!({"path":saved}));
+    let mut reopened = Session::default();
+    run(&mut reopened, "doc.open", json!({"path":saved}));
+    check(&reopened);
+    assert!(rel(volume(&mut reopened), edited_volume) < 1e-8);
+    run(&mut reopened, "file.export", json!({"path":output}));
+    let mut roundtrip = Session::default();
+    run(&mut roundtrip, "doc.open", json!({"path":output}));
+    check(&roundtrip);
+    assert!(rel(volume(&mut roundtrip), edited_volume) < 1e-3);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// Extrude To Object (a parallel face, with an offset; a slanted face) and From Object.
 #[test]
 fn extrude_to_and_from_objects() {
@@ -2349,4 +2412,40 @@ fn special_files_are_refused_by_every_file_command() {
         assert!(r.as_ref().is_err_and(|e| e.to_string().contains("not a regular file")), "{cmd}: {r:?}");
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Parameters that work are listed in the command's params doc, which is all agents see (#271).
+#[test]
+fn params_docs_list_working_parameters() {
+    let mut s = Session::default();
+    let cmds = run(&mut s, "engine.commands", json!({}));
+    let params =
+        |id: &str| cmds.as_array().unwrap().iter().find(|c| c["id"] == id).and_then(|c| c["params"].as_str()).unwrap_or_default().to_string();
+    // Both work today: a named base flange, and a loft cut limited to its targets.
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "A"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [50, 50]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "sheet.flange", json!({"sketch": "A", "body_name": "Panel A"}));
+    assert!(s.model.state().body("Panel A").is_some());
+    assert!(params("sheet.flange").contains("body_name"), "sheet.flange: {}", params("sheet.flange"));
+    assert!(params("solid.loft").contains("targets"), "solid.loft: {}", params("solid.loft"));
+}
+
+/// Every body-creating feature documents the keys `add_feature` reads for all of them (`name`,
+/// `body_name`), and those that take `targets` say so (#271).
+#[test]
+fn feature_params_docs_list_shared_keys() {
+    let mut s = Session::default();
+    let cmds = run(&mut s, "engine.commands", json!({}));
+    let params =
+        |id: &str| cmds.as_array().unwrap().iter().find(|c| c["id"] == id).and_then(|c| c["params"].as_str()).unwrap_or_default().to_string();
+    let with_targets = ["solid.extrude", "solid.revolve", "solid.sweep", "solid.loft", "solid.pipe", "solid.coil"];
+    let without_targets = ["solid.box", "solid.cylinder", "solid.sphere", "solid.torus", "sheet.flange"];
+    for id in with_targets.iter().chain(&without_targets) {
+        let doc = params(id);
+        assert!(doc.contains("name?") && doc.contains("body_name?"), "{id}: {doc}");
+    }
+    for id in with_targets {
+        assert!(params(id).contains("targets?"), "{id}: {}", params(id));
+    }
 }

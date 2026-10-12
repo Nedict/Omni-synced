@@ -642,6 +642,9 @@ fn sketch_entity_items(app: &SolveApp) -> Vec<Item> {
         return v;
     }
     let ents: Vec<String> = curves.iter().chain(points.iter()).cloned().collect();
+    if crate::sketch_text::selected_entity(app).is_some() {
+        v.push(cmd(app, "sketch.edit_text", "Edit Text"));
+    }
     v.push(cmd(app, "sketch.move", "Move/Copy").key("M"));
     if !curves.is_empty() {
         v.push(cmd(app, "sketch.construction", "Normal / Construction").with(json!({ "curves": curves })));

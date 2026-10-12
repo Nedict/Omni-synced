@@ -181,3 +181,4 @@ FusionSnapFitCommand	plastic.snap_fit
 FusionLipCommand	plastic.lip
 FusionRestCommand	plastic.rest
 ConstructionPlanePerpendicularToPlaneCommand	construct.plane.perpendicular
+ParaMeshConvertCommand	mesh.convert

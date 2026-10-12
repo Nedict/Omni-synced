@@ -125,12 +125,12 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj
         app.dialog = Some(d);
         return;
     }
-    if crate::dialogs_sheet::overlay(painter, proj.rect, &d) {
+    if crate::dialogs_sheet::overlay(app, painter, proj.rect, &d) {
         app.dialog = Some(d);
         return;
     }
     if let Kind::Measure { result: Some(r), .. } = &d.kind {
-        measure_line(painter, proj, r);
+        measure_line(app, painter, proj, r);
         app.dialog = Some(d);
         return;
     }
@@ -380,7 +380,7 @@ fn drag_arrow(
 }
 
 /// The measured distance: a line between the closest points with its length.
-fn measure_line(painter: &egui::Painter, proj: &Proj, r: &serde_json::Value) {
+fn measure_line(app: &SolveApp, painter: &egui::Painter, proj: &Proj, r: &serde_json::Value) {
     let t = Tokens::get();
     let p = |k: &str| -> Option<Vec3> {
         let a = r.get(k)?.as_array()?;
@@ -393,7 +393,7 @@ fn measure_line(painter: &egui::Painter, proj: &Proj, r: &serde_json::Value) {
         painter.circle(s, 3.5, t.manipulator, Stroke::new(1.0, Color32::WHITE));
     }
     let mid = sa + (sb - sa) * 0.5 + vec2(10.0, -14.0);
-    let galley = painter.layout_no_wrap(format!("{d:.3} mm"), egui::FontId::proportional(12.5), t.text);
+    let galley = painter.layout_no_wrap(crate::prefs::show_mm(app, d, 1), egui::FontId::proportional(12.5), t.text);
     let rect = egui::Rect::from_min_size(mid, galley.size() + vec2(10.0, 6.0));
     painter.rect(rect, 3.0, t.overlay, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     painter.galley(rect.min + vec2(5.0, 3.0), galley, t.text);

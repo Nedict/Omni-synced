@@ -32,7 +32,7 @@ fn icon_of(k: &FeatureKind) -> &'static str {
         FeatureKind::Draft { .. } => "draft",
         FeatureKind::Split { .. } => "split",
         FeatureKind::Move { .. } => "move",
-        FeatureKind::Import { .. } | FeatureKind::MeshImport { .. } => "import",
+        FeatureKind::Import { .. } | FeatureKind::MeshImport { .. } | FeatureKind::MeshConvert { .. } => "import",
         other => crate::workspace::feature_icon(other).unwrap_or("feature"),
     }
 }
