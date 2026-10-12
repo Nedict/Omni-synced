@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -24,7 +25,7 @@ _spec = importlib.util.spec_from_file_location("flatpak_smoke", HERE / "flatpak-
 flatpak_smoke = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(flatpak_smoke)
 
-PORT = 18839
+PORTS = {"x11": 18839, "wayland": 18840}
 REQUESTS = [
     {"id": 1, "method": "ui.inspect", "params": {}},
     {"id": 2, "method": "engine.execute",
@@ -33,14 +34,14 @@ REQUESTS = [
 ]
 
 
-def drive(app, frame):
+def drive(app, port, frame):
     """Connect to the app's control port, model the box and capture a frame."""
     deadline = time.monotonic() + 60
     while True:
         if app.poll() is not None:
             raise RuntimeError(f"the app exited with {app.returncode} before listening")
         try:
-            conn = socket.create_connection(("127.0.0.1", PORT), timeout=60)
+            conn = socket.create_connection(("127.0.0.1", port), timeout=60)
             break
         except OSError:
             if time.monotonic() >= deadline:
@@ -87,16 +88,20 @@ def run_backend(backend, out):
                 if compositor.poll() is not None or time.monotonic() >= deadline:
                     raise RuntimeError("headless Weston failed")
                 time.sleep(.1)
-        app = subprocess.Popen(prefix + ["/snap/bin/solidcraft", "--control", str(PORT)],
-                               env=env, stdout=log, stderr=subprocess.STDOUT)
+        with socket.socket() as probe:
+            if probe.connect_ex(("127.0.0.1", PORTS[backend])) == 0:
+                raise RuntimeError(f"port {PORTS[backend]} is already in use (another SolidCraft?)")
+        # Its own process group, so stopping it also stops the app under xvfb-run.
+        app = subprocess.Popen(prefix + ["/snap/bin/solidcraft", "--control", str(PORTS[backend])],
+                               env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         try:
-            renderer, stats = drive(app, work / "frame.png")
+            renderer, stats = drive(app, PORTS[backend], work / "frame.png")
         finally:
-            app.terminate()
+            os.killpg(app.pid, signal.SIGTERM)
             try:
                 app.wait(timeout=15)
             except subprocess.TimeoutExpired:
-                app.kill()
+                os.killpg(app.pid, signal.SIGKILL)
                 app.wait()
         shutil.copy(work / "frame.png", out / f"snap-{backend}.png")
         print(f"snap {backend}: PASS renderer={renderer}, box=6000 mm³, frame={stats}")
