@@ -685,7 +685,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                         if down || up {
                             let enabled: Vec<&str> = cmds.iter().filter(|c| c.info(&app.session).enabled).map(|c| c.id).collect();
                             let focused = ui.ctx().memory(|m| m.focused());
-                            let at = enabled.iter().position(|id| focused == Some(dropdown_row_id(ui, id)));
+                            let at = enabled.iter().position(|id| focused == Some(dropdown_row_id(id)));
                             let n = enabled.len();
                             let next = match (at, down) {
                                 (None, true) => Some(0),
@@ -695,23 +695,27 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                             };
                             if let Some(id) = next.and_then(|i| enabled.get(i)) {
                                 ui.ctx().memory_mut(|m| {
-                                    m.request_focus(dropdown_row_id(ui, id));
+                                    m.request_focus(dropdown_row_id(id));
                                     m.move_focus(egui::FocusDirection::None);
                                 });
                             }
                         }
-                        for c in &cmds {
-                            let pinned = crate::toolbar_custom::pinned_on(app, &tab, c.id).is_some();
-                            match dropdown_row(app, ui, c, row_w, pinned) {
-                                RowAction::None => {}
-                                RowAction::Menu(at) => menu = Some((at, c.id)),
-                                RowAction::TogglePin => toggle = Some(c.id),
-                                RowAction::Start => {
-                                    app.start(c.id);
-                                    ui.ctx().data_mut(|d| d.remove::<egui::Id>(egui::Id::new("sc_panel_open")));
+                        // The rows scroll when the drop-down would run past the window's bottom.
+                        let room = (ui.ctx().content_rect().bottom() - ui.cursor().top() - 12.0).max(ROW_H * 3.0);
+                        egui::ScrollArea::vertical().id_salt("panel_menu_rows").max_height(room).show(ui, |ui| {
+                            for c in &cmds {
+                                let pinned = crate::toolbar_custom::pinned_on(app, &tab, c.id).is_some();
+                                match dropdown_row(app, ui, c, row_w, pinned) {
+                                    RowAction::None => {}
+                                    RowAction::Menu(at) => menu = Some((at, c.id)),
+                                    RowAction::TogglePin => toggle = Some(c.id),
+                                    RowAction::Start => {
+                                        app.start(c.id);
+                                        ui.ctx().data_mut(|d| d.remove::<egui::Id>(egui::Id::new("sc_panel_open")));
+                                    }
                                 }
                             }
-                        }
+                        });
                     });
                 });
                 popup_rect = Some(area.response.rect);
@@ -791,8 +795,10 @@ enum RowAction {
 const ROW_H: f32 = 24.0;
 
 /// The id of a drop-down row (for keyboard focus).
-fn dropdown_row_id(ui: &egui::Ui, id: &str) -> egui::Id {
-    ui.id().with(("dropdown_row", id))
+/// A drop-down row's id, the same inside and outside the rows' scroll area (one drop-down is
+/// open at a time).
+fn dropdown_row_id(id: &str) -> egui::Id {
+    egui::Id::new(("dropdown_row", id))
 }
 
 /// How wide a panel drop-down's rows are: the widest label and shortcut, at least 200.
@@ -816,7 +822,11 @@ fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solvecraft_engine
     let (rect, _) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::hover());
     // Every row drags onto the toolbar (to pin it there); enabled rows also start their command.
     let sense = if info.enabled { Sense::click_and_drag() } else { Sense::drag() };
-    let resp = ui.interact(rect, dropdown_row_id(ui, c.id), sense);
+    let resp = ui.interact(rect, dropdown_row_id(c.id), sense);
+    // Rows reached with the arrow keys scroll into view in a drop-down taller than the window.
+    if resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::ArrowUp)) {
+        resp.scroll_to_me_animation(None, egui::style::ScrollAnimation::none());
+    }
     if resp.drag_started() {
         resp.dnd_set_drag_payload(ToolbarDrag { id: c.id, from_menu: true });
     }
@@ -1232,5 +1242,33 @@ mod home_tests {
             let text = crate::i18n::Locale::for_language(catalog.id).text("ui.needs_design");
             assert!(text != english && text.contains("{command}"), "{} must translate ui.needs_design", catalog.id);
         }
+    }
+}
+
+#[cfg(test)]
+mod dropdown_tests {
+    use super::*;
+
+    /// A drop-down taller than the window stops at its bottom and scrolls: the last row is
+    /// reached with the arrow keys and comes into view.
+    #[test]
+    fn a_tall_drop_down_scrolls_inside_a_short_window() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.call("ui.resize", json!({"width":1200,"height":480}));
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.frames(4);
+        h.step(&json!({"click":{"handle":"panel:SKETCH:CREATE"}})).unwrap();
+        h.frames(4);
+        let menu = crate::scenario::rect_of("toolbar_dropdown").expect("the drop-down is open");
+        assert!(menu.bottom() <= 480.0, "the drop-down runs past the window: {menu:?}");
+        assert!(crate::scenario::handle_at("dropdown:sketch.intersect").is_some_and(|p| !menu.contains(p)), "Intersect starts below the fold");
+        // Up from no focus goes to the last enabled row; it scrolls into view.
+        h.step(&json!({"key":"ArrowUp"})).unwrap();
+        h.frames(10);
+        let hot = crate::scenario::handles("dropdown_hot:");
+        let [(_, at)] = hot.as_slice() else { panic!("one highlighted row: {hot:?}") };
+        let menu = crate::scenario::rect_of("toolbar_dropdown").unwrap();
+        assert!(menu.contains(*at), "the focused last row is out of view: {at:?} in {menu:?}");
     }
 }
