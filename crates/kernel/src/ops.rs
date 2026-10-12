@@ -113,6 +113,9 @@ fn overlap(a: &solidcraft_geom::Mesh, b: &solidcraft_geom::Mesh) -> Option<(f64,
     Some((frac(b, &ib, &ia)?, frac(a, &ia, &ib)?))
 }
 
+/// Sampled overlap fraction below which two bodies share no material.
+const NONE: f64 = 0.003;
+
 /// Booleans that need no intersection: one body clear of the other, or inside it. These are
 /// common with coincident curved faces (a hole drilled where one already is, a body joined
 /// with itself), which the intersection can't handle. `counts`: the operands' faces and edges.
@@ -125,7 +128,6 @@ fn trivial(
     counts: &[(usize, usize)],
 ) -> Option<Option<Body>> {
     let (b_in_a, a_in_b) = overlap(ma, mb)?;
-    const NONE: f64 = 0.003;
     const ALL: f64 = 0.997;
     let disjoint = b_in_a < NONE && a_in_b < NONE;
     match op {
@@ -317,6 +319,12 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
     let slack = 2e-3 * (va + vb) + 1e-9;
     // Volume bounds, then membership against the operands (catches misclassified pieces), on
     // one mesh of the result. Returns (plausible, volume).
+    // Shells that touch were never fused: coincident back-to-back faces leave the intersection
+    // nothing to cut, so it returns both operands side by side (#396). Volume and point
+    // sampling cannot see that; the shell grouping can. (Operands already like that, saved
+    // before this was caught, stay joinable.)
+    let unfused =
+        |r: &Body| op == BoolOp::Union && r.shell_count() > 1 && r.union_lumps().is_err() && a.union_lumps().is_ok() && b.union_lumps().is_ok();
     let check = |r: &Body| -> (bool, f64) {
         let Ok(mr) = r.tessellate_with(tol_m, true) else { return (false, f64::NAN) };
         let v = mr.measure().volume;
@@ -327,6 +335,9 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
                 BoolOp::Intersect => v <= va.min(vb) + slack,
             };
         if !bounds {
+            return (false, v);
+        }
+        if unfused(r) {
             return (false, v);
         }
         let consistent = match &meshes {
@@ -401,6 +412,18 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
             }
         }
     }
+    // A face standing wholly inside a coincident face of the other body, back to back, and no
+    // other contact (#396): exact, by topology alone.
+    if op == BoolOp::Union
+        && a.solid.boundaries().len() == 1
+        && b.solid.boundaries().len() == 1
+        && let Some(Ok(body)) = crate::coplanar::inset(a, b)
+        && let (Some(ma), Some(mb)) = &meshes
+        && overlap(ma, mb).is_some_and(|(b_in_a, a_in_b)| b_in_a < NONE && a_in_b < NONE)
+        && check(&body).0
+    {
+        return Ok(Some(body));
+    }
     // Bores on a common cylinder (a pad's bore around the hole it is joined over).
     if op == BoolOp::Union && !BORES.with(|c| c.get()) && crate::coplanar::has_coincident_cylinders(a, b) {
         BORES.with(|c| c.set(true));
@@ -447,7 +470,11 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
                             }
                             return Ok(Some(body));
                         }
-                        last = format!("implausible result volume {v:.4}");
+                        last = if unfused(&body) {
+                            "the bodies touch along faces that could not be fused".into()
+                        } else {
+                            format!("implausible result volume {v:.4}")
+                        };
                     }
                     Err(e) => last = e.to_string(),
                 },
