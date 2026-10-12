@@ -2350,3 +2350,17 @@ fn special_files_are_refused_by_every_file_command() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Renaming one pattern copy leaves the other copies' names alone (#265).
+#[test]
+fn renaming_a_pattern_copy_keeps_the_other_copies_names() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "operation": "new_body", "body_name": "X"}));
+    run(&mut s, "solid.pattern.rectangular", json!({"bodies": ["X"], "dir1": [1, 0, 0], "count1": 3, "spacing1": 20}));
+    run(&mut s, "body.rename", json!({"body": "X (2)", "name": "Second"}));
+    let third = run(&mut s, "inspect.measure", json!({"bodies": ["X (3)"]}));
+    assert_eq!(third["bodies"][0]["bbox"]["min"][0].as_f64().map(f64::round), Some(40.0), "X (3) is still the copy at x = 40: {third}");
+    run(&mut s, "body.rename", json!({"body": "X (3)", "name": "Third"}));
+    let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names, ["X", "Second", "Third"]);
+}
