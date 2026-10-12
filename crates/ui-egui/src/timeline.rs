@@ -417,6 +417,22 @@ fn group_is_open(app: &SolveApp, groups: &[solidcraft_engine::doc::TimelineGroup
     true
 }
 
+fn group_ancestors_are_open(app: &SolveApp, groups: &[solidcraft_engine::doc::TimelineGroup], id: u64) -> bool {
+    let mut current = groups.iter().find(|group| group.id == id).and_then(|group| group.parent);
+    let mut steps = 0usize;
+    while let Some(group_id) = current {
+        if app.tree.collapsed.contains(&format!("timeline_group:{group_id}")) {
+            return false;
+        }
+        steps += 1;
+        if steps > groups.len() {
+            return false;
+        }
+        current = groups.iter().find(|group| group.id == group_id).and_then(|group| group.parent);
+    }
+    true
+}
+
 fn group_first_feature(
     groups: &[solidcraft_engine::doc::TimelineGroup],
     features: &[(u64, String, &'static str, bool, &'static str, FeatureKind)],
@@ -439,7 +455,7 @@ fn visible_order(
         let mut at_index: Vec<_> = groups.iter().filter(|group| group_first_feature(groups, features, group.id) == Some(index)).collect();
         at_index.sort_by_key(|group| (group_depth(groups, group.id), group.id));
         for group in at_index {
-            if group_is_open(app, groups, group.id) && shown.insert(group.id) {
+            if group_ancestors_are_open(app, groups, group.id) && shown.insert(group.id) {
                 order.push(TimelineItem::Group(group.id));
             }
         }
@@ -452,7 +468,7 @@ fn visible_order(
     let mut trailing: Vec<_> = groups.iter().filter(|group| !shown.contains(&group.id)).collect();
     trailing.sort_by_key(|group| (group_first_feature(groups, features, group.id).unwrap_or(usize::MAX), group_depth(groups, group.id), group.id));
     for group in trailing {
-        if shown.insert(group.id) {
+        if group_ancestors_are_open(app, groups, group.id) && shown.insert(group.id) {
             order.push(TimelineItem::Group(group.id));
         }
     }
@@ -495,6 +511,7 @@ fn vertical_group_row(
     );
     crate::scenario::publish_handle(&format!("timeline-folder:{}", group.name), rect.center());
     let fold_rect = Rect::from_min_max(pos2(rect.left() + offset, rect.top()), pos2(rect.left() + offset + 18.0, rect.bottom()));
+    crate::scenario::publish_handle(&format!("timeline-folder-fold:{}", group.name), fold_rect.center());
     let fold = ui.interact(fold_rect, ui.id().with(("timeline_group_fold", group.id)), Sense::click());
     if fold.clicked() {
         if open {
@@ -563,7 +580,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
         let mut at_index: Vec<_> = groups.iter().filter(|group| first_indices.get(&group.id).copied().flatten() == Some(index)).collect();
         at_index.sort_by_key(|group| (group_depth(&groups, group.id), group.id));
         for group in at_index {
-            if group_is_open(app, &groups, group.id) && shown_groups.insert(group.id) {
+            if group_ancestors_are_open(app, &groups, group.id) && shown_groups.insert(group.id) {
                 vertical_group_row(app, ui, group, &groups, &order, &mut drag, group_depth(&groups, group.id));
             }
         }
@@ -687,7 +704,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut trailing: Vec<_> = groups.iter().filter(|group| !shown_groups.contains(&group.id)).collect();
     trailing.sort_by_key(|group| (first_indices.get(&group.id).copied().flatten().unwrap_or(usize::MAX), group_depth(&groups, group.id), group.id));
     for group in trailing {
-        if group_is_open(app, &groups, group.id) && shown_groups.insert(group.id) {
+        if group_ancestors_are_open(app, &groups, group.id) && shown_groups.insert(group.id) {
             vertical_group_row(app, ui, group, &groups, &order, &mut drag, group_depth(&groups, group.id));
         }
     }
@@ -1139,5 +1156,19 @@ mod tests {
         assert!(harness.app.session.doc.timeline_groups.iter().all(|group| group.id != child));
         assert!(harness.app.session.doc.timeline_groups.iter().any(|group| group.id == root));
         assert!(harness.app.session.doc.find_feature("Feature").is_some());
+    }
+
+    #[test]
+    fn collapsed_folder_stays_visible_while_its_contents_hide() {
+        let mut harness = Harness::new();
+        harness.app.preferences.timeline_left = true;
+        harness.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "name": "Inside"})).unwrap();
+        harness.app.run("timeline.group", json!({"name": "Folder", "features": ["Inside"]})).unwrap();
+        harness.frames(4);
+        assert!(handle_at("timeline:Inside").is_some());
+
+        harness.step(&json!({"click": {"handle": "timeline-folder-fold:Folder"}})).unwrap();
+        assert!(handle_at("timeline-folder:Folder").is_some(), "collapsed folder row disappeared");
+        assert!(handle_at("timeline:Inside").is_none(), "collapsed folder still showed its contents");
     }
 }
