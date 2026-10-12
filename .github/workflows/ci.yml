@@ -154,11 +154,14 @@ jobs:
           name: nextest-archive
       - name: Run tests
         env:
-          # Pull requests skip the heavy tests (default-filter in .config/nextest.toml).
-          ALL: ${{ github.event_name != 'pull_request' && '--ignore-default-filter' || '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          SHARD: ${{ matrix.shard }}
         run: |
+          # Pull requests skip the heavy tests (default-filter in .config/nextest.toml).
+          all=()
+          if [ "$EVENT_NAME" != pull_request ]; then all=(--ignore-default-filter); fi
           cargo nextest run --archive-file tests.tar.zst --workspace-remap . \
-            --profile ci --partition slice:${{ matrix.shard }}/4 $ALL
+            --profile ci --partition "slice:$SHARD/4" "${all[@]}"
       - name: Upload test timings
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
