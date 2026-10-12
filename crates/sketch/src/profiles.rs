@@ -14,6 +14,7 @@ use solvecraft_geom::{Loop2, Region2, Seg2, Vec2};
 
 use crate::model::{CurveKind, Sketch};
 use crate::shape::{Shape, intersections};
+use crate::union_find::{find, union};
 
 const MERGE_TOL: f64 = 1e-6;
 const MAX_EDGES: usize = 50_000;
@@ -399,16 +400,6 @@ impl Grid {
     }
 }
 
-fn find(p: &mut [usize], mut i: usize) -> usize {
-    while let Some(&q) = p.get(i) {
-        if q == i {
-            break;
-        }
-        i = q;
-    }
-    i
-}
-
 /// Signed curvature at the start of a segment (left turns positive).
 fn curvature(s: &Seg2) -> f64 {
     match *s {
@@ -756,12 +747,7 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
     let mut comp: Vec<usize> = (0..n).collect();
     for (e, a) in edges.iter().zip(&alive) {
         if *a {
-            let (ru, rv) = (find(&mut comp, e.u), find(&mut comp, e.v));
-            if ru != rv
-                && let Some(s) = comp.get_mut(rv)
-            {
-                *s = ru;
-            }
+            union(&mut comp, e.v, e.u);
         }
     }
 

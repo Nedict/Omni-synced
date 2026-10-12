@@ -4,8 +4,42 @@ use solvecraft_geom::Vec2;
 
 use crate::*;
 
-fn v(x: f64, y: f64) -> Vec2 {
+pub(crate) fn v(x: f64, y: f64) -> Vec2 {
     Vec2::new(x, y)
+}
+
+/// Deterministic pseudo-random numbers for the solver harnesses.
+pub(crate) struct Lcg(pub u64);
+
+impl Lcg {
+    pub(crate) fn next(&mut self) -> f64 {
+        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (self.0 >> 11) as f64 / (1u64 << 53) as f64
+    }
+    pub(crate) fn range(&mut self, lo: f64, hi: f64) -> f64 {
+        lo + self.next() * (hi - lo)
+    }
+    /// ±1, evenly.
+    pub(crate) fn sign(&mut self) -> f64 {
+        if self.next() < 0.5 { 1.0 } else { -1.0 }
+    }
+}
+
+/// Run `f` with the constructive seed on or off, without the seed-on/seed-off comparison (for
+/// tests that measure the difference).
+pub(crate) fn seeded<T>(on: bool, f: impl FnOnce() -> T) -> T {
+    use crate::construct::switch;
+    switch::without_differential(|| if on { f() } else { switch::without_seed(f) })
+}
+
+/// The points that are constants for a plain solve.
+pub(crate) fn given(sk: &Sketch) -> Vec<bool> {
+    crate::solver::held_points(sk, &Hold::default())
+}
+
+/// The constructive seed of a plain solve.
+pub(crate) fn seed_of(sk: &Sketch) -> crate::construct::Seed {
+    crate::construct::seed(sk, &given(sk), None, &crate::solver::points_on_curves(sk), &mut crate::decompose::Budget::full())
 }
 
 /// Rough rectangle from four lines sharing corner points.
