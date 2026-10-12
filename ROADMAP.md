@@ -67,6 +67,9 @@ headline counts in-scope tabs only and lists the deferred ones separately.
   Type a value and press Enter to commit one undo step; rejected values remain editable and
   cancellation leaves the sketch unchanged. Fit keeps geometry clear of the Sketch Palette
   and navigation controls, including enlarged displays and nested pending placements.
+- Curvature and Polygon constraints accept complete preselected operands. Fix/Unfix
+  consumes complete point/curve selections consistently; mixed or ambiguous selections
+  retain the picking workflow. Rejected constraints preserve selection and undo history.
 - Contextual error reporting: a **Create Issue** action beside feature errors opens a
   reviewable GitHub issue draft with the error, operation settings, build diagnostics and
   useful reproduction context. The draft is editable, with optional capture of the actual
@@ -304,6 +307,9 @@ headline counts in-scope tabs only and lists the deferred ones separately.
 
 ## Kernel
 
+- Boolean intersection-curve construction refuses point-only, collapsed and non-finite
+  polylines without panicking. Direct constructor regressions retain valid open endpoints
+  and closed spherical intersections; the original interactive trigger remains unidentified.
 - Shell of a stepped, joined planar body no longer creates horizontal subdivisions across
   continuous walls. Fresh axis-aligned Cut walls are stitched using their exact construction
   support and shared topology, preserving real steps and intentional boundaries. The local
