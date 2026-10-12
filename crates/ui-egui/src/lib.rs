@@ -95,6 +95,7 @@ mod sketch_display_ui_tests;
 #[cfg(test)]
 mod sketch_edit_tests;
 pub mod sketch_palette;
+pub(crate) mod sketch_text;
 pub mod sketch_tools;
 pub mod stand_up;
 pub mod theme;
@@ -483,6 +484,10 @@ impl SolveApp {
     /// Start a command the way a toolbar click does: interactive tools and dialogs for commands
     /// that have them, otherwise run it with defaults.
     pub fn start(&mut self, id: &str) {
+        // Another command ends Edit Text (its dialog is not a feature edit to keep).
+        if sketch_text::editing(self) {
+            dialogs::cancel(self);
+        }
         // A component moved without Capture Position: ask first (Capture, Revert or Cancel).
         if browser::needs_capture(self, id) && !(id == "sketch.dimension" && self.session.active_sketch.is_some()) {
             self.tree.capture_prompt = Some(id.to_string());
@@ -536,6 +541,15 @@ impl SolveApp {
                 if self.run(id, params).is_ok() {
                     let _ = self.session.execute("select.clear", &json!({}));
                     self.set_status("Constraint applied", false);
+                }
+                return;
+            }
+            if id == "sketch.project"
+                && let Some(refs) = tools::projection_preselection(&self.session.selection)
+            {
+                if self.run(id, json!({"refs":refs})).is_ok() {
+                    let _ = self.session.execute("select.clear", &json!({}));
+                    self.set_status("Projection applied", false);
                 }
                 return;
             }
@@ -654,6 +668,9 @@ impl SolveApp {
     /// Finish the active sketch: stop editing, restore the history marker Edit Sketch moved and
     /// return to the view from before the sketch.
     pub fn finish_sketch(&mut self) {
+        if sketch_text::editing(self) {
+            dialogs::cancel(self);
+        }
         dim_view::cancel();
         self.tool = None;
         let _ = self.run("sketch.finish", json!({}));
@@ -990,6 +1007,7 @@ impl SolveApp {
         }
         shortcut_box::show(self, ui.ctx());
         prefs::show(self, ui.ctx());
+        toolbar_custom::window(self, ui.ctx());
     }
 
     fn drain_control(&mut self, ctx: &egui::Context) {

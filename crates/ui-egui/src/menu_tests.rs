@@ -499,7 +499,7 @@ fn units_menu_changes_the_design_units_and_new_designs_take_the_preference() {
     assert_eq!(items.len(), 5);
     act(&mut app, &Target::Units, "in");
     assert_eq!(app.session.doc.units, "in");
-    assert!(crate::prefs::show_mm(&app, 25.4, 1).starts_with("1.00 in"));
+    assert!(crate::prefs::show_mm(&app, 25.4, 1).starts_with("1.000 in"));
     app.preferences.default_units = "cm".into();
     crate::documents::new_design(&mut app);
     assert_eq!(app.session.doc.units, "cm");
