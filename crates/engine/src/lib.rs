@@ -156,6 +156,8 @@ pub struct Preview {
     pub before: Arc<ModelState>,
     /// The model after the commands.
     pub after: Arc<ModelState>,
+    /// What each command replied (as `execute` returns it).
+    pub replies: Vec<Value>,
 }
 
 /// Prepared world geometry depends on design/model identity and placement context, not
@@ -670,12 +672,12 @@ impl Session {
     /// A `timeline.redefine` is shown even while the timeline is rolled back to the feature
     /// being edited.
     pub fn preview(&self, commands: &[(String, Value)]) -> Result<Preview> {
-        self.scratch().preview_in_place(commands).map(|after| Preview { before: self.model.state(), after: after.model.state() })
+        self.scratch().preview_in_place(commands).map(|(after, replies)| Preview { before: self.model.state(), after: after.model.state(), replies })
     }
 
     /// The same evaluated preview in occurrence coordinates, including uncaptured moves.
     pub fn preview_world(&self, commands: &[(String, Value)]) -> Result<Preview> {
-        self.scratch().preview_in_place(commands).map(|after| Preview { before: self.world_state(), after: after.world_state() })
+        self.scratch().preview_in_place(commands).map(|(after, replies)| Preview { before: self.world_state(), after: after.world_state(), replies })
     }
 
     /// World preview with each session's visibility applied, including new body placements.
@@ -686,15 +688,17 @@ impl Session {
             shown.bodies.retain(|body| session.body_visible(&body.name));
             Arc::new(shown)
         };
-        self.scratch().preview_in_place(commands).map(|after| Preview { before: visible(self), after: visible(&after) })
+        self.scratch().preview_in_place(commands).map(|(after, replies)| Preview { before: visible(self), after: visible(&after), replies })
     }
 
-    fn preview_in_place(mut self, commands: &[(String, Value)]) -> Result<Self> {
+    fn preview_in_place(mut self, commands: &[(String, Value)]) -> Result<(Self, Vec<Value>)> {
         if commands.is_empty() {
             return Err(EngineError::Other("nothing to preview".into()));
         }
+        let mut replies = Vec::with_capacity(commands.len());
         for (id, params) in commands {
             let r = self.execute(id, params)?;
+            replies.push(r.clone());
             if id == "timeline.redefine"
                 && let Some(fid) = r.get("feature").and_then(Value::as_u64)
                 && let Some(idx) = self.doc.feature_index(fid)
@@ -707,7 +711,7 @@ impl Session {
                 }
             }
         }
-        Ok(self)
+        Ok((self, replies))
     }
 
     /// Measure one or two selections (see `inspect.measure` with `items`); errors come back as

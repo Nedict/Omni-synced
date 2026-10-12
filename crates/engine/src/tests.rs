@@ -2815,6 +2815,21 @@ fn fillet_fit_reduce_uses_the_largest_radius_that_fits() {
     // Saved only when set.
     let json = serde_json::to_string(&s.doc.features).unwrap();
     assert_eq!(json.matches("\"fit\":\"reduce\"").count(), 1, "{json}");
-    // An unknown mode is refused.
+    // An unknown mode is refused, and so is reduce with a radius that is not constant.
     assert!(s.execute("solid.fillet", &json!({"edges": mids, "radius": 1, "fit": "taper"})).is_err());
+    assert!(s.execute("solid.fillet", &json!({"edges": mids, "radius": 1, "fit": "reduce", "type": "chord"})).is_err());
+}
+
+#[test]
+fn a_pattern_of_a_reduced_fillet_rounds_each_copy_alike() {
+    // #293: a 6 mm wide post on a plate, its four vertical edges at 3.5 reduced to 3, patterned
+    // three times: every copy is a full round.
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 60, "width": 20, "height": 2}));
+    run(&mut s, "solid.box", json!({"length": 14, "width": 6, "height": 10, "corner": [2, 7, 2], "operation": "join", "name": "Post"}));
+    let mids = json!([[2, 7, 7], [16, 7, 7], [2, 13, 7], [16, 13, 7]]);
+    run(&mut s, "solid.fillet", json!({"edges": mids, "radius": 3.5, "fit": "reduce", "name": "Round"}));
+    run(&mut s, "solid.pattern.rectangular", json!({"features": ["Post", "Round"], "dir1": [1, 0, 0], "count1": 3, "spacing1": 20}));
+    let expect = 60.0 * 20.0 * 2.0 + 3.0 * (840.0 - (4.0 - PI) * 9.0 * 10.0);
+    assert!(rel(volume(&mut s), expect) < 2e-4, "{} vs {expect}", volume(&mut s));
 }

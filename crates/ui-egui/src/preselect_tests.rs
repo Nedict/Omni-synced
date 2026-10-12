@@ -543,6 +543,10 @@ fn fillet_radius_fit_reduces_and_shows_the_applied_radius() {
     let fillet = app.session.doc.features.last().unwrap().id;
     let e = crate::dialogs::for_feature(&app, fillet, None).unwrap();
     assert_eq!(e.extra.get("fit"), Some(&json!("reduce")));
+    // Its edit preview shows the radius it uses too.
+    let cmds = apply_commands(&app, &e).unwrap();
+    let job = crate::preview::compute(&app.session, &cmds, crate::preview::Colors::from_tokens(&crate::theme::Tokens::dark())).unwrap();
+    assert_eq!(job.applied, Some(3.0));
 }
 
 /// Apply a dialog's commands to the session; the new feature's id.

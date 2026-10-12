@@ -790,6 +790,9 @@ fn fillet(s: &mut Session, p: &Value) -> Result<Value> {
         Some("reduce") => solvecraft_doc::FilletFit::Reduce,
         Some(o) => return Err(bad(cmd, format!("unknown fit `{o}` (exact or reduce)"))),
     };
+    if fit == solvecraft_doc::FilletFit::Reduce && !style.is_constant() {
+        return Err(bad(cmd, "`fit: reduce` takes a constant radius"));
+    }
     let mut out = add_feature(s, p, FeatureKind::Fillet { edges, radius, body: str_(p, "body").map(str::to_string), style, fit })?;
     // The radius the fillet used, when `fit: reduce` reduced it.
     if let Some(id) = out.get("feature").and_then(Value::as_u64)

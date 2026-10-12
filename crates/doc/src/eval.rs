@@ -274,6 +274,14 @@ fn fillet_fitted(
     }
 }
 
+/// Add `note` to a feature's warning.
+fn append_warning(warning: &mut Option<String>, note: String) {
+    *warning = Some(match warning.take() {
+        Some(w) => format!("{w}; {note}"),
+        None => note,
+    });
+}
+
 /// A length in mm, without trailing zeros.
 fn show_mm(v: f64) -> String {
     let s = format!("{v:.6}");
@@ -284,11 +292,6 @@ impl ModelState {
     /// The radius fillet `feature` used when it reduced a radius too large for its edges.
     pub fn fitted_radius(&self, feature: u64) -> Option<f64> {
         self.fitted.get(&feature).copied()
-    }
-
-    /// Every reduced fillet radius (by feature id).
-    pub fn fitted_radii(&self) -> impl Iterator<Item = (u64, f64)> + '_ {
-        self.fitted.iter().map(|(k, v)| (*k, *v))
     }
 }
 
@@ -948,10 +951,7 @@ impl Model {
             });
             if r.is_ok() {
                 if let Some(note) = boolean_diagnostics.warning() {
-                    warning = Some(match warning {
-                        Some(existing) => format!("{existing}; {note}"),
-                        None => note,
-                    });
+                    append_warning(&mut warning, note);
                 }
             } else {
                 boolean_diagnostics = Default::default();
@@ -2823,7 +2823,11 @@ fn replay(
                 let Some(mb) = st.bodies.get(ti).cloned() else { continue };
                 let nb = match &src.kind {
                     FeatureKind::Chamfer { distance2, angle, flip, .. } => chamfer_with(vals, &mb.body, &moved, r, distance2, angle, *flip)?,
-                    FeatureKind::Fillet { fit, .. } => fillet_fitted(&mb.body, &moved, r, *fit)?.0,
+                    // A copy is congruent to the original: the radius it was reduced to first.
+                    FeatureKind::Fillet { fit, .. } => match st.fitted.get(&src.id).copied() {
+                        Some(used) => kernel::fillet(&mb.body, &moved, used).or_else(|_| fillet_fitted(&mb.body, &moved, r, *fit).map(|x| x.0))?,
+                        None => fillet_fitted(&mb.body, &moved, r, *fit)?.0,
+                    },
                     _ => kernel::fillet(&mb.body, &moved, r)?,
                 };
                 let nb = Traced::step(nb, &[&mb.traced()]);
@@ -3566,11 +3570,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                     let (b, used) = fillet_fitted(&mb.body, &edges, r, *fit)?;
                     if let Some(used) = used {
                         st.fitted.insert(f.id, used);
-                        let note = format!("the radius is reduced to {} mm, the largest that fits these edges", show_mm(used));
-                        *warning = Some(match warning.take() {
-                            Some(w) => format!("{w}; {note}"),
-                            None => note,
-                        });
+                        append_warning(warning, format!("the radius is reduced to {} mm, the largest that fits these edges", show_mm(used)));
                     }
                     (b, input)
                 }

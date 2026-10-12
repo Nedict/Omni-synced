@@ -229,7 +229,9 @@ pub fn compute(s: &Session, cmds: &[(String, Value)], colors: Colors) -> Job {
             let p = real.map_err(|e| e.to_string())?;
             let mut b = guard(&|| build(&p.before, &p.after, colors))?;
             b.bounds = state_bounds(&p.after);
-            b.applied = p.after.fitted_radii().find(|(id, _)| p.before.fitted_radius(*id).is_none()).map(|(_, r)| r);
+            // The radius a previewed fillet used when it reduced the one asked for (a new
+            // fillet or an edited one: the feature the replies name).
+            b.applied = p.replies.iter().filter_map(|r| r.get("feature").and_then(Value::as_u64)).find_map(|id| p.after.fitted_radius(id));
             Ok(b)
         }
     }
