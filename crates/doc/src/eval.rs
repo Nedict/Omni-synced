@@ -2928,7 +2928,14 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             Ok(())
         }
         FeatureKind::ConstructionPlane { plane } => {
-            let pl = doc.resolve_plane_in(vals, plane, 0, Some(st))?;
+            // On a body face: follow the face as it is now, as a sketch on that face does.
+            let pl = match crate::face_anchor::plane_face_anchor(plane) {
+                Some(anchor) => {
+                    let fst = crate::state_in_face_anchor_frame(doc, st, anchor, f.component)?;
+                    doc.resolve_attached_plane(vals, plane, f.component, st, &fst)?
+                }
+                None => doc.resolve_plane_in(vals, plane, 0, Some(st))?,
+            };
             st.construct.push(crate::construct::Construct { feature: f.id, name: f.name.clone(), geom: crate::construct::ConstructGeom::Plane(pl) });
             Ok(())
         }
@@ -3290,6 +3297,20 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                     *mb = ModelBody::new(mb.name.clone(), nb, mb.feature);
                 }
             }
+            Ok(())
+        }
+        FeatureKind::MeshConvert { body, tolerance } => {
+            let tolerance = val(vals, tolerance, Kind::Length)?;
+            let index = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let source = st.bodies.get(index).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            if doc.model_body_component(source) != f.component {
+                return Err(DocError::Invalid("activate the mesh body's component before converting it".into()));
+            }
+            let converted = kernel::convert_prismatic_mesh(&source.body, tolerance)?;
+            let converted = converted.with_color(source.body.color());
+            let result = ModelBody::new(source.name.clone(), converted, f.id);
+            let target = st.bodies.get_mut(index).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            *target = result;
             Ok(())
         }
         FeatureKind::MeshImport { meshes, .. } => {

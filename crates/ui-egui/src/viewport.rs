@@ -705,13 +705,14 @@ pub fn pick(app: &SolveApp, proj: &Proj, pos: Pos2) -> Vec<Hit> {
     let (o, d) = proj.ray(pos);
     // Sketch points of the active sketch (of every shown sketch while a command takes points).
     let wants_points = app.dialog.as_ref().and_then(|d| d.active_input()).is_some_and(|i| i.accept & crate::selection::POINTS != 0);
-    let point_sketches: Vec<u64> = if wants_points { visible_sketches(app) } else { s.active_sketch.into_iter().collect() };
+    let external_points = wants_points || (app.dialog.is_none() && app.tool.as_ref().is_none_or(|tool| tool.cmd == "sketch.project"));
+    let point_sketches: Vec<u64> = if external_points { visible_sketches(app) } else { s.active_sketch.into_iter().collect() };
     let mut best: Option<(f32, Hit)> = None;
     for ss in point_sketches.iter().filter_map(|sid| st.sketch(*sid)) {
         let sid = ss.feature;
         for p in &ss.sketch.points {
             if let Some(sp) = proj.to_screen(ss.plane.to_world(p.pos)) {
-                let dd = sp.distance(pos);
+                let dd = sp.distance(pos) - if s.active_sketch == Some(sid) { 2.0 } else { 0.0 };
                 if dd < 8.0 && best.as_ref().is_none_or(|(b, _)| dd < *b) {
                     best = Some((dd, Hit::SketchPoint { sketch: sid, id: p.id.clone(), at: p.pos }));
                 }
@@ -995,6 +996,22 @@ pub fn selection_bounds(app: &SolveApp) -> Option<solvecraft_engine::geom::Aabb3
                 }
             }
             Sel::Vertex { point, .. } => b.add(*point),
+            Sel::ExternalSketchPoint { sketch, id } => {
+                if let Some(ss) = st.sketch(*sketch)
+                    && let Some(p) = ss.sketch.resolve_point(id).and_then(|i| ss.sketch.point(i))
+                {
+                    b.add(ss.plane.to_world(p));
+                }
+            }
+            Sel::ExternalSketchCurve { sketch, id } => {
+                if let Some(ss) = st.sketch(*sketch)
+                    && let Some(i) = ss.sketch.curve_index(id)
+                {
+                    for p in ss.sketch.polyline(i) {
+                        b.add(ss.plane.to_world(p));
+                    }
+                }
+            }
             Sel::SketchCurve { id } => {
                 for ss in &st.sketches {
                     if let Some(i) = ss.sketch.curve_index(id) {
@@ -1063,7 +1080,7 @@ pub fn candidate(app: &SolveApp, hits: &[Hit]) -> Option<(Hit, Sel)> {
     let off = |k: &str| app.ui.pick_off.iter().any(|x| x == k);
     hits.iter()
         .filter(|h| match h {
-            Hit::SketchCurve { sketch, .. } => app.session.active_sketch == Some(*sketch) && !off("sketch") && !off("sketch_curves"),
+            Hit::SketchCurve { .. } => !off("sketch") && !off("sketch_curves"),
             Hit::SketchPoint { .. } => !off("sketch") && !off("sketch_points"),
             Hit::Profile { .. } => !off("sketch"),
             Hit::Vertex { .. } => !off("vertices") && !app.ui.pick_bodies,
@@ -1072,6 +1089,12 @@ pub fn candidate(app: &SolveApp, hits: &[Hit]) -> Option<(Hit, Sel)> {
             Hit::Plane { .. } | Hit::Axis { .. } => true,
         })
         .find_map(|h| match h {
+            Hit::SketchCurve { sketch, id, .. } if app.session.active_sketch != Some(*sketch) => {
+                Some((h.clone(), Sel::ExternalSketchCurve { sketch: *sketch, id: id.clone() }))
+            }
+            Hit::SketchPoint { sketch, id, .. } if app.session.active_sketch != Some(*sketch) => {
+                Some((h.clone(), Sel::ExternalSketchPoint { sketch: *sketch, id: id.clone() }))
+            }
             Hit::Face { body, .. } if app.ui.pick_bodies => Some((h.clone(), Sel::Body { name: body.clone() })),
             _ => hit_sel(h).map(|s| (h.clone(), s)),
         })
@@ -1292,6 +1315,17 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
                 }
             }
             Sel::Profile { sketch, index } => profile_fill(&mut sc, app, *sketch, *index, t.sel_profile, t.sel_profile_edge),
+            Sel::ExternalSketchCurve { sketch, id } => {
+                if let Some(ss) = st.sketch(*sketch)
+                    && let Some(ci) = ss.sketch.curve_index(id)
+                {
+                    for pts in &crate::sketch_display::curve_sample(app, *sketch, ci, &ss.plane, &display_proj(app)).parts {
+                        for w in pts.windows(2) {
+                            sc.line(w[0].to_f32(), w[1].to_f32(), c4(t.sel_edge), 3.5, true);
+                        }
+                    }
+                }
+            }
             // A 3D sketch curve, in whichever sketch has it.
             Sel::SketchCurve { id } if st.sketches.iter().any(|ss| ss.sketch.wire_index(id).is_some()) => {
                 for ss in st.sketches.iter() {
@@ -1447,7 +1481,9 @@ pub fn sketch_point_at(app: &SolveApp, proj: &Proj, pos: Pos2) -> Option<(Vec2, 
     let st = app.session.world_state();
     let ss = st.sketch(sid)?;
     for h in pick(app, proj, pos) {
-        if let Hit::SketchPoint { id, at, .. } = h {
+        if let Hit::SketchPoint { sketch, id, at } = h
+            && sketch == sid
+        {
             return Some((at, Some(id)));
         }
     }
@@ -1832,7 +1868,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         {
             let active = app.session.active_sketch;
             match pick(app, &proj, a).into_iter().next() {
-                Some(Hit::SketchPoint { id, .. }) => app.viewport.point_drag = Some((id, app.session.undo.len(), None)),
+                Some(Hit::SketchPoint { sketch, id, .. }) if Some(sketch) == active => {
+                    app.viewport.point_drag = Some((id, app.session.undo.len(), None))
+                }
                 Some(Hit::SketchCurve { sketch, id, .. }) if Some(sketch) == active => {
                     app.viewport.point_drag = on_plane(app, a).map(|q| (id, app.session.undo.len(), Some(q)));
                 }
@@ -2239,6 +2277,15 @@ fn hover_highlight(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
 fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let t = Tokens::get();
     let st = app.session.world_state();
+    for item in &app.session.selection {
+        if let Sel::ExternalSketchPoint { sketch, id } = item
+            && let Some(ss) = st.sketch(*sketch)
+            && let Some(point) = ss.sketch.resolve_point(id).and_then(|i| ss.sketch.point(i))
+            && let Some(pos) = proj.to_screen(ss.plane.to_world(point))
+        {
+            painter.circle_stroke(pos, 6.0, Stroke::new(2.0, t.sel_edge));
+        }
+    }
     let Some(sid) = app.session.active_sketch else { return };
     let Some(ss) = st.sketch(sid) else { return };
     let sk = &ss.sketch;

@@ -289,7 +289,13 @@ fn cmd_exec(args: &[String]) -> Result<(), String> {
 fn cmd_mcp(args: &[String]) -> Result<(), String> {
     let backend: Box<dyn solvecraft_mcp::Backend> = match (flag(args, "--connect"), flag(args, "--in")) {
         (Some(_), Some(_)) => return Err("mcp: use either --connect or --in, not both".into()),
-        (Some(addr), None) => Box::new(solvecraft_mcp::Remote::connect(addr).map_err(|e| format!("cannot connect to {addr}: {e}"))?),
+        (Some(addr), None) => Box::new(solvecraft_mcp::Remote::connect(addr).map_err(|e| {
+            let port = addr.rsplit(':').next().filter(|p| p.parse::<u16>().is_ok()).unwrap_or("PORT");
+            format!(
+                "cannot connect to {addr}: {e}\nno SolidCraft app is listening there; start it with \
+                 `solvecraft --control {port}` (or SOLVECRAFT_CONTROL_PORT={port}) and retry"
+            )
+        })?),
         (None, Some(path)) => Box::new(solvecraft_mcp::Headless::new(load(path)?)),
         (None, None) => Box::new(solvecraft_mcp::Headless::default()),
     };

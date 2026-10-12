@@ -333,10 +333,10 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
                     ui.end_row();
                     row_label(ui, "Flat size");
                     ui.label(format!(
-                        "{:.2} × {:.2} × {:.2} mm",
-                        size[0].as_f64().unwrap_or(0.0),
-                        size[1].as_f64().unwrap_or(0.0),
-                        size[2].as_f64().unwrap_or(0.0)
+                        "{} × {} × {}",
+                        crate::prefs::show_mm(app, size[0].as_f64().unwrap_or(0.0), 1),
+                        crate::prefs::show_mm(app, size[1].as_f64().unwrap_or(0.0), 1),
+                        crate::prefs::show_mm(app, size[2].as_f64().unwrap_or(0.0), 1)
                     ));
                     ui.end_row();
                     let bends = v["bends"].as_array().cloned().unwrap_or_default();
@@ -349,10 +349,10 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
                         row_label(ui, &format!("  Bend {}", b["bend"].as_u64().unwrap_or(0)));
                         ui.label(
                             RichText::new(format!(
-                                "{} {:.1}°  R{:.2}",
+                                "{} {:.1}°  R{}",
                                 if up { "Up" } else { "Down" },
                                 b["angle_deg"].as_f64().unwrap_or(0.0),
-                                b["radius"].as_f64().unwrap_or(0.0)
+                                crate::prefs::show_mm(app, b["radius"].as_f64().unwrap_or(0.0), 1)
                             ))
                             .color(if up { up_col } else { down_col }),
                         );
@@ -691,7 +691,7 @@ fn bend_colors() -> (Color32, Color32) {
 
 /// The flat pattern view: the outline, cut-outs and bend lines (up and down in their colours)
 /// drawn flat over the viewport, fitted to it. True when the dialog is a flat pattern.
-pub fn overlay(painter: &egui::Painter, rect: Rect, d: &Dialog) -> bool {
+pub fn overlay(app: &SolveApp, painter: &egui::Painter, rect: Rect, d: &Dialog) -> bool {
     let Kind::Sheet(Sm::FlatPattern { data, .. }) = &d.kind else { return false };
     let t = Tokens::get();
     let (up_col, down_col) = bend_colors();
@@ -757,7 +757,7 @@ pub fn overlay(painter: &egui::Painter, rect: Rect, d: &Dialog) -> bool {
         if !outer.is_empty() {
             let bounds = outer.iter().map(|p| to(*p)).fold(Rect::NOTHING, |r, p| r.union(Rect::from_min_max(p, p)));
             let anchor = bounds.center_top() - vec2(0.0, 6.0);
-            if let Some(label) = pocket_label(pocket) {
+            if let Some(label) = pocket_label(app, pocket) {
                 if let Some((_, labels)) = pocket_annotations.iter_mut().find(|(at, _)| at.distance(anchor) < 1.0) {
                     if !labels.contains(&label) {
                         labels.push(label);
@@ -797,7 +797,7 @@ pub fn overlay(painter: &egui::Painter, rect: Rect, d: &Dialog) -> bool {
     true
 }
 
-fn pocket_label(pocket: &Value) -> Option<String> {
+fn pocket_label(app: &SolveApp, pocket: &Value) -> Option<String> {
     let depth = pocket["depth_mm"].as_f64()?;
     if !depth.is_finite() || depth <= 0.0 {
         return None;
@@ -808,7 +808,7 @@ fn pocket_label(pocket: &Value) -> Option<String> {
         "internal" => "Internal",
         _ => return None,
     };
-    Some(format!("{side} pocket: {depth} mm deep"))
+    Some(format!("{side} pocket: {} deep", crate::prefs::show_mm(app, depth, 1)))
 }
 
 #[cfg(test)]

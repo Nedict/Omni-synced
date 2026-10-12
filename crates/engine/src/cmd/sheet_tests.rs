@@ -1610,3 +1610,20 @@ fn edge_flanges_on_two_collinear_tab_ends_in_one_feature() {
     run(&mut separate, "sheet.flange", json!({"edges": [[115, 31, 0.8]], "height": "10"}));
     assert!(rel(volume(&mut s), volume(&mut separate)) < 1e-6);
 }
+
+/// A tab whose fold line sits exactly at its root: the bend zone reaches the blank outline beside
+/// the tab. Every edge is straight, so the error must not blame a slanted or curved edge (#262).
+#[test]
+fn fold_at_a_tab_root_names_the_real_cause() {
+    let mut s = Session::default();
+    outline_blank(&mut s, json!([[0, 0], [100, 0], [100, 50], [60, 50], [60, 70], [40, 70], [40, 50], [0, 50]]));
+    if let Err(e) = s.execute("sheet.fold", &json!({"points": [[40, 50, 0.8], [60, 50, 0.8]], "fixed": [50, 25, 0.8]})) {
+        let e = e.to_string();
+        assert!(!e.contains("slanted or curved"), "all edges are straight: {e}");
+        assert!(e.contains("bend zone"), "name the bend zone reaching the outline: {e}");
+    }
+    // 1 mm into the tab the same fold works.
+    let mut ok = Session::default();
+    outline_blank(&mut ok, json!([[0, 0], [100, 0], [100, 50], [60, 50], [60, 70], [40, 70], [40, 50], [0, 50]]));
+    run(&mut ok, "sheet.fold", json!({"points": [[40, 51, 0.8], [60, 51, 0.8]], "fixed": [50, 25, 0.8]}));
+}

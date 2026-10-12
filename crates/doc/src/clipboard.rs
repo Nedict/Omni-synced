@@ -356,9 +356,11 @@ impl crate::Feature {
                     mapped_name(n, bodies);
                 }
             }
-            K::Split { body, .. } | K::SheetConvert { body, .. } | K::SurfaceExtend { body, .. } | K::SurfaceTrim { body, .. } => {
-                mapped_name(body, bodies)
-            }
+            K::Split { body, .. }
+            | K::SheetConvert { body, .. }
+            | K::SurfaceExtend { body, .. }
+            | K::SurfaceTrim { body, .. }
+            | K::MeshConvert { body, .. } => mapped_name(body, bodies),
             _ => {}
         }
         match &mut self.kind {

@@ -175,10 +175,12 @@ fn main() -> eframe::Result {
     #[cfg(all(unix, not(target_os = "macos")))]
     let mut options = options;
     #[cfg(all(unix, not(target_os = "macos")))]
-    // winit has no file drag-and-drop on Wayland (only on X11), so dropping files from the file
-    // manager showed a "no" cursor. Run through XWayland when it's there; SOLVECRAFT_WAYLAND=1
-    // keeps the native Wayland backend.
-    if std::env::var_os("DISPLAY").is_some() && std::env::var_os("SOLVECRAFT_WAYLAND").is_none() {
+    if prefer_x11(
+        std::env::var_os("DISPLAY").is_some(),
+        std::env::var_os("WAYLAND_DISPLAY").is_some(),
+        std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
+        std::env::var("SOLVECRAFT_WAYLAND").ok().as_deref(),
+    ) {
         options.event_loop_builder = Some(Box::new(|b| {
             use winit::platform::x11::EventLoopBuilderExtX11;
             b.with_x11();
@@ -234,6 +236,45 @@ fn main() -> eframe::Result {
             }))
         }),
     )
+}
+
+/// Whether to run through XWayland rather than native Wayland. winit has no file drag-and-drop
+/// on Wayland (only on X11), so dropping files from the file manager showed a "no" cursor: use
+/// XWayland when it's there. Except on niri, whose XWayland (xwayland-satellite) breaks window
+/// management (maximize/restore), so it stays on native Wayland and gives up file drops.
+/// `SOLVECRAFT_WAYLAND=1` keeps native Wayland, `SOLVECRAFT_WAYLAND=0` forces XWayland.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn prefer_x11(display: bool, wayland_display: bool, desktop: Option<&str>, wayland_override: Option<&str>) -> bool {
+    match wayland_override.map(str::trim) {
+        Some("0") => return display,
+        Some(_) => return false,
+        None => {}
+    }
+    let niri = desktop.is_some_and(|d| d.split(':').any(|name| name.trim().eq_ignore_ascii_case("niri")));
+    display && !(niri && wayland_display)
+}
+
+#[cfg(all(test, unix, not(target_os = "macos")))]
+mod backend_tests {
+    use super::prefer_x11;
+
+    #[test]
+    fn xwayland_by_default_native_wayland_on_niri_and_the_override_wins() {
+        // XWayland whenever there's an X display, for file drag-and-drop.
+        assert!(prefer_x11(true, true, Some("GNOME"), None));
+        assert!(prefer_x11(true, false, None, None));
+        assert!(!prefer_x11(false, true, Some("KDE"), None));
+        // niri (alone or in a desktop list) under Wayland stays native.
+        assert!(!prefer_x11(true, true, Some("niri"), None));
+        assert!(!prefer_x11(true, true, Some("niri:GNOME"), None));
+        // niri without a Wayland socket (nested X session) still uses X11.
+        assert!(prefer_x11(true, false, Some("niri"), None));
+        // SOLVECRAFT_WAYLAND: anything but 0 keeps Wayland, 0 forces XWayland (when present).
+        assert!(!prefer_x11(true, true, Some("GNOME"), Some("1")));
+        assert!(!prefer_x11(true, true, Some("GNOME"), Some("")));
+        assert!(prefer_x11(true, true, Some("niri"), Some("0")));
+        assert!(!prefer_x11(false, true, Some("niri"), Some("0")));
+    }
 }
 
 #[cfg(test)]

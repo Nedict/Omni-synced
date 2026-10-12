@@ -205,7 +205,7 @@ pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) -
         painter.text(
             s + vec2(10.0, 10.0),
             egui::Align2::LEFT_TOP,
-            format!("{:.2}, {:.2}, {:.2}", h.x, h.y, h.z),
+            format!("{}, {}, {}", crate::prefs::show_mm(app, h.x, 1), crate::prefs::show_mm(app, h.y, 1), crate::prefs::show_mm(app, h.z, 1)),
             egui::FontId::proportional(11.0),
             tk.text_dim,
         );
@@ -265,7 +265,12 @@ pub fn click(app: &mut SolveApp, proj: &Proj, pos: Pos2) -> bool {
     TRIAD.with(|t| *t.borrow_mut() = hit.as_ref().map(|(w, i, _)| (w.clone(), *i)));
     if let Some((w, _, p)) = hit {
         app.set_status(
-            format!("{w} at {:.2}, {:.2}, {:.2}: drag an arrow (X, Y, Z) or the square (in the sketch plane); Delete removes it", p.x, p.y, p.z),
+            format!(
+                "{w} at {}, {}, {}: drag an arrow (X, Y, Z) or the square (in the sketch plane); Delete removes it",
+                crate::prefs::show_mm(app, p.x, 1),
+                crate::prefs::show_mm(app, p.y, 1),
+                crate::prefs::show_mm(app, p.z, 1)
+            ),
             false,
         );
         return true;

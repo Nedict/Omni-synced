@@ -747,7 +747,7 @@ fn doc_settings(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
     }
     let prec = format!(
         "Precision: {} {}, {}°",
-        format_args!("{:.*}", usize::from(app.preferences.length_decimals), 0.0),
+        crate::prefs::show_mm_bare(app, 0.0),
         crate::prefs::unit_scale(&app.session.doc.units).1,
         format_args!("{:.*}", usize::from(app.preferences.angle_decimals), 0.0)
     );
@@ -1011,24 +1011,24 @@ fn canvas_panel(app: &mut SolveApp, ctx: &egui::Context) {
                     for (label, p) in [("Point A", &mut m.a), ("Point B", &mut m.b)] {
                         ui.label(label);
                         ui.horizontal(|ui| {
-                            ui.add(egui::DragValue::new(&mut p[0]).speed(0.5).suffix(" mm"));
-                            ui.add(egui::DragValue::new(&mut p[1]).speed(0.5).suffix(" mm"));
+                            ui.add(crate::prefs::length_drag(&mut p[0], &app.session.doc.units, app.preferences.length_decimals));
+                            ui.add(crate::prefs::length_drag(&mut p[1], &app.session.doc.units, app.preferences.length_decimals));
                         });
                         ui.end_row();
                     }
                     ui.label("Distance");
-                    ui.add(egui::DragValue::new(&mut m.distance).speed(0.5).range(0.001..=1e6).suffix(" mm"));
+                    ui.add(crate::prefs::length_drag(&mut m.distance, &app.session.doc.units, app.preferences.length_decimals).range(0.001..=1e6));
                     ui.end_row();
                 } else {
                     let (mut x, mut y, mut w, mut ang, mut op, mut flip) = (c.center.x, c.center.y, c.width, c.angle.to_degrees(), c.opacity, c.flip);
                     ui.label("Center X");
-                    let r1 = ui.add(egui::DragValue::new(&mut x).speed(0.5).suffix(" mm"));
+                    let r1 = ui.add(crate::prefs::length_drag(&mut x, &app.session.doc.units, app.preferences.length_decimals));
                     ui.end_row();
                     ui.label("Center Y");
-                    let r2 = ui.add(egui::DragValue::new(&mut y).speed(0.5).suffix(" mm"));
+                    let r2 = ui.add(crate::prefs::length_drag(&mut y, &app.session.doc.units, app.preferences.length_decimals));
                     ui.end_row();
                     ui.label("Width");
-                    let r3 = ui.add(egui::DragValue::new(&mut w).speed(0.5).range(0.01..=1e6).suffix(" mm"));
+                    let r3 = ui.add(crate::prefs::length_drag(&mut w, &app.session.doc.units, app.preferences.length_decimals).range(0.01..=1e6));
                     ui.end_row();
                     ui.label("Angle");
                     let r4 = ui.add(egui::DragValue::new(&mut ang).speed(1.0).suffix(" deg"));
@@ -1573,7 +1573,7 @@ fn occurrence_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                 for (k, axis) in ["X distance", "Y distance", "Z distance"].iter().enumerate() {
                     ui.label(*axis);
                     if let Some(v) = m.translate.get_mut(k) {
-                        let response = ui.add(egui::DragValue::new(v).speed(0.5).suffix(" mm"));
+                        let response = ui.add(crate::prefs::length_drag(v, &app.session.doc.units, app.preferences.length_decimals));
                         crate::scenario::publish_handle(&format!("occurrence-move:distance:{k}"), response.rect.center());
                     }
                     ui.end_row();
@@ -1709,7 +1709,11 @@ pub fn dims_overlay(app: &SolveApp, ctx: &egui::Context) {
             }
             let expr = c.param.as_ref().and_then(|p| app.session.doc.param(p)).map(|p| p.expr.as_str());
             let col = if c.driven { tk.dimension_driven } else { tk.dimension };
-            let galley = painter.layout_no_wrap(crate::dim_view::label(&c.kind, expr, c.driven), FontId::proportional(11.5), col);
+            let galley = painter.layout_no_wrap(
+                crate::dim_view::label(&c.kind, expr, c.driven, &app.session.doc.units, app.preferences.length_decimals),
+                FontId::proportional(11.5),
+                col,
+            );
             let size = galley.size() + vec2(6.0, 2.0);
             let half = Vec2::new(f64::from(size.x) * 0.5 * px, f64::from(size.y) * 0.5 * px);
             let lay = dim_layout(&frame, c.text.or_else(|| default_text(&frame, middle, px)), px, half);

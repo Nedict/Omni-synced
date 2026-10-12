@@ -1,6 +1,6 @@
 # SolidCraft with Nix
 
-The flake supports `x86_64-linux` and `aarch64-linux`. Enable Nix's `nix-command`
+The flake supports `x86_64-linux`, `aarch64-linux` and `aarch64-darwin`. Enable Nix's `nix-command`
 and `flakes` experimental features. The committed `flake.lock` pins nixpkgs and
 its Rust toolchain; package evaluation checks that compiler against the Rust
 floor in `Cargo.toml`.
@@ -35,8 +35,9 @@ nix profile install github:bherbruck/solidcraft#solidcraft
 solidcraft --sample
 ```
 
-This installs the SolidCraft desktop entry, MIME definition and generated icon
-sizes alongside the commands. NixOS/Home Manager can instead put the flake's
+On Linux, this installs the SolidCraft desktop entry, MIME definition and generated icon
+sizes alongside the commands. On macOS the package contains the binaries only; for a bundled
+`SolveCraft.app`, use the release `.dmg`. NixOS/Home Manager can instead put the flake's
 `packages.${system}.solidcraft` in `environment.systemPackages`/`home.packages`.
 If a non-NixOS desktop does not discover profile-installed launchers, ensure that
 its session includes `~/.nix-profile/share` in `XDG_DATA_DIRS`, then log out and
@@ -64,6 +65,10 @@ discoverable. Enable `hardware.graphics.enable = true` on NixOS and keep the
 system's driver stack consistent with the compositor. File pickers also need a
 working session D-Bus and the desktop's `xdg-desktop-portal` service.
 
+On macOS (`aarch64-darwin`), none of this applies: winit talks to AppKit, wgpu renders through
+Metal, and the GPU drivers ship with the operating system, so the darwin package carries no
+library wrapper and no extra search paths.
+
 On another distribution, graphics drivers outside the Nix store may need a
 matching [nixGL wrapper](https://github.com/nix-community/nixGL). Follow its
 GPU-specific instructions; a wrapper for a different driver is not a substitute.
@@ -81,6 +86,19 @@ Vulkan and other backends keep the requested sample count; saved preferences are
 For older builds, including 0.3.0, set Anti-aliasing to 1x and restart when using OpenGL.
 If that window cannot show the settings dialog, edit only the `msaa` field to `1` in
 `~/.local/share/solvecraft/graphics.json`; preserve any other settings.
+
+## Wayland, XWayland and niri
+
+On Linux the app runs through XWayland whenever an X display is available, because
+winit only supports dragging files from a file manager into the window on X11. On
+niri (detected from `XDG_CURRENT_DESKTOP` with a Wayland socket present) it stays on
+native Wayland instead, since window management such as maximize/restore misbehaves
+under niri's XWayland. The trade-off: **on native Wayland, dropping files onto the
+window does not work**; use File > Open or pass the file on the command line.
+This applies to every build, not only the Nix package.
+
+Override the choice with `SOLVECRAFT_WAYLAND=1` (always native Wayland) or
+`SOLVECRAFT_WAYLAND=0` (XWayland whenever an X display is available).
 
 ## Development shells
 
