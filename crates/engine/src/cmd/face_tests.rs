@@ -202,3 +202,30 @@ fn tangent_hole_contacts_split_no_faces() {
 }
 
 const RECIPE_307: &str = r#"{"commands": [{"command": "sketch.create", "params": {"name": "Plate_sketch", "plane": "XY"}}, {"command": "sketch.line", "params": {"construction": false, "ids": ["l1"], "points": [[-50, -50], [50, -50]]}}, {"command": "sketch.line", "params": {"construction": false, "ids": ["l2"], "points": ["l1.end", [50, 50]]}}, {"command": "sketch.line", "params": {"construction": false, "ids": ["l3"], "points": ["l2.end", [-50, 50]]}}, {"command": "sketch.line", "params": {"construction": false, "ids": ["l4"], "points": ["l3.end", "l1.start"]}}, {"command": "sketch.finish", "params": {}}, {"command": "solid.extrude", "params": {"body_names": ["Plate"], "direction": "positive", "distance": 5, "name": "Plate", "operation": "new", "profiles": [{"loops": [{"curves": ["l1", "l2", "l3", "l4"], "outer": true}], "sketch": "Plate_sketch"}], "sketch": "Plate_sketch"}}, {"command": "sketch.create", "params": {"name": "HoleA", "plane": "XY"}}, {"command": "sketch.circle.center", "params": {"center": [-30, -30], "construction": false, "id": "c1", "radius": 5}}, {"command": "sketch.finish", "params": {}}, {"command": "solid.extrude", "params": {"body_names": ["Plate"], "direction": "positive", "name": "HoleA", "operation": "cut", "profiles": [{"loops": [{"curves": ["c1"], "outer": true}], "sketch": "HoleA"}], "sketch": "HoleA", "through_all": true}}, {"command": "solid.pattern.rectangular", "params": {"count1": 5, "count2": 5, "dir1": [1, 0, 0], "dir2": [0, 1, 0], "features": ["HoleA"], "name": "GridPattern", "spacing1": 15, "spacing2": 15}}, {"command": "sketch.create", "params": {"name": "HoleB", "plane": "XY"}}, {"command": "sketch.circle.center", "params": {"center": [25, 0], "construction": false, "id": "c1", "radius": 5}}, {"command": "sketch.finish", "params": {}}, {"command": "solid.extrude", "params": {"body_names": ["Plate"], "direction": "positive", "name": "HoleB", "operation": "cut", "profiles": [{"loops": [{"curves": ["c1"], "outer": true}], "sketch": "HoleB"}], "sketch": "HoleB", "through_all": true}}, {"command": "solid.pattern.circular", "params": {"angle": 360, "axis": {"dir": [0, 0, 1], "origin": [0, 0, 0]}, "count": 8, "features": ["HoleB"], "name": "RingPattern"}}]}"#;
+
+/// #308: a blind cut ending inside a cylinder leaves thin strips of the cylinder wall beside
+/// the cut; they must count as cylinder, not as a sphere or a freeform face.
+#[test]
+fn blind_cut_inside_a_cylinder_keeps_only_planes_and_cylinders() {
+    let mut s = Session::default();
+    let side = json!({"origin":[0,0,0],"x_dir":[0,0,-1],"y_dir":[0,1,0]});
+    s.execute("solid.box", &json!({"length":40,"width":30,"height":3,"body_name":"Hinge"})).unwrap();
+    for (name, radius, operation, extent) in
+        [("Knuckle", 4, "join", json!({"distance":40})), ("Pin", 2, "cut", json!({"distance":100,"direction":"symmetric"}))]
+    {
+        s.execute("sketch.create", &json!({"name":name,"plane":side})).unwrap();
+        s.execute("sketch.circle.center", &json!({"center":[-4,33],"radius":radius})).unwrap();
+        s.execute("sketch.finish", &json!({})).unwrap();
+        let mut p = json!({"sketch":name,"operation":operation,"body_names":["Hinge"]});
+        p.as_object_mut().unwrap().extend(extent.as_object().unwrap().clone());
+        s.execute("solid.extrude", &p).unwrap();
+    }
+    s.execute("sketch.create", &json!({"name":"Gap","plane":"XY"})).unwrap();
+    s.execute("sketch.rectangle.two_point", &json!({"p0":[12,29],"p1":[28,40]})).unwrap();
+    s.execute("sketch.finish", &json!({})).unwrap();
+    s.execute("solid.extrude", &json!({"sketch":"Gap","operation":"cut","distance":3.3,"body_names":["Hinge"]})).unwrap();
+    let m = s.execute("inspect.measure", &json!({})).unwrap();
+    let body = &m["bodies"][0];
+    assert_eq!(body["face_types"], json!({"cylinder": 2, "plane": 12}), "{m}");
+    assert_eq!(body["faces"], 14, "{m}");
+}

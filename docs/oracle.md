@@ -9,7 +9,7 @@ Where the expected values come from (the **Source** column):
 
 No expected value comes from a commercial CAD product.
 
-**75 / 76 cases pass**; sources: 55 analytic, 21 freecad. 1 known failure(s) tracked in issues; 0 case(s) without expected values yet.
+**76 / 76 cases pass**; sources: 55 analytic, 21 freecad. 0 known failure(s) tracked in issues; 0 case(s) without expected values yet.
 
 | Case | Source | Result | Surface distance mm (max / mean) | Method | Notes |
 |---|---|---|---|---|---|
@@ -87,7 +87,7 @@ No expected value comes from a commercial CAD product.
 | 72-sm-contour-flange | analytic | pass |  | contour flange, width 50 along +Y, XZ section: plate x 0..35 z 0..2.5; bend R 2.5..5 about (35, 5) (sketch corner = outer virtual sharp, setback R+t); wall x 37.5..40 z 5..27.5; bend R 2.5..5 about (42.5, 27.5) (sketch corner = inner virtual sharp, setback R); plate x 42.5..70 z 30..32.5 | SolidCraft convention: the sketch lines are the sheet face away from the material (material right of travel); thickness grows to the material side |
 | 73-sm-hem | analytic | pass |  | 68's part (height 20) plus a flat hem on the flange top edge: 180 deg bend, inner radius = hem gap 0.01, outer 2.51, about (y 2.51, z 20), folded toward +y (inside); hem leg 8 - (0.01 + 2.5) = 5.49: y 2.52..5.02, z 14.51..20; extrusion along x 100 | SolidCraft conventions: hem gap 0.01 mm (rule hem_gap), hem length measured to the outer face of the hem bend (top at z 22.51), hem folds over the flange's inner face. |
 | 74-sm-unfold-refold | analytic | pass |  | U channel 80x50 (t 2.5, R 2.5, base y 5..45, flanges z 5..20) with the flat-pattern slot x 35..45, y -12..10 refolded: BA = (pi/2)(R + K t) = 5.654866776, so the slot removes base y 5..10, the whole y=0 bend and the flange from z 5 to 5 + (12 - (BA - 5)) = 16.345133224; x-segments 0..35 / 35..45 / 45..80 | unfold/refold maps flat distance through the K-factor neutral layer (K 0.44) |
-| 75-sm-bracket-holes | analytic | known failure (#296) |  | base x 0..75, y 5..40, z 0..2.5 (trimmed 5 by each flange's setback); bend 1 (R 2.5..5 about y 5, z 5) x 0..75; flange 1 y 0..2.5, z 5..30, x 0..80; bend 2 (R 2.5..5 about x 75, z 5) y 5..40; flange 2 x 77.5..80, z 5..15, y 5..40; minus two d6 through holes at (25,20), (55,20) in the base. A = sum of prism areas - 2 x 4 joint areas (75t, 75t, 35t, 35t) + hole walls - hole discs | step 14 (solid.extrude): invalid input: sew: nonmanifold edge contact; SolidCraft convention: the second flange trims the base under the first bend, so bend 1 stops at x 75 while flange 1's panel runs to x 80 (open corner relief, no fill). |
+| 75-sm-bracket-holes | analytic | pass |  | base x 0..75, y 5..40, z 0..2.5 (trimmed 5 by each flange's setback); bend 1 (R 2.5..5 about y 5, z 5) x 0..75; flange 1 y 0..2.5, z 5..30, x 0..80; bend 2 (R 2.5..5 about x 75, z 5) y 5..40; flange 2 x 77.5..80, z 5..15, y 5..40; minus two d6 through holes at (25,20), (55,20) in the base. A = sum of prism areas - 2 x 4 joint areas (75t, 75t, 35t, 35t) + hole walls - hole discs | SolidCraft convention: the second flange trims the base under the first bend, so bend 1 stops at x 75 while flange 1's panel runs to x 80 (open corner relief, no fill). |
 | 76-sm-thickness-variant | analytic | pass |  | final rule thickness 3 (bend radius = Thickness = 3): base y 6..60 x 3; bend annulus R 3..6 about (y 6, z 6); flange y 0..3, z 6..20; extrusion along x 100 | the rule's thickness edits regenerate the whole sheet body; only the final 3 mm state matters |
 
 ## Not covered by a reference case

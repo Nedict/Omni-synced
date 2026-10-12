@@ -1248,6 +1248,63 @@ fn pipe_and_sweep_follow_3d_sketch_curves() {
     assert!(body["volume_mm3"].as_f64().unwrap_or(0.0) > 4.0 * std::f64::consts::PI * 50.0 * 0.95, "{p} {body}");
 }
 
+/// Between two points, or on a line, that don't line up with an axis, an `auto` dimension takes
+/// its orientation from where its text goes: across from the two the distance between them,
+/// past that above or below them the horizontal distance, beside them the vertical one (#257).
+#[test]
+fn auto_dimension_orientation_follows_where_its_text_is_placed() {
+    use solvecraft_sketch::ConstraintKind;
+    // The ends of a 30 × 40 line: 50 long, and the slope keeps "across" and "past" distinct.
+    let dimension = |end: [f64; 2], entities: Value, extra: Value| {
+        let mut s = new_sketch();
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], end], "connect": false}));
+        let mut p = json!({"entities": entities});
+        if let (Some(p), Some(extra)) = (p.as_object_mut(), extra.as_object()) {
+            p.extend(extra.clone());
+        }
+        let r = run(&mut s, "sketch.dimension", p);
+        let sk = sketch(&s);
+        let kind = sk.constraints.iter().find(|c| c.kind.is_dimension()).map(|c| c.kind.clone()).expect("a dimension");
+        (kind, r["measured"].as_f64().unwrap_or(f64::NAN), sk)
+    };
+    let points = json!(["l1.start", "l1.end"]);
+    for entities in [points.clone(), json!(["l1"])] {
+        for (at, expected) in [
+            ([15.0, 60.0], "horizontal"),
+            ([15.0, -20.0], "horizontal"),
+            ([-30.0, 5.0], "vertical"),
+            ([55.0, 38.0], "vertical"),
+            ([-20.0, 25.0], "aligned"),
+            ([45.0, 10.0], "aligned"),
+            ([-20.0, -20.0], "aligned"),
+        ] {
+            let (kind, measured, _) = dimension([30.0, 40.0], entities.clone(), json!({"text_at": at}));
+            let (got, value) = match kind {
+                ConstraintKind::DistanceX { .. } => ("horizontal", 30.0),
+                ConstraintKind::DistanceY { .. } => ("vertical", 40.0),
+                ConstraintKind::Distance { .. } | ConstraintKind::Length { .. } => ("aligned", 50.0),
+                other => panic!("{entities} at {at:?}: {other:?}"),
+            };
+            assert_eq!(got, expected, "{entities} with its text at {at:?}");
+            assert!((measured - value).abs() < 1e-9, "{entities} at {at:?} measured {measured}");
+        }
+        // No text, an explicit type, or two ends already on an axis keep today's dimension.
+        let (kind, ..) = dimension([30.0, 40.0], entities.clone(), json!({}));
+        assert!(matches!(kind, ConstraintKind::Distance { .. } | ConstraintKind::Length { .. }), "{kind:?}");
+        let (kind, ..) = dimension([30.0, 40.0], entities.clone(), json!({"type": "distance", "text_at": [15, 60]}));
+        assert!(matches!(kind, ConstraintKind::Distance { .. } | ConstraintKind::Length { .. }), "{kind:?}");
+        let (kind, ..) = dimension([30.0, 40.0], entities.clone(), json!({"type": "vertical", "text_at": [15, 60]}));
+        assert!(matches!(kind, ConstraintKind::DistanceY { .. }), "{kind:?}");
+        let (kind, ..) = dimension([40.0, 0.0], json!(["l1.start", "l1.end"]), json!({"text_at": [60, 5]}));
+        assert!(matches!(kind, ConstraintKind::Distance { .. }), "{kind:?}");
+    }
+    // The chosen dimension drives that coordinate: 24 across X, the 40 in Y kept.
+    let (_, _, sk) = dimension([30.0, 40.0], points, json!({"text_at": [15, 60], "value": 24}));
+    let end = sk.point(sk.resolve_point("l1.end").expect("end")).expect("end point");
+    let start = sk.point(sk.resolve_point("l1.start").expect("start")).expect("start point");
+    assert!(((end.x - start.x).abs() - 24.0).abs() < 1e-6 && ((end.y - start.y).abs() - 40.0).abs() < 1e-6, "{start:?} {end:?}");
+}
+
 /// A two-link arm (B, elbow E, hand H) hanging off a rigid triangle A B C that only the cluster
 /// decomposition places: pinned at F by two of its corners and held at G by the third. Every
 /// line is dimensioned. Without decomposition budget the elbow's seed has nothing to build on.

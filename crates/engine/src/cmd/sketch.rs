@@ -106,7 +106,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params(concat!("p0, p1: overall ends, width", connect_doc!(), created_doc!())),
     CommandSpec::new("sketch.point", "Point", draw_point).at("SKETCH", "CREATE").icon("point").enabled(in_sketch).params(concat!("point: [x,y], id?", connect_doc!(), created_doc!())),
     CommandSpec::new("sketch.dimension", "Sketch Dimension", dimension).at("SKETCH", "CREATE").icon("dimension").key("D").enabled(in_sketch).params(
-        "entities: [refs], type?: auto|distance|horizontal|vertical|length|radius|diameter|angle, value?: number or expression (default: current; a bare number is in the design's units, e.g. 2 means 2 in in an inch design; give a unit such as \"50 mm\" to override); text_at?: [x, y]. Two lines: the angle between them (acute, or 180° − it when the value is nearer that) unless text_at picks a sector. Returns measured in unit (mm or deg)",
+        "entities: [refs], type?: auto|distance|horizontal|vertical|length|radius|diameter|angle, value?: number or expression (default: current; a bare number is in the design's units, e.g. 2 means 2 in in an inch design; give a unit such as \"50 mm\" to override); text_at?: [x, y]. Two points or a line off the axes: with auto, text_at across from them is the distance between them, above or below them horizontal, beside them vertical. Two lines: the angle between them (acute, or 180° − it when the value is nearer that) unless text_at picks a sector. Returns measured in unit (mm or deg)",
     ),
     CommandSpec::new("sketch.constraint.horizontal_vertical", "Horizontal/Vertical", c_horizontal_vertical)
         .at("SKETCH", "CONSTRAINTS")
@@ -1610,7 +1610,7 @@ fn dimension(s: &mut Session, p: &Value) -> Result<Value> {
             }
             ((None, Some(c)), None) if is_line(c) => {
                 let (a, b) = line_pts(sk, c).unwrap_or_default();
-                match ty.as_str() {
+                match auto_orientation(&ty, a, b, text_at) {
                     "angle" => {
                         let angle = (b - a).angle();
                         (ConstraintKind::LineAngle { l: c, value: angle }, angle)
@@ -1647,7 +1647,7 @@ fn dimension(s: &mut Session, p: &Value) -> Result<Value> {
             }
             ((Some(a), None), Some((Some(b), None))) => {
                 let (pa, pb) = (sk.point(a).unwrap_or_default(), sk.point(b).unwrap_or_default());
-                match ty.as_str() {
+                match auto_orientation(&ty, pa, pb, text_at) {
                     "horizontal" => (ConstraintKind::DistanceX { p: a, q: b, value: (pb.x - pa.x).abs() }, (pb.x - pa.x).abs()),
                     "vertical" => (ConstraintKind::DistanceY { p: a, q: b, value: (pb.y - pa.y).abs() }, (pb.y - pa.y).abs()),
                     _ => (ConstraintKind::Distance { p: a, q: b, value: pa.dist(pb) }, pa.dist(pb)),
@@ -1765,6 +1765,28 @@ fn solved_measure(s: &Session, p: &Value, cmd: &str) -> Option<(f64, &'static st
     let sk = s.doc.sketch(target_sketch(s, p, cmd).ok()?).ok()?;
     let k = &sk.constraints.last()?.kind;
     Some(measured(k.is_angle(), solvecraft_sketch::measure_dimension(sk, k)?))
+}
+
+/// The type of a dimension between `a` and `b` (two points or a line's ends). `auto` takes it
+/// from where the text is placed: across from the two (between the perpendiculars through
+/// them) the distance between them; past that, above or below them the horizontal distance,
+/// beside them the vertical one (#257). With no text, or when the two already line up with
+/// an axis, `auto` stays the distance between them; other types are returned unchanged.
+fn auto_orientation(ty: &str, a: Vec2, b: Vec2, text_at: Option<Vec2>) -> &str {
+    let Some(t) = text_at.filter(|_| ty == "auto") else { return ty };
+    let d = b - a;
+    let len = d.len();
+    let along = (t - a).dot(d) / len;
+    let between = |v: f64, p: f64, q: f64| p.min(q) <= v && v <= p.max(q);
+    if d.x.abs() <= 1e-9 * len || d.y.abs() <= 1e-9 * len || !along.is_finite() || (0.0..=len).contains(&along) {
+        ty
+    } else if between(t.x, a.x, b.x) {
+        "horizontal"
+    } else if between(t.y, a.y, b.y) {
+        "vertical"
+    } else {
+        ty
+    }
 }
 
 /// Keep a dimension's text where it was placed (`at`, sketch coordinates), relative to the

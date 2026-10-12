@@ -145,6 +145,7 @@ mod component_frames;
 mod mirror_planes;
 mod primitive_points;
 mod robustness;
+mod xz_plane;
 
 /// Plan area a round of radius `r` fills at the concave corner `x` where circles (c1, r1) and
 /// (c2, r2) cross: the triangle of its contacts and the corner, less the three circular segments.

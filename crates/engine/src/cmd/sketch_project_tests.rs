@@ -499,3 +499,30 @@ fn project_and_include_from_other_bodies() {
     assert!(row["error"].is_null(), "{row}");
     assert!(row["warning"].as_str().is_some_and(|w| w.contains("lost")), "{row}");
 }
+
+/// A cylinder's wall and the torus of a rounded rim are drawn as one face but stored in halves
+/// joined by hidden seams; projecting one projects the whole face, not an open half.
+#[test]
+fn faces_split_by_hidden_seams_project_whole() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane":"XY"}));
+    run(&mut s, "sketch.circle.center", json!({"center":[0,0],"radius":20}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance":10}));
+    run(&mut s, "sketch.create", json!({"plane":"XZ"}));
+    run(&mut s, "sketch.project", json!({"refs":[{"face":[20,0,5]}]}));
+    let wall = run(&mut s, "sketch.inspect", json!({}));
+    let heights: Vec<f64> =
+        wall["curves"].as_array().unwrap().iter().flat_map(|c| [c["start_at"][1].as_f64().unwrap(), c["end_at"][1].as_f64().unwrap()]).collect();
+    assert!(heights.iter().any(|y| y.abs() < 1e-6) && heights.iter().any(|y| (y.abs() - 10.).abs() < 1e-6), "{wall}");
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.fillet", json!({"edges":[[20,0,10]],"radius":3}));
+    run(&mut s, "sketch.create", json!({"plane":"XY"}));
+    let t = 0.5f64.sqrt() * 3.;
+    run(&mut s, "sketch.project", json!({"refs":[{"face":[17. + t, 0, 7. + t]}]}));
+    let round = run(&mut s, "sketch.inspect", json!({}));
+    let mut radii: Vec<f64> = round["curves"].as_array().unwrap().iter().map(|c| c["radius"].as_f64().unwrap()).collect();
+    radii.sort_by(f64::total_cmp);
+    assert_eq!(radii.len(), 4, "{round}");
+    assert!(radii[..2].iter().all(|r| (r - 17.).abs() < 1e-6) && radii[2..].iter().all(|r| (r - 20.).abs() < 1e-6), "{round}");
+}

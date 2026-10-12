@@ -687,7 +687,7 @@ pub(super) fn sheet_cut(
             plans.push((sh.body.clone(), Some((sh, mb.body.clone()))));
             continue;
         }
-        if let Some(bends) = sh.unmodeled_solid(&ss.plane)? {
+        for bends in sh.unmodeled_solids(&ss.plane)? {
             for tool in tools {
                 if kernel::boolean(&bends, tool, kernel::BoolOp::Intersect)?.is_some() {
                     return Err(DocError::Invalid(

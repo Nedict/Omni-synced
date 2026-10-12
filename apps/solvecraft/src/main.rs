@@ -15,7 +15,7 @@
 #[path = "../../app_icon.rs"]
 mod app_icon;
 mod control_server;
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 mod space_mouse;
 
 use solvecraft_engine::Session;
@@ -23,7 +23,7 @@ use solvecraft_ui_egui::{Services, SolveApp};
 
 struct App {
     solve: SolveApp,
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     space_mouse: space_mouse::SpaceMouse,
 }
 
@@ -36,7 +36,7 @@ impl eframe::App for App {
             solvecraft_ui_egui::documents::request_quit(&mut self.solve);
         }
         self.solve.logic(ctx);
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
         self.space_mouse.tick(&mut self.solve, ctx);
         if self.solve.quit_requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -229,11 +229,11 @@ fn main() -> eframe::Result {
                 let every = if app.autosave_minutes > 0.0 { app.autosave_minutes * 60.0 } else { f64::MAX / 4.0 };
                 solvecraft_ui_egui::recovery_ui::start(&mut app, &dir, std::time::Duration::from_secs_f64(every.min(1e9)));
             }
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
             let space_mouse = space_mouse::SpaceMouse::start(&cc.egui_ctx);
             Ok(Box::new(App {
                 solve: app,
-                #[cfg(target_os = "windows")]
+                #[cfg(any(target_os = "windows", target_os = "linux"))]
                 space_mouse,
             }))
         }),

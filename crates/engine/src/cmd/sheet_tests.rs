@@ -702,6 +702,45 @@ fn fold_keeps_the_larger_side_either_way() {
     }
 }
 
+/// A tray shrunk by a parameter change unfolds like the same tray built at that size. The
+/// sketch solved again leaves its corners ~1e-13 mm off, and the flat pattern's planar
+/// arrangement used to drop a bend zone through a gap that small: "planar region arrangement
+/// failed", for W alone or both sizes, at 72° or 90°, while growing the tray worked.
+#[test]
+fn tray_shrunk_by_a_parameter_unfolds_like_one_built_at_that_size() {
+    for angle in [72.0, 90.0] {
+        let tray = |s: &mut Session, w: f64, h: f64| {
+            run(s, "parameters.add", json!({"name": "W", "expression": format!("{w} mm")}));
+            run(s, "parameters.add", json!({"name": "H", "expression": format!("{h} mm")}));
+            run(s, "sheet.manage_rules", json!({"name": "AL2", "thickness": "2 mm", "k_factor": "0.5", "bend_radius": "1 mm", "active": true}));
+            run(s, "sketch.create", json!({"plane": "XY", "name": "Tray"}));
+            run(s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [w, h]}));
+            run(s, "sketch.constraint.fix", json!({"entities": ["p1"]}));
+            run(s, "sketch.dimension", json!({"entities": ["l1"], "value": "W"}));
+            run(s, "sketch.dimension", json!({"entities": ["l2"], "value": "H"}));
+            run(s, "sketch.finish", json!({}));
+            run(s, "sheet.flange", json!({"type": "base", "sketch": "Tray"}));
+            let edges = json!([[w / 2.0, 0, 2], [w, h / 2.0, 2], [w / 2.0, h, 2], [0, h / 2.0, 2]]);
+            run(s, "sheet.flange", json!({"type": "edge", "edges": edges, "height": 38.6, "angle": angle}));
+            run(s, "sheet.unfold", json!({}));
+        };
+        let mut direct = Session::default();
+        tray(&mut direct, 400.0, 300.0);
+        let want = flat(&mut direct)["flat_size_mm"].clone();
+        let mut shrunk = Session::default();
+        tray(&mut shrunk, 2000.0, 2500.0);
+        for (name, expr) in [("W", "400 mm"), ("H", "300 mm")] {
+            let r = run(&mut shrunk, "parameters.change", json!({"name": name, "expression": expr}));
+            assert_eq!(r["errors"], json!([]), "{angle}° {name} = {expr}: {r}");
+        }
+        let got = flat(&mut shrunk)["flat_size_mm"].clone();
+        for k in 0..3 {
+            assert!((got[k].as_f64().unwrap() - want[k].as_f64().unwrap()).abs() < 1e-9, "{angle}°: {got} {want}");
+        }
+        assert!(rel(volume(&mut shrunk), volume(&mut direct)) < 1e-9, "{angle}°");
+    }
+}
+
 #[test]
 fn bend_table_exports_shop_dimensions_and_tracks_parameter_changes() {
     let mut s = Session::default();
@@ -1645,4 +1684,34 @@ fn fold_at_a_tab_root_names_the_real_cause() {
     let mut ok = Session::default();
     outline_blank(&mut ok, json!([[0, 0], [100, 0], [100, 50], [60, 50], [60, 70], [40, 70], [40, 50], [0, 50]]));
     run(&mut ok, "sheet.fold", json!({"points": [[40, 51, 0.8], [60, 51, 0.8]], "fixed": [50, 25, 0.8]}));
+}
+
+/// #296: two bends meeting at an open corner relief touch only along an edge, so the folded
+/// material the machining guard checks must not be sewn into one solid.
+#[test]
+fn hole_beside_two_adjacent_edge_flanges_cuts_and_bends_stay_guarded() {
+    let build = |s: &mut Session| {
+        base(s, 80.0, 40.0);
+        run(s, "sheet.flange", json!({"edges":[[40.0, 0.0, 2.5]],"height":30,"angle":90}));
+        run(s, "sheet.flange", json!({"edges":[[80.0, 22.5, 2.5]],"height":15,"angle":90}));
+    };
+    let hole = |s: &mut Session, name: &str, centre: [f64; 2]| {
+        run(s, "sketch.create", json!({"plane":"XY","name":name}));
+        run(s, "sketch.circle.center", json!({"center":centre,"radius":3}));
+        run(s, "sketch.finish", json!({}));
+        s.execute("solid.extrude", &json!({"sketch":name,"through_all":true,"operation":"cut"}))
+    };
+    let mut s = Session::default();
+    build(&mut s);
+    let before = volume(&mut s);
+    assert!((before - 14057.2).abs() < 0.1, "{before}");
+    if let Err(e) = hole(&mut s, "Hole", [25.0, 20.0]) {
+        panic!("hole beside two flanges: {e}");
+    }
+    let after = volume(&mut s);
+    assert!((before - after - 9.0 * PI * 2.5).abs() < 0.05, "{before} -> {after}");
+    let mut bend = Session::default();
+    build(&mut bend);
+    let error = hole(&mut bend, "Bend", [78.5, 20.0]).unwrap_err().to_string();
+    assert!(error.contains("bend"), "{error}");
 }

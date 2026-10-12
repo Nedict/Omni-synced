@@ -108,10 +108,24 @@ cargo xtask ci                                          # fmt, clippy, tests, as
 
 Windows builds: `cargo xwin build --release --target x86_64-pc-windows-msvc -p solvecraft`.
 
-On Windows, SolidCraft detects a connected 3Dconnexion SpaceNavigator or SpaceMouse through its
+On Windows and Linux, SolidCraft detects a connected 3Dconnexion SpaceNavigator or SpaceMouse through its
 multi-axis HID interface. Move the cap to pan and zoom, and tilt or twist it to rotate the 3D view.
 While editing a sketch, the cap pans and zooms without changing the sketch view. The Navigation
 page in Preferences has an on/off switch and a speed control for the 3D mouse.
+
+On Linux SolidCraft reads `/dev/hidrawN` directly, so the logged-in user needs access to the
+device. A udev rule that adds the `uaccess` tag does that, for example
+`/etc/udev/rules.d/70-3d-mouse.rules` for devices with 3Dconnexion's vendor id:
+
+```
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="256f", TAG+="uaccess"
+```
+
+Older SpaceNavigators use Logitech's vendor id `046d`; add a rule with their product id (see `lsusb`)
+instead of matching every Logitech device. Reload with `sudo udevadm control --reload && sudo udevadm trigger`, then replug the device. The Flatpak
+sandbox does not expose hidraw devices, so the 3D mouse only works with native builds there for now.
+Devices that send all six axes in HID report 1 (some homemade ones do) are recognised from their
+report descriptor, so they work as well.
 
 In the browser: `cd apps/solvecraft-web && trunk build --release --public-url ./` (WebGPU, or
 WebGL2 with `?webgl`; `?sample` opens the sample part).
