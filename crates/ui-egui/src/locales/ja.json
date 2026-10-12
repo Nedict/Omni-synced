@@ -187,6 +187,7 @@
   "ui.multiple": "複数",
   "ui.named_views": "名前付きビュー",
   "ui.navigation": "ナビゲーション",
+  "ui.needs_design": "{command}: 先にデザインを開いてください",
   "ui.new_body": "新規ボディ",
   "ui.new_design": "新規デザイン",
   "ui.normal": "標準",
