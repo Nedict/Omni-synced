@@ -2506,6 +2506,21 @@ fn join_with_targets_leaves_other_touched_bodies_alone() {
     assert!(rel(a, 1032.0) < 1e-6, "A: {a}");
 }
 
+/// Every body a multi-profile `new` extrude creates carries its `body_name`, not a generic BodyN (#266).
+#[test]
+fn multi_profile_extrude_names_every_body_after_body_name() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "R"}));
+    for x in [0, 10, 20] {
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [x, 0], "p1": [x + 5, 30]}));
+    }
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": "10", "operation": "new_body", "body_name": "Ribs"}));
+    let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert!(names.iter().all(|n| n.starts_with("Ribs")), "{names:?}");
+    assert!(rel(volume(&mut s), 4500.0) < 1e-6);
+}
+
 /// Renaming one pattern copy leaves the other copies' names alone (#265).
 #[test]
 fn renaming_a_pattern_copy_keeps_the_other_copies_names() {

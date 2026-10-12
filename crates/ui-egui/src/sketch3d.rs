@@ -14,7 +14,7 @@ use solvecraft_engine::geom::{Vec2, Vec3};
 use crate::SolveApp;
 use crate::theme::Tokens;
 use crate::tools::Tool;
-use crate::viewport::{Hit, Proj, pick};
+use crate::viewport::{Hit, Proj, pick_3d};
 
 thread_local! {
     /// Points of the curve being drawn in 3D (with the tool they belong to).
@@ -38,6 +38,11 @@ pub fn active(app: &SolveApp) -> bool {
 
 fn takes(cmd: &str) -> bool {
     matches!(cmd, "sketch.line" | "sketch.spline.fit_point" | "sketch.point")
+}
+
+/// Only 3D point-placing tools broaden sketch-point picking; ordinary selection stays local.
+pub fn drawing(app: &SolveApp) -> bool {
+    active(app) && app.tool.as_ref().is_some_and(|tool| takes(tool.cmd))
 }
 
 /// Points drawn in 3D: (wire id, fit index, point).
@@ -69,9 +74,13 @@ pub fn point_at(app: &SolveApp, proj: &Proj, pos: Pos2) -> Option<(Vec3, &'stati
     let st = app.session.world_state();
     let ss = app.session.active_sketch.and_then(|s| st.sketch(s))?;
     let (o, d) = proj.ray(pos);
-    for h in pick(app, proj, pos) {
+    for h in pick_3d(app, proj, pos) {
         match h {
-            Hit::SketchPoint { at, .. } => return Some((ss.plane.to_world(at), "Pt")),
+            Hit::SketchPoint { sketch, at, .. } => {
+                if let Some(source) = st.sketch(sketch) {
+                    return Some((source.plane.to_world(at), "Pt"));
+                }
+            }
             Hit::Vertex { point, .. } => return Some((point, "Vertex")),
             Hit::Edge { body, index, .. } => {
                 let ws = app.session.world_state();

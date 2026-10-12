@@ -314,6 +314,11 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   continuous collision detection; local thin walls and small details remain limitations.
   See [contact-set limits and recovery](docs/contact-sets.md).
 
+## 3D sketch bridges
+
+3D sketch drawing snaps to points on other visible sketch planes without flattening them onto
+the active plane. Bridge endpoints capture their source positions; associative endpoint links,
+construction-plane selection of 3D wires and loft guide rails remain separate work.
 Feature dialog header chevrons collapse and restore the form without discarding selections
 or edited values, including the Appearance panel.
 
