@@ -87,7 +87,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("construct.plane.offset", "Offset Plane", plane_offset)
         .at("SOLID", "CONSTRUCT")
         .icon("plane")
-        .params("base: XY|XZ|YZ|plane name; offset: expr; name?"),
+        .params("base: XY|XZ|YZ|plane name, or a planar face {face: [x,y,z], body?, index?, path?}; offset: expr; name?"),
     CommandSpec::new("construct.plane.at_angle", "Plane at Angle", plane_angle)
         .at("SOLID", "CONSTRUCT")
         .icon("plane")
@@ -359,10 +359,17 @@ pub(super) fn check_expr(s: &Session, e: &str, kind: Kind, cmd: &str, what: &str
 
 /// Add a feature, evaluate, and report its result (an evaluation error fails the command).
 pub(super) fn add_feature(s: &mut Session, p: &Value, kind: FeatureKind) -> Result<Value> {
+    add_feature_in(s, p, kind, true)
+}
+
+/// `add_feature`; `world` is false when `kind` is already in the active component's frame.
+fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) -> Result<Value> {
     let name = str_(p, "name");
     // Commands speak world coordinates; the feature is authored in the active component.
     let mut kind = kind;
-    super::component::to_active_frame(s, &mut kind);
+    if world {
+        super::component::to_active_frame(s, &mut kind);
+    }
     // Bare lengths typed in an inch (or cm…) design mean that unit.
     if s.doc.units.trim() != "mm" {
         let doc = s.doc.clone();
@@ -1002,9 +1009,17 @@ pub(super) fn plane_param(s: &Session, v: Option<&Value>, cmd: &str) -> Result<s
 
 fn plane_offset(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "construct.plane.offset";
-    let base = plane_param(s, p.get("base"), cmd)?;
     let d = req_expr(cmd, p, "offset")?;
     check_expr(s, &d, Kind::Length, cmd, "offset")?;
+    // A planar body face: attached exactly, as a sketch on that face is, so the plane follows it.
+    if let Some(face) = p.get("base").filter(|b| b.get("face").is_some()) {
+        let base = super::sketch::face::capture(s, face, cmd)?;
+        super::sketch::face::capture_positions(s, &base)?;
+        let kind = FeatureKind::ConstructionPlane { plane: solvecraft_doc::PlaneRef::Offset { base: Box::new(base), distance: d } };
+        // The capture is already in the authoring frame.
+        return add_feature_in(s, p, kind, false);
+    }
+    let base = plane_param(s, p.get("base"), cmd)?;
     add_feature(s, p, FeatureKind::ConstructionPlane { plane: solvecraft_doc::PlaneRef::Offset { base: Box::new(base), distance: d } })
 }
 
@@ -1429,3 +1444,7 @@ mod offset_identity_tests;
 #[cfg(test)]
 #[path = "offset_edit_guard_tests.rs"]
 mod offset_edit_guard_tests;
+
+#[cfg(test)]
+#[path = "offset_plane_face_tests.rs"]
+mod offset_plane_face_tests;

@@ -2928,7 +2928,14 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             Ok(())
         }
         FeatureKind::ConstructionPlane { plane } => {
-            let pl = doc.resolve_plane_in(vals, plane, 0, Some(st))?;
+            // On a body face: follow the face as it is now, as a sketch on that face does.
+            let pl = match crate::face_anchor::plane_face_anchor(plane) {
+                Some(anchor) => {
+                    let fst = crate::state_in_face_anchor_frame(doc, st, anchor, f.component)?;
+                    doc.resolve_attached_plane(vals, plane, f.component, st, &fst)?
+                }
+                None => doc.resolve_plane_in(vals, plane, 0, Some(st))?,
+            };
             st.construct.push(crate::construct::Construct { feature: f.id, name: f.name.clone(), geom: crate::construct::ConstructGeom::Plane(pl) });
             Ok(())
         }

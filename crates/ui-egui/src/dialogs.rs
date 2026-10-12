@@ -378,7 +378,9 @@ impl Dialog {
             ),
             "solid.pipe" => Dialog::new(Kind::Pipe { diameter: "5 mm".into(), wall: String::new() }, vec![SelInput::new("Path", CURVES, true)]),
             "solid.bounding_solid" => Dialog::new(Kind::Stock { margin: "2 mm".into() }, vec![SelInput::new("Bodies (all if none)", BODIES, true)]),
-            "construct.plane.offset" => Dialog::new(Kind::OffsetPlane { offset: "10 mm".into() }, vec![SelInput::new("Plane", PLANES, false)]),
+            "construct.plane.offset" => {
+                Dialog::new(Kind::OffsetPlane { offset: "10 mm".into() }, vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)])
+            }
             "construct.plane.at_angle" => Dialog::new(
                 Kind::AnglePlane { angle: "45 deg".into() },
                 vec![SelInput::new("Plane", PLANES, false), SelInput::new("Axis", AXES, false)],
@@ -2575,8 +2577,11 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::OffsetPlane { offset } => {
             need(0, "a plane")?;
             let base = match sels(d, 0).first() {
-                Some(Sel::Plane { name }) => name.clone(),
-                _ => return Err("pick an origin or construction plane".into()),
+                Some(Sel::Plane { name }) => json!(name),
+                Some(face @ Sel::Face { .. }) => {
+                    crate::sketch_attachment_ui::face_plane(app, face).ok_or("the picked face is no longer in the model")?
+                }
+                _ => return Err("pick an origin or construction plane, or a planar face".into()),
             };
             ("construct.plane.offset", json!({"base": base, "offset": offset}))
         }
