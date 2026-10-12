@@ -9,7 +9,13 @@ use crate::{DocError, Result};
 
 type Key = (i64, i64, i64);
 
+/// Boundary of the picked face as drawn: a closed surface cut into pieces (a cylinder or a
+/// round's torus in halves) projects as the whole patch, since its seams are hidden.
 pub(super) fn face_edges(mesh: &Mesh, face: u32, plane: &Plane) -> Result<Vec<usize>> {
+    let patch = mesh.surface_patch(face as usize);
+    if patch.len() > 1 {
+        return family_edges(mesh, &patch.into_iter().collect(), plane);
+    }
     let edges = mesh.face_edges(face).into_iter().filter(|e| !mesh.seams.get(*e).copied().unwrap_or(false)).collect();
     boundary_edges(mesh, edges, plane)
 }
