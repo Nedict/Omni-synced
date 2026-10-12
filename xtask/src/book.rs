@@ -20,8 +20,8 @@ const SNAPSHOT_SIZE: (&str, &str) = ("960", "600");
 pub fn run(root: &Path, build: bool) -> Result<(), String> {
     let book = root.join("docs/book");
     let mut c = cargo();
-    c.args(["build", "-q", "--release", "-p", "solvecraft-cli"]);
-    crate::run(c, "cargo build -p solvecraft-cli")?;
+    c.args(["build", "-q", "--release", "-p", "solidcraft-cli"]);
+    crate::run(c, "cargo build -p solidcraft-cli")?;
 
     let out = cli().arg("commands").output().map_err(|e| format!("solvecraft-cli: {e}"))?;
     if !out.status.success() {
@@ -61,7 +61,7 @@ pub fn run(root: &Path, build: bool) -> Result<(), String> {
 /// The release solvecraft-cli just built.
 fn cli() -> std::process::Command {
     let mut c = cargo();
-    c.args(["run", "-q", "--release", "-p", "solvecraft-cli", "--"]);
+    c.args(["run", "-q", "--release", "-p", "solidcraft-cli", "--"]);
     c
 }
 

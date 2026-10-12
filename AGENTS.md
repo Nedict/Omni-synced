@@ -38,7 +38,7 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
   panic restores the design and reports `EngineError::Internal`.
 - **Crash reports:** the desktop app writes every panic and every unclean exit to a local crash folder,
   with the design and the commands that reproduce it (`solvecraft_engine::crash`, docs/crash-reports.md).
-  When someone says the app crashed, look there first: `solvecraft-cli crashes`, `crashes show <id>`,
+  When someone says the app crashed, look there first: `solidcraft-cli crashes`, `crashes show <id>`,
   `crashes replay <id>` (or the `diagnostics.crash_reports` command / MCP `crash_reports` tool).
 - **Prove it:** every crash fix lands with a regression test (see `hostile_params_never_panic`); a
   crash report's `design.solvecraft` + `replay.json` is the test's starting point.
@@ -120,7 +120,7 @@ version bumps solely from commit prefixes, overwrite published versions, or push
 before the draft is verified.
 
 ## Running and looking at the app
-- `cargo run --release -p solvecraft -- --sample --control PORT` (sample design + control channel).
+- `cargo run --release -p solidcraft -- --sample --control PORT` (sample design + control channel).
   Pick a free port. Without a display, run it under `Xvfb :99` with `DISPLAY=:99`.
 - Drive it with JSON lines on `127.0.0.1:PORT` (see `docs/control-protocol.md`):
   - `{"id":1,"method":"engine.execute","params":{"command":"solid.extrude","params":{"distance":20}}}`
@@ -133,7 +133,7 @@ before the draft is verified.
 - Reference tests: `cargo xtask oracle` replays `tests/oracle/*/recipe.json` and compares with
   each case's `expected.json` (analytic or FreeCAD values; writes `docs/oracle.md`). Expected
   values never come from a commercial CAD product.
-- Build with `CARGO_TARGET_DIR=<repo>/target`. Windows: `cargo xwin build --release --target x86_64-pc-windows-msvc -p solvecraft`.
+- Build with `CARGO_TARGET_DIR=<repo>/target`. Windows: `cargo xwin build --release --target x86_64-pc-windows-msvc -p solidcraft`.
 
 ## Roadmap
 `ROADMAP.md` (committed) tracks status, milestones and estimates. Update it whenever a

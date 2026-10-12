@@ -316,7 +316,7 @@ pub fn crash_draft(report: &serde_json::Value) -> Draft {
     let field = |o: Option<&serde_json::Value>, k: &str| o.and_then(|o| o.get(k)).and_then(serde_json::Value::as_str).unwrap_or("?").to_string();
     let system = report.get("system");
     let mut body = format!(
-        "## What happened\n{what}{}.\n\nMessage: {}\nLocation: {}\nThread: {}\nHappened {} time(s), first {}\n\n## Backtrace\n{}\n## Command\n{}\n## Recent commands\n{}\n\n## Reproduction\nCrash report `{}` on the reporter's computer holds {}. Replay it with `solvecraft-cli crashes replay {}`.\nOnly attach the design if it can be shared publicly.\n\n## Environment\n{}\n",
+        "## What happened\n{what}{}.\n\nMessage: {}\nLocation: {}\nThread: {}\nHappened {} time(s), first {}\n\n## Backtrace\n{}\n## Command\n{}\n## Recent commands\n{}\n\n## Reproduction\nCrash report `{}` on the reporter's computer holds {}. Replay it with `solidcraft-cli crashes replay {}`.\nOnly attach the design if it can be shared publicly.\n\n## Environment\n{}\n",
         command.map(|c| format!(" while running `{c}`")).unwrap_or_default(),
         limited(&s("message"), 2000),
         s("location"),

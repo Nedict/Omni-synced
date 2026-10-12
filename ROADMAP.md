@@ -99,7 +99,7 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 - Crash reports: every panic (in a command, in the kernel, anywhere else) and every unclean
   exit (abort, stack overflow, kill: found at the next start through a locked per-run command
   journal) leaves a local report with the backtrace, version and commit, the command and the
-  design that reproduce it (`solvecraft-cli crashes replay <id>`). Repeats are counted, not
+  design that reproduce it (`solidcraft-cli crashes replay <id>`). Repeats are counted, not
   rewritten; at most 20 reports, 50 MB and 90 days. The app shows them after a crash (Help >
   Crash Reports…) with a reviewed issue draft; agents read them through
   `diagnostics.crash_reports`, the MCP `crash_reports` tool or the CLI. Nothing is sent

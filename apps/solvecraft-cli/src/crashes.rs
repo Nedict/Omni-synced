@@ -1,4 +1,4 @@
-//! `solvecraft-cli crashes`: the crash reports the desktop app wrote on this computer
+//! `solidcraft-cli crashes`: the crash reports the desktop app wrote on this computer
 //! (docs/crash-reports.md): list them, show one, replay one, delete them.
 
 use std::sync::Mutex;
@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use serde_json::{Value, json};
 use solvecraft_engine::crash;
 
-const USAGE: &str = "usage: solvecraft-cli crashes [list [--json] | show <id> | replay <id> | dir | clear [<id>]]";
+const USAGE: &str = "usage: solidcraft-cli crashes [list [--json] | show <id> | replay <id> | dir | clear [<id>]]";
 
 pub fn run(args: &[String]) -> Result<(), String> {
     let dir = crash::default_dir().ok_or("no crash folder on this system")?;

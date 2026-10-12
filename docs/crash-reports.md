@@ -17,7 +17,7 @@ until you review and submit it, and the design is not part of the draft.
 | macOS | `~/Library/Application Support/SolveCraft/crashes` |
 
 `SOLVECRAFT_CRASH_DIR` overrides the folder. `solvecraft --crash-log` and
-`solvecraft-cli crashes dir` print it.
+`solidcraft-cli crashes dir` print it.
 
 ## For agents
 
@@ -27,12 +27,12 @@ All of these read the same folder:
 |---|---|---|---|
 | Engine command (MCP `execute`, control channel, scripts) | `diagnostics.crash_reports {limit?}` | `diagnostics.crash_report {id}` | `diagnostics.crash_reports.clear {id?}` |
 | MCP tool | `crash_reports {limit?}` | `crash_reports {id}` | — |
-| CLI | `solvecraft-cli crashes [--json]` | `solvecraft-cli crashes show <id>` | `solvecraft-cli crashes clear [<id>]` |
+| CLI | `solidcraft-cli crashes [--json]` | `solidcraft-cli crashes show <id>` | `solidcraft-cli crashes clear [<id>]` |
 | Control channel (UI) | `ui.help {"item": "crashes"}` opens the window | | |
 
-**Reproduce:** `solvecraft-cli crashes replay <id>` opens the report's design, runs its
+**Reproduce:** `solidcraft-cli crashes replay <id>` opens the report's design, runs its
 commands, and reports whether the same internal error happens again (same place and message).
-Without the CLI, run `solvecraft-cli run <report>/replay.json --in <report>/design.solvecraft`.
+Without the CLI, run `solidcraft-cli run <report>/replay.json --in <report>/design.solvecraft`.
 A fixed crash turns into a regression test with the same two files.
 
 **Check that reporting works:** with `SOLVECRAFT_CRASH_TEST=1` set for the app, the command

@@ -1,11 +1,11 @@
 [package]
-name = "solvecraft"
+name = "solidcraft"
 description = "SolidCraft desktop app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-default-run = "solvecraft"
+default-run = "solidcraft"
 
 [lints]
 workspace = true

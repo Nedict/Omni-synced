@@ -190,7 +190,7 @@ mod tests {
             "while running `solid.fillet`",
             "\"radius\": 2",
             "solid.box",
-            "solvecraft-cli crashes replay 20261012-162341-bb60791ed6692f1d",
+            "solidcraft-cli crashes replay 20261012-162341-bb60791ed6692f1d",
             "Renderer: test",
             "Happened 2 time(s)",
         ] {

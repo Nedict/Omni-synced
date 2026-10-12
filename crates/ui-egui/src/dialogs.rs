@@ -1577,6 +1577,22 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         );
                         enter |= field(ui, radius);
                         ui.end_row();
+                        // A constant radius too large for the edges: refused, or reduced to the
+                        // largest that fits (the preview shows what was used).
+                        if !*chamfer && rtype == 0 {
+                            row_label(ui, "Radius Fit");
+                            let fit = extra_choice(ui, &mut d.extra, "fi_fit", "fit", &[("Exact", "exact"), ("Reduce to Fit", "reduce")]);
+                            ui.end_row();
+                            if fit == 1
+                                && let Some(r) = app.preview.applied
+                            {
+                                row_label(ui, "Applied Radius");
+                                ui.label(RichText::new(crate::prefs::show_mm(app, r, 1)).color(t.warning));
+                                ui.end_row();
+                            }
+                        } else if !*chamfer {
+                            d.extra.remove("fit");
+                        }
                         if *chamfer && *ctype == 1 {
                             row_label(ui, "Distance 2");
                             enter |= field(ui, distance2);
@@ -3302,6 +3318,10 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                     }
                     *flip = *f;
                 }
+            }
+            // A fillet that reduces a radius too large for its edges.
+            if let FeatureKind::Fillet { fit: solvecraft_engine::doc::FilletFit::Reduce, .. } = &f.kind {
+                d.extra.insert("fit".into(), json!("reduce"));
             }
             // A chord-length or variable fillet.
             if let FeatureKind::Fillet { style, .. } = &f.kind {

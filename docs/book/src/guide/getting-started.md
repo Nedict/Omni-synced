@@ -12,12 +12,12 @@ stable Rust (1.95 or newer):
 
 ```sh
 git clone https://github.com/bherbruck/solidcraft && cd solidcraft
-cargo run --release -p solvecraft -- --sample   # opens with a sample part
+cargo run --release -p solidcraft -- --sample   # opens with a sample part
 ```
 
 `solvecraft part.step` opens a STEP, IGES, 3MF, STL or OBJ file as a new design, and
 `solvecraft design.solvecraft` opens a saved design. Windows builds cross-compile from Linux with
-`cargo xwin build --release --target x86_64-pc-windows-msvc -p solvecraft`.
+`cargo xwin build --release --target x86_64-pc-windows-msvc -p solidcraft`.
 
 ### macOS
 
@@ -71,11 +71,11 @@ cd apps/solvecraft-web && trunk serve --release
 `solvecraft-cli` runs the same commands without a window:
 
 ```sh
-cargo run --release -p solvecraft-cli -- commands                       # every command, as JSON
-cargo run --release -p solvecraft-cli -- run examples/bracket.json --out bracket.step
-cargo run --release -p solvecraft-cli -- eval examples/bracket.json     # volume, area, faces…
-cargo run --release -p solvecraft-cli -- snapshot examples/bracket.json --out bracket.png
-cargo run --release -p solvecraft-cli -- exec solid.box '{"length": 20, "width": 10, "height": 5}'
+cargo run --release -p solidcraft-cli -- commands                       # every command, as JSON
+cargo run --release -p solidcraft-cli -- run examples/bracket.json --out bracket.step
+cargo run --release -p solidcraft-cli -- eval examples/bracket.json     # volume, area, faces…
+cargo run --release -p solidcraft-cli -- snapshot examples/bracket.json --out bracket.png
+cargo run --release -p solidcraft-cli -- exec solid.box '{"length": 20, "width": 10, "height": 5}'
 ```
 
 A script is a list of commands:

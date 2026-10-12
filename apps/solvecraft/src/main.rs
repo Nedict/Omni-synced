@@ -158,7 +158,7 @@ fn main() -> eframe::Result {
             "--control" => control_port = args.next().and_then(|p| p.parse().ok()),
             "--sample" => sample = true,
             "--version" | "-V" => {
-                println!("solvecraft {}", env!("CARGO_PKG_VERSION"));
+                println!("solidcraft {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             "--crash-log" => {
@@ -168,14 +168,14 @@ fn main() -> eframe::Result {
                         for r in solvecraft_engine::crash::list(&dir).iter().take(5) {
                             println!("  {}  {}  {}", r.id, r.kind, r.message);
                         }
-                        println!("more: solvecraft-cli crashes");
+                        println!("more: solidcraft-cli crashes");
                     }
                     None => println!("no crash folder on this system"),
                 }
                 return Ok(());
             }
             "--help" | "-h" => {
-                println!("usage: solvecraft [--control PORT] [--sample] [--crash-log] [design.solvecraft | part.step]");
+                println!("usage: solidcraft [--control PORT] [--sample] [--crash-log] [design.solvecraft | part.step]");
                 return Ok(());
             }
             _ => files.push(a),
