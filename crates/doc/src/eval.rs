@@ -271,6 +271,10 @@ pub struct ModelState {
     pub construct: Vec<crate::construct::Construct>,
     /// Evaluation-cache keys of the sketches (by sketch feature id).
     sketch_keys: BTreeMap<u64, u64>,
+    /// The edges each fillet or chamfer blended, as found in this evaluation (by feature id):
+    /// a pattern of the feature repeats these, not the points picked when it was made, which a
+    /// parameter change may have moved off the edges.
+    blend_edges: BTreeMap<u64, Vec<Vec3>>,
 }
 
 impl ModelState {
@@ -290,6 +294,12 @@ impl ModelState {
             self.sketch_keys.get(&s.feature).hash(&mut h);
         }
         self.body_counter.hash(&mut h);
+        for (feature, points) in &self.blend_edges {
+            feature.hash(&mut h);
+            for p in points {
+                [p.x, p.y, p.z].map(f64::to_bits).hash(&mut h);
+            }
+        }
         serde_json::to_string(&self.threads).unwrap_or_default().hash(&mut h);
         serde_json::to_string(&self.sheets).unwrap_or_default().hash(&mut h);
         h.finish()
@@ -2735,8 +2745,11 @@ fn replay(
         // A fillet or chamfer repeats at the copied edges.
         if let FeatureKind::Fillet { edges, radius, .. } | FeatureKind::Chamfer { edges, distance: radius, .. } = &src.kind {
             let r = val(vals, radius, Kind::Length)?;
+            // The edges the feature blended in this evaluation (found by name), falling back to
+            // its picked points.
+            let found = st.blend_edges.get(&src.id).cloned().unwrap_or_else(|| edges.clone());
             for m in mats {
-                let moved: Vec<Vec3> = edges.iter().map(|p| crate::apply_point(m, *p)).collect();
+                let moved: Vec<Vec3> = found.iter().map(|p| crate::apply_point(m, *p)).collect();
                 let ti = blend_target(st, &None, &moved)?;
                 let Some(mb) = st.bodies.get(ti).cloned() else { continue };
                 let nb = match &src.kind {
@@ -3466,6 +3479,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             } else {
                 resolve_edges(&mb.body, edges, &f.edge_refs, warning)?
             };
+            st.blend_edges.insert(f.id, edges.clone());
             let input = mb.traced();
             // The blended body, and the lineage of what the last blend started from.
             let (nb, from) = match &f.kind {

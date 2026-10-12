@@ -2676,3 +2676,42 @@ fn feature_params_docs_list_shared_keys() {
         assert!(params(id).contains("targets?"), "{id}: {}", params(id));
     }
 }
+
+#[test]
+fn a_pattern_repeats_a_fillet_on_the_edges_it_found() {
+    // #219: a filleted pocket patterned along the plate, its height from a parameter. A taller
+    // pocket moves its far corner edges away from the points picked for the fillet; the pattern
+    // repeats the edges the fillet found (by name), not those points.
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name": "n", "expression": "14", "unit": ""}));
+    run(&mut s, "parameters.add", json!({"name": "h", "expression": "(419.1 mm - 3.175 mm - (n - 1) * 3.175 mm) / n", "unit": "mm"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [150, 422.275]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 19.05, "name": "Plate"}));
+    run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 19.05, "name": "PocketPlane"}));
+    run(&mut s, "sketch.create", json!({"plane": "PocketPlane"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [3.175, 3.175], "p1": [146.825, 29.9357]}));
+    run(&mut s, "sketch.dimension", json!({"entities": ["origin", "p1"], "type": "horizontal", "value": "3.175"}));
+    run(&mut s, "sketch.dimension", json!({"entities": ["origin", "p1"], "type": "vertical", "value": "3.175"}));
+    run(&mut s, "sketch.dimension", json!({"entities": ["l1"], "type": "length", "value": "143.65"}));
+    run(&mut s, "sketch.dimension", json!({"entities": ["l4"], "type": "length", "value": "h"}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 12.7, "direction": "negative", "operation": "cut", "name": "Pocket"}));
+    run(
+        &mut s,
+        "solid.fillet",
+        json!({"edges": [[3.175, 3.175, 12.700000000000001], [146.825, 3.175, 12.700000000000001], [146.825, 29.9357, 12.700000000000001], [3.175, 29.9357, 12.700000000000001]], "radius": 3.2}),
+    );
+    run(
+        &mut s,
+        "solid.pattern.rectangular",
+        json!({"features": ["Pocket", "Fillet1"], "dir1": [0, 1, 0], "count1": "n", "spacing1": "h + 3.175 mm"}),
+    );
+    let r = run(&mut s, "parameters.change", json!({"name": "n", "expression": "10"}));
+    assert_eq!(r["errors"].as_array().map(Vec::len), Some(0), "{r}");
+    let (n, h) = (10.0, (419.1 - 3.175 - 9.0 * 3.175) / 10.0);
+    let pocket = 143.65 * h * 12.7 - 4.0 * (1.0 - PI / 4.0) * 3.2 * 3.2 * 12.7;
+    let expect = 150.0 * 422.275 * 19.05 - n * pocket;
+    assert!(rel(volume(&mut s), expect) < 1e-5, "{} vs {expect}", volume(&mut s));
+}
