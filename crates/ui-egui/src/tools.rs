@@ -326,7 +326,25 @@ fn run_shape(app: &mut SolveApp, t: &Tool) -> Result<Vec<String>, String> {
 /// Only consume a complete, unambiguous selection; command validation owns geometry.
 pub(crate) fn constraint_preselection(command: &str, selection: &[solvecraft_engine::Sel]) -> Option<Value> {
     use solvecraft_engine::Sel::{SketchCurve, SketchPoint};
+    let selected_ids = |curves_only: bool, minimum: usize| -> Option<Vec<&str>> {
+        if !(minimum..=200).contains(&selection.len()) {
+            return None;
+        }
+        let ids: Vec<&str> = selection
+            .iter()
+            .map(|s| match s {
+                SketchCurve { id } => Some(id.as_str()),
+                SketchPoint { id } if !curves_only => Some(id.as_str()),
+                _ => None,
+            })
+            .collect::<Option<_>>()?;
+        let unique: std::collections::BTreeSet<_> = ids.iter().copied().collect();
+        (unique.len() == ids.len()).then_some(ids)
+    };
     match (command, selection) {
+        ("sketch.constraint.fix", _) => selected_ids(false, 1).map(|ids| json!({"entities":ids})),
+        ("sketch.constraint.polygon", _) => selected_ids(true, 3).map(|ids| json!({"lines":ids})),
+        ("sketch.constraint.curvature", [SketchCurve { id: a }, SketchCurve { id: b }]) if a != b => Some(json!({"a":a,"b":b})),
         ("sketch.constraint.horizontal_vertical", [SketchCurve { id }]) => Some(json!({"line":id})),
         ("sketch.constraint.horizontal_vertical", [SketchPoint { id: a }, SketchPoint { id: b }]) if a != b => Some(json!({"points":[a,b]})),
         ("sketch.constraint.coincident", [a, b]) => {
