@@ -290,9 +290,18 @@ pub fn drag_end() {
 
 /// The text shown for a dimension: the value (R / Ø for radius and diameter, degrees for
 /// angles), "fx: value" when an expression drives it, in parentheses when driven.
-pub fn label(k: &ConstraintKind, expr: Option<&str>, driven: bool) -> String {
+pub fn label(k: &ConstraintKind, expr: Option<&str>, driven: bool, units: &str, decimals: u8) -> String {
     let v = k.value().unwrap_or(0.0);
-    let num = if k.is_angle() { format!("{:.1}°", v.to_degrees()) } else { format!("{v:.2}") };
+    // Retain deliberately authored trailing zeros in a four-place inch literal too.
+    let authored_four = units == "in"
+        && expr.is_some_and(|e| {
+            e.trim().strip_suffix("in").map(str::trim).is_some_and(|number| {
+                number.parse::<f64>().is_ok()
+                    && number.split_once('.').is_some_and(|(_, fraction)| fraction.len() >= 4 && fraction.bytes().all(|b| b.is_ascii_digit()))
+            })
+        });
+    let decimals = if authored_four { decimals.max(4) } else { decimals };
+    let num = if k.is_angle() { format!("{:.1}°", v.to_degrees()) } else { crate::prefs::length_number(v, units, decimals) };
     let num = match k {
         ConstraintKind::Radius { .. } => format!("R{num}"),
         ConstraintKind::Diameter { .. } | ConstraintKind::LinearDiameter { .. } => format!("Ø{num}"),
@@ -300,7 +309,7 @@ pub fn label(k: &ConstraintKind, expr: Option<&str>, driven: bool) -> String {
     };
     let plain = expr.is_none_or(|e| {
         let e = e.trim();
-        let e = e.strip_suffix("mm").or_else(|| e.strip_suffix("deg")).or_else(|| e.strip_suffix('°')).unwrap_or(e);
+        let e = ["mm", "cm", "in", "ft", "m", "deg", "rad", "°"].iter().find_map(|unit| e.strip_suffix(unit)).unwrap_or(e);
         e.trim().parse::<f64>().is_ok()
     });
     let text = if plain { num } else { format!("fx: {num}") };
@@ -392,7 +401,8 @@ pub fn show(app: &mut SolveApp, ui: &egui::Ui, painter: &egui::Painter, proj: &P
         } else {
             tk.dimension
         };
-        let galley = painter.layout_no_wrap(label(&c.kind, expr, c.driven), font.clone(), col);
+        let galley =
+            painter.layout_no_wrap(label(&c.kind, expr, c.driven, &app.session.doc.units, app.preferences.length_decimals), font.clone(), col);
         let size = galley.size() + vec2(6.0, 2.0);
         let half = Vec2::new(f64::from(size.x) * 0.5 * px, f64::from(size.y) * 0.5 * px);
         // Unplaced linear dimensions sit outside the shape they measure.
@@ -528,7 +538,15 @@ fn edit_box(app: &mut SolveApp, ctx: &egui::Context) {
                     Err("The sketch changed; place the dimension again".into())
                 }
             } else {
-                app.run("parameters.change", json!({"name": e.param, "expression": e.expr}))
+                let kind = app
+                    .session
+                    .doc
+                    .param(&e.param)
+                    .and_then(|p| solvecraft_engine::doc::expr::unit_info(&p.unit))
+                    .map(|(k, _)| k)
+                    .unwrap_or(solvecraft_engine::doc::expr::Kind::Unitless);
+                let expression = app.session.doc.with_design_unit(&e.expr, kind);
+                app.run("parameters.change", json!({"name": e.param, "expression": expression}))
             };
             if let Err(err) = result {
                 app.set_status(err, true);
@@ -622,14 +640,32 @@ mod tests {
     }
 
     #[test]
+    fn inch_labels_convert_all_lengths_preserve_four_digits_and_leave_angles_alone() {
+        let length = ConstraintKind::Length { l: 0, value: 25.4 };
+        assert_eq!(label(&length, Some("25.4 mm"), false, "in", 2), "1.000");
+        assert_eq!(label(&length, Some("1 in"), false, "in", 2), "1.000");
+        assert_eq!(label(&length, Some("1.0000 in"), false, "in", 2), "1.0000");
+        let radius = ConstraintKind::Radius { c: 0, value: 1.2345 * 25.4 };
+        assert_eq!(label(&radius, Some("1.2345 in"), false, "in", 2), "R1.2345");
+        assert_eq!(label(&radius, Some("width / 2"), true, "in", 2), "(fx: R1.2345)");
+        let diameter = ConstraintKind::Diameter { c: 0, value: 0.001 * 25.4 };
+        assert_eq!(label(&diameter, None, false, "in", 2), "Ø0.001");
+        assert_eq!(crate::prefs::length_number(25.4 * (1.0 + 1e-12), "in", 2), "1.000");
+        assert_eq!(crate::prefs::length_number(25.4, "in", 5), "1.00000");
+        assert_eq!(crate::prefs::length_number(25.4, "cm", 2), "2.54");
+        let angle = ConstraintKind::Angle { a: 0, b: 1, value: std::f64::consts::FRAC_PI_4, flip: false };
+        assert_eq!(label(&angle, Some("45 deg"), false, "in", 2), "45.0°");
+    }
+
+    #[test]
     fn labels_show_the_value_or_fx() {
         let k = ConstraintKind::Length { l: 0, value: 25.0 };
-        assert_eq!(label(&k, Some("25 mm"), false), "25.00");
-        assert_eq!(label(&k, Some("width * 2"), false), "fx: 25.00");
-        assert_eq!(label(&k, None, true), "(25.00)");
-        assert_eq!(label(&ConstraintKind::Radius { c: 0, value: 5.0 }, Some("5 mm"), false), "R5.00");
-        assert_eq!(label(&ConstraintKind::Diameter { c: 0, value: 10.0 }, Some("10"), false), "Ø10.00");
+        assert_eq!(label(&k, Some("25 mm"), false, "mm", 2), "25.00");
+        assert_eq!(label(&k, Some("width * 2"), false, "mm", 2), "fx: 25.00");
+        assert_eq!(label(&k, None, true, "mm", 2), "(25.00)");
+        assert_eq!(label(&ConstraintKind::Radius { c: 0, value: 5.0 }, Some("5 mm"), false, "mm", 2), "R5.00");
+        assert_eq!(label(&ConstraintKind::Diameter { c: 0, value: 10.0 }, Some("10"), false, "mm", 2), "Ø10.00");
         let a = ConstraintKind::Angle { a: 0, b: 1, value: std::f64::consts::FRAC_PI_4, flip: false };
-        assert_eq!(label(&a, Some("45 deg"), false), "45.0°");
+        assert_eq!(label(&a, Some("45 deg"), false, "mm", 2), "45.0°");
     }
 }

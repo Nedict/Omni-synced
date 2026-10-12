@@ -75,7 +75,7 @@ fn analysis(app: &mut SolveApp, cmd: &str, p: Value) {
     let Ok(v) = app.run(cmd, p) else { return };
     let mark = match cmd {
         "inspect.center_of_mass" => v3(&v["center"]).map(|c| (c, "Center of mass".to_string())),
-        _ => v3(&v["at"]).zip(v["min_radius"].as_f64()).map(|(c, r)| (c, format!("R min {r:.3} mm"))),
+        _ => v3(&v["at"]).zip(v["min_radius"].as_f64()).map(|(c, r)| (c, format!("R min {}", crate::prefs::show_mm(app, r, 1)))),
     };
     if let Some(m) = mark {
         MARKS.with(|k| k.borrow_mut().push(m));
@@ -125,6 +125,12 @@ fn marks(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
 /// Commands that start with a step of their own: Canvas and Decal ask for the image first,
 /// Edit Canvas opens the canvas panel. False when the command should not go on.
 pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
+    if id == "sketch.edit_text"
+        && let Some(dialog) = crate::dialogs::Dialog::for_command(app, id)
+    {
+        app.dialog = Some(dialog);
+        return false;
+    }
     // Surface analyses toggle: a second click turns the same one off.
     use solvecraft_engine::SurfaceAnalysis as A;
     let same = match (id, app.session.analysis) {
@@ -349,6 +355,7 @@ fn mode(id: &str) -> Option<Mode> {
         "sketch.slot.arc_three_point" | "sketch.slot.arc_center" => Mode::Points(4),
         "sketch.spline.fit_point" | "sketch.spline.control_point" | "sketch.spline.control_point_5" => Mode::Points(0),
         "sketch.text" => Mode::Points(1),
+        "sketch.edit_text" => Mode::Entities(1),
         "sketch.blend_curve" => Mode::Points(2),
         "sketch.offset" => Mode::Entities(1),
         "sketch.fillet" | "sketch.chamfer.equal_distance" | "sketch.chamfer.distance_angle" | "sketch.chamfer.two_distance" => Mode::Entities(1),
@@ -406,6 +413,7 @@ pub fn hint(id: &str) -> Option<String> {
             "sketch.spline.fit_point" => "Spline: click fit points; click the start to close smoothly, or right-click to finish",
             "sketch.spline.control_point" | "sketch.spline.control_point_5" => "Control point spline: click control points; right-click to finish",
             "sketch.text" => "Text: click where the text starts",
+            "sketch.edit_text" => "Edit Text: click an outline of the text to edit",
             "sketch.blend_curve" => "Blend curve: click the ends of two curves",
             "sketch.offset" => "Offset: click a curve (its chain is offset), then the side and distance",
             "sketch.fillet" => "Fillet: click the corner of two lines",
@@ -730,6 +738,10 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
                 return;
             }
             let Some((id, _)) = sketch_entity(app, &hits) else { return };
+            if cmd == "sketch.edit_text" {
+                crate::sketch_text::open(app, &id);
+                return;
+            }
             if cmd == "sketch.centerline" {
                 let _ = app.run(cmd, json!({"curves": [id]}));
                 return;

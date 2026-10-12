@@ -35,6 +35,71 @@ const PLATE: f64 = 100.0 * 50.0 * 5.0;
 const HOLE: f64 = PI * 4.0 * 5.0;
 
 #[test]
+fn circular_axis_origin_rejects_invalid_values_atomically() {
+    let mut s = plate_with_hole();
+    run(&mut s, "parameters.add", json!({"name":"cx","expression":"50 mm"}));
+    run(&mut s, "parameters.add", json!({"name":"cy","expression":"25 mm"}));
+    let before = s.doc.to_json();
+    let undo = s.undo.len();
+    for origin in [
+        json!(["cx", "cy", 0]),
+        json!(["50", 25, 0]),
+        json!([0, 0]),
+        json!([0, 0, 0, 0]),
+        json!(null),
+        json!(false),
+        json!({"x":0,"y":0}),
+        json!([1e9, 0, 0]),
+        json!([0, 1e100, 0]),
+    ] {
+        for (cmd, params) in [
+            ("solid.pattern.circular", json!({"features":["Hole1"],"axis":{"origin":origin,"dir":[0,0,1]},"count":4})),
+            ("construct.plane.at_angle", json!({"base":"XY","axis":{"origin":origin,"dir":[1,0,0]},"angle":45})),
+        ] {
+            let error = s.execute(cmd, &params).unwrap_err().to_string();
+            assert!(error.contains("axis.origin") && error.contains("expressions are not supported"), "{error}");
+            assert_eq!(s.doc.to_json(), before);
+            assert_eq!(s.undo.len(), undo);
+        }
+    }
+}
+
+#[test]
+fn circular_numeric_axis_origin_preserves_hole_geometry_and_reopens() {
+    for origin in [json!([50, 50, 0]), json!({"x":50,"y":50,"z":0})] {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane":"XY"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[100,100]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance":10}));
+        run(&mut s, "sketch.create", json!({"plane":"XY"}));
+        run(&mut s, "sketch.circle.center", json!({"center":[50,20],"radius":5}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance":10,"operation":"cut","name":"Hole"}));
+        let before = s.doc.to_json();
+        run(&mut s, "solid.pattern.circular", json!({"features":["Hole"],"axis":{"origin":origin,"dir":[0,0,1]},"count":4}));
+        let expected = 100.0 * 100.0 * 10.0 - 4.0 * PI * 25.0 * 10.0;
+        assert!(rel(volume(&mut s), expected) < 1e-4);
+        let saved = s.doc.to_json();
+        run(&mut s, "edit.undo", json!({}));
+        assert_eq!(s.doc.to_json(), before);
+        run(&mut s, "edit.redo", json!({}));
+        assert_eq!(s.doc.to_json(), saved);
+        let mut reopened = Session::new(solvecraft_doc::Document::from_json(&saved).unwrap());
+        assert!(rel(volume(&mut reopened), expected) < 1e-4);
+    }
+    // The documented omission of origin still means zero.
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length":2,"width":2,"height":2,"corner":[20,0,0],"body_name":"Cube"}));
+    let before = s.doc.to_json();
+    run(&mut s, "solid.pattern.circular", json!({"bodies":["Cube"],"axis":{"dir":[0,0,1]},"count":4}));
+    let implicit = s.doc.to_json();
+    let mut explicit = Session::new(solvecraft_doc::Document::from_json(&before).unwrap());
+    run(&mut explicit, "solid.pattern.circular", json!({"bodies":["Cube"],"axis":{"origin":[0,0,0],"dir":[0,0,1]},"count":4}));
+    assert_eq!(implicit, explicit.doc.to_json());
+}
+
+#[test]
 fn pattern_on_path_spacing_extent_and_flip() {
     let mut s = plate_with_hole();
     assert!(rel(volume(&mut s), PLATE - HOLE) < 1e-4);

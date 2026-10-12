@@ -46,6 +46,10 @@ mod web {
         on_unload.forget();
     }
 
+    const JAPANESE_FONT_PATH: &str = "./fonts/BIZUDPGothic-Regular.ttf";
+
+    type FontLoadResult = Rc<std::cell::RefCell<Option<Result<Vec<u8>, String>>>>;
+
     struct Shell {
         app: SolveApp,
         files: Rc<Files>,
@@ -58,6 +62,9 @@ mod web {
         rename_focus: bool,
         /// The start page's recent designs were filled from the stored ones.
         recents_synced: bool,
+        /// On-demand CJK font: fetched only when a CJK language is selected.
+        font: solvecraft_ui_egui::fonts::CjkFontLoader,
+        font_result: FontLoadResult,
     }
 
     impl Shell {
@@ -304,10 +311,42 @@ mod web {
             }
             files::autosave(&self.files, None);
         }
+
+        /// Fetch and install the CJK font when a CJK language is selected. If that fails, this
+        /// session falls back to English (no tofu); the saved language preference is kept.
+        fn tick_font(&mut self, ctx: &egui::Context) {
+            let done = self.font_result.borrow_mut().take();
+            if let Some(res) = done {
+                let installed = match res {
+                    Ok(bytes) => solvecraft_ui_egui::fonts::install_cjk_font(ctx, bytes),
+                    Err(err) => {
+                        log::warn!("failed to fetch CJK font from {JAPANESE_FONT_PATH}: {err}");
+                        false
+                    }
+                };
+                if installed {
+                    log::info!("loaded web CJK font from {JAPANESE_FONT_PATH}");
+                } else {
+                    log::warn!("CJK font unavailable; showing English for this session");
+                }
+                self.font.finished(installed, &mut self.app.preferences.language);
+                ctx.request_repaint();
+            }
+            if self.font.tick(&mut self.app.preferences.language) {
+                let slot = self.font_result.clone();
+                let ctx = ctx.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let res = fetch_font_bytes(JAPANESE_FONT_PATH).await;
+                    *slot.borrow_mut() = Some(res);
+                    ctx.request_repaint();
+                });
+            }
+        }
     }
 
     impl eframe::App for Shell {
         fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+            self.tick_font(ctx);
             self.app.logic(ctx);
             self.files_tick(ctx);
             UNSAVED.with(|u| u.set(solvecraft_ui_egui::documents::any_dirty(&self.app)));
@@ -323,7 +362,11 @@ mod web {
             self.recovery_prompt(&ctx);
         }
         fn save(&mut self, storage: &mut dyn eframe::Storage) {
+            // Persist the user's own language, not a session-only English fallback.
+            let saved = self.font.persisted_language(&self.app.preferences.language).to_owned();
+            let live = std::mem::replace(&mut self.app.preferences.language, saved);
             storage.set_string(PREFS_KEY, self.app.prefs());
+            self.app.preferences.language = live;
         }
     }
 
@@ -332,6 +375,19 @@ mod web {
 
     fn query() -> String {
         web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
+    }
+
+    /// Fetch font bytes asynchronously through the browser.
+    async fn fetch_font_bytes(url: &str) -> Result<Vec<u8>, String> {
+        let window = web_sys::window().ok_or("no window")?;
+        let resp_val = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(url)).await.map_err(|e| format!("{e:?}"))?;
+        let resp: web_sys::Response = resp_val.dyn_into().map_err(|_| "response cast failed")?;
+        if !resp.ok() {
+            return Err(format!("HTTP {}", resp.status()));
+        }
+        let ab_val = wasm_bindgen_futures::JsFuture::from(resp.array_buffer().map_err(|e| format!("{e:?}"))?).await.map_err(|e| format!("{e:?}"))?;
+        let uint8_arr = js_sys::Uint8Array::new(&ab_val);
+        Ok(uint8_arr.to_vec())
     }
 
     pub fn start() {
@@ -355,6 +411,7 @@ mod web {
                     canvas,
                     options,
                     Box::new(move |cc| {
+                        solvecraft_ui_egui::fonts::setup_fonts(&cc.egui_ctx);
                         let files = Rc::new(Files::default());
                         files::start(&files);
                         let panel = files.clone();
@@ -398,6 +455,8 @@ mod web {
                             renaming: None,
                             rename_focus: false,
                             recents_synced: false,
+                            font: Default::default(),
+                            font_result: Rc::new(std::cell::RefCell::new(None)),
                         }))
                     }),
                 )
