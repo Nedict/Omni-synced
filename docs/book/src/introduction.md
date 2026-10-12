@@ -21,8 +21,8 @@ also script, test or hand to an agent.
 SolidCraft is early. Sketching, solid modelling, parameters, components with joints, sheet metal
 and a plastic-enclosure subset work; surfaces, drawings, CAM and simulation are deferred. The
 [roadmap](https://github.com/bherbruck/solidcraft/blob/main/ROADMAP.md) has the details, and
-[command parity](dev/parity.md) and the [Fusion oracle](dev/oracle.md) measure how far along it
-is.
+the [feature list](dev/features.md) lists every command by area, and the
+[reference tests](dev/oracle.md) check modelling results against analytic and FreeCAD values.
 
 Existing `.solvecraft` designs and `solvecraft-cli` commands keep their names and behavior.
 
@@ -30,5 +30,7 @@ This book has two halves: the **user guide** for people modelling with SolidCraf
 **developer guide** for people working on it. The [command reference](reference/commands.md) is
 generated from the code on every build.
 
-SolidCraft is licensed MIT OR Apache-2.0. It is a clean-room implementation and is not affiliated
-with Autodesk; Fusion is a trademark of Autodesk, Inc.
+SolidCraft is licensed MIT OR Apache-2.0. It is independent: behaviour is designed from public
+documentation, general CAD conventions and user feedback, and reference tests use analytic
+values and open-source tools. SolidCraft is not affiliated with Autodesk; Fusion is a trademark
+of Autodesk, Inc.

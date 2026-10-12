@@ -118,6 +118,7 @@ fn join_meeting_nothing_keeps_the_first_body() {
     assert!(rel(volume(&mut s), 1064.0) < 1e-6);
 }
 
+mod boolean_diagnostics;
 mod component_frames;
 mod mirror_planes;
 mod primitive_points;
@@ -511,9 +512,20 @@ fn registry_is_consistent() {
     let n = ids.len();
     ids.dedup();
     assert_eq!(ids.len(), n, "duplicate command ids");
-    assert!(find_command("extrude").is_some(), "case-insensitive lookup");
+    assert_eq!(find_command("Solid.Extrude").map(|c| c.id), Some("solid.extrude"), "case-insensitive lookup");
     let s = Session::default();
     assert!(!find_command("sketch.line").unwrap().info(&s).enabled);
+}
+
+/// Only SolidCraft's own dotted ids name commands; other ids are unknown commands.
+#[test]
+fn only_own_ids_name_commands() {
+    for old in ["Extrude", "SketchCreate", "FusionFilletEdgesCommand"] {
+        assert!(find_command(old).is_none(), "{old}");
+        let mut s = Session::default();
+        let err = s.execute(old, &serde_json::json!({})).unwrap_err();
+        assert!(matches!(err, crate::EngineError::UnknownCommand(_)), "{old}: {err}");
+    }
 }
 
 #[test]
@@ -2335,15 +2347,15 @@ fn boundary_fill_cells() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 20, "body_name": "A"}));
     run(&mut s, "solid.box", json!({"corner": [10, 0, 0], "length": 20, "width": 20, "height": 20, "body_name": "B"}));
-    let r = run(&mut s, "SurfaceSculpt", json!({"tools": ["A", "B"], "cells": [[15, 10, 10]], "remove_tools": true}));
+    let r = run(&mut s, "solid.boundary_fill", json!({"tools": ["A", "B"], "cells": [[15, 10, 10]], "remove_tools": true}));
     let m = run(&mut s, "inspect.measure", json!({}));
     assert_eq!(m["body_count"], 1, "{r} {m}");
     assert!(rel(m["total"]["volume_mm3"].as_f64().unwrap_or(0.0), 10.0 * 20.0 * 20.0) < 1e-9);
     run(&mut s, "edit.undo", json!({}));
-    run(&mut s, "SurfaceSculpt", json!({"tools": ["A", "B"], "cells": [[5, 10, 10], [25, 10, 10]], "remove_tools": true}));
+    run(&mut s, "solid.boundary_fill", json!({"tools": ["A", "B"], "cells": [[5, 10, 10], [25, 10, 10]], "remove_tools": true}));
     let m = run(&mut s, "inspect.measure", json!({}));
     assert!(rel(m["total"]["volume_mm3"].as_f64().unwrap_or(0.0), 2.0 * 10.0 * 20.0 * 20.0) < 1e-9, "{m}");
-    assert!(s.execute("SurfaceSculpt", &json!({"tools": ["A"], "cells": [[100, 100, 100]]})).is_err());
+    assert!(s.execute("solid.boundary_fill", &json!({"tools": ["A"], "cells": [[100, 100, 100]]})).is_err());
 }
 
 /// Rectangles name their sides and corners, so they can be dimensioned without inspecting the
@@ -2496,6 +2508,20 @@ fn deleting_a_sketch_leaves_no_silently_failing_feature() {
             join["error"]
         );
     }
+}
+
+/// Renaming one pattern copy leaves the other copies' names alone (#265).
+#[test]
+fn renaming_a_pattern_copy_keeps_the_other_copies_names() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "operation": "new_body", "body_name": "X"}));
+    run(&mut s, "solid.pattern.rectangular", json!({"bodies": ["X"], "dir1": [1, 0, 0], "count1": 3, "spacing1": 20}));
+    run(&mut s, "body.rename", json!({"body": "X (2)", "name": "Second"}));
+    let third = run(&mut s, "inspect.measure", json!({"bodies": ["X (3)"]}));
+    assert_eq!(third["bodies"][0]["bbox"]["min"][0].as_f64().map(f64::round), Some(40.0), "X (3) is still the copy at x = 40: {third}");
+    run(&mut s, "body.rename", json!({"body": "X (3)", "name": "Third"}));
+    let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names, ["X", "Second", "Third"]);
 }
 
 /// Parameters that work are listed in the command's params doc, which is all agents see (#271).

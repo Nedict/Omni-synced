@@ -4,6 +4,14 @@ A sketch lies on a plane: an origin plane, a construction plane or a planar face
 **Create Sketch** (`sketch.create`) and click a plane, or pick a face first. **Finish Sketch**
 returns to the model.
 
+In scripts, `XY`, `XZ`, `YZ` and their `Top`, `Front`, `Right` aliases name origin planes.
+These names are reserved: a construction plane cannot be created with or renamed to one
+(case-insensitive). If an older design already has a construction plane with such a name, a
+string argument naming it is ambiguous and is rejected; use the other alias (`XY` for `Top`)
+for the origin plane, the construction feature's numeric ID to select it, or an explicit
+`{origin: [x,y,z], normal: [x,y,z]}` plane. Existing saved references retain their meaning;
+opening a design does not reinterpret old sketches.
+
 Curves adapt to the current zoom and display scale. Picking and highlighting use the same
 visible boundary, including small circles at Fit and sketches in rotated components.
 Profile shading follows those curves while preserving holes. Zooming changes the display

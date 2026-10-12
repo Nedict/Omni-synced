@@ -34,10 +34,7 @@ impl ShortcutBox {
     }
     pub fn load(&mut self, v: &Value) {
         let list = |k: &str| -> Vec<String> {
-            v.get(k)
-                .and_then(Value::as_array)
-                .map(|a| a.iter().take(64).filter_map(|x| x.as_str().map(|id| solvecraft_engine::legacy_ids::current_id(id).to_string())).collect())
-                .unwrap_or_default()
+            v.get(k).and_then(Value::as_array).map(|a| a.iter().take(64).filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
         };
         self.recent = list("recent");
         self.pinned = list("pinned");

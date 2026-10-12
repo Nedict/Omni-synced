@@ -122,9 +122,41 @@ jobs:
         if: always()
         run: sccache --show-stats
 
+  oracle:
+    name: Reference tests
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: oracle
+      - name: Set up compiler cache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.16.0
+      - name: Build the command line
+        run: cargo build -p solvecraft-cli --profile ci --locked
+      - name: Replay tests/oracle and compare with expected.json
+        run: cargo xtask oracle --cli target/ci/solvecraft-cli
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oracle-report
+          path: docs/oracle.md
+
   # Preserve the existing check name for branch protection, including docs-only PRs.
   ci:
-    needs: [changes, checks, clippy, tests]
+    needs: [changes, checks, clippy, tests, oracle]
     if: always()
     runs-on: ubuntu-24.04
     steps:
@@ -135,12 +167,14 @@ jobs:
           NATIVE: ${{ needs.changes.outputs.native }}
           CLIPPY: ${{ needs.clippy.result }}
           TESTS: ${{ needs.tests.result }}
+          ORACLE: ${{ needs.oracle.result }}
         run: |
           test "$CHANGES" = success
           test "$CHECKS" = success
           if [ "$NATIVE" = true ]; then
             test "$CLIPPY" = success
             test "$TESTS" = success
+            test "$ORACLE" = success
           fi
 
   wasm:

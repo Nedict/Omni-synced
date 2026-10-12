@@ -10,7 +10,6 @@
 pub mod cmd;
 pub mod frames;
 pub mod fuzz;
-pub mod legacy_ids;
 pub mod licences;
 pub mod occurrences;
 pub mod params;

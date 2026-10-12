@@ -594,8 +594,8 @@ fn toolbar_pins_removes_reorders_and_keeps_its_layout() {
     tc::reorder(&mut app, "SOLID", extra, "MODIFY", None);
     assert!(!ids(&app, "CREATE").contains(&extra) && ids(&app, "MODIFY").last() == Some(&extra));
     // Pin to Shortcuts goes to the S box's favourites.
-    act(&mut app, &Target::ToolbarCommand { id: "Extrude".into() }, "Pin to Shortcuts");
-    assert!(app.sbox.pinned.iter().any(|p| p == "Extrude"));
+    act(&mut app, &Target::ToolbarCommand { id: "solid.extrude".into() }, "Pin to Shortcuts");
+    assert!(app.sbox.pinned.iter().any(|p| p == "solid.extrude"));
     // Kept between runs, and exported and imported with the shortcuts.
     let mut other = sample_app();
     other.load_prefs(&app.prefs());

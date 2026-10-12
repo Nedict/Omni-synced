@@ -14,7 +14,7 @@
   row gives that item's menu. Rows drag into groups and other components.
 - **Viewport.** Click to select, Shift or Ctrl to add, drag for a window or crossing box. The
   wheel zooms at the cursor, the middle button pans and right-drag orbits freely (the mouse
-  preset in Preferences switches to SolidWorks or Inventor style). Shift+middle orbits freely
+  preset in Preferences switches to SolidWorks, Inventor, Alias or Tinkercad style). Shift+middle orbits freely
   in the default and Inventor presets. Shift+right-drag snaps to the nearest standard or
   diagonal view; Shift does not request snapping when the preset already requires it to orbit.
   The axis view shows the world's X/Y/Z directions in SolidCraft's colors. Click a signed
@@ -43,6 +43,18 @@ Navigation › **Smooth wheel zoom** is on by default. Turn it off to apply each
 trackpad event immediately, with no smoothing tail. It is independent of **Animate view
 changes**, which controls axis views, Look At, Home and Fit. Re-enabling smoothing during
 a wheel gesture takes effect after that gesture ends, avoiding leftover zoom being replayed.
+
+Navigation › **Alias** uses Alias's camera keys: Shift+Alt+left drag orbits, Shift+Alt+middle
+drag pans and Shift+Alt+right drag zooms (drag down to move away, up to move closer). Without
+Shift+Alt, a left drag still selects with a box and drags sketch geometry.
+
+Some Linux desktops take Alt+drag for themselves (moving or resizing windows), so the viewport
+never sees it. To free it:
+
+- **KDE Plasma:** System Settings › Window Management › Window Behavior › Window Actions, set
+  **Modifier key** to Meta (or None).
+- **GNOME:** run `gsettings set org.gnome.desktop.wm.preferences mouse-button-modifier '<Super>'`
+  (or set Tweaks › Windows › Window Action Key to Super).
 
 Shift-orbit snapping includes 45-degree edge views and isometric corner views, with a
 lightly damped spring transition and a small boundary margin to prevent flicker.

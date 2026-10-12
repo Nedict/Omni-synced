@@ -68,12 +68,12 @@ pub(crate) fn cap_key(outer: &[String], holes: &[Vec<String>]) -> String {
     }
     format!("{:x}", hash.finalize())
 }
-pub(crate) fn exact_region_signature(sketch: &SolvedSketch, region: &solvecraft_geom::Region2) -> Option<solvecraft_kernel::CapSignature> {
+fn exact_region_signature(curves: &ExactSketchCurves, region: &solvecraft_geom::Region2) -> Option<solvecraft_kernel::CapSignature> {
     if region.outer.segs.len() + region.holes.iter().map(|hole| hole.segs.len()).sum::<usize>() > 4096 || region.holes.len() > 128 {
         return None;
     }
     let signature = |outline: &solvecraft_geom::Loop2| {
-        let mut ids = outline.segs.iter().map(|segment| exact_sketch_curve(sketch, segment)).collect::<Option<Vec<_>>>()?;
+        let mut ids = outline.segs.iter().map(|segment| curves.find(segment)).collect::<Option<Vec<_>>>()?;
         ids.sort();
         ids.dedup();
         Some(ids)
@@ -112,6 +112,7 @@ pub(crate) fn extrude_cap_bindings(sketch: &SolvedSketch, bodies: &[solvecraft_k
             }
         }
     }
+    let curves = ExactSketchCurves::new(sketch);
     let mut counts = std::collections::BTreeMap::new();
     let mut bindings = Vec::with_capacity(bodies.len());
     for body in bodies {
@@ -121,7 +122,7 @@ pub(crate) fn extrude_cap_bindings(sketch: &SolvedSketch, bodies: &[solvecraft_k
             let signature = if let Some(FaceSource::ExtrudeCap { region, high, .. }) = source {
                 let signature = match &cached {
                     Some((previous, signature)) if *previous == region => signature.clone(),
-                    _ => exact_region_signature(sketch, region),
+                    _ => exact_region_signature(&curves, region),
                 };
                 cached = Some((region, signature.clone()));
                 if let Some((outer, holes)) = &signature {
@@ -307,36 +308,55 @@ pub(crate) fn flat_source_matches(certificate: &FaceCertificate, source: &solvec
 
 /// Match a generated segment to one exact analytic sketch curve. Coincident
 /// candidates are ambiguous and never resolved by distance or candidate order.
-pub(crate) fn exact_sketch_curve(sketch: &SolvedSketch, generated: &Seg2) -> Option<String> {
-    if sketch.sketch.curves.len() > 2000 {
-        return None;
-    }
-    let mut found = None;
-    for (index, curve) in sketch.sketch.curves.iter().enumerate() {
-        if curve.construction
-            || !matches!(
-                curve.kind,
-                solvecraft_sketch::CurveKind::Line { .. } | solvecraft_sketch::CurveKind::Arc { .. } | solvecraft_sketch::CurveKind::Circle { .. }
-            )
-        {
-            continue;
+pub(crate) struct ExactSketchCurves<'a> {
+    segments: Vec<(&'a str, Vec<Seg2>)>,
+}
+
+impl<'a> ExactSketchCurves<'a> {
+    /// Prepare only bounded analytic curves, once per certification pass. Point lookup
+    /// and segment allocation must not be repeated for every generated face.
+    pub(crate) fn new(sketch: &'a SolvedSketch) -> Self {
+        let mut segments = Vec::new();
+        if sketch.sketch.curves.len() > 2000 {
+            return Self { segments };
         }
-        let matches = if let solvecraft_sketch::CurveKind::Circle { c, r } = curve.kind {
-            sketch
-                .sketch
-                .point(c)
-                .is_some_and(|center| exact_segment_contains(&Seg2::Arc { center, radius: r, start: 0., sweep: std::f64::consts::TAU }, generated))
-        } else {
-            sketch.sketch.segs(index).iter().any(|original| exact_segment_contains(original, generated))
-        };
-        if matches {
-            if found.is_some() {
-                return None;
+        for (index, curve) in sketch.sketch.curves.iter().enumerate() {
+            if curve.construction
+                || !matches!(
+                    curve.kind,
+                    solvecraft_sketch::CurveKind::Line { .. }
+                        | solvecraft_sketch::CurveKind::Arc { .. }
+                        | solvecraft_sketch::CurveKind::Circle { .. }
+                )
+            {
+                continue;
             }
-            found = Some(curve.id.clone());
+            let originals = if let solvecraft_sketch::CurveKind::Circle { c, r } = curve.kind {
+                sketch
+                    .sketch
+                    .point(c)
+                    .map(|center| vec![Seg2::Arc { center, radius: r, start: 0., sweep: std::f64::consts::TAU }])
+                    .unwrap_or_default()
+            } else {
+                sketch.sketch.segs(index)
+            };
+            segments.push((curve.id.as_str(), originals));
         }
+        Self { segments }
     }
-    found
+
+    pub(crate) fn find(&self, generated: &Seg2) -> Option<String> {
+        let mut found = None;
+        for (id, originals) in &self.segments {
+            if originals.iter().any(|original| exact_segment_contains(original, generated)) {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(*id);
+            }
+        }
+        found.map(str::to_owned)
+    }
 }
 
 fn exact_segment_contains(original: &Seg2, generated: &Seg2) -> bool {
@@ -486,6 +506,73 @@ mod shell_tests;
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn solved(mut sketch: solvecraft_sketch::Sketch) -> SolvedSketch {
+        let report = solvecraft_sketch::solve(&mut sketch);
+        SolvedSketch { feature: 1, name: "sources".into(), plane: solvecraft_geom::Plane::XY, sketch, report, profiles: Vec::new() }
+    }
+
+    #[test]
+    fn prepared_sources_keep_exact_identity_and_reject_ambiguity() {
+        use solvecraft_geom::Vec2;
+        let mut sketch = solvecraft_sketch::Sketch::new();
+        sketch.add_line(Vec2::ZERO, Vec2::new(10., 0.), None, None, Some("line")).unwrap();
+        sketch.add_circle(Vec2::new(20., 0.), 2., None, Some("circle")).unwrap();
+        let construction = sketch.add_line(Vec2::ZERO, Vec2::new(10., 0.), None, None, Some("construction")).unwrap();
+        sketch.curves[construction].construction = true;
+        let sketch = solved(sketch);
+        let curves = ExactSketchCurves::new(&sketch);
+        let partial = Seg2::Line { a: Vec2::new(8., 0.), b: Vec2::new(2., 0.) };
+        assert_eq!(curves.find(&partial).as_deref(), Some("line"));
+        assert_eq!(curves.find(&Seg2::Arc { center: Vec2::new(20., 0.), radius: 2., start: 1., sweep: -2. }).as_deref(), Some("circle"));
+        assert_eq!(curves.find(&Seg2::Line { a: Vec2::ZERO, b: Vec2::new(11., 0.) }), None);
+        let mut ambiguous = sketch.clone();
+        ambiguous.sketch.add_line(Vec2::new(1., 0.), Vec2::new(9., 0.), None, None, Some("overlap")).unwrap();
+        assert_eq!(ExactSketchCurves::new(&ambiguous).find(&partial), None);
+        // A prepared pass borrows one immutable evaluated sketch, so an upstream edit
+        // necessarily prepares fresh sources rather than retaining stale coordinates.
+        let mut moved = sketch.clone();
+        moved.sketch = solvecraft_sketch::Sketch::new();
+        moved.sketch.add_line(Vec2::new(0., 1.), Vec2::new(10., 1.), None, None, Some("line")).unwrap();
+        assert_eq!(ExactSketchCurves::new(&moved).find(&partial), None);
+    }
+
+    #[test]
+    #[ignore = "manual optimized certification microbenchmark; no timing assertion"]
+    fn benchmark_prepared_extrude_sources() {
+        use solvecraft_geom::Vec2;
+        let mut sketch = solvecraft_sketch::Sketch::new();
+        for i in 0..1000 {
+            let y = i as f64;
+            sketch.add_line(Vec2::new(0., y), Vec2::new(10., y), None, None, None).unwrap();
+        }
+        let sketch = solved(sketch);
+        let queries: Vec<_> = (0..1000).map(|i| Seg2::Line { a: Vec2::new(2., i as f64), b: Vec2::new(8., i as f64) }).collect();
+        let start = std::time::Instant::now();
+        let old: Vec<_> = queries
+            .iter()
+            .map(|generated| {
+                let mut found = None;
+                for (index, curve) in sketch.sketch.curves.iter().enumerate() {
+                    if sketch.sketch.segs(index).iter().any(|original| exact_segment_contains(original, generated)) {
+                        if found.is_some() {
+                            return None;
+                        }
+                        found = Some(curve.id.clone());
+                    }
+                }
+                found
+            })
+            .collect();
+        let old_ms = start.elapsed().as_secs_f64() * 1000.;
+        let start = std::time::Instant::now();
+        let curves = ExactSketchCurves::new(&sketch);
+        let new: Vec<_> = queries.iter().map(|query| curves.find(query)).collect();
+        let new_ms = start.elapsed().as_secs_f64() * 1000.;
+        assert_eq!(old, new);
+        assert!(new.iter().all(Option::is_some));
+        eprintln!("1000 analytic sources / 1000 face segments: repeated={old_ms:.3}ms prepared={new_ms:.3}ms (includes preparation)");
+    }
     #[test]
     fn certificate_budgets_apply_before_saved_target_and_paint_decode() {
         for certificate in [

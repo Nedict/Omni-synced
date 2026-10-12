@@ -49,6 +49,9 @@ pub struct ViewportState {
     /// Nothing will look at the frame (the headless scenario harness): skip the software render.
     pub no_pixels: bool,
     pub nav: Option<NavMode>,
+    /// The preset's navigation for the left-button drag under way (Alias: Shift+Alt), taken
+    /// when the button went down, so the drag neither selects nor moves sketch geometry.
+    pub primary_nav: Option<NavMode>,
     /// What a click would pick now (after the active command's filter).
     pub hover: Option<Hit>,
     pub mouse: Option<Pos2>,
@@ -1543,7 +1546,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     app.viewport.rect = Some(rect);
     refresh_layout(app, ui.ctx().pixels_per_point());
     let resp = ui.interact(rect, ui.id().with("viewport"), Sense::click_and_drag());
-    let (hover, scroll, mods, middle, secondary_down, primary_down, delta) = ui.input(|i| {
+    let (hover, scroll, mods, middle, secondary_down, primary_down, primary_pressed, primary_released, delta) = ui.input(|i| {
         (
             i.pointer.hover_pos(),
             i.smooth_scroll_delta.y,
@@ -1551,6 +1554,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             i.pointer.middle_down(),
             i.pointer.secondary_down(),
             i.pointer.primary_down(),
+            i.pointer.primary_pressed(),
+            i.pointer.primary_released(),
             i.pointer.delta(),
         )
     });
@@ -1597,14 +1602,28 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         app.cancel_view_animation();
         app.cam.zoom_at(f, anchor);
     }
-    let dragging = resp.dragged() || (inside && (middle || secondary_down));
+    // A left press with the preset's keys (Alias: Shift+Alt) navigates until the button is let
+    // go (kept through the release frame, so the end of the drag doesn't select either).
+    if primary_pressed && inside {
+        app.viewport.primary_nav = crate::prefs::nav_mode(app, crate::prefs::NavButton::Left, mods);
+    } else if !primary_down && !primary_released {
+        app.viewport.primary_nav = None;
+    }
+    // The fixed navigation mode (navigation bar) or the preset's left-button binding.
+    let primary_nav = app.viewport.nav.or(app.viewport.primary_nav);
+    let button = if middle {
+        Some(crate::prefs::NavButton::Middle)
+    } else if secondary_down {
+        Some(crate::prefs::NavButton::Right)
+    } else {
+        None
+    };
+    let dragging = resp.dragged() || (inside && button.is_some());
     let mode = if dragging && app.viewport.axis_drag.is_none() {
-        if middle || secondary_down {
-            crate::prefs::nav_mode(app, middle, secondary_down, mods)
-        } else if primary_down {
-            app.viewport.nav
-        } else {
-            None
+        match button {
+            Some(b) => crate::prefs::nav_mode(app, b, mods),
+            None if primary_down => primary_nav,
+            None => None,
         }
     } else {
         None
@@ -1612,10 +1631,14 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     if mode == Some(NavMode::Orbit) {
         let press = ui.input(|i| i.pointer.press_origin());
         app.cancel_view_animation();
-        // Shift can be required to enter orbit (Fusion/Inventor middle drag), rather
-        // than an additional request for snapping. Only an extra modifier snaps.
+        // Shift can be required to enter orbit (Fusion/Inventor middle drag, Alias Shift+Alt),
+        // rather than an additional request for snapping. Only an extra modifier snaps.
         let without_shift = egui::Modifiers { shift: false, ..mods };
-        let snap = mods.shift && (!middle || crate::prefs::nav_mode(app, middle, secondary_down, without_shift) == Some(NavMode::Orbit));
+        let snap = mods.shift
+            && match button {
+                Some(b) => crate::prefs::nav_mode(app, b, without_shift) == Some(NavMode::Orbit),
+                None => app.viewport.nav.is_some(),
+            };
         orbit_drag(app, rect, f64::from(delta.x), f64::from(delta.y), press, snap, true);
     } else {
         if matches!(mode, Some(NavMode::Pan | NavMode::Zoom)) {
@@ -1682,7 +1705,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let navigating = scroll != 0.0
         || middle
         || secondary_down
-        || (app.viewport.nav.is_some() && primary_down)
+        || (primary_nav.is_some() && primary_down)
         || app.viewport.axis_drag.is_some()
         || app.viewport.spin
         || app.viewport.orbit_snap.is_some()
@@ -1834,7 +1857,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
     }
     // Dragging a sketch point of the active sketch moves it; the solver keeps the constraints.
-    if app.tool.is_none() && app.dialog.is_none() && app.viewport.nav.is_none() && app.session.active_sketch.is_some() {
+    if app.tool.is_none() && app.dialog.is_none() && primary_nav.is_none() && app.session.active_sketch.is_some() {
         let on_plane = |app: &SolveApp, p: Pos2| {
             let ss = app.session.active_sketch.and_then(|sid| app.session.world_state().sketch(sid).cloned())?;
             let (o, d) = proj.ray(p);
@@ -1924,7 +1947,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()
-        && app.viewport.nav.is_none()
+        && primary_nav.is_none()
         && app.viewport.point_drag.is_none()
         && !crate::dim_view::dragging()
         && !crate::sketch3d::dragging()

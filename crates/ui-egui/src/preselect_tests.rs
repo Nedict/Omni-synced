@@ -543,7 +543,7 @@ fn boundary_fill_finds_the_cells_and_fills_the_ticked_ones() {
         {"command": "solid.box", "params": {"length": 20, "width": 20, "height": 20}},
         {"command": "solid.box", "params": {"length": 20, "width": 20, "height": 20, "corner": [10, 10, 0], "operation": "new"}}
     ]));
-    let mut d = start(&mut app, vec![], "SurfaceSculpt");
+    let mut d = start(&mut app, vec![], "solid.boundary_fill");
     d.inputs[0].items = vec![Sel::Body { name: "Body1".into() }, Sel::Body { name: "Body2".into() }];
     app.dialog = Some(d);
     // The dialog finds the cells on its next frame.

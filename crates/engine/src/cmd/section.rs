@@ -25,6 +25,8 @@ fn section(s: &mut Session, p: &Value) -> Result<Value> {
     // A named plane's world axis: which component of a point lies along its normal.
     let (origin, normal, axis) = match p.get("plane") {
         Some(Value::String(n)) if Plane::named(n.trim()).is_some() => {
+            // Apply the same ambiguity check as modelling commands before treating a name as an origin alias.
+            super::features::plane_param(s, p.get("plane"), cmd)?;
             let pl = Plane::named(n.trim()).ok_or_else(|| bad(cmd, format!("unknown plane `{n}`")))?;
             let normal = pl.normal();
             let axis = [normal.x, normal.y, normal.z].iter().position(|c| c.abs() > 0.5);

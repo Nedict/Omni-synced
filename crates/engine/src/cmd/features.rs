@@ -417,6 +417,11 @@ fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) ->
     if participants.len() > 10_000 || participants.iter().any(|b| b != "*" && s.model.state().body(b).is_none()) {
         return Err(EngineError::Other("`participants` must list existing bodies".into()));
     }
+    if matches!(kind, FeatureKind::ConstructionPlane { .. })
+        && let Some(n) = name
+    {
+        check_plane_name(n, "construct.plane")?;
+    }
     let id = s.doc_mut().add_feature(kind, name)?;
     if let Some(f) = s.doc_mut().feature_mut(id) {
         f.participants = participants;
@@ -977,6 +982,31 @@ fn mirror(s: &mut Session, p: &Value) -> Result<Value> {
     add_feature(s, p, FeatureKind::Mirror { features, plane, bodies, combine })
 }
 
+/// The other name of an origin plane (`Top` for `XY`, `XY` for `Top`...), if `name` is one.
+pub(super) fn origin_plane_alias(name: &str) -> Option<&'static str> {
+    match name.trim().to_ascii_uppercase().as_str() {
+        "XY" => Some("Top"),
+        "TOP" => Some("XY"),
+        "XZ" => Some("Front"),
+        "FRONT" => Some("XZ"),
+        "YZ" => Some("Right"),
+        "RIGHT" => Some("YZ"),
+        _ => None,
+    }
+}
+
+/// A construction plane may not take an origin plane's name (`XY`, `Top`...): a plane
+/// parameter could then mean either.
+pub(super) fn check_plane_name(name: &str, cmd: &str) -> Result<()> {
+    if solvecraft_geom::Plane::named(name.trim()).is_some() {
+        return Err(bad(
+            cmd,
+            format!("`{}` is reserved for an origin plane (XY, XZ, YZ, Top, Front, Right); give the construction plane another name", name.trim()),
+        ));
+    }
+    Ok(())
+}
+
 /// A plane reference from a parameter: an origin plane, a construction plane (by name or
 /// feature id; kept by name, so the feature follows the plane when it changes), or an
 /// explicit plane `{origin, x_dir, y_dir}` / `{origin, normal}`. Every command that takes a
@@ -990,7 +1020,22 @@ pub(super) fn plane_param(s: &Session, v: Option<&Value>, cmd: &str) -> Result<s
         None => Err(bad(cmd, format!("no plane `{r}` (a plane is {WANT})"))),
     };
     match v {
-        Some(Value::String(n)) if solvecraft_geom::Plane::named(n.trim()).is_some() => Ok(PlaneRef::Origin { name: n.trim().to_ascii_uppercase() }),
+        Some(Value::String(n)) if solvecraft_geom::Plane::named(n.trim()).is_some() => {
+            if let Some(f) = s.doc.find_feature(n.trim())
+                && matches!(f.kind, FeatureKind::ConstructionPlane { .. })
+            {
+                return Err(bad(
+                    cmd,
+                    format!(
+                        "plane `{}` is ambiguous: an origin-plane alias and a construction plane; use `{}` for the origin plane, construction plane feature id {}, or an explicit {{origin, normal}} plane",
+                        n.trim(),
+                        origin_plane_alias(n).unwrap_or("XY"),
+                        f.id
+                    ),
+                ));
+            }
+            Ok(PlaneRef::Origin { name: n.trim().to_ascii_uppercase() })
+        }
         Some(Value::String(n)) => construction(n.trim()),
         Some(Value::Number(id)) => match id.as_u64() {
             Some(id) => construction(&id.to_string()),

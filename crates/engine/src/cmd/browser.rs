@@ -445,13 +445,14 @@ fn rename_body(s: &mut Session, p: &Value) -> Result<Value> {
     if st.body(name).is_some() {
         return Err(bad(cmd, format!("another body is called `{name}`")));
     }
-    // The body is the k-th new body of its feature; the names before it are kept as they are.
+    // The body is the k-th new body of its feature; its siblings keep the names they have now
+    // (unpinned pattern copies would otherwise be renumbered into the freed name, #265).
     let fid = b.feature;
     let siblings: Vec<String> = st.bodies.iter().filter(|x| x.feature == fid).map(|x| x.name.clone()).collect();
     let k = siblings.iter().position(|n| *n == old).unwrap_or(0);
     let d = s.doc_mut();
     let f = d.feature_mut(fid).ok_or_else(|| bad(cmd, "the body's feature is gone"))?;
-    while f.body_names.len() <= k {
+    while f.body_names.len() < siblings.len().max(k + 1) {
         let i = f.body_names.len();
         f.body_names.push(siblings.get(i).cloned().unwrap_or_default());
     }

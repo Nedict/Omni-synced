@@ -366,7 +366,7 @@ impl Dialog {
                 Kind::ReplaceFace,
                 vec![SelInput::new("Faces", PLANAR_FACES, true), SelInput::new("Target", PLANES | PLANAR_FACES, false)],
             ),
-            "SurfaceSculpt" => {
+            "solid.boundary_fill" => {
                 Dialog::new(Kind::BoundaryFill { operation: 0, cells: Vec::new(), of: Vec::new() }, vec![SelInput::new("Tools", BODIES, true)])
             }
             "solid.align" => Dialog::new(
@@ -2848,7 +2848,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             if picked.is_empty() {
                 return Err("tick the cells to fill".into());
             }
-            ("SurfaceSculpt", json!({"tools": body_names(0), "cells": picked, "operation": OPS.get(*operation).copied().unwrap_or("new")}))
+            ("solid.boundary_fill", json!({"tools": body_names(0), "cells": picked, "operation": OPS.get(*operation).copied().unwrap_or("new")}))
         }
         Kind::Combine { operation, keep_tools } => {
             need(0, "the target body")?;
@@ -3383,7 +3383,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             d
         }
         FeatureKind::BoundaryFill { tools, cells, operation, remove_tools } => {
-            let mut d = start("SurfaceSculpt")?;
+            let mut d = start("solid.boundary_fill")?;
             // The cells again, ticked where a stored cell point lies in the same cell.
             let before = s.model.state_before(f.id);
             let found = fill_cells(&before, tools);
