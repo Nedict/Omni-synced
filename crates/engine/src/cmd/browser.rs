@@ -32,7 +32,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("name?; camera: {target: [x,y,z], yaw, pitch, distance, fov?} (replaces a view of the same name)"),
     CommandSpec::new("view.rename", "Rename Named View", view_rename).params("view: name, name"),
     CommandSpec::new("view.delete", "Delete Named View", view_delete).params("view: name"),
-    CommandSpec::new("view.list", "List Named Views", view_list).noundo(),
+    CommandSpec::new("view.list", "List Named Views", view_list).noundo().doc_only(),
     CommandSpec::new("browser.order", "Order Browser Items", order).params("folder, component?, order: [keys] (the folder's items in display order)"),
     CommandSpec::new("browser.visibility", "Show/Hide", visibility).icon("eye").noundo().params(
         "visible: bool; items?: [sketch id or name | body name | construction name | O|X|Y|Z|XY|XZ|YZ]; \
@@ -312,6 +312,7 @@ fn document_units(s: &mut Session, p: &Value) -> Result<Value> {
     // What the geometry reads: every feature's length inputs.
     let matched_configuration = s.doc.configuration_matches().then(|| s.doc.configs.active.clone()).flatten();
     let before = s.doc.length_inputs();
+    let solved = s.solved_sketches();
     s.doc_mut().units = u.to_string();
     // Unit-less user parameters holding a bare number read it in the design's units where they
     // stand for lengths. If any input moved, those numbers keep the old unit, written out.
@@ -346,6 +347,7 @@ fn document_units(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(row) = matched_configuration {
         s.doc_mut().apply_configuration(&row)?;
     }
+    s.settle_value_edit(&solved)?;
     Ok(json!({ "units": u, "kept": kept }))
 }
 

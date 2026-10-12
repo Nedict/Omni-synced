@@ -19,8 +19,7 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("selection.delete", "De
 /// Run another command's body inside this one (so the whole delete is one undo step).
 fn sub(s: &mut Session, id: &str, p: Value) -> Result<Value> {
     let spec = super::find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
-    (spec.enabled)(s).map_err(|why| EngineError::Disabled(spec.id.to_string(), why))?;
-    let r = (spec.run)(s, &p)?;
+    let r = spec.run_nested(s, &p)?;
     s.refresh();
     Ok(r)
 }

@@ -1,0 +1,4 @@
+# Expected differences from Fusion's dimension-edit behaviour, for `cargo xtask solver-oracle`.
+# case <TAB> edit (0-based index into the case's edits, or * for every edit) <TAB> reason
+# Each mirrored, different or we_refused edit needs a row here, e.g. the fold policy: SolveCraft
+# refuses an edit that would fold a linkage where Fusion may reconfigure it.

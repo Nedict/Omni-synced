@@ -74,14 +74,25 @@ fn fillet_and_chamfer_corners() {
     let e = s.execute("sketch.chamfer.equal_distance", &json!({"a": c[0], "b": c[1], "distance": 25})).unwrap_err().to_string();
     assert!(e.contains("too large") || e.contains("does not fit") || e.contains("longer"), "{e}");
     assert_eq!(sk(&s).curves.len(), n);
-    // A line meeting an arc, and two arcs (a slot's end rounded into a line).
+    // A line meeting an arc at a corner (not tangent to it), and two arcs (a slot's end
+    // rounded into a line).
     let mut s = new_sketch();
-    let l = curves(&run(&mut s, "sketch.line", json!({"points": [[-20, 10], [0, 10]]})))[0].clone();
+    let l = curves(&run(&mut s, "sketch.line", json!({"points": [[-20, 0], [0, 10]]})))[0].clone();
     let a = curves(&run(&mut s, "sketch.arc.three_point", json!({"start": format!("{l}.end"), "end": [10, 0], "through": [7.0710678, 7.0710678]})))
         [0]
     .clone();
     run(&mut s, "sketch.fillet", json!({"a": l, "b": a, "radius": 2}));
     assert!(solved(&s));
+    // A line running tangent into an arc has no corner to round: refused, nothing changed.
+    let mut s = new_sketch();
+    let l = curves(&run(&mut s, "sketch.line", json!({"points": [[-20, 10], [0, 10]]})))[0].clone();
+    let a = curves(&run(&mut s, "sketch.arc.three_point", json!({"start": format!("{l}.end"), "end": [10, 0], "through": [7.0710678, 7.0710678]})))
+        [0]
+    .clone();
+    let n = sk(&s).curves.len();
+    let e = s.execute("sketch.fillet", &json!({"a": l, "b": a, "radius": 2})).unwrap_err().to_string();
+    assert!(e.contains("does not fit"), "{e}");
+    assert_eq!(sk(&s).curves.len(), n);
     let mut s = new_sketch();
     let a1 = curves(&run(&mut s, "sketch.arc.three_point", json!({"start": [-10, 0], "end": [0, 0], "through": [-5, -5]})))[0].clone();
     let a2 = curves(&run(&mut s, "sketch.arc.three_point", json!({"start": format!("{a1}.end"), "end": [10, 0], "through": [5, 2]})))[0].clone();

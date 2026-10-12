@@ -3,7 +3,7 @@
 use serde_json::{Value, json};
 use solvecraft_doc::{FeatureKind, PlaneRef, expr::Kind};
 use solvecraft_geom::{Plane, Vec2, Vec3};
-use solvecraft_sketch::{ConstraintKind, CurveKind, Hold, Sketch, SolveReport, solve, solve_holding};
+use solvecraft_sketch::{Analysis, Budget, ConstraintKind, CurveKind, Hold, Sketch, SolveReport, solve, solve_with};
 
 use super::{CommandSpec, in_sketch};
 use crate::params::{bad, bool_, expr, num, req_vec2, str_, string_list, vec2, vec3};
@@ -11,9 +11,12 @@ use crate::{EngineError, Result, Session};
 
 #[path = "sketch_dimensioned.rs"]
 mod dimensioned;
+#[path = "sketch_drag.rs"]
+mod drag;
 #[path = "sketch_face.rs"]
 pub(super) mod face;
 use dimensioned::draw as draw_dimensioned;
+use drag::drag_entity;
 
 /// The `connect` parameter every drawing command takes (see `connect_points`).
 macro_rules! connect_doc {
@@ -170,8 +173,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .enabled(in_sketch)
         .params("entities: [curve, point or constraint ids]"),
     CommandSpec::new("sketch.move_point", "Drag Sketch Point", move_point).enabled(in_sketch).params("point: ref, to: [x,y]"),
-    CommandSpec::new("sketch.drag", "Drag Sketch Geometry", drag).enabled(in_sketch).params(
-        "entity: point or curve, from: [x,y] where it was grabbed, to: [x,y]: a point goes to `to`, a line (spline, conic) slides by to - from, a circle or arc grabbed on its edge takes the radius to `to`; the rest moves as little as it can",
+    CommandSpec::new("sketch.drag", "Drag Sketch Geometry", drag).enabled(in_sketch).live(drag_live).params(
+        "entity: point or curve, from: [x,y] where it was grabbed, to: [x,y], live?: bool: a point goes to `to`, a line (spline, conic) slides by to - from, a circle or arc grabbed on its edge takes the radius to `to`; the rest moves as little as it can and keeps its solution branch (a long move is followed in short steps, each solved with the entity held; a step that cannot be solved that way is approached as far as it can be and the next ones tried; when none past it solves, the last one is left to the sketch's ordinary solve, which may pull it back or leave the sketch unsolved; a step that would sweep an arc through its start is undone and the drag ends there). Returns `reached`: how much of the way from `from` to `to` the geometry followed (0..1), and `at`: where the grabbed spot went (`from` moved as the dragged points did), the `from` of the next move. `live: true` (each frame of an interactive drag) solves the sketch once and leaves the features after it as they were (stale) until `sketch.drag_end` or any command that reads the model; `dof` is then the one from before the drag",
+    ),
+    CommandSpec::new("sketch.drag_end", "End Sketch Drag", drag_end).enabled(in_sketch).doc_only().params(
+        "constraint?: {command: a sketch.constraint.* id, params}: ends a drag made of `sketch.drag` `live: true` frames: adds the constraint it let go on (not kept if it over-constrains the sketch), then evaluates the whole model once; returns the constraint's result and the sketch's solved state and degrees of freedom",
     ),
     CommandSpec::new("sketch.dimension_text", "Move Dimension Text", dimension_text)
         .enabled(in_sketch)
@@ -219,25 +225,143 @@ pub(super) fn edit<T>(
     f: impl FnOnce(&mut Sketch, &mut solvecraft_doc::Document) -> Result<T>,
 ) -> Result<(T, Value)> {
     let id = target_sketch(s, p, cmd)?;
+    let (out, rep) = edit_solved(s, id, strict, |sk, doc| Ok((f(sk, doc)?, Left::Unsolved)))?;
+    Ok((out, rep.map(|rep| report_json(&rep)).unwrap_or(Value::Null)))
+}
+
+/// A solve's outcome as commands return it.
+pub(super) fn report_json(rep: &SolveReport) -> Value {
+    json!({"solved": rep.keeps_orientation(), "dof": rep.dof})
+}
+
+/// What an [`edit_solved`] step leaves for the edit's own solve.
+pub(super) enum Left {
+    /// The sketch, solved from where it is.
+    Unsolved,
+    /// The sketch, solved keeping the orientation of these positions (the last solved ones,
+    /// before a drag left a step placed but unsolved).
+    MovedFrom(Vec<Vec2>),
+    /// The sketch, solved with the dimensions' values (from the parameters) applied.
+    Solved,
+}
+
+impl Left {
+    /// Solved again by the edit even when already solved (for its report).
+    pub(super) fn solve_again(self) -> Left {
+        match self {
+            Left::Solved => Left::Unsolved,
+            left => left,
+        }
+    }
+}
+
+/// `edit` of sketch `id` for a step that may solve the sketch itself: when it returns
+/// [`Left::Solved`] (and offsets need not be recomputed) the sketch is not solved again and the
+/// report is `None`.
+pub(super) fn edit_solved<T>(
+    s: &mut Session,
+    id: u64,
+    strict: bool,
+    f: impl FnOnce(&mut Sketch, &mut solvecraft_doc::Document) -> Result<(T, Left)>,
+) -> Result<(T, Option<SolveReport>)> {
     let mut doc = (*s.doc).clone();
     let mut sk = doc.sketch(id)?.clone();
     super::sketch_project::refresh(s, &doc, id, &mut sk);
-    let out = f(&mut sk, &mut doc)?;
-    let (vals, _) = doc.param_values();
-    doc.apply_dimension_values(&vals, &mut sk)?;
-    sk.refresh_offsets()?;
-    let mut rep = solve(&mut sk);
-    if !sk.offsets.is_empty() || !sk.freeform_offsets.is_empty() {
-        sk.refresh_offsets()?;
-        rep = solve(&mut sk);
-    }
-    if strict && !rep.ok() {
-        return Err(EngineError::Other(format!("that would over-constrain the sketch (conflicts with {})", rep.failing.join(", "))));
-    }
+    // The stored sketch is solved for its stored values.
+    let stored = sk.driving_values();
+    let (out, left) = f(&mut sk, &mut doc)?;
+    let offsets = !sk.offsets.is_empty() || !sk.freeform_offsets.is_empty();
+    let rep = match left {
+        // A drag step solved it (held, with the dimensions' values applied).
+        Left::Solved if !offsets => None,
+        // A drag left a step placed but unsolved: solve it keeping the orientation of the last
+        // solved positions. A drag changes no values, so there is nothing to continue.
+        Left::MovedFrom(reference) => {
+            doc.apply_dimension_values(&doc.param_values().0, &mut sk)?;
+            sk.refresh_offsets()?;
+            let unsolved = sk.clone();
+            let mut rep = counted_solve(&mut sk, &Hold::default(), Some(&reference), Analysis::Full, None);
+            if offsets {
+                sk.refresh_offsets()?;
+                rep = counted_solve(&mut sk, &Hold::default(), Some(&reference), Analysis::Full, None);
+            }
+            Some(settle(strict, rep, &mut sk, unsolved)?)
+        }
+        // Solved for the document's values, continuing from the stored solved state.
+        Left::Solved | Left::Unsolved => {
+            let (vals, _) = doc.param_values();
+            sk.refresh_offsets()?;
+            let unsolved = sk.clone();
+            #[cfg(test)]
+            solve_counts::record(Analysis::Full);
+            let rep = doc.solve_sketch(&vals, &mut sk, &stored)?;
+            Some(settle(strict, rep, &mut sk, unsolved)?)
+        }
+    };
     sk.validate_periodic_splines()?;
     *doc.sketch_mut(id)? = sk;
     *s.doc_mut() = doc;
-    Ok((out, json!({"solved": rep.ok(), "dof": rep.dof})))
+    Ok((out, rep))
+}
+
+/// An edit's solve outcome: with `strict`, a solve that fails or turns the sketch over is an
+/// error; otherwise such a sketch is stored as the edit left it before the solve, its values
+/// and geometry together, so the stored sketch stays solved for its stored values.
+fn settle(strict: bool, rep: SolveReport, sk: &mut Sketch, unsolved: Sketch) -> Result<SolveReport> {
+    if strict && !rep.keeps_orientation() {
+        return Err(EngineError::Other(rep.failure(|f| format!("that would over-constrain the sketch (conflicts with {f})"))));
+    }
+    if !rep.keeps_orientation() {
+        *sk = unsolved;
+    }
+    Ok(rep)
+}
+
+/// The sketch solves of `edit` and drags, counted in tests (see [`solve_with`]).
+pub(super) fn counted_solve(
+    sk: &mut Sketch,
+    hold: &Hold,
+    reference: Option<&[Vec2]>,
+    analysis: Analysis,
+    budget: Option<&mut Budget>,
+) -> SolveReport {
+    #[cfg(test)]
+    solve_counts::record(analysis);
+    solve_with(sk, hold, reference, analysis, budget)
+}
+
+/// Inside an `edit` closure: solve the sketch for the document's parameter values from its
+/// stored solved state, as the edit's own solve does, for commands that work on the current
+/// geometry.
+pub(super) fn solve_current(sk: &mut Sketch, doc: &solvecraft_doc::Document) -> Result<SolveReport> {
+    let stored = sk.driving_values();
+    let (values, _) = doc.param_values();
+    Ok(doc.solve_sketch(&values, sk, &stored)?)
+}
+
+/// Solves run on this thread by [`counted_solve`] and the edit's own solve: (all of them, those
+/// with a rank analysis).
+#[cfg(test)]
+pub(super) mod solve_counts {
+    use std::cell::Cell;
+
+    use solvecraft_sketch::Analysis;
+
+    thread_local! {
+        static COUNTS: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
+    }
+
+    pub fn record(analysis: Analysis) {
+        COUNTS.with(|c| {
+            let (n, full) = c.get();
+            c.set((n + 1, full + usize::from(analysis == Analysis::Full)));
+        });
+    }
+
+    /// The counts since the last call.
+    pub fn take() -> (usize, usize) {
+        COUNTS.with(|c| c.replace((0, 0)))
+    }
 }
 
 /// How close (mm) a new point must land to an existing one to be connected to it.
@@ -1165,7 +1289,7 @@ pub(super) fn apply_in_order(sk: &mut Sketch, rep: &SolveReport, first: &[Ent], 
             driven: false,
             text: None,
         }));
-        let ok = solve_holding(&mut trial, &h).ok();
+        let ok = solve_with(&mut trial, &h, None, Analysis::Full, None).ok();
         trial.constraints.retain(|c| c.id != TEMP);
         if ok && !collapsed(sk, &trial) {
             *sk = trial;
@@ -1240,7 +1364,7 @@ fn c_coincident(s: &mut Session, p: &Value) -> Result<Value> {
         && let Some(c) = sk.constraints.iter().find(|c| matches!(c.kind, ConstraintKind::Coincident { p, q } if (p, q) == (a, b) || (p, q) == (b, a)))
     {
         let rep = solve(&mut sk.clone());
-        return Ok(json!({"constraint": c.id, "existing": true, "sketch": {"solved": rep.ok(), "dof": rep.dof}}));
+        return Ok(json!({"constraint": c.id, "existing": true, "sketch": report_json(&rep)}));
     }
     constrain(s, p, cmd, |sk| {
         if let Some((a, b)) = line_points {
@@ -1823,109 +1947,82 @@ fn sketch_delete(s: &mut Session, p: &Value) -> Result<Value> {
 fn move_point(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.move_point";
     let to = req_vec2(cmd, p, "to")?;
-    let (_, info) = edit(s, p, cmd, false, |sk, _| {
+    let id = target_sketch(s, p, cmd)?;
+    let (_, rep) = edit_solved(s, id, false, |sk, _| {
         let q = point_ref(sk, p.get("point"), cmd, "point")?;
-        drag_entity(sk, Ent::Point(q), to, to);
-        Ok(())
+        Ok(((), drag_entity(sk, Ent::Point(q), to, to, false).1.solve_again()))
     })?;
-    Ok(json!({"sketch": info}))
+    Ok(json!({"sketch": rep.as_ref().map(report_json)}))
 }
 
 fn drag(s: &mut Session, p: &Value) -> Result<Value> {
-    let cmd = "sketch.drag";
-    let to = req_vec2(cmd, p, "to")?;
-    let from = p.get("from").and_then(vec2).unwrap_or(to);
-    let (_, info) = edit(s, p, cmd, false, |sk, _| {
-        let r = p.get("entity").and_then(Value::as_str).ok_or_else(|| bad(cmd, "`entity` must be a sketch point or curve"))?;
-        let e = ent(sk, r).ok_or_else(|| bad(cmd, format!("unknown sketch entity `{r}`")))?;
-        drag_entity(sk, e, from, to);
-        Ok(())
-    })?;
-    Ok(json!({"sketch": info}))
+    drag_frame(s, p, false).map(|(v, _)| v)
 }
 
-/// Drag like Fusion: the grabbed entity follows the cursor exactly (a point goes to it; a line,
-/// spline or conic slides by the cursor's move; a circle or arc grabbed on its edge changes
-/// radius about its centre) and the rest of the sketch moves as little as it can. Fixed and
-/// fully constrained geometry stays (the solve that follows pulls it back).
-fn drag_entity(sk: &mut Sketch, e: Ent, from: Vec2, to: Vec2) {
-    let d = to - from;
-    let mut hold = Hold::default();
-    match e {
-        Ent::Point(q) => {
-            if sk.point_locked(q) {
-                return;
-            }
-            if let Some(pt) = sk.points.get_mut(q) {
-                pt.pos = to;
-            }
-            hold.points.push(q);
-        }
-        Ent::Curve(c) => {
-            if sk.curve_locked(c) {
-                return;
-            }
-            let Some(kind) = sk.curves.get(c).map(|c| c.kind.clone()) else { return };
-            let locked = sk.locked_points();
-            let set = |sk: &mut Sketch, q: usize, at: Vec2| {
-                if !locked.get(q).copied().unwrap_or(true)
-                    && let Some(pt) = sk.points.get_mut(q)
-                {
-                    pt.pos = at;
-                }
-            };
-            match kind {
-                CurveKind::Circle { c: cc, .. } => {
-                    let r = sk.point(cc).map(|o| o.dist(to)).unwrap_or(0.0);
-                    if let Some(CurveKind::Circle { r: slot, .. }) = sk.curves.get_mut(c).map(|x| &mut x.kind)
-                        && r > 1e-9
-                    {
-                        *slot = r;
-                    }
-                    hold.points.push(cc);
-                    hold.radii.push(c);
-                }
-                CurveKind::Arc { c: cc, a, b } => {
-                    let Some(o) = sk.point(cc) else { return };
-                    let r = o.dist(to);
-                    if r > 1e-9 {
-                        for q in [a, b] {
-                            if let Some(u) = sk.point(q).and_then(|pq| (pq - o).normalized()) {
-                                set(sk, q, o + u * r);
-                            }
-                        }
-                    }
-                    hold.points.extend([cc, a, b]);
-                }
-                CurveKind::Ellipse { c: cc, m, .. } => {
-                    // Grabbed on the outline: the minor radius follows (the major stays).
-                    let (Some(o), Some(pm)) = (sk.point(cc), sk.point(m)) else { return };
-                    let u = (pm - o).normalized().unwrap_or(Vec2::X);
-                    let minor = u.cross(to - o).abs();
-                    if minor > 1e-9
-                        && let Some(CurveKind::Ellipse { r: slot, .. }) = sk.curves.get_mut(c).map(|x| &mut x.kind)
-                    {
-                        *slot = minor;
-                    }
-                    hold.points.extend([cc, m]);
-                    hold.radii.push(c);
-                }
-                k => {
-                    // Lines, splines and conics slide with the cursor.
-                    for q in k.point_ids().into_iter().collect::<std::collections::BTreeSet<_>>() {
-                        if let Some(at) = sk.point(q) {
-                            set(sk, q, at + d);
-                        }
-                    }
-                    hold.points.extend(k.point_ids());
-                }
-            }
-        }
+fn drag_live(s: &mut Session, p: &Value) -> Result<(Value, Option<crate::LiveEdit>)> {
+    drag_frame(s, p, true)
+}
+
+/// `sketch.drag`; `live`: one frame of an interactive drag, returned with the sketch to show.
+fn drag_frame(s: &mut Session, p: &Value, live: bool) -> Result<(Value, Option<crate::LiveEdit>)> {
+    let cmd = "sketch.drag";
+    let to = req_vec2(cmd, p, "to")?;
+    let from = match p.get("from") {
+        None | Some(Value::Null) => to,
+        Some(v) => vec2(v).ok_or_else(|| bad(cmd, "`from` must be a point [x, y]"))?,
+    };
+    let id = target_sketch(s, p, cmd)?;
+    // The sketch's report as last evaluated: a live frame keeps its degrees of freedom.
+    let last = s.model.result(id).and_then(|r| r.state.sketch(id)).map(|ss| ss.report.clone());
+    let (d, rep) = edit_solved(s, id, false, |sk, doc| {
+        let r = p.get("entity").and_then(Value::as_str).ok_or_else(|| bad(cmd, "`entity` must be a sketch point or curve"))?;
+        let e = ent(sk, r).ok_or_else(|| bad(cmd, format!("unknown sketch entity `{r}`")))?;
+        // The held solves work on the dimensions' current values (a solved step applies them).
+        doc.apply_dimension_values(&doc.param_values().0, sk)?;
+        let (d, left) = drag_entity(sk, e, from, to, live);
+        // A live frame's held solve is its only one; otherwise the sketch's own solve reports
+        // its degrees of freedom.
+        Ok((d, if live && last.is_some() { left } else { left.solve_again() }))
+    })?;
+    // Where the grabbed spot went: `from` moved as the dragged points did on average (with the
+    // whole step when it followed; otherwise as the sketch's own solve left them).
+    let sk = s.doc.sketch(id)?;
+    let moves: Vec<Vec2> = d.moving.iter().filter_map(|&(q, was)| Some(sk.point(q)? - was)).collect();
+    let at = from + moves.iter().fold(Vec2::ZERO, |a, m| a + *m) * (1.0 / moves.len().max(1) as f64);
+    let rep = rep.or_else(|| last.map(|last| SolveReport { status: solvecraft_sketch::SolveStatus::Solved, failing: Vec::new(), ..last }));
+    let out = json!({"sketch": rep.as_ref().map(report_json), "reached": d.reached, "at": [at.x, at.y]});
+    Ok((out, rep.filter(|_| live).map(|report| crate::LiveEdit { sketch: id, report })))
+}
+
+/// Ends a live drag: the snap constraint it let go on, if any, then one evaluation of the model.
+/// It reads the model only before the sketch it edits (never stale), so `execute` does not
+/// evaluate first.
+fn drag_end(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "sketch.drag_end";
+    let id = target_sketch(s, p, cmd)?;
+    let start = s.doc.clone();
+    let mut constraint = Value::Null;
+    if let Some(c) = p.get("constraint").filter(|c| !c.is_null()) {
+        let name = c.get("command").and_then(Value::as_str).unwrap_or_default();
+        let spec = super::find_command(name)
+            .filter(|spec| spec.id.starts_with("sketch.constraint."))
+            .ok_or_else(|| bad(cmd, "`constraint.command` must be a sketch.constraint.* command"))?;
+        let params = c.get("params").cloned().unwrap_or(Value::Null);
+        // A constraint that cannot be added (it would over-constrain the sketch) is not kept.
+        constraint = spec.run_nested(s, &params).unwrap_or_else(|e| {
+            s.doc = start.clone();
+            json!({"error": e.to_string()})
+        });
     }
-    let mut trial = sk.clone();
-    if solve_holding(&mut trial, &hold).ok() {
-        *sk = trial;
+    // A new constraint changed the document: `execute` evaluates the model after this.
+    if !std::sync::Arc::ptr_eq(&start, &s.doc) {
+        return Ok(json!({"constraint": constraint, "sketch": constraint.get("sketch")}));
     }
+    if s.model.is_stale() {
+        s.refresh();
+    }
+    let report = s.model.result(id).and_then(|r| r.state.sketch(id)).map(|ss| report_json(&ss.report));
+    Ok(json!({"constraint": constraint, "sketch": report}))
 }
 
 /// The Sketch Palette options of a sketch, by their palette names (true = shown / on).
@@ -2000,6 +2097,9 @@ mod rect_tests;
 #[path = "sketch_ux_tests.rs"]
 mod ux_tests;
 
+#[cfg(test)]
+#[path = "sketch_drag_live_tests.rs"]
+mod drag_live_tests;
 #[cfg(test)]
 #[path = "sketch_ids_tests.rs"]
 mod ids_tests;

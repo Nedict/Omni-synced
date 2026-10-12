@@ -8,6 +8,7 @@ mod book;
 mod layers;
 mod licences;
 mod parity;
+mod solver_oracle;
 mod test;
 
 use std::path::{Path, PathBuf};
@@ -24,6 +25,10 @@ commands:
                   xtask/data/fusion-catalog.tsv from plan/fusion/menu-tree.json)
   oracle          replay plan/fusion/oracle/*/recipe.json and compare with measure.json;
                   writes docs/oracle.md
+  solver-oracle   replay plan/fusion/solver-oracle/*/case.json dimension edits and compare
+                  with Fusion's measure.json; writes docs/solver-oracle.md, fails on a
+                  disagreement not explained in xtask/data/solver-oracle-known.tsv (succeeds
+                  with a message when nothing is measured yet)
   step-corpus [--iges] [DIR]
                   import every DIR/*/part.step (default plan/fusion/oracle) and compare
                   with measure.json; writes docs/step-import.md (--iges: part.igs,
@@ -50,6 +55,7 @@ fn main() -> ExitCode {
         Some("assets") => assets::run(&root()),
         Some("parity") => parity::run(&root(), rest.contains(&"--refresh")),
         Some("oracle") => cmd_oracle(),
+        Some("solver-oracle") => solver_oracle::run(&root()),
         Some("step-corpus") => cmd_step_corpus(rest.iter().find(|a| !a.starts_with("--")).copied(), rest.contains(&"--iges")),
         Some("book") => book::run(&root(), !rest.contains(&"--no-build")),
         Some("licences") => licences::run(&root(), rest.contains(&"--check")),

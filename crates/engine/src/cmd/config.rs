@@ -393,8 +393,9 @@ fn activate(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, format!("configuration `{r}` would fail to rebuild: {}", new_errors.join("; "))));
     }
     let styles = trial.doc.configuration_style_status(&trial.model.state()).map_err(|error| bad(cmd, format!("configuration `{r}`: {error}")))?;
+    let solved = s.solved_sketches();
     s.doc = trial.doc;
-    s.refresh();
+    s.settle_value_edit(&solved)?;
     let errors: Vec<String> = s.model.results.iter().filter_map(|x| x.error.clone()).collect();
     let mut out = show(s, p)?;
     out["errors"] = json!(errors);

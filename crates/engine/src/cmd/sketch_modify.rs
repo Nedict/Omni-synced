@@ -8,7 +8,7 @@ use solvecraft_doc::ProfileSel;
 use solvecraft_geom::Vec2;
 use solvecraft_sketch::{ConstraintKind, Curve, CurveKind, Shape, Sketch, intersections};
 
-use super::sketch::{add_c, edit, ids_of};
+use super::sketch::{add_c, edit, ids_of, solve_current};
 use super::{CommandSpec, in_sketch};
 use crate::params::{bad, bool_, expr, num, req_vec2, str_, string_list, vec2, vec2_list};
 use crate::{Result, Session};
@@ -378,10 +378,9 @@ fn extend(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.extend";
     let at = req_vec2(cmd, p, "at")?;
     let (out, info) = edit(s, p, cmd, true, |sk, doc| {
-        let (values, _) = doc.param_values();
-        doc.apply_dimension_values(&values, sk)?;
-        if !solvecraft_sketch::solve(sk).ok() {
-            return Err(bad(cmd, "solve the existing sketch constraints before extending"));
+        let rep = solve_current(sk, doc)?;
+        if !rep.keeps_orientation() {
+            return Err(bad(cmd, rep.failure(|_| "solve the existing sketch constraints before extending".into())));
         }
         let ci = curve_arg(sk, p, cmd)?;
         let sh = sk.shape(ci).ok_or_else(|| bad(cmd, "curve"))?;
@@ -453,7 +452,7 @@ fn extend(s: &mut Session, p: &Value) -> Result<Value> {
         pin(sk, end, oi)?;
         let before = sk.points.iter().map(|p| p.pos).collect::<Vec<_>>();
         let hold = solvecraft_sketch::Hold { points: (0..sk.points.len()).filter(|i| *i != end).collect(), radii: (0..sk.curves.len()).collect() };
-        if !solvecraft_sketch::solve_holding(sk, &hold).ok()
+        if !solvecraft_sketch::solve_with(sk, &hold, None, solvecraft_sketch::Analysis::Full, None).ok()
             || sk.point(end).is_none_or(|point| point.dist(q) > TOL)
             || sk.points.iter().enumerate().any(|(i, point)| i != end && point.pos.dist(before[i]) > TOL)
         {
@@ -928,11 +927,10 @@ fn offset(s: &mut Session, p: &Value) -> Result<Value> {
     let side = p.get("side").and_then(vec2);
     let use_chain = bool_(p, "chain").unwrap_or(true);
     let (out, info) = edit(s, p, cmd, true, |sk, doc| {
-        let (values, _) = doc.param_values();
-        doc.apply_dimension_values(&values, sk)?;
         sk.refresh_offsets()?;
-        if !solvecraft_sketch::solve(sk).ok() {
-            return Err(bad(cmd, "solve existing constraints before offsetting"));
+        let rep = solve_current(sk, doc)?;
+        if !rep.keeps_orientation() {
+            return Err(bad(cmd, rep.failure(|_| "solve existing constraints before offsetting".into())));
         }
         sk.refresh_offsets()?;
         let sel: Vec<usize> = ids.iter().map(|i| sk.curve_index(i).ok_or_else(|| bad(cmd, format!("unknown curve `{i}`")))).collect::<Result<_>>()?;
@@ -1137,14 +1135,9 @@ fn break_offset(s: &mut Session, p: &Value) -> Result<Value> {
         // A parameter edit may have changed the evaluated source without
         // rewriting the stored fit points. Break must freeze the displayed,
         // current dimensioned geometry, rather than its stale stored predecessor.
-        let (values, _) = doc.param_values();
-        doc.apply_dimension_values(&values, sk)?;
-        if !solvecraft_sketch::solve(sk).ok() {
-            return Err(bad(cmd, "cannot break an offset with conflicting source dimensions"));
-        }
-        sk.refresh_offsets()?;
-        if !solvecraft_sketch::solve(sk).ok() {
-            return Err(bad(cmd, "cannot break an offset with conflicting derived dimensions"));
+        let rep = solve_current(sk, doc)?;
+        if !rep.keeps_orientation() {
+            return Err(bad(cmd, rep.failure(|_| "cannot break an offset with conflicting dimensions".into())));
         }
         sk.validate_periodic_splines()?;
         if let Some(association) = sk

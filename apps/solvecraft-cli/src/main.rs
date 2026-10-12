@@ -9,6 +9,7 @@
 //! solvecraft-cli commands                                     the command registry as JSON
 //! solvecraft-cli recipe <recipe.json>                         translate an oracle recipe to a script
 //! solvecraft-cli oracle <case-dir>...                         replay recipes and compare with measure.json
+//! solvecraft-cli solver-oracle <case-dir>...                  replay sketch dimension edits and compare with measure.json
 //! solvecraft-cli step-corpus <case-dir>...                    import part.step and compare with measure.json
 //! solvecraft-cli mcp [--in design|script] [--connect HOST:PORT] MCP server on stdio (docs/mcp.md)
 //! solvecraft-cli licences                                     SolveCraft's licence and the third-party licences
@@ -21,6 +22,7 @@ mod fuzz;
 mod oracle;
 mod recipe;
 mod seams;
+mod solver_oracle;
 
 use std::process::ExitCode;
 
@@ -41,6 +43,7 @@ const USAGE: &str = "usage:
   solvecraft-cli commands
   solvecraft-cli recipe <recipe.json>
   solvecraft-cli oracle <case-dir>... [--json]
+  solvecraft-cli solver-oracle <case-dir>... [--json]
   solvecraft-cli fuzz [--from N] [--count N] [--jobs J] [--timeout S] [--steps N] [--minimise] [--out DIR] [--report FILE]
   solvecraft-cli step-corpus <case-dir>... [--json] [--iges]
   solvecraft-cli mcp [--in design.solvecraft|script.json] [--connect 127.0.0.1:PORT]
@@ -74,6 +77,7 @@ fn main() -> ExitCode {
         }),
         Some("oracle") => oracle::run(&args[1..]),
         Some("step-corpus") => oracle::step_corpus(&args[1..]),
+        Some("solver-oracle") => solver_oracle::run(&args[1..]),
         Some("fuzz") => fuzz::run(&args[1..]),
         Some("fuzz-one") => fuzz::one(&args[1..]),
         Some("mcp") => cmd_mcp(&args[1..]),
@@ -104,7 +108,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn pretty(v: &Value) -> String {
+pub(crate) fn pretty(v: &Value) -> String {
     serde_json::to_string_pretty(v).unwrap_or_default()
 }
 

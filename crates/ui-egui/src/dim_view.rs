@@ -258,9 +258,10 @@ pub fn double_click(app: &mut SolveApp, pos: Pos2) -> bool {
 }
 
 /// Start dragging the text of the dimension under `press` (true: a dimension took the drag).
-pub fn drag_start(app: &SolveApp, press: Pos2, press_sketch: Vec2) -> bool {
+/// Its lines take it only off sketch geometry (`on_geometry`: a point or curve is under `press`).
+pub fn drag_start(app: &SolveApp, press: Pos2, press_sketch: Vec2, on_geometry: bool) -> bool {
     let Some(d) = DRAWN.with(|d| {
-        let id = hit(press)?;
+        let id = hit_text(press).or_else(|| if on_geometry { None } else { hit(press) })?;
         d.borrow().iter().find(|x| x.id == id).cloned()
     }) else {
         return false;

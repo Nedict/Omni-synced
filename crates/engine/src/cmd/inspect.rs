@@ -34,7 +34,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("appearance.list", "List Appearances", appearance_list)
         .noundo()
         .params("body?: name → assigned appearances; with body, its resolved look and its faces' (face index, look)"),
-    CommandSpec::new("material.list", "List Materials", material_list).noundo(),
+    CommandSpec::new("material.list", "List Materials", material_list).noundo().doc_only(),
     CommandSpec::new("engine.commands", "List Commands", commands).noundo(),
 ];
 
