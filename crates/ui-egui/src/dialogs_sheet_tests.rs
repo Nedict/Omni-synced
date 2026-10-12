@@ -145,7 +145,7 @@ fn shallow_pocket_overlay_labels_depth_without_drawing_a_through_void() {
     let ctx = egui::Context::default();
     let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
         let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("flat-pocket-test")));
-        assert!(overlay(&painter, Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0)), &dialog));
+        assert!(overlay(&app, &painter, Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0)), &dialog));
     });
     output.textures_delta.clear();
     let texts: Vec<&str> = output
@@ -156,7 +156,7 @@ fn shallow_pocket_overlay_labels_depth_without_drawing_a_through_void() {
             _ => None,
         })
         .collect();
-    assert!(texts.contains(&"Bottom pocket: 1 mm deep"));
+    assert!(texts.contains(&"Bottom pocket: 1.00 mm deep"));
     assert!(texts.contains(&"Pocket boundary (material remains)"));
     let paths: Vec<_> = output
         .shapes
@@ -198,7 +198,7 @@ fn flat_pattern_islands_fit_before_the_actual_command_panel() {
                 ui.label("Flat size: 50 × 10 × 2.5 mm");
             });
             let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("island-fit")));
-            assert!(overlay(&painter, Rect::from_min_max(pos2(250.0, 126.0), pos2(1400.0, 832.0)), &dialog));
+            assert!(overlay(&app, &painter, Rect::from_min_max(pos2(250.0, 126.0), pos2(1400.0, 832.0)), &dialog));
         });
         output.textures_delta.clear();
     }
@@ -237,7 +237,7 @@ fn coincident_top_and_bottom_pocket_depths_share_a_readable_annotation() {
     let ctx = egui::Context::default();
     let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
         let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("coincident-pocket-test")));
-        assert!(overlay(&painter, Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0)), &dialog));
+        assert!(overlay(&app, &painter, Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0)), &dialog));
     });
     output.textures_delta.clear();
     let labels: Vec<_> = output
@@ -249,8 +249,8 @@ fn coincident_top_and_bottom_pocket_depths_share_a_readable_annotation() {
         })
         .collect();
     assert_eq!(labels.len(), 1, "coincident depths must not overwrite one another");
-    assert!(labels[0].contains("Top pocket: 1 mm deep"));
-    assert!(labels[0].contains("Bottom pocket: 0.5 mm deep"));
+    assert!(labels[0].contains("Top pocket: 1.00 mm deep"));
+    assert!(labels[0].contains("Bottom pocket: 0.50 mm deep"));
     assert!(labels[0].contains('\n'));
     assert_eq!(app.session.doc.to_json(), doc);
 }
@@ -309,4 +309,12 @@ fn bend_table_picker_writes_the_current_body() {
     assert_eq!(contents.lines().count(), 2);
     assert!(contents.contains(",90.000000000,up,2.500000000,"), "{contents}");
     assert_eq!(app.session.undo.len(), undo);
+}
+
+#[test]
+fn pocket_depth_labels_follow_inches_without_changing_flat_data() {
+    let mut app = plate();
+    app.run("document.units", json!({"units":"in"})).unwrap();
+    assert_eq!(super::pocket_label(&app, &json!({"side":"top","depth_mm":25.4*0.1234})).as_deref(), Some("Top pocket: 0.1234 in deep"));
+    assert!(super::pocket_label(&app, &json!({"side":"top","depth_mm":-1})).is_none());
 }

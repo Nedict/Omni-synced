@@ -71,10 +71,12 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
 - **Rust only.** Units are millimetres and radians internally; Z is up.
 - **Quality gates** before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests,
   assets, layers). Commit after every feature arc that builds.
-- **Publishing**: `origin` is github.com/bherbruck/solidcraft. After each commit that
-  passes `cargo xtask ci`: `git pull --rebase origin main` (re-run ci if it brought changes),
-  then `git push`. Never force-push. Never commit `plan/`, build dirs (`target*/`) or anything
-  produced by Fusion (oracle STEP/STL/PNG); check `git ls-files` before pushing.
+- **Publishing**: `origin` is github.com/bherbruck/solidcraft. Changes land through **pull requests**:
+  push a branch, open a PR, and let GitHub CI run. Maintainers (and agents working for them) may
+  merge their own PR as soon as CI is green (`gh pr merge --squash`); a trivial fix (docs, typos)
+  may be merged right away. Keep each PR to one topic, rebase or merge `main` into it when it
+  conflicts, and never force-push `main`. Never commit `plan/`, build dirs (`target*/`) or
+  generated reference data; check `git ls-files` before pushing.
 - **Never break wasm**: everything below the apps must build for `wasm32-unknown-unknown`
   (`cargo xtask wasm`, part of `cargo xtask ci`).
 

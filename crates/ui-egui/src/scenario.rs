@@ -54,6 +54,8 @@ thread_local! {
     /// and counts by name, for checks.
     static RECTS: RefCell<Vec<(String, egui::Rect)>> = const { RefCell::new(Vec::new()) };
     static COUNTS: RefCell<Vec<(String, f64)>> = const { RefCell::new(Vec::new()) };
+    /// Widths a scenario's `same_width` checks remembered (by rect name).
+    static WIDTHS: RefCell<Vec<(String, f32)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// A manipulator's handle drawn this frame at `at` (screen), by name: "arrow" (a dialog's value
@@ -161,6 +163,7 @@ impl Harness {
             time: 0.0,
             size: egui::vec2(1600.0, 1000.0),
         };
+        WIDTHS.with(|m| m.borrow_mut().clear());
         h.install();
         h.ctx.enable_accesskit();
         h.frames(3);
@@ -623,6 +626,35 @@ pub fn check(h: &mut Harness, e: &Value) -> Result<(), String> {
                 let got = count_of(n);
                 if got != v["value"].as_f64() {
                     return Err(format!("count {n}: got {got:?}, want {}", v["value"]));
+                }
+            }
+            "same_width" => {
+                // {"same_width": "name"}: the published rect is as wide as the first time this
+                // scenario checked it (±0.5 px): a window that keeps its size.
+                let n = v.as_str().unwrap_or_default();
+                let w = rect_of(n).ok_or(format!("no rect {n}"))?.width();
+                let first = WIDTHS.with(|m| {
+                    let mut m = m.borrow_mut();
+                    match m.iter().find(|(k, _)| k == n) {
+                        Some(&(_, w0)) => w0,
+                        None => {
+                            m.push((n.to_string(), w));
+                            w
+                        }
+                    }
+                });
+                if (w - first).abs() > 0.5 {
+                    return Err(format!("{n} is {w:.1} px wide, was {first:.1} px"));
+                }
+            }
+            "right_edge" => {
+                // {"right_edge": {"inner": a, "outer": b, "tol": px}}: published rect a ends at
+                // b's right edge (within tol).
+                let (a, b) = (v["inner"].as_str().unwrap_or_default(), v["outer"].as_str().unwrap_or_default());
+                let (ra, rb) = (rect_of(a).ok_or(format!("no rect {a}"))?, rect_of(b).ok_or(format!("no rect {b}"))?);
+                let tol = v["tol"].as_f64().unwrap_or(2.0) as f32;
+                if (ra.right() - rb.right()).abs() > tol {
+                    return Err(format!("{a} ends at x={:.1}, {b} at x={:.1} (±{tol})", ra.right(), rb.right()));
                 }
             }
             "spans" => {

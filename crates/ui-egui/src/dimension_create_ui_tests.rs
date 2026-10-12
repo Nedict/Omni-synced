@@ -290,3 +290,36 @@ fn draft_annotation_does_not_move_committed_dimension_hitboxes() {
     h.step(&json!({"key":"Escape"})).unwrap();
     assert_eq!(crate::dim_view::drawn(), drawn);
 }
+
+#[test]
+fn inch_dimension_entry_survives_unit_changes_undo_and_reopen() {
+    let mut h = line([25.4, 0.]);
+    h.app.run("document.units", json!({"units":"in"})).unwrap();
+    place(&mut h, &[[12.7, 0.]], [12.7, 8.]);
+    type_value(&mut h, "1.2345");
+    h.step(&json!({"key":"Enter"})).unwrap();
+    let sketch = h.app.session.active_sketch.unwrap();
+    h.settle();
+    crate::dim_view::edit_param(&h.app, "d1");
+    h.settle();
+    type_value(&mut h, "1.3456");
+    h.step(&json!({"key":"Enter"})).unwrap();
+    let edited = h.app.session.world_state();
+    let edited = &edited.sketch(sketch).unwrap().sketch;
+    assert!(edited.constraints.iter().any(|c| c.kind.value().is_some_and(|v| (v - 1.3456 * 25.4).abs() < 1e-6)));
+    h.app.run("edit.undo", json!({})).unwrap();
+    let before = h.app.session.world_state().sketch(sketch).unwrap().sketch.clone();
+    let c = before.constraints.iter().find(|c| c.param.is_some()).unwrap();
+    let p = h.app.session.doc.param(c.param.as_deref().unwrap()).unwrap();
+    assert_eq!(crate::dim_view::label(&c.kind, Some(&p.expr), false, "in", 2), "1.2345");
+    assert!((c.kind.value().unwrap() - 31.3563).abs() < 1e-6);
+    h.app.run("document.units", json!({"units":"mm"})).unwrap();
+    assert_eq!(h.app.session.world_state().sketch(sketch).unwrap().sketch, before);
+    h.app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(h.app.session.doc.units, "in");
+    let doc = solvecraft_engine::doc::Document::from_json(&h.app.session.doc.to_json()).unwrap();
+    let reopened = solvecraft_engine::Session::new(doc);
+    assert_eq!(reopened.doc.units, "in");
+    assert_eq!(reopened.world_state().sketch(sketch).unwrap().sketch, before);
+    crate::dim_view::cancel();
+}

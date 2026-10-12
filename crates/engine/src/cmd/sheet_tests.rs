@@ -1558,3 +1558,29 @@ fn partial_depth_intersect_sub_extrusion_resolution_layers_refuse_atomically() {
         assert!((solvecraft_kernel::measure(&s.world_state().body(&name).unwrap().body).unwrap().volume - 15000.0).abs() < 1e-5);
     }
 }
+
+/// A 0.8 mm steel rule and a base flange from a closed outline on XY (the sheet spans z 0..0.8).
+fn outline_blank(s: &mut Session, outline: Value) {
+    run(s, "sheet.manage_rules", json!({"name": "Steel 0.8", "thickness": "0.8", "active": true}));
+    run(s, "sketch.create", json!({"plane": "XY", "name": "Blank"}));
+    run(s, "sketch.line", json!({"points": outline, "closed": true}));
+    run(s, "sketch.finish", json!({}));
+    run(s, "sheet.flange", json!({"sketch": "Blank"}));
+}
+
+/// A tab whose fold line sits exactly at its root: the bend zone reaches the blank outline beside
+/// the tab. Every edge is straight, so the error must not blame a slanted or curved edge (#262).
+#[test]
+fn fold_at_a_tab_root_names_the_real_cause() {
+    let mut s = Session::default();
+    outline_blank(&mut s, json!([[0, 0], [100, 0], [100, 50], [60, 50], [60, 70], [40, 70], [40, 50], [0, 50]]));
+    if let Err(e) = s.execute("sheet.fold", &json!({"points": [[40, 50, 0.8], [60, 50, 0.8]], "fixed": [50, 25, 0.8]})) {
+        let e = e.to_string();
+        assert!(!e.contains("slanted or curved"), "all edges are straight: {e}");
+        assert!(e.contains("bend zone"), "name the bend zone reaching the outline: {e}");
+    }
+    // 1 mm into the tab the same fold works.
+    let mut ok = Session::default();
+    outline_blank(&mut ok, json!([[0, 0], [100, 0], [100, 50], [60, 50], [60, 70], [40, 70], [40, 50], [0, 50]]));
+    run(&mut ok, "sheet.fold", json!({"points": [[40, 51, 0.8], [60, 51, 0.8]], "fixed": [50, 25, 0.8]}));
+}
