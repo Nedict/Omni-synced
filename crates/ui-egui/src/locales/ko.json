@@ -187,6 +187,7 @@
   "ui.multiple": "다중",
   "ui.named_views": "명명된 뷰",
   "ui.navigation": "탐색",
+  "ui.needs_design": "{command}: 먼저 디자인을 열어 주세요",
   "ui.new_body": "새 바디",
   "ui.new_design": "새 디자인",
   "ui.normal": "일반",

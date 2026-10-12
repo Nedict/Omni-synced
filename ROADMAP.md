@@ -321,9 +321,20 @@ the active plane. Bridge endpoints capture their source positions; associative e
 construction-plane selection of 3D wires and loft guide rails remain separate work.
 Feature dialog header chevrons collapse and restore the form without discarding selections
 or edited values, including the Appearance panel.
+## Construction on 3D paths
+
+Plane Along Path has a viewport path selector, fractional position, live preview and timeline
+editing. Construction planes and points resolve drawn 3D wires without applying their sketch
+plane a second time. Curved paths use sampled segments; multi-curve chains, absolute distance
+and reference-object placement remain separate work, as do loft rails and centerlines.
 
 ## Document-opening performance
 
+- Desktop STEP import prepares consecutive independent solids in bounded batches with up
+  to eight workers, retaining serial traversal, result order and persistent source identities.
+  The web path remains serial. Original multi-solid fixtures show 64–81% lower complete
+  import times; single-solid assembly parts are not scheduled across nodes. See
+  [measurements and limits](docs/perf.md#parallel-step-body-preparation-2026-10-12).
 - Cold rebuild profiling separates parsing, geometry, placement, display meshing and
   thumbnails. Straight-line closest-point projection and exact curved-surface evaluation
   reuse reduce repeated work without relaxing geometry checks. Three alternating optimized

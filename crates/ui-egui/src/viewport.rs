@@ -1809,10 +1809,17 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             if app.tool.is_some() {
                 crate::tools::on_click(app, &proj, p);
             } else if app.dialog.as_ref().is_some_and(|d| d.wants_picks()) {
-                if let Some(sel) = cand.and_then(|c| c.1)
+                if let Some((hit, Some(sel))) = cand
                     && let Some(mut d) = app.dialog.take()
                 {
                     d.pick(&app.session, sel);
+                    if let crate::dialogs::Kind::PathPlane { sketch, .. } = &mut d.kind {
+                        *sketch = match hit {
+                            Hit::SketchCurve { sketch, .. } => Some(sketch),
+                            _ => None,
+                        };
+                        d.extra.remove("path");
+                    }
                     app.dialog = Some(d);
                 }
             } else {

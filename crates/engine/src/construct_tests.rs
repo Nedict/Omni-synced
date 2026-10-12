@@ -216,6 +216,47 @@ fn plane_along_a_path() {
     run(&mut s, "sketch.create", json!({"plane": "P", "name": "OnPath"}));
 }
 
+#[test]
+fn construction_on_a_3d_wire_ignores_its_sketch_plane_and_follows_edits() {
+    let mut s = Session::default();
+    let sketch = run(&mut s, "sketch.create", json!({"plane":{"origin":[100,200,300],"x_dir":[0,1,0],"y_dir":[0,0,1]}}))["sketch"].as_u64().unwrap();
+    run(&mut s, "sketch.options", json!({"sketch_3d":true}));
+    let wire = run(&mut s, "sketch.line3d", json!({"points":[[10,20,10],[30,35,40]]}))["curves"][0].as_str().unwrap().to_string();
+    run(&mut s, "sketch.finish", json!({}));
+    let path = json!({"sketch":sketch,"curve":wire});
+    run(&mut s, "construct.plane.along_path", json!({"path":path,"t":0.5,"name":"BridgePlane"}));
+    run(&mut s, "construct.point.along_path", json!({"path":path,"t":0.25,"name":"Quarter"}));
+    let p = plane(&s, "BridgePlane");
+    assert!(near(p.origin, Vec3::new(20.0, 27.5, 25.0)), "{p:?}");
+    assert!(parallel(p.normal(), Vec3::new(20.0, 15.0, 30.0)));
+    assert!(near(point(&s, "Quarter"), Vec3::new(15.0, 23.75, 17.5)));
+    run(&mut s, "sketch.edit", json!({"sketch":sketch}));
+    run(&mut s, "sketch.move3d", json!({"wire":wire,"index":1,"to":[50,35,40]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let updated = plane(&s, "BridgePlane");
+    assert!(near(updated.origin, Vec3::new(30.0, 27.5, 25.0)), "{updated:?}");
+    assert!(parallel(updated.normal(), Vec3::new(40.0, 15.0, 30.0)));
+    let restored = solvecraft_doc::format::read(&s.doc.to_json()).unwrap();
+    let mut cold = Session { doc: restored.into(), ..Default::default() };
+    cold.refresh();
+    assert!(near(plane(&cold, "BridgePlane").origin, updated.origin));
+}
+
+#[test]
+fn plane_on_a_3d_wire_moves_with_its_component() {
+    let mut s = Session::default();
+    run(&mut s, "component.create", json!({"name":"Part"}));
+    let sketch = run(&mut s, "sketch.create", json!({"plane":"XY"}))["sketch"].as_u64().unwrap();
+    run(&mut s, "sketch.options", json!({"sketch_3d":true}));
+    let wire = run(&mut s, "sketch.line3d", json!({"points":[[0,0,10],[0,0,40]]}))["curves"][0].as_str().unwrap().to_string();
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "construct.plane.along_path", json!({"path":{"sketch":sketch,"curve":wire},"t":0.5,"name":"Section"}));
+    run(&mut s, "occurrence.move", json!({"occurrence":"Part:1","translate":[50,20,0],"capture":true}));
+    let p = plane(&s, "Section");
+    assert!(near(p.origin, Vec3::new(50.0, 20.0, 25.0)), "{p:?}");
+    assert!(parallel(p.normal(), Vec3::Z));
+}
+
 /// Built from model geometry, they follow when the model changes: the box gets taller.
 #[test]
 fn construction_follows_the_model() {

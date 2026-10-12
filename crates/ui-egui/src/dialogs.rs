@@ -101,6 +101,11 @@ pub enum Kind {
     AnglePlane {
         angle: String,
     },
+    /// A plane perpendicular to one selected path at a fractional distance.
+    PathPlane {
+        t: String,
+        sketch: Option<u64>,
+    },
     /// Split a body by a plane.
     Split,
     /// Scale bodies uniformly.
@@ -387,6 +392,9 @@ impl Dialog {
             "construct.plane.offset" => {
                 Dialog::new(Kind::OffsetPlane { offset: "10 mm".into() }, vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)])
             }
+            "construct.plane.along_path" => {
+                Dialog::new(Kind::PathPlane { t: "0.5".into(), sketch: None }, vec![SelInput::new("Path", CURVES | EDGES, false)])
+            }
             "construct.plane.at_angle" => Dialog::new(
                 Kind::AnglePlane { angle: "45 deg".into() },
                 vec![SelInput::new("Plane", PLANES, false), SelInput::new("Axis", AXES, false)],
@@ -588,6 +596,7 @@ impl Dialog {
                 | Kind::PatternCirc { .. }
                 | Kind::Loft { .. }
                 | Kind::Sweep { .. }
+                | Kind::PathPlane { .. }
                 | Kind::Move { .. }
                 | Kind::Hole { .. }
                 | Kind::Primitive { .. }
@@ -611,6 +620,7 @@ impl Dialog {
             Kind::PatternCirc { angle, .. } => ("Angle", ValueKind::Angle, angle),
             Kind::Section { offset, .. } => ("Distance", ValueKind::Length, offset),
             Kind::OffsetPlane { offset } => ("Distance", ValueKind::Length, offset),
+            Kind::PathPlane { t, .. } => ("Position (0 to 1)", ValueKind::Unitless, t),
             Kind::Rib { thickness, .. } => ("Thickness", ValueKind::Length, thickness),
             Kind::Emboss { depth, .. } => ("Depth", ValueKind::Length, depth),
             Kind::PathPattern { spacing, .. } => ("Spacing", ValueKind::Length, spacing),
@@ -666,6 +676,10 @@ impl Dialog {
 
     /// A pick in the viewport (already accepted by the active input).
     pub fn pick(&mut self, s: &Session, sel: Sel) {
+        if let Kind::PathPlane { sketch, .. } = &mut self.kind {
+            *sketch = None;
+            self.extra.remove("path");
+        }
         if self.active == 0 && matches!(self.kind, Kind::Extrude { .. } | Kind::Revolve { .. } | Kind::Emboss { .. }) {
             self.profile_selection_changed = true;
         }
@@ -709,6 +723,10 @@ impl Dialog {
 
     /// Box selection result: replace (or add to) the active input.
     pub fn take_box(&mut self, s: &Session, sels: Vec<Sel>, add: bool) {
+        if let Kind::PathPlane { sketch, .. } = &mut self.kind {
+            *sketch = None;
+            self.extra.remove("path");
+        }
         if self.active == 0 && matches!(self.kind, Kind::Extrude { .. } | Kind::Revolve { .. } | Kind::Emboss { .. }) {
             self.profile_selection_changed = true;
         }
@@ -821,6 +839,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::Measure { .. } => "MEASURE",
         Kind::Material { .. } => "PHYSICAL MATERIAL",
         Kind::OffsetPlane { .. } => "OFFSET PLANE",
+        Kind::PathPlane { .. } => "PLANE ALONG PATH",
         Kind::Rib { web: false, .. } => "RIB",
         Kind::Rib { web: true, .. } => "WEB",
         Kind::Emboss { .. } => "EMBOSS",
@@ -1657,6 +1676,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     Kind::AnglePlane { angle } => {
                         row_label(ui, "Angle");
                         enter |= field(ui, angle);
+                        ui.end_row();
+                    }
+                    Kind::PathPlane { t, .. } => {
+                        row_label(ui, "Position (0 to 1)");
+                        enter |= field(ui, t);
                         ui.end_row();
                     }
                     Kind::Split | Kind::ReplaceFace | Kind::Remove => {}
@@ -2618,6 +2642,29 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             };
             ("construct.plane.offset", json!({"base": base, "offset": offset}))
         }
+        Kind::PathPlane { t, sketch } => {
+            need(0, "a path")?;
+            let path = match sels(d, 0).first() {
+                Some(Sel::SketchCurve { id }) => {
+                    let st = app.session.world_state();
+                    let matches: Vec<u64> = st
+                        .sketches
+                        .iter()
+                        .filter(|ss| ss.sketch.curve_index(id).is_some() || ss.sketch.wire_index(id).is_some())
+                        .map(|ss| ss.feature)
+                        .collect();
+                    let source = match sketch {
+                        Some(source) if matches.contains(source) => *source,
+                        None if matches.len() == 1 => *matches.first().ok_or("pick a path")?,
+                        _ => return Err("pick the path in the viewport to identify its source sketch".into()),
+                    };
+                    json!({"sketch": source, "curve": id})
+                }
+                Some(Sel::Edge { point, .. }) => d.extra.get("path").cloned().unwrap_or_else(|| json!({"edge": pt(*point)})),
+                _ => return Err("pick a sketch curve or model edge".into()),
+            };
+            ("construct.plane.along_path", json!({"path": path, "t": t}))
+        }
         Kind::AnglePlane { angle } => {
             need(0, "a plane")?;
             let base = match sels(d, 0).first() {
@@ -3535,6 +3582,23 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             d.kind = Kind::OffsetPlane { offset: distance.clone() };
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = plane_sel(s, base).into_iter().collect();
+            }
+            d
+        }
+        FeatureKind::ConstructionPlane { plane: PlaneRef::AlongPath { path, t } } => {
+            let mut d = start("construct.plane.along_path")?;
+            let (item, sketch) = match path.as_ref() {
+                solvecraft_engine::doc::construct::GeoRef::SketchCurve { sketch, curve } => (Sel::SketchCurve { id: curve.clone() }, Some(*sketch)),
+                solvecraft_engine::doc::construct::GeoRef::Edge { at, name } => {
+                    // Preserve the saved named reference until a replacement is picked.
+                    d.extra.insert("path".into(), json!({"type":"edge","at":pt3(*at),"name":name}));
+                    (Sel::Edge { body: String::new(), index: 0, point: *at }, None)
+                }
+                _ => return None,
+            };
+            d.kind = Kind::PathPlane { t: t.clone(), sketch };
+            if let Some(input) = d.inputs.first_mut() {
+                input.items = vec![item];
             }
             d
         }

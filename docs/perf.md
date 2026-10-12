@@ -1,5 +1,57 @@
 # Design loading
 
+## Parallel STEP body preparation (2026-10-12)
+
+Profiling an original 48-cylinder STEP fixture before changing the importer measured
+3.17 ms parsing, 6.06 ms reconstructing B-reps and 45.58 ms preparing/orienting bodies.
+The five complete imports had a median of 59.21 ms. The expensive orientation mesh,
+rather than the text parser, was the first parallelization target for #287.
+
+Desktop import now prepares consecutive independent solids in a representation with
+up to eight workers. Each batch contains at most 64 solids. Parsing, B-rep reconstruction,
+assembly traversal, first-use unit resolution, naming and result collection remain ordered.
+Mapped items end a batch. Fewer than four solids use the serial path; wasm always uses it.
+Thread creation failure falls back to serial work, and kernel/worker failures remain
+per-body errors reported by the importer.
+
+Windows x64, AMD Ryzen AI Max+ 395 (16 cores / 32 logical processors), optimized `ci`
+profile, no concurrent build: three fresh test processes per fixture, five alternating
+serial/parallel pairs in each process. These are complete uncached kernel imports,
+including parsing and body preparation; fixture generation/export and later desktop
+display meshing are outside the timer. Both paths use the same input text and code.
+
+| Original generated fixture | Bodies | Serial median | 8 workers median | Reduction |
+|---|---:|---:|---:|---:|
+| Cylinders, radius 5 mm, height 12 mm | 48 | 57.54 ms | 17.38 ms | 69.8% |
+| Cylinders, radius 5 mm, height 12 mm | 512 | 896.31 ms | 313.06 ms | 65.1% |
+| Tori, major radius 20 mm, minor radius 4 mm | 48 | 269.05 ms | 51.90 ms | 80.7% |
+| Boxes, 10 × 15 × 12 mm | 512 | 247.97 ms | 90.15 ms | 63.6% |
+| Boxes, 10 × 15 × 12 mm | 4 | 1.49 ms | 1.02 ms | 31.5% |
+| One cylinder (serial fallback) | 1 | 1.22 ms | 1.29 ms | serial fallback |
+
+There are 15 samples per cell. The single-cylinder modes run identical serial code; their
+0.07 ms median difference is within the overlapping 1.11–1.57 / 1.13–1.52 ms ranges. The 512-cylinder runs ranged from 567.40–983.61 ms
+serial and 197.72–345.51 ms parallel; scheduling/thermal variation is material. These
+synthetic results do not establish a speedup for every assembly or complete desktop Open.
+In particular, parts containing only one solid are not parallelized across assembly nodes.
+Cross-part scheduling, parallel B-rep reconstruction and later display meshes remain open.
+
+Reproduce after compiling, without other builds running:
+
+```sh
+cargo test -p solvecraft-kernel --profile ci benchmark_independent_step_solids --no-run
+SOLVECRAFT_STEP_BENCH_COUNT=512 SOLVECRAFT_STEP_BENCH_KIND=cylinder \
+  cargo test -p solvecraft-kernel --profile ci benchmark_independent_step_solids \
+  -- --ignored --nocapture --test-threads=1
+```
+
+Use `torus` or `box` for the other fixtures and repeat in three fresh processes.
+`SOLVECRAFT_STEP_BENCH_FIXTURE` optionally writes the original STEP for native inspection.
+No timing threshold runs in CI. Regressions compare serial and threaded imports with
+different worker counts: exact display meshes, measures, body/face source identities,
+names, colours/opacity, units, rotated assembly placements, duplicates and partial failures
+across the batch boundary. The public analytic/FreeCAD reference suite also checks STEP
+export/import; its current results are reported in docs/oracle.md.
 ## Analytic extrusion source preparation
 
 New-body extrusion certificates now prepare the sketch's bounded analytic segments once

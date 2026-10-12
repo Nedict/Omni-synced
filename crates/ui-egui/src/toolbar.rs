@@ -104,45 +104,55 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.painter().text(pos2(left + 36.0, r.center().y), Align2::LEFT_CENTER, "SolidCraft", FontId::proportional(14.0), t.app_bar_text);
         }
         let mut x = left + if compact_actions { 60.0 } else { 128.0 };
-        let mut click = |ui: &mut egui::Ui, icon: &str, tip: &str| -> bool {
+        // A disabled button is dimmed and ignores clicks (its tooltip still shows).
+        let mut click = |ui: &mut egui::Ui, icon: &str, tip: &str, enabled: bool| -> bool {
             let width = if compact_actions { 22.0 } else { 26.0 };
             let br = Rect::from_center_size(pos2(x, r.center().y), vec2(width, 26.0));
             x += if compact_actions { 22.0 } else { 30.0 };
-            let resp = ui.interact(br, ui.id().with(("ab", icon)), Sense::click());
+            let resp = ui.interact(br, ui.id().with(("ab", icon)), if enabled { Sense::click() } else { Sense::hover() });
             crate::scenario::publish_handle(&format!("appbar:{icon}"), br.center());
-            if resp.hovered() {
+            if enabled && resp.hovered() {
                 ui.painter().rect_filled(br, 4.0, Color32::from_white_alpha(30));
             }
+            let dim = |c: Color32| if enabled { c } else { c.gamma_multiply(0.35) };
             icons::paint(
                 ui.painter(),
                 br.shrink(5.0),
                 icon,
-                Color32::from_rgb(225, 230, 238),
-                Color32::from_rgb(120, 140, 170),
-                Color32::from_rgb(120, 190, 255),
+                dim(Color32::from_rgb(225, 230, 238)),
+                dim(Color32::from_rgb(120, 140, 170)),
+                dim(Color32::from_rgb(120, 190, 255)),
             );
-            resp.on_hover_text(tip).clicked()
+            let clicked = resp.on_hover_text(tip).clicked();
+            enabled && clicked
         };
-        let file = click(ui, "folder", app.tr("ui.file"));
-        if click(ui, "save", &format!("{} (Ctrl+S)", app.tr("ui.save"))) {
+        let file = click(ui, "folder", app.tr("ui.file"), true);
+        // Save, Undo and Redo act on the design, which Home hides.
+        let shown = design_shown(app);
+        let tip = |id: &str, key: &str| {
+            let label = app.tr(id);
+            if shown { format!("{label} ({key})") } else { crate::i18n::format("ui.needs_design", &[("command", label)]) }
+        };
+        let (save_tip, undo_tip, redo_tip) = (tip("ui.save", "Ctrl+S"), tip("ui.undo", "Ctrl+Z"), tip("ui.redo", "Ctrl+Y"));
+        if click(ui, "save", &save_tip, shown) {
             save(app);
         }
-        if click(ui, "undo", &format!("{} (Ctrl+Z)", app.tr("ui.undo"))) {
+        if click(ui, "undo", &undo_tip, shown) {
             let _ = app.run("edit.undo", json!({}));
         }
-        if click(ui, "redo", &format!("{} (Ctrl+Y)", app.tr("ui.redo"))) {
+        if click(ui, "redo", &redo_tip, shown) {
             let _ = app.run("edit.redo", json!({}));
         }
-        if click(ui, "home", app.tr("ui.home")) {
+        if click(ui, "home", app.tr("ui.home"), true) {
             let rev = app.session.revision;
             app.home.show(rev);
         }
         let theme_tip = if app.ui.dark { app.tr("ui.light") } else { app.tr("ui.dark") };
-        if !compact_actions && click(ui, if app.ui.dark { "sun" } else { "moon" }, theme_tip) {
+        if !compact_actions && click(ui, if app.ui.dark { "sun" } else { "moon" }, theme_tip, true) {
             app.ui.dark = !app.ui.dark;
             app.preferences.theme = if app.ui.dark { "dark" } else { "light" }.into();
         }
-        if click(ui, "help", app.tr("ui.help")) {
+        if click(ui, "help", app.tr("ui.help"), true) {
             app.help.menu = !app.help.menu;
             let at = ui.ctx().input(|i| i.pointer.latest_pos()).map_or(300.0, |p| p.x);
             ui.ctx().data_mut(|d| {
@@ -239,9 +249,12 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                 ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
                 ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
                 ui.visuals_mut().widgets.hovered.weak_bg_fill = Tokens::get().hover;
-                let item = |ui: &mut egui::Ui, label: &str, key: &str| {
-                    ui.add(egui::Button::new(label).shortcut_text(key).min_size(vec2(180.0, 22.0))).clicked()
+                let item_if = |ui: &mut egui::Ui, label: &str, key: &str, enabled: bool| {
+                    ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(key).min_size(vec2(180.0, 22.0))).clicked()
                 };
+                let item = |ui: &mut egui::Ui, label: &str, key: &str| item_if(ui, label, key, true);
+                // Insert, Save and Export act on the design, which Home hides.
+                let shown = design_shown(app);
                 if item(ui, app.tr("ui.new_design"), "Ctrl+N") {
                     crate::documents::new_design(app);
                     close = true;
@@ -270,36 +283,36 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                         ui.close();
                     }
                 });
-                if item(ui, "Insert STEP…", "") {
+                if item_if(ui, "Insert STEP…", "", shown) {
                     app.start("file.insert_step");
                     close = true;
                 }
-                if item(ui, "Insert Mesh…", "") {
+                if item_if(ui, "Insert Mesh…", "", shown) {
                     app.start("file.insert_mesh");
                     close = true;
                 }
-                if item(ui, app.tr("ui.save"), "Ctrl+S") {
+                if item_if(ui, app.tr("ui.save"), "Ctrl+S", shown) {
                     save(app);
                     close = true;
                 }
-                if item(ui, &format!("{}…", app.tr("ui.save_as")), "") {
+                if item_if(ui, &format!("{}…", app.tr("ui.save_as")), "", shown) {
                     save_as(app);
                     close = true;
                 }
                 ui.separator();
-                if item(ui, "Export STL…", "") {
+                if item_if(ui, "Export STL…", "", shown) {
                     export(app, "stl");
                     close = true;
                 }
-                if item(ui, "Export STEP…", "") {
+                if item_if(ui, "Export STEP…", "", shown) {
                     export(app, "step");
                     close = true;
                 }
-                if item(ui, "Export 3MF…", "") {
+                if item_if(ui, "Export 3MF…", "", shown) {
                     export(app, "3mf");
                     close = true;
                 }
-                if item(ui, "Export OBJ…", "") {
+                if item_if(ui, "Export OBJ…", "", shown) {
                     export(app, "obj");
                     close = true;
                 }
@@ -323,6 +336,12 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
     if close || (!just_opened && resp.response.clicked_elsewhere()) {
         ctx.data_mut(|d| d.insert_temp(id, false));
     }
+}
+
+/// Whether the open design is on screen. Home hides it, so commands that act on it (save,
+/// undo, insert, export, tool shortcuts) are off there.
+pub fn design_shown(app: &SolveApp) -> bool {
+    !app.home.open
 }
 
 pub fn save(app: &mut SolveApp) {
@@ -832,13 +851,12 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
             i.events.iter().filter_map(|e| if let egui::Event::Key { key, pressed: true, .. } = e { Some(*key) } else { None }).collect();
         (keys, i.modifiers)
     });
+    // Home hides the design: only New, Open and Preferences work there.
+    let shown = design_shown(app);
     for k in keys {
         use egui::Key;
         if mods.command {
             match k {
-                Key::Z => drop(app.run("edit.undo", json!({}))),
-                Key::Y => drop(app.run("edit.redo", json!({}))),
-                Key::S => save(app),
                 Key::N => crate::documents::new_design(app),
                 Key::Comma => crate::prefs::open_at(app, 0),
                 Key::O => {
@@ -846,12 +864,19 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                         app.open_path_async(&p);
                     }
                 }
+                _ if !shown => {}
+                Key::Z => drop(app.run("edit.undo", json!({}))),
+                Key::Y => drop(app.run("edit.redo", json!({}))),
+                Key::S => save(app),
                 _ => {
                     if let Some(id) = crate::keymap::command_for(app, &crate::keymap::key_name(k, mods)) {
                         app.start(id);
                     }
                 }
             }
+            continue;
+        }
+        if !shown {
             continue;
         }
         match k {
@@ -981,5 +1006,107 @@ mod header_report_tests {
         assert_eq!(h.app.session.doc.param("d1").unwrap().expr, "30 mm");
         h.app.run("edit.undo", json!({})).unwrap();
         assert_eq!(h.app.session.doc.to_json(), before.0);
+    }
+}
+
+#[cfg(test)]
+mod home_tests {
+    use super::*;
+
+    /// Home hides the design: its Save, Undo and Redo buttons, the File menu's Insert, Save
+    /// and Export, and the design's keyboard shortcuts leave it alone. They work again once
+    /// the design is back.
+    #[test]
+    fn design_actions_are_off_on_home() {
+        // A design with history both ways, a selection and unsaved changes, behind Home.
+        let on_home = || {
+            let mut h = crate::scenario::Harness::new();
+            h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Main"})).unwrap();
+            h.app.run("solid.box", json!({"length": 5, "width": 5, "height": 5, "corner": [20, 0, 0]})).unwrap();
+            h.app.run("edit.undo", json!({})).unwrap();
+            h.app.session.selection = vec![solvecraft_engine::Sel::Body { name: "Main".into() }];
+            let rev = h.app.session.revision;
+            h.app.home.show(rev);
+            h.frames(2);
+            h
+        };
+        let mut h = on_home();
+        assert!(!design_shown(&h.app));
+        // Everything an action could change: the design, its history and file, files written,
+        // the selection and visibility, and whether it left Home or opened a tool, dialog or the command box.
+        let state = |h: &crate::scenario::Harness| {
+            let files = std::fs::read_dir(&h.dir).map_or(0, |d| d.count());
+            let doc = serde_json::to_value(&*h.app.session.doc).unwrap();
+            let busy = (h.app.tool.is_some(), h.app.dialog.is_some(), h.app.ui.palette_open);
+            (
+                doc,
+                h.app.session.undo.len(),
+                h.app.session.redo.len(),
+                h.app.session.path.clone(),
+                files,
+                h.app.session.selection.clone(),
+                h.app.session.visibility.hidden_bodies.clone(),
+                h.app.home.open,
+                busy,
+            )
+        };
+        let click = |h: &mut crate::scenario::Harness, handle: &str| {
+            let at = crate::scenario::handle_at(handle).unwrap();
+            h.call("ui.click", json!({"x": at.x, "y": at.y}));
+        };
+        let mut actions: Vec<(String, Box<dyn Fn(&mut crate::scenario::Harness)>)> = Vec::new();
+        for icon in ["save", "undo", "redo"] {
+            actions.push((format!("{icon} button"), Box::new(move |h| click(h, &format!("appbar:{icon}")))));
+        }
+        for (key, cmd) in [("S", true), ("Z", true), ("Y", true), ("Delete", false), ("V", false), ("E", false), ("S", false)] {
+            let name = if cmd { format!("Ctrl+{key}") } else { key.to_string() };
+            actions.push((name, Box::new(move |h| drop(h.call("ui.key", json!({"key": key, "cmd": cmd}))))));
+        }
+        for item in ["Insert STEP…", "Insert Mesh…", "Save", "Save As…", "Export STL…", "Export STEP…", "Export 3MF…", "Export OBJ…"] {
+            actions.push((
+                format!("File › {item}"),
+                Box::new(move |h| {
+                    h.ctx.data_mut(|d| d.insert_temp(egui::Id::new("sc_file_menu"), false));
+                    click(h, "appbar:folder");
+                    let _ = h.step(&json!({"widget": item}));
+                }),
+            ));
+        }
+        // Each action on its own design, so one cannot hide another.
+        let mut acted = Vec::new();
+        for (name, act) in &actions {
+            let mut h = on_home();
+            let before = state(&h);
+            act(&mut h);
+            h.settle();
+            if state(&h) != before {
+                acted.push(name.clone());
+            }
+        }
+        assert!(acted.is_empty(), "these acted on the hidden design from Home: {acted:?}");
+
+        h.app.home.open = false;
+        h.frames(2);
+        let at = crate::scenario::handle_at("appbar:redo").unwrap();
+        h.call("ui.click", json!({"x": at.x, "y": at.y}));
+        assert_eq!(h.app.session.redo.len(), 0, "Redo works once Home is closed");
+        h.call("ui.key", json!({"key": "Z", "cmd": true}));
+        h.settle();
+        assert_eq!(h.app.session.redo.len(), 1, "Ctrl+Z works once Home is closed");
+        let at = crate::scenario::handle_at("appbar:save").unwrap();
+        h.call("ui.click", json!({"x": at.x, "y": at.y}));
+        h.settle();
+        assert!(h.app.session.path.is_some() && !h.app.session.is_dirty(), "the design saves once Home is closed");
+    }
+
+    /// The disabled buttons' tooltip is translated in every catalog (not English fallback).
+    #[test]
+    fn needs_design_tooltip_is_translated() {
+        let english = crate::i18n::Locale::for_language("en").text("ui.needs_design");
+        assert!(english.contains("{command}"));
+        for catalog in crate::i18n::LOCALES.iter().filter(|c| c.id != "en") {
+            let text = crate::i18n::Locale::for_language(catalog.id).text("ui.needs_design");
+            assert!(text != english && text.contains("{command}"), "{} must translate ui.needs_design", catalog.id);
+        }
     }
 }

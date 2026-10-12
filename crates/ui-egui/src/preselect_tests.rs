@@ -9,6 +9,58 @@ use crate::dialogs::{Dialog, Kind, apply_commands};
 use crate::{Services, SolveApp};
 
 #[test]
+fn path_plane_click_retains_source_and_previews_then_edits_in_place() {
+    let mut h = crate::scenario::Harness::new();
+    let source = h.app.run("sketch.create", json!({"plane":"XY","name":"Bridge"})).unwrap()["sketch"].as_u64().unwrap();
+    h.app.run("sketch.options", json!({"sketch_3d":true})).unwrap();
+    let wire = h.app.run("sketch.line3d", json!({"points":[[10,20,10],[30,35,40]]})).unwrap()["curves"][0].as_str().unwrap().to_string();
+    h.app.run("sketch.finish", json!({})).unwrap();
+    h.app.run("sketch.create", json!({"plane":"XY","name":"Other"})).unwrap();
+    h.app.run("sketch.options", json!({"sketch_3d":true})).unwrap();
+    let duplicate = h.app.run("sketch.line3d", json!({"points":[[-30,0,0],[-20,0,0]]})).unwrap()["curves"][0].as_str().unwrap().to_string();
+    assert_eq!(wire, duplicate, "exercise duplicate curve ids in different sketches");
+    h.app.run("sketch.finish", json!({})).unwrap();
+    h.app.ui.show_origin = false;
+    h.settle();
+    h.call("ui.view", json!({"view":"home"}));
+    h.call("ui.view", json!({"view":"fit"}));
+    h.app.start("construct.plane.along_path");
+    h.frames(2);
+    h.step(&json!({"click":{"world":[20,27.5,25]}})).unwrap();
+    let d = h.app.dialog.as_ref().unwrap();
+    let commands = apply_commands(&h.app, d).unwrap();
+    assert_eq!(commands[0].1["path"]["sketch"], json!(source));
+    let history = h.app.session.undo.len();
+    let count = h.app.session.doc.features.len();
+    let preview = h.app.session.preview_visible_world(&commands).unwrap();
+    let built = crate::preview::compute(&h.app.session, &commands, crate::preview::Colors::from_tokens(&crate::theme::Tokens::dark())).unwrap();
+    assert!(!built.scene.xray.is_empty(), "construction preview must contain visible geometry");
+    let plane = preview.after.construct.last().unwrap();
+    let solvecraft_engine::doc::construct::ConstructGeom::Plane(pl) = plane.geom else { panic!("plane") };
+    assert!(pl.origin.dist(Vec3::new(20.0, 27.5, 25.0)) < 1e-6);
+    assert_eq!(h.app.session.doc.features.len(), count);
+    assert_eq!(h.app.session.undo.len(), history);
+    h.step(&json!({"key":"Enter"})).unwrap();
+    assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog);
+    let feature = h.app.session.doc.features.last().unwrap().clone();
+    assert_eq!(h.app.session.undo.len(), history + 1);
+    h.app.edit_feature(feature.id);
+    h.frames(2);
+    let d = h.app.dialog.as_mut().unwrap();
+    assert!(matches!(d.kind,Kind::PathPlane{sketch:Some(s),..} if s==source));
+    if let Kind::PathPlane { t, .. } = &mut d.kind {
+        *t = "0.25".into();
+    }
+    h.step(&json!({"key":"Enter"})).unwrap();
+    assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog);
+    assert_eq!(h.app.session.doc.features.len(), count + 1);
+    let p = solvecraft_engine::view::construction_planes(&h.app.session).into_iter().find(|p| p.0 == feature.id).unwrap().2;
+    assert!(p.origin.dist(Vec3::new(15.0, 23.75, 17.5)) < 1e-6, "{p:?}");
+    h.app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(h.app.session.doc.feature(feature.id).unwrap().kind, feature.kind);
+}
+
+#[test]
 fn cylinder_emboss_empty_target_face_applies_automatic_wrap_and_deboss() {
     for deboss in [false, true] {
         let mut h = crate::scenario::Harness::new();

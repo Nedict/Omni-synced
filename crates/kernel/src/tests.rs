@@ -182,6 +182,39 @@ fn fillets_on_several_edges_and_angles() {
 }
 
 #[test]
+fn fillet_consuming_a_side_face_makes_a_full_round() {
+    // 14 x 6 x 10: r = 3 on the four vertical edges uses up both 6 mm end faces (#199).
+    let b = box_solid(Vec3::new(14.0, 0.0, 0.0), Vec3::new(28.0, 6.0, 10.0)).unwrap();
+    let mids = [Vec3::new(14.0, 0.0, 5.0), Vec3::new(28.0, 0.0, 5.0), Vec3::new(14.0, 6.0, 5.0), Vec3::new(28.0, 6.0, 5.0)];
+    let full = 840.0 - (4.0 - PI) * 9.0 * 10.0;
+    for order in [mids.to_vec(), mids.iter().rev().copied().collect()] {
+        let f = fillet(&b, &order, 3.0).unwrap();
+        let m = measure(&f).unwrap();
+        assert!(rel(m.volume, full) < 2e-4, "{} vs {full}", m.volume);
+        // Top, bottom, the two long sides and four quarter rounds; the end faces are gone.
+        assert_eq!(m.faces, 8, "{m:?}");
+        assert_eq!(f.lumps().unwrap().len(), 1);
+        assert!(f.validity().is_empty(), "{:?}", f.validity());
+    }
+    // One end only: two rounds meeting on one end face.
+    let f = fillet(&b, &mids[1..4].iter().step_by(2).copied().collect::<Vec<_>>(), 3.0).unwrap();
+    assert!(rel(measure(&f).unwrap().volume, 840.0 - (4.0 - PI) * 9.0 * 5.0) < 2e-4);
+    assert!(f.validity().is_empty());
+    // A 6 x 6 post rounded on all four edges with r = 3 is a cylinder.
+    let post = box_solid(Vec3::ZERO, Vec3::new(6.0, 6.0, 10.0)).unwrap();
+    let corners = [Vec3::new(0.0, 0.0, 5.0), Vec3::new(6.0, 0.0, 5.0), Vec3::new(6.0, 6.0, 5.0), Vec3::new(0.0, 6.0, 5.0)];
+    let c = fillet(&post, &corners, 3.0).unwrap();
+    assert!(rel(measure(&c).unwrap().volume, PI * 9.0 * 10.0) < 2e-4, "{}", measure(&c).unwrap().volume);
+    assert!(c.validity().is_empty());
+    // Past the limit there is no face left to consume: still refused, the body unchanged.
+    for r in [3.0 + 1e-3, 3.5] {
+        let e = fillet(&b, &mids, r).unwrap_err();
+        assert!(e.to_string().contains("larger than the neighbouring faces"), "{r}: {e}");
+    }
+    assert_eq!(measure(&b).unwrap().volume, 840.0);
+}
+
+#[test]
 fn tapered_extrudes() {
     // 40 x 40 square, 30 up, 10° outward: a frustum.
     let sq = Region2 {
@@ -1929,4 +1962,21 @@ fn shell_of_a_pocket_whose_floor_falls_to_a_drain() {
     let want = 140.0 * 90.0 * top - pocket_vol - cavity;
     let m = measure(&s).unwrap();
     assert!(rel(m.volume, want) < 1e-4, "{} vs {want}", m.volume);
+}
+
+#[test]
+fn shell_open_beside_a_round_as_large_as_the_wall_is_refused() {
+    // Opening the bottom of a box whose bottom outline is rounded: the cavity's side walls stand
+    // the thickness in from the outside, where a round at least that large meets the bottom, so
+    // the rim would have no thickness. Smaller rounds leave a rim.
+    let b = box_solid(Vec3::ZERO, Vec3::new(40.0, 30.0, 10.0)).unwrap();
+    let loop_ = [Vec3::new(20.0, 0.0, 0.0), Vec3::new(40.0, 15.0, 0.0), Vec3::new(20.0, 30.0, 0.0), Vec3::new(0.0, 15.0, 0.0)];
+    let bottom = [Vec3::new(20.0, 15.0, 0.0)];
+    for r in [2.0, 2.4] {
+        let f = fillet(&b, &loop_, r).unwrap();
+        let e = shell(&f, &bottom, 2.0).unwrap_err();
+        assert!(e.to_string().starts_with("the operation failed: not supported yet: the rim"), "{r}: {e}");
+    }
+    let f = fillet(&b, &loop_, 1.5).unwrap();
+    assert!(shell(&f, &bottom, 2.0).unwrap().validity().is_empty());
 }
