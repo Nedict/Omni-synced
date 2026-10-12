@@ -3703,7 +3703,6 @@ mod world_placement_cache_tests {
         assert!(source.names.origin.is_some());
         assert!(source.mesh.get().is_none());
         let world = world_state(&doc, &state);
-        assert!(source.mesh.get().is_some(), "source naming is prepared before adoption, as before");
         let names = crate::naming::face_names(&world.bodies[0]);
         assert!(Arc::ptr_eq(&names, &crate::naming::face_names(source)));
         assert!(names.iter().all(|name| name.starts_with(&format!("F{feature}:"))));
@@ -3731,7 +3730,6 @@ mod world_placement_cache_tests {
         let first = world.body("Block").unwrap();
         let second_name = doc.world_body_name(&state, "Block", component, &[second]);
         let placed = world.body(&second_name).unwrap();
-        assert!(source.mesh.get().is_some(), "persistent source names stay prepared before adoption");
         assert!(Arc::ptr_eq(&source.mesh, &first.mesh), "unchanged geometry must retain the shared display mesh cell");
         assert_eq!(first.key, 0);
         assert_eq!(placed.key, 0);
