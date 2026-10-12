@@ -23,6 +23,17 @@ fn rel(a: f64, b: f64) -> f64 {
 }
 
 #[test]
+fn round_as_tall_as_a_disc_uses_up_its_wall() {
+    // #190: a disc 13 in radius and 2 high, its top edge rounded by 2.
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius": 13, "height": 2}));
+    run(&mut s, "solid.fillet", json!({"edges": [[0, 13, 2], [0, -13, 2]], "radius": "2 mm"}));
+    let (a, c) = ((1.0 - PI / 4.0) * 4.0, 2.0 * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI)));
+    let expect = PI * 169.0 * 2.0 - a * 2.0 * PI * (13.0 - c);
+    assert!(rel(volume(&mut s), expect) < 2e-4, "{} vs {expect}", volume(&mut s));
+}
+
+#[test]
 fn join_extrude_from_a_chamfered_top_face() {
     let mut s = Session::default();
     run(&mut s, "parameters.add", json!({"name":"height","expression":"20 mm"}));
