@@ -141,8 +141,7 @@
             wrapProgram $out/bin/solvecraft \
               --prefix LD_LIBRARY_PATH : "${libraryPath pkgs}" \
               --set-default XDG_DATA_DIRS /usr/local/share:/usr/share \
-              --prefix XDG_DATA_DIRS : "$out/share:${driverShareDir}" \
-              --run 'if [ "''${XDG_CURRENT_DESKTOP:-}" = niri ] && [ -n "''${WAYLAND_DISPLAY:-}" ] && [ -z "''${SOLVECRAFT_WAYLAND+x}" ]; then export SOLVECRAFT_WAYLAND=1; fi'
+              --prefix XDG_DATA_DIRS : "$out/share:${driverShareDir}"
           '';
 
           meta = {
