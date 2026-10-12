@@ -2350,3 +2350,24 @@ fn special_files_are_refused_by_every_file_command() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Deleting a sketch takes its extrude with it; a later combine that names the extrude's body must
+/// not be left failing silently: it is deleted too, or the reply reports it (#267).
+#[test]
+fn deleting_a_sketch_leaves_no_silently_failing_feature() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [20, 20]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "S", "distance": "10", "body_name": "P"}));
+    run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5, "corner": [18, 5, 0], "operation": "new_body", "body_name": "Q"}));
+    run(&mut s, "solid.combine", json!({"target": "P", "tools": ["Q"], "name": "JoinPQ"}));
+    let reply = run(&mut s, "timeline.delete", json!({"features": ["S"]}));
+    if let Ok(join) = s.execute("timeline.inspect", &json!({"feature": "JoinPQ"})) {
+        assert!(
+            join["error"].is_null() || reply.to_string().contains("JoinPQ"),
+            "JoinPQ now fails ({}) but the reply only says {reply}",
+            join["error"]
+        );
+    }
+}
