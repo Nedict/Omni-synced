@@ -183,6 +183,24 @@ pub fn tool_definitions() -> Vec<Value> {
             false,
             false,
         ),
+        tool(
+            "crash_reports",
+            "Crash reports",
+            "SolidCraft's crash reports on this computer (the app's when connected to it). Without `id`: the list, newest \
+             first (id, kind, time, message, command, count, version, path, replayable). With `id`: the whole report: \
+             message, location, backtrace, app version and commit, system, the command that crashed and the recent ones, \
+             and design_path / replay_path when it can be replayed: `solidcraft-cli crashes replay <id>`, or \
+             `solidcraft-cli run <replay_path> --in <design_path>`. Reports never leave this computer.",
+            obj(
+                json!({
+                    "id": string("A report id from the list"),
+                    "limit": {"type": "integer", "description": "Reports to list (default 20)"},
+                }),
+                &[],
+            ),
+            true,
+            false,
+        ),
         tool("undo", "Undo", "Undo the last change to the design.", obj(json!({}), &[]), false, false),
         tool("redo", "Redo", "Redo the last undone change.", obj(json!({}), &[]), false, false),
         tool(
@@ -352,6 +370,10 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<V
             exec(b, "parameters.change", p)
         }
         "export" => exec(b, "file.export", pick(a, &["path", "format", "bodies"])),
+        "crash_reports" => match a.get("id") {
+            Some(_) => exec(b, "diagnostics.crash_report", pick(a, &["id"])),
+            None => exec(b, "diagnostics.crash_reports", pick(a, &["limit"])),
+        },
         "undo" => exec(b, "edit.undo", json!({})),
         "redo" => exec(b, "edit.redo", json!({})),
         "new_design" => exec(b, "file.new", pick(a, &["name"])),

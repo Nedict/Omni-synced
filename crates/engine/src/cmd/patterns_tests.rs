@@ -285,7 +285,6 @@ fn sketch_hole_cut(n: usize) -> std::time::Duration {
 /// field: 32 took 2 s and 128 took 60 s, though a feature pattern of the same holes is near
 /// linear since #261. Linear is 4×. A ratio, not a time (see the 512-hole pattern test).
 #[test]
-#[ignore = "fails until #368 is fixed"]
 fn one_extrude_of_many_sketch_circles_scales_linearly() {
     let t32 = sketch_hole_cut(32);
     let t128 = sketch_hole_cut(128);

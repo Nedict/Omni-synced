@@ -36,7 +36,12 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
   `solidcraft_kernel::guard`, which turns a panic into `KernelError::Internal`.
 - **Last-resort guard:** `Session::execute` runs every command under `catch_unwind`; an escaped
   panic restores the design and reports `EngineError::Internal`.
-- **Prove it:** every crash fix lands with a regression test (see `hostile_params_never_panic`).
+- **Crash reports:** the desktop app writes every panic and every unclean exit to a local crash folder,
+  with the design and the commands that reproduce it (`solidcraft_engine::crash`, docs/crash-reports.md).
+  When someone says the app crashed, look there first: `solidcraft-cli crashes`, `crashes show <id>`,
+  `crashes replay <id>` (or the `diagnostics.crash_reports` command / MCP `crash_reports` tool).
+- **Prove it:** every crash fix lands with a regression test (see `hostile_params_never_panic`); a
+  crash report's `design.solidcraft` + `replay.json` is the test's starting point.
 - Every production crate root carries
   `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]`.
 

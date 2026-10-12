@@ -185,6 +185,8 @@ impl Autosaver {
                 self.has_entry = false;
             }
             self.last = None;
+            // Crash replays start from the saved file (or a new design) from here.
+            crate::crash::rebased(s, s.path.as_deref().map(Path::new), false);
             return Ok(false);
         }
         if self.last.as_ref().is_some_and(|l| Arc::ptr_eq(l, &s.doc) || **l == *s.doc) {
@@ -198,6 +200,8 @@ impl Autosaver {
         solidcraft_io::write_atomic(&file(&self.dir, &self.id, "json"), &meta, false).map_err(io)?;
         self.last = Some(s.doc.clone());
         self.has_entry = true;
+        // Crash replays start from this autosave from here.
+        crate::crash::rebased(s, Some(&file(&self.dir, &self.id, "solvecraft")), true);
         Ok(true)
     }
 

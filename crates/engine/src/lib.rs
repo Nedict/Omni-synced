@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod cmd;
+pub mod crash;
 pub mod frames;
 pub mod fuzz;
 pub mod licences;
@@ -217,6 +218,9 @@ pub struct Session {
     /// commands are undone however long the undo history is.
     pub(crate) checkpoints: Vec<Checkpoint>,
     next_checkpoint: u64,
+    /// Record this session's top-level commands in the crash journal (the app's own design;
+    /// never previews or other scratch sessions). See [`crash`].
+    pub crash_journal: bool,
     /// Full model evaluations (`refresh`), for tests.
     #[cfg(test)]
     pub(crate) evaluations: usize,
@@ -317,6 +321,7 @@ impl Session {
             visibility: Visibility::default(),
             #[cfg(test)]
             evaluations: 0,
+            crash_journal: false,
         }
     }
 
@@ -495,15 +500,21 @@ impl Session {
         };
         let null = Value::Object(Default::default());
         let params = if params.is_null() { &null } else { params };
+        let given = params;
         // Picks in the world go into their component's frame (once: commands run by commands
         // already have them there).
         let (_nested, outermost) = frames::Nested::enter(spec.id);
         let mapped = if outermost { frames::to_local(self, spec.id, params) } else { None };
         let params = mapped.as_ref().unwrap_or(params);
+        if outermost {
+            crash::command_begin(self, spec.id, given);
+        }
+        let scope = crash::Scope::enter();
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match live {
             Some(run) => run(self, params),
             None => (spec.run)(self, params).map(|v| (v, None)),
         }));
+        drop(scope);
         let r = match r {
             Ok(r) => r,
             Err(p) => {
@@ -511,6 +522,17 @@ impl Session {
                 Err(EngineError::Internal(spec.id.to_string(), msg))
             }
         };
+        if outermost && crash::enabled() {
+            // A failed command leaves the design as it was (restored below).
+            let failed = r.as_ref().err().map(ToString::to_string);
+            let after = if failed.is_some() { &before.doc } else { &self.doc };
+            // Commands that only read leave no trace (the journal keeps what a replay needs).
+            let changed = !Arc::ptr_eq(&self.doc, &before.doc)
+                || self.active_sketch != before.active_sketch
+                || self.pending_moves != before.pending_moves
+                || spec.id.starts_with("select.");
+            crash::command_done(self.crash_journal, changed, &before.doc, after, spec.id, given, failed.map_or(Ok(()), Err));
+        }
         let changed = !Arc::ptr_eq(&self.doc, &before.doc);
         match r {
             Ok((v, live_edit)) => {
@@ -631,6 +653,7 @@ impl Session {
             visibility: self.visibility.clone(),
             #[cfg(test)]
             evaluations: 0,
+            crash_journal: false,
         }
     }
 

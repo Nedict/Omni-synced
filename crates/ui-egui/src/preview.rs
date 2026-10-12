@@ -41,6 +41,8 @@ pub struct Built {
     pub error: Option<String>,
     /// Extent of what the preview shows (the view's depth range must cover it).
     pub bounds: Aabb3,
+    /// The radius a fillet used when it reduced one too large for its edges (`fit: reduce`).
+    pub applied: Option<f64>,
 }
 
 type Job = Result<Built, String>;
@@ -66,6 +68,8 @@ pub struct PreviewState {
     /// Time the last preview took (ms), for `ui.inspect`.
     pub ms: f64,
     started: f64,
+    /// The radius the previewed fillet used when it reduced the one asked for.
+    pub applied: Option<f64>,
 }
 
 impl PreviewState {
@@ -73,6 +77,7 @@ impl PreviewState {
         self.running = None;
         self.shown_key = None;
         self.error = None;
+        self.applied = None;
         self.busy = false;
         if self.active || !self.replaced.is_empty() {
             self.active = false;
@@ -98,9 +103,13 @@ impl PreviewState {
                 self.bounds = b.bounds;
                 self.active = true;
                 self.error = b.error;
+                self.applied = b.applied;
                 self.set_scene(b.scene);
             }
-            Err(e) => self.error = Some(e),
+            Err(e) => {
+                self.error = Some(e);
+                self.applied = None;
+            }
         }
     }
 
@@ -220,6 +229,7 @@ pub fn compute(s: &Session, cmds: &[(String, Value)], colors: Colors) -> Job {
             let p = real.map_err(|e| e.to_string())?;
             let mut b = guard(&|| build(&p.before, &p.after, colors))?;
             b.bounds = state_bounds(&p.after);
+            b.applied = p.after.fitted_radii().find(|(id, _)| p.before.fitted_radius(*id).is_none()).map(|(_, r)| r);
             Ok(b)
         }
     }
@@ -256,7 +266,7 @@ fn build_tool(before: &ModelState, after: &ModelState, c: Colors, op: &str) -> B
             }
         }
     }
-    Built { scene: sc, replaced: Vec::new(), error: None, bounds: Aabb3::EMPTY }
+    Built { scene: sc, replaced: Vec::new(), error: None, bounds: Aabb3::EMPTY, applied: None }
 }
 
 /// The same commands making a new body instead of joining, cutting or intersecting, and the
@@ -357,7 +367,7 @@ pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
             replaced.push(b.name.clone());
         }
     }
-    Built { scene: sc, replaced, error: None, bounds: Aabb3::EMPTY }
+    Built { scene: sc, replaced, error: None, bounds: Aabb3::EMPTY, applied: None }
 }
 
 /// Is face `f` of `m` new surface, i.e. not on the old mesh? Decided by a vote of points on it

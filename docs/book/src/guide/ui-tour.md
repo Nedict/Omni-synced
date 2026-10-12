@@ -14,7 +14,10 @@
   row gives that item's menu. Rows drag into groups and other components.
 - **Viewport.** Click to select, Shift or Ctrl to add, drag for a window or crossing box. The
   wheel zooms at the cursor, the middle button pans and right-drag orbits freely (the mouse
-  preset in Preferences switches to SolidWorks, Inventor, Alias or Tinkercad style). Shift+middle orbits freely
+<  preset in Preferences switches to SolidWorks, Inventor, Alias or Tinkercad style). On a
+  trackpad, pinch zooms and two-finger scroll pans (Navigation › Two-finger scroll pans;
+  off: scroll zooms like the wheel); mouse wheels zoom and the thumb wheel pans sideways.
+  Shift+middle orbits freely
   in the default and Inventor presets. Shift+right-drag snaps to the nearest standard or
   diagonal view; Shift does not request snapping when the preset already requires it to orbit.
   The axis view shows the world's X/Y/Z directions in SolidCraft's colors. Click a signed

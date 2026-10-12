@@ -328,6 +328,9 @@ pub enum FeatureKind {
         /// radius varying along each edge.
         #[serde(default, skip_serializing_if = "FilletStyle::is_constant")]
         style: FilletStyle,
+        /// What to do when the radius is too large for the geometry around the edges.
+        #[serde(default, skip_serializing_if = "FilletFit::is_exact")]
+        fit: FilletFit,
     },
     Chamfer {
         edges: Vec<Vec3>,
@@ -914,6 +917,22 @@ pub enum FilletStyle {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         smooth: bool,
     },
+}
+
+/// A fillet radius too large for the geometry around its edges: refused (`Exact`, the default),
+/// or reduced to the largest that works for all of them (`Reduce`), with a warning.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilletFit {
+    #[default]
+    Exact,
+    Reduce,
+}
+
+impl FilletFit {
+    pub fn is_exact(&self) -> bool {
+        *self == FilletFit::Exact
+    }
 }
 
 impl FilletStyle {

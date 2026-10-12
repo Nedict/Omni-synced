@@ -2790,3 +2790,31 @@ fn a_design_saved_before_format_14_keeps_generic_names_past_body_name() {
     assert_eq!(names, ["Ribs", "Body1", "Body2"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn fillet_fit_reduce_uses_the_largest_radius_that_fits() {
+    // #293: 3.5 is too large for the 6 mm end faces of a 14 x 6 x 10 box; reduce gives 3 (a full
+    // round), says so, and refits when the box changes.
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name": "w", "expression": "6 mm"}));
+    run(&mut s, "solid.box", json!({"length": 14, "width": "w", "height": 10, "corner": [14, 0, 0]}));
+    let mids = json!([[14, 0, 5], [28, 0, 5], [14, 6, 5], [28, 6, 5]]);
+    assert!(s.execute("solid.fillet", &json!({"edges": mids, "radius": 3.5})).is_err());
+    let out = run(&mut s, "solid.fillet", json!({"edges": mids, "radius": 3.5, "fit": "reduce", "name": "Round"}));
+    assert_eq!(out["radius_applied"].as_f64(), Some(3.0), "{out}");
+    let full = 840.0 - (4.0 - PI) * 9.0 * 10.0;
+    assert!(rel(volume(&mut s), full) < 2e-4, "{} vs {full}", volume(&mut s));
+    let id = out["feature"].as_u64().unwrap();
+    let warning = s.model.result(id).and_then(|r| r.warning.clone()).unwrap_or_default();
+    assert!(warning.contains("reduced to 3 mm"), "{warning}");
+    // Wider: the requested 3.5 fits, nothing is reduced.
+    let r = run(&mut s, "parameters.change", json!({"name": "w", "expression": "8 mm"}));
+    assert_eq!(r["errors"].as_array().map(Vec::len), Some(0), "{r}");
+    assert_eq!(s.model.result(id).and_then(|r| r.state.fitted_radius(id)), None);
+    assert!(s.model.result(id).and_then(|r| r.warning.clone()).is_none());
+    // Saved only when set.
+    let json = serde_json::to_string(&s.doc.features).unwrap();
+    assert_eq!(json.matches("\"fit\":\"reduce\"").count(), 1, "{json}");
+    // An unknown mode is refused.
+    assert!(s.execute("solid.fillet", &json!({"edges": mids, "radius": 1, "fit": "taper"})).is_err());
+}

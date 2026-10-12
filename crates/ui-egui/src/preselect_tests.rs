@@ -512,6 +512,39 @@ fn chamfer_types_send_their_values() {
     assert!(matches!(&e.kind, Kind::Fillet { chamfer: true, ctype: 2, angle, flip: true, .. } if angle == "30 deg"), "{:?}", e.kind);
 }
 
+/// Radius Fit: the fillet reduces a radius too large for its edges, the preview shows the radius
+/// it used, and editing the feature keeps the choice (#293).
+#[test]
+fn fillet_radius_fit_reduces_and_shows_the_applied_radius() {
+    let mut app = app_with(serde_json::json!([
+        {"command": "solid.box", "params": {"length": 14, "width": 6, "height": 10, "corner": [14, 0, 0]}}
+    ]));
+    let edges: Vec<Sel> = [Vec3::new(14.0, 0.0, 5.0), Vec3::new(28.0, 0.0, 5.0), Vec3::new(14.0, 6.0, 5.0), Vec3::new(28.0, 6.0, 5.0)]
+        .into_iter()
+        .map(|p| edge(&app, p))
+        .collect();
+    let mut d = start(&mut app, edges, "solid.fillet");
+    if let Kind::Fillet { radius, .. } = &mut d.kind {
+        *radius = "3.5 mm".into();
+    }
+    // Exact (the default) sends no fit and the preview refuses the radius.
+    let (id, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert!(p.get("fit").is_none(), "{p}");
+    assert!(app.session.preview(&[(id.clone(), p)]).is_err());
+    // Reduce to Fit: the preview builds it, at the radius that fits.
+    d.extra.insert("fit".into(), json!("reduce"));
+    let (id, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!(p["fit"], json!("reduce"));
+    let job = crate::preview::compute(&app.session, &[(id.clone(), p.clone())], crate::preview::Colors::from_tokens(&crate::theme::Tokens::dark()))
+        .unwrap();
+    assert_eq!(job.applied, Some(3.0));
+    // Applied and edited again, the fillet keeps its fit.
+    app.session.execute(&id, &p).unwrap();
+    let fillet = app.session.doc.features.last().unwrap().id;
+    let e = crate::dialogs::for_feature(&app, fillet, None).unwrap();
+    assert_eq!(e.extra.get("fit"), Some(&json!("reduce")));
+}
+
 /// Apply a dialog's commands to the session; the new feature's id.
 fn apply(app: &mut SolveApp, d: &Dialog) -> u64 {
     for (id, p) in apply_commands(app, d).unwrap() {

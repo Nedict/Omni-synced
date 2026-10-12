@@ -256,6 +256,42 @@ fn thread_groove(t: &ThreadInfo, radius: f64, open: (bool, bool)) -> Result<soli
     Ok(kernel::sweep_helix_mesh(&plane, &section, base, k, p, (s1 - s0) / p, 48)?)
 }
 
+/// A constant fillet of `edges`; with [`FilletFit::Reduce`](crate::FilletFit::Reduce), a radius too
+/// large for the geometry around them is reduced to the largest that works for all of them, which
+/// is returned.
+fn fillet_fitted(
+    body: &kernel::Body,
+    edges: &[Vec3],
+    r: f64,
+    fit: crate::FilletFit,
+) -> std::result::Result<(kernel::Body, Option<f64>), kernel::KernelError> {
+    match kernel::fillet(body, edges, r) {
+        Err(kernel::KernelError::TooLarge(why)) if fit == crate::FilletFit::Reduce => match kernel::fillet_max(body, edges, r) {
+            Some((used, b)) => Ok((b, Some(used))),
+            None => Err(kernel::KernelError::TooLarge(why)),
+        },
+        other => other.map(|b| (b, None)),
+    }
+}
+
+/// A length in mm, without trailing zeros.
+fn show_mm(v: f64) -> String {
+    let s = format!("{v:.6}");
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+impl ModelState {
+    /// The radius fillet `feature` used when it reduced a radius too large for its edges.
+    pub fn fitted_radius(&self, feature: u64) -> Option<f64> {
+        self.fitted.get(&feature).copied()
+    }
+
+    /// Every reduced fillet radius (by feature id).
+    pub fn fitted_radii(&self) -> impl Iterator<Item = (u64, f64)> + '_ {
+        self.fitted.iter().map(|(k, v)| (*k, *v))
+    }
+}
+
 /// Model after some prefix of the timeline.
 #[derive(Clone, Debug, Default)]
 pub struct ModelState {
@@ -275,6 +311,9 @@ pub struct ModelState {
     /// a pattern of the feature repeats these, not the points picked when it was made, which a
     /// parameter change may have moved off the edges.
     blend_edges: BTreeMap<u64, Vec<Vec3>>,
+    /// The radius a fillet used when it reduced a radius too large for its edges (by feature id,
+    /// see `FilletFit::Reduce`).
+    fitted: BTreeMap<u64, f64>,
 }
 
 impl ModelState {
@@ -299,6 +338,10 @@ impl ModelState {
             for p in points {
                 [p.x, p.y, p.z].map(f64::to_bits).hash(&mut h);
             }
+        }
+        for (feature, r) in &self.fitted {
+            feature.hash(&mut h);
+            r.to_bits().hash(&mut h);
         }
         serde_json::to_string(&self.threads).unwrap_or_default().hash(&mut h);
         serde_json::to_string(&self.sheets).unwrap_or_default().hash(&mut h);
@@ -1132,6 +1175,21 @@ fn apply_op(state: &mut ModelState, f: &Feature, tools: Vec<Body>, op: Operation
     apply_traced(state, f, tools.into_iter().map(Traced::unnamed).collect(), op, targets)
 }
 
+/// Many cut tools clear of each other (a pattern's copies, the circles of a vent field in one
+/// sketch) as one tool of many pieces, so the target is cut once instead of rebuilding an ever
+/// more complex body for every tool (#261, #368). Tools that may meet are left as they are.
+fn clear_tools_as_one(tools: Vec<Traced>) -> Vec<Traced> {
+    if tools.len() < 8 {
+        return tools;
+    }
+    let bodies: Vec<Body> = tools.iter().map(|t| t.body.clone()).collect();
+    match kernel::union_apart(&bodies) {
+        // Each piece's faces keep the names of the tool it is.
+        Ok(Some(one)) => vec![Traced::step(one, &tools.iter().collect::<Vec<_>>())],
+        _ => tools,
+    }
+}
+
 /// [`apply_op`] with tools whose lineage is known: the bodies it makes or changes keep theirs.
 fn apply_traced(state: &mut ModelState, f: &Feature, tools: Vec<Traced>, op: Operation, targets: &[String]) -> Result<()> {
     let tools = if op == Operation::Intersect { intersection_tool_union(tools)? } else { tools };
@@ -1213,6 +1271,7 @@ fn apply_traced(state: &mut ModelState, f: &Feature, tools: Vec<Traced>, op: Ope
         }
         Operation::Cut | Operation::Intersect => {
             let bop = if op == Operation::Cut { BoolOp::Cut } else { BoolOp::Intersect };
+            let tools = if op == Operation::Cut { clear_tools_as_one(tools) } else { tools };
             let affected: std::collections::BTreeSet<String> =
                 target_idx.iter().filter_map(|i| state.bodies.get(*i).map(|b| b.name.clone())).collect();
             let mut remove = Vec::new();
@@ -2764,6 +2823,7 @@ fn replay(
                 let Some(mb) = st.bodies.get(ti).cloned() else { continue };
                 let nb = match &src.kind {
                     FeatureKind::Chamfer { distance2, angle, flip, .. } => chamfer_with(vals, &mb.body, &moved, r, distance2, angle, *flip)?,
+                    FeatureKind::Fillet { fit, .. } => fillet_fitted(&mb.body, &moved, r, *fit)?.0,
                     _ => kernel::fillet(&mb.body, &moved, r)?,
                 };
                 let nb = Traced::step(nb, &[&mb.traced()]);
@@ -2796,16 +2856,6 @@ fn replay(
                 for t in &tools {
                     copies.push(t.copied(kernel::transform_matrix(&t.body, *m)?, src.id, k + 1));
                 }
-            }
-        }
-        // Many cut copies clear of each other: one tool of many pieces, so the target is cut
-        // once instead of rebuilding an ever more complex body for every copy (#261).
-        if op == Operation::Cut && copies.len() >= 8 {
-            let bodies: Vec<Body> = copies.iter().map(|t| t.body.clone()).collect();
-            if let Ok(Some(one)) = kernel::union_apart(&bodies) {
-                // Each piece's faces keep the names of the copy it is.
-                let joined = Traced::step(one, &copies.iter().collect::<Vec<_>>());
-                copies = vec![joined];
             }
         }
         // New bodies from a pattern join their source when they touch it (as one feature would).
@@ -3512,7 +3562,18 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                         None => return Err(DocError::Invalid("no edges to fillet".into())),
                     }
                 }
-                FeatureKind::Fillet { .. } => (kernel::fillet(&mb.body, &edges, r)?, input),
+                FeatureKind::Fillet { fit, .. } => {
+                    let (b, used) = fillet_fitted(&mb.body, &edges, r, *fit)?;
+                    if let Some(used) = used {
+                        st.fitted.insert(f.id, used);
+                        let note = format!("the radius is reduced to {} mm, the largest that fits these edges", show_mm(used));
+                        *warning = Some(match warning.take() {
+                            Some(w) => format!("{w}; {note}"),
+                            None => note,
+                        });
+                    }
+                    (b, input)
+                }
                 FeatureKind::Chamfer { distance2, angle, flip, .. } => (chamfer_with(vals, &mb.body, &edges, r, distance2, angle, *flip)?, input),
                 _ => return Err(DocError::Invalid("blend".into())),
             };
@@ -3980,7 +4041,13 @@ mod chain_tests {
         )
         .unwrap();
         doc.add_feature(
-            FeatureKind::Fillet { edges: vec![Vec3::new(20.0, 0.0, 20.0)], radius: "4".into(), body: None, style: crate::FilletStyle::Constant },
+            FeatureKind::Fillet {
+                edges: vec![Vec3::new(20.0, 0.0, 20.0)],
+                radius: "4".into(),
+                body: None,
+                style: crate::FilletStyle::Constant,
+                fit: Default::default(),
+            },
             None,
         )
         .unwrap();
