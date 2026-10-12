@@ -252,3 +252,42 @@ fn pattern_of_512_hole_cuts_finishes_in_reasonable_time() {
     // Linear is 4×, the old quadratic cost 16× or more.
     assert!(t512.as_secs_f64() < 8.0 * t128.as_secs_f64() + 2.0, "128 holes took {t128:?}, 512 took {t512:?}");
 }
+
+/// A plate with `n` Ø2 circles drawn in one sketch (16 a row, 6 mm apart) and cut by one extrude:
+/// how long the cut took. It runs on its own thread so a hang fails the test instead of CI.
+fn sketch_hole_cut(n: usize) -> std::time::Duration {
+    use std::time::{Duration, Instant};
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 200, "width": 100, "height": 1, "operation": "new_body", "body_name": "Plate"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "offset": "2", "name": "H"}));
+    for i in 0..n {
+        run(&mut s, "sketch.circle.center", json!({"center": [4 + (i % 16) * 6, 4 + (i / 16) * 6], "diameter": 2}));
+    }
+    run(&mut s, "sketch.finish", json!({}));
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let t = Instant::now();
+        let r =
+            s.execute("solid.extrude", &json!({"sketch": "H", "distance": "4", "direction": "negative", "operation": "cut", "targets": ["Plate"]}));
+        let took = t.elapsed();
+        let v = r.map(|_| volume(&mut s)).map_err(|e| e.to_string());
+        let _ = tx.send((v, took));
+    });
+    let (v, took) = rx.recv_timeout(Duration::from_secs(900)).expect("the cut did not finish within 900 s");
+    let n = n as f64;
+    let v = v.expect("cut");
+    // The measure meshes the bores: each hole reads about 0.06 % small, so allow 0.1 % a hole.
+    assert!((v - (200.0 * 100.0 - n * PI)).abs() < n * PI * 1e-3, "{n} holes: {v}");
+    took
+}
+
+/// Many holes drawn in one sketch and cut by one extrude (#368), the usual way to draw a vent
+/// field: 32 took 2 s and 128 took 60 s, though a feature pattern of the same holes is near
+/// linear since #261. Linear is 4×. A ratio, not a time (see the 512-hole pattern test).
+#[test]
+#[ignore = "fails until #368 is fixed"]
+fn one_extrude_of_many_sketch_circles_scales_linearly() {
+    let t32 = sketch_hole_cut(32);
+    let t128 = sketch_hole_cut(128);
+    assert!(t128.as_secs_f64() < 8.0 * t32.as_secs_f64() + 2.0, "32 circles took {t32:?}, 128 took {t128:?}");
+}

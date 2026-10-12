@@ -3290,7 +3290,7 @@ dependencies = [
 
 [[package]]
 name = "solvecraft"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "eframe",
  "egui",
@@ -3307,7 +3307,7 @@ dependencies = [
 
 [[package]]
 name = "solvecraft-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde_json",
  "solvecraft-engine",
@@ -3316,7 +3316,7 @@ dependencies = [
 
 [[package]]
 name = "solvecraft-doc"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "log",
  "serde",
@@ -3331,7 +3331,7 @@ dependencies = [
 
 [[package]]
 name = "solvecraft-engine"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "log",
  "serde",
@@ -3347,7 +3347,7 @@ dependencies = [
 
 [[package]]
 name = "solvecraft-geom"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3356,7 +3356,7 @@ dependencies = [
 
 [[package]]
 name = "solvecraft-io"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "quick-xml 0.38.4",
  "solvecraft-doc",
@@ -3368,7 +3368,7 @@ dependencies = [
 
 [[package]]
 name = "solvecraft-kernel"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "log",
  "serde",
@@ -3383,7 +3383,7 @@ dependencies = [
 
 [[package]]
 name = "solvecraft-mcp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde_json",
  "solvecraft-engine",
@@ -3391,7 +3391,7 @@ dependencies = [
 
 [[package]]
 name = "solvecraft-render"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "image",
  "serde",
@@ -3401,7 +3401,7 @@ dependencies = [
 
 [[package]]
 name = "solvecraft-sketch"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3412,7 +3412,7 @@ dependencies = [
 
 [[package]]
 name = "solvecraft-ui-egui"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "egui",
  "egui-wgpu",
@@ -3427,7 +3427,7 @@ dependencies = [
 
 [[package]]
 name = "solvecraft-web"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "eframe",
  "egui",
@@ -4850,7 +4850,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde_json",
 ]
