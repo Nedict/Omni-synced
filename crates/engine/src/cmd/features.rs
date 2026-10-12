@@ -453,26 +453,15 @@ fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) ->
     s.active_sketch = None;
     s.refresh();
     // A feature that makes more bodies than it was given names (a multi-profile extrude with one
-    // `body_name`) names the rest after the first: `Ribs`, `Ribs (2)`, `Ribs (3)`… (#266). The
-    // names are stored on the feature, so recomputes and saved designs keep them.
-    if let Some(base) = names.first().map(|n| n.trim().to_string()).filter(|n| !n.is_empty()) {
-        let st = s.model.state();
-        let made = st.bodies.iter().filter(|b| b.feature == id).count();
-        if made > names.len() {
-            let mut taken: std::collections::BTreeSet<String> = st.bodies.iter().map(|b| b.name.clone()).collect();
-            taken.extend(names.iter().cloned());
-            let mut i = 1usize;
-            while names.len() < made {
-                i += 1;
-                let n = format!("{base} ({i})");
-                if taken.insert(n.clone()) {
-                    names.push(n);
-                }
-            }
-            if let Some(f) = s.doc_mut().feature_mut(id) {
-                f.body_names = names;
-            }
-            s.refresh();
+    // `body_name`) has the rest numbered after the first by the evaluator: `Ribs`, `Ribs (2)`,
+    // `Ribs (3)`… (#266, #373). They are stored on the feature, so recomputes and saved designs
+    // keep them even when the profiles are later picked in another order.
+    if names.first().is_some_and(|n| !n.trim().is_empty()) {
+        let made: Vec<String> = s.model.state().bodies.iter().filter(|b| b.feature == id).map(|b| b.name.clone()).collect();
+        if made.len() > names.len()
+            && let Some(f) = s.doc_mut().feature_mut(id)
+        {
+            f.body_names = made;
         }
     }
     let r = s.model.result(id).cloned();

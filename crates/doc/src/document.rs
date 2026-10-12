@@ -1544,7 +1544,8 @@ pub struct Feature {
     pub name: String,
     #[serde(default)]
     pub suppressed: bool,
-    /// Names for the bodies this feature creates (in order); missing ones get `BodyN`.
+    /// Names for the bodies this feature creates (in order); missing ones are numbered after the
+    /// first (`Ribs (4)`), or get `BodyN` when there is none (or see `shell_piece_order`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub body_names: Vec<String>,
     /// Parameter names of the feature's inputs (see `FeatureKind::inputs`), e.g. `d3`.
@@ -1570,6 +1571,8 @@ pub struct Feature {
     /// The pieces this feature splits a body into take its body names in the kernel's shell order,
     /// as builds before format 14 named them, instead of after their faces (`lineage::order_lumps`).
     /// Set on the features of designs saved before then, whose stored body names mean that order.
+    /// Such features also name the bodies past their `body_names` `BodyN`, as those builds did,
+    /// where newer ones number them after the first name (`Ribs (4)`, #373).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub shell_piece_order: bool,
     #[serde(flatten)]

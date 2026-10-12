@@ -1054,6 +1054,16 @@ fn new_name(state: &mut ModelState, f: &Feature, k: usize) -> String {
     {
         return n.clone();
     }
+    // Bodies past the stored names (a profile added after the feature was made) are numbered
+    // after the first name: `Ribs (4)` (#373). Features saved before format 14 keep `BodyN`,
+    // which later features of those designs may name.
+    if !f.shell_piece_order
+        && k >= f.body_names.len()
+        && let Some(base) = f.body_names.first().map(|n| n.trim()).filter(|n| !n.is_empty())
+    {
+        let n = format!("{base} ({})", k.saturating_add(1));
+        return if state.body(&n).is_none() { n } else { unique_body_name(state, base) };
+    }
     loop {
         state.body_counter += 1;
         let n = format!("Body{}", state.body_counter);

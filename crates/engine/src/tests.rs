@@ -2735,7 +2735,6 @@ fn raising_a_pattern_count_after_a_rename_numbers_the_new_copy_after_the_others(
 /// A profile added to the sketch after a named multi-profile extrude is named after `body_name`
 /// too (#373).
 #[test]
-#[ignore = "fails until #373 is fixed"]
 fn a_profile_added_later_is_named_after_body_name() {
     let mut s = Session::default();
     run(&mut s, "sketch.create", json!({"plane": "XY", "name": "R"}));
@@ -2764,4 +2763,30 @@ fn extrude_reply_lists_the_bodies_it_created() {
     run(&mut s, "sketch.finish", json!({}));
     let r = run(&mut s, "solid.extrude", json!({"sketch": "R", "distance": "10", "operation": "new_body", "body_name": "Ribs"}));
     assert_eq!(r["created_bodies"], json!(["Ribs", "Ribs (2)", "Ribs (3)"]), "{r}");
+}
+
+/// A design saved before format 14 names the bodies past its stored names `BodyN`, as it did when
+/// it was saved, so later features that name them still find them (#373).
+#[test]
+fn a_design_saved_before_format_14_keeps_generic_names_past_body_name() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "R"}));
+    for x in [0, 10, 20] {
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [x, 0], "p1": [x + 5, 30]}));
+    }
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "R", "distance": "10", "operation": "new_body", "body_name": "Ribs"}));
+    let mut legacy: Value = serde_json::from_str(&s.doc.to_json()).unwrap();
+    legacy["format"] = json!("solvecraft/13");
+    let extrude = legacy["features"].as_array_mut().unwrap().iter_mut().find(|f| f["type"] == "extrude").unwrap();
+    extrude["body_names"] = json!(["Ribs"]);
+    let dir = std::env::temp_dir().join(format!("solvecraft-373-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let design = dir.join("ribs.solvecraft");
+    std::fs::write(&design, legacy.to_string()).unwrap();
+    let mut old = Session::default();
+    run(&mut old, "doc.open", json!({"path": design.to_string_lossy()}));
+    let names: Vec<String> = old.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names, ["Ribs", "Body1", "Body2"]);
+    let _ = std::fs::remove_dir_all(&dir);
 }
