@@ -36,6 +36,8 @@ old-name Pages addresses are not permanent aliases.
 - **FreeBSD:** `tar -xzf solidcraft-{version}-freebsd-x86_64.tar.gz --strip-components 1 -C /usr/local`.
 - **Web:** `solidcraft-web-{version}.zip` is a static site to host yourself.
 - `SHA256SUMS.txt`: `sha256sum -c SHA256SUMS.txt --ignore-missing`.
+- Files without a version in the name (`solidcraft-windows-x64.msi`, `solidcraft-linux-x86_64.AppImage`, …)
+  are the same packages under fixed names, for download links that always fetch the latest release.
 
 For Flatpak feed installation and updates, add Flathub for the required runtime before
 installing SolidCraft; keep both remotes in the same user installation:

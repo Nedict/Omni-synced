@@ -6,7 +6,8 @@ working (see the [compatibility notes](https://github.com/bherbruck/solidcraft/b
 
 ## Desktop
 
-Download the latest build from the
+Download the installer for your system from the
+[Download section of the README](https://github.com/bherbruck/solidcraft#download) or the
 [releases page](https://github.com/bherbruck/solidcraft/releases), or build it yourself with
 stable Rust (1.95 or newer):
 
@@ -89,3 +90,15 @@ A script is a list of commands:
 
 Units are millimetres and degrees unless an expression says otherwise (`"1 in"`, `"30 deg"`),
 and Z is up.
+
+## Name and compatibility
+
+SolidCraft was renamed from an earlier working name. Since 0.5.0 everything uses the new
+name: the `solidcraft` and `solidcraft-cli` programs, `.solidcraft` designs, `SOLIDCRAFT_*`
+environment variables, settings folders and the `solidcraft` MCP server. Upgrading keeps
+working: designs, settings, recovery files, environment variables and CLI/MCP setups from
+earlier builds carry over. Every compatibility shim is listed in the
+[compatibility notes](https://github.com/bherbruck/solidcraft/blob/main/docs/compatibility.md).
+
+Use the SolidCraft documentation and web-app URLs. GitHub redirects links to the renamed
+repository; old-name Pages and Flatpak URLs are not maintained as permanent aliases.

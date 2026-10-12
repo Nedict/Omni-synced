@@ -10,12 +10,50 @@ model through the built-in MCP server.
 
 *Start with an empty design and draw the original parametric electronics enclosure in the English desktop UI: rounded corners, a shell, a USB port sketched directly on the wall and a four-boss pattern. Change width from 80 → 100 mm and wall thickness from 2 → 3 mm in Parameters and watch it rebuild. Original animated pointer and click cues; 4× playback. [Full video](https://github.com/bherbruck/solidcraft/raw/refs/heads/main/docs/screenshots/enclosure-demo-0.2.1.mp4), generated with the [demo script](examples/demo/record_ui.sh).*
 
-**Documentation:** the [SolidCraft book](https://bherbruck.github.io/solidcraft/) (user guide,
-developer guide and command reference; sources in [docs/book](docs/book)), and the
-[web app](https://bherbruck.github.io/solidcraft/app/) to try it in the browser.
+## Download
 
-Linux Flatpak installation needs the Freedesktop runtime from Flathub as well as the
-SolidCraft application feed. See [install and launch commands](https://bherbruck.github.io/solidcraft/guide/getting-started.html#linux-flatpak).
+[![Download for Windows][badge-windows]][windows-msi]
+[![Download for macOS][badge-macos]][macos-dmg]
+[![Download for Linux][badge-linux]][linux-appimage]
+[![Try it in your browser][badge-web]][web-app]
+
+- **Windows:** download and run the [installer][windows-msi].
+  Also for [ARM64][windows-arm64-msi] and [32-bit][windows-x86-msi] PCs, or as a
+  [portable zip][windows-portable] that runs without installing.
+- **macOS:** open the [disk image][macos-dmg] and drag SolidCraft into Applications
+  (Apple silicon and Intel).
+- **Linux:** download the [AppImage][linux-appimage], allow it to run as a program and open it.
+  Or install the [.deb][linux-deb] (Ubuntu, Debian, Mint) or [.rpm][linux-rpm] (Fedora,
+  openSUSE), or use [Flatpak](https://bherbruck.github.io/solidcraft/guide/getting-started.html#linux-flatpak).
+  For ARM64: [AppImage][linux-arm64-appimage], [.deb][linux-arm64-deb], [.rpm][linux-arm64-rpm].
+- **Web:** [try it in your browser][web-app], no install.
+
+The downloads aren't signed yet. On Windows, if SmartScreen warns you, choose **More info**, then
+**Run anyway**. On macOS, the first time, right-click SolidCraft in Applications and choose **Open**.
+
+Older versions, checksums and other formats are on the [releases page](https://github.com/bherbruck/solidcraft/releases).
+Install details, upgrading from earlier builds and building from source are in
+[Getting started](https://bherbruck.github.io/solidcraft/guide/getting-started.html).
+
+[badge-windows]: https://img.shields.io/badge/Windows-Download-0078D6?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0yIDJoOS41djkuNUgyek0xMi41IDJIMjJ2OS41aC05LjV6TTIgMTIuNWg5LjVWMjJIMnpNMTIuNSAxMi41SDIyVjIyaC05LjV6Ii8%2BPC9zdmc%2B
+[badge-macos]: https://img.shields.io/badge/macOS-Download-333333?style=for-the-badge&logo=apple&logoColor=white
+[badge-linux]: https://img.shields.io/badge/Linux-AppImage-E95420?style=for-the-badge&logo=linux&logoColor=white
+[badge-web]: https://img.shields.io/badge/Web-Try_in_browser-2EA44F?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIj48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIxMCIvPjxwYXRoIGQ9Ik0yIDEyaDIwTTEyIDJhMTUgMTUgMCAwIDEgMCAyME0xMiAyYTE1IDE1IDAgMCAwIDAgMjAiLz48L3N2Zz4%3D
+[windows-msi]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-windows-x64.msi
+[windows-arm64-msi]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-windows-arm64.msi
+[windows-x86-msi]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-windows-x86.msi
+[windows-portable]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-windows-x64-portable.zip
+[macos-dmg]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-macos-universal.dmg
+[linux-appimage]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-linux-x86_64.AppImage
+[linux-deb]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-linux-x86_64.deb
+[linux-rpm]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-linux-x86_64.rpm
+[linux-arm64-appimage]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-linux-aarch64.AppImage
+[linux-arm64-deb]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-linux-aarch64.deb
+[linux-arm64-rpm]: https://github.com/bherbruck/solidcraft/releases/latest/download/solidcraft-linux-aarch64.rpm
+[web-app]: https://bherbruck.github.io/solidcraft/app/
+
+**Documentation:** the [SolidCraft book](https://bherbruck.github.io/solidcraft/) (user guide,
+developer guide and command reference; sources in [docs/book](docs/book)).
 
 **Status: early but usable for simple parts.** 75 of 76 public reference parts
 match their analytic or FreeCAD-computed volume, area, centre of mass and bounding box
@@ -24,18 +62,6 @@ These checks do not establish complete geometric or workflow equivalence. The co
 are listed by area in [docs/features.md](docs/features.md); status and plans are in [ROADMAP.md](ROADMAP.md).
 Open work and known bugs are in [GitHub issues](https://github.com/bherbruck/solidcraft/issues),
 and help is welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Name and compatibility
-
-SolidCraft was renamed from an earlier working name. Since 0.5.0 everything uses the new
-name: the `solidcraft` and `solidcraft-cli` programs, `.solidcraft` designs, `SOLIDCRAFT_*`
-environment variables, settings folders and the `solidcraft` MCP server. Upgrading keeps
-working: designs, settings, recovery files, environment variables and CLI/MCP setups from
-earlier builds carry over. Every compatibility shim is listed in
-[docs/compatibility.md](docs/compatibility.md).
-
-Use the SolidCraft documentation and web-app URLs above. GitHub redirects links to the
-renamed repository; old-name Pages and Flatpak URLs are not maintained as permanent aliases.
 
 ## What works
 

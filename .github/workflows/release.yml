@@ -12,6 +12,10 @@
 #   Windows x64, x86, arm64 .msi and a portable .zip; x64 also the plain .exe      packaging/windows
 #   Web                     a .zip of the static site                              packaging/web
 #
+# The main installers are also attached without the version in their names
+# (solidcraft-windows-x64.msi, solidcraft-linux-x86_64.AppImage, ...) so that
+# releases/latest/download/<name> links in the README keep working across releases.
+#
 # A dry run: dispatch with draft=false (the default). Only the release branch may create drafts.
 name: Release
 
@@ -350,6 +354,24 @@ jobs:
           pattern: release-*
           path: artifacts
           merge-multiple: true
+      - name: Version-less copies for permanent download links
+        # The README links to releases/latest/download/<name>, which must not change between
+        # releases: solidcraft-<version>-windows-x64.msi is also uploaded as
+        # solidcraft-windows-x64.msi, and so on for the main installers.
+        working-directory: artifacts
+        run: |
+          shopt -s nullglob
+          for f in "solidcraft-$VERSION-"*; do
+            case "$f" in
+              *.msi | *-portable.zip | *.dmg | *.AppImage | *.deb | *.rpm | *.flatpak | *.snap)
+                cp -- "$f" "solidcraft-${f#"solidcraft-$VERSION-"}" ;;
+            esac
+          done
+          for f in solidcraft-windows-x64.msi solidcraft-macos-universal.dmg \
+            solidcraft-linux-x86_64.AppImage solidcraft-linux-x86_64.deb solidcraft-linux-x86_64.rpm; do
+            test -s "$f" || { echo "::error::missing version-less copy $f"; exit 1; }
+          done
+          ls -l solidcraft-[!0-9]*
       - name: Checksums and notes
         run: |
           (cd artifacts && sha256sum -- * | tee SHA256SUMS.txt)
