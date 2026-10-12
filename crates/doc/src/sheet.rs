@@ -1355,7 +1355,29 @@ impl SheetBody {
             }
             (None, Some(p)) => {
                 let q = apply_point(&inv, p);
-                Vec2::new(q.x, q.y).dot(n) < l0
+                let q2 = Vec2::new(q.x, q.y);
+                // A point in the panel's slab must be on material: inside the outline and
+                // outside every cut-out (a side face of either counts as material).
+                let near = |poly: &[Vec2]| {
+                    let m = poly.len();
+                    (0..m).any(|i| match (poly.get(i), poly.get((i + 1) % m)) {
+                        (Some(&a), Some(&b)) => {
+                            let d = b - a;
+                            let t = if d.len2() > 1e-18 { ((q2 - a).dot(d) / d.len2()).clamp(0.0, 1.0) } else { 0.0 };
+                            (a + d * t).dist(q2) < 1e-3
+                        }
+                        _ => false,
+                    })
+                };
+                let in_slab = q.z > -1e-4 && q.z < self.t + 1e-4;
+                let in_hole = self.holes.iter().any(|h| h.contains(q2) && !near(&h.outer.ccw().polyline(1e-3)));
+                if in_slab && ((!point_in(&pts, q2) && !near(&pts)) || in_hole) {
+                    return Err(DocError::Invalid(format!(
+                        "the fixed point ({:.3}, {:.3}, {:.3}) is not on the sheet: pick a point on the face of the side that stays",
+                        p.x, p.y, p.z
+                    )));
+                }
+                q2.dot(n) < l0
             }
             (None, None) => side_area(n) <= side_area(n * -1.0),
         };
@@ -1383,6 +1405,19 @@ impl SheetBody {
         let us: Vec<f64> = strip.iter().map(|q| q.dot(d)).collect();
         let (u0, u1) = (us.iter().cloned().fold(f64::MAX, f64::min), us.iter().cloned().fold(f64::MIN, f64::max));
         if ((u1 - u0) * ba - signed_area(&strip).abs()).abs() > 1e-6 * (u1 - u0).max(1.0) * ba.max(1.0) {
+            // A corner of the outline inside the zone (e.g. a fold right at a tab's root): name
+            // it and how far the line has to move to clear it.
+            let corners: Vec<(Vec2, f64)> = pts.iter().map(|q| (*q, q.dot(n) - s0)).filter(|(_, s)| *s > 1e-6 && *s < ba - 1e-6).collect();
+            if let Some(&(c, _)) = corners.first() {
+                let on = corners.iter().fold(0.0_f64, |m, (_, s)| m.max(*s));
+                let back = corners.iter().fold(0.0_f64, |m, (_, s)| m.max(ba - *s));
+                let w = apply_point(&self.world(panel), Vec3::new(c.x, c.y, self.t));
+                return Err(DocError::Invalid(format!(
+                    "the bend zone ({ba:.3} mm wide) reaches a corner of the sheet's outline at ({:.3}, {:.3}, {:.3}): \
+                     move the fold line at least {on:.3} mm toward the side that folds or {back:.3} mm toward the side that stays",
+                    w.x, w.y, w.z
+                )));
+            }
             return Err(DocError::Invalid("not supported yet: folds whose bend zone crosses a slanted or curved edge of the sheet".into()));
         }
         let up = !flip;

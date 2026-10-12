@@ -595,6 +595,27 @@ mod tests {
     }
 
     #[test]
+    fn header_chevron_folds_and_restores_appearance_inputs() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();
+        h.app.session.selection = vec![Sel::Body { name: "Body1".into() }];
+        h.app.start("appearance.assign");
+        h.frames(3);
+        let before = h.app.dialog.clone().unwrap();
+        h.step(&json!({"widget":"»"})).unwrap();
+        assert!(h.app.dialog.as_ref().unwrap().collapsed);
+        assert!(h.widget("Appearance name").is_none());
+        h.step(&json!({"widget":"«"})).unwrap();
+        let after = h.app.dialog.as_ref().unwrap();
+        assert!(!after.collapsed);
+        assert_eq!(format!("{:?}", after.inputs), format!("{:?}", before.inputs));
+        let (Kind::Appearance(before), Kind::Appearance(after)) = (&before.kind, &after.kind) else { panic!("appearance dialog") };
+        assert_eq!(before.color, after.color);
+        assert_eq!(before.opacity, after.opacity);
+        assert_eq!(before.search, after.search);
+    }
+
+    #[test]
     fn real_frames_and_unchanged_apply_keep_precise_opacity() {
         let mut h = crate::scenario::Harness::new();
         h.app.run("solid.box", json!({"length":10,"width":10,"height":10})).unwrap();

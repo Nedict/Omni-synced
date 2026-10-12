@@ -13,6 +13,20 @@ Opening a STEP or IGES file creates a design with the file's bodies as a base fe
 inserting one adds them to the current design. Later features build on them. Mesh bodies render,
 measure, move and export, but solid features need B-rep bodies.
 
+For closed mechanical meshes with a constant cross-section, use **Mesh → Modify →
+Convert Mesh**. Select the mesh body and set the fitting tolerance. The conversion
+rebuilds planar faces and circular through-walls, replacing the mesh with a solid
+that accepts solid modeling operations. The imported triangles remain embedded
+upstream: changing their scale, undoing the conversion or reopening the design
+rebuilds the result through the timeline. Double-click the conversion to edit its
+tolerance or source body.
+
+The tolerance bounds circular reconstruction against the original chords. Coarse
+polygons remain polygons when rounding would exceed it. Open/nonmanifold meshes,
+tapers, stepped parts and organic scans are refused by this first reconstruction
+method; it does not silently substitute a faceted solid. Conversion currently
+accepts at most 50,000 triangles and a bounded number of boundary segments.
+
 Saves are atomic: a crash at any moment leaves either the old file or the new one, and the
 replaced version is kept as `<file>.bak`. Unsaved changes are autosaved to a recovery folder,
 and the next launch offers to recover them. Older design files are upgraded on open, and files

@@ -1,128 +1,148 @@
-//! Replay oracle recipes and compare with Fusion's measurements; import oracle STEP files and
-//! compare them with the same measurements.
+//! Reference tests: replay `tests/oracle/<case>/recipe.json` through the command engine and
+//! compare the part with `expected.json` (closed-form values, or values from an independent
+//! kernel; see tests/oracle/README.md), and with `reference.stl` where one exists.
+
+#![allow(clippy::needless_range_loop)]
 
 use serde_json::{Value, json};
+use solvecraft_engine::geom::Vec3;
 
-use crate::{read_json, recipe, seams};
+use crate::spatial::{self, Tri};
+use crate::{read_json, recipe};
 
-/// Relative tolerance for volume and area (our curved-face tessellation is within ~2e-4).
+/// Default relative tolerance for volume and area (our curved-face tessellation is within ~2e-4).
 pub const REL_TOL: f64 = 1e-3;
+/// Default tolerance for centre of mass and bounding box, as a fraction of the bbox diagonal.
+const ABS_FRAC: f64 = 1e-3;
+/// Chord tolerance used to triangulate our part for the surface-distance check (mm).
+const MESH_TOL: f64 = 0.01;
+/// Relative tolerance on the principal second moments of the two triangulations.
+const INERTIA_REL: f64 = 2e-3;
 
-/// Cases compared loosely (relative tolerance on volume and area, topology not compared), and why.
-const APPROXIMATE: [(&str, f64, &str); 1] = [(
-    "49-helical-sweep",
-    5e-3,
-    "Fusion sweeps along a spline fitted through helix points; SolidCraft builds the true helix (a coil), so the size is compared within 0.5% and the topology not at all",
-)];
+/// What SolidCraft built: totals over every body.
+struct Got {
+    body_count: usize,
+    volume: f64,
+    area: f64,
+    com: [f64; 3],
+    bbox: ([f64; 3], [f64; 3]),
+    faces: u64,
+}
+
+fn v3(v: &Value) -> Option<[f64; 3]> {
+    let a = v.as_array()?;
+    Some([a.first()?.as_f64()?, a.get(1)?.as_f64()?, a.get(2)?.as_f64()?])
+}
+
+fn totals(m: &Value) -> Got {
+    let bodies = m["bodies"].as_array().cloned().unwrap_or_default();
+    let (mut volume, mut area, mut faces) = (0.0, 0.0, 0);
+    let mut moment = [0.0; 3];
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for b in &bodies {
+        let v = b["volume_mm3"].as_f64().unwrap_or(f64::NAN);
+        volume += v;
+        area += b["area_mm2"].as_f64().unwrap_or(f64::NAN);
+        faces += b["faces"].as_u64().unwrap_or(0);
+        let c = v3(&b["center_of_mass"]).unwrap_or([f64::NAN; 3]);
+        let (bl, bh) = (v3(&b["bbox"]["min"]).unwrap_or([f64::NAN; 3]), v3(&b["bbox"]["max"]).unwrap_or([f64::NAN; 3]));
+        for k in 0..3 {
+            moment[k] += v * c[k];
+            lo[k] = lo[k].min(bl[k]);
+            hi[k] = hi[k].max(bh[k]);
+        }
+    }
+    let com = moment.map(|x| x / volume);
+    Got { body_count: bodies.len(), volume, area, com, bbox: (lo, hi), faces }
+}
+
+struct Checks {
+    list: Vec<Value>,
+    pass: bool,
+}
+
+impl Checks {
+    fn push(&mut self, what: &str, got: Value, want: Value, ok: bool) {
+        self.pass &= ok;
+        self.list.push(json!({"check": what, "got": got, "want": want, "ok": ok}));
+    }
+    fn rel(&mut self, what: &str, g: f64, w: Option<f64>, rel: f64) {
+        let ok = w.is_some_and(|w| g.is_finite() && (g - w).abs() <= rel * w.abs().max(1.0));
+        self.push(what, json!(g), json!(w), ok);
+    }
+    fn vec(&mut self, what: &str, g: [f64; 3], w: Option<[f64; 3]>, tol: f64) {
+        let ok = w.is_some_and(|w| g.iter().zip(w).all(|(g, w)| g.is_finite() && (g - w).abs() <= tol));
+        self.push(what, json!(g), json!(w), ok);
+    }
+}
 
 fn check_case(dir: &str) -> Value {
     let name = std::path::Path::new(dir).file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
-    let rp = format!("{dir}/recipe.json");
-    let mp = format!("{dir}/measure.json");
-    let (recipe, want) = match (read_json(&rp), read_json(&mp)) {
-        (Ok(r), Ok(m)) => (r, m),
-        (Err(e), _) | (_, Err(e)) => return json!({"case": name, "pass": false, "error": e}),
+    let recipe = match read_json(&format!("{dir}/recipe.json")) {
+        Ok(r) => r,
+        Err(e) => return json!({"case": name, "pass": false, "error": e}),
     };
+    let want = read_json(&format!("{dir}/expected.json")).ok();
     let script = match recipe::to_script(&recipe) {
         Ok(s) => s,
         Err(e) => return json!({"case": name, "pass": false, "skipped": true, "error": e}),
     };
     let mut s = solvecraft_engine::Session::default();
     if let Err(e) = s.run_script(&script) {
-        return json!({"case": name, "pass": false, "error": e.to_string()});
+        return json!({"case": name, "pass": false, "error": e.to_string(), "source": want.as_ref().map(|w| w["source"].clone())});
     }
     let got = match s.execute("inspect.measure", &json!({})) {
-        Ok(m) => m,
+        Ok(m) => totals(&m),
         Err(e) => return json!({"case": name, "pass": false, "error": e.to_string()}),
     };
-    let mut checks = Vec::new();
-    let mut pass = true;
-    let mut num = |what: &str, g: Option<f64>, w: Option<f64>, rel: f64| {
-        let ok = match (g, w) {
-            (Some(g), Some(w)) => (g - w).abs() <= rel * w.abs().max(1.0),
-            _ => false,
-        };
-        pass &= ok;
-        checks.push(json!({"check": what, "got": g, "want": w, "ok": ok}));
+    let got_json = json!({
+        "body_count": got.body_count, "volume_mm3": got.volume, "area_mm2": got.area,
+        "center_of_mass": got.com, "bbox": {"min": got.bbox.0, "max": got.bbox.1}, "faces": got.faces,
+    });
+    let Some(want) = want else {
+        return json!({"case": name, "pass": false, "skipped": true, "error": "no expected.json yet", "got": got_json});
     };
-    // Cases where Fusion's part is itself an approximation: compare size loosely, not topology.
-    let approx = APPROXIMATE.iter().find(|(c, _, _)| *c == name);
-    let tol = approx.map(|(_, t, _)| *t).unwrap_or(REL_TOL);
-    let within = |k: &str, rel: f64| match (got["total"][k].as_f64(), want["total"][k].as_f64()) {
-        (Some(g), Some(w)) => (g - w).abs() <= rel * w.abs().max(1.0),
-        _ => false,
-    };
-    let size_ok =
-        got["body_count"] == want["body_count"] && within("volume_mm3", tol) && (FUSION_AREA_OFF.contains(&name.as_str()) || within("area_mm2", tol));
-    num("body_count", got["body_count"].as_f64(), want["body_count"].as_f64(), 0.0);
-    num("volume_mm3", got["total"]["volume_mm3"].as_f64(), want["total"]["volume_mm3"].as_f64(), tol);
-    let area_off = FUSION_AREA_OFF.contains(&name.as_str());
-    if !area_off {
-        num("area_mm2", got["total"]["area_mm2"].as_f64(), want["total"]["area_mm2"].as_f64(), tol);
+    let only: Option<Vec<String>> = want["compare"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect());
+    let wanted = |k: &str| want.get(k).is_some_and(|v| !v.is_null()) && only.as_ref().is_none_or(|o| o.iter().any(|x| x == k));
+    let rel = want["tolerance"]["rel"].as_f64().unwrap_or(REL_TOL);
+    let diag = |b: ([f64; 3], [f64; 3])| ((b.1[0] - b.0[0]).powi(2) + (b.1[1] - b.0[1]).powi(2) + (b.1[2] - b.0[2]).powi(2)).sqrt();
+    let want_bbox = v3(&want["bbox"]["min"]).zip(v3(&want["bbox"]["max"]));
+    let abs = want["tolerance"]["abs_mm"].as_f64().unwrap_or_else(|| ABS_FRAC * want_bbox.map(diag).unwrap_or_else(|| diag(got.bbox)).max(1.0));
+    let mut c = Checks { list: Vec::new(), pass: true };
+    if wanted("body_count") {
+        let ok = want["body_count"].as_u64() == Some(got.body_count as u64);
+        c.push("body_count", json!(got.body_count), want["body_count"].clone(), ok);
     }
-    let mut seam_note = None;
-    if approx.is_none() {
-        let exact = ["faces", "edges", "vertices"].iter().all(|k| got["total"][k].as_f64().is_some() && got["total"][k] == want["total"][k]);
-        let fusion_seams = want["bodies"]
-            .as_array()
-            .and_then(|bs| bs.iter().map(seams::normalised).try_fold((0, 0, 0), |a, n| n.map(|n| (a.0 + n.0, a.1 + n.1, a.2 + n.2))));
-        match fusion_seams {
-            // Size matches and only the topology differs: compare with Fusion's seam splits merged.
-            Some((f, e, v)) if size_ok && !exact => {
-                let raw: Vec<String> = ["faces", "edges", "vertices"]
-                    .iter()
-                    .map(|k| {
-                        let ours: i64 = got["bodies"].as_array().into_iter().flatten().filter_map(|b| b["kernel"][k].as_i64()).sum();
-                        format!("{k} {ours}/{}", want["total"][k])
-                    })
-                    .collect();
-                seam_note = Some(format!(
-                    "topology compared seam-normalised: Fusion's {}/{}/{} faces/edges/vertices become {f}/{e}/{v} with closed-surface patches counted once and seam edges and vertices dropped (raw SolidCraft/Fusion: {})",
-                    want["total"]["faces"],
-                    want["total"]["edges"],
-                    want["total"]["vertices"],
-                    raw.join(", ")
-                ));
-                num("faces (seam-normalised)", got["total"]["faces"].as_f64(), Some(f as f64), 0.0);
-                num("edges (seam-normalised)", got["total"]["edges"].as_f64(), Some(e as f64), 0.0);
-                num("vertices (seam-normalised)", got["total"]["vertices"].as_f64(), Some(v as f64), 0.0);
-            }
-            _ => {
-                num("faces", got["total"]["faces"].as_f64(), want["total"]["faces"].as_f64(), 0.0);
-                num("edges", got["total"]["edges"].as_f64(), want["total"]["edges"].as_f64(), 0.0);
-                num("vertices", got["total"]["vertices"].as_f64(), want["total"]["vertices"].as_f64(), 0.0);
-            }
-        }
+    if wanted("volume_mm3") {
+        c.rel("volume_mm3", got.volume, want["volume_mm3"].as_f64(), rel);
+    }
+    if wanted("area_mm2") {
+        c.rel("area_mm2", got.area, want["area_mm2"].as_f64(), rel);
+    }
+    if wanted("center_of_mass") {
+        c.vec("center_of_mass", got.com, v3(&want["center_of_mass"]), abs);
+    }
+    if wanted("bbox") {
+        c.vec("bbox.min", got.bbox.0, want_bbox.map(|b| b.0), abs);
+        c.vec("bbox.max", got.bbox.1, want_bbox.map(|b| b.1), abs);
+    }
+    if wanted("faces") {
+        let ok = want["faces"].as_u64() == Some(got.faces);
+        c.push("faces", json!(got.faces), want["faces"].clone(), ok);
+    }
+    let stl = format!("{dir}/reference.stl");
+    if std::path::Path::new(&stl).is_file() && only.as_ref().is_none_or(|o| o.iter().any(|x| x == "surface")) {
+        let tol = want["tolerance"]["surface_mm"].as_f64().unwrap_or(0.05);
+        reference_checks(&s, &stl, tol, &mut c);
     }
     // Our STEP export of the rebuilt part: well formed, and read back with no warnings and the
     // same volume.
-    let (ok, note) = step_export_check(&s, got["total"]["volume_mm3"].as_f64().unwrap_or(0.0));
-    pass &= ok;
-    checks.push(json!({"check": "step_export", "got": note, "want": "valid, re-imports cleanly", "ok": ok}));
-    let mut out = json!({"case": name, "pass": pass, "checks": checks});
-    if let Some((_, _, why)) = approx {
-        out["note"] = json!(why);
-    }
-    if let Some(n) = seam_note {
+    let (ok, note) = step_export_check(&s, got.volume);
+    c.push("step_export", json!(note), json!("valid, re-imports cleanly"), ok);
+    let mut out = json!({"case": name, "pass": c.pass, "source": want["source"], "checks": c.list, "got": got_json});
+    if let Some(n) = want["note"].as_str() {
         out["note"] = json!(n);
-    }
-    if area_off {
-        out["note"] = json!(
-            "area not compared: Fusion reports this tight sweep's horn torus face at three times its area (π²·R·r quarter-turn value; 740 mm² against 246.7 by Pappus); volume and topology are compared"
-        );
-    }
-    let effective: Vec<String> = recipe["features"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|f| f.get("fusion_effective_extent").is_some())
-        .map(|f| f["name"].as_str().unwrap_or("?").to_string())
-        .collect();
-    if !effective.is_empty() {
-        out["note"] = json!(format!(
-            "known Fusion difference: {} replayed with the extent Fusion actually used (its through-all is sized as 1.1 × the farthest vertex, so curved tops stop it short; SolidCraft's through-all goes truly through)",
-            effective.join(", ")
-        ));
     }
     out
 }
@@ -163,77 +183,43 @@ fn step_export_check(s: &solvecraft_engine::Session, volume: f64) -> (bool, Stri
     }
 }
 
-/// Cases whose Fusion area is not the geometric one: Fusion reports the horn torus face of a
-/// tight sweep (tube touching its axis) at three times π²·R·r, its quarter-turn area; the
-/// volumes agree. Their area is not compared.
-const FUSION_AREA_OFF: &[&str] = &["50-sweep-tight-bend"];
-
-/// Import a case's `part.step` (as File → Open does) and compare with Fusion's measurements:
-/// body count, volume and area (relative 1e-3) and the faces read from the file.
-/// Open the case's `part.step` (or `part.igs` with `iges`) and compare with measure.json.
-fn check_step_case(dir: &str, iges: bool) -> Value {
-    let name = std::path::Path::new(dir).file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
-    let sp = format!("{dir}/{}", if iges { "part.igs" } else { "part.step" });
-    let want = match read_json(&format!("{dir}/measure.json")) {
-        Ok(m) => m,
-        Err(e) => return json!({"case": name, "pass": false, "error": e}),
-    };
-    let t0 = std::time::Instant::now();
-    let mut s = solvecraft_engine::Session::default();
-    let opened = match s.execute("doc.open", &json!({"path": sp})) {
-        Ok(v) => v,
-        Err(e) => return json!({"case": name, "pass": false, "error": e.to_string()}),
-    };
-    let got = match s.execute("inspect.measure", &json!({})) {
-        Ok(m) => m,
-        Err(e) => return json!({"case": name, "pass": false, "error": e.to_string()}),
-    };
-    let ms = t0.elapsed().as_secs_f64() * 1000.0;
-    // Faces read from the file (the kernel may split a face that wraps around a closed surface).
-    let file_faces = std::fs::read(&sp)
-        .ok()
-        .and_then(|b| {
-            let text = String::from_utf8_lossy(&b);
-            if iges {
-                solvecraft_engine::kernel::iges_import(&text).ok().map(std::sync::Arc::new)
-            } else {
-                solvecraft_engine::kernel::step_import_shared(&text).ok()
+/// Our part as a triangle soup (curved faces refined onto the surface).
+fn our_mesh(s: &solvecraft_engine::Session) -> Result<Vec<Tri>, String> {
+    let mut ours: Vec<Tri> = Vec::new();
+    for b in &s.world_state().bodies {
+        let m = b.body.tessellate_with(MESH_TOL, true).map_err(|e| e.to_string())?;
+        let p = |i: u32| m.positions.get(i as usize).map(|v: &Vec3| [v.x, v.y, v.z]);
+        for t in &m.triangles {
+            if let (Some(a), Some(b), Some(c)) = (p(t[0]), p(t[1]), p(t[2])) {
+                ours.push([a, b, c]);
             }
-        })
-        .map(|imp| imp.bodies.iter().map(|b| b.file_faces).sum::<usize>() as f64);
-    let mut checks = Vec::new();
-    let mut pass = true;
-    let mut num = |what: &str, g: Option<f64>, w: Option<f64>, rel: f64| {
-        let ok = match (g, w) {
-            (Some(g), Some(w)) => (g - w).abs() <= rel * w.abs().max(1.0),
-            _ => false,
-        };
-        pass &= ok;
-        checks.push(json!({"check": what, "got": g, "want": w, "ok": ok}));
-    };
-    num("body_count", got["body_count"].as_f64(), want["body_count"].as_f64(), 0.0);
-    num("volume_mm3", got["total"]["volume_mm3"].as_f64(), want["total"]["volume_mm3"].as_f64(), REL_TOL);
-    if !FUSION_AREA_OFF.contains(&name.as_str()) {
-        num("area_mm2", got["total"]["area_mm2"].as_f64(), want["total"]["area_mm2"].as_f64(), REL_TOL);
+        }
     }
-    num("faces", file_faces, want["total"]["faces"].as_f64(), 0.0);
-    json!({
-        "case": name, "pass": pass, "checks": checks, "ms": ms,
-        "bodies": opened["bodies"], "warnings": opened["warnings"],
-        "info": {"kernel_faces_merged": got["total"]["faces"], "edges": got["total"]["edges"], "want_edges": want["total"]["edges"], "vertices": got["total"]["vertices"], "want_vertices": want["total"]["vertices"]},
-    })
+    if ours.is_empty() { Err("empty mesh".into()) } else { Ok(ours) }
 }
 
-pub fn step_corpus(args: &[String]) -> Result<(), String> {
-    let dirs: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
-    if dirs.is_empty() {
-        return Err("step-corpus: give one or more case directories (each with part.step and measure.json)".into());
-    }
-    let iges = args.iter().any(|a| a == "--iges");
-    let results: Vec<Value> = dirs.iter().map(|d| check_step_case(d, iges)).collect();
-    report(args, &results);
-    let failed = results.iter().filter(|r| !r["pass"].as_bool().unwrap_or(false)).count();
-    if failed > 0 { Err(format!("{failed} STEP case(s) failed")) } else { Ok(()) }
+/// Compare our part with the reference triangulation: the symmetric surface distance, and the
+/// principal second moments of volume of both meshes (the shape's inertia, independent of how it
+/// sits in space).
+fn reference_checks(s: &solvecraft_engine::Session, stl: &str, tol: f64, c: &mut Checks) {
+    let (ours, reference) = match (our_mesh(s), spatial::read_stl(stl)) {
+        (Ok(o), Ok(r)) if !r.is_empty() => (o, r),
+        (Err(e), _) | (_, Err(e)) => return c.push("surface_distance_mm", json!(e), json!(format!("<= {tol}")), false),
+        _ => return c.push("surface_distance_mm", json!("empty reference.stl"), json!(format!("<= {tol}")), false),
+    };
+    let (lo, hi) = spatial::bounds(&reference);
+    let size = (0..3).map(|k| hi[k] - lo[k]).fold(0.0, f64::max);
+    let h = spatial::hausdorff(&ours, &reference, size.max(1.0));
+    let worst = h.a_to_b.max(h.b_to_a);
+    c.push(
+        "surface_distance_mm",
+        json!({"max": worst, "mean": h.mean, "ours_to_reference": h.a_to_b, "reference_to_ours": h.b_to_a, "worst_at": h.worst_at}),
+        json!(format!("<= {tol}")),
+        worst <= tol,
+    );
+    let ((_, _, pa), (_, _, pb)) = (spatial::mass_properties(&ours), spatial::mass_properties(&reference));
+    let ok = pa.iter().zip(pb).all(|(a, b)| (a - b).abs() <= INERTIA_REL * b.abs().max(1.0));
+    c.push("principal_moments_mm5", json!(pa), json!(pb), ok);
 }
 
 fn report(args: &[String], results: &[Value]) {
@@ -268,7 +254,7 @@ fn report(args: &[String], results: &[Value]) {
 pub fn run(args: &[String]) -> Result<(), String> {
     let dirs: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
     if dirs.is_empty() {
-        return Err("oracle: give one or more case directories".into());
+        return Err("oracle: give one or more case directories (each with recipe.json and expected.json)".into());
     }
     let results: Vec<Value> = dirs.iter().map(|d| check_case(d)).collect();
     report(args, &results);

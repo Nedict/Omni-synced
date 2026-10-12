@@ -8,8 +8,7 @@
 //! solvecraft-cli exec <command> [json-params]                 run one command on an empty design
 //! solvecraft-cli commands                                     the command registry as JSON
 //! solvecraft-cli recipe <recipe.json>                         translate an oracle recipe to a script
-//! solvecraft-cli oracle <case-dir>...                         replay recipes and compare with measure.json
-//! solvecraft-cli step-corpus <case-dir>...                    import part.step and compare with measure.json
+//! solvecraft-cli oracle <case-dir>...                         replay recipes and compare with expected.json
 //! solvecraft-cli mcp [--in design|script] [--connect HOST:PORT] MCP server on stdio (docs/mcp.md)
 //! solvecraft-cli licences                                     SolveCraft's licence and the third-party licences
 //! solvecraft-cli icon --out F.png|F.ico [--size N]             the app icon (packaging; drawn, not a file)
@@ -20,7 +19,7 @@
 mod fuzz;
 mod oracle;
 mod recipe;
-mod seams;
+mod spatial;
 
 use std::process::ExitCode;
 
@@ -42,7 +41,6 @@ const USAGE: &str = "usage:
   solvecraft-cli recipe <recipe.json>
   solvecraft-cli oracle <case-dir>... [--json]
   solvecraft-cli fuzz [--from N] [--count N] [--jobs J] [--timeout S] [--steps N] [--minimise] [--out DIR] [--report FILE]
-  solvecraft-cli step-corpus <case-dir>... [--json] [--iges]
   solvecraft-cli mcp [--in design.solvecraft|script.json] [--connect 127.0.0.1:PORT]
   solvecraft-cli licences
   solvecraft-cli icon --out icon.png [--size 256] | --out icon.ico
@@ -73,7 +71,6 @@ fn main() -> ExitCode {
             recipe::to_script(&v).map(|s| println!("{}", pretty(&s)))
         }),
         Some("oracle") => oracle::run(&args[1..]),
-        Some("step-corpus") => oracle::step_corpus(&args[1..]),
         Some("fuzz") => fuzz::run(&args[1..]),
         Some("fuzz-one") => fuzz::one(&args[1..]),
         Some("mcp") => cmd_mcp(&args[1..]),
@@ -289,7 +286,13 @@ fn cmd_exec(args: &[String]) -> Result<(), String> {
 fn cmd_mcp(args: &[String]) -> Result<(), String> {
     let backend: Box<dyn solvecraft_mcp::Backend> = match (flag(args, "--connect"), flag(args, "--in")) {
         (Some(_), Some(_)) => return Err("mcp: use either --connect or --in, not both".into()),
-        (Some(addr), None) => Box::new(solvecraft_mcp::Remote::connect(addr).map_err(|e| format!("cannot connect to {addr}: {e}"))?),
+        (Some(addr), None) => Box::new(solvecraft_mcp::Remote::connect(addr).map_err(|e| {
+            let port = addr.rsplit(':').next().filter(|p| p.parse::<u16>().is_ok()).unwrap_or("PORT");
+            format!(
+                "cannot connect to {addr}: {e}\nno SolidCraft app is listening there; start it with \
+                 `solvecraft --control {port}` (or SOLVECRAFT_CONTROL_PORT={port}) and retry"
+            )
+        })?),
         (None, Some(path)) => Box::new(solvecraft_mcp::Headless::new(load(path)?)),
         (None, None) => Box::new(solvecraft_mcp::Headless::default()),
     };

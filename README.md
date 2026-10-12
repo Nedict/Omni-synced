@@ -17,10 +17,11 @@ developer guide and command reference; sources in [docs/book](docs/book)), and t
 Linux Flatpak installation needs the Freedesktop runtime from Flathub as well as the
 SolidCraft application feed. See [install and launch commands](https://bherbruck.github.io/solidcraft/guide/getting-started.html#linux-flatpak).
 
-**Status: early but usable for simple parts.** The historical benchmark report records
-76 of 76 reference parts matching volume, area and topology ([docs/oracle.md](docs/oracle.md)).
-These checks do not establish complete geometric or workflow equivalence. Feature coverage
-is tracked in [docs/parity.md](docs/parity.md) and [ROADMAP.md](ROADMAP.md).
+**Status: early but usable for simple parts.** 75 of 76 public reference parts
+match their analytic or FreeCAD-computed volume, area, centre of mass and bounding box
+([docs/oracle.md](docs/oracle.md)); the other is a tracked bug.
+These checks do not establish complete geometric or workflow equivalence. The commands SolidCraft has
+are listed by area in [docs/features.md](docs/features.md); status and plans are in [ROADMAP.md](ROADMAP.md).
 Open work and known bugs are in [GitHub issues](https://github.com/bherbruck/solidcraft/issues),
 and help is welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -77,7 +78,8 @@ renamed repository; old-name Pages and Flatpak URLs are not maintained as perman
   components as assemblies; revolved faces as native planes, cylinders, cones, spheres and tori),
   IGES 5.3 (manifold solid B-reps with names and colours), 3MF, STL (binary/ASCII) and OBJ;
   3MF, STL and OBJ import as mesh bodies (they render, measure, move and export; solid features
-  need B-rep bodies);
+  need B-rep bodies). Convert Mesh reconstructs supported closed constant-section parts
+  as parametric solids with planar and circular cylindrical faces;
   STEP import (AP203/AP214/AP242 solids, assemblies, units, names, colours) and IGES import
   (manifold solid B-reps, or trimmed and bounded surfaces sewn into solids) as a base feature
   that later features build on — open a `.step`/`.stp`/`.igs`/`.iges` file, insert one into a
@@ -166,6 +168,7 @@ MIT OR Apache-2.0, at your option. Developed under the
 [clean-room contribution rules](CLAUDE.md); third-party code and assets retain their
 documented licences and attribution.
 
-References to other products describe workflow comparisons and benchmark provenance.
+SolidCraft is independent. Behaviour is designed from public documentation, general CAD
+conventions and user feedback. Reference tests use analytic values and open-source tools.
 SolidCraft is not affiliated with, sponsored by or endorsed by Autodesk. Autodesk and
 Fusion are trademarks of Autodesk, Inc.

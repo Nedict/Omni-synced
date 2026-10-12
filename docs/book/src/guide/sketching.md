@@ -4,6 +4,14 @@ A sketch lies on a plane: an origin plane, a construction plane or a planar face
 **Create Sketch** (`sketch.create`) and click a plane, or pick a face first. **Finish Sketch**
 returns to the model.
 
+In scripts, `XY`, `XZ`, `YZ` and their `Top`, `Front`, `Right` aliases name origin planes.
+These names are reserved: a construction plane cannot be created with or renamed to one
+(case-insensitive). If an older design already has a construction plane with such a name, a
+string argument naming it is ambiguous and is rejected; use the other alias (`XY` for `Top`)
+for the origin plane, the construction feature's numeric ID to select it, or an explicit
+`{origin: [x,y,z], normal: [x,y,z]}` plane. Existing saved references retain their meaning;
+opening a design does not reinterpret old sketches.
+
 Curves adapt to the current zoom and display scale. Picking and highlighting use the same
 visible boundary, including small circles at Fit and sketches in rotated components.
 Profile shading follows those curves while preserving holes. Zooming changes the display
@@ -21,6 +29,11 @@ fillet, chamfer, offset (O), mirror, patterns, move/copy and scale.
 
 **Project** (P) and **Intersect** bring model edges into the sketch as linked geometry that
 follows later changes. Sketching on a face projects its edges automatically.
+For Project, select visible source curves or points from another sketch, model edges,
+faces, vertices or bodies, or axes and planes, then press P. The entire supported selection
+is projected in one undo step. A rejected projection keeps the selection for correction;
+an empty or mixed selection starts the ordinary picking tool. External sketch selections
+retain their source sketch, even when the active sketch uses the same point or curve names.
 
 Run from a script or the control channel, every command that adds sketch geometry returns the
 ids of what it added (`created: {points, curves, constraints, dimensions}`). Ids are stable and
@@ -127,3 +140,16 @@ when a parameter moves the geometry. Islands inside the region are its holes. Wh
 more than one (both halves of a circle cut by a line), is bounded by exactly those curves, the
 feature reports an error rather than taking another region. Profiles picked by index or by point
 (`[{"point": [x, y]}]`) are stored the same way when the feature is made.
+
+## Measurement units
+
+Change the current design through **Document Settings > Units** in the browser.
+The units preference applies to new designs. Existing sketch annotations, live drawing
+lengths and Measure follow the current design units without resizing geometry.
+Inches display at least three decimal places and retain a meaningful fourth digit;
+a higher display precision can be selected in Preferences. Bare length values typed
+in the dimension tool use the current design units. Explicit units such as `25.4 mm`
+remain valid in an inch design. Angular dimensions keep their angular units. Deliberately typed four-place inch literals
+retain trailing zeros. Component/canvas distance controls and inspection, parts-library
+and flat-pattern measurements follow design units too; parameter expressions and metric
+standard names retain their explicit authored units.

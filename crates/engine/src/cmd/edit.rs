@@ -145,6 +145,9 @@ fn rename(s: &mut Session, p: &Value) -> Result<Value> {
     if s.doc.features.iter().any(|f| f.name == name && f.id != id) {
         return Err(bad(cmd, format!("another feature is called `{name}`")));
     }
+    if s.doc.feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::ConstructionPlane { .. })) {
+        super::features::check_plane_name(name, cmd)?;
+    }
     if let Some(f) = s.doc_mut().feature_mut(id) {
         f.name = name.to_string();
     }
@@ -261,6 +264,7 @@ fn inspect_feature(s: &mut Session, p: &Value) -> Result<Value> {
         "id": f.id, "name": f.name, "type": f.kind.type_name(), "suppressed": f.suppressed, "rolled_back": rolled_back,
         "definition": def, "omitted": omitted, "inputs": inputs,
         "error": r.and_then(|r| r.error.clone()), "warning": r.and_then(|r| r.warning.clone()),
+        "boolean_diagnostics": r.map(|r| &r.boolean_diagnostics),
     }))
 }
 

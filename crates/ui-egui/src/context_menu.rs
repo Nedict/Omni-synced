@@ -54,6 +54,8 @@ pub enum Target {
     ToolbarCommand {
         id: String,
     },
+    /// The toolbar's empty space.
+    Toolbar,
     /// The workspace switcher.
     Workspace,
     /// The Named Views folder, and one view (saved or standard) in it.
@@ -240,6 +242,7 @@ pub fn target_bodies(app: &SolveApp, target: &Target) -> Vec<String> {
         | Target::Units
         | Target::Joint { .. }
         | Target::ToolbarCommand { .. }
+        | Target::Toolbar
         | Target::Workspace
         | Target::NamedViews
         | Target::NamedView { .. } => Vec::new(),
@@ -298,6 +301,7 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
         Target::NamedViews => vec![act("ui.newView", "New Named View", "perspective")],
         Target::Joint { id } => joint_items(app, *id),
         Target::ToolbarCommand { id } => crate::toolbar_custom::command_items(app, id),
+        Target::Toolbar => crate::toolbar_custom::toolbar_items(app),
         Target::Workspace => {
             let mut v = vec![act("ui.workspace", "Design", "box").key("current")];
             for w in ["Generative Design", "Render", "Animation", "Simulation", "Manufacture", "Drawing"] {
@@ -642,6 +646,9 @@ fn sketch_entity_items(app: &SolveApp) -> Vec<Item> {
         return v;
     }
     let ents: Vec<String> = curves.iter().chain(points.iter()).cloned().collect();
+    if crate::sketch_text::selected_entity(app).is_some() {
+        v.push(cmd(app, "sketch.edit_text", "Edit Text"));
+    }
     v.push(cmd(app, "sketch.move", "Move/Copy").key("M"));
     if !curves.is_empty() {
         v.push(cmd(app, "sketch.construction", "Normal / Construction").with(json!({ "curves": curves })));
@@ -876,7 +883,9 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             let _ = app.run("browser.visibility", json!({"visible": true, "paths": [p["path"]], "isolate": true}));
         }
         "ui.canvasVisible" => drop(app.run("canvas.edit", p)),
-        "ui.toolbarPin" | "ui.toolbarRemove" | "ui.toolbarReset" | "ui.shortcutPin" => crate::toolbar_custom::run(app, &item.id, &p),
+        "ui.toolbarPin" | "ui.toolbarRemove" | "ui.toolbarReset" | "ui.toolbarCustomize" | "ui.shortcutPin" => {
+            crate::toolbar_custom::run(app, &item.id, &p)
+        }
         "ui.workspace" => {}
         "ui.findJoint" => {
             if let Some(id) = id_of(&p, "joint") {

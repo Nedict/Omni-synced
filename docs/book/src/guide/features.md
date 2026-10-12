@@ -62,6 +62,12 @@ be found, the feature warns instead of silently picking another face.
 
 ## Editing a feature from a script
 
+For `solid.pattern.circular`, `axis` accepts `X`, `Y`, `Z`, or `{origin, dir}`.
+An explicit origin must contain three finite numeric coordinates in millimetres
+(`[x, y, z]` or `{x, y, z}`); omitting it uses the world origin. Expressions and
+construction-axis references are not supported. Invalid origins are rejected rather than
+silently replaced with zero.
+
 `timeline.inspect {feature}` returns a feature's `definition`: the fields `timeline.edit` changes,
 with their current values. `timeline.edit {feature, set}` merges `set` into that definition
 (objects are merged field by field, anything else replaces the value), rebuilds the feature and

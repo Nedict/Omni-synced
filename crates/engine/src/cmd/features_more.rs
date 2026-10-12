@@ -11,7 +11,7 @@ use crate::params::{bad, bool_, expr, req_expr, str_, string_list, vec3};
 use crate::{Result, Session};
 
 pub static COMMANDS: &[CommandSpec] = &[
-    CommandSpec::new("SurfaceSculpt", "Boundary Fill", boundary_fill).at("SOLID", "CREATE").icon("boundary_fill").params(
+    CommandSpec::new("solid.boundary_fill", "Boundary Fill", boundary_fill).at("SOLID", "CREATE").icon("boundary_fill").params(
         "tools: [bodies]; cells: [[x,y,z] a point inside each cell to fill (a cell: inside some tools, outside the rest)]; operation?: new|join|cut|intersect; remove_tools?: bool",
     ),
     CommandSpec::new("solid.coil", "Coil", coil).at("SOLID", "CREATE").icon("coil").params(
@@ -422,7 +422,7 @@ pub(super) fn snap_point(s: &Session, kind: &str, at: Vec3) -> Option<Vec3> {
 }
 
 fn boundary_fill(s: &mut Session, p: &Value) -> Result<Value> {
-    let cmd = "SurfaceSculpt";
+    let cmd = "solid.boundary_fill";
     let tools = string_list(p, "tools");
     let st = s.model.state();
     if tools.is_empty() || tools.len() > 64 || tools.iter().any(|t| st.body(t).is_none()) {

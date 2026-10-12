@@ -54,6 +54,8 @@ thread_local! {
     /// and counts by name, for checks.
     static RECTS: RefCell<Vec<(String, egui::Rect)>> = const { RefCell::new(Vec::new()) };
     static COUNTS: RefCell<Vec<(String, f64)>> = const { RefCell::new(Vec::new()) };
+    /// Widths a scenario's `same_width` checks remembered (by rect name).
+    static WIDTHS: RefCell<Vec<(String, f32)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// A manipulator's handle drawn this frame at `at` (screen), by name: "arrow" (a dialog's value
@@ -132,6 +134,8 @@ pub struct Harness {
     queue: Option<std::sync::mpsc::Sender<ControlRequest>>,
     time: f64,
     size: egui::Vec2,
+    /// The camera as the last `camera` step left it.
+    cam_mark: Option<solvecraft_engine::render::Camera>,
 }
 
 impl Default for Harness {
@@ -160,7 +164,9 @@ impl Harness {
             queue: None,
             time: 0.0,
             size: egui::vec2(1600.0, 1000.0),
+            cam_mark: None,
         };
+        WIDTHS.with(|m| m.borrow_mut().clear());
         h.install();
         h.ctx.enable_accesskit();
         h.frames(3);
@@ -358,7 +364,7 @@ impl Harness {
                 let [x, y] = self.at(at)?;
                 // Hover first, as a hand does.
                 self.call("ui.move", json!({"x": x, "y": y}));
-                let mut p = json!({"x": x, "y": y, "double": flag("double"), "shift": flag("shift"), "ctrl": flag("ctrl")});
+                let mut p = json!({"x": x, "y": y, "double": flag("double"), "shift": flag("shift"), "ctrl": flag("ctrl"), "alt": flag("alt")});
                 if let Some(b) = s.get("button") {
                     p["button"] = b.clone();
                 }
@@ -379,7 +385,10 @@ impl Harness {
                 let [x0, y0] = self.at(d.get(0).unwrap_or(&Value::Null))?;
                 let [x1, y1] = self.at(d.get(1).unwrap_or(&Value::Null))?;
                 let steps = s.get("steps").cloned().unwrap_or(json!(8));
-                self.call("ui.drag", json!({"x0": x0, "y0": y0, "x1": x1, "y1": y1, "steps": steps, "shift": flag("shift"), "ctrl": flag("ctrl")}))
+                self.call(
+                    "ui.drag",
+                    json!({"x0": x0, "y0": y0, "x1": x1, "y1": y1, "steps": steps, "shift": flag("shift"), "ctrl": flag("ctrl"), "alt": flag("alt")}),
+                )
             } else if let Some(m) = s.get("queued").and_then(Value::as_str) {
                 let (v, frames) = self.call_queued(m, s.get("params").cloned().unwrap_or(json!({})));
                 let min = s.get("min_frames").and_then(Value::as_u64).unwrap_or(0);
@@ -429,6 +438,8 @@ impl Harness {
                 }
                 self.app.cam_anim = None;
                 self.frames(2);
+                // Where `camera.panned` and `camera.zoomed` checks measure from.
+                self.cam_mark = Some(self.app.cam);
                 return Ok(());
             } else if let Some(v) = s.get("view_anim").and_then(Value::as_str) {
                 return self.view_anim(v, s.get("max_deg").and_then(Value::as_f64).unwrap_or(10.0));
@@ -608,6 +619,27 @@ pub fn check(h: &mut Harness, e: &Value) -> Result<(), String> {
                 if !near(yaw, &v["yaw_deg"]) || !near(pitch, &v["pitch_deg"]) {
                     return Err(format!("camera yaw {yaw:.2}°, pitch {pitch:.2}°, want {v}"));
                 }
+                // Since the last `camera` step: "panned" (bool: the target moved) and "zoomed"
+                // ("in", "out" or "no": the eye's distance from the target).
+                if !v["panned"].is_null() || !v["zoomed"].is_null() {
+                    let mark = h.cam_mark.ok_or("camera.panned/zoomed need a `camera` step first")?;
+                    let c = &h.app.cam;
+                    let moved = c.target.dist(mark.target) > 1e-6 * mark.distance.max(1.0);
+                    if v["panned"].as_bool().is_some_and(|want| want != moved) {
+                        return Err(format!("camera panned: got {moved}, want {}", v["panned"]));
+                    }
+                    let r = c.distance / mark.distance;
+                    let zoomed = if r < 1.0 - 1e-6 {
+                        "in"
+                    } else if r > 1.0 + 1e-6 {
+                        "out"
+                    } else {
+                        "no"
+                    };
+                    if v["zoomed"].as_str().is_some_and(|want| want != zoomed) {
+                        return Err(format!("camera zoomed: got {zoomed} (distance ×{r:.4}), want {}", v["zoomed"]));
+                    }
+                }
                 // "back": the world direction from the target to the eye.
                 if let Some(want) = v["back"].as_array() {
                     let b = h.app.cam.back();
@@ -623,6 +655,35 @@ pub fn check(h: &mut Harness, e: &Value) -> Result<(), String> {
                 let got = count_of(n);
                 if got != v["value"].as_f64() {
                     return Err(format!("count {n}: got {got:?}, want {}", v["value"]));
+                }
+            }
+            "same_width" => {
+                // {"same_width": "name"}: the published rect is as wide as the first time this
+                // scenario checked it (±0.5 px): a window that keeps its size.
+                let n = v.as_str().unwrap_or_default();
+                let w = rect_of(n).ok_or(format!("no rect {n}"))?.width();
+                let first = WIDTHS.with(|m| {
+                    let mut m = m.borrow_mut();
+                    match m.iter().find(|(k, _)| k == n) {
+                        Some(&(_, w0)) => w0,
+                        None => {
+                            m.push((n.to_string(), w));
+                            w
+                        }
+                    }
+                });
+                if (w - first).abs() > 0.5 {
+                    return Err(format!("{n} is {w:.1} px wide, was {first:.1} px"));
+                }
+            }
+            "right_edge" => {
+                // {"right_edge": {"inner": a, "outer": b, "tol": px}}: published rect a ends at
+                // b's right edge (within tol).
+                let (a, b) = (v["inner"].as_str().unwrap_or_default(), v["outer"].as_str().unwrap_or_default());
+                let (ra, rb) = (rect_of(a).ok_or(format!("no rect {a}"))?, rect_of(b).ok_or(format!("no rect {b}"))?);
+                let tol = v["tol"].as_f64().unwrap_or(2.0) as f32;
+                if (ra.right() - rb.right()).abs() > tol {
+                    return Err(format!("{a} ends at x={:.1}, {b} at x={:.1} (±{tol})", ra.right(), rb.right()));
                 }
             }
             "spans" => {

@@ -11,8 +11,8 @@ The SHEET METAL tab builds parts from a sheet of constant thickness under a **sh
 - **Create Flat Pattern** (`sheet.flat_pattern`) shows the flat part with its bend lines and a
   bend table, and exports it as DXF or a bend-table CSV through the save picker.
 
-Bends follow the rule's K-factor, so flat lengths match what a press brake will make. The
-oracle checks these against parts built in Fusion.
+Bends follow the rule's K-factor, so flat lengths match what a press brake will make. Tests
+check flat lengths against hand-computed bend allowances.
 
 For a shop drawing or spreadsheet, `sheet.export_bend_table` returns CSV by default; choose
 `format: "json"` for structured data. It includes the sheet rule, thickness, bend angles,

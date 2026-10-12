@@ -499,7 +499,7 @@ fn units_menu_changes_the_design_units_and_new_designs_take_the_preference() {
     assert_eq!(items.len(), 5);
     act(&mut app, &Target::Units, "in");
     assert_eq!(app.session.doc.units, "in");
-    assert!(crate::prefs::show_mm(&app, 25.4, 1).starts_with("1.00 in"));
+    assert!(crate::prefs::show_mm(&app, 25.4, 1).starts_with("1.000 in"));
     app.preferences.default_units = "cm".into();
     crate::documents::new_design(&mut app);
     assert_eq!(app.session.doc.units, "cm");
@@ -594,8 +594,8 @@ fn toolbar_pins_removes_reorders_and_keeps_its_layout() {
     tc::reorder(&mut app, "SOLID", extra, "MODIFY", None);
     assert!(!ids(&app, "CREATE").contains(&extra) && ids(&app, "MODIFY").last() == Some(&extra));
     // Pin to Shortcuts goes to the S box's favourites.
-    act(&mut app, &Target::ToolbarCommand { id: "Extrude".into() }, "Pin to Shortcuts");
-    assert!(app.sbox.pinned.iter().any(|p| p == "Extrude"));
+    act(&mut app, &Target::ToolbarCommand { id: "solid.extrude".into() }, "Pin to Shortcuts");
+    assert!(app.sbox.pinned.iter().any(|p| p == "solid.extrude"));
     // Kept between runs, and exported and imported with the shortcuts.
     let mut other = sample_app();
     other.load_prefs(&app.prefs());
