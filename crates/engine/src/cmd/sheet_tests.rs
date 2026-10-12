@@ -1715,3 +1715,41 @@ fn hole_beside_two_adjacent_edge_flanges_cuts_and_bends_stay_guarded() {
     let error = hole(&mut bend, "Bend", [78.5, 20.0]).unwrap_err().to_string();
     assert!(error.contains("bend"), "{error}");
 }
+
+/// A fold whose stored `fixed` point ends up off the sheet after a parameter change keeps working:
+/// the point still says which side stays (#370). Only a new pick off the sheet is refused (#263).
+#[test]
+#[ignore = "fails until #370 is fixed"]
+fn fold_keeps_working_when_a_parameter_moves_the_sheet_off_its_fixed_point() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.change", json!({"name": "w", "expression": "100 mm"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Blank"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [100, 60]}));
+    run(&mut s, "sketch.dimension", json!({"entities": ["l1"], "value": "w"}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "sheet.flange", json!({"sketch": "Blank"}));
+    run(&mut s, "sheet.fold", json!({"points": [[40, 0, 2.5], [40, 60, 2.5]], "fixed": [90, 30, 2.5], "name": "Fold1"}));
+    run(&mut s, "parameters.change", json!({"name": "w", "expression": "80 mm"}));
+    let fold = run(&mut s, "timeline.inspect", json!({"feature": "Fold1"}));
+    assert!(fold["error"].is_null(), "the fold fails after the width change: {}", fold["error"]);
+    // The +x side (where the point is) stays flat out to the new width; the -x side stands up.
+    let bb = &run(&mut s, "inspect.measure", json!({}))["bodies"][0]["bbox"];
+    assert!((bb["max"][0].as_f64().unwrap_or(0.0) - 80.0).abs() < 1e-6, "{bb}");
+    assert!(bb["max"][2].as_f64().unwrap_or(0.0) > 30.0, "{bb}");
+}
+
+/// `fixed` 20 mm above a 2.5 mm sheet touches no material: refuse it or say so, like a point in a
+/// cut-out (#371).
+#[test]
+#[ignore = "fails until #371 is fixed"]
+fn fold_fixed_point_above_the_sheet_is_not_silently_accepted() {
+    let mut s = Session::default();
+    base(&mut s, 100.0, 60.0);
+    match s.execute("sheet.fold", &json!({"points": [[40, 0, 2.5], [40, 60, 2.5]], "fixed": [90, 30, 20]})) {
+        Err(e) => assert!(e.to_string().contains("fixed"), "{e}"),
+        Ok(r) => {
+            let warned = ["warning", "warnings"].iter().any(|k| r.get(*k).is_some_and(|w| w.to_string().contains("fixed")));
+            assert!(warned, "fixed [90, 30, 20] is 17.5 mm above the sheet, yet the fold succeeded silently: {r}");
+        }
+    }
+}
