@@ -33,8 +33,9 @@ impl Catalog {
 
 static ENGLISH: Catalog = Catalog::new("en", "English", include_str!("locales/en.json"));
 static JAPANESE: Catalog = Catalog::new("ja", "日本語", include_str!("locales/ja.json"));
+static GERMAN: Catalog = Catalog::new("de", "Deutsch", include_str!("locales/de.json"));
 static KOREAN: Catalog = Catalog::new("ko", "한국어", include_str!("locales/ko.json"));
-pub const LOCALES: &[&Catalog] = &[&ENGLISH, &JAPANESE, &KOREAN];
+pub const LOCALES: &[&Catalog] = &[&ENGLISH, &JAPANESE, &GERMAN, &KOREAN];
 
 pub fn is_supported(id: &str) -> bool {
     LOCALES.iter().any(|catalog| catalog.id == id)
