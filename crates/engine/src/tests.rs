@@ -2716,3 +2716,18 @@ fn a_pattern_repeats_a_fillet_on_the_edges_it_found() {
     let expect = 150.0 * 422.275 * 19.05 - n * pocket;
     assert!(rel(volume(&mut s), expect) < 1e-5, "{} vs {expect}", volume(&mut s));
 }
+
+/// A copy added by raising the count after a rename takes the next number, not the freed one (#372).
+#[test]
+#[ignore = "fails until #372 is fixed"]
+fn raising_a_pattern_count_after_a_rename_numbers_the_new_copy_after_the_others() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "operation": "new_body", "body_name": "X"}));
+    run(&mut s, "solid.pattern.rectangular", json!({"bodies": ["X"], "dir1": [1, 0, 0], "count1": 3, "spacing1": 20, "name": "Pat"}));
+    run(&mut s, "body.rename", json!({"body": "X (2)", "name": "Second"}));
+    run(&mut s, "timeline.edit", json!({"feature": "Pat", "set": {"pattern": {"count1": "4"}}}));
+    let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names, ["X", "Second", "X (3)", "X (4)"]);
+    let fourth = run(&mut s, "inspect.measure", json!({"bodies": ["X (4)"]}));
+    assert_eq!(fourth["bodies"][0]["bbox"]["min"][0].as_f64().map(f64::round), Some(60.0), "{fourth}");
+}
