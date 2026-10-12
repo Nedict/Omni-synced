@@ -2350,3 +2350,28 @@ fn special_files_are_refused_by_every_file_command() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A cut targeted at one body leaves a non-target body alone, even one the tool covers completely (#260).
+#[test]
+fn targeted_cut_keeps_a_covered_body_that_is_not_a_target() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "operation": "new_body", "body_name": "Frame"}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [20, 0, 0], "operation": "new_body", "body_name": "Other"}));
+    // Exactly Other's extent; it does not touch Frame.
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [20, 0, 0], "operation": "cut", "targets": ["Frame"]}));
+    let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names, ["Frame", "Other"]);
+    assert!(rel(volume(&mut s), 2000.0) < 1e-6);
+}
+
+/// A frame's opening cut over a separate mesh body that sits in it: the mesh survives (#260).
+#[test]
+fn targeted_cut_keeps_an_overlapping_body_that_is_not_a_target() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 50, "width": 50, "height": 5, "operation": "new_body", "body_name": "Frame"}));
+    run(&mut s, "solid.box", json!({"length": 30, "width": 30, "height": 1, "corner": [10, 10, 2], "operation": "new_body", "body_name": "Mesh"}));
+    run(&mut s, "solid.box", json!({"length": 30, "width": 30, "height": 5, "corner": [10, 10, 0], "operation": "cut", "targets": ["Frame"]}));
+    let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names, ["Frame", "Mesh"]);
+    assert!(rel(volume(&mut s), 50.0 * 50.0 * 5.0 - 30.0 * 30.0 * 5.0 + 900.0) < 1e-6);
+}
