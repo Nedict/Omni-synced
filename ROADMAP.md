@@ -331,6 +331,12 @@ or edited values, including the Appearance panel.
 
 ## Kernel
 
+- Successful Boolean retries report their strategy and numerical adjustments as
+  feature warnings and structured inspection data. Diagnostics survive cached
+  evaluation, undo/redo and cold reopening; the robustness runner counts retry
+  events by strategy and reports any bounded-log truncation. Existing geometry
+  acceptance checks remain in force.
+
 - Boolean intersection-curve construction refuses point-only, collapsed and non-finite
   polylines without panicking. Direct constructor regressions retain valid open endpoints
   and closed spherical intersections; the original interactive trigger remains unidentified.

@@ -64,6 +64,8 @@ pub struct Run {
     pub unsupported: Vec<(String, String)>,
     /// Steps whose generated parameters a command refused.
     pub rejected: usize,
+    pub boolean_fallbacks: std::collections::BTreeMap<solvecraft_kernel::BooleanStrategy, usize>,
+    pub boolean_reports_truncated: bool,
 }
 
 impl Run {
@@ -289,7 +291,15 @@ pub fn run(seed: u64, max_steps: usize) -> Run {
 pub fn run_with(seed: u64, max_steps: usize, on_step: &mut dyn FnMut(&Step)) -> Run {
     let mut r = Rng::new(seed);
     let mut s = Session::default();
-    let mut run = Run { seed, steps: Vec::new(), outcome: Outcome::ok(), unsupported: Vec::new(), rejected: 0 };
+    let mut run = Run {
+        seed,
+        steps: Vec::new(),
+        outcome: Outcome::ok(),
+        unsupported: Vec::new(),
+        rejected: 0,
+        boolean_fallbacks: Default::default(),
+        boolean_reports_truncated: false,
+    };
     let mut last_feature: Option<String> = None;
     let n = 2 + r.below(max_steps.max(2) - 1);
     let mut tries = 0;
@@ -314,6 +324,12 @@ pub fn run_with(seed: u64, max_steps: usize, on_step: &mut dyn FnMut(&Step)) -> 
             continue;
         }
         let kind = st.kind;
+        for result in s.model.results.iter().skip(before).filter(|result| result.error.is_none()) {
+            run.boolean_reports_truncated |= result.boolean_diagnostics.truncated;
+            for event in &result.boolean_diagnostics.events {
+                *run.boolean_fallbacks.entry(event.strategy).or_default() += 1;
+            }
+        }
         run.steps.push(st);
         if out.kind != "ok" {
             run.outcome = out;
@@ -329,14 +345,19 @@ pub fn run_with(seed: u64, max_steps: usize, on_step: &mut dyn FnMut(&Step)) -> 
 /// Run fixed steps (a recorded or minimised design): the index and outcome of the first step
 /// that isn't ok (or the last step's, ok).
 pub fn replay(steps: &[Step]) -> (usize, Outcome) {
+    let (index, outcome, _) = replay_session(steps);
+    (index, outcome)
+}
+
+fn replay_session(steps: &[Step]) -> (usize, Outcome, Session) {
     let mut s = Session::default();
     for (i, st) in steps.iter().enumerate() {
         let out = apply(&mut s, st);
         if out.kind != "ok" {
-            return (i, out);
+            return (i, out, s);
         }
     }
-    (steps.len().saturating_sub(1), Outcome::ok())
+    (steps.len().saturating_sub(1), Outcome::ok(), s)
 }
 
 /// The start of a message, to tell failures apart (numbers vary between versions of a case).
@@ -367,6 +388,14 @@ pub fn minimise(run: &Run) -> Run {
             }
         }
     }
-    let (_, outcome) = replay(&steps);
-    Run { seed: run.seed, steps, outcome, unsupported: Vec::new(), rejected: 0 }
+    let (_, outcome, session) = replay_session(&steps);
+    let mut boolean_fallbacks = std::collections::BTreeMap::new();
+    let mut boolean_reports_truncated = false;
+    for result in &session.model.results {
+        boolean_reports_truncated |= result.boolean_diagnostics.truncated;
+        for event in &result.boolean_diagnostics.events {
+            *boolean_fallbacks.entry(event.strategy).or_default() += 1;
+        }
+    }
+    Run { seed: run.seed, steps, outcome, unsupported: Vec::new(), rejected: 0, boolean_fallbacks, boolean_reports_truncated }
 }
