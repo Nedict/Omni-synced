@@ -201,7 +201,7 @@ impl Autosaver {
         self.last = Some(s.doc.clone());
         self.has_entry = true;
         // Crash replays start from this autosave from here.
-        crate::crash::rebased(s, Some(&file(&self.dir, &self.id, "solvecraft")), true);
+        crate::crash::rebased(s, Some(&file(&self.dir, &self.id, solidcraft_io::DESIGN_EXT)), true);
         Ok(true)
     }
 

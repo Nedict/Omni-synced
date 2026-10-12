@@ -1152,14 +1152,14 @@ mod tests {
     fn trackpad_pan_defaults_on_persists_and_follows_dialog_buttons() {
         assert!(serde_json::from_value::<Prefs>(json!({})).unwrap().trackpad_pan);
         assert!(Prefs::default().trackpad_pan);
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         control(&mut app, &json!({"open":"Navigation", "trackpad_pan":false})).unwrap();
         control(&mut app, &json!({"button":"cancel"})).unwrap();
         assert!(app.preferences.trackpad_pan);
         control(&mut app, &json!({"open":"Navigation", "trackpad_pan":false})).unwrap();
         control(&mut app, &json!({"button":"apply"})).unwrap();
         assert!(!app.preferences.trackpad_pan);
-        let mut other = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         other.load_prefs(&app.prefs());
         assert!(!other.preferences.trackpad_pan);
         control(&mut app, &json!({"open":"Navigation", "button":"defaults"})).unwrap();
