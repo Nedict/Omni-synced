@@ -2367,3 +2367,22 @@ fn params_docs_list_working_parameters() {
     assert!(params("sheet.flange").contains("body_name"), "sheet.flange: {}", params("sheet.flange"));
     assert!(params("solid.loft").contains("targets"), "solid.loft: {}", params("solid.loft"));
 }
+
+/// Every body-creating feature documents the keys `add_feature` reads for all of them (`name`,
+/// `body_name`), and those that take `targets` say so (#271).
+#[test]
+fn feature_params_docs_list_shared_keys() {
+    let mut s = Session::default();
+    let cmds = run(&mut s, "engine.commands", json!({}));
+    let params =
+        |id: &str| cmds.as_array().unwrap().iter().find(|c| c["id"] == id).and_then(|c| c["params"].as_str()).unwrap_or_default().to_string();
+    let with_targets = ["solid.extrude", "solid.revolve", "solid.sweep", "solid.loft", "solid.pipe", "solid.coil"];
+    let without_targets = ["solid.box", "solid.cylinder", "solid.sphere", "solid.torus", "sheet.flange"];
+    for id in with_targets.iter().chain(&without_targets) {
+        let doc = params(id);
+        assert!(doc.contains("name?") && doc.contains("body_name?"), "{id}: {doc}");
+    }
+    for id in with_targets {
+        assert!(params(id).contains("targets?"), "{id}: {}", params(id));
+    }
+}
