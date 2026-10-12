@@ -24,7 +24,8 @@ pub fn panels(tab: &str) -> &'static [&'static str] {
     }
 }
 
-/// How many commands of a panel get a big button.
+/// How many commands of a panel get a button on a fresh (or reset) toolbar. The user's own
+/// layout (`toolbar_custom`) has no cap: every pinned command gets a button.
 pub fn promoted(tab: &str, panel: &str) -> usize {
     match (tab, panel) {
         ("SOLID", "CREATE") => 4,
@@ -34,6 +35,78 @@ pub fn promoted(tab: &str, panel: &str) -> usize {
         (_, "FINISH SKETCH") => 1,
         _ => 2,
     }
+}
+
+/// How a panel is drawn on a toolbar that may be too narrow for every button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fit {
+    /// Every button of the panel.
+    Full,
+    /// One button that opens the panel's drop-down (which lists every command, pinned or not).
+    Collapsed,
+    /// In the » menu at the end of the toolbar.
+    More,
+}
+
+/// A panel's width with `buttons` buttons.
+pub fn panel_width(buttons: usize) -> f32 {
+    (buttons.max(1) as f32 * 40.0).max(64.0) + 8.0
+}
+
+/// A collapsed panel's width.
+pub const COLLAPSED_WIDTH: f32 = 72.0;
+
+/// The gap after each panel (its separator).
+const PANEL_GAP: f32 = 2.0;
+
+/// Fit panels of these full widths into `room`: all of them in full when they fit; otherwise
+/// panels collapse into their drop-down from the right, then (all collapsed and still too wide)
+/// the last ones go into the » menu. Nothing is dropped.
+pub fn fit(widths: &[f32], room: f32) -> Vec<Fit> {
+    let mut fits = vec![Fit::Full; widths.len()];
+    let total = |fits: &[Fit]| -> f32 {
+        widths
+            .iter()
+            .zip(fits)
+            .map(|(w, f)| match f {
+                Fit::Full => w + PANEL_GAP,
+                Fit::Collapsed => COLLAPSED_WIDTH.min(*w) + PANEL_GAP,
+                Fit::More => 0.0,
+            })
+            .sum()
+    };
+    for i in (0..widths.len()).rev() {
+        if total(&fits) <= room {
+            return fits;
+        }
+        if let Some(f) = fits.get_mut(i) {
+            *f = Fit::Collapsed;
+        }
+    }
+    for i in (0..widths.len()).rev() {
+        if total(&fits) <= room {
+            return fits;
+        }
+        if let Some(f) = fits.get_mut(i) {
+            *f = Fit::More;
+        }
+    }
+    fits
+}
+
+/// The commands a panel's drop-down (or its » submenu) lists: its own, then any button moved
+/// into it from another panel.
+fn menu_commands(
+    cmds: &[&'static solvecraft_engine::CommandSpec],
+    shown: &[&'static solvecraft_engine::CommandSpec],
+) -> Vec<&'static solvecraft_engine::CommandSpec> {
+    let mut out = cmds.to_vec();
+    for c in shown {
+        if !out.iter().any(|o| o.id == c.id) {
+            out.push(*c);
+        }
+    }
+    out
 }
 
 fn report_rect(bar: Rect, captions: f32, tabs_start: f32) -> (Rect, bool) {
@@ -456,29 +529,61 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         // The open drop-down (a button dropped on it leaves the toolbar).
         let mut popup_rect: Option<Rect> = None;
         let mut overflow = Vec::new();
-        for (panel, cmds, promote) in crate::toolbar_custom::panel_lists(&tab) {
+        // Every panel with all its buttons (the user's pins have no cap); a toolbar too narrow
+        // for them collapses panels into their drop-down, then into the » menu.
+        let lists: Vec<_> = crate::toolbar_custom::panel_lists(&tab)
+            .into_iter()
+            .map(|(panel, cmds, promote)| {
+                let shown = crate::toolbar_custom::buttons(app, &tab, panel, &cmds, promote);
+                (panel, cmds, shown)
+            })
+            .collect();
+        let widths: Vec<f32> = lists.iter().map(|(_, _, shown)| panel_width(shown.len())).collect();
+        let fits = fit(&widths, r.right() - 40.0 - px);
+        crate::scenario::publish_count("toolbar_collapsed", fits.iter().filter(|f| **f == Fit::Collapsed).count() as f64);
+        crate::scenario::publish_count("toolbar_more", fits.iter().filter(|f| **f == Fit::More).count() as f64);
+        for ((panel, cmds, shown), fit) in lists.into_iter().zip(fits) {
             let panel: &&str = &panel;
-            let shown = crate::toolbar_custom::buttons(app, &tab, panel, &cmds, promote);
-            let n = shown.len().max(1);
-            let width = (n as f32 * 40.0).max(64.0) + 8.0;
-            if !overflow.is_empty() || px + width > r.right() - 40.0 {
-                overflow.push((*panel, cmds));
+            if fit == Fit::More {
+                overflow.push((*panel, menu_commands(&cmds, &shown)));
                 continue;
             }
+            let collapsed = fit == Fit::Collapsed;
+            let width = if collapsed { COLLAPSED_WIDTH.min(panel_width(shown.len())) } else { panel_width(shown.len()) };
             let enabled_panel = !cmds.is_empty() || *panel == "SELECT";
-            // Dropped on the panel's free space: the button goes to its end.
-            let free = Rect::from_min_size(
-                pos2(px + 4.0 + shown.len() as f32 * 40.0, top + 2.0),
-                vec2((width - 8.0 - shown.len() as f32 * 40.0).max(8.0), 38.0),
-            );
-            let fresp = ui.interact(free, ui.id().with(("panel_free", panel)), Sense::hover());
+            let popup_id = ui.id().with(("panel_menu", panel));
+            // Dropped on the panel's free space (all of a collapsed panel): the button goes to
+            // its end.
+            let drawn = if collapsed { 0 } else { shown.len() };
+            let free = Rect::from_min_size(pos2(px + 4.0 + drawn as f32 * 40.0, top + 2.0), vec2((width - 8.0 - drawn as f32 * 40.0).max(8.0), 38.0));
+            let fresp = ui.interact(free, ui.id().with(("panel_free", panel)), if collapsed { Sense::click() } else { Sense::hover() });
             if fresp.dnd_hover_payload::<ToolbarDrag>().is_some() {
                 painter.line_segment([pos2(free.left(), free.top() + 2.0), pos2(free.left(), free.bottom() - 2.0)], Stroke::new(2.0, t.accent));
             }
             if let Some(d) = fresp.dnd_release_payload::<ToolbarDrag>() {
                 drop = Some((d.id, *panel, None));
             }
-            for (i, c) in shown.iter().enumerate() {
+            let mut opened = false;
+            if collapsed {
+                // One button: the panel's first command's icon over a caret; it opens the
+                // drop-down, which lists every command of the panel.
+                let br = Rect::from_center_size(free.center(), vec2(38.0, 38.0));
+                crate::scenario::publish_handle(&format!("collapsed:{tab}:{panel}"), br.center());
+                if fresp.hovered() && enabled_panel {
+                    painter.rect_filled(br, 4.0, t.hover);
+                }
+                if let Some(c) = shown.first().or(cmds.first()) {
+                    let acc = if tab == "SKETCH" { t.sketch_accent } else { t.accent };
+                    icons::paint(&painter, Rect::from_center_size(br.center() - vec2(0.0, 3.0), vec2(26.0, 26.0)), c.icon, t.icon, t.icon_fill, acc);
+                }
+                caret(&painter, pos2(br.center().x, br.bottom() - 3.0), t.text_dim);
+                let tip = format!("{} ({})", app.tr_label(panel), shown.len().max(cmds.len()));
+                if fresp.on_hover_text(tip).clicked() && enabled_panel {
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("sc_panel_open"), popup_id));
+                    opened = true;
+                }
+            }
+            for (i, c) in shown.iter().enumerate().take(drawn) {
                 let br = Rect::from_min_size(pos2(px + 4.0 + i as f32 * 40.0, top + 2.0), vec2(38.0, 38.0));
                 let info = c.info(&app.session);
                 let resp = ui.interact(br, ui.id().with(("cmd", c.id)), Sense::click_and_drag());
@@ -534,7 +639,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                     app.start(id);
                 }
             }
-            if shown.is_empty() {
+            if shown.is_empty() && !collapsed {
                 let br = Rect::from_min_size(pos2(px + 4.0, top + 2.0), vec2(width - 8.0, 38.0));
                 painter.text(br.center(), Align2::CENTER_CENTER, "—", FontId::proportional(14.0), t.border);
             }
@@ -559,12 +664,12 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             let gw = g.size().x;
             painter.galley(pos2(gx, gy), g, lc);
             caret(&painter, pos2(gx + gw + 6.0, lr.center().y), lc);
-            let popup_id = ui.id().with(("panel_menu", panel));
             if lresp.clicked() {
                 ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("sc_panel_open"), popup_id));
             }
             let open = ui.ctx().data(|d| d.get_temp::<egui::Id>(egui::Id::new("sc_panel_open"))) == Some(popup_id);
             if open {
+                let cmds = if collapsed { menu_commands(&cmds, &shown) } else { cmds.clone() };
                 let area = crate::frame::area(popup_id).fixed_pos(lr.left_bottom()).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         ui.set_min_width(200.0);
@@ -613,7 +718,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 crate::scenario::publish_rect("toolbar_dropdown", area.response.rect);
                 // A drag out of the drop-down ends with a release elsewhere: not a click elsewhere.
                 let dragging = egui::DragAndDrop::has_payload_of_type::<ToolbarDrag>(ui.ctx());
-                if (area.response.clicked_elsewhere() && !lresp.clicked() && !dragging) || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                if (area.response.clicked_elsewhere() && !lresp.clicked() && !opened && !dragging) || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     ui.ctx().data_mut(|d| d.remove::<egui::Id>(egui::Id::new("sc_panel_open")));
                 }
             }
@@ -916,6 +1021,25 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
 #[cfg(test)]
 mod header_report_tests {
     use super::*;
+
+    #[test]
+    fn panels_fit_collapse_then_move_to_more_and_none_is_dropped() {
+        // A panel with 14 buttons and three default ones.
+        let widths = [panel_width(14), panel_width(4), panel_width(2), panel_width(2)];
+        let full: f32 = widths.iter().map(|w| w + 2.0).sum();
+        assert_eq!(fit(&widths, full), vec![Fit::Full; 4]);
+        // A little short: the last panel collapses first.
+        assert_eq!(fit(&widths, full - 10.0), vec![Fit::Full, Fit::Full, Fit::Full, Fit::Collapsed]);
+        // Every panel collapsed fits.
+        let collapsed = 4.0 * (COLLAPSED_WIDTH + 2.0);
+        assert_eq!(fit(&widths, collapsed), vec![Fit::Collapsed; 4]);
+        // Narrower: the last ones go into the » menu; then all of them.
+        assert_eq!(fit(&widths, collapsed - 1.0), vec![Fit::Collapsed, Fit::Collapsed, Fit::Collapsed, Fit::More]);
+        assert_eq!(fit(&widths, 0.0), vec![Fit::More; 4]);
+        assert_eq!(fit(&widths, f32::NAN).len(), 4);
+        // No cap: 40 px a button however many there are.
+        assert_eq!(panel_width(30) - panel_width(20), 400.0);
+    }
 
     fn captured_frame(h: &mut crate::scenario::Harness) {
         let token = h.app.shot_token;
