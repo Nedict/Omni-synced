@@ -1,5 +1,30 @@
 # Design loading
 
+## Analytic extrusion source preparation
+
+New-body extrusion certificates now prepare the sketch's bounded analytic segments once
+per certification pass instead of allocating segments and resolving their points for each
+generated cap boundary and side face. Saved designs run this same code during cold rebuilds.
+Exact containment tolerances, ambiguous-source rejection and the certification work budget
+are unchanged. Prepared segments borrow an immutable evaluated sketch and are not retained
+across edits.
+
+The reproducible microbenchmark is:
+
+```sh
+cargo test -p solvecraft-doc --profile ci benchmark_prepared_extrude_sources -- --ignored --nocapture
+```
+
+Three Windows x64 optimized `ci` runs, during other compilation, compared the previous
+segment reconstruction loop and the prepared matcher in the same process. For 1,000
+analytic lines and 1,000 generated face segments, median time fell from **45.90 ms to
+12.30 ms** (73% less, about 3.7x faster). Preparation is included and every returned source
+identity is compared. This measures certification only, not complete extrusion, file-open
+latency or Boolean operations; it does not establish an end-to-end loading speedup.
+Remaining cold geometry rebuild and import costs are tracked in
+[#255](https://github.com/bherbruck/solidcraft/issues/255); certification work is
+[#254](https://github.com/bherbruck/solidcraft/issues/254).
+
 ## Cold geometry rebuilds after 0.3.1
 
 Three alternating cold-process comparisons on the same Windows machine and optimized

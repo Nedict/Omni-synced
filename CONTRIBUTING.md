@@ -119,7 +119,7 @@ the most complete description of the house style.
 |---|---|---|
 | Unit and engine tests | next to the code, or `*_tests.rs` files | `cargo xtask test` (or `cargo test --workspace --profile ci`) |
 | UI scenarios | `crates/ui-egui/tests/scenarios/*.json` | part of `cargo test` |
-| Fusion oracle | `cargo xtask oracle` | needs the local oracle data (see below) |
+| Reference tests | `cargo xtask oracle` | `tests/oracle/` (see below) |
 
 **UI scenarios** drive the real app headless: start a tool, click a plane or a sketch point,
 press keys, then assert on the result.
@@ -150,11 +150,15 @@ in the PR. `cargo xtask test` builds the tests with it and then runs every test 
 `cargo xtask test -- shell`. Tests run beside each other on a busy machine, so a test must not
 depend on wall-clock timing.
 
-**The Fusion oracle** is a set of 76 reference parts, each built in Fusion from a recipe.
-SolidCraft rebuilds the same recipe and compares volume, area and topology counts with Fusion's
-measurements; [docs/oracle.md](docs/oracle.md) has the current results. The recipes and
-measurements live outside the repo (`plan/`, gitignored), because they come from a Fusion
-install. If you work on geometry and want to check against it, ask in an issue.
+**The reference tests** are 76 parts in [`tests/oracle/`](tests/oracle/), each a `recipe.json`
+in our own format with an `expected.json` beside it. SolidCraft rebuilds the recipe and compares
+body count, volume, area, centre of mass and bounding box (and, where there is a `reference.stl`,
+the surface itself). Expected values are either worked out in closed form
+(`tools/oracle-analytic/`) or computed by building the same recipe in FreeCAD, run as a separate
+program (`tools/freecad-oracle/`); each file says which. [docs/oracle.md](docs/oracle.md) has
+the current results, and CI runs `cargo xtask oracle` on every pull request. A case that fails
+because of a known bug names its issue in `expected.json` (`"known_failure": "#123"`); never
+change an expected value to match SolidCraft's output.
 
 ## Sending a change
 

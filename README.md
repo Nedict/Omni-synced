@@ -17,8 +17,9 @@ developer guide and command reference; sources in [docs/book](docs/book)), and t
 Linux Flatpak installation needs the Freedesktop runtime from Flathub as well as the
 SolidCraft application feed. See [install and launch commands](https://bherbruck.github.io/solidcraft/guide/getting-started.html#linux-flatpak).
 
-**Status: early but usable for simple parts.** The historical benchmark report records
-76 of 76 reference parts matching volume, area and topology ([docs/oracle.md](docs/oracle.md)).
+**Status: early but usable for simple parts.** 75 of 76 public reference parts
+match their analytic or FreeCAD-computed volume, area, centre of mass and bounding box
+([docs/oracle.md](docs/oracle.md)); the other is a tracked bug.
 These checks do not establish complete geometric or workflow equivalence. Feature coverage
 is tracked in [docs/parity.md](docs/parity.md) and [ROADMAP.md](ROADMAP.md).
 Open work and known bugs are in [GitHub issues](https://github.com/bherbruck/solidcraft/issues),
