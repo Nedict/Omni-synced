@@ -110,6 +110,24 @@ fn names_saved_before_exact_history_find_the_faces_they_named() {
     assert!(solid([7.0, 15.0, 11.0]) && !solid([32.0, 15.0, 11.0]));
 }
 
+/// Body names saved before format 14 name the pieces of a split body in the kernel's shell order.
+/// The features after the split that refer to a piece by its body name still find that piece:
+/// the far one stays `Body1` (chamfered), the near one `Body1 (1)` (filleted, coloured).
+#[test]
+fn body_names_saved_before_exact_history_keep_their_pieces() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus/split-body-pieces.solvecraft");
+    let s = open(&path);
+    assert!(s.doc.features.iter().all(|f| f.shell_piece_order), "every saved feature keeps the shell order");
+    for r in &s.model.results {
+        assert!(r.error.is_none() && r.warning.is_none(), "{}: {:?} {:?}", r.name, r.error, r.warning);
+    }
+    let state = s.model.state();
+    let piece = |name: &str| state.bodies.iter().find(|b| b.name == name).unwrap_or_else(|| panic!("{name}"));
+    let solid = |name: &str, p: [f64; 3]| piece(name).body.contains(solvecraft_engine::geom::Vec3::new(p[0], p[1], p[2]));
+    assert!(solid("Body1", [20.0, 24.0, 5.0]) && solid("Body1 (1)", [20.0, 6.0, 5.0]));
+    assert!(s.doc.appearances.bodies.contains_key("Body1 (1)"));
+}
+
 /// A small deterministic generator (xorshift).
 struct Rng(u64);
 impl Rng {

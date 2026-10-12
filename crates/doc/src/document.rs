@@ -1567,6 +1567,11 @@ pub struct Feature {
     /// component's bodies.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub participants: Vec<String>,
+    /// The pieces this feature splits a body into take its body names in the kernel's shell order,
+    /// as builds before format 14 named them, instead of after their faces (`lineage::order_lumps`).
+    /// Set on the features of designs saved before then, whose stored body names mean that order.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shell_piece_order: bool,
     #[serde(flatten)]
     pub kind: FeatureKind,
 }
@@ -1901,6 +1906,7 @@ impl Document {
             edge_names: Vec::new(),
             face_names: Vec::new(),
             participants: Vec::new(),
+            shell_piece_order: false,
             kind,
         };
         match self.marker {

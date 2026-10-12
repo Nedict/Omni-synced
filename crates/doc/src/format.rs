@@ -44,6 +44,8 @@
 //!   where their centres lay (`F2:top#2`). Names stored by older formats were worked out from
 //!   geometry, and a few of them name a face that history names differently; they get the
 //!   legacy mark (`?F2:top#2`) and are found again as the build that saved them found them.
+//!   Pieces a feature splits a body into are named after their faces; features saved before
+//!   keep the kernel's shell order (`shell_piece_order`), which their stored body names mean.
 
 use serde_json::Value;
 
@@ -90,6 +92,10 @@ const JSON_STEPS: [JsonStep; 13] = [
 ///   `"type": "face"|"edge"`, picked `at` a point), wherever a feature holds one;
 /// - joint snaps on a face (`face_center`, `circle_center`), in joints and named origins;
 /// - face appearances, but not strict ones, whose names are certified lineage.
+///
+/// Every feature also keeps naming the pieces it splits a body into in the kernel's shell order
+/// (`Feature::shell_piece_order`): the body names stored after it (bodies, targets, participants,
+/// materials, appearances, joints) mean the pieces in that order.
 fn v13_to_v14(v: &mut Value) -> Result<()> {
     if let Some(Value::Array(features)) = v.get_mut("features") {
         for f in features.iter_mut() {
@@ -104,6 +110,7 @@ fn v13_to_v14(v: &mut Value) -> Result<()> {
             {
                 links.iter_mut().filter_map(|l| l.get_mut("face_name")).for_each(mark);
             }
+            o.insert("shell_piece_order".into(), Value::Bool(true));
             references(f);
         }
     }
@@ -160,6 +167,15 @@ fn snap(origin: Option<&mut Value>) {
 fn mark_all(names: Option<&mut Value>) {
     if let Some(Value::Array(names)) = names {
         names.iter_mut().for_each(mark);
+    }
+}
+
+/// `features` (a design's, as JSON) as an upgrade from before format 14 leaves them: each keeps
+/// the shell order of the pieces it makes (see [`v13_to_v14`]).
+#[cfg(test)]
+pub(crate) fn pieces_in_shell_order(features: &mut Value) {
+    for f in features.as_array_mut().into_iter().flatten().filter_map(Value::as_object_mut) {
+        f.insert("shell_piece_order".into(), Value::Bool(true));
     }
 }
 
@@ -745,6 +761,8 @@ mod tests {
         assert_eq!(v["assembly"]["origins"][0]["origin"]["snap"]["face"], "?F3:side");
         assert_eq!(v["appearances"]["faces"][0]["name"], "?F2:top#1");
         assert_eq!(v["appearances"]["faces"][1]["name"], "F2:+x", "strict appearance names are certified lineage");
+        // Every feature keeps naming the pieces it splits a body into as the saving build did.
+        assert!(v["features"].as_array().unwrap().iter().all(|f| f["shell_piece_order"] == true));
         // The step never marks twice.
         let once = v.clone();
         v13_to_v14(&mut v).unwrap();
@@ -768,6 +786,9 @@ mod tests {
         });
         let mut v = file.clone();
         v13_to_v14(&mut v).unwrap();
+        for f in v["features"].as_array_mut().unwrap() {
+            f.as_object_mut().unwrap().remove("shell_piece_order");
+        }
         assert_eq!(v, file);
     }
 
@@ -1181,6 +1202,7 @@ mod tests {
         legacy["format"] = Value::from("solvecraft/6");
         let original_table = legacy["configs"].clone();
         let upgraded = read(&legacy.to_string()).unwrap();
+        d.features.iter_mut().for_each(|f| f.shell_piece_order = true);
         assert_eq!(upgraded, d, "the identity migration preserves the complete design");
         assert_eq!(serde_json::to_value(&upgraded.configs).unwrap(), original_table);
         assert_eq!(upgraded.format, format_string(FORMAT));
@@ -1232,9 +1254,11 @@ mod tests {
         d.add_feature(crate::FeatureKind::Sketch { plane: crate::PlaneRef::Origin { name: "XY".into() }, sketch }, Some("Dimensioned")).unwrap();
         let mut legacy: Value = serde_json::from_str(&d.to_json()).unwrap();
         legacy["format"] = Value::from("solvecraft/7");
-        let features = legacy["features"].clone();
+        let mut features = legacy["features"].clone();
+        pieces_in_shell_order(&mut features);
         let params = legacy["params"].clone();
         let upgraded = read(&legacy.to_string()).unwrap();
+        d.features.iter_mut().for_each(|f| f.shell_piece_order = true);
         assert_eq!(upgraded, d);
         let upgraded_json: Value = serde_json::from_str(&upgraded.to_json()).unwrap();
         assert_eq!(upgraded_json["features"], features);

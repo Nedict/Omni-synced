@@ -300,8 +300,11 @@ impl ModelState {
         let feature = f.id;
         let depth = before.bodies.iter().filter_map(|b| b.names.origin.as_ref().map(|o| o.depth)).max().unwrap_or(0) + 1;
         let origin = Arc::new(crate::naming::NamingOrigin { feature: f.clone(), before: before.clone(), depth, mats });
-        // Pieces a cut left are named after their faces, not the kernel's shell order.
-        crate::lineage::order_lumps(&mut self.bodies, &origin);
+        // Pieces a cut left are named after their faces, not the kernel's shell order (unless
+        // the feature was saved when they were named in that order).
+        if !f.shell_piece_order {
+            crate::lineage::order_lumps(&mut self.bodies, &origin);
+        }
         for b in &mut self.bodies {
             if !matches!(f.kind, FeatureKind::BodyTransfer { .. })
                 && let Some(old) = before.bodies.iter().find(|old| old.name == b.name && old.transferred)

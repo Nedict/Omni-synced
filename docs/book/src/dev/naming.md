@@ -51,7 +51,8 @@ curve the profile segment lies on exactly; nothing is sampled.
   reported when only geometry confirms it).
 - **Lumps.** When a cut leaves a body in pieces, the whole is named first, so pieces of one face in
   different bodies are told apart, and the bodies (`Bar`, `Bar (1)`) are assigned in the order of
-  their least face name, not the kernel's shell order (which an upstream edit can swap).
+  their least face name, not the kernel's shell order (which an upstream edit can swap; see
+  [Older designs](#older-designs)).
 
 Names are worked out lazily, on first request, and shared by a body's clones.
 
@@ -86,6 +87,11 @@ face that history names differently (a tube's outer wall was named after the ske
 its centre, its inner circle). Migrating such a design marks those names (`?F2:top#2`), and they
 are found among the names geometry gives, as the build that saved them found them: an older design
 evaluates as it was saved. Picking the face again stores its exact name.
+
+Their features also keep naming the pieces they split a body into in the kernel's shell order
+(`Feature::shell_piece_order`, set by the migration): the body names stored after them (fillet and
+chamfer bodies, targets, participants, materials, appearances, joints) mean the pieces in that
+order. Features added later name their pieces after their faces.
 
 ## Not done yet
 
