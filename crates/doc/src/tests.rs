@@ -104,8 +104,17 @@ fn set_back_reports_restored_features() {
 #[test]
 fn box_fillet_cut_timeline() {
     let (mut doc, _) = plate_doc();
-    doc.add_feature(FeatureKind::Fillet { edges: vec![Vec3::new(0.0, 0.0, 10.0)], radius: "3".into(), body: None, style: Default::default() }, None)
-        .unwrap();
+    doc.add_feature(
+        FeatureKind::Fillet {
+            edges: vec![Vec3::new(0.0, 0.0, 10.0)],
+            radius: "3".into(),
+            body: None,
+            style: Default::default(),
+            fit: Default::default(),
+        },
+        None,
+    )
+    .unwrap();
     let mut sk = Sketch::new();
     sk.add_circle(Vec2::new(20.0, 15.0), 5.0, None, None).unwrap();
     let s2 = doc.add_feature(FeatureKind::Sketch { plane: PlaneRef::Origin { name: "XY".into() }, sketch: sk }, None).unwrap();
@@ -163,8 +172,17 @@ fn errors_are_reported_not_fatal() {
         None,
     )
     .unwrap();
-    doc.add_feature(FeatureKind::Fillet { edges: vec![Vec3::new(500.0, 0.0, 0.0)], radius: "1".into(), body: None, style: Default::default() }, None)
-        .unwrap();
+    doc.add_feature(
+        FeatureKind::Fillet {
+            edges: vec![Vec3::new(500.0, 0.0, 0.0)],
+            radius: "1".into(),
+            body: None,
+            style: Default::default(),
+            fit: Default::default(),
+        },
+        None,
+    )
+    .unwrap();
     doc.add_feature(
         FeatureKind::Box {
             corner: point_expr(Vec3::ZERO),

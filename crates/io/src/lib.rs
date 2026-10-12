@@ -575,7 +575,13 @@ mod tests {
         )
         .unwrap();
         doc.add_feature(
-            FeatureKind::Fillet { edges: vec![Vec3::new(0.0, 0.0, 5.0)], radius: "4".into(), body: None, style: Default::default() },
+            FeatureKind::Fillet {
+                edges: vec![Vec3::new(0.0, 0.0, 5.0)],
+                radius: "4".into(),
+                body: None,
+                style: Default::default(),
+                fit: Default::default(),
+            },
             None,
         )
         .unwrap();
