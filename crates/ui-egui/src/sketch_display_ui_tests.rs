@@ -289,3 +289,37 @@ fn pixel_frame_budget_does_not_cache_unbounded_empty_curve_results() {
     assert!(h.app.viewport.display.lock().unwrap().len() <= 4096);
     assert_eq!(h.app.session.doc.to_json(), baseline);
 }
+
+/// A zoomed-in ring is sampled finely, but each slab of the fill still crosses only its
+/// four boundary edges: its fill must fit the hover highlight's budget (#164).
+#[test]
+fn zoomed_in_ring_fill_fits_the_hover_highlight_budget() {
+    let mut h = Harness::new();
+    h.app.ui.show_origin = false;
+    h.app.ui.perspective = true;
+    h.app.run("sketch.create", json!({"plane":"XY","name":"Ring"})).unwrap();
+    h.app.run("sketch.circle.center", json!({"center":[0,0],"radius":40})).unwrap();
+    h.app.run("sketch.circle.center", json!({"center":[0,0],"radius":45})).unwrap();
+    h.settle();
+    h.step(&json!({"call":"ui.view","params":{"view":"iso"}})).unwrap();
+    h.step(&json!({"call":"ui.view","params":{"view":"fit"}})).unwrap();
+    h.app.cam.zoom_at(0.15, Some(Vec3::new(42.5, 0.0, 0.0)));
+    h.settle();
+    let baseline = h.app.session.doc.to_json();
+    let sid = h.app.session.active_sketch.unwrap();
+    let state = h.app.session.world_state();
+    let ss = state.sketch(sid).unwrap();
+    let proj = projection(&h.app, h.app.viewport.rect.unwrap());
+    let ppp = h.app.viewport.pixels_per_point();
+    let ring = ss.profiles.iter().find(|p| p.region.holes.len() == 1).unwrap();
+    let display = crate::sketch_display::display_region(&ring.region, &ss.plane, &proj, ppp).unwrap();
+    let edges = std::iter::once(&display.outer).chain(&display.holes).map(|l| l.segs.len()).sum::<usize>();
+    assert!(edges * edges / 2 > 65_536, "fixture must sample the ring finely enough to exceed the old estimate: {edges} edges");
+    let triangles = crate::sketch_display::region_triangles(&ring.region, &ss.plane, &proj, ppp);
+    assert!(!triangles.is_empty(), "the ring's fill was dropped at this zoom");
+    for t in &triangles {
+        let r = ((t[0] + t[1] + t[2]) / 3.0).len();
+        assert!((39.9..=45.1).contains(&r), "fill triangle outside the ring: r = {r}");
+    }
+    assert_eq!(h.app.session.doc.to_json(), baseline);
+}
