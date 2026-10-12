@@ -1558,3 +1558,39 @@ fn partial_depth_intersect_sub_extrusion_resolution_layers_refuse_atomically() {
         assert!((solvecraft_kernel::measure(&s.world_state().body(&name).unwrap().body).unwrap().volume - 15000.0).abs() < 1e-5);
     }
 }
+
+fn body_volume(s: &mut Session, name: &str) -> Option<f64> {
+    let m = run(s, "inspect.measure", json!({}));
+    m["bodies"].as_array()?.iter().find(|b| b["name"] == name)?["volume_mm3"].as_f64()
+}
+
+#[test]
+fn base_and_contour_flanges_name_their_body() {
+    // The base flange of upstream issue #271: a 50 x 50 panel of 0.8 mm steel.
+    let mut s = Session::default();
+    run(&mut s, "sheet.manage_rules", json!({"name": "Steel 0.8", "thickness": "0.8", "active": true}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "A"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [50, 50]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "sheet.flange", json!({"sketch": "A", "body_name": "Panel A"}));
+    let v = body_volume(&mut s, "Panel A");
+    assert!(v.is_some_and(|v| rel(v, 2000.0) < 1e-9), "{v:?}");
+    // A contour flange takes its name the same way.
+    run(&mut s, "sketch.create", json!({"plane": {"origin": [0, 0, 100], "x_dir": [1, 0, 0], "y_dir": [0, 0, -1]}, "name": "Contour"}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [40, 0]], "ids": ["l1"]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "sheet.flange", json!({"sketch": "Contour", "curves": ["l1"], "distance": 10, "body_name": "Strip"}));
+    let v = body_volume(&mut s, "Strip");
+    assert!(v.is_some_and(|v| rel(v, 40.0 * 10.0 * 0.8) < 1e-9), "{v:?}");
+}
+
+#[test]
+fn flange_params_doc_names_body_name_on_the_forms_that_read_it() {
+    let doc = crate::find_command("sheet.flange").map(|c| c.params).unwrap_or_default();
+    let forms: Vec<&str> = doc.split(" | ").collect();
+    let form = |name: &str| forms.iter().find(|f| f.starts_with(name)).copied().unwrap_or_default();
+    assert!(form("base:").contains("body_name?"), "{doc}");
+    assert!(form("contour:").contains("body_name?"), "{doc}");
+    // An edge flange grows an existing sheet and makes no body to name.
+    assert!(!form("edge:").contains("body_name"), "{doc}");
+}

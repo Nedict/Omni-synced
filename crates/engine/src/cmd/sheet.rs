@@ -14,7 +14,7 @@ use crate::{EngineError, Result, Session};
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("sheet.flange", "Flange", flange).at("SHEET METAL", "CREATE").icon("flange").params(
-        "base: sketch + profiles? (rule?, flip?) | contour: sketch + curves (open chain of lines) + distance (rule?, flip?, reverse?) | \
+        "base: sketch + profiles? (rule?, flip?, body_name?) | contour: sketch + curves (open chain of lines) + distance (rule?, flip?, reverse?, body_name?) | \
          edge: edges: [[x,y,z] on top/bottom edges] + height (to the outer face), angle? (default 90 deg), radius? (default: rule), \
          position?: inside|outside|middle, flip?, body?; type?: base|edge|contour (default from the inputs)",
     ),

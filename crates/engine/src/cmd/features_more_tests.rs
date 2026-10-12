@@ -602,3 +602,35 @@ fn cylinder_auto_inference_refuses_ambiguity_curves_and_seam_crossing_atomically
         assert_eq!(exact_cylinder_volume(&s), volume);
     }
 }
+
+#[test]
+fn loft_cut_spares_bodies_outside_its_targets() {
+    // Upstream issue #271: a loft cut through Target whose volume also holds Bystander.
+    let lofted = |targets: Option<Value>| {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 40, "width": 40, "height": 10, "operation": "new", "body_name": "Target"}));
+        run(&mut s, "solid.box", json!({"length": 6, "width": 6, "height": 6, "corner": [17, 17, 12], "operation": "new", "body_name": "Bystander"}));
+        run(&mut s, "sketch.create", json!({"plane": "XY", "offset": "-1", "name": "S0"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [10, 10], "p1": [30, 30]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "sketch.create", json!({"plane": "XY", "offset": "25", "name": "S1"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [5, 5], "p1": [35, 35]}));
+        run(&mut s, "sketch.finish", json!({}));
+        let mut p = json!({"sections": [{"sketch": "S0"}, {"sketch": "S1"}], "operation": "cut"});
+        if let Some(t) = targets {
+            p["targets"] = t;
+        }
+        run(&mut s, "solid.loft", p);
+        let m = measure(&mut s);
+        m["bodies"].as_array().and_then(|b| b.iter().find(|b| b["name"] == "Bystander")).map(|b| b["volume_mm3"].as_f64().unwrap_or(f64::NAN))
+    };
+    let kept = lofted(Some(json!(["Target"])));
+    assert!(kept.is_some_and(|v| rel(v, 216.0) < 1e-9), "{kept:?}");
+    assert_eq!(lofted(None), None, "without targets the cut takes every body it reaches");
+}
+
+#[test]
+fn loft_params_doc_names_targets() {
+    let doc = crate::find_command("solid.loft").map(|c| c.params).unwrap_or_default();
+    assert!(doc.contains("targets?"), "{doc}");
+}
