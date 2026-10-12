@@ -49,12 +49,15 @@ def drive(app, port, frame):
             time.sleep(.2)
     with conn, conn.makefile("rw") as io:
         replies = []
-        for request in REQUESTS + [{"id": 4, "method": "ui.screenshot", "params": {"path": str(frame)}}]:
+        for request in REQUESTS + [{"id": 4, "method": "ui.screenshot", "params": {"path": str(frame)}},
+                                   {"id": 5, "method": "app.quit", "params": {"force": True}}]:
             io.write(json.dumps(request) + "\n")
             io.flush()
             replies.append(io.readline())
     renderer = flatpak_smoke.validate_replies("".join(replies[:3]))
     capture = json.loads(replies[3])
+    if any(json.loads(reply).get("ok") is not True for reply in replies[4:]):
+        raise ValueError(f"app.quit failed: {replies[4:]}")
     if capture.get("ok") is not True or renderer != "gpu":
         raise ValueError(f"GPU frame capture failed: renderer={renderer}, {capture}")
     return renderer, flatpak_smoke.frame_statistics(frame.read_bytes())
@@ -96,8 +99,11 @@ def run_backend(backend, out):
                                env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         try:
             renderer, stats = drive(app, PORTS[backend], work / "frame.png")
+            # app.quit exits cleanly, so the next run doesn't report a crash.
+            app.wait(timeout=30)
         finally:
-            os.killpg(app.pid, signal.SIGTERM)
+            if app.poll() is None:
+                os.killpg(app.pid, signal.SIGTERM)
             try:
                 app.wait(timeout=15)
             except subprocess.TimeoutExpired:
