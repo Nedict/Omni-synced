@@ -496,6 +496,15 @@ struct Actions {
 }
 
 pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
+    browser_panel(app, ui, false);
+}
+
+/// The left-sidebar layout: feature history first, parts and scene browser below it.
+pub fn browser_below_timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
+    browser_panel(app, ui, true);
+}
+
+fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
     let t = Tokens::get();
     app.tree.order.clear();
     DRAWN.with(|d| d.borrow_mut().clear());
@@ -506,16 +515,33 @@ pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
         .resizable(false)
         .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(6, 6)))
         .show(ui, |ui| {
-            ui.label(RichText::new("BROWSER").size(11.0).strong().color(t.text_dim));
-            ui.add_space(4.0);
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .scroll_source(egui::scroll_area::ScrollSource { scroll_bar: true, mouse_wheel: true, ..egui::scroll_area::ScrollSource::NONE })
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    component_rows(app, ui, 0, 0, &mut acts);
+            if timeline_above {
+                let available = ui.available_height();
+                let timeline_height = (available * 0.56).clamp(150.0, (available - 130.0).max(150.0));
+                ui.allocate_ui_with_layout(vec2(ui.available_width(), timeline_height), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    crate::timeline::left_timeline(app, ui)
                 });
+                ui.separator();
+            }
+            browser_contents(app, ui, &mut acts);
         });
+    finish_browser(app, ui, acts);
+}
+
+fn browser_contents(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
+    let t = Tokens::get();
+    ui.label(RichText::new("BROWSER").size(11.0).strong().color(t.text_dim));
+    ui.add_space(4.0);
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .scroll_source(egui::scroll_area::ScrollSource { scroll_bar: true, mouse_wheel: true, ..egui::scroll_area::ScrollSource::NONE })
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            component_rows(app, ui, 0, 0, acts);
+        });
+}
+
+fn finish_browser(app: &mut SolveApp, ui: &mut egui::Ui, acts: Actions) {
     app.viewport.hover_bodies = acts.hover_bodies;
     if let Some(d) = acts.drop {
         apply_drop(app, d);

@@ -1787,6 +1787,10 @@ pub struct Document {
     /// Browser groups (folders of bodies, sketches or construction planes).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub browser_groups: Vec<BrowserGroup>,
+    /// Named folders used to organise features in the timeline. They do not affect evaluation
+    /// order; feature ids remain the source of truth when features are renamed or reordered.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timeline_groups: Vec<TimelineGroup>,
     /// Browser item order per component folder (`"<component>/<folder>"` → item keys).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub browser_order: std::collections::BTreeMap<String, Vec<String>>,
@@ -1853,6 +1857,15 @@ pub struct BrowserGroup {
     pub items: Vec<String>,
 }
 
+/// A saved feature-history folder. A feature can belong to at most one folder.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TimelineGroup {
+    pub id: u64,
+    pub name: String,
+    #[serde(default)]
+    pub features: Vec<u64>,
+}
+
 fn default_format() -> String {
     crate::format::format_string(crate::format::FORMAT)
 }
@@ -1893,6 +1906,7 @@ impl Document {
             canvases: Vec::new(),
             param_comments: Default::default(),
             browser_groups: Vec::new(),
+            timeline_groups: Vec::new(),
             browser_order: Default::default(),
             named_views: Vec::new(),
             visibility: Visibility::default(),
@@ -2129,6 +2143,9 @@ impl Document {
             .rules
             .retain(|rule| !rule.references_features(&gone) && !rule.parameter_references().iter().any(|name| gone_params.contains(name)));
         self.features.retain(|f| !gone.contains(&f.id));
+        for group in &mut self.timeline_groups {
+            group.features.retain(|feature| !gone.contains(feature));
+        }
         // Configuration columns of deleted features go with them.
         let keep: Vec<bool> = self
             .configs

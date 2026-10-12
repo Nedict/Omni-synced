@@ -1,6 +1,6 @@
 //! The timeline (bottom): features in order, the rollback marker, errors and warnings.
 
-use egui::{Color32, Rect, Sense, Stroke, UiBuilder, pos2, vec2};
+use egui::{Color32, Rect, RichText, Sense, Stroke, UiBuilder, pos2, vec2};
 use serde_json::json;
 use solidcraft_engine::doc::FeatureKind;
 
@@ -67,6 +67,351 @@ fn delete_feature(app: &mut SolveApp, id: u64) {
         let _ = app.run("timeline.delete", json!({ "features": [id.to_string()] }));
     } else {
         app.dialog = Some(crate::dialogs::Dialog::confirm_delete(id, with, fail));
+    }
+}
+
+/// A standalone left feature-history panel, used when the parts browser is hidden.
+pub fn left_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let t = Tokens::get();
+    egui::Panel::left("sc_timeline_left")
+        .exact_size(250.0)
+        .resizable(false)
+        .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(6, 6)))
+        .show(ui, |ui| left_timeline(app, ui));
+}
+
+/// Vertical feature history with named rows, folders and a horizontal rollback bar. The caller
+/// gives this a bounded height so the parts and scene browser can use the space below it.
+pub fn left_timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let t = Tokens::get();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("FEATURE HISTORY").size(11.0).strong().color(t.text_dim));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.small_button("+").on_hover_text("New feature folder").clicked()
+                && let Ok(result) = app.run("timeline.group", json!({}))
+                && let Some(group) = result.get("group").and_then(serde_json::Value::as_u64)
+            {
+                app.tree.collapsed.remove(&format!("timeline_group:{group}"));
+            }
+        });
+    });
+    timeline_transport(app, ui);
+    ui.separator();
+
+    egui::ScrollArea::vertical()
+        .id_salt("sc_left_timeline_scroll")
+        .auto_shrink([false, false])
+        .scroll_source(egui::scroll_area::ScrollSource { scroll_bar: true, mouse_wheel: true, ..egui::scroll_area::ScrollSource::NONE })
+        .show(ui, |ui| vertical_features(app, ui));
+}
+
+fn timeline_transport(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let t = Tokens::get();
+    let n = app.session.doc.features.len();
+    let marker = app.session.doc.marker.unwrap_or(n);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let controls = [("first", Some(0usize)), ("back", Some(marker.saturating_sub(1))), ("forward", Some((marker + 1).min(n))), ("last", None)];
+        for (what, target) in controls {
+            let (rect, response) = ui.allocate_exact_size(vec2(24.0, 22.0), Sense::click());
+            if response.hovered() {
+                ui.painter().rect_filled(rect, 3.0, t.hover);
+            }
+            transport_glyph(ui.painter(), rect.center(), what, t.icon);
+            if response
+                .on_hover_text(match what {
+                    "first" => "Roll back to the start",
+                    "back" => "Step back one feature",
+                    "forward" => "Step forward one feature",
+                    _ => "Play to the end",
+                })
+                .clicked()
+            {
+                let params = match target {
+                    Some(position) if position < n => json!({"position": position}),
+                    _ => json!({}),
+                };
+                let _ = app.run("timeline.roll_to", params);
+            }
+        }
+    });
+}
+
+fn nearest_vertical_slot(slots: &[(f32, usize)], y: f32, fallback: usize) -> usize {
+    slots.iter().min_by(|a, b| (a.0 - y).abs().total_cmp(&(b.0 - y).abs())).map(|slot| slot.1).unwrap_or(fallback)
+}
+
+fn vertical_marker(app: &mut SolveApp, ui: &mut egui::Ui, drag: &mut Option<Drag>) {
+    let t = Tokens::get();
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 9.0), Sense::drag());
+    let line = Rect::from_min_max(pos2(rect.left() + 8.0, rect.center().y - 1.5), pos2(rect.right() - 5.0, rect.center().y + 1.5));
+    let colour = t.accent;
+    ui.painter().rect_filled(line, 1.5, colour);
+    ui.painter().circle_filled(pos2(line.right(), line.center().y), 4.0, colour);
+    if response.drag_started() {
+        *drag = Some(Drag::Marker);
+    }
+    response.on_hover_text("Rollback bar: drag to roll the model back; new features are inserted here");
+    let _ = app;
+}
+
+fn group_for(groups: &[solidcraft_engine::doc::TimelineGroup], feature: u64) -> Option<u64> {
+    groups.iter().find(|group| group.features.contains(&feature)).map(|group| group.id)
+}
+
+fn vertical_group_row(app: &mut SolveApp, ui: &mut egui::Ui, group: &solidcraft_engine::doc::TimelineGroup) -> bool {
+    let t = Tokens::get();
+    let key = format!("timeline_group:{}", group.id);
+    let open = !app.tree.collapsed.contains(&key);
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 27.0), Sense::click());
+    if response.hovered() {
+        ui.painter().rect_filled(rect, 3.0, t.hover);
+    }
+    let centre = pos2(rect.left() + 9.0, rect.center().y);
+    let arrow = if open {
+        vec![centre + vec2(-4.0, -2.0), centre + vec2(4.0, -2.0), centre + vec2(0.0, 3.0)]
+    } else {
+        vec![centre + vec2(-2.0, -4.0), centre + vec2(-2.0, 4.0), centre + vec2(3.0, 0.0)]
+    };
+    ui.painter().add(egui::Shape::convex_polygon(arrow, t.text_dim, Stroke::NONE));
+    let icon = Rect::from_min_size(pos2(rect.left() + 18.0, rect.top() + 4.0), vec2(19.0, 19.0));
+    icons::paint(ui.painter(), icon, "folder", t.icon, t.icon_fill, t.accent);
+    ui.painter().text(pos2(rect.left() + 42.0, rect.center().y), egui::Align2::LEFT_CENTER, &group.name, egui::FontId::proportional(12.0), t.text);
+    crate::scenario::publish_handle(&format!("timeline-folder:{}", group.name), rect.center());
+    if response.clicked() {
+        if open {
+            app.tree.collapsed.insert(key.clone());
+        } else {
+            app.tree.collapsed.remove(&key);
+        }
+    }
+    if response.double_clicked() {
+        crate::context_menu::start_rename(app, crate::context_menu::RenameWhat::TimelineGroup(group.id), rect.center());
+    }
+    response.context_menu(|ui| {
+        if ui.button("Rename Folder").clicked() {
+            crate::context_menu::start_rename(app, crate::context_menu::RenameWhat::TimelineGroup(group.id), rect.center());
+            ui.close();
+        }
+        if ui.button("Remove Folder").on_hover_text("Keep its features in the history").clicked() {
+            let _ = app.run("timeline.ungroup", json!({"group": group.id}));
+            ui.close();
+        }
+    });
+    open
+}
+
+fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let t = Tokens::get();
+    let features: Vec<_> = app
+        .session
+        .doc
+        .features
+        .iter()
+        .map(|feature| (feature.id, feature.name.clone(), icon_of(&feature.kind), feature.suppressed, feature.kind.type_name(), feature.kind.clone()))
+        .collect();
+    let groups = app.session.doc.timeline_groups.clone();
+    let n = features.len();
+    let marker = app.session.doc.marker.unwrap_or(n);
+    let from_view = match &app.viewport.hover {
+        Some(crate::viewport::Hit::Face { body, .. } | crate::viewport::Hit::Edge { body, .. } | crate::viewport::Hit::Vertex { body, .. }) => {
+            app.session.world_state().body(body).map(|body| body.feature)
+        }
+        _ => None,
+    };
+    let drag_id = ui.id().with("tl_vertical_drag");
+    let mut drag: Option<Drag> = ui.data(|data| data.get_temp(drag_id));
+    let pointer = ui.input(|input| input.pointer.hover_pos());
+    let mut slots = Vec::new();
+    let mut shown_groups = std::collections::BTreeSet::new();
+    let mut open_groups = std::collections::BTreeMap::new();
+    let mut hovered = None;
+    let mut edit = None;
+
+    for (index, (id, name, icon, suppressed, ty, kind)) in features.iter().enumerate() {
+        let group_id = group_for(&groups, *id);
+        if let Some(group_id) = group_id
+            && shown_groups.insert(group_id)
+            && let Some(group) = groups.iter().find(|group| group.id == group_id)
+        {
+            open_groups.insert(group_id, vertical_group_row(app, ui, group));
+        }
+        let group_open = group_id.and_then(|id| open_groups.get(&id).copied()).unwrap_or(true);
+        if index == marker {
+            slots.push((ui.cursor().top(), index));
+            vertical_marker(app, ui, &mut drag);
+        }
+        if !group_open {
+            continue;
+        }
+        slots.push((ui.cursor().top(), index));
+        let indent = if group_id.is_some() { 16.0 } else { 0.0 };
+        let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click_and_drag());
+        crate::scenario::publish_handle(&format!("timeline:{name}"), rect.center());
+        let result = app.session.model.result(*id);
+        let error = result.and_then(|result| result.error.clone());
+        let warning = result.and_then(|result| result.warning.clone());
+        let rolled = index >= marker;
+        let selected =
+            app.session.selection.iter().any(|selection| matches!(selection, solidcraft_engine::Sel::Feature { id: selected } if selected == id));
+        let background = if error.is_some() {
+            t.timeline_item_error
+        } else if selected {
+            t.accent_soft
+        } else if response.hovered() || from_view == Some(*id) {
+            t.hover
+        } else {
+            Color32::TRANSPARENT
+        };
+        if background != Color32::TRANSPARENT {
+            ui.painter().rect_filled(rect, 3.0, background);
+        }
+        let icon_rect = Rect::from_min_size(pos2(rect.left() + 4.0 + indent, rect.top() + 4.0), vec2(22.0, 22.0));
+        let ink = if rolled || *suppressed { t.border } else { t.icon };
+        icons::paint(ui.painter(), icon_rect, icon, ink, if rolled { t.panel_header } else { t.icon_fill }, if rolled { t.border } else { t.accent });
+        if *suppressed {
+            ui.painter().line_segment([icon_rect.left_bottom(), icon_rect.right_top()], Stroke::new(1.5, t.text_dim));
+        }
+        let text_colour = if rolled || *suppressed { t.text_dim } else { t.text };
+        ui.painter().text(
+            pos2(icon_rect.right() + 7.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            name,
+            egui::FontId::proportional(12.0),
+            text_colour,
+        );
+        if warning.is_some() && error.is_none() {
+            icons::paint(
+                ui.painter(),
+                Rect::from_min_size(pos2(rect.right() - 15.0, rect.center().y - 6.0), vec2(12.0, 12.0)),
+                "warning",
+                t.icon,
+                t.warning,
+                t.warning,
+            );
+        }
+        if response.hovered() {
+            hovered = Some(*id);
+        }
+        if response.drag_started() {
+            drag = Some(Drag::Feature(*id));
+        }
+        let mut tip = format!("{name}  ({ty})");
+        if let Some(error) = &error {
+            tip.push_str(&format!("\nError: {error}"));
+        }
+        if let Some(warning) = &warning {
+            tip.push_str(&format!("\nWarning: {warning}"));
+        }
+        tip.push_str("\nDouble-click to edit · drag to reorder · right-click for more");
+        let response = response.on_hover_text(tip);
+        if response.clicked() {
+            let _ = app.run("select.set", json!({"items": [{"type": "feature", "id": id}]}));
+        }
+        if response.double_clicked() {
+            edit = Some(*id);
+        }
+        let sketch = match kind {
+            FeatureKind::Extrude { sketch, .. } | FeatureKind::Revolve { sketch, .. } | FeatureKind::Sweep { sketch, .. } => Some(*sketch),
+            _ => None,
+        };
+        response.context_menu(|ui| {
+            if ui.button("Edit Feature").clicked() {
+                edit = Some(*id);
+                ui.close();
+            }
+            if let Some(sketch) = sketch
+                && ui.button("Edit Profile Sketch").clicked()
+            {
+                app.edit_sketch(sketch);
+                ui.close();
+            }
+            if ui.button("Rename Feature").clicked() {
+                crate::context_menu::start_rename(app, crate::context_menu::RenameWhat::Feature(*id), rect.center());
+                ui.close();
+            }
+            if ui.button(if *suppressed { "Unsuppress Feature" } else { "Suppress Feature" }).clicked() {
+                let _ = app.run("timeline.suppress", json!({"feature": id}));
+                ui.close();
+            }
+            if ui.button("Roll Back Here").clicked() {
+                let _ = app.run("timeline.roll_to", json!({"feature": id}));
+                ui.close();
+            }
+            ui.separator();
+            if group_id.is_some() && ui.button("Remove from Folder").clicked() {
+                let _ = app.run("timeline.move_to_group", json!({"features": [id], "group": null}));
+                ui.close();
+            }
+            ui.menu_button("Move to Folder", |ui| {
+                for group in &groups {
+                    if Some(group.id) != group_id && ui.button(&group.name).clicked() {
+                        let _ = app.run("timeline.move_to_group", json!({"features": [id], "group": group.id}));
+                        app.tree.collapsed.remove(&format!("timeline_group:{}", group.id));
+                        ui.close();
+                    }
+                }
+                if groups.is_empty() {
+                    ui.label("No folders yet");
+                }
+            });
+            if ui.button("New Folder with Feature").clicked() {
+                let _ = app.run("timeline.group", json!({"features": [id]}));
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Delete").clicked() {
+                delete_feature(app, *id);
+                ui.close();
+            }
+        });
+    }
+    for group in groups.iter().filter(|group| group.features.iter().all(|feature| !features.iter().any(|item| item.0 == *feature))) {
+        if shown_groups.insert(group.id) {
+            vertical_group_row(app, ui, group);
+        }
+    }
+    if marker >= n {
+        slots.push((ui.cursor().top(), n));
+        vertical_marker(app, ui, &mut drag);
+    }
+    crate::dialogs_assembly::timeline_joints_vertical(app, ui);
+
+    if let (Some(active), Some(pointer)) = (drag, pointer) {
+        let slot = nearest_vertical_slot(&slots, pointer.y, n);
+        let y = slots.iter().find(|(_, position)| *position == slot).map(|(y, _)| *y).unwrap_or(ui.cursor().top());
+        ui.painter().line_segment(
+            [pos2(ui.min_rect().left() + 4.0, y), pos2(ui.max_rect().right() - 5.0, y)],
+            Stroke::new(2.0, if active == Drag::Marker { t.accent } else { t.sketch_accent }),
+        );
+    }
+    if ui.input(|input| input.pointer.any_released())
+        && let Some(active) = drag.take()
+        && let Some(pointer) = pointer
+    {
+        let slot = nearest_vertical_slot(&slots, pointer.y, n);
+        match active {
+            Drag::Marker => {
+                let _ = app.run("timeline.roll_to", if slot >= n { json!({}) } else { json!({"position": slot}) });
+            }
+            Drag::Feature(id) => {
+                let from = app.session.doc.feature_index(id).unwrap_or(0);
+                let to = if slot > from { slot.saturating_sub(1) } else { slot };
+                if to != from {
+                    let _ = app.run("timeline.reorder", json!({"feature": id, "position": to}));
+                }
+            }
+        }
+    }
+    ui.data_mut(|data| match drag {
+        Some(active) => {
+            data.insert_temp(drag_id, active);
+        }
+        None => data.remove::<Drag>(drag_id),
+    });
+    app.viewport.hover_feature = hovered;
+    if let Some(feature) = edit {
+        app.edit_feature(feature);
     }
 }
 
@@ -351,5 +696,29 @@ fn transport_glyph(p: &egui::Painter, c: egui::Pos2, what: &str, col: Color32) {
             tri(1.0, -1.0);
             bar(5.0);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scenario::{Harness, handle_at};
+
+    #[test]
+    fn left_history_shows_named_features_and_folders_above_the_browser() {
+        let mut harness = Harness::new();
+        harness.app.preferences.timeline_left = true;
+        harness.app.run("solid.box", json!({"length": 20, "width": 15, "height": 10, "name": "Base"})).unwrap();
+        harness.app.run("solid.fillet", json!({"edges": [[20, 7.5, 10]], "radius": 1, "name": "Round"})).unwrap();
+        harness.app.run("timeline.group", json!({"name": "Housing", "features": ["Base", "Round"]})).unwrap();
+        harness.frames(4);
+
+        let folder = handle_at("timeline-folder:Housing").unwrap();
+        let base = handle_at("timeline:Base").unwrap();
+        let round = handle_at("timeline:Round").unwrap();
+        let browser = handle_at("row:Untitled").unwrap();
+        assert!(folder.x < 250.0 && base.x < 250.0 && round.x < 250.0);
+        assert!(folder.y < base.y && base.y < round.y);
+        assert!(round.y < browser.y, "the parts/scene browser belongs below the feature history");
     }
 }

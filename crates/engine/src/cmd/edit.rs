@@ -25,6 +25,17 @@ pub static COMMANDS: &[CommandSpec] = &[
         .key("Delete")
         .params("features: [id or name] (a sketch takes its dependent features with it) → deleted: [ids]; failing?: [{feature, error}] (later features that worked and now fail)"),
     CommandSpec::new("timeline.rename", "Rename", rename).params("feature: id|name, name (references to it follow)"),
+    CommandSpec::new("timeline.group", "New Feature Folder", group)
+        .icon("folder")
+        .doc_only()
+        .params("name?; features?: [id|name] (features leave any other timeline folder)"),
+    CommandSpec::new("timeline.ungroup", "Remove Feature Folder", ungroup)
+        .doc_only()
+        .params("group: id (features remain in the timeline)"),
+    CommandSpec::new("timeline.rename_group", "Rename Feature Folder", rename_group).doc_only().params("group: id, name"),
+    CommandSpec::new("timeline.move_to_group", "Move Features to Folder", move_to_group)
+        .doc_only()
+        .params("features: [id|name], group?: id (omit or null to remove from folders)"),
     CommandSpec::new("timeline.rollback", "Move Timeline Marker", rollback).params("position: number of features to keep active (omit = end)"),
     CommandSpec::new("timeline.roll_to", "Roll History Marker", rollback)
         .params("position: number of features to keep active (omit = end) | feature: id|name (the marker goes right after it)"),
@@ -185,6 +196,95 @@ fn rename(s: &mut Session, p: &Value) -> Result<Value> {
         f.kind.remap_refs(&sketches, &names);
     }
     Ok(json!({"feature": id, "name": name}))
+}
+
+fn timeline_group_id(s: &Session, p: &Value, cmd: &str) -> Result<u64> {
+    let id = p.get("group").and_then(Value::as_u64).ok_or_else(|| bad(cmd, "`group` must be a timeline folder id"))?;
+    if s.doc.timeline_groups.iter().any(|group| group.id == id) { Ok(id) } else { Err(bad(cmd, format!("no timeline folder {id}"))) }
+}
+
+fn group_features(s: &Session, p: &Value, required: bool, cmd: &str) -> Result<Vec<u64>> {
+    let values = match p.get("features") {
+        Some(Value::Array(values)) => values,
+        None if !required => return Ok(Vec::new()),
+        _ => return Err(bad(cmd, "`features` must be a list of feature ids or names")),
+    };
+    if values.is_empty() && required {
+        return Err(bad(cmd, "`features` must list at least one feature"));
+    }
+    if values.len() > 10_000 {
+        return Err(bad(cmd, "too many features"));
+    }
+    let mut ids = Vec::new();
+    for value in values {
+        let id = feature_id(s, Some(value), cmd)?;
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+fn group(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "timeline.group";
+    let features = group_features(s, p, false, cmd)?;
+    let name = match str_(p, "name").map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) if name.len() <= 128 => name.to_string(),
+        Some(_) => return Err(bad(cmd, "`name` must be 1…128 characters")),
+        None => format!("Folder{}", s.doc.timeline_groups.len() + 1),
+    };
+    let id = s
+        .doc
+        .timeline_groups
+        .iter()
+        .map(|group| group.id)
+        .max()
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(|| bad(cmd, "no more timeline folder ids are available"))?;
+    let doc = s.doc_mut();
+    for group in &mut doc.timeline_groups {
+        group.features.retain(|feature| !features.contains(feature));
+    }
+    doc.timeline_groups.push(solidcraft_doc::TimelineGroup { id, name: name.clone(), features });
+    Ok(json!({"group": id, "name": name}))
+}
+
+fn ungroup(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "timeline.ungroup";
+    let id = timeline_group_id(s, p, cmd)?;
+    s.doc_mut().timeline_groups.retain(|group| group.id != id);
+    Ok(json!({"group": id}))
+}
+
+fn rename_group(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "timeline.rename_group";
+    let id = timeline_group_id(s, p, cmd)?;
+    let name = str_(p, "name")
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && name.len() <= 128)
+        .ok_or_else(|| bad(cmd, "`name` must be 1…128 characters"))?;
+    if let Some(group) = s.doc_mut().timeline_groups.iter_mut().find(|group| group.id == id) {
+        group.name = name.to_string();
+    }
+    Ok(json!({"group": id, "name": name}))
+}
+
+fn move_to_group(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "timeline.move_to_group";
+    let features = group_features(s, p, true, cmd)?;
+    let target = match p.get("group") {
+        Some(Value::Null) | None => None,
+        Some(_) => Some(timeline_group_id(s, p, cmd)?),
+    };
+    let doc = s.doc_mut();
+    for group in &mut doc.timeline_groups {
+        group.features.retain(|feature| !features.contains(feature));
+        if Some(group.id) == target {
+            group.features.extend(features.iter().copied());
+        }
+    }
+    Ok(json!({"features": features, "group": target}))
 }
 
 fn rollback(s: &mut Session, p: &Value) -> Result<Value> {

@@ -310,3 +310,30 @@ fn inserting_variable_fillet_control_preserves_parameters_at_existing_positions(
     assert_eq!(length["value"], 3.0);
     assert_eq!(width["value"], 4.0);
 }
+
+#[test]
+fn timeline_folders_are_command_backed_saved_undoable_and_follow_feature_ids() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "name": "Base"}));
+    run(&mut s, "solid.fillet", json!({"edges": [[10, 5, 10]], "radius": 1, "name": "Round"}));
+    let base = s.doc.find_feature("Base").unwrap().id;
+    let round = s.doc.find_feature("Round").unwrap().id;
+
+    let made = run(&mut s, "timeline.group", json!({"name": "Housing", "features": ["Base", round]}));
+    let group = made["group"].as_u64().unwrap();
+    assert_eq!(s.doc.timeline_groups[0].features, vec![base, round]);
+    run(&mut s, "timeline.rename", json!({"feature": base, "name": "Foundation"}));
+    assert_eq!(s.doc.timeline_groups[0].features, vec![base, round], "folders follow stable ids, not names");
+    run(&mut s, "timeline.rename_group", json!({"group": group, "name": "Main housing"}));
+    run(&mut s, "timeline.move_to_group", json!({"features": [round], "group": null}));
+    assert_eq!(s.doc.timeline_groups[0].features, vec![base]);
+
+    let reopened = solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap();
+    assert_eq!(reopened.timeline_groups, s.doc.timeline_groups);
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.doc.timeline_groups[0].features, vec![base, round]);
+    run(&mut s, "timeline.delete", json!({"features": [base]}));
+    assert_eq!(s.doc.timeline_groups[0].features, vec![round], "deleted features leave folders cleanly");
+    run(&mut s, "timeline.ungroup", json!({"group": group}));
+    assert!(s.doc.timeline_groups.is_empty());
+}

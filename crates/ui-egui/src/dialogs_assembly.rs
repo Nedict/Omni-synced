@@ -1049,6 +1049,50 @@ pub fn timeline_joints(app: &mut SolveApp, ui: &mut egui::Ui, p: &egui::Painter,
     x
 }
 
+/// Named joint rows for the vertical feature-history layout.
+pub fn timeline_joints_vertical(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let t = Tokens::get();
+    let joints: Vec<(u64, String, JointKind, bool)> =
+        app.session.doc.assembly.joints.iter().map(|joint| (joint.id, joint.name.clone(), joint.kind, joint.suppressed)).collect();
+    if joints.is_empty() {
+        return;
+    }
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new("JOINTS").size(10.0).strong().color(t.text_dim));
+    let mut open = None;
+    let mut run = None;
+    for (id, name, kind, suppressed) in joints {
+        let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), egui::Sense::click());
+        if response.hovered() {
+            ui.painter().rect_filled(rect, 3.0, t.hover);
+        }
+        let icon = egui::Rect::from_min_size(egui::pos2(rect.left() + 4.0, rect.top() + 4.0), vec2(22.0, 22.0));
+        crate::icons::paint(ui.painter(), icon, "joint", if suppressed { t.border } else { t.icon }, t.icon_fill, t.accent);
+        if suppressed {
+            ui.painter().line_segment([icon.left_bottom(), icon.right_top()], Stroke::new(1.5, t.text_dim));
+        }
+        ui.painter().text(
+            egui::pos2(icon.right() + 7.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            &name,
+            egui::FontId::proportional(12.0),
+            if suppressed { t.text_dim } else { t.text },
+        );
+        let response = response.on_hover_text(format!("{name}  ({kind:?} joint)\nDouble-click to edit · right-click for more"));
+        if response.double_clicked() {
+            open = edit_joint(app, id);
+        }
+        response.context_menu(|ui| joint_menu(app, ui, (id, kind, suppressed), &mut open, &mut run));
+    }
+    if let Some((command, params)) = run {
+        let _ = app.run(command, params);
+    }
+    if let Some(dialog) = open {
+        app.tool = None;
+        app.dialog = Some(dialog);
+    }
+}
+
 /// The Joints folder at the end of the Browser: a row per joint (double-click edits, the menu
 /// edits, drives, suppresses or deletes).
 pub fn browser_joints(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {

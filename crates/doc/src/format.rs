@@ -364,8 +364,21 @@ pub fn read(s: &str) -> Result<Document> {
     if d.features.len() > crate::document::MAX_FEATURES
         || d.params.len() > crate::document::MAX_PARAMS
         || d.components.len() > crate::document::MAX_FEATURES
+        || d.timeline_groups.len() > crate::document::MAX_FEATURES
+        || d.timeline_groups.iter().any(|group| group.features.len() > crate::document::MAX_FEATURES)
     {
         return Err(DocError::Invalid("document too large".into()));
+    }
+    let feature_ids: std::collections::BTreeSet<_> = d.features.iter().map(|feature| feature.id).collect();
+    let mut group_ids = std::collections::BTreeSet::new();
+    let mut grouped_features = std::collections::BTreeSet::new();
+    for group in &d.timeline_groups {
+        if group.name.trim().is_empty() || group.name.len() > 128 || !group_ids.insert(group.id) {
+            return Err(DocError::Invalid("damaged design: invalid timeline folder".into()));
+        }
+        if group.features.iter().any(|feature| !feature_ids.contains(feature) || !grouped_features.insert(*feature)) {
+            return Err(DocError::Invalid("damaged design: invalid feature in a timeline folder".into()));
+        }
     }
     for o in &d.occurrences {
         if !rigid(&o.transform) {
