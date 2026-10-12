@@ -67,8 +67,10 @@ fn known(s: &Session, name: &str) -> bool {
 
 fn change_param(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "parameters.change";
+    let solved = s.solved_sketches();
     if let Some(n) = str_(p, "delete") {
         s.doc_mut().remove_param(n.trim())?;
+        s.settle_value_edit(&solved)?;
         return Ok(json!({"deleted": n.trim()}));
     }
     let mut name = param_name(cmd, p)?.to_string();
@@ -101,7 +103,7 @@ fn change_param(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(f) = bool_(p, "favorite") {
         s.doc_mut().set_favorite(&name, f)?;
     }
-    s.refresh();
+    s.settle_value_edit(&solved)?;
     let (vals, _) = s.doc.param_values();
     out["name"] = json!(name);
     out["expression"] = json!(e);
@@ -140,7 +142,9 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "parameters.add";
     let name = param_name(cmd, p)?.to_string();
     let e = expr_arg(p, "expression").or_else(|| expr_arg(p, "value")).ok_or_else(|| bad(cmd, "`expression` must be a number or text"))?;
+    let solved = s.solved_sketches();
     s.doc_mut().add_user_param(&name, &e, str_(p, "unit"), str_(p, "comment"))?;
+    s.settle_value_edit(&solved)?;
     if let Some(f) = bool_(p, "favorite") {
         s.doc_mut().set_favorite(&name, f)?;
     }
@@ -160,7 +164,9 @@ fn rename(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     let name = param_name("parameters.delete", p)?.to_string();
+    let solved = s.solved_sketches();
     s.doc_mut().remove_param(&name)?;
+    s.settle_value_edit(&solved)?;
     Ok(json!({"deleted": name}))
 }
 
@@ -238,8 +244,9 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
         }
         _ => return Err(bad(cmd, "give `text` or `path`")),
     };
+    let solved = s.solved_sketches();
     let names = s.doc_mut().import_params(&text)?;
-    s.refresh();
+    s.settle_value_edit(&solved)?;
     Ok(json!({"imported": names, "errors": failing(s)}))
 }
 

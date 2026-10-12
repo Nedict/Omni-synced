@@ -222,22 +222,46 @@ pub(super) fn edit<T>(
     let mut doc = (*s.doc).clone();
     let mut sk = doc.sketch(id)?.clone();
     super::sketch_project::refresh(s, &doc, id, &mut sk);
+    // The stored sketch is solved for its stored values.
+    let stored = sk.driving_values();
     let out = f(&mut sk, &mut doc)?;
+    // Solved for the document's values, continuing from the stored solved state.
     let (vals, _) = doc.param_values();
-    doc.apply_dimension_values(&vals, &mut sk)?;
     sk.refresh_offsets()?;
-    let mut rep = solve(&mut sk);
-    if !sk.offsets.is_empty() || !sk.freeform_offsets.is_empty() {
-        sk.refresh_offsets()?;
-        rep = solve(&mut sk);
-    }
-    if strict && !rep.ok() {
-        return Err(EngineError::Other(format!("that would over-constrain the sketch (conflicts with {})", rep.failing.join(", "))));
-    }
+    let unsolved = sk.clone();
+    let rep = doc.solve_sketch(&vals, &mut sk, &stored)?;
+    let rep = settle(strict, rep, &mut sk, unsolved)?;
     sk.validate_periodic_splines()?;
     *doc.sketch_mut(id)? = sk;
     *s.doc_mut() = doc;
-    Ok((out, json!({"solved": rep.ok(), "dof": rep.dof})))
+    Ok((out, report_json(&rep)))
+}
+
+/// A solve's outcome as commands return it.
+pub(super) fn report_json(rep: &SolveReport) -> Value {
+    json!({"solved": rep.keeps_orientation(), "dof": rep.dof})
+}
+
+/// An edit's solve outcome: with `strict`, a solve that fails or turns the sketch over is an
+/// error; otherwise such a sketch is stored as the edit left it before the solve, its values
+/// and geometry together, so the stored sketch stays solved for its stored values.
+fn settle(strict: bool, rep: SolveReport, sk: &mut Sketch, unsolved: Sketch) -> Result<SolveReport> {
+    if strict && !rep.keeps_orientation() {
+        return Err(EngineError::Other(rep.failure(|f| format!("that would over-constrain the sketch (conflicts with {f})"))));
+    }
+    if !rep.keeps_orientation() {
+        *sk = unsolved;
+    }
+    Ok(rep)
+}
+
+/// Inside an `edit` closure: solve the sketch for the document's parameter values from its
+/// stored solved state, as the edit's own solve does, for commands that work on the current
+/// geometry.
+pub(super) fn solve_current(sk: &mut Sketch, doc: &solvecraft_doc::Document) -> Result<SolveReport> {
+    let stored = sk.driving_values();
+    let (values, _) = doc.param_values();
+    Ok(doc.solve_sketch(&values, sk, &stored)?)
 }
 
 /// How close (mm) a new point must land to an existing one to be connected to it.
@@ -1240,7 +1264,7 @@ fn c_coincident(s: &mut Session, p: &Value) -> Result<Value> {
         && let Some(c) = sk.constraints.iter().find(|c| matches!(c.kind, ConstraintKind::Coincident { p, q } if (p, q) == (a, b) || (p, q) == (b, a)))
     {
         let rep = solve(&mut sk.clone());
-        return Ok(json!({"constraint": c.id, "existing": true, "sketch": {"solved": rep.ok(), "dof": rep.dof}}));
+        return Ok(json!({"constraint": c.id, "existing": true, "sketch": report_json(&rep)}));
     }
     constrain(s, p, cmd, |sk| {
         if let Some((a, b)) = line_points {

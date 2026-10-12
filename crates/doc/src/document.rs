@@ -2181,6 +2181,28 @@ impl Document {
         }
         Ok(())
     }
+
+    /// Apply parameter values to a sketch's dimensions and solve it. `stored` are the values
+    /// its geometry is solved for (the stored sketch's): what the solve cannot reach in one
+    /// jump it reaches by stepping the changed values from there, and an edit that would turn
+    /// the sketch over is refused. Offsets whose sources moved are refreshed and solved again:
+    /// from the stored state again after a refused or failed first solve (the geometry is still
+    /// the stored one), from the solved one otherwise.
+    pub fn solve_sketch(
+        &self,
+        vals: &std::collections::BTreeMap<String, expr::Value>,
+        sk: &mut Sketch,
+        stored: &solvecraft_sketch::DrivingValues,
+    ) -> Result<solvecraft_sketch::SolveReport> {
+        self.apply_dimension_values(vals, sk)?;
+        let mut report = solvecraft_sketch::solve_after_value_edit(sk, stored);
+        if !sk.offsets.is_empty() || !sk.freeform_offsets.is_empty() {
+            // Source dimensions may have moved curves during the solve.
+            sk.refresh_offsets()?;
+            report = if report.ok() { solvecraft_sketch::solve(sk) } else { solvecraft_sketch::solve_after_value_edit(sk, stored) };
+        }
+        Ok(report)
+    }
 }
 
 /// Density of the default material (g/cm³), as Fusion's default.

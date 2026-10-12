@@ -360,6 +360,7 @@ impl Session {
             if let Some(inverse) = solvecraft_doc::mat_inverse(&first) {
                 let delta = solvecraft_doc::mat_mul(&self.active_component_frame(), &inverse);
                 for sketch in w.sketches.iter_mut().filter(|sk| self.doc.feature(sk.feature).is_some_and(|f| f.component == self.active_component)) {
+                    let sketch = Arc::make_mut(sketch);
                     let plane = sketch.plane;
                     if let Some(mapped) = solvecraft_geom::Plane::new(
                         solvecraft_doc::apply_point(&delta, plane.origin),
@@ -405,6 +406,39 @@ impl Session {
         {
             self.active_sketch = None;
         }
+    }
+
+    /// The sketches whose last evaluation solved, each with its own parameter-driven values
+    /// (taken before a value edit, for [`Session::settle_value_edit`]).
+    pub(crate) fn solved_sketches(&self) -> SketchValues {
+        self.model
+            .results
+            .iter()
+            .filter_map(|r| r.state.sketch(r.id).filter(|k| k.report.keeps_orientation()).map(|k| (r.id, own_values(&k.sketch))))
+            .collect()
+    }
+
+    /// After the document's values changed (parameters, a configuration, the units): evaluate,
+    /// and refuse the edit when a sketch that solved before no longer does, or turns over,
+    /// because its own parameter-driven values changed (the command fails, so `execute`
+    /// restores the document's values and geometry). A sketch broken by a change upstream
+    /// (a projected or linked edge moved) is not the edit's to refuse: it carries a warning,
+    /// as before. Otherwise store each sketch whose values changed as solved, so the next edit
+    /// continues from it (see `Model::adopt_solved_sketches`).
+    pub(crate) fn settle_value_edit(&mut self, solved_before: &SketchValues) -> Result<()> {
+        self.refresh();
+        for r in &self.model.results {
+            let (Some(before), Some(k)) = (solved_before.get(&r.id), r.state.sketch(r.id)) else { continue };
+            if !k.report.keeps_orientation() && own_values(&k.sketch) != *before {
+                let why = k.report.failure(|f| format!("its constraints would conflict ({f})"));
+                return Err(EngineError::Other(format!("sketch `{}`: {why}; the values were not changed", r.name)));
+            }
+        }
+        // Checked first: storing makes the document unique (a copy when the undo step shares it).
+        if self.model.edited_sketches(&self.doc).next().is_some() {
+            self.model.adopt_solved_sketches(Arc::make_mut(&mut self.doc));
+        }
+        Ok(())
     }
 
     /// Run a command with JSON parameters (no dialogs). Undoable commands record an undo step
@@ -686,3 +720,12 @@ mod tests;
 mod thread_tests;
 #[cfg(test)]
 mod world_placement_cache_tests;
+
+/// Per sketch feature: its parameter-driven dimensions' values (see [`own_values`]).
+pub(crate) type SketchValues = std::collections::BTreeMap<u64, std::collections::BTreeMap<String, f64>>;
+
+/// The values of a sketch's driving dimensions that come from parameters: what a value edit
+/// changes in it (as opposed to geometry it projects or links from upstream).
+fn own_values(sk: &solvecraft_sketch::Sketch) -> std::collections::BTreeMap<String, f64> {
+    sk.constraints.iter().filter(|c| c.param.is_some() && !c.driven).filter_map(|c| Some((c.id.clone(), c.kind.value()?))).collect()
+}
