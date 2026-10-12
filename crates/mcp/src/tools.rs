@@ -45,7 +45,9 @@ pub fn tool_definitions() -> Vec<Value> {
             "The command catalog: id, label, toolbar tab/panel, shortcut, one-line parameter docs and whether the command is \
              enabled right now. Ids are dotted and lower-case (solid.extrude, sketch.create, \
              solid.fillet, sketch.inspect, timeline.rollback). Optional case-insensitive \
-             substring `filter` over id, label, panel and params.",
+             substring `filter`: when it contains a `.` or equals a command id, only the commands whose \
+             id contains it come back; otherwise it matches id, label, tab, panel and params. The exact \
+             id comes first, then the other id matches.",
             obj(json!({"filter": string("Substring to match, e.g. \"sketch\", \"fillet\", \"pattern\"")}), &[]),
             true,
             false,
@@ -309,12 +311,14 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<V
         "list_commands" => {
             let all = b.call("engine.commands", json!({}))?;
             let Some(f) = str_arg(a, "filter").map(str::to_lowercase).filter(|f| !f.is_empty()) else { return Ok(all) };
-            let hit = |c: &Value| {
-                ["id", "label", "panel", "tab", "params"]
-                    .iter()
-                    .any(|k| c.get(*k).and_then(Value::as_str).is_some_and(|s| s.to_lowercase().contains(&f)))
-            };
-            Ok(Value::Array(all.as_array().map(|v| v.iter().filter(|c| hit(c)).cloned().collect()).unwrap_or_default()))
+            let field = |c: &Value, k: &str| c.get(k).and_then(Value::as_str).map(str::to_lowercase);
+            let hit = |c: &Value, keys: &[&str]| keys.iter().any(|k| field(c, k).is_some_and(|s| s.contains(&f)));
+            let exact = |c: &Value| field(c, "id").as_deref() == Some(f.as_str());
+            let cmds = all.as_array().map(Vec::as_slice).unwrap_or_default();
+            let keys: &[&str] = if f.contains('.') || cmds.iter().any(exact) { &["id"] } else { &["id", "label", "panel", "tab", "params"] };
+            let mut found: Vec<Value> = cmds.iter().filter(|c| hit(c, keys)).cloned().collect();
+            found.sort_by_key(|c| (!exact(c), !hit(c, &["id"])));
+            Ok(Value::Array(found))
         }
         "execute" => {
             let id = str_arg(a, "command").ok_or("`command` is required")?;

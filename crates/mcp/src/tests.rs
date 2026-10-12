@@ -90,6 +90,30 @@ fn handshake_and_tools_list() {
     assert_eq!(call(&mut s, 8, "nope/nope", json!({}))["error"]["code"], -32601);
 }
 
+/// A dotted filter or an exact id returns only id matches; a plain word still searches the docs.
+#[test]
+fn list_commands_filter_prefers_ids() {
+    let mut s = server();
+    let ids = |cmds: &Value| cmds.as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+
+    let cmds = tool(&mut s, "list_commands", json!({"filter": "sketch.delete"}));
+    assert_eq!(ids(&cmds), ["sketch.delete"]);
+
+    // The catalog lists sketch.move_point and sketch.move3d before sketch.move.
+    let cmds = ids(&tool(&mut s, "list_commands", json!({"filter": "Sketch.Move"})));
+    assert_eq!(cmds.first().map(String::as_str), Some("sketch.move"), "{cmds:?}");
+    assert!(cmds.iter().all(|id| id.contains("sketch.move")), "{cmds:?}");
+
+    let cmds = ids(&tool(&mut s, "list_commands", json!({"filter": "Clearance"})));
+    assert!(cmds.contains(&"solid.hole".to_string()), "{cmds:?}");
+    assert!(cmds.iter().all(|id| !id.contains("clearance")), "{cmds:?}");
+
+    // A plain word some id happens to contain still searches the docs, id matches first.
+    let cmds = ids(&tool(&mut s, "list_commands", json!({"filter": "radius"})));
+    assert!(cmds.contains(&"solid.cylinder".to_string()), "{cmds:?}");
+    assert!(cmds.first().is_some_and(|id| id.contains("radius")), "{cmds:?}");
+}
+
 /// Box → fillet → hole in one batch, then verify with measure / inspect_design and look at it.
 #[test]
 fn agent_builds_box_fillet_hole() {
