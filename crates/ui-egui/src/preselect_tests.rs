@@ -470,6 +470,19 @@ fn a_hole_is_mirrored_as_a_feature() {
     assert_eq!(cmds[0].1["features"], json!(["Hole1"]));
 }
 
+/// The radius arrow points into the body: dragging toward the material grows the round.
+#[test]
+fn fillet_and_chamfer_arrows_point_into_the_body() {
+    for id in ["solid.fillet", "solid.chamfer"] {
+        let mut app = boxed();
+        let e = edge(&app, Vec3::new(20.0, 0.0, 20.0));
+        let d = start(&mut app, vec![e], id);
+        let (_, dir) = crate::canvas::anchor(&app, &d).unwrap();
+        let dir = dir.unwrap();
+        assert!(dir.y > 0.5 && dir.z < -0.5, "{id}: {dir:?}");
+    }
+}
+
 #[test]
 fn chamfer_types_send_their_values() {
     let mut app = boxed();

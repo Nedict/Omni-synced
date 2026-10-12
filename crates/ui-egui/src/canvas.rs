@@ -69,9 +69,9 @@ pub fn anchor(app: &SolveApp, d: &Dialog) -> Option<(Vec3, Option<Vec3>)> {
             let offset = if start.trim().is_empty() { 0.0 } else { app.session.doc.eval(start, ValueKind::Length).ok()? };
             (at + n * (from + offset), Some(n))
         }
-        Kind::Fillet { .. } | Kind::Section { .. } | Kind::Hole { .. } | Kind::OffsetPlane { .. } | Kind::OffsetFaces { .. } => (at, normal),
-        // Shell thickness grows into the body.
-        Kind::Shell { .. } => (at, normal.map(|n| -n)),
+        Kind::Section { .. } | Kind::Hole { .. } | Kind::OffsetPlane { .. } | Kind::OffsetFaces { .. } => (at, normal),
+        // Fillet radii, chamfer distances and shell thickness grow into the body.
+        Kind::Fillet { .. } | Kind::Shell { .. } => (at, normal.map(|n| -n)),
         Kind::Sheet(_) => (at, crate::dialogs_sheet::arrow(app, d).or(normal)),
         Kind::Plastic(_) => (at, normal),
         Kind::PatternRect { .. } => (at, d.inputs.get(1).and_then(|i| i.items.first()).and_then(|x| crate::dialogs::axis_of(app, x)).map(|a| a.1)),
@@ -98,8 +98,8 @@ fn reference_height(app: &SolveApp, d: &Dialog, label: &str, plane: &solvecraft_
     Some(solvecraft_engine::doc::object_height(&app.session.world_state(), plane, centre, p))
 }
 
-/// The outward direction between the two faces at an edge (where a fillet's radius arrow
-/// points).
+/// The outward direction between the two faces at an edge (a fillet's radius arrow points the
+/// other way, into the body).
 fn edge_bisector(m: &Mesh, index: usize, p: Vec3) -> Option<Vec3> {
     let faces = m.edge_faces.get(index)?;
     let mut sum = Vec3::ZERO;
