@@ -21,7 +21,7 @@ also script, test or hand to an agent.
 SolidCraft is early. Sketching, solid modelling, parameters, components with joints, sheet metal
 and a plastic-enclosure subset work; surfaces, drawings, CAM and simulation are deferred. The
 [roadmap](https://github.com/bherbruck/solidcraft/blob/main/ROADMAP.md) has the details, and
-[command parity](dev/parity.md) and the [Fusion oracle](dev/oracle.md) measure how far along it
+[command parity](dev/parity.md) and the [reference tests](dev/oracle.md) measure how far along it
 is.
 
 Existing `.solvecraft` designs and `solvecraft-cli` commands keep their names and behavior.

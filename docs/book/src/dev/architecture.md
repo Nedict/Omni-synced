@@ -7,7 +7,7 @@ SolidCraft is a Cargo workspace in layers. A crate only depends on crates in low
 
 The web app, `apps/solvecraft-web`, is the desktop front end compiled to wasm with
 [trunk](https://trunkrs.dev). `xtask` holds the repository's own tooling: `cargo xtask ci`,
-`layers`, `assets`, `oracle`, `parity`, `step-corpus` and `book`.
+`layers`, `assets`, `oracle`, `parity` and `book`.
 
 A few rules follow from the layering:
 

@@ -1568,6 +1568,25 @@ fn outline_blank(s: &mut Session, outline: Value) {
     run(s, "sheet.flange", json!({"sketch": "Blank"}));
 }
 
+/// `fixed` inside a cut-out touches no material: the fold must refuse it or say which side it kept (#263).
+#[test]
+fn fold_fixed_point_off_the_sheet_is_not_silently_ignored() {
+    let mut s = Session::default();
+    outline_blank(&mut s, json!([[0, 0], [100, 0], [100, 60], [0, 60]]));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "offset": "2", "name": "Window"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [10, 15], "p1": [40, 45]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Window", "distance": "4", "direction": "negative", "operation": "cut"}));
+    match s.execute("sheet.fold", &json!({"points": [[80, 0, 0.8], [80, 60, 0.8]], "fixed": [25, 30, 0.8]})) {
+        Err(e) => assert!(e.to_string().contains("fixed"), "{e}"),
+        Ok(r) => {
+            let warned =
+                ["warning", "warnings"].iter().any(|k| r.get(*k).is_some_and(|w| !w.is_null() && w != &json!([]) && w.to_string().contains("fixed")));
+            assert!(warned, "fixed [25, 30] is inside the window, yet the fold succeeded silently: {r}");
+        }
+    }
+}
+
 /// A tab whose fold line sits exactly at its root: the bend zone reaches the blank outline beside
 /// the tab. Every edge is straight, so the error must not blame a slanted or curved edge (#262).
 #[test]
