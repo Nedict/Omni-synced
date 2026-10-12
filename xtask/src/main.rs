@@ -165,7 +165,7 @@ fn cmd_oracle(cli: Option<&str>) -> Result<(), String> {
         }
         None => {
             let mut c = cargo();
-            c.args(["run", "-q", "--release", "-p", "solvecraft-cli", "--"]);
+            c.args(["run", "-q", "--release", "-p", "solidcraft-cli", "--"]);
             c
         }
     };

@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 fn mcp_connect_without_a_listening_app_names_the_control_flag() {
     // A port that was free a moment ago: nothing listens on it.
     let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    let output = Command::new(env!("CARGO_BIN_EXE_solvecraft-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_solidcraft-cli"))
         .args(["mcp", "--connect", &format!("127.0.0.1:{port}")])
         .stdin(Stdio::null())
         .output()

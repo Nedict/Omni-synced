@@ -13,7 +13,7 @@ use serde_json::Value;
 use crate::cargo;
 
 pub const FILE: &str = "THIRD-PARTY-LICENSES.txt";
-const ROOTS: &[&str] = &["solvecraft", "solvecraft-cli", "solvecraft-web"];
+const ROOTS: &[&str] = &["solidcraft", "solidcraft-cli", "solvecraft-web"];
 
 pub fn run(root: &Path, check: bool) -> Result<(), String> {
     let text = generate(root)?;

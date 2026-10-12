@@ -46,8 +46,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("mcp", Class::Layer(5)),
     ("testkit", Class::Testkit),
     // apps and tooling
-    ("solvecraft", Class::Exempt),
-    ("cli", Class::Exempt),
+    ("solidcraft", Class::Exempt),
+    ("solidcraft-cli", Class::Exempt),
     ("web", Class::Exempt),
     ("xtask", Class::Exempt),
 ];
@@ -240,7 +240,7 @@ mod tests {
             c("solvecraft-doc", &[("solvecraft-geom", Normal, true)]),
             c("solvecraft-engine", &[("solvecraft-doc", Normal, true), ("solvecraft-testkit", Dev, true)]),
             c("solvecraft-ui-egui", &[("solvecraft-engine", Normal, true), ("egui", Normal, false)]),
-            c("solvecraft-cli", &[("solvecraft-ui-egui", Normal, true)]),
+            c("solidcraft-cli", &[("solvecraft-ui-egui", Normal, true)]),
         ];
         assert!(check(&g).is_empty(), "{:?}", check(&g));
     }
@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn apps_and_xtask_exempt() {
-        for app in ["solvecraft", "solvecraft-cli", "xtask"] {
+        for app in ["solidcraft", "solidcraft-cli", "xtask"] {
             assert!(check(&[c(app, &[("egui", Normal, false), ("solvecraft-ui-egui", Normal, true)])]).is_empty());
         }
     }

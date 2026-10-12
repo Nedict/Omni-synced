@@ -3289,7 +3289,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "solvecraft"
+name = "solidcraft"
 version = "0.5.0"
 dependencies = [
  "eframe",
@@ -3306,7 +3306,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "solvecraft-cli"
+name = "solidcraft-cli"
 version = "0.5.0"
 dependencies = [
  "serde_json",

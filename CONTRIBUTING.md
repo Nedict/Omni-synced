@@ -17,23 +17,23 @@ build you also need `rustup target add wasm32-unknown-unknown` and [`trunk`](htt
 
 ```sh
 git clone https://github.com/bherbruck/solidcraft && cd solidcraft
-cargo run --release -p solvecraft -- --sample      # desktop app with a sample part
+cargo run --release -p solidcraft -- --sample      # desktop app with a sample part
 cargo xtask test                                   # unit, engine and UI-scenario tests
 cargo xtask ci                                     # everything a PR must pass (see below)
 ```
 
 SolidCraft is the product and repository name. Cargo packages and executables retain
 their `solvecraft` names for compatibility with existing scripts and MCP clients.
-Build the desktop app with `cargo build --release -p solvecraft`, or the CLI with
-`cargo build --release -p solvecraft-cli`. Run the CLI with
-`cargo run --release -p solvecraft-cli -- commands` (or `target/release/solvecraft-cli commands`
+Build the desktop app with `cargo build --release -p solidcraft`, or the CLI with
+`cargo build --release -p solidcraft-cli`. Run the CLI with
+`cargo run --release -p solidcraft-cli -- commands` (or `target/release/solidcraft-cli commands`
 after building). There is no Cargo package named `solidcraft`.
 
 Web: `cd apps/solvecraft-web && trunk serve --release`, then open the printed URL (`?sample`
 opens the sample part, `?webgl` forces WebGL2). Saving and opening files in the browser needs
 HTTPS or localhost, because it uses the Origin Private File System.
 
-Windows from Linux: `cargo xwin build --release --target x86_64-pc-windows-msvc -p solvecraft`.
+Windows from Linux: `cargo xwin build --release --target x86_64-pc-windows-msvc -p solidcraft`.
 
 ### NixOS: `nix develop`
 
