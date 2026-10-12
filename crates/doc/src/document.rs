@@ -1889,6 +1889,30 @@ impl Document {
         self.features.iter().find(|f| f.name.eq_ignore_ascii_case(r))
     }
 
+    /// Rename a feature; the features that name it (patterns and mirrors of it, sketches and
+    /// features on a construction plane, axis or point) follow (#401). While another feature
+    /// still answers to the old name (a sketch and its extrude often share one), references
+    /// stay with that name. Returns how many features were updated.
+    pub fn rename_feature(&mut self, id: u64, name: &str) -> Result<usize> {
+        let old = self.feature(id).map(|f| f.name.clone()).ok_or_else(|| DocError::Unknown(format!("feature {id}")))?;
+        let shared = self.features.iter().any(|f| f.id != id && f.name.eq_ignore_ascii_case(&old));
+        let mut features = self.features.clone();
+        let mut n = 0;
+        if !shared && old != name {
+            let names = std::collections::BTreeMap::from([(old, name.to_string())]);
+            let (ids, none) = (std::collections::BTreeMap::new(), std::collections::BTreeMap::new());
+            for (f, was) in features.iter_mut().zip(&self.features) {
+                f.remap_clone(&ids, &names, &none, &none)?;
+                n += usize::from(f != was);
+            }
+        }
+        if let Some(f) = features.iter_mut().find(|f| f.id == id) {
+            f.name = name.to_string();
+        }
+        self.features = features;
+        Ok(n)
+    }
+
     fn unique_name(&self, base: &str) -> String {
         let mut n = 1;
         loop {

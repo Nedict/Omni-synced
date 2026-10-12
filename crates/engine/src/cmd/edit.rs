@@ -22,7 +22,8 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("delete")
         .key("Delete")
         .params("features: [id or name] (a sketch takes its dependent features with it) → deleted: [ids]; failing?: [{feature, error}] (later features that worked and now fail)"),
-    CommandSpec::new("timeline.rename", "Rename", rename).params("feature: id|name, name"),
+    CommandSpec::new("timeline.rename", "Rename", rename)
+        .params("feature: id|name, name (patterns, mirrors and features on a construction plane, axis or point that name it follow) → feature, name, references_updated"),
     CommandSpec::new("timeline.rollback", "Move Timeline Marker", rollback).params("position: number of features to keep active (omit = end)"),
     CommandSpec::new("timeline.roll_to", "Roll History Marker", rollback)
         .params("position: number of features to keep active (omit = end) | feature: id|name (the marker goes right after it)"),
@@ -169,10 +170,8 @@ fn rename(s: &mut Session, p: &Value) -> Result<Value> {
     if s.doc.feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::ConstructionPlane { .. })) {
         super::features::check_plane_name(name, cmd)?;
     }
-    if let Some(f) = s.doc_mut().feature_mut(id) {
-        f.name = name.to_string();
-    }
-    Ok(json!({"feature": id, "name": name}))
+    let n = s.doc_mut().rename_feature(id, name)?;
+    Ok(json!({"feature": id, "name": name, "references_updated": n}))
 }
 
 fn rollback(s: &mut Session, p: &Value) -> Result<Value> {

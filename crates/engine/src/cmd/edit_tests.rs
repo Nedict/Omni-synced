@@ -310,3 +310,66 @@ fn inserting_variable_fillet_control_preserves_parameters_at_existing_positions(
     assert_eq!(length["value"], 3.0);
     assert_eq!(width["value"], 4.0);
 }
+
+fn measured(s: &mut Session) -> Value {
+    run(s, "inspect.measure", json!({}))
+}
+
+fn volume(s: &mut Session) -> f64 {
+    measured(s)["total"]["volume_mm3"].as_f64().unwrap()
+}
+
+/// Renaming a feature carries the features that name it along: a pattern of `Tooth cut` keeps
+/// copying it after `Tooth cut` becomes `Single tooth` (#401).
+#[test]
+fn renaming_a_feature_follows_the_features_that_reference_it() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Bar"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-10, 0], "p1": [10, 200]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Bar", "distance": 4, "operation": "new", "body_name": "Bar", "name": "Bar"}));
+    run(&mut s, "sketch.create", json!({"plane": "YZ", "name": "Tooth"}));
+    run(&mut s, "sketch.line", json!({"points": [[9, 4.5], [13, 2.5], [13, 4.5]], "closed": true}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Tooth", "distance": 8, "direction": "symmetric", "operation": "cut", "name": "Tooth cut"}));
+    run(&mut s, "solid.pattern.rectangular", json!({"features": ["Tooth cut"], "dir1": [0, 1, 0], "count1": 5, "spacing1": 4, "name": "Teeth"}));
+    // Each tooth removes the part of the triangle under the bar's top face (z <= 4): the
+    // integral of (2z - 5) dz over 2.5..4 = 2.25 mm², 8 mm either side of the sketch plane.
+    let expected = 20.0 * 200.0 * 4.0 - 5.0 * 2.25 * 16.0;
+    let before = volume(&mut s);
+    assert!((before - expected).abs() < 1e-6 * expected, "{before} != {expected}");
+    let reply = run(&mut s, "timeline.rename", json!({"feature": "Tooth cut", "name": "Single tooth"}));
+    assert_eq!(reply["references_updated"], 1, "{reply}");
+    let teeth = s.doc.find_feature("Teeth").unwrap().id;
+    assert!(s.model.result(teeth).unwrap().error.is_none(), "{:?}", s.model.result(teeth));
+    let after = volume(&mut s);
+    assert!((after - expected).abs() < 1e-6 * expected, "{after} != {expected}");
+    // The sketch `Bar` shares its name with the extrude, which keeps answering to `Bar`: a
+    // mirror of `Bar` stays on the extrude when the sketch is renamed.
+    run(&mut s, "solid.mirror", json!({"features": ["Bar"], "plane": "XZ", "name": "Flip"}));
+    let reply = run(&mut s, "timeline.rename", json!({"feature": 1, "name": "Bar outline"}));
+    assert_eq!(reply["references_updated"], 0, "{reply}");
+    let flip = s.doc.find_feature("Flip").unwrap();
+    assert!(matches!(&flip.kind, solidcraft_doc::FeatureKind::Mirror { features, .. } if features == &["Bar"]));
+    assert!(s.model.result(flip.id).unwrap().error.is_none(), "{:?}", s.model.result(flip.id));
+}
+
+/// A sketch on a construction plane stays on it when the plane is renamed (#401).
+#[test]
+fn renaming_a_construction_plane_keeps_its_sketches_on_it() {
+    let mut s = Session::default();
+    run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 5, "name": "Lid"}));
+    run(&mut s, "sketch.create", json!({"plane": "Lid", "name": "Top"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [10, 20]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Top", "distance": 3, "name": "Pad"}));
+    let reply = run(&mut s, "timeline.rename", json!({"feature": "Lid", "name": "Cover"}));
+    assert_eq!(reply["references_updated"], 1, "{reply}");
+    let pad = s.doc.find_feature("Pad").unwrap().id;
+    assert!(s.model.result(pad).unwrap().error.is_none(), "{:?}", s.model.result(pad));
+    let m = measured(&mut s);
+    let v = m["total"]["volume_mm3"].as_f64().unwrap();
+    assert!((v - 600.0).abs() < 1e-6, "{m}");
+    assert_eq!(m["bodies"][0]["bbox"]["min"][2], 5.0, "{m}");
+    assert_eq!(m["bodies"][0]["bbox"]["max"][2], 8.0, "{m}");
+}
