@@ -1007,6 +1007,7 @@ impl SolveApp {
         }
         shortcut_box::show(self, ui.ctx());
         prefs::show(self, ui.ctx());
+        toolbar_custom::window(self, ui.ctx());
     }
 
     fn drain_control(&mut self, ctx: &egui::Context) {

@@ -134,6 +134,8 @@ pub struct Harness {
     queue: Option<std::sync::mpsc::Sender<ControlRequest>>,
     time: f64,
     size: egui::Vec2,
+    /// The camera as the last `camera` step left it.
+    cam_mark: Option<solvecraft_engine::render::Camera>,
 }
 
 impl Default for Harness {
@@ -162,6 +164,7 @@ impl Harness {
             queue: None,
             time: 0.0,
             size: egui::vec2(1600.0, 1000.0),
+            cam_mark: None,
         };
         WIDTHS.with(|m| m.borrow_mut().clear());
         h.install();
@@ -361,7 +364,7 @@ impl Harness {
                 let [x, y] = self.at(at)?;
                 // Hover first, as a hand does.
                 self.call("ui.move", json!({"x": x, "y": y}));
-                let mut p = json!({"x": x, "y": y, "double": flag("double"), "shift": flag("shift"), "ctrl": flag("ctrl")});
+                let mut p = json!({"x": x, "y": y, "double": flag("double"), "shift": flag("shift"), "ctrl": flag("ctrl"), "alt": flag("alt")});
                 if let Some(b) = s.get("button") {
                     p["button"] = b.clone();
                 }
@@ -382,7 +385,10 @@ impl Harness {
                 let [x0, y0] = self.at(d.get(0).unwrap_or(&Value::Null))?;
                 let [x1, y1] = self.at(d.get(1).unwrap_or(&Value::Null))?;
                 let steps = s.get("steps").cloned().unwrap_or(json!(8));
-                self.call("ui.drag", json!({"x0": x0, "y0": y0, "x1": x1, "y1": y1, "steps": steps, "shift": flag("shift"), "ctrl": flag("ctrl")}))
+                self.call(
+                    "ui.drag",
+                    json!({"x0": x0, "y0": y0, "x1": x1, "y1": y1, "steps": steps, "shift": flag("shift"), "ctrl": flag("ctrl"), "alt": flag("alt")}),
+                )
             } else if let Some(m) = s.get("queued").and_then(Value::as_str) {
                 let (v, frames) = self.call_queued(m, s.get("params").cloned().unwrap_or(json!({})));
                 let min = s.get("min_frames").and_then(Value::as_u64).unwrap_or(0);
@@ -432,6 +438,8 @@ impl Harness {
                 }
                 self.app.cam_anim = None;
                 self.frames(2);
+                // Where `camera.panned` and `camera.zoomed` checks measure from.
+                self.cam_mark = Some(self.app.cam);
                 return Ok(());
             } else if let Some(v) = s.get("view_anim").and_then(Value::as_str) {
                 return self.view_anim(v, s.get("max_deg").and_then(Value::as_f64).unwrap_or(10.0));
@@ -610,6 +618,27 @@ pub fn check(h: &mut Harness, e: &Value) -> Result<(), String> {
                 let near = |got: f64, want: &Value| want.as_f64().is_none_or(|w| ((got - w + 540.0).rem_euclid(360.0) - 180.0).abs() < 0.5);
                 if !near(yaw, &v["yaw_deg"]) || !near(pitch, &v["pitch_deg"]) {
                     return Err(format!("camera yaw {yaw:.2}°, pitch {pitch:.2}°, want {v}"));
+                }
+                // Since the last `camera` step: "panned" (bool: the target moved) and "zoomed"
+                // ("in", "out" or "no": the eye's distance from the target).
+                if !v["panned"].is_null() || !v["zoomed"].is_null() {
+                    let mark = h.cam_mark.ok_or("camera.panned/zoomed need a `camera` step first")?;
+                    let c = &h.app.cam;
+                    let moved = c.target.dist(mark.target) > 1e-6 * mark.distance.max(1.0);
+                    if v["panned"].as_bool().is_some_and(|want| want != moved) {
+                        return Err(format!("camera panned: got {moved}, want {}", v["panned"]));
+                    }
+                    let r = c.distance / mark.distance;
+                    let zoomed = if r < 1.0 - 1e-6 {
+                        "in"
+                    } else if r > 1.0 + 1e-6 {
+                        "out"
+                    } else {
+                        "no"
+                    };
+                    if v["zoomed"].as_str().is_some_and(|want| want != zoomed) {
+                        return Err(format!("camera zoomed: got {zoomed} (distance ×{r:.4}), want {}", v["zoomed"]));
+                    }
                 }
                 // "back": the world direction from the target to the eye.
                 if let Some(want) = v["back"].as_array() {

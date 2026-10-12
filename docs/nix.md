@@ -87,6 +87,19 @@ For older builds, including 0.3.0, set Anti-aliasing to 1x and restart when usin
 If that window cannot show the settings dialog, edit only the `msaa` field to `1` in
 `~/.local/share/solvecraft/graphics.json`; preserve any other settings.
 
+## Wayland, XWayland and niri
+
+On Linux the app runs through XWayland whenever an X display is available, because
+winit only supports dragging files from a file manager into the window on X11. On
+niri (detected from `XDG_CURRENT_DESKTOP` with a Wayland socket present) it stays on
+native Wayland instead, since window management such as maximize/restore misbehaves
+under niri's XWayland. The trade-off: **on native Wayland, dropping files onto the
+window does not work**; use File > Open or pass the file on the command line.
+This applies to every build, not only the Nix package.
+
+Override the choice with `SOLVECRAFT_WAYLAND=1` (always native Wayland) or
+`SOLVECRAFT_WAYLAND=0` (XWayland whenever an X display is available).
+
 ## Development shells
 
 `nix develop` supplies runtime libraries and uses the Rust/C toolchain already on

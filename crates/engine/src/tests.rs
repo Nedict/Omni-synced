@@ -118,10 +118,74 @@ fn join_meeting_nothing_keeps_the_first_body() {
     assert!(rel(volume(&mut s), 1064.0) < 1e-6);
 }
 
+mod boolean_diagnostics;
 mod component_frames;
 mod mirror_planes;
 mod primitive_points;
 mod robustness;
+
+/// Plan area a round of radius `r` fills at the concave corner `x` where circles (c1, r1) and
+/// (c2, r2) cross: the triangle of its contacts and the corner, less the three circular segments.
+fn round_gap(c1: [f64; 2], r1: f64, c2: [f64; 2], r2: f64, x: [f64; 2], r: f64) -> f64 {
+    let (a, b) = (r1 + r, r2 + r);
+    let d = (c2[0] - c1[0]).hypot(c2[1] - c1[1]);
+    let u = [(c2[0] - c1[0]) / d, (c2[1] - c1[1]) / d];
+    let along = (a * a - b * b + d * d) / (2.0 * d);
+    let side = if (x[0] - c1[0]) * -u[1] + (x[1] - c1[1]) * u[0] < 0.0 { -1.0 } else { 1.0 };
+    let off = (a * a - along * along).sqrt() * side;
+    let f = [c1[0] + u[0] * along - u[1] * off, c1[1] + u[1] * along + u[0] * off];
+    let t1 = [c1[0] + (f[0] - c1[0]) * r1 / a, c1[1] + (f[1] - c1[1]) * r1 / a];
+    let t2 = [c2[0] + (f[0] - c2[0]) * r2 / b, c2[1] + (f[1] - c2[1]) * r2 / b];
+    let angle = |c: [f64; 2], p: [f64; 2], q: [f64; 2]| {
+        let (v, w) = ([p[0] - c[0], p[1] - c[1]], [q[0] - c[0], q[1] - c[1]]);
+        ((v[0] * w[0] + v[1] * w[1]) / (v[0].hypot(v[1]) * w[0].hypot(w[1]))).clamp(-1.0, 1.0).acos()
+    };
+    let segment = |r: f64, t: f64| r * r * (t - t.sin()) / 2.0;
+    let triangle = ((x[0] - t1[0]) * (t2[1] - t1[1]) - (t2[0] - t1[0]) * (x[1] - t1[1])).abs() / 2.0;
+    triangle - segment(r1, angle(c1, t1, x)) - segment(r2, angle(c2, x, t2)) - segment(r, angle(f, t2, t1))
+}
+
+/// A profile of two overlapping arcs, extruded: the vertical edges where the two walls meet are
+/// straight lines between cylinders, and their rounds end on the caps across curved edges.
+#[test]
+fn fillet_the_edges_between_two_overlapping_cylinders() {
+    let (c1, r1) = ([0.0, 0.0], 17.140595088852663);
+    let (c2, r2) = ([10.715766135516247, 13.378055020402751], 9.666944358807896);
+    let (p, q) = ([1.7728134670876865, 17.048669520256194], [16.250324167975673, 5.452243981674495]);
+    let profile = 1087.5018766864137;
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    run(&mut s, "sketch.arc.center_point", json!({"center": c1, "start": p, "end": q}));
+    run(&mut s, "sketch.arc.center_point", json!({"center": c2, "start": q, "end": p}));
+    let si = run(&mut s, "sketch.inspect", json!({}));
+    assert!(rel(si["profiles"][0]["area_mm2"].as_f64().unwrap(), profile) < 1e-9, "{si}");
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 10}));
+    let counts = |s: &mut Session| {
+        let m = run(s, "inspect.measure", json!({}));
+        (m["total"]["faces"].as_u64(), m["total"]["edges"].as_u64(), m["total"]["vertices"].as_u64())
+    };
+    assert_eq!(counts(&mut s), (Some(4), Some(6), Some(4)));
+    let (gp, gq) = (round_gap(c1, r1, c2, r2, p, 6.0), round_gap(c1, r1, c2, r2, q, 6.0));
+    // One round: a blend face; the edge becomes two contact lines and two end arcs.
+    run(&mut s, "solid.fillet", json!({"edges": [[p[0], p[1], 5]], "radius": 6, "name": "Round"}));
+    let (v, expect) = (volume(&mut s), (profile + gp) * 10.0);
+    assert!(rel(v, expect) < 2e-4, "{v} vs {expect}");
+    assert_eq!(counts(&mut s), (Some(5), Some(9), Some(6)));
+    // Both corners in one fillet.
+    run(
+        &mut s,
+        "timeline.redefine",
+        json!({"feature": "Round", "command": "solid.fillet", "params": {"edges": [[p[0], p[1], 5], [q[0], q[1], 5]], "radius": 6}}),
+    );
+    let (v, expect) = (volume(&mut s), (profile + gp + gq) * 10.0);
+    assert!(rel(v, expect) < 2e-4, "{v} vs {expect}");
+    assert_eq!(counts(&mut s), (Some(6), Some(12), Some(8)));
+    // A larger round, whose contacts are found on the long arcs from their far ends too.
+    run(&mut s, "timeline.redefine", json!({"feature": "Round", "command": "solid.fillet", "params": {"edges": [[q[0], q[1], 5]], "radius": 13}}));
+    let (v, expect) = (volume(&mut s), (profile + round_gap(c1, r1, c2, r2, q, 13.0)) * 10.0);
+    assert!(rel(v, expect) < 2e-4, "{v} vs {expect}");
+}
 
 /// Sketch a 40 x 30 rectangle with dimensions, extrude 20, fillet a vertical edge, cut a hole.
 #[test]

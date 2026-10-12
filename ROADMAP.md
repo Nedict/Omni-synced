@@ -160,7 +160,8 @@ headline counts in-scope tabs only and lists the deferred ones separately.
   convex planar body or of an extruded part; fillets inside patterns; closed chains of curved
   edges between any two smooth sides (a branch pipe on a main pipe), by a rolling ball (the
   blend a rational B-spline through exact arcs), closed or ending at planar faces square to the
-  edges.
+  edges, where straight or curved cap edges are trimmed to the contacts (the straight edge
+  between two overlapping extruded arcs).
 - Booleans: prisms along one direction (plates with holes, slots, patterns of them, equal
   sections stacked end to end) are combined exactly in 2D. Qualified axial cuts preserve
   annular holes with overrun cutters, including inward Press Pull after a joined extrusion;
@@ -329,6 +330,12 @@ or edited values, including the Appearance panel.
   median opening, with 82% spent rebuilding geometry; halving full opening remains open.
 
 ## Kernel
+
+- Successful Boolean retries report their strategy and numerical adjustments as
+  feature warnings and structured inspection data. Diagnostics survive cached
+  evaluation, undo/redo and cold reopening; the robustness runner counts retry
+  events by strategy and reports any bounded-log truncation. Existing geometry
+  acceptance checks remain in force.
 
 - Boolean intersection-curve construction refuses point-only, collapsed and non-finite
   polylines without panicking. Direct constructor regressions retain valid open endpoints

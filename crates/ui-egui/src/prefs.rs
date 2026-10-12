@@ -18,9 +18,128 @@ use crate::theme::Tokens;
 use crate::viewport::NavMode;
 
 pub const UNITS: [&str; 5] = ["mm", "cm", "m", "in", "ft"];
-/// Mouse mappings: (id, label).
-pub const NAV_PRESETS: [(&str, &str); 5] =
-    [("fusion", "Fusion"), ("solidworks", "SolidWorks"), ("inventor", "Inventor"), ("alias", "Alias"), ("tinkercad", "Tinkercad")];
+/// A mouse button that can drag the camera.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NavButton {
+    Left,
+    Middle,
+    Right,
+}
+
+/// Modifier keys a binding needs held (others may be held too).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct NavKeys {
+    pub shift: bool,
+    pub ctrl: bool,
+    pub alt: bool,
+}
+
+impl NavKeys {
+    const NONE: NavKeys = NavKeys { shift: false, ctrl: false, alt: false };
+    const SHIFT: NavKeys = NavKeys { shift: true, ctrl: false, alt: false };
+    const CTRL: NavKeys = NavKeys { shift: false, ctrl: true, alt: false };
+    const SHIFT_ALT: NavKeys = NavKeys { shift: true, ctrl: false, alt: true };
+
+    /// All of these keys are held (Ctrl is Cmd on macOS).
+    fn held(self, m: Modifiers) -> bool {
+        (!self.shift || m.shift) && (!self.ctrl || m.ctrl || m.command) && (!self.alt || m.alt)
+    }
+}
+
+/// One camera binding: dragging `button` with `keys` held does `mode`.
+#[derive(Clone, Copy, Debug)]
+pub struct NavBinding {
+    pub button: NavButton,
+    pub keys: NavKeys,
+    pub mode: NavMode,
+}
+
+const fn bind(button: NavButton, keys: NavKeys, mode: NavMode) -> NavBinding {
+    NavBinding { button, keys, mode }
+}
+
+/// A mouse mapping: its bindings, most specific first (the first one whose button is dragged
+/// with all its keys held wins).
+pub struct NavPreset {
+    pub id: &'static str,
+    pub label: &'static str,
+    /// What the mouse does, for the Preferences page.
+    pub help: &'static str,
+    /// Choosing the preset turns the wheel the other way.
+    pub reverse_zoom: bool,
+    pub bindings: &'static [NavBinding],
+}
+
+impl NavPreset {
+    /// What dragging `button` with `mods` held does, if anything.
+    pub fn mode(&self, button: NavButton, mods: Modifiers) -> Option<NavMode> {
+        self.bindings.iter().find(|b| b.button == button && b.keys.held(mods)).map(|b| b.mode)
+    }
+}
+
+use NavButton::{Left, Middle, Right};
+use NavMode::{Orbit, Pan, Zoom};
+
+/// The mouse mappings. The first is the default.
+pub const NAV_PRESETS: [NavPreset; 5] = [
+    NavPreset {
+        id: "fusion",
+        label: "Fusion",
+        help: "Middle drag pans, Shift+middle orbits, right drag orbits",
+        reverse_zoom: false,
+        bindings: &[bind(Middle, NavKeys::SHIFT, Orbit), bind(Middle, NavKeys::NONE, Pan), bind(Right, NavKeys::NONE, Orbit)],
+    },
+    NavPreset {
+        id: "solidworks",
+        label: "SolidWorks",
+        help: "Middle drag orbits, Ctrl+middle pans, Shift+middle zooms, right drag orbits",
+        reverse_zoom: true,
+        bindings: &[
+            bind(Middle, NavKeys::CTRL, Pan),
+            bind(Middle, NavKeys::SHIFT, Zoom),
+            bind(Middle, NavKeys::NONE, Orbit),
+            bind(Right, NavKeys::NONE, Orbit),
+        ],
+    },
+    NavPreset {
+        id: "inventor",
+        label: "Inventor",
+        help: "Middle drag pans, Shift+middle orbits, Ctrl+middle zooms, right drag orbits",
+        reverse_zoom: false,
+        bindings: &[
+            bind(Middle, NavKeys::SHIFT, Orbit),
+            bind(Middle, NavKeys::CTRL, Zoom),
+            bind(Middle, NavKeys::NONE, Pan),
+            bind(Right, NavKeys::NONE, Orbit),
+        ],
+    },
+    NavPreset {
+        id: "alias",
+        label: "Alias",
+        help: "Shift+Alt+left drag orbits, Shift+Alt+middle pans, Shift+Alt+right zooms; middle drag also pans and right drag orbits",
+        reverse_zoom: false,
+        bindings: &[
+            bind(Left, NavKeys::SHIFT_ALT, Orbit),
+            bind(Middle, NavKeys::SHIFT_ALT, Pan),
+            bind(Right, NavKeys::SHIFT_ALT, Zoom),
+            bind(Middle, NavKeys::CTRL, Zoom),
+            bind(Middle, NavKeys::NONE, Pan),
+            bind(Right, NavKeys::NONE, Orbit),
+        ],
+    },
+    NavPreset {
+        id: "tinkercad",
+        label: "Tinkercad",
+        help: "Right drag orbits, middle or Shift+right drag pans",
+        reverse_zoom: false,
+        bindings: &[bind(Right, NavKeys::SHIFT, Pan), bind(Right, NavKeys::NONE, Orbit), bind(Middle, NavKeys::NONE, Pan)],
+    },
+];
+
+/// The preset with this id (the default for an unknown one).
+pub fn nav_preset(id: &str) -> &'static NavPreset {
+    NAV_PRESETS.iter().find(|p| p.id == id).unwrap_or(&NAV_PRESETS[0])
+}
 /// The dialog's pages, in order.
 pub const PAGES: [&str; 7] = ["General", "Navigation", "Keyboard Shortcuts", "Design", "Graphics", "Sketch", "Selection"];
 pub const PAGE_SHORTCUTS: usize = 2;
@@ -254,40 +373,9 @@ pub fn set_autosave(app: &mut SolveApp) {
     }
 }
 
-/// Which navigation a mouse drag does under the preset.
-pub fn nav_mode(app: &SolveApp, middle: bool, secondary: bool, mods: Modifiers) -> Option<NavMode> {
-    if secondary && !middle {
-        // Tinkercad: Shift+right pans; everywhere else right drag orbits.
-        return Some(if app.preferences.nav == "tinkercad" && mods.shift { NavMode::Pan } else { NavMode::Orbit });
-    }
-    if !middle {
-        return None;
-    }
-    let ctrl = mods.ctrl || mods.command;
-    match app.preferences.nav.as_str() {
-        // Middle orbits, Ctrl+middle pans, Shift+middle zooms.
-        "solidworks" => Some(if ctrl {
-            NavMode::Pan
-        } else if mods.shift {
-            NavMode::Zoom
-        } else {
-            NavMode::Orbit
-        }),
-        // Middle pans, Shift+middle orbits, Ctrl+middle zooms.
-        "inventor" => Some(if mods.shift {
-            NavMode::Orbit
-        } else if ctrl {
-            NavMode::Zoom
-        } else {
-            NavMode::Pan
-        }),
-        // Alias: middle pans, Ctrl+middle zooms (right drag orbits).
-        "alias" => Some(if ctrl { NavMode::Zoom } else { NavMode::Pan }),
-        // Tinkercad: middle pans.
-        "tinkercad" => Some(NavMode::Pan),
-        // Fusion: middle pans, Shift+middle orbits.
-        _ => Some(if mods.shift { NavMode::Orbit } else { NavMode::Pan }),
-    }
+/// Which navigation dragging `button` with `mods` held does under the preset.
+pub fn nav_mode(app: &SolveApp, button: NavButton, mods: Modifiers) -> Option<NavMode> {
+    nav_preset(&app.preferences.nav).mode(button, mods)
 }
 
 /// +1, or −1 when the wheel zooms the other way.
@@ -618,17 +706,15 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
         }
         1 => {
             ui.label("Pan, zoom, orbit");
-            egui::ComboBox::from_id_salt("pref_nav")
-                .selected_text(NAV_PRESETS.iter().find(|(id, _)| *id == app.preferences.nav).map_or("Fusion", |x| x.1))
-                .show_ui(ui, |ui| {
-                    for (id, label) in NAV_PRESETS {
-                        if ui.selectable_value(&mut app.preferences.nav, id.to_string(), label).clicked() {
-                            app.preferences.zoom_reverse = id == "solidworks";
-                        }
+            egui::ComboBox::from_id_salt("pref_nav").selected_text(nav_preset(&app.preferences.nav).label).show_ui(ui, |ui| {
+                for p in &NAV_PRESETS {
+                    if ui.selectable_value(&mut app.preferences.nav, p.id.to_string(), p.label).clicked() {
+                        app.preferences.zoom_reverse = p.reverse_zoom;
                     }
-                });
+                }
+            });
             ui.end_row();
-            note(ui, &format!("{}; hold Shift during orbit to snap; the wheel zooms", nav_help(&app.preferences.nav)));
+            note(ui, &format!("{}; hold Shift during orbit to snap; the wheel zooms", nav_preset(&app.preferences.nav).help));
             ui.label("Context menu");
             ui.checkbox(&mut app.preferences.radial_context_menu, "Radial context menu");
             ui.end_row();
@@ -732,17 +818,6 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     });
 }
 
-/// What the mouse does under a preset.
-pub fn nav_help(preset: &str) -> &'static str {
-    match preset {
-        "solidworks" => "Middle drag orbits, Ctrl+middle pans, Shift+middle zooms, right drag orbits",
-        "inventor" => "Middle drag pans, Shift+middle orbits, Ctrl+middle zooms, right drag orbits",
-        "alias" => "Alt+right or right drag orbits, middle drag pans, Ctrl+middle zooms",
-        "tinkercad" => "Right drag orbits, middle or Shift+right drag pans",
-        _ => "Middle drag pans, Shift+middle orbits, right drag orbits",
-    }
-}
-
 /// The control channel's `ui.prefs`: `open` (a page name) opens the dialog there, `button`
 /// presses OK, Cancel, Apply or Restore Defaults, `stand_up: true` answers the stand-up offer;
 /// any other keys set preferences. Returns them all, the open page and the offer.
@@ -795,7 +870,7 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     if !UNITS.contains(&new.default_units.as_str()) {
         return Err(format!("units must be one of {}", UNITS.join(", ")));
     }
-    if !NAV_PRESETS.iter().any(|(id, _)| *id == new.nav) || !MSAA.contains(&new.msaa) {
+    if !NAV_PRESETS.iter().any(|p| p.id == new.nav) || !MSAA.contains(&new.msaa) {
         return Err("`nav` must be fusion, solidworks, inventor, alias or tinkercad and `msaa` 1, 2, 4 or 8".into());
     }
     if !THEMES.iter().any(|(id, _)| *id == new.theme) || !["z", "y"].contains(&new.up_axis.as_str()) {
@@ -890,15 +965,25 @@ mod tests {
         let shift = Modifiers { shift: true, ..Default::default() };
         let ctrl = Modifiers { ctrl: true, ..Default::default() };
         let none = Modifiers::default();
-        assert!(matches!(nav_mode(&app, true, false, none), Some(NavMode::Pan)));
-        assert!(matches!(nav_mode(&app, true, false, shift), Some(NavMode::Orbit)));
+        assert!(matches!(nav_mode(&app, NavButton::Middle, none), Some(NavMode::Pan)));
+        assert!(matches!(nav_mode(&app, NavButton::Middle, shift), Some(NavMode::Orbit)));
         set(&mut app, &json!({"nav": "solidworks"})).unwrap();
-        assert!(matches!(nav_mode(&app, true, false, none), Some(NavMode::Orbit)));
-        assert!(matches!(nav_mode(&app, true, false, ctrl), Some(NavMode::Pan)));
+        assert!(matches!(nav_mode(&app, NavButton::Middle, none), Some(NavMode::Orbit)));
+        assert!(matches!(nav_mode(&app, NavButton::Middle, ctrl), Some(NavMode::Pan)));
         set(&mut app, &json!({"nav": "inventor", "zoom_reverse": true})).unwrap();
-        assert!(matches!(nav_mode(&app, true, false, ctrl), Some(NavMode::Zoom)));
+        assert!(matches!(nav_mode(&app, NavButton::Middle, ctrl), Some(NavMode::Zoom)));
         assert_eq!(zoom_sign(&app), -1.0);
-        assert!(matches!(nav_mode(&app, false, true, none), Some(NavMode::Orbit)), "right drag orbits everywhere");
+        assert!(matches!(nav_mode(&app, NavButton::Right, none), Some(NavMode::Orbit)), "right drag orbits everywhere");
+        assert_eq!(nav_mode(&app, NavButton::Left, none), None, "left drag selects");
+        let shift_alt = Modifiers { shift: true, alt: true, ..Default::default() };
+        assert_eq!(nav_mode(&app, NavButton::Left, shift_alt), None, "only Alias navigates with the left button");
+        set(&mut app, &json!({"nav": "alias"})).unwrap();
+        assert_eq!(nav_mode(&app, NavButton::Left, shift_alt), Some(NavMode::Orbit));
+        assert_eq!(nav_mode(&app, NavButton::Middle, shift_alt), Some(NavMode::Pan));
+        assert_eq!(nav_mode(&app, NavButton::Right, shift_alt), Some(NavMode::Zoom));
+        assert_eq!(nav_mode(&app, NavButton::Left, none), None, "a plain left drag still selects");
+        assert_eq!(nav_mode(&app, NavButton::Left, shift), None);
+        assert_eq!(nav_mode(&app, NavButton::Right, none), Some(NavMode::Orbit));
         assert!(set(&mut app, &json!({"nav": "blender"})).is_err());
         assert!(set(&mut app, &json!({"default_units": "furlong"})).is_err());
         assert!(set(&mut app, &json!({"nope": 1})).is_err());
