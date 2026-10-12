@@ -363,3 +363,13 @@ fn base64_matches_rfc4648() {
         assert_eq!(base64(i.as_bytes()), o);
     }
 }
+
+/// Filtering by a command id returns that command, not every command whose docs mention it (#269).
+#[test]
+fn list_commands_filter_by_a_command_id_matches_ids() {
+    let mut s = server();
+    let cmds = tool(&mut s, "list_commands", json!({"filter": "sketch.delete"}));
+    let ids: Vec<&str> = cmds.as_array().unwrap().iter().filter_map(|c| c["id"].as_str()).collect();
+    assert!(ids.contains(&"sketch.delete"), "{ids:?}");
+    assert!(ids.iter().all(|id| id.contains("sketch.delete")), "{} commands matched: {ids:?}", ids.len());
+}

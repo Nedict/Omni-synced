@@ -347,10 +347,49 @@ pub fn unit_scale(units: &str) -> (f64, &'static str) {
     }
 }
 
+/// Inch labels retain a meaningful fourth digit without promoting floating-point noise.
+pub fn length_precision(value: f64, units: &str, decimals: u8) -> usize {
+    let base = usize::from(decimals.min(8));
+    if units != "in" {
+        return base;
+    }
+    let needs_four = ((value * 10_000.0).round() - (value * 1000.0).round() * 10.0).abs() >= 0.5;
+    base.max(if needs_four { 4 } else { 3 })
+}
+
+pub fn length_number(mm: f64, units: &str, decimals: u8) -> String {
+    let value = mm * unit_scale(units).0;
+    format!("{:.*}", length_precision(value, units, decimals), value)
+}
+
+/// Edit a millimetre value through a control expressed in the current design units.
+/// Keep the stored value untouched unless the user actually changes the field.
+pub fn length_drag<'a>(value: &'a mut f64, units: &str, decimals: u8) -> egui::DragValue<'a> {
+    let (scale, unit) = unit_scale(units);
+    egui::DragValue::new(value)
+        .speed(0.5)
+        .suffix(format!(" {unit}"))
+        .custom_formatter(move |mm, _| length_number(mm, unit, decimals))
+        .custom_parser(move |text| parse_length_mm(text, scale))
+}
+
+/// A length typed into a field, in millimetres: a bare number is in the design's units (`scale`
+/// units per millimetre); an explicit unit ("10 mm", "0.5 in", "2 cm + 3 mm") is honoured.
+pub fn parse_length_mm(text: &str, scale: f64) -> Option<f64> {
+    use solvecraft_engine::doc::expr;
+    if !(scale.is_finite() && scale > 0.0) {
+        return None;
+    }
+    let defaults = expr::Defaults { len: 1.0 / scale, ..expr::Defaults::default() };
+    let no_params = |n: &str| Err(solvecraft_engine::doc::DocError::Expr(format!("unknown parameter `{n}`")));
+    let value = expr::eval_with_defaults(text.trim(), &no_params, defaults).ok()?.to_kind_in(expr::Kind::Length, defaults).ok()?;
+    value.is_finite().then_some(value)
+}
+
 /// A length in millimetres in `units`, with `decimals` (for display).
 pub fn format_length(mm: f64, units: &str, decimals: u8) -> String {
-    let (k, u) = unit_scale(units);
-    format!("{:.*} {u}", usize::from(decimals.min(8)), mm * k)
+    let (_, u) = unit_scale(units);
+    format!("{} {u}", length_number(mm, units, decimals))
 }
 
 /// A length, area (`power` 2) or volume (3) given in millimetres, shown in the design's units
@@ -362,13 +401,13 @@ pub fn show_mm(app: &SolveApp, v: f64, power: i32) -> String {
         3 => "³",
         _ => "",
     };
-    format!("{:.*} {u}{sup}", usize::from(app.preferences.length_decimals.min(8)), v * k.powi(power))
+    let value = v * k.powi(power);
+    format!("{:.*} {u}{sup}", length_precision(value, &app.session.doc.units, app.preferences.length_decimals), value)
 }
 
 /// Numbers in millimetres, in the design's units without the unit name.
 pub fn show_mm_bare(app: &SolveApp, v: f64) -> String {
-    let (k, _) = unit_scale(&app.session.doc.units);
-    format!("{:.*}", usize::from(app.preferences.length_decimals.min(8)), v * k)
+    length_number(v, &app.session.doc.units, app.preferences.length_decimals)
 }
 
 /// Write the anti-aliasing setting where the host reads it at start (the window's samples can't
@@ -396,52 +435,64 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let mut open = true;
     let mut button: Option<&str> = None;
     let before = app.preferences.clone();
-    crate::frame::window(ctx, app.tr("ui.preferences"), crate::frame::Width::Wide)
+    let shown = crate::frame::window(ctx, app.tr("ui.preferences"), crate::frame::Width::Wide)
         .id(egui::Id::new("sc_prefs"))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
         .show(ctx, |ui| {
-            // A fixed page area: the vertical separator fills the height it is given, so an
-            // auto-sized one would grow every frame.
-            ui.allocate_ui_with_layout(egui::vec2(700.0, 400.0), egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                ui.set_min_size(egui::vec2(700.0, 400.0));
-                ui.vertical(|ui| {
-                    ui.set_width(140.0);
-                    for (i, s) in PAGES.iter().enumerate() {
-                        if ui.selectable_label(app.prefs_window.section == i, app.tr_label(s)).clicked() {
-                            app.prefs_window.section = i;
-                            app.keymap.read_only = false;
-                        }
+            // One fixed size for every page (#290): the page is drawn into a clipped child of
+            // that size and only that size is allocated, so no page (or translation) can widen
+            // the window; descriptions wrap and tall pages scroll inside it.
+            ui.set_max_width(PREFS_W);
+            let (body, _) = ui.allocate_exact_size(egui::vec2(PREFS_W, PREFS_H), egui::Sense::hover());
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::left_to_right(egui::Align::Min)));
+            child.shrink_clip_rect(body);
+            let ui_body = &mut child;
+            ui_body.vertical(|ui| {
+                ui.set_width(PREFS_NAV_W);
+                for (i, s) in PAGES.iter().enumerate() {
+                    if ui.selectable_label(app.prefs_window.section == i, app.tr_label(s)).clicked() {
+                        app.prefs_window.section = i;
+                        app.keymap.read_only = false;
                     }
-                });
-                ui.separator();
-                ui.vertical(|ui| {
-                    // A fixed width, so the window keeps its size from page to page.
-                    ui.set_width(540.0);
-                    ui.label(RichText::new(app.tr_label(PAGES.get(app.prefs_window.section).copied().unwrap_or_default())).strong().size(14.0));
-                    ui.add_space(6.0);
+                }
+            });
+            ui_body.separator();
+            ui_body.vertical(|ui| {
+                ui.set_width(ui.available_width());
+                ui.label(RichText::new(app.tr_label(PAGES.get(app.prefs_window.section).copied().unwrap_or_default())).strong().size(14.0));
+                ui.add_space(6.0);
+                if app.prefs_window.section == PAGE_SHORTCUTS {
+                    // The shortcuts table scrolls by itself.
                     page(app, ui, &t);
-                });
+                } else {
+                    egui::ScrollArea::vertical().id_salt("sc_prefs_page").auto_shrink([false, false]).show(ui, |ui| page(app, ui, &t));
+                }
             });
             ui.separator();
+            // Restore Defaults at the left; OK, Cancel and Apply flush right, as in every dialog.
             ui.horizontal(|ui| {
+                ui.set_width(PREFS_W);
                 if ui.button(app.tr("ui.restore_defaults")).on_hover_text(app.tr("ui.reset_the_settings_on_this_page")).clicked() {
                     button = Some("defaults");
                 }
-                crate::frame::right_aligned(ui, 700.0, 170.0, |ui| {
-                    if ui.button(app.tr("ui.heading_ok")).clicked() {
-                        button = Some("ok");
-                    }
-                    if ui.button(app.tr("ui.cancel")).clicked() {
-                        button = Some("cancel");
-                    }
-                    if ui.button(app.tr("ui.apply")).clicked() {
-                        button = Some("apply");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Right to left: Apply is the rightmost.
+                    for (key, id) in [("ui.apply", "apply"), ("ui.cancel", "cancel"), ("ui.heading_ok", "ok")] {
+                        let r = ui.button(app.tr(key));
+                        crate::scenario::publish_rect(&format!("prefs:{id}"), r.rect);
+                        if r.clicked() {
+                            button = Some(id);
+                        }
                     }
                 });
+                crate::scenario::publish_rect("prefs:footer", ui.max_rect());
             });
         });
+    if let Some(w) = &shown {
+        crate::scenario::publish_rect("prefs:window", w.response.rect);
+    }
     if app.preferences.msaa != before.msaa {
         save_graphics(app);
     }
@@ -485,12 +536,19 @@ fn up_axis_changed(app: &mut SolveApp) {
     }
 }
 
+/// The Preferences window's content size: the same on every page.
+const PREFS_W: f32 = 744.0;
+const PREFS_H: f32 = 400.0;
+/// The page list at its left.
+const PREFS_NAV_W: f32 = 128.0;
+
 /// One page of the dialog.
 fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     let _language = crate::i18n::scope(&app.preferences.language);
     let note = |ui: &mut egui::Ui, s: &str| {
         ui.label("");
-        ui.label(RichText::new(s).size(11.0).color(t.text_dim));
+        // Descriptions wrap within the page instead of widening it.
+        ui.add(egui::Label::new(RichText::new(s).size(11.0).color(t.text_dim)).wrap());
         ui.end_row();
     };
     if app.prefs_window.section == PAGE_SHORTCUTS {
@@ -767,6 +825,22 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn length_fields_read_bare_numbers_in_design_units_and_honour_explicit_units() {
+        let inch = unit_scale("in").0;
+        let close = |a: Option<f64>, b: f64| a.is_some_and(|a| (a - b).abs() < 1e-9);
+        assert!(close(parse_length_mm("2", inch), 50.8));
+        assert!(close(parse_length_mm(" 10 mm ", inch), 10.0));
+        assert!(close(parse_length_mm("0.5 in", 1.0), 12.7));
+        assert!(close(parse_length_mm("1 in + 5 mm", unit_scale("cm").0), 30.4));
+        assert!(close(parse_length_mm("3", unit_scale("cm").0), 30.0));
+        assert!(close(parse_length_mm("3", 1.0), 3.0));
+        assert_eq!(parse_length_mm("10 deg", inch), None);
+        assert_eq!(parse_length_mm("abc", inch), None);
+        assert_eq!(parse_length_mm("", inch), None);
+        assert_eq!(parse_length_mm("1e400", 1.0), None);
+    }
 
     #[test]
     fn radial_context_menu_defaults_off_and_follows_preferences_transactions() {

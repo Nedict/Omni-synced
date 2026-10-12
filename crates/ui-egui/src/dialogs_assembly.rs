@@ -591,7 +591,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             }
             ui.end_row();
             if let Some(r) = result.as_ref() {
-                interference_rows(ui, r);
+                interference_rows(app, ui, r);
             }
         }
     }
@@ -623,7 +623,7 @@ fn interference(app: &mut SolveApp, picked: &[Sel]) -> (Value, Vec<Mesh>) {
     (r, meshes)
 }
 
-fn interference_rows(ui: &mut egui::Ui, r: &Value) {
+fn interference_rows(app: &SolveApp, ui: &mut egui::Ui, r: &Value) {
     let t = Tokens::get();
     if let Some(e) = r.get("error").and_then(Value::as_str) {
         row_label(ui, "");
@@ -646,7 +646,7 @@ fn interference_rows(ui: &mut egui::Ui, r: &Value) {
     ui.end_row();
     for h in hits {
         row_label(ui, &format!("{} · {}", h["a"].as_str().unwrap_or(""), h["b"].as_str().unwrap_or("")));
-        ui.label(RichText::new(format!("{:.3} mm³", h["volume_mm3"].as_f64().unwrap_or(0.0))).color(t.error));
+        ui.label(RichText::new(crate::prefs::show_mm(app, h["volume_mm3"].as_f64().unwrap_or(0.0), 3)).color(t.error));
         ui.end_row();
     }
 }

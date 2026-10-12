@@ -48,7 +48,7 @@ Claude Desktop (`claude_desktop_config.json`), bridged to a running app:
 
 | Tool | Arguments | What it does |
 |---|---|---|
-| `list_commands` | `filter?` | The command catalog: id, label, tab/panel, shortcut, parameter docs, enabled now. |
+| `list_commands` | `filter?` | The command catalog: id, label, tab/panel, shortcut, parameter docs, enabled now. `filter` matches id, label, tab and panel. |
 | `execute` | `command`, `params?` | Run any command with JSON parameters (`list_commands` shows them). Failures leave the design unchanged. |
 | `batch` | `commands: [{command, params}]`, `rollback?` (default true) | Run steps in order, stop at the first error and undo the completed steps. The reply names the failing step (`failed.index`, `failed.command`, `failed.error`) and every result before it. |
 | `inspect_design` | `measure?` (default true), `sketches?` (default true) | Parameters, timeline (type, suppressed, rolled back, error, warning, timing), bodies (volume, area, centre of mass, bbox, face/edge/vertex counts, visible), sketches (curves, points, constraints, profiles, DOF, solve status, visible), selection, undo depth. Hide helper sketches, bodies or construction planes with `execute` `browser.visibility` (`{items, visible}` or `{folder, visible}`). |

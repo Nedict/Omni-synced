@@ -45,7 +45,8 @@ pub fn tool_definitions() -> Vec<Value> {
             "The command catalog: id, label, toolbar tab/panel, shortcut, one-line parameter docs and whether the command is \
              enabled right now. Ids are dotted and lower-case (solid.extrude, sketch.create, \
              solid.fillet, sketch.inspect, timeline.rollback). Optional case-insensitive \
-             substring `filter` over id, label, panel and params.",
+             substring `filter` over id, label, tab and panel (not the parameter docs, so a command id \
+             finds that command rather than every command whose docs mention it).",
             obj(json!({"filter": string("Substring to match, e.g. \"sketch\", \"fillet\", \"pattern\"")}), &[]),
             true,
             false,
@@ -310,9 +311,8 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<V
             let all = b.call("engine.commands", json!({}))?;
             let Some(f) = str_arg(a, "filter").map(str::to_lowercase).filter(|f| !f.is_empty()) else { return Ok(all) };
             let hit = |c: &Value| {
-                ["id", "label", "panel", "tab", "params"]
-                    .iter()
-                    .any(|k| c.get(*k).and_then(Value::as_str).is_some_and(|s| s.to_lowercase().contains(&f)))
+                // Not "params": many docs name other commands (e.g. "usable in sketch.delete"), #269.
+                ["id", "label", "panel", "tab"].iter().any(|k| c.get(*k).and_then(Value::as_str).is_some_and(|s| s.to_lowercase().contains(&f)))
             };
             Ok(Value::Array(all.as_array().map(|v| v.iter().filter(|c| hit(c)).cloned().collect()).unwrap_or_default()))
         }
