@@ -218,16 +218,16 @@ fn signature(app: &SolveApp, dialog: Option<&dialogs::Dialog>) -> u64 {
     h.0.finish()
 }
 
-fn reportable(feature: &solvecraft_engine::doc::Feature) -> bool {
+fn reportable(feature: &solidcraft_engine::doc::Feature) -> bool {
     !matches!(
         feature.kind,
-        solvecraft_engine::doc::FeatureKind::Sketch { .. }
-            | solvecraft_engine::doc::FeatureKind::Import { .. }
-            | solvecraft_engine::doc::FeatureKind::MeshImport { .. }
+        solidcraft_engine::doc::FeatureKind::Sketch { .. }
+            | solidcraft_engine::doc::FeatureKind::Import { .. }
+            | solidcraft_engine::doc::FeatureKind::MeshImport { .. }
     )
 }
 
-fn feature_context(feature: &solvecraft_engine::doc::Feature) -> String {
+fn feature_context(feature: &solidcraft_engine::doc::Feature) -> String {
     format!("Feature {}: {}\n{}", feature.id, debug(&feature.name, 160), block(&json_context(&feature.kind, 2000)))
 }
 
@@ -249,7 +249,7 @@ pub fn draft_for(app: &SolveApp, dialog: Option<&dialogs::Dialog>, error: Option
     context.push_str("\nSelected items (including occurrence paths):\n");
     context.push_str(&block(&debug(&app.session.selection.iter().take(32).collect::<Vec<_>>(), 3000)));
     for item in app.session.selection.iter().take(8) {
-        if let solvecraft_engine::Sel::Feature { id } = item
+        if let solidcraft_engine::Sel::Feature { id } = item
             && let Some(feature) = app.session.doc.feature(*id)
             && reportable(feature)
         {
@@ -289,7 +289,7 @@ pub fn draft_for(app: &SolveApp, dialog: Option<&dialogs::Dialog>, error: Option
     Draft { title, body, image: None, texture: None, note: String::new(), source_signature: source_signature(app, dialog) }
 }
 
-/// A draft from a crash report (`solvecraft_engine::crash`): what happened, where, the command
+/// A draft from a crash report (`solidcraft_engine::crash`): what happened, where, the command
 /// and how to replay it. The design stays on this computer; the draft says how to share it.
 pub fn crash_draft(report: &serde_json::Value) -> Draft {
     let s = |k: &str| report.get(k).and_then(serde_json::Value::as_str).unwrap_or("?").to_string();
@@ -328,7 +328,7 @@ pub fn crash_draft(report: &serde_json::Value) -> Draft {
         if recent.is_empty() { "(none recorded)".to_string() } else { recent.join(", ") },
         s("id"),
         match (report.get("design_path").is_some(), report.get("replay_path").is_some()) {
-            (true, true) => "the design as it was before the crash (design.solvecraft) and the commands that crash it (replay.json)",
+            (true, true) => "the design as it was before the crash (design.solidcraft) and the commands that crash it (replay.json)",
             (false, true) => "the commands that crash it on a new design (replay.json)",
             _ => "no replay (see its notes)",
         },
@@ -622,7 +622,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
     use super::*;
     use serde_json::json;
-    use solvecraft_engine::{Sel, Session};
+    use solidcraft_engine::{Sel, Session};
 
     fn app() -> SolveApp {
         SolveApp::new(Session::default(), Default::default())
@@ -909,7 +909,7 @@ mod tests {
         h.app.run("sketch.line", json!({"points":[[0,0],[20,0]]})).unwrap();
         h.call("ui.view", json!({"view":"top"}));
         h.app.cam.distance = 80.0;
-        h.app.cam.target = solvecraft_engine::geom::Vec3::new(10.0, 0.0, 0.0);
+        h.app.cam.target = solidcraft_engine::geom::Vec3::new(10.0, 0.0, 0.0);
         h.settle();
         h.step(&json!({"start":"sketch.dimension"})).unwrap();
         for point in [[0, 0, 0], [20, 0, 0], [10, 5, 0]] {

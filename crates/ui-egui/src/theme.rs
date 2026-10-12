@@ -255,7 +255,7 @@ impl Tokens {
 
 /// How a physical material looks (the default appearance follows the material).
 pub fn material_color(name: &str) -> Option<Color32> {
-    solvecraft_engine::doc::material_color(name).map(|[r, g, b]| Color32::from_rgb(r, g, b))
+    solidcraft_engine::doc::material_color(name).map(|[r, g, b]| Color32::from_rgb(r, g, b))
 }
 
 /// Switch themes (the visuals follow on the next [`apply`]).

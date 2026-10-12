@@ -1,5 +1,5 @@
 use serde_json::json;
-use solvecraft_engine::Session;
+use solidcraft_engine::Session;
 
 use super::*;
 use crate::Services;
@@ -295,7 +295,7 @@ fn bend_table_picker_writes_the_current_body() {
     app.run("sheet.flange", json!({"sketch": "Base"})).unwrap();
     app.run("sheet.flange", json!({"edges": [[50, 0, 2.5]], "height": 20})).unwrap();
     let body = app.session.model.state().sheets[0].body.clone();
-    let path = std::env::temp_dir().join(format!("solvecraft-bend-table-{}.csv", std::process::id()));
+    let path = std::env::temp_dir().join(format!("solidcraft-bend-table-{}.csv", std::process::id()));
     let output = path.to_string_lossy().into_owned();
     let chosen = output.clone();
     app.services.pick_save = Some(Box::new(move |_, extensions| {

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use egui::RichText;
 use serde_json::{Value, json};
-use solvecraft_engine::command_specs;
+use solidcraft_engine::command_specs;
 
 use crate::SolveApp;
 use crate::theme::Tokens;
@@ -63,7 +63,7 @@ pub fn effective(app: &SolveApp, id: &str) -> Option<String> {
     match app.keymap.custom.get(id) {
         Some(k) if k.is_empty() => None,
         Some(k) => Some(k.clone()),
-        None => solvecraft_engine::find_command(id).and_then(|c| c.shortcut).map(str::to_string),
+        None => solidcraft_engine::find_command(id).and_then(|c| c.shortcut).map(str::to_string),
     }
 }
 
@@ -74,20 +74,20 @@ pub fn commands_for(app: &SolveApp, key: &str) -> Vec<&'static str> {
 
 /// The enabled command a key press runs, if any.
 pub fn command_for(app: &SolveApp, key: &str) -> Option<&'static str> {
-    commands_for(app, key).into_iter().find(|id| solvecraft_engine::find_command(id).is_some_and(|c| c.info(&app.session).enabled))
+    commands_for(app, key).into_iter().find(|id| solidcraft_engine::find_command(id).is_some_and(|c| c.info(&app.session).enabled))
 }
 
 /// Bind `key` to a command (`""` clears it). Refused for reserved keys, and when other commands
 /// use the key unless `replace` (they lose it).
 pub fn bind(app: &mut SolveApp, id: &str, key: &str, replace: bool) -> Result<(), String> {
-    let spec = solvecraft_engine::find_command(id).ok_or_else(|| format!("no command `{id}`"))?;
+    let spec = solidcraft_engine::find_command(id).ok_or_else(|| format!("no command `{id}`"))?;
     if RESERVED.contains(&key) {
         return Err(format!("{key} is used by SolidCraft itself"));
     }
     if !key.is_empty() {
         let others: Vec<&'static str> = commands_for(app, key).into_iter().filter(|o| *o != id).collect();
         if !others.is_empty() && !replace {
-            let names: Vec<&str> = others.iter().filter_map(|o| solvecraft_engine::find_command(o).map(|c| c.label)).collect();
+            let names: Vec<&str> = others.iter().filter_map(|o| solidcraft_engine::find_command(o).map(|c| c.label)).collect();
             return Err(format!("{key} is already used by {}", names.join(", ")));
         }
         for o in others {
@@ -264,7 +264,7 @@ mod tests {
     use super::*;
 
     fn app() -> SolveApp {
-        SolveApp::new(solvecraft_engine::Session::default(), Default::default())
+        SolveApp::new(solidcraft_engine::Session::default(), Default::default())
     }
 
     #[test]

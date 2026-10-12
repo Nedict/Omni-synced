@@ -11,8 +11,8 @@ profile and the wasm build check.
 | Sketch fuzz | `crates/engine/src/cmd/sketch_fuzz_tests.rs` | random sketches through the solver and profile finder |
 | UI scenarios | `crates/ui-egui/tests/scenarios/*.json` | the real app, headless: clicks, keys, drags, assertions |
 | Layout tests | `crates/ui-egui/tests/ui_layout.rs`, `window_widths.rs` | panels and dialogs at every window width |
-| Design-file corpus | `apps/solvecraft-cli/tests/corpus` | every saved file version still opens and evaluates the same |
-| Kill mid-save | `apps/solvecraft-cli/tests/kill_mid_save.rs` | a save killed at any moment leaves a readable file |
+| Design-file corpus | `apps/solidcraft-cli/tests/corpus` | every saved file version still opens and evaluates the same |
+| Kill mid-save | `apps/solidcraft-cli/tests/kill_mid_save.rs` | a save killed at any moment leaves a readable file |
 | Reference tests | `cargo xtask oracle` → [docs/oracle.md](oracle.md) | parts rebuilt from `tests/oracle/*/recipe.json`, compared with analytic or FreeCAD expected values |
 
 ## UI scenarios
@@ -54,12 +54,12 @@ On GitHub, one job builds the tests into a
 Pull requests skip a few heavy tests (each takes one to four minutes); they run on every push to
 `main`, nightly, and in `cargo xtask test`:
 
-- `solvecraft-engine`: `tests::hostile_params_never_panic`, everything in `tests::robustness`,
+- `solidcraft-engine`: `tests::hostile_params_never_panic`, everything in `tests::robustness`,
   `pattern_suppress_tests::enclosure_arc_extinction_keeps_a_real_sharp_inner_lip_after_resize_and_reopen`,
   `pattern_suppress_tests::enclosure_datums_follow_wall_height_and_board_depth_with_material_proofs`,
   `cmd::plastic::tests::enclosure_snap_fit_follows_resized_front_wall`
-- `solvecraft-kernel`: `tests::boolean_identity_on_tangent_primitives`
-- `solvecraft-ui-egui` scenarios: `acceptance_sensor_enclosure`
+- `solidcraft-kernel`: `tests::boolean_identity_on_tangent_primitives`
+- `solidcraft-ui-egui` scenarios: `acceptance_sensor_enclosure`
 
 To run exactly what a pull request runs: `cargo nextest run --cargo-profile ci --profile ci`;
 add `--ignore-default-filter` for the full set. A new test that takes over a minute on CI can

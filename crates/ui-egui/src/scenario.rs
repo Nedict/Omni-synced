@@ -18,7 +18,7 @@
 //! - `{"choose_file": "part.step"}`: the next Open picker returns that file of the scenario's
 //!   folder (Save pickers save there)
 //! - `{"shot": "name"}`: a screenshot when run in a window; headless, a render of the model
-//!   into `$SOLVECRAFT_SCENARIO_SHOTS` when that is set; `{"debug": 1}`
+//!   into `$SOLIDCRAFT_SCENARIO_SHOTS` when that is set; `{"debug": 1}`
 //!   prints the UI state (`"widgets"`: also every widget's text; `"handles"`: every published
 //!   handle, browser rows as `row:<label>` and their fold arrows as `fold:<label>`)
 //! - `{"camera": {"yaw": rad, "pitch": rad}}` puts the camera at an orbit; `{"view_anim": "top",
@@ -41,7 +41,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use serde_json::{Value, json};
-use solvecraft_engine::Session;
+use solidcraft_engine::Session;
 
 use crate::control::{ControlRequest, Outcome, handle};
 use crate::{Services, SolveApp};
@@ -114,7 +114,7 @@ fn with_dir(v: Value, dir: &str) -> Value {
 fn scratch_dir() -> PathBuf {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static N: AtomicUsize = AtomicUsize::new(0);
-    let d = std::env::temp_dir().join(format!("solvecraft-scenario-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+    let d = std::env::temp_dir().join(format!("solidcraft-scenario-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
     let _ = std::fs::create_dir_all(&d);
     d
 }
@@ -135,7 +135,7 @@ pub struct Harness {
     time: f64,
     size: egui::Vec2,
     /// The camera as the last `camera` step left it.
-    cam_mark: Option<solvecraft_engine::render::Camera>,
+    cam_mark: Option<solidcraft_engine::render::Camera>,
 }
 
 impl Default for Harness {
@@ -145,9 +145,9 @@ impl Default for Harness {
 }
 
 impl Drop for Harness {
-    /// The scenario's files go with it (kept with SOLVECRAFT_SCENARIO_KEEP set).
+    /// The scenario's files go with it (kept with SOLIDCRAFT_SCENARIO_KEEP set).
     fn drop(&mut self) {
-        if std::env::var_os("SOLVECRAFT_SCENARIO_KEEP").is_none() {
+        if solidcraft_engine::geom::env::var_os("SCENARIO_KEEP").is_none() {
             let _ = std::fs::remove_dir_all(&self.dir);
         }
     }
@@ -324,7 +324,7 @@ impl Harness {
     /// frame may turn the view (its right or back vector) by more than `max_deg`, the last
     /// included, so the move ends without a jump.
     fn view_anim(&mut self, v: &str, max_deg: f64) -> Result<(), String> {
-        let basis = |c: &solvecraft_engine::render::Camera| c.basis();
+        let basis = |c: &solidcraft_engine::render::Camera| c.basis();
         let mut prev = basis(&self.app.cam);
         self.app.animate_view(v);
         if self.app.cam_anim.is_none() && self.app.viewport.orbit_snap.is_none() {
@@ -334,7 +334,7 @@ impl Harness {
         for i in 0..240 {
             self.frame();
             let now = basis(&self.app.cam);
-            let ang = |a: solvecraft_engine::geom::Vec3, b: solvecraft_engine::geom::Vec3| a.dot(b).clamp(-1.0, 1.0).acos().to_degrees();
+            let ang = |a: solidcraft_engine::geom::Vec3, b: solidcraft_engine::geom::Vec3| a.dot(b).clamp(-1.0, 1.0).acos().to_degrees();
             let d = ang(prev.0, now.0).max(ang(prev.2, now.2));
             if d > worst.0 {
                 worst = (d, i);
@@ -403,7 +403,7 @@ impl Harness {
                 v
             } else if let Some(f) = s.get("script").and_then(Value::as_str) {
                 // A command script (`{"commands": [{command, params}]}`, path from the repository
-                // root) run through the engine, as `solvecraft-cli run` does.
+                // root) run through the engine, as `solidcraft-cli run` does.
                 let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(f);
                 let text = std::fs::read_to_string(&path).map_err(|e| format!("{f}: {e}"))?;
                 let v: Value = serde_json::from_str(&text).map_err(|e| format!("{f}: {e}"))?;
@@ -422,8 +422,8 @@ impl Harness {
             } else if s.get("note").is_some() || s.get("pending").is_some() {
                 return Ok(());
             } else if let Some(name) = s.get("shot").and_then(Value::as_str) {
-                // With SOLVECRAFT_SCENARIO_SHOTS set: a render of the model as the camera sees it.
-                if let Ok(dir) = std::env::var("SOLVECRAFT_SCENARIO_SHOTS") {
+                // With SOLIDCRAFT_SCENARIO_SHOTS set: a render of the model as the camera sees it.
+                if let Ok(dir) = solidcraft_engine::geom::env::var("SCENARIO_SHOTS").ok_or(()) {
                     let path = std::path::Path::new(&dir).join(format!("{name}.png"));
                     self.call("ui.render", json!({"path": path.to_string_lossy(), "width": 1000, "height": 700}));
                 }

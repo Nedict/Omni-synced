@@ -1,4 +1,4 @@
-//! The SolveCraft engine.
+//! The SolidCraft engine.
 //!
 //! Every user-visible action is a command with a stable, dotted, lower-case id
 //! (`solid.extrude`, `sketch.create`, `solid.fillet`, `timeline.rollback`). Commands take JSON
@@ -22,16 +22,16 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use solvecraft_doc::{Document, Model, ModelState};
-use solvecraft_geom::Vec3;
+use solidcraft_doc::{Document, Model, ModelState};
+use solidcraft_geom::Vec3;
 
 pub use cmd::{CommandInfo, CommandSpec, auto_operation, command_specs, find_command};
-pub use solvecraft_doc as doc;
-pub use solvecraft_geom as geom;
-pub use solvecraft_io as io;
-pub use solvecraft_kernel as kernel;
-pub use solvecraft_render as render;
-pub use solvecraft_sketch as sketch;
+pub use solidcraft_doc as doc;
+pub use solidcraft_geom as geom;
+pub use solidcraft_io as io;
+pub use solidcraft_kernel as kernel;
+pub use solidcraft_render as render;
+pub use solidcraft_sketch as sketch;
 
 /// Longest accepted request line on the JSON-lines channels (MCP over stdio and the control
 /// server over loopback), so both refuse runaway input at the same size.
@@ -52,23 +52,23 @@ pub enum EngineError {
     Internal(String, String),
 }
 
-impl From<solvecraft_doc::DocError> for EngineError {
-    fn from(e: solvecraft_doc::DocError) -> Self {
+impl From<solidcraft_doc::DocError> for EngineError {
+    fn from(e: solidcraft_doc::DocError) -> Self {
         EngineError::Other(e.to_string())
     }
 }
-impl From<solvecraft_sketch::SketchError> for EngineError {
-    fn from(e: solvecraft_sketch::SketchError) -> Self {
+impl From<solidcraft_sketch::SketchError> for EngineError {
+    fn from(e: solidcraft_sketch::SketchError) -> Self {
         EngineError::Other(e.to_string())
     }
 }
-impl From<solvecraft_kernel::KernelError> for EngineError {
-    fn from(e: solvecraft_kernel::KernelError) -> Self {
+impl From<solidcraft_kernel::KernelError> for EngineError {
+    fn from(e: solidcraft_kernel::KernelError) -> Self {
         EngineError::Other(e.to_string())
     }
 }
-impl From<solvecraft_io::IoError> for EngineError {
-    fn from(e: solvecraft_io::IoError) -> Self {
+impl From<solidcraft_io::IoError> for EngineError {
+    fn from(e: solidcraft_io::IoError) -> Self {
         EngineError::Other(e.to_string())
     }
 }
@@ -146,7 +146,7 @@ pub struct Snapshot {
     pub label: String,
     pub doc: Arc<Document>,
     pub active_sketch: Option<u64>,
-    pub pending_moves: std::collections::BTreeMap<u64, solvecraft_doc::Mat>,
+    pub pending_moves: std::collections::BTreeMap<u64, solidcraft_doc::Mat>,
 }
 
 /// What some commands would make, evaluated on a scratch copy of a session
@@ -164,15 +164,15 @@ pub struct Preview {
 #[derive(Clone)]
 struct WorldCache {
     doc: Arc<Document>,
-    model: Arc<solvecraft_doc::ModelState>,
-    pending_moves: std::collections::BTreeMap<u64, solvecraft_doc::Mat>,
+    model: Arc<solidcraft_doc::ModelState>,
+    pending_moves: std::collections::BTreeMap<u64, solidcraft_doc::Mat>,
     active_component: u64,
     active_occurrence_path: Option<Vec<u64>>,
-    world: Arc<solvecraft_doc::ModelState>,
+    world: Arc<solidcraft_doc::ModelState>,
 }
 
 impl WorldCache {
-    fn matches(&self, session: &Session, model: &Arc<solvecraft_doc::ModelState>) -> bool {
+    fn matches(&self, session: &Session, model: &Arc<solidcraft_doc::ModelState>) -> bool {
         Arc::ptr_eq(&self.doc, &session.doc)
             && Arc::ptr_eq(&self.model, model)
             && self.pending_moves == session.pending_moves
@@ -203,11 +203,11 @@ pub struct Session {
     /// The placement used when authoring shared component geometry.
     pub active_occurrence_path: Option<Vec<u64>>,
     /// Occurrence moves not captured yet (Capture Position keeps them, a recompute drops them).
-    pub pending_moves: std::collections::BTreeMap<u64, solvecraft_doc::Mat>,
+    pub pending_moves: std::collections::BTreeMap<u64, solidcraft_doc::Mat>,
     world_cache: std::sync::Mutex<Option<WorldCache>>,
     occurrence_visibility_cache: std::sync::Mutex<Option<occurrences::VisibilityCache>>,
     /// Features copied with `timeline.copy` (pasted by `timeline.paste`).
-    pub clipboard: Vec<solvecraft_doc::Feature>,
+    pub clipboard: Vec<solidcraft_doc::Feature>,
     /// Section Analysis: a view cut by a plane (origin, unit normal; the normal side is hidden).
     pub section: Option<(Vec3, Vec3)>,
     /// Surface analysis shading the model (zebra, draft, curvature map).
@@ -233,7 +233,7 @@ pub struct LiveEdit {
     /// What the frame's solve found: a full solve's report, or, when the sketch was solved
     /// without a rank analysis, its last report's degrees of freedom and determined flags (a
     /// drag does not change them; the evaluation at the gesture's end brings them up to date).
-    pub report: solvecraft_sketch::SolveReport,
+    pub report: solidcraft_sketch::SolveReport,
 }
 
 /// The design, active sketch, pending positions and undo history at an `edit.checkpoint`.
@@ -242,7 +242,7 @@ pub(crate) struct Checkpoint {
     pub id: u64,
     pub doc: Arc<Document>,
     pub active_sketch: Option<u64>,
-    pub pending_moves: std::collections::BTreeMap<u64, solvecraft_doc::Mat>,
+    pub pending_moves: std::collections::BTreeMap<u64, solidcraft_doc::Mat>,
     pub undo: Vec<Snapshot>,
     pub redo: Vec<Snapshot>,
 }
@@ -352,7 +352,7 @@ impl Session {
     /// Re-evaluate the model after a document change.
     /// The model placed in the world through component occurrences (and uncaptured moves): what
     /// to display, measure, pick and export. The same as `model.state()` without components.
-    pub fn world_state(&self) -> Arc<solvecraft_doc::ModelState> {
+    pub fn world_state(&self) -> Arc<solidcraft_doc::ModelState> {
         let st = self.model.state();
         if self.doc.occurrences.is_empty() {
             return st;
@@ -364,7 +364,7 @@ impl Session {
             return cached.world.clone();
         }
         let mut w = if self.pending_moves.is_empty() {
-            solvecraft_doc::world_state(&self.doc, &st)
+            solidcraft_doc::world_state(&self.doc, &st)
         } else {
             let mut d = (*self.doc).clone();
             for o in &mut d.occurrences {
@@ -372,27 +372,27 @@ impl Session {
                     o.transform = *m;
                 }
             }
-            solvecraft_doc::world_state(&d, &st)
+            solidcraft_doc::world_state(&d, &st)
         };
         // Sketch definitions are displayed once, at the placement currently being authored.
         if self.active_occurrence_path.is_some() && self.active_component != 0 {
-            let first = self.occurrence_placement(&self.doc.first_path(self.active_component)).map(|p| p.world).unwrap_or(solvecraft_doc::IDENTITY);
-            if let Some(inverse) = solvecraft_doc::mat_inverse(&first) {
-                let delta = solvecraft_doc::mat_mul(&self.active_component_frame(), &inverse);
+            let first = self.occurrence_placement(&self.doc.first_path(self.active_component)).map(|p| p.world).unwrap_or(solidcraft_doc::IDENTITY);
+            if let Some(inverse) = solidcraft_doc::mat_inverse(&first) {
+                let delta = solidcraft_doc::mat_mul(&self.active_component_frame(), &inverse);
                 for sketch in w.sketches.iter_mut().filter(|sk| self.doc.feature(sk.feature).is_some_and(|f| f.component == self.active_component)) {
                     let sketch = Arc::make_mut(sketch);
                     let plane = sketch.plane;
-                    if let Some(mapped) = solvecraft_geom::Plane::new(
-                        solvecraft_doc::apply_point(&delta, plane.origin),
-                        solvecraft_doc::apply_vector(&delta, plane.x),
-                        solvecraft_doc::apply_vector(&delta, plane.y),
+                    if let Some(mapped) = solidcraft_geom::Plane::new(
+                        solidcraft_doc::apply_point(&delta, plane.origin),
+                        solidcraft_doc::apply_vector(&delta, plane.x),
+                        solidcraft_doc::apply_vector(&delta, plane.y),
                     ) {
                         sketch.plane = mapped;
                     }
                     for wire in &mut sketch.sketch.wires {
-                        if wire.space == solvecraft_doc::sketch::WireSpace::Component {
+                        if wire.space == solidcraft_doc::sketch::WireSpace::Component {
                             for point in wire.pts.iter_mut().chain(&mut wire.fit) {
-                                *point = solvecraft_doc::apply_point(&delta, *point);
+                                *point = solidcraft_doc::apply_point(&delta, *point);
                             }
                         }
                     }
@@ -798,6 +798,6 @@ pub(crate) type SketchValues = std::collections::BTreeMap<u64, std::collections:
 
 /// The values of a sketch's driving dimensions that come from parameters: what a value edit
 /// changes in it (as opposed to geometry it projects or links from upstream).
-fn own_values(sk: &solvecraft_sketch::Sketch) -> std::collections::BTreeMap<String, f64> {
+fn own_values(sk: &solidcraft_sketch::Sketch) -> std::collections::BTreeMap<String, f64> {
     sk.constraints.iter().filter(|c| c.param.is_some() && !c.driven).filter_map(|c| Some((c.id.clone(), c.kind.value()?))).collect()
 }

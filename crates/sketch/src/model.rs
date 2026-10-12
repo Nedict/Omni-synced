@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use solvecraft_geom::{Seg2, Vec2, Vec3};
+use solidcraft_geom::{Seg2, Vec2, Vec3};
 
 use crate::union_find::{find, union};
 
@@ -1120,7 +1120,7 @@ impl Sketch {
                 _ => Vec::new(),
             },
             CurveKind::Circle { c, r } => match self.point(c) {
-                Some(c) => solvecraft_geom::Loop2::circle(c, r).segs,
+                Some(c) => solidcraft_geom::Loop2::circle(c, r).segs,
                 None => Vec::new(),
             },
             CurveKind::Arc { c, a, b } => match (self.point(c), self.point(a), self.point(b)) {
@@ -1167,10 +1167,10 @@ impl Sketch {
                     crate::curves::fit_beziers_mode(&p, *periodic).ok()?.into_iter().map(|[p0, p1, p2, p3]| Seg2::Cubic { p0, p1, p2, p3 }).collect(),
                 )
             }
-            CurveKind::Spline { pts, control: true, degree, .. } if (*degree as usize) <= solvecraft_geom::MAX_BEZIER_DEGREE => {
+            CurveKind::Spline { pts, control: true, degree, .. } if (*degree as usize) <= solidcraft_geom::MAX_BEZIER_DEGREE => {
                 let p: Vec<Vec2> = pts.iter().map(pt).collect::<Option<_>>()?;
                 let k = (*degree as usize).min(p.len().saturating_sub(1)).max(1);
-                Some(crate::curves::bspline_beziers(&p, k).iter().filter_map(|c| solvecraft_geom::bezier(c)).collect())
+                Some(crate::curves::bspline_beziers(&p, k).iter().filter_map(|c| solidcraft_geom::bezier(c)).collect())
             }
             _ => None,
         }

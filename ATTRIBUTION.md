@@ -4,8 +4,8 @@ Every non-code asset in this repository (images, icons, fonts, example parts) is
 its author, source and licence. `cargo xtask assets` (part of `cargo xtask ci`) fails if an asset
 file is missing from this table.
 
-**Policy (mandatory):** SolveCraft contains **no Autodesk iconography, images, artwork, fonts,
-templates, materials or help text.** Every asset is original work by SolveCraft contributors or
+**Policy (mandatory):** SolidCraft contains **no Autodesk iconography, images, artwork, fonts,
+templates, materials or help text.** Every asset is original work by SolidCraft contributors or
 third-party material under an open licence. Screenshots of Autodesk software are never committed.
 
 Generated-in-code assets are original and have no file to list:
@@ -19,13 +19,13 @@ Generated-in-code assets are original and have no file to list:
 |---|---|---|---|
 | assets/icon.svg | SolidCraft contributors | original macOS adaptation of the code-drawn SolidCraft mark, edited and exported with VectorCraft; Apple HIG and production templates consulted as layout references only | MIT OR Apache-2.0 |
 | assets/SolidCraft.icon/icon.json | SolidCraft contributors | approved Icon Composer composition and appearance settings for the original SolidCraft artwork | MIT OR Apache-2.0 |
-| assets/SolidCraft.icon/Assets/01-background.svg | SolidCraft contributors | original full-square porcelain background exported from VectorCraft for system masking | MIT OR Apache-2.0 |
 | assets/SolidCraft.icon/Assets/02-grid.svg | SolidCraft contributors | original perspective grid with elliptical radial alpha, exported from VectorCraft | MIT OR Apache-2.0 |
-| assets/SolidCraft.icon/Assets/03-solid.svg | SolidCraft contributors | original blue CAD solid with white edges clipped to its silhouette, exported from VectorCraft | MIT OR Apache-2.0 |
+| assets/SolidCraft.icon/Assets/02-grid-dark.svg | SolidCraft contributors | original blue perspective grid with elliptical radial alpha, exported from VectorCraft for the Dark appearance | MIT OR Apache-2.0 |
+| assets/SolidCraft.icon/Assets/03-solid-blue-cutout.svg | SolidCraft contributors | original saturated blue CAD solid with transparent topology cutouts, edited and exported with VectorCraft | MIT OR Apache-2.0 |
 | assets/Assets.car | SolidCraft contributors | Apple actool compilation of assets/SolidCraft.icon for macOS; contains original artwork only | MIT OR Apache-2.0 |
 | assets/icon.vectorcraft | SolidCraft contributors | editable VectorCraft source for assets/icon.svg, with named face and background layers | MIT OR Apache-2.0 |
 | assets/icon.png | SolidCraft contributors | 1024 × 1024 transparent sRGB export of assets/icon.svg from VectorCraft | MIT OR Apache-2.0 |
-| assets/icon.icns | SolidCraft contributors | traditional macOS fallback packaged from assets/icon.png by Apple's iconutil | MIT OR Apache-2.0 |
+| assets/icon.icns | SolidCraft contributors | macOS fallback compiled by Apple's actool from the approved assets/SolidCraft.icon composition | MIT OR Apache-2.0 |
 | assets/icon.iconset/icon_16x16.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
 | assets/icon.iconset/icon_16x16@2x.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
 | assets/icon.iconset/icon_32x32.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
@@ -36,16 +36,16 @@ Generated-in-code assets are original and have no file to list:
 | assets/icon.iconset/icon_256x256@2x.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
 | assets/icon.iconset/icon_512x512.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
 | assets/icon.iconset/icon_512x512@2x.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
-| docs/screenshots/sample-plate.png | SolveCraft contributors | screenshot of SolveCraft itself (`solvecraft --sample`) | MIT OR Apache-2.0 |
-| docs/screenshots/enclosure-demo-0.2.1.gif | SolveCraft contributors | original electronics enclosure screen recording of the actual SolveCraft 0.2.1 English desktop UI, generated with examples/demo/record_ui.sh and its original animated pointer overlay (4× playback) | MIT OR Apache-2.0 |
-| docs/screenshots/enclosure-demo-0.2.1.mp4 | SolveCraft contributors | original electronics enclosure screen recording of the actual SolveCraft 0.2.1 English desktop UI, generated with examples/demo/record_ui.sh and its original animated pointer overlay (4× playback) | MIT OR Apache-2.0 |
-| docs/book/src/generated/sample-plate.png | SolveCraft contributors | copy of docs/screenshots/sample-plate.png made by `cargo xtask book` (gitignored) | MIT OR Apache-2.0 |
-| docs/book/src/generated/bracket.png | SolveCraft contributors | rendered by `cargo xtask book` (`solvecraft-cli snapshot examples/bracket.json`; gitignored) | MIT OR Apache-2.0 |
-| docs/book/src/generated/enclosure.png | SolveCraft contributors | rendered by `cargo xtask book` (`solvecraft-cli snapshot docs/book/scripts/enclosure.json`; gitignored) | MIT OR Apache-2.0 |
-| docs/book/src/generated/revolve.png | SolveCraft contributors | rendered by `cargo xtask book` (`solvecraft-cli snapshot docs/book/scripts/revolve.json`; gitignored) | MIT OR Apache-2.0 |
-| docs/book/src/generated/sheet-metal.png | SolveCraft contributors | rendered by `cargo xtask book` (`solvecraft-cli snapshot docs/book/scripts/sheet-metal.json`; gitignored) | MIT OR Apache-2.0 |
+| docs/screenshots/sample-plate.png | SolidCraft contributors | screenshot of SolidCraft itself (`solidcraft --sample`) | MIT OR Apache-2.0 |
+| docs/screenshots/enclosure-demo-0.2.1.gif | SolidCraft contributors | original electronics enclosure screen recording of the actual SolidCraft 0.2.1 English desktop UI, generated with examples/demo/record_ui.sh and its original animated pointer overlay (4× playback) | MIT OR Apache-2.0 |
+| docs/screenshots/enclosure-demo-0.2.1.mp4 | SolidCraft contributors | original electronics enclosure screen recording of the actual SolidCraft 0.2.1 English desktop UI, generated with examples/demo/record_ui.sh and its original animated pointer overlay (4× playback) | MIT OR Apache-2.0 |
+| docs/book/src/generated/sample-plate.png | SolidCraft contributors | copy of docs/screenshots/sample-plate.png made by `cargo xtask book` (gitignored) | MIT OR Apache-2.0 |
+| docs/book/src/generated/bracket.png | SolidCraft contributors | rendered by `cargo xtask book` (`solidcraft-cli snapshot examples/bracket.json`; gitignored) | MIT OR Apache-2.0 |
+| docs/book/src/generated/enclosure.png | SolidCraft contributors | rendered by `cargo xtask book` (`solidcraft-cli snapshot docs/book/scripts/enclosure.json`; gitignored) | MIT OR Apache-2.0 |
+| docs/book/src/generated/revolve.png | SolidCraft contributors | rendered by `cargo xtask book` (`solidcraft-cli snapshot docs/book/scripts/revolve.json`; gitignored) | MIT OR Apache-2.0 |
+| docs/book/src/generated/sheet-metal.png | SolidCraft contributors | rendered by `cargo xtask book` (`solidcraft-cli snapshot docs/book/scripts/sheet-metal.json`; gitignored) | MIT OR Apache-2.0 |
 | crates/sketch/fonts/LiberationSans-Regular.ttf | Red Hat, Inc. (Liberation Fonts 2.x; digitized data Google) | https://github.com/liberationfonts (Debian fonts-liberation), unmodified; licence text in crates/sketch/fonts/OFL.txt; used for sketch Text outlines | SIL OFL 1.1 |
-| apps/solvecraft-web/fonts/BIZUDPGothic-Regular.ttf | The BIZ UDGothic Project Authors | https://github.com/googlefonts/morisawa-biz-ud-gothic (Google Fonts), unmodified; licence text in apps/solvecraft-web/fonts/OFL.txt; used for web UI Japanese font | SIL OFL 1.1 |
+| apps/solidcraft-web/fonts/BIZUDPGothic-Regular.ttf | The BIZ UDGothic Project Authors | https://github.com/googlefonts/morisawa-biz-ud-gothic (Google Fonts), unmodified; licence text in apps/solidcraft-web/fonts/OFL.txt; used for web UI Japanese font | SIL OFL 1.1 |
 | tests/oracle/17-loft/reference.stl | SolidCraft contributors | triangulation of our own recipe (tests/oracle/17-loft/recipe.json) built with FreeCAD as an external tool by tools/freecad-oracle | MIT OR Apache-2.0 |
 | tests/oracle/23-bracket-multifeature/reference.stl | SolidCraft contributors | triangulation of our own recipe (tests/oracle/23-bracket-multifeature/recipe.json) built with FreeCAD as an external tool by tools/freecad-oracle | MIT OR Apache-2.0 |
 | tests/oracle/28-blind-pocket-fillets/reference.stl | SolidCraft contributors | triangulation of our own recipe (tests/oracle/28-blind-pocket-fillets/recipe.json) built with FreeCAD as an external tool by tools/freecad-oracle | MIT OR Apache-2.0 |
@@ -69,25 +69,25 @@ Generated-in-code assets are original and have no file to list:
 
 ## Code adapted from sibling projects
 
-| SolveCraft file | Adapted from | Licence |
+| SolidCraft file | Adapted from | Licence |
 |---|---|---|
 | xtask/src/layers.rs | CADCraft `xtask/src/layers.rs` (dependency layering rules and tests) | MIT OR Apache-2.0 |
-| apps/solvecraft/src/control_server.rs | CADCraft `apps/cadcraft/src/control_server.rs` (loopback JSON-lines server) | MIT OR Apache-2.0 |
+| apps/solidcraft/src/control_server.rs | CADCraft `apps/cadcraft/src/control_server.rs` (loopback JSON-lines server) | MIT OR Apache-2.0 |
 | crates/ui-egui/src/lib.rs (screenshot queue, synthetic input) | CADCraft `crates/ui-egui/src/lib.rs` | MIT OR Apache-2.0 |
 | crates/ui-egui/src/control.rs (method dispatch and screenshot saving) | CADCraft `crates/ui-egui/src/control.rs` | MIT OR Apache-2.0 |
 | crates/ui-egui/src/gpu.rs (paint-callback structure) | CADCraft `crates/ui-egui/src/gpu.rs` | MIT OR Apache-2.0 |
 | crates/mcp/src/server.rs, crates/mcp/src/backend.rs (JSON-RPC framing, MCP lifecycle, control-port bridge) | CADCraft `crates/mcp/src/{server,backend}.rs` | MIT OR Apache-2.0 |
 | crates/mcp/src/tools.rs (tool schema helpers and argument checking) | CADCraft `crates/mcp/src/tools.rs`, GridCraft `crates/mcp/src/tools.rs` | MIT OR Apache-2.0 |
 | crates/io/src/threemf.rs (bounded zip part reading and writing) | GridCraft `crates/xlsx/src/package.rs` | MIT OR Apache-2.0 |
-| crates/ui-egui/src/titlebar.rs (title bar drag, caption buttons, resize zones, their tests) and the window setup in apps/solvecraft/src/main.rs | VectorCraft `crates/ui-egui/src/titlebar.rs`, `apps/vectorcraft/src/main.rs` | MIT OR Apache-2.0 |
+| crates/ui-egui/src/titlebar.rs (title bar drag, caption buttons, resize zones, their tests) and the window setup in apps/solidcraft/src/main.rs | VectorCraft `crates/ui-egui/src/titlebar.rs`, `apps/vectorcraft/src/main.rs` | MIT OR Apache-2.0 |
 | LICENSE-MIT, LICENSE-APACHE (licence text) | CADCraft | — |
 | .github/workflows/release.yml, .github/workflows/packaging-lint.yml and packaging/ (release pipeline: Linux AppImage/deb/rpm/Flatpak/tar.gz, FreeBSD, macOS dmg, Windows MSI/portable zip, web zip; AppRun, nfpm, Flatpak, WiX and Info.plist templates) | PhotoCraft (https://github.com/storytold/photocraft) `.github/workflows/{release,packaging-lint}.yml`, `packaging/` | Apache-2.0 |
 
 ## Recovered contributions
 
-| SolveCraft file | Original contribution | Licence |
+| SolidCraft file | Original contribution | Licence |
 |---|---|---|
-| crates/ui-egui/src/viewport.rs (`nearest_quarter_turn`, `axis_view_orbit`) | N3MI-DG's [PR #101](https://github.com/bherbruck/solvecraft/pull/101): [minimal TOP/BOTTOM turns](https://github.com/bherbruck/solvecraft/commit/c28e780f52490784ef5886f094b9d3f6d10c3e3f) and [drag-to-orbit](https://github.com/bherbruck/solvecraft/commit/f30b30be6ecc4e2e6544a851243137c01a354934), adapted to the axis gizmo | MIT OR Apache-2.0 |
+| crates/ui-egui/src/viewport.rs (`nearest_quarter_turn`, `axis_view_orbit`) | N3MI-DG's [PR #101](https://github.com/bherbruck/solidcraft/pull/101): [minimal TOP/BOTTOM turns](https://github.com/bherbruck/solidcraft/commit/c28e780f52490784ef5886f094b9d3f6d10c3e3f) and [drag-to-orbit](https://github.com/bherbruck/solidcraft/commit/f30b30be6ecc4e2e6544a851243137c01a354934), adapted to the axis gizmo | MIT OR Apache-2.0 |
 
 ## Vendored third-party code
 

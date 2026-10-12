@@ -1,9 +1,9 @@
 use super::*;
-use solvecraft_doc::{Document, FeatureKind, MeshData};
-use solvecraft_geom::Vec3;
+use solidcraft_doc::{Document, FeatureKind, MeshData};
+use solidcraft_geom::Vec3;
 
 fn imported_box() -> Session {
-    let body = solvecraft_kernel::box_solid(Vec3::ZERO, Vec3::new(10., 20., 30.)).unwrap();
+    let body = solidcraft_kernel::box_solid(Vec3::ZERO, Vec3::new(10., 20., 30.)).unwrap();
     let mesh = body.tessellate(0.01).unwrap();
     let mut doc = Document::default();
     doc.add_feature(
@@ -78,7 +78,7 @@ fn exported_binary_stl_with_a_bore_reconstructs_analytic_faces() {
     run(&mut s, "sketch.circle.center", json!({"center":[10,10],"radius":4}));
     run(&mut s, "sketch.finish", json!({}));
     run(&mut s, "solid.extrude", json!({"sketch":"Section","profiles":[{"point":[30,10]}],"distance":15,"body_name":"Bracket"}));
-    let path = std::env::temp_dir().join(format!("solvecraft-mesh-convert-{}.stl", std::process::id()));
+    let path = std::env::temp_dir().join(format!("solidcraft-mesh-convert-{}.stl", std::process::id()));
     run(&mut s, "file.save_mesh", json!({"path":path}));
     run(&mut s, "doc.open", json!({"path":path}));
     let name = s.model.state().bodies[0].name.clone();
@@ -87,7 +87,7 @@ fn exported_binary_stl_with_a_bore_reconstructs_analytic_faces() {
     let body = &state.bodies[0].body;
     assert!(!body.is_mesh());
     assert!(body.validity().is_empty());
-    assert_eq!(solvecraft_kernel::measure(body).unwrap().merged.face_types.get("cylinder"), Some(&1));
+    assert_eq!(solidcraft_kernel::measure(body).unwrap().merged.face_types.get("cylinder"), Some(&1));
     assert_eq!(body.faces(0.01).unwrap().len(), 10);
     std::fs::remove_file(path).unwrap();
 }

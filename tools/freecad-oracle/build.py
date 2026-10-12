@@ -8,7 +8,7 @@
 #   ORACLE_OUT    path of a JSON file to write the measured result to
 #   ORACLE_STL    optional: path of a binary STL to write (reference.stl)
 #
-# The recipe format and its meaning are SolidCraft's (apps/solvecraft-cli/src/recipe.rs and the
+# The recipe format and its meaning are SolidCraft's (apps/solidcraft-cli/src/recipe.rs and the
 # engine in crates/); this file re-implements that meaning with FreeCAD's modelling operations.
 
 import json

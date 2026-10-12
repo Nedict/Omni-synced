@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
-use solvecraft_geom::Vec2;
-use solvecraft_sketch::CurveKind;
+use solidcraft_geom::Vec2;
+use solidcraft_sketch::CurveKind;
 
 use crate::Session;
 
@@ -15,7 +15,7 @@ fn ids(v: &Value) -> Vec<String> {
     v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
 }
 
-fn sketch(s: &Session) -> solvecraft_sketch::Sketch {
+fn sketch(s: &Session) -> solidcraft_sketch::Sketch {
     let id = s.active_sketch.unwrap();
     s.model.state().sketch(id).unwrap().sketch.clone()
 }
@@ -63,7 +63,7 @@ fn explicit_freeform_break_preserves_exact_geometry_and_undo() {
             }
         }
         let encoded = serde_json::to_value(&after).unwrap();
-        let restored: solvecraft_sketch::Sketch = serde_json::from_value(encoded).unwrap();
+        let restored: solidcraft_sketch::Sketch = serde_json::from_value(encoded).unwrap();
         assert_eq!(restored.curves.len(), after.curves.len());
         run(&mut s, "edit.undo", json!({}));
         assert!(sketch(&s).curve_index(&id).is_some());
@@ -120,7 +120,7 @@ fn analytic_trim_and_break_use_freeform_cutters() {
     let sk = sketch(&s);
     for id in ids(&out["curves"]) {
         let shape = sk.shape(sk.curve_index(&id).unwrap()).unwrap();
-        assert!(matches!(shape, solvecraft_sketch::Shape::Line { a, b } if (a.y - 5.0).abs() < 1e-6 && (b.y - 5.0).abs() < 1e-6));
+        assert!(matches!(shape, solidcraft_sketch::Shape::Line { a, b } if (a.y - 5.0).abs() < 1e-6 && (b.y - 5.0).abs() < 1e-6));
     }
 
     let mut s = new_sketch();
@@ -144,7 +144,7 @@ fn trim_extend_break() {
     let sk = sketch(&s);
     let sh = sk.shape(sk.curve_index(&h).unwrap()).unwrap();
     assert!(
-        matches!(sh, solvecraft_sketch::Shape::Line { a, b } if a.dist(Vec2::new(0.0, 0.0)) < 1e-9 && b.dist(Vec2::new(10.0, 0.0)) < 1e-9),
+        matches!(sh, solidcraft_sketch::Shape::Line { a, b } if a.dist(Vec2::new(0.0, 0.0)) < 1e-9 && b.dist(Vec2::new(10.0, 0.0)) < 1e-9),
         "{sh:?}"
     );
     // Trim the lower half of the vertical line: the original id survives on the upper piece.
@@ -198,7 +198,7 @@ fn exact_extend_ellipse_preserves_support_target_and_history() {
         assert!(end.dist(Vec2::new(expected_x, y)) < 1e-7, "exact ellipse contact {end:?}");
         assert_eq!(sk.exact_segs(0).unwrap(), target);
         let persisted = s.doc.to_json();
-        let reopened = solvecraft_doc::format::read(&persisted).unwrap();
+        let reopened = solidcraft_doc::format::read(&persisted).unwrap();
         assert_eq!(reopened.to_json(), persisted);
         run(&mut s, "edit.undo", json!({}));
         assert_eq!(s.doc.to_json(), before);
@@ -645,7 +645,7 @@ fn certified_offset_follows_dimension_drag_reopen_break_and_undo() {
     run(&mut s, "sketch.drag", json!({"entity":ellipse,"from":[0,0],"to":[4,3]}));
     verify(&s);
     let mut reopened = Session {
-        doc: std::sync::Arc::new(solvecraft_doc::format::read(&s.doc.to_json()).unwrap()),
+        doc: std::sync::Arc::new(solidcraft_doc::format::read(&s.doc.to_json()).unwrap()),
         active_sketch: s.active_sketch,
         ..Session::default()
     };
@@ -677,7 +677,7 @@ fn certified_offset_delete_output_undo_reopen_and_refuse_dependent_source() {
     assert!(sk.curve_index(&id).is_none());
     assert!(sk.curve_index("e1").is_some());
     let deleted = s.doc.to_json();
-    let reopened = solvecraft_doc::format::read(&deleted).unwrap();
+    let reopened = solidcraft_doc::format::read(&deleted).unwrap();
     assert_eq!(reopened.to_json(), deleted);
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(s.doc.to_json(), attached);
@@ -706,7 +706,7 @@ fn periodic_closed_offset_chain_break_drag_reopen_and_material_volume() {
     let check = |session: &Session| {
         let sk = sketch(session);
         assert_eq!(sk.freeform_offsets.iter().map(|r| r.certificate).collect::<Vec<_>>(), [2, 2]);
-        assert_eq!(solvecraft_sketch::find_profiles(&sk).len(), 3);
+        assert_eq!(solidcraft_sketch::find_profiles(&sk).len(), 3);
         for id in [&a, &b] {
             assert!(matches!(sk.curves[sk.curve_index(id).unwrap()].kind, CurveKind::Spline { periodic: true, .. }));
         }
@@ -719,7 +719,7 @@ fn periodic_closed_offset_chain_break_drag_reopen_and_material_volume() {
     run(&mut s, "parameters.change", json!({"name":"d1","expression":12}));
     check(&s);
     let mut reopened =
-        Session { doc: solvecraft_doc::format::read(&s.doc.to_json()).unwrap().into(), active_sketch: s.active_sketch, ..Default::default() };
+        Session { doc: solidcraft_doc::format::read(&s.doc.to_json()).unwrap().into(), active_sketch: s.active_sketch, ..Default::default() };
     reopened.refresh();
     check(&reopened);
     let attached = reopened.doc.to_json();
@@ -736,12 +736,12 @@ fn periodic_closed_offset_chain_break_drag_reopen_and_material_volume() {
     let indices = moved.curves[moved.curve_index(&b).unwrap()].kind.point_ids();
     assert_eq!(moved.point(indices[0]), moved.point(*indices.last().unwrap()));
     assert!(moved.point(indices[0]).unwrap().dist(from) > 0.1);
-    assert_eq!(solvecraft_doc::format::read(&reopened.doc.to_json()).unwrap().to_json(), reopened.doc.to_json());
+    assert_eq!(solidcraft_doc::format::read(&reopened.doc.to_json()).unwrap().to_json(), reopened.doc.to_json());
     run(&mut reopened, "edit.undo", json!({}));
     run(&mut reopened, "edit.undo", json!({}));
     assert_eq!(reopened.doc.to_json(), attached);
     // An independent ring area multiplied by height probes actual profile material.
-    let regions = solvecraft_sketch::find_profiles(&sketch(&s));
+    let regions = solidcraft_sketch::find_profiles(&sketch(&s));
     let selected = regions.iter().enumerate().min_by(|(_, x), (_, y)| x.area.total_cmp(&y.area)).unwrap();
     let n = 4096;
     let h = std::f64::consts::TAU / n as f64;
@@ -767,7 +767,7 @@ fn periodic_closed_offset_chain_break_drag_reopen_and_material_volume() {
     run(&mut s, "sketch.finish", json!({}));
     run(&mut s, "solid.extrude", json!({"sketch":sketch_id,"profiles":[selected.0],"distance":3,"operation":"new"}));
     let state = s.world_state();
-    let volume = solvecraft_kernel::measure(&state.bodies.last().unwrap().body).unwrap().volume;
+    let volume = solidcraft_kernel::measure(&state.bodies.last().unwrap().body).unwrap().volume;
     assert!((volume - expected).abs() < 0.05, "{volume} vs {expected}");
 }
 
@@ -780,7 +780,7 @@ fn periodic_fit_creator_keeps_legacy_and_refuses_hostile_intent_atomically() {
     let i = sk.curve_index(&id).unwrap();
     assert!(matches!(sk.curves[i].kind, CurveKind::Spline { periodic: true, .. }));
     sk.validate_periodic_splines().unwrap();
-    assert_eq!(solvecraft_sketch::find_profiles(&sk).len(), 1);
+    assert_eq!(solidcraft_sketch::find_profiles(&sk).len(), 1);
     let before = s.doc.to_json();
     let history = s.undo.len();
     for (cmd, p) in [
@@ -822,7 +822,7 @@ fn analytic_offset_partial_delete_releases_survivors_preserves_source_and_undo()
     }
     assert!(sk.curve_index("l1").is_some());
     let saved = s.doc.to_json();
-    assert_eq!(solvecraft_doc::format::read(&saved).unwrap().to_json(), saved);
+    assert_eq!(solidcraft_doc::format::read(&saved).unwrap().to_json(), saved);
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(s.doc.to_json(), before);
 }
@@ -835,7 +835,7 @@ fn periodic_offset_extrusion_survives_post_extrude_span_changes_and_cold_reopen(
     let a = run(&mut s, "sketch.offset", json!({"curves":["e1"],"distance":-1,"chain":false}))["curves"][0].as_str().unwrap().to_string();
     run(&mut s, "sketch.offset", json!({"curves":[a],"distance":-0.5,"chain":false}));
     let sk_id = s.active_sketch.unwrap();
-    let initial = solvecraft_sketch::find_profiles(&sketch(&s));
+    let initial = solidcraft_sketch::find_profiles(&sketch(&s));
     let (index, ring) = initial.iter().enumerate().min_by(|(_, a), (_, b)| a.area.total_cmp(&b.area)).unwrap();
     let initial_count = ring.outer_curves.len();
     let boundary = ring.whole_curve_boundaries().unwrap();
@@ -887,21 +887,21 @@ fn periodic_offset_extrusion_survives_post_extrude_span_changes_and_cold_reopen(
         let body = &state.bodies[0].body;
         for (distance, material) in [(1.25, true), (0.5, false), (1.75, false)] {
             let point = ellipse + normal * distance;
-            assert_eq!(body.contains(solvecraft_geom::Vec3::new(point.x, point.y, 1.5)), material);
+            assert_eq!(body.contains(solidcraft_geom::Vec3::new(point.x, point.y, 1.5)), material);
         }
         // Repeat at the exact major-axis seam as a physical material control.
         for (distance, material) in [(1.25, true), (0.5, false), (1.75, false)] {
             let point = centre + u * (major + distance);
             assert_eq!(ring.region.contains(point), material);
-            assert_eq!(body.contains(solvecraft_geom::Vec3::new(point.x, point.y, 1.5)), material);
+            assert_eq!(body.contains(solidcraft_geom::Vec3::new(point.x, point.y, 1.5)), material);
         }
-        let volume = solvecraft_kernel::measure(body).unwrap().volume;
+        let volume = solidcraft_kernel::measure(body).unwrap().volume;
         assert!((volume - expected).abs() < 0.05, "{major}: {volume} vs independent {expected}");
-        let mut cold = Session { doc: solvecraft_doc::format::read(&s.doc.to_json()).unwrap().into(), ..Default::default() };
+        let mut cold = Session { doc: solidcraft_doc::format::read(&s.doc.to_json()).unwrap().into(), ..Default::default() };
         cold.refresh();
         let cold_state = cold.world_state();
         assert_eq!(cold_state.bodies.len(), 1);
-        let cold_volume = solvecraft_kernel::measure(&cold_state.bodies[0].body).unwrap().volume;
+        let cold_volume = solidcraft_kernel::measure(&cold_state.bodies[0].body).unwrap().volume;
         assert!((cold_volume - volume).abs() < 1e-8);
         let edited = s.doc.to_json();
         run(&mut s, "edit.undo", json!({}));

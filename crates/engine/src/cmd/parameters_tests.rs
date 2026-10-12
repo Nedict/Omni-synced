@@ -157,7 +157,7 @@ fn rename_updates_every_reference() {
     assert!(rel(volume(&mut s), 40.0 * 40.0 * 10.0) < 1e-9);
     // Model and feature parameters can be renamed too: dimensions and features follow.
     let dim = s.doc.features.first().and_then(|f| match &f.kind {
-        solvecraft_doc::FeatureKind::Sketch { sketch, .. } => sketch.constraints.iter().filter_map(|c| c.param.clone()).next(),
+        solidcraft_doc::FeatureKind::Sketch { sketch, .. } => sketch.constraints.iter().filter_map(|c| c.param.clone()).next(),
         _ => None,
     });
     let dim = dim.unwrap_or_default();
@@ -235,7 +235,7 @@ fn csv_and_json_round_trip() {
     assert_eq!(s.doc.param("len").map(|p| p.expr.as_str()), Some("80 mm"));
     assert!(matches!(s.execute("parameters.import", &json!({})), Err(EngineError::BadParams { .. })));
 
-    let dir = std::env::temp_dir().join(format!("solvecraft-params-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("solidcraft-params-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join("p.json");
     let r = run(&mut s, "parameters.export", json!({"path": path.to_string_lossy()}));
@@ -307,7 +307,7 @@ fn dimension_edits_of_a_triconnected_linkage_continue_and_store_the_solved_sketc
     let solved = s.model.state().sketch(feature).unwrap().report.clone();
     assert!(solved.ok(), "{solved:?}");
     assert_eq!(linkage_turns(&s, feature), before);
-    let mut fresh = solvecraft_doc::Model::default();
+    let mut fresh = solidcraft_doc::Model::default();
     fresh.evaluate(&s.doc);
     let again = fresh.state().sketch(feature).unwrap().report.clone();
     assert!(again.ok() && again.continuations == 0, "{again:?}");
@@ -348,7 +348,7 @@ fn a_failed_edit_keeps_the_stored_sketch_solved_for_its_values() {
     run(&mut s, "sketch.point", json!({"point": [200, 200]}));
     let stored = s.doc.sketch(feature).unwrap();
     for c in stored.constraints.iter().filter(|c| c.param.is_some()) {
-        let measured = solvecraft_sketch::measure_dimension(stored, &c.kind).unwrap();
+        let measured = solidcraft_sketch::measure_dimension(stored, &c.kind).unwrap();
         assert!((measured - c.kind.value().unwrap()).abs() < 1e-6, "{}: {measured} vs {:?}", c.id, c.kind.value());
     }
 }
@@ -396,7 +396,7 @@ fn a_design_stored_with_other_values_still_rebuilds() {
     run(&mut s, "sketch.finish", json!({}));
     run(&mut s, "solid.extrude", json!({"sketch": "Linkage", "distance": 5}));
     set_params(&mut s, &params, &FLIPPING);
-    let s = Session::new(solvecraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    let s = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
     let state = s.model.state();
     let solved = state.sketch(feature).unwrap();
     assert!(solved.report.ok() && !solved.report.folded.is_empty(), "{:?}", solved.report);
@@ -450,7 +450,7 @@ fn a_failed_auto_constrain_keeps_the_stored_sketch_consistent() {
     let consistent = |s: &Session, feature: u64| {
         let stored = s.doc.sketch(feature).unwrap();
         stored.constraints.iter().filter(|c| c.param.is_some()).all(|c| {
-            let measured = solvecraft_sketch::measure_dimension(stored, &c.kind).unwrap();
+            let measured = solidcraft_sketch::measure_dimension(stored, &c.kind).unwrap();
             (measured - c.kind.value().unwrap()).abs() < 1e-6
         })
     };
@@ -473,7 +473,7 @@ fn a_failed_auto_constrain_keeps_the_stored_sketch_consistent() {
 }
 
 /// The stored sketch's points, by id.
-fn stored_points(s: &Session, feature: u64) -> Vec<solvecraft_geom::Vec2> {
+fn stored_points(s: &Session, feature: u64) -> Vec<solidcraft_geom::Vec2> {
     s.doc.sketch(feature).unwrap().points.iter().map(|p| p.pos).collect()
 }
 
@@ -504,7 +504,7 @@ fn an_unsolvable_value_edit_is_refused_and_changes_nothing() {
 fn value_edits_continue_from_the_last_solved_state() {
     // A → B → C, each a small edit solved in one jump; C is solved from B (the stored state),
     // and setting both values back reproduces A (the linkage is fully constrained).
-    let close = |a: &[solvecraft_geom::Vec2], b: &[solvecraft_geom::Vec2], tol: f64| a.iter().zip(b).all(|(p, q)| p.dist(*q) < tol);
+    let close = |a: &[solidcraft_geom::Vec2], b: &[solidcraft_geom::Vec2], tol: f64| a.iter().zip(b).all(|(p, q)| p.dist(*q) < tol);
     let (mut s, feature, params) = linkage_session();
     run(&mut s, "sketch.finish", json!({}));
     let a = stored_points(&s, feature);
@@ -520,7 +520,7 @@ fn value_edits_continue_from_the_last_solved_state() {
     let stored = from_b.driving_values();
     let (vals, _) = s.doc.param_values();
     s.doc.apply_dimension_values(&vals, &mut from_b).unwrap();
-    assert!(solvecraft_sketch::solve_after_value_edit(&mut from_b, &stored).ok());
+    assert!(solidcraft_sketch::solve_after_value_edit(&mut from_b, &stored).ok());
     assert!(close(&c, &from_b.points.iter().map(|p| p.pos).collect::<Vec<_>>(), 1e-6) && !close(&c, &b, 1e-3));
     run(&mut s, "parameters.change", json!({"name": params[7], "expression": p7}));
     run(&mut s, "parameters.change", json!({"name": params[8], "expression": p8}));

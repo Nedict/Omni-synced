@@ -87,13 +87,13 @@ fn revolve_to_a_cylinder_follows_it() {
         }
         let st = s.model.state();
         let (arc, post) = (st.body("Arc").unwrap(), st.body("Post").unwrap());
-        let overlap = solvecraft_kernel::boolean(&arc.body, &post.body, solvecraft_kernel::BoolOp::Intersect)
+        let overlap = solidcraft_kernel::boolean(&arc.body, &post.body, solidcraft_kernel::BoolOp::Intersect)
             .ok()
             .flatten()
-            .map(|b| solvecraft_kernel::measure(&b).map(|m| m.volume).unwrap_or(0.0))
+            .map(|b| solidcraft_kernel::measure(&b).map(|m| m.volume).unwrap_or(0.0))
             .unwrap_or(0.0);
         assert!(overlap < 1e-3, "no overlap: {overlap}");
-        let v = solvecraft_kernel::measure(&arc.body).unwrap().volume;
+        let v = solidcraft_kernel::measure(&arc.body).unwrap().volume;
         let full = PI * (225.0 - 100.0) * 5.0;
         // The post is at a quarter turn one way (three quarters the other): the ring stops
         // short of the post's centre line, within its half-width of it.

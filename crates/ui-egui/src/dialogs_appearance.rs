@@ -5,7 +5,7 @@
 
 use egui::{Color32, RichText, Sense, Stroke, vec2};
 use serde_json::{Value, json};
-use solvecraft_engine::Sel;
+use solidcraft_engine::Sel;
 
 use crate::SolveApp;
 use crate::dialogs::{Kind, combo, row_label};
@@ -118,12 +118,12 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
         let faces = app.session.selection.iter().any(|s| matches!(s, Sel::Face { .. }))
             && !app.session.selection.iter().any(|s| matches!(s, Sel::Body { .. }));
         let state = app.session.world_state();
-        let body_look = |body: &solvecraft_engine::doc::ModelBody| {
+        let body_look = |body: &solidcraft_engine::doc::ModelBody| {
             app.session.doc.model_body_look(body).or_else(|| {
                 (body.body.paint().is_some() || body.imported.is_some() || body.body.color().is_some()).then(|| {
                     let color =
                         app.session.doc.body_color(body).map(|rgb| rgb.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)).unwrap_or([196, 199, 204]);
-                    solvecraft_engine::doc::appearance::Look::custom(color, app.session.doc.model_body_opacity(body))
+                    solidcraft_engine::doc::appearance::Look::custom(color, app.session.doc.model_body_opacity(body))
                 })
             })
         };
@@ -169,7 +169,7 @@ fn apply_params(targets: &[Sel], color: [u8; 3], opacity: f64, look: Option<&str
     if !faces.is_empty() {
         p["faces"] = json!(faces);
         // An engine without face looks: their bodies.
-        if bodies.is_empty() && solvecraft_engine::find_command("appearance.list").is_none() {
+        if bodies.is_empty() && solidcraft_engine::find_command("appearance.list").is_none() {
             let mut owners: Vec<String> =
                 targets.iter().filter_map(|x| if let Sel::Face { body, .. } = x { Some(body.clone()) } else { None }).collect();
             owners.dedup();
@@ -483,8 +483,8 @@ fn target_names(targets: &[Sel]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use solvecraft_engine::Session;
-    use solvecraft_engine::geom::Vec3;
+    use solidcraft_engine::Session;
+    use solidcraft_engine::geom::Vec3;
 
     use super::*;
     use crate::Services;

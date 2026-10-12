@@ -1,5 +1,5 @@
 //! Live operation previews. While a feature dialog is open, its commands are evaluated on a
-//! scratch copy of the session ([`solvecraft_engine::Session::preview`]), off the UI thread
+//! scratch copy of the session ([`solidcraft_engine::Session::preview`]), off the UI thread
 //! where threads exist, and the result is drawn in place of the bodies it changes: new surface
 //! tinted, removed material as a translucent ghost. The last good preview stays up while the
 //! next one computes or when an input makes the feature fail (the error shows in the dialog).
@@ -9,9 +9,9 @@ use std::hash::{Hash, Hasher};
 use std::sync::mpsc::{Receiver, TryRecvError};
 
 use serde_json::Value;
-use solvecraft_engine::Session;
-use solvecraft_engine::doc::ModelState;
-use solvecraft_engine::geom::{Aabb3, Mesh, Vec3};
+use solidcraft_engine::Session;
+use solidcraft_engine::doc::ModelState;
+use solidcraft_engine::geom::{Aabb3, Mesh, Vec3};
 
 use crate::SolveApp;
 use crate::gpu::{GpuScene, SceneSlot};
@@ -299,7 +299,7 @@ pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
         if before.construct.iter().any(|old| old == construct) {
             continue;
         }
-        if let solvecraft_engine::doc::construct::ConstructGeom::Plane(plane) = construct.geom {
+        if let solidcraft_engine::doc::construct::ConstructGeom::Plane(plane) = construct.geom {
             let (o, x, y) = (plane.origin, plane.x * 10.0, plane.y * 10.0);
             let quad = [o - x - y, o + x - y, o + x + y, o - x + y];
             let color = [c.added[0], c.added[1], c.added[2], 64];
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn a_hole_shows_its_cut_through_the_body() {
-        let mut s = solvecraft_engine::Session::default();
+        let mut s = solidcraft_engine::Session::default();
         s.execute("solid.box", &json!({"length": 40, "width": 30, "height": 20})).unwrap();
         let p = s.preview(&[("solid.hole".to_string(), json!({"position": [20, 15, 20], "diameter": 5, "depth": 10}))]).unwrap();
         let b = build(&p.before, &p.after, colors());

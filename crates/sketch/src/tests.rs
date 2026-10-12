@@ -1,6 +1,6 @@
 use std::f64::consts::{FRAC_PI_2, PI};
 
-use solvecraft_geom::Vec2;
+use solidcraft_geom::Vec2;
 
 use crate::*;
 
@@ -323,12 +323,12 @@ fn profiles_split_at_crossings_and_touch_points() {
 #[test]
 fn merging_adjacent_regions() {
     let a =
-        solvecraft_geom::Region2 { outer: solvecraft_geom::Loop2::polygon(&[v(0.0, 0.0), v(10.0, 0.0), v(10.0, 10.0), v(0.0, 10.0)]), holes: vec![] };
-    let b = solvecraft_geom::Region2 {
-        outer: solvecraft_geom::Loop2::polygon(&[v(10.0, 0.0), v(20.0, 0.0), v(20.0, 10.0), v(10.0, 10.0)]),
+        solidcraft_geom::Region2 { outer: solidcraft_geom::Loop2::polygon(&[v(0.0, 0.0), v(10.0, 0.0), v(10.0, 10.0), v(0.0, 10.0)]), holes: vec![] };
+    let b = solidcraft_geom::Region2 {
+        outer: solidcraft_geom::Loop2::polygon(&[v(10.0, 0.0), v(20.0, 0.0), v(20.0, 10.0), v(10.0, 10.0)]),
         holes: vec![],
     };
-    let c = solvecraft_geom::Region2 { outer: solvecraft_geom::Loop2::polygon(&[v(50.0, 0.0), v(60.0, 0.0), v(60.0, 10.0)]), holes: vec![] };
+    let c = solidcraft_geom::Region2 { outer: solidcraft_geom::Loop2::polygon(&[v(50.0, 0.0), v(60.0, 0.0), v(60.0, 10.0)]), holes: vec![] };
     let m = merge_regions(&[a, b, c]);
     assert_eq!(m.len(), 2);
     let mut areas: Vec<f64> = m.iter().map(|r| r.area()).collect();
@@ -446,7 +446,7 @@ fn long_connected_chain_solves() {
 /// cut in two by a line through it (each side gets an exact sub-curve ending on the line).
 #[test]
 fn exact_profiles_for_high_degree_and_cut_free_form_curves() {
-    use solvecraft_geom::Seg2;
+    use solidcraft_geom::Seg2;
     let exact_loop = |p: &Profile| p.region.outer.segs.iter().all(|s| !matches!(s, Seg2::Line { .. }) || s.length() > 1.0);
     let closed = |p: &Profile| {
         let s = &p.region.outer.segs;

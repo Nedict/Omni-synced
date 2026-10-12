@@ -1,7 +1,7 @@
 use std::f64::consts::FRAC_PI_2;
 
 use serde_json::{Value, json};
-use solvecraft_geom::Vec3;
+use solidcraft_geom::Vec3;
 
 use crate::Session;
 
@@ -18,7 +18,7 @@ fn occ(s: &Session, component: &str) -> u64 {
 }
 
 fn place(s: &Session, component: &str, p: Vec3) -> Vec3 {
-    solvecraft_doc::apply_point(&solvecraft_doc::joints::occurrence_world(&s.doc, occ(s, component)), p)
+    solidcraft_doc::apply_point(&solidcraft_doc::joints::occurrence_world(&s.doc, occ(s, component)), p)
 }
 
 fn near(a: Vec3, b: Vec3) -> bool {
@@ -55,9 +55,9 @@ fn revolute_hinge_turns_about_the_knuckle() {
     assert_eq!(dof, 1, "{l}");
     // Drive 90°: B turns about the knuckle axis (through (0, 33, 4), along the frame's z = −X).
     run(&mut s, "joint.drive", json!({"joint": "Hinge", "value": 90}));
-    let want = solvecraft_doc::rigid(Vec3::ZERO, Vec3::new(0.0, 33.0, 4.0), Vec3::new(-1.0, 0.0, 0.0), FRAC_PI_2);
+    let want = solidcraft_doc::rigid(Vec3::ZERO, Vec3::new(0.0, 33.0, 4.0), Vec3::new(-1.0, 0.0, 0.0), FRAC_PI_2);
     let p = Vec3::new(20.0, 0.0, 0.0);
-    assert!(near(place(&s, "LeafB", p), solvecraft_doc::apply_point(&want, p)), "{:?}", place(&s, "LeafB", p));
+    assert!(near(place(&s, "LeafB", p), solidcraft_doc::apply_point(&want, p)), "{:?}", place(&s, "LeafB", p));
     assert!(near(place(&s, "LeafB", p), Vec3::new(20.0, 29.0, 37.0)));
     // LeafA did not move; the knuckle axis is fixed.
     assert!(near(place(&s, "LeafA", p), p));
@@ -108,7 +108,7 @@ fn slider_limits_clamp() {
         .doc
         .features
         .iter()
-        .find(|f| matches!(f.kind, solvecraft_doc::FeatureKind::Box { .. }))
+        .find(|f| matches!(f.kind, solidcraft_doc::FeatureKind::Box { .. }))
         .and_then(|f| f.param_names.get(2).cloned())
         .unwrap_or_default();
     run(&mut s, "parameters.change", json!({"name": h, "expression": "15"}));
@@ -176,7 +176,7 @@ fn motion_links_and_interference() {
     run(&mut s, "joint.drive", json!({"joint": "Screw", "values": [0, 3]}));
     assert!(near(place(&s, "D", Vec3::new(65.0, 5.0, 0.0)), Vec3::new(5.0, 5.0, 16.0)), "{:?}", place(&s, "D", Vec3::new(65.0, 5.0, 0.0)));
     // Saved and reopened, joints come back.
-    let back = solvecraft_doc::Document::from_json(&s.doc.to_json()).unwrap();
+    let back = solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap();
     assert_eq!(back.assembly, s.doc.assembly);
     let mut t = Session::new(back);
     let l = run(&mut t, "joint.list", json!({}));

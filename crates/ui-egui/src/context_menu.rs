@@ -14,7 +14,7 @@
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use serde::Serialize;
 use serde_json::{Value, json};
-use solvecraft_engine::Sel;
+use solidcraft_engine::Sel;
 
 use crate::theme::Tokens;
 use crate::{SolveApp, icons};
@@ -123,7 +123,7 @@ impl Item {
 
 /// A command entry: label, icon, shortcut and enablement come from the registry.
 fn cmd(app: &SolveApp, id: &str, label: &str) -> Item {
-    let info = solvecraft_engine::find_command(id).map(|c| c.info(&app.session));
+    let info = solidcraft_engine::find_command(id).map(|c| c.info(&app.session));
     let shortcut = match id {
         "edit.undo" => "Ctrl+Z".to_string(),
         "edit.redo" => "Ctrl+Y".to_string(),
@@ -304,7 +304,7 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
         Target::Toolbar => crate::toolbar_custom::toolbar_items(app),
         Target::Workspace => {
             let mut v = vec![act("ui.workspace", "Design", "box").key("current")];
-            for w in ["Generative Design", "Render", "Animation", "Simulation", "Manufacture", "Drawing"] {
+            for w in ["Render", "Animation", "Simulation", "Manufacture", "Drawing"] {
                 v.push(act("ui.workspace", w, "").key("coming later").on(false));
             }
             v
@@ -493,7 +493,7 @@ fn sketch_items(app: &SolveApp, id: u64) -> Vec<Item> {
 /// An assembly joint: edit, drive, suppress, delete.
 fn joint_items(app: &SolveApp, id: u64) -> Vec<Item> {
     let Some(j) = app.session.doc.assembly.joints.iter().find(|j| j.id == id) else { return Vec::new() };
-    let rigid = j.kind == solvecraft_engine::doc::joints::JointKind::Rigid;
+    let rigid = j.kind == solidcraft_engine::doc::joints::JointKind::Rigid;
     vec![
         act("ui.editJoint", "Edit Joint", "joint").with(json!({ "joint": id })),
         act("ui.editJoint", "Edit Joint Limits", "").with(json!({ "joint": id })).on(!rigid),
@@ -609,7 +609,7 @@ fn component_items(app: &SolveApp, id: u64) -> Vec<Item> {
 /// Sketch entity items: construction, fix, delete, dimension and the constraints the selection
 /// can take.
 fn sketch_entity_items(app: &SolveApp) -> Vec<Item> {
-    use solvecraft_engine::sketch::CurveKind;
+    use solidcraft_engine::sketch::CurveKind;
     let Some(sid) = app.session.active_sketch else { return Vec::new() };
     let st = app.session.world_state();
     let Some(ss) = st.sketch(sid) else { return Vec::new() };
@@ -1024,7 +1024,7 @@ pub fn delete(app: &mut SolveApp) {
 /// visibility (bodies, faces' and edges' bodies, sketches, construction and origin planes and
 /// axes, components' bodies, canvases). When some are shown and some hidden, all are hidden.
 pub fn toggle_visibility(app: &mut SolveApp) {
-    use solvecraft_engine::doc::FeatureKind;
+    use solidcraft_engine::doc::FeatureKind;
     let paths: Vec<Vec<u64>> =
         app.session.selection.iter().filter_map(|s| if let Sel::Occurrence { path } = s { Some(path.clone()) } else { None }).collect();
     if !paths.is_empty() {
@@ -1686,7 +1686,7 @@ mod tests {
 
     #[test]
     fn disabled_radial_menu_does_not_capture_right_button_hold() {
-        let mut app = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         let ctx = egui::Context::default();
         let point = pos2(600.0, 400.0);
         app.viewport.mouse = Some(point);

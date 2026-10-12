@@ -2,10 +2,10 @@
 //! Trim and Split Face. Each has a live preview and Edit Feature.
 
 use serde_json::{Map, Value, json};
-use solvecraft_engine::Sel;
-use solvecraft_engine::doc::expr::Kind as ValueKind;
-use solvecraft_engine::doc::{FaceAt, FeatureKind, PlaneRef};
-use solvecraft_engine::geom::Vec3;
+use solidcraft_engine::Sel;
+use solidcraft_engine::doc::expr::Kind as ValueKind;
+use solidcraft_engine::doc::{FaceAt, FeatureKind, PlaneRef};
+use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
 use crate::dialogs::{Kind, OP_LABELS, OPS, combo, field, op_index, row_label};

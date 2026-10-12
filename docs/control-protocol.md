@@ -1,6 +1,6 @@
 # Control protocol
 
-`solvecraft --control PORT` (or `SOLVECRAFT_CONTROL_PORT=PORT`) listens on `127.0.0.1:PORT` for
+`solidcraft --control PORT` (or `SOLIDCRAFT_CONTROL_PORT=PORT`) listens on `127.0.0.1:PORT` for
 JSON lines. Each request is one line `{"id": …, "method": "…", "params": {…}}`; each reply is one
 line `{"id": …, "ok": true, "result": …}` or `{"id": …, "ok": false, "error": "…"}`. Requests are
 handled on the UI thread between frames; pointer and keyboard input is injected as real egui
@@ -23,7 +23,7 @@ answered within 60 seconds is replied to with `{"ok": false, "error": "timeout"}
 | `engine.commands` | — | every command: id, label, tab, panel, icon, shortcut, params doc, enabled |
 | `document.inspect` | `measure?`: bool | parameters, timeline (errors, timings), bodies, sketches, selection |
 
-Commands never open dialogs when run this way. `solvecraft-cli commands` prints the same registry.
+Commands never open dialogs when run this way. `solidcraft-cli commands` prints the same registry.
 
 Every `sketch.*` command that changes a sketch adds `created: {points, curves, constraints,
 dimensions}` to its result (and `wires` for 3D curves): the ids of what it added, in creation
@@ -85,7 +85,7 @@ unit regardless of the design, pass an expression with one: `"value": "50 mm"` o
 
 ## MCP
 
-`solvecraft-cli mcp --connect 127.0.0.1:PORT` bridges an MCP client (an AI agent) to this
+`solidcraft-cli mcp --connect 127.0.0.1:PORT` bridges an MCP client (an AI agent) to this
 channel; see [mcp.md](mcp.md).
 
 ## Example

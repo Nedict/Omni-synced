@@ -3,8 +3,8 @@ use crate::scenario::Harness;
 use crate::sketch_display::{curve_sample, projection_key};
 use crate::viewport::{Hit, Proj, pick, projection};
 use serde_json::json;
-use solvecraft_engine::geom::{Plane, Vec2, Vec3};
-use solvecraft_engine::render::{SampledPath, SamplingQuality};
+use solidcraft_engine::geom::{Plane, Vec2, Vec3};
+use solidcraft_engine::render::{SampledPath, SamplingQuality};
 use std::sync::Arc;
 
 fn circle(h: &mut Harness) -> u64 {
@@ -78,7 +78,7 @@ fn pixel_circle_fit_exact_half_chord_hover_click_and_model_invariance() {
             h.app.viewport.hover
         );
         h.step(&json!({"click":{"world":[world.x,world.y,world.z]}})).unwrap();
-        assert!(h.app.session.selection.iter().any(|s| matches!(s, solvecraft_engine::Sel::SketchCurve{id} if id == "c1")));
+        assert!(h.app.session.selection.iter().any(|s| matches!(s, solidcraft_engine::Sel::SketchCurve{id} if id == "c1")));
         h.app.session.selection.clear();
     }
     assert_eq!(h.app.session.doc.to_json(), baseline, "display and selection must not alter stored geometry, constraints or expressions");
@@ -106,16 +106,16 @@ fn pixel_cache_full_view_resize_and_hidpi_invalidate_within_same_grid_bucket() {
     let keys = crate::viewport::display_scene_keys(&h.app, &first);
     let a = curve_sample(&h.app, sid, index, &plane, &first);
     assert!(Arc::ptr_eq(&a, &curve_sample(&h.app, sid, index, &plane, &first)));
-    let grid = solvecraft_engine::view::grid_step(h.app.cam.half_height());
+    let grid = solidcraft_engine::view::grid_step(h.app.cam.half_height());
     // Find a real zoom change which keeps the complete grid bucket unchanged.
     let distance = h.app.cam.distance;
     for factor in [0.8, 0.9, 1.1, 1.2] {
         h.app.cam.distance = distance * factor;
-        if solvecraft_engine::view::grid_step(h.app.cam.half_height()) == grid {
+        if solidcraft_engine::view::grid_step(h.app.cam.half_height()) == grid {
             break;
         }
     }
-    assert_eq!(solvecraft_engine::view::grid_step(h.app.cam.half_height()), grid);
+    assert_eq!(solidcraft_engine::view::grid_step(h.app.cam.half_height()), grid);
     assert_ne!(h.app.cam.distance, distance);
     let zoom = projection(&h.app, first.rect);
     let zoom_keys = crate::viewport::display_scene_keys(&h.app, &zoom);
@@ -163,7 +163,7 @@ fn pixel_adapter_uses_exact_ellipse_periodic_fit_and_control_spline_spans() {
         let ss = state.sketch(sid).unwrap();
         let exact = ss.sketch.exact_segs(0).unwrap();
         assert!(
-            exact.iter().all(|s| !matches!(s, solvecraft_engine::geom::Seg2::Line { .. })),
+            exact.iter().all(|s| !matches!(s, solidcraft_engine::geom::Seg2::Line { .. })),
             "freeform display must reach the exact span extractor"
         );
         let proj = projection(&h.app, h.app.viewport.rect.unwrap());
@@ -216,7 +216,7 @@ fn pixel_curve_second_nested_rotated_occurrence_uses_its_world_plane() {
     assert!(dense_circle_error(&path, &ss.plane, &proj, 1.0, h.app.viewport.pixels_per_point()) <= 1.0);
     let world = ss.plane.to_world(Vec2::new(0.8090169943749475, 0.5877852522924731));
     h.step(&json!({"click":{"world":[world.x,world.y,world.z]}})).unwrap();
-    assert!(h.app.session.selection.iter().any(|s| matches!(s, solvecraft_engine::Sel::SketchCurve{id} if id == "c1")));
+    assert!(h.app.session.selection.iter().any(|s| matches!(s, solidcraft_engine::Sel::SketchCurve{id} if id == "c1")));
     assert_eq!(h.app.session.doc.to_json(), baseline);
 }
 
@@ -231,7 +231,7 @@ fn pixel_annulus_fill_keeps_hole_and_cpu_bridge_matches_cached_boundaries() {
     let ss = state.sketch(sid).unwrap();
     let proj = projection(&h.app, h.app.viewport.rect.unwrap());
     let ppp = h.app.viewport.pixels_per_point();
-    let profiles = solvecraft_engine::sketch::find_profiles(&ss.sketch);
+    let profiles = solidcraft_engine::sketch::find_profiles(&ss.sketch);
     let ring = profiles.iter().find(|p| p.region.holes.len() == 1).unwrap();
     let display = crate::sketch_display::display_region(&ring.region, &ss.plane, &proj, ppp).unwrap();
     assert_eq!(display.holes.len(), 1);
@@ -254,7 +254,7 @@ fn pixel_annulus_fill_keeps_hole_and_cpu_bridge_matches_cached_boundaries() {
         }
     }
     assert!((area - std::f64::consts::PI * 0.75).abs() < 0.02, "adaptive fill area: {area}");
-    let cpu = solvecraft_engine::view::sketch_lines_with_sampler(&ss.sketch, &ss.plane, true, &[], |sk, index, plane| {
+    let cpu = solidcraft_engine::view::sketch_lines_with_sampler(&ss.sketch, &ss.plane, true, &[], |sk, index, plane| {
         crate::sketch_display::curve_parts(sk, index, plane, &proj, ppp)
     });
     let cached: Vec<_> = (0..ss.sketch.curves.len()).flat_map(|index| curve_sample(&h.app, sid, index, &ss.plane, &proj).parts.clone()).collect();

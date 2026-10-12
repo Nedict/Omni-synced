@@ -1,7 +1,7 @@
 use crate::context_menu::{self, Target};
 use crate::scenario::Harness;
 use serde_json::json;
-use solvecraft_engine::Sel;
+use solidcraft_engine::Sel;
 
 #[test]
 fn replaced_body_name_uses_evaluated_owner_in_browser_and_component_actions() {
@@ -104,19 +104,19 @@ fn occurrence_move_dialog_keeps_other_pending_moves_and_reuses_initial_baseline(
     context_menu::run_item(&mut h.app, movement, egui::Pos2::ZERO);
     let mut m = h.app.tree.occurrence_move.clone().unwrap();
     m.pivot =
-        Some(solvecraft_engine::doc::apply_point(&h.app.session.occurrence_placement(&[second]).unwrap().world, solvecraft_engine::geom::Vec3::ZERO));
+        Some(solidcraft_engine::doc::apply_point(&h.app.session.occurrence_placement(&[second]).unwrap().world, solidcraft_engine::geom::Vec3::ZERO));
     m.translate = [10.0, 0.0, 0.0];
     crate::browser::apply_occurrence_move(&mut h.app, &m);
     let at = h.app.session.occurrence_placement(&[second]).unwrap();
-    assert!((solvecraft_engine::doc::apply_point(&at.world, solvecraft_engine::geom::Vec3::ZERO).x - 65.0).abs() < 1e-8);
+    assert!((solidcraft_engine::doc::apply_point(&at.world, solidcraft_engine::geom::Vec3::ZERO).x - 65.0).abs() < 1e-8);
     m.translate = [3.0, 0.0, 0.0];
     crate::browser::apply_occurrence_move(&mut h.app, &m);
     let at = h.app.session.occurrence_placement(&[second]).unwrap();
-    assert!((solvecraft_engine::doc::apply_point(&at.world, solvecraft_engine::geom::Vec3::ZERO).x - 58.0).abs() < 1e-8);
+    assert!((solidcraft_engine::doc::apply_point(&at.world, solidcraft_engine::geom::Vec3::ZERO).x - 58.0).abs() < 1e-8);
     assert_eq!(h.app.session.pending_moves[&first], first_pending);
     crate::browser::revert_occurrence_dialog(&mut h.app, &m);
     let restored = h.app.session.occurrence_placement(&[second]).unwrap();
-    assert!((solvecraft_engine::doc::apply_point(&restored.world, solvecraft_engine::geom::Vec3::ZERO).x - 55.0).abs() < 1e-8);
+    assert!((solidcraft_engine::doc::apply_point(&restored.world, solidcraft_engine::geom::Vec3::ZERO).x - 55.0).abs() < 1e-8);
     assert_eq!(h.app.session.pending_moves[&first], first_pending);
     h.app.run("component.revert_position", json!({"occurrences":[second]})).unwrap();
     context_menu::run_item(&mut h.app, movement, egui::Pos2::ZERO);

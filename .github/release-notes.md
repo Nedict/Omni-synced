@@ -5,15 +5,26 @@ parameter to watch the timeline rebuild. [Documentation](https://bherbruck.githu
 [issues](https://github.com/bherbruck/solidcraft/issues). AI agents can model with it over MCP:
 `solidcraft-cli mcp` ([how](https://bherbruck.github.io/solidcraft/guide/mcp.html)).
 
-**Renamed to SolidCraft.** Downloads, installers and programs now carry the SolidCraft name:
-the desktop app is `solidcraft`, the command line `solidcraft-cli`. `solvecraft-cli` is still
-installed as a deprecated alias that forwards to `solidcraft-cli` (it prints a one-line note on
-stderr), so scripts and MCP setups such as `claude mcp add solvecraft -- solvecraft-cli mcp`
-keep working; new setups use `claude mcp add solidcraft -- solidcraft-cli mcp`. Existing designs
-open as before. Upgrades: the `.msi` upgrades an earlier install in place (it now installs to
-`Program Files\SolidCraft`); the `solidcraft` `.deb`/`.rpm` replaces the old `solvecraft`
-package; the Flatpak app ID `ai.storyteller.solvecraft` is unchanged, so Flatpak updates
-continue; earlier AppImages still find updates.
+**Renamed to SolidCraft.** Everything now uses the new name: the `solidcraft` and
+`solidcraft-cli` programs, `.solidcraft` designs, `SOLIDCRAFT_*` environment variables,
+settings folders, package names and the `solidcraft` MCP server. Upgrading from SolveCraft:
+- `.solvecraft` designs still open (double-click, Open, drag-drop, the CLI and MCP); new saves
+  are `.solidcraft`. Builds older than this one can't open files saved by it.
+- Settings, preferences and recovery files are copied to the new folders on first launch; the
+  old folders are left in place. `SOLVECRAFT_*` environment variables are still read.
+- `solvecraft-cli` remains as a deprecated alias for one release; it forwards to
+  `solidcraft-cli` and prints a note. Agents: `claude mcp add solidcraft -- solidcraft-cli mcp`;
+  an existing `claude mcp add solvecraft -- solvecraft-cli mcp` setup keeps working.
+- Windows: the `.msi` upgrades the existing installation in place (now in
+  `Program Files\SolidCraft`). Linux: the `solidcraft` `.deb`/`.rpm` replaces the `solvecraft`
+  package. The Flatpak app ID stays `ai.storyteller.solvecraft`, so `flatpak update` just works,
+  and existing AppImages find the update.
+- macOS: quit the app, move the old `SolveCraft.app` to the Trash (your designs and settings
+  stay), then drag `SolidCraft.app` from the DMG onto Applications and pin it in the Dock.
+- Details: [compatibility notes](https://github.com/bherbruck/solidcraft/blob/main/docs/compatibility.md).
+
+Documentation, the browser app and the Flatpak feed use the SolidCraft project Pages URLs;
+old-name Pages addresses are not permanent aliases.
 
 **Which file?**
 - **Windows:** `SolidCraft-{version}-windows-x64.exe` runs as is. Or install the `.msi`, or unzip the
@@ -21,16 +32,13 @@ continue; earlier AppImages still find updates.
 - **macOS 11+** (Apple silicon and Intel): open the `.dmg` and drag `SolidCraft.app` onto Applications.
   The CLI is in `solidcraft-cli-{version}-macos-universal.zip`.
 - **Linux** (x86_64 and aarch64, glibc 2.35+): the `.AppImage` (`chmod +x`, then run it), the
-  `.deb` or `.rpm`, the `.flatpak` (`flatpak install --user <file>`), or the `.tar.gz`.
+  `.deb` or `.rpm`, the `.flatpak` (`flatpak install --user <file>`), the `.snap`
+  (`sudo snap install --dangerous <file>`, or `sudo snap install solidcraft` from the Snap Store), or the `.tar.gz`.
 - **FreeBSD:** `tar -xzf solidcraft-{version}-freebsd-x86_64.tar.gz --strip-components 1 -C /usr/local`.
 - **Web:** `solidcraft-web-{version}.zip` is a static site to host yourself.
 - `SHA256SUMS.txt`: `sha256sum -c SHA256SUMS.txt --ignore-missing`.
-
-**Updating macOS from SolveCraft.app:** quit the app, rename the existing app in
-Applications to `SolidCraft.app`, then drag the new app from the DMG onto Applications
-and choose **Replace**. If both names are already installed, move the old `SolveCraft.app`
-to the Trash. Remove any Dock shortcut with the old name and pin the new app. Designs
-and settings are unchanged. The DMG includes these instructions.
+- Files without a version in the name (`solidcraft-windows-x64.msi`, `solidcraft-linux-x86_64.AppImage`, …)
+  are the same packages under fixed names, for download links that always fetch the latest release.
 
 For Flatpak feed installation and updates, add Flathub for the required runtime before
 installing SolidCraft; keep both remotes in the same user installation:

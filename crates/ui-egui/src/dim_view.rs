@@ -2,7 +2,7 @@
 //! dimension line (or arc) with arrowheads, and the value centred on it; radius and diameter
 //! leaders with R / Ø, angles as an arc between the two lines, arc lengths with the arc mark,
 //! driven (reference) dimensions in parentheses in a muted colour. The geometry comes from
-//! `solvecraft_sketch::dim_layout`.
+//! `solidcraft_sketch::dim_layout`.
 //!
 //! A click selects a dimension (Delete removes it), a drag moves its text (and so the offset of
 //! its dimension line), a double-click edits its value in place with parameter completion.
@@ -14,9 +14,9 @@ use std::sync::Arc;
 
 use egui::{FontId, Pos2, Rect, Shape, Stroke, vec2};
 use serde_json::json;
-use solvecraft_engine::Sel;
-use solvecraft_engine::geom::Vec2;
-use solvecraft_engine::sketch::{ConstraintKind, DimFrame, chain_centres, default_text, dim_frame, dim_layout};
+use solidcraft_engine::Sel;
+use solidcraft_engine::geom::Vec2;
+use solidcraft_engine::sketch::{ConstraintKind, DimFrame, chain_centres, default_text, dim_frame, dim_layout};
 
 use crate::SolveApp;
 use crate::theme::Tokens;
@@ -52,16 +52,16 @@ struct Edit {
 /// document also makes the editor's identity check safe across document replacements.
 #[derive(Clone, Debug)]
 struct DimensionDraft {
-    baseline: Arc<solvecraft_engine::doc::Document>,
+    baseline: Arc<solidcraft_engine::doc::Document>,
     sketch: u64,
     component: u64,
     path: Option<Vec<u64>>,
-    pending: std::collections::BTreeMap<u64, solvecraft_engine::doc::Mat>,
+    pending: std::collections::BTreeMap<u64, solidcraft_engine::doc::Mat>,
     entities: Vec<String>,
     at: Vec2,
     checked_expr: String,
-    preview_doc: Arc<solvecraft_engine::doc::Document>,
-    preview: Arc<solvecraft_engine::doc::ModelState>,
+    preview_doc: Arc<solidcraft_engine::doc::Document>,
+    preview: Arc<solidcraft_engine::doc::ModelState>,
     error: Option<String>,
     /// A dimension that would over-constrain the sketch, placed as a driven (reference) one:
     /// it has no parameter and no value to edit (#320).
@@ -79,7 +79,7 @@ impl DimensionDraft {
     fn params(&self, expr: &str) -> serde_json::Value {
         json!({"entities": self.entities, "text_at": [self.at.x, self.at.y], "value": expr})
     }
-    fn evaluate(&self, app: &SolveApp, expr: &str) -> Result<solvecraft_engine::Session, String> {
+    fn evaluate(&self, app: &SolveApp, expr: &str) -> Result<solidcraft_engine::Session, String> {
         let mut scratch = app.session.scratch();
         let result = scratch.execute("sketch.dimension", &self.params(expr)).map_err(|e| e.to_string())?;
         let param = result.get("param").and_then(serde_json::Value::as_str).ok_or("The dimension value is unavailable")?;
@@ -169,11 +169,11 @@ fn draft_of(app: &SolveApp, sketch: u64, entities: &[String], at: Vec2, driven: 
 /// Cache inference at a stationary pointer, including incomplete/unsupported picks.
 #[derive(Clone)]
 struct Placement {
-    baseline: Arc<solvecraft_engine::doc::Document>,
+    baseline: Arc<solidcraft_engine::doc::Document>,
     sketch: Option<u64>,
     component: u64,
     path: Option<Vec<u64>>,
-    pending: std::collections::BTreeMap<u64, solvecraft_engine::doc::Mat>,
+    pending: std::collections::BTreeMap<u64, solidcraft_engine::doc::Mat>,
     entities: Vec<String>,
     at: Vec2,
     draft: Option<(String, DimensionDraft)>,
@@ -398,7 +398,7 @@ pub fn show(app: &mut SolveApp, ui: &egui::Ui, painter: &egui::Painter, proj: &P
     let mut constraints = sk.constraints.iter().map(|c| (ss, c, false)).collect::<Vec<_>>();
     if let (Some(source), Some((param, _))) = (draft_sketch, draft.as_ref()) {
         // A driven draft is keyed by its constraint id (it has no parameter).
-        let ours = |c: &&solvecraft_engine::sketch::Constraint| c.param.as_deref() == Some(param.as_str()) || (c.driven && c.id == *param);
+        let ours = |c: &&solidcraft_engine::sketch::Constraint| c.param.as_deref() == Some(param.as_str()) || (c.driven && c.id == *param);
         constraints.extend(source.sketch.constraints.iter().filter(ours).map(|c| (source, c, true)));
     }
     for (source, c, is_draft) in constraints {
@@ -483,7 +483,7 @@ pub fn show(app: &mut SolveApp, ui: &egui::Ui, painter: &egui::Painter, proj: &P
 }
 
 /// A point a dimension measures (for the shape it belongs to).
-fn first_point(sk: &solvecraft_engine::sketch::Sketch, k: &ConstraintKind) -> Option<usize> {
+fn first_point(sk: &solidcraft_engine::sketch::Sketch, k: &ConstraintKind) -> Option<usize> {
     use ConstraintKind::*;
     match *k {
         Length { l, .. } => sk.curves.get(l).and_then(|c| c.kind.point_ids().first().copied()),
@@ -574,9 +574,9 @@ fn edit_box(app: &mut SolveApp, ctx: &egui::Context) {
                     .session
                     .doc
                     .param(&e.param)
-                    .and_then(|p| solvecraft_engine::doc::expr::unit_info(&p.unit))
+                    .and_then(|p| solidcraft_engine::doc::expr::unit_info(&p.unit))
                     .map(|(k, _)| k)
-                    .unwrap_or(solvecraft_engine::doc::expr::Kind::Unitless);
+                    .unwrap_or(solidcraft_engine::doc::expr::Kind::Unitless);
                 let expression = app.session.doc.with_design_unit(&e.expr, kind);
                 app.run("parameters.change", json!({"name": e.param, "expression": expression}))
             };

@@ -22,7 +22,7 @@ commands:
   features        list SolidCraft's commands by area in docs/features.md (from the registry)
   oracle [--cli BIN]
                   replay the reference tests (tests/oracle/*/recipe.json), compare with each
-                  case's expected.json and write docs/oracle.md (--cli: a solvecraft-cli
+                  case's expected.json and write docs/oracle.md (--cli: a solidcraft-cli
                   already built, instead of cargo run --release)
   book [--no-build]
                   generate docs/book's command reference and screenshots, then mdbook build
@@ -173,7 +173,7 @@ fn cmd_oracle(cli: Option<&str>) -> Result<(), String> {
     for c in &cases {
         cmd.arg(c.strip_prefix(root()).unwrap_or(c));
     }
-    let out = cmd.output().map_err(|e| format!("solvecraft-cli: {e}"))?;
+    let out = cmd.output().map_err(|e| format!("solidcraft-cli: {e}"))?;
     let results: serde_json::Value =
         serde_json::from_slice(&out.stdout).map_err(|e| format!("oracle JSON: {e}\n{}", String::from_utf8_lossy(&out.stderr)))?;
     let list = results.as_array().cloned().unwrap_or_default();
@@ -275,7 +275,7 @@ fn wasm_check() -> Result<(Command, usize), String> {
     let crates = layers::from_metadata(&metadata()?)?;
     let mut set: Vec<String> =
         crates.iter().filter(|c| matches!(layers::classify(&c.name), Some(layers::Class::Layer(_)))).map(|c| c.name.clone()).collect();
-    set.push("solvecraft-web".into());
+    set.push("solidcraft-web".into());
     let mut c = cargo();
     c.args(["check", "--target", "wasm32-unknown-unknown", "--profile", "ci"]);
     for p in &set {

@@ -37,7 +37,7 @@
 use std::sync::mpsc::Sender;
 
 use serde_json::{Value, json};
-use solvecraft_engine::render::{StandardView, render_png};
+use solidcraft_engine::render::{StandardView, render_png};
 
 use crate::SolveApp;
 
@@ -180,7 +180,7 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
                     };
                 }
             }
-            match (serde_json::from_value::<crate::UiState>(cur), serde_json::from_value::<solvecraft_engine::Visibility>(vis)) {
+            match (serde_json::from_value::<crate::UiState>(cur), serde_json::from_value::<solidcraft_engine::Visibility>(vis)) {
                 (Ok(u), Ok(v)) => {
                     app.ui = u;
                     app.session.visibility = v;
@@ -349,13 +349,13 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
             let proj = crate::viewport::projection(app, rect);
             let num = |v: &Value, i: usize| v.get(i).and_then(Value::as_f64).unwrap_or(0.0);
             let world = if let Some(w) = p.get("world") {
-                Some(solvecraft_engine::geom::Vec3::new(num(w, 0), num(w, 1), num(w, 2)))
+                Some(solidcraft_engine::geom::Vec3::new(num(w, 0), num(w, 1), num(w, 2)))
             } else if let Some(s) = p.get("sketch") {
                 let st = app.session.world_state();
                 app.session
                     .active_sketch
                     .and_then(|id| st.sketch(id))
-                    .map(|ss| ss.plane.to_world(solvecraft_engine::geom::Vec2::new(num(s, 0), num(s, 1))))
+                    .map(|ss| ss.plane.to_world(solidcraft_engine::geom::Vec2::new(num(s, 0), num(s, 1))))
             } else if let Some(n) = p.get("plane").and_then(Value::as_str) {
                 crate::viewport::origin_planes(app).into_iter().find(|(name, _, _)| *name == n).map(|(_, _, q)| (q[0] + q[1] + q[2] + q[3]) / 4.0)
             } else if let Some(n) = p.get("axis").and_then(Value::as_str) {
@@ -365,7 +365,7 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
             } else if let Some(n) = p.get("gizmo").and_then(Value::as_str) {
                 // A handle of the move triad ("x", "xy", "rz", "ball"), moved `by` [x,y,z] mm or
                 // turned `turn` degrees (rings).
-                let by = p.get("by").map(|b| solvecraft_engine::geom::Vec3::new(num(b, 0), num(b, 1), num(b, 2))).unwrap_or_default();
+                let by = p.get("by").map(|b| solidcraft_engine::geom::Vec3::new(num(b, 0), num(b, 1), num(b, 2))).unwrap_or_default();
                 crate::gizmo::handle_point(n, by, p.get("turn").and_then(Value::as_f64).unwrap_or(0.0))
             } else {
                 None
@@ -386,7 +386,7 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 .take(1000)
                 .map(|v| {
                     let c = |i: usize| v.get(i).and_then(Value::as_f64).unwrap_or(0.0);
-                    proj.to_screen(solvecraft_engine::geom::Vec3::new(c(0), c(1), c(2))).map_or(Value::Null, |q| json!([q.x, q.y]))
+                    proj.to_screen(solidcraft_engine::geom::Vec3::new(c(0), c(1), c(2))).map_or(Value::Null, |q| json!([q.x, q.y]))
                 })
                 .collect();
             ok(json!(pts))
@@ -406,7 +406,7 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 .take(1000)
                 .map(|v| {
                     let c = |i: usize| v.get(i).and_then(Value::as_f64).unwrap_or(0.0);
-                    let q = solvecraft_engine::geom::Vec2::new(c(0), c(1));
+                    let q = solidcraft_engine::geom::Vec2::new(c(0), c(1));
                     proj.to_screen(ss.plane.to_world(q)).map_or(Value::Null, |p| json!([p.x, p.y]))
                 })
                 .collect();
@@ -527,7 +527,7 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
             let h = f("height").unwrap_or(800.0).clamp(16.0, 8192.0) as usize;
             // Cut by the section the viewport shows (an open Section Analysis dialog's preview,
             // a sketch's Slice), not only the committed one.
-            let scene = solvecraft_engine::view::scene_with_section(&app.session, &app.cam, crate::viewport::section_plane(app));
+            let scene = solidcraft_engine::view::scene_with_section(&app.session, &app.cam, crate::viewport::section_plane(app));
             let Some(png) = render_png(&scene, &app.cam, w, h) else { return err("render failed") };
             match s("path") {
                 Some(path) => match std::fs::write(path, &png) {
@@ -561,7 +561,7 @@ pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>) -> Value {
         buf.extend_from_slice(&c.to_array());
     }
     let Some(img) = image::RgbaImage::from_raw(w as u32, h as u32, buf) else { return json!({"ok": false, "error": "bad image"}) };
-    let path = path.map(str::to_string).unwrap_or_else(|| std::env::temp_dir().join("solvecraft-shot.png").to_string_lossy().to_string());
+    let path = path.map(str::to_string).unwrap_or_else(|| std::env::temp_dir().join("solidcraft-shot.png").to_string_lossy().to_string());
     match img.save(&path) {
         Ok(()) => json!({"ok": true, "result": {"path": path, "width": w, "height": h}}),
         Err(e) => json!({"ok": false, "error": e.to_string()}),
@@ -571,7 +571,7 @@ pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>) -> Value {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use solvecraft_engine::{Sel, Session};
+    use solidcraft_engine::{Sel, Session};
 
     use super::*;
     use crate::Services;
@@ -592,7 +592,7 @@ mod tests {
         let mut s = Session::default();
         s.execute("solid.box", &json!({"length": 40, "width": 30, "height": 20})).unwrap();
         let mut app = SolveApp::new(s, Services::default());
-        let dir = std::env::temp_dir().join(format!("solvecraft-render-section-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("solidcraft-render-section-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let whole = render(&mut app, &dir.join("whole.png"));
         app.session.selection = vec![Sel::Plane { name: "XZ".into() }];

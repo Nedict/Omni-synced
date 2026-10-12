@@ -1,6 +1,6 @@
 use crate::scenario::Harness;
 use serde_json::{Value, json};
-use solvecraft_engine::doc::{FaceAttachmentStatus, FeatureKind, PlaneRef};
+use solidcraft_engine::doc::{FaceAttachmentStatus, FeatureKind, PlaneRef};
 
 fn picked_sketch() -> (Harness, u64) {
     let mut h = Harness::new();
@@ -46,7 +46,7 @@ fn actual_picked_face_and_noop_edit_preserve_exact_anchor_and_dimensions() {
     h.settle();
     h.app.finish_sketch();
     assert_eq!(serde_json::to_value(&h.app.session.doc.feature(sketch).unwrap().kind).unwrap(), before);
-    let path = h.dir.join("picked-face.solvecraft");
+    let path = h.dir.join("picked-face.solidcraft");
     h.app.run("file.save", json!({"path":path})).unwrap();
     h.app.run("doc.open", json!({"path":path})).unwrap();
     assert_eq!(serde_json::to_value(&h.app.session.doc.feature(sketch).unwrap().kind).unwrap(), before);
@@ -84,7 +84,7 @@ fn lost_attachment_ghost_rebind_preview_cancel_apply_and_undo_preserve_sketch() 
     h.app.run("browser.visibility", json!({"items":["ControlBox"],"visible":true})).unwrap();
     h.frames(4);
     h.step(&json!({"click":{"world":[3,4,30]}})).unwrap();
-    assert!(matches!(h.app.session.selection.first(), Some(solvecraft_engine::Sel::Face { body, .. }) if body=="ControlBox"));
+    assert!(matches!(h.app.session.selection.first(), Some(solidcraft_engine::Sel::Face { body, .. }) if body=="ControlBox"));
     h.frames(2);
     h.step(&json!({"widget":"Reattach selected face"})).unwrap();
     let commands = crate::sketch_attachment_ui::commands(&h.app)
@@ -113,7 +113,7 @@ fn lost_attachment_ghost_rebind_preview_cancel_apply_and_undo_preserve_sketch() 
     let boss = h.app.session.world_state().body("Boss").unwrap().mesh().bounds();
     assert!((boss.min.z - 30.0).abs() < 1e-7 && (boss.max.z - 32.0).abs() < 1e-7);
     let repaired = h.app.session.doc.to_json();
-    let path = h.dir.join("rebound-face.solvecraft");
+    let path = h.dir.join("rebound-face.solidcraft");
     h.app.run("file.save", json!({"path":path})).unwrap();
     h.app.run("edit.undo", json!({})).unwrap();
     assert_eq!(h.app.session.doc.to_json(), before);
@@ -130,7 +130,7 @@ fn attachment_drafts_leave_on_document_replacement_but_survive_failed_open() {
     h.frames(2);
     h.step(&json!({"widget":"Use XZ plane"})).unwrap();
     assert!(crate::sketch_attachment_ui::commands(&h.app).is_some());
-    assert!(h.app.run("doc.open", json!({"path":h.dir.join("missing.solvecraft")})).is_err());
+    assert!(h.app.run("doc.open", json!({"path":h.dir.join("missing.solidcraft")})).is_err());
     assert!(crate::sketch_attachment_ui::commands(&h.app).is_some());
     h.app.run("file.new", json!({})).unwrap();
     assert!(h.app.tree.redefine.is_none());
@@ -223,7 +223,7 @@ fn actual_nested_second_placement_face_pick_keeps_target_and_author_paths() {
     assert_eq!(h.app.session.active_occurrence_path.as_ref(), Some(&path));
     h.app.finish_sketch();
     assert_eq!(h.app.session.doc.feature(sketch).unwrap().kind, kind);
-    let file = h.dir.join("nested-face.solvecraft");
+    let file = h.dir.join("nested-face.solidcraft");
     h.app.run("file.save", json!({"path":file})).unwrap();
     h.app.run("doc.open", json!({"path":file})).unwrap();
     assert_eq!(h.app.session.doc.feature(sketch).unwrap().kind, kind);
@@ -241,9 +241,9 @@ fn actual_nested_second_placement_face_pick_keeps_target_and_author_paths() {
 
 #[test]
 fn nested_anchor_saved_fixed_conversion_preserves_rotated_second_author_plane() {
-    use solvecraft_engine::doc::{EmbossFace, apply_point, apply_vector};
-    use solvecraft_engine::geom::Plane;
-    use solvecraft_engine::geom::Vec3;
+    use solidcraft_engine::doc::{EmbossFace, apply_point, apply_vector};
+    use solidcraft_engine::geom::Plane;
+    use solidcraft_engine::geom::Vec3;
     let mut h = Harness::new();
     h.app.session.auto_project = false;
     let created = h.app.run("component.create", json!({"name":"Author"})).unwrap();
@@ -285,7 +285,7 @@ fn nested_anchor_saved_fixed_conversion_preserves_rotated_second_author_plane() 
         axis_dir: Vec3::X,
         angle: "15 deg".into(),
     };
-    h.app.session = solvecraft_engine::Session::new(document);
+    h.app.session = solidcraft_engine::Session::new(document);
     let raw = h.app.session.doc.sketch(id).unwrap().clone();
     let before = h.app.session.doc.to_json();
     let undo = h.app.session.undo.len();

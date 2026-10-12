@@ -17,7 +17,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use solvecraft_geom::{Mesh, Seg2, Vec2, Vec3};
+use solidcraft_geom::{Mesh, Seg2, Vec2, Vec3};
 
 use crate::history_names::Names;
 use crate::lineage::Lineage;
@@ -737,7 +737,7 @@ mod tests {
 
     #[test]
     fn merged_face_votes_collectively_for_pieces_of_one_source() {
-        let body = ModelBody::new("Input".into(), solvecraft_kernel::box_solid(Vec3::ZERO, Vec3::new(4., 1., 1.)).unwrap(), 1);
+        let body = ModelBody::new("Input".into(), solidcraft_kernel::box_solid(Vec3::ZERO, Vec3::new(4., 1., 1.)).unwrap(), 1);
         let mut mesh = Mesh::default();
         let mut points = Vec::new();
         for i in 0..3u32 {

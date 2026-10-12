@@ -2,8 +2,8 @@
 //! arc slots.
 
 use serde_json::{Value, json};
-use solvecraft_geom::Vec2;
-use solvecraft_sketch::{ConstraintKind, CurveKind, LinkKind, LinkSource, Sketch};
+use solidcraft_geom::Vec2;
+use solidcraft_sketch::{ConstraintKind, CurveKind, LinkKind, LinkSource, Sketch};
 
 use super::sketch::{add_c, circumcircle, edit, ids_of, mark_construction, req_parg, result, slot};
 use super::{CommandSpec, in_sketch};
@@ -92,7 +92,7 @@ fn text_source(p: &Value, cmd: &str, old: Option<(String, Vec2, f64, f64)>) -> R
     if text.trim().is_empty() {
         return Err(bad(cmd, "`text` must not be empty"));
     }
-    if text.chars().count() > solvecraft_sketch::MAX_TEXT_CHARS {
+    if text.chars().count() > solidcraft_sketch::MAX_TEXT_CHARS {
         return Err(bad(cmd, "text too long"));
     }
     let at = p.get("at").and_then(crate::params::vec2).unwrap_or(at0);
@@ -136,7 +136,7 @@ fn edit_text(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let src = text_source(p, cmd, Some(old))?;
     let LinkSource::Text { text, at, height, angle } = &src else { return Err(bad(cmd, "text")) };
-    let geom = solvecraft_sketch::text_geometry(text, *at, *height, *angle)?;
+    let geom = solidcraft_sketch::text_geometry(text, *at, *height, *angle)?;
     sk.set_link_source(&l, src.clone());
     sk.update_link(&l, &geom)?;
     let curves = ids_of(&sk, &sk.link_curves(&l));
@@ -231,7 +231,7 @@ fn ellipse(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn point_list(sk: &mut Sketch, p: &Value, cmd: &str) -> Result<Vec<usize>> {
     let list = p.get("points").and_then(Value::as_array).ok_or_else(|| bad(cmd, "`points` must be a list"))?;
-    if list.len() < 2 || list.len() > solvecraft_sketch::MAX_SPLINE_POINTS {
+    if list.len() < 2 || list.len() > solidcraft_sketch::MAX_SPLINE_POINTS {
         return Err(bad(cmd, "a spline needs 2 to 500 points"));
     }
     let mut out = Vec::new();
@@ -359,9 +359,9 @@ fn leaving_dir(sk: &Sketch, ci: usize, pi: usize) -> Option<Vec2> {
         CurveKind::Spline { ref pts, control, periodic, .. } => {
             let q: Vec<Vec2> = pts.iter().filter_map(|i| sk.point(*i)).collect();
             if pts.last() == Some(&pi) {
-                solvecraft_sketch::spline_end_tangent_mode(&q, control, periodic, true)
+                solidcraft_sketch::spline_end_tangent_mode(&q, control, periodic, true)
             } else if pts.first() == Some(&pi) {
-                solvecraft_sketch::spline_end_tangent_mode(&q, control, periodic, false).map(|t| -t)
+                solidcraft_sketch::spline_end_tangent_mode(&q, control, periodic, false).map(|t| -t)
             } else {
                 None
             }
@@ -441,7 +441,7 @@ fn tangent_circle(s: &mut Session, p: &Value, cmd: &str, n: usize, radius: Optio
     let (out, info) = edit(s, p, cmd, true, |sk, doc| {
         let cs = tangent_curves(sk, p, cmd, n)?;
         let r0 = match &radius {
-            Some(e) => doc.eval(e, solvecraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("radius: {e}")))?,
+            Some(e) => doc.eval(e, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("radius: {e}")))?,
             None => guess_radius(sk, &cs, near),
         };
         if !(r0 > 1e-9 && r0 < 1e8) {
@@ -564,7 +564,7 @@ pub(super) fn solve_new_only(sk: &mut Sketch, first_new: usize) {
             p.fixed = true;
         }
     }
-    if solvecraft_sketch::solve(&mut trial).ok() {
+    if solidcraft_sketch::solve(&mut trial).ok() {
         for (p, t) in sk.points.iter_mut().zip(&trial.points).skip(first_new) {
             p.pos = t.pos;
         }

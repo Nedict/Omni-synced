@@ -1,4 +1,4 @@
-//! The command registry. Ids are SolveCraft's own dotted ids (`solid.extrude`,
+//! The command registry. Ids are SolidCraft's own dotted ids (`solid.extrude`,
 //! `sketch.rectangle.two_point`); the toolbar placement (`tab`, `panel`) follows the familiar
 //! Design workspace layout.
 

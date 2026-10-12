@@ -8,15 +8,15 @@ until you review and submit it, and the design is not part of the draft.
 
 ## Where they are
 
-`<data dir>/solvecraft/crashes/`, next to the recovery folder:
+`<data dir>/solidcraft/crashes/`, next to the recovery folder:
 
 | System | Folder |
 |---|---|
-| Linux | `~/.local/share/solvecraft/crashes` (or `$XDG_DATA_HOME/solvecraft/crashes`) |
-| Windows | `%LOCALAPPDATA%\SolveCraft\crashes` |
-| macOS | `~/Library/Application Support/SolveCraft/crashes` |
+| Linux | `~/.local/share/solidcraft/crashes` (or `$XDG_DATA_HOME/solidcraft/crashes`) |
+| Windows | `%LOCALAPPDATA%\SolidCraft\crashes` |
+| macOS | `~/Library/Application Support/SolidCraft/crashes` |
 
-`SOLVECRAFT_CRASH_DIR` overrides the folder. `solvecraft --crash-log` and
+`SOLIDCRAFT_CRASH_DIR` overrides the folder. `solidcraft --crash-log` and
 `solidcraft-cli crashes dir` print it.
 
 ## For agents
@@ -32,10 +32,10 @@ All of these read the same folder:
 
 **Reproduce:** `solidcraft-cli crashes replay <id>` opens the report's design, runs its
 commands, and reports whether the same internal error happens again (same place and message).
-Without the CLI, run `solidcraft-cli run <report>/replay.json --in <report>/design.solvecraft`.
+Without the CLI, run `solidcraft-cli run <report>/replay.json --in <report>/design.solidcraft`.
 A fixed crash turns into a regression test with the same two files.
 
-**Check that reporting works:** with `SOLVECRAFT_CRASH_TEST=1` set for the app, the command
+**Check that reporting works:** with `SOLIDCRAFT_CRASH_TEST=1` set for the app, the command
 `diagnostics.crash_test` has three modes:
 - `panic`: an internal error in a command
 - `kernel`: an internal error inside the geometry kernel
@@ -45,7 +45,7 @@ A fixed crash turns into a regression test with the same two files.
 
 A folder `crashes/<YYYYMMDD-HHMMSS>-<signature>/`:
 
-- `report.json` (`"format": "solvecraft-crash/1"`):
+- `report.json` (`"format": "solidcraft-crash/1"`):
   - `kind`: one of
     - `command_panic`: a command hit an internal error; it was caught and the design was left unchanged
     - `kernel_panic_recovered`: the third-party geometry kernel panicked and was caught. This is harmless on the desktop, but it would crash the web build.
@@ -59,7 +59,7 @@ A folder `crashes/<YYYYMMDD-HHMMSS>-<signature>/`:
   - `base`: what the replay starts from (the design before the command, an autosave, a saved file or a new design)
   - `count`, `first_seen`, `last_seen`: the same crash repeats only increase `count`
   - `notes`: what is missing and why, for example a design too large to copy
-- `design.solvecraft`: the design the replay starts from
+- `design.solidcraft`: the design the replay starts from
 - `replay.json`: `{"commands": [{command, params}, …]}`
 
 ## How it stays cheap and small

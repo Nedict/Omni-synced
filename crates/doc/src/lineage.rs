@@ -11,9 +11,9 @@
 
 use std::sync::{Arc, OnceLock};
 
-use solvecraft_geom::Region2;
-use solvecraft_kernel::Body;
-use solvecraft_kernel::history::{Change, FaceOrigin, FaceProv, History};
+use solidcraft_geom::Region2;
+use solidcraft_kernel::Body;
+use solidcraft_kernel::history::{Change, FaceOrigin, FaceProv, History};
 
 use crate::SolvedSketch;
 
@@ -183,7 +183,7 @@ impl<'a> ProfileRoles<'a> {
         if history.operands != 0 {
             return None;
         }
-        let segments: Vec<&solvecraft_geom::Seg2> =
+        let segments: Vec<&solidcraft_geom::Seg2> =
             self.region.map(|r| std::iter::once(&r.outer).chain(&r.holes).flat_map(|l| &l.segs).collect()).unwrap_or_default();
         let curves = self.sketch.map(crate::config::ExactSketchCurves::new);
         let curve = |segment: usize| -> Option<String> { curves.as_ref()?.find(segments.get(segment)?).map(|id| format!("side:{id}")) };
@@ -235,7 +235,7 @@ pub(crate) fn box_tool(body: Body) -> Traced {
         sources
             .iter()
             .map(|source| match source {
-                Some(solvecraft_kernel::FaceSource::Box { axis, high, .. }) => {
+                Some(solidcraft_kernel::FaceSource::Box { axis, high, .. }) => {
                     ["x", "y", "z"].get(usize::from(*axis)).map(|a| vec![format!("{}{a}", if *high { "+" } else { "-" })]).unwrap_or_default()
                 }
                 _ => Vec::new(),

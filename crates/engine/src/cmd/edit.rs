@@ -1,7 +1,7 @@
 //! Undo/redo, the timeline, deletion and selection.
 
 use serde_json::{Value, json};
-use solvecraft_doc::{Feature, FeatureKind};
+use solidcraft_doc::{Feature, FeatureKind};
 
 use super::CommandSpec;
 use crate::params::{bad, bool_, num, str_, string_list};
@@ -96,7 +96,7 @@ fn restore_checkpoint(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn compute_all(s: &mut Session, _p: &Value) -> Result<Value> {
-    s.model = solvecraft_doc::Model::new();
+    s.model = solidcraft_doc::Model::new();
     s.refresh();
     let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
     Ok(json!({"features": s.model.results.len(), "errors": errors}))
@@ -303,7 +303,7 @@ fn edit_feature(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "the feature type cannot change"));
     }
     if let FeatureKind::BodyTransfer { bodies, from, to, transform } = &nf.kind {
-        solvecraft_doc::validate_body_transfer(&s.doc, bodies, *from, *to, transform)?;
+        solidcraft_doc::validate_body_transfer(&s.doc, bodies, *from, *to, transform)?;
         nf.component = *to;
     }
     if let (FeatureKind::Sketch { sketch: a, .. }, FeatureKind::Sketch { sketch: b, .. }) = (&nf.kind, &f.kind)
@@ -319,8 +319,8 @@ fn edit_feature(s: &mut Session, p: &Value) -> Result<Value> {
         && a != b
     {
         let before = s.model.state_before(id);
-        nf.edge_refs = solvecraft_doc::edge_refs(&before, body, a);
-        nf.edge_names = solvecraft_doc::edge_names_for(&before, body, a);
+        nf.edge_refs = solidcraft_doc::edge_refs(&before, body, a);
+        nf.edge_names = solidcraft_doc::edge_names_for(&before, body, a);
     }
     // Profiles picked by index or point are kept by their curves, as when the feature was made.
     if nf.kind.clone().profile_sels_mut() != f.kind.clone().profile_sels_mut() {
@@ -328,7 +328,7 @@ fn edit_feature(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // New face points: their faces' names now.
     if nf.kind.face_points() != f.kind.face_points() {
-        nf.face_names = solvecraft_doc::naming::face_names_at(&s.model.state_before(id), &nf.kind.face_points());
+        nf.face_names = solidcraft_doc::naming::face_names_at(&s.model.state_before(id), &nf.kind.face_points());
     }
     if let Some(slot) = s.doc_mut().feature_mut(id) {
         *slot = nf;
@@ -372,7 +372,7 @@ fn select_clear(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 /// Features that worked in `before` and fail in `after`: (name, error).
-fn newly_broken(before: &solvecraft_doc::Model, after: &solvecraft_doc::Model) -> Vec<(String, String)> {
+fn newly_broken(before: &solidcraft_doc::Model, after: &solidcraft_doc::Model) -> Vec<(String, String)> {
     after
         .results
         .iter()
@@ -398,7 +398,7 @@ fn reorder(s: &mut Session, p: &Value) -> Result<Value> {
     let name = f.name.clone();
     next.features.insert(to, f);
     // Everything that evaluated before must still evaluate.
-    let mut after = solvecraft_doc::Model::new();
+    let mut after = solidcraft_doc::Model::new();
     after.evaluate(&next);
     let broken = newly_broken(&s.model, &after);
     if !broken.is_empty() {
@@ -409,13 +409,13 @@ fn reorder(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"feature": id, "position": to}))
 }
 
-fn input_keys(kind: &FeatureKind) -> Vec<(String, solvecraft_doc::expr::Kind)> {
+fn input_keys(kind: &FeatureKind) -> Vec<(String, solidcraft_doc::expr::Kind)> {
     let mut keys: Vec<_> = kind.inputs().into_iter().map(|(label, _, unit)| (label.to_string(), unit)).collect();
     if let FeatureKind::Fillet { style, .. } = kind {
         if let Some((key, _)) = keys.first_mut() {
             *key = "fillet.radius".into();
         }
-        if let solvecraft_doc::FilletStyle::Variable { mid, .. } = style {
+        if let solidcraft_doc::FilletStyle::Variable { mid, .. } = style {
             for ((key, _), (position, _)) in keys.iter_mut().skip(2).zip(mid) {
                 *key = format!("fillet.mid.{}", position.to_bits());
             }
@@ -583,7 +583,7 @@ fn dependents(s: &mut Session, p: &Value) -> Result<Value> {
     let id = feature_id(s, p.get("feature"), cmd)?;
     let mut next = (*s.doc).clone();
     let gone = next.delete_feature(id)?;
-    let mut after = solvecraft_doc::Model::new();
+    let mut after = solidcraft_doc::Model::new();
     after.evaluate(&next);
     let names = |ids: &[u64]| -> Vec<String> { ids.iter().filter(|x| **x != id).filter_map(|x| s.doc.feature(*x).map(|f| f.name.clone())).collect() };
     let broken: Vec<String> = newly_broken(&s.model, &after).into_iter().map(|(n, _)| n).collect();

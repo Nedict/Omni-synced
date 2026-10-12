@@ -1,12 +1,12 @@
-//! Joints between occurrences (`solvecraft_doc::joints`): Joint Origin, Joint, As-built Joint,
+//! Joints between occurrences (`solidcraft_doc::joints`): Joint Origin, Joint, As-built Joint,
 //! Rigid Group, Drive Joints, Motion Link, limits, and Interference. Every change re-solves the
 //! joint graph and moves the occurrences it places; the session re-solves after any edit too,
 //! so joints follow the geometry their origins snap to.
 
 use serde_json::{Value, json};
-use solvecraft_doc::expr::Kind;
-use solvecraft_doc::joints::{self, Joint, JointKind, JointOrigin, MotionLink, NamedOrigin, Snap};
-use solvecraft_geom::Vec3;
+use solidcraft_doc::expr::Kind;
+use solidcraft_doc::joints::{self, Joint, JointKind, JointOrigin, MotionLink, NamedOrigin, Snap};
+use solidcraft_geom::Vec3;
 
 use super::CommandSpec;
 use crate::params::{bad, bool_, num, str_, string_list, vec3};
@@ -88,9 +88,9 @@ pub(crate) fn occurrence_at(s: &Session, p: Vec3) -> Option<u64> {
         let comp = s.doc.model_body_component(b);
         let occs: Vec<u64> = if comp == 0 { vec![0] } else { s.doc.occurrences.iter().filter(|o| o.component == comp).map(|o| o.id).collect() };
         for occ in occs {
-            let t = if occ == 0 { solvecraft_doc::IDENTITY } else { joints::occurrence_world(&s.doc, occ) };
-            let inv = solvecraft_doc::mat_inverse(&t)?;
-            let q = solvecraft_doc::apply_point(&inv, p);
+            let t = if occ == 0 { solidcraft_doc::IDENTITY } else { joints::occurrence_world(&s.doc, occ) };
+            let inv = solidcraft_doc::mat_inverse(&t)?;
+            let q = solidcraft_doc::apply_point(&inv, p);
             let bb = b.mesh().bounds();
             let c = Vec3::new(q.x.clamp(bb.min.x, bb.max.x), q.y.clamp(bb.min.y, bb.max.y), q.z.clamp(bb.min.z, bb.max.z));
             let d = c.dist(q);
@@ -126,10 +126,10 @@ fn origin_param(s: &Session, v: Option<&Value>, cmd: &str) -> Result<JointOrigin
         None => occurrence_at(s, world).ok_or_else(|| bad(cmd, "no body there"))?,
     };
     // World → the component's own coordinates.
-    let t = if occurrence == 0 { solvecraft_doc::IDENTITY } else { joints::occurrence_world(&s.doc, occurrence) };
-    let inv = solvecraft_doc::mat_inverse(&t).ok_or_else(|| bad(cmd, "occurrence transform"))?;
-    let local = |p: Vec3| solvecraft_doc::apply_point(&inv, p);
-    let local_dir = |d: Vec3| solvecraft_doc::apply_vector(&inv, d);
+    let t = if occurrence == 0 { solidcraft_doc::IDENTITY } else { joints::occurrence_world(&s.doc, occurrence) };
+    let inv = solidcraft_doc::mat_inverse(&t).ok_or_else(|| bad(cmd, "occurrence transform"))?;
+    let local = |p: Vec3| solidcraft_doc::apply_point(&inv, p);
+    let local_dir = |d: Vec3| solidcraft_doc::apply_vector(&inv, d);
     let snap = match what {
         "face" | "circle" => {
             let pick = local(world);
@@ -139,7 +139,7 @@ fn origin_param(s: &Session, v: Option<&Value>, cmd: &str) -> Result<JointOrigin
             } else {
                 pick
             };
-            let face = solvecraft_doc::naming::face_names_at(&s.model.state(), &[named_at]).into_iter().next().filter(|n| !n.is_empty());
+            let face = solidcraft_doc::naming::face_names_at(&s.model.state(), &[named_at]).into_iter().next().filter(|n| !n.is_empty());
             if what == "face" { Snap::FaceCenter { pick, face } } else { Snap::CircleCenter { pick, face } }
         }
         "point" => Snap::Point { point: local(world), z: v.get("z").and_then(vec3).map(local_dir) },
@@ -526,7 +526,7 @@ fn interference(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "inspect.interference";
     let want = string_list(p, "bodies");
     let st = s.world_state();
-    let bodies: Vec<&solvecraft_doc::ModelBody> =
+    let bodies: Vec<&solidcraft_doc::ModelBody> =
         st.bodies.iter().filter(|b| want.is_empty() || want.contains(&b.name)).filter(|b| !b.body.is_mesh()).collect();
     if bodies.len() > 200 {
         return Err(bad(cmd, "too many bodies (200 at most)"));
@@ -544,8 +544,8 @@ fn interference(s: &mut Session, p: &Value) -> Result<Value> {
             if apart {
                 continue;
             }
-            let Ok(Some(o)) = solvecraft_kernel::boolean(&a.body, &b.body, solvecraft_kernel::BoolOp::Intersect) else { continue };
-            let Ok(m) = solvecraft_kernel::measure(&o) else { continue };
+            let Ok(Some(o)) = solidcraft_kernel::boolean(&a.body, &b.body, solidcraft_kernel::BoolOp::Intersect) else { continue };
+            let Ok(m) = solidcraft_kernel::measure(&o) else { continue };
             if m.volume > 1e-9 * a.body.size().max(1.0).powi(3) {
                 hits.push(json!({"a": a.name, "b": b.name, "volume_mm3": m.volume, "area_mm2": m.area, "center": m.centroid, "bbox": {"min": m.bbox.min, "max": m.bbox.max}}));
             }
@@ -559,8 +559,8 @@ fn interference(s: &mut Session, p: &Value) -> Result<Value> {
 mod tests;
 
 /// A point in the middle of the cylindrical face at `pick` (on its wall, halfway along).
-fn cylinder_wall_point(b: &solvecraft_doc::kernel::Body, pick: Vec3) -> Option<Vec3> {
-    let c = solvecraft_doc::kernel::cylinder_face_at(b, pick)?;
+fn cylinder_wall_point(b: &solidcraft_doc::kernel::Body, pick: Vec3) -> Option<Vec3> {
+    let c = solidcraft_doc::kernel::cylinder_face_at(b, pick)?;
     let v = pick - c.axis_point;
     let along = v.dot(c.axis);
     let radial = (v - c.axis * along).normalized()?;

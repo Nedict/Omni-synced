@@ -1,8 +1,8 @@
 //! Documents and files: new, open (designs and STEP), insert STEP, save, export.
 
 use serde_json::{Value, json};
-use solvecraft_doc::Document;
-use solvecraft_io::Format;
+use solidcraft_doc::Document;
+use solidcraft_io::Format;
 
 use super::CommandSpec;
 use crate::params::{bad, bool_, str_, string_list};
@@ -14,7 +14,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solvecraft design, or a .step/.stp file (opens as a new design)"),
+        .params("path: .solidcraft design, or a .step/.stp file (opens as a new design)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -50,9 +50,9 @@ fn path_arg<'a>(p: &'a Value, cmd: &str) -> Result<&'a str> {
 }
 
 /// Read a STEP file as an Import feature.
-fn read_step(path: &str) -> Result<solvecraft_io::StepFeature> {
-    let bytes = solvecraft_io::vfs::read(path, solvecraft_io::MAX_STEP_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-    solvecraft_io::step_import_feature(&bytes, path).map_err(|e| EngineError::Other(format!("{path}: {e}")))
+fn read_step(path: &str) -> Result<solidcraft_io::StepFeature> {
+    let bytes = solidcraft_io::vfs::read(path, solidcraft_io::MAX_STEP_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    solidcraft_io::step_import_feature(&bytes, path).map_err(|e| EngineError::Other(format!("{path}: {e}")))
 }
 
 /// Add an Import feature for a STEP file to the session's design.
@@ -76,8 +76,8 @@ fn add_step(s: &mut Session, path: &str, name: Option<&str>) -> Result<Value> {
 
 /// Add a MeshImport feature for a 3MF or STL file.
 fn add_mesh(s: &mut Session, path: &str, name: Option<&str>) -> Result<Value> {
-    let bytes = solvecraft_io::vfs::read(path, solvecraft_io::MAX_3MF_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-    let mf = solvecraft_io::mesh_import_feature(&bytes, path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    let bytes = solidcraft_io::vfs::read(path, solidcraft_io::MAX_3MF_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    let mf = solidcraft_io::mesh_import_feature(&bytes, path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     let fname = name.filter(|n| !n.trim().is_empty()).unwrap_or(&mf.name).to_string();
     let id = s.doc_mut().add_feature(mf.kind, Some(&fname))?;
     if let Some(f) = s.doc_mut().feature_mut(id) {
@@ -97,7 +97,7 @@ fn add_mesh(s: &mut Session, path: &str, name: Option<&str>) -> Result<Value> {
 fn insert_mesh(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "file.insert_mesh";
     let path = path_arg(p, cmd)?;
-    if !solvecraft_io::is_mesh_path(path) {
+    if !solidcraft_io::is_mesh_path(path) {
         return Err(bad(cmd, "only 3MF and STL files (.3mf, .stl) can be inserted as meshes"));
     }
     add_mesh(s, path, str_(p, "name"))
@@ -106,7 +106,7 @@ fn insert_mesh(s: &mut Session, p: &Value) -> Result<Value> {
 fn insert_step(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "file.insert_step";
     let path = path_arg(p, cmd)?;
-    if !solvecraft_io::is_step_path(path) {
+    if !solidcraft_io::is_step_path(path) {
         return Err(bad(cmd, "only STEP files (.step, .stp) can be inserted"));
     }
     add_step(s, path, str_(p, "name"))
@@ -114,18 +114,18 @@ fn insert_step(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = path_arg(p, "doc.open")?;
-    if solvecraft_io::is_step_path(path) || solvecraft_io::is_mesh_path(path) {
+    if solidcraft_io::is_step_path(path) || solidcraft_io::is_mesh_path(path) {
         // A new, unsaved design holding the file's bodies.
         let stem = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "Untitled".into());
         let mut fresh = Session::new(Document::new(&stem));
-        let r = if solvecraft_io::is_step_path(path) { add_step(&mut fresh, path, None)? } else { add_mesh(&mut fresh, path, None)? };
+        let r = if solidcraft_io::is_step_path(path) { add_step(&mut fresh, path, None)? } else { add_mesh(&mut fresh, path, None)? };
         fresh.undo.clear();
         *s = fresh;
         let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
         return Ok(json!({"path": path, "features": s.doc.features.len(), "errors": errors, "bodies": r["bodies"], "warnings": r["warnings"]}));
     }
-    let bytes = solvecraft_io::vfs::read(path, solvecraft_io::MAX_DESIGN_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-    let doc = solvecraft_io::read_design(&bytes)?;
+    let bytes = solidcraft_io::vfs::read(path, solidcraft_io::MAX_DESIGN_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    let doc = solidcraft_io::read_design(&bytes)?;
     *s = Session::new(doc);
     s.path = Some(path.to_string());
     let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
@@ -133,9 +133,9 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn write(s: &mut Session, path: &str) -> Result<Value> {
-    let bytes = solvecraft_io::write_design(&s.doc);
+    let bytes = solidcraft_io::write_design(&s.doc);
     // Atomic, keeping the version being replaced as `<file>.bak`.
-    solvecraft_io::write_atomic(std::path::Path::new(path), &bytes, true).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    solidcraft_io::write_atomic(std::path::Path::new(path), &bytes, true).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     s.path = Some(path.to_string());
     s.mark_saved();
     Ok(json!({"path": path, "bytes": bytes.len()}))
@@ -158,12 +158,12 @@ fn export_to(s: &Session, path: &str, format: Format, bodies: &[String]) -> Resu
     let name = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| s.doc.name.clone());
     // A design with components exports as a STEP assembly; otherwise bodies as placed.
     let bytes = if format == Format::Step && bodies.is_empty() && !s.doc.occurrences.is_empty() {
-        solvecraft_io::step_assembly(&s.doc, &s.doc.painted(&s.model.state()), &name)?
+        solidcraft_io::step_assembly(&s.doc, &s.doc.painted(&s.model.state()), &name)?
     } else {
         // Bodies carry the colour they are shown in (appearance, material or imported).
-        solvecraft_io::export(&s.doc.painted(&s.world_state()), bodies, format, &name)?
+        solidcraft_io::export(&s.doc.painted(&s.world_state()), bodies, format, &name)?
     };
-    solvecraft_io::vfs::write(path, &bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    solidcraft_io::vfs::write(path, &bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     Ok(json!({"path": path, "bytes": bytes.len(), "format": format!("{format:?}")}))
 }
 

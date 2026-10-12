@@ -55,7 +55,7 @@ fn handshake_and_tools_list() {
     let init =
         call(&mut s, 1, "initialize", json!({"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "t", "version": "0"}}));
     assert_eq!(init["result"]["protocolVersion"], "2025-03-26");
-    assert_eq!(init["result"]["serverInfo"]["name"], "solvecraft");
+    assert_eq!(init["result"]["serverInfo"]["name"], "solidcraft");
     assert!(init["result"]["capabilities"]["tools"].is_object());
     assert!(init["result"]["instructions"].as_str().unwrap().contains("headless"));
     // An unknown version gets ours.
@@ -97,9 +97,9 @@ fn handshake_and_tools_list() {
 
     let res = call(&mut s, 5, "resources/list", json!({}));
     assert_eq!(res["result"]["resources"].as_array().unwrap().len(), 2);
-    let d = call(&mut s, 6, "resources/read", json!({"uri": "solvecraft://design"}));
+    let d = call(&mut s, 6, "resources/read", json!({"uri": "solidcraft://design"}));
     assert!(d["result"]["contents"][0]["text"].as_str().unwrap().contains("timeline"));
-    assert_eq!(call(&mut s, 7, "resources/read", json!({"uri": "solvecraft://nope"}))["error"]["code"], -32002);
+    assert_eq!(call(&mut s, 7, "resources/read", json!({"uri": "solidcraft://nope"}))["error"]["code"], -32002);
     assert_eq!(call(&mut s, 8, "nope/nope", json!({}))["error"]["code"], -32601);
 }
 
@@ -154,7 +154,7 @@ fn agent_builds_box_fillet_hole() {
     assert!(img["data"].as_str().unwrap().starts_with("iVBORw0KGgo"), "not a PNG");
 
     // Export, save, start over, open.
-    let dir = std::env::temp_dir().join(format!("solvecraft-mcp-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("solidcraft-mcp-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let step = dir.join("part.step");
     tool(&mut s, "export", json!({"path": step.to_string_lossy()}));
@@ -165,7 +165,7 @@ fn agent_builds_box_fillet_hole() {
     let shot = dir.join("shot.png");
     tool(&mut s, "screenshot", json!({"path": shot.to_string_lossy(), "width": 64, "height": 64}));
     assert!(std::fs::metadata(&shot).unwrap().len() > 100);
-    let design = dir.join("part.solvecraft");
+    let design = dir.join("part.solidcraft");
     tool(&mut s, "save", json!({"path": design.to_string_lossy()}));
     tool(&mut s, "new_design", json!({"name": "Empty"}));
     assert_eq!(tool(&mut s, "measure", json!({}))["body_count"], 0);
@@ -385,4 +385,20 @@ fn list_commands_filter_by_a_command_id_matches_ids() {
     let ids: Vec<&str> = cmds.as_array().unwrap().iter().filter_map(|c| c["id"].as_str()).collect();
     assert!(ids.contains(&"sketch.delete"), "{ids:?}");
     assert!(ids.iter().all(|id| id.contains("sketch.delete")), "{} commands matched: {ids:?}", ids.len());
+}
+
+/// Compatibility shims (docs/compatibility.md): a design saved before the rename (legacy
+/// extension and format tag) opens through MCP, and the legacy resource URIs still read.
+#[test]
+fn legacy_design_files_and_resource_uris() {
+    let mut s = server();
+    let saved = String::from_utf8(solidcraft_engine::io::write_design(&solidcraft_engine::doc::Document::default())).unwrap();
+    assert!(saved.contains("\"solidcraft/"), "{saved}");
+    let legacy = saved.replace("\"solidcraft/", "\"solvecraft/");
+    let path = std::env::temp_dir().join(format!("solidcraft-mcp-legacy-{}.solvecraft", std::process::id()));
+    std::fs::write(&path, legacy).unwrap();
+    tool(&mut s, "open", json!({"path": path.to_string_lossy()}));
+    let _ = std::fs::remove_file(&path);
+    let d = call(&mut s, 1, "resources/read", json!({"uri": "solvecraft://design"}));
+    assert!(d["result"]["contents"][0]["text"].as_str().unwrap().contains("timeline"));
 }

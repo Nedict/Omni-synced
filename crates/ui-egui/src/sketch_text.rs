@@ -1,7 +1,7 @@
 //! Edit Text: the shared feature dialog (OK/Cancel, expression fields) for the source of a
 //! sketch text's outlines; OK runs `sketch.edit_text`.
 use serde_json::{Value, json};
-use solvecraft_engine::{
+use solidcraft_engine::{
     Sel,
     doc::expr::Kind as ValueKind,
     sketch::{LinkKind, LinkSource},
@@ -244,14 +244,14 @@ mod tests {
         let sk = h.app.session.doc.sketch(sid).unwrap();
         let expected = LinkSource::Text {
             text: "O".into(),
-            at: solvecraft_engine::geom::Vec2::new(25.0, 12.0),
+            at: solidcraft_engine::geom::Vec2::new(25.0, 12.0),
             height: 20.0,
             angle: std::f64::consts::FRAC_PI_2,
         };
         assert_eq!(sk.link(&link).unwrap().source, expected);
         assert!(!h.app.session.world_state().sketch(sid).unwrap().profiles.is_empty());
         let changed = h.app.session.doc.to_json();
-        let reopened = solvecraft_engine::Session::new(solvecraft_engine::doc::Document::from_json(&changed).unwrap());
+        let reopened = solidcraft_engine::Session::new(solidcraft_engine::doc::Document::from_json(&changed).unwrap());
         assert_eq!(reopened.doc.sketch(sid).unwrap().link(&link).unwrap().source, expected);
         h.app.run("edit.undo", json!({})).unwrap();
         assert_eq!(h.app.session.doc.to_json(), before);
@@ -322,7 +322,7 @@ mod tests {
         assert!(!editing(&h.app));
         h.app.start("sketch.edit_text");
         assert!(editing(&h.app));
-        crate::documents::open_tab(&mut h.app, solvecraft_engine::Session::default()).unwrap();
+        crate::documents::open_tab(&mut h.app, solidcraft_engine::Session::default()).unwrap();
         assert!(!editing(&h.app));
     }
 

@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use solvecraft_geom::Vec3;
+use solidcraft_geom::Vec3;
 
 use crate::Document;
 

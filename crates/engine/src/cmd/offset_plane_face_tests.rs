@@ -1,9 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use crate::Session;
 use serde_json::{Value, json};
-use solvecraft_doc::construct::ConstructGeom;
-use solvecraft_doc::{Document, FeatureKind, PlaneRef};
-use solvecraft_geom::Plane;
+use solidcraft_doc::construct::ConstructGeom;
+use solidcraft_doc::{Document, FeatureKind, PlaneRef};
+use solidcraft_geom::Plane;
 
 fn run(s: &mut Session, command: &str, params: Value) -> Value {
     s.execute(command, &params).unwrap_or_else(|e| panic!("{command} {params}: {e}"))
@@ -18,7 +18,7 @@ fn plane(s: &Session, name: &str) -> Plane {
 }
 
 fn volume(s: &Session) -> f64 {
-    s.model.state().bodies.iter().map(|b| solvecraft_kernel::measure(&b.body).unwrap().volume).sum()
+    s.model.state().bodies.iter().map(|b| solidcraft_kernel::measure(&b.body).unwrap().volume).sum()
 }
 
 #[test]

@@ -2,7 +2,7 @@
 //! solids).
 
 use serde_json::Value;
-use solvecraft_doc::{FaceAt, FeatureKind, PlaneRef, ProfileSel, expr::Kind};
+use solidcraft_doc::{FaceAt, FeatureKind, PlaneRef, ProfileSel, expr::Kind};
 
 use super::CommandSpec;
 use super::features::{add_feature, check_expr, feature_sketch, operation, plane_param, profiles};
@@ -34,7 +34,7 @@ pub static COMMANDS: &[CommandSpec] = &[
 
 fn patch(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "surface.patch";
-    let edges: Vec<solvecraft_geom::Vec3> = p.get("edges").and_then(Value::as_array).map(|a| a.iter().filter_map(vec3).collect()).unwrap_or_default();
+    let edges: Vec<solidcraft_geom::Vec3> = p.get("edges").and_then(Value::as_array).map(|a| a.iter().filter_map(vec3).collect()).unwrap_or_default();
     if !edges.is_empty() {
         if edges.len() > 10_000 {
             return Err(bad(cmd, "too many edges"));
@@ -88,7 +88,7 @@ fn extend(s: &mut Session, p: &Value) -> Result<Value> {
     if s.model.state().body(&body).is_none() {
         return Err(bad(cmd, format!("no body `{body}`")));
     }
-    let edges: Vec<solvecraft_geom::Vec3> = p.get("edges").and_then(Value::as_array).map(|a| a.iter().filter_map(vec3).collect()).unwrap_or_default();
+    let edges: Vec<solidcraft_geom::Vec3> = p.get("edges").and_then(Value::as_array).map(|a| a.iter().filter_map(vec3).collect()).unwrap_or_default();
     if edges.is_empty() || edges.len() > 10_000 {
         return Err(bad(cmd, "`edges` must list points on the edges to extend"));
     }
@@ -126,7 +126,7 @@ mod tests {
     }
     fn volume(s: &Session, name: &str) -> f64 {
         let st = s.world_state();
-        solvecraft_kernel::measure(&st.body(name).unwrap().body).unwrap().volume
+        solidcraft_kernel::measure(&st.body(name).unwrap().body).unwrap().volume
     }
 
     /// A rectangle patched, trimmed by a plane and thickened; a box's faces stitched back.

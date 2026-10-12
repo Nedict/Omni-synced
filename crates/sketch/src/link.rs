@@ -7,7 +7,7 @@
 //! constants; they still bound profiles and take constraints and dimensions like any curve.
 
 use serde::{Deserialize, Serialize};
-use solvecraft_geom::{Vec2, Vec3};
+use solidcraft_geom::{Vec2, Vec3};
 
 use crate::model::{Curve, CurveKind, Result, Sketch, SketchError, in_range, radius_in_range};
 

@@ -1,8 +1,8 @@
-//! The Crash Reports window (Help > Crash Reports…): the reports `solvecraft_engine::crash`
+//! The Crash Reports window (Help > Crash Reports…): the reports `solidcraft_engine::crash`
 //! keeps on this computer, each with a reviewed issue draft. It opens by itself after a crash.
 
 use egui::{RichText, vec2};
-use solvecraft_engine::crash::{self, Summary};
+use solidcraft_engine::crash::{self, Summary};
 
 use crate::SolveApp;
 use crate::theme::Tokens;
@@ -153,12 +153,12 @@ mod tests {
     use serde_json::json;
 
     fn folder(tag: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("solvecraft-crash-ui-{tag}-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("solidcraft-crash-ui-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         let id = "20261012-162341-bb60791ed6692f1d";
         std::fs::create_dir_all(d.join(id)).unwrap();
         let report = json!({
-            "format": "solvecraft-crash/1", "id": id, "kind": "unclean_exit", "count": 2,
+            "format": "solidcraft-crash/1", "id": id, "kind": "unclean_exit", "count": 2,
             "first_seen": "2026-10-12T16:23:41Z", "message": "SolidCraft ended without a clean exit while running `solid.fillet`",
             "location": "unclean exit in solid.fillet", "thread": "(unknown)", "backtrace": [],
             "command": {"command": "solid.fillet", "params": {"radius": 2}},
@@ -176,7 +176,7 @@ mod tests {
         let d = folder("draft");
         let mut h = crate::scenario::Harness::new();
         h.app.crashes.folder = Some(d.clone());
-        let fresh = solvecraft_engine::crash::list(&d);
+        let fresh = solidcraft_engine::crash::list(&d);
         assert_eq!(fresh.len(), 1);
         super::announce(&mut h.app, &fresh);
         assert!(h.app.crashes.open, "a real crash opens the window");
@@ -201,7 +201,7 @@ mod tests {
         h.frames(2);
         h.step(&json!({"widget": "Delete all"})).unwrap();
         h.frames(2);
-        assert!(solvecraft_engine::crash::list(&d).is_empty());
+        assert!(solidcraft_engine::crash::list(&d).is_empty());
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -221,7 +221,7 @@ mod tests {
     #[test]
     fn recovered_kernel_errors_do_not_interrupt() {
         let mut h = crate::scenario::Harness::new();
-        let quiet = solvecraft_engine::crash::Summary {
+        let quiet = solidcraft_engine::crash::Summary {
             id: "x".into(),
             kind: "kernel_panic_recovered".into(),
             time: String::new(),
