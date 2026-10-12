@@ -1,6 +1,6 @@
 # SolidCraft with Nix
 
-The flake supports `x86_64-linux` and `aarch64-linux`. Enable Nix's `nix-command`
+The flake supports `x86_64-linux`, `aarch64-linux` and `aarch64-darwin`. Enable Nix's `nix-command`
 and `flakes` experimental features. The committed `flake.lock` pins nixpkgs and
 its Rust toolchain; package evaluation checks that compiler against the Rust
 floor in `Cargo.toml`.
@@ -35,8 +35,9 @@ nix profile install github:bherbruck/solidcraft#solidcraft
 solidcraft --sample
 ```
 
-This installs the SolidCraft desktop entry, MIME definition and generated icon
-sizes alongside the commands. NixOS/Home Manager can instead put the flake's
+On Linux, this installs the SolidCraft desktop entry, MIME definition and generated icon
+sizes alongside the commands. On macOS the package contains the binaries only; for a bundled
+`SolveCraft.app`, use the release `.dmg`. NixOS/Home Manager can instead put the flake's
 `packages.${system}.solidcraft` in `environment.systemPackages`/`home.packages`.
 If a non-NixOS desktop does not discover profile-installed launchers, ensure that
 its session includes `~/.nix-profile/share` in `XDG_DATA_DIRS`, then log out and
@@ -63,6 +64,10 @@ libraries. It exposes `/run/opengl-driver/lib` and
 discoverable. Enable `hardware.graphics.enable = true` on NixOS and keep the
 system's driver stack consistent with the compositor. File pickers also need a
 working session D-Bus and the desktop's `xdg-desktop-portal` service.
+
+On macOS (`aarch64-darwin`), none of this applies: winit talks to AppKit, wgpu renders through
+Metal, and the GPU drivers ship with the operating system, so the darwin package carries no
+library wrapper and no extra search paths.
 
 On another distribution, graphics drivers outside the Nix store may need a
 matching [nixGL wrapper](https://github.com/nix-community/nixGL). Follow its
