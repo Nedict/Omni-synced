@@ -63,6 +63,9 @@ struct DimensionDraft {
     preview_doc: Arc<solvecraft_engine::doc::Document>,
     preview: Arc<solvecraft_engine::doc::ModelState>,
     error: Option<String>,
+    /// A dimension that would over-constrain the sketch, placed as a driven (reference) one:
+    /// it has no parameter and no value to edit (#320).
+    driven: bool,
 }
 
 impl DimensionDraft {
@@ -102,8 +105,15 @@ pub fn cancel() {
 
 /// Infer the measured value through the same command as scripts, without creating a real
 /// parameter or an undo entry. Only accepting the editor executes the command on the design.
-pub fn begin_dimension(app: &SolveApp, entities: Vec<String>, at: Vec2) -> Result<(), String> {
+/// A driven dimension has no value to accept, so it is added at once.
+pub fn begin_dimension(app: &mut SolveApp, entities: Vec<String>, at: Vec2) -> Result<(), String> {
     let (param, expr, draft) = dimension_draft(app, entities, at)?;
+    if draft.driven {
+        PLACEMENT.with(|preview| *preview.borrow_mut() = None);
+        app.run("sketch.dimension", json!({"entities": draft.entities, "text_at": [at.x, at.y], "driven": true}))?;
+        app.set_status("That dimension would over-constrain the sketch, so it was added as a driven (reference) dimension", false);
+        return Ok(());
+    }
     EDIT.with(|edit| *edit.borrow_mut() = Some(Edit { param, expr, at: None, fresh: FRESH, wait: 10, draft: Some(draft) }));
     PLACEMENT.with(|preview| *preview.borrow_mut() = None);
     Ok(())
@@ -114,22 +124,41 @@ fn dimension_draft(app: &SolveApp, entities: Vec<String>, at: Vec2) -> Result<(S
     if entities.is_empty() || entities.len() > 2 || !at.x.is_finite() || !at.y.is_finite() {
         return Err("Pick one edge or two endpoints, then place the dimension".into());
     }
+    // A dimension the sketch can't take (it would over-constrain it) becomes a driven one,
+    // which only measures; when that fails too, the first refusal is the one to report.
+    draft_of(app, sketch, &entities, at, false).or_else(|error| draft_of(app, sketch, &entities, at, true).map_err(|_| error))
+}
+
+/// The draft of one dimension: its parameter (for a driven one, its constraint id, since it
+/// has no parameter), the parameter's expression, and the scratch session it was added in.
+fn draft_of(app: &SolveApp, sketch: u64, entities: &[String], at: Vec2, driven: bool) -> Result<(String, String, DimensionDraft), String> {
     let mut scratch = app.session.scratch();
-    let result = scratch.execute("sketch.dimension", &json!({"entities": entities, "text_at": [at.x, at.y]})).map_err(|e| e.to_string())?;
-    let param = result.get("param").and_then(serde_json::Value::as_str).ok_or("This dimension has no editable value")?.to_string();
-    let expr = scratch.doc.param(&param).ok_or("The dimension value is unavailable")?.expr.clone();
+    let result =
+        scratch.execute("sketch.dimension", &json!({"entities": entities, "text_at": [at.x, at.y], "driven": driven})).map_err(|e| e.to_string())?;
+    let (param, expr) = if driven {
+        let before =
+            app.session.doc.sketch(sketch).ok().map(|sk| sk.constraints.iter().map(|c| c.id.clone()).collect::<Vec<_>>()).unwrap_or_default();
+        let added =
+            scratch.doc.sketch(sketch).ok().and_then(|sk| sk.constraints.iter().find(|c| c.driven && !before.contains(&c.id)).map(|c| c.id.clone()));
+        (added.ok_or("The driven dimension is unavailable")?, String::new())
+    } else {
+        let param = result.get("param").and_then(serde_json::Value::as_str).ok_or("This dimension has no editable value")?.to_string();
+        let expr = scratch.doc.param(&param).ok_or("The dimension value is unavailable")?.expr.clone();
+        (param, expr)
+    };
     let draft = DimensionDraft {
         baseline: app.session.doc.clone(),
         sketch,
         component: app.session.active_component,
         path: app.session.active_occurrence_path.clone(),
         pending: app.session.pending_moves.clone(),
-        entities,
+        entities: entities.to_vec(),
         at,
         checked_expr: expr.clone(),
         preview: scratch.world_state(),
         preview_doc: scratch.doc.clone(),
         error: None,
+        driven,
     };
     if !draft.preview.sketch(sketch).is_some_and(|solved| solved.report.ok()) {
         return Err("That dimension conflicts with the sketch constraints".into());
@@ -368,7 +397,9 @@ pub fn show(app: &mut SolveApp, ui: &egui::Ui, painter: &egui::Painter, proj: &P
     let draft_centres = draft_sketch.map(|solved| chain_centres(&solved.sketch));
     let mut constraints = sk.constraints.iter().map(|c| (ss, c, false)).collect::<Vec<_>>();
     if let (Some(source), Some((param, _))) = (draft_sketch, draft.as_ref()) {
-        constraints.extend(source.sketch.constraints.iter().filter(|c| c.param.as_deref() == Some(param.as_str())).map(|c| (source, c, true)));
+        // A driven draft is keyed by its constraint id (it has no parameter).
+        let ours = |c: &&solvecraft_engine::sketch::Constraint| c.param.as_deref() == Some(param.as_str()) || (c.driven && c.id == *param);
+        constraints.extend(source.sketch.constraints.iter().filter(ours).map(|c| (source, c, true)));
     }
     for (source, c, is_draft) in constraints {
         if ss.sketch.view.hide_dimensions && !is_draft {
@@ -602,6 +633,35 @@ mod tests {
             assert!(!Arc::ptr_eq(&draft.preview_doc, &refreshed.preview_doc));
             h.step(&json!({"key":"Escape"})).unwrap();
         }
+        cancel();
+    }
+
+    /// Placing a dimension the sketch can't take previews it as driven: in the draft it is a
+    /// driven constraint with no parameter, labelled in parentheses (#320).
+    #[test]
+    fn an_over_constraining_placement_previews_a_driven_dimension() {
+        cancel();
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.app.run("sketch.line", json!({"points":[[10,10],[30,10]],"infer":false})).unwrap();
+        h.app.run("sketch.dimension", json!({"entities":["l1"],"value":"20 mm"})).unwrap();
+        h.call("ui.view", json!({"view":"top"}));
+        let baseline = h.app.session.doc.to_json();
+        h.step(&json!({"start":"sketch.dimension"})).unwrap();
+        h.step(&json!({"click":{"sketch":[20,10]}})).unwrap();
+        h.step(&json!({"move":{"sketch":[20,20]}})).unwrap();
+        h.settle();
+        let (id, draft) = placement_preview(&h.app).expect("an over-constraining dimension still previews");
+        assert!(draft.driven);
+        let sk = &draft.preview.sketch(draft.sketch).unwrap().sketch;
+        let c = sk.constraints.iter().find(|c| c.id == id).unwrap();
+        assert!(c.driven && c.param.is_none(), "{c:?}");
+        assert!(matches!(c.kind, ConstraintKind::Length {value,..} if (value-20.).abs()<1e-6));
+        assert_eq!(label(&c.kind, None, c.driven, "mm", 2), "(20.00)");
+        assert!(!editing());
+        assert_eq!(h.app.session.doc.to_json(), baseline);
+        h.step(&json!({"key":"Escape"})).unwrap();
+        h.step(&json!({"key":"Escape"})).unwrap();
         cancel();
     }
 

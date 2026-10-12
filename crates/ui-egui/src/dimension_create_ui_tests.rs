@@ -348,3 +348,33 @@ fn placing_a_two_point_dimension_picks_horizontal_vertical_or_aligned() {
         }
     }
 }
+
+/// A dimension that would over-constrain the sketch is placed as a driven (reference) one
+/// instead of failing: added with no parameter or value editor, and removed again by one
+/// undo (#320).
+#[test]
+fn an_over_constraining_dimension_is_placed_as_a_driven_one() {
+    let mut h = line([20., 0.]);
+    h.app.run("sketch.dimension", json!({"entities":["l1"],"value":"20 mm"})).unwrap();
+    h.settle();
+    let original = h.app.session.doc.to_json();
+    let undo = h.app.session.undo.len();
+    let params = h.app.session.doc.params.len();
+    h.step(&json!({"start":"sketch.dimension"})).unwrap();
+    h.step(&json!({"click":{"world":[10,0,0]}})).unwrap();
+    h.step(&json!({"move":{"world":[10,6,0]}})).unwrap();
+    h.settle();
+    assert_eq!(crate::dim_view::drawn().len(), 1, "the preview is not a selectable dimension");
+    h.step(&json!({"click":{"world":[10,6,0]}})).unwrap();
+    assert!(!crate::dim_view::editing(), "a driven dimension has no value to edit");
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+    assert_eq!(h.app.session.doc.params.len(), params, "a driven dimension adds no parameter");
+    let state = h.app.session.world_state();
+    let solved = state.sketch(h.app.session.active_sketch.unwrap()).unwrap();
+    assert!(solved.report.ok());
+    let dims: Vec<_> = solved.sketch.constraints.iter().filter(|c| c.kind.is_dimension()).collect();
+    assert_eq!(dims.len(), 2);
+    assert_eq!(dims.iter().filter(|c| c.driven && c.param.is_none()).count(), 1, "{dims:?}");
+    h.app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(h.app.session.doc.to_json(), original);
+}
