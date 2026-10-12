@@ -22,6 +22,7 @@ mod oracle;
 mod recipe;
 mod seams;
 
+use std::net::ToSocketAddrs;
 use std::process::ExitCode;
 
 use serde_json::{Value, json};
@@ -285,17 +286,34 @@ fn cmd_exec(args: &[String]) -> Result<(), String> {
 }
 
 /// MCP server on stdio: headless (optionally starting from a design or script) or bridged to
-/// a running app's control port. stdout carries only protocol messages.
+/// an app's control port, which may start listening after the server; a bridged session that
+/// never reached the app fails when its input closes. stdout carries only protocol messages.
 fn cmd_mcp(args: &[String]) -> Result<(), String> {
     let backend: Box<dyn solvecraft_mcp::Backend> = match (flag(args, "--connect"), flag(args, "--in")) {
         (Some(_), Some(_)) => return Err("mcp: use either --connect or --in, not both".into()),
-        (Some(addr), None) => Box::new(solvecraft_mcp::Remote::connect(addr).map_err(|e| format!("cannot connect to {addr}: {e}"))?),
+        (Some(addr), None) => {
+            // Only an app that is not listening yet is waited for; an address that does not
+            // resolve never will.
+            if addr.to_socket_addrs().map_err(|e| format!("mcp: --connect {addr}: {e}"))?.next().is_none() {
+                return Err(format!("mcp: --connect {addr}: the address resolves to nothing"));
+            }
+            Box::new(solvecraft_mcp::Remote::connect(addr).unwrap_or_else(|e| {
+                let bridge = solvecraft_mcp::Remote::new(addr);
+                eprintln!(
+                    "solvecraft-cli mcp: no SolidCraft app listens at {addr} yet ({e}); {}. Serving anyway: tool calls connect once it listens.",
+                    bridge.start_hint()
+                );
+                bridge
+            }))
+        }
         (None, Some(path)) => Box::new(solvecraft_mcp::Headless::new(load(path)?)),
         (None, None) => Box::new(solvecraft_mcp::Headless::default()),
     };
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    solvecraft_mcp::Server::new(backend).serve(stdin.lock(), stdout.lock()).map_err(|e| e.to_string())
+    let mut server = solvecraft_mcp::Server::new(backend);
+    server.serve(stdin.lock(), stdout.lock()).map_err(|e| e.to_string())?;
+    server.backend().never_reached().map_or(Ok(()), Err)
 }
 
 /// `save-stress <path> <rounds>`: save a design of a few hundred kilobytes `rounds` times, its

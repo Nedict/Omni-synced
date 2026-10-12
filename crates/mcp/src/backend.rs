@@ -15,6 +15,11 @@ pub trait Backend {
     /// True when a real window is attached (`ui.screenshot` can capture it).
     fn has_ui(&self) -> bool;
     fn describe(&self) -> String;
+    /// Why the session could not be served at all - a bridge that never reached its app - or
+    /// `None`.
+    fn never_reached(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Longest reply line accepted from the app.
@@ -25,14 +30,26 @@ const MAX_REPLY: u64 = 64 << 20;
 pub struct Remote {
     addr: String,
     conn: Option<(BufReader<TcpStream>, TcpStream)>,
+    reached: bool,
     next_id: u64,
 }
 
 impl Remote {
+    /// A bridge that connects on its first call, so the app may start after it.
+    pub fn new(addr: &str) -> Self {
+        Self { addr: addr.to_string(), conn: None, reached: false, next_id: 1 }
+    }
+
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1 };
+        let mut r = Self::new(addr);
         r.reconnect()?;
         Ok(r)
+    }
+
+    /// How to make the app listen on this bridge's address.
+    pub fn start_hint(&self) -> String {
+        let port = self.addr.rsplit_once(':').map_or("PORT", |(_, port)| port);
+        format!("start the app with `solvecraft --control {port}` (or SOLVECRAFT_CONTROL_PORT={port})")
     }
 
     fn reconnect(&mut self) -> std::io::Result<()> {
@@ -46,6 +63,7 @@ impl Remote {
                     s.set_read_timeout(Some(Duration::from_secs(300))).ok();
                     let read = s.try_clone()?;
                     self.conn = Some((BufReader::new(read), s));
+                    self.reached = true;
                     return Ok(());
                 }
                 Err(e) => last = e,
@@ -56,7 +74,7 @@ impl Remote {
 
     fn roundtrip(&mut self, line: &str) -> std::io::Result<String> {
         if self.conn.is_none() {
-            self.reconnect()?;
+            self.reconnect().map_err(|e| std::io::Error::new(e.kind(), format!("cannot connect ({e}); {}, then call again", self.start_hint())))?;
         }
         let Some((reader, writer)) = self.conn.as_mut() else { return Err(std::io::Error::other("not connected")) };
         let sent = writer.write_all(line.as_bytes()).and_then(|()| writer.write_all(b"\n")).and_then(|()| writer.flush());
@@ -102,7 +120,13 @@ impl Backend for Remote {
         true
     }
     fn describe(&self) -> String {
+        if self.conn.is_none() {
+            return format!("bridged to the SolidCraft app at {}, not reachable yet: {}", self.addr, self.start_hint());
+        }
         format!("connected to the SolidCraft app at {} (the user watches the viewport)", self.addr)
+    }
+    fn never_reached(&self) -> Option<String> {
+        (!self.reached).then(|| format!("no SolidCraft app was reached at {}; {}", self.addr, self.start_hint()))
     }
 }
 
