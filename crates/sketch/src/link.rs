@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use solvecraft_geom::{Vec2, Vec3};
 
-use crate::model::{Curve, CurveKind, Result, Sketch, SketchError};
+use crate::model::{Curve, CurveKind, Result, Sketch, SketchError, in_range, radius_in_range};
 
 /// Points of one link closer than this are merged into one point.
 const MERGE_TOL: f64 = 1e-7;
@@ -154,16 +154,14 @@ pub enum LinkGeom {
 
 impl LinkGeom {
     fn finite(&self) -> bool {
-        let ok = |p: &Vec2| p.is_finite() && p.x.abs() < 1e9 && p.y.abs() < 1e9;
+        let ok = |p: &Vec2| in_range(*p);
         match self {
             LinkGeom::Point(p) => ok(p),
             LinkGeom::Line(a, b) => ok(a) && ok(b) && a.dist(*b) > MERGE_TOL,
-            LinkGeom::Circle(c, r) => ok(c) && r.is_finite() && *r > 1e-9 && *r < 1e9,
+            LinkGeom::Circle(c, r) => ok(c) && radius_in_range(*r),
             LinkGeom::Arc { c, a, b } => ok(c) && ok(a) && ok(b) && c.dist(*a) > 1e-9 && a.dist(*b) > MERGE_TOL,
             LinkGeom::Conic { a, apex, b, rho } => ok(a) && ok(apex) && ok(b) && a.dist(*b) > MERGE_TOL && *rho > 1e-6 && *rho < 1.0 - 1e-6,
-            LinkGeom::Ellipse { c, major, minor } => {
-                ok(c) && ok(major) && c.dist(*major) > 1e-9 && minor.is_finite() && *minor > 1e-9 && *minor < 1e9
-            }
+            LinkGeom::Ellipse { c, major, minor } => ok(c) && ok(major) && c.dist(*major) > 1e-9 && radius_in_range(*minor),
             LinkGeom::Spline { pts, control, degree, periodic } => {
                 (!*periodic || (!*control && *degree == 3 && crate::periodic_beziers(pts).is_ok()))
                     && (2..=crate::curves::MAX_SPLINE_POINTS).contains(&pts.len())

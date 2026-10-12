@@ -249,9 +249,13 @@ fn auto(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
             Some(r) => sk.resolve_point(r).ok_or_else(|| bad(cmd, format!("unknown point `{r}`")))?,
             None => 0,
         };
-        // Values of existing dimensions must be applied before judging degrees of freedom.
-        let (vals, _) = doc.param_values();
-        doc.apply_dimension_values(&vals, sk)?;
+        // Values of existing dimensions must be applied (and reached from the stored solved
+        // state) before judging degrees of freedom; a sketch they would turn over keeps its
+        // stored geometry, as the edit's own solve then refuses them.
+        let rep = super::sketch::solve_current(sk, doc)?;
+        if !rep.keeps_orientation() {
+            return Err(bad(cmd, rep.failure(|f| format!("the sketch constraints conflict ({f})"))));
+        }
         Ok(run_auto(sk, doc, p, datum))
     })?;
     Ok(json!({"added": added, "dof": dof, "sketch": info}))

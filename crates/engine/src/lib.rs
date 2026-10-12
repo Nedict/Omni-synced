@@ -217,6 +217,19 @@ pub struct Session {
     /// commands are undone however long the undo history is.
     pub(crate) checkpoints: Vec<Checkpoint>,
     next_checkpoint: u64,
+    /// Full model evaluations (`refresh`), for tests.
+    #[cfg(test)]
+    pub(crate) evaluations: usize,
+}
+
+/// A sketch changed by one frame of an interactive gesture (`live: true`).
+#[derive(Clone, Debug)]
+pub struct LiveEdit {
+    pub sketch: u64,
+    /// What the frame's solve found: a full solve's report, or, when the sketch was solved
+    /// without a rank analysis, its last report's degrees of freedom and determined flags (a
+    /// drag does not change them; the evaluation at the gesture's end brings them up to date).
+    pub report: solvecraft_sketch::SolveReport,
 }
 
 /// The design, active sketch, pending positions and undo history at an `edit.checkpoint`.
@@ -302,6 +315,8 @@ impl Session {
             checkpoints: Vec::new(),
             next_checkpoint: 1,
             visibility: Visibility::default(),
+            #[cfg(test)]
+            evaluations: 0,
         }
     }
 
@@ -360,6 +375,7 @@ impl Session {
             if let Some(inverse) = solvecraft_doc::mat_inverse(&first) {
                 let delta = solvecraft_doc::mat_mul(&self.active_component_frame(), &inverse);
                 for sketch in w.sketches.iter_mut().filter(|sk| self.doc.feature(sk.feature).is_some_and(|f| f.component == self.active_component)) {
+                    let sketch = Arc::make_mut(sketch);
                     let plane = sketch.plane;
                     if let Some(mapped) = solvecraft_geom::Plane::new(
                         solvecraft_doc::apply_point(&delta, plane.origin),
@@ -394,6 +410,10 @@ impl Session {
 
     pub fn refresh(&mut self) {
         self.model.evaluate(&self.doc);
+        #[cfg(test)]
+        {
+            self.evaluations += 1;
+        }
         self.revision += 1;
         self.prune_occurrence_state();
         // Joints follow the geometry their origins snap to.
@@ -407,10 +427,65 @@ impl Session {
         }
     }
 
+    /// Show the sketch a live frame changed, leaving the features after it as they were last
+    /// evaluated (marked stale); a full `refresh` when the model cannot show it that way.
+    fn refresh_live(&mut self, edit: LiveEdit) {
+        let sketch = self.doc.sketch(edit.sketch).ok().cloned();
+        if sketch.is_some_and(|sketch| self.model.show_live_sketch(edit.sketch, sketch, edit.report)) {
+            self.revision += 1;
+        } else {
+            self.refresh();
+        }
+    }
+
+    /// The sketches whose last evaluation solved, each with its own parameter-driven values
+    /// (taken before a value edit, for [`Session::settle_value_edit`]).
+    pub(crate) fn solved_sketches(&self) -> SketchValues {
+        self.model
+            .results
+            .iter()
+            .filter_map(|r| r.state.sketch(r.id).filter(|k| k.report.keeps_orientation()).map(|k| (r.id, own_values(&k.sketch))))
+            .collect()
+    }
+
+    /// After the document's values changed (parameters, a configuration, the units): evaluate,
+    /// and refuse the edit when a sketch that solved before no longer does, or turns over,
+    /// because its own parameter-driven values changed (the command fails, so `execute`
+    /// restores the document's values and geometry). A sketch broken by a change upstream
+    /// (a projected or linked edge moved) is not the edit's to refuse: it carries a warning,
+    /// as before. Otherwise store each sketch whose values changed as solved, so the next edit
+    /// continues from it (see `Model::adopt_solved_sketches`).
+    pub(crate) fn settle_value_edit(&mut self, solved_before: &SketchValues) -> Result<()> {
+        self.refresh();
+        for r in &self.model.results {
+            let (Some(before), Some(k)) = (solved_before.get(&r.id), r.state.sketch(r.id)) else { continue };
+            if !k.report.keeps_orientation() && own_values(&k.sketch) != *before {
+                let why = k.report.failure(|f| format!("its constraints would conflict ({f})"));
+                return Err(EngineError::Other(format!("sketch `{}`: {why}; the values were not changed", r.name)));
+            }
+        }
+        // Checked first: storing makes the document unique (a copy when the undo step shares it).
+        if self.model.edited_sketches(&self.doc).next().is_some() {
+            self.model.adopt_solved_sketches(Arc::make_mut(&mut self.doc));
+        }
+        Ok(())
+    }
+
     /// Run a command with JSON parameters (no dialogs). Undoable commands record an undo step
     /// when they change the document; a failing or panicking command leaves it unchanged.
+    ///
+    /// A command that takes `live` ([`CommandSpec::live`]) run with `live: true` is one frame of
+    /// an interactive gesture: the model shows its sketch's new solution and keeps every later
+    /// feature's last result (stale) instead of evaluating them. Any other command that reads
+    /// the model ([`CommandSpec::reads_model`]) first evaluates a stale model in full, so the
+    /// gesture's end (`sketch.drag_end`, or whatever runs next after an abandoned gesture) brings
+    /// the model up to date before anything reads it.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
+        let live = spec.live.filter(|_| params.get("live").and_then(Value::as_bool) == Some(true));
+        if live.is_none() && spec.reads_model && self.model.is_stale() {
+            self.refresh();
+        }
         (spec.enabled)(self).map_err(|why| EngineError::Disabled(spec.id.to_string(), why))?;
         let before = Snapshot {
             label: spec.label.to_string(),
@@ -425,7 +500,10 @@ impl Session {
         let (_nested, outermost) = frames::Nested::enter(spec.id);
         let mapped = if outermost { frames::to_local(self, spec.id, params) } else { None };
         let params = mapped.as_ref().unwrap_or(params);
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (spec.run)(self, params)));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match live {
+            Some(run) => run(self, params),
+            None => (spec.run)(self, params).map(|v| (v, None)),
+        }));
         let r = match r {
             Ok(r) => r,
             Err(p) => {
@@ -435,7 +513,7 @@ impl Session {
         };
         let changed = !Arc::ptr_eq(&self.doc, &before.doc);
         match r {
-            Ok(v) => {
+            Ok((v, live_edit)) => {
                 let v = if changed { self.with_created(spec.id, params, &before, v) } else { v };
                 if changed {
                     if spec.undoable {
@@ -445,7 +523,10 @@ impl Session {
                         }
                         self.redo.clear();
                     }
-                    self.refresh();
+                    match live_edit {
+                        Some(edit) => self.refresh_live(edit),
+                        None => self.refresh(),
+                    }
                 }
                 Ok(v)
             }
@@ -548,6 +629,8 @@ impl Session {
             checkpoints: Vec::new(),
             next_checkpoint: 1,
             visibility: self.visibility.clone(),
+            #[cfg(test)]
+            evaluations: 0,
         }
     }
 
@@ -686,3 +769,12 @@ mod tests;
 mod thread_tests;
 #[cfg(test)]
 mod world_placement_cache_tests;
+
+/// Per sketch feature: its parameter-driven dimensions' values (see [`own_values`]).
+pub(crate) type SketchValues = std::collections::BTreeMap<u64, std::collections::BTreeMap<String, f64>>;
+
+/// The values of a sketch's driving dimensions that come from parameters: what a value edit
+/// changes in it (as opposed to geometry it projects or links from upstream).
+fn own_values(sk: &solvecraft_sketch::Sketch) -> std::collections::BTreeMap<String, f64> {
+    sk.constraints.iter().filter(|c| c.param.is_some() && !c.driven).filter_map(|c| Some((c.id.clone(), c.kind.value()?))).collect()
+}

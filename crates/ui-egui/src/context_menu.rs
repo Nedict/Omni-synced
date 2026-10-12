@@ -1326,7 +1326,7 @@ fn track_hold(app: &mut SolveApp, ctx: &egui::Context) {
             i.time,
         )
     });
-    let free = app.tool.is_none() && app.dialog.is_none();
+    let free = app.tool.is_none() && app.dialog.is_none() && app.preferences.nav != crate::prefs::OPENSCAD_NAV;
     if pressed && free && app.viewport.context_menu.is_none() && app.viewport.mouse.is_some() {
         app.menu.press = pos.map(|p| (p, time));
     }

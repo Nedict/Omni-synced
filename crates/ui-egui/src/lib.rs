@@ -93,6 +93,8 @@ pub(crate) mod sketch_display;
 #[cfg(test)]
 mod sketch_display_ui_tests;
 #[cfg(test)]
+mod sketch_drag_ui_tests;
+#[cfg(test)]
 mod sketch_edit_tests;
 pub mod sketch_palette;
 pub(crate) mod sketch_text;
@@ -237,6 +239,11 @@ pub struct SolveApp {
     pub recoverable: Vec<solvecraft_engine::recovery::Entry>,
     /// The bodies of a just-opened Y-up file, offered to be stood up (`stand_up`).
     pub stand_up: Option<Vec<String>>,
+    /// The anti-aliasing sample counts the graphics device supports (empty without a GPU).
+    pub msaa_supported: Vec<u32>,
+    /// Settings put back at start because they kept SolidCraft from starting, one line each,
+    /// shown until dismissed (`prefs::show_reset_notice`).
+    pub settings_reset: Vec<prefs::SettingReset>,
     /// The last command was a big operation: autosave after it.
     pub big_operation: bool,
     /// Autosave interval (minutes; 0 = only after big operations). A preference.
@@ -298,6 +305,8 @@ impl SolveApp {
             autosave: None,
             recoverable: Vec::new(),
             stand_up: None,
+            msaa_supported: Vec::new(),
+            settings_reset: Vec::new(),
             big_operation: false,
             autosave_minutes: 5.0,
             custom_titlebar: false,
@@ -333,6 +342,7 @@ impl SolveApp {
     /// stencil buffer bits and MSAA sample count). Without it the viewport renders on the CPU.
     pub fn set_wgpu(&mut self, rs: &egui_wgpu::RenderState, depth_bits: u8, stencil_bits: u8, samples: u32) {
         self.viewport.gpu = Some(gpu::install(rs, depth_bits, stencil_bits, samples));
+        self.msaa_supported = rs.msaa_supported.clone();
         let info = rs.adapter.get_info();
         self.help.gpu = Some(format!("{} ({:?}, {:?})", info.name.trim(), info.backend, info.device_type));
     }
@@ -410,7 +420,10 @@ impl SolveApp {
         if let Some(t) = v.get("toolbar") {
             self.toolbar_custom.load(t);
         }
-        if let Some(p) = v.get("preferences").and_then(|p| serde_json::from_value::<prefs::Prefs>(p.clone()).ok()) {
+        if let Some(mut p) = v.get("preferences").and_then(|p| serde_json::from_value::<prefs::Prefs>(p.clone()).ok()) {
+            if !prefs::MSAA.contains(&p.msaa) {
+                p.msaa = prefs::Prefs::default().msaa;
+            }
             self.preferences = p;
         }
         // Saved before the theme was a preference: the Dark/Light flag says which.
@@ -1002,6 +1015,7 @@ impl SolveApp {
         params_dialog::show(self, ui.ctx());
         recovery_ui::show(self, ui.ctx());
         stand_up::show(self, ui.ctx());
+        prefs::show_reset_notice(self, ui.ctx());
         context_menu::show(self, ui.ctx());
         delete::show(self, ui.ctx());
         if self.custom_titlebar {

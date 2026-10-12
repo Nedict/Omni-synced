@@ -57,6 +57,10 @@ use serde_json::Value;
 use crate::{Result, Session};
 
 pub type Run = fn(&mut Session, &Value) -> Result<Value>;
+/// A command's form for one frame of an interactive gesture: its result and the sketch it
+/// changed, for [`Session::execute`] to show without evaluating the rest of the model (`None`:
+/// evaluate as usual).
+pub type LiveRun = fn(&mut Session, &Value) -> Result<(Value, Option<crate::LiveEdit>)>;
 pub type Enabled = fn(&Session) -> std::result::Result<(), String>;
 
 pub struct CommandSpec {
@@ -74,11 +78,40 @@ pub struct CommandSpec {
     pub enabled: Enabled,
     pub run: Run,
     pub undoable: bool,
+    /// What runs instead of `run` when the command is given `live: true` (a frame of an
+    /// interactive gesture, see [`Session::execute`]).
+    pub live: Option<LiveRun>,
+    /// Reads the evaluated model (the default). A command that reads only the document and the
+    /// session's history runs on a model left stale by a live gesture without evaluating it first.
+    pub reads_model: bool,
 }
 
 impl CommandSpec {
     pub const fn new(id: &'static str, label: &'static str, run: Run) -> Self {
-        CommandSpec { id, label, tab: "", panel: "", icon: "", shortcut: None, params: "", enabled: always, run, undoable: true }
+        CommandSpec {
+            id,
+            label,
+            tab: "",
+            panel: "",
+            icon: "",
+            shortcut: None,
+            params: "",
+            enabled: always,
+            run,
+            undoable: true,
+            live: None,
+            reads_model: true,
+        }
+    }
+    /// Takes `live: true`, run by `run`.
+    pub const fn live(mut self, run: LiveRun) -> Self {
+        self.live = Some(run);
+        self
+    }
+    /// Reads only the document (and history), never the evaluated model.
+    pub const fn doc_only(mut self) -> Self {
+        self.reads_model = false;
+        self
     }
     pub const fn at(mut self, tab: &'static str, panel: &'static str) -> Self {
         self.tab = tab;
@@ -104,6 +137,12 @@ impl CommandSpec {
     pub const fn noundo(mut self) -> Self {
         self.undoable = false;
         self
+    }
+    /// Run inside another command: when it is enabled, its `run` (the caller's command owns the
+    /// undo step and the evaluation).
+    pub(crate) fn run_nested(&self, s: &mut Session, p: &Value) -> Result<Value> {
+        (self.enabled)(s).map_err(|why| crate::EngineError::Disabled(self.id.to_string(), why))?;
+        (self.run)(s, p)
     }
     pub fn info(&self, s: &Session) -> CommandInfo {
         let e = (self.enabled)(s);

@@ -200,6 +200,8 @@ fn main() -> eframe::Result {
             if let Some(rs) = &cc.wgpu_render_state {
                 eprintln!("SolidCraft graphics: {:?}, MSAA {}x (requested {}x)", rs.adapter.get_info().backend, rs.msaa_samples, samples);
                 app.set_wgpu(rs, DEPTH_BITS, STENCIL_BITS, rs.msaa_samples);
+                // A saved anti-aliasing the device can't do: back to the default, with a notice.
+                solvecraft_ui_egui::prefs::check_msaa(&mut app, u32::from(samples));
             }
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());

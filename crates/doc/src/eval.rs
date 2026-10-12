@@ -7,7 +7,7 @@ use std::sync::{Arc, OnceLock};
 use serde::Serialize;
 use solvecraft_geom::{Mesh, Plane, Region2, Vec2, Vec3};
 use solvecraft_kernel::{self as kernel, Body, BoolOp};
-use solvecraft_sketch::{CurveKind, Profile, SolveReport, find_profiles, solve};
+use solvecraft_sketch::{CurveKind, Profile, SolveReport, find_profiles};
 
 use crate::expr::{self, Kind, Value};
 use crate::lineage::Traced;
@@ -262,7 +262,8 @@ pub struct ModelState {
     /// Cosmetic threads (from Thread features and threaded holes).
     pub threads: Vec<ThreadInfo>,
     pub bodies: Vec<ModelBody>,
-    pub sketches: Vec<SolvedSketch>,
+    /// Shared between states: a feature that does not change a sketch keeps it as it was.
+    pub sketches: Vec<Arc<SolvedSketch>>,
     pub body_counter: usize,
     /// Sheet metal bodies (by body name) and their flat patterns.
     pub sheets: Vec<crate::sheet::SheetBody>,
@@ -295,7 +296,8 @@ impl ModelState {
     }
 
     /// After a feature evaluated to this state from `before` with cache key `key`: bodies it
-    /// made or changed, and sketches it made, take that key; the rest keep theirs.
+    /// made or changed take that key, sketches it made a digest of their solved geometry (see
+    /// [`quantize`]); the rest keep theirs.
     fn stamp(&mut self, before: &Arc<ModelState>, f: &Feature, key: u64, mats: Vec<Mat>) {
         let feature = f.id;
         let depth = before.bodies.iter().filter_map(|b| b.names.origin.as_ref().map(|o| o.depth)).max().unwrap_or(0) + 1;
@@ -342,8 +344,16 @@ impl ModelState {
                 }
             }
         }
-        if self.sketches.iter().any(|s| s.feature == feature) {
-            self.sketch_keys.insert(feature, key);
+        // Later features read a sketch's solved geometry: they are keyed by it (to the
+        // quantum), so a value set back that solves to the same geometry reuses their results.
+        if let Some(s) = self.sketches.iter().find(|s| s.feature == feature) {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            serde_json::to_string(&s.plane).unwrap_or_default().hash(&mut h);
+            let mut sketch = s.sketch.clone();
+            quantize(&mut sketch);
+            serde_json::to_string(&sketch).unwrap_or_default().hash(&mut h);
+            s.report.ok().hash(&mut h);
+            self.sketch_keys.insert(feature, h.finish());
         }
     }
 }
@@ -394,7 +404,7 @@ impl ModelState {
         self.bodies.iter().find(|b| b.name == name)
     }
     pub fn sketch(&self, feature: u64) -> Option<&SolvedSketch> {
-        self.sketches.iter().find(|s| s.feature == feature)
+        self.sketches.iter().find(|s| s.feature == feature).map(|s| &**s)
     }
 }
 
@@ -408,6 +418,11 @@ pub struct FeatureResult {
     pub boolean_diagnostics: kernel::BooleanDiagnostics,
     pub ms: f64,
     pub skipped: bool,
+    /// Not evaluated on the document's current inputs: a feature at or after a sketch shown live
+    /// ([`Model::show_live_sketch`]). It keeps its last result until the next `evaluate`, which
+    /// never reuses it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
     #[serde(skip)]
     fingerprint: u64,
     #[serde(skip)]
@@ -448,7 +463,7 @@ fn fingerprint(prev: u64, f: &Feature, vals: &BTreeMap<String, Value>, rolled_ba
     prev.hash(&mut h);
     rolled_back.hash(&mut h);
     vals.get(DESIGN_LEN).map(|v| v.v.to_bits()).hash(&mut h);
-    serde_json::to_string(f).unwrap_or_default().hash(&mut h);
+    feature_json(f).hash(&mut h);
     for n in param_names(f) {
         n.hash(&mut h);
         match vals.get(&n) {
@@ -461,6 +476,123 @@ fn fingerprint(prev: u64, f: &Feature, vals: &BTreeMap<String, Value>, rolled_ba
         }
     }
     h.finish()
+}
+
+/// Positions and radii are fingerprinted to this quantum (mm): far below anything a design
+/// can show, far above the solver's rounding, so a sketch solved again to the same geometry
+/// reads as the same input.
+const QUANTUM: f64 = 1e-6;
+
+/// Put what a solve writes into a sketch on the [`QUANTUM`] grid: positions, radii and the
+/// measured values of driven dimensions.
+fn quantize(sk: &mut solvecraft_sketch::Sketch) {
+    let q = |v: f64| (v / QUANTUM).round() * QUANTUM;
+    for p in &mut sk.points {
+        p.pos = Vec2::new(q(p.pos.x), q(p.pos.y));
+    }
+    for c in &mut sk.curves {
+        if let CurveKind::Circle { r, .. } | CurveKind::Ellipse { r, .. } = &mut c.kind {
+            *r = q(*r);
+        }
+    }
+    for c in sk.constraints.iter_mut().filter(|c| c.driven) {
+        if let Some(v) = c.kind.value() {
+            c.kind.set_value(q(v));
+        }
+    }
+}
+
+/// A feature as fingerprinted: its definition, a sketch's stored solve quantized.
+fn feature_json(f: &Feature) -> String {
+    if let FeatureKind::Sketch { .. } = &f.kind {
+        let mut g = f.clone();
+        if let FeatureKind::Sketch { sketch, .. } = &mut g.kind {
+            quantize(sketch);
+        }
+        return serde_json::to_string(&g).unwrap_or_default();
+    }
+    serde_json::to_string(f).unwrap_or_default()
+}
+
+/// Store in `stored` the solution `solved` holds for it: the positions, the circle and ellipse
+/// radii, the arcs' end order and orientation (a signed sweep can swap them) and the
+/// constraints' values. Nothing else: what evaluation derives for its own copy (an offset's
+/// upgraded topology, refreshed links) stays out of the stored sketch. A `solved` that does not
+/// match `stored` entity for entity is not adopted.
+fn adopt_solution(stored: &mut solvecraft_sketch::Sketch, solved: &solvecraft_sketch::Sketch) {
+    if stored.points.len() != solved.points.len()
+        || stored.curves.len() != solved.curves.len()
+        || stored.constraints.len() != solved.constraints.len()
+        || stored.constraints.iter().zip(&solved.constraints).any(|(a, b)| a.id != b.id)
+    {
+        return;
+    }
+    for (p, q) in stored.points.iter_mut().zip(&solved.points) {
+        p.pos = q.pos;
+    }
+    for (c, d) in stored.curves.iter_mut().zip(&solved.curves) {
+        match (&mut c.kind, &d.kind) {
+            (CurveKind::Circle { r, .. }, CurveKind::Circle { r: s, .. }) | (CurveKind::Ellipse { r, .. }, CurveKind::Ellipse { r: s, .. }) => {
+                *r = *s
+            }
+            (CurveKind::Arc { a, b, .. }, CurveKind::Arc { a: sa, b: sb, .. }) => {
+                (*a, *b) = (*sa, *sb);
+                c.reversed = d.reversed;
+            }
+            _ => {}
+        }
+    }
+    for (c, d) in stored.constraints.iter_mut().zip(&solved.constraints) {
+        if let Some(v) = d.kind.value() {
+            c.kind.set_value(v);
+        }
+    }
+}
+
+/// The values features are evaluated with: the parameters, and the design's length unit.
+fn evaluation_values(doc: &Document) -> (BTreeMap<String, Value>, BTreeMap<String, String>) {
+    let (mut vals, perr) = doc.param_values();
+    if let Some((Kind::Length, scale)) = expr::unit_info(doc.units.trim())
+        && scale != 1.0
+    {
+        vals.insert(DESIGN_LEN.into(), Value { v: scale, len: 0, ang: 0 });
+    }
+    (vals, perr)
+}
+
+/// A feature's fingerprint in the chain after `prev`: its own inputs, where it is placed, and
+/// the sheet metal or plastic rules it takes defaults from.
+fn chain_fingerprint(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, prev: u64, rolled_back: bool) -> u64 {
+    let mut fp = fingerprint(prev, f, vals, rolled_back) ^ placement_digest(doc, f);
+    // Sheet metal features also depend on the rules (and the parameters they use).
+    if f.kind.is_sheet() {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        fp.hash(&mut h);
+        serde_json::to_string(&doc.sheet).unwrap_or_default().hash(&mut h);
+        for r in &doc.sheet.rules {
+            for e in [&r.thickness, &r.k_factor, &r.bend_radius, &r.relief_width, &r.relief_depth, &r.corner_relief, &r.hem_gap, &r.gap] {
+                for n in expr::references(e) {
+                    vals.get(&n).map(|v| v.v.to_bits()).hash(&mut h);
+                }
+            }
+        }
+        fp = h.finish();
+    }
+    // Plastic features take defaults from the plastic rules.
+    if f.kind.is_plastic() && !doc.plastic.is_empty() {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        fp.hash(&mut h);
+        serde_json::to_string(&doc.plastic).unwrap_or_default().hash(&mut h);
+        for r in &doc.plastic.rules {
+            for (_, e, _) in r.fields() {
+                for n in expr::references(e) {
+                    vals.get(&n).map(|v| v.v.to_bits()).hash(&mut h);
+                }
+            }
+        }
+        fp = h.finish();
+    }
+    fp
 }
 
 /// Document-level inputs any feature may read: construction planes (resolved by name), sheet
@@ -579,14 +711,79 @@ impl Model {
         self.results.iter().find(|r| r.id == id)
     }
 
+    /// Show a sketch's new solution before the model is evaluated again (the frames of an
+    /// interactive drag): `sketch`, already solved with `report`, on the plane it was last
+    /// evaluated on. The sketch's own result and the final state show it, and the sketch and
+    /// every feature after it are marked stale, keeping their last geometry. Nothing else is
+    /// recomputed; the next [`Model::evaluate`] recomputes from the sketch on. Returns `false`,
+    /// changing nothing, when the sketch has no evaluated result or a feature before it is
+    /// already stale (only a full evaluation brings that up to date).
+    pub fn show_live_sketch(&mut self, feature: u64, sketch: solvecraft_sketch::Sketch, report: SolveReport) -> bool {
+        let Some(i) = self.results.iter().position(|r| r.id == feature) else { return false };
+        if self.results.iter().take(i).any(|r| r.stale) {
+            return false;
+        }
+        let Some(last) = self.results.get(i).filter(|r| !r.skipped && r.error.is_none()).and_then(|r| r.state.sketch(feature)) else {
+            return false;
+        };
+        let solved = Arc::new(SolvedSketch { feature, name: last.name.clone(), plane: last.plane, profiles: find_profiles(&sketch), sketch, report });
+        let shown = self.results.iter().rposition(|r| !r.skipped);
+        for (k, r) in self.results.iter_mut().enumerate().skip(i) {
+            r.stale = true;
+            // The sketch's own state and the final one show it: only that entry changes (the
+            // states are copied on the first frame; later frames own them and swap in place).
+            if (k == i || Some(k) == shown)
+                && let Some(s) = Arc::make_mut(&mut r.state).sketches.iter_mut().find(|s| s.feature == feature)
+            {
+                *s = solved.clone();
+            }
+        }
+        true
+    }
+
+    /// Some results are stale ([`Model::show_live_sketch`]): the model needs an `evaluate`.
+    pub fn is_stale(&self) -> bool {
+        self.results.iter().any(|r| r.stale)
+    }
+
+    /// Store in `doc` the sketches whose last evaluation solved them for new driving values
+    /// (see `Document::solve_sketch`), so the stored sketch is the solved state the next value
+    /// edit continues from (edits depend on their history, as a user editing dimensions one
+    /// after another expects) and later evaluations repeat no continuation. Their results
+    /// stand for the updated document: the solved sketch is what evaluating it gives.
+    /// Returns how many sketches were stored.
+    pub fn adopt_solved_sketches(&mut self, doc: &mut Document) -> usize {
+        let solved: Vec<SolvedSketch> = self.edited_sketches(doc).cloned().collect();
+        let Some(first) = solved.iter().filter_map(|s| doc.features.iter().position(|f| f.id == s.feature)).min() else { return 0 };
+        for s in &solved {
+            if let Ok(stored) = doc.sketch_mut(s.feature) {
+                adopt_solution(stored, &s.sketch);
+            }
+        }
+        // The fingerprints from the first stored sketch on.
+        let vals = evaluation_values(doc).0;
+        let marker = doc.marker.unwrap_or(usize::MAX);
+        let mut prev_fp = first.checked_sub(1).and_then(|i| self.results.get(i)).map_or(0, |r| r.fingerprint);
+        for (i, f) in doc.features.iter().enumerate().skip(first) {
+            prev_fp = chain_fingerprint(doc, &vals, f, prev_fp, i >= marker);
+            if let Some(r) = self.results.get_mut(i).filter(|r| r.id == f.id) {
+                r.fingerprint = prev_fp;
+            }
+        }
+        solved.len()
+    }
+
+    /// The sketches the last evaluation solved for driving values other than the ones `doc`
+    /// stores them with (a value edit since they were stored).
+    pub fn edited_sketches<'a>(&'a self, doc: &'a Document) -> impl Iterator<Item = &'a SolvedSketch> + 'a {
+        self.results.iter().filter(|r| !r.skipped && r.error.is_none()).filter_map(|r| r.state.sketch(r.id)).filter(|s| {
+            s.report.keeps_orientation() && doc.sketch(s.feature).is_ok_and(|stored| stored.driving_values() != s.sketch.driving_values())
+        })
+    }
+
     /// Re-evaluate the document, reusing results up to the first changed feature.
     pub fn evaluate(&mut self, doc: &Document) {
-        let (mut vals, perr) = doc.param_values();
-        if let Some((Kind::Length, scale)) = expr::unit_info(doc.units.trim())
-            && scale != 1.0
-        {
-            vals.insert(DESIGN_LEN.into(), Value { v: scale, len: 0, ang: 0 });
-        }
+        let (vals, perr) = evaluation_values(doc);
         self.param_errors = perr;
         let mut prev_fp = 0u64;
         let mut state = self.empty.clone();
@@ -598,40 +795,13 @@ impl Model {
         let ctx = context_digest(doc, &vals);
         for (i, f) in doc.features.iter().enumerate() {
             let rolled_back = i >= marker;
-            let mut fp = fingerprint(prev_fp, f, &vals, rolled_back) ^ placement_digest(doc, f);
-            // Sheet metal features also depend on the rules (and the parameters they use).
-            if f.kind.is_sheet() {
-                let mut h = std::collections::hash_map::DefaultHasher::new();
-                fp.hash(&mut h);
-                serde_json::to_string(&doc.sheet).unwrap_or_default().hash(&mut h);
-                for r in &doc.sheet.rules {
-                    for e in [&r.thickness, &r.k_factor, &r.bend_radius, &r.relief_width, &r.relief_depth, &r.corner_relief, &r.hem_gap, &r.gap] {
-                        for n in expr::references(e) {
-                            vals.get(&n).map(|v| v.v.to_bits()).hash(&mut h);
-                        }
-                    }
-                }
-                fp = h.finish();
-            }
-            // Plastic features take defaults from the plastic rules.
-            if f.kind.is_plastic() && !doc.plastic.is_empty() {
-                let mut h = std::collections::hash_map::DefaultHasher::new();
-                fp.hash(&mut h);
-                serde_json::to_string(&doc.plastic).unwrap_or_default().hash(&mut h);
-                for r in &doc.plastic.rules {
-                    for (_, e, _) in r.fields() {
-                        for n in expr::references(e) {
-                            vals.get(&n).map(|v| v.v.to_bits()).hash(&mut h);
-                        }
-                    }
-                }
-                fp = h.finish();
-            }
+            let fp = chain_fingerprint(doc, &vals, f, prev_fp, rolled_back);
             prev_fp = fp;
             if reuse
                 && let Some(old) = self.results.get(i)
                 && old.id == f.id
                 && old.fingerprint == fp
+                && !old.stale
             {
                 if !old.skipped {
                     state = old.state.clone();
@@ -649,6 +819,7 @@ impl Model {
                     boolean_diagnostics: Default::default(),
                     ms: 0.0,
                     skipped: true,
+                    stale: false,
                     fingerprint: fp,
                     state: state.clone(),
                 });
@@ -671,6 +842,7 @@ impl Model {
                     boolean_diagnostics: c.boolean_diagnostics,
                     ms: c.ms,
                     skipped: false,
+                    stale: false,
                     fingerprint: fp,
                     state: state.clone(),
                 });
@@ -775,6 +947,7 @@ impl Model {
                 boolean_diagnostics,
                 ms,
                 skipped: false,
+                stale: false,
                 fingerprint: fp,
                 state: state.clone(),
             });
@@ -2920,15 +3093,11 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             if let Some(w) = face_warning {
                 warns.insert(0, w);
             }
-            doc.apply_dimension_values(vals, &mut sk)?;
-            let mut report = solve(&mut sk);
-            if !sk.offsets.is_empty() || !sk.freeform_offsets.is_empty() {
-                // Source dimensions may have moved curves during the solve.
-                sk.refresh_offsets()?;
-                report = solve(&mut sk);
-            }
-            if !report.ok() {
-                warns.insert(0, format!("the sketch constraints conflict ({})", report.failing.join(", ")));
+            // The stored sketch is solved for its stored values.
+            let stored = sk.driving_values();
+            let report = doc.solve_sketch(vals, &mut sk, &stored)?;
+            if !report.keeps_orientation() {
+                warns.insert(0, report.failure(|f| format!("the sketch constraints conflict ({f})")));
             }
             if !warns.is_empty() {
                 *warning = Some(warns.join("; "));
@@ -2936,7 +3105,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             sk.validate_periodic_splines()?;
             let profiles = find_profiles(&sk);
             st.sketches.retain(|s| s.feature != f.id);
-            st.sketches.push(SolvedSketch { feature: f.id, name: f.name.clone(), plane, sketch: sk, report, profiles });
+            st.sketches.push(Arc::new(SolvedSketch { feature: f.id, name: f.name.clone(), plane, sketch: sk, report, profiles }));
             Ok(())
         }
         FeatureKind::Extrude { operation, targets, .. }
@@ -3580,6 +3749,12 @@ pub fn state_in_frame_at<'a>(doc: &Document, st: &'a ModelState, comp: u64, fram
         }
     }
     for (s, m) in out.sketches.iter_mut().zip(&sketch_m) {
+        // Only a sketch the frame moves is copied.
+        let maps_wire = |w: &solvecraft_sketch::Wire| !crate::is_identity(if w.space == solvecraft_sketch::WireSpace::Component { m } else { &inv });
+        if crate::is_identity(m) && !s.sketch.wires.iter().any(maps_wire) {
+            continue;
+        }
+        let s = Arc::make_mut(s);
         if !crate::is_identity(m)
             && let Some(np) = Plane::new(crate::apply_point(m, s.plane.origin), crate::apply_vector(m, s.plane.x), crate::apply_vector(m, s.plane.y))
         {
@@ -3646,7 +3821,12 @@ pub fn world_state(doc: &Document, st: &ModelState) -> ModelState {
         }
         if primary {
             for s in st.sketches.iter().filter(|s| comp_of_feature(s.feature) == comp) {
-                let mut s2 = s.clone();
+                if ident {
+                    // In place: shared as it is.
+                    out.sketches.push(s.clone());
+                    continue;
+                }
+                let mut s2 = SolvedSketch::clone(s);
                 if !ident {
                     let p = &s.plane;
                     if let Some(np) = Plane::new(crate::apply_point(&m, p.origin), crate::apply_vector(&m, p.x), crate::apply_vector(&m, p.y)) {
@@ -3658,7 +3838,7 @@ pub fn world_state(doc: &Document, st: &ModelState) -> ModelState {
                         map_wire(wire, &m);
                     }
                 }
-                out.sketches.push(s2);
+                out.sketches.push(Arc::new(s2));
             }
             for t in st
                 .threads

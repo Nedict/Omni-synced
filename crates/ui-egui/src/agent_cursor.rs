@@ -193,7 +193,8 @@ pub fn picks(app: &SolveApp, command: &str, params: &Value) -> Vec<Vec3> {
     // A profile feature without picks takes the profiles of the active (else the last) sketch:
     // point at them.
     if out.is_empty() && matches!(id, "solid.extrude" | "solid.revolve") {
-        let ss = app.session.active_sketch.and_then(|s| st.sketch(s)).or_else(|| st.sketches.iter().rev().find(|s| !s.profiles.is_empty()));
+        let ss =
+            app.session.active_sketch.and_then(|s| st.sketch(s)).or_else(|| st.sketches.iter().rev().find(|s| !s.profiles.is_empty()).map(|s| &**s));
         if let Some(ss) = ss {
             out.extend(ss.profiles.iter().take(4).map(|p| ss.plane.to_world(p.region.interior_point())));
         }

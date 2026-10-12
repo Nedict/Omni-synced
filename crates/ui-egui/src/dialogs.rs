@@ -2243,15 +2243,30 @@ fn params_table(app: &mut SolveApp, ui: &mut egui::Ui, new_name: &mut String, ne
             let id = egui::Id::new(("pexpr", &p.name));
             let mut e = ui.data(|dd| dd.get_temp::<String>(id)).unwrap_or_else(|| p.expr.clone());
             let r = ui.add(egui::TextEdit::singleline(&mut e).desired_width(160.0));
+            let refused_id = egui::Id::new(("prefused", &p.name));
             if r.changed() {
-                ui.data_mut(|dd| dd.insert_temp(id, e.clone()));
+                // Typing again clears the reason a previous change was refused.
+                ui.data_mut(|dd| {
+                    dd.insert_temp(id, e.clone());
+                    dd.remove::<String>(refused_id);
+                });
             }
             if r.lost_focus() && e != p.expr {
-                let _ = app.run("parameters.change", json!({"name": p.name, "expression": e}));
-                ui.data_mut(|dd| dd.remove::<String>(id));
+                match change_param(app, &p.name, &e) {
+                    Ok(()) => ui.data_mut(|dd| {
+                        dd.remove::<String>(id);
+                        dd.remove::<String>(refused_id);
+                    }),
+                    // Refused (it would leave a sketch unsolved, say): the typed expression
+                    // stays in the field with the reason beside it, nothing silently reverts.
+                    Err(why) => ui.data_mut(|dd| {
+                        dd.insert_temp(refused_id, why);
+                    }),
+                }
             }
+            let refused = ui.data(|dd| dd.get_temp::<String>(refused_id));
             let v = vals.get(&p.name).map(|v| if p.unit == "deg" { format!("{:.3}°", v.v.to_degrees()) } else { format!("{:.4} {}", v.v, p.unit) });
-            match (v, errs.get(&p.name)) {
+            match (v, errs.get(&p.name).or(refused.as_ref())) {
                 (_, Some(e)) => ui.label(RichText::new(e).color(t.error)),
                 (Some(v), None) => ui.label(RichText::new(v).color(t.text_dim)),
                 _ => ui.label(""),
@@ -2271,6 +2286,14 @@ fn params_table(app: &mut SolveApp, ui: &mut egui::Ui, new_name: &mut String, ne
         }
     });
     ui.end_row();
+}
+
+/// Set a parameter's expression from the parameters table: `Err` with the message to show
+/// beside the field when the change is refused (the document keeps its values).
+pub(crate) fn change_param(app: &mut SolveApp, name: &str, expression: &str) -> Result<(), String> {
+    app.run("parameters.change", json!({"name": name, "expression": expression}))
+        .map(|_| ())
+        .map_err(|e| crate::friendly_error("parameters.change", &e))
 }
 
 /// Start a sketch on a picked plane or planar face and turn the view to face it.
@@ -3750,4 +3773,31 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
     d.active = 0;
     d.error = None;
     Some(d)
+}
+
+#[cfg(test)]
+mod param_refusal_tests {
+    use super::*;
+    use solvecraft_engine::Session;
+
+    #[test]
+    fn a_refused_parameter_change_shows_why() {
+        // A triangle whose sides are parameters: a side longer than the other two together
+        // has no solution, so the change is refused and the table shows the reason.
+        let mut s = Session::default();
+        s.execute("sketch.create", &json!({"plane": "XY", "name": "Tri"})).unwrap();
+        s.execute("sketch.line", &json!({"points": [[0, 0], [40, 0], [20, 30]], "closed": true})).unwrap();
+        for l in ["l1", "l2", "l3"] {
+            s.execute("sketch.dimension", &json!({"entities": [l]})).unwrap();
+        }
+        s.execute("sketch.finish", &json!({})).unwrap();
+        let name = s.doc.params.iter().find(|p| p.model).map(|p| p.name.clone()).unwrap();
+        let before = s.doc.param(&name).map(|p| p.expr.clone());
+        let mut app = SolveApp::new(s, Default::default());
+        let why = change_param(&mut app, &name, "500 mm").unwrap_err();
+        assert!(why.contains("Tri") && why.contains("conflict"), "{why}");
+        assert_eq!(app.session.doc.param(&name).map(|p| p.expr.clone()), before);
+        assert!(app.status.as_ref().is_some_and(|(m, _, error)| *error && m.contains("Tri")), "{:?}", app.status);
+        assert!(change_param(&mut app, &name, "41 mm").is_ok());
+    }
 }

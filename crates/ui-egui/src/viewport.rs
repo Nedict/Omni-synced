@@ -1622,7 +1622,20 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // A left press with the preset's keys (Alias: Shift+Alt) navigates until the button is let
     // go (kept through the release frame, so the end of the drag doesn't select either).
     if primary_pressed && inside {
-        app.viewport.primary_nav = crate::prefs::nav_mode(app, crate::prefs::NavButton::Left, mods);
+        let openscad_orbit = app.preferences.nav == crate::prefs::OPENSCAD_NAV
+            && app.tool.is_none()
+            && app.dialog.is_none()
+            && app.viewport.context_menu.is_none()
+            && !mods.shift
+            && hover.is_some_and(|p| {
+                let proj = projection(app, rect);
+                pick(app, &proj, p).is_empty() && crate::dim_view::hit(p).is_none() && crate::sketch_tools::glyph_at(p).is_none()
+            });
+        app.viewport.primary_nav = if app.preferences.nav != crate::prefs::OPENSCAD_NAV || openscad_orbit {
+            crate::prefs::nav_mode(app, crate::prefs::NavButton::Left, mods)
+        } else {
+            None
+        };
     } else if !primary_down && !primary_released {
         app.viewport.primary_nav = None;
     }
@@ -1651,7 +1664,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         // Shift can be required to enter orbit (Fusion/Inventor middle drag, Alias Shift+Alt),
         // rather than an additional request for snapping. Only an extra modifier snaps.
         let without_shift = egui::Modifiers { shift: false, ..mods };
-        let snap = mods.shift
+        let snap = app.preferences.nav != crate::prefs::OPENSCAD_NAV
+            && mods.shift
             && match button {
                 Some(b) => crate::prefs::nav_mode(app, b, without_shift) == Some(NavMode::Orbit),
                 None => app.viewport.nav.is_some(),
@@ -1723,6 +1737,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         || middle
         || secondary_down
         || (primary_nav.is_some() && primary_down)
+        || mode.is_some()
         || app.viewport.axis_drag.is_some()
         || app.viewport.spin
         || app.viewport.orbit_snap.is_some()
@@ -1881,19 +1896,25 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
     }
     // Dragging a sketch point of the active sketch moves it; the solver keeps the constraints.
-    if app.tool.is_none() && app.dialog.is_none() && primary_nav.is_none() && app.session.active_sketch.is_some() {
+    if app.tool.is_none() && app.dialog.is_none() && primary_nav.is_none() && mode.is_none() && app.session.active_sketch.is_some() {
         let on_plane = |app: &SolveApp, p: Pos2| {
             let ss = app.session.active_sketch.and_then(|sid| app.session.world_state().sketch(sid).cloned())?;
             let (o, d) = proj.ray(p);
             ss.plane.intersect_ray(o, d).map(|w| ss.plane.to_local(w))
         };
-        // The 3D triad, then a dimension's text, follow a drag that starts on them.
-        if resp.drag_started_by(egui::PointerButton::Primary)
-            && let Some(a) = ui.input(|i| i.pointer.press_origin())
-            && !crate::sketch3d::drag_start(app, &proj, a)
-            && let Some(q) = on_plane(app, a)
+        // What a drag starts on: the 3D triad, then a dimension's text, then sketch geometry
+        // (before the dimension's lines, which end on the geometry they measure), as for clicks.
+        let grabbed = resp
+            .drag_started_by(egui::PointerButton::Primary)
+            .then(|| ui.input(|i| i.pointer.press_origin()))
+            .flatten()
+            .filter(|a| !crate::sketch3d::drag_start(app, &proj, *a))
+            .map(|a| (a, pick(app, &proj, a).into_iter().next()));
+        if let Some((a, hit)) = &grabbed
+            && let Some(q) = on_plane(app, *a)
         {
-            crate::dim_view::drag_start(app, a, q);
+            let on_geometry = matches!(hit, Some(Hit::SketchPoint { .. } | Hit::SketchCurve { .. }));
+            crate::dim_view::drag_start(app, *a, q, on_geometry);
         }
         if crate::sketch3d::dragging()
             && (resp.dragged_by(egui::PointerButton::Primary) || resp.drag_stopped())
@@ -1908,13 +1929,12 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::dim_view::drag_to(app, q);
         }
         // A point or a curve of the sketch being edited follows a drag that starts on it.
-        if resp.drag_started_by(egui::PointerButton::Primary)
+        if let Some((a, hit)) = grabbed
             && !crate::dim_view::dragging()
             && !crate::sketch3d::dragging()
-            && let Some(a) = ui.input(|i| i.pointer.press_origin())
         {
             let active = app.session.active_sketch;
-            match pick(app, &proj, a).into_iter().next() {
+            match hit {
                 Some(Hit::SketchPoint { sketch, id, .. }) if Some(sketch) == active => {
                     app.viewport.point_drag = Some((id, app.session.undo.len(), None))
                 }
@@ -1950,17 +1970,25 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             if let Some(s) = snap {
                 q += s.offset;
             }
-            if app.session.execute("sketch.drag", &json!({"entity": id, "from": [from.x, from.y], "to": [q.x, q.y]})).is_ok() {
-                app.session.undo.truncate(depth + 1);
-            }
+            // Each frame re-solves the sketch only (`live`); the model follows when the drag ends.
+            let at = match app.session.execute("sketch.drag", &json!({"entity": id, "from": [from.x, from.y], "to": [q.x, q.y], "live": true})) {
+                Ok(r) => {
+                    app.session.undo.truncate(depth + 1);
+                    r.get("at").and_then(solvecraft_engine::params::vec2).unwrap_or(q)
+                }
+                Err(_) => from,
+            };
+            // The grab stays on the geometry: what it could not follow this frame it catches up
+            // with on the next one instead of lagging the cursor for the rest of the drag.
             if grab.is_some() {
-                app.viewport.point_drag = Some((id, depth, Some(q)));
+                app.viewport.point_drag = Some((id, depth, Some(at)));
             }
         }
         if resp.drag_stopped() {
             if let Some((_, depth, _)) = app.viewport.point_drag.clone() {
-                // Let go on a point, midpoint or curve: the matching constraint, in the drag's undo step.
-                crate::drag_snap::release(app);
+                // Letting go on a point, midpoint or curve adds the matching constraint, then the
+                // whole model follows the drag, all in the drag's undo step.
+                let _ = app.session.execute("sketch.drag_end", &json!({ "constraint": crate::drag_snap::release() }));
                 app.session.undo.truncate(depth + 1);
             }
             crate::drag_snap::clear();
@@ -1969,9 +1997,19 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::sketch3d::drag_end();
         }
     }
+    // A sketch drag whose release never came (focus lost, a tool or dialog took over) ends here,
+    // so the model does not stay behind its sketch until the next command. Not while CAD input
+    // is held back (an issue report's capture): a release then belongs to the report, and the
+    // drag continues afterwards.
+    if app.viewport.point_drag.is_some() && !crate::issue_report::cad_input_blocked() && !ui.input(|i| i.pointer.primary_down()) {
+        app.viewport.point_drag = None;
+        crate::drag_snap::clear();
+        let _ = app.session.execute("sketch.drag_end", &json!({}));
+    }
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()
         && primary_nav.is_none()
+        && mode.is_none()
         && app.viewport.point_drag.is_none()
         && !crate::dim_view::dragging()
         && !crate::sketch3d::dragging()
@@ -2685,7 +2723,14 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
     }
     let t = Tokens::get();
     let items: [(&str, &str); 10] = [
-        ("orbit", "Orbit (right drag; hold Shift to snap)"),
+        (
+            "orbit",
+            if app.preferences.nav == crate::prefs::OPENSCAD_NAV {
+                "Orbit (left drag on empty space; Shift+left drag box-selects)"
+            } else {
+                "Orbit (right drag; hold Shift to snap)"
+            },
+        ),
         ("spin", "Continuous orbit (stops at the next click or key)"),
         ("pan", "Pan (drag; or middle drag)"),
         ("zoom", "Zoom (drag; or wheel)"),
@@ -2941,6 +2986,109 @@ mod tests {
             app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1 });
         }
         app
+    }
+
+    #[test]
+    fn openscad_left_drag_preserves_editing_and_selection() {
+        for action in ["point", "box", "tool"] {
+            let ctx = egui::Context::default();
+            let mut app = hover_app(false);
+            app.preferences.nav = crate::prefs::OPENSCAD_NAV.into();
+            app.ui.show_origin = false;
+            hover_frame(&mut app, &ctx, vec![]);
+            let point = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
+            let (start, end) =
+                if action == "point" { (point, point + vec2(30.0, 20.0)) } else { (point - vec2(40.0, 40.0), point + vec2(40.0, 40.0)) };
+            if action == "tool" {
+                app.start("sketch.line");
+                assert!(app.tool.is_some());
+            }
+            let before = app.cam;
+            let undo = app.session.undo.len();
+            let modifiers = egui::Modifiers { shift: action == "box", ..Default::default() };
+            let frame = |app: &mut SolveApp, mut events: Vec<egui::Event>| {
+                events.insert(0, egui::Event::ModifiersChanged(modifiers));
+                let mut out = ctx.run_ui(
+                    egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))), events, ..Default::default() },
+                    |ui| show(app, ui),
+                );
+                out.textures_delta.clear();
+            };
+            frame(
+                &mut app,
+                vec![
+                    egui::Event::PointerMoved(start),
+                    egui::Event::PointerButton { pos: start, button: egui::PointerButton::Primary, pressed: true, modifiers },
+                ],
+            );
+            frame(&mut app, vec![egui::Event::PointerMoved(end)]);
+            frame(&mut app, vec![]);
+            assert_eq!(app.cam, before, "{action} drag must not orbit");
+            if action == "point" {
+                assert!(app.viewport.point_drag.is_some());
+                assert_eq!(app.session.undo.len(), undo + 1);
+            } else if action == "box" {
+                assert!(app.viewport.boxsel.is_some());
+            } else {
+                assert!(app.tool.is_some());
+                assert!(app.viewport.primary_nav.is_none());
+            }
+            frame(&mut app, vec![egui::Event::PointerButton { pos: end, button: egui::PointerButton::Primary, pressed: false, modifiers }]);
+            if action == "box" {
+                assert!(!app.session.selection.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn openscad_empty_space_drags_navigate_without_editing_or_box_selecting() {
+        for (button, shift) in [
+            (egui::PointerButton::Primary, false),
+            (egui::PointerButton::Secondary, false),
+            (egui::PointerButton::Middle, false),
+            (egui::PointerButton::Secondary, true),
+            (egui::PointerButton::Middle, true),
+        ] {
+            let ctx = egui::Context::default();
+            let mut app = hover_app(false);
+            app.preferences.nav = crate::prefs::OPENSCAD_NAV.into();
+            hover_frame(&mut app, &ctx, vec![]);
+            let point = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
+            let p = if button == egui::PointerButton::Primary { point + vec2(80.0, 80.0) } else { point };
+            let before = app.cam;
+            let undo = app.session.undo.len();
+            let modifiers = egui::Modifiers { shift, ..Default::default() };
+            let frame = |app: &mut SolveApp, mut events: Vec<egui::Event>| {
+                events.insert(0, egui::Event::ModifiersChanged(modifiers));
+                let _ = ctx.run_ui(
+                    egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))), events, ..Default::default() },
+                    |ui| show(app, ui),
+                );
+            };
+            frame(&mut app, vec![egui::Event::PointerMoved(p), egui::Event::PointerButton { pos: p, button, pressed: true, modifiers }]);
+            let end = p + vec2(30.0, 20.0);
+            frame(&mut app, vec![egui::Event::PointerMoved(end)]);
+            frame(&mut app, vec![]);
+            assert!(app.viewport.hover.is_none());
+            assert!(app.viewport.boxsel.is_none() && app.viewport.point_drag.is_none());
+            frame(&mut app, vec![egui::Event::PointerButton { pos: end, button, pressed: false, modifiers }]);
+            assert_eq!(app.session.undo.len(), undo);
+            assert!(app.session.selection.is_empty());
+            assert!(app.viewport.context_menu.is_none());
+            if button == egui::PointerButton::Primary {
+                assert_ne!(app.cam.yaw, before.yaw);
+                assert_eq!(app.cam.target, before.target);
+                assert_eq!(app.cam.distance, before.distance);
+            } else if shift {
+                assert_ne!(app.cam.distance, before.distance);
+                assert_eq!(app.cam.target, before.target);
+                assert_eq!(app.cam.yaw, before.yaw);
+            } else {
+                assert_ne!(app.cam.target, before.target);
+                assert_eq!(app.cam.distance, before.distance);
+                assert_eq!(app.cam.yaw, before.yaw);
+            }
+        }
     }
 
     #[test]

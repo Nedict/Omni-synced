@@ -1677,8 +1677,10 @@ fn cached_evaluation_matches_from_scratch() {
         let before = hits(&s);
         run(&mut s, id, p.clone());
         same(&s, &format!("step {step}: {id} {p}"));
-        if step == 1 {
-            assert!(hits(&s) > before, "setting the width back reuses the earlier results");
+        // Setting the width back solves the sketch again from its current state; the
+        // features after it see the same geometry and reuse their results. So does undo.
+        if step == 1 || step == 3 {
+            assert!(hits(&s) > before, "step {step} reuses the earlier results");
         }
     }
 }

@@ -18,6 +18,7 @@ use crate::theme::Tokens;
 use crate::viewport::NavMode;
 
 pub const UNITS: [&str; 5] = ["mm", "cm", "m", "in", "ft"];
+pub const OPENSCAD_NAV: &str = "openscad";
 /// A mouse button that can drag the camera.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavButton {
@@ -81,7 +82,7 @@ use NavButton::{Left, Middle, Right};
 use NavMode::{Orbit, Pan, Zoom};
 
 /// The mouse mappings. The first is the default.
-pub const NAV_PRESETS: [NavPreset; 5] = [
+pub const NAV_PRESETS: [NavPreset; 6] = [
     NavPreset {
         id: "fusion",
         label: "Fusion",
@@ -134,6 +135,19 @@ pub const NAV_PRESETS: [NavPreset; 5] = [
         reverse_zoom: false,
         bindings: &[bind(Right, NavKeys::SHIFT, Pan), bind(Right, NavKeys::NONE, Orbit), bind(Middle, NavKeys::NONE, Pan)],
     },
+    NavPreset {
+        id: OPENSCAD_NAV,
+        label: "OpenSCAD",
+        help: "Left drag on empty space orbits, Shift+left drag box-selects, sketch geometry drags edit; right or middle drag pans, Shift+right or Shift+middle drag zooms",
+        reverse_zoom: false,
+        bindings: &[
+            bind(Left, NavKeys::NONE, Orbit),
+            bind(Right, NavKeys::SHIFT, Zoom),
+            bind(Middle, NavKeys::SHIFT, Zoom),
+            bind(Right, NavKeys::NONE, Pan),
+            bind(Middle, NavKeys::NONE, Pan),
+        ],
+    },
 ];
 
 /// The preset with this id (the default for an unknown one).
@@ -144,6 +158,7 @@ pub fn nav_preset(id: &str) -> &'static NavPreset {
 pub const PAGES: [&str; 7] = ["General", "Navigation", "Keyboard Shortcuts", "Design", "Graphics", "Sketch", "Selection"];
 pub const PAGE_SHORTCUTS: usize = 2;
 pub const PAGE_DESIGN: usize = 3;
+pub const PAGE_GRAPHICS: usize = 4;
 pub const THEMES: [(&str, &str); 3] = [("dark", "Dark"), ("light", "Light"), ("system", "System")];
 pub const MSAA: [u32; 4] = [1, 2, 4, 8];
 
@@ -318,7 +333,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.up_axis = d.up_axis;
             p.offer_stand_up = d.offer_stand_up;
         }
-        4 => {
+        PAGE_GRAPHICS => {
             let msaa = p.msaa != d.msaa;
             p.msaa = d.msaa;
             app.ui.visual_style = 0;
@@ -506,6 +521,77 @@ fn save_graphics(app: &SolveApp) {
     }
 }
 
+/// At start, with the graphics device known: the saved anti-aliasing (`requested` samples, as
+/// the host read it) is more than the device supports. The window would not have opened with it,
+/// so the renderer fell back; put the setting back to its default (or the largest supported
+/// count below it) and tell the user what changed.
+pub fn check_msaa(app: &mut SolveApp, requested: u32) {
+    let supported = &app.msaa_supported;
+    if requested <= 1 || supported.is_empty() || supported.contains(&requested) {
+        return;
+    }
+    let default = Prefs::default().msaa;
+    let reset = supported.iter().copied().filter(|&n| n <= default).max().unwrap_or(1);
+    let supported = supported.clone();
+    app.preferences.msaa = reset;
+    save_graphics(app);
+    app.settings_reset.push(SettingReset::Msaa { requested, reset, supported });
+}
+
+/// A setting put back at start because it would keep SolidCraft from starting.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SettingReset {
+    /// Anti-aliasing samples the graphics device can't render with.
+    Msaa { requested: u32, reset: u32, supported: Vec<u32> },
+}
+
+impl SettingReset {
+    /// The line the notice shows, in the current interface language.
+    pub fn message(&self) -> String {
+        match self {
+            SettingReset::Msaa { requested, reset, supported } => {
+                let setting = format!("{} › {}", crate::i18n::tr("ui.graphics"), crate::i18n::tr("ui.anti_aliasing"));
+                let supported = supported.iter().map(|n| format!("{n}")).collect::<Vec<_>>().join("×, ") + "×";
+                crate::i18n::format(
+                    "settings.msaa_reset",
+                    &[("setting", &setting), ("requested", &requested.to_string()), ("reset", &reset.to_string()), ("supported", &supported)],
+                )
+            }
+        }
+    }
+}
+
+/// Settings put back at start (`SolveApp::settings_reset`), until dismissed.
+pub fn show_reset_notice(app: &mut SolveApp, ctx: &egui::Context) {
+    if app.settings_reset.is_empty() {
+        return;
+    }
+    let mut ok = false;
+    let mut prefs = false;
+    crate::frame::window(ctx, app.tr("settings.reset_title"), crate::frame::Width::Normal)
+        .id(egui::Id::new("sc_settings_reset"))
+        .collapsible(false)
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.label(app.tr("settings.reset_intro"));
+            ui.add_space(4.0);
+            for reset in &app.settings_reset {
+                ui.label(format!("• {}", reset.message()));
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ok = ui.button(app.tr("ui.heading_ok")).clicked();
+                prefs = ui.button(app.tr("ui.open_preferences")).clicked();
+            });
+        });
+    if ok || prefs {
+        app.settings_reset.clear();
+    }
+    if prefs {
+        open_at(app, PAGE_GRAPHICS);
+    }
+}
+
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     // File › Keyboard Shortcuts and Help › Keyboard Shortcuts open this dialog at that page.
     if app.keymap.open {
@@ -632,7 +718,6 @@ const PREFS_NAV_W: f32 = 128.0;
 
 /// One page of the dialog.
 fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
-    let _language = crate::i18n::scope(&app.preferences.language);
     let note = |ui: &mut egui::Ui, s: &str| {
         ui.label("");
         // Descriptions wrap within the page instead of widening it.
@@ -714,7 +799,8 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 }
             });
             ui.end_row();
-            note(ui, &format!("{}; hold Shift during orbit to snap; the wheel zooms", nav_preset(&app.preferences.nav).help));
+            let snap_help = if app.preferences.nav == OPENSCAD_NAV { "" } else { "; hold Shift during orbit to snap" };
+            note(ui, &format!("{}{snap_help}; the wheel zooms", nav_preset(&app.preferences.nav).help));
             ui.label("Context menu");
             ui.checkbox(&mut app.preferences.radial_context_menu, "Radial context menu");
             ui.end_row();
@@ -786,14 +872,18 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.label("Perspective view");
             ui.checkbox(&mut app.ui.perspective, "");
             ui.end_row();
-            ui.label("Anti-aliasing");
+            ui.label(app.tr("ui.anti_aliasing"));
             egui::ComboBox::from_id_salt("pref_msaa").selected_text(format!("{}×", app.preferences.msaa)).show_ui(ui, |ui| {
                 for m in MSAA {
-                    ui.selectable_value(&mut app.preferences.msaa, m, format!("{m}×"));
+                    // Counts the graphics device can't do would keep the window from opening.
+                    let ok = app.msaa_supported.is_empty() || app.msaa_supported.contains(&m);
+                    ui.add_enabled_ui(ok, |ui| ui.selectable_value(&mut app.preferences.msaa, m, format!("{m}×")))
+                        .inner
+                        .on_disabled_hover_text(app.tr("settings.msaa_unsupported"));
                 }
             });
             ui.end_row();
-            note(ui, "Anti-aliasing applies the next time SolidCraft starts");
+            note(ui, app.tr("settings.msaa_applies_on_restart"));
             ui.label("Renderer");
             ui.label(match (&app.viewport.gpu, &app.help.gpu) {
                 (Some(_), Some(g)) => format!("GPU: {g}"),
@@ -871,7 +961,10 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
         return Err(format!("units must be one of {}", UNITS.join(", ")));
     }
     if !NAV_PRESETS.iter().any(|p| p.id == new.nav) || !MSAA.contains(&new.msaa) {
-        return Err("`nav` must be fusion, solidworks, inventor, alias or tinkercad and `msaa` 1, 2, 4 or 8".into());
+        return Err("`nav` must be fusion, solidworks, inventor, alias, tinkercad or openscad and `msaa` 1, 2, 4 or 8".into());
+    }
+    if new.msaa != app.preferences.msaa && !app.msaa_supported.is_empty() && !app.msaa_supported.contains(&new.msaa) {
+        return Err(format!("this graphics device doesn't support `msaa` {}; it supports {:?}", new.msaa, app.msaa_supported));
     }
     if !THEMES.iter().any(|(id, _)| *id == new.theme) || !["z", "y"].contains(&new.up_axis.as_str()) {
         return Err("`theme` must be dark, light or system and `up_axis` z or y".into());
@@ -900,6 +993,59 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsupported_saved_msaa_is_reset_to_the_default_with_a_notice() {
+        let dir = std::env::temp_dir().join(format!("sc_msaa_reset_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("graphics.json");
+        let services = crate::Services { graphics_path: Some(path.to_string_lossy().to_string()), ..Default::default() };
+        let mut app = SolveApp::new(solvecraft_engine::Session::default(), services);
+        // WebGPU's guarantee for the surface format: 8x saved, the device can only do 1x and 4x.
+        app.msaa_supported = vec![1, 4];
+        app.preferences.msaa = 8;
+        check_msaa(&mut app, 8);
+        assert_eq!(app.preferences.msaa, 4);
+        let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap_or_default()).unwrap_or_default();
+        assert_eq!(saved["msaa"], 4);
+        assert_eq!(app.settings_reset, [SettingReset::Msaa { requested: 8, reset: 4, supported: vec![1, 4] }]);
+        assert_eq!(
+            app.settings_reset[0].message(),
+            "Graphics › Anti-aliasing: 8× isn't supported by this graphics device; it is now 4× (supported: 1×, 4×)."
+        );
+        {
+            let _de = crate::i18n::scope("de");
+            assert_eq!(
+                app.settings_reset[0].message(),
+                "Grafik › Kantenglättung: 8× wird von diesem Grafikgerät nicht unterstützt; jetzt 4× (unterstützt: 1×, 4×)."
+            );
+        }
+        // Below the default when the device can't do that either.
+        app.settings_reset.clear();
+        app.msaa_supported = vec![1, 2];
+        check_msaa(&mut app, 8);
+        assert_eq!(app.preferences.msaa, 2);
+        // Supported, off, or no GPU: nothing changes (OpenGL's 1x policy isn't a reset either).
+        for (supported, requested) in [(vec![1, 2, 4, 8], 8), (vec![1, 4], 1), (vec![], 8), (vec![1, 4], 4)] {
+            app.settings_reset.clear();
+            app.preferences.msaa = requested;
+            app.msaa_supported = supported;
+            check_msaa(&mut app, requested);
+            assert!(app.settings_reset.is_empty());
+            assert_eq!(app.preferences.msaa, requested);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn control_channel_rejects_msaa_the_device_cannot_do_and_bad_saved_msaa_loads_as_default() {
+        let mut app = SolveApp::new(solvecraft_engine::Session::default(), crate::Services::default());
+        app.msaa_supported = vec![1, 4];
+        assert!(set(&mut app, &serde_json::json!({ "msaa": 8 })).is_err());
+        assert!(set(&mut app, &serde_json::json!({ "msaa": 1 })).is_ok());
+        app.load_prefs(&serde_json::json!({ "preferences": { "msaa": 16 } }).to_string());
+        assert_eq!(app.preferences.msaa, Prefs::default().msaa);
+    }
 
     #[test]
     fn length_fields_read_bare_numbers_in_design_units_and_honour_explicit_units() {
@@ -957,6 +1103,20 @@ mod tests {
         assert!(app.preferences.smooth_wheel_zoom);
         control(&mut app, &json!({"button":"cancel"})).unwrap();
         assert!(!app.preferences.smooth_wheel_zoom);
+    }
+
+    #[test]
+    fn openscad_preset_maps_navigation_and_persists() {
+        let mut app = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        set(&mut app, &json!({"nav": OPENSCAD_NAV})).unwrap();
+        for button in [NavButton::Middle, NavButton::Right] {
+            assert_eq!(nav_mode(&app, button, Modifiers::default()), Some(NavMode::Pan));
+            assert_eq!(nav_mode(&app, button, Modifiers { shift: true, ..Default::default() }), Some(NavMode::Zoom));
+        }
+        assert_eq!(nav_mode(&app, NavButton::Left, Modifiers::default()), Some(NavMode::Orbit));
+        let mut other = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
+        other.load_prefs(&app.prefs());
+        assert_eq!(other.preferences.nav, OPENSCAD_NAV);
     }
 
     #[test]
