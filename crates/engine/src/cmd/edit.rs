@@ -8,8 +8,8 @@ use crate::params::{bad, bool_, num, str_, string_list};
 use crate::{EngineError, Result, Sel, Session, Snapshot};
 
 pub static COMMANDS: &[CommandSpec] = &[
-    CommandSpec::new("edit.undo", "Undo", undo).icon("undo").key("Ctrl+Z").noundo(),
-    CommandSpec::new("edit.redo", "Redo", redo).icon("redo").key("Ctrl+Y").noundo(),
+    CommandSpec::new("edit.undo", "Undo", undo).icon("undo").key("Ctrl+Z").noundo().doc_only(),
+    CommandSpec::new("edit.redo", "Redo", redo).icon("redo").key("Ctrl+Y").noundo().doc_only(),
     CommandSpec::new("edit.checkpoint", "Checkpoint", checkpoint)
         .noundo()
         .params("→ {checkpoint: id}: remember the design, active sketch and undo history (restore with edit.restore_checkpoint)"),
@@ -51,26 +51,33 @@ pub static COMMANDS: &[CommandSpec] = &[
 
 fn undo(s: &mut Session, _p: &Value) -> Result<Value> {
     let Some(prev) = s.undo.pop() else { return Err(EngineError::Other("nothing to undo".into())) };
-    let label = prev.label.clone();
-    s.redo.push(Snapshot { label: label.clone(), doc: s.doc.clone(), active_sketch: s.active_sketch, pending_moves: s.pending_moves.clone() });
-    s.doc = prev.doc;
-    s.active_sketch = prev.active_sketch;
-    s.pending_moves = prev.pending_moves;
-    s.selection.clear();
-    s.refresh();
+    let now = go_to(s, prev);
+    let label = now.label.clone();
+    s.redo.push(now);
     Ok(json!({"undone": label}))
 }
 
 fn redo(s: &mut Session, _p: &Value) -> Result<Value> {
     let Some(next) = s.redo.pop() else { return Err(EngineError::Other("nothing to redo".into())) };
-    let label = next.label.clone();
-    s.undo.push(Snapshot { label: label.clone(), doc: s.doc.clone(), active_sketch: s.active_sketch, pending_moves: s.pending_moves.clone() });
-    s.doc = next.doc;
-    s.active_sketch = next.active_sketch;
-    s.pending_moves = next.pending_moves;
-    s.selection.clear();
-    s.refresh();
+    let now = go_to(s, next);
+    let label = now.label.clone();
+    s.undo.push(now);
     Ok(json!({"redone": label}))
+}
+
+/// Put the session at `snap`; returns where it was, under the same label.
+fn go_to(s: &mut Session, snap: Snapshot) -> Snapshot {
+    let was = Snapshot { label: snap.label, doc: s.doc.clone(), active_sketch: s.active_sketch, pending_moves: s.pending_moves.clone() };
+    let same = std::sync::Arc::ptr_eq(&s.doc, &snap.doc);
+    s.doc = snap.doc;
+    s.active_sketch = snap.active_sketch;
+    s.pending_moves = snap.pending_moves;
+    s.selection.clear();
+    // A new document is evaluated by `execute`.
+    if same {
+        s.refresh();
+    }
+    was
 }
 
 fn checkpoint(s: &mut Session, _p: &Value) -> Result<Value> {
@@ -477,8 +484,7 @@ fn redefine(s: &mut Session, p: &Value) -> Result<Value> {
     }
     trial.doc_mut().marker = Some(idx + 1);
     trial.refresh();
-    (spec.enabled)(&trial).map_err(|why| EngineError::Disabled(spec.id.to_string(), why))?;
-    let r = (spec.run)(&mut trial, &params)?;
+    let r = spec.run_nested(&mut trial, &params)?;
     let made = r.get("feature").and_then(Value::as_u64).ok_or_else(|| bad(cmd, format!("`{cid}` did not make a feature")))?;
     let mut new = trial.doc.feature(made).cloned().ok_or_else(|| bad(cmd, format!("`{cid}` did not make a feature")))?;
     if let (FeatureKind::Emboss { face: Some(before), .. }, FeatureKind::Emboss { face: Some(after), .. }) = (&old.kind, &mut new.kind)

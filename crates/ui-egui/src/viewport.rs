@@ -1887,13 +1887,19 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             let (o, d) = proj.ray(p);
             ss.plane.intersect_ray(o, d).map(|w| ss.plane.to_local(w))
         };
-        // The 3D triad, then a dimension's text, follow a drag that starts on them.
-        if resp.drag_started_by(egui::PointerButton::Primary)
-            && let Some(a) = ui.input(|i| i.pointer.press_origin())
-            && !crate::sketch3d::drag_start(app, &proj, a)
-            && let Some(q) = on_plane(app, a)
+        // What a drag starts on: the 3D triad, then a dimension's text, then sketch geometry
+        // (before the dimension's lines, which end on the geometry they measure), as for clicks.
+        let grabbed = resp
+            .drag_started_by(egui::PointerButton::Primary)
+            .then(|| ui.input(|i| i.pointer.press_origin()))
+            .flatten()
+            .filter(|a| !crate::sketch3d::drag_start(app, &proj, *a))
+            .map(|a| (a, pick(app, &proj, a).into_iter().next()));
+        if let Some((a, hit)) = &grabbed
+            && let Some(q) = on_plane(app, *a)
         {
-            crate::dim_view::drag_start(app, a, q);
+            let on_geometry = matches!(hit, Some(Hit::SketchPoint { .. } | Hit::SketchCurve { .. }));
+            crate::dim_view::drag_start(app, *a, q, on_geometry);
         }
         if crate::sketch3d::dragging()
             && (resp.dragged_by(egui::PointerButton::Primary) || resp.drag_stopped())
@@ -1908,13 +1914,12 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::dim_view::drag_to(app, q);
         }
         // A point or a curve of the sketch being edited follows a drag that starts on it.
-        if resp.drag_started_by(egui::PointerButton::Primary)
+        if let Some((a, hit)) = grabbed
             && !crate::dim_view::dragging()
             && !crate::sketch3d::dragging()
-            && let Some(a) = ui.input(|i| i.pointer.press_origin())
         {
             let active = app.session.active_sketch;
-            match pick(app, &proj, a).into_iter().next() {
+            match hit {
                 Some(Hit::SketchPoint { sketch, id, .. }) if Some(sketch) == active => {
                     app.viewport.point_drag = Some((id, app.session.undo.len(), None))
                 }
@@ -1950,17 +1955,25 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             if let Some(s) = snap {
                 q += s.offset;
             }
-            if app.session.execute("sketch.drag", &json!({"entity": id, "from": [from.x, from.y], "to": [q.x, q.y]})).is_ok() {
-                app.session.undo.truncate(depth + 1);
-            }
+            // Each frame re-solves the sketch only (`live`); the model follows when the drag ends.
+            let at = match app.session.execute("sketch.drag", &json!({"entity": id, "from": [from.x, from.y], "to": [q.x, q.y], "live": true})) {
+                Ok(r) => {
+                    app.session.undo.truncate(depth + 1);
+                    r.get("at").and_then(solvecraft_engine::params::vec2).unwrap_or(q)
+                }
+                Err(_) => from,
+            };
+            // The grab stays on the geometry: what it could not follow this frame it catches up
+            // with on the next one instead of lagging the cursor for the rest of the drag.
             if grab.is_some() {
-                app.viewport.point_drag = Some((id, depth, Some(q)));
+                app.viewport.point_drag = Some((id, depth, Some(at)));
             }
         }
         if resp.drag_stopped() {
             if let Some((_, depth, _)) = app.viewport.point_drag.clone() {
-                // Let go on a point, midpoint or curve: the matching constraint, in the drag's undo step.
-                crate::drag_snap::release(app);
+                // Letting go on a point, midpoint or curve adds the matching constraint, then the
+                // whole model follows the drag, all in the drag's undo step.
+                let _ = app.session.execute("sketch.drag_end", &json!({ "constraint": crate::drag_snap::release() }));
                 app.session.undo.truncate(depth + 1);
             }
             crate::drag_snap::clear();
@@ -1968,6 +1981,15 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::dim_view::drag_end();
             crate::sketch3d::drag_end();
         }
+    }
+    // A sketch drag whose release never came (focus lost, a tool or dialog took over) ends here,
+    // so the model does not stay behind its sketch until the next command. Not while CAD input
+    // is held back (an issue report's capture): a release then belongs to the report, and the
+    // drag continues afterwards.
+    if app.viewport.point_drag.is_some() && !crate::issue_report::cad_input_blocked() && !ui.input(|i| i.pointer.primary_down()) {
+        app.viewport.point_drag = None;
+        crate::drag_snap::clear();
+        let _ = app.session.execute("sketch.drag_end", &json!({}));
     }
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()

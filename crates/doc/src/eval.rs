@@ -418,6 +418,11 @@ pub struct FeatureResult {
     pub boolean_diagnostics: kernel::BooleanDiagnostics,
     pub ms: f64,
     pub skipped: bool,
+    /// Not evaluated on the document's current inputs: a feature at or after a sketch shown live
+    /// ([`Model::show_live_sketch`]). It keeps its last result until the next `evaluate`, which
+    /// never reuses it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
     #[serde(skip)]
     fingerprint: u64,
     #[serde(skip)]
@@ -706,6 +711,41 @@ impl Model {
         self.results.iter().find(|r| r.id == id)
     }
 
+    /// Show a sketch's new solution before the model is evaluated again (the frames of an
+    /// interactive drag): `sketch`, already solved with `report`, on the plane it was last
+    /// evaluated on. The sketch's own result and the final state show it, and the sketch and
+    /// every feature after it are marked stale, keeping their last geometry. Nothing else is
+    /// recomputed; the next [`Model::evaluate`] recomputes from the sketch on. Returns `false`,
+    /// changing nothing, when the sketch has no evaluated result or a feature before it is
+    /// already stale (only a full evaluation brings that up to date).
+    pub fn show_live_sketch(&mut self, feature: u64, sketch: solvecraft_sketch::Sketch, report: SolveReport) -> bool {
+        let Some(i) = self.results.iter().position(|r| r.id == feature) else { return false };
+        if self.results.iter().take(i).any(|r| r.stale) {
+            return false;
+        }
+        let Some(last) = self.results.get(i).filter(|r| !r.skipped && r.error.is_none()).and_then(|r| r.state.sketch(feature)) else {
+            return false;
+        };
+        let solved = Arc::new(SolvedSketch { feature, name: last.name.clone(), plane: last.plane, profiles: find_profiles(&sketch), sketch, report });
+        let shown = self.results.iter().rposition(|r| !r.skipped);
+        for (k, r) in self.results.iter_mut().enumerate().skip(i) {
+            r.stale = true;
+            // The sketch's own state and the final one show it: only that entry changes (the
+            // states are copied on the first frame; later frames own them and swap in place).
+            if (k == i || Some(k) == shown)
+                && let Some(s) = Arc::make_mut(&mut r.state).sketches.iter_mut().find(|s| s.feature == feature)
+            {
+                *s = solved.clone();
+            }
+        }
+        true
+    }
+
+    /// Some results are stale ([`Model::show_live_sketch`]): the model needs an `evaluate`.
+    pub fn is_stale(&self) -> bool {
+        self.results.iter().any(|r| r.stale)
+    }
+
     /// Store in `doc` the sketches whose last evaluation solved them for new driving values
     /// (see `Document::solve_sketch`), so the stored sketch is the solved state the next value
     /// edit continues from (edits depend on their history, as a user editing dimensions one
@@ -761,6 +801,7 @@ impl Model {
                 && let Some(old) = self.results.get(i)
                 && old.id == f.id
                 && old.fingerprint == fp
+                && !old.stale
             {
                 if !old.skipped {
                     state = old.state.clone();
@@ -778,6 +819,7 @@ impl Model {
                     boolean_diagnostics: Default::default(),
                     ms: 0.0,
                     skipped: true,
+                    stale: false,
                     fingerprint: fp,
                     state: state.clone(),
                 });
@@ -800,6 +842,7 @@ impl Model {
                     boolean_diagnostics: c.boolean_diagnostics,
                     ms: c.ms,
                     skipped: false,
+                    stale: false,
                     fingerprint: fp,
                     state: state.clone(),
                 });
@@ -904,6 +947,7 @@ impl Model {
                 boolean_diagnostics,
                 ms,
                 skipped: false,
+                stale: false,
                 fingerprint: fp,
                 state: state.clone(),
             });

@@ -32,7 +32,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("name?; camera: {target: [x,y,z], yaw, pitch, distance, fov?} (replaces a view of the same name)"),
     CommandSpec::new("view.rename", "Rename Named View", view_rename).params("view: name, name"),
     CommandSpec::new("view.delete", "Delete Named View", view_delete).params("view: name"),
-    CommandSpec::new("view.list", "List Named Views", view_list).noundo(),
+    CommandSpec::new("view.list", "List Named Views", view_list).noundo().doc_only(),
     CommandSpec::new("browser.order", "Order Browser Items", order).params("folder, component?, order: [keys] (the folder's items in display order)"),
     CommandSpec::new("browser.visibility", "Show/Hide", visibility).icon("eye").noundo().params(
         "visible: bool; items?: [sketch id or name | body name | construction name | O|X|Y|Z|XY|XZ|YZ]; \

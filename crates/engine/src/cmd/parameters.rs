@@ -15,7 +15,7 @@ pub static COMMANDS: &[CommandSpec] = &[
              favorite?: bool, new_name?: rename (references follow); or delete: name → recomputed: features rebuilt, \
          restored: features whose earlier result for the same inputs was reused (e.g. a value set back)",
     ),
-    CommandSpec::new("parameters.list", "List Parameters", list).noundo().params(
+    CommandSpec::new("parameters.list", "List Parameters", list).noundo().doc_only().params(
         "favorites?: bool (only favourites), filter?: all|user|sketch|feature|favorites → parameters (name, expression, unit, value in its unit, \
          source, feature/input, comment, favorite, uses, used_by, error) and cycles",
     ),
@@ -38,9 +38,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("text: CSV (header with name, expression, unit?, comment?) or JSON [{name, expression, unit?, comment?}] | path; all or nothing"),
     CommandSpec::new("expr.evaluate", "Evaluate Expression", evaluate)
         .noundo()
+        .doc_only()
         .params("expression, kind?: length|angle|unitless (or unit?: mm|in|deg…) → ok, value (mm/rad), display_value, references, error"),
     CommandSpec::new("parameters.complete", "Complete Expression", complete)
         .noundo()
+        .doc_only()
         .params("prefix?: the text before the cursor → word, suggestions [{text, kind: parameter|function|unit|constant, detail}]"),
 ];
 

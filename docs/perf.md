@@ -285,3 +285,51 @@ Pi STEP (27 bodies) into the case in 279 ms; undo restored the original two bodi
 full 77 MB board STEP (2689 solid definitions, 45,689 faces) still had not completed after
 300 s. Its window continued handling inspection and Cancel, and cancelling preserved the
 case. Complex STEP construction remains an outstanding kernel performance problem.
+
+# Sketch solver and drags (2026-10-11)
+
+Unknowns the constraints pin down one after another from the constants (each one's own rows
+of full, well-conditioned rank, reading nothing but constants and unknowns pinned before it)
+are eliminated exactly: values the constructive seed placed and whose constraints hold there
+stay constants while Levenberg–Marquardt solves the rest, and the rank analysis (degrees of
+freedom, determined geometry) runs on the remainder only. A component tied to no constant takes
+one point as a constant first (its translation). All the held solves of one live drag frame
+share a 1M decomposition work budget (about 16 ms; a solve's own, 20M, is about 0.3 s), and a
+drag's steps are a quarter of the smallest held size instead of an eighth, except once a seed
+ran out of budget: the rest of that drag goes in eighths, as before, and continuation keeps
+the branch the seed no longer places.
+
+`cargo run --release -p solvecraft-sketch --example solve_bench`, macOS arm64, load average
+45–75 (best of 5):
+
+| Grid (origin corner fixed, rows horizontal, columns vertical, every edge a distance) | Start | Before | After |
+|---|---|---:|---:|
+| 10 × 10 | at solution | 0.36 ms | 0.21 ms |
+| 10 × 10 | ±1 mm | 0.34 ms | 0.21 ms |
+| 15 × 15 | at solution | 1.41 ms | 0.41 ms |
+| 15 × 15 | ±1 mm | 1.39 ms | 0.40 ms |
+| 20 × 20 | at solution | 4.06 ms | 0.72 ms |
+| 20 × 20 | ±1 mm | 4.44 ms | 0.73 ms |
+
+The seed constructs every grid point, so LM gets no variable (a test counts them). Before, the
+time was the dense rank analysis of the whole grid. A 100-rectangle strip with nothing fixed,
+solved whole from a moved corner, still costs 20–27 ms: nothing is constructed there and LM
+iterates on every point with dense normal equations (a sparse solve would be the next step).
+
+Drag frames, `sketch.drag` + `world_state()` per frame (60 frames of 0.5 mm, best of 5; the
+"before" column is one run of the same bench on the previous code):
+
+| Sketch | Points | Scripted ms/frame before → after | Live ms/frame before → after | `drag_end` ms before → after |
+|---|---:|---:|---:|---:|
+| 100 rectangles | 401 | 2.77 → 2.37 | 1.13 → 1.02 | 1.44 → 1.37 |
+| 100 rectangles, rolled back under an extrude | 401 | 2.49 → 2.33 | 1.13 → 0.97 | 1.42 → 1.28 |
+| 100-rectangle connected strip | 401 | 100.9 → 2.32 | 1.32 → 1.20 | 53.6 → 1.41 |
+| 100-rectangle strip, rolled back under an extrude | 401 | 203.8 → 2.23 | 1.31 → 1.18 | 54.0 → 1.42 |
+| rigid truss of 40 triangles, pinned at one end, dragged at the other | 42 | — → 6.8 | — → 6.3 | — → 0.59 |
+
+The strip floats (nothing fixed), so its full solves (scripted frames, `drag_end`) ran the
+dense rank analysis on 800 variables; with one corner taken as a constant all of it is
+eliminated. A live frame's held solve was already cheap: the seed places the strip and LM
+returns at once. Of a live strip frame, the seed reads the constraints in about 0.15 ms, so a
+per-gesture cache of that reading is not worth its invalidation (its signs depend on the
+reference positions, which change every step).

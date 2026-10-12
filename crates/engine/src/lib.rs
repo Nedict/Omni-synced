@@ -217,6 +217,19 @@ pub struct Session {
     /// commands are undone however long the undo history is.
     pub(crate) checkpoints: Vec<Checkpoint>,
     next_checkpoint: u64,
+    /// Full model evaluations (`refresh`), for tests.
+    #[cfg(test)]
+    pub(crate) evaluations: usize,
+}
+
+/// A sketch changed by one frame of an interactive gesture (`live: true`).
+#[derive(Clone, Debug)]
+pub struct LiveEdit {
+    pub sketch: u64,
+    /// What the frame's solve found: a full solve's report, or, when the sketch was solved
+    /// without a rank analysis, its last report's degrees of freedom and determined flags (a
+    /// drag does not change them; the evaluation at the gesture's end brings them up to date).
+    pub report: solvecraft_sketch::SolveReport,
 }
 
 /// The design, active sketch, pending positions and undo history at an `edit.checkpoint`.
@@ -302,6 +315,8 @@ impl Session {
             checkpoints: Vec::new(),
             next_checkpoint: 1,
             visibility: Visibility::default(),
+            #[cfg(test)]
+            evaluations: 0,
         }
     }
 
@@ -395,6 +410,10 @@ impl Session {
 
     pub fn refresh(&mut self) {
         self.model.evaluate(&self.doc);
+        #[cfg(test)]
+        {
+            self.evaluations += 1;
+        }
         self.revision += 1;
         self.prune_occurrence_state();
         // Joints follow the geometry their origins snap to.
@@ -405,6 +424,17 @@ impl Session {
             && self.doc.feature(id).is_none()
         {
             self.active_sketch = None;
+        }
+    }
+
+    /// Show the sketch a live frame changed, leaving the features after it as they were last
+    /// evaluated (marked stale); a full `refresh` when the model cannot show it that way.
+    fn refresh_live(&mut self, edit: LiveEdit) {
+        let sketch = self.doc.sketch(edit.sketch).ok().cloned();
+        if sketch.is_some_and(|sketch| self.model.show_live_sketch(edit.sketch, sketch, edit.report)) {
+            self.revision += 1;
+        } else {
+            self.refresh();
         }
     }
 
@@ -443,8 +473,19 @@ impl Session {
 
     /// Run a command with JSON parameters (no dialogs). Undoable commands record an undo step
     /// when they change the document; a failing or panicking command leaves it unchanged.
+    ///
+    /// A command that takes `live` ([`CommandSpec::live`]) run with `live: true` is one frame of
+    /// an interactive gesture: the model shows its sketch's new solution and keeps every later
+    /// feature's last result (stale) instead of evaluating them. Any other command that reads
+    /// the model ([`CommandSpec::reads_model`]) first evaluates a stale model in full, so the
+    /// gesture's end (`sketch.drag_end`, or whatever runs next after an abandoned gesture) brings
+    /// the model up to date before anything reads it.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
+        let live = spec.live.filter(|_| params.get("live").and_then(Value::as_bool) == Some(true));
+        if live.is_none() && spec.reads_model && self.model.is_stale() {
+            self.refresh();
+        }
         (spec.enabled)(self).map_err(|why| EngineError::Disabled(spec.id.to_string(), why))?;
         let before = Snapshot {
             label: spec.label.to_string(),
@@ -459,7 +500,10 @@ impl Session {
         let (_nested, outermost) = frames::Nested::enter(spec.id);
         let mapped = if outermost { frames::to_local(self, spec.id, params) } else { None };
         let params = mapped.as_ref().unwrap_or(params);
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (spec.run)(self, params)));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match live {
+            Some(run) => run(self, params),
+            None => (spec.run)(self, params).map(|v| (v, None)),
+        }));
         let r = match r {
             Ok(r) => r,
             Err(p) => {
@@ -469,7 +513,7 @@ impl Session {
         };
         let changed = !Arc::ptr_eq(&self.doc, &before.doc);
         match r {
-            Ok(v) => {
+            Ok((v, live_edit)) => {
                 let v = if changed { self.with_created(spec.id, params, &before, v) } else { v };
                 if changed {
                     if spec.undoable {
@@ -479,7 +523,10 @@ impl Session {
                         }
                         self.redo.clear();
                     }
-                    self.refresh();
+                    match live_edit {
+                        Some(edit) => self.refresh_live(edit),
+                        None => self.refresh(),
+                    }
                 }
                 Ok(v)
             }
@@ -582,6 +629,8 @@ impl Session {
             checkpoints: Vec::new(),
             next_checkpoint: 1,
             visibility: self.visibility.clone(),
+            #[cfg(test)]
+            evaluations: 0,
         }
     }
 
