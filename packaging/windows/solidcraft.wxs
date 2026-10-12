@@ -89,11 +89,12 @@
           <Extension Id="solidcraft" ContentType="application/x-solidcraft">
             <Verb Id="open" Command="Open" TargetFile="SolidcraftExe" Argument="&quot;%1&quot;" />
           </Extension>
-          <!-- Compatibility shim (docs/compatibility.md): designs saved before the rename. -->
-          <Extension Id="solvecraft" ContentType="application/x-solvecraft">
-            <Verb Id="open" Command="Open" TargetFile="SolidcraftExe" Argument="&quot;%1&quot;" />
-          </Extension>
         </ProgId>
+        <!-- Compatibility shim (docs/compatibility.md): designs saved before the rename open as
+             the same ProgId. Registered by hand: a second Extension under one ProgId would write
+             its open verb twice (WIX0091). -->
+        <RegistryValue Root="HKLM" Key="Software\Classes\.solvecraft" Value="Solidcraft.Design" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.solvecraft" Name="Content Type" Value="application/x-solvecraft" Type="string" />
         <!-- STEP, IGES and meshes: offered under "Open with", never forced as the default. -->
         <ProgId Id="Solidcraft.Model" Description="3D model" Icon="SolidcraftExe" IconIndex="0" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Solidcraft.Model\shell\open\command" Value="&quot;[#SolidcraftExe]&quot; &quot;%1&quot;" Type="string" />
