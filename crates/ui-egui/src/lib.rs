@@ -978,6 +978,8 @@ impl SolveApp {
         if self.home.open {
             home::show(self, ui);
             if self.home.open {
+                // Preferences and Keyboard Shortcuts open from Home too (its links, the gear, Ctrl+,).
+                prefs::show(self, ui.ctx());
                 return;
             }
         }

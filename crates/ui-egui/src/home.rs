@@ -605,4 +605,28 @@ mod tests {
         assert_eq!(app.session.doc.name, "Sample Plate");
         assert!(!app.session.is_dirty());
     }
+
+    /// The gear, Ctrl+, and Home's own links open Preferences over Home, not after leaving it.
+    #[test]
+    fn preferences_and_shortcuts_open_over_home() {
+        let mut h = crate::scenario::Harness::new();
+        let rev = h.app.session.revision;
+        h.app.home.show(rev);
+        h.frames(2);
+        assert!(h.app.home.open);
+        let gear = crate::scenario::handle_at("titlebar:preferences").unwrap();
+        h.call("ui.click", serde_json::json!({"x": gear.x, "y": gear.y}));
+        assert!(h.app.prefs_window.open && h.app.home.open);
+        let shown = |h: &crate::scenario::Harness| {
+            h.ctx.memory(|m| m.areas().visible_last_frame(&egui::LayerId::new(egui::Order::Middle, egui::Id::new("sc_prefs"))))
+        };
+        assert!(shown(&h), "the Preferences window must be drawn on Home");
+        h.call("ui.prefs", serde_json::json!({"button": "cancel"}));
+        assert!(!shown(&h));
+
+        // Home › Keyboard Shortcuts opens the same window at its page.
+        h.app.keymap.open = true;
+        h.frames(2);
+        assert!(shown(&h) && h.app.prefs_window.section == crate::prefs::PAGE_SHORTCUTS && h.app.home.open);
+    }
 }
