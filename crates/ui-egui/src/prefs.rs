@@ -18,6 +18,7 @@ use crate::theme::Tokens;
 use crate::viewport::NavMode;
 
 pub const UNITS: [&str; 5] = ["mm", "cm", "m", "in", "ft"];
+pub const OPENSCAD_NAV: &str = "openscad";
 /// A mouse button that can drag the camera.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavButton {
@@ -135,9 +136,9 @@ pub const NAV_PRESETS: [NavPreset; 6] = [
         bindings: &[bind(Right, NavKeys::SHIFT, Pan), bind(Right, NavKeys::NONE, Orbit), bind(Middle, NavKeys::NONE, Pan)],
     },
     NavPreset {
-        id: "openscad",
+        id: OPENSCAD_NAV,
         label: "OpenSCAD",
-        help: "Left drag orbits, right or middle drag pans, Shift+right or Shift+middle drag zooms",
+        help: "Left drag on empty space orbits, Shift+left drag box-selects, sketch geometry drags edit; right or middle drag pans, Shift+right or Shift+middle drag zooms",
         reverse_zoom: false,
         bindings: &[
             bind(Left, NavKeys::NONE, Orbit),
@@ -727,7 +728,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 }
             });
             ui.end_row();
-            let snap_help = if app.preferences.nav == "openscad" { "" } else { "; hold Shift during orbit to snap" };
+            let snap_help = if app.preferences.nav == OPENSCAD_NAV { "" } else { "; hold Shift during orbit to snap" };
             note(ui, &format!("{}{snap_help}; the wheel zooms", nav_preset(&app.preferences.nav).help));
             ui.label("Context menu");
             ui.checkbox(&mut app.preferences.radial_context_menu, "Radial context menu");
@@ -976,7 +977,7 @@ mod tests {
     #[test]
     fn openscad_preset_maps_navigation_and_persists() {
         let mut app = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
-        set(&mut app, &json!({"nav": "openscad"})).unwrap();
+        set(&mut app, &json!({"nav": OPENSCAD_NAV})).unwrap();
         for button in [NavButton::Middle, NavButton::Right] {
             assert_eq!(nav_mode(&app, button, Modifiers::default()), Some(NavMode::Pan));
             assert_eq!(nav_mode(&app, button, Modifiers { shift: true, ..Default::default() }), Some(NavMode::Zoom));
@@ -984,7 +985,7 @@ mod tests {
         assert_eq!(nav_mode(&app, NavButton::Left, Modifiers::default()), Some(NavMode::Orbit));
         let mut other = SolveApp::new(solvecraft_engine::Session::default(), Default::default());
         other.load_prefs(&app.prefs());
-        assert_eq!(other.preferences.nav, "openscad");
+        assert_eq!(other.preferences.nav, OPENSCAD_NAV);
     }
 
     #[test]

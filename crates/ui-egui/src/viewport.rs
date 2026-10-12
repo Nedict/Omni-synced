@@ -1622,12 +1622,20 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // A left press with the preset's keys (Alias: Shift+Alt) navigates until the button is let
     // go (kept through the release frame, so the end of the drag doesn't select either).
     if primary_pressed && inside {
-        app.viewport.primary_nav =
-            if app.preferences.nav != "openscad" || (app.tool.is_none() && app.dialog.is_none() && app.viewport.context_menu.is_none()) {
-                crate::prefs::nav_mode(app, crate::prefs::NavButton::Left, mods)
-            } else {
-                None
-            };
+        let openscad_orbit = app.preferences.nav == crate::prefs::OPENSCAD_NAV
+            && app.tool.is_none()
+            && app.dialog.is_none()
+            && app.viewport.context_menu.is_none()
+            && !mods.shift
+            && hover.is_some_and(|p| {
+                let proj = projection(app, rect);
+                pick(app, &proj, p).is_empty() && crate::dim_view::hit(p).is_none() && crate::sketch_tools::glyph_at(p).is_none()
+            });
+        app.viewport.primary_nav = if app.preferences.nav != crate::prefs::OPENSCAD_NAV || openscad_orbit {
+            crate::prefs::nav_mode(app, crate::prefs::NavButton::Left, mods)
+        } else {
+            None
+        };
     } else if !primary_down && !primary_released {
         app.viewport.primary_nav = None;
     }
@@ -1656,7 +1664,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         // Shift can be required to enter orbit (Fusion/Inventor middle drag, Alias Shift+Alt),
         // rather than an additional request for snapping. Only an extra modifier snaps.
         let without_shift = egui::Modifiers { shift: false, ..mods };
-        let snap = app.preferences.nav != "openscad"
+        let snap = app.preferences.nav != crate::prefs::OPENSCAD_NAV
             && mods.shift
             && match button {
                 Some(b) => crate::prefs::nav_mode(app, b, without_shift) == Some(NavMode::Orbit),
@@ -2693,7 +2701,14 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
     }
     let t = Tokens::get();
     let items: [(&str, &str); 10] = [
-        ("orbit", if app.preferences.nav == "openscad" { "Orbit (left drag)" } else { "Orbit (right drag; hold Shift to snap)" }),
+        (
+            "orbit",
+            if app.preferences.nav == crate::prefs::OPENSCAD_NAV {
+                "Orbit (left drag on empty space; Shift+left drag box-selects)"
+            } else {
+                "Orbit (right drag; hold Shift to snap)"
+            },
+        ),
         ("spin", "Continuous orbit (stops at the next click or key)"),
         ("pan", "Pan (drag; or middle drag)"),
         ("zoom", "Zoom (drag; or wheel)"),
@@ -2952,7 +2967,59 @@ mod tests {
     }
 
     #[test]
-    fn openscad_drags_navigate_without_editing_or_box_selecting() {
+    fn openscad_left_drag_preserves_editing_and_selection() {
+        for action in ["point", "box", "tool"] {
+            let ctx = egui::Context::default();
+            let mut app = hover_app(false);
+            app.preferences.nav = crate::prefs::OPENSCAD_NAV.into();
+            app.ui.show_origin = false;
+            hover_frame(&mut app, &ctx, vec![]);
+            let point = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
+            let (start, end) =
+                if action == "point" { (point, point + vec2(30.0, 20.0)) } else { (point - vec2(40.0, 40.0), point + vec2(40.0, 40.0)) };
+            if action == "tool" {
+                app.start("sketch.line");
+                assert!(app.tool.is_some());
+            }
+            let before = app.cam;
+            let undo = app.session.undo.len();
+            let modifiers = egui::Modifiers { shift: action == "box", ..Default::default() };
+            let frame = |app: &mut SolveApp, mut events: Vec<egui::Event>| {
+                events.insert(0, egui::Event::ModifiersChanged(modifiers));
+                let mut out = ctx.run_ui(
+                    egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))), events, ..Default::default() },
+                    |ui| show(app, ui),
+                );
+                out.textures_delta.clear();
+            };
+            frame(
+                &mut app,
+                vec![
+                    egui::Event::PointerMoved(start),
+                    egui::Event::PointerButton { pos: start, button: egui::PointerButton::Primary, pressed: true, modifiers },
+                ],
+            );
+            frame(&mut app, vec![egui::Event::PointerMoved(end)]);
+            frame(&mut app, vec![]);
+            assert_eq!(app.cam, before, "{action} drag must not orbit");
+            if action == "point" {
+                assert!(app.viewport.point_drag.is_some());
+                assert_eq!(app.session.undo.len(), undo + 1);
+            } else if action == "box" {
+                assert!(app.viewport.boxsel.is_some());
+            } else {
+                assert!(app.tool.is_some());
+                assert!(app.viewport.primary_nav.is_none());
+            }
+            frame(&mut app, vec![egui::Event::PointerButton { pos: end, button: egui::PointerButton::Primary, pressed: false, modifiers }]);
+            if action == "box" {
+                assert!(!app.session.selection.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn openscad_empty_space_drags_navigate_without_editing_or_box_selecting() {
         for (button, shift) in [
             (egui::PointerButton::Primary, false),
             (egui::PointerButton::Secondary, false),
@@ -2962,9 +3029,10 @@ mod tests {
         ] {
             let ctx = egui::Context::default();
             let mut app = hover_app(false);
-            app.preferences.nav = "openscad".into();
+            app.preferences.nav = crate::prefs::OPENSCAD_NAV.into();
             hover_frame(&mut app, &ctx, vec![]);
-            let p = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
+            let point = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
+            let p = if button == egui::PointerButton::Primary { point + vec2(80.0, 80.0) } else { point };
             let before = app.cam;
             let undo = app.session.undo.len();
             let modifiers = egui::Modifiers { shift, ..Default::default() };
