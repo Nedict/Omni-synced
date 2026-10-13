@@ -2925,7 +2925,6 @@ fn a_pattern_of_a_reduced_fillet_rounds_each_copy_alike() {
 /// half-round front R 4.6 tangent to them) grows by d = z · tan 5° with mitred corners:
 /// A(d) = A₀ + P·d + (2 + π/2)·d², integrated over the 10 mm height.
 #[test]
-#[ignore = "fails until #546 is fixed"]
 fn tapered_extrude_of_a_profile_mixing_lines_and_an_arc() {
     let mut s = Session::default();
     run(&mut s, "sketch.create", json!({"plane": "XY", "name": "D"}));
