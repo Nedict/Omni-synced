@@ -363,14 +363,14 @@ namespace ModelForge.Interop.sldworks
 
         public IFeature FeatureFillet(int options, double radius, int setBackType, double setBack, object pointRadius, object edgeRadius, object setBackRadius)
         {
-            Json r = _doc.Raw.TryExecute("solid.fillet", "radius", radius * 1000);
+            Json r = _doc.Raw.TryExecute("solid.fillet", "edges", _doc.SelectedEdgePoints(), "radius", radius * 1000);
             if (r == null) return null;
             return new Feature(_doc, (ulong)r["feature"].AsDouble(0), r["name"].AsString("Fillet"), "fillet", false);
         }
 
         public IFeature InsertFeatureChamfer(int options, int chamferType, double width, double angle, double otherDistance, double otherAngle, double depth, double depth2)
         {
-            Json r = _doc.Raw.TryExecute("solid.chamfer", "distance", width * 1000, "angle", angle * 180.0 / Math.PI);
+            Json r = _doc.Raw.TryExecute("solid.chamfer", "edges", _doc.SelectedEdgePoints(), "distance", width * 1000, "angle", angle * 180.0 / Math.PI);
             if (r == null) return null;
             return new Feature(_doc, (ulong)r["feature"].AsDouble(0), r["name"].AsString("Chamfer"), "chamfer", false);
         }

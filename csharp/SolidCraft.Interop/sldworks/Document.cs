@@ -101,7 +101,11 @@ namespace ModelForge.Interop.sldworks
 
         public bool ForceRebuild3(bool topOnly) { return EditRebuild3(); }
 
-        public void ClearSelection2(bool all) { Session.TryExecute("select.clear"); }
+        public void ClearSelection2(bool all)
+        {
+            Session.TryExecute("select.clear");
+            if (all) ClearSelectedEdges();
+        }
         public bool ClearSelection2(bool all, bool unused) { ClearSelection2(all); return true; }
 
         public ISketch GetActiveSketch2()
@@ -227,6 +231,21 @@ namespace ModelForge.Interop.sldworks
             _ids[key] = id;
             return id;
         }
+
+        /// <summary>Edges selected since the last clear, as world points (mm) on each edge.</summary>
+        private readonly List<double[]> _selectedEdgePoints = new List<double[]>();
+
+        internal void SelectEdgePoint(double[] pointMm)
+        {
+            if (pointMm != null && pointMm.Length == 3) _selectedEdgePoints.Add(pointMm);
+        }
+
+        internal void ClearSelectedEdges() { _selectedEdgePoints.Clear(); }
+
+        /// <summary>The selected edge points as a JSON-ready array, or an empty array.</summary>
+        internal object[] SelectedEdgePoints() { return _selectedEdgePoints.ToArray(); }
+
+        internal bool HasSelectedEdges { get { return _selectedEdgePoints.Count > 0; } }
 
         internal string NameOfId(EntityTag tag, ulong id)
         {

@@ -110,7 +110,7 @@ namespace ModelForge.Interop.sldworks
         double[] CylinderParams { get; }
     }
 
-    public interface IBody2
+    public interface IBody2 : IEntity
     {
         string Name { get; set; }
         object[] GetFaces();
@@ -119,7 +119,7 @@ namespace ModelForge.Interop.sldworks
         ITessellation GetTessellation();
     }
 
-    public interface IFace2
+    public interface IFace2 : IEntity
     {
         double GetArea();
         object GetBox();
@@ -129,7 +129,7 @@ namespace ModelForge.Interop.sldworks
         double[] Normal { get; }
     }
 
-    public interface IEdge
+    public interface IEdge : IEntity
     {
         ICurve GetCurve();
         double[] GetCurveParams2();
@@ -280,7 +280,7 @@ namespace ModelForge.Interop.sldworks
         object GetAll();
     }
 
-    public interface IFeature
+    public interface IFeature : IEntity
     {
         string Name { get; }
         string GetTypeName2();
@@ -387,7 +387,7 @@ namespace ModelForge.Interop.sldworks
         string TypeFaceName { get; set; }
     }
 
-    public interface IComponent2
+    public interface IComponent2 : IEntity
     {
         string Name2 { get; }
         string GetPathName();
@@ -401,7 +401,6 @@ namespace ModelForge.Interop.sldworks
         int SetSuppression2(int state);
         bool IsFixed();
         bool IsRoot();
-        bool Select4(bool append, SelectData data, bool mark);
         bool SetTransformAndSolve2(IMathTransform transform);
         string ReferencedConfiguration { get; }
         IMathTransform Transform2 { get; }

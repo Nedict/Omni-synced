@@ -186,6 +186,18 @@ namespace ModelForge.Interop.sldworks
         public IVertex GetStartVertex() { return new Vertex(_doc.EdgeEndpoint(Name, true)); }
 
         public IVertex GetEndVertex() { return new Vertex(_doc.EdgeEndpoint(Name, false)); }
+
+        public override bool Select4(bool append, SelectData data, bool mark)
+        {
+            // Record a world point on this edge so a fillet/chamfer can address it, matching the
+            // SolidWorks behaviour where FeatureFillet acts on the current selection.
+            if (!append) _doc.ClearSelectedEdges();
+            double[] a = _doc.EdgeEndpoint(Name, true);
+            double[] b = _doc.EdgeEndpoint(Name, false);
+            double[] mid = new double[] { (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2 };
+            _doc.SelectEdgePoint(mid);
+            return true;
+        }
     }
 
     /// <summary>A straight-line curve between two points (SolidCraft edge geometry as a curve).</summary>

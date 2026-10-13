@@ -176,6 +176,35 @@ static class Program
         Check(error == 0 && resolved is IBody2, "persist reference resolves back to a body");
         Check(doc.Extension.IsSamePersistentID(reference, doc.Extension.GetPersistReference3(bodies[0])) == (int)swObjectEquality.swObjectSame, "IsSamePersistentID agrees for the same entity");
 
+        // A through cut, as the workspace makes with FeatureCut3, and its analytic volume.
+        doc.SketchManager.InsertSketch(true);
+        doc.SketchManager.CreateCircleByRadius(0.025, 0.015, 0, 0.005);
+        doc.SketchManager.InsertSketch(true);
+        doc.ClearSelection2(true);
+        IFeature cut = doc.FeatureManager.FeatureCut3(true, false, false, (int)swEndConditions_e.swEndCondBlind, 0, 0.01, 0.01, false, false, false, false, 0, 0, false, false, false, false, false, false, true, false, false, false, 0, 0, false);
+        Check(cut != null, "FeatureCut3 returns a feature");
+        Near(doc.Extension.CreateMassProperty().Volume, 0.05 * 0.03 * 0.01 - Math.PI * 0.005 * 0.005 * 0.01, 1e-14, "plate minus through hole (m^3)");
+
+        // An edge fillet with FeatureFillet.
+        object[] partBodies = (object[])((IPartDoc)doc).GetBodies2(0, false);
+        object[] edges = ((IBody2)partBodies[0]).GetEdges() as object[];
+        Check(edges != null && edges.Length > 0, "body exposes edges");
+        ((IEdge)edges[0]).Select4(true, null);
+        IFeature fillet = doc.FeatureManager.FeatureFillet((int)swFeatureFilletOptions_e.swFeatureFilletUniformRadius, 0.001, 0, 0, null, null, null);
+        Check(fillet != null, "FeatureFillet returns a feature");
+
+        // Feature suppression round-trips, and a persist reference taken before a rebuild still
+        // resolves after it (the IsSamePersistentID contract).
+        object featureRef = doc.Extension.GetPersistReference3(fillet);
+        fillet.SetSuppression2((int)swFeatureSuppressionAction_e.swSuppressFeature, (int)swInConfigurationOpts_e.swThisConfiguration, null);
+        doc.EditRebuild3();
+        fillet.SetSuppression2((int)swFeatureSuppressionAction_e.swUnSuppressFeature, (int)swInConfigurationOpts_e.swThisConfiguration, null);
+        doc.EditRebuild3();
+        int pinError;
+        object pinResolved = doc.Extension.GetObjectByPersistReference3(featureRef, out pinError);
+        Check(pinError == 0 && pinResolved is IFeature, "a feature persist reference survives suppression and rebuild");
+
         app.CloseDoc(doc.GetTitle());
+        Check(app.GetOpenDocumentByName(doc.GetTitle()) == null, "CloseDoc releases the document");
     }
 }
