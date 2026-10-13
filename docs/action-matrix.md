@@ -37,7 +37,9 @@ lists which still fail; skip `action_matrix_` to leave out the matrix itself).
 - `oracle/*`: the 76 reference recipes, rebuilt (`solidcraft-cli recipe`).
 - `demo/enclosure_steps`: the electronics enclosure built over MCP;
   `demo/pi-case`: the Raspberry Pi 4 case of the 0.6 README demo, built through the desktop UI
-  and saved by `examples/demo/enclosure_ui_mcp.py --story pi --save`.
+  and saved by `examples/demo/enclosure_ui_mcp.py --story pi-0.6 --save`;
+  `demo/pi-case-0.8`: the 0.8 README demo's case (`--story pi`), with a rounded rim, engraved
+  text and a PETG material.
 - `typical/*`: [`tests/action_matrix/designs`](../tests/action_matrix/designs/), parts made the
   ordinary way: a stacked extrude, a filleted and shelled box, a revolved knob, a plate with a
   counterbored hole patterned 3 × 2 and a chamfered outline, a sheet metal L bracket with holes, a
