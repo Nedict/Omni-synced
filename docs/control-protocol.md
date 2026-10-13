@@ -47,7 +47,7 @@ unit regardless of the design, pass an expression with one: `"value": "50 mm"` o
 
 | Method | Params | Notes |
 |---|---|---|
-| `ui.inspect` | — | UI state, what is hidden (`visibility`: bodies, origin and construction items, sketches; set it with the `browser.visibility` command), viewport rect, camera, active tool/dialog, hover, renderer, timings, live preview (`active`, `busy`, `error`, `ms`, bodies it stands in for) |
+| `ui.inspect` | — | UI state, what is hidden (`visibility`: bodies, origin and construction items, sketches; set it with the `browser.visibility` command), viewport rect, camera, active tool/dialog, the status line (`status`: text and whether it is an error), hover, renderer, timings, live preview (`active`, `busy`, `error`, `ms`, bodies it stands in for) |
 | `ui.set` | any `UiState` field (`tab`, `perspective`, `showGrid`, `dark`, …), and `hiddenBodies`, `hiddenOrigin`, `hiddenSketches`, `shownSketches` (whole lists; `browser.visibility` changes single items) | `dark: false` switches to the light theme |
 | `ui.view` | `view`: `front`, `back`, `top`, `bottom`, `left`, `right`, `iso`, `home`, `fit`; `animate` (bool, default false: snap) | |
 | `ui.start` | `command` | like a toolbar click: starts the sketch tool or dialog for the command |
