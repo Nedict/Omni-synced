@@ -7,6 +7,8 @@
 //!   no interior points);
 //! - faces whose boundary runs along their parameter box (cylinder halves, sphere and torus
 //!   patches, fillets): a structured grid zipped to the edge nodes;
+//! - four-cornered faces whose sides are not parameter lines (mitred fillet strips, cross
+//!   hole walls): a Coons blend of the four sides, zipped the same way;
 //! - anything else (trimmed faces, holes): constrained Delaunay with interior seeds and
 //!   Ruppert refinement.
 //!
@@ -15,6 +17,7 @@
 //! old way.
 
 pub(crate) mod cdt;
+pub(crate) mod coons;
 pub(crate) mod edges;
 pub(crate) mod grid;
 pub(crate) mod surface;
@@ -188,6 +191,12 @@ fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, stats: 
             }
             _ => None,
         };
+        let cells = |lines: &Vec<f64>, (a, b): (f64, f64)| (lines.len().saturating_sub(1).max(1) as f64) / (b - a).max(f64::MIN_POSITIVE);
+        let scale = [cells(&us, bbox[0]), cells(&vs, bbox[1])];
+        let structured = match structured {
+            None if ranges.len() == 1 => coons::coons(&uvs, &fixed, scale, grid::MAX_FACE_GRID),
+            other => other,
+        };
         match structured {
             Some(r) => {
                 stats.structured += 1;
@@ -205,8 +214,7 @@ fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, stats: 
                 let eval = |u: f64, v: f64| s.derivs(u, v).map(|(p, _, _)| p);
                 // One unit per tolerance cell in each direction: a straight direction (one
                 // cell) keeps long triangles, Ruppert shapes them in that metric.
-                let cells = |lines: &Vec<f64>, (a, b): (f64, f64)| (lines.len().saturating_sub(1).max(1) as f64) / (b - a).max(f64::MIN_POSITIVE);
-                let sag = cdt::Sag { eval: &eval, tol, scale: [cells(&us, bbox[0]), cells(&vs, bbox[1])] };
+                let sag = cdt::Sag { eval: &eval, tol, scale };
                 let fill = cdt::Fill { seeds: &seeds, refine: Some((sag, MAX_REFINE)) };
                 cdt::triangulate(&uvs, &ranges, fill).ok_or_else(|| fail("boundary crosses itself"))?
             }
