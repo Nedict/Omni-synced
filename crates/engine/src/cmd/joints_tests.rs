@@ -195,3 +195,25 @@ fn faces_mate_by_default() {
     run(&mut s, "joint.edit", json!({"joint": "Stack", "flip": true}));
     assert!(near(place(&s, "B", Vec3::new(25.0, 5.0, 10.0)), Vec3::new(5.0, 5.0, 0.0)), "{:?}", place(&s, "B", Vec3::new(25.0, 5.0, 10.0)));
 }
+
+/// #527: an assembly with its fasteners passes 200 bodies quickly; the clash check must still
+/// cover the whole design. 201 separate 1 mm cubes 2 mm apart, plus one cube pushed half-way
+/// into the first: exactly that pair overlaps, by 0.5 mm³.
+#[test]
+#[ignore = "fails until #527 is fixed"]
+fn interference_checks_designs_with_more_than_200_bodies() {
+    let mut s = Session::default();
+    for i in 0..201 {
+        run(&mut s, "solid.box", json!({"length": 1, "width": 1, "height": 1, "corner": [2 * i, 0, 0], "operation": "new"}));
+    }
+    run(&mut s, "solid.box", json!({"length": 1, "width": 1, "height": 1, "corner": [0.5, 0, 0], "operation": "new", "body_name": "Clash"}));
+    assert_eq!(s.model.state().bodies.len(), 202);
+    let i = run(&mut s, "inspect.interference", json!({}));
+    assert_eq!(i["checked"], 202, "{i}");
+    assert_eq!(i["count"], 1, "{i}");
+    let hit = &i["interferences"][0];
+    let mut pair = [hit["a"].as_str().unwrap_or(""), hit["b"].as_str().unwrap_or("")];
+    pair.sort_unstable();
+    assert_eq!(pair, ["Body1", "Clash"], "{i}");
+    assert!((hit["volume_mm3"].as_f64().unwrap_or(0.0) - 0.5).abs() < 1e-6, "{i}");
+}
