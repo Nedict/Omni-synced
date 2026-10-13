@@ -472,8 +472,10 @@ fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) ->
     }
     let st = s.model.state();
     let bodies: Vec<&str> = st.bodies.iter().map(|b| b.name.as_str()).collect();
+    // The bodies this feature made, apart from the ones it changed or that were there (#374).
+    let created: Vec<&str> = st.bodies.iter().filter(|b| b.feature == id).map(|b| b.name.as_str()).collect();
     let fname = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
-    Ok(json!({"feature": id, "name": fname, "bodies": bodies, "ms": r.map(|r| r.ms)}))
+    Ok(json!({"feature": id, "name": fname, "bodies": bodies, "created_bodies": created, "ms": r.map(|r| r.ms)}))
 }
 
 fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
