@@ -1575,6 +1575,9 @@ mod offset_edit_guard_tests;
 mod offset_plane_face_tests;
 
 #[cfg(test)]
+#[path = "lineage_face_tests.rs"]
+mod lineage_face_tests;
+#[cfg(test)]
 #[path = "stacked_face_tests.rs"]
 mod stacked_face_tests;
 

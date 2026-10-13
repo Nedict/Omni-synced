@@ -66,6 +66,10 @@
 //!   A design can also keep what was hidden when it was saved (`visibility`: hidden bodies,
 //!   occurrence placements, sketches and origin items; `browser.visibility`). A design without
 //!   it shows everything, as it always did; a reader that ignores it loses only the hiding.
+//!   Sketch face anchors can name a flat face by its exact history name (a `lineage`
+//!   certificate: the target's `name`, e.g. a cut wall `F5:side:l1` or a pattern copy
+//!   `F4:top@F6.2`), where no construction certificate names it alone. Anchors with
+//!   construction certificates resolve as before.
 
 use serde_json::Value;
 

@@ -263,10 +263,10 @@ make a legacy face sketch there).
 | 2 |  | A helix edge projected along its axis is a point (expected) | `edge.project` 2 | 1 | oracle/50-sweep-tight-bend `Bend/F3:side:c1#1\|F3:side:c1#2~2` |
 
 Where the face history stands (`crates/kernel/src/history.rs`, [face attachments](face-attachments.md)):
-a face takes an attached sketch only when the body carries an exact source certificate for it.
-Extrude caps and sides, boxes, shells' inner walls, STEP faces and sheet metal panels have one,
-and booleans, fillets and shells pass untouched faces' sources through. Everything that makes or
-reshapes faces without recording one (cut walls, holes, chamfers, revolves, lofts, sweeps, drafts,
-tapers, splits, intersects, shell rims, pattern and mirror copies, sheet metal rims) leaves faces
-that refuse a sketch, and press-pull and extrude-from-face then fall back to a legacy face sketch
-that is found again by a point. Together they are the largest group of failures.
+a flat face takes an attached sketch when the body carries an exact source certificate for it
+(extrude caps and sides, boxes, shells' inner walls, STEP faces, sheet metal panels), or else
+when its persistent name follows exact history (a `lineage` certificate): cut walls and floors,
+chamfers, pattern and mirror copies, sides a Join merged, and pieces of a split face. What still
+refuses a sketch is what makes faces without recording their history (revolves in some cases,
+Offset Face, the plastic features, lofts, sweeps, drafts, tapers, shell rims, sheet metal rims):
+press-pull and extrude-from-face then fall back to a legacy face sketch found again by a point.

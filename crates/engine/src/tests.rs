@@ -830,12 +830,16 @@ fn step_open_then_model_on_it() {
     run(&mut s, "solid.hole", json!({"position": at(28.0, 15.0, 20.0), "diameter": 6}));
     want -= PI * 9.0 * 20.0;
     assert!(rel(volume(&mut s), want) < 5e-4, "{} vs {want}", volume(&mut s));
-    // Modified imported faces no longer have an immutable construction certificate.
-    // The public attachment refuses them; the user can explicitly choose a fixed plane.
-    let before_fixed = s.doc.to_json();
-    assert!(s.execute("sketch.create", &json!({"plane":{"face":at(10.0,15.0,20.0)}})).is_err());
-    assert_eq!(s.doc.to_json(), before_fixed);
-    run(&mut s, "sketch.create", json!({"plane": {"face": at(10.0, 15.0, 20.0), "fixed": true}}));
+    // Modified imported faces no longer have an immutable construction certificate; the top
+    // attaches by its exact history name instead.
+    let top = run(&mut s, "sketch.create", json!({"plane": {"face": at(10.0, 15.0, 20.0)}}))["sketch"].as_u64().unwrap();
+    assert!(matches!(
+        s.placed_document().sketch_face_attachment(top, &s.model),
+        doc::FaceAttachmentStatus::Healthy {
+            target: doc::config::ConfigFaceTarget { certificate: Some(doc::config::FaceCertificate::Lineage), .. },
+            ..
+        }
+    ));
     let c = [x0 + 10.0, y0 + 15.0];
     // Sketch coordinates on the face are relative to the model origin projected onto it.
     run(&mut s, "sketch.rectangle.two_point", json!({"p0": [c[0] - 4.0, c[1] - 4.0], "p1": [c[0] + 4.0, c[1] + 4.0]}));

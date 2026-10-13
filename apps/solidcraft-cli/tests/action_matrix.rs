@@ -995,7 +995,6 @@ fn a_fillet_or_chamfer_on_one_edge_ending_at_a_cylinder() {
 }
 
 #[test]
-#[ignore = "fails until #557 is fixed"]
 fn a_sketch_on_a_patterned_boss_top() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 20.]).into();
     c.extend([
