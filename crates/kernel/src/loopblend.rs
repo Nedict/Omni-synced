@@ -226,7 +226,8 @@ fn build(
     // Joints: k round a whole loop; k + 1 along a run (its two ends included).
     let nj = if open { k + 1 } else { k };
     let nxt = |i: usize| if open { i + 1 } else { (i + 1) % k };
-    // Joints: smooth, or sharp between two lines (the blends then meet in a mitre).
+    // Joints: smooth, or sharp where the walls meet in one straight seam (the blends
+    // then meet in a mitre). A loop can therefore mix lines and arcs at its corners.
     let mut mitre = vec![false; nj];
     for i in 0..k {
         if open && i == 0 {
@@ -236,7 +237,7 @@ fn build(
         let p = cur.start();
         let (Some(ta), Some(tb)) = (prev.tangent(p), cur.tangent(p)) else { return Err(unsupported("degenerate loop edge")) };
         if ta.dot(tb) < 1.0 - 1e-6 {
-            if !(matches!(prev, Seg::Line { .. }) && matches!(cur, Seg::Line { .. })) || ta.dot(tb) < -1.0 + 1e-3 {
+            if ta.dot(tb) < -1.0 + 1e-3 {
                 return Err(unsupported("blending a loop with sharp corners next to arcs"));
             }
             if let Some(x) = mitre.get_mut(i) {
@@ -450,7 +451,10 @@ fn build(
         let cc = centre(i) + d1 * lam;
         let q = p + t * sb + d1 * lam;
         let mid = cc + ((pa_i - cc) + (q - cc)).normalized().unwrap_or(t) * r;
-        let arc = builder::circle_arc(&builder::vertex(p3(pa_i)), &builder::vertex(p3(q)), p3(mid));
+        let previous = (i + k - 1) % k;
+        let line_corner = matches!(segs.get(previous), Some(Seg::Line { .. })) && matches!(segs.get(i), Some(Seg::Line { .. }));
+        let end = if line_corner { q } else { pb_i };
+        let arc = builder::circle_arc(&builder::vertex(p3(pa_i)), &builder::vertex(p3(end)), p3(mid));
         let nb = (pa_i - p).cross(pb_i - p).normalized().ok_or_else(|| unsupported("mitre plane"))?;
         let den = d1.dot(nb);
         if den.abs() < 1e-9 {

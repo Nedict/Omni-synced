@@ -1680,6 +1680,22 @@ fn fillet_an_open_curved_edge() {
     assert!(rel(removed, want) < 1e-3, "{removed} vs {want}");
 }
 
+#[test]
+fn fillet_mixed_arc_and_line_perimeter_edges() {
+    use solidcraft_geom::Seg2;
+    let d = Loop2 {
+        segs: vec![
+            Seg2::Arc { center: Vec2::ZERO, radius: 10.0, start: 0.0, sweep: PI },
+            Seg2::Line { a: Vec2::new(-10.0, 0.0), b: Vec2::new(10.0, 0.0) },
+        ],
+    };
+    let body = extrude(&Plane::XY, &[Region2 { outer: d, holes: vec![] }], 0.0, 15.0).unwrap().pop().unwrap();
+    let blended = fillet(&body, &[Vec3::new(0.0, 10.0, 15.0), Vec3::new(5.0, 0.0, 15.0)], 0.5).unwrap();
+    assert!(blended.validity().is_empty(), "{:?}", blended.validity());
+    let bounds = measure(&blended).unwrap().bbox;
+    assert!(bounds.min.x > -10.1 && bounds.max.x < 10.1 && bounds.min.y > -0.1 && bounds.max.y < 10.1, "{bounds:?}");
+}
+
 /// Boolean survey: random boxes, cylinders and spheres combined every way; prints what fails.
 #[test]
 #[ignore]
