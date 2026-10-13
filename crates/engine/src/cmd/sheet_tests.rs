@@ -2577,8 +2577,6 @@ fn a_flange_asked_for_0_8_mm_is_0_8_mm_or_refused_never_silently_2_5_mm() {
         Err(e) => assert!(e.to_string().contains("thickness"), "{e}"),
     }
 }
-}
-
 
 /// A new fold still refuses a `fixed` point in a cut-out or past the outline, leaving the design
 /// untouched (#263); a stored one that drifts off the sheet keeps its side with a warning (#370).
