@@ -259,6 +259,13 @@ fn normalize(s: &str) -> String {
     s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
 }
 
+/// The file a font name refers to (after `~` and `%VAR%` expansion), or `None` for the built-in
+/// font or an installed family, so callers can vet the path before [`font_data`] reads it.
+pub fn font_file_path(name: &str) -> Option<PathBuf> {
+    let name = name.trim();
+    (is_path(name) && name.len() <= MAX_FONT_NAME).then(|| expand(name))
+}
+
 fn is_path(name: &str) -> bool {
     name.contains('/') || name.contains('\\') || has_font_extension(name)
 }

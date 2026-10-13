@@ -117,6 +117,10 @@ fn text_source(p: &Value, cmd: &str, old: Option<(String, Vec2, f64, f64, Option
         Some(Value::String(f)) => Some(f.trim().to_string()),
         Some(_) => return Err(bad(cmd, "`font` must be a font family name or a font file path")),
     };
+    // A font file an agent names must lie in its folders (installed families are found by name).
+    if let Some(path) = font.as_deref().and_then(solidcraft_sketch::font_file_path) {
+        solidcraft_io::vfs::check(&path.to_string_lossy()).map_err(|e| bad(cmd, e.to_string()))?;
+    }
     // An unknown font or an unreadable file is an error now, not a lost link later.
     solidcraft_sketch::font_data(font.as_deref()).map_err(|e| bad(cmd, e.to_string()))?;
     Ok(LinkSource::Text { text, at, height, angle, font })
