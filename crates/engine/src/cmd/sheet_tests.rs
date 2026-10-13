@@ -2563,7 +2563,6 @@ fn flat_pattern_reports_a_round_hole_as_a_circle() {
 }
 
 #[test]
-#[ignore = "fails until #570 is fixed"]
 fn a_flange_asked_for_0_8_mm_is_0_8_mm_or_refused_never_silently_2_5_mm() {
     // `thickness` on sheet.flange may become an inline override of the rule, or be refused as
     // an unknown parameter; either is fine. Building the default 2.5 mm sheet silently is not.

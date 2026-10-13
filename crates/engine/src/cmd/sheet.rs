@@ -17,7 +17,8 @@ pub static COMMANDS: &[CommandSpec] = &[
         "base: sketch + profiles? (rule?, flip?) | contour: sketch + curves (open chain of lines) + distance (rule?, flip?, reverse?) | \
          edge: edges: [[x,y,z] on top/bottom edges, or {point: [x,y,z], angle?, height?} for an edge with its own angle and height] + \
          height (to the outer face), angle? (default 90 deg), radius? (default: rule), \
-         position?: inside|outside|middle, flip?, body?; type?: base|edge|contour (default from the inputs); name?, body_name? (the new body)",
+         position?: inside|outside|middle, flip?, body?; type?: base|edge|contour (default from the inputs); name?, body_name? (the new body). \
+         Thickness, K-factor and bend radius come from the rule (sheet.manage_rules); passing them here is refused",
     ),
     CommandSpec::new("sheet.hem", "Hem", hem)
         .at("SHEET METAL", "CREATE")
@@ -105,8 +106,23 @@ fn rule_param(s: &Session, p: &Value, cmd: &str) -> Result<Option<String>> {
     }
 }
 
+/// Sheet values a flange takes from its rule. Passing one to `sheet.flange` is refused rather
+/// than ignored, so a script never gets a part of another thickness than it asked for.
+const RULE_ONLY: [&str; 8] =
+    ["thickness", "k_factor", "bend_radius", "relief_width", "relief_depth", "corner_relief", "corner_relief_shape", "hem_gap"];
+
 fn flange(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sheet.flange";
+    let nested = p.get("base").filter(|b| b.is_object());
+    if let Some(key) = RULE_ONLY.iter().find(|k| p.get(**k).is_some() || nested.is_some_and(|b| b.get(**k).is_some())) {
+        return Err(bad(
+            cmd,
+            format!(
+                "`{key}` is not a sheet.flange parameter: the sheet metal rule sets it. Make a rule with \
+                 sheet.manage_rules {{name, {key}, …}} and pass its name as `rule`"
+            ),
+        ));
+    }
     let ty = match str_(p, "type") {
         Some(t) => t.to_ascii_lowercase(),
         None if p.get("edges").is_some() => "edge".into(),
