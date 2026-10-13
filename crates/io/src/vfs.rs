@@ -151,13 +151,59 @@ impl PathScope {
                 ),
             )
         };
-        // A UNC path (`\\server\share`) would make Windows connect out before any check could run.
-        if cfg!(windows) && matches!(path.as_bytes().get(..2), Some([b'\\' | b'/', b'\\' | b'/'])) {
-            return Err(refused());
+        // Judged from the text before any filesystem call: resolving a UNC path would already
+        // make Windows connect out, and a device name opens the device.
+        if cfg!(windows)
+            && let Some(why) = windows_refusal(path)
+        {
+            return Err(Error::new(ErrorKind::PermissionDenied, format!("{path}: not allowed for this agent: {why}")));
+        }
+        #[cfg(windows)]
+        if let Some(std::path::Component::Prefix(p)) = std::path::Path::new(path).components().next()
+            && !matches!(p.kind(), std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_))
+        {
+            return Err(Error::new(ErrorKind::PermissionDenied, format!("{path}: not allowed for this agent: only paths on a local drive")));
         }
         let resolved = resolve(std::path::Path::new(path)).map_err(|_| refused())?;
         if self.roots.iter().any(|r| resolved.starts_with(r)) { Ok(()) } else { Err(refused()) }
     }
+}
+
+/// Why Windows would not treat `path` as a plain file on a local drive, judged by Windows rules
+/// from the text alone (so it is tested on every platform): UNC, device (`\\.\`), NT (`\??\`) and
+/// verbatim paths other than a verbatim drive (`\\?\C:\`), drive-relative paths (`C:file`), a `:`
+/// inside a name (alternate data streams) and reserved device names (`NUL`, `COM1.txt`, …).
+pub fn windows_refusal(path: &str) -> Option<&'static str> {
+    let norm = path.replace('/', "\\");
+    let drive = |s: &str| matches!(s.as_bytes(), [d, b':', ..] if d.is_ascii_alphabetic());
+    let drive_abs = |s: &str| matches!(s.as_bytes(), [d, b':', b'\\', ..] if d.is_ascii_alphabetic());
+    let body = if let Some(v) = norm.strip_prefix("\\\\?\\") {
+        if !drive_abs(v) {
+            return Some("only paths on a local drive (no UNC, device or volume paths)");
+        }
+        v.get(2..).unwrap_or("")
+    } else if norm.starts_with("\\\\") || norm.starts_with("\\??\\") {
+        return Some("network (UNC), device and NT namespace paths");
+    } else if drive(&norm) {
+        if !drive_abs(&norm) {
+            return Some("drive-relative paths (`C:file`)");
+        }
+        norm.get(2..).unwrap_or("")
+    } else {
+        &norm
+    };
+    for name in body.split('\\').filter(|n| !n.is_empty()) {
+        if name.contains(':') {
+            return Some("`:` in a file name (alternate data streams)");
+        }
+        let stem = name.split('.').next().unwrap_or("").trim_end_matches([' ', '.']).to_uppercase();
+        let numbered =
+            |p: &str| stem.strip_prefix(p).is_some_and(|n| matches!(n, "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"));
+        if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$") || numbered("COM") || numbered("LPT") {
+            return Some("reserved device names (CON, NUL, COM1, …)");
+        }
+    }
+    None
 }
 
 /// `path` with symlinks and `..` resolved. A file that doesn't exist yet resolves through its
@@ -298,6 +344,98 @@ mod tests {
         assert_eq!(super::read(&s(out.join("secret.txt")), 16).unwrap(), b"secret");
         assert!(PathScope::new([base.join("nonexistent")]).check(&s(root.join("sub/a.txt"))).is_err());
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Review of #205: a root is a folder, not a string prefix (`a` doesn't admit `ab`); a new
+    /// file needs an existing folder, and one whose folder is a symlink that leads out is refused.
+    #[cfg(all(unix, not(target_arch = "wasm32")))]
+    #[test]
+    fn roots_are_folders_and_new_files_resolve_through_their_folder() {
+        use super::PathScope;
+        let base = std::env::temp_dir().join(format!("solidcraft-vfs-prefix-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (a, ab, out) = (base.join("a"), base.join("ab"), base.join("out"));
+        for d in [&a, &ab, &out] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::os::unix::fs::symlink(&out, a.join("link")).unwrap();
+        let scope = PathScope::new([a.clone()]);
+        let s = |p: std::path::PathBuf| p.to_string_lossy().to_string();
+        assert!(scope.check(&s(a.join("new.txt"))).is_ok());
+        for refused in [ab.join("x.txt"), a.join("missing/x.txt"), a.join("link/new.txt")] {
+            let e = scope.check(&s(refused.clone())).unwrap_err();
+            assert!(e.to_string().contains("outside the folders this agent may use"), "{}: {e}", refused.display());
+        }
+        super::scoped(Some(scope), || assert!(super::write(&s(a.join("link/new.txt")), b"x").is_err()));
+        assert!(!out.join("new.txt").exists() && !a.join("missing").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Windows rules, judged from the text alone, on every platform (#205 review).
+    #[test]
+    fn windows_paths_that_are_not_plain_local_files_are_refused() {
+        use super::windows_refusal as w;
+        for ok in [
+            r"C:\work\part.step",
+            "C:/work/part.step",
+            r"\\?\C:\work\part.step",
+            r"work\part.step",
+            "part.step",
+            r"\work\a.b.step",
+            r"C:\com10\x.txt",
+            r"C:\console.txt",
+        ] {
+            assert_eq!(w(ok), None, "{ok}");
+        }
+        for bad in [
+            r"\\server\share\x.step",
+            "//server/share/x.step",
+            r"\\?\UNC\server\share\x.step",
+            r"\??\UNC\server\share\x.step",
+            r"\??\C:\x.step",
+            "/??/UNC/server/share/x.step",
+            r"\\.\COM1",
+            r"\\?\Volume{0}\x",
+            r"\\?\GLOBALROOT\Device\x",
+            "C:foo.step",
+            r"C:\work\a.step:stream",
+            r"C:\work\NUL",
+            r"C:\work\nul.txt",
+            r"C:\work\COM1.step",
+            r"C:\work\lpt9",
+            r"C:\work\Con .txt",
+            r"C:\work\COM¹",
+            r"C:\work\CONOUT$",
+            r"work\AUX\x.step",
+        ] {
+            assert!(w(bad).is_some(), "{bad}");
+        }
+    }
+
+    /// The same, through a scope on Windows itself: refused before any filesystem call.
+    #[cfg(windows)]
+    #[test]
+    fn windows_unc_verbatim_drive_relative_and_device_paths_are_refused() {
+        let root = std::env::temp_dir().join(format!("solidcraft-vfs-win-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let scope = super::PathScope::new([root.clone()]);
+        let inside = |f: &str| root.join(f).to_string_lossy().to_string();
+        assert!(scope.check(&inside("ok.step")).is_ok());
+        for bad in [
+            r"\\server\share\x.step".to_string(),
+            r"\\?\UNC\server\share\x.step".to_string(),
+            r"\??\UNC\server\share\x.step".to_string(),
+            r"\\.\COM1".to_string(),
+            "C:foo.step".to_string(),
+            inside("NUL"),
+            inside("COM1.txt"),
+            inside("con"),
+            inside("a.step:stream"),
+        ] {
+            let e = scope.check(&bad).unwrap_err();
+            assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied, "{bad}: {e}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A directory is not a file either.

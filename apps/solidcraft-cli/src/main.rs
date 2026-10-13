@@ -320,7 +320,11 @@ fn cmd_mcp(args: &[String]) -> Result<(), String> {
         let design_dir = flag(args, "--in")
             .and_then(|p| std::path::Path::new(p).parent())
             .map(|d| if d.as_os_str().is_empty() { ".".into() } else { d.to_path_buf() });
-        solidcraft_mcp::agent_scope(design_dir.into_iter().chain(flags(args, "--allow-path").into_iter().map(std::path::PathBuf::from)))
+        let (scope, notes) = solidcraft_mcp::agent_scope(design_dir, flags(args, "--allow-path").into_iter().map(std::path::PathBuf::from));
+        for n in notes {
+            eprintln!("solidcraft mcp: {n}");
+        }
+        scope
     });
     if let Some(s) = &scope {
         let roots: Vec<String> = s.roots().iter().map(|r| r.display().to_string()).collect();

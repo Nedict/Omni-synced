@@ -439,6 +439,40 @@ fn legacy_design_files_and_resource_uris() {
     assert!(d["result"]["contents"][0]["text"].as_str().unwrap().contains("timeline"));
 }
 
+/// The working folder (or `--in`'s folder) joins the agent's folders only strictly inside home:
+/// not home itself, a folder above it, `/` or a folder elsewhere (#205 review).
+#[test]
+fn the_working_folder_counts_only_strictly_inside_home() {
+    use std::path::Path;
+
+    use crate::under_home;
+    let home = std::env::temp_dir().join(format!("solidcraft-mcp-home-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let work = home.join("projects/bracket");
+    std::fs::create_dir_all(&work).unwrap();
+    let sibling = home.with_file_name(format!("{}x", home.file_name().unwrap().to_string_lossy()));
+    std::fs::create_dir_all(&sibling).unwrap();
+    let h = Some(home.as_path());
+    assert!(under_home(&work, h));
+    assert!(under_home(&home.join("projects/../projects"), h));
+    for (dir, why) in [
+        (home.clone(), "home itself"),
+        (home.parent().unwrap().to_path_buf(), "above home"),
+        ("/".into(), "a drive root"),
+        (sibling.clone(), "a name that only starts like home"),
+    ] {
+        assert!(!under_home(&dir, h), "{why}: {}", dir.display());
+    }
+    assert!(!under_home(&work, None), "no home known: nothing implicit");
+    assert!(!under_home(Path::new("/nonexistent-solidcraft"), h));
+    // The default scope never holds the working folder when it is outside home; it says so.
+    let (scope, notes) = crate::agent_scope(Some("/".into()), []);
+    assert!(!scope.roots().iter().any(|r| r.parent().is_none()), "{scope:?}");
+    assert!(notes.iter().any(|n| n.contains("--in design's folder /")), "{notes:?}");
+    let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&sibling);
+}
+
 /// Tool calls reach files only inside the server's folders (#205): the usual workflow (save,
 /// export, open, screenshots) works there; a path outside, directly, through `..` or through a
 /// symlink that leads out, is refused with a clear error and nothing is written.
@@ -451,7 +485,7 @@ fn tool_calls_stay_inside_the_agents_folders() {
     std::fs::create_dir_all(&root).unwrap();
     std::fs::create_dir_all(&out).unwrap();
     let at = |d: &std::path::Path, f: &str| d.join(f).to_string_lossy().to_string();
-    let defaults = crate::agent_scope([root.clone()]);
+    let (defaults, _) = crate::agent_scope(None, [root.clone()]);
     for dir in [std::env::temp_dir(), root.clone()] {
         assert!(defaults.roots().contains(&std::fs::canonicalize(dir).unwrap()), "{defaults:?}");
     }

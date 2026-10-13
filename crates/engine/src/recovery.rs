@@ -333,6 +333,28 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
     }
 
+    /// `doc.recover {discard: true}` opens a real entry and then deletes it; given a folder and
+    /// id that only name someone's design, it deletes nothing (#205 review).
+    #[test]
+    fn recover_with_discard_deletes_only_the_entry_it_opened() {
+        let d = dir("recover-discard");
+        let mut s = Session::default();
+        let mut a = Autosaver::new(&d, Duration::from_secs(3600)).unwrap();
+        s.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10})).unwrap();
+        assert!(a.save(&s).unwrap());
+        let id = a.id.clone();
+        drop(a);
+        let mut t = Session::default();
+        let r = t.execute("doc.recover", &json!({"dir": d.to_string_lossy(), "id": id, "discard": true})).unwrap();
+        assert_eq!(r["features"], 1, "{r}");
+        assert!(orphans(&d).is_empty() && !file(&d, &id, "json").exists() && !file(&d, &id, "solidcraft").exists());
+        let part = d.join("part.solidcraft");
+        fs::write(&part, solidcraft_io::write_design(&Document::default())).unwrap();
+        assert!(t.execute("doc.recover", &json!({"dir": d.to_string_lossy(), "id": "part", "discard": true})).is_err());
+        assert!(part.exists());
+        let _ = fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn saving_drops_the_entry_and_a_clean_close_leaves_nothing() {
         let d = dir("clean");

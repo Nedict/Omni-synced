@@ -24,15 +24,28 @@ temporary file by the app and read back by the server, so both must run on the s
 
 ### Which files the agent can reach
 
-Tool calls read, write and delete files only inside the server's folders: the folder it was
-started in (unless that is a drive's root, `/`), the system's temporary folders (`/tmp` and the
-platform's temp folder, where screenshots go), the folder of the `--in` design and every
-`--allow-path DIR` (repeat it for more). Paths are resolved first, so `..` and symlinks that lead
-out are refused too, as are Windows UNC paths (`\\server\share`). This includes a `sketch.text`
-font given as a file path; installed fonts named by family still work. A refused path is a tool error
-saying the path is outside the folders this agent may use; stderr lists the folders at start-up.
-The recovery folder is outside them, so `doc.recovery_*` work for an agent only with
-`--allow-path` on it.
+Tool calls read, write and delete files only inside the server's folders:
+
+- the system's temporary folders (`/tmp` and the platform's temp folder, where screenshots go);
+- every `--allow-path DIR` (repeat it for more);
+- the folder the server was started in and the folder of the `--in` design, but only when they
+  lie strictly inside your home folder. Home itself, a folder above it (`/`, `/home`, `/Users`,
+  a drive's root) and folders elsewhere are left out, so `~/.ssh` or `~/.bashrc` are never in
+  reach by default; stderr says when a folder was left out, and `--allow-path` adds it back.
+
+Paths are resolved before they are compared, so `..` and symlinks that lead out are refused,
+and a new file must go into a folder that exists. On Windows a path must be on a local drive
+(`C:\…` or `\\?\C:\…`): UNC, device and NT paths (`\\server\share`, `\\?\UNC\…`, `\??\…`,
+`\\.\…`), drive-relative paths (`C:file`), a `:` in a file name and reserved device names (`NUL`,
+`CON`, `COM1.txt`, …) are refused before any file system call. This includes a `sketch.text`
+font given as a file path; installed fonts named by family still work. A refused path is a tool
+error saying why; stderr lists the folders at start-up.
+
+The default recovery folder is not one of these folders, so `doc.recovery_list`, `doc.recover`
+and `doc.recovery_discard` work for an agent only when it is passed with `--allow-path` (the app's
+own Recover dialog is unaffected). A hard link inside an allowed folder can't be told apart from
+an ordinary file, so a hard link to a file elsewhere is reachable through it; don't keep such
+links in a folder you allow.
 
 ```sh
 solidcraft-cli mcp --allow-path ~/designs --allow-path ~/exports

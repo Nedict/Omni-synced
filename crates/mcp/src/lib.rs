@@ -17,21 +17,41 @@ pub use backend::{Backend, Headless, Remote};
 pub use server::{PROTOCOL_VERSION, SUPPORTED_VERSIONS, Server};
 pub use tools::{call_tool, tool_definitions};
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use solidcraft_engine::io::vfs::PathScope;
 
-/// The folders `solidcraft-cli mcp` lets its agent read, write and delete in: the working folder
-/// (unless it is a drive's root, as for a server some clients start in `/`), the system's
-/// temporary folders (screenshots) and `extra` (`--in`'s folder, each `--allow-path`).
-pub fn agent_scope(extra: impl IntoIterator<Item = PathBuf>) -> PathScope {
-    let mut roots: Vec<PathBuf> = std::env::current_dir().into_iter().filter(|d| d.parent().is_some()).collect();
-    roots.push(std::env::temp_dir());
+/// The folders `solidcraft-cli mcp` lets its agent read, write and delete in: the system's
+/// temporary folders (screenshots), each `allowed` folder (`--allow-path`), and the working
+/// folder and the `--in` design's folder when they lie strictly inside the home folder (never
+/// home itself, a folder above it or a system folder, where `~/.ssh` or `~/.bashrc` would be
+/// in reach). Also the notes to print about folders left out.
+pub fn agent_scope(design_dir: Option<PathBuf>, allowed: impl IntoIterator<Item = PathBuf>) -> (PathScope, Vec<String>) {
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).filter(|h| !h.is_empty()).map(PathBuf::from);
+    let mut roots = vec![std::env::temp_dir()];
     if cfg!(unix) {
         roots.push("/tmp".into());
     }
-    roots.extend(extra);
-    PathScope::new(roots)
+    let mut notes = Vec::new();
+    for (what, dir) in [("working folder", std::env::current_dir().ok()), ("--in design's folder", design_dir)] {
+        let Some(dir) = dir else { continue };
+        if under_home(&dir, home.as_deref()) {
+            roots.push(dir);
+        } else {
+            notes.push(format!(
+                "the {what} {} is not inside your home folder, so it is left out; add it with --allow-path if you mean it",
+                dir.display()
+            ));
+        }
+    }
+    roots.extend(allowed);
+    (PathScope::new(roots), notes)
+}
+
+/// Whether `dir` lies strictly inside `home` (both resolved; `false` when either can't be).
+pub fn under_home(dir: &Path, home: Option<&Path>) -> bool {
+    let (Ok(dir), Some(Ok(home))) = (std::fs::canonicalize(dir), home.map(std::fs::canonicalize)) else { return false };
+    dir != home && dir.starts_with(&home)
 }
 
 #[cfg(test)]

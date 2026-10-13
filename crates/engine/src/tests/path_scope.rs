@@ -37,6 +37,7 @@ fn file_commands_stay_inside_the_agents_folders() {
             ("sketch.insert_dxf", json!({"path": at(&out, "a.dxf")})),
             ("doc.recovery_list", json!({"dir": out.to_string_lossy()})),
             ("doc.recovery_discard", json!({"dir": out.to_string_lossy(), "id": "part"})),
+            ("doc.recover", json!({"dir": out.to_string_lossy(), "id": "part", "discard": true})),
         ] {
             let e = s.execute(cmd, &p).unwrap_err().to_string();
             assert!(e.contains("outside the folders this agent may use"), "{cmd}: {e}");
