@@ -47,8 +47,9 @@
 //!   Pieces a feature splits a body into are named after their faces; features saved before
 //!   keep the kernel's shell order (`shell_piece_order`), which their stored body names mean.
 //! - 15: sketch face anchors and face bindings can name a cylinder primitive's cap
-//!   (`cylinder_cap`). Version 14 designs need no transformation; the version stamp lets older
-//!   readers request an update instead of encountering an unknown certificate kind.
+//!   (`cylinder_cap`), and sketches can link lines to their own axes (`sketch_axis`). Version 14
+//!   designs need no transformation; the version stamp lets older readers request an update
+//!   instead of encountering an unknown certificate or link kind.
 
 use serde_json::Value;
 
