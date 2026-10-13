@@ -5,7 +5,7 @@ use serde_json::Value;
 use solidcraft_doc::{FaceAt, FeatureKind, PlaneRef, ProfileSel, expr::Kind};
 
 use super::CommandSpec;
-use super::features::{add_feature, check_expr, feature_sketch, operation, plane_param, profiles};
+use super::features::{add_feature, check_expr, extent_param, feature_sketch, operation, plane_param, profiles};
 use crate::params::{bad, bool_, expr, str_, string_list, vec3};
 use crate::{Result, Session};
 
@@ -30,10 +30,10 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SURFACE", "MODIFY")
         .icon("trim")
         .params("body: surface name; plane: XY|XZ|YZ|plane name|{origin, normal} or tool: {body, point} (a face, its surface extended); keep: [x,y,z] (a point on the side to keep)"),
-    planned!("surface.extrude", "Surface Extrude", "757")
+    CommandSpec::new("surface.extrude", "Surface Extrude", surface_extrude)
         .at("SURFACE", "CREATE")
         .icon("surface_extrude")
-        .params("planned: the parameters of solid.extrude, with open curve chains as well as profiles (walls only, no caps); caps?: bool (close a closed profile)"),
+        .params("sketch?: id|name; curves?: [curve ids] (open or closed chains of curves meeting end to end) and/or profiles? (their boundaries; the default when no curves are given); distance: expr; direction?: positive|negative|symmetric; distance2?: expr; start_offset?: expr; name?, body_name? (a surface body: walls only, no caps)"),
     planned!("surface.revolve", "Surface Revolve", "757")
         .at("SURFACE", "CREATE")
         .icon("surface_revolve")
@@ -93,6 +93,21 @@ fn patch(s: &mut Session, p: &Value) -> Result<Value> {
     let sketch = feature_sketch(s, p, cmd)?;
     let profiles = profiles(p, cmd)?;
     add_feature(s, p, FeatureKind::Patch { sketch: Some(sketch), profiles, body: None, edges: Vec::new() })
+}
+
+fn surface_extrude(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "surface.extrude";
+    let sketch = feature_sketch(s, p, cmd)?;
+    let curves = string_list(p, "curves");
+    if curves.len() > 1000 {
+        return Err(bad(cmd, "at most 1000 curves"));
+    }
+    let profiles = if curves.is_empty() || p.get("profiles").is_some() { Some(profiles(p, cmd)?) } else { None };
+    let extent = extent_param(s, p, cmd)?;
+    if extent.through_all || extent.taper.is_some() || extent.to.is_some() || extent.from.is_some() {
+        return Err(bad(cmd, "not supported yet: through all, to or from an object, or a taper"));
+    }
+    add_feature(s, p, FeatureKind::SurfaceExtrude { sketch, profiles, curves, extent })
 }
 
 fn bodies_param(s: &Session, p: &Value, cmd: &str) -> Result<Vec<String>> {
@@ -177,13 +192,75 @@ mod tests {
         solidcraft_kernel::measure(&st.body(name).unwrap().body).unwrap().volume
     }
 
+    fn area(s: &Session, name: &str) -> f64 {
+        solidcraft_kernel::measure(&s.world_state().body(name).unwrap().body).unwrap().area
+    }
+
+    /// Surface Extrude of open curves: a line and an arc joined end to end (listed in either
+    /// order) make one sheet of two walls; both sides of the sketch; undo, redo and reopening
+    /// give the same sheet.
+    #[test]
+    fn surface_extrude_open_curves() {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [10, 0]], "ids": ["l1"]}));
+        let arc = run(&mut s, "sketch.arc.three_point", json!({"start": [10, 0], "end": [20, 0], "through": [15, 5]}))["created"]["curves"][0]
+            .as_str()
+            .unwrap()
+            .to_string();
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "surface.extrude", json!({"sketch": "S", "curves": [arc, "l1"], "distance": 4, "body_name": "Wall"}));
+        let st = s.world_state();
+        let wall = &st.body("Wall").unwrap().body;
+        assert!(wall.is_surface() && wall.face_count() == 2);
+        // The line's wall and the half circle's (radius 5): length × height.
+        let want = (10.0 + std::f64::consts::PI * 5.0) * 4.0;
+        assert!((area(&s, "Wall") - want).abs() < want * 1e-3, "{} vs {want}", area(&s, "Wall"));
+        run(&mut s, "surface.extrude", json!({"sketch": "S", "curves": ["l1"], "distance": 2, "direction": "symmetric", "body_name": "Both"}));
+        let bb = solidcraft_kernel::measure(&s.world_state().body("Both").unwrap().body).unwrap().bbox;
+        assert!((bb.min.z + 2.0).abs() < 1e-9 && (bb.max.z - 2.0).abs() < 1e-9, "{bb:?}");
+        run(&mut s, "edit.undo", json!({}));
+        assert!(s.world_state().body("Both").is_none());
+        run(&mut s, "edit.redo", json!({}));
+        assert!(s.world_state().body("Both").is_some());
+        let cold = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        assert!((area(&cold, "Wall") - area(&s, "Wall")).abs() < 1e-9);
+        // Refused: no such curve, a zero distance, and an extent a sheet does not take yet.
+        assert!(s.execute("surface.extrude", &json!({"sketch": "S", "curves": ["nope"], "distance": 4})).is_err());
+        assert!(s.execute("surface.extrude", &json!({"sketch": "S", "curves": ["l1"], "distance": 0})).is_err());
+        assert!(s.execute("surface.extrude", &json!({"sketch": "S", "curves": ["l1"], "distance": 4, "through_all": true})).is_err());
+    }
+
+    /// Surface Extrude of a profile gives its walls alone; patching both ends and stitching
+    /// makes the solid that solid.extrude makes of the same profile.
+    #[test]
+    fn surface_extrude_profile_walls_stitch_into_the_solid() {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "R"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [10, 6]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "surface.extrude", json!({"sketch": "R", "distance": 3, "body_name": "Walls"}));
+        let st = s.world_state();
+        let walls = &st.body("Walls").unwrap().body;
+        assert!(walls.is_surface() && walls.face_count() == 4);
+        assert!((area(&s, "Walls") - 96.0).abs() < 1e-9);
+        let edges = |z: f64| json!([[5, 0, z], [10, 3, z], [5, 6, z], [0, 3, z]]);
+        run(&mut s, "surface.patch", json!({"edges": edges(0.0), "body": "Walls", "body_name": "Bottom"}));
+        run(&mut s, "surface.patch", json!({"edges": edges(3.0), "body": "Walls", "body_name": "Top"}));
+        run(&mut s, "surface.stitch", json!({"bodies": ["Walls", "Bottom", "Top"]}));
+        let st = s.world_state();
+        assert!(!st.body("Walls").unwrap().body.is_surface());
+        run(&mut s, "solid.extrude", json!({"sketch": "R", "distance": 3, "body_name": "Solid"}));
+        assert!((volume(&s, "Walls") - volume(&s, "Solid")).abs() < 1e-9);
+        assert!((volume(&s, "Walls") - 180.0).abs() < 1e-9);
+    }
+
     /// The planned surface commands are registered but refuse to run: disabled with the
     /// issue that tracks them, an error (never a panic) from every caller, and the design left
     /// as it was.
     #[test]
     fn planned_commands_refuse_and_leave_the_design_alone() {
         let planned = [
-            "surface.extrude",
             "surface.revolve",
             "surface.sweep",
             "surface.loft",
