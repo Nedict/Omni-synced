@@ -1475,7 +1475,10 @@ fn grow_profile_for_coplanar(st: &ModelState, r: &Region2, op: Operation, target
 
 /// Booleans struggle with coincident faces (a cut starting on the face it cuts, a boss
 /// starting on the face it joins). Extending the tool past such an end changes nothing when the
-/// space beyond is empty (cut) or already material (join), so do exactly that.
+/// space beyond is empty (cut) or already material (join), so do exactly that. Only an end
+/// that lies on a target face parallel to it moves, and by less than half the way to the next
+/// such face level: the samples can miss material beyond the end (a thin floor between a recess
+/// above and a ring pocket below), which a longer tool would cut through.
 fn extend_for_coplanar(st: &ModelState, plane: &Plane, r: &Region2, lo: f64, hi: f64, op: Operation, targets: &[String]) -> (f64, f64) {
     if !matches!(op, Operation::Cut | Operation::Join) || st.bodies.is_empty() {
         return (lo, hi);
@@ -1490,18 +1493,40 @@ fn extend_for_coplanar(st: &ModelState, plane: &Plane, r: &Region2, lo: f64, hi:
     let samples = region_samples(r);
     let n = plane.normal();
     let inside_any = |p: Vec3| meshes.iter().any(|m| m.contains(p));
-    let ok_beyond = |h: f64, dir: f64| {
+    // Heights of the targets' faces parallel to the profile plane.
+    let tol = (size * 1e-7).max(1e-9);
+    let levels: Vec<f64> = meshes
+        .iter()
+        .flat_map(|m| {
+            m.triangles.iter().filter_map(|t| {
+                let [a, b, c] = m.tri(t)?;
+                let normal = (b - a).cross(c - a).normalized()?;
+                (normal.dot(n).abs() > 1.0 - 1e-9).then(|| (a - plane.origin).dot(n))
+            })
+        })
+        .collect();
+    // How far the end at `h` may move in `dir`: zero unless a face lies on it, then short of
+    // half the gap to the next face level beyond it.
+    let room = |h: f64, dir: f64| {
+        if !levels.iter().any(|z| (z - h).abs() < tol) {
+            return 0.0;
+        }
+        let gap = levels.iter().map(|z| (z - h) * dir).filter(|g| *g > tol).fold(f64::INFINITY, f64::min);
+        delta.min(gap * 0.5)
+    };
+    let ok_beyond = |h: f64, dir: f64, step: f64| {
         samples.iter().all(|s| {
             let base = plane.to_world(*s);
             [0.5, 1.0].iter().all(|k| {
-                let p = base + n * (h + dir * delta * k);
+                let p = base + n * (h + dir * step * k);
                 let inside = inside_any(p);
                 if op == Operation::Cut { !inside } else { inside }
             })
         })
     };
-    let lo2 = if ok_beyond(lo, -1.0) { lo - delta } else { lo };
-    let hi2 = if ok_beyond(hi, 1.0) { hi + delta } else { hi };
+    let (down, up) = (room(lo, -1.0), room(hi, 1.0));
+    let lo2 = if down > tol && ok_beyond(lo, -1.0, down) { lo - down } else { lo };
+    let hi2 = if up > tol && ok_beyond(hi, 1.0, up) { hi + up } else { hi };
     (lo2, hi2)
 }
 

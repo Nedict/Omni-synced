@@ -111,7 +111,6 @@ fn blind_hole_into_a_long_d_profile_bar_stops_short_of_the_round_front() {
 /// A ring pocket cut from below a recess leaves a 0.5 mm floor joining the outer wall to the inner
 /// block: one connected part, yet the cut left two bodies and lost volume (#545).
 #[test]
-#[ignore = "fails until #545 is fixed"]
 fn ring_cut_below_a_recess_keeps_the_part_in_one_body() {
     let s = replay(include_str!("../../../examples/regressions/ring_cut_below_recess_thin_floor.json"));
     let bodies: Vec<(String, f64)> = s.model.state().bodies.iter().map(|b| (b.name.clone(), volume(&s, &b.name))).collect();
