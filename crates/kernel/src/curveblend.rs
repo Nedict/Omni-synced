@@ -833,6 +833,30 @@ fn curve_blend_with_limit(solid: &Solid, ids: &[mt::EdgeID], size: f64, r: f64, 
         }
         let mut seam_subst: HashMap<mt::EdgeID, mt::Edge> = HashMap::new();
         for (id, (seam, a, b)) in ends {
+            // At a slanted end the blend may stop past the seam's old end: the seam then runs
+            // on along its line or circle, within its planar face.
+            let one_end = match (&a, &b) {
+                (Some(nv), None) => Some((seam.front().clone(), nv.clone())),
+                (None, Some(nv)) => Some((seam.back().clone(), nv.clone())),
+                _ => None,
+            };
+            if let Some((old, nv)) = one_end
+                && slanted.iter().any(|(k, ..)| verts.get(*k) == Some(&old))
+            {
+                let on_tol = (size * 1e-5).max(1e-6);
+                let q = from_p3(nv.point());
+                if crate::blend::on_edge(&seam, q, on_tol).is_none() {
+                    let fits = faces
+                        .iter()
+                        .filter(|f| f.edge_iter().any(|e| e.id() == id))
+                        .any(|f| crate::blend::plane_normal(f).is_some() && crate::blend::extension_fits(f, from_p3(old.point()), q, tol));
+                    if !fits || !crate::blend::on_extension(&seam, q, on_tol) {
+                        return Err(too_large("the blend is larger than the neighbouring faces"));
+                    }
+                }
+                seam_subst.insert(id, crate::blend::retarget(&seam, &old, &nv, on_tol)?);
+                continue;
+            }
             if !matches!(seam.curve(), mt::Curve::Line(_)) {
                 seam_subst.insert(id, trim_curved_seam(&seam, a, b, size)?);
                 continue;

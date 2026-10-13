@@ -261,7 +261,7 @@ fn edge_circle(e: &mt::Edge, tol: f64) -> Option<(Vec3, Vec3, f64)> {
 
 /// Where `q` lies on the edge's curve: its parameter, if within `tol` of the curve and inside
 /// the edge's range.
-fn on_edge(e: &mt::Edge, q: Vec3, tol: f64) -> Option<f64> {
+pub(crate) fn on_edge(e: &mt::Edge, q: Vec3, tol: f64) -> Option<f64> {
     use mt::{BoundedCurve, ParametricCurve, SearchNearestParameter};
     let c = e.curve();
     let (lo, hi) = c.range_tuple();
@@ -273,7 +273,7 @@ fn on_edge(e: &mt::Edge, q: Vec3, tol: f64) -> Option<f64> {
 }
 
 /// Whether `q` lies on the edge's curve continued past its ends (a line or a circle).
-fn on_extension(e: &mt::Edge, q: Vec3, tol: f64) -> bool {
+pub(crate) fn on_extension(e: &mt::Edge, q: Vec3, tol: f64) -> bool {
     match e.curve() {
         mt::Curve::Line(_) => {
             let (a, b) = (vtx(e.absolute_front()), vtx(e.absolute_back()));
@@ -285,7 +285,7 @@ fn on_extension(e: &mt::Edge, q: Vec3, tol: f64) -> bool {
 
 /// The edge `e` with its end at `v` moved to `nv`, along its own curve: shortened (any curve),
 /// or continued past `v` (a line or a circle). In the stored orientation of `e`.
-fn retarget(e: &mt::Edge, v: &mt::Vertex, nv: &mt::Vertex, tol: f64) -> Result<mt::Edge> {
+pub(crate) fn retarget(e: &mt::Edge, v: &mt::Vertex, nv: &mt::Vertex, tol: f64) -> Result<mt::Edge> {
     let (f, bk) = (e.absolute_front(), e.absolute_back());
     if f == bk {
         return Err(unsupported("a closed edge where the blend ends"));
