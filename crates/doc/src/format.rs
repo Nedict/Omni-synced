@@ -85,6 +85,8 @@
 //!   edges of a solid or shelled body that become bends). A conversion without `bends` is the
 //!   plate conversion it always was and saves as before; 0.8.0 would drop the bend edges and
 //!   refuse the body as no plate.
+//!   A fillet's `fit` can be `taper` (the radius follows the room along each edge it doesn't
+//!   fit). Fillets with `exact` or `reduce` save as before; 0.8.0 would refuse the unknown fit.
 
 use serde_json::Value;
 
