@@ -434,3 +434,34 @@ fn legacy_design_files_and_resource_uris() {
     let d = call(&mut s, 1, "resources/read", json!({"uri": "solvecraft://design"}));
     assert!(d["result"]["contents"][0]["text"].as_str().unwrap().contains("timeline"));
 }
+
+/// #531: a product model keeps an optional variant hidden in its default presentation. Hiding
+/// it must survive saving and reopening the design (suppressing it would change the design).
+#[test]
+#[ignore = "fails until #531 is fixed"]
+fn hidden_body_stays_hidden_after_save_and_reopen() {
+    let mut s = server();
+    tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "body_name": "Base"}}));
+    tool(
+        &mut s,
+        "execute",
+        json!({"command": "solid.box", "params": {"length": 5, "width": 5, "height": 5, "corner": [20, 0, 0], "operation": "new", "body_name": "Variant"}}),
+    );
+    tool(&mut s, "execute", json!({"command": "browser.visibility", "params": {"items": ["Variant"], "visible": false}}));
+    let visible = |s: &mut Server, body: &str| {
+        let d = tool(s, "inspect_design", json!({"measure": false}));
+        d["bodies"].as_array().into_iter().flatten().find(|b| b["name"] == body).map(|b| b["visible"].clone()).unwrap_or(Value::Null)
+    };
+    assert_eq!(visible(&mut s, "Variant"), false);
+
+    let dir = std::env::temp_dir().join(format!("solidcraft-mcp-visibility-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let design = dir.join("variants.solvecraft");
+    tool(&mut s, "save", json!({"path": design.to_string_lossy()}));
+    tool(&mut s, "new_design", json!({"name": "Empty"}));
+    tool(&mut s, "open", json!({"path": design.to_string_lossy()}));
+    let (base, variant) = (visible(&mut s, "Base"), visible(&mut s, "Variant"));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(base, true);
+    assert_eq!(variant, false, "the hidden body is visible again after reopening");
+}
