@@ -2108,7 +2108,9 @@ fn feature_tools_with_constructor(
             if untrimmed {
                 *constructor = Some(ExtrudeConstructor { plane: ss.plane, interval: (lo + off, hi + off) });
             }
-            if *operation == Operation::NewBody && extent.taper.is_none() {
+            // A Join tool's faces outlive the boolean where they stay on the result, so they are
+            // certified as a new body's are (see `Body::with_preserved_union_planar_sources`).
+            if matches!(operation, Operation::NewBody | Operation::Join) && extent.taper.is_none() {
                 let bodies: Vec<Body> = tools.iter().map(|t| t.body.clone()).collect();
                 let cap_bindings = crate::config::extrude_cap_bindings(&ss, &bodies, 10_000_000);
                 let source_curves = cap_bindings.as_ref().map(|_| crate::config::ExactSketchCurves::new(&ss));
@@ -2127,8 +2129,20 @@ fn feature_tools_with_constructor(
                                 _ => None,
                             })
                             .collect();
-                        let caps =
+                        let mut caps =
                             cap_bindings.as_ref().and_then(|bindings| bindings.get(body_index)).cloned().unwrap_or_else(|| vec![None; curves.len()]);
+                        // A cap moved off its designed height (into a Join target, or past a
+                        // curved To face) is not the feature's start or end face.
+                        let nominal = |plane: &solidcraft_geom::Plane| {
+                            let height = (plane.origin - ss.plane.origin).dot(n);
+                            let tolerance = 1e-9 * (1.0 + height.abs() + (lo + off).abs() + (hi + off).abs());
+                            (height - (lo + off)).abs() <= tolerance || (height - (hi + off)).abs() <= tolerance
+                        };
+                        for (cap, source) in caps.iter_mut().zip(body.face_sources().into_iter().flatten()) {
+                            if matches!(source, Some(kernel::FaceSource::ExtrudeCap { plane, .. }) if !nominal(plane)) {
+                                *cap = None;
+                            }
+                        }
                         // Certificates set face sources only: the faces, and their lineage, stay.
                         let body = body.with_extrude_certificates(f.id, *sketch, &curves)?.with_extrude_cap_certificates(f.id, *sketch, &caps)?;
                         Ok(Traced { body, lineage })
@@ -3624,7 +3638,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             let s = Vec3::new(val(vals, length, Kind::Length)?, val(vals, width, Kind::Length)?, val(vals, height, Kind::Length)?);
             let corner = point(vals, corner)?;
             let b = kernel::box_solid(corner, corner + s)?;
-            let b = if *operation == Operation::NewBody { b.with_box_certificate(f.id)? } else { b };
+            let b = if matches!(operation, Operation::NewBody | Operation::Join) { b.with_box_certificate(f.id)? } else { b };
             apply_traced(st, f, vec![crate::lineage::box_tool(b)], *operation, &[])
         }
         FeatureKind::Cylinder { base, axis, radius, height, operation } => {
