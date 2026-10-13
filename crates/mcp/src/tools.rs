@@ -63,7 +63,7 @@ pub fn tool_definitions() -> Vec<Value> {
              created: {points, curves, constraints, dimensions}: the ids of what they added, stable and not reused \
              after a delete (undo rewinds the counters with the design), usable right away \
              in sketch.dimension, sketch.constraint.* and sketch.delete. Feature commands return the feature's id \
-             and name, every body (bodies) and the bodies the feature created, changed and removed (created_bodies, \n             changed_bodies, removed_bodies).",
+             and name, every body (bodies) and the bodies the feature created, changed and removed (created_bodies, changed_bodies, removed_bodies).",
             obj(
                 json!({
                     "command": string("Command id (see list_commands)"),
@@ -89,7 +89,7 @@ pub fn tool_definitions() -> Vec<Value> {
                         "items": {"type": "object", "properties": {"command": {"type": "string"}, "params": {"type": "object"}}, "required": ["command"]},
                     },
                     "rollback": {"type": "boolean", "description": "Undo completed steps when one fails (default true)"},
-                    "verbose": {"type": "boolean", "description": "false: a compact reply. Feature steps leave out the full body list                         (created_bodies, changed_bodies and removed_bodies stay), sketch steps the ids they repeat outside `created`                         (default true)"},
+                    "verbose": {"type": "boolean", "description": "false: a compact reply. Feature steps leave out the full body list (created_bodies, changed_bodies and removed_bodies stay), sketch steps the ids they repeat outside `created` (default true)"},
                 }),
                 &["commands"],
             ),
