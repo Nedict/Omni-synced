@@ -71,13 +71,16 @@ pub enum LinkSource {
     Iso { body: String, at: Vec3, dir: String },
     /// The outline of a body spun about an axis (world line), laid into the sketch plane.
     Spun { body: String, origin: Vec3, dir: Vec3 },
-    /// Text: baseline start `at` (sketch coordinates), capital height and angle (radians).
+    /// Text: baseline start `at` (sketch coordinates), capital height and angle (radians), in
+    /// `font` (a font file path or an installed family name; none: the built-in font).
     Text {
         text: String,
         at: Vec2,
         height: f64,
         #[serde(default)]
         angle: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        font: Option<String>,
     },
 }
 

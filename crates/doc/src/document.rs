@@ -942,6 +942,10 @@ pub enum FeatureKind {
         rotate_axis: Option<Vec3>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         angle: Option<String>,
+        /// When set, the original bodies are kept and the transform is applied to a new copy
+        /// of each instead of moving them in place.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        copy: bool,
     },
     /// A non-parametric base feature: bodies imported from a STEP file. The STEP text is kept
     /// in the design (it is the B-rep), so the design reopens without the original file.

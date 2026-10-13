@@ -262,7 +262,7 @@ fn resolve_uncached(
         LinkSource::SketchAxis { name } => {
             vec![solidcraft_sketch::sketch_axis_geom(name).ok_or_else(|| DocError::Unknown(format!("sketch axis `{name}`")))?]
         }
-        LinkSource::Text { text, at, height, angle } => solidcraft_sketch::text_geometry(text, *at, *height, *angle)?,
+        LinkSource::Text { text, at, height, angle, font } => solidcraft_sketch::text_geometry_in(font.as_deref(), text, *at, *height, *angle)?,
         LinkSource::Plane { name } => {
             let pr =
                 if Plane::named(name).is_some() { PlaneRef::Origin { name: name.clone() } } else { PlaneRef::Construction { name: name.clone() } };
