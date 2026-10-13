@@ -226,6 +226,10 @@ pub struct Prefs {
     /// Put the feature history above the parts browser in the left sidebar instead of along the
     /// bottom of the viewport.
     pub timeline_left: bool,
+    /// Height of the feature-history section when it shares the left sidebar with the browser.
+    pub timeline_left_height: f32,
+    /// Whether the browser below the left feature history is collapsed.
+    pub timeline_left_browser_collapsed: bool,
     /// The wheel zooms toward the point under the cursor (else toward the view's centre).
     pub zoom_to_cursor: bool,
     /// Spread discrete wheel input across frames (off: apply each event immediately).
@@ -289,6 +293,8 @@ impl Default for Prefs {
             language: "en".into(),
             ui_scale: 1.0,
             timeline_left: false,
+            timeline_left_height: 360.0,
+            timeline_left_browser_collapsed: false,
             zoom_to_cursor: true,
             smooth_wheel_zoom: true,
             trackpad_pan: true,
@@ -381,6 +387,8 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.language = d.language;
             p.ui_scale = d.ui_scale;
             p.timeline_left = d.timeline_left;
+            p.timeline_left_height = d.timeline_left_height;
+            p.timeline_left_browser_collapsed = d.timeline_left_browser_collapsed;
             p.default_units = d.default_units;
             p.length_decimals = d.length_decimals;
             p.angle_decimals = d.angle_decimals;
@@ -1418,6 +1426,8 @@ mod tests {
 
         // Switch language to Japanese
         set(&mut app, &json!({"language": "ja", "timeline_left": true})).unwrap();
+        app.preferences.timeline_left_height = 275.0;
+        app.preferences.timeline_left_browser_collapsed = true;
         assert_eq!(app.preferences.language, "ja");
         assert!(app.preferences.timeline_left);
         assert_eq!(app.tr("ui.preferences"), "環境設定");
@@ -1428,6 +1438,8 @@ mod tests {
         other.load_prefs(&app.prefs());
         assert_eq!(other.preferences.language, "ja");
         assert!(other.preferences.timeline_left);
+        assert_eq!(other.preferences.timeline_left_height, 275.0);
+        assert!(other.preferences.timeline_left_browser_collapsed);
         assert_eq!(other.tr("ui.preferences"), "環境設定");
     }
 

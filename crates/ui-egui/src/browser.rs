@@ -521,13 +521,42 @@ fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
         .show(ui, |ui| {
             if timeline_above {
                 let available = ui.available_height();
-                let timeline_height = (available * 0.56).clamp(150.0, (available - 130.0).max(150.0));
+                let browser_collapsed = app.preferences.timeline_left_browser_collapsed;
+                let max_timeline_height = (available - if browser_collapsed { 30.0 } else { 130.0 }).max(150.0);
+                let remembered = app.preferences.timeline_left_height;
+                let timeline_height =
+                    if remembered.is_finite() { remembered.clamp(150.0, max_timeline_height) } else { 360.0_f32.clamp(150.0, max_timeline_height) };
                 ui.allocate_ui_with_layout(vec2(ui.available_width(), timeline_height), egui::Layout::top_down(egui::Align::Min), |ui| {
                     crate::timeline_left::left_timeline(app, ui)
                 });
-                ui.separator();
+                if !browser_collapsed {
+                    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 8.0), egui::Sense::hover());
+                    let response = ui
+                        .interact(rect, egui::Id::new("left_history_divider"), egui::Sense::drag())
+                        .on_hover_cursor(egui::CursorIcon::ResizeVertical);
+                    if response.dragged() {
+                        let delta = ui.input(|input| input.pointer.delta().y);
+                        if delta.is_finite() {
+                            app.preferences.timeline_left_height = (timeline_height + delta).clamp(150.0, max_timeline_height);
+                        }
+                    }
+                    ui.painter().hline(rect.x_range(), rect.center().y, egui::Stroke::new(1.0, t.border));
+                    crate::scenario::publish_handle("left-history-divider", rect.center());
+                }
+                let arrow = if browser_collapsed { "▶" } else { "▼" };
+                let response =
+                    ui.add(egui::Button::new(RichText::new(format!("{arrow}  BROWSER")).size(11.0).strong().color(t.text_dim)).frame(false));
+                crate::scenario::publish_handle("left-browser-toggle", response.rect.center());
+                if response.clicked() {
+                    app.preferences.timeline_left_browser_collapsed = !browser_collapsed;
+                }
+                if !browser_collapsed {
+                    ui.add_space(4.0);
+                    browser_rows(app, ui, &mut acts);
+                }
+            } else {
+                browser_contents(app, ui, &mut acts);
             }
-            browser_contents(app, ui, &mut acts);
         });
     finish_browser(app, ui, acts);
 }
@@ -536,6 +565,10 @@ fn browser_contents(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
     let t = Tokens::get();
     ui.label(RichText::new("BROWSER").size(11.0).strong().color(t.text_dim));
     ui.add_space(4.0);
+    browser_rows(app, ui, acts);
+}
+
+fn browser_rows(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .scroll_source(egui::scroll_area::ScrollSource { scroll_bar: true, mouse_wheel: true, ..egui::scroll_area::ScrollSource::NONE })

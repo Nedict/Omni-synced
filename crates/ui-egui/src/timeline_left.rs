@@ -832,6 +832,30 @@ mod tests {
     }
 
     #[test]
+    fn history_browser_divider_resizes_and_browser_collapses() {
+        let mut harness = Harness::new();
+        harness.app.preferences.timeline_left = true;
+        harness.app.preferences.timeline_left_height = 180.0;
+        harness.frames(4);
+
+        let divider = handle_at("left-history-divider").unwrap();
+        let before = harness.app.preferences.timeline_left_height;
+        harness.step(&json!({"drag": [[divider.x, divider.y], [divider.x, divider.y + 40.0]]})).unwrap();
+        assert!(
+            harness.app.preferences.timeline_left_height > before + 20.0,
+            "dragging the divider should remember a taller history section: {before} -> {}",
+            harness.app.preferences.timeline_left_height
+        );
+
+        harness.step(&json!({"click": {"handle": "left-browser-toggle"}})).unwrap();
+        assert!(harness.app.preferences.timeline_left_browser_collapsed);
+        assert!(handle_at("row:Untitled").is_none(), "the collapsed browser should hide its rows");
+        harness.step(&json!({"click": {"handle": "left-browser-toggle"}})).unwrap();
+        assert!(!harness.app.preferences.timeline_left_browser_collapsed);
+        assert!(handle_at("row:Untitled").is_some(), "expanding the browser should restore its rows");
+    }
+
+    #[test]
     fn rollback_bar_above_last_feature_can_be_dragged_to_the_end() {
         let mut harness = Harness::new();
         harness.app.preferences.timeline_left = true;
