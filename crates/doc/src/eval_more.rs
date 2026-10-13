@@ -325,6 +325,21 @@ fn sheet_for(st: &ModelState, body: &Option<String>, pick: Option<Vec3>) -> Resu
         .ok_or_else(|| DocError::Invalid("there is no sheet metal body".into()))
 }
 
+/// Whether a point touches sheet `i`'s material: inside it, on one of its faces, or within its
+/// display tolerance of one (picks land on the display mesh). A sheet with no mesh to test
+/// against counts as touched.
+fn on_sheet_material(st: &ModelState, i: usize, p: Vec3) -> bool {
+    let Some(mb) = st.sheets.get(i).and_then(|sh| st.body(&sh.body)) else { return true };
+    let mesh = mb.mesh();
+    if mesh.triangles.is_empty() {
+        return true;
+    }
+    // Twice the display mesh's chord tolerance (see `ModelBody::mesh`).
+    let step = 2.0 * (mb.body.size() * 1e-3).max(1e-3);
+    let offsets = [-step, 0.0, step];
+    offsets.iter().any(|&dx| offsets.iter().any(|&dy| offsets.iter().any(|&dz| mesh.contains(p + Vec3::new(dx, dy, dz)))))
+}
+
 /// A region mirrored in the sketch x axis (y → −y); curves other than lines and arcs as polylines.
 fn mirror_y(r: &Region2) -> Region2 {
     let f = |p: Vec2| Vec2::new(p.x, -p.y);
@@ -500,6 +515,19 @@ pub(super) fn sheet_eval(
                     doc.rule_values(vals, &doc.sheet_rule(Some(&rule)))?.bend_radius
                 }
             };
+            // A fixed point that touches no material at all (e.g. far above the sheet) still picks
+            // the side it lies on, so a stored fold keeps recomputing; it says so (#371).
+            if let Some(p) = fixed
+                && !on_sheet_material(st, i, *p)
+            {
+                *warning = Some(format!(
+                    "{} at ({:.3}, {:.3}, {:.3}); the side of the fold line it lies on stays",
+                    sheet::FOLD_FIXED_OFF_SHEET,
+                    p.x,
+                    p.y,
+                    p.z
+                ));
+            }
             let sh = st.sheets.get_mut(i).ok_or_else(|| DocError::Invalid("sheet".into()))?;
             if sh.flat {
                 return Err(DocError::Invalid("refold the sheet before folding it".into()));
