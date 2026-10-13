@@ -80,12 +80,12 @@ fn min_angle(m: &Mesh) -> f64 {
 
 #[test]
 fn a_box_is_a_regular_grid_on_every_face() {
-    // 40 × 30 × 20: sides at most 1/20 of the diagonal (2.69 mm), so 15 × 12 × 8 cells.
+    // 40 × 30 × 20: sides at most 1/5 of the diagonal (10.77 mm), so 4 × 3 × 2 cells.
     let b = ok(crate::box_solid(Vec3::ZERO, Vec3::new(40.0, 30.0, 20.0)));
     let (m, s) = plan_body(&b, 0.05);
     assert_eq!(s.planar, 6);
     assert_watertight(&m, "box");
-    let cells = 2 * (15 * 12 + 15 * 8 + 12 * 8);
+    let cells = 2 * (4 * 3 + 4 * 2 + 3 * 2);
     assert_eq!(m.triangles.len(), 2 * cells, "two triangles per grid cell");
     assert!(min_angle(&m) > 40.0, "{}", min_angle(&m));
 }

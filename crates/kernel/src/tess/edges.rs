@@ -149,7 +149,7 @@ mod tests {
             }
         }
         // A coarse tolerance alone would leave a few long chords; the turn limit keeps every
-        // side within 15° of arc: at least 24 around each of the two circles.
+        // side within 30° of arc: at least 12 around each of the two circles.
         let mut seen = std::collections::HashSet::new();
         let sides: usize = cyl
             .solid
@@ -157,6 +157,6 @@ mod tests {
             .filter(|e| seen.insert(e.id()) && !matches!(e.curve(), mt::Curve::Line(_)))
             .map(|e| sample_edge(&e, 5.0, f64::INFINITY).len() - 1)
             .sum();
-        assert!(sides >= 48, "{sides}");
+        assert!(sides >= 24, "{sides}");
     }
 }

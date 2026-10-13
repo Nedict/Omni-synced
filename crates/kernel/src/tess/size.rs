@@ -11,11 +11,14 @@ use solidcraft_geom::tess::EvalSurface;
 use super::uv::Domain;
 
 /// Largest turn (radians) of the surface normal, or an edge's tangent, across one side.
-pub(crate) const MAX_TURN: f64 = 15.0 * std::f64::consts::PI / 180.0;
+pub(crate) const MAX_TURN: f64 = 30.0 * std::f64::consts::PI / 180.0;
 /// Longest side, as a fraction of the body's extent.
-const MAX_LEN_FRACTION: f64 = 1.0 / 20.0;
-/// Longest side relative to the side the curvature asks for (1: about equilateral).
-const ASPECT: f64 = 1.0;
+const MAX_LEN_FRACTION: f64 = 1.0 / 5.0;
+/// Longest side relative to the side the curvature asks for: along a straight direction (a
+/// cylinder's axis) triangles may be this many times longer than across it. With
+/// [`MAX_TURN`] and [`MAX_LEN_FRACTION`] this puts the oracle parts' display meshes at about
+/// the reference mesher's triangle count (1.2×; 5× with equilateral triangles and 15°).
+const ASPECT: f64 = 4.0;
 /// Curvature samples per parameter direction.
 const SAMPLES: usize = 9;
 
@@ -109,7 +112,7 @@ mod tests {
         };
         let rules = Rules::new(0.01, 100.0);
         let (h, speed) = face_size(&s, &super::super::uv::domain(&s), &rules);
-        // r = 3: 15° of turn is 0.785 mm; the 0.01 mm sag chord is √(8·3·0.01) = 0.49 mm.
+        // r = 3: 30° of turn is 1.57 mm; the 0.01 mm sag chord is √(8·3·0.01) = 0.49 mm.
         assert!((h - ASPECT * (8.0 * 3.0 * 0.01f64).sqrt()).abs() < 0.01, "{h}");
         assert!((speed[0] - 40.0).abs() < 1e-6 && (speed[1] - 3.0).abs() < 1e-6, "{speed:?}");
         // Coarser: the turn limit governs.
@@ -121,6 +124,6 @@ mod tests {
     fn a_plane_takes_the_longest_side() {
         let s = EvalSurface::Plane { origin: Vec3::ZERO, du: Vec3::X, dv: Vec3::Y };
         let rules = Rules::new(0.01, 100.0);
-        assert_eq!(face_size(&s, &super::super::uv::domain(&s), &rules).0, 5.0);
+        assert_eq!(face_size(&s, &super::super::uv::domain(&s), &rules).0, 20.0);
     }
 }
