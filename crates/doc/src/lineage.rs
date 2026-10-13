@@ -207,7 +207,7 @@ impl<'a> ProfileRoles<'a> {
         let segments: Vec<&solidcraft_geom::Seg2> =
             self.region.map(|r| std::iter::once(&r.outer).chain(&r.holes).flat_map(|l| &l.segs).collect()).unwrap_or_default();
         let curves = self.sketch.map(crate::config::ExactSketchCurves::new);
-        let curve = |segment: usize| -> Option<String> { curves.as_ref()?.find(segments.get(segment)?).map(|id| format!("side:{id}")) };
+        let curve = |segment: usize| -> Option<String> { curves.as_ref()?.find_along(segments.get(segment)?).map(|id| format!("side:{id}")) };
         let roles = history
             .faces
             .iter()
@@ -271,7 +271,7 @@ impl SectionRoles<'_> {
         for (k, (sketch, lp)) in self.sections.iter().enumerate() {
             let curves = crate::config::ExactSketchCurves::new(sketch);
             for seg in &lp.segs {
-                let role = curves.find(seg).map(|id| if k == 0 { format!("side:{id}") } else { format!("side:s{k}.{id}") });
+                let role = curves.find_along(seg).map(|id| if k == 0 { format!("side:{id}") } else { format!("side:s{k}.{id}") });
                 segments.push((k, role));
             }
         }

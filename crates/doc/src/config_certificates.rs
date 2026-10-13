@@ -421,6 +421,40 @@ impl<'a> ExactSketchCurves<'a> {
             (None, None) => None,
         }
     }
+
+    /// [`find`](Self::find), else the one sketch line a generated straight segment runs along
+    /// and overlaps: a profile a feature grew to overlap a flush face (its neighbours lengthened
+    /// past the sketch's corners) still names its sides by the lines they were drawn on. Two
+    /// candidates stay ambiguous.
+    pub(crate) fn find_along(&self, generated: &Seg2) -> Option<String> {
+        if let Some(id) = self.find(generated) {
+            return Some(id);
+        }
+        let Seg2::Line { a: c, b: d } = *generated else { return None };
+        let mut found: Option<Option<&str>> = None;
+        for (id, linked, originals) in &self.segments {
+            if *linked {
+                continue;
+            }
+            let along = originals.iter().any(|original| {
+                let Seg2::Line { a, b } = *original else { return false };
+                let direction = b - a;
+                let scale = direction.len().max((d - c).len()).max(1.);
+                if direction.len() <= 1e-12
+                    || direction.cross(c - a).abs() > 1e-10 * scale * scale
+                    || direction.cross(d - a).abs() > 1e-10 * scale * scale
+                {
+                    return false;
+                }
+                let (tc, td) = ((c - a).dot(direction) / direction.len2(), (d - a).dot(direction) / direction.len2());
+                tc.min(td).max(0.) < tc.max(td).min(1.) - 1e-9
+            });
+            if along {
+                found = Some(if found.is_some() { None } else { Some(*id) });
+            }
+        }
+        found.flatten().map(str::to_owned)
+    }
 }
 
 fn exact_segment_contains(original: &Seg2, generated: &Seg2) -> bool {

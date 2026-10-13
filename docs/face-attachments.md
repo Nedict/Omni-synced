@@ -33,7 +33,10 @@ Where the pieces of one name no longer share a plane (Offset Face raised one pie
 cut had split), each piece is attached by its own name: the face's, qualified by the faces
 around it (`F2:top#[F2:side:l4,F4:side:l4]`). The plastic features (Boss, Lip, Rest, Snap Fit)
 keep the history of the body they go on and name their own faces by the part they make
-(`F4:post:top`, `F5:rest:side:0`, `F6:arm:top`), so those take attachments too.
+(`F4:post:top`, `F5:rest:side:0`, `F6:arm:top`), so those take attachments too. A side an extrude grew to
+overlap a flush body before joining it (its neighbours lengthened past the sketch's corners) is
+still named by the sketch line it runs along, so a wall a Join merged from two extrudes' walls
+attaches by the first one's name and answers to the other's.
 
 Faces whose history is not exact (faces a feature rebuilt without reporting its history),
 ambiguous sources, and the pieces of a face split on purpose with Split Face (each piece is its

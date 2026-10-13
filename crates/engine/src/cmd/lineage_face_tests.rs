@@ -246,3 +246,84 @@ fn counterbore_floors_and_their_pattern_copies_take_a_sketch() {
     }
     healthy(&reopened(&s), "Copy");
 }
+
+/// The middle of the largest triangle of each flat face of the first body.
+fn flat_faces(s: &Session) -> Vec<(usize, solidcraft_geom::Vec3)> {
+    let state = s.model.state();
+    let body = &state.bodies[0].body;
+    let mesh = body.tessellate(0.01).unwrap();
+    (0..body.face_count())
+        .filter(|index| body.planar_face(*index).is_some())
+        .filter_map(|index| {
+            let point = mesh
+                .triangles
+                .iter()
+                .zip(&mesh.tri_face)
+                .filter(|(_, f)| **f as usize == index)
+                .filter_map(|(t, _)| mesh.tri(t))
+                .max_by(|[a, b, c], [d, e, f]| (*b - *a).cross(*c - *a).len().total_cmp(&(*e - *d).cross(*f - *d).len()))
+                .map(|[a, b, c]| (a + b + c) * (1.0 / 3.0))?;
+            Some((index, point))
+        })
+        .collect()
+}
+
+/// Every flat face of the first body takes an attached sketch (#681: a flat face is a flat face,
+/// whichever features it was merged from).
+fn every_flat_face_takes_a_sketch(s: &mut Session) {
+    no_errors(s);
+    let faces = flat_faces(s);
+    assert!(faces.len() >= 8, "{}", faces.len());
+    let mut failed = Vec::new();
+    for (index, point) in faces {
+        match s.execute("sketch.create", &json!({"plane": {"face": point, "body": "Body1", "index": index}})) {
+            Ok(made) => {
+                run(s, "sketch.finish", json!({}));
+                let id = made["sketch"].as_u64().unwrap();
+                if !matches!(s.placed_document().sketch_face_attachment(id, &s.model), FaceAttachmentStatus::Healthy { .. }) {
+                    failed.push(format!("face {index} at {point:?}: not healthy"));
+                }
+            }
+            Err(e) => failed.push(format!("face {index} at {point:?}: {e}")),
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+/// #681: a block with a lower step joined flush beside it. The step's side walls continue the
+/// block's (a Join merged them), and they take a sketch like every other flat face.
+#[test]
+fn every_flat_face_of_a_block_and_a_flush_step_takes_a_sketch() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "A"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [20, 10]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "A", "distance": 10, "name": "Block"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "B"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 10], "p1": [20, 20]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "B", "distance": 5, "operation": "join", "name": "Step"}));
+    every_flat_face_takes_a_sketch(&mut s);
+}
+
+/// #681 as reported: one sketch of a 2 x 2 grid, three cells extruded up (an elbow) and three
+/// joined down (the inverse elbow).
+#[test]
+#[ignore = "the join of the elbow down fails until #679 is fixed"]
+fn every_flat_face_of_an_elbow_up_and_an_elbow_down_takes_a_sketch() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Grid"}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [20, 0], [20, 20], [0, 20]], "closed": true}));
+    run(&mut s, "sketch.line", json!({"points": [[10, 0], [10, 20]]}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 10], [20, 10]]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let cells = |pts: [[f64; 2]; 3]| pts.iter().map(|p| json!({"point": p})).collect::<Vec<_>>();
+    run(&mut s, "solid.extrude", json!({"sketch": "Grid", "distance": 10, "profiles": cells([[5., 5.], [15., 5.], [5., 15.]]), "name": "Up"}));
+    let down = cells([[15., 5.], [5., 15.], [15., 15.]]);
+    run(
+        &mut s,
+        "solid.extrude",
+        json!({"sketch": "Grid", "distance": 10, "direction": "negative", "operation": "join", "profiles": down, "name": "Down"}),
+    );
+    every_flat_face_takes_a_sketch(&mut s);
+}
