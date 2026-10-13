@@ -29,16 +29,29 @@ carry their seed's construction certificate, so a sketch attached to the seed be
 patterned keeps resolving to the seed: of the faces carrying one certificate, the producing
 feature's own face is the one whose name is not a copy's.
 
-Faces whose history is not exact (Offset Face, the plastic features, sheet metal rims, faces a
-feature rebuilt without reporting its history), ambiguous sources, and the pieces of a face
-split on purpose with Split Face (each piece is its own face) require an explicit fixed plane
-instead. The error says why, and the Create Sketch dialog then offers **Use fixed plane**,
+Where the pieces of one name no longer share a plane (Offset Face raised one piece of a top a
+cut had split), each piece is attached by its own name: the face's, qualified by the faces
+around it (`F2:top#[F2:side:l4,F4:side:l4]`). The plastic features (Boss, Lip, Rest, Snap Fit)
+keep the history of the body they go on and name their own faces by the part they make
+(`F4:post:top`, `F5:rest:side:0`, `F6:arm:top`), so those take attachments too. A side an extrude grew to
+overlap a flush body before joining it (its neighbours lengthened past the sketch's corners) is
+still named by the sketch line it runs along, so a wall a Join merged from two extrudes' walls
+attaches by the first one's name and answers to the other's.
+
+Faces whose history is not exact (faces a feature rebuilt without reporting its history),
+ambiguous sources, and the pieces of a face split on purpose with Split Face (each piece is its
+own face) require an explicit fixed plane instead. The error says why, and the Create Sketch dialog then offers **Use fixed plane**,
 which places the sketch on that face's current plane without following later changes. A
 nearby or parallel face is never used to repair a new attachment automatically.
 
 The flat faces of a sheet metal body are the exception: they have no construction
 certificate, so a sketch on one attaches to its panel by name (`sheet:<body>:<panel>:<side>`)
-and finds it again after every rebuild, unfold and refold. If that panel no longer exists the
+and finds it again after every rebuild, unfold and refold. The rims (the sheet's thickness
+along a panel's straight edge) attach the same way, by the edge they run along
+(`<panel>:rim.l3` for a base sketch line, `<flange>:rim.far`, `rim.side0`, `rim.side1`), and so
+do the flat ends of a bend (`<flange>:rim.bend0`, `rim.bend1`); a rim's plane faces out of the
+panel, its x along the edge and its y across the thickness. Extrude and Press Pull from a sheet
+face use the same attachment. If that panel no longer exists the
 sketch reports a lost attachment, as above. See the sheet metal guide.
 
 ## Create and repair

@@ -202,7 +202,8 @@ fn fillet_into_an_earlier_round() {
     }
 }
 
-/// Clean seeds and the original seed 5 edge contact, now rejected without distortion.
+/// Clean seeds, and the original seed 5 edge contact and seed 16 partial face contact, now
+/// rejected without distortion.
 #[test]
 fn fixed_seeds_run_clean() {
     for seed in FIXED_SEEDS {
@@ -224,6 +225,29 @@ fn fixed_seeds_run_clean() {
             assert!((total_volume(&s) - 3750.0).abs() < 1e-6);
             assert_eq!(s.model.state().bodies.len(), 1);
             assert!(s.model.state().bodies.first().unwrap().body.validity().is_empty());
+            continue;
+        }
+        if *seed == 16 {
+            // Seed 16 patterns a short cylinder around a block: one copy's cap lies on a side of
+            // the block but half of it runs past the block's bottom edge. That contact can't be
+            // fused yet (#674). Before #577 the join came back as two shells touching over the
+            // half disc (#396); with #577 alone, the cap was pushed into the block over its whole
+            // area, which added 72 mm³ past the edge (45290.6 mm³ for 45218.4). The retry guard (#644) refuses that,
+            // so the pattern is refused and the part stays as it was.
+            let mut s = Session::default();
+            run(&mut s, "solid.box", json!({"length": 25.0, "width": 47.5, "height": 37.5}));
+            run(
+                &mut s,
+                "solid.cylinder",
+                json!({"axis": [1.0, 0.0, 0.0], "base": [0.0, 7.5, 0.0], "height": 2.5, "operation": "join", "radius": 5.0}),
+            );
+            let before = total_volume(&s);
+            // The block, and the half of the cylinder outside it.
+            assert!((before - (25.0 * 47.5 * 37.5 + PI * 25.0 * 2.5 / 2.0)).abs() < 0.05, "{before}");
+            let error = s.execute("solid.pattern.circular", &json!({"axis": "Z", "count": 4, "features": ["Cylinder1"]})).unwrap_err();
+            assert!(error.to_string().contains("touch along faces that could not be fused"), "{error}");
+            assert!((total_volume(&s) - before).abs() < 1e-6);
+            assert!(s.model.state().bodies.iter().all(|b| b.body.validity().is_empty()));
             continue;
         }
         let r = fuzz::run(*seed, 8);
