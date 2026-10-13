@@ -1,8 +1,9 @@
 # UI localization
 
-SolidCraft embeds its translations and works offline. English and Japanese are currently
-registered in `crates/ui-egui/src/i18n.rs`. Adding a language requires an embedded catalog and
-one registration there; the preferences selector and validation use the same registry.
+SolidCraft embeds its translations and works offline. English, Japanese, German, Korean and
+Chinese are currently registered in `crates/ui-egui/src/i18n.rs`. Adding a language requires an
+embedded catalog and one registration there; the preferences selector and validation use the same
+registry.
 
 ## Messages
 
@@ -22,6 +23,28 @@ Generated browser labels use named templates while their underlying model names 
 Catalogs are parsed once and looked up through ordered maps. This is offline localization,
 not a claim of zero runtime overhead. The catalog tests check registered locale IDs,
 translation keys, and placeholder consistency. Run `cargo xtask ci` before submitting changes.
+
+## Coverage
+
+A message a locale never received falls back to English silently, so a gap shows up only as a row
+that looks untranslated. Two guards catch that in the build:
+
+- `every_catalog_carries_every_english_message` — adding a key to `en.json` without giving it to
+  the other catalogs fails the tests.
+- `every_toolbar_tab_and_panel_is_in_the_english_catalog` — tabs and panels reach the UI as bare
+  source strings, resolved only by the English-label adapter, so a heading missing from `en.json`
+  can never translate.
+
+Command labels are the same case on a larger scale: every label in the engine's registry now has
+an entry under `cmd.<command id>`, and `every_command_label_is_in_the_english_catalog` fails if a
+command is added without one.
+
+`cargo xtask i18n` prints the same picture across every locale — which messages each one is
+missing and which command labels English cannot translate. `--check` turns it into a non-zero exit
+for CI. `--add-missing` writes each uncovered label into `en.json` under `cmd.<command id>`, with
+the English label as its text, so the label adapter can find it and only the translations are left
+to do. One key per distinct label: two commands that share a label (`Trim`, `Extend`) must not both
+claim it, or the English-text lookup would silently pick one.
 
 ## Rendering and coverage
 
