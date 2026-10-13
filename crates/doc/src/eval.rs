@@ -880,6 +880,7 @@ fn cache_key(f: &Feature, chain_fp: u64, local: u64, ctx: u64, state: &ModelStat
 fn placement_digest(doc: &Document, f: &Feature) -> u64 {
     let path = match &f.kind {
         FeatureKind::Sweep { path_sketch, .. }
+        | FeatureKind::SurfaceSweep { path_sketch, .. }
         | FeatureKind::Pipe { path_sketch, .. }
         | FeatureKind::Pattern { pattern: crate::PatternKind::Path { path_sketch, .. }, .. } => Some(*path_sketch),
         _ => None,
@@ -892,7 +893,7 @@ fn placement_digest(doc: &Document, f: &Feature) -> u64 {
         for frame in [doc.component_transform(f.component), doc.component_transform(owner)] {
             frame.iter().flatten().for_each(|value| value.to_bits().hash(&mut hash));
         }
-        if let FeatureKind::Sweep { sketch, .. } = &f.kind {
+        if let FeatureKind::Sweep { sketch, .. } | FeatureKind::SurfaceSweep { sketch, .. } = &f.kind {
             let owner = doc.feature(*sketch).map(|feature| feature.component).unwrap_or(0);
             doc.component_transform(owner).iter().flatten().for_each(|value| value.to_bits().hash(&mut hash));
         }
@@ -3635,7 +3636,8 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         | FeatureKind::SurfaceExtrude { .. }
         | FeatureKind::Unstitch { .. }
         | FeatureKind::ReverseNormal { .. }
-        | FeatureKind::SurfaceRevolve { .. } => surface::eval(doc, vals, f, st),
+        | FeatureKind::SurfaceRevolve { .. }
+        | FeatureKind::SurfaceSweep { .. } => surface::eval(doc, vals, f, st),
         FeatureKind::Emboss { .. }
         | FeatureKind::Rib { .. }
         | FeatureKind::ReplaceFace { .. }

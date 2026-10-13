@@ -118,6 +118,8 @@
 //!   saves as before. 0.9.0 would heal a gap the design leaves open.
 //!   A `SurfaceRevolve` feature (Surface Revolve: `sketch`, optional `profiles`, `curves`,
 //!   `axis`, `angle`, optional `angle2` and `symmetric`) is also first saved in 18.
+//!   A `SurfaceSweep` feature (Surface Sweep: `sketch`, optional `profiles` and `curves`,
+//!   `path_sketch`, `path`) is also first saved in 18.
 
 use serde_json::Value;
 

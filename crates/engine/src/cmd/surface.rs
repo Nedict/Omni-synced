@@ -5,7 +5,7 @@ use serde_json::Value;
 use solidcraft_doc::{FaceAt, FeatureKind, PlaneRef, ProfileSel, expr::Kind};
 
 use super::CommandSpec;
-use super::features::{add_feature, axis_param, check_expr, extent_param, feature_sketch, operation, plane_param, profiles};
+use super::features::{add_feature, axis_param, check_expr, extent_param, feature_sketch, operation, plane_param, profiles, sketch_id};
 use crate::params::{bad, bool_, expr, str_, string_list, vec3};
 use crate::{Result, Session};
 
@@ -38,10 +38,10 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SURFACE", "CREATE")
         .icon("surface_revolve")
         .params("sketch?: id|name; curves?: [curve ids] and/or profiles? (as surface.extrude); axis: sketch line id|x|y|X|Y|Z|{origin, dir}; angle?: expr (default 360 deg); angle2?: expr (the other side); symmetric?: bool; name?, body_name? (a surface body, no caps; a solid where a full turn closes it)"),
-    planned!("surface.sweep", "Surface Sweep", "757")
+    CommandSpec::new("surface.sweep", "Surface Sweep", surface_sweep)
         .at("SURFACE", "CREATE")
         .icon("surface_sweep")
-        .params("planned: the parameters of solid.sweep, with an open profile chain as well as a closed one (no caps); caps?: bool"),
+        .params("sketch?: id|name; curves?: [curve ids] and/or profiles? (as surface.extrude); path_sketch: sketch; path: [curve ids in order] (a path with corners, or 3D curves, gives ruled walls mitred at the corners); name?, body_name? (a surface body, no caps)"),
     planned!("surface.loft", "Surface Loft", "757")
         .at("SURFACE", "CREATE")
         .icon("surface_loft")
@@ -153,6 +153,18 @@ fn surface_revolve(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let symmetric = bool_(p, "symmetric").unwrap_or(false) || str_(p, "direction").is_some_and(|d| d.eq_ignore_ascii_case("symmetric"));
     add_feature(s, p, FeatureKind::SurfaceRevolve { sketch, profiles, curves, axis, angle, angle2, symmetric })
+}
+
+fn surface_sweep(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "surface.sweep";
+    let sketch = feature_sketch(s, p, cmd)?;
+    let (profiles, curves) = sheet_inputs(p, cmd)?;
+    let path_sketch = sketch_id(s, p.get("path_sketch"), cmd, "path_sketch")?;
+    let path = string_list(p, "path");
+    if path.is_empty() || path.len() > 1000 {
+        return Err(bad(cmd, "`path` must list 1…1000 curve ids"));
+    }
+    add_feature(s, p, FeatureKind::SurfaceSweep { sketch, profiles, curves, path_sketch, path })
 }
 
 fn bodies_param(s: &Session, p: &Value, cmd: &str) -> Result<Vec<String>> {
@@ -432,13 +444,57 @@ mod tests {
         assert!(s.execute("surface.revolve", &json!({"sketch": "S", "curves": ["side"], "axis": "y", "angle": "400 deg"})).is_err());
     }
 
+    /// Surface Sweep: a line along y carried up a path in the XZ plane, straight then round a
+    /// quarter turn (every point of it 5 from the arc's axis: 10 × (5 + 5π/2)), or round a
+    /// corner (10 × both legs); a rectangle's walls up the straight leg; undo, redo, reopening.
+    #[test]
+    fn surface_sweep_curves_and_profiles() {
+        use std::f64::consts::FRAC_PI_2;
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [0, 10]], "ids": ["l"]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "sketch.create", json!({"plane": "XZ", "name": "P"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [0, 5]], "ids": ["up"]}));
+        let arc = run(
+            &mut s,
+            "sketch.arc.three_point",
+            json!({"start": [0, 5], "end": [5, 10], "through": [5.0 - 5.0 / 2f64.sqrt(), 5.0 + 5.0 / 2f64.sqrt()]}),
+        )["created"]["curves"][0]
+            .as_str()
+            .unwrap()
+            .to_string();
+        run(&mut s, "sketch.line", json!({"points": [[0, 5], [5, 5]], "ids": ["over"]}));
+        run(&mut s, "sketch.finish", json!({}));
+        let close = |a: f64, want: f64| assert!((a - want).abs() < want * 2e-3, "{a} vs {want}"); // (measured on meshes)
+        run(&mut s, "surface.sweep", json!({"sketch": "S", "curves": ["l"], "path_sketch": "P", "path": ["up", arc], "body_name": "Bend"}));
+        assert!(s.world_state().body("Bend").unwrap().body.is_surface());
+        close(area(&s, "Bend"), 10.0 * (5.0 + 5.0 * FRAC_PI_2));
+        run(&mut s, "surface.sweep", json!({"sketch": "S", "curves": ["l"], "path_sketch": "P", "path": ["up", "over"], "body_name": "Corner"}));
+        close(area(&s, "Corner"), 100.0);
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "R"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-1, -1], "p1": [1, 2]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "surface.sweep", json!({"sketch": "R", "path_sketch": "P", "path": ["up"], "body_name": "Walls"}));
+        let st = s.world_state();
+        assert!(st.body("Walls").unwrap().body.is_surface() && st.body("Walls").unwrap().body.face_count() == 4);
+        close(area(&s, "Walls"), 10.0 * 5.0);
+        run(&mut s, "edit.undo", json!({}));
+        assert!(s.world_state().body("Walls").is_none());
+        run(&mut s, "edit.redo", json!({}));
+        let cold = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        assert!((area(&cold, "Bend") - area(&s, "Bend")).abs() < 1e-9);
+        // Refused: no path, and a path curve that is not there.
+        assert!(s.execute("surface.sweep", &json!({"sketch": "S", "curves": ["l"], "path_sketch": "P"})).is_err());
+        assert!(s.execute("surface.sweep", &json!({"sketch": "S", "curves": ["l"], "path_sketch": "P", "path": ["nope"]})).is_err());
+    }
+
     /// The planned surface commands are registered but refuse to run: disabled with the
     /// issue that tracks them, an error (never a panic) from every caller, and the design left
     /// as it was.
     #[test]
     fn planned_commands_refuse_and_leave_the_design_alone() {
         let planned = [
-            "surface.sweep",
             "surface.loft",
             "surface.offset",
             "surface.ruled",

@@ -1,5 +1,5 @@
 //! Evaluation of the surface features: Patch, Stitch, Thicken, Trim, Extend, Surface Extrude,
-//! Unstitch and Reverse Normal (kernel `surfaces`).
+//! Revolve and Sweep, Unstitch and Reverse Normal (kernel `surfaces`).
 
 use super::*;
 use solidcraft_geom::Seg2;
@@ -153,6 +153,32 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             if let Some(slot) = st.bodies.get_mut(i) {
                 *slot = ModelBody::traced_new(mb.name, turned, mb.feature);
             }
+            Ok(())
+        }
+        FeatureKind::SurfaceSweep { sketch, profiles, curves, path_sketch, path } => {
+            let ss = st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?;
+            let ps =
+                st.sketch(*path_sketch).ok_or_else(|| DocError::Unknown(format!("sketch {path_sketch} (it must come earlier in the timeline)")))?;
+            // As Sweep: a 3D path sketch is followed in the feature's frame, the curves with it.
+            let profile;
+            let ss = if !ps.sketch.wires.is_empty() {
+                profile = profile_in_frame(doc, ss, f.component)?;
+                &profile
+            } else {
+                ss
+            };
+            let mapped = path_in_frame(doc, ps, f.component)?;
+            let ps = mapped.as_ref();
+            let chains = sheet_chains(ss, profiles.as_ref(), curves)?;
+            // The path runs on from the end nearest the middle of the curves.
+            let pts: Vec<Vec2> = chains.iter().flatten().flat_map(|s| s.polyline(1e-2)).collect();
+            let start = ss.plane.to_world(pts.iter().fold(Vec2::default(), |a, p| a + *p) * (1.0 / pts.len().max(1) as f64));
+            let body = match path_points(ps, path, start)? {
+                Some(pts) => kernel::sweep_sheet_points(&ss.plane, &chains, &pts)?,
+                None => kernel::sweep_sheet(&ss.plane, &chains, &path_segments(ps, path, start)?)?,
+            };
+            let name = new_name(st, f, 0);
+            st.bodies.push(ModelBody::new(name, body, f.id));
             Ok(())
         }
         _ => Err(DocError::Invalid("not a surface feature".into())),

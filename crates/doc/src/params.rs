@@ -289,6 +289,7 @@ impl FeatureKind {
             | FeatureKind::BoundaryFill { .. }
             | FeatureKind::Loft { .. }
             | FeatureKind::Sweep { .. }
+            | FeatureKind::SurfaceSweep { .. }
             | FeatureKind::Import { .. }
             | FeatureKind::MeshImport { .. }
             | FeatureKind::BodyTransfer { .. } => {}
