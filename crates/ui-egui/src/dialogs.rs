@@ -615,7 +615,13 @@ impl Dialog {
             Kind::Shell { thickness } => ("Thickness", ValueKind::Length, thickness),
             Kind::Draft { angle } => ("Angle", ValueKind::Angle, angle),
             Kind::Hole { diameter, .. } => ("Diameter", ValueKind::Length, diameter),
-            Kind::Move { x, .. } => ("X", ValueKind::Length, x),
+            // A move's main value follows its type: a distance along X for the ones that
+            // translate, the angle for Rotate. Point to Point is two picks with nothing to type.
+            Kind::Move { mode, x, angle, .. } => match *mode {
+                crate::dialogs_move::ROTATE => ("Angle", ValueKind::Angle, angle),
+                crate::dialogs_move::POINT_TO_POINT => return None,
+                _ => ("X", ValueKind::Length, x),
+            },
             Kind::PatternRect { spacing, .. } => ("Spacing", ValueKind::Length, spacing),
             Kind::PatternCirc { angle, .. } => ("Angle", ValueKind::Angle, angle),
             Kind::Section { offset, .. } => ("Distance", ValueKind::Length, offset),
