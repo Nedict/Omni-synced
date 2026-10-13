@@ -24,6 +24,48 @@ new uses of it anywhere else. Public docs/web/Flatpak deployments use project Pa
 
 `plan/` is gitignored (local only).
 
+## Working alongside other agents (mandatory)
+
+Several agents may work in this repository **at the same time**, from the same checkout or from
+sibling checkouts of the same clone. They share one Git index, one working tree and one
+`.git/` state, so an uncoordinated command from one agent can destroy another's work. Follow
+these rules whenever more than one agent may be active:
+
+1. **Announce before you touch shared state.** Append an entry to `plan/agents.md` (create it if
+   missing; `plan/` is gitignored, so it is per-checkout and never committed) before starting:
+   `## <agent-id> @ <UTC time> — <what you are doing>`, listing the files or ranges you intend to
+   edit. Keep entries short; remove yours when you finish.
+2. **One long Git operation at a time.** Never run `git pull`, `git rebase`, `git merge`,
+   `git checkout <branch>`, `git reset`, `git stash` or `git clean` while another agent may be
+   mid-operation. Check `plan/agents.md` and `git status` first. A rebase/merge/cherry-pick in
+   progress (`.git/rebase-merge/`, `.git/rebase-apply/`, `.git/MERGE_HEAD`) means **stop**: do not
+   start another. If it is dormant (no mtime change for several minutes) and blocking the tree,
+   you may finish or abort it — first commit or stash your own uncommitted edits, because
+   `git rebase --abort` restores tracked files to HEAD and will discard them.
+3. **Never `git add -A` / `git add .`.** Stage only the files you changed, by path. Another
+   agent's uncommitted work is in the same tree; a sweeping add bundles it into your commit.
+4. **Never force-push, reset --hard, clean -fd or checkout -- .** These destroy uncommitted work
+   that is not yours. If you need to undo, undo your own paths only.
+5. **Keep your work recoverable.** Commit to a named branch (e.g. `csharp-bridge`) before any
+   rebase, and record the tip in `plan/agents.md`. If you find someone else's commits stranded in
+   a reflog, preserve them on a branch before acting.
+6. **If you are mid-operation and need to stop**, finish or abort it cleanly first, and say so in
+   `plan/agents.md`. A half-finished rebase blocks everyone.
+7. **Conflict resolution preserves both sides' intent.** Resolve by keeping upstream *and* the
+   incoming change where they are additive (e.g. two test modules); never silently drop a side.
+   State the resolution and the validation you ran at handoff.
+8. **Report upstream state at handoff:** current `origin/main`, your branch's relationship to it,
+   whether a PR is open, and any conflicts you resolved.
+
+A compact entry looks like:
+
+```
+## bridge-agent @ 2026-10-12T22:05Z — C# interop (crates/ffi, csharp/, xtask/src/main.rs)
+status: active
+branch: csharp-bridge (tip 3f2a9c1)
+notes: rebase of main onto origin/main was mid-flight; aborted it after it stalled
+```
+
 ## Never crash
 People trust SolidCraft with their designs; a crash loses their work. **This outranks feature work.**
 - **No panics in non-test code:** no `unwrap()`, `expect()`, `panic!`, `unreachable!`, `todo!`,
