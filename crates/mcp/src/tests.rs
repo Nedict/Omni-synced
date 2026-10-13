@@ -505,3 +505,23 @@ fn a_bridged_request_carries_the_agents_folders() {
     assert_eq!(got["command"], "file.new");
     echo.join().unwrap();
 }
+
+/// #528: an agent saves the angle of a product photo as a named view once, then renders the
+/// model from that view after each change. The render must use the saved camera, not a
+/// standard view.
+#[test]
+#[ignore = "fails until #528 is fixed"]
+fn screenshot_renders_a_saved_named_view() {
+    let mut s = server();
+    tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 40, "width": 20, "height": 10}}));
+    let camera = json!({"target": [20, 10, 5], "yaw": 0.5, "pitch": -0.6, "distance": 150});
+    tool(&mut s, "execute", json!({"command": "view.save", "params": {"name": "Photo", "camera": camera}}));
+    let shot = |s: &mut Server, view: &str| {
+        let img = tool(s, "screenshot", json!({"view": view, "width": 96, "height": 64}));
+        img["data"].as_str().unwrap_or_default().to_string()
+    };
+    let iso = shot(&mut s, "iso");
+    let photo = shot(&mut s, "Photo");
+    assert!(photo.starts_with("iVBORw0KGgo"), "not a PNG");
+    assert_ne!(photo, iso, "the named view rendered like the standard iso view");
+}
