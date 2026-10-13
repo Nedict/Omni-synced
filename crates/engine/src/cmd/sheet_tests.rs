@@ -2467,3 +2467,37 @@ fn designs_without_per_edge_values_are_read_and_written_as_before() {
     design["features"][flange]["edges"][3] = json!({"point": [0.0, 45.0, 2.0], "twist": "3 deg"});
     assert!(solidcraft_doc::Document::from_json(&design.to_string()).is_err());
 }
+
+/// Names of the hole's side faces (curved, smaller than the bend faces) in `Body1`.
+fn hole_face_names(s: &mut Session) -> Vec<String> {
+    let faces = run(s, "model.faces", json!({"body": "Body1"}));
+    let faces = faces["faces"].as_array().cloned().unwrap_or_default();
+    faces
+        .iter()
+        .filter(|f| f["plane_normal"].is_null() && f["area"].as_f64().is_some_and(|a| a < 100.0))
+        .map(|f| f["name"].as_str().unwrap_or_default().to_string())
+        .collect()
+}
+
+#[test]
+#[ignore = "fails until #535 is fixed"]
+fn a_hole_on_a_folded_panel_keeps_the_name_of_its_sketch_circle() {
+    // A Ø10 hole at x = 20 on a 100 x 60 plate; the fold at x = 40 stands that (smaller) side up.
+    let mut s = Session::default();
+    base(&mut s, 100.0, 60.0);
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Hole"}));
+    let circle = run(&mut s, "sketch.circle.center", json!({"center": [20, 30], "radius": 5}));
+    let curve = circle["curves"][0].as_str().unwrap_or("c1").to_string();
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Hole", "through_all": true, "operation": "cut", "direction": "symmetric"}));
+    let side = format!(":side:{curve}#");
+    let flat = hole_face_names(&mut s);
+    assert_eq!(flat.len(), 2, "{flat:?}");
+    assert!(flat.iter().all(|n| n.contains(&side)), "before the fold: {flat:?}");
+    fold_line(&mut s);
+    run(&mut s, "sheet.fold", json!({"sketch": "FoldLine", "curve": "fl"}));
+    assert!(bbox(&mut s)["max"][2].as_f64().unwrap_or(0.0) > 20.0, "the hole's panel stands up");
+    let folded = hole_face_names(&mut s);
+    assert_eq!(folded.len(), 2, "{folded:?}");
+    assert!(folded.iter().all(|n| n.contains(&side)), "after the fold the hole is still circle {curve}: {folded:?} (before: {flat:?})");
+}
