@@ -42,6 +42,12 @@ pub(crate) fn entity_for_selection(app: &SolveApp, selection: &Sel) -> Option<St
     let ids = match selection {
         Sel::SketchCurve { id } => vec![id.clone()],
         Sel::Profile { sketch, index } if *sketch == sid => ss.profiles.get(*index)?.curve_ids(),
+        // A point of a letter's outline stands for its text (a double-click often lands on one).
+        Sel::SketchPoint { id } => {
+            let point = ss.sketch.resolve_point(id).and_then(|i| ss.sketch.points.get(i))?;
+            let link = point.link.as_deref()?;
+            vec![ss.sketch.curves.iter().find(|curve| curve.link.as_deref() == Some(link))?.id.clone()]
+        }
         _ => return None,
     };
     let mut link = None;

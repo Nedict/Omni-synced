@@ -70,6 +70,50 @@ fn text_drag_moves_all_letters_and_rebuilds_downstream_on_release() {
 }
 
 #[test]
+fn live_text_resize_follows_each_frame_and_rebuilds_downstream_on_release() {
+    let (mut s, link, _) = setup();
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance":3}));
+    run(&mut s, "sketch.edit", json!({"sketch":1}));
+    let curves = s.doc.sketch(1).unwrap().link_curves(&link).len();
+    for (frame, height) in [12.0, 16.0, 20.0].into_iter().enumerate() {
+        let at = Vec2::new(3.0 - frame as f64, 4.0);
+        run(&mut s, "sketch.edit_text", json!({"link":link,"at":[at.x,at.y],"height":height,"angle":-10,"live":true}));
+        assert!(s.model.is_stale(), "a live frame leaves the features after the sketch as they were");
+        let sk = s.doc.sketch(1).unwrap();
+        let LinkSource::Text { at: now, height: h, angle, text, .. } = &sk.link(&link).unwrap().source else { panic!() };
+        assert!(now.dist(at) < 1e-12);
+        assert_eq!((*h, text.as_str()), (height, "II"));
+        assert!((*angle + 10_f64.to_radians()).abs() < 1e-12);
+        // Same letters, same outlines: what references them keeps working.
+        assert_eq!(sk.link_curves(&link).len(), curves);
+        let shown = s.world_state();
+        assert!(shown.sketch(1).unwrap().profiles.len() >= 2, "the sketch shown follows the frame");
+    }
+    run(&mut s, "sketch.drag_end", json!({}));
+    assert!(!s.model.is_stale());
+    assert!(s.model.result(2).is_some_and(|r| r.error.is_none()));
+}
+
+#[test]
+fn live_text_edit_rejects_bad_values_and_leaves_the_design_as_it_was() {
+    let (mut s, link, _) = setup();
+    let before = s.doc.to_json();
+    let undo = s.undo.len();
+    for params in [
+        json!({"link":link,"height":0,"live":true}),
+        json!({"link":link,"height":-3,"live":true}),
+        json!({"link":link,"height":2e5,"live":true}),
+        json!({"link":"no-such-link","height":5,"live":true}),
+        json!({"height":5,"live":true}),
+    ] {
+        assert!(s.execute("sketch.edit_text", &params).is_err(), "{params}");
+        assert_eq!(s.doc.to_json(), before);
+        assert_eq!(s.undo.len(), undo);
+    }
+}
+
+#[test]
 fn text_move_in_a_rotated_component_preserves_font_and_local_coordinates() {
     let mut s = Session::default();
     let component = run(&mut s, "component.create", json!({"name":"Label"}));
