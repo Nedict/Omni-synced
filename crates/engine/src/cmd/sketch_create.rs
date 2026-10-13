@@ -10,6 +10,10 @@ use super::{CommandSpec, in_sketch};
 use crate::params::{bad, num, req_vec2, str_, string_list};
 use crate::{Result, Session};
 
+#[cfg(test)]
+#[path = "sketch_text_move_tests.rs"]
+mod text_move_tests;
+
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("sketch.line.midpoint", "Midpoint Line", midpoint_line)
         .at("SKETCH", "CREATE")
@@ -80,16 +84,19 @@ pub static COMMANDS: &[CommandSpec] = &[
         .enabled(in_sketch)
         .params("curves: [line ids], value?: bool (default toggles): centerline line type (not in profiles; an axis)"),
     CommandSpec::new("sketch.text", "Text", text).at("SKETCH", "CREATE").icon("text").enabled(in_sketch).params(concat!(
-        "text: string (\\n breaks lines), at: baseline start [x,y], height?: capital height mm (default 5), angle?: deg",
+        "text: string (\\n breaks lines), at: baseline start [x,y], height?: capital height mm (default 5), angle?: deg, font?: an installed font's family or full name, or a .ttf/.otf file path (~ and %VAR% expand; default: the built-in Liberation Sans)",
         created_doc!()
     )),
     CommandSpec::new("sketch.edit_text", "Edit Text", edit_text)
         .enabled(in_sketch)
-        .params(concat!("link: the text's link id (or entity: one of its curves), text?, at?, height?, angle?: deg", created_doc!())),
+        .params(concat!(
+            "link: the text's link id (or entity: one of its curves), text?, at?, height?, angle?: deg, font?: family or file path (empty: the built-in font)",
+            created_doc!()
+        )),
 ];
 
-fn text_source(p: &Value, cmd: &str, old: Option<(String, Vec2, f64, f64)>) -> Result<LinkSource> {
-    let (t0, at0, h0, a0) = old.unwrap_or((String::new(), Vec2::ZERO, 5.0, 0.0));
+fn text_source(p: &Value, cmd: &str, old: Option<(String, Vec2, f64, f64, Option<String>)>) -> Result<LinkSource> {
+    let (t0, at0, h0, a0, f0) = old.unwrap_or((String::new(), Vec2::ZERO, 5.0, 0.0, None));
     let text = str_(p, "text").map(str::to_string).unwrap_or(t0);
     if text.trim().is_empty() {
         return Err(bad(cmd, "`text` must not be empty"));
@@ -103,7 +110,15 @@ fn text_source(p: &Value, cmd: &str, old: Option<(String, Vec2, f64, f64)>) -> R
         return Err(bad(cmd, "`height` must be positive"));
     }
     let angle = num(p, "angle").map(f64::to_radians).unwrap_or(a0);
-    Ok(LinkSource::Text { text, at, height, angle })
+    let font = match p.get("font") {
+        None | Some(Value::Null) => f0,
+        Some(Value::String(f)) if f.trim().is_empty() => None,
+        Some(Value::String(f)) => Some(f.trim().to_string()),
+        Some(_) => return Err(bad(cmd, "`font` must be a font family name or a font file path")),
+    };
+    // An unknown font or an unreadable file is an error now, not a lost link later.
+    solidcraft_sketch::font_data(font.as_deref()).map_err(|e| bad(cmd, e.to_string()))?;
+    Ok(LinkSource::Text { text, at, height, angle, font })
 }
 
 fn text(s: &mut Session, p: &Value) -> Result<Value> {
@@ -122,6 +137,39 @@ fn text(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"link": l, "curves": curves}))
 }
 
+/// The text source owning an outline or one of its linked points.
+pub(super) fn text_link<'a>(sk: &'a Sketch, entity: &str) -> Option<&'a str> {
+    let link = sk
+        .curve_index(entity)
+        .and_then(|i| sk.curves.get(i))
+        .and_then(|c| c.link.as_deref())
+        .or_else(|| sk.resolve_point(entity).and_then(|i| sk.points.get(i)).and_then(|p| p.link.as_deref()))?;
+    sk.link(link).filter(|source| source.kind == LinkKind::Text).map(|source| source.id.as_str())
+}
+
+/// Transform a text source as a unit; generated outlines remain linked and editable.
+pub(super) fn move_text(sk: &mut Sketch, link: &str, translate: Vec2, rotation: f64, center: Vec2, copy: bool) -> Result<Vec<usize>> {
+    let Some(LinkSource::Text { text, at, height, angle, font }) = sk.link(link).map(|l| l.source.clone()) else {
+        return Err(bad("sketch.move", "the selected source is not text"));
+    };
+    let q = at - center;
+    let (sin, cos) = rotation.sin_cos();
+    let at = center + Vec2::new(q.x * cos - q.y * sin, q.x * sin + q.y * cos) + translate;
+    let angle = angle + rotation;
+    let geom = solidcraft_sketch::text_geometry_in(font.as_deref(), &text, at, height, angle)?;
+    let source = LinkSource::Text { text, at, height, angle, font };
+    let link = if copy {
+        sk.add_link(LinkKind::Text, source, &geom)?
+    } else {
+        sk.set_link_source(link, source);
+        if sk.update_link(link, &geom)? {
+            return Err(bad("sketch.move", "moving text must preserve its outline topology; edit the text source first"));
+        }
+        link.to_owned()
+    };
+    Ok(sk.link_curves(&link))
+}
+
 fn edit_text(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.edit_text";
     let id = s.active_sketch.ok_or_else(|| bad(cmd, "no sketch is being edited"))?;
@@ -133,12 +181,12 @@ fn edit_text(s: &mut Session, p: &Value) -> Result<Value> {
         _ => return Err(bad(cmd, "give `link` or `entity`")),
     };
     let old = match sk.link(&l).map(|x| (x.kind, x.source.clone())) {
-        Some((LinkKind::Text, LinkSource::Text { text, at, height, angle })) => (text, at, height, angle),
+        Some((LinkKind::Text, LinkSource::Text { text, at, height, angle, font })) => (text, at, height, angle, font),
         _ => return Err(bad(cmd, format!("`{l}` is not text"))),
     };
     let src = text_source(p, cmd, Some(old))?;
-    let LinkSource::Text { text, at, height, angle } = &src else { return Err(bad(cmd, "text")) };
-    let geom = solidcraft_sketch::text_geometry(text, *at, *height, *angle)?;
+    let LinkSource::Text { text, at, height, angle, font } = &src else { return Err(bad(cmd, "text")) };
+    let geom = solidcraft_sketch::text_geometry_in(font.as_deref(), text, *at, *height, *angle)?;
     sk.set_link_source(&l, src.clone());
     sk.update_link(&l, &geom)?;
     let curves = ids_of(&sk, &sk.link_curves(&l));

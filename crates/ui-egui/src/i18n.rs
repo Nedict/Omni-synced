@@ -222,6 +222,13 @@ mod tests {
         assert_eq!(ja.text("ui.preferences"), "環境設定");
         assert_eq!(ja.label("Extrude"), "押し出し");
         assert_eq!(ja.label("CREATE SKETCH"), "スケッチを作成");
+        assert_eq!(ja.label("New Component"), "新規コンポーネント");
+        assert_eq!(ja.label("UTILITIES"), "ユーティリティ");
+        assert_eq!(ja.label("CONFIGURE"), "構成");
+        assert_eq!(ja.label("Drive Joints"), "ジョイントを駆動");
+        assert_eq!(ja.label("Axis Through Cylinder/Cone/Torus"), "円柱/円錐/トーラスを通る軸");
+        assert_eq!(ja.label("Filter commands or keys"), "コマンドまたはキーを検索");
+        assert_eq!(ja.label("Context menu"), "コンテキスト メニュー");
         assert_eq!(ja.label("NonExistentKey"), "NonExistentKey");
         assert_eq!(Locale::for_language("unknown").text("ui.preferences"), "Preferences");
         static PARTIAL: Catalog = Catalog::new("test", "Test", r#"{"ui.preferences":"Prefs"}"#);

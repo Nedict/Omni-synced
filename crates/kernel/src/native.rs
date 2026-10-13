@@ -8,6 +8,8 @@ use std::sync::Arc;
 mod adapter;
 mod binary;
 mod metadata;
+mod preview;
+pub use preview::native_preview_mesh;
 
 // 01/02 were development-only prototypes; independent metadata records start at 03.
 const MAGIC: &[u8; 8] = b"SCBREP03";
@@ -82,6 +84,8 @@ pub fn decode_native_body(bytes: &[u8]) -> Result<Body> {
         let solid = adapter::decode(saved.solid)?;
         let mut body = Body {
             solid: Arc::new(solid),
+            size: 0.0,
+            volume: Some(std::sync::Arc::new(std::sync::Mutex::new(None))),
             coarse_missing: None,
             mesh: None,
             color: None,

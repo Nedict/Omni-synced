@@ -782,12 +782,17 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         refold: bool,
     },
-    /// Convert a plate body (constant thickness from the face at `face`) to sheet metal.
+    /// Convert a body to sheet metal from its fixed face at `face`: a plate of constant
+    /// thickness or, with `bends`, a solid or shelled body whose faces reached from the fixed
+    /// face across those edges become the sheet.
     SheetConvert {
         body: String,
         face: Vec3,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rule: Option<String>,
+        /// Points on the sharp edges that become bends.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        bends: Vec<Vec3>,
     },
     /// Plastic boss: a round post on a face (draft, root fillet, hole, ribs).
     Boss {
@@ -942,6 +947,10 @@ pub enum FeatureKind {
         rotate_axis: Option<Vec3>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         angle: Option<String>,
+        /// When set, the original bodies are kept and the transform is applied to a new copy
+        /// of each instead of moving them in place.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        copy: bool,
     },
     /// A non-parametric base feature: bodies imported from a STEP file. The STEP text is kept
     /// in the design (it is the B-rep), so the design reopens without the original file.
@@ -985,16 +994,23 @@ pub enum FilletStyle {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         smooth: bool,
     },
+    /// The radius along each edge as a clamped B-spline of the position from the end nearest
+    /// `start` (0) to the other (1): `radius` is its first control radius and `radii` the rest,
+    /// its degree what `knots` leave (knots = control radii + degree + 1).
+    Spline { start: Vec3, knots: Vec<f64>, radii: Vec<String> },
 }
 
 /// A fillet radius too large for the geometry around its edges: refused (`Exact`, the default),
-/// or reduced to the largest that works for all of them (`Reduce`), with a warning.
+/// reduced to the largest that works for all of them (`Reduce`), or tapered along each edge it
+/// doesn't fit to the room there, down to zero where a face closes to a point (`Taper`); a
+/// warning says what was done.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FilletFit {
     #[default]
     Exact,
     Reduce,
+    Taper,
 }
 
 impl FilletFit {
@@ -1006,6 +1022,13 @@ impl FilletFit {
 impl FilletStyle {
     pub fn is_constant(&self) -> bool {
         *self == FilletStyle::Constant
+    }
+
+    /// The spline of a [`FilletStyle::Spline`] with its control radii `values` (the first is
+    /// the feature's `radius`).
+    pub fn spline(knots: &[f64], values: Vec<f64>) -> solidcraft_kernel::RadiusSpline {
+        let degree = knots.len().saturating_sub(values.len() + 1);
+        solidcraft_kernel::RadiusSpline { degree, knots: knots.to_vec(), radii: values }
     }
 }
 
@@ -1456,6 +1479,8 @@ impl FeatureKind {
             FeatureKind::Thread { face, .. } => vec![face],
             FeatureKind::Emboss { face: Some(face), .. } => vec![&mut face.at],
             FeatureKind::Boss { position, .. } | FeatureKind::SnapFit { position, .. } | FeatureKind::Rest { position, .. } => vec![position],
+            // With bend edges the fixed face is found by name (a plate keeps its point).
+            FeatureKind::SheetConvert { face, bends, .. } if !bends.is_empty() => vec![face],
             _ => Vec::new(),
         }
     }
@@ -1500,9 +1525,13 @@ impl FeatureKind {
             }
             FeatureKind::Fillet { radius, style, .. } => {
                 v.push(radius);
-                if let FilletStyle::Variable { radius2, mid, .. } = style {
-                    v.push(radius2);
-                    v.extend(mid.iter().map(|(_, r)| r.as_str()));
+                match style {
+                    FilletStyle::Variable { radius2, mid, .. } => {
+                        v.push(radius2);
+                        v.extend(mid.iter().map(|(_, r)| r.as_str()));
+                    }
+                    FilletStyle::Spline { radii, .. } => v.extend(radii.iter().map(String::as_str)),
+                    FilletStyle::Constant | FilletStyle::Chord => {}
                 }
             }
             FeatureKind::Chamfer { distance, distance2, angle, .. } => {
@@ -1694,6 +1723,18 @@ pub struct StandardPart {
     pub length: Option<f64>,
 }
 
+/// A component whose contents come from another design file (Insert Design): where that file
+/// is, and the Import feature in the component that holds its bodies (Update Links replaces
+/// them; Break Link keeps them and forgets the file).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DesignLink {
+    /// The design file: relative to this design's folder once this design is saved, else as
+    /// given (`/` separates folders).
+    pub path: String,
+    /// The Import feature holding the linked design's bodies.
+    pub feature: u64,
+}
+
 /// The document.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
@@ -1727,6 +1768,9 @@ pub struct Document {
     /// Components that are standard parts (by component id): what to rebuild them from.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub parts: std::collections::BTreeMap<u64, StandardPart>,
+    /// Components linked to another design file (by component id).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub links: std::collections::BTreeMap<u64, DesignLink>,
     /// Configurations (rows of parameter values and suppressions).
     #[serde(default, skip_serializing_if = "crate::config::ConfigTable::is_empty")]
     pub configs: crate::config::ConfigTable,
@@ -1742,6 +1786,9 @@ pub struct Document {
     /// Physical material per body (by body name); others use the default.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub materials: std::collections::BTreeMap<String, String>,
+    /// Physical materials defined in this design (`material.create`), next to the built-in ones.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub user_materials: Vec<UserMaterial>,
     /// Appearance colour per body (by body name, sRGB); it overrides the material's look.
     #[serde(default, skip_serializing_if = "crate::appearance::Appearances::is_empty")]
     pub appearances: crate::appearance::Appearances,
@@ -1755,12 +1802,48 @@ pub struct Document {
     /// Browser groups (folders of bodies, sketches or construction planes).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub browser_groups: Vec<BrowserGroup>,
+    /// Named folders used to organise features in the timeline. They do not affect evaluation
+    /// order; feature ids remain the source of truth when features are renamed or reordered.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timeline_groups: Vec<TimelineGroup>,
     /// Browser item order per component folder (`"<component>/<folder>"` → item keys).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub browser_order: std::collections::BTreeMap<String, Vec<String>>,
     /// Named views: saved cameras.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub named_views: Vec<NamedView>,
+    /// What was hidden when the design was saved. A session takes it from here when the design
+    /// opens and keeps the live state itself (`browser.visibility`: saved, not an undo step), so
+    /// a document in a session leaves this empty; the session puts it back when it saves.
+    #[serde(default, skip_serializing_if = "Visibility::is_empty")]
+    pub visibility: Visibility,
+}
+
+/// Items hidden or shown one by one. Saved with the design, but not an undo step.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Visibility {
+    /// Bodies by name.
+    pub hidden_bodies: Vec<String>,
+    /// Exact occurrence placements hidden with all descendants.
+    pub hidden_occurrences: Vec<Vec<u64>>,
+    /// Origin items (O, X, Y, Z, XY, XZ, YZ) and construction geometry, by name.
+    pub hidden_origin: Vec<String>,
+    /// Sketches by feature id.
+    pub hidden_sketches: Vec<u64>,
+    /// Finished sketches shown although a feature uses them.
+    pub shown_sketches: Vec<u64>,
+}
+
+impl Visibility {
+    /// Nothing hidden or shown one by one (the default view).
+    pub fn is_empty(&self) -> bool {
+        self.hidden_bodies.is_empty()
+            && self.hidden_occurrences.is_empty()
+            && self.hidden_origin.is_empty()
+            && self.hidden_sketches.is_empty()
+            && self.shown_sketches.is_empty()
+    }
 }
 
 /// A saved camera (orbit camera: target, yaw, pitch, distance; `fov` 0 for orthographic).
@@ -1787,6 +1870,66 @@ pub struct BrowserGroup {
     pub folder: String,
     #[serde(default)]
     pub items: Vec<String>,
+}
+
+/// A saved feature-history folder. Folders may nest, and a feature can belong to at most one folder.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TimelineGroup {
+    pub id: u64,
+    pub name: String,
+    /// The containing feature folder. `None` places the folder at the timeline root.
+    #[serde(default)]
+    pub parent: Option<u64>,
+    #[serde(default)]
+    pub features: Vec<u64>,
+}
+
+/// The first feature-history folder whose own and nested features do not form one
+/// uninterrupted run in the timeline.
+pub fn non_contiguous_timeline_group(features: &[Feature], groups: &[TimelineGroup]) -> Option<u64> {
+    let positions: std::collections::BTreeMap<u64, usize> = features.iter().enumerate().map(|(index, feature)| (feature.id, index)).collect();
+    let mut stats = std::collections::BTreeMap::new();
+    let mut children = std::collections::BTreeMap::new();
+    for group in groups {
+        let mut count = 0usize;
+        let mut first = usize::MAX;
+        let mut last = 0usize;
+        for index in group.features.iter().filter_map(|feature| positions.get(feature)) {
+            count = count.saturating_add(1);
+            first = first.min(*index);
+            last = last.max(*index);
+        }
+        stats.insert(group.id, (count, first, last));
+        children.entry(group.id).or_insert(0usize);
+        if let Some(parent) = group.parent {
+            let child_count = children.entry(parent).or_insert(0);
+            *child_count = child_count.saturating_add(1);
+        }
+    }
+    let parents: std::collections::BTreeMap<u64, Option<u64>> = groups.iter().map(|group| (group.id, group.parent)).collect();
+    let mut pending: Vec<u64> = groups.iter().filter(|group| children.get(&group.id) == Some(&0)).map(|group| group.id).collect();
+    while let Some(id) = pending.pop() {
+        let (count, first, last) = stats.get(&id).copied().unwrap_or_default();
+        if count > 0 && last.saturating_sub(first).saturating_add(1) != count {
+            return Some(id);
+        }
+        if let Some(parent) = parents.get(&id).copied().flatten() {
+            if let Some((parent_count, parent_first, parent_last)) = stats.get_mut(&parent) {
+                *parent_count = parent_count.saturating_add(count);
+                if count > 0 {
+                    *parent_first = (*parent_first).min(first);
+                    *parent_last = (*parent_last).max(last);
+                }
+            }
+            if let Some(remaining) = children.get_mut(&parent) {
+                *remaining = remaining.saturating_sub(1);
+                if *remaining == 0 {
+                    pending.push(parent);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn default_format() -> String {
@@ -1819,16 +1962,20 @@ impl Document {
             plastic: Default::default(),
             configs: Default::default(),
             parts: Default::default(),
+            links: Default::default(),
             body_components: Default::default(),
             body_offsets: Default::default(),
             materials: Default::default(),
+            user_materials: Vec::new(),
             appearances: Default::default(),
             favorites: Default::default(),
             canvases: Vec::new(),
             param_comments: Default::default(),
             browser_groups: Vec::new(),
+            timeline_groups: Vec::new(),
             browser_order: Default::default(),
             named_views: Vec::new(),
+            visibility: Visibility::default(),
         }
     }
 
@@ -1861,7 +2008,46 @@ impl Document {
 
     /// Density of a body's material (g/cm³).
     pub fn density(&self, body: &str) -> f64 {
-        self.materials.get(body).and_then(|m| material_density(m)).unwrap_or(DEFAULT_DENSITY)
+        self.materials.get(body).and_then(|m| self.material_density(m)).unwrap_or(DEFAULT_DENSITY)
+    }
+
+    /// A material defined in this design, by name (case-insensitive).
+    pub fn user_material(&self, name: &str) -> Option<&UserMaterial> {
+        let name = name.trim();
+        self.user_materials.iter().find(|m| m.name.eq_ignore_ascii_case(name))
+    }
+
+    /// A physical material's name as the library or this design spells it (case-insensitive
+    /// lookup): built-in materials first, then the design's own.
+    pub fn material_name(&self, name: &str) -> Option<String> {
+        MATERIALS
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name.trim()))
+            .map(|(n, _)| n.to_string())
+            .or_else(|| self.user_material(name).map(|m| m.name.clone()))
+    }
+
+    /// Density of a physical material (g/cm³): built-in or defined in this design. A design
+    /// material with an unusable density (a damaged file) has none.
+    pub fn material_density(&self, name: &str) -> Option<f64> {
+        material_density(name).or_else(|| self.user_material(name).map(|m| m.density).filter(|d| valid_density(*d)))
+    }
+
+    /// The look a physical material gives a body without an appearance of its own.
+    pub fn material_look(&self, name: &str) -> Option<crate::appearance::Look> {
+        crate::appearance::material_look(name).or_else(|| {
+            let mut look = self.user_material(name)?.appearance.clone()?;
+            // A damaged file's opacity is shown opaque rather than trusted.
+            if !(look.opacity.is_finite() && (0.0..=1.0).contains(&look.opacity)) {
+                look.opacity = 1.0;
+            }
+            Some(look)
+        })
+    }
+
+    /// Every physical material's name: the built-in library, then the design's own.
+    pub fn material_names(&self) -> Vec<String> {
+        MATERIALS.iter().map(|(n, _)| n.to_string()).chain(self.user_materials.iter().map(|m| m.name.clone())).collect()
     }
 
     /// The component a body belongs to: where it was moved, else its feature's.
@@ -1971,6 +2157,40 @@ impl Document {
         }
     }
 
+    /// The deepest timeline folder spanning the insertion slot between `marker - 1` and
+    /// `marker`. A slot at a folder's outer boundary is not inside that folder.
+    fn timeline_group_at_insertion(&self, marker: usize) -> Option<u64> {
+        let before = self.features.get(marker.checked_sub(1)?)?.id;
+        let after = self.features.get(marker)?.id;
+        let direct = |feature| self.timeline_groups.iter().find(|group| group.features.contains(&feature)).map(|group| group.id);
+        let parents: std::collections::BTreeMap<u64, Option<u64>> = self.timeline_groups.iter().map(|group| (group.id, group.parent)).collect();
+
+        let mut before_ancestors = std::collections::BTreeSet::new();
+        let mut current = direct(before);
+        let mut steps = 0usize;
+        while let Some(id) = current {
+            if !before_ancestors.insert(id) || steps >= self.timeline_groups.len() {
+                return None;
+            }
+            current = parents.get(&id).copied().flatten();
+            steps = steps.saturating_add(1);
+        }
+
+        current = direct(after);
+        steps = 0;
+        while let Some(id) = current {
+            if before_ancestors.contains(&id) {
+                return Some(id);
+            }
+            if steps >= self.timeline_groups.len() {
+                return None;
+            }
+            current = parents.get(&id).copied().flatten();
+            steps = steps.saturating_add(1);
+        }
+        None
+    }
+
     /// Insert a feature at the marker (or the end) and return its id.
     pub fn add_feature(&mut self, kind: FeatureKind, name: Option<&str>) -> Result<u64> {
         if self.features.len() >= MAX_FEATURES {
@@ -2002,12 +2222,21 @@ impl Document {
             shell_piece_order: false,
             kind,
         };
+        let insertion_group = self.marker.and_then(|marker| self.timeline_group_at_insertion(marker));
         match self.marker {
             Some(m) if m < self.features.len() => {
                 self.features.insert(m, f);
                 self.marker = Some(m + 1);
             }
             _ => self.features.push(f),
+        }
+        if let Some(group_id) = insertion_group {
+            let positions: std::collections::BTreeMap<u64, usize> =
+                self.features.iter().enumerate().map(|(index, feature)| (feature.id, index)).collect();
+            if let Some(group) = self.timeline_groups.iter_mut().find(|group| group.id == group_id) {
+                group.features.push(id);
+                group.features.sort_by_key(|feature| positions.get(feature).copied().unwrap_or(usize::MAX));
+            }
         }
         self.name_feature_inputs(id);
         Ok(id)
@@ -2023,6 +2252,9 @@ impl Document {
             .rules
             .retain(|rule| !rule.references_features(&gone) && !rule.parameter_references().iter().any(|name| gone_params.contains(name)));
         self.features.retain(|f| !gone.contains(&f.id));
+        for group in &mut self.timeline_groups {
+            group.features.retain(|feature| !gone.contains(feature));
+        }
         // Configuration columns of deleted features go with them.
         let keep: Vec<bool> = self
             .configs
@@ -2281,18 +2513,25 @@ impl Document {
     /// the sketch over is refused. Offsets whose sources moved are refreshed and solved again:
     /// from the stored state again after a refused or failed first solve (the geometry is still
     /// the stored one), from the solved one otherwise.
+    ///
+    /// `moved_from`: the stored sketch, when `sk` is that sketch with its links refreshed. A
+    /// link's points are where their source is now; the sides and turns the solve keeps are
+    /// those of the stored state ([`Sketch::positions_in`]), not the ones read beside a line
+    /// that has moved past a point.
     pub fn solve_sketch(
         &self,
         vals: &std::collections::BTreeMap<String, expr::Value>,
         sk: &mut Sketch,
         stored: &solidcraft_sketch::DrivingValues,
+        moved_from: Option<&Sketch>,
     ) -> Result<solidcraft_sketch::SolveReport> {
         self.apply_dimension_values(vals, sk)?;
-        let mut report = solidcraft_sketch::solve_after_value_edit(sk, stored);
+        let was = |sk: &Sketch| moved_from.and_then(|from| sk.positions_in(from));
+        let mut report = solidcraft_sketch::solve_after_edit(sk, stored, was(sk).as_deref());
         if !sk.offsets.is_empty() || !sk.freeform_offsets.is_empty() {
             // Source dimensions may have moved curves during the solve.
             sk.refresh_offsets()?;
-            report = if report.ok() { solidcraft_sketch::solve(sk) } else { solidcraft_sketch::solve_after_value_edit(sk, stored) };
+            report = if report.ok() { solidcraft_sketch::solve(sk) } else { solidcraft_sketch::solve_after_edit(sk, stored, was(sk).as_deref()) };
         }
         Ok(report)
     }
@@ -2339,6 +2578,26 @@ pub fn material_color(name: &str) -> Option<[u8; 3]> {
     })
 }
 
+/// A physical material defined in a design (`material.create`): its name, its density and,
+/// optionally, the look it gives bodies without an appearance of their own.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UserMaterial {
+    pub name: String,
+    /// Density (g/cm³).
+    pub density: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub appearance: Option<crate::appearance::Look>,
+}
+
+/// Largest density a material may have (g/cm³); the densest elements are about 22.6.
+pub const MAX_DENSITY: f64 = 1000.0;
+
+/// A density a material can have: finite, above zero and at most [`MAX_DENSITY`] g/cm³.
+pub fn valid_density(d: f64) -> bool {
+    d.is_finite() && d > 0.0 && d <= MAX_DENSITY
+}
+
+/// Density of a built-in physical material (g/cm³).
 pub fn material_density(name: &str) -> Option<f64> {
     MATERIALS.iter().find(|(n, _)| n.eq_ignore_ascii_case(name.trim())).map(|(_, d)| *d)
 }

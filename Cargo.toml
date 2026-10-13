@@ -5,7 +5,7 @@ members = ["crates/*", "apps/*", "xtask"]
 exclude = ["vendor"]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
@@ -37,10 +37,13 @@ truck-shapeops = { version = "0.4", default-features = false }
 truck-meshalgo = { version = "0.4", default-features = false, features = ["tessellation", "analyzers"] }
 truck-stepio = { version = "0.3", default-features = false }
 truck-topology = "0.6"
+# constrained Delaunay + Ruppert refinement for trimmed faces (MIT OR Apache-2.0); already in the
+# tree through truck-meshalgo.
+spade = { version = "2.15", default-features = false, features = ["std"] }
 
 # packages (3MF)
 zip = { version = "3", default-features = false, features = ["deflate"] }
-quick-xml = "0.38"
+quick-xml = "0.41"
 
 # fonts (sketch text outlines; MIT OR Apache-2.0, pure Rust)
 ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
