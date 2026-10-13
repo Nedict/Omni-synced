@@ -1291,8 +1291,9 @@ fn auto_operation(app: &SolveApp, d: &mut Dialog) {
     }
 }
 
-/// Show the active dialog (if any), docked flush to the right edge of the viewport just below
-/// the axis view, sized to its content.
+/// Show the active dialog (if any), docked flush to an edge of the viewport just below the axis
+/// view, sized to its content. The right edge is its place, except while a sketch is open: the
+/// Sketch Palette keeps the right there, and the dialog takes the left so both stay on screen.
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     app.viewport.dialog_rect = None;
     let Some(mut d) = app.dialog.take() else { return };
@@ -1309,7 +1310,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let t = Tokens::get();
     let vp = app.viewport.rect.unwrap_or_else(|| ctx.content_rect());
     let top = (vp.top() + crate::viewport::AXIS_VIEW_CLEARANCE).min((vp.bottom() - 360.0).max(vp.top()));
-    let anchor = egui::pos2(vp.right(), top);
+    // The Sketch Palette owns the right edge for as long as a sketch is being edited. A dialog
+    // started there docks at the left instead, so neither panel hides the other.
+    let side = if crate::sketch_palette::editing(app) && crate::sketch_palette::fits_beside_a_dialog(app, ctx) {
+        crate::frame::Side::Left
+    } else {
+        crate::frame::Side::Right
+    };
+    let anchor = egui::pos2(side.anchor_x(vp), top);
     let mut keep = true;
     let mut ok = false;
     let mut applied = false;
@@ -1318,11 +1326,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let wide = d.is_wide();
     let raw_title = title(&d.kind);
     let heading = if d.editing.is_some() { crate::i18n::format("dialog.edit_title", &[("title", tr(raw_title))]) } else { tr(raw_title).to_string() };
-    let frame = egui::Frame::window(&ctx.global_style())
-        .fill(t.dialog_bg)
-        .stroke(Stroke::new(1.0, t.dialog_border))
-        .corner_radius(egui::CornerRadius { nw: 4, sw: 4, ne: 0, se: 0 })
-        .shadow(egui::Shadow { offset: [-2, 2], blur: 8, spread: 0, color: Color32::from_black_alpha(40) });
+    let frame = crate::frame::dock_frame(ctx, side);
     // The area includes the border as well as the inner margins; reserve all of it so a
     // horizontally scrolling table cannot push a wide dialog two pixels past its limit.
     let horizontal_frame = frame.inner_margin.leftf() + frame.inner_margin.rightf() + 2.0 * frame.stroke.width;
@@ -1331,12 +1335,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let valid = !has_ok || !d.previews() || (apply_commands(app, &d).is_ok() && app.preview.error.is_none());
     let width = if wide { crate::frame::Width::Wide } else { crate::frame::Width::Normal };
     let wkey = egui::Id::new(("sc_dialog_w", wide));
-    let response = crate::frame::docked(
+    let response = crate::frame::docked_on(
         RichText::new(heading.clone()).strong().size(13.0),
         egui::Id::new(("sc_dialog", title(&d.kind))),
         anchor,
         vp.bottom() - anchor.y - 8.0,
         width,
+        side,
     )
     .frame(frame)
     .open(&mut keep)
@@ -2044,6 +2049,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         crate::frame::remember_width(ui, wkey);
     });
     app.viewport.dialog_rect = response.map(|r| r.response.rect);
+    if let Some(r) = app.viewport.dialog_rect {
+        crate::scenario::publish_rect("dialog:outer", r);
+    }
     // Keyboard: Enter applies (from a value field, or with nothing focused), Esc cancels.
     let (enter_free, esc) = ctx.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
     let nothing_focused = ctx.memory(|m| m.focused().is_none());

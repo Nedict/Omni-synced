@@ -2664,13 +2664,11 @@ fn cpu_render(app: &mut SolveApp, ctx: &egui::Context, painter: &egui::Painter, 
 
 pub(crate) fn refresh_layout(app: &mut SolveApp, scale: f32) {
     if let Some(rect) = app.viewport.rect {
-        let docks: Vec<_> = [
-            app.viewport.palette_rect.filter(|_| app.session.active_sketch.is_some() && app.dialog.is_none()),
-            app.viewport.dialog_rect.filter(|_| app.dialog.is_some()),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        let docks: Vec<_> =
+            [app.viewport.palette_rect.filter(|_| app.session.active_sketch.is_some()), app.viewport.dialog_rect.filter(|_| app.dialog.is_some())]
+                .into_iter()
+                .flatten()
+                .collect();
         app.viewport.layout = Some(crate::viewport_layout::Layout::new(rect, &docks, scale));
     }
 }
