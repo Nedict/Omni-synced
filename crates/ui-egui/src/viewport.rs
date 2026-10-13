@@ -7,7 +7,7 @@ use solidcraft_engine::Sel;
 use solidcraft_engine::geom::{Vec2, Vec3};
 use solidcraft_engine::render::{Camera, Mat4, Rgb};
 use solidcraft_engine::sketch::CurveKind;
-use solidcraft_engine::view::{colors, grid_step, sketch_consumed, sketch_lines_with_sampler};
+use solidcraft_engine::view::{colors, grid_step, sketch_lines_with_sampler};
 use std::hash::{Hash, Hasher};
 
 use crate::gpu::{GpuScene, GpuTarget, SceneSlot, ViewportCallback};
@@ -35,8 +35,11 @@ pub enum NavMode {
 
 #[derive(Default)]
 pub struct ViewportState {
-    /// Per-body bounding boxes for fast picking, keyed by the model they were taken from.
-    pick_bounds: std::sync::Mutex<Option<(usize, std::sync::Arc<Vec<(String, solidcraft_engine::geom::Aabb3)>>)>>,
+    /// Per-body boxes of one world state, held (not just its address, which a later state can
+    /// reuse once the old one is freed, so stale boxes would come back).
+    pick_bounds: std::sync::Mutex<Option<BodyBounds>>,
+    /// The last click in the view was the middle button's (for the middle double-click).
+    middle_clicked: bool,
     /// The last pick (its key and hits): reused while nothing it depends on changed.
     last_pick: Option<(u64, Vec<Hit>)>,
     pub rect: Option<Rect>,
@@ -239,16 +242,13 @@ pub fn projection(app: &SolveApp, rect: Rect) -> Proj {
 /// Sketches drawn in the viewport: the active one, and finished ones not yet used by a feature.
 fn visible_sketches(app: &SolveApp) -> Vec<u64> {
     let st = app.session.world_state();
-    st.sketches
-        .iter()
-        .filter(|s| {
-            app.session.active_sketch == Some(s.feature)
-                || (!app.session.visibility.hidden_sketches.contains(&s.feature)
-                    && (app.session.visibility.shown_sketches.contains(&s.feature)
-                        || (app.ui.show_sketches && !sketch_consumed(&app.session, s.feature))))
-        })
-        .map(|s| s.feature)
-        .collect()
+    st.sketches.iter().filter(|s| solidcraft_engine::view::sketch_drawn(&app.session, s.feature, app.ui.show_sketches)).map(|s| s.feature).collect()
+}
+
+/// What Home, Fit and the orbit pivot frame: the bodies and sketches shown now, where they are
+/// now (see [`solidcraft_engine::view::visible_bounds`]).
+pub fn view_bounds(app: &SolveApp) -> solidcraft_engine::geom::Aabb3 {
+    solidcraft_engine::view::visible_bounds(&app.session, app.ui.show_sketches)
 }
 
 fn scene_key(app: &SolveApp) -> u64 {
@@ -593,7 +593,7 @@ pub fn origin_axes(app: &SolveApp) -> Vec<(&'static str, Vec3)> {
 /// from, to).
 pub fn construction_axis_segments(app: &SolveApp) -> Vec<(String, Vec3, Vec3)> {
     let h = origin_size(app.cam.half_height()) * AXIS_LEN;
-    let bb = solidcraft_engine::view::bounds(&app.session);
+    let bb = view_bounds(app);
     solidcraft_engine::view::construction_axes(&app.session)
         .into_iter()
         .filter(|(_, n, _, _)| !app.session.visibility.hidden_origin.contains(n))
@@ -645,19 +645,20 @@ fn body_bounds(
     app: &SolveApp,
     st: &std::sync::Arc<solidcraft_engine::doc::ModelState>,
 ) -> std::sync::Arc<Vec<(String, solidcraft_engine::geom::Aabb3)>> {
-    let key = std::sync::Arc::as_ptr(st) as usize;
     if let Ok(mut g) = app.viewport.pick_bounds.lock() {
         if let Some((k, b)) = g.as_ref()
-            && *k == key
+            && std::sync::Arc::ptr_eq(k, st)
         {
             return b.clone();
         }
         let b = std::sync::Arc::new(st.bodies.iter().map(|b| (b.name.clone(), b.mesh().bounds())).collect::<Vec<_>>());
-        *g = Some((key, b.clone()));
+        *g = Some((st.clone(), b.clone()));
         return b;
     }
     std::sync::Arc::new(Vec::new())
 }
+
+type BodyBounds = (std::sync::Arc<solidcraft_engine::doc::ModelState>, std::sync::Arc<Vec<(String, solidcraft_engine::geom::Aabb3)>>);
 
 /// The model's extent: bodies (from the cached boxes) and sketches.
 pub fn model_bounds(app: &SolveApp) -> solidcraft_engine::geom::Aabb3 {
@@ -1812,6 +1813,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     app.viewport.mouse = hover.filter(|_| inside);
     // Ctrl or Alt held: drawing and dragging don't snap.
     crate::drag_snap::set_suppressed(mods.ctrl || mods.alt || mods.command);
+    middle_double_click(app, ui, inside);
 
     // ---- navigation ----
     let trackpad_pan = app.preferences.trackpad_pan;
@@ -2946,6 +2948,34 @@ fn signed_axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
     icons::paint(&painter, home, "home", t.icon, if hr.hovered() { t.accent_soft } else { t.overlay }, t.accent);
     if hr.on_hover_text("Home view").clicked() {
         app.animate_view("home");
+    }
+}
+
+/// A middle-button double-click goes Home (or fits, or nothing: Preferences › Navigation). Only
+/// clicks count: a press that moves (a pan or orbit drag) or is held is not one, and the two
+/// clicks must both be the middle button's, close together in time and place.
+fn middle_double_click(app: &mut SolveApp, ui: &egui::Ui, inside: bool) {
+    use egui::PointerButton::{Extra1, Extra2, Middle, Primary, Secondary};
+    let (double, releases, middle, other, dragging) = ui.input(|i| {
+        (
+            i.pointer.button_double_clicked(Middle),
+            i.events.iter().filter(|e| matches!(e, egui::Event::PointerButton { button: Middle, pressed: false, .. })).count(),
+            i.pointer.button_clicked(Middle),
+            [Primary, Secondary, Extra1, Extra2].into_iter().any(|b| i.pointer.button_clicked(b)),
+            i.pointer.is_decidedly_dragging(),
+        )
+    });
+    // egui pairs clicks of any buttons; the first click must have been the middle one too (or
+    // both arrive in this frame).
+    let go = double && inside && !other && (app.viewport.middle_clicked || releases >= 2);
+    app.viewport.middle_clicked = if other || dragging || go { false } else { middle || app.viewport.middle_clicked };
+    if !go {
+        return;
+    }
+    match crate::prefs::MiddleDoubleClick::of(app) {
+        crate::prefs::MiddleDoubleClick::Home => app.animate_view("home"),
+        crate::prefs::MiddleDoubleClick::Fit => app.animate_fit_all(),
+        crate::prefs::MiddleDoubleClick::Off => {}
     }
 }
 
@@ -4389,3 +4419,7 @@ mod tests {
         assert!(construction_axis_segments(&app).is_empty());
     }
 }
+
+#[cfg(test)]
+#[path = "view_home_tests.rs"]
+mod view_home_tests;

@@ -809,14 +809,14 @@ impl SolveApp {
         self.cam_anim = None;
         self.viewport.orbit_snap = None;
         self.viewport.orbit_free = None;
-        let bounds = solidcraft_engine::view::bounds(&self.session);
+        let bounds = viewport::view_bounds(self);
         self.pending_fit = Some((self.cam, bounds, false));
         self.cam = self.fitted(self.cam);
     }
 
     /// `cam` moved to frame the whole model.
     pub fn fitted(&self, mut cam: Camera) -> Camera {
-        let b = solidcraft_engine::view::bounds(&self.session);
+        let b = viewport::view_bounds(self);
         if b.is_empty() {
             cam.target = solidcraft_engine::geom::Vec3::ZERO;
             cam.distance = 150.0;
@@ -873,6 +873,15 @@ impl SolveApp {
         self.cam_anim = Some(anim);
     }
 
+    /// Frame everything shown, keeping the orientation (animated; the selection is ignored).
+    pub fn animate_fit_all(&mut self) {
+        self.pending_fit = None;
+        let request = Some((self.cam, viewport::view_bounds(self), true));
+        let to = self.fitted(self.cam);
+        self.animate_to(to);
+        self.pending_fit = request;
+    }
+
     /// Animated view changes for the axis view and navigation bar.
     pub fn animate_view(&mut self, v: &str) {
         self.pending_fit = None;
@@ -885,13 +894,13 @@ impl SolveApp {
                     to = self.fitted_bounds(to, &b);
                 }
                 None => {
-                    self.pending_fit = Some((to, solidcraft_engine::view::bounds(&self.session), true));
+                    self.pending_fit = Some((to, viewport::view_bounds(self), true));
                     to = self.fitted(to);
                 }
             },
             "home" => {
                 to.set_view(StandardView::Iso);
-                self.pending_fit = Some((to, solidcraft_engine::view::bounds(&self.session), true));
+                self.pending_fit = Some((to, viewport::view_bounds(self), true));
                 to = self.fitted(to);
             }
             v => match StandardView::parse(v) {

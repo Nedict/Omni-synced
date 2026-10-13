@@ -167,7 +167,7 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
             ui.label(
                 RichText::new(
-                    "Select Other: hold the left button still on the model (or right-click › Select Other…) to list everything under the cursor; click again on the same spot to select the next thing there.",
+                    "Select Other: hold the left button still on the model (or right-click › Select Other…) to list everything under the cursor; click again on the same spot to select the next thing there. Double-click the middle button to go Home (Preferences › Navigation).",
                 )
                 .size(11.0)
                 .color(t.text_dim),

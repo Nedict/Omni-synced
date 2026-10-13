@@ -236,6 +236,36 @@ pub struct Prefs {
     pub up_axis: String,
     /// After a STEP or IGES file opens, offer to stand a Y-up part up (`stand_up`).
     pub offer_stand_up: bool,
+    /// What a middle-button double-click in the view does: `home`, `fit` or `off`.
+    pub middle_double_click: String,
+}
+
+/// What a middle-button double-click in the view does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MiddleDoubleClick {
+    /// Go Home (the iso view, framing what is shown).
+    Home,
+    /// Frame what is shown, keeping the orientation.
+    Fit,
+    Off,
+}
+
+impl MiddleDoubleClick {
+    pub const ALL: [(MiddleDoubleClick, &'static str, &'static str); 3] =
+        [(MiddleDoubleClick::Home, "home", "Home"), (MiddleDoubleClick::Fit, "fit", "Fit"), (MiddleDoubleClick::Off, "off", "Off")];
+
+    /// The preference's setting (Home for an unknown one).
+    pub fn of(app: &SolveApp) -> MiddleDoubleClick {
+        Self::parse(&app.preferences.middle_double_click).unwrap_or(MiddleDoubleClick::Home)
+    }
+
+    pub fn parse(id: &str) -> Option<MiddleDoubleClick> {
+        Self::ALL.iter().find(|(_, i, _)| *i == id).map(|(m, _, _)| *m)
+    }
+
+    pub fn label(self) -> &'static str {
+        Self::ALL.iter().find(|(m, _, _)| *m == self).map_or("Home", |(_, _, l)| l)
+    }
 }
 
 impl Default for Prefs {
@@ -262,6 +292,7 @@ impl Default for Prefs {
             look_at_speed: 1.0,
             up_axis: "z".into(),
             offer_stand_up: true,
+            middle_double_click: "home".into(),
         }
     }
 }
@@ -366,6 +397,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.space_mouse_speed = d.space_mouse_speed;
             p.look_at_anim = d.look_at_anim;
             p.look_at_speed = d.look_at_speed;
+            p.middle_double_click = d.middle_double_click;
         }
         PAGE_SHORTCUTS => crate::keymap::reset(app, None),
         PAGE_DESIGN => {
@@ -491,7 +523,7 @@ fn pivot_under(app: &SolveApp, proj: &crate::viewport::Proj, at: Pos2) -> Vec3 {
             _ => {}
         }
     }
-    let b = solidcraft_engine::view::bounds(&app.session);
+    let b = crate::viewport::view_bounds(app);
     if b.is_empty() { app.cam.target } else { b.center() }
 }
 
@@ -897,6 +929,18 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 ui.radio_value(&mut app.preferences.orbit_cursor, true, "Point under the cursor");
             });
             ui.end_row();
+            ui.label("Middle double-click");
+            let current = MiddleDoubleClick::of(app);
+            egui::ComboBox::from_id_salt("pref_middle_double_click").selected_text(current.label()).show_ui(ui, |ui| {
+                for (m, id, label) in MiddleDoubleClick::ALL {
+                    if ui.selectable_label(current == m, label).clicked() {
+                        app.preferences.middle_double_click = id.into();
+                    }
+                }
+            })
+            .response
+            .on_hover_text("Double-clicking the middle button in the view: Home (the home view, framing what is shown), Fit (frame what is shown, keeping the orientation) or nothing");
+            ui.end_row();
             ui.label("Animate view changes");
             ui.checkbox(&mut app.preferences.look_at_anim, "Axis view, Look At, Home and Fit");
             ui.end_row();
@@ -1050,6 +1094,9 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     }
     if !(0.5..=2.5).contains(&new.ui_scale) || !(0.25..=4.0).contains(&new.look_at_speed) {
         return Err("`ui_scale` must be 0.5…2.5 and `look_at_speed` 0.25…4".into());
+    }
+    if MiddleDoubleClick::parse(&new.middle_double_click).is_none() {
+        return Err("`middle_double_click` must be home, fit or off".into());
     }
     if new.theme != app.preferences.theme && new.theme != "system" {
         app.ui.dark = new.theme == "dark";
@@ -1433,7 +1480,7 @@ mod tests {
         let hits = crate::viewport::pick(&app, &proj, corner);
         use crate::viewport::Hit;
         assert!(!hits.iter().any(|h| matches!(h, Hit::Face { .. } | Hit::Edge { .. } | Hit::Vertex { .. })), "the corner is empty space");
-        let centre = solidcraft_engine::view::bounds(&app.session).center();
+        let centre = crate::viewport::view_bounds(&app).center();
         orbit(&mut app, rect, 40.0, 25.0, Some(corner));
         assert_eq!(app.viewport.orbit_pivot, Some(centre));
 
