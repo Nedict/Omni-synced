@@ -353,13 +353,11 @@ fn lip_on_a_rounded_shelled_rim() {
     }
 }
 
-/// #851: a wall of radius 21 runs out into the back face in a knife edge, where the two faces
-/// have opposite normals. The edge rounds to the ball that fits there and chamfers with the
-/// plane through that ball's contacts (volumes: the cusp area less the wall's sector and the
-/// ball's, or the chord triangle less the wall's segment, times the 10 mm height).
-#[test]
-fn blend_a_knife_edge_where_a_curved_wall_runs_out() {
-    let steps = json!([
+/// The #851 part: a wall of radius 21 meets the front face square and runs out tangent into the
+/// back face, in a knife edge at (62⅙, 0). Its two blends below are checked against the volumes
+/// of the swept corner (the wall's angle integrated over the section), through the display plan.
+fn knife_edge_part() -> Session {
+    script(json!([
         {"command": "sketch.create", "params": {"plane": "XY"}},
         {"command": "sketch.rectangle.two_point", "params": {"p0": [0, 0], "p1": [41.5, -21]}},
         {"command": "sketch.dimension", "params": {"entities": ["l2"], "text_at": [36.5, -8.5], "value": "21 mm"}},
@@ -370,16 +368,48 @@ fn blend_a_knife_edge_where_a_curved_wall_runs_out() {
         {"command": "sketch.constraint.tangent", "params": {"a": "c1", "b": "l6"}},
         {"command": "sketch.finish", "params": {}},
         {"command": "solid.extrude", "params": {"direction": "positive", "distance": "10 mm", "operation": "new", "profiles": [0, 1], "sketch": 1}}
-    ]);
+    ]))
+}
+
+/// The volume of the session's bodies through the display plan.
+fn planned_volume(s: &Session) -> f64 {
+    s.model.state().bodies.iter().map(|b| b.body.display_plan(2e-4).unwrap().evaluate().measure().volume).sum()
+}
+
+/// #851: the knife edge where the wall runs out has opposite normals on its two faces. It rounds
+/// to the ball that fits there and chamfers with the plane through that ball's contacts (the cusp
+/// area less the wall's sector and the ball's, or the chord triangle less the wall's segment,
+/// times the 10 mm height).
+#[test]
+fn blend_a_knife_edge_where_a_curved_wall_runs_out() {
     let knife = json!([[62.1667, 0, 5]]);
     for (command, params, removed) in
         [("solid.fillet", json!({"edges": knife, "radius": 2}), 119.648_812), ("solid.chamfer", json!({"edges": knife, "distance": 2}), 159.236_451)]
     {
-        let mut s = script(steps.clone());
-        let before = total_volume(&s);
+        let mut s = knife_edge_part();
+        let before = planned_volume(&s);
         s.execute(command, &params).unwrap_or_else(|e| panic!("{command}: {e}"));
-        let after = total_volume(&s);
+        let after = planned_volume(&s);
         assert!((before - after - removed).abs() < 0.5, "{command}: removed {}, expected {removed}", before - after);
+        for b in &s.model.state().bodies {
+            assert!(b.body.validity().is_empty(), "{command}: {:?}", b.body.validity());
+        }
+    }
+}
+
+/// #851: the arc's top edge runs out tangent to the back face at the knife edge's top. The blend
+/// is cut by that face along a curve that touches the wall's contact at the tip.
+#[test]
+fn blend_an_arc_edge_that_runs_out_tangent_to_a_face() {
+    let arc = json!([[47.3174, -6.1508, 10]]);
+    for (command, params, removed) in
+        [("solid.fillet", json!({"edges": arc, "radius": 2}), 25.506), ("solid.chamfer", json!({"edges": arc, "distance": 2}), 58.077)]
+    {
+        let mut s = knife_edge_part();
+        let before = planned_volume(&s);
+        s.execute(command, &params).unwrap_or_else(|e| panic!("{command}: {e}"));
+        let after = planned_volume(&s);
+        assert!((before - after - removed).abs() < 0.05, "{command}: removed {}, expected {removed}", before - after);
         for b in &s.model.state().bodies {
             assert!(b.body.validity().is_empty(), "{command}: {:?}", b.body.validity());
         }

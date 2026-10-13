@@ -130,3 +130,103 @@ fn knife_edge_blends_the_same_in_a_mirror() {
         assert!((v - reference).abs() < 1e-6, "mirror {axis}: volume {v}, expected {reference}");
     }
 }
+
+/// A point on the arc's top edge (half way round the wall).
+fn arc_top() -> Vec3 {
+    let (s, c) = (std::f64::consts::FRAC_PI_4.sin(), std::f64::consts::FRAC_PI_4.cos());
+    Vec3::new(TIP_X - R_WALL * c, -R_WALL + R_WALL * s, HEIGHT)
+}
+
+/// Volume the arc's top edge takes off, by integrating the corner of the blend over the wall's
+/// angle: the part of the sweep above the back face (y = 0) is not material. Rounds: the corner
+/// between the wall and the top, less the ball's quarter disc; chamfers: its triangle.
+fn arc_top_removed(size: f64, round: bool) -> f64 {
+    let n = 2000;
+    let step = size / f64::from(n);
+    let mut total = 0.0;
+    for i in 0..n {
+        let rho = R_WALL + (f64::from(i) + 0.5) * step;
+        for j in 0..n {
+            let z = HEIGHT - size + (f64::from(j) + 0.5) * step;
+            let inside = if round {
+                (rho - (R_WALL + size)).powi(2) + (z - (HEIGHT - size)).powi(2) >= size * size
+            } else {
+                (rho - R_WALL) + (HEIGHT - z) <= size
+            };
+            if inside {
+                total += rho * (R_WALL / rho).asin() * step * step;
+            }
+        }
+    }
+    total
+}
+
+/// Volume through the display planner (the mesh the app draws): closed and exact where the
+/// legacy mesher behind `measure` can leak at a zero-angle corner like the one at the tip.
+fn planned_volume(b: &Body) -> f64 {
+    let mesh = b.display_plan(2e-4).unwrap().evaluate();
+    let key = |p: Vec3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
+    let mut uses: std::collections::HashMap<([u64; 3], [u64; 3]), i32> = std::collections::HashMap::new();
+    for t in &mesh.triangles {
+        let [a, b, c] = mesh.tri(t).unwrap();
+        for (p, q) in [(a, b), (b, c), (c, a)] {
+            *uses.entry((key(p), key(q))).or_default() += 1;
+            *uses.entry((key(q), key(p))).or_default() -= 1;
+        }
+    }
+    assert!(uses.values().all(|n| *n == 0), "the mesh has cracks");
+    mesh.measure().volume
+}
+
+/// The arc's top edge runs out tangent to the back face at the knife edge's top: the blend is cut
+/// by that face along a curve that touches the wall's contact at the tip.
+#[test]
+fn fillet_and_chamfer_the_arc_top_edge() {
+    for (name, body) in [("plate first", part()), ("corner first", part_other_order()), ("cut from a box", part_cut_from_a_box())] {
+        let before = planned_volume(&body);
+        for r in [0.5, 2.0, 4.0, 8.0] {
+            for round in [true, false] {
+                let what = if round { "fillet" } else { "chamfer" };
+                let made = if round { fillet(&body, &[arc_top()], r) } else { chamfer(&body, &[arc_top()], r) };
+                let made = made.unwrap_or_else(|e| panic!("{name} {what} r={r}: {e}"));
+                assert!(made.validity().is_empty(), "{name} {what} r={r}: {:?}", made.validity());
+                assert_eq!(made.face_count(), body.face_count() + 1, "{name} {what} r={r}: one blend face");
+                let removed = before - planned_volume(&made);
+                let expected = arc_top_removed(r, round);
+                assert!((removed - expected).abs() < 0.01 * expected + 0.01, "{name} {what} r={r}: removed {removed}, expected {expected}");
+            }
+        }
+    }
+}
+
+/// Mirrored parts take the edge the other way round and the tip at the other end of the chain.
+#[test]
+fn the_arc_top_edge_blends_the_same_in_a_mirror() {
+    let body = part();
+    let reference = planned_volume(&fillet(&body, &[arc_top()], 2.0).unwrap());
+    let mirror = |axis: usize| {
+        let mut m = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+        m[axis][axis] = -1.0;
+        m
+    };
+    let at = arc_top();
+    for (axis, p) in [(0, Vec3::new(-at.x, at.y, at.z)), (1, Vec3::new(at.x, -at.y, at.z)), (2, Vec3::new(at.x, at.y, -at.z))] {
+        let mirrored = transform_matrix(&body, mirror(axis)).unwrap();
+        let v = planned_volume(&fillet(&mirrored, &[p], 2.0).unwrap_or_else(|e| panic!("mirror {axis}: {e}")));
+        assert!((v - reference).abs() < 1e-4 * reference, "mirror {axis}: volume {v}, expected {reference}");
+    }
+}
+
+/// Sizes from tiny to larger than the wall: blended, or refused, never a panic or a broken solid.
+#[test]
+fn arc_top_edge_sizes_never_panic() {
+    let body = part();
+    for r in [1e-5, 1e-3, 6.0, 10.0, 21.0, 40.0, 1e3] {
+        for round in [true, false] {
+            let made = if round { fillet(&body, &[arc_top()], r) } else { chamfer(&body, &[arc_top()], r) };
+            if let Ok(b) = made {
+                assert!(b.validity().is_empty(), "r={r}: {:?}", b.validity());
+            }
+        }
+    }
+}

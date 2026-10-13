@@ -29,6 +29,10 @@ const EXTENSION: usize = 8;
 /// `1 + n1·n2` below this: a knife edge, where the faces' normals are opposite and the ball's
 /// centre is found by sliding along the faces rather than from their normals.
 const KNIFE: f64 = 1e-4;
+/// An end face this close to square-on-to-its-sides' normal counts as tangent to a side.
+const TANGENT_END: f64 = 1e-6;
+/// Times the run past a tangent end is halved when the ball does not fit along it.
+const TANGENT_RETRIES: usize = 8;
 /// Slides of the ball's centre along a knife edge's faces, each 1.6 times the last.
 const KNIFE_STEPS: usize = 40;
 
@@ -37,6 +41,8 @@ struct Fit {
     contacts: [mt::Curve; 2],
     /// Parameter range belonging to this edge (the fit includes neighbouring sections).
     range: (f64, f64),
+    /// Parameter distance between neighbouring sections.
+    step: f64,
 }
 
 struct Guide {
@@ -136,7 +142,7 @@ fn fit_strip(list: &[Section], before: &[Section], after: &[Section], round: boo
     };
     let contacts = [contact(0)?, contact(2)?];
     let bs = mt::BSplineSurface::try_new((mt::KnotVec::bezier_knot(2), vk), rows).map_err(|e| fail(&e.to_string()))?;
-    Ok(Fit { surface: mt::Surface::NurbsSurface(mt::NurbsSurface::new(bs)), contacts, range })
+    Ok(Fit { surface: mt::Surface::NurbsSurface(mt::NurbsSurface::new(bs)), contacts, range, step: 1.0 / den })
 }
 
 /// Compare the fitted strip with a solved circular section between interpolation nodes.
@@ -256,6 +262,108 @@ fn end_cap(fit: &Fit, g: &mt::Face, at: &Section, round: bool, tolerance: f64) -
                 return Err(too_large("the blend is larger than the neighbouring faces"));
             }
             return Ok((*t1, *t2, mt::Curve::BSplineCurve(bs)));
+        }
+    }
+    Err(fail())
+}
+
+/// Where a blend strip run on past a chain end meets an end face that lies along the edge and is
+/// tangent to one side there (a wall running out into the face): the end curve from contact 1 to
+/// contact 2, the same result as [`end_cap`]. The strip touches the face at the vertex along the
+/// tangent side's contact, so a Newton solve for the crossing is singular there. Instead, march
+/// along the strip from the vertex: at each station the cross-section's one crossing of the face
+/// is a simple root, and the other contact leaves the face at a simple root along the strip.
+fn tangent_cap(fit: &Fit, g: &mt::Face, at_start: bool, vertex_along: f64, tolerance: f64) -> Result<(f64, f64, mt::Curve)> {
+    use mt::{ParametricCurve, ParametricSurface, SearchNearestParameter};
+    let fail = || unsupported("the blend's end on its end face");
+    let surf = &fit.surface;
+    // How far the strip's point (u, v) is outside the end face (negative: inside the body).
+    let outside = |u: f64, v: f64| -> Option<f64> {
+        let x = from_p3(surf.subs(u, v));
+        let (q, n, _) = project(g, x, None)?;
+        Some((x - q).dot(n))
+    };
+    // Root of `f` between `lo` and `hi`, `f(lo)` and `f(hi)` of different sign.
+    let bisect = |f: &dyn Fn(f64) -> Option<f64>, mut lo: f64, mut hi: f64| -> Option<f64> {
+        let flo = f(lo)?;
+        for _ in 0..60 {
+            let mid = 0.5 * (lo + hi);
+            let fm = f(mid)?;
+            if fm.abs() <= tolerance * 1e-6 {
+                return Some(mid);
+            }
+            if fm.is_sign_negative() == flo.is_sign_negative() {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        Some(0.5 * (lo + hi))
+    };
+    // The vertex's section: `vertex_along` of the way along the strip (the sections are evenly
+    // spaced along the spine, the extension past the vertex included).
+    let v_t = fit.range.0 + (fit.range.1 - fit.range.0) * vertex_along;
+    let (v_end, dir) = if at_start { (fit.range.1, 1.0) } else { (fit.range.0, -1.0) };
+    let (f0, f1) = (outside(0.0, v_t).ok_or_else(fail)?, outside(1.0, v_t).ok_or_else(fail)?);
+    // The contact on the face at the vertex, and the other one, which is outside it there.
+    let (u_t, u_o) = if f1.abs() <= tolerance && f0 > tolerance {
+        (1.0, 0.0)
+    } else if f0.abs() <= tolerance && f1 > tolerance {
+        (0.0, 1.0)
+    } else {
+        return Err(fail());
+    };
+    // Where the other contact comes back inside: the strip's own part, from the vertex on.
+    let steps = (((v_end - v_t).abs() / fit.step).ceil() as usize).clamp(1, 4096);
+    let mut v_a = None;
+    let mut last = v_t;
+    for i in 1..=steps {
+        let v = if i == steps { v_end } else { v_t + dir * fit.step * i as f64 };
+        let h = outside(u_o, v).ok_or_else(fail)?;
+        if h <= 0.0 {
+            v_a = bisect(&|x| outside(u_o, x), last, v);
+            break;
+        }
+        last = v;
+    }
+    let v_a = v_a.ok_or_else(|| too_large("the blend is larger than the neighbouring faces"))?;
+    let inside = |t: f64| t > fit.range.0.min(fit.range.1) + 1e-6 && t < fit.range.0.max(fit.range.1) - 1e-6;
+    if !(inside(v_a) && inside(v_t)) {
+        return Err(too_large("the blend is larger than the neighbouring faces"));
+    }
+    for m in [16usize, 32, 64] {
+        // The curve at stations v_i from the crossing contact to the tangent one, as (u, v, point).
+        let mut stations: Vec<(f64, f64, Vec3)> = Vec::with_capacity(m + 1);
+        for i in 0..=m {
+            let v = v_a + (v_t - v_a) * i as f64 / m as f64;
+            let u = if i == 0 {
+                u_o
+            } else if i == m || outside(u_t, v).ok_or_else(fail)? >= 0.0 {
+                u_t
+            } else {
+                bisect(&|x| outside(x, v), u_o, u_t).ok_or_else(fail)?
+            };
+            stations.push((u, v, from_p3(surf.subs(u, v))));
+        }
+        let mut pts: Vec<Vec3> = stations.iter().map(|x| x.2).collect();
+        // The curve runs from contact 1 to contact 2.
+        if u_o == 1.0 {
+            pts.reverse();
+        }
+        let bs = crate::build::interpolate_cubic(&pts).ok_or_else(fail)?;
+        let gs = g.surface();
+        let fits = stations.windows(2).enumerate().all(|(i, w)| {
+            let (Some(a), Some(b)) = (w.first(), w.get(1)) else { return false };
+            let t = if u_o == 1.0 { 1.0 - (i as f64 + 0.5) / m as f64 } else { (i as f64 + 0.5) / m as f64 };
+            let q = p3(from_p3(bs.subs(t)));
+            let hint = (0.5 * (a.0 + b.0), 0.5 * (a.1 + b.1));
+            let on_g = gs.search_nearest_parameter(q, None, 100).is_some_and(|(x, y)| from_p3(gs.subs(x, y)).dist(from_p3(q)) <= tolerance);
+            let on_s = surf.search_nearest_parameter(q, Some(hint), 100).is_some_and(|(x, y)| from_p3(surf.subs(x, y)).dist(from_p3(q)) <= tolerance);
+            on_g && on_s
+        });
+        if fits {
+            let (t1, t2) = if u_o == 0.0 { (v_a, v_t) } else { (v_t, v_a) };
+            return Ok((t1, t2, mt::Curve::BSplineCurve(bs)));
         }
     }
     Err(fail())
@@ -629,8 +737,9 @@ fn curve_blend_with_limit(solid: &Solid, ids: &[mt::EdgeID], size: f64, r: f64, 
     let mut seams: Vec<Vec<(usize, mt::Edge)>> = Vec::with_capacity(nv);
     // At an open chain's ends: the end face (planar, square to the edge there).
     let mut end_faces: Vec<(usize, usize)> = Vec::new(); // (vertex index, face index)
-    // Chain ends whose end face is not a plane square to the edge: (vertex, face, point, tangent).
-    let mut slanted: Vec<(usize, usize, Vec3, Vec3)> = Vec::new();
+    // Chain ends whose end face is not a plane square to the edge: (vertex, face, point, tangent,
+    // whether the end face lies along the edge, tangent to one of the sides there).
+    let mut slanted: Vec<(usize, usize, Vec3, Vec3, bool)> = Vec::new();
     for (k, v) in verts.iter().enumerate() {
         let at_end = !closed && (k == 0 || k == nv - 1);
         let (k1, k2) = {
@@ -699,7 +808,7 @@ fn curve_blend_with_limit(solid: &Solid, ids: &[mt::EdgeID], size: f64, r: f64, 
                 _ => false,
             };
             if !square {
-                slanted.push((k, fi, p, t));
+                slanted.push((k, fi, p, t, false));
             }
         }
         let extra = match here.first().cloned().filter(|_| !at_end) {
@@ -738,25 +847,41 @@ fn curve_blend_with_limit(solid: &Solid, ids: &[mt::EdgeID], size: f64, r: f64, 
     // Past a slanted end: sections of the same rolling ball beyond the end vertex (far to near
     // at the chain's start, near to far at its end), far enough to cross the end face.
     let mut beyond: Vec<(usize, Vec<Section>)> = Vec::new();
-    for (k, fi, p, t) in &slanted {
+    for (k, fi, p, t, tangent) in slanted.iter_mut() {
         let g = faces.get(*fi).ok_or_else(|| KernelError::Failed("end face".into()))?;
         let at = vsec.get(*k).copied().ok_or_else(|| KernelError::Failed("section".into()))?;
         let (_, ng, _) = project(g, *p, None).ok_or_else(|| unsupported("the blend's end on its end face"))?;
         let cos = ng.dot(*t).abs();
-        if cos < 0.15 {
+        // An end face along the edge and tangent to one side there (a wall that runs out into
+        // the face): the blend meets it along a curve that touches that side's contact at the
+        // vertex. Any other end face that close to the edge is refused.
+        let (e1, e2) = edge_sides(&vertex_edges(*k));
+        *tangent = cos < TANGENT_END
+            && [&e1, &e2].iter().any(|side| side.iter().filter_map(|f| project(f, *p, None)).any(|(_, n, _)| n.dot(ng).abs() > 1.0 - TANGENT_END));
+        if cos < 0.15 && !*tangent {
             return Err(unsupported("an end face almost along the edge"));
         }
         let width = at.q1.dist(*p).max(at.q2.dist(*p)).max(at.c.dist(*p)) + r;
-        let reach = 1.5 * width / cos;
+        let reach = 1.5 * width / if *tangent { 1.0 } else { cos };
         let out = if *k == 0 { -*t } else { *t };
-        let (e1, e2) = edge_sides(&vertex_edges(*k));
+        // Past a tangent end the straight run along the tangent leaves the curved spine: where
+        // the ball no longer fits, the run is shortened (it only gives the fit its context).
         let mut list = Vec::with_capacity(EXTENSION);
-        for j in 1..=EXTENSION {
-            let anchor = *p + out * (reach * j as f64 / EXTENSION as f64);
-            list.push(
+        let mut reach = reach;
+        for attempt in 0..(if *tangent { TANGENT_RETRIES } else { 1 }) {
+            list.clear();
+            let sections = (1..=EXTENSION).map(|j| {
+                let anchor = *p + out * (reach * j as f64 / EXTENSION as f64);
                 solve(&e1, &e2, anchor, *t, r, sigma, cusp, None, tol * 100.0)
-                    .ok_or_else(|| unsupported("the ball doesn't fit past the end of the edge"))?,
-            );
+            });
+            if let Some(all) = sections.collect::<Option<Vec<_>>>() {
+                list = all;
+                break;
+            }
+            if attempt + 1 == TANGENT_RETRIES || !*tangent {
+                return Err(unsupported("the ball doesn't fit past the end of the edge"));
+            }
+            reach *= 0.5;
         }
         if *k == 0 {
             list.reverse();
@@ -789,7 +914,7 @@ fn curve_blend_with_limit(solid: &Solid, ids: &[mt::EdgeID], size: f64, r: f64, 
         solve(&a1, &a2, anchor, t, r, sigma, cusp, None, tol * 100.0).ok_or_else(|| unsupported("the ball doesn't fit along the edge"))
     };
     let mut samples = SAMPLES.min(max_samples);
-    let (esec, fits) = loop {
+    let (esec, fits, vertex_alongs) = loop {
         if n.checked_mul(samples).is_none_or(|count| count > MAX_CHAIN_SAMPLES) {
             return Err(unsupported("curve blend exceeds the section fitting limit"));
         }
@@ -808,6 +933,17 @@ fn curve_blend_with_limit(solid: &Solid, ids: &[mt::EdgeID], size: f64, r: f64, 
                 }
             }
             guides.push(Guide::new(list)?);
+        }
+        // How far along its guide each extended vertex's section lies.
+        let mut alongs: Vec<(usize, f64)> = Vec::with_capacity(beyond.len());
+        for (kv, ext) in &beyond {
+            let guide = guides.get(if *kv == 0 { 0 } else { n - 1 }).ok_or_else(|| KernelError::Failed("spine guide".into()))?;
+            let index = if *kv == 0 { ext.len() } else { guide.lengths.len().saturating_sub(1 + ext.len()) };
+            let (at, total) = (guide.lengths.get(index).copied(), guide.lengths.last().copied());
+            let Some(along) = at.zip(total).map(|(a, t)| a / t).filter(|x| x.is_finite()) else {
+                return Err(unsupported("degenerate rolling-ball spine"));
+            };
+            alongs.push((*kv, along));
         }
         // Intersection curves inherit their leader's piecewise parameter speed. Fitting
         // those parameters creates oscillations even on a geometrically smooth spine.
@@ -873,22 +1009,25 @@ fn curve_blend_with_limit(solid: &Solid, ids: &[mt::EdgeID], size: f64, r: f64, 
             }
         }
         if accurate {
-            break (esec, fits);
+            break (esec, fits, alongs);
         }
         if samples >= max_samples {
             return Err(KernelError::Failed("curve blend: could not fit the rolling-ball surface within the accuracy and section limits".into()));
         }
         samples = (2 * samples - 1).min(max_samples);
     };
+    let vertex_along = |k: usize| vertex_alongs.iter().find(|x| x.0 == k).map_or(0.0, |x| x.1);
     // Where each extended blend meets its slanted end face: (vertex, edge, cut parameters of
     // the two contacts, the end curve from contact 1 to contact 2).
     let mut caps: Vec<(usize, usize, f64, f64, mt::Curve)> = Vec::new();
-    for (k, fi, _, _) in &slanted {
+    for (k, fi, _, _, tangent) in &slanted {
         let ke = if *k == 0 { 0 } else { n - 1 };
         let fit = fits.get(ke).ok_or_else(|| KernelError::Failed("curve blend fit".into()))?;
         let g = faces.get(*fi).ok_or_else(|| KernelError::Failed("end face".into()))?;
         let at = vsec.get(*k).copied().ok_or_else(|| KernelError::Failed("section".into()))?;
-        let cap = crate::guard("curve blend end", || end_cap(fit, g, &at, round, fit_tolerance))?;
+        let cap = crate::guard("curve blend end", || {
+            if *tangent { tangent_cap(fit, g, *k == 0, vertex_along(*k), fit_tolerance) } else { end_cap(fit, g, &at, round, fit_tolerance) }
+        })?;
         caps.push((*k, ke, cap.0, cap.1, cap.2));
     }
     // Both ends of one edge cut back: the contacts must keep a piece between them.
