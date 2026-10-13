@@ -26,6 +26,11 @@ const MAX_SAMPLES: usize = 369;
 const MAX_CHAIN_SAMPLES: usize = 100_000;
 /// Sections past a slanted end of an open chain.
 const EXTENSION: usize = 8;
+/// `1 + n1·n2` below this: a knife edge, where the faces' normals are opposite and the ball's
+/// centre is found by sliding along the faces rather than from their normals.
+const KNIFE: f64 = 1e-4;
+/// Slides of the ball's centre along a knife edge's faces, each 1.6 times the last.
+const KNIFE_STEPS: usize = 40;
 
 struct Fit {
     surface: mt::Surface,
@@ -294,8 +299,20 @@ fn in_range(f: &mt::Face, uv: (f64, f64)) -> bool {
 /// Solve for the ball touching both sides near `p`. `extra` adds a third condition (a plane the
 /// side-k contact must lie in); without it the centre stays in the plane through `p` square to
 /// `t`. `sigma` is +1 when the ball sits outside the material (concave edge), −1 inside.
+/// `cusp` is ±1 at a knife edge (the faces' normals opposite: both leave the edge the same way,
+/// along `cusp · n1 × t`, and the ball lies where the cusp has opened to its width), else 0.
 #[allow(clippy::too_many_arguments)]
-fn solve(f1: &[&mt::Face], f2: &[&mt::Face], p: Vec3, t: Vec3, r: f64, sigma: f64, extra: Option<(usize, Vec3, Vec3)>, tol: f64) -> Option<Section> {
+fn solve(
+    f1: &[&mt::Face],
+    f2: &[&mt::Face],
+    p: Vec3,
+    t: Vec3,
+    r: f64,
+    sigma: f64,
+    cusp: f64,
+    extra: Option<(usize, Vec3, Vec3)>,
+    tol: f64,
+) -> Option<Section> {
     // The nearest face of a side (several faces on one smooth surface group). Each face's
     // search starts from its last answer: the centre moves little between iterations. An
     // answer outside the surface's parameters, or farther than that last point (the search
@@ -320,10 +337,47 @@ fn solve(f1: &[&mt::Face], f2: &[&mt::Face], p: Vec3, t: Vec3, r: f64, sigma: f6
     let (q2, n2) = near(f2, p)?;
     let _ = (q1, q2);
     let den = 1.0 + n1.dot(n2);
-    if den.abs() < 1e-9 {
-        return None;
-    }
-    let mut c = p + (n1 + n2) * (sigma * r / den);
+    let mut c = if cusp != 0.0 && den.abs() < KNIFE {
+        // The normals are (nearly) opposite: `(n1 + n2) / den` has no direction. The centre is r
+        // inside face 1 and slides along it, away from the edge, until it is r from face 2 too.
+        let w = n1.cross(t).normalized()? * cusp;
+        let centre = |s: f64| -> Option<Vec3> {
+            let (qa, na) = near(f1, p + w * s)?;
+            Some(qa + na * (sigma * r))
+        };
+        let gap = |s: f64| -> Option<f64> {
+            let c = centre(s)?;
+            let (q2, n2) = near(f2, c)?;
+            Some((c - q2).dot(n2) - sigma * r)
+        };
+        let (mut lo, mut g_lo) = (0.0, gap(0.0)?);
+        let mut hi = None;
+        let mut s = r * 0.05;
+        for _ in 0..KNIFE_STEPS {
+            let Some(g) = gap(s) else { break };
+            if g == 0.0 || g.is_sign_negative() != g_lo.is_sign_negative() {
+                hi = Some(s);
+                break;
+            }
+            (lo, g_lo) = (s, g);
+            s *= 1.6;
+        }
+        let mut hi = hi?;
+        for _ in 0..60 {
+            let mid = 0.5 * (lo + hi);
+            match gap(mid) {
+                Some(g) if g.is_sign_negative() == g_lo.is_sign_negative() => lo = mid,
+                Some(_) => hi = mid,
+                None => break,
+            }
+        }
+        centre(0.5 * (lo + hi))?
+    } else {
+        if den.abs() < 1e-9 {
+            return None;
+        }
+        p + (n1 + n2) * (sigma * r / den)
+    };
     for _ in 0..60 {
         let (q1, n1) = near(f1, c)?;
         let (q2, n2) = near(f2, c)?;
@@ -549,7 +603,23 @@ fn curve_blend_with_limit(solid: &Solid, ids: &[mt::EdgeID], size: f64, r: f64, 
         (Some(x), Some(y)) => (x.1, y.1),
         _ => return Err(KernelError::Failed("blend: normals".into())),
     };
-    let convex = t1.dot(n1.cross(n2)) > 0.0;
+    // A knife edge (opposite normals): both faces leave the edge along `w`; the second one lies
+    // below the first (against its outward normal) when the cusp is material, above when it is
+    // a gap. The cross product of the normals, which tells the other edges apart, is zero here.
+    let knife = 1.0 + n1.dot(n2) < KNIFE;
+    let (convex, cusp) = if knife {
+        let w = n1.cross(t1).normalized().ok_or_else(|| KernelError::Failed("blend: cusp direction".into()))?;
+        // Second order: from the point of face 1 a little way along `w`, face 2's nearest point.
+        let probe = project(f1, pm + w * r, None)
+            .and_then(|(qa, na, _)| s2.first().and_then(|f| project(f, qa, None)).map(|(qb, _, _)| (qb - qa).dot(na)))
+            .filter(|depth| depth.abs() > size * 1e-9)
+            .ok_or_else(|| unsupported("a knife edge whose faces lie flat on each other"))?;
+        // Whether the chain runs along the edge as face 1 uses it decides which way `w` points
+        // from the chain's tangent.
+        (probe < 0.0, if in_f1.front() == e0.front() { 1.0 } else { -1.0 })
+    } else {
+        (t1.dot(n1.cross(n2)) > 0.0, 0.0)
+    };
     let sigma = if convex { -1.0 } else { 1.0 };
     if n1.dot(n2) > 1.0 - 1e-6 {
         return Err(unsupported("blending a smooth edge"));
@@ -654,7 +724,7 @@ fn curve_blend_with_limit(solid: &Solid, ids: &[mt::EdgeID], size: f64, r: f64, 
             }
         };
         let (a1, a2) = edge_sides(&vertex_edges(k));
-        let s = solve(&a1, &a2, p, t, r, sigma, extra, tol * 100.0).ok_or_else(|| unsupported("the ball doesn't fit along the edge"))?;
+        let s = solve(&a1, &a2, p, t, r, sigma, cusp, extra, tol * 100.0).ok_or_else(|| unsupported("the ball doesn't fit along the edge"))?;
         // A seam on the other side too must pass through that side's contact.
         if let Some((side, seam)) = here.get(1).filter(|_| !at_end) {
             let q = if *side == 1 { s.q1 } else { s.q2 };
@@ -684,7 +754,7 @@ fn curve_blend_with_limit(solid: &Solid, ids: &[mt::EdgeID], size: f64, r: f64, 
         for j in 1..=EXTENSION {
             let anchor = *p + out * (reach * j as f64 / EXTENSION as f64);
             list.push(
-                solve(&e1, &e2, anchor, *t, r, sigma, None, tol * 100.0)
+                solve(&e1, &e2, anchor, *t, r, sigma, cusp, None, tol * 100.0)
                     .ok_or_else(|| unsupported("the ball doesn't fit past the end of the edge"))?,
             );
         }
@@ -716,7 +786,7 @@ fn curve_blend_with_limit(solid: &Solid, ids: &[mt::EdgeID], size: f64, r: f64, 
         let (start, end) = offsets.get(k).copied().ok_or_else(|| KernelError::Failed("section offset".into()))?;
         let anchor = p + t * (start * (1.0 - along) + end * along);
         let (a1, a2) = edge_sides(&[k]);
-        solve(&a1, &a2, anchor, t, r, sigma, None, tol * 100.0).ok_or_else(|| unsupported("the ball doesn't fit along the edge"))
+        solve(&a1, &a2, anchor, t, r, sigma, cusp, None, tol * 100.0).ok_or_else(|| unsupported("the ball doesn't fit along the edge"))
     };
     let mut samples = SAMPLES.min(max_samples);
     let (esec, fits) = loop {
@@ -753,7 +823,8 @@ fn curve_blend_with_limit(solid: &Solid, ids: &[mt::EdgeID], size: f64, r: f64, 
             }
             let (anchor, tangent) = guide.anchor(along).ok_or_else(|| unsupported("degenerate rolling-ball spine"))?;
             let (a1, a2) = edge_sides(&[k]);
-            solve(&a1, &a2, anchor, tangent, r, sigma, None, tol * 100.0).ok_or_else(|| unsupported("the ball doesn't fit along the resampled spine"))
+            solve(&a1, &a2, anchor, tangent, r, sigma, cusp, None, tol * 100.0)
+                .ok_or_else(|| unsupported("the ball doesn't fit along the resampled spine"))
         };
         let esec: Vec<Vec<Section>> = (0..n)
             .map(|k| (0..samples).map(|j| uniform_section(k, j as f64 / (samples - 1) as f64)).collect::<Result<Vec<_>>>())

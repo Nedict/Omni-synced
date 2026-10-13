@@ -352,3 +352,36 @@ fn lip_on_a_rounded_shelled_rim() {
         assert!((v - want).abs() < 1e-3 * want, "{extra}: {v} vs {want}");
     }
 }
+
+/// #851: a wall of radius 21 runs out into the back face in a knife edge, where the two faces
+/// have opposite normals. The edge rounds to the ball that fits there and chamfers with the
+/// plane through that ball's contacts (volumes: the cusp area less the wall's sector and the
+/// ball's, or the chord triangle less the wall's segment, times the 10 mm height).
+#[test]
+fn blend_a_knife_edge_where_a_curved_wall_runs_out() {
+    let steps = json!([
+        {"command": "sketch.create", "params": {"plane": "XY"}},
+        {"command": "sketch.rectangle.two_point", "params": {"p0": [0, 0], "p1": [41.5, -21]}},
+        {"command": "sketch.dimension", "params": {"entities": ["l2"], "text_at": [36.5, -8.5], "value": "21 mm"}},
+        {"command": "sketch.line", "params": {"infer": true, "points": ["p2", [61.5, -21]]}},
+        {"command": "sketch.dimension", "params": {"entities": ["l5"], "text_at": [54.5, -26.5], "value": "21"}},
+        {"command": "sketch.circle.center", "params": {"center": "l5.end", "radius": 21}},
+        {"command": "sketch.line", "params": {"infer": true, "points": ["p3", [62.166666666666664, 0]]}},
+        {"command": "sketch.constraint.tangent", "params": {"a": "c1", "b": "l6"}},
+        {"command": "sketch.finish", "params": {}},
+        {"command": "solid.extrude", "params": {"direction": "positive", "distance": "10 mm", "operation": "new", "profiles": [0, 1], "sketch": 1}}
+    ]);
+    let knife = json!([[62.1667, 0, 5]]);
+    for (command, params, removed) in
+        [("solid.fillet", json!({"edges": knife, "radius": 2}), 119.648_812), ("solid.chamfer", json!({"edges": knife, "distance": 2}), 159.236_451)]
+    {
+        let mut s = script(steps.clone());
+        let before = total_volume(&s);
+        s.execute(command, &params).unwrap_or_else(|e| panic!("{command}: {e}"));
+        let after = total_volume(&s);
+        assert!((before - after - removed).abs() < 0.5, "{command}: removed {}, expected {removed}", before - after);
+        for b in &s.model.state().bodies {
+            assert!(b.body.validity().is_empty(), "{command}: {:?}", b.body.validity());
+        }
+    }
+}

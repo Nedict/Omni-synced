@@ -44,6 +44,8 @@ mod issue_616_tests;
 mod issue_674_tests;
 #[cfg(test)]
 mod issue_679_tests;
+#[cfg(test)]
+mod issue_851_tests;
 mod lip;
 mod loopblend;
 mod measure;
