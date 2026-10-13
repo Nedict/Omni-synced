@@ -511,6 +511,12 @@ impl SolveApp {
             self.tree.capture_prompt = Some(id.to_string());
             return;
         }
+        // A line-type toggle changes the current drawing, including a partly picked shape.
+        // Handle it before cancelling tools or inline dimensions.
+        if id == "sketch.construction" {
+            sketch_palette::toggle_construction(self);
+            return;
+        }
         dim_view::cancel();
         self.tool = None;
         self.home.open = false;
@@ -541,12 +547,6 @@ impl SolveApp {
         if id == "solid.press_pull" {
             let edges = self.session.selection.iter().any(|s| matches!(s, solidcraft_engine::Sel::Edge { .. }));
             return self.start(if edges { "solid.fillet" } else { "solid.extrude" });
-        }
-        // Construction toggle: selected sketch curves switch at once, otherwise pick them.
-        // Construction (X): convert the selection, or switch construction mode; no pick tool.
-        if id == "sketch.construction" {
-            sketch_palette::toggle_construction(self);
-            return;
         }
         if let Some(spec) = solidcraft_engine::find_command(id)
             && (tools::Tool::for_command(id).is_some() || dialogs::Dialog::for_command(self, id).is_some())

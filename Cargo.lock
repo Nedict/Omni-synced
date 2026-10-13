@@ -2767,15 +2767,6 @@ checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
 name = "quick-xml"
-version = "0.38.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
-dependencies = [
- "memchr",
-]
-
-[[package]]
-name = "quick-xml"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
@@ -3297,7 +3288,7 @@ dependencies = [
  "embed-resource",
  "hidapi",
  "log",
- "quick-xml 0.38.4",
+ "quick-xml",
  "rfd",
  "serde_json",
  "solidcraft-engine",
@@ -3358,7 +3349,7 @@ dependencies = [
 name = "solidcraft-io"
 version = "0.7.0"
 dependencies = [
- "quick-xml 0.38.4",
+ "quick-xml",
  "serde",
  "serde_json",
  "sha2",
@@ -4182,7 +4173,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "338e30461b3a2b67d70eb30a6d89f8e0c93a833e07d2ae89085cd070c4a00ac0"
 dependencies = [
  "proc-macro2",
- "quick-xml 0.41.0",
+ "quick-xml",
  "quote",
 ]
 

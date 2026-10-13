@@ -64,7 +64,10 @@ per edge with an angle and a height box; an empty box takes the value above.
 For a shop drawing or spreadsheet, `sheet.export_bend_table` returns CSV by default; choose
 `format: "json"` for structured data. It includes the sheet rule, thickness, bend angles,
 radii, allowances and flat centre-line coordinates. Lengths use millimetres and angles use
-degrees. Supply `path` to save it, or omit `path` to receive the content through the command
+degrees. A bend is listed where its centre line has material: one that a cut-out has shortened
+gives the length and ends it has left, and one that cut-outs split gives a row for every piece,
+all with the bend's number (the flat pattern and the DXF draw the same pieces as bend lines).
+Supply `path` to save it, or omit `path` to receive the content through the command
 response. `body` defaults to the last sheet body. Exporting does not add a timeline entry or
 consume an undo step.
 
@@ -80,11 +83,18 @@ Base-flange profiles keep their interior holes. Through cuts that cross a sheet 
 notches in the flat outline; overlapping and repeated cuts remove their combined area once.
 The flat preview, DXF and unfolded solid use the same material boundaries. Lines and circular
 arcs remain exact; other profile curves use a 0.001 mm chord tolerance.
+Flat-pattern JSON lists each cut-out twice, in the same order: as points (`cutouts`), and
+exactly (`cutout_shapes`): a round hole as `{"circle": {"center", "radius"}}`, any other as its
+`line`, `arc` (centre, radius, start and sweep in degrees) and `polyline` segments.
 
 Cuts can leave separate material pieces, including the centre of a ring cut. These pieces
 remain one logical sheet group through Unfold / Refold and export as separate flat outlines.
 Large profiles that exceed the geometry processing budget report an error instead of
 exporting a partial outline.
+
+A Box cut, or a Cylinder cut whose axis is the sheet's normal, machines the sheet like the
+extrude of its footprint: through the sheet it is a cut-out (a cylinder a round one), and
+part way it is a pocket. A primitive cut at any other angle, or across a folded bend, is refused.
 
 Parallel, untapered extrude cuts also preserve shallow pockets through Unfold / Refold.
 The pocket floor and side walls remain solid geometry; overlapping cuts from opposite sides

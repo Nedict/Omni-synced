@@ -429,6 +429,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn construction_shortcut_keeps_the_drawing_tool_and_commits_its_line_type() {
+        for command in ["sketch.line", "sketch.rectangle.two_point", "sketch.circle.center"] {
+            let mut h = crate::scenario::Harness::new();
+            h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+            set_mode(&mut h.app, 0);
+            h.step(&json!({"start":command})).unwrap();
+            h.step(&json!({"key":"X"})).unwrap();
+            assert_eq!(h.app.tool.as_ref().map(|t| t.cmd), Some(command));
+            assert_eq!(mode(&h.app), 1);
+            h.step(&json!({"click":{"sketch":[0,0]}})).unwrap();
+            h.step(&json!({"move":{"sketch":[20,10]}})).unwrap();
+            let before = h.app.tool.clone().unwrap();
+            let history = h.app.session.undo.len();
+            // The toolbar takes the same start path, even while a dimension box has focus.
+            h.app.start("sketch.construction");
+            h.app.start("sketch.construction");
+            let after = h.app.tool.as_ref().unwrap();
+            assert_eq!(after.cmd, before.cmd);
+            assert_eq!(after.pts, before.pts);
+            assert_eq!(after.dims_stage, before.dims_stage);
+            assert_eq!(after.dims.iter().map(|d| &d.value).collect::<Vec<_>>(), before.dims.iter().map(|d| &d.value).collect::<Vec<_>>());
+            assert_eq!(h.app.session.undo.len(), history);
+            h.step(&json!({"click":{"sketch":[20,10]}})).unwrap();
+            let state = h.app.session.world_state();
+            let sketch = &state.sketch(h.app.session.active_sketch.unwrap()).unwrap().sketch;
+            assert!(!sketch.curves.is_empty(), "{command}");
+            assert!(sketch.curves.iter().all(|c| c.construction), "{command}");
+            h.app.run("edit.undo", json!({})).unwrap();
+            assert!(h.app.session.world_state().sketch(h.app.session.active_sketch.unwrap()).unwrap().sketch.curves.is_empty());
+            set_mode(&mut h.app, 0);
+        }
+    }
+
+    #[test]
     fn palette_footer_and_scrolled_lower_option_remain_reachable_at_scale_and_resize() {
         for (scale, height) in [(1.0, 900.0), (2.0, 900.0), (2.0, 720.0)] {
             FOLDED.with(|v| v.set(false));

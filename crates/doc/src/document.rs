@@ -1765,6 +1765,38 @@ pub struct Document {
     /// Named views: saved cameras.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub named_views: Vec<NamedView>,
+    /// What was hidden when the design was saved. A session takes it from here when the design
+    /// opens and keeps the live state itself (`browser.visibility`: saved, not an undo step), so
+    /// a document in a session leaves this empty; the session puts it back when it saves.
+    #[serde(default, skip_serializing_if = "Visibility::is_empty")]
+    pub visibility: Visibility,
+}
+
+/// Items hidden or shown one by one. Saved with the design, but not an undo step.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Visibility {
+    /// Bodies by name.
+    pub hidden_bodies: Vec<String>,
+    /// Exact occurrence placements hidden with all descendants.
+    pub hidden_occurrences: Vec<Vec<u64>>,
+    /// Origin items (O, X, Y, Z, XY, XZ, YZ) and construction geometry, by name.
+    pub hidden_origin: Vec<String>,
+    /// Sketches by feature id.
+    pub hidden_sketches: Vec<u64>,
+    /// Finished sketches shown although a feature uses them.
+    pub shown_sketches: Vec<u64>,
+}
+
+impl Visibility {
+    /// Nothing hidden or shown one by one (the default view).
+    pub fn is_empty(&self) -> bool {
+        self.hidden_bodies.is_empty()
+            && self.hidden_occurrences.is_empty()
+            && self.hidden_origin.is_empty()
+            && self.hidden_sketches.is_empty()
+            && self.shown_sketches.is_empty()
+    }
 }
 
 /// A saved camera (orbit camera: target, yaw, pitch, distance; `fov` 0 for orthographic).
@@ -1833,6 +1865,7 @@ impl Document {
             browser_groups: Vec::new(),
             browser_order: Default::default(),
             named_views: Vec::new(),
+            visibility: Visibility::default(),
         }
     }
 

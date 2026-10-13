@@ -31,6 +31,8 @@ pub struct NamingOrigin {
     pub depth: usize,
     /// Instance transforms of a pattern or mirror (its copies are named after their sources).
     pub mats: Vec<crate::Mat>,
+    /// The sheet metal bodies after a sheet feature (their folds place moved faces).
+    pub sheets: Vec<crate::sheet::SheetBody>,
 }
 
 /// The lazily computed names of a body, shared by its clones.
@@ -332,6 +334,24 @@ fn geometric_from(b: &ModelBody, o: &NamingOrigin, nf: usize, names_of: fn(&Mode
         }
         if let Some((_, k, got)) = best {
             names = got.into_iter().map(|n| n.map(|n| format!("{n}@F{fid}.{}", k + 1))).collect();
+        }
+    }
+    // A sheet feature that moved panels (a fold, an unfold): faces it carried along lie on the
+    // faces they were, taken back through the panel they are on.
+    if let (Some(after), Some(before), Some(input)) = (
+        o.sheets.iter().find(|s| s.body == b.name),
+        o.before.sheets.iter().find(|s| s.body == b.name),
+        inputs.iter().find(|(x, _, _)| x.name == b.name),
+    ) {
+        let input = std::slice::from_ref(input);
+        for (name, ps) in names.iter_mut().zip(&pts) {
+            if name.is_some() {
+                continue;
+            }
+            let back: Option<Vec<Vec3>> = ps.iter().map(|p| after.point_before(before, *p)).collect();
+            if let Some(back) = back.filter(|b| !b.is_empty()) {
+                *name = vote(&back, input, tol, None);
+            }
         }
     }
     let empty = Vec::new();

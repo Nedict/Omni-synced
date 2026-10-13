@@ -93,7 +93,6 @@ fn struts_ending_on_a_bore_wall_join_without_a_panic() {
 /// yet the cut was refused (#544). It removes π · 1² · 10 mm³ (within 5 %: the measure tessellates
 /// the small bore) and adds the bore's wall and floor to the bar's six faces.
 #[test]
-#[ignore = "fails until #544 is fixed"]
 fn blind_hole_into_a_long_d_profile_bar_stops_short_of_the_round_front() {
     let script: Value = serde_json::from_str(include_str!("../../../examples/regressions/blind_hole_in_long_d_profile.json")).unwrap();
     let steps = script.get("commands").and_then(Value::as_array).unwrap();
@@ -111,7 +110,6 @@ fn blind_hole_into_a_long_d_profile_bar_stops_short_of_the_round_front() {
 /// A ring pocket cut from below a recess leaves a 0.5 mm floor joining the outer wall to the inner
 /// block: one connected part, yet the cut left two bodies and lost volume (#545).
 #[test]
-#[ignore = "fails until #545 is fixed"]
 fn ring_cut_below_a_recess_keeps_the_part_in_one_body() {
     let s = replay(include_str!("../../../examples/regressions/ring_cut_below_recess_thin_floor.json"));
     let bodies: Vec<(String, f64)> = s.model.state().bodies.iter().map(|b| (b.name.clone(), volume(&s, &b.name))).collect();
