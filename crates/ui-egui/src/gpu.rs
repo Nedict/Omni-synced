@@ -184,7 +184,7 @@ struct Batch {
     count: u32,
 }
 
-/// A planned body on the GPU: its evaluated mesh and a colour per vertex.
+/// A chunk of planned bodies on the GPU: their evaluated mesh and a colour per vertex.
 struct PlannedDraw {
     mesh: Arc<solidcraft_gpu::GpuMesh>,
     colors: wgpu::Buffer,
@@ -206,9 +206,9 @@ struct Batches {
     xray: Option<Batch>,
     under: Option<Batch>,
     planned: Vec<PlannedDraw>,
-    /// Evaluated plans by the plan's address, holding the plan so the address stays its own:
-    /// a body whose plan is unchanged is not evaluated again when the scene is rebuilt.
-    resident: std::collections::HashMap<usize, (Arc<solidcraft_engine::geom::tess::TessPlan>, Arc<solidcraft_gpu::GpuMesh>)>,
+    /// Evaluated chunks by their plans' addresses, holding the plans so the addresses stay
+    /// theirs: a chunk whose plans are unchanged is not evaluated again when the scene is rebuilt.
+    resident: std::collections::HashMap<Vec<usize>, (Vec<Arc<solidcraft_engine::geom::tess::TessPlan>>, Arc<solidcraft_gpu::GpuMesh>)>,
 }
 
 impl Batches {
@@ -238,6 +238,9 @@ impl Batches {
         }
     }
 
+    /// The planned bodies on the GPU: in chunks of at most `MAX_BATCH` vertices (one for any
+    /// ordinary scene), each uploaded and evaluated in one dispatch and drawn in one call. A
+    /// chunk whose plans are unchanged is not evaluated again; colours are rebuilt each time.
     fn planned(
         &mut self,
         device: &wgpu::Device,
@@ -245,27 +248,47 @@ impl Batches {
         encoder: &mut wgpu::CommandEncoder,
         bodies: &[PlannedBody],
     ) -> Vec<PlannedDraw> {
-        let ptr = |b: &PlannedBody| Arc::as_ptr(&b.plan) as usize;
-        self.resident.retain(|k, _| bodies.iter().any(|b| ptr(b) == *k));
-        let mut out = Vec::with_capacity(bodies.len());
+        let mut chunks: Vec<Vec<&PlannedBody>> = Vec::new();
+        let mut filled = 0usize;
         for b in bodies {
-            let mesh = match self.resident.get(&ptr(b)) {
+            let n = b.plan.vertex_count();
+            match chunks.last_mut() {
+                Some(c) if filled + n <= solidcraft_gpu::MAX_BATCH => c.push(b),
+                _ => {
+                    chunks.push(vec![b]);
+                    filled = 0;
+                }
+            }
+            filled += n;
+        }
+        let key = |c: &[&PlannedBody]| c.iter().map(|b| Arc::as_ptr(&b.plan) as usize).collect::<Vec<usize>>();
+        self.resident.retain(|k, _| chunks.iter().any(|c| key(c) == *k));
+        let mut out = Vec::with_capacity(chunks.len());
+        for chunk in &chunks {
+            let mesh = match self.resident.get(&key(chunk)) {
                 Some((_, m)) => m.clone(),
-                None => match tess.prepare(&b.plan) {
-                    Ok(m) => {
-                        tess.record(encoder, &m);
-                        let m = Arc::new(m);
-                        self.resident.insert(ptr(b), (b.plan.clone(), m.clone()));
-                        m
+                None => {
+                    let plans: Vec<&solidcraft_engine::geom::tess::TessPlan> = chunk.iter().map(|b| &*b.plan).collect();
+                    match tess.prepare_many(&plans) {
+                        Ok(m) => {
+                            tess.record(encoder, &m);
+                            let m = Arc::new(m);
+                            self.resident.insert(key(chunk), (chunk.iter().map(|b| b.plan.clone()).collect(), m.clone()));
+                            m
+                        }
+                        Err(e) => {
+                            log::warn!("bodies are not drawn on the GPU: {e}");
+                            continue;
+                        }
                     }
-                    Err(e) => {
-                        log::warn!("a body is not drawn on the GPU: {e}");
-                        continue;
-                    }
-                },
+                }
             };
-            let last = b.face_colors.last().copied().unwrap_or([200, 200, 200, 255]);
-            let bytes: Vec<u8> = mesh.vertex_face.iter().flat_map(|f| b.face_colors.get(*f as usize).copied().unwrap_or(last)).collect();
+            let mut bytes = Vec::with_capacity(mesh.vertex_face.len() * 4);
+            for (part, b) in mesh.parts.iter().zip(chunk) {
+                let last = b.face_colors.last().copied().unwrap_or([200, 200, 200, 255]);
+                let faces = mesh.vertex_face.get(part.vertices.start as usize..part.vertices.end as usize).unwrap_or_default();
+                bytes.extend(faces.iter().flat_map(|f| b.face_colors.get(*f as usize).copied().unwrap_or(last)));
+            }
             if let Some(colors) = upload(device, "sc_planned_colors", &bytes, 4) {
                 out.push(PlannedDraw { mesh, colors: colors.buffer });
             }
