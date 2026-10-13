@@ -222,6 +222,11 @@ pub fn export_mesh(b: &solidcraft_kernel::Body) -> Result<Mesh> {
     Ok(b.tessellate((b.size() * 2e-4).max(1e-3))?)
 }
 
+/// Distance within which an exported mesh's vertices are welded (STL and 3MF alike).
+fn weld_eps(b: &solidcraft_kernel::Body) -> f64 {
+    (b.size() * 1e-6).max(1e-7)
+}
+
 /// Binary STL of several meshes (one solid).
 pub fn stl_binary(meshes: &[Mesh], name: &str) -> Vec<u8> {
     let n: usize = meshes.iter().map(|m| m.triangles.len()).sum();
@@ -292,13 +297,22 @@ pub fn export(state: &ModelState, bodies: &[String], format: Format, name: &str)
         return Err(IoError::Empty);
     }
     Ok(match format {
-        Format::StlBinary | Format::StlAscii | Format::Obj => {
+        Format::StlBinary | Format::StlAscii => {
+            // Each body welded on its own (as for 3MF), so shared vertices are written identically
+            // and the file is closed where faces meet.
+            let meshes: Vec<Mesh> = sel
+                .iter()
+                .map(|b| {
+                    let m = export_mesh(&b.body)?;
+                    let (positions, triangles) = weld(&m.positions, &m.triangles, weld_eps(&b.body));
+                    Ok(Mesh { positions, triangles, ..Mesh::default() })
+                })
+                .collect::<Result<_>>()?;
+            if format == Format::StlBinary { stl_binary(&meshes, name) } else { stl_ascii(&meshes, name).into_bytes() }
+        }
+        Format::Obj => {
             let meshes: Vec<(String, Mesh)> = sel.iter().map(|b| Ok((b.name.clone(), export_mesh(&b.body)?))).collect::<Result<_>>()?;
-            match format {
-                Format::StlBinary => stl_binary(&meshes.into_iter().map(|(_, m)| m).collect::<Vec<_>>(), name),
-                Format::StlAscii => stl_ascii(&meshes.into_iter().map(|(_, m)| m).collect::<Vec<_>>(), name).into_bytes(),
-                _ => obj(&meshes).into_bytes(),
-            }
+            obj(&meshes).into_bytes()
         }
         Format::Step => {
             let bs: Vec<solidcraft_kernel::ExportBody> =
@@ -317,7 +331,7 @@ pub fn export(state: &ModelState, bodies: &[String], format: Format, name: &str)
                 .iter()
                 .map(|b| {
                     let m = export_mesh(&b.body)?;
-                    let eps = (b.body.size() * 1e-6).max(1e-7);
+                    let eps = weld_eps(&b.body);
                     // Faces with colours of their own tag their triangles.
                     let paint = b.body.paint();
                     let mut looks = Vec::new();
