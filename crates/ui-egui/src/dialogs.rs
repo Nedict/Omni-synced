@@ -248,6 +248,9 @@ pub enum Kind {
     /// Edit Text: a sketch text's content and placement (`sketch_text`).
     Text(crate::sketch_text::Tx),
     TextMove(crate::sketch_text_move::TextMove),
+    /// Sketch-space modify tools: scale, and later offset, fillet, chamfer, the patterns,
+    /// mirror and move (`sketch_modify_ui`).
+    SketchModify(crate::sketch_modify_ui::Mod),
 }
 
 /// The Single hole placement's input: places on planar faces. A pick on or near a sketch point
@@ -323,11 +326,10 @@ fn fits(a: Accept, s: &Sel) -> bool {
         Sel::SketchCurve { .. } => a & (AXES | CURVES) != 0,
         Sel::Vertex { .. } => a & selection::VERTICES != 0,
         Sel::Feature { .. } => a & selection::FEATURES != 0,
-        Sel::SketchPoint { .. }
-        | Sel::SketchConstraint { .. }
-        | Sel::Occurrence { .. }
-        | Sel::ExternalSketchCurve { .. }
-        | Sel::ExternalSketchPoint { .. } => false,
+        // Sketch points go into a sketch command's own inputs (Entities, a base point), so a
+        // box selection and a pre-selection reach them the way a click already does.
+        Sel::SketchPoint { .. } => a & selection::POINTS != 0,
+        Sel::SketchConstraint { .. } | Sel::Occurrence { .. } | Sel::ExternalSketchCurve { .. } | Sel::ExternalSketchPoint { .. } => false,
     }
 }
 
@@ -525,7 +527,8 @@ impl Dialog {
                     .or_else(|| crate::dialogs_motion::start(app, id))
                     .or_else(|| crate::dialogs_parts::start(app, id))
                     .or_else(|| crate::sketch_text::start(app, id))
-                    .or_else(|| crate::sketch_text_move::start(app, id))?;
+                    .or_else(|| crate::sketch_text_move::start(app, id))
+                    .or_else(|| crate::sketch_modify_ui::start(app, id))?;
                 Dialog::new(kind, inputs)
             }
         };
@@ -702,6 +705,7 @@ impl Dialog {
             Kind::Sheet(k) => return k.primary(&self.inputs),
             Kind::Surface(k) => return k.primary(),
             Kind::Plastic(k) => return k.primary(),
+            Kind::SketchModify(k) => return k.primary(),
             _ => return None,
         })
     }
@@ -994,6 +998,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::Part(_) => "INSERT PART",
         Kind::Text(_) => "EDIT TEXT",
         Kind::TextMove(_) => "MOVE/COPY TEXT",
+        Kind::SketchModify(k) => k.title(),
     }
 }
 
@@ -2122,6 +2127,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     Kind::Assembly(k) => enter |= crate::dialogs_assembly::rows(app, ui, k, &mut d.inputs, &mut d.active),
                     Kind::Sheet(k) => enter |= crate::dialogs_sheet::rows(app, ui, k, &mut d.inputs),
                     Kind::Surface(k) => enter |= crate::dialogs_surface::rows(ui, k),
+                    Kind::SketchModify(k) => enter |= crate::sketch_modify_ui::rows(ui, k),
                     Kind::Plastic(k) => enter |= crate::dialogs_plastic::rows(app, ui, k, &d.inputs),
                     Kind::Appearance(k) => enter |= crate::dialogs_appearance::rows(app, ui, k, &mut d.inputs),
                     Kind::Motion(k) => enter |= crate::dialogs_motion::rows(app, ui, k, &mut d.inputs),
@@ -3147,6 +3153,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::Assembly(k) => return crate::dialogs_assembly::commands(app, k, &d.inputs),
         Kind::Sheet(k) => return crate::dialogs_sheet::commands(app, k, &d.inputs, &d.extra),
         Kind::Surface(k) => return crate::dialogs_surface::commands(app, k, &d.inputs, &d.extra),
+        Kind::SketchModify(k) => return crate::sketch_modify_ui::commands(app, k, &d.inputs, &d.extra),
         Kind::Plastic(k) => return crate::dialogs_plastic::commands(app, k, &d.inputs, &d.extra),
         Kind::Appearance(k) => return Ok(crate::dialogs_appearance::commands(k, &d.inputs)),
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),

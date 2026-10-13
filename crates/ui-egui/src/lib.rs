@@ -105,6 +105,9 @@ mod sketch_drag_ui_tests;
 #[cfg(test)]
 mod sketch_edit_tests;
 mod sketch_families;
+pub mod sketch_modify_ui;
+#[cfg(test)]
+mod sketch_modify_ui_tests;
 pub mod sketch_palette;
 pub(crate) mod sketch_text;
 mod sketch_text_move;
