@@ -209,7 +209,8 @@ pub struct SheetRule {
     pub corner_relief: String,
     /// What is cut where two bends meet at a corner of the base: `notch` (nothing more: the
     /// bends end square at the corner), `round` or `rectangular` (a relief `corner_relief`
-    /// across, centred on the corner the two bends share).
+    /// across, centred on the corner the two bends share), or `tear` (no relief: each bend's
+    /// end is cut straight from that corner to where its flange's end starts).
     #[serde(default = "rule_corner_relief_shape")]
     pub corner_relief_shape: String,
     /// Inner radius of flat hems.
@@ -286,6 +287,9 @@ pub enum ReliefShape {
     /// A square with a corner on the corner of the bends (a kite where the base's corner isn't
     /// square: both cuts leave their edge at a right angle).
     Rectangular,
+    /// No relief: both bends run to their corner, and each one's end is cut straight, in the
+    /// flat, from that corner to where its flange's closed end starts.
+    Tear,
 }
 
 impl ReliefShape {
@@ -294,6 +298,7 @@ impl ReliefShape {
             "notch" => Some(ReliefShape::Notch),
             "round" => Some(ReliefShape::Round),
             "rectangular" => Some(ReliefShape::Rectangular),
+            "tear" => Some(ReliefShape::Tear),
             _ => None,
         }
     }
@@ -303,6 +308,7 @@ impl ReliefShape {
             ReliefShape::Notch => "notch",
             ReliefShape::Round => "round",
             ReliefShape::Rectangular => "rectangular",
+            ReliefShape::Tear => "tear",
         }
     }
 }
@@ -349,8 +355,9 @@ impl Document {
             relief_width: with_t(&r.relief_width, Kind::Length)?,
             relief_depth: with_t(&r.relief_depth, Kind::Length)?,
             corner_relief: with_t(&r.corner_relief, Kind::Length)?,
-            corner_relief_shape: ReliefShape::parse(&r.corner_relief_shape)
-                .ok_or_else(|| DocError::Invalid(format!("unknown corner relief shape `{}` (notch, round or rectangular)", r.corner_relief_shape)))?,
+            corner_relief_shape: ReliefShape::parse(&r.corner_relief_shape).ok_or_else(|| {
+                DocError::Invalid(format!("unknown corner relief shape `{}` (notch, round, rectangular or tear)", r.corner_relief_shape))
+            })?,
             hem_gap: with_t(&r.hem_gap, Kind::Length)?,
             gap: with_t(&r.gap, Kind::Length)?,
         };
@@ -385,6 +392,11 @@ pub struct SheetFlange {
     /// flanges that aren't at 90° ends on a slanted line in the flat.
     #[serde(default, skip_serializing_if = "is_zero_pair")]
     pub slope: (f64, f64),
+    /// Torn ends (the rule's `tear` corner relief): there the bend doesn't end square across,
+    /// but on the straight line, in the flat, from its start line's end to where the panel's
+    /// end starts.
+    #[serde(default, skip_serializing_if = "is_false_pair")]
+    pub tear: (bool, bool),
     /// A fold's panel: the part of the sheet past the bend (flat coordinates, counter-clockwise)
     /// instead of a rectangle `leg` long.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -460,6 +472,10 @@ struct Cell {
 
 fn is_zero_pair(v: &(f64, f64)) -> bool {
     v.0 == 0.0 && v.1 == 0.0
+}
+
+fn is_false_pair(v: &(bool, bool)) -> bool {
+    !v.0 && !v.1
 }
 
 fn rev_edge(e: EdgeSpec) -> EdgeSpec {
@@ -645,6 +661,29 @@ fn in_triangle(p: Vec2, a: Vec2, b: Vec2, c: Vec2) -> bool {
     (x >= -1e-6 && y >= -1e-6 && z >= -1e-6) || (x <= 1e-6 && y <= 1e-6 && z <= 1e-6)
 }
 
+/// The least over 0 ≤ φ ≤ `th` (at most π) of `h`, a function of the form
+/// a + b·φ + c·cos φ + d·sin φ: at an end, or where its slope b − c·sin φ + d·cos φ vanishes.
+fn sinusoid_least(h: &dyn Fn(f64) -> f64, th: f64) -> f64 {
+    use std::f64::consts::{FRAC_PI_2, PI, TAU};
+    let (h0, h90, h180, h360) = (h(0.0), h(FRAC_PI_2), h(PI), h(TAU));
+    let b = (h360 - h0) / TAU;
+    let a = (h0 + h180 - b * PI) / 2.0;
+    let (c, d) = (h0 - a, h90 - a - b * FRAC_PI_2);
+    let mut least = h0.min(h(th));
+    // c·sin φ − d·cos φ = r·sin(φ − ψ) = b.
+    let r = c.hypot(d);
+    if r > 1e-12 && b.abs() <= r {
+        let (psi, x) = (d.atan2(c), (b / r).asin());
+        for phi in [psi + x, psi + PI - x] {
+            let phi = phi.rem_euclid(TAU);
+            if phi > 0.0 && phi < th {
+                least = least.min(h(phi));
+            }
+        }
+    }
+    least
+}
+
 /// Two flanges on the far edges of two flanges that meet at a corner of the base (see
 /// [`SheetBody::close_return_corners`]): flanges `a` and `b`, which end of each (false = the end
 /// at `p`), and where each one's bend ends there (flat coordinates; apart, each on its own parent).
@@ -716,12 +755,36 @@ impl SheetBody {
         (-f.ext.0 - f.slope.0 * f.leg, f.len + f.ext.1 + f.slope.1 * f.leg)
     }
 
-    /// Flat region of a flange's bend zone.
+    /// Flat region of a flange's bend zone: square across the bend at both ends, but at a torn
+    /// end its far edge ends where the panel's does.
     pub fn zone(&self, f: &SheetFlange) -> Region2 {
         let ba = self.allowance(f);
         let (u0, u1) = self.zone_span(f);
         let (a, b) = (f.p + f.d * u0, f.p + f.d * u1);
-        rect(a, b, b + f.n * ba, a + f.n * ba)
+        // The panel's own corners (`panel`), so that the two share the whole edge.
+        let far_a = if f.tear.0 { f.p + f.n * ba - f.d * f.ext.0 } else { a + f.n * ba };
+        let far_b = if f.tear.1 { f.p + f.n * ba + f.d * (f.len + f.ext.1) } else { b + f.n * ba };
+        rect(a, b, far_b, far_a)
+    }
+
+    /// Where a bend zone's far edge (on its panel's side) starts and ends, along the bend from
+    /// `p`: where its start line does (`zone_span`), or at a torn end where the panel's end starts.
+    fn zone_ends(&self, f: &SheetFlange) -> (f64, f64) {
+        let (u0, u1) = self.zone_span(f);
+        (if f.tear.0 { -f.ext.0 } else { u0 }, if f.tear.1 { f.len + f.ext.1 } else { u1 })
+    }
+
+    /// Folded (in the flat frame, as `fold`), the point of a bend's end (the one at `p`, or the
+    /// other one when `at_end`) at the turn `phi` of the bend and the height `z` in the sheet. A
+    /// torn end runs evenly along the bend while the bend turns, from its start line's end to
+    /// where the panel's end starts.
+    fn bend_end(&self, f: &SheetFlange, at_end: bool, phi: f64, z: f64) -> Vec3 {
+        let ((u0, u1), (e0, e1)) = (self.zone_span(f), self.zone_ends(f));
+        let (from, to) = if at_end { (u1, e1) } else { (u0, e0) };
+        let u = from + (to - from) * phi / f.angle.abs().max(1e-12);
+        let parent = f.parent.map_or(IDENTITY, |i| self.fold(i));
+        let (axis_o, k, turn) = self.bend_axis(f);
+        apply_point(&mat_mul(&parent, &rot_about(axis_o, k, turn.signum() * phi)), v3(f.p + f.d * u) + Vec3::Z * z)
     }
 
     /// The part of a bend along its parent's edge: where a later flange trimmed that edge back
@@ -1390,7 +1453,9 @@ impl SheetBody {
         let mut out = Vec::new();
         for (i, f) in self.flanges.iter().enumerate() {
             let ba = self.allowance(f);
-            let (u0, u1) = self.zone_span(f);
+            // The centre line runs between the middles of the bend's two ends (a torn end is askew).
+            let ((u0, u1), (e0, e1)) = (self.zone_span(f), self.zone_ends(f));
+            let (u0, u1) = ((u0 + e0) / 2.0, (u1 + e1) / 2.0);
             let a = f.p + f.n * (ba / 2.0) + f.d * u0;
             for (s0, s1) in clear_of(a, f.d, u1 - u0, &cuts) {
                 out.push(BendInfo {
@@ -1754,6 +1819,7 @@ impl SheetBody {
                 tag: String::new(),
                 ext: (0.0, 0.0),
                 slope: (0.0, 0.0),
+                tear: (false, false),
             });
             made.push(self.flanges.len() - 1);
         }
@@ -2179,8 +2245,8 @@ impl SheetBody {
         out
     }
 
-    /// Close the corners the new flanges make, then cut the rule's relief at each. Returns a
-    /// note for every corner left open or without its relief.
+    /// Close the corners the new flanges make, then cut the rule's relief at each (or tear it).
+    /// Returns a note for every corner left open, without its relief or not torn.
     fn close_corners(&mut self, made: &[usize]) -> Vec<String> {
         let corners = self.corners(made);
         let mut notes = Vec::new();
@@ -2188,20 +2254,48 @@ impl SheetBody {
             let w = apply_point(&s.frame_mat(), v3(c));
             format!("({:.3}, {:.3}, {:.3})", w.x, w.y, w.z)
         };
+        let mut closed = Vec::with_capacity(corners.len());
         for k in &corners {
-            if let Err(why) = self.close_corner(k) {
-                notes.push(format!("the flanges at {} are left open: {why}", at(self, k.c)));
+            match self.close_corner(k) {
+                Ok(()) => closed.push(*k),
+                Err(why) => notes.push(format!("the flanges at {} are left open: {why}", at(self, k.c))),
             }
         }
-        // The reliefs come last: they move the bends' ends, which is how the corners were found.
-        if self.relief != ReliefShape::Notch {
-            for k in &corners {
-                if let Err(why) = self.relieve_corner(k, &corners) {
-                    notes.push(format!("no corner relief at {}: {why}", at(self, k.c)));
+        match self.relief {
+            ReliefShape::Notch => {}
+            // The reliefs come last: they move the bends' ends, which is how the corners were found.
+            ReliefShape::Round | ReliefShape::Rectangular => {
+                for k in &corners {
+                    if let Err(why) = self.relieve_corner(k, &corners) {
+                        notes.push(format!("no corner relief at {}: {why}", at(self, k.c)));
+                    }
+                }
+            }
+            // A tear cuts to the flanges' closed ends, so a corner left open gets none.
+            ReliefShape::Tear => {
+                for k in &closed {
+                    if let Err(why) = self.tear_corner(k) {
+                        notes.push(format!("the corner at {} keeps its notch: {why}", at(self, k.c)));
+                    }
                 }
             }
         }
         notes
+    }
+
+    /// The plane halving the inner faces (toward the bends' axes) of the two flanges at a corner:
+    /// the signed distance from it of a folded point, positive on flange a's side. `None` where
+    /// the faces are parallel.
+    fn halving_plane(&self, k: &Corner) -> Option<impl Fn(Vec3) -> f64 + use<>> {
+        let (wa, wb) = (self.fold(k.a), self.fold(k.b));
+        // The inner faces, with normals pointing from the outer face in.
+        let (z_in, sign) = if self.flanges.get(k.a)?.angle >= 0.0 { (self.t, 1.0) } else { (0.0, -1.0) };
+        let na = apply_vector(&wa, Vec3::Z) * sign;
+        let nb = apply_vector(&wb, Vec3::Z) * sign;
+        let pa = apply_point(&wa, v3(k.c) + Vec3::Z * z_in);
+        let pb = apply_point(&wb, v3(k.c) + Vec3::Z * z_in);
+        let m = (nb - na).len();
+        (m > 1e-6).then_some(move |p: Vec3| (nb.dot(p - pb) - na.dot(p - pa)) / m)
     }
 
     /// Run two flanges' panels on toward each other (or cut them back) until their ends meet the
@@ -2231,18 +2325,8 @@ impl SheetBody {
             return Err(format!("the flange gap {gap:.4} mm is below {MIN_CORNER_GAP} mm"));
         }
         let (wa, wb) = (self.fold(k.a), self.fold(k.b));
-        // The inner faces (toward the bends' axes), with normals pointing from the outer face in.
-        let (z_in, sign) = if fa.angle >= 0.0 { (self.t, 1.0) } else { (0.0, -1.0) };
-        let na = apply_vector(&wa, Vec3::Z) * sign;
-        let nb = apply_vector(&wb, Vec3::Z) * sign;
-        let pa = apply_point(&wa, v3(k.c) + Vec3::Z * z_in);
-        let pb = apply_point(&wb, v3(k.c) + Vec3::Z * z_in);
-        let m = (nb - na).len();
-        if !(m > 1e-6) {
-            return Err("the flanges are parallel".into());
-        }
         // Signed distance from the plane bisecting the inner faces, positive on flange a's side.
-        let bisector = |p: Vec3| (nb.dot(p - pb) - na.dot(p - pa)) / m;
+        let Some(bisector) = self.halving_plane(k) else { return Err("the flanges are parallel".into()) };
         // A flange's end: its panel keeps u ≥ u_end(s) (u from the corner along its bend, s from
         // the bend's start across it), so that every point of the end face is gap/2 or more from
         // the bisecting plane. The distance is affine in (u, s, z), so the end is a line in the
@@ -2296,6 +2380,68 @@ impl SheetBody {
         Ok(())
     }
 
+    /// Tear a closed corner (the rule's `tear`): nothing is cut out of the base, both bends
+    /// keep running to the corner where their start lines meet, and each one's end is cut
+    /// straight, in the flat, from that corner to where its panel's closed end starts (`zone`),
+    /// instead of square across the bend and on along the panel's edge. The panels keep the ends
+    /// `close_corner` gave them. Folded, such an end is a helix (`ZoneEdge::Curved`): the two
+    /// bends touch at the corner and open to the rule's gap where the panels start. Refused, with
+    /// the reason, when the bends would overlap in the flat pattern, or when folded a bend's end
+    /// would cross the plane square to the base that halves the corner (into the other bend) or
+    /// come nearer the plane halving the flanges' inner faces than a straight taper from where
+    /// the corner lies to the half gap the panels keep; the corner then stays as it was closed.
+    fn tear_corner(&mut self, k: &Corner) -> std::result::Result<(), String> {
+        let (Some(mut fa), Some(mut fb)) = (self.flanges.get(k.a).cloned(), self.flanges.get(k.b).cloned()) else {
+            return Err("a flange is missing".into());
+        };
+        let ea = if k.a_end { fa.d * -1.0 } else { fa.d };
+        let eb = if k.b_end { fb.d * -1.0 } else { fb.d };
+        // As for the closing: flanges at an inside corner of the base turn away from each other,
+        // and a bend without a panel has no end to be cut to.
+        if ea.dot(fb.n) > -1e-9 || eb.dot(fa.n) > -1e-9 || fa.leg <= 1e-9 || fb.leg <= 1e-9 {
+            return Ok(());
+        }
+        for (f, at_end) in [(&mut fa, k.a_end), (&mut fb, k.b_end)] {
+            if at_end {
+                f.tear.1 = true;
+            } else {
+                f.tear.0 = true;
+            }
+        }
+        let (za, zb) = (corners_of(&self.zone(&fa)), corners_of(&self.zone(&fb)));
+        if pieces_overlap(&za, &zb) || pieces_overlap(&za, &corners_of(&self.panel(&fb))) || pieces_overlap(&zb, &corners_of(&self.panel(&fa))) {
+            return Err("a tear would make the bends overlap in the flat pattern".into());
+        }
+        let (Some(half), Some(bisector)) = (v3(ea - eb).normalized(), self.halving_plane(k)) else {
+            return Err("the flanges are parallel".into());
+        };
+        let (c, half_gap) = (v3(k.c), self.gap / 2.0);
+        for (f, at_end, sign) in [(&fa, k.a_end, 1.0), (&fb, k.b_end, -1.0)] {
+            // On a torn end a signed distance is a + b·φ + c·cos φ + d·sin φ in the turn φ, on
+            // either face of the sheet: its least less a taper from `from` to `to` is exact.
+            let th = f.angle.abs();
+            let least = |g: &dyn Fn(Vec3) -> f64, from: f64, to: f64| {
+                let over = |z: f64| sinusoid_least(&|phi: f64| g(self.bend_end(f, at_end, phi, z)) - (from + (to - from) * phi / th), th);
+                over(0.0).min(over(self.t))
+            };
+            if least(&|p: Vec3| sign * (p - c).dot(half), 0.0, 0.0) < -1e-9 {
+                return Err("a tear would run a bend into the other one".into());
+            }
+            let own = |p: Vec3| sign * bisector(p);
+            let start = own(self.bend_end(f, at_end, 0.0, 0.0)).min(own(self.bend_end(f, at_end, 0.0, self.t))).min(half_gap);
+            if least(&own, start, half_gap) < -1e-9 {
+                return Err("a tear would bring the bends nearer each other than the flanges' ends are".into());
+            }
+        }
+        if let Some(f) = self.flanges.get_mut(k.a) {
+            *f = fa;
+        }
+        if let Some(f) = self.flanges.get_mut(k.b) {
+            *f = fb;
+        }
+        Ok(())
+    }
+
     /// Cut the rule's relief where two bends meet at a corner of the base, `relief_size / 2`
     /// from the corner along both edges: a round about the corner through the angle the base
     /// fills there, or the square with that side (a kite where the corner isn't square, its
@@ -2340,7 +2486,7 @@ impl SheetBody {
         // The relief from the edge that ends at the corner to the one that starts there, and
         // how far from the corner it reaches.
         let (relief, reach) = match self.relief {
-            ReliefShape::Notch => return Ok(()),
+            ReliefShape::Notch | ReliefShape::Tear => return Ok(()),
             ReliefShape::Round => (vec![Seg2::Arc { center: c, radius: r, start: da.angle(), sweep: -alpha }], r),
             ReliefShape::Rectangular => {
                 let x = snap(c + (da + db) * (r / (1.0 + da.dot(db))));
@@ -2400,6 +2546,7 @@ impl SheetBody {
             leg,
             ext: (0.0, 0.0),
             slope: (0.0, 0.0),
+            tear: (false, false),
             shape: None,
             tag: String::new(),
         });
@@ -2509,6 +2656,7 @@ impl SheetBody {
             leg: 0.0,
             ext: (0.0, 0.0),
             slope: (0.0, 0.0),
+            tear: (false, false),
             shape: None,
             tag: String::new(),
         };
@@ -2582,6 +2730,7 @@ impl SheetBody {
             leg,
             ext: (0.0, 0.0),
             slope: (0.0, 0.0),
+            tear: (false, false),
             shape: Some(ccw(moving)),
             tag: String::new(),
         });
@@ -2724,6 +2873,7 @@ impl SheetBody {
                 leg,
                 ext: (0.0, 0.0),
                 slope: (0.0, 0.0),
+                tear: (false, false),
                 shape: Some(ccw(moving)),
                 tag: String::new(),
             });
@@ -2946,7 +3096,7 @@ impl SheetBody {
 
     /// The flat end of a bend (where the bend stops along its flange's edge: an annular sector
     /// square to the bend axis) that a point lies on: `<flange>:rim.bend0` at its start,
-    /// `rim.bend1` at its end.
+    /// `rim.bend1` at its end. A torn end is a helix on the bend, no flat face.
     fn bend_side_at(&self, p: Vec3, tol: f64) -> Option<String> {
         if self.flat {
             return None;
@@ -2966,9 +3116,9 @@ impl SheetBody {
                 continue;
             }
             let (u0, u1) = self.zone_span(f);
-            let side = if (u - u0).abs() <= tol {
+            let side = if (u - u0).abs() <= tol && !f.tear.0 {
                 "bend0"
-            } else if (u - u1).abs() <= tol {
+            } else if (u - u1).abs() <= tol && !f.tear.1 {
                 "bend1"
             } else {
                 continue;
@@ -2982,6 +3132,9 @@ impl SheetBody {
     /// along the bend axis, its origin on the axis, its x across the sheet.
     fn bend_side(&self, i: usize, end: bool) -> Option<Plane> {
         let f = self.flanges.get(i)?;
+        if if end { f.tear.1 } else { f.tear.0 } {
+            return None;
+        }
         let (world, o, d, _, _) = self.bend_frame(f)?;
         let (u0, u1) = self.zone_span(f);
         let (u, out) = if end { (u1, d) } else { (u0, d * -1.0) };
@@ -3446,6 +3599,7 @@ pub fn contour_flange(body: &str, rule: &str, rv: &RuleValues, plane: &Plane, pt
             leg: leg.max(0.0),
             ext: (0.0, 0.0),
             slope: (0.0, 0.0),
+            tear: (false, false),
             shape: None,
             tag: String::new(),
         };
@@ -4314,7 +4468,7 @@ mod tests {
     fn relief_area(shape: ReliefShape, size: f64, alpha: f64, ba: f64) -> f64 {
         let r = size / 2.0;
         match shape {
-            ReliefShape::Notch => 0.0,
+            ReliefShape::Notch | ReliefShape::Tear => 0.0,
             ReliefShape::Round => r * r * alpha / 2.0 + 2.0 * r * ba,
             ReliefShape::Rectangular => r * r * (alpha / 2.0).tan() + 2.0 * r * ba,
         }
@@ -4328,15 +4482,17 @@ mod tests {
         assert_eq!(SheetRule::steel().corner_relief_shape, "notch");
         let (doc, vals) = (Document::default(), std::collections::BTreeMap::new());
         assert_eq!(doc.rule_values(&vals, &old).unwrap().corner_relief_shape, ReliefShape::Notch);
-        for (text, shape) in [("round", ReliefShape::Round), (" Rectangular ", ReliefShape::Rectangular), ("NOTCH", ReliefShape::Notch)] {
+        let shapes =
+            [("round", ReliefShape::Round), (" Rectangular ", ReliefShape::Rectangular), ("NOTCH", ReliefShape::Notch), ("Tear", ReliefShape::Tear)];
+        for (text, shape) in shapes {
             let rule = SheetRule { corner_relief_shape: text.into(), ..old.clone() };
             assert_eq!(doc.rule_values(&vals, &rule).unwrap().corner_relief_shape, shape);
             assert_eq!(ReliefShape::parse(shape.name()), Some(shape));
         }
         // No other name is a shape.
-        for text in ["square", "circle", ""] {
+        for text in ["square", "circle", "rip", ""] {
             let err = doc.rule_values(&vals, &SheetRule { corner_relief_shape: text.into(), ..old.clone() }).unwrap_err().to_string();
-            assert!(err.contains(&format!("unknown corner relief shape `{text}` (notch, round or rectangular)")), "{err}");
+            assert!(err.contains(&format!("unknown corner relief shape `{text}` (notch, round, rectangular or tear)")), "{err}");
         }
     }
 
@@ -4669,14 +4825,14 @@ mod tests {
     #[test]
     fn a_bend_relief_at_one_end_leaves_the_corner_at_the_other_as_it_was() {
         // Flanges on the bar's top and right edges in one call: their bends meet at (157, 27),
-        // where the corner is closed and relieved by the rule's shape, and the top one ends
-        // beside the leg at (20, 27), where it gets the bend relief. Against the bar without
+        // where the corner is closed and relieved or torn by the rule's shape, and the top one
+        // ends beside the leg at (20, 27), where it gets the bend relief. Against the bar without
         // the leg, the same corner and all, the flat pattern gains the leg from the bend line
         // up, 20 × (60 − 27), less the relief, 2 × (1 + BA + 12 + 2), and loses 20 of the top
         // flange's length, 20 × (BA + 12).
         let (ba, panel) = (std::f64::consts::PI, 12.0);
         let picks = [Vec3::new(90.0, 30.0, 2.0), Vec3::new(160.0, 15.0, 2.0)];
-        for shape in [ReliefShape::Notch, ReliefShape::Round, ReliefShape::Rectangular] {
+        for shape in [ReliefShape::Notch, ReliefShape::Round, ReliefShape::Rectangular, ReliefShape::Tear] {
             let what = format!("{shape:?}");
             let rv = RuleValues { corner_relief_shape: shape, ..alu() };
             let bar = rect(Vec2::new(0.0, 0.0), Vec2::new(160.0, 0.0), Vec2::new(160.0, 30.0), Vec2::new(0.0, 30.0));
@@ -4686,8 +4842,14 @@ mod tests {
             let mut s = bar_with_leg(&rv, 30.0);
             let (made, notes) = s.add_flanges_noted(&picks, 15.0, std::f64::consts::FRAC_PI_2, 1.0, "inside", false).unwrap();
             assert!(notes.is_empty() && made.len() == 2, "{what}: {notes:?}");
-            // The corner's relief reaches 4 along both bends (8 across); the notch none.
-            let cut = if shape == ReliefShape::Notch { 0.0 } else { 4.0 };
+            // The corner's relief reaches 4 along both bends (8 across); the notch none. A tear
+            // moves the bend's end at the corner out by grow = sin 90° − 0.5/√2 on the flange's
+            // side, so its centre line is half of that longer.
+            let cut = match shape {
+                ReliefShape::Notch => 0.0,
+                ReliefShape::Tear => -(1.0 - 0.5 / std::f64::consts::SQRT_2) / 2.0,
+                ReliefShape::Round | ReliefShape::Rectangular => 4.0,
+            };
             let lengths: Vec<f64> = s.bends().iter().map(|b| b.length).collect();
             assert!((lengths[0] - (137.0 - cut)).abs() < 1e-9 && (lengths[1] - (27.0 - cut)).abs() < 1e-9, "{what}: {lengths:?}");
             let got = corners_of(&s.base);
@@ -4896,6 +5058,7 @@ mod tests {
         p: Vec2,
         d: Vec2,
         span: (f64, f64),
+        ends: (f64, f64),
         radius: f64,
         angle: f64,
         t: f64,
@@ -4913,6 +5076,7 @@ mod tests {
                 p: f.p,
                 d: f.d,
                 span: s.zone_span(f),
+                ends: s.zone_ends(f),
                 radius: f.radius,
                 angle: f.angle,
                 t: s.t,
@@ -4936,7 +5100,10 @@ mod tests {
             let down = Vec3::Z * -1.0;
             let (rho, turn) = (perp.len(), perp.dot(k.cross(down)).atan2(perp.dot(down)));
             let u = (Vec2::new(q.x, q.y) - self.p).dot(self.d);
-            let in_bend = [rho - self.radius, self.radius + self.t - rho, turn * rho, (self.angle - turn) * rho, u - self.span.0, self.span.1 - u]
+            // A torn end runs along the bend as the bend turns, from the start line's end to the panel's.
+            let (span, ends, x) = (self.span, self.ends, turn / self.angle);
+            let (u0, u1) = (span.0 + (ends.0 - span.0) * x, span.1 + (ends.1 - span.1) * x);
+            let in_bend = [rho - self.radius, self.radius + self.t - rho, turn * rho, (self.angle - turn) * rho, u - u0, u1 - u]
                 .into_iter()
                 .fold(f64::INFINITY, f64::min);
             let depth = in_panel.max(in_bend);
@@ -4954,13 +5121,14 @@ mod tests {
             let f = &s.flanges[i];
             let ba = s.allowance(f);
             let mut samples = Vec::new();
-            // The bend's 12 mm nearest the corner.
-            let (u0, u1) = s.zone_span(f);
+            // The bend's 12 mm nearest the corner, from its end (which a tear leaves askew).
+            let ((u0, u1), (e0, e1)) = (s.zone_span(f), s.zone_ends(f));
             for iu in 0..48 {
                 let du = 0.02 + 0.25 * iu as f64;
-                let u = if at_end { u1 - du } else { u0 + du };
                 for is in 0..24 {
-                    samples.push((Piece::Zone(i), f.p + f.d * u + f.n * (ba * (is as f64 + 0.5) / 24.0)));
+                    let x = (is as f64 + 0.5) / 24.0;
+                    let u = if at_end { u1 + (e1 - u1) * x - du } else { u0 + (e0 - u0) * x + du };
+                    samples.push((Piece::Zone(i), f.p + f.d * u + f.n * (ba * x)));
                 }
             }
             // The panel's 25 mm nearest its end, over its whole height.
@@ -5773,6 +5941,393 @@ mod tests {
             let in_the_bends: f64 = MIXED.iter().map(|deg| 8.0 * deg.to_radians() * 2.0).sum();
             let (removed, want) = (flat_area(&notch) - flat_area(&s), 4.0 * relief_area(shape, 8.0, FRAC_PI_2, 0.0) + in_the_bends);
             assert!((removed - want).abs() < 1e-6, "{what}: {removed} vs {want}");
+            holds_the_flat_material(&s, &what);
+        }
+    }
+
+    /// `alu()` with torn corners.
+    fn torn() -> RuleValues {
+        RuleValues { corner_relief_shape: ReliefShape::Tear, ..alu() }
+    }
+
+    /// The corners of the flat pattern's outline.
+    fn outline_points(s: &SheetBody) -> Vec<Vec2> {
+        s.flat_regions().unwrap().iter().flat_map(|r| r.outer.segs.iter().map(Seg2::start)).collect()
+    }
+
+    /// A tear leaves the base and the flanges as the closing made them (`notch`): it only marks
+    /// the bend ends at the corners as torn. `torn`: how many of the ends are.
+    fn tears_nothing_but_the_bend_ends(s: &SheetBody, notch: &SheetBody, torn: usize, what: &str) {
+        assert_eq!(s.base, notch.base, "{what}");
+        assert_eq!(s.flanges.iter().map(|f| f.tear.0 as usize + f.tear.1 as usize).sum::<usize>(), torn, "{what}");
+        let whole: Vec<SheetFlange> = s.flanges.iter().map(|f| SheetFlange { tear: (false, false), ..f.clone() }).collect();
+        assert_eq!(whole, notch.flanges, "{what}");
+    }
+
+    #[test]
+    fn a_tear_cuts_each_bend_from_the_corner_to_its_flanges_end() {
+        use std::f64::consts::SQRT_2;
+        // The tray under `alu()`: T = 2, R = 1, gap g = 0.5, flanges h = 38.6 high. The bends on y = 0
+        // and x = 0 start on the lines y = s0 and x = s0, s0 = (R + T)·tan(θ/2), which meet at
+        // c = (s0, s0), and are BA = θ·(R + T/2) wide. The flange on y = 0 is closed to
+        // x_end(w) = g/√2 + T·sinθ − w·cosθ (`closed_corners_end_on_the_bisector_with_the_gap`): w = s0
+        // where its panel starts, at flat y = s0 − BA, and w = h at its far edge. A tear cuts from c
+        // straight to (x_end(s0), s0 − BA), where the panel's end goes on; the notch's step at
+        // (s0, s0 − BA) is gone. The flange on x = 0 is the mirror image in x = y.
+        let (t, r, g, h) = (2.0, 1.0, 0.5, 38.6);
+        for deg in [90.0f64, 72.0] {
+            let what = format!("{deg}°");
+            let (notch, _) = tray(&alu(), deg, h);
+            let (s, notes) = tray(&torn(), deg, h);
+            assert!(notes.is_empty(), "{what}: {notes:?}");
+            tears_nothing_but_the_bend_ends(&s, &notch, 8, &what);
+            let th = deg.to_radians();
+            let (s0, ba) = ((r + t) * (th / 2.0).tan(), th * (r + 0.5 * t));
+            let x_end = |w: f64| g / SQRT_2 + t * th.sin() - w * th.cos();
+            let (y0, y1) = (s0 - ba, s0 - ba - (h - s0));
+            // The bend on y = 0: its start line between the corners, its far edge as long as the panel's.
+            let zone = corners_of(&s.zone(&s.flanges[0]));
+            assert_eq!(zone.len(), 4, "{what}");
+            for (x, y) in [(s0, s0), (120.0 - s0, s0), (120.0 - x_end(s0), y0), (x_end(s0), y0)] {
+                assert!(zone.iter().any(|p| p.dist(Vec2::new(x, y)) < 1e-9), "{what}: ({x}, {y}) not in {zone:?}");
+            }
+            // The outline at the corner: the panel's end, the cut, the corner of the bends, and on.
+            let (cut, stepped) = (outline_points(&s), outline_points(&notch));
+            let at = |pts: &[Vec2], x: f64, y: f64| pts.iter().any(|p| p.dist(Vec2::new(x, y)) < 1e-9);
+            for (x, y) in [(x_end(h), y1), (x_end(s0), y0), (s0, s0)] {
+                assert!(at(&cut, x, y) && at(&cut, y, x), "{what}: ({x}, {y}) not in the outline");
+            }
+            assert!(at(&stepped, s0, y0) && at(&stepped, y0, s0) && !at(&cut, s0, y0) && !at(&cut, y0, s0), "{what}");
+            // Each of the eight bend ends gains the triangle between its square end and the cut.
+            let grow = s0 - x_end(s0);
+            let gained = flat_area(&s) - flat_area(&notch);
+            assert!(grow > 0.0 && (gained - 8.0 * ba * grow / 2.0).abs() < 1e-6, "{what}: {gained}");
+            // The bend table: the centre line runs between the middles of the bend's two ends.
+            let bend = &s.bends()[0];
+            let (start, end) = (Vec2::new(s0 - grow / 2.0, s0 - ba / 2.0), Vec2::new(120.0 - s0 + grow / 2.0, s0 - ba / 2.0));
+            assert!(
+                (bend.length - (120.0 - 2.0 * s0 + grow)).abs() < 1e-9 && bend.start.dist(start) < 1e-9 && bend.end.dist(end) < 1e-9,
+                "{what}: {bend:?}"
+            );
+            // Folded, the panels' ends are the gap apart as they were. A point of a bend's inner face
+            // is R·sin φ out from the bend's start line at the turn φ, and the torn end is there
+            // grow·φ/θ past the corner along the bend, so the two ends at this corner (flange 0's
+            // and its mirror image, flange 3's) are √2·(R·sin φ − grow·φ/θ) apart: they touch at the
+            // corner and are the gap apart where the panels start (grow = R·sinθ − g/√2).
+            let corners = s.corners(&[0, 1, 2, 3]);
+            assert_eq!(corners.len(), 4, "{what}");
+            ends_are_gap_apart(&s, &corners, g, &what);
+            let (c, far) = (Vec2::new(s0, s0), Vec2::new(x_end(s0), y0));
+            for i in 0..=64 {
+                let x = i as f64 / 64.0;
+                let q = c + (far - c) * x;
+                let apart = s.map3(Piece::Zone(0), q, t).dist(s.map3(Piece::Zone(3), Vec2::new(q.y, q.x), t));
+                let want = SQRT_2 * (r * (th * x).sin() - grow * x);
+                assert!((apart - want).abs() < 1e-9 && apart > g * x - 1e-9, "{what}: {x}: {apart} vs {want}");
+                assert!(s.bend_end(&s.flanges[0], false, th * x, t).dist(s.map3(Piece::Zone(0), q, t)) < 1e-9, "{what}: {x}");
+            }
+            for k in &corners {
+                flanges_keep_clear(&s, k, &what);
+            }
+            holds_the_flat_material(&s, &what);
+            let unfolded = vol(&s.flat_solid().unwrap());
+            assert!((unfolded - flat_area(&s) * t).abs() < 1e-3 * unfolded, "{what}: {unfolded}");
+        }
+    }
+
+    #[test]
+    fn a_tear_follows_corners_that_are_not_square() {
+        // The trapezoid of the relief tests with 72° flanges: the base fills α = atan(90/20) = 77.47°
+        // at its lower corners and β = 180° − α at the upper ones. Seen from above, a point u along a
+        // bend from the corner of the bends and v out from the bend's start line is
+        // u·sin(α/2) + v·cos(α/2) from the plane that halves the corner, which also halves the inner
+        // faces of two flanges at one angle. A panel's inner face starts v = R·sinθ out and keeps
+        // g/2 from that plane, so its end starts at u = (g/2 − R·sinθ·cos(α/2)) / sin(α/2): less
+        // than nothing, the panel runs on past the corner, and the tear cuts from the corner to there.
+        let (r, g) = (1.0, 0.5);
+        let th = 72f64.to_radians();
+        let (s0, ba) = (3.0 * (th / 2.0).tan(), th * 2.0);
+        let (alpha, beta) = (90f64.atan2(20.0), std::f64::consts::PI - 90f64.atan2(20.0));
+        let u_end = |a: f64| (g / 2.0 - r * th.sin() * (a / 2.0).cos()) / (a / 2.0).sin();
+        let (notch, _) = trapezoid(&alu(), 72.0);
+        let (s, notes) = trapezoid(&torn(), 72.0);
+        assert!(notes.is_empty(), "{notes:?}");
+        tears_nothing_but_the_bend_ends(&s, &notch, 8, "trapezoid");
+        let (cut, stepped) = (outline_points(&s), outline_points(&notch));
+        let at = |pts: &[Vec2], q: Vec2| pts.iter().any(|p| p.dist(q) < 1e-8);
+        // The bend on y = 0 (flange 0) between the lower corners, and the one on y = 90 (flange 2)
+        // between the upper ones: the corner of the bends, where the cut ends, and the notch's step.
+        let lower = (Vec2::new(s0 / (alpha / 2.0).tan(), s0), Vec2::new(u_end(alpha), -ba));
+        let upper = (Vec2::new(20.0 + s0 / (beta / 2.0).tan(), 90.0 - s0), Vec2::new(u_end(beta), ba));
+        for (i, (c, to)) in [(0, lower), (2, upper)] {
+            let zone = corners_of(&s.zone(&s.flanges[i]));
+            let mirror = |q: Vec2| Vec2::new(120.0 - q.x, q.y);
+            for q in [c, c + to, mirror(c), mirror(c + to)] {
+                assert!(at(&zone, q) && at(&cut, q), "flange {i}: {q:?} not in {zone:?}");
+            }
+            let step = Vec2::new(c.x, c.y + to.y);
+            assert!(at(&stepped, step) && !at(&cut, step), "flange {i}");
+        }
+        // Each bend end gains the triangle between its square end and the cut: four ends at α, four at β.
+        let (gained, want) = (flat_area(&s) - flat_area(&notch), -2.0 * ba * (u_end(alpha) + u_end(beta)));
+        assert!((gained - want).abs() < 1e-6, "{gained} vs {want}");
+        let corners = s.corners(&[0, 1, 2, 3]);
+        assert_eq!(corners.len(), 4);
+        ends_are_gap_apart(&s, &corners, g, "trapezoid");
+        for k in &corners {
+            flanges_keep_clear(&s, k, "trapezoid");
+        }
+        holds_the_flat_material(&s, "trapezoid");
+    }
+
+    #[test]
+    fn a_cut_out_over_torn_bend_ends_folds() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        // A round cut-out of radius 2 about the corner (s0, s0) of the tray's bends takes the two
+        // torn bend ends with it. Of its disc the flat pattern holds all but the wedge between the
+        // two cuts, which leave the corner atan(grow/BA) off the lines square to the bends.
+        for deg in [90.0f64, 72.0] {
+            let what = format!("{deg}°");
+            let th = deg.to_radians();
+            let (s0, ba, grow) = (3.0 * (th / 2.0).tan(), th * 2.0, th.sin() - 0.25 * 2f64.sqrt());
+            let (whole, _) = tray(&torn(), deg, 38.6);
+            let mut s = whole.clone();
+            s.holes.push(Region2 { outer: Loop2::circle(Vec2::new(s0, s0), 2.0), holes: vec![] });
+            let (removed, want) = (flat_area(&whole) - flat_area(&s), 4.0 * (PI - (FRAC_PI_2 - 2.0 * (grow / ba).atan()) / 2.0));
+            assert!((removed - want).abs() < 1e-6, "{what}: {removed} vs {want}");
+            let body = s.solid().unwrap_or_else(|e| panic!("{what}: no solid: {e}"));
+            assert!(body.validity().is_empty() && body.shell_count() == 1, "{what}: {:?}", body.validity());
+            let lost = vol(&whole.solid().unwrap()) - vol(&body);
+            assert!((lost - want * 2.0).abs() < 0.05, "{what}: {lost} vs {}", want * 2.0);
+        }
+    }
+
+    #[test]
+    fn a_tear_holds_at_every_angle() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        // Every 5° from 45° to 135° on the tray and on the trapezoid: all four corners are torn, the
+        // flanges are the ones the notch gives, and each of the eight bend ends gains the triangle
+        // between its square end and the cut, BA·(−u_end)/2 with u_end as in
+        // `a_tear_follows_corners_that_are_not_square`. The flanges' ends stay the gap apart, no
+        // bend runs into the other flange, and the folded part holds the flat pattern's material.
+        let alpha = 90f64.atan2(20.0);
+        for step in 9..=27 {
+            let deg = step as f64 * 5.0;
+            let th = deg.to_radians();
+            let u_end = |a: f64| (0.25 - th.sin() * (a / 2.0).cos()) / (a / 2.0).sin();
+            for (name, (s, notes), (notch, _), angles) in [
+                ("tray", tray(&torn(), deg, 38.6), tray(&alu(), deg, 38.6), [FRAC_PI_2; 4]),
+                ("trapezoid", trapezoid(&torn(), deg), trapezoid(&alu(), deg), [alpha, alpha, PI - alpha, PI - alpha]),
+            ] {
+                let what = format!("a tear on the {name} at {deg}°");
+                assert!(notes.is_empty(), "{what}: {notes:?}");
+                tears_nothing_but_the_bend_ends(&s, &notch, 8, &what);
+                let want: f64 = angles.iter().map(|a| -(th * 2.0) * u_end(*a)).sum();
+                let gained = flat_area(&s) - flat_area(&notch);
+                assert!((gained - want).abs() < 1e-6, "{what}: {gained} vs {want}");
+                let corners = s.corners(&[0, 1, 2, 3]);
+                assert_eq!(corners.len(), 4, "{what}");
+                ends_are_gap_apart(&s, &corners, 0.5, &what);
+                for k in &corners {
+                    flanges_keep_clear(&s, k, &what);
+                }
+                holds_the_flat_material(&s, &what);
+            }
+        }
+    }
+
+    #[test]
+    fn flanges_of_unequal_angle_are_torn_where_their_bends_stay_apart() {
+        // The tray with flanges at 60°, 90°, 105° and 120°, each its own height. Three corners are
+        // torn: each bend's start line runs between the corners of the bend lines, and its far edge
+        // to the panel's end of `hand_panel` where the end is torn. At the fourth corner the flanges
+        // at 120° and 60° lean 60° apart, and the plane halving them leans with them: a cut to the
+        // ends it gives would run one bend across the corner into the other, so that corner keeps
+        // its notch, with a note.
+        let rv = torn();
+        let heights = [38.6, 30.0, 45.0, 25.0];
+        let (notch, _) = tray_each(&alu(), MIXED, heights);
+        let (s, notes) = tray_each(&rv, MIXED, heights);
+        let s0 = MIXED.map(|a| 3.0 * (a.to_radians() / 2.0).tan());
+        let ba = MIXED.map(|a| a.to_radians() * 2.0);
+        let refused = format!("the corner at ({:.3}, {:.3}, 0.000) keeps its notch: a tear would run a bend into the other one", s0[3], s0[0]);
+        assert_eq!(notes, [refused]);
+        tears_nothing_but_the_bend_ends(&s, &notch, 6, "four angles");
+        assert_eq!(s.flanges.iter().map(|f| f.tear).collect::<Vec<_>>(), [(false, true), (true, true), (true, true), (true, false)]);
+        // The corners of the bend lines, counter-clockwise from the one at the origin, and the way
+        // out of the base across each bend.
+        let c = [Vec2::new(s0[3], s0[0]), Vec2::new(120.0 - s0[1], s0[0]), Vec2::new(120.0 - s0[1], 90.0 - s0[2]), Vec2::new(s0[3], 90.0 - s0[2])];
+        let out = [Vec2::new(0.0, -1.0), Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0), Vec2::new(-1.0, 0.0)];
+        let mut gain = 0.0;
+        for i in 0..4 {
+            let (f, panel) = (&s.flanges[i], hand_panel(&rv, MIXED, heights, i));
+            let (a, b) = (c[i], c[(i + 1) % 4]);
+            let (square_a, square_b) = (a + out[i] * ba[i], b + out[i] * ba[i]);
+            let (far_a, far_b) = (if f.tear.0 { panel[0] } else { square_a }, if f.tear.1 { panel[3] } else { square_b });
+            let zone = corners_of(&s.zone(f));
+            assert_eq!(zone.len(), 4, "flange {i}");
+            for q in [a, b, far_b, far_a] {
+                assert!(zone.iter().any(|p| p.dist(q) < 1e-9), "flange {i}: {q:?} not in {zone:?}");
+            }
+            // A torn end gains the triangle between the bend's square end and the cut.
+            let along = (b - a).normalized().unwrap();
+            gain += ba[i] / 2.0 * ((square_a - far_a).dot(along) + (far_b - square_b).dot(along));
+        }
+        let (area, want) = (flat_area(&s), hand_flat_area(&rv, MIXED, heights) + gain);
+        assert!(gain > 0.0 && (area - want).abs() < 1e-6, "flat area {area} vs {want}");
+        let corners = s.corners(&[0, 1, 2, 3]);
+        assert_eq!(corners.len(), 4);
+        ends_are_gap_apart(&s, &corners, rv.gap, "four angles");
+        for k in &corners {
+            flanges_keep_clear(&s, k, "four angles");
+        }
+        holds_the_flat_material(&s, "four angles");
+    }
+
+    #[test]
+    fn every_pair_of_angles_is_torn_or_keeps_its_notch() {
+        // The corners of `every_pair_of_angles_closes_at_any_base_corner` under the tear. Flanges at
+        // one angle are always torn. Where the angles differ, the plane that halves the flanges
+        // leans, and where their ends start moves with it: the corner is torn while both bends' ends
+        // stay on their own side of the corner and open toward the flanges' ends, and else keeps
+        // its notch with a note. That is a cautious rule: at the 60° and the 90° corner it tears
+        // angles up to 45° apart, at the 120° corner 27 of the 49 pairs. Torn, the flanges are the
+        // closed ones, no bend lies in the other flange, and the part is one valid shell.
+        let mut torn_pairs = Vec::new();
+        for alpha in [60.0f64, 90.0, 120.0] {
+            let u = Vec2::new(alpha.to_radians().cos(), alpha.to_radians().sin());
+            let pts = [Vec2::new(0.0, 0.0), Vec2::new(120.0, 0.0), Vec2::new(120.0, 0.0) + u * 90.0, u * 90.0];
+            let mut count = 0;
+            for a in SWEEP {
+                for b in SWEEP {
+                    let what = format!("corner {alpha}°, flanges {a}° and {b}°");
+                    let each = [
+                        EdgeFlange { pick: Vec3::new(60.0, 0.0, 2.0), height: 38.6, angle: a.to_radians() },
+                        EdgeFlange { pick: Vec3::new(u.x * 45.0, u.y * 45.0, 2.0), height: 38.6, angle: b.to_radians() },
+                    ];
+                    let base = || Region2 { outer: Loop2::polygon(&pts).ccw(), holes: vec![] };
+                    let (notch, _) = flanges_each(base(), &alu(), &each);
+                    let (s, notes) = flanges_each(base(), &torn(), &each);
+                    if !notes.is_empty() {
+                        assert!(notes.len() == 1 && notes[0].contains(") keeps its notch: a tear would"), "{what}: {notes:?}");
+                        assert!(a != b && s.flanges == notch.flanges, "{what}: {notes:?}");
+                        continue;
+                    }
+                    count += 1;
+                    tears_nothing_but_the_bend_ends(&s, &notch, 2, &what);
+                    let corners = s.corners(&[0, 1]);
+                    assert_eq!(corners.len(), 1, "{what}");
+                    ends_are_gap_apart(&s, &corners, 0.5, &what);
+                    flanges_keep_clear(&s, &corners[0], &what);
+                    holds_the_flat_material(&s, &what);
+                }
+            }
+            torn_pairs.push(count);
+        }
+        assert_eq!(torn_pairs, [37, 37, 27]);
+    }
+
+    #[test]
+    fn returns_close_at_torn_corners_as_at_whole_ones() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        // Like a relief, a tear leaves the walls' closed ends as they are, so the returns on them
+        // meet as at a whole corner: every check of `tray_with_level_returns_closes_every_corner`
+        // holds, the flanges are the ones the notch gives, and the walls' bends are torn as without
+        // returns (the returns' own bends are not).
+        let tray = [Vec2::new(0.0, 0.0), Vec2::new(120.0, 0.0), Vec2::new(120.0, 90.0), Vec2::new(0.0, 90.0)];
+        let trapezoid = [Vec2::new(0.0, 0.0), Vec2::new(120.0, 0.0), Vec2::new(100.0, 90.0), Vec2::new(20.0, 90.0)];
+        let alpha = 90f64.atan2(20.0);
+        let cases = [
+            ("tray", tray, [FRAC_PI_2; 4], 90.0f64),
+            ("tray", tray, [FRAC_PI_2; 4], 110.0),
+            ("trapezoid", trapezoid, [alpha, alpha, PI - alpha, PI - alpha], 110.0),
+        ];
+        for (name, pts, angles, deg) in cases {
+            let what = format!("a tear on the {name}, walls at {deg}°");
+            let notch = tray_with_level_returns_closes_every_corner(&alu(), &pts, deg, &what);
+            let s = tray_with_level_returns_closes_every_corner(&torn(), &pts, deg, &what);
+            tears_nothing_but_the_bend_ends(&s, &notch, 8, &what);
+            assert!(s.flanges.iter().all(|f| f.tear == (f.parent.is_none(), f.parent.is_none())), "{what}");
+            let th = deg.to_radians();
+            let want: f64 = angles.iter().map(|a| -(th * 2.0) * (0.25 - th.sin() * (a / 2.0).cos()) / (a / 2.0).sin()).sum();
+            let gained = flat_area(&s) - flat_area(&notch);
+            assert!((gained - want).abs() < 1e-6, "{what}: {gained} vs {want}");
+            returns_keep_out_of_the_walls(&s, &what);
+        }
+    }
+
+    #[test]
+    fn a_corner_left_open_or_made_by_two_features_is_not_torn() {
+        // A tear cuts to the flanges' closed ends. With a gap of zero the corners stay open: the
+        // notes say so, nothing is torn, and the tear adds no note of its own.
+        let (s, notes) = tray(&RuleValues { gap: 0.0, ..torn() }, 72.0, 38.6);
+        assert_eq!(notes.len(), 4, "{notes:?}");
+        assert!(notes.iter().all(|n| n.contains("left open") && n.contains("gap")), "{notes:?}");
+        assert_eq!(s.flanges, tray(&RuleValues { gap: 0.0, ..alu() }, 72.0, 38.6).0.flanges);
+        assert!(s.solid().is_ok());
+        // Like the closing, the tear belongs to the corners between the flanges of one feature.
+        let base = rect(Vec2::new(0.0, 0.0), Vec2::new(120.0, 0.0), Vec2::new(120.0, 90.0), Vec2::new(0.0, 90.0));
+        let mut s = base_flange("Body1", "AL2", &torn(), Plane::XY, base);
+        s.add_flanges(&[Vec3::new(60.0, 0.0, 2.0)], 38.6, 72f64.to_radians(), 1.0, "inside", false).unwrap();
+        let (_, notes) = s.add_flanges_noted(&[Vec3::new(120.0, 45.0, 2.0)], 25.0, 72f64.to_radians(), 1.0, "inside", false).unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
+        assert!(s.flanges.iter().all(|f| f.tear == (false, false)));
+        assert!(s.solid().is_ok() && s.flat_regions().unwrap().len() == 1);
+    }
+
+    #[test]
+    fn a_torn_bend_end_is_no_flat_face() {
+        use std::f64::consts::{FRAC_PI_2, SQRT_2};
+        // A bend's flat ends are faces a sketch can sit on (`rim.bend0`, `rim.bend1`). The bar's top
+        // flange (see `a_bend_relief_at_one_end_leaves_the_corner_at_the_other_as_it_was`) turns
+        // about the axis y = 27, z = 3 between the radii 1 and 3. With the notch its bend ends on the
+        // planes x = 157, at the corner, and x = 20, beside the leg; the middle of each end is 2 from
+        // the axis, halfway round. Torn, the end at the corner is a helix that leaves its plane at
+        // the corner of the bends: no flat face is there, the point has no name and the name gives
+        // no plane. The end beside the leg is the face it was.
+        let picks = [Vec3::new(90.0, 30.0, 2.0), Vec3::new(160.0, 15.0, 2.0)];
+        let mid = |x: f64| Vec3::new(x, 27.0 + SQRT_2, 3.0 - SQRT_2);
+        let mut notch = bar_with_leg(&alu(), 30.0);
+        notch.add_flanges_noted(&picks, 15.0, FRAC_PI_2, 1.0, "inside", false).unwrap();
+        let mut s = bar_with_leg(&torn(), 30.0);
+        s.add_flanges_noted(&picks, 15.0, FRAC_PI_2, 1.0, "inside", false).unwrap();
+        let (corner, at_corner) = notch.panel_face_at(mid(157.0), 1e-6).unwrap();
+        let (leg, at_leg) = notch.panel_face_at(mid(20.0), 1e-6).unwrap();
+        assert!(corner.starts_with("#0:rim.bend") && leg.starts_with("#0:rim.bend") && corner != leg, "{corner} {leg}");
+        assert!(at_corner.normal().dist(Vec3::X) < 1e-12 && at_leg.normal().dist(Vec3::X * -1.0) < 1e-12, "{at_corner:?} {at_leg:?}");
+        assert!(s.panel_face_at(mid(157.0), 1e-6).is_none() && s.panel_face(&corner).is_none(), "{corner}");
+        assert_eq!(s.panel_face_at(mid(20.0), 1e-6), Some((leg.clone(), at_leg)));
+        assert_eq!(s.panel_face(&leg), Some(at_leg));
+    }
+
+    #[test]
+    fn a_tear_that_cannot_be_made_leaves_the_notch_with_a_note() {
+        // Flanges at very different angles on the two edges at the origin of a parallelogram (as in
+        // `every_pair_of_angles_is_torn_or_keeps_its_notch`). The bend lines lie s0 = 3·tan(θ/2) in
+        // from their edges and meet at ((s0_b + s0_a·cos α) / sin α, s0_a), where the note points.
+        // Each of the three reasons leaves the part the notch gives.
+        let cases = [
+            (90.0f64, 20.0f64, 140.0f64, "a tear would make the bends overlap in the flat pattern"),
+            (90.0, 60.0, 120.0, "a tear would run a bend into the other one"),
+            (120.0, 105.0, 60.0, "a tear would bring the bends nearer each other than the flanges' ends are"),
+        ];
+        for (alpha, a, b, why) in cases {
+            let what = format!("corner {alpha}°, flanges {a}° and {b}°");
+            let alpha = alpha.to_radians();
+            let u = Vec2::new(alpha.cos(), alpha.sin());
+            let pts = [Vec2::new(0.0, 0.0), Vec2::new(120.0, 0.0), Vec2::new(120.0, 0.0) + u * 90.0, u * 90.0];
+            let each = [
+                EdgeFlange { pick: Vec3::new(60.0, 0.0, 2.0), height: 38.6, angle: a.to_radians() },
+                EdgeFlange { pick: Vec3::new(u.x * 45.0, u.y * 45.0, 2.0), height: 38.6, angle: b.to_radians() },
+            ];
+            let base = || Region2 { outer: Loop2::polygon(&pts).ccw(), holes: vec![] };
+            let (notch, none) = flanges_each(base(), &alu(), &each);
+            let (s, notes) = flanges_each(base(), &torn(), &each);
+            let (s0_a, s0_b) = (3.0 * (a.to_radians() / 2.0).tan(), 3.0 * (b.to_radians() / 2.0).tan());
+            let c = Vec2::new((s0_b + s0_a * alpha.cos()) / alpha.sin(), s0_a);
+            assert!(none.is_empty(), "{what}: {none:?}");
+            assert_eq!(notes, [format!("the corner at ({:.3}, {:.3}, 0.000) keeps its notch: {why}", c.x, c.y)], "{what}");
+            assert_eq!((&s.base, &s.flanges), (&notch.base, &notch.flanges), "{what}");
             holds_the_flat_material(&s, &what);
         }
     }

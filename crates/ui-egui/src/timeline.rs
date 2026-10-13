@@ -11,6 +11,7 @@ pub(crate) fn icon_of(k: &FeatureKind) -> &'static str {
     match k {
         FeatureKind::Sketch { .. } => "sketch",
         FeatureKind::Extrude { .. } => "extrude",
+        FeatureKind::SurfaceExtrude { .. } => "surface_extrude",
         FeatureKind::Revolve { .. } => "revolve",
         FeatureKind::Fillet { .. } => "fillet",
         FeatureKind::Chamfer { .. } => "chamfer",

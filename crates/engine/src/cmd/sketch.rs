@@ -183,7 +183,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .enabled(in_sketch)
         .params("dimension: constraint id or parameter name; at: [x,y] text centre (sketch coordinates) | reset: true (default place)"),
     CommandSpec::new("sketch.options", "Sketch Palette Options", sketch_options).icon("sketch").params(
-        "sketch?: id|name (default active); any of show_profile, show_points, show_dimensions, show_constraints, show_projected, grid, snap, slice, sketch_3d: bool. Returns them all",
+        "sketch?: id|name (default active); any of show_profile, show_points, show_dimensions, show_constraints, show_projected, show_construction, grid, snap, slice, sketch_3d: bool. Returns them all",
     ),
     CommandSpec::new("sketch.chain", "Chain", chain_cmd)
         .enabled(in_sketch)
@@ -2252,6 +2252,7 @@ fn options_json(v: &solidcraft_sketch::SketchView) -> Value {
         "show_dimensions": !v.hide_dimensions,
         "show_constraints": !v.hide_constraints,
         "show_projected": !v.hide_projected,
+        "show_construction": !v.hide_construction,
         "grid": !v.hide_grid,
         "snap": !v.no_snap,
         "slice": v.slice,
@@ -2261,7 +2262,18 @@ fn options_json(v: &solidcraft_sketch::SketchView) -> Value {
 
 fn sketch_options(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.options";
-    let keys = ["show_profile", "show_points", "show_dimensions", "show_constraints", "show_projected", "grid", "snap", "slice", "sketch_3d"];
+    let keys = [
+        "show_profile",
+        "show_points",
+        "show_dimensions",
+        "show_constraints",
+        "show_projected",
+        "show_construction",
+        "grid",
+        "snap",
+        "slice",
+        "sketch_3d",
+    ];
     if let Some(o) = p.as_object()
         && let Some(k) = o.keys().find(|k| *k != "sketch" && !keys.contains(&k.as_str()))
     {
@@ -2284,6 +2296,7 @@ fn sketch_options(s: &mut Session, p: &Value) -> Result<Value> {
         put("show_dimensions", &mut v.hide_dimensions, true);
         put("show_constraints", &mut v.hide_constraints, true);
         put("show_projected", &mut v.hide_projected, true);
+        put("show_construction", &mut v.hide_construction, true);
         put("grid", &mut v.hide_grid, true);
         put("snap", &mut v.no_snap, true);
         put("slice", &mut v.slice, false);

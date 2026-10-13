@@ -125,8 +125,6 @@ pub fn on_hover(app: &mut SolveApp, proj: &Proj, pos: Pos2) {
     crate::sketch3d::on_hover(app, proj, pos);
     let h = if let Some(point) = app.tool.as_ref().and_then(|tool| crate::sketch_tools::periodic_start_snap(app, tool, proj, pos)) {
         Some((point, Some("Close smooth loop".into())))
-    } else if let Some(tool) = app.tool.as_ref().filter(|t| t.cmd == "sketch.fillet" || t.cmd.starts_with("sketch.chamfer.")) {
-        crate::sketch_tools::corner_point(app, proj, pos, tool.cmd).map(|(at, id)| (at, Some(id)))
     } else {
         sketch_point_at(app, proj, pos)
     };

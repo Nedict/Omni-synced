@@ -31,6 +31,13 @@ fit-point and control-point splines, conics, points and text. **Construction** (
 into reference geometry that doesn't form profiles. Modify tools include trim (T), extend, break,
 fillet, chamfer, offset (O), mirror, patterns, move/copy and scale.
 
+The Sketch Palette's **Construction Geometries** option hides construction curves while you
+work. A hidden construction curve cannot be picked by a click or by a box. Nothing invisible
+is selectable. The option belongs to one sketch and is saved with the design. Centerlines are
+a line type of their own and keep showing. Projected geometry that carries the construction
+line type, such as the trace of a plane, answers to **Projected Geometries** instead. The
+option changes display only. Construction curves were already outside every profile.
+
 Polygon tools show their edge outline while positioning the second point, so the orientation
 can be checked before placement. Inscribed and circumscribed polygons retain their support
 circle and update the outline when the inline **Sides** value changes.

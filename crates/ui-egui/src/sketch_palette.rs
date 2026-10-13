@@ -2,9 +2,9 @@
 //! command dialog. Feature Options: the modes of the creation tool that is running, as icon
 //! buttons. Options: the line type of the selected curves (normal, construction, centerline),
 //! Look At, and the display toggles kept with the sketch (grid, snap, slice, profiles, points,
-//! dimensions, constraints, projected geometry, 3D sketch); the sketch's degrees of freedom;
-//! Finish Sketch. Toggles run `sketch.options`, line types `sketch.construction` /
-//! `sketch.centerline`.
+//! dimensions, constraints, projected geometry, construction geometry, 3D sketch); the sketch's
+//! degrees of freedom; Finish Sketch. Toggles run `sketch.options`, line types
+//! `sketch.construction` / `sketch.centerline`.
 //!
 //! The line type is also a drawing mode: with nothing selected, Construction (or X) makes what
 //! is drawn next construction geometry until it is switched back.
@@ -33,7 +33,7 @@ const WIDTH: f32 = 236.0;
 /// The display toggles: option key and label. Plain nouns throughout, no "Show " prefix: the
 /// checkbox itself already says whether each one is on.
 ///
-/// Seven of these pass their English source text directly, like the rest of this file's
+/// Eight of these pass their English source text directly, like the rest of this file's
 /// `app.tr_label(...)` calls: `Locale::label` looks up a literal English string against every
 /// other English catalog entry to find its id. "Profile" and "Points" cannot do that safely:
 /// both already name something else under that same lookup (`SelInput::new("Profile", ...)` /
@@ -56,7 +56,7 @@ const WIDTH: f32 = 236.0;
 /// before the id fallback ever runs). Nobody writes UI copy that looks like a dotted id, so
 /// this is a remote hazard, not a likely one, but it is why these two ids are spelled out here
 /// rather than reused anywhere else.
-pub const TOGGLES: [(&str, &str); 9] = [
+pub const TOGGLES: [(&str, &str); 10] = [
     ("grid", "Sketch Grid"),
     ("snap", "Snap"),
     ("slice", "Slice"),
@@ -65,6 +65,7 @@ pub const TOGGLES: [(&str, &str); 9] = [
     ("show_dimensions", "Dimensions"),
     ("show_constraints", "Constraints"),
     ("show_projected", "Projected Geometries"),
+    ("show_construction", "Construction Geometries"),
     ("sketch_3d", "3D Sketch"),
 ];
 
@@ -347,6 +348,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         "show_dimensions" => !opts.hide_dimensions,
         "show_constraints" => !opts.hide_constraints,
         "show_projected" => !opts.hide_projected,
+        "show_construction" => !opts.hide_construction,
         "sketch_3d" => opts.three_d,
         _ => false,
     };

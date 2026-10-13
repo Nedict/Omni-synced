@@ -925,6 +925,18 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         targets: Vec<String>,
     },
+    /// A surface body swept straight along the sketch normal from open curve chains and the
+    /// boundaries of profiles: walls only, no caps.
+    SurfaceExtrude {
+        sketch: u64,
+        /// Profiles whose boundary loops are swept (none: only `curves`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profiles: Option<ProfileSel>,
+        /// Sketch curve ids, grouped into chains of curves that meet end to end.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        curves: Vec<String>,
+        extent: Extent,
+    },
     /// A planar surface body extended outward by `distance` past the edges through `edges`.
     SurfaceExtend {
         body: String,
@@ -1225,6 +1237,7 @@ impl FeatureKind {
         use FeatureKind as K;
         match self {
             K::Extrude { sketch, .. }
+            | K::SurfaceExtrude { sketch, .. }
             | K::Revolve { sketch, .. }
             | K::Emboss { sketch, .. }
             | K::Rib { sketch, .. }
@@ -1356,6 +1369,7 @@ impl FeatureKind {
             FeatureKind::Align { .. } => "AlignFeature",
             FeatureKind::Remove { .. } => "RemoveFeature",
             FeatureKind::Patch { .. } => "PatchFeature",
+            FeatureKind::SurfaceExtrude { .. } => "SurfaceExtrudeFeature",
             FeatureKind::Stitch { .. } => "StitchFeature",
             FeatureKind::Thicken { .. } => "ThickenFeature",
             FeatureKind::SurfaceTrim { .. } => "TrimFeature",
@@ -1422,6 +1436,7 @@ impl FeatureKind {
             FeatureKind::Align { .. } => "Align",
             FeatureKind::Remove { .. } => "Remove",
             FeatureKind::Patch { .. } => "Patch",
+            FeatureKind::SurfaceExtrude { .. } => "SurfaceExtrude",
             FeatureKind::Stitch { .. } => "Stitch",
             FeatureKind::Thicken { .. } => "Thicken",
             FeatureKind::SurfaceTrim { .. } => "Trim",
@@ -1442,7 +1457,9 @@ impl FeatureKind {
             | FeatureKind::Sweep { sketch, profiles, .. }
             | FeatureKind::Emboss { sketch, profiles, .. }
             | FeatureKind::SheetBase { sketch, profiles, .. } => vec![(*sketch, profiles)],
-            FeatureKind::Patch { sketch: Some(sk), profiles, .. } => vec![(*sk, profiles)],
+            FeatureKind::Patch { sketch: Some(sk), profiles, .. } | FeatureKind::SurfaceExtrude { sketch: sk, profiles: Some(profiles), .. } => {
+                vec![(*sk, profiles)]
+            }
             FeatureKind::Loft { sections, .. } => sections.iter_mut().filter(|s| s.point.is_none()).map(|s| (s.sketch, &mut s.profiles)).collect(),
             _ => Vec::new(),
         }
@@ -1456,7 +1473,9 @@ impl FeatureKind {
             | FeatureKind::Sweep { sketch, profiles, .. }
             | FeatureKind::Emboss { sketch, profiles, .. }
             | FeatureKind::SheetBase { sketch, profiles, .. } => vec![(*sketch, profiles)],
-            FeatureKind::Patch { sketch: Some(sketch), profiles, .. } => vec![(*sketch, profiles)],
+            FeatureKind::Patch { sketch: Some(sketch), profiles, .. } | FeatureKind::SurfaceExtrude { sketch, profiles: Some(profiles), .. } => {
+                vec![(*sketch, profiles)]
+            }
             FeatureKind::Loft { sections, .. } => {
                 sections.iter().filter(|section| section.point.is_none()).map(|section| (section.sketch, &section.profiles)).collect()
             }
@@ -1504,7 +1523,7 @@ impl FeatureKind {
             | FeatureKind::ConstructionPlane { plane }
             | FeatureKind::Split { plane, .. }
             | FeatureKind::SplitFace { plane, .. } => plane_exprs(plane, &mut v),
-            FeatureKind::Extrude { extent, .. } => {
+            FeatureKind::Extrude { extent, .. } | FeatureKind::SurfaceExtrude { extent, .. } => {
                 v.push(&extent.distance);
                 if let Some(d) = &extent.distance2 {
                     v.push(d);

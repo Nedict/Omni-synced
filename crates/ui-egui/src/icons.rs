@@ -1,7 +1,32 @@
 //! Toolbar and browser icons, drawn in code (no image assets). Each icon is designed on a
 //! 24 × 24 grid and scaled to the target rectangle.
 
-use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
+use egui::{Color32, Mesh, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
+
+/// Surface sheets: a sheet, a second sheet beside it, a lighter sheet (an opening, a blend or
+/// round strip), and the iso lines and comb teeth drawn on sheets.
+const SHEET: Color32 = Color32::from_rgb(170, 200, 240);
+const SHEET_2: Color32 = Color32::from_rgb(150, 185, 235);
+const SHEET_LIGHT: Color32 = Color32::from_rgb(214, 229, 248);
+const SHEET_LINE: Color32 = Color32::from_rgb(127, 166, 218);
+
+/// `n + 1` points along the cubic Bézier curve with control points `c`.
+fn bezier(c: [(f32, f32); 4], n: usize) -> Vec<(f32, f32)> {
+    (0..=n)
+        .map(|i| i as f32 / n as f32)
+        .map(|t| {
+            let u = 1.0 - t;
+            let w = [u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t];
+            (w.iter().zip(&c).map(|(w, q)| w * q.0).sum(), w.iter().zip(&c).map(|(w, q)| w * q.1).sum())
+        })
+        .collect()
+}
+
+/// `n + 1` points along an ellipse from angle `a0` to `a1` (y down: angles below the centre
+/// first).
+fn ellipse(x: f32, y: f32, rx: f32, ry: f32, a0: f32, a1: f32, n: usize) -> Vec<(f32, f32)> {
+    (0..=n).map(|i| a0 + (a1 - a0) * i as f32 / n as f32).map(|a| (x + rx * a.cos(), y + ry * a.sin())).collect()
+}
 
 struct Pen<'a> {
     p: &'a Painter,
@@ -59,6 +84,30 @@ impl Pen<'_> {
         self.poly(&front, self.fill.gamma_multiply(0.85), self.ink);
         self.poly(&side, self.fill.gamma_multiply(0.7), self.ink);
         self.poly(&top, self.fill, self.ink);
+    }
+    /// A cubic Bézier curve through control points `c`.
+    fn curve(&self, c: [(f32, f32); 4], col: Color32) {
+        self.line(&bezier(c, 16), col);
+    }
+    fn dashed(&self, pts: &[(f32, f32)], c: Color32) {
+        let v: Vec<Pos2> = pts.iter().map(|(x, y)| self.at(*x, *y)).collect();
+        self.p.add(Shape::dashed_line(&v, Stroke::new(self.w, c), 2.0 * self.s(), 1.6 * self.s()));
+    }
+    /// Fill the strip between two polylines that run the same way, such as the front and back
+    /// edges of a curved sheet. Unlike `poly`, the strip need not be convex.
+    fn band(&self, a: &[(f32, f32)], b: &[(f32, f32)], fill: Color32) {
+        let mut m = Mesh::default();
+        for (p, q) in a.iter().zip(b) {
+            m.colored_vertex(self.at(p.0, p.1), fill);
+            m.colored_vertex(self.at(q.0, q.1), fill);
+        }
+        let n = a.len().min(b.len()) as u32;
+        for i in 1..n {
+            let k = 2 * i;
+            m.add_triangle(k - 2, k - 1, k);
+            m.add_triangle(k - 1, k + 1, k);
+        }
+        self.p.add(Shape::mesh(m));
     }
 }
 
@@ -838,6 +887,45 @@ pub fn paint(p: &Painter, r: Rect, name: &str, ink: Color32, fill: Color32, acce
                 1.5 * pen.s(),
             ));
         }
+        // The three chamfer types, for the Chamfer Type row of the corner tool window. Each
+        // draws the cut it makes: equal legs with a tick on each, two unequal legs, and one leg
+        // with the angle the cut leaves it at.
+        "sketch_chamfer_equal" => {
+            pen.line(&[(4.0, 21.0), (4.0, 12.0)], ink);
+            pen.line(&[(12.0, 4.0), (21.0, 4.0)], ink);
+            pen.line(&[(4.0, 12.0), (12.0, 4.0)], a);
+            pen.line(&[(2.5, 9.5), (5.5, 6.5)], a);
+            pen.line(&[(9.5, 2.5), (6.5, 5.5)], a);
+            p.add(Shape::dashed_line(
+                &[pen.at(4.0, 12.0), pen.at(4.0, 4.0), pen.at(12.0, 4.0)],
+                Stroke::new(pen.w * 0.7, ink.gamma_multiply(0.5)),
+                2.0 * pen.s(),
+                1.5 * pen.s(),
+            ));
+        }
+        "sketch_chamfer_two" => {
+            pen.line(&[(4.0, 21.0), (4.0, 10.0)], ink);
+            pen.line(&[(18.0, 4.0), (21.0, 4.0)], ink);
+            pen.line(&[(4.0, 10.0), (18.0, 4.0)], a);
+            p.add(Shape::dashed_line(
+                &[pen.at(4.0, 10.0), pen.at(4.0, 4.0), pen.at(18.0, 4.0)],
+                Stroke::new(pen.w * 0.7, ink.gamma_multiply(0.5)),
+                2.0 * pen.s(),
+                1.5 * pen.s(),
+            ));
+        }
+        "sketch_chamfer_angle" => {
+            pen.line(&[(4.0, 21.0), (4.0, 13.0)], ink);
+            pen.line(&[(14.0, 4.0), (21.0, 4.0)], ink);
+            pen.line(&[(4.0, 13.0), (14.0, 4.0)], a);
+            pen.arc(4.0, 13.0, 6.0, -std::f32::consts::FRAC_PI_2, 0.73, a);
+            p.add(Shape::dashed_line(
+                &[pen.at(4.0, 13.0), pen.at(4.0, 4.0), pen.at(14.0, 4.0)],
+                Stroke::new(pen.w * 0.7, ink.gamma_multiply(0.5)),
+                2.0 * pen.s(),
+                1.5 * pen.s(),
+            ));
+        }
         "offset" => {
             pen.closed(&[(8.0, 9.0), (16.0, 9.0), (16.0, 15.0), (8.0, 15.0)], ink);
             pen.line(&[(8.0, 4.0), (16.0, 4.0)], a);
@@ -858,22 +946,33 @@ pub fn paint(p: &Painter, r: Rect, name: &str, ink: Color32, fill: Color32, acce
         }
         "patch" => {
             // A wire loop with a surface spanned across it.
-            pen.poly(&[(4.0, 16.0), (9.0, 6.0), (19.0, 5.0), (20.0, 15.0), (12.0, 20.0)], Color32::from_rgb(170, 200, 240), ink);
+            pen.poly(&[(4.0, 16.0), (9.0, 6.0), (19.0, 5.0), (20.0, 15.0), (12.0, 20.0)], SHEET, ink);
             pen.line(&[(4.0, 16.0), (9.0, 6.0), (19.0, 5.0), (20.0, 15.0), (12.0, 20.0), (4.0, 16.0)], a);
         }
         "stitch" => {
             // Two surface patches sewn along their shared edge.
-            pen.poly(&[(3.0, 18.0), (11.0, 14.0), (11.0, 4.0), (3.0, 8.0)], Color32::from_rgb(170, 200, 240), ink);
-            pen.poly(&[(13.0, 14.0), (21.0, 18.0), (21.0, 8.0), (13.0, 4.0)], Color32::from_rgb(150, 185, 235), ink);
+            pen.poly(&[(3.0, 18.0), (11.0, 14.0), (11.0, 4.0), (3.0, 8.0)], SHEET, ink);
+            pen.poly(&[(13.0, 14.0), (21.0, 18.0), (21.0, 8.0), (13.0, 4.0)], SHEET_2, ink);
             for y in [6.0, 9.0, 12.0] {
                 pen.line(&[(10.0, y), (14.0, y + 1.5)], a);
             }
         }
         "thicken" => {
-            // A curved sheet given thickness: its offset copy and the side walls.
-            pen.arc(12.0, 20.0, 11.0, 3.6, 5.8, ink);
-            pen.arc(12.0, 20.0, 7.0, 3.6, 5.8, a);
-            pen.arrow((12.0, 9.0), (12.0, 13.5), a);
+            // A wavy sheet (accent edges) grown downward into a slab, shaded like `iso_box`.
+            let f = [(2.0, 12.5), (7.0, 9.5), (12.0, 15.5), (17.0, 12.5)];
+            let b = [(6.4, 8.9), (11.4, 5.9), (16.4, 11.9), (21.4, 8.9)];
+            let d = f.map(|(x, y)| (x, y + 6.0));
+            pen.band(&bezier(b, 16), &bezier(f, 16), SHEET);
+            pen.band(&bezier(f, 16), &bezier(d, 16), pen.fill.gamma_multiply(0.85));
+            pen.poly(&[(17.0, 12.5), (21.4, 8.9), (21.4, 14.9), (17.0, 18.5)], pen.fill.gamma_multiply(0.7), ink);
+            pen.line(&[(2.0, 12.5), (2.0, 18.5)], ink);
+            pen.line(&[(17.0, 12.5), (17.0, 18.5)], ink);
+            pen.line(&[(21.4, 8.9), (21.4, 14.9)], ink);
+            pen.curve(d, ink);
+            pen.line(&[(6.4, 8.9), (2.0, 12.5)], ink);
+            pen.line(&[(21.4, 8.9), (17.0, 12.5)], a);
+            pen.curve(b, a);
+            pen.curve(f, a);
         }
         "extend" => {
             pen.line(&[(20.0, 3.0), (20.0, 21.0)], ink);
@@ -896,18 +995,190 @@ pub fn paint(p: &Painter, r: Rect, name: &str, ink: Color32, fill: Color32, acce
         "blend" => {
             pen.line(&[(2.0, 19.0), (8.0, 15.0)], ink);
             pen.line(&[(16.0, 9.0), (22.0, 5.0)], ink);
-            let c = [(8.0_f32, 15.0_f32), (12.5, 12.0), (11.5, 12.0), (16.0, 9.0)];
-            let pts: Vec<(f32, f32)> = (0..=16)
-                .map(|i| i as f32 / 16.0)
-                .map(|t| {
-                    let u = 1.0 - t;
-                    let w = [u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t];
-                    (w.iter().zip(&c).map(|(w, q)| w * q.0).sum(), w.iter().zip(&c).map(|(w, q)| w * q.1).sum())
-                })
-                .collect();
-            pen.line(&pts, a);
+            pen.curve([(8.0, 15.0), (12.5, 12.0), (11.5, 12.0), (16.0, 9.0)], a);
             pen.dot(8.0, 15.0, ink);
             pen.dot(16.0, 9.0, ink);
+        }
+        // Surface modelling: open sheets (no caps) in the sheet colours, the input or the result
+        // in the accent.
+        "surface_extrude" => {
+            // An open profile (accent) pulled up into a sheet.
+            let top = [(4.0, 11.0), (8.0, 8.0), (13.0, 14.0), (20.0, 10.0)];
+            let bottom = [(4.0, 20.0), (8.0, 17.0), (13.0, 23.0), (20.0, 19.0)];
+            pen.band(&bezier(top, 16), &bezier(bottom, 16), SHEET);
+            pen.line(&[(4.0, 11.0), (4.0, 20.0)], ink);
+            pen.line(&[(20.0, 10.0), (20.0, 19.0)], ink);
+            pen.curve(top, ink);
+            pen.curve(bottom, a);
+            pen.arrow((12.0, 8.5), (12.0, 2.5), a);
+        }
+        "surface_revolve" => {
+            // An open profile (accent) turned about the axis into a hollow band.
+            let left = [(5.0, 6.0), (7.0, 10.0), (5.0, 14.0), (6.0, 18.0)];
+            let right = [(19.0, 6.0), (17.0, 10.0), (19.0, 14.0), (18.0, 18.0)];
+            pen.band(&bezier(left, 16), &bezier(right, 16), SHEET);
+            let front = ellipse(12.0, 18.0, 6.0, 2.2, 0.0, std::f32::consts::PI, 16);
+            pen.poly(&front, SHEET, Color32::TRANSPARENT);
+            // A closed fill takes each point once: a repeated end point spikes `poly`'s edge.
+            let mut opening = ellipse(12.0, 6.0, 7.0, 2.2, 0.0, std::f32::consts::TAU, 32);
+            opening.pop();
+            pen.poly(&opening, SHEET_LIGHT, ink);
+            pen.line(&front, ink);
+            pen.curve(left, ink);
+            pen.line(&[(12.0, 1.5), (12.0, 3.8)], ink);
+            pen.line(&[(12.0, 20.2), (12.0, 22.5)], ink);
+            pen.curve(right, a);
+        }
+        "surface_sweep" => {
+            // A straight profile (accent) carried along a curved path: a ribbon.
+            let near = [(4.0, 13.0), (8.0, 5.0), (14.0, 5.0), (20.0, 9.0)];
+            let far = [(4.0, 20.0), (8.0, 12.0), (14.0, 12.0), (20.0, 16.0)];
+            pen.band(&bezier(near, 16), &bezier(far, 16), SHEET);
+            pen.curve(near, ink);
+            pen.curve(far, ink);
+            pen.line(&[(4.0, 13.0), (4.0, 20.0)], a);
+            pen.line(&[(20.0, 9.0), (20.0, 16.0)], ink);
+        }
+        "surface_loft" => {
+            // Two open sections (accent) joined by a sheet.
+            let top = [(5.0, 6.0), (9.0, 3.0), (14.0, 8.0), (19.0, 5.0)];
+            let bottom = [(3.0, 19.0), (8.0, 15.0), (14.0, 22.0), (21.0, 18.0)];
+            pen.band(&bezier(top, 16), &bezier(bottom, 16), SHEET);
+            pen.line(&[(5.0, 6.0), (3.0, 19.0)], ink);
+            pen.line(&[(19.0, 5.0), (21.0, 18.0)], ink);
+            pen.curve(top, a);
+            pen.curve(bottom, a);
+        }
+        "surface_offset" => {
+            // A wavy sheet and its offset copy (dashed), the distance shown by the arrow.
+            let back = [(6.0, 14.0), (10.0, 11.0), (15.0, 17.0), (21.0, 14.0)];
+            let front = [(3.0, 20.0), (7.0, 17.0), (12.0, 23.0), (18.0, 20.0)];
+            pen.band(&bezier(back, 16), &bezier(front, 16), SHEET);
+            pen.curve(back, ink);
+            pen.curve(front, ink);
+            pen.line(&[(6.0, 14.0), (3.0, 20.0)], ink);
+            pen.line(&[(21.0, 14.0), (18.0, 20.0)], ink);
+            pen.dashed(&bezier(back.map(|(x, y)| (x, y - 9.0)), 16), a);
+            pen.dashed(&bezier(front.map(|(x, y)| (x, y - 9.0)), 16), a);
+            pen.dashed(&[(6.0, 5.0), (3.0, 11.0)], a);
+            pen.dashed(&[(21.0, 5.0), (18.0, 11.0)], a);
+            pen.arrow((12.0, 17.0), (12.0, 8.5), a);
+        }
+        "ruled" => {
+            // A strip hanging off a block's edge (accent), ruled by straight lines.
+            pen.poly(&[(2.0, 12.0), (12.0, 12.0), (12.0, 22.0), (2.0, 22.0)], pen.fill, ink);
+            pen.poly(&[(12.0, 12.0), (21.0, 4.0), (21.0, 14.0), (12.0, 22.0)], SHEET, ink);
+            pen.line(&[(15.0, 9.3), (15.0, 19.3)], a);
+            pen.line(&[(18.0, 6.7), (18.0, 16.7)], a);
+            pen.line(&[(12.0, 12.0), (12.0, 22.0)], a);
+        }
+        "boundary" => {
+            // Four boundary curves (accent) meeting at corners, the patch between them a Coons
+            // patch with its iso lines.
+            let (c00, c10, c11, c01) = ((4.0, 17.0), (10.0, 5.0), (20.0, 7.0), (17.0, 20.0));
+            let left = [c00, (5.0, 12.0), (8.0, 8.0), c10];
+            let top = [c10, (13.0, 4.0), (17.0, 4.0), c11];
+            let right = [c01, (19.0, 16.0), (20.0, 11.0), c11];
+            let bottom = [c00, (8.0, 20.0), (13.0, 21.0), c01];
+            let n = 12;
+            let lerp = |p: (f32, f32), q: (f32, f32), s: f32| (p.0 + (q.0 - p.0) * s, p.1 + (q.1 - p.1) * s);
+            let (b, t) = (bezier(bottom, n), bezier(top, n));
+            // Each row runs across the patch (u) at one height (v) up the left and right sides.
+            let rows: Vec<Vec<(f32, f32)>> = bezier(left, n)
+                .into_iter()
+                .zip(bezier(right, n))
+                .enumerate()
+                .map(|(j, (lv, rv))| {
+                    let v = j as f32 / n as f32;
+                    b.iter()
+                        .zip(&t)
+                        .enumerate()
+                        .map(|(i, (bu, tu))| {
+                            let u = i as f32 / n as f32;
+                            let corners = lerp(lerp(c00, c01, u), lerp(c10, c11, u), v);
+                            let (ruled_v, ruled_u) = (lerp(*bu, *tu, v), lerp(lv, rv, u));
+                            (ruled_v.0 + ruled_u.0 - corners.0, ruled_v.1 + ruled_u.1 - corners.1)
+                        })
+                        .collect()
+                })
+                .collect();
+            for (lo, hi) in rows.iter().zip(rows.iter().skip(1)) {
+                pen.band(lo, hi, SHEET);
+            }
+            for j in [n / 3, 2 * n / 3] {
+                if let Some(r) = rows.get(j) {
+                    pen.line(r, SHEET_LINE);
+                }
+                pen.line(&rows.iter().filter_map(|r| r.get(j).copied()).collect::<Vec<_>>(), SHEET_LINE);
+            }
+            for c in [left, top, right, bottom] {
+                pen.curve(c, a);
+            }
+            for (x, y) in [c00, c10, c11, c01] {
+                pen.dot(x, y, ink);
+            }
+        }
+        "surface_blend" => {
+            // Two separate sheets at different heights bridged by a smooth strip (accent) that
+            // leaves both edges tangent.
+            let near = [(13.0, 20.0), (8.5, 20.0), (10.5, 11.0), (6.0, 11.0)];
+            let far = near.map(|(x, y)| (x + 4.4, y - 3.6));
+            pen.poly(&[(2.0, 11.0), (6.0, 11.0), (10.4, 7.4), (6.4, 7.4)], SHEET, ink);
+            pen.band(&bezier(near, 16), &bezier(far, 16), SHEET_LIGHT);
+            pen.curve(far, a);
+            pen.poly(&[(13.0, 20.0), (17.0, 20.0), (21.4, 16.4), (17.4, 16.4)], SHEET, ink);
+            pen.curve(near, a);
+        }
+        "untrim" => {
+            // A trimmed sheet whose hole (dashed, accent) is filled back in.
+            pen.poly(&[(3.0, 17.0), (9.0, 5.0), (21.0, 7.0), (16.0, 20.0)], SHEET, ink);
+            let hole = ellipse(12.2, 12.3, 4.2, 3.2, 0.0, std::f32::consts::TAU, 32);
+            pen.poly(hole.get(1..).unwrap_or_default(), SHEET_LIGHT, Color32::TRANSPARENT);
+            pen.dashed(&hole, a);
+        }
+        "unstitch" => {
+            // Two sheets pulled apart from their shared edge.
+            pen.poly(&[(2.0, 18.0), (9.0, 14.0), (9.0, 4.0), (2.0, 8.0)], SHEET, ink);
+            pen.poly(&[(15.0, 14.0), (22.0, 18.0), (22.0, 8.0), (15.0, 4.0)], SHEET_2, ink);
+            pen.arrow((10.8, 11.0), (7.0, 11.0), a);
+            pen.arrow((13.2, 11.0), (17.0, 11.0), a);
+        }
+        "reverse_normal" => {
+            // A sheet with its old normal (faded) and the flipped one (accent).
+            pen.poly(&[(2.0, 14.0), (14.0, 10.0), (22.0, 13.0), (10.0, 18.0)], SHEET, ink);
+            pen.arrow((12.0, 14.0), (12.0, 3.5), ink.gamma_multiply(0.5));
+            pen.arrow((12.0, 14.0), (12.0, 22.5), a);
+        }
+        "surface_fillet" => {
+            // A wall sheet and a floor sheet joined by a round strip (accent edges).
+            let near = [(3.0, 16.0), (3.0, 18.8), (5.2, 21.0), (8.0, 21.0)];
+            let far = near.map(|(x, y)| (x + 4.4, y - 3.6));
+            pen.poly(&[(3.0, 16.0), (3.0, 8.0), (7.4, 4.4), (7.4, 12.4)], SHEET_2, ink);
+            pen.poly(&[(8.0, 21.0), (16.0, 21.0), (20.4, 17.4), (12.4, 17.4)], SHEET, ink);
+            pen.band(&bezier(near, 16), &bezier(far, 16), SHEET_LIGHT);
+            pen.line(&[(4.5, 19.5), (8.9, 15.9)], SHEET_LINE);
+            pen.curve(far, a);
+            pen.curve(near, a);
+        }
+        "continuity" => {
+            // A straight curve joining a curved one (accent) at a point, with the curved one's
+            // curvature comb: teeth that grow as the curve tightens.
+            pen.line(&[(2.0, 17.0), (12.0, 13.0)], ink);
+            let c = [(12.0, 13.0), (16.5, 11.2), (20.0, 8.0), (21.0, 3.0)];
+            let pts = bezier(c, 10);
+            let mut tips = Vec::new();
+            for (i, ((x, y), (x1, y1))) in pts.iter().zip(pts.iter().skip(1)).enumerate() {
+                let len = (x1 - x).hypot(y1 - y).max(1e-6);
+                let h = 0.8 + 4.2 * i as f32 / 10.0;
+                let tip = (x + (y1 - y) / len * h, y - (x1 - x) / len * h);
+                if i % 2 == 0 {
+                    pen.line(&[(*x, *y), tip], SHEET_LINE);
+                }
+                tips.push(tip);
+            }
+            pen.line(&tips, SHEET_LINE);
+            pen.curve(c, a);
+            pen.dot(12.0, 13.0, a);
         }
         // Assembly: joints (accent: the joint itself).
         "joint" => {
@@ -1081,6 +1352,40 @@ mod tests {
             paint(ui.painter(), r, name, ink, fill, accent);
         });
         format!("{:?}", out.shapes)
+    }
+
+    /// Command icons not drawn yet (the fallback square) or drawn past their square, from before
+    /// this check. Remove a name when its icon is fixed; never add one.
+    const KNOWN_GAPS: &[&str] =
+        &["cylinder", "pipe", "offset_face", "thread", "boundary_fill", "coil", "rib", "emboss", "capture", "revert", "camera", "material"];
+
+    /// What is wrong with the icon `name`: not drawn (the fallback square), or drawn past its
+    /// square by more than a stroke width.
+    fn icon_problem(name: &str) -> Option<String> {
+        if drawn(name, Color32::BLACK, Color32::WHITE, Color32::BLUE) == drawn("", Color32::BLACK, Color32::WHITE, Color32::BLUE) {
+            return Some("no icon drawn".into());
+        }
+        let side = 48.0;
+        let r = Rect::from_min_size(Pos2::ZERO, vec2(side, side));
+        let ctx = egui::Context::default();
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(100.0, 100.0))), ..Default::default() };
+        let out = ctx.run_ui(input, |ui| paint(ui.painter(), r, name, Color32::BLACK, Color32::WHITE, Color32::BLUE));
+        let used = out.shapes.iter().fold(Rect::NOTHING, |b, s| b.union(s.shape.visual_bounding_rect()));
+        (!r.expand(side / 24.0 * 1.4).contains_rect(used)).then(|| format!("drawn over {used:?}"))
+    }
+
+    /// Every command's icon is drawn and stays inside its square.
+    #[test]
+    fn every_command_icon_is_drawn_inside_its_square() {
+        let bad: Vec<String> = solidcraft_engine::command_specs()
+            .into_iter()
+            .filter(|c| !c.icon.is_empty() && !KNOWN_GAPS.contains(&c.icon))
+            .filter_map(|c| icon_problem(c.icon).map(|why| format!("{} ({}): {why}", c.id, c.icon)))
+            .collect();
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+        for gap in KNOWN_GAPS {
+            assert!(icon_problem(gap).is_some(), "`{gap}` is fixed now: take it off KNOWN_GAPS");
+        }
     }
 
     /// The Sketch Palette and the toolbar both rely on this contract. Construction and

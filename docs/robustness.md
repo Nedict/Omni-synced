@@ -45,7 +45,11 @@ rotation, face offset and tessellation tolerance in millimetres/radians.
 
 A common shift of both operands is reversed on the result. Coincident-face
 separation and bore offsets describe temporary working geometry; they are not
-claims about the final model's error. A tool nudge changes the relative operand
+claims about the final model's error. A coincident face is separated only
+where the space it moves through holds what the Boolean leaves there anyway
+(nothing of the target for a cut's face, the target's material for a join's);
+a face with no such room stays, and the exact planar fallback is tried first.
+A tool nudge changes the relative operand
 placement and reports both its translation magnitude and rotation angle.
 Exact planar and piecewise fallbacks report zero displacement. The existing
 volume and spatial acceptance checks still apply to all results.
