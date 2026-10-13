@@ -982,7 +982,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             let selected_label = crate::i18n::tr_label(styles[usize::from(app.ui.visual_style.min(3))]);
             egui::ComboBox::from_id_salt("pref_style").selected_text(selected_label).show_ui(ui, |ui| {
                 for (i, s) in styles.iter().enumerate() {
-                    ui.selectable_value(&mut app.ui.visual_style, i as u8, crate::i18n::tr_label(*s));
+                    ui.selectable_value(&mut app.ui.visual_style, i as u8, crate::i18n::tr_label(s));
                 }
             });
             ui.end_row();
