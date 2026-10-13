@@ -72,19 +72,22 @@
 //!   Sketch face anchors can name a flat face by its exact history name (a `lineage`
 //!   certificate: the target's `name`, e.g. a cut wall `F5:side:l1` or a pattern copy
 //!   `F4:top@F6.2`), where no construction certificate names it alone. Anchors with
-//!   construction certificates resolve as before. A `lineage` name can also be a piece's own,
-//!   qualified by the faces around it (`F2:top#[F2:side:l4,F4:side:l4]`), where Offset Face
-//!   moved one piece of a face off the others' plane; never a numbered piece. Sheet face names
-//!   can also name a rim, the sheet's thickness along a panel's straight edge
-//!   (`sheet:<body>:<panel>:rim.<edge>`, the edge a base sketch line's id, `edge<k>`, or a
-//!   flange's `far`, `side0` or `side1`), or a flat end of a bend (`rim.bend0`, `rim.bend1`).
+//!   construction certificates resolve as before.
+//! - 17: a `lineage` face name can be a piece's own, qualified by the faces around it
+//!   (`F2:top#[F2:side:l4,F4:side:l4]`), where Offset Face moved one piece of a face off the
+//!   others' plane; never a numbered piece. Sheet face names can also name a rim, the sheet's
+//!   thickness along a panel's straight edge (`sheet:<body>:<panel>:rim.<edge>`, the edge a base
+//!   sketch line's id, `edge<k>`, or a flange's `far`, `side0` or `side1`), or a flat end of a
+//!   bend (`rim.bend0`, `rim.bend1`). Version 16 designs need no transformation; the version
+//!   stamp makes 0.8.0 (which reads up to 16) ask for an update instead of meeting names it
+//!   can't resolve.
 
 use serde_json::Value;
 
 use crate::{DocError, Document, Result};
 
 /// The format this build writes.
-pub const FORMAT: u32 = 16;
+pub const FORMAT: u32 = 17;
 
 pub fn format_string(n: u32) -> String {
     format!("solidcraft/{n}")
@@ -101,7 +104,7 @@ pub fn version_of(s: &str) -> Option<u32> {
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
 type JsonStep = fn(&mut Value) -> Result<()>;
-const JSON_STEPS: [JsonStep; 15] = [
+const JSON_STEPS: [JsonStep; 16] = [
     |_| Ok(()),
     v2_to_v3,
     v3_to_v4,
@@ -115,6 +118,7 @@ const JSON_STEPS: [JsonStep; 15] = [
     |_| Ok(()),
     |_| Ok(()),
     v13_to_v14,
+    |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
 ];
