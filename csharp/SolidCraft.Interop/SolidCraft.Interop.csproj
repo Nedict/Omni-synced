@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The typed bridge between the ModelForge C# workspace and the SolidCraft Rust library.
+       Targets net8.0, where `NativeLibrary` (the DllImport resolver) and the UTF-8 marshalling
+       helpers are available. See csharp/README.md for the workspace build against Mono. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>SolidCraft.Interop</AssemblyName>
+    <RootNamespace>SolidCraft.Interop</RootNamespace>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

@@ -3346,6 +3346,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "solidcraft-ffi"
+version = "0.6.0"
+dependencies = [
+ "serde_json",
+ "solidcraft-engine",
+]
+
+[[package]]
 name = "solidcraft-geom"
 version = "0.7.0"
 dependencies = [

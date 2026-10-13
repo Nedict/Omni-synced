@@ -1,0 +1,24 @@
+[package]
+name = "solidcraft-ffi"
+description = "SolidCraft C ABI: lets a host (the ModelForge C# workspace) drive a SolidCraft session in-process"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The C ABI needs `unsafe` for `extern "C"` and raw pointers. Every other crate in the
+# workspace forbids it (see the root `[workspace.lints]`); this crate replaces the workspace
+# lints with its own, smaller set, and keeps `unsafe` confined to this file.
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+# The pointer-marshalling entry points are necessarily `unsafe fn` with raw pointers.
+not_unsafe_ptr_arg_deref = "allow"
+missing_safety_doc = "allow"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+solidcraft-engine = { workspace = true }
+serde_json = { workspace = true }

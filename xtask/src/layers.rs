@@ -50,6 +50,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("cli", Class::Exempt),
     ("web", Class::Exempt),
     ("xtask", Class::Exempt),
+    // The C ABI host bridge (ModelForge C# workspace): a leaf like the apps.
+    ("ffi", Class::Exempt),
 ];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).
