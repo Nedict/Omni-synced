@@ -460,6 +460,11 @@ fn actions(s: &Session) -> Vec<Action> {
             action: "body.move",
             act: Act::Run("solid.move", json!({"bodies": [world], "translate": [10, 0, 0]})),
         });
+        out.push(Action {
+            entity: entity.clone(),
+            action: "body.copy",
+            act: Act::Run("solid.move", json!({"bodies": [world], "translate": [round3(size * 1.2), 0, 0], "copy": true})),
+        });
         out.push(Action { entity: entity.clone(), action: "body.mirror", act: Act::Run("solid.mirror", json!({"bodies": [world], "plane": "YZ"})) });
         out.push(Action {
             entity,
