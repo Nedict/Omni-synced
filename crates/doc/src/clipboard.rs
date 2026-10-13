@@ -84,6 +84,10 @@ pub fn remap_topology(name: &str, ids: &BTreeMap<u64, u64>, bodies: &BTreeMap<St
     if let Some(old) = crate::naming::legacy_name(name) {
         return format!("{}{}", crate::naming::LEGACY_MARK, remap_topology(old, ids, bodies));
     }
+    // A flat face of a sheet: `sheet:<body>:<panel>:<side>`, the panel a flange's feature token.
+    if let Some((body, face)) = crate::sheet::split_sheet_face_name(name) {
+        return crate::sheet::sheet_face_name(bodies.get(body).map_or(body, String::as_str), &remap_topology(face, ids, bodies));
+    }
     // Imported names belong to the complete canonical body prefix, even when that prefix
     // happens to contain text resembling a feature token.
     if let Some((body, suffix)) = name.rsplit_once(":face:")
@@ -462,6 +466,14 @@ mod clone_tests {
         assert_eq!(remap_topology("F1:Housing:face:0", &ids, &bodies), "F1:Housing (copy):face:0");
         assert_eq!(remap_topology("F1:+x|F10:end@F1.2", &ids, &bodies), "F2:+x|F20:end@F2.2");
         assert_eq!(remap_topology("UserF1:label", &ids, &bodies), "UserF1:label");
+    }
+    #[test]
+    fn a_sheet_face_follows_its_body_and_its_flange() {
+        let ids = BTreeMap::from([(1, 2), (10, 20)]);
+        let bodies = BTreeMap::from([("Body1".into(), "Body1 (copy)".into())]);
+        assert_eq!(remap_topology("sheet:Body1:F1.0:top", &ids, &bodies), "sheet:Body1 (copy):F2.0:top");
+        assert_eq!(remap_topology("sheet:Body1:base:bottom", &ids, &bodies), "sheet:Body1 (copy):base:bottom");
+        assert_eq!(remap_topology("sheet:Other:F10.1:top", &ids, &bodies), "sheet:Other:F20.1:top");
     }
     #[test]
     fn parameter_remap_is_simultaneous_and_token_scoped() {

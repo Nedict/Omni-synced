@@ -151,11 +151,34 @@ pub(crate) fn extrude_cap_bindings(sketch: &SolvedSketch, bodies: &[solidcraft_k
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FaceCertificate {
-    Box { axis: u8, high: bool },
-    ExtrudeCap { sketch: u64, high: bool, outer: Vec<String>, holes: Vec<Vec<String>> },
-    ExtrudeSide { sketch: u64, curve: String },
-    Imported { payload_sha256: String, item: u64, face: u64 },
-    ShellPlanar { source_producer: u64, source: Box<FaceCertificate>, inner: bool },
+    Box {
+        axis: u8,
+        high: bool,
+    },
+    /// A cylinder primitive's cap: `high` is its `top` (the far end), else its `bottom`.
+    CylinderCap {
+        high: bool,
+    },
+    ExtrudeCap {
+        sketch: u64,
+        high: bool,
+        outer: Vec<String>,
+        holes: Vec<Vec<String>>,
+    },
+    ExtrudeSide {
+        sketch: u64,
+        curve: String,
+    },
+    Imported {
+        payload_sha256: String,
+        item: u64,
+        face: u64,
+    },
+    ShellPlanar {
+        source_producer: u64,
+        source: Box<FaceCertificate>,
+        inner: bool,
+    },
 }
 
 impl FaceCertificate {
@@ -177,6 +200,7 @@ impl FaceCertificate {
     pub fn validate(&self) -> Result<()> {
         let valid = match self {
             Self::Box { axis, .. } => *axis <= 2,
+            Self::CylinderCap { .. } => true,
             Self::ExtrudeCap { sketch, outer, holes, .. } => *sketch != 0 && valid_signature(outer, holes),
             Self::ExtrudeSide { sketch, curve } => *sketch != 0 && !curve.is_empty() && curve.len() <= 128,
             Self::Imported { payload_sha256, item, face } => {
@@ -204,6 +228,11 @@ pub(crate) fn validate_certificate_json(value: &serde_json::Value) -> Result<()>
             fields.len() == 3
                 && fields.keys().all(|key| ["kind", "axis", "high"].contains(&key.as_str()))
                 && fields.get("axis").and_then(serde_json::Value::as_u64).is_some_and(|axis| axis <= 2)
+                && fields.get("high").and_then(serde_json::Value::as_bool).is_some()
+        }
+        Some("cylinder_cap") => {
+            fields.len() == 2
+                && fields.keys().all(|key| ["kind", "high"].contains(&key.as_str()))
                 && fields.get("high").and_then(serde_json::Value::as_bool).is_some()
         }
         Some("extrude_cap") => {
@@ -252,6 +281,7 @@ pub(crate) fn shell_certificate_role(source: &FaceCertificate, inner: bool) -> R
             let axis = ["x", "y", "z"].get(*axis as usize).ok_or_else(|| DocError::Invalid("invalid shell source axis".into()))?;
             format!("box:{}{axis}", if *high { "+" } else { "-" })
         }
+        FaceCertificate::CylinderCap { high } => format!("cylinder:{}", cylinder_cap_role(*high)),
         FaceCertificate::ExtrudeSide { curve, .. } => format!("side:{curve}"),
         FaceCertificate::ExtrudeCap { high, outer, holes, .. } => format!("cap:{}:{}", if *high { "high" } else { "low" }, cap_key(outer, holes)),
         FaceCertificate::Imported { payload_sha256, item, face } => format!("import:{payload_sha256}:{item}:{face}"),
@@ -260,10 +290,16 @@ pub(crate) fn shell_certificate_role(source: &FaceCertificate, inner: bool) -> R
     Ok(format!("shell:{}:{role}", if inner { "inner" } else { "outer" }))
 }
 
+/// A cylinder cap's role, as the cylinder's face names call it.
+pub(crate) fn cylinder_cap_role(high: bool) -> &'static str {
+    if high { "top" } else { "bottom" }
+}
+
 pub(crate) fn flat_source_certificate(source: &solidcraft_kernel::FaceSource) -> Option<(u64, FaceCertificate)> {
     use solidcraft_kernel::FaceSource;
     match source {
         FaceSource::Box { producer: Some(producer), axis, high, .. } => Some((*producer, FaceCertificate::Box { axis: *axis, high: *high })),
+        FaceSource::CylinderCap { producer, high, .. } => Some((*producer, FaceCertificate::CylinderCap { high: *high })),
         FaceSource::CertifiedExtrudeSide { producer, sketch, curve, .. } => {
             Some((*producer, FaceCertificate::ExtrudeSide { sketch: *sketch, curve: curve.clone() }))
         }
@@ -282,6 +318,9 @@ pub(crate) fn flat_source_matches(certificate: &FaceCertificate, source: &solidc
     match (certificate, source) {
         (FaceCertificate::Box { axis, high }, FaceSource::Box { producer: Some(current), axis: current_axis, high: current_high, .. }) => {
             producer == *current && axis == current_axis && high == current_high
+        }
+        (FaceCertificate::CylinderCap { high }, FaceSource::CylinderCap { producer: current, high: current_high, .. }) => {
+            producer == *current && high == current_high
         }
         (
             FaceCertificate::ExtrudeSide { sketch, curve },
@@ -411,7 +450,8 @@ impl Document {
             | Some(solidcraft_kernel::FaceSource::CertifiedExtrudeSide { producer, .. })
             | Some(solidcraft_kernel::FaceSource::CertifiedExtrudeCap { producer, .. })
             | Some(solidcraft_kernel::FaceSource::ShellPlanar { producer: Some(producer), .. })
-            | Some(solidcraft_kernel::FaceSource::Box { producer: Some(producer), .. }) => *producer,
+            | Some(solidcraft_kernel::FaceSource::Box { producer: Some(producer), .. })
+            | Some(solidcraft_kernel::FaceSource::CylinderCap { producer, .. }) => *producer,
             _ => name
                 .strip_prefix('F')
                 .and_then(|name| name.split_once(':'))
@@ -481,6 +521,11 @@ impl Document {
                 target.name = format!("F{producer}:{}{axis_name}", if *high { "+" } else { "-" });
                 target.certificate = Some(FaceCertificate::Box { axis: *axis, high: *high });
             }
+            Some(solidcraft_kernel::FaceSource::CylinderCap { producer, high, .. }) => {
+                target.origin_feature = *producer;
+                target.name = format!("F{producer}:{}", cylinder_cap_role(*high));
+                target.certificate = Some(FaceCertificate::CylinderCap { high: *high });
+            }
             Some(solidcraft_kernel::FaceSource::CertifiedExtrudeCap { producer, sketch, high, outer, holes, .. }) => {
                 target.origin_feature = *producer;
                 target.name = format!("F{producer}:cap:{}:{}", if *high { "high" } else { "low" }, cap_key(outer, holes));
@@ -510,6 +555,31 @@ mod tests {
     fn solved(mut sketch: solidcraft_sketch::Sketch) -> SolvedSketch {
         let report = solidcraft_sketch::solve(&mut sketch);
         SolvedSketch { feature: 1, name: "sources".into(), plane: solidcraft_geom::Plane::XY, sketch, report, profiles: Vec::new() }
+    }
+
+    #[test]
+    fn cylinder_cap_certificate_json_is_exact() {
+        for high in [true, false] {
+            let valid = json!({"kind":"cylinder_cap","high":high});
+            assert!(validate_certificate_json(&valid).is_ok());
+            let certificate: FaceCertificate = serde_json::from_value(valid.clone()).unwrap();
+            assert_eq!(certificate, FaceCertificate::CylinderCap { high });
+            assert_eq!(serde_json::to_value(&certificate).unwrap(), valid);
+        }
+        let shelled = json!({"kind":"shell_planar","source_producer":3,"source":{"kind":"cylinder_cap","high":false},"inner":true});
+        assert!(validate_certificate_json(&shelled).is_ok());
+        let certificate: FaceCertificate = serde_json::from_value(shelled).unwrap();
+        assert_eq!(shell_certificate_role(&FaceCertificate::CylinderCap { high: false }, true).unwrap(), "shell:inner:cylinder:bottom");
+        assert!(certificate.validate().is_ok());
+        for bad in [
+            json!({"kind":"cylinder_cap"}),
+            json!({"kind":"cylinder_cap","high":1}),
+            json!({"kind":"cylinder_cap","high":null}),
+            json!({"kind":"cylinder_cap","high":true,"axis":2}),
+            json!({"kind":"cylinder_cap","high":true,"extra":[[[]]]}),
+        ] {
+            assert!(validate_certificate_json(&bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

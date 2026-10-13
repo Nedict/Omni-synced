@@ -14,6 +14,11 @@ Edited surfaces without retained construction provenance, ambiguous sources, and
 generators require an explicit fixed plane instead. A nearby or parallel face is never used
 to repair a new attachment automatically.
 
+The flat faces of a sheet metal body are the exception: they have no construction
+certificate, so a sketch on one attaches to its panel by name (`sheet:<body>:<panel>:<side>`)
+and finds it again after every rebuild, unfold and refold. If that panel no longer exists the
+sketch reports a lost attachment, as above. See the sheet metal guide.
+
 ## Create and repair
 
 Select a supported planar face and create a sketch. The desktop selection supplies the exact

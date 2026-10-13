@@ -710,6 +710,31 @@ fn surface_dialogs_make_their_commands() {
 }
 
 #[test]
+fn patch_dialog_fills_a_loop_of_edges_that_is_not_planar() {
+    // A box with its top cut away by a sideways cylinder: its rim is a closed loop of four
+    // curved edges, not in a plane. Picking them in the Patch dialog fills it with one face.
+    let mut app = app_with(json!([
+        {"command": "solid.box", "params": {"length": 28, "width": 28, "height": 20, "corner": [-14, -14, 0], "body_name": "Saddle"}},
+        {"command": "solid.cylinder", "params": {"radius": 40, "height": 120, "base": [0, -60, 50], "axis": "Y", "operation": "cut", "targets": ["Saddle"]}}
+    ]));
+    let z = |x: f64| 50.0 - (1600.0 - x * x).sqrt();
+    let rim = [Vec3::new(14.0, 0.0, z(14.0)), Vec3::new(0.0, 14.0, z(0.0)), Vec3::new(-14.0, 0.0, z(-14.0)), Vec3::new(0.0, -14.0, z(0.0))];
+    let mut d = start(&mut app, vec![], "surface.patch");
+    d.inputs[0].items = rim.iter().enumerate().map(|(i, p)| Sel::Edge { body: "Saddle".into(), index: i, point: *p }).collect();
+    let cmds = apply_commands(&app, &d).unwrap();
+    assert_eq!(cmds.len(), 1);
+    assert_eq!(cmds[0].0, "surface.patch");
+    app.session.execute(&cmds[0].0, &cmds[0].1).unwrap();
+    let st = app.session.model.state();
+    let fill = st.bodies.iter().find(|b| b.name != "Saddle").unwrap();
+    assert!(fill.body.is_surface() && fill.body.face_count() == 1);
+    // One smooth face over the rim: its area is close to the cylinder's inside the rim.
+    let area = fill.mesh().measure().area;
+    let want = 28.0 * 40.0 * 2.0 * (14.0f64 / 40.0).asin();
+    assert!((area - want).abs() < want * 1e-2, "{area} vs {want}");
+}
+
+#[test]
 fn split_body_by_a_curved_face_sends_it_as_a_tool() {
     let mut app = app_with(json!([
         {"command": "solid.box", "params": {"length": 40, "width": 30, "height": 20}},

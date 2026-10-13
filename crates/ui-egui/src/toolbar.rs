@@ -8,6 +8,19 @@ use crate::{SolveApp, icons};
 
 pub const TABS: &[&str] = &["SOLID", "SURFACE", "MESH", "SHEET METAL", "PLASTIC", "UTILITIES"];
 
+/// The accent stroke colour for a panel's icons: constraint commands use the same red as the
+/// constraint glyphs they draw in the sketch (`glyph_text`), sketch tools otherwise keep
+/// `sketch_accent`, and every other tab keeps the plain `accent`.
+fn panel_accent(t: Tokens, tab: &str, panel: &str) -> Color32 {
+    if panel == "CONSTRAINTS" {
+        t.glyph_text
+    } else if tab == "SKETCH" {
+        t.sketch_accent
+    } else {
+        t.accent
+    }
+}
+
 /// Panels shown on each tab (in order). Commands come from the registry by (tab, panel).
 pub fn panels(tab: &str) -> &'static [&'static str] {
     if let Some(p) = crate::workspace::panels(tab) {
@@ -582,7 +595,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                     painter.rect_filled(br, 4.0, t.hover);
                 }
                 if let Some(c) = shown.first().or(cmds.first()) {
-                    let acc = if tab == "SKETCH" { t.sketch_accent } else { t.accent };
+                    let acc = panel_accent(t, &tab, panel);
                     icons::paint(&painter, Rect::from_center_size(br.center() - vec2(0.0, 3.0), vec2(26.0, 26.0)), c.icon, t.icon, t.icon_fill, acc);
                 }
                 caret(&painter, pos2(br.center().x, br.bottom() - 3.0), t.text_dim);
@@ -621,11 +634,8 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 } else if resp.hovered() && info.enabled {
                     painter.rect_filled(br, 4.0, t.hover);
                 }
-                let (ink, fill, acc) = if info.enabled {
-                    (t.icon, t.icon_fill, if tab == "SKETCH" { t.sketch_accent } else { t.accent })
-                } else {
-                    (t.border, t.panel_header, t.border)
-                };
+                let (ink, fill, acc) =
+                    if info.enabled { (t.icon, t.icon_fill, panel_accent(t, &tab, panel)) } else { (t.border, t.panel_header, t.border) };
                 let icon = match c.id {
                     "sketch.finish" => "finish",
                     "config.table" => "configuration_table",
@@ -876,8 +886,14 @@ fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solidcraft_engine
         p.rect_filled(rect, 3.0, t.hover);
         crate::scenario::publish_handle(&format!("dropdown_hot:{}", c.id), rect.center());
     }
-    let (ink, fill, acc, text) =
-        if info.enabled { (t.icon, t.icon_fill, t.accent, t.text) } else { (t.border, t.panel_header, t.border, t.text_dim) };
+    // Every other row keeps the plain accent it always has; only a constraint command's row
+    // switches to the constraint red, to match its button on the ribbon.
+    let (ink, fill, acc, text) = if info.enabled {
+        let acc = if c.panel == "CONSTRAINTS" { t.glyph_text } else { t.accent };
+        (t.icon, t.icon_fill, acc, t.text)
+    } else {
+        (t.border, t.panel_header, t.border, t.text_dim)
+    };
     let ir = Rect::from_center_size(pos2(rect.left() + 6.0 + 9.0, rect.center().y), vec2(18.0, 18.0));
     icons::paint(p, ir, c.icon, ink, fill, acc);
     p.text(pos2(ir.right() + 8.0, rect.center().y), Align2::LEFT_CENTER, &label, FontId::proportional(13.0), text);

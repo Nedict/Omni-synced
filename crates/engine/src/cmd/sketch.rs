@@ -29,7 +29,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("sketch.create", "Create Sketch", create_sketch)
         .at("SOLID", "CREATE")
         .icon("sketch")
-        .params("plane: XY|XZ|YZ | construction plane name or id | {origin, x_dir, y_dir} | {face: [world x,y,z], body?: exact world body, index?: face index, path?: complete occurrence ids, fixed?: bool}; new face attachments require a unique certified source, fixed:true explicitly freezes the selected plane; offset?: expr, project_edges?: bool, name?"),
+        .params("plane: XY|XZ|YZ | construction plane name or id | {origin, x_dir, y_dir} | {face: [world x,y,z], body?: exact world body, index?: face index, path?: complete occurrence ids, fixed?: bool}; new face attachments require a unique certified source (a flat face of a sheet metal body attaches to its panel instead, in the flat pattern's coordinates), fixed:true explicitly freezes the selected plane; offset?: expr, project_edges?: bool, name?"),
     CommandSpec::new("sketch.edit", "Edit Sketch", edit_sketch).noundo().icon("sketch").params("sketch: id or name"),
     CommandSpec::new("sketch.finish", "Finish Sketch", finish_sketch).at("SKETCH", "FINISH SKETCH").icon("finish").enabled(in_sketch).noundo(),
     CommandSpec::new("sketch.line", "Line", draw_line)
@@ -662,6 +662,8 @@ fn create_sketch_with_plane(s: &mut Session, p: &Value, plane: PlaneRef, interna
     let attachment = s.doc.feature(id).and_then(|feature| match &feature.kind {
         FeatureKind::Sketch { plane, .. } => Some(if face::anchor(plane).is_some() {
             "exact_face"
+        } else if solidcraft_doc::sheet::plane_sheet_face(plane).is_some() {
+            "sheet_face"
         } else if internal_body.is_some() {
             "internal_legacy_face"
         } else {

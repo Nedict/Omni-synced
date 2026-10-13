@@ -321,6 +321,8 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   exact holes and retained islands, including the union of multiple selected profiles, and
   records complementary depth layers as pockets while retaining the stock gauge. Unsupported
   tapered or bend-crossing machining refuses atomically instead of restoring material later.
+  Sketches attach to a sheet's flat faces (base and flanges, either side) by panel, in the
+  flat pattern's coordinates, and follow it through rebuilds and unfold/refold.
 - Rolling-ball fillet accuracy: independent offset-cylinder tee references check surface
   distance, actual trimmed tessellation, supporting-cylinder contacts and tangency at two
   scales. The measured trimmed-part error is below 0.0001 mm; this is an analytic geometry

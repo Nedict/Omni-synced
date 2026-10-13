@@ -51,8 +51,9 @@ keeps the current design. Previews cannot be edited or measured. This experiment
 requires `preview: true` in an engine Save/Save As call; ordinary saves omit display caches.
 The repository's `docs/design-container.md` describes limits and encoding details.
 
-Current designs use format 14, including persistent names from exact face history,
-exact planar shell-face anchors, persistent analytic offset boundary roles and
+Current designs use format 15, including sketch face anchors on cylinder caps, sketch axis
+links, persistent
+names from exact face history, exact planar shell-face anchors, persistent analytic offset boundary roles and
 association profile references, durable sketch face anchors, periodic fit splines and versioned
 revolve conventions. It also retains recorded body transfers, explicit 3D curve coordinate
 spaces and certified face bindings, alongside semantic configuration styles, associative

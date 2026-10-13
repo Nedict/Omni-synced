@@ -191,8 +191,8 @@ impl Tokens {
             subheading_bg: Color32::from_rgb(234, 237, 242),
             profile_fill: Color32::from_rgba_unmultiplied_const(255, 196, 120, 70),
             glyph_bg: Color32::WHITE,
-            glyph_edge: Color32::from_rgb(90, 150, 90),
-            glyph_text: Color32::from_rgb(40, 110, 40),
+            glyph_edge: Color32::from_rgb(190, 110, 100),
+            glyph_text: Color32::from_rgb(150, 40, 35),
             overlay: Color32::from_rgba_unmultiplied_const(255, 255, 255, 235),
             rubber_band: Color32::from_rgb(30, 120, 230),
             app_bar_text: Color32::from_rgb(230, 234, 242),
@@ -247,8 +247,8 @@ impl Tokens {
         t.heading_bg = Color32::from_rgb(38, 44, 55);
         t.subheading_bg = Color32::from_rgb(48, 55, 68);
         t.glyph_bg = Color32::from_rgb(44, 50, 60);
-        t.glyph_edge = Color32::from_rgb(96, 170, 110);
-        t.glyph_text = Color32::from_rgb(150, 220, 160);
+        t.glyph_edge = Color32::from_rgb(200, 130, 120);
+        t.glyph_text = Color32::from_rgb(240, 165, 155);
         t.overlay = Color32::from_rgba_unmultiplied_const(34, 38, 46, 240);
         t.rubber_band = Color32::from_rgb(92, 160, 255);
         t.timeline_item = Color32::from_rgb(52, 58, 70);

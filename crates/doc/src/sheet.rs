@@ -2025,6 +2025,72 @@ impl SheetBody {
         best.map(|(_, q)| q)
     }
 
+    /// The persistent name of a panel: `base`, a flange's tag, or `#<index>` for an untagged
+    /// flange; `flat` for the whole sheet while it is unfolded.
+    fn panel_name(&self, pi: Option<usize>) -> String {
+        match pi {
+            _ if self.flat => "flat".into(),
+            None => "base".into(),
+            Some(i) => match self.flanges.get(i) {
+                Some(f) if !f.tag.is_empty() => f.tag.clone(),
+                _ => format!("#{i}"),
+            },
+        }
+    }
+
+    /// The plane of a flat face of a panel (`top`: the face at the thickness, else the bottom
+    /// one), facing out of the sheet. Its coordinates are the flat pattern's (the bottom
+    /// face's mirrored in y), so a sketch on it measures as the flat pattern does.
+    fn panel_face_plane(&self, world: &Mat, top: bool) -> Option<Plane> {
+        let (x, y) = (apply_vector(world, Vec3::X), apply_vector(world, Vec3::Y));
+        Plane::new(apply_point(world, Vec3::new(0.0, 0.0, if top { self.t } else { 0.0 })), x, if top { y } else { y * -1.0 })
+    }
+
+    /// The flat face of the sheet that a point lies on (sheet coordinates, within `tol`, which
+    /// stays below a quarter of the thickness): its persistent name (`<panel>:top` or
+    /// `<panel>:bottom`) and its plane (see [`panel_face`](Self::panel_face)).
+    pub fn panel_face_at(&self, p: Vec3, tol: f64) -> Option<(String, Plane)> {
+        let tol = tol.min(self.t * 0.25);
+        let flat = if self.flat { self.flat_regions().ok()? } else { Vec::new() };
+        let panels = if self.flat { vec![(None, self.base.clone())] } else { self.panels() };
+        for (pi, region) in panels {
+            let world = self.world(pi);
+            let Some(inverse) = mat_inverse(&world) else { continue };
+            let q = apply_point(&inverse, p);
+            let top = (q.z - self.t).abs() < q.z.abs();
+            if (if top { (q.z - self.t).abs() } else { q.z.abs() }) > tol {
+                continue;
+            }
+            let q2 = Vec2::new(q.x, q.y);
+            if if self.flat { flat.iter().any(|r| r.contains(q2)) } else { region.contains(q2) } {
+                return Some((format!("{}:{}", self.panel_name(pi), if top { "top" } else { "bottom" }), self.panel_face_plane(&world, top)?));
+            }
+        }
+        None
+    }
+
+    /// The plane of the flat face with this persistent name (see [`panel_face_at`](Self::panel_face_at)).
+    /// A face named while the sheet was folded follows its panel; one named unfolded (`flat`)
+    /// is the flat sheet's own plane.
+    pub fn panel_face(&self, name: &str) -> Option<Plane> {
+        let (panel, side) = name.rsplit_once(':')?;
+        let top = match side {
+            "top" => true,
+            "bottom" => false,
+            _ => return None,
+        };
+        let pi = match panel {
+            "flat" | "base" => None,
+            tag => Some(
+                self.flanges
+                    .iter()
+                    .position(|f| f.tag == tag)
+                    .or_else(|| tag.strip_prefix('#')?.parse::<usize>().ok().filter(|i| *i < self.flanges.len()))?,
+            ),
+        };
+        self.panel_face_plane(&self.world(pi), top)
+    }
+
     /// Map a region in a world plane to flat coordinates through a panel's placement.
     pub fn region_to_flat(&self, panel: Option<usize>, plane: &Plane, r: &Region2) -> Result<Region2> {
         region_complexity(std::slice::from_ref(r))?;
@@ -2323,6 +2389,52 @@ pub fn contour_flange(body: &str, rule: &str, rv: &RuleValues, plane: &Plane, pt
     Ok(sheet)
 }
 
+/// The name a sketch keeps for a flat face of a sheet: `sheet:<body>:<panel>:<top|bottom>`.
+pub fn sheet_face_name(body: &str, face: &str) -> String {
+    format!("sheet:{body}:{face}")
+}
+
+/// Point the sheet face a sketch plane is attached to (also beneath an offset or a rotation)
+/// at body `new`, when it is on body `old`.
+pub fn rename_plane_sheet_body(plane: &mut crate::PlaneRef, old: &str, new: &str) {
+    match plane {
+        crate::PlaneRef::Face { name: Some(name), anchor: None, .. } => {
+            let renamed = split_sheet_face_name(name).filter(|(body, _)| *body == old).map(|(_, face)| sheet_face_name(new, face));
+            if let Some(renamed) = renamed {
+                *name = renamed;
+            }
+        }
+        crate::PlaneRef::Offset { base, .. } | crate::PlaneRef::AtAngle { base, .. } => rename_plane_sheet_body(base, old, new),
+        _ => {}
+    }
+}
+
+/// The sheet face a sketch plane is attached to (also beneath an offset or a rotation): its
+/// [`sheet_face_name`].
+pub fn plane_sheet_face(plane: &crate::PlaneRef) -> Option<&str> {
+    match plane {
+        crate::PlaneRef::Face { name: Some(name), anchor: None, .. } if split_sheet_face_name(name).is_some() => Some(name),
+        crate::PlaneRef::Offset { base, .. } | crate::PlaneRef::AtAngle { base, .. } => plane_sheet_face(base),
+        _ => None,
+    }
+}
+
+/// The body and the `<panel>:<side>` of a [`sheet_face_name`].
+pub fn split_sheet_face_name(name: &str) -> Option<(&str, &str)> {
+    let rest = name.strip_prefix("sheet:")?;
+    let (head, side) = rest.rsplit_once(':')?;
+    let (body, panel) = head.rsplit_once(':')?;
+    (!body.is_empty() && !panel.is_empty() && !side.is_empty()).then_some(())?;
+    Some((body, rest.get(body.len() + 1..)?))
+}
+
+/// The plane of the sheet face with a [`sheet_face_name`], in the body's own coordinates.
+pub fn sheet_face_plane(st: &crate::ModelState, name: &str) -> Option<(String, Plane)> {
+    let (body, face) = split_sheet_face_name(name)?;
+    let plane = st.sheets.iter().find(|s| s.body == body)?.panel_face(face)?;
+    Some((body.to_string(), plane))
+}
+
 /// Persistent names of the sheet edges nearest each world point (empty when none).
 pub fn sheet_edge_names(st: &crate::ModelState, pts: &[Vec3]) -> Vec<String> {
     pts.iter()
@@ -2391,6 +2503,85 @@ mod tests {
         s.add_flange(Vec3::new(50.0, 0.0, 2.5), 15.0, std::f64::consts::FRAC_PI_4, 2.5, "inside", false).unwrap();
         assert!((vol(&s.solid().unwrap()) - 18450.777).abs() < 2.0);
         assert!((s.flat_size().unwrap().1 - 73.685298).abs() < 1e-5);
+    }
+
+    #[test]
+    fn flat_faces_of_a_sheet_are_found_and_named_by_panel() {
+        use std::f64::consts::FRAC_PI_2;
+        // Steel, 2.5 thick, R = T: a 90° flange on the y = 0 edge stands between the planes
+        // y = 0 (its outer face) and y = 2.5 (its inner face) from z = 5 up.
+        let mut s = plate(100.0, 60.0);
+        s.add_flange(Vec3::new(50.0, 0.0, 2.5), 20.0, FRAC_PI_2, 2.5, "inside", false).unwrap();
+        s.flanges[0].tag = "F7.0".into();
+        let face = |s: &SheetBody, p: Vec3| s.panel_face_at(p, 1e-6);
+        let (name, plane) = face(&s, Vec3::new(50.0, 30.0, 2.5)).unwrap();
+        assert_eq!(name, "base:top");
+        assert!(plane.normal().dist(Vec3::Z) < 1e-12 && (plane.origin.z - 2.5).abs() < 1e-12);
+        // The top face's coordinates are the flat pattern's; the bottom face's mirror y.
+        assert!(plane.to_local(Vec3::new(30.0, 20.0, 2.5)).dist(Vec2::new(30.0, 20.0)) < 1e-12);
+        let (name, plane) = face(&s, Vec3::new(50.0, 30.0, 0.0)).unwrap();
+        assert_eq!(name, "base:bottom");
+        assert!(plane.normal().dist(Vec3::Z * -1.0) < 1e-12 && plane.origin.z.abs() < 1e-12);
+        assert!(plane.to_local(Vec3::new(30.0, 20.0, 0.0)).dist(Vec2::new(30.0, -20.0)) < 1e-12);
+        // The flange's inner face is the sheet's top side there; 7 mm up it is flat y = 5 − BA − 7.
+        let ba = FRAC_PI_2 * (2.5 + 0.44 * 2.5);
+        let (inner, plane) = face(&s, Vec3::new(30.0, 2.5, 12.0)).unwrap();
+        assert_eq!(inner, "F7.0:top");
+        assert!(plane.normal().dist(Vec3::Y) < 1e-12, "{:?}", plane.normal());
+        assert!(plane.to_local(Vec3::new(30.0, 2.5, 12.0)).dist(Vec2::new(30.0, 5.0 - ba - 7.0)) < 1e-9);
+        let (outer, plane) = face(&s, Vec3::new(30.0, 0.0, 12.0)).unwrap();
+        assert_eq!(outer, "F7.0:bottom");
+        assert!(plane.normal().dist(Vec3::Y * -1.0) < 1e-12, "{:?}", plane.normal());
+        // A name gives the same plane again.
+        for p in [Vec3::new(50.0, 30.0, 2.5), Vec3::new(50.0, 30.0, 0.0), Vec3::new(30.0, 2.5, 12.0), Vec3::new(30.0, 0.0, 12.0)] {
+            let (name, plane) = face(&s, p).unwrap();
+            assert_eq!(s.panel_face(&name), Some(plane), "{name}");
+        }
+        // Inside the sheet, on the bend, beside the sheet, above the flange: no flat face.
+        for p in [Vec3::new(50.0, 30.0, 1.0), Vec3::new(50.0, 1.0, 1.0), Vec3::new(150.0, 30.0, 2.5), Vec3::new(30.0, 2.5, 40.0)] {
+            assert!(face(&s, p).is_none(), "{p:?}");
+        }
+        // Names that are no face, or no flange, give no plane.
+        for name in ["base", "base:side", "nobody:top", "#7:top", "F8.0:top", ""] {
+            assert!(s.panel_face(name).is_none(), "{name}");
+        }
+        // A flange without a tag is named by its index.
+        s.flanges[0].tag.clear();
+        assert_eq!(face(&s, Vec3::new(30.0, 2.5, 12.0)).map(|f| f.0).as_deref(), Some("#0:top"));
+        assert!(s.panel_face("#0:bottom").is_some());
+        // Unfolded, the whole sheet is one panel.
+        s.flat = true;
+        assert_eq!(face(&s, Vec3::new(50.0, -10.0, 2.5)).map(|f| f.0).as_deref(), Some("flat:top"));
+        assert!(s.panel_face("flat:bottom").is_some());
+    }
+
+    #[test]
+    fn a_pick_beside_a_thin_sheet_takes_the_nearer_face() {
+        // The tolerance of a pick on a large part is far above a thin sheet's thickness, and
+        // never reaches a quarter of it here: the nearer side wins, the middle is no face.
+        let rv = RuleValues { thickness: 0.5, ..steel() };
+        let s = base_flange(
+            "Thin",
+            "Sheet",
+            &rv,
+            Plane::XY,
+            rect(Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0), Vec2::new(100.0, 60.0), Vec2::new(0.0, 60.0)),
+        );
+        let at = |z: f64| s.panel_face_at(Vec3::new(50.0, 30.0, z), 5.0).map(|f| f.0);
+        assert_eq!(at(0.4).as_deref(), Some("base:top"));
+        assert_eq!(at(0.1).as_deref(), Some("base:bottom"));
+        assert_eq!(at(0.25), None);
+        assert_eq!(at(3.0), None);
+    }
+
+    #[test]
+    fn sheet_face_names_split_from_the_right() {
+        assert_eq!(split_sheet_face_name(&sheet_face_name("Body1", "F7.0:top")), Some(("Body1", "F7.0:top")));
+        // A body name may hold colons; the panel and the side never do.
+        assert_eq!(split_sheet_face_name("sheet:Part:2:base:bottom"), Some(("Part:2", "base:bottom")));
+        for name in ["", "sheet", "sheet:Body1", "sheet:Body1:top", "sheet::base:top", "sheet:Body1::top", "sheet:Body1:base:", "Body1:base:top"] {
+            assert_eq!(split_sheet_face_name(name), None, "{name}");
+        }
     }
 
     #[test]

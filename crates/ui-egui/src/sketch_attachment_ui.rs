@@ -167,6 +167,10 @@ pub fn panel(app: &mut SolveApp, ctx: &egui::Context, at: Pos2) {
                 ui.label("Legacy face attachment. Rebinding to a certified face creates an exact attachment.");
                 *plane
             }
+            FaceAttachmentStatus::Sheet { plane } => {
+                ui.label("Attached to a flat face of a sheet metal body; it follows that panel when the sheet changes.");
+                *plane
+            }
             FaceAttachmentStatus::Fixed { plane } => {
                 ui.label("Sketch plane has no body-face attachment.");
                 *plane

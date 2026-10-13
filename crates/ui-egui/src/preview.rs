@@ -276,7 +276,13 @@ fn build_tool(before: &ModelState, after: &ModelState, c: Colors, op: &str) -> B
 fn as_new_body(cmds: &[(String, Value)]) -> Option<(Vec<(String, Value)>, String)> {
     let mut out = cmds.to_vec();
     let mut changed: Option<String> = None;
-    for (_, p) in &mut out {
+    for (command, p) in &mut out {
+        let inner = p.get("command").and_then(Value::as_str).map(str::to_string);
+        // A combine's operation is between bodies that already exist: it has no new-body form
+        // (and no tool body of its own to show).
+        if inner.as_deref().unwrap_or(command.as_str()) == "solid.combine" {
+            continue;
+        }
         let p = if p.get("command").is_some() { p.get_mut("params")? } else { p };
         if let Some(op) = p.get_mut("operation")
             && let Some(o) = op.as_str().filter(|o| *o != "new").map(str::to_string)
@@ -453,6 +459,22 @@ mod tests {
         assert_eq!(pv.shown_key, Some(2));
         pv.poll(2);
         assert_eq!(pv.error.as_deref(), Some("current invalid expression"), "current errors still prevent invalid Apply");
+    }
+
+    /// Combine previews its result (cut, join or intersect between existing bodies) without an
+    /// error, so its dialog's OK is enabled. Before, the preview also tried the command as a new
+    /// body, which a combine has no form of, and always reported "operation must be join, cut or
+    /// intersect".
+    #[test]
+    fn combine_previews_its_result_without_an_error() {
+        let mut s = solidcraft_engine::Session::default();
+        s.execute("solid.box", &json!({"length": 20, "width": 20, "height": 20, "body_name": "Cube"})).unwrap();
+        s.execute("solid.cylinder", &json!({"base": [10, 10, -5], "diameter": 6, "height": 30, "body_name": "Pin"})).unwrap();
+        for op in ["cut", "join", "intersect"] {
+            let cmd = ("solid.combine".to_string(), json!({"target": "Cube", "tools": ["Pin"], "operation": op, "keep_tools": false}));
+            let built = compute(&s, &[cmd], colors()).unwrap_or_else(|e| panic!("{op}: {e}"));
+            assert!(built.error.is_none(), "{op}: {:?}", built.error);
+        }
     }
 
     fn count(bytes: &[u8], stride: usize, col: [u8; 4]) -> usize {

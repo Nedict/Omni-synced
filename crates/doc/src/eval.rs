@@ -3074,6 +3074,38 @@ fn smooth_chain(b: &ModelBody, picks: &[Vec3]) -> Vec<Vec3> {
     out
 }
 
+/// `plane` with the sheet face it names (see `sheet::plane_sheet_face`) replaced by that face's current
+/// plane in the frame of component `comp`, or an error when the face is gone: a lost
+/// attachment is reported, never moved to the nearest face.
+pub(crate) fn sheet_face_plane_in_frame(doc: &Document, st: &ModelState, comp: u64, plane: &PlaneRef) -> Result<PlaneRef> {
+    Ok(match plane {
+        PlaneRef::Face { name: Some(name), anchor: None, .. } if crate::sheet::plane_sheet_face(plane).is_some() => {
+            let lost = || DocError::Invalid(format!("lost face attachment: the sheet face `{name}` no longer exists; reattach the sketch to a face"));
+            let (body, face) = crate::sheet::sheet_face_plane(st, name).ok_or_else(lost)?;
+            if doc.occurrences.is_empty() && doc.body_offsets.is_empty() {
+                return Ok(PlaneRef::Custom { plane: face });
+            }
+            // The body's own coordinates into the component's frame, as `state_in_frame` places its bodies.
+            let source = st.body(&body).ok_or_else(lost)?;
+            let inverse = crate::mat_inverse(&doc.component_transform(comp)).ok_or_else(lost)?;
+            let m = crate::mat_mul(&inverse, &doc.component_transform(doc.model_body_component(source)));
+            let m = doc.model_body_offset(source).map(|offset| crate::mat_mul(&m, offset)).unwrap_or(m);
+            let placed = Plane::new(crate::apply_point(&m, face.origin), crate::apply_vector(&m, face.x), crate::apply_vector(&m, face.y));
+            PlaneRef::Custom { plane: placed.ok_or_else(lost)? }
+        }
+        PlaneRef::Offset { base, distance } => {
+            PlaneRef::Offset { base: Box::new(sheet_face_plane_in_frame(doc, st, comp, base)?), distance: distance.clone() }
+        }
+        PlaneRef::AtAngle { base, axis_origin, axis_dir, angle } => PlaneRef::AtAngle {
+            base: Box::new(sheet_face_plane_in_frame(doc, st, comp, base)?),
+            axis_origin: *axis_origin,
+            axis_dir: *axis_dir,
+            angle: angle.clone(),
+        },
+        other => other.clone(),
+    })
+}
+
 /// The plane of the body face a sketch sits on, found again: among planar faces with the
 /// picked plane's normal, the one nearest `at`. The picked frame moves along its normal onto it.
 fn face_plane(st: &ModelState, picked: &Plane, at: Vec3, name: Option<&str>) -> (Plane, Option<String>) {
@@ -3205,6 +3237,10 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             };
             let (plane, face_warning) = match (anchor, plane) {
                 (Some(_), plane) => (doc.resolve_attached_plane(vals, plane, f.component, st, &fst)?, None),
+                // A flat face of a sheet: the panel's exact plane, from its flat region and fold.
+                (None, plane) if crate::sheet::plane_sheet_face(plane).is_some() => {
+                    (doc.resolve_plane_in(vals, &sheet_face_plane_in_frame(doc, st, f.component, plane)?, 0, Some(&fst))?, None)
+                }
                 (None, PlaneRef::Face { plane: picked, at, name, anchor: None }) => face_plane(&fst, picked, *at, name.as_deref()),
                 (None, other) => (doc.resolve_plane_in(vals, other, 0, Some(&fst))?, None),
             };
@@ -3643,6 +3679,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         }
         FeatureKind::Cylinder { base, axis, radius, height, operation } => {
             let b = kernel::cylinder(point(vals, base)?, *axis, val(vals, radius, Kind::Length)?, val(vals, height, Kind::Length)?)?;
+            let b = if matches!(operation, Operation::NewBody | Operation::Join) { b.with_cylinder_certificate(f.id)? } else { b };
             apply_traced(st, f, vec![crate::lineage::cylinder_tool(b)], *operation, &[])
         }
         FeatureKind::Sphere { center, radius, operation } => {

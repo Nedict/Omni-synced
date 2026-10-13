@@ -89,3 +89,15 @@ tool with varying depth is refused before changing sheet geometry. Pocket profil
 but a pocket crossing a bend zone cannot yet be refolded. Machining folded bend material,
 tapered sheet cuts and other unsupported 3D sheet Cut/Intersect operations report an error before changing
 the design; they cannot silently restore removed material during a later sheet rebuild.
+
+A sketch can be drawn on a flat face of the sheet: the base or a flange, on either side. Pick
+the face (or give `sketch.create` the point `plane: {face: [x, y, z]}`) and the sketch attaches
+to that panel instead of to a certified source face. It keeps the face's name,
+`sheet:<body>:<panel>:<top|bottom>` (the panel is `base` or the flange's feature tag), and finds
+the face again whenever the sheet is rebuilt: after a parameter change such as the thickness or
+a flange angle, through Unfold / Refold, after the file is reopened and when the body is
+renamed. Sketch coordinates are the flat pattern's, so a point drawn on a flange lies where the
+flat pattern and its DXF have it, and on the bottom face y runs the other way, as seen from
+below. When the face is gone (its flange is suppressed or deleted) the sketch reports a lost
+attachment instead of moving to another face; **Redefine Sketch Plane** attaches it to another
+face. `fixed: true` still freezes the picked plane in space.

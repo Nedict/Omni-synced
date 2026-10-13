@@ -117,11 +117,13 @@ impl Document {
     }
 }
 
-/// All status planes are world-space. A lost plane is a repair guide only.
+/// All status planes are world-space. A lost plane is a repair guide only. `Sheet` is a sketch on
+/// a flat face of a sheet metal body, attached by the name of its panel (`sheet::sheet_face_name`).
 #[derive(Clone, Debug)]
 pub enum FaceAttachmentStatus {
     Fixed { plane: Option<Plane> },
     Legacy { plane: Option<Plane> },
+    Sheet { plane: Option<Plane> },
     Healthy { plane: Plane, target: ConfigFaceTarget, path: Vec<u64> },
     Lost { message: String, repair_plane: Option<Plane> },
 }
@@ -210,6 +212,13 @@ impl Document {
                 self.resolve_plane(&vals, plane, 0).ok()
             });
             let current = world.and_then(|world| current.and_then(|plane| map_plane(&world, &plane).ok()));
+            if crate::sheet::plane_sheet_face(plane).is_some() {
+                let state = model.state_before(feature.id);
+                return match crate::eval::sheet_face_plane_in_frame(self, &state, feature.component, plane) {
+                    Ok(_) => FaceAttachmentStatus::Sheet { plane: current },
+                    Err(error) => FaceAttachmentStatus::Lost { message: error.to_string(), repair_plane: current },
+                };
+            }
             return if has_face_reference(plane) {
                 FaceAttachmentStatus::Legacy { plane: current }
             } else {
