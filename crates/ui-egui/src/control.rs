@@ -515,6 +515,7 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
                 json!({"diagnostics": crate::help::diagnostics(app), "version": crate::help::VERSION, "commit": crate::help::COMMIT, "built": crate::help::BUILD_DATE}),
             ),
         },
+        "ui.selectOther" => wrap(crate::select_other::control(app, p)),
         "ui.menuPick" => {
             let Some(key) = s("item") else { return err("missing `item` (id or label)") };
             wrap(crate::context_menu::pick(app, key))

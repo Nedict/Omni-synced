@@ -251,8 +251,10 @@ mod web {
                 },
                 "download_open" => {
                     let d = &self.app.session.doc;
-                    let bytes = solidcraft_engine::io::write_design(d);
-                    if let Err(e) = files::download(&format!("{}.{}", d.name, solidcraft_engine::io::DESIGN_EXT), &bytes) {
+                    let result = solidcraft_engine::io::write_design_container(d)
+                        .map_err(|e| e.to_string())
+                        .and_then(|bytes| files::download(&format!("{}.{}", d.name, solidcraft_engine::io::DESIGN_EXT), &bytes));
+                    if let Err(e) = result {
                         self.app.set_status(e, true);
                     }
                 }

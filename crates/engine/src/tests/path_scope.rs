@@ -29,6 +29,8 @@ fn file_commands_stay_inside_the_agents_folders() {
             ("file.save_as", json!({"path": at(&out, "x.solidcraft")})),
             ("file.save", json!({"path": at(&root, "../out/x.solidcraft")})),
             ("file.export", json!({"path": at(&out, "x.stl")})),
+            ("file.export", json!({"path": at(&out, "x.json"), "format": "json"})),
+            ("file.save_as", json!({"path": at(&out, "x.json"), "format": "json", "preview": true})),
             ("parameters.export", json!({"path": at(&out, "x.csv")})),
             ("doc.open", json!({"path": at(&out, "part.solidcraft")})),
             ("parameters.import", json!({"path": at(&out, "p.csv")})),

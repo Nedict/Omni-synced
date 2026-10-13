@@ -415,8 +415,21 @@ pub(super) fn sheet_eval(
             Ok(())
         }
         FeatureKind::SheetFlange { edges, height, angle, radius, position, flip, body } => {
-            let i = sheet_for(st, body, edges.first().copied())?;
+            let i = sheet_for(st, body, edges.first().map(|e| e.point))?;
             let (h, a) = (val(vals, height, Kind::Length)?, val(vals, angle, Kind::Angle)?);
+            // Each edge's own height and angle, else the feature's.
+            let mut own = Vec::with_capacity(edges.len());
+            for e in edges {
+                let height = match &e.height {
+                    Some(x) => val(vals, x, Kind::Length)?,
+                    None => h,
+                };
+                let angle = match &e.angle {
+                    Some(x) => val(vals, x, Kind::Angle)?,
+                    None => a,
+                };
+                own.push((height, angle));
+            }
             let rr = match radius {
                 Some(e) => val(vals, e, Kind::Length)?,
                 None => {
@@ -428,9 +441,21 @@ pub(super) fn sheet_eval(
             if sh.flat {
                 return Err(DocError::Invalid("refold the sheet before adding flanges".into()));
             }
-            let picks = sheet_picks(sh, f, edges, warning);
+            let points: Vec<Vec3> = edges.iter().map(|e| e.point).collect();
+            let each: Vec<sheet::EdgeFlange> = sheet_picks(sh, f, &points, warning)
+                .into_iter()
+                .zip(own)
+                .map(|(pick, (height, angle))| sheet::EdgeFlange { pick, height, angle })
+                .collect();
             let n0 = sh.flanges.len();
-            sh.add_flanges(&picks, h, a, rr, position, *flip)?;
+            let (_, notes) = sh.add_flanges_each(&each, rr, position, *flip)?;
+            if !notes.is_empty() {
+                let notes = notes.join("; ");
+                *warning = Some(match warning.take() {
+                    Some(w) => format!("{w}; {notes}"),
+                    None => notes,
+                });
+            }
             tag_flanges(sh, n0, f.id);
             rebuild_sheet(st, i)
         }

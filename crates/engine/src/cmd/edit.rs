@@ -1,5 +1,7 @@
 //! Undo/redo, the timeline, deletion and selection.
 
+use std::collections::BTreeMap;
+
 use serde_json::{Value, json};
 use solidcraft_doc::{Feature, FeatureKind};
 
@@ -22,7 +24,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("delete")
         .key("Delete")
         .params("features: [id or name] (a sketch takes its dependent features with it) → deleted: [ids]; failing?: [{feature, error}] (later features that worked and now fail)"),
-    CommandSpec::new("timeline.rename", "Rename", rename).params("feature: id|name, name"),
+    CommandSpec::new("timeline.rename", "Rename", rename).params("feature: id|name, name (references to it follow)"),
     CommandSpec::new("timeline.rollback", "Move Timeline Marker", rollback).params("position: number of features to keep active (omit = end)"),
     CommandSpec::new("timeline.roll_to", "Roll History Marker", rollback)
         .params("position: number of features to keep active (omit = end) | feature: id|name (the marker goes right after it)"),
@@ -163,14 +165,24 @@ fn rename(s: &mut Session, p: &Value) -> Result<Value> {
     let id = feature_id(s, p.get("feature"), cmd)?;
     let name =
         str_(p, "name").map(str::trim).filter(|n| !n.is_empty() && n.len() <= 128).ok_or_else(|| bad(cmd, "`name` must be 1…128 characters"))?;
+    let old = s.doc.feature(id).map(|f| f.name.clone()).ok_or_else(|| bad(cmd, "feature"))?;
     if s.doc.features.iter().any(|f| f.name == name && f.id != id) {
         return Err(bad(cmd, format!("another feature is called `{name}`")));
     }
     if s.doc.feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::ConstructionPlane { .. })) {
         super::features::check_plane_name(name, cmd)?;
     }
-    if let Some(f) = s.doc_mut().feature_mut(id) {
+    if name == old {
+        return Ok(json!({"feature": id, "name": name}));
+    }
+    let names = BTreeMap::from([(old.clone(), name.to_string())]);
+    let sketches = BTreeMap::new();
+    let doc = s.doc_mut();
+    if let Some(f) = doc.feature_mut(id) {
         f.name = name.to_string();
+    }
+    for f in doc.features.iter_mut() {
+        f.kind.remap_refs(&sketches, &names);
     }
     Ok(json!({"feature": id, "name": name}))
 }
@@ -321,6 +333,14 @@ fn edit_feature(s: &mut Session, p: &Value) -> Result<Value> {
         let before = s.model.state_before(id);
         nf.edge_refs = solidcraft_doc::edge_refs(&before, body, a);
         nf.edge_names = solidcraft_doc::edge_names_for(&before, body, a);
+    }
+    // New or reordered flange edges: their names now, so each edge's own angle and height stay
+    // with the edge they were given for.
+    if let (FeatureKind::SheetFlange { edges: a, .. }, FeatureKind::SheetFlange { edges: b, .. }) = (&nf.kind, &f.kind) {
+        let points = |e: &[solidcraft_doc::FlangeEdge]| e.iter().map(|x| x.point).collect::<Vec<_>>();
+        if points(a) != points(b) {
+            nf.edge_names = solidcraft_doc::sheet::sheet_edge_names(&s.model.state_before(id), &points(a));
+        }
     }
     // Profiles picked by index or point are kept by their curves, as when the feature was made.
     if nf.kind.clone().profile_sels_mut() != f.kind.clone().profile_sels_mut() {

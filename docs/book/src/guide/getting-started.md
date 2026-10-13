@@ -51,6 +51,22 @@ missing runtime. Launch with `flatpak run ai.storyteller.solvecraft`, rather tha
 a host `solidcraft` binary. Files chosen through Open/Save use the desktop file-chooser portal;
 command-line paths outside Documents may need a specific additional filesystem permission.
 
+### Linux Snap
+
+On Ubuntu and other distributions with snapd:
+
+```sh
+sudo snap install solidcraft
+solidcraft                # or open SolidCraft from the app menu
+solidcraft.cli --version  # the CLI, for scripts and `solidcraft.cli mcp`
+```
+
+The snap can open designs in your home folder (not hidden folders) and, through the file
+chooser, anywhere else. For USB drives and other mounted disks, run
+`sudo snap connect solidcraft:removable-media` once. A release's `.snap` file installs without
+the store with `sudo snap install --dangerous ./solidcraft-VERSION-linux-ARCH.snap`; it then
+doesn't update automatically.
+
 ## Web
 
 The same app runs in the browser: [open SolidCraft on the web](../app/) (`?sample` opens the sample
@@ -87,6 +103,11 @@ A script is a list of commands:
 ```
 
 ![The bracket example, rendered by solidcraft-cli snapshot](../generated/bracket.png)
+
+A command that fails stops the script. A feature can also fail later, when a parameter change
+rebuilds it; `run` then exits with status 1, lists the failing features and writes none of
+its `--out` and `--save` files, because the bodies lack what those features should have made.
+`--allow-errors` writes them anyway.
 
 Units are millimetres and degrees unless an expression says otherwise (`"1 in"`, `"30 deg"`),
 and Z is up.

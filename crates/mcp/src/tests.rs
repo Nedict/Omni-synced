@@ -179,6 +179,38 @@ fn agent_builds_box_fillet_hole() {
 }
 
 #[test]
+fn save_selects_container_or_json_and_reopens_by_contents() {
+    let mut s = server();
+    tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 10, "width": 20, "height": 30}}));
+    let dir = std::env::temp_dir().join(format!("solidcraft-mcp-encodings-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, format, is_json) in [
+        ("default.solidcraft", None, false),
+        ("explicit.solidcraft", Some("json"), true),
+        ("legacy.solvecraft", None, false),
+        ("inferred.json", None, true),
+        ("container.json", Some("container"), false),
+    ] {
+        let path = dir.join(name);
+        let mut args = json!({"path": path.to_string_lossy()});
+        if let Some(format) = format {
+            args["format"] = json!(format);
+        }
+        tool(&mut s, "save", args);
+        let bytes = std::fs::read(&path).unwrap();
+        if is_json {
+            assert!(serde_json::from_slice::<Value>(&bytes).unwrap().is_object());
+        } else {
+            assert!(bytes.starts_with(b"PK\x03\x04"));
+        }
+        tool(&mut s, "new_design", json!({}));
+        tool(&mut s, "open", json!({"path": path.to_string_lossy()}));
+        assert!(rel(volume(&mut s), 6000.0) < 1e-9);
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn parameters_drive_the_design() {
     let mut s = server();
     tool(&mut s, "set_parameter", json!({"name": "len", "value": "40 mm"}));
