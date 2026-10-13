@@ -112,7 +112,8 @@ and help is welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
   separately from through-hole outlines in the flat preview and DXF.
 - **Files**: design containers (`.solidcraft`) with lossless binary mesh payloads;
   plain JSON remains supported for opening, Save As and export. Desktop Open can show a saved
-  experimental preview (explicit `preview: true` engine saves) while checking geometry before editing. Export to STEP (AP242 with body names, colours and
+  provisional picture from warm geometry caches while rebuilding before editing; caches never
+  replace the parametric design. Export to STEP (AP242 with body names, colours and
   components as assemblies; revolved faces as native planes, cylinders, cones, spheres and tori),
   IGES 5.3 (manifold solid B-reps with names and colours), 3MF, STL (binary/ASCII) and OBJ;
   3MF, STL and OBJ import as mesh bodies (they render, measure, move and export; solid features

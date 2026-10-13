@@ -4,7 +4,8 @@ This is SolidCraft's geometry interchange data model in `solidcraft_geom::brep`.
 It has no modelling-backend dependency. It is the basis for #303's disposable
 native cache; it is not an editable-session snapshot or a STEP replacement for
 external interchange. The container reader, binary codec and kernel adapters are
-separate layers. The schema is not yet emitted by application saves.
+separate layers. Warm application saves can emit it as the optional native cache
+described in [the container format](design-container.md#native-evaluated-cache).
 
 ## Geometry and topology
 
@@ -127,7 +128,8 @@ intersection annotation. This approximation is suitable only for the provisional
 cache, never authoritative modelling state.
 
 Decoded bodies remain provisional; the application must never use an untrusted
-cache as its editable model. Application cache integration is separate. A second
+cache as its editable model. Application integration keeps it provisional while
+rebuilding the document and original sources. A second
 backend needs its own tested adapter before cross-kernel interoperability can be
 claimed.
 
@@ -136,3 +138,19 @@ field names, tags, topology, geometry and metadata. Integer and structural value
 are exact; floating coefficients allow 1e-10 relative/absolute platform rounding.
 The signature is asserted separately. This protects the wire contract against
 accidental runtime-refactor changes.
+
+## Bounded provisional display
+
+`native_preview_mesh` samples at most 32 points along each curved edge, caps each
+face's boundary at 4,096 points, and bounds spline controls and nested surfaces
+before parameter searches. Searches use at most 16 refinement trials. Revolution
+profiles involving procedural intersections are refused in this display path.
+The separate mesher uses a fixed grid of at most 16 subdivisions per direction
+and fixed periodic-seam connections; it never invokes adaptive edge, surface or
+aspect-ratio refinement. Planes use a single grid cell.
+
+Before projection, the caller reserves a conservative triangle bound covering
+duplicated projected boundary points, periodic seams and the grid for the complete
+body. Output is checked against that reservation and for finite coordinates.
+Missing faces or exceeded budgets cause a cache miss. This mesh is approximate,
+read-only display; normal modelling/export tessellation is unchanged.
