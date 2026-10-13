@@ -47,6 +47,10 @@ const SLOW: [&str; 7] = [
 const EDIT_SAMPLE: u64 = 6;
 /// An action that takes longer than this is recorded as a timeout.
 const ACTION_TIMEOUT: Duration = Duration::from_secs(90);
+/// Building a design and listing its actions, before the first one runs: the biggest designs
+/// (oracle 41's tube with radial holes, about 25 s here) take several times that on a loaded CI
+/// runner, and a design that never loads loses all its actions, not one.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(300);
 /// Caps per body, so one large imported or patterned body cannot dominate the run.
 const MAX_FACES: usize = 120;
 const MAX_EDGES: usize = 240;
@@ -725,7 +729,9 @@ fn run_design(design: &str, out: &Path, sample: u64) -> Vec<Value> {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        let mut seen = 0usize;
+        // Until the child writes, it is loading the design (again, after a restart).
+        let loaded_at = std::fs::metadata(out).map(|m| m.len() as usize).unwrap_or(0);
+        let mut seen = loaded_at;
         let mut last_change = Instant::now();
         let (status, timed_out) = loop {
             if let Some(status) = child.try_wait().unwrap() {
@@ -735,7 +741,7 @@ fn run_design(design: &str, out: &Path, sample: u64) -> Vec<Value> {
             if n != seen {
                 seen = n;
                 last_change = Instant::now();
-            } else if last_change.elapsed() > ACTION_TIMEOUT {
+            } else if last_change.elapsed() > if seen == loaded_at { LOAD_TIMEOUT } else { ACTION_TIMEOUT } {
                 let _ = child.kill();
                 let _ = child.wait();
                 break (None, true);

@@ -54,7 +54,7 @@ impl FeatureKind {
                     }
                 }
             },
-            FeatureKind::Extrude { extent, .. } => {
+            FeatureKind::Extrude { extent, .. } | FeatureKind::SurfaceExtrude { extent, .. } => {
                 v.push(("Distance", &mut extent.distance, L));
                 if let Some(d) = &mut extent.distance2 {
                     v.push(("Distance 2", d, L));

@@ -47,6 +47,7 @@ impl FeatureKind {
                 }
             }
             FeatureKind::Extrude { sketch, .. }
+            | FeatureKind::SurfaceExtrude { sketch, .. }
             | FeatureKind::Revolve { sketch, .. }
             | FeatureKind::Emboss { sketch, .. }
             | FeatureKind::SheetBase { sketch, .. }

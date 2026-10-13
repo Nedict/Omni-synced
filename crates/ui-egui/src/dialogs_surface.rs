@@ -1,24 +1,39 @@
-//! Dialogs for the surface tools and face splitting (#19): Patch, Stitch, Thicken, Extend,
-//! Trim and Split Face. Each has a live preview and Edit Feature.
+//! Dialogs for the surface tools and face splitting (#19): Surface Extrude, Patch, Stitch,
+//! Thicken, Extend, Trim and Split Face. Each has a live preview and Edit Feature.
 
 use serde_json::{Map, Value, json};
 use solidcraft_engine::Sel;
 use solidcraft_engine::doc::expr::Kind as ValueKind;
-use solidcraft_engine::doc::{FaceAt, FeatureKind, PlaneRef};
+use solidcraft_engine::doc::{Direction, FaceAt, FeatureKind, PlaneRef, ProfileSel};
 use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
 use crate::dialogs::{Kind, OP_LABELS, OPS, combo, field, op_index, row_label};
-use crate::selection::{BODIES, EDGES, FACES, PLANES, PROFILES, SelInput};
+use crate::selection::{BODIES, CURVES, EDGES, FACES, PLANES, PROFILES, SelInput};
 
 /// A surface tool dialog's values.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Surf {
+    /// `direction`: an index into [`EXTRUDE_SIDES`].
+    Extrude {
+        distance: String,
+        direction: usize,
+    },
     Patch,
-    Stitch { tolerance: String },
-    ConvertMesh { tolerance: String },
-    Thicken { thickness: String, symmetric: bool, operation: usize },
-    Extend { distance: String },
+    Stitch {
+        tolerance: String,
+    },
+    ConvertMesh {
+        tolerance: String,
+    },
+    Thicken {
+        thickness: String,
+        symmetric: bool,
+        operation: usize,
+    },
+    Extend {
+        distance: String,
+    },
     Trim,
     SplitFace,
 }
@@ -26,6 +41,7 @@ pub enum Surf {
 impl Surf {
     pub fn title(&self) -> &'static str {
         match self {
+            Surf::Extrude { .. } => "SURFACE EXTRUDE",
             Surf::Patch => "PATCH",
             Surf::Stitch { .. } => "STITCH",
             Surf::ConvertMesh { .. } => "CONVERT MESH",
@@ -40,14 +56,18 @@ impl Surf {
     pub fn primary(&mut self) -> Option<(&'static str, ValueKind, &mut String)> {
         Some(match self {
             Surf::Thicken { thickness, .. } => ("Thickness", ValueKind::Length, thickness),
-            Surf::Extend { distance } => ("Distance", ValueKind::Length, distance),
+            Surf::Extend { distance } | Surf::Extrude { distance, .. } => ("Distance", ValueKind::Length, distance),
             _ => return None,
         })
     }
 }
 
+/// The sides a surface extrude goes to (labels, and the `direction` parameter).
+const EXTRUDE_SIDES: [(&str, &str); 3] = [("One Side", "positive"), ("Symmetric", "symmetric"), ("Flipped", "negative")];
+
 fn inputs(k: &Surf) -> Vec<SelInput> {
     match k {
+        Surf::Extrude { .. } => vec![SelInput::new("Profiles or curves", PROFILES | CURVES, true)],
         Surf::Patch => vec![SelInput::new("Boundary", PROFILES | EDGES, true)],
         Surf::Stitch { .. } => vec![SelInput::new("Surfaces", BODIES, true)],
         Surf::ConvertMesh { .. } => vec![SelInput::new("Mesh body", BODIES, false)],
@@ -65,6 +85,7 @@ fn inputs(k: &Surf) -> Vec<SelInput> {
 /// The dialog for a surface command.
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     let k = match id {
+        "surface.extrude" => Surf::Extrude { distance: "10 mm".into(), direction: 0 },
         "surface.patch" => Surf::Patch,
         "surface.stitch" => Surf::Stitch { tolerance: String::new() },
         "mesh.convert" => Surf::ConvertMesh { tolerance: "0.05 mm".into() },
@@ -107,6 +128,14 @@ pub fn rows(ui: &mut egui::Ui, k: &mut Surf) -> bool {
             enter |= field(ui, distance);
             ui.end_row();
         }
+        Surf::Extrude { distance, direction } => {
+            row_label(ui, "Distance");
+            enter |= field(ui, distance);
+            ui.end_row();
+            row_label(ui, "Direction");
+            combo(ui, "sx_dir", &EXTRUDE_SIDES.map(|(label, _)| label), direction);
+            ui.end_row();
+        }
         Surf::Patch | Surf::Trim | Surf::SplitFace => {}
     }
     enter
@@ -141,6 +170,32 @@ fn tool(app: &SolveApp, sel: Option<&Sel>) -> Result<(&'static str, Value), Stri
 pub fn commands(app: &SolveApp, k: &Surf, inputs: &[SelInput], extra: &Map<String, Value>) -> Result<Vec<(String, Value)>, String> {
     let need = |i: usize, what: &str| if items(inputs, i).is_empty() { Err(format!("select {what} first")) } else { Ok(()) };
     let (cmd, mut p) = match k {
+        Surf::Extrude { distance, direction } => {
+            need(0, "profiles or curves to extrude")?;
+            let picks = items(inputs, 0);
+            let profiles: Vec<(u64, usize)> =
+                picks.iter().filter_map(|x| if let Sel::Profile { sketch, index } = x { Some((*sketch, *index)) } else { None }).collect();
+            let curves: Vec<String> = picks.iter().filter_map(|x| if let Sel::SketchCurve { id } = x { Some(id.clone()) } else { None }).collect();
+            let sketch = match profiles.first() {
+                Some((sk, _)) => *sk,
+                None => crate::dialogs::curves_sketch(app, &curves, None).ok_or("the curves must be in one sketch")?,
+            };
+            if profiles.iter().any(|(sk, _)| *sk != sketch) {
+                return Err("the profiles and curves must be in one sketch".into());
+            }
+            let mut p = json!({
+                "sketch": sketch,
+                "distance": distance,
+                "direction": EXTRUDE_SIDES.get(*direction).map_or("positive", |(_, d)| *d),
+            });
+            if !curves.is_empty() {
+                p["curves"] = json!(curves);
+            }
+            if !profiles.is_empty() {
+                p["profiles"] = json!(profiles.iter().map(|(_, i)| *i).collect::<Vec<_>>());
+            }
+            ("surface.extrude", p)
+        }
         Surf::Patch => {
             need(0, "a boundary (sketch profiles or a loop of edges)")?;
             let profiles: Vec<(u64, usize)> =
@@ -230,6 +285,26 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
     let s = &app.session;
     let edge = |p: &Vec3| crate::dialogs::edge_sel(s, *p);
     let (k, fill): (Surf, Vec<Vec<Sel>>) = match kind {
+        FeatureKind::SurfaceExtrude { sketch, profiles, curves, extent } => {
+            let mut sels: Vec<Sel> = Vec::new();
+            let st = s.world_state();
+            if let (Some(sel), Some(ss)) = (profiles, st.sketch(*sketch)) {
+                let all = 0..ss.profiles.len();
+                match sel {
+                    ProfileSel::Indices { indices } => {
+                        sels.extend(indices.iter().filter(|i| all.contains(i)).map(|index| Sel::Profile { sketch: *sketch, index: *index }))
+                    }
+                    _ => sels.extend(all.map(|index| Sel::Profile { sketch: *sketch, index })),
+                }
+            }
+            sels.extend(curves.iter().map(|id| Sel::SketchCurve { id: id.clone() }));
+            let direction = match extent.direction {
+                Direction::Positive => 0,
+                Direction::Symmetric => 1,
+                Direction::Negative => 2,
+            };
+            (Surf::Extrude { distance: extent.distance.clone(), direction }, vec![sels])
+        }
         FeatureKind::Patch { sketch, edges, .. } => {
             let mut sels: Vec<Sel> = edges.iter().filter_map(edge).collect();
             if let Some(sk) = sketch {
