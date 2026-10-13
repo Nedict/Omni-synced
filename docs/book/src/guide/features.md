@@ -55,8 +55,9 @@ planar placement.
 A **Hole** with **Single** placement drills where you pick a planar face. A pick on or near a
 point of a shown sketch that lies on that face, such as a circle's centre, places the hole
 exactly at that point, as **Multiple** placement picks it; **Select Other** (press and hold) also
-offers the face where you clicked. The hole keeps that place on the face; to have holes follow
-later edits of the sketch, place them with **Multiple**.
+offers the face where you clicked. The corners of text outlines don't count, nor do projected
+points while the sketch hides projected geometry. The hole keeps that place on the face; to have
+holes follow later edits of the sketch, place them with **Multiple**.
 
 Fillets and chamfers handle straight edges between planar faces, whole smooth loops, runs of
 neighbouring edges with mitred or spherical corners, and closed chains of curved edges (a rolling
