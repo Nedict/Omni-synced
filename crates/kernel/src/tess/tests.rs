@@ -270,3 +270,12 @@ fn a_drill_point_apex_leaves_no_zero_area_triangles() {
         }
     }
 }
+
+#[test]
+fn a_placed_body_meshes_like_the_original() {
+    let b = ok(crate::box_solid(Vec3::ZERO, Vec3::new(2.0, 3.0, 4.0)));
+    let placed = ok(crate::transform(&b, Vec3::new(15.0, -2.0, 8.0), Vec3::ZERO, Vec3::X, 0.7));
+    let (m, _) = plan_body(&b, 0.005);
+    let (p, _) = plan_body(&placed, 0.005);
+    assert_eq!(m.tri_face, p.tri_face);
+}
