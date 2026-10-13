@@ -19,6 +19,10 @@ use crate::{SolveApp, icons};
 #[path = "viewport_appearance_tests.rs"]
 mod appearance_tests;
 
+#[cfg(test)]
+#[path = "viewport_plane_target_tests.rs"]
+mod plane_target_tests;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavMode {
     Orbit,
@@ -82,6 +86,8 @@ pub struct ViewportState {
     pub build_ms: f64,
     /// The right-click menu, open at this screen position.
     pub context_menu: Option<Pos2>,
+    /// Select Other: its list, a press being held, and click cycling.
+    pub select_other: crate::select_other::State,
     /// A sketch point or curve being dragged (its id, the undo depth when the drag began: the
     /// whole drag is one undo step, and for a curve where it was last under the cursor).
     pub point_drag: Option<(String, usize, Option<Vec2>)>,
@@ -423,13 +429,17 @@ fn build_sketch_scene(app: &SolveApp, proj: &Proj) -> GpuScene {
         for (pts, col, cons) in sketch_lines_with_sampler(&ss.sketch, &ss.plane, active, &ss.report.curve_determined, |_, index, plane| {
             crate::sketch_display::curve_sample(app, sid, index, plane, proj).parts.clone()
         }) {
-            let segs = if !cons {
-                pts.windows(2).map(|w| (w[0], w[1])).collect()
-            } else if col == colors::SKETCH_CENTERLINE {
-                dashes(&pts, &[0.6 * unit, 0.15 * unit, 0.05 * unit, 0.15 * unit])
-            } else {
-                dashes(&pts, &[0.3 * unit, 0.2 * unit])
-            };
+            let segs = sketch_segments(
+                &pts,
+                if !cons {
+                    0
+                } else if col == colors::SKETCH_CENTERLINE {
+                    2
+                } else {
+                    1
+                },
+                unit,
+            );
             for (a, b) in segs {
                 sc.line(a.to_f32(), b.to_f32(), sketch_color(&tk, col), if cons { 1.2 } else { 2.0 }, active);
             }
@@ -496,6 +506,15 @@ fn ground_shadow(sc: &mut GpuScene, app: &SolveApp, st: &solidcraft_engine::doc:
     }
 }
 
+/// Sketch line types share the same world-space dash phase in the scene and overlays.
+pub(crate) fn sketch_segments(pts: &[Vec3], mode: u8, unit: f64) -> Vec<(Vec3, Vec3)> {
+    match mode {
+        1 => dashes(pts, &[0.3 * unit, 0.2 * unit]),
+        2 => dashes(pts, &[0.6 * unit, 0.15 * unit, 0.05 * unit, 0.15 * unit]),
+        _ => pts.windows(2).map(|w| (w[0], w[1])).collect(),
+    }
+}
+
 /// The drawn pieces of a polyline in a dash pattern (on, off, on, off… lengths).
 pub(crate) fn dashes(pts: &[Vec3], pattern: &[f64]) -> Vec<(Vec3, Vec3)> {
     let mut out = Vec::new();
@@ -544,6 +563,16 @@ pub fn origin_planes(app: &SolveApp) -> Vec<(&'static str, Vec3, [Vec3; 4])> {
         .into_iter()
         .filter(|(n, _, _)| creating || !app.session.visibility.hidden_origin.iter().any(|h| h == n))
         .collect()
+}
+
+/// A point on origin plane `name`'s square that a click at its screen point picks: the middle,
+/// or else the middle of a quarter the other planes don't cover from this view (in an iso view
+/// the XZ square hides the middle of the XY one). The middle when no candidate is picked.
+pub fn origin_plane_target(app: &SolveApp, proj: &Proj, name: &str) -> Option<Vec3> {
+    let (_, _, q) = origin_planes(app).into_iter().find(|(n, _, _)| *n == name)?;
+    let mid = (q[0] + q[1] + q[2] + q[3]) / 4.0;
+    let picked = |w: &Vec3| proj.to_screen(*w).is_some_and(|p| matches!(pick(app, proj, p).first(), Some(Hit::Plane { name: n, .. }) if n == name));
+    Some(std::iter::once(mid).chain(q.iter().map(|c| (mid + *c) / 2.0)).find(picked).unwrap_or(mid))
 }
 
 pub fn origin_axes(app: &SolveApp) -> Vec<(&'static str, Vec3)> {
@@ -720,7 +749,68 @@ pub fn pick_3d(app: &SolveApp, proj: &Proj, pos: Pos2) -> Vec<Hit> {
     pick_with_sketch_points(app, proj, pos, true)
 }
 
+/// Everything under `pos` (Select Other): like [`pick`], but every sketch point, sketch curve,
+/// vertex, edge, axis and profile near the cursor, and the nearest face of every body along the
+/// ray, instead of the nearest of each kind. Each kind is nearest first.
+pub fn pick_all(app: &SolveApp, proj: &Proj, pos: Pos2) -> Vec<Hit> {
+    pick_hits(app, proj, pos, false, true)
+}
+
 fn pick_with_sketch_points(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool) -> Vec<Hit> {
+    pick_hits(app, proj, pos, other_sketch_points, false)
+}
+
+/// The same thing picked twice (one row per target in [`pick_all`]).
+pub fn same_target(a: &Hit, b: &Hit) -> bool {
+    match (a, b) {
+        (Hit::SketchPoint { sketch: s, id: i, .. }, Hit::SketchPoint { sketch: t, id: j, .. })
+        | (Hit::SketchCurve { sketch: s, id: i, .. }, Hit::SketchCurve { sketch: t, id: j, .. }) => s == t && i == j,
+        (Hit::Vertex { body: a, point: p }, Hit::Vertex { body: b, point: q }) => a == b && p.dist(*q) < 1e-9,
+        (Hit::Edge { body: a, index: i, .. }, Hit::Edge { body: b, index: j, .. })
+        | (Hit::Face { body: a, index: i, .. }, Hit::Face { body: b, index: j, .. }) => a == b && i == j,
+        (Hit::Profile { sketch: s, index: i }, Hit::Profile { sketch: t, index: j }) => s == t && i == j,
+        (Hit::Plane { name: a, .. }, Hit::Plane { name: b, .. }) | (Hit::Axis { name: a }, Hit::Axis { name: b }) => a == b,
+        _ => false,
+    }
+}
+
+/// The candidates of one kind: the nearest only, or with `all` every target (nearest first).
+struct Near<T> {
+    all: bool,
+    v: Vec<(T, Hit)>,
+}
+
+impl<T: PartialOrd + Copy> Near<T> {
+    fn new(all: bool) -> Self {
+        Near { all, v: Vec::new() }
+    }
+    /// Whether a candidate at `d` would be kept.
+    fn wants(&self, d: T) -> bool {
+        self.all || self.v.first().is_none_or(|(b, _)| d < *b)
+    }
+    fn offer(&mut self, d: T, h: Hit) {
+        if !self.all {
+            if self.wants(d) {
+                self.v = vec![(d, h)];
+            }
+            return;
+        }
+        match self.v.iter_mut().find(|(_, x)| same_target(x, &h)) {
+            Some(e) if d < e.0 => *e = (d, h),
+            Some(_) => {}
+            None => self.v.push((d, h)),
+        }
+    }
+    fn sorted(mut self) -> Vec<(T, Hit)> {
+        self.v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        self.v
+    }
+    fn hits(self) -> impl Iterator<Item = Hit> {
+        self.sorted().into_iter().map(|x| x.1)
+    }
+}
+
+fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, all: bool) -> Vec<Hit> {
     let s = &app.session;
     let st = s.world_state();
     let bounds = body_bounds(app, &st);
@@ -733,23 +823,21 @@ fn pick_with_sketch_points(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_
     let external_points =
         wants_points || other_sketch_points || (app.dialog.is_none() && app.tool.as_ref().is_none_or(|tool| tool.cmd == "sketch.project"));
     let point_sketches: Vec<u64> = if external_points { visible_sketches(app) } else { s.active_sketch.into_iter().collect() };
-    let mut best: Option<(f32, Hit)> = None;
+    let mut best = Near::new(all);
     for ss in point_sketches.iter().filter_map(|sid| st.sketch(*sid)) {
         let sid = ss.feature;
         for p in &ss.sketch.points {
             if let Some(sp) = proj.to_screen(ss.plane.to_world(p.pos)) {
                 let dd = sp.distance(pos) - if s.active_sketch == Some(sid) { 2.0 } else { 0.0 };
-                if dd < 8.0 && best.as_ref().is_none_or(|(b, _)| dd < *b) {
-                    best = Some((dd, Hit::SketchPoint { sketch: sid, id: p.id.clone(), at: p.pos }));
+                if dd < 8.0 && best.wants(dd) {
+                    best.offer(dd, Hit::SketchPoint { sketch: sid, id: p.id.clone(), at: p.pos });
                 }
             }
         }
     }
-    if let Some((_, h)) = best {
-        hits.push(h);
-    }
+    hits.extend(best.hits());
     // Sketch curves (the active sketch wins ties).
-    let mut bestc: Option<(f32, Hit)> = None;
+    let mut bestc = Near::new(all);
     for sid in visible_sketches(app) {
         let Some(ss) = st.sketch(sid) else { continue };
         let bonus = if s.active_sketch == Some(sid) { 2.0 } else { 0.0 };
@@ -762,8 +850,8 @@ fn pick_with_sketch_points(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_
                 let pts: Vec<Pos2> = part.iter().filter_map(|q| proj.to_screen(*q)).collect();
                 for w in pts.windows(2) {
                     let dd = seg_dist(pos, w[0], w[1]) - bonus;
-                    if dd < 6.0 && bestc.as_ref().is_none_or(|(b, _)| dd < *b) {
-                        bestc = Some((dd, Hit::SketchCurve { sketch: sid, id: c.id.clone(), straight }));
+                    if dd < 6.0 && bestc.wants(dd) {
+                        bestc.offer(dd, Hit::SketchCurve { sketch: sid, id: c.id.clone(), straight });
                     }
                 }
             }
@@ -773,17 +861,16 @@ fn pick_with_sketch_points(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_
             let pts: Vec<Pos2> = w.pts.iter().filter_map(|q| proj.to_screen(*q)).collect();
             for seg in pts.windows(2) {
                 let dd = seg_dist(pos, seg[0], seg[1]) - bonus;
-                if dd < 6.0 && bestc.as_ref().is_none_or(|(b, _)| dd < *b) {
-                    bestc = Some((dd, Hit::SketchCurve { sketch: sid, id: w.id.clone(), straight: false }));
+                if dd < 6.0 && bestc.wants(dd) {
+                    bestc.offer(dd, Hit::SketchCurve { sketch: sid, id: w.id.clone(), straight: false });
                 }
             }
         }
     }
-    if let Some((_, h)) = bestc {
-        hits.push(h);
-    }
-    // Nearest face along the ray (hides what is behind it).
+    hits.extend(bestc.hits());
+    // Nearest face along the ray (hides what is behind it); with `all`, every body's nearest.
     let mut bestf: Option<(f64, Hit)> = None;
+    let mut faces = Near::new(all);
     for b in &st.bodies {
         if !app.session.body_visible(&b.name) {
             continue;
@@ -793,23 +880,27 @@ fn pick_with_sketch_points(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_
             let pad = bb.diagonal() * 1e-6 + 1e-9;
             match ray_box(o, d, &bb, pad) {
                 None => continue,
-                Some(t0) if bestf.as_ref().is_some_and(|(bt, _)| t0 > *bt) => continue,
+                Some(t0) if !all && bestf.as_ref().is_some_and(|(bt, _)| t0 > *bt) => continue,
                 _ => {}
             }
         }
         let m = b.mesh();
-        if let Some((t, ti)) = m.raycast(o, d)
-            && bestf.as_ref().is_none_or(|(bt, _)| t < *bt)
-        {
+        if let Some((t, ti)) = m.raycast(o, d) {
             let fi = m.tri_face.get(ti).copied().unwrap_or(0) as usize;
-            bestf = Some((t, Hit::Face { body: b.name.clone(), index: fi, point: o + d * t }));
+            let hit = Hit::Face { body: b.name.clone(), index: fi, point: o + d * t };
+            if bestf.as_ref().is_none_or(|(bt, _)| t < *bt) {
+                bestf = Some((t, hit.clone()));
+            }
+            if all {
+                faces.offer(t, hit);
+            }
         }
     }
     let slack = scene_radius(app) * 0.02;
     let visible = |p: Vec3| bestf.as_ref().is_none_or(|(t, _)| (p - o).dot(d) <= *t + slack);
     // Vertices (edge end points) and edges.
-    let mut bestv: Option<(f32, Hit)> = None;
-    let mut beste: Option<(f32, Hit)> = None;
+    let mut bestv = Near::new(all);
+    let mut beste = Near::new(all);
     for b in &st.bodies {
         if !app.session.body_visible(&b.name) {
             continue;
@@ -828,35 +919,35 @@ fn pick_with_sketch_points(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_
             for v in [e.first(), e.last()].into_iter().flatten() {
                 if let Some(sp) = proj.to_screen(*v) {
                     let dd = sp.distance(pos);
-                    if dd < 7.0 && visible(*v) && bestv.as_ref().is_none_or(|(bd, _)| dd < *bd) {
-                        bestv = Some((dd, Hit::Vertex { body: b.name.clone(), point: *v }));
+                    if dd < 7.0 && visible(*v) && bestv.wants(dd) {
+                        bestv.offer(dd, Hit::Vertex { body: b.name.clone(), point: *v });
                     }
                 }
             }
             let pts: Vec<Pos2> = e.iter().filter_map(|q| proj.to_screen(*q)).collect();
             for (k, w) in pts.windows(2).enumerate() {
                 let dd = seg_dist(pos, w[0], w[1]);
-                if dd < 6.0 && beste.as_ref().is_none_or(|(bd, _)| dd < *bd) {
+                if dd < 6.0 && beste.wants(dd) {
                     let mid = polyline_mid(e);
                     // Visible where the cursor is (not just at the middle).
                     let at = e.get(k).copied().unwrap_or(mid);
                     if visible(at) || visible(mid) {
-                        beste = Some((dd, Hit::Edge { body: b.name.clone(), index: ei, mid }));
+                        beste.offer(dd, Hit::Edge { body: b.name.clone(), index: ei, mid });
                     }
                 }
             }
         }
     }
-    hits.extend(bestv.map(|x| x.1));
-    hits.extend(beste.map(|x| x.1));
+    hits.extend(bestv.hits());
+    hits.extend(beste.hits());
     // Origin axes.
     let size = origin_size(app.cam.half_height());
-    let mut besta: Option<(f32, Hit)> = None;
+    let mut besta = Near::new(all);
     for (name, dir) in origin_axes(app) {
         if let (Some(a), Some(b)) = (proj.to_screen(Vec3::ZERO), proj.to_screen(dir * (size * AXIS_LEN))) {
             let dd = seg_dist(pos, a, b);
-            if dd < 5.0 && besta.as_ref().is_none_or(|(bd, _)| dd < *bd) {
-                besta = Some((dd, Hit::Axis { name: name.into() }));
+            if dd < 5.0 && besta.wants(dd) {
+                besta.offer(dd, Hit::Axis { name: name.into() });
             }
         }
     }
@@ -864,15 +955,16 @@ fn pick_with_sketch_points(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_
     for (name, a, b) in construction_axis_segments(app) {
         if let (Some(a), Some(b)) = (proj.to_screen(a), proj.to_screen(b)) {
             let dd = seg_dist(pos, a, b);
-            if dd < 5.0 && besta.as_ref().is_none_or(|(bd, _)| dd < *bd) {
-                besta = Some((dd, Hit::Axis { name }));
+            if dd < 5.0 && besta.wants(dd) {
+                besta.offer(dd, Hit::Axis { name });
             }
         }
     }
-    hits.extend(besta.map(|x| x.1));
+    hits.extend(besta.hits());
     // Surfaces by depth: profiles (slightly preferred over a face they lie on), faces, planes.
     let mut surf: Vec<(f64, Hit)> = Vec::new();
     let mut bestp: Option<(f64, f64, Hit)> = None;
+    let mut profiles_all: Vec<(f64, f64, Hit)> = Vec::new();
     for sid in visible_sketches(app) {
         let Some(ss) = st.sketch(sid) else { continue };
         let n = ss.plane.normal();
@@ -888,15 +980,24 @@ fn pick_with_sketch_points(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_
         // Show Profile off: the sketch being edited offers no profiles.
         let profiles = if ss.sketch.view.hide_profile && s.active_sketch == Some(sid) { &[][..] } else { &ss.profiles[..] };
         for (pi, p) in profiles.iter().enumerate() {
-            if p.region.contains(lp) && bestp.as_ref().is_none_or(|(_, a, _)| p.area < *a) {
+            if !p.region.contains(lp) {
+                continue;
+            }
+            if all {
+                profiles_all.push((t, p.area, Hit::Profile { sketch: sid, index: pi }));
+            } else if bestp.as_ref().is_none_or(|(_, a, _)| p.area < *a) {
                 bestp = Some((t, p.area, Hit::Profile { sketch: sid, index: pi }));
             }
         }
     }
-    if let Some((t, _, h)) = bestp {
+    // Smallest profile first.
+    profiles_all.sort_by(|a, b| a.1.total_cmp(&b.1));
+    for (t, _, h) in bestp.into_iter().chain(profiles_all) {
         surf.push((t - slack, h));
     }
-    if let Some(f) = bestf {
+    if all {
+        surf.extend(faces.sorted());
+    } else if let Some(f) = bestf {
         surf.push(f);
     }
     // Planes give way to a face or profile at the same depth (a floor on the XZ plane).
@@ -1103,27 +1204,57 @@ pub fn candidate(app: &SolveApp, hits: &[Hit]) -> Option<(Hit, Sel)> {
     if let Some(d) = app.dialog.as_ref().filter(|d| d.wants_picks()) {
         return hits.iter().find_map(|h| d.candidate(&app.session, h).map(|s| (h.clone(), s)));
     }
+    hits.iter().filter(|h| pick_allowed(app, h)).find_map(|h| hit_candidate(app, h))
+}
+
+/// Every hit a click could pick, in order, each with its selection (Select Other).
+pub fn candidates(app: &SolveApp, hits: &[Hit]) -> Vec<(Hit, Sel)> {
+    if let Some(d) = app.dialog.as_ref().filter(|d| d.wants_picks()) {
+        return hits.iter().filter_map(|h| d.candidate(&app.session, h).map(|s| (h.clone(), s))).collect();
+    }
+    hits.iter().filter(|h| pick_allowed(app, h)).filter_map(|h| hit_candidate(app, h)).collect()
+}
+
+/// What the selection filter lets a click pick with no dialog.
+fn pick_allowed(app: &SolveApp, h: &Hit) -> bool {
     let off = |k: &str| app.ui.pick_off.iter().any(|x| x == k);
-    hits.iter()
-        .filter(|h| match h {
-            Hit::SketchCurve { .. } => !off("sketch") && !off("sketch_curves"),
-            Hit::SketchPoint { .. } => !off("sketch") && !off("sketch_points"),
-            Hit::Profile { .. } => !off("sketch"),
-            Hit::Vertex { .. } => !off("vertices") && !app.ui.pick_bodies,
-            Hit::Edge { .. } => !off("edges") && !app.ui.pick_bodies,
-            Hit::Face { .. } => !off("faces") || app.ui.pick_bodies,
-            Hit::Plane { .. } | Hit::Axis { .. } => true,
-        })
-        .find_map(|h| match h {
-            Hit::SketchCurve { sketch, id, .. } if app.session.active_sketch != Some(*sketch) => {
-                Some((h.clone(), Sel::ExternalSketchCurve { sketch: *sketch, id: id.clone() }))
-            }
-            Hit::SketchPoint { sketch, id, .. } if app.session.active_sketch != Some(*sketch) => {
-                Some((h.clone(), Sel::ExternalSketchPoint { sketch: *sketch, id: id.clone() }))
-            }
-            Hit::Face { body, .. } if app.ui.pick_bodies => Some((h.clone(), Sel::Body { name: body.clone() })),
-            _ => hit_sel(h).map(|s| (h.clone(), s)),
-        })
+    match h {
+        Hit::SketchCurve { .. } => !off("sketch") && !off("sketch_curves"),
+        Hit::SketchPoint { .. } => !off("sketch") && !off("sketch_points"),
+        Hit::Profile { .. } => !off("sketch"),
+        Hit::Vertex { .. } => !off("vertices") && !app.ui.pick_bodies,
+        Hit::Edge { .. } => !off("edges") && !app.ui.pick_bodies,
+        Hit::Face { .. } => !off("faces") || app.ui.pick_bodies,
+        Hit::Plane { .. } | Hit::Axis { .. } => true,
+    }
+}
+
+/// The selection a click on `h` makes with no dialog (sketch entities only belong to the active sketch).
+fn hit_candidate(app: &SolveApp, h: &Hit) -> Option<(Hit, Sel)> {
+    match h {
+        Hit::SketchCurve { sketch, id, .. } if app.session.active_sketch != Some(*sketch) => {
+            Some((h.clone(), Sel::ExternalSketchCurve { sketch: *sketch, id: id.clone() }))
+        }
+        Hit::SketchPoint { sketch, id, .. } if app.session.active_sketch != Some(*sketch) => {
+            Some((h.clone(), Sel::ExternalSketchPoint { sketch: *sketch, id: id.clone() }))
+        }
+        Hit::Face { body, .. } if app.ui.pick_bodies => Some((h.clone(), Sel::Body { name: body.clone() })),
+        _ => hit_sel(h).map(|s| (h.clone(), s)),
+    }
+}
+
+/// A pick for the open dialog's active input (a click, or a Select Other row).
+pub(crate) fn dialog_pick(app: &mut SolveApp, hit: &Hit, sel: Sel) {
+    let Some(mut d) = app.dialog.take() else { return };
+    d.pick(&app.session, sel);
+    if let crate::dialogs::Kind::PathPlane { sketch, .. } = &mut d.kind {
+        *sketch = match hit {
+            Hit::SketchCurve { sketch, .. } => Some(*sketch),
+            _ => None,
+        };
+        d.extra.remove("path");
+    }
+    app.dialog = Some(d);
 }
 
 /// The edge a selection refers to now: by index if it still passes through the stored point,
@@ -1346,8 +1477,9 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
                     && let Some(ci) = ss.sketch.curve_index(id)
                 {
                     for pts in &crate::sketch_display::curve_sample(app, *sketch, ci, &ss.plane, &display_proj(app)).parts {
-                        for w in pts.windows(2) {
-                            sc.line(w[0].to_f32(), w[1].to_f32(), c4(t.sel_edge), 3.5, true);
+                        let mode = ss.sketch.curves.get(ci).map_or(0, |c| if c.centerline { 2 } else { u8::from(c.construction) });
+                        for (a, b) in sketch_segments(pts, mode, grid_step(app.cam.half_height()).0) {
+                            sc.line(a.to_f32(), b.to_f32(), c4(t.sel_edge), 3.5, true);
                         }
                     }
                 }
@@ -1367,8 +1499,9 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
                     && let Some(ci) = ss.sketch.curve_index(id)
                 {
                     for pts in &crate::sketch_display::curve_sample(app, ss.feature, ci, &ss.plane, &display_proj(app)).parts {
-                        for w in pts.windows(2) {
-                            sc.line(w[0].to_f32(), w[1].to_f32(), c4(t.sel_edge), 3.5, true);
+                        let mode = ss.sketch.curves.get(ci).map_or(0, |c| if c.centerline { 2 } else { u8::from(c.construction) });
+                        for (a, b) in sketch_segments(pts, mode, grid_step(app.cam.half_height()).0) {
+                            sc.line(a.to_f32(), b.to_f32(), c4(t.sel_edge), 3.5, true);
                         }
                     }
                 }
@@ -1855,6 +1988,11 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let hits = hover.filter(|_| inside && app.viewport.boxsel.is_none() && !navigating).map(|p| pick_cached(app, &proj, p)).unwrap_or_default();
     let cand = if app.tool.is_some() { hits.first().cloned().map(|h| (h, None)) } else { candidate(app, &hits).map(|(h, s)| (h, Some(s))) };
     app.viewport.hover = cand.as_ref().map(|c| c.0.clone());
+    // Select Other: a press held still opens the list of everything under it; while the list is
+    // open its row under the pointer is what lights up.
+    let held =
+        crate::select_other::track_hold(app, ui.ctx(), &proj, inside, primary_pressed, primary_down, hover, primary_nav.is_some() || mode.is_some());
+    crate::select_other::hover_override(app);
     let painter = ui.painter_at(rect);
     // Background gradient.
     let (top, bot) = (t.viewport_top, t.viewport_bottom);
@@ -1930,22 +2068,12 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         if app.tool.is_some() {
             crate::tools::on_hover(app, &proj, p);
         }
-        if resp.clicked() {
+        if resp.clicked() && !held {
             if app.tool.is_some() {
                 crate::tools::on_click(app, &proj, p);
             } else if app.dialog.as_ref().is_some_and(|d| d.wants_picks()) {
-                if let Some((hit, Some(sel))) = cand
-                    && let Some(mut d) = app.dialog.take()
-                {
-                    d.pick(&app.session, sel);
-                    if let crate::dialogs::Kind::PathPlane { sketch, .. } = &mut d.kind {
-                        *sketch = match hit {
-                            Hit::SketchCurve { sketch, .. } => Some(sketch),
-                            _ => None,
-                        };
-                        d.extra.remove("path");
-                    }
-                    app.dialog = Some(d);
+                if let Some((hit, Some(sel))) = cand {
+                    dialog_pick(app, &hit, sel);
                 }
             } else {
                 // Dimensions and constraint glyphs sit on top of the geometry.
@@ -1961,15 +2089,23 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 if !crate::sketch3d::click(app, &proj, p) {
                     match on_dim.or(on_glyph) {
                         Some(id) => select(app, Some(Sel::SketchConstraint { id }), add),
-                        None => select(app, cand.and_then(|c| c.1), add),
+                        // Clicking again on the same spot selects the next thing under it (not
+                        // the second click of a double-click, which has its own actions).
+                        None if !add && !resp.double_clicked() && crate::select_other::cycle_click(app, &proj, p) => {}
+                        None => {
+                            let sel = cand.and_then(|c| c.1);
+                            select(app, sel.clone(), add);
+                            crate::select_other::note_click(app, p, if add { None } else { sel });
+                        }
                     }
                 }
             }
         }
         // Double-click a dimension: edit its value in place.
-        let dim_edit = resp.double_clicked() && app.tool.is_none() && app.dialog.is_none() && crate::dim_view::double_click(app, p);
+        let dim_edit = resp.double_clicked() && !held && app.tool.is_none() && app.dialog.is_none() && crate::dim_view::double_click(app, p);
         // Double-click a sketch curve: select the chain joined to it end to end.
         if resp.double_clicked()
+            && !held
             && !dim_edit
             && app.tool.is_none()
             && app.dialog.is_none()
@@ -1983,6 +2119,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
         // Double-click an edge: select the edges that continue it smoothly (the loop).
         if resp.double_clicked()
+            && !held
             && !dim_edit
             && app.tool.is_none()
             && app.dialog.is_none()
@@ -2006,7 +2143,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
     }
     // Dragging a sketch point of the active sketch moves it; the solver keeps the constraints.
-    if app.tool.is_none() && app.dialog.is_none() && primary_nav.is_none() && mode.is_none() && app.session.active_sketch.is_some() {
+    if app.tool.is_none() && app.dialog.is_none() && primary_nav.is_none() && mode.is_none() && app.session.active_sketch.is_some() && !held {
         let on_plane = |app: &SolveApp, p: Pos2| {
             let ss = app.session.active_sketch.and_then(|sid| app.session.world_state().sketch(sid).cloned())?;
             let (o, d) = proj.ray(p);
@@ -2118,6 +2255,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()
+        && !held
         && primary_nav.is_none()
         && mode.is_none()
         && app.viewport.point_drag.is_none()
@@ -2173,6 +2311,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::canvas::show(app, ui, &painter, &proj);
     crate::sketch_tools::show(app, ui, &painter, &proj);
     crate::sketch_dims::show(app, ui, &proj);
+    crate::select_other::show(app, ui.ctx());
     axis_view(app, ui, rect);
     nav_bar(app, ui, rect);
     // Status chip.
@@ -2192,7 +2331,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
 
 /// A click without a command: select the candidate (replacing the selection, or toggling it
 /// in with Shift/Ctrl); a click on nothing clears.
-fn select(app: &mut SolveApp, sel: Option<Sel>, add: bool) {
+pub(crate) fn select(app: &mut SolveApp, sel: Option<Sel>, add: bool) {
     match sel {
         Some(x) => {
             let items = grouped_selection(&app.session, &x);
@@ -2452,8 +2591,8 @@ fn hover_highlight(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
                 && let Some(ci) = ss.sketch.curve_index(id)
             {
                 for part in &crate::sketch_display::curve_sample(app, *sketch, ci, &ss.plane, proj).parts {
-                    let pts: Vec<Pos2> = part.iter().filter_map(|q| proj.to_screen(*q)).collect();
-                    painter.add(Shape::line(pts, Stroke::new(3.0, col)));
+                    let mode = ss.sketch.curves.get(ci).map_or(0, |c| if c.centerline { 2 } else { u8::from(c.construction) });
+                    crate::tools::paint_sketch_path(part, mode, painter, proj, Stroke::new(3.0, col));
                 }
             }
         }
@@ -2945,6 +3084,53 @@ fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn construction_drawing_and_hover_overlays_preserve_visible_gaps() {
+        fn length(shape: &Shape) -> f32 {
+            match shape {
+                Shape::LineSegment { points, .. } => points[0].distance(points[1]),
+                Shape::Path(path) => path.points.windows(2).map(|w| w[0].distance(w[1])).sum(),
+                Shape::Vec(shapes) => shapes.iter().map(length).sum(),
+                _ => 0.0,
+            }
+        }
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.call("ui.view", json!({"view":"top"}));
+        h.settle();
+        let proj = display_proj(&h.app);
+        let a = Vec2::ZERO;
+        let b = Vec2::new(20.0, 8.0);
+        let whole = proj.to_screen(Vec3::new(b.x, b.y, 0.0)).unwrap().distance(proj.to_screen(Vec3::ZERO).unwrap());
+        let mut draw = crate::tools::Tool::for_command("sketch.line").unwrap();
+        draw.pts.push((a, None));
+        draw.hover = Some((b, None));
+        for mode in [0, 1, 2] {
+            crate::sketch_palette::set_mode(&mut h.app, mode);
+            let ctx = egui::Context::default();
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let painter = ui.ctx().layer_painter(egui::LayerId::background());
+                crate::tools::preview(&h.app, &draw, &painter, &proj);
+            });
+            let preview: f32 = output.shapes.iter().map(|s| length(&s.shape)).sum();
+            let r = h.app.run("sketch.line", json!({"points":[[0,0],[20,8]]})).unwrap();
+            let id = r["curves"][0].as_str().unwrap().to_string();
+            h.app.viewport.hover = Some(Hit::SketchCurve { sketch: h.app.session.active_sketch.unwrap(), id, straight: true });
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                hover_highlight(&h.app, &ui.ctx().layer_painter(egui::LayerId::background()), &proj);
+            });
+            let hover: f32 = output.shapes.iter().map(|s| length(&s.shape)).sum();
+            assert!((preview - hover).abs() < 0.01, "mode {mode}: preview {preview}, hover {hover}");
+            if mode == 0 {
+                assert!((preview - whole).abs() < 0.01);
+            } else {
+                assert!(preview > whole * 0.25 && preview < whole * 0.85, "mode {mode} covers {preview} of {whole}");
+            }
+            h.app.run("edit.undo", json!({})).unwrap();
+        }
+        crate::sketch_palette::set_mode(&mut h.app, 0);
+    }
 
     #[test]
     fn cpu_viewport_uses_section_preview_and_sketch_slice() {

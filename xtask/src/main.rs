@@ -24,6 +24,10 @@ commands:
                   replay the reference tests (tests/oracle/*/recipe.json), compare with each
                   case's expected.json and write docs/oracle.md (--cli: a solidcraft-cli
                   already built, instead of cargo run --release)
+  action-matrix [--bless] [--results FILE]
+                  try every ordinary action on every face, edge, vertex and body of the design
+                  corpus and compare with tests/action_matrix/baseline.json (--bless rewrites it;
+                  --results keeps every outcome with its message). See docs/action-matrix.md
   book [--no-build]
                   generate docs/book's command reference and screenshots, then mdbook build
                   into target/book
@@ -46,6 +50,9 @@ fn main() -> ExitCode {
         Some("assets") => assets::run(&root()),
         Some("features") => features::run(&root()),
         Some("oracle") => cmd_oracle(rest.iter().position(|a| *a == "--cli").and_then(|i| rest.get(i + 1)).copied()),
+        Some("action-matrix") => {
+            cmd_action_matrix(rest.contains(&"--bless"), rest.iter().position(|a| *a == "--results").and_then(|i| rest.get(i + 1)).copied())
+        }
         Some("book") => book::run(&root(), !rest.contains(&"--no-build")),
         Some("licences") => licences::run(&root(), rest.contains(&"--check")),
         Some("test") => {
@@ -93,6 +100,33 @@ pub fn metadata() -> Result<serde_json::Value, String> {
         return Err(format!("cargo metadata failed:\n{}", String::from_utf8_lossy(&out.stderr)));
     }
     serde_json::from_slice(&out.stdout).map_err(|e| format!("cargo metadata: bad JSON: {e}"))
+}
+
+/// The full action matrix (apps/solidcraft-cli/tests/action_matrix.rs), with the ci profile.
+fn cmd_action_matrix(bless: bool, results: Option<&str>) -> Result<(), String> {
+    let mut c = cargo();
+    c.args([
+        "test",
+        "--profile",
+        "ci",
+        "-p",
+        "solidcraft-cli",
+        "--test",
+        "action_matrix",
+        "action_matrix_all",
+        "--",
+        "--exact",
+        "--ignored",
+        "--nocapture",
+    ]);
+    if bless {
+        c.env("ACTION_MATRIX_BLESS", "1");
+    }
+    if let Some(r) = results {
+        let p = std::path::absolute(r).map_err(|e| format!("{r}: {e}"))?;
+        c.env("ACTION_MATRIX_RESULTS", p);
+    }
+    run(c, "cargo test --profile ci -p solidcraft-cli --test action_matrix action_matrix_all")
 }
 
 fn cmd_layers() -> Result<(), String> {

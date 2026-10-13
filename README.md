@@ -6,9 +6,9 @@ Sketch, constrain, and build solids with a parametric feature timeline. Change a
 and watch your model rebuild. Run it on your desktop, in your browser, or let AI agents
 model through the built-in MCP server.
 
-![SolidCraft: draw a rounded electronics enclosure, sketch its USB port directly on a face, add four mounting bosses and resize it through Parameters](docs/screenshots/enclosure-demo-0.2.1.gif)
+![SolidCraft 0.6: model a Raspberry Pi 4 case from an empty design: a sketch dimensioned with parameters, extrude, fillets and shell, standoffs patterned on the board's mounting holes, port cut-outs, vent slots, a colour and a height change in Parameters](docs/screenshots/demo-0.6.gif)
 
-*Start with an empty design and draw the original parametric electronics enclosure in the English desktop UI: rounded corners, a shell, a USB port sketched directly on the wall and a four-boss pattern. Change width from 80 → 100 mm and wall thickness from 2 → 3 mm in Parameters and watch it rebuild. Original animated pointer and click cues; 4× playback. [Full video](https://github.com/bherbruck/solidcraft/raw/refs/heads/main/docs/screenshots/enclosure-demo-0.2.1.mp4), generated with the [demo script](examples/demo/record_ui.sh).*
+*A Raspberry Pi 4 case from an empty design: a sketch dimensioned with the board's parameters, extrude, fillet, shell, an M2.5 standoff patterned on the 58 × 49 mm hole rectangle, port cut-outs, vent slots and a colour, then height 24 → 32 mm in Parameters and it all rebuilds. 6× playback. [Full video](https://github.com/bherbruck/solidcraft/raw/refs/heads/main/docs/screenshots/demo-0.6.mp4), recorded with the [demo script](examples/demo/record_ui.sh).*
 
 ## Download
 
@@ -112,7 +112,8 @@ and help is welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
   separately from through-hole outlines in the flat preview and DXF.
 - **Files**: design containers (`.solidcraft`) with lossless binary mesh payloads;
   plain JSON remains supported for opening, Save As and export. Desktop Open can show a saved
-  experimental preview (explicit `preview: true` engine saves) while checking geometry before editing. Export to STEP (AP242 with body names, colours and
+  provisional picture from warm geometry caches while rebuilding before editing; caches never
+  replace the parametric design. Export to STEP (AP242 with body names, colours and
   components as assemblies; revolved faces as native planes, cylinders, cones, spheres and tori),
   IGES 5.3 (manifold solid B-reps with names and colours), 3MF, STL (binary/ASCII) and OBJ;
   3MF, STL and OBJ import as mesh bodies (they render, measure, move and export; solid features

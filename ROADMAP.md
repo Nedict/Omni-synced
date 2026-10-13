@@ -53,13 +53,23 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 | M7 | Sweep, loft (incl. to a point), rib and web (to next / depth), emboss (planar faces and exact radial emboss/deboss of bounded orthogonal profiles on complete exterior cylinders/sleeves), thread (cosmetic, and modelled M3–M20 outside and inside: the ISO profile screwed in as a faceted cut), coil (smooth B-spline helical walls), pipe, pattern on path, patterns of bodies and components, replace face (parallel), align, remove, feature copy/paste: done. Unique eligible cylindrical targets are inferred for new Emboss features. Left: general curved-face emboss and exact (unfaceted) modelled threads | in progress | 12 |
 | M8 | Surface workspace | deferred | — |
 | M9 | Components and assemblies: New Component / Create Components from Bodies, active component, per-component origin/bodies/sketches/timeline entries, occurrences with transforms, Copy/Paste vs Paste New, nested Browser tree with visibility and isolate; Ground, Move/Copy of occurrences, joints (rigid, revolute, slider, cylindrical, pin-slot, planar, ball) by joint origins with limits and Drive Joints, As-built Joint, Rigid Group, Contact Sets (driving and motion studies stop where bodies in a set would pass through each other), Motion Study (joint values keyed along a timeline, playback, export of occurrence positions as JSON/CSV), Exploded views (automatic or by hand, shown without changing placements); interference, per-component physical properties; STEP with assembly structure. Physical properties now measure material-aware component/occurrence placements, descendants and repeated instances, including pending moves and body reassignment offsets; contact geometry and automatic exploded centres respect those offsets. Groundwork done: component tree, occurrences with transforms (instances, Paste New), world placement, active component as authoring frame, ground, Capture/Revert Position, moving bodies and sketches. UI: ASSEMBLE panel dialogs for New Component, Joint (snaps on faces, edges, circles and vertices; animated motion preview; offsets, flip, limits), As-built Joint, Joint Origin, Rigid Group, Drive Joints (live slider), Motion Link and Interference (overlaps shown red); joints in the timeline and the Browser | in progress | 32 |
-| M10 | Sheet metal: flange (base, edge, contour), hem, unfold/refold, convert, flat pattern + DXF, rules: done. PLASTIC enclosure subset: Boss, Rib, Web, Lip/Groove, Snap Fit, Rest, Plastic Rules (library, edit, assign; rule draft and clearance as feature defaults): done, tested against hand-computed geometry. UI: SHEET METAL and PLASTIC tabs in Fusion's layout with dialogs (live preview, Edit Feature, pre-selection) for Flange, Hem, Unfold/Refold, Convert, Sheet Metal Rules, Create Flat Pattern (flat view with bend lines, bend table CSV/JSON and DXF export with exact circle/arc/line cutouts), Boss, Lip/Groove, Snap Fit, Rest, Manage and Assign Plastic Rules; Fold (bend along a sketch line); flanges meeting at a corner closed at any angle with the rule's gap; edge flanges with their own angle and height per edge in one feature | in progress | 36 |
+| M10 | Sheet metal: flange (base, edge, contour), hem, unfold/refold, convert, flat pattern + DXF, rules: done. PLASTIC enclosure subset: Boss, Rib, Web, Lip/Groove, Snap Fit, Rest, Plastic Rules (library, edit, assign; rule draft and clearance as feature defaults): done, tested against hand-computed geometry. UI: SHEET METAL and PLASTIC tabs in Fusion's layout with dialogs (live preview, Edit Feature, pre-selection) for Flange, Hem, Unfold/Refold, Convert, Sheet Metal Rules, Create Flat Pattern (flat view with bend lines, bend table CSV/JSON and DXF export with exact circle/arc/line cutouts), Boss, Lip/Groove, Snap Fit, Rest, Manage and Assign Plastic Rules; Fold (bend along a sketch line); flanges meeting at a corner closed at any angle with the rule's gap; edge flanges with their own angle and height per edge in one feature; corner reliefs (notch, round, rectangular) chosen by the rule | in progress | 36 |
 | M11 | 2D drawings | deferred | — |
 | M12 | Release: cross-platform packages, verification and deliberate publication implemented; original current-UI demo refreshed. Trusted distribution signing and broader performance work remain | in progress | 16 |
 | M14 | Configurations: a table of rows (parameter expressions and feature suppressions per row) switched with config.activate (undoable, all or nothing), kept through parameter renames and feature deletes (config.configure, config.table, config.column/row/activate). Per-row body materials and appearances (library looks, custom colour/opacity and clearing overrides), undoable activation and save/reopen: done. Ordered typed configuration rules, atomic validation and structured rule editing: done. Component appearance and certified semantic face style columns, atomic preview/apply and independent-copy remapping: done. Exact constructed sketch-side and immutable imported-face lineage now preserve legacy names and reject retargeting. Left: ambiguous shifted/two-sided caps | in progress | 4 |
 | M13 | Never lose work: atomic saves (temporary file, flush, rename; a crash at any moment leaves the old file or the new one) with the replaced version kept as `<file>.bak`; autosave of unsaved changes to the recovery folder every 5 minutes (preference) and after big operations, only when something changed; "Recover unsaved design?" on the next launch (`doc.recovery_list`, `doc.recover`, `doc.recovery_discard`); a kill-mid-save test (process killed while saving a 0.5 MB design 25 times). File format: `"format": "solidcraft/12"`, older formats upgraded step by step (`doc::format`), newer ones refused with a message, out-of-range numbers and broken placements refused; a corpus of designs saved by M0, components-era, joints-era and current builds (apps/solidcraft-cli/tests/corpus) that must open and evaluate as saved; damaged and hostile variants (truncation, bit flips, hostile values, removed keys, repeated features, deep nesting) never panic | done | 6 |
 
 ## Dimensioning and error reporting
+
+- Sketch Create groups drawing variants under Line, Rectangle, Circle, Arc, Slot,
+  Polygon and Spline. Each open part remembers its last interactive choice per family
+  across sketch sessions and document-tab switches; closing the part resets these UI choices.
+- Inscribed, circumscribed and edge polygon tools preview their actual outline before
+  placement, including orientation and the selected side count.
+- Construction (X) preserves the active sketch drawing tool, picked anchors and inline
+  dimension values, so line type can change while a shape is in progress.
+- Planar sketch construction previews and hover feedback keep the same dashed pattern as
+  committed geometry; centerlines retain their dash-dot pattern.
 
 - Point has a default Sketch CREATE toolbar button alongside the existing drawing tools.
   Saved custom layouts are preserved; Reset Toolbar restores the default Point button.
@@ -147,6 +157,9 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 
 ## View navigation
 
+- Desktop Ctrl/Cmd +/- and 0 change or reset the saved UI scale. The scale slider keeps
+  its layout stable during a drag and applies the selected scale on release.
+
 - OpenSCAD navigation preset: left drag orbits, right/middle drag pans, Shift+right/middle
   drag zooms, and the wheel zooms. Available in the shared desktop/web Navigation preferences.
 - Compact clickable signed X/Y/Z axis tips, smooth drag-to-orbit, and Shift-orbit snapping
@@ -155,6 +168,11 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   top/bottom heading are preserved. Diagonals include 45-degree edge and isometric corner views.
 
 ## Known limitations
+
+- Scheduled and manual CI scan locked dependency advisories, bans and sources with
+  cargo-deny. Vulnerabilities fail the scan; unmaintained crates warn. Local vendored
+  patches require separate upstream review because advisory databases cannot version-match
+  their path dependencies. Pull requests retain the existing licence checks.
 
 - Associative shell-face sketches require a unique certified planar source. Nested shell
   attachments and ambiguous coincident sources remain unsupported.
@@ -323,6 +341,10 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   tapered or bend-crossing machining refuses atomically instead of restoring material later.
   Sketches attach to a sheet's flat faces (base and flanges, either side) by panel, in the
   flat pattern's coordinates, and follow it through rebuilds and unfold/refold.
+  A flange on another flange's far edge (a return) follows that flange's closed end and keeps
+  clear of the flange beside it, and the returns of one feature are mitred toward each other
+  with the rule's gap where their flanges meet at a corner; returns of separate features, and
+  flanges on returns, are not closed toward each other.
 - Rolling-ball fillet accuracy: independent offset-cylinder tee references check surface
   distance, actual trimmed tessellation, supporting-cylinder contacts and tangency at two
   scales. The measured trimmed-part error is below 0.0001 mm; this is an analytic geometry
@@ -356,13 +378,17 @@ and reference-object placement remain separate work, as do loft rails and center
 - Design containers (#303, phase one) separate and deduplicate STEP, raw images and
   lossless binary mesh arrays while keeping plain JSON as a supported Save As/export
   format. Generated-mesh storage measurements reduce serialization and decoding work;
-  evaluated geometry caching and instant cold display remain separate follow-up work.
+  a seekable reader defers original blobs until after provisional display.
   See [container format](docs/design-container.md) and [performance measurements](docs/perf.md).
-- Desktop Open can show an experimental, opt-in bounded saved display preview while rebuilding in the existing
-  file worker. Ordinary saves omit display caches; explicit `preview: true` saves cache
-  only already warm meshes. Document hashes and application versions reject
-  stale previews. Preview geometry cannot be edited or measured, and cancelled or stale
-  completions cannot replace a newer document. Evaluated B-rep restoration remains open.
+- Warm saves with explicit `cache: true` can include a versioned native B-rep cache through SolidCraft-owned topology
+  and geometry records, with a separate truck adapter and bounded binary reader. Exact
+  face-source certificates and operation history survive codec round trips. A provisional
+  picture can be generated before original blobs are read; editing and measurement wait
+  for authoritative reconstruction. Cached metadata binds preview and reconstruction to
+  the same document despite concurrent file writes. Default saves omit this cache and never force cold
+  evaluation or meshing; explicit `preview: true` remains a separate warm-mesh option.
+  Keys, resource budgets and document/revision guards reject incompatible, hostile or
+  stale results. A second modelling kernel still requires its own tested adapter.
 
 - Cold rebuild profiling separates parsing, geometry, placement, display meshing and
   thumbnails. Straight-line closest-point projection and exact curved-surface evaluation

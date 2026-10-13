@@ -37,8 +37,8 @@ Generated-in-code assets are original and have no file to list:
 | assets/icon.iconset/icon_512x512.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
 | assets/icon.iconset/icon_512x512@2x.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
 | docs/screenshots/sample-plate.png | SolidCraft contributors | screenshot of SolidCraft itself (`solidcraft --sample`) | MIT OR Apache-2.0 |
-| docs/screenshots/enclosure-demo-0.2.1.gif | SolidCraft contributors | original electronics enclosure screen recording of the actual SolidCraft 0.2.1 English desktop UI, generated with examples/demo/record_ui.sh and its original animated pointer overlay (4× playback) | MIT OR Apache-2.0 |
-| docs/screenshots/enclosure-demo-0.2.1.mp4 | SolidCraft contributors | original electronics enclosure screen recording of the actual SolidCraft 0.2.1 English desktop UI, generated with examples/demo/record_ui.sh and its original animated pointer overlay (4× playback) | MIT OR Apache-2.0 |
+| docs/screenshots/demo-0.6.gif | SolidCraft contributors | original screen recording of the actual SolidCraft 0.6 English desktop UI modelling an original Raspberry Pi 4 case (no logos or branding), generated with examples/demo/record_ui.sh and its original animated pointer overlay (6× playback) | MIT OR Apache-2.0 |
+| docs/screenshots/demo-0.6.mp4 | SolidCraft contributors | original screen recording of the actual SolidCraft 0.6 English desktop UI modelling an original Raspberry Pi 4 case (no logos or branding), generated with examples/demo/record_ui.sh and its original animated pointer overlay (6× playback) | MIT OR Apache-2.0 |
 | docs/book/src/og.png | SolidCraft contributors | original 1280 × 640 social preview card (the SolidCraft mark, name and tagline), served by the docs site for link previews | MIT OR Apache-2.0 |
 | docs/book/src/generated/sample-plate.png | SolidCraft contributors | copy of docs/screenshots/sample-plate.png made by `cargo xtask book` (gitignored) | MIT OR Apache-2.0 |
 | docs/book/src/generated/bracket.png | SolidCraft contributors | rendered by `cargo xtask book` (`solidcraft-cli snapshot examples/bracket.json`; gitignored) | MIT OR Apache-2.0 |
@@ -94,7 +94,7 @@ Generated-in-code assets are original and have no file to list:
 
 | Directory | Source | Licence | Changes |
 |---|---|---|---|
-| vendor/truck-meshalgo | truck-meshalgo 0.4.0, https://github.com/ricosjp/truck (RICOS Co. Ltd.) | Apache-2.0 | meshing: parameter searches kept inside the surface domain (vendor/README.md) |
+| vendor/truck-meshalgo | truck-meshalgo 0.4.0, https://github.com/ricosjp/truck (RICOS Co. Ltd.) | Apache-2.0 | meshing: bounded parameter searches, subdivision and provisional fixed-grid previews (vendor/README.md) |
 | vendor/truck-stepio | truck-stepio 0.3.0, https://github.com/ricosjp/truck (RICOS Co. Ltd.) | Apache-2.0 | STEP writer: intersection-curve surfaces written at unique ids (vendor/README.md) |
 | vendor/truck-shapeops | truck-shapeops 0.4.0, https://github.com/ricosjp/truck (RICOS Co. Ltd.) | Apache-2.0 | robust meshing and nearest-parameter fallback in booleans; degenerate intersection-curve rejection; face and edge history of booleans; trace macro (vendor/README.md) |
 | vendor/matext4cgmath | matext4cgmath 0.1.0, https://github.com/ricosjp/matext4cgmath (RICOS Co. Ltd.) | Apache-2.0 | root refinement stops after 100 Newton steps (vendor/README.md) |

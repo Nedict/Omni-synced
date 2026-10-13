@@ -62,7 +62,8 @@ pub fn tool_definitions() -> Vec<Value> {
              the command's result; failures leave the design unchanged. Sketch commands that add geometry return \
              created: {points, curves, constraints, dimensions}: the ids of what they added, stable and not reused \
              after a delete (undo rewinds the counters with the design), usable right away \
-             in sketch.dimension, sketch.constraint.* and sketch.delete.",
+             in sketch.dimension, sketch.constraint.* and sketch.delete. Feature commands return the feature's id \
+             and name, every body (bodies) and the bodies the feature created, changed and removed (created_bodies, changed_bodies, removed_bodies).",
             obj(
                 json!({
                     "command": string("Command id (see list_commands)"),
@@ -88,6 +89,7 @@ pub fn tool_definitions() -> Vec<Value> {
                         "items": {"type": "object", "properties": {"command": {"type": "string"}, "params": {"type": "object"}}, "required": ["command"]},
                     },
                     "rollback": {"type": "boolean", "description": "Undo completed steps when one fails (default true)"},
+                    "verbose": {"type": "boolean", "description": "false: a compact reply. Feature steps leave out the full body list (created_bodies, changed_bodies and removed_bodies stay), sketch steps the ids they repeat outside `created` (default true)"},
                 }),
                 &["commands"],
             ),
@@ -448,6 +450,7 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
         return text_result(&json!(format!("batch too long ({} steps, at most {MAX_BATCH})", steps.len())), true);
     }
     let rollback = a.get("rollback").and_then(Value::as_bool).unwrap_or(true);
+    let verbose = a.get("verbose").and_then(Value::as_bool).unwrap_or(true);
     let start = if rollback { Undo::begin(b) } else { Undo::None };
     let mut results = Vec::with_capacity(steps.len());
     for (i, step) in steps.iter().enumerate() {
@@ -457,7 +460,7 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
             None => Err("missing `command`".to_string()),
         };
         match r {
-            Ok(v) => results.push(v),
+            Ok(v) => results.push(if verbose { v } else { compact(v) }),
             Err(e) => {
                 let undone = start.rollback(b, i);
                 return text_result(
@@ -476,6 +479,24 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
     }
     start.finish(b);
     text_result(&json!({"ok": true, "completed": results.len(), "results": results}), false)
+}
+
+/// A step's result without what the design already had (`batch` with `verbose: false`): a
+/// feature's full body list (its created, changed and removed bodies stay), and the sketch ids
+/// a sketch command repeats outside `created`.
+fn compact(mut v: Value) -> Value {
+    let Some(o) = v.as_object_mut() else { return v };
+    if o.contains_key("created_bodies") {
+        o.remove("bodies");
+    }
+    if let Some(created) = o.get("created").cloned() {
+        for k in ["points", "curves", "constraints", "dimensions"] {
+            if o.get(k).is_some_and(|x| created.get(k) == Some(x)) {
+                o.remove(k);
+            }
+        }
+    }
+    v
 }
 
 static SHOT: AtomicU64 = AtomicU64::new(0);

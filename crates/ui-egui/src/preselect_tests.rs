@@ -754,3 +754,86 @@ fn split_body_by_a_curved_face_sends_it_as_a_tool() {
     let p = apply_commands(&app, &d).unwrap().remove(0).1;
     assert!(p["tool"]["point"].is_array() && p.get("plane").is_none(), "{p}");
 }
+
+/// Runs a primitive's dialog with `sels` pre-selected and returns the new body's centroid.
+fn primitive_on(app: &mut SolveApp, sels: Vec<Sel>, id: &str, edit: impl FnOnce(&mut Dialog)) -> (serde_json::Value, Vec3) {
+    let mut d = start(app, sels, id);
+    edit(&mut d);
+    let (cmd, p) = apply_commands(app, &d).unwrap().remove(0);
+    let name = app.session.execute(&cmd, &p).unwrap()["created_bodies"][0].as_str().unwrap().to_string();
+    let st = app.session.model.state();
+    (p, st.body(&name).unwrap().mesh().measure().centroid)
+}
+
+/// The face of Body1 whose centre is at `c`, picked at `p`.
+fn picked(app: &SolveApp, c: Vec3, p: Vec3) -> Sel {
+    let Sel::Face { body, index, .. } = face(app, c) else { panic!("a face") };
+    Sel::Face { body, index, point: p }
+}
+
+fn near(a: Vec3, b: Vec3) -> bool {
+    a.dist(b) < 0.05
+}
+
+#[test]
+fn primitives_go_on_the_picked_face() {
+    // #580: a sphere (or any primitive) made with a face selected went to the origin.
+    let mut app = boxed();
+    let top = picked(&app, Vec3::new(20.0, 15.0, 20.0), Vec3::new(8.0, 10.0, 20.0));
+    let (p, c) = primitive_on(&mut app, vec![top.clone()], "solid.sphere", |_| {});
+    assert_eq!(p["center"], json!([8.0, 10.0, 20.0]), "{p}");
+    assert!(near(c, Vec3::new(8.0, 10.0, 20.0)), "{c:?}");
+
+    let (p, c) = primitive_on(&mut app, vec![top.clone()], "solid.cylinder", |_| {});
+    assert_eq!(p["axis"], json!([0.0, 0.0, 1.0]), "standing on the top face: {p}");
+    assert!(near(c, Vec3::new(8.0, 10.0, 30.0)), "{c:?}");
+
+    // A box stands on the face, centred on the picked point across it.
+    let (_, c) = primitive_on(&mut app, vec![top.clone()], "solid.box", |_| {});
+    assert!(near(c, Vec3::new(8.0, 10.0, 30.0)), "{c:?}");
+
+    let (p, c) = primitive_on(&mut app, vec![top], "solid.torus", |_| {});
+    assert_eq!(p["center"], json!([8.0, 10.0, 20.0]), "{p}");
+    assert!(near(c, Vec3::new(8.0, 10.0, 20.0)), "{c:?}");
+}
+
+#[test]
+fn a_box_stands_out_of_a_face_that_faces_down_an_axis() {
+    let mut app = boxed();
+    // The x = 0 side faces -X: the box goes the other way, away from the body.
+    let side = picked(&app, Vec3::new(0.0, 15.0, 10.0), Vec3::new(0.0, 12.0, 8.0));
+    let (_, c) = primitive_on(&mut app, vec![side.clone()], "solid.box", |_| {});
+    assert!(near(c, Vec3::new(-10.0, 12.0, 8.0)), "{c:?}");
+    // Sizes that are expressions stay expressions in the corner.
+    app.session.execute("parameters.add", &json!({"name": "s", "expression": "6 mm"})).unwrap();
+    let (p, c) = primitive_on(&mut app, vec![side.clone()], "solid.box", |d| {
+        if let Kind::Primitive { fields, .. } = &mut d.kind {
+            fields.iter_mut().for_each(|f| f.1 = "s".into());
+        }
+    });
+    assert_eq!(p["corner"][0], json!("0 mm - (s)"), "{p}");
+    assert!(near(c, Vec3::new(-3.0, 12.0, 8.0)), "{c:?}");
+    // The cylinder's axis points out of the face.
+    let (p, c) = primitive_on(&mut app, vec![side], "solid.cylinder", |_| {});
+    assert_eq!(p["axis"], json!([-1.0, 0.0, 0.0]), "{p}");
+    assert!(near(c, Vec3::new(-10.0, 12.0, 8.0)), "{c:?}");
+}
+
+#[test]
+fn a_primitive_without_a_pick_or_with_its_position_cleared_stays_at_the_origin() {
+    let mut app = boxed();
+    let (p, c) = primitive_on(&mut app, vec![], "solid.sphere", |_| {});
+    assert!(p.get("center").is_none(), "{p}");
+    assert!(near(c, Vec3::ZERO), "{c:?}");
+    let top = face(&app, Vec3::new(20.0, 15.0, 20.0));
+    let (p, _) = primitive_on(&mut app, vec![top], "solid.sphere", |d| {
+        if let Kind::Primitive { at, .. } = &mut d.kind {
+            *at = None;
+        }
+    });
+    assert!(p.get("center").is_none(), "{p}");
+    // A vertex places it too.
+    let v = Sel::Vertex { body: "Body1".into(), point: Vec3::new(40.0, 30.0, 20.0) };
+    let (p, _) = primitive_on(&mut app, vec![v], "solid.sphere", |_| {});
+    assert_eq!(p["center"], json!([40.0, 30.0, 20.0]), "{p}");
+}

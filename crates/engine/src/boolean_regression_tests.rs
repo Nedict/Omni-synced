@@ -88,3 +88,33 @@ fn struts_ending_on_a_bore_wall_join_without_a_panic() {
     result.unwrap();
     assert_eq!(s.model.state().bodies.len(), 1);
 }
+
+/// A blind Ø2 hole into the flat back of a long D-profile bar ends 2 mm short of the round front,
+/// yet the cut was refused (#544). It removes π · 1² · 10 mm³ (within 5 %: the measure tessellates
+/// the small bore) and adds the bore's wall and floor to the bar's six faces.
+#[test]
+fn blind_hole_into_a_long_d_profile_bar_stops_short_of_the_round_front() {
+    let script: Value = serde_json::from_str(include_str!("../../../examples/regressions/blind_hole_in_long_d_profile.json")).unwrap();
+    let steps = script.get("commands").and_then(Value::as_array).unwrap();
+    let mut s = Session::default();
+    s.run_script(&Value::Array(steps[..5].to_vec())).unwrap();
+    let bar = volume(&s, "Slat");
+    s.run_script(&Value::Array(steps[5..].to_vec())).unwrap();
+    let hole = std::f64::consts::PI * 10.0;
+    let removed = bar - volume(&s, "Slat");
+    assert!((removed - hole).abs() < 0.05 * hole, "removed {removed} vs {hole}");
+    let faces = s.model.state().body("Slat").map(|b| solidcraft_kernel::measure(&b.body).unwrap().merged.faces);
+    assert_eq!(faces, Some(8));
+}
+
+/// A ring pocket cut from below a recess leaves a 0.5 mm floor joining the outer wall to the inner
+/// block: one connected part, yet the cut left two bodies and lost volume (#545).
+#[test]
+fn ring_cut_below_a_recess_keeps_the_part_in_one_body() {
+    let s = replay(include_str!("../../../examples/regressions/ring_cut_below_recess_thin_floor.json"));
+    let bodies: Vec<(String, f64)> = s.model.state().bodies.iter().map(|b| (b.name.clone(), volume(&s, &b.name))).collect();
+    let want = 100.0 * 100.0 * 30.0 - 88.0 * 88.0 * 12.0 - (95.0 * 95.0 - 68.0 * 68.0) * 17.5;
+    assert_eq!(bodies.len(), 1, "{bodies:?}");
+    let got = volume(&s, "Frame");
+    assert!((got - want).abs() < 1e-9 * want, "{got} vs {want}");
+}

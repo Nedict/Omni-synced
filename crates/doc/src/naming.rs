@@ -31,6 +31,8 @@ pub struct NamingOrigin {
     pub depth: usize,
     /// Instance transforms of a pattern or mirror (its copies are named after their sources).
     pub mats: Vec<crate::Mat>,
+    /// The sheet metal bodies after a sheet feature (their folds place moved faces).
+    pub sheets: Vec<crate::sheet::SheetBody>,
 }
 
 /// The lazily computed names of a body, shared by its clones.
@@ -334,6 +336,24 @@ fn geometric_from(b: &ModelBody, o: &NamingOrigin, nf: usize, names_of: fn(&Mode
             names = got.into_iter().map(|n| n.map(|n| format!("{n}@F{fid}.{}", k + 1))).collect();
         }
     }
+    // A sheet feature that moved panels (a fold, an unfold): faces it carried along lie on the
+    // faces they were, taken back through the panel they are on.
+    if let (Some(after), Some(before), Some(input)) = (
+        o.sheets.iter().find(|s| s.body == b.name),
+        o.before.sheets.iter().find(|s| s.body == b.name),
+        inputs.iter().find(|(x, _, _)| x.name == b.name),
+    ) {
+        let input = std::slice::from_ref(input);
+        for (name, ps) in names.iter_mut().zip(&pts) {
+            if name.is_some() {
+                continue;
+            }
+            let back: Option<Vec<Vec3>> = ps.iter().map(|p| after.point_before(before, *p)).collect();
+            if let Some(back) = back.filter(|b| !b.is_empty()) {
+                *name = vote(&back, input, tol, None);
+            }
+        }
+    }
     let empty = Vec::new();
     let names: Vec<String> = names
         .into_iter()
@@ -386,7 +406,7 @@ fn behind(ps: &[Vec3], ns: &[Vec3], inputs: &[(&ModelBody, FaceIndex, Arc<Vec<St
     votes.first().filter(|(_, k)| *k * 2 >= ps.len().max(1)).map(|(n, _)| n.clone())
 }
 
-fn ray_hit(o: Vec3, d: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f64> {
+pub(crate) fn ray_hit(o: Vec3, d: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f64> {
     let (e1, e2) = (b - a, c - a);
     let h = d.cross(e2);
     let det = e1.dot(h);

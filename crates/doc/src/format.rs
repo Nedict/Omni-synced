@@ -51,13 +51,28 @@
 //!   anchors can name a sheet metal panel side (`sheet:<body>:<panel>:<side>`). Version 14
 //!   designs need no transformation; the version stamp lets older readers request an update
 //!   instead of encountering an unknown certificate or link kind.
+//! - 16: sheet metal rules can choose a corner relief shape (`corner_relief_shape`: notch,
+//!   round or rectangular). Version 15 designs need no transformation (an absent shape is the
+//!   notch they always had); the version stamp lets older readers request an update instead of
+//!   silently building notches where a design asks for another shape.
+//!   Under the same version, sketch text can be set in a font other than the built-in one
+//!   (`font` in the text link's source: an installed family or a font file); a text without
+//!   `font` is in the built-in font, as it always was.
+//!   A Move feature can also keep its source bodies and transform a copy (`copy: true`); a
+//!   move without it saves as before.
+//!   A design can also define its own physical materials (`user_materials`: name, density in
+//!   g/cm³, optional look), which bodies (`materials`) and configuration material cells name
+//!   like built-in ones; a design without them saves as before.
+//!   A design can also keep what was hidden when it was saved (`visibility`: hidden bodies,
+//!   occurrence placements, sketches and origin items; `browser.visibility`). A design without
+//!   it shows everything, as it always did; a reader that ignores it loses only the hiding.
 
 use serde_json::Value;
 
 use crate::{DocError, Document, Result};
 
 /// The format this build writes.
-pub const FORMAT: u32 = 15;
+pub const FORMAT: u32 = 16;
 
 pub fn format_string(n: u32) -> String {
     format!("solidcraft/{n}")
@@ -74,7 +89,7 @@ pub fn version_of(s: &str) -> Option<u32> {
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
 type JsonStep = fn(&mut Value) -> Result<()>;
-const JSON_STEPS: [JsonStep; 14] = [
+const JSON_STEPS: [JsonStep; 15] = [
     |_| Ok(()),
     v2_to_v3,
     v3_to_v4,
@@ -88,6 +103,7 @@ const JSON_STEPS: [JsonStep; 14] = [
     |_| Ok(()),
     |_| Ok(()),
     v13_to_v14,
+    |_| Ok(()),
     |_| Ok(()),
 ];
 

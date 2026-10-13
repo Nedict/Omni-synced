@@ -31,6 +31,16 @@ fit-point and control-point splines, conics, points and text. **Construction** (
 into reference geometry that doesn't form profiles. Modify tools include trim (T), extend, break,
 fillet, chamfer, offset (O), mirror, patterns, move/copy and scale.
 
+Polygon tools show their edge outline while positioning the second point, so the orientation
+can be checked before placement. Inscribed and circumscribed polygons retain their support
+circle and update the outline when the inline **Sides** value changes.
+
+**Text** is set in the built-in font (Liberation Sans) unless it is given another: `sketch.text` and
+`sketch.edit_text` take a `font`, the family or full name of an installed font ("DejaVu Sans") or the path
+of a `.ttf` / `.otf` file, and the **Edit Text** dialog has a **Font** field for it. An unknown font is an
+error, and the font is kept with the text in the design, so the text stays editable in it. `SOLIDCRAFT_FONT_DIRS`
+adds folders to the ones searched for installed fonts.
+
 **Project** (P) and **Intersect** bring model edges into the sketch as linked geometry that
 follows later changes. Sketching on a face projects its edges automatically.
 For Project, select visible source curves or points from another sketch, model edges,
@@ -87,6 +97,11 @@ another offset. Periodic intent is stored on each curve and survives save, reope
 While drawing a fit spline, click its starting point after three distinct samples to close
 it smoothly. Right-click finishes an ordinary natural fit. Offset accepts both ellipse
 handles and dense fitted curves; the second click sets the side and distance from the curve.
+
+While drawing in a planar sketch, **Construction** (X) changes the line type without
+ending the tool or losing picked points and inline values. The preview and hover feedback
+keep construction dashes and centerline dash-dot patterns visible. With curves selected,
+Construction changes those curves as before.
 
 Enable **3D Sketch** in the Sketch Palette to draw lines, fit splines and points off the plane.
 While placing these points, you can snap to points on other visible sketches. For a bridge

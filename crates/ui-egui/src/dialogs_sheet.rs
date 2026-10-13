@@ -32,6 +32,9 @@ const RULE_FIELDS: [(&str, &str); 8] = [
     ("hem_gap", "Hem Gap"),
     ("gap", "Flange Gap"),
 ];
+/// The corner relief shapes the manager offers (the rule's `corner_relief_shape`) and their labels.
+const RELIEF_SHAPES: [&str; 3] = ["notch", "round", "rectangular"];
+const RELIEF_SHAPE_LABELS: [&str; 3] = ["Notch", "Round", "Rectangular"];
 
 #[derive(Clone, Debug)]
 pub enum Sm {
@@ -73,6 +76,8 @@ pub enum Sm {
         pick: usize,
         name: String,
         values: Vec<String>,
+        /// The corner relief shape (index into `RELIEF_SHAPES`).
+        relief: usize,
         active: bool,
         loaded: Option<usize>,
     },
@@ -148,7 +153,7 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
             let active = app.session.doc.sheet.active.clone();
             let rules = rule_list(app);
             let pick = active.and_then(|a| rules.iter().position(|r| r.name == a)).unwrap_or(0);
-            (Sm::Rules { pick, name: String::new(), values: Vec::new(), active: true, loaded: None }, vec![])
+            (Sm::Rules { pick, name: String::new(), values: Vec::new(), relief: 0, active: true, loaded: None }, vec![])
         }
         "sheet.flat_pattern" => (Sm::FlatPattern { data: None, key: None, status: None }, vec![SelInput::new("Body (last if none)", BODIES, false)]),
         _ => return None,
@@ -291,7 +296,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
         }
         Sm::Unfold { .. } => {}
         Sm::Convert { rule } => rule_combo(app, ui, "sm_conv_rule", rule),
-        Sm::Rules { pick, name, values, active, loaded } => {
+        Sm::Rules { pick, name, values, relief, active, loaded } => {
             let rules = rule_list(app);
             let mut names: Vec<String> = rules.iter().map(|r| r.name.clone()).collect();
             names.push("New rule…".into());
@@ -312,6 +317,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
                     base.hem_gap.clone(),
                     base.gap.clone(),
                 ];
+                *relief = RELIEF_SHAPES.iter().position(|s| s.eq_ignore_ascii_case(base.corner_relief_shape.trim())).unwrap_or(0);
                 *active = app.session.doc.sheet_rule(None).name == base.name || *pick >= rules.len();
                 if *pick >= rules.len() {
                     *name = format!("Rule{}", rules.len() + 1);
@@ -323,7 +329,13 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
                 ui.text_edit_singleline(name);
                 ui.end_row();
             }
-            for ((_, label), v) in RULE_FIELDS.iter().zip(values.iter_mut()) {
+            for ((key, label), v) in RULE_FIELDS.iter().zip(values.iter_mut()) {
+                if *key == "corner_relief" {
+                    // The shape goes with its size, the row below.
+                    row_label(ui, "Corner Relief Shape");
+                    combo(ui, "sm_relief_shape", &RELIEF_SHAPE_LABELS, relief);
+                    ui.end_row();
+                }
                 row_label(ui, label);
                 enter |= field(ui, v);
                 ui.end_row();
@@ -581,7 +593,7 @@ pub fn commands(app: &SolveApp, k: &Sm, inputs: &[SelInput], extra: &Map<String,
             }
             ("sheet.convert", p)
         }
-        Sm::Rules { pick, name, values, active, .. } => {
+        Sm::Rules { pick, name, values, relief, active, .. } => {
             let rules = rule_list(app);
             let n = match rules.get(*pick) {
                 Some(r) => r.name.clone(),
@@ -590,7 +602,7 @@ pub fn commands(app: &SolveApp, k: &Sm, inputs: &[SelInput], extra: &Map<String,
             if n.is_empty() {
                 return Err("give the rule a name".into());
             }
-            let mut p = json!({"name": n, "active": active});
+            let mut p = json!({"name": n, "active": active, "corner_relief_shape": RELIEF_SHAPES.get(*relief).copied().unwrap_or("notch")});
             for ((k, _), v) in RULE_FIELDS.iter().zip(values) {
                 if !v.trim().is_empty() {
                     p[*k] = json!(v);

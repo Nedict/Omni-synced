@@ -357,7 +357,7 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
                     .and_then(|id| st.sketch(id))
                     .map(|ss| ss.plane.to_world(solidcraft_engine::geom::Vec2::new(num(s, 0), num(s, 1))))
             } else if let Some(n) = p.get("plane").and_then(Value::as_str) {
-                crate::viewport::origin_planes(app).into_iter().find(|(name, _, _)| *name == n).map(|(_, _, q)| (q[0] + q[1] + q[2] + q[3]) / 4.0)
+                crate::viewport::origin_plane_target(app, &proj, n)
             } else if let Some(n) = p.get("axis").and_then(Value::as_str) {
                 // Along an origin axis, on its solid part.
                 let size = crate::selection::origin_size(app.cam.half_height());
@@ -501,6 +501,7 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 json!({"diagnostics": crate::help::diagnostics(app), "version": crate::help::VERSION, "commit": crate::help::COMMIT, "built": crate::help::BUILD_DATE}),
             ),
         },
+        "ui.selectOther" => wrap(crate::select_other::control(app, p)),
         "ui.menuPick" => {
             let Some(key) = s("item") else { return err("missing `item` (id or label)") };
             wrap(crate::context_menu::pick(app, key))

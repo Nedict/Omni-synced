@@ -341,7 +341,15 @@ pub fn revolve(plane: &Plane, regions: &[Region2], axis_origin: Vec2, axis_dir: 
                 _ => nl,
             }
         };
-        let given = numbered_region(r)?.map_loops(|l| reseam(snap_loop(l)));
+        // Adjacent profiles revolved together leave the axis edge split where they met: one
+        // edge again, so the builders for a profile with an edge on the axis take it (swept
+        // pieces of the axis are zero-area faces that booleans fail on).
+        let on_axis = |p: Vec2| d.cross(p - axis_origin).abs() < 1e-9;
+        let axis_run = |s: &Seg2, t: &Seg2| {
+            let (a, b, c) = (s.start(), s.end(), t.end());
+            on_axis(a) && on_axis(b) && on_axis(c) && (b - a).dot(c - b) > 0.0
+        };
+        let given = numbered_region(r)?.map_loops(|l| reseam(snap_loop(l).merged_lines(axis_run)));
         let r = &given.region();
         // A half disc on the axis revolved fully is a sphere: build it without poles. Every
         // patch is swept from the half disc's arcs.
@@ -388,7 +396,6 @@ pub fn revolve(plane: &Plane, regions: &[Region2], axis_origin: Vec2, axis_dir: 
         // there, which truck only tessellates reliably with the axis through the world origin. Off
         // it, the body measured too large and booleans with it failed or removed the wrong side.
         // Build such a profile there and move it into place, as `revolve_touching_axis` does.
-        let on_axis = |p: Vec2| d.cross(p - axis_origin).abs() < 1e-9;
         let axis_edges = r.outer.segs.iter().filter(|s| matches!(**s, Seg2::Line { a, b } if on_axis(a) && on_axis(b))).count();
         let shift = if axis_edges > 0 { o } else { Vec3::ZERO };
         let (profile, f) = if shift.len() > 0.0 {
@@ -487,7 +494,8 @@ pub fn torus(center: Vec3, major: f64, minor: f64) -> Result<Body> {
 }
 
 /// Offset every segment of a loop to its right by `d` (outward for a region's outer loop and
-/// holes alike). Loops of lines (mitred corners) and loops of arcs on one circle are supported.
+/// holes alike). Loops of lines (mitred corners), loops of arcs on one circle, and loops of lines
+/// and arcs that meet the arcs tangentially are supported.
 fn offset_loop(lp: &Loop2, d: f64) -> Result<Loop2> {
     if d == 0.0 {
         return Ok(lp.clone());
@@ -511,6 +519,9 @@ fn offset_loop(lp: &Loop2, d: f64) -> Result<Loop2> {
             .collect::<Result<Vec<_>>>()?;
         return Ok(Loop2 { segs });
     }
+    if lp.segs.iter().any(|s| matches!(s, Seg2::Arc { .. })) {
+        return offset_lines_and_arcs(lp, d);
+    }
     let n = lp.segs.len();
     let mut lines: Vec<(Vec2, Vec2)> = Vec::with_capacity(n);
     for s in &lp.segs {
@@ -533,6 +544,75 @@ fn offset_loop(lp: &Loop2, d: f64) -> Result<Loop2> {
     let out = Loop2::polygon(&pts);
     if out.signed_area().signum() != lp.signed_area().signum() || out.signed_area().abs() < 1e-9 {
         return Err(KernelError::Invalid("the taper closes the profile".into()));
+    }
+    Ok(out)
+}
+
+/// [`offset_loop`] for a loop of lines and arcs. Each arc keeps its centre and angles and its
+/// radius moves by `d` (so its side stays an exact cone), each line moves `d` to its right, and
+/// two lines meeting at a corner are mitred. An arc has to meet its neighbours tangentially: at
+/// a corner its side would meet the next one along a conic, not a straight ruling.
+fn offset_lines_and_arcs(lp: &Loop2, d: f64) -> Result<Loop2> {
+    let closes = || KernelError::Invalid("the taper closes the profile".into());
+    let right = |v: Vec2| Vec2::new(v.y, -v.x);
+    let n = lp.segs.len();
+    let moved: Vec<Option<Seg2>> = lp
+        .segs
+        .iter()
+        .map(|s| match *s {
+            Seg2::Line { .. } => Ok(None),
+            Seg2::Arc { center, radius, start, sweep } => {
+                let r = radius + sweep.signum() * d;
+                if r > 1e-6 { Ok(Some(Seg2::Arc { center, radius: r, start, sweep })) } else { Err(closes()) }
+            }
+            _ => Err(KernelError::Failed("not supported yet: tapered profiles with splines or conics".into())),
+        })
+        .collect::<Result<_>>()?;
+    // Where each segment starts after the offset.
+    let mut joints = Vec::with_capacity(n);
+    for (i, s) in lp.segs.iter().enumerate() {
+        let k = (i + n - 1) % n;
+        let (Some(prev), Some(prev_moved), Some(this_moved)) = (lp.segs.get(k), moved.get(k), moved.get(i)) else {
+            return Err(KernelError::Failed("taper: profile loop".into()));
+        };
+        let (tin, tout) = (prev.end_tangent(), s.start_tangent());
+        let tangent = tin.cross(tout).abs() < 1e-6 && tin.dot(tout) > 0.0;
+        joints.push(match (prev_moved, this_moved) {
+            (Some(a), _) if tangent => a.end(),
+            (None, Some(b)) if tangent => b.start(),
+            (None, None) => {
+                let v = s.start();
+                let (p0, p1) = (v + right(tin) * d, v + right(tout) * d);
+                let den = tin.cross(tout);
+                if den.abs() < 1e-12 { p1 } else { p0 + tin * ((p1 - p0).cross(tout) / den) }
+            }
+            _ => return Err(KernelError::Failed("not supported yet: tapered profiles where an arc meets another edge at a corner".into())),
+        });
+    }
+    let mut segs = Vec::with_capacity(n);
+    for (i, s) in lp.segs.iter().enumerate() {
+        let (Some(&a), Some(&b), Some(m)) = (joints.get(i), joints.get((i + 1) % n), moved.get(i)) else {
+            return Err(KernelError::Failed("taper: profile loop".into()));
+        };
+        match m {
+            Some(arc) => {
+                if arc.start().dist(a) > 1e-6 || arc.end().dist(b) > 1e-6 {
+                    return Err(KernelError::Failed("not supported yet: tapered profiles where an arc meets another edge at a corner".into()));
+                }
+                segs.push(*arc);
+            }
+            None => {
+                // A line that turned around has been swallowed by its neighbours.
+                if (b - a).dot(s.end() - s.start()) <= 0.0 {
+                    return Err(closes());
+                }
+                segs.push(Seg2::Line { a, b });
+            }
+        }
+    }
+    let out = Loop2 { segs };
+    if out.signed_area().signum() != lp.signed_area().signum() || out.signed_area().abs() < 1e-9 {
+        return Err(closes());
     }
     Ok(out)
 }
