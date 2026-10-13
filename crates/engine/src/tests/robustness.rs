@@ -415,3 +415,50 @@ fn blend_an_arc_edge_that_runs_out_tangent_to_a_face() {
         }
     }
 }
+
+/// #851: every selection of the issue's table works, picked together or one after the other as
+/// the issue lists them, on the part with the wall that meets the front face square and runs out
+/// tangent into the back face (the top front edge, the arc's top edge, the front upright at the
+/// arc, the front-left upright and the knife edge at the tip). Each makes a sound solid the
+/// display plan can mesh, and takes less than its edges would one by one where they meet.
+#[test]
+fn blend_corners_where_edges_meet_on_a_curved_wall() {
+    let (tf, at, fu, fl, kn) =
+        (json!([20, -21, 10]), json!([47.3174, -6.1508, 10]), json!([41.1667, -21, 5]), json!([0, -21, 5]), json!([62.1667, 0, 5]));
+    let fillet = |edges: Value| json!({"command": "solid.fillet", "params": {"edges": edges, "radius": 2}});
+    let chamfer = |edges: Value| json!({"command": "solid.chamfer", "params": {"edges": edges, "distance": 2}});
+    let base = planned_volume(&knife_edge_part());
+    let rows: Vec<(&str, Vec<Value>)> = vec![
+        ("three at the corner", vec![fillet(json!([tf, at, fu]))]),
+        ("top front and arc", vec![fillet(json!([tf, at]))]),
+        ("arc and upright", vec![fillet(json!([at, fu]))]),
+        ("top front and upright", vec![fillet(json!([tf, fu]))]),
+        ("arc alone", vec![fillet(json!([at]))]),
+        ("top front, then the front-left upright", vec![fillet(json!([tf])), fillet(json!([fl]))]),
+        ("top front and front-left together", vec![fillet(json!([tf, fl]))]),
+        ("the knife edge", vec![fillet(json!([kn]))]),
+        ("chamfer: the knife edge", vec![chamfer(json!([kn]))]),
+        ("chamfer: the arc", vec![chamfer(json!([at]))]),
+        ("chamfer: the arc and the top front", vec![chamfer(json!([at, tf]))]),
+        ("arc, then top front", vec![fillet(json!([at])), fillet(json!([tf]))]),
+        ("top front, then upright", vec![fillet(json!([tf])), fillet(json!([fu]))]),
+    ];
+    for (name, steps) in rows {
+        let mut s = knife_edge_part();
+        for step in &steps {
+            let (c, p) = (step["command"].as_str().unwrap_or(""), &step["params"]);
+            s.execute(c, p).unwrap_or_else(|e| panic!("{name}: {c} {p}: {e}"));
+        }
+        for b in &s.model.state().bodies {
+            assert!(b.body.validity().is_empty(), "{name}: {:?}", b.body.validity());
+            assert!(b.body.display_plan(2e-4).is_ok(), "{name}: the display plan refuses the body");
+        }
+        let removed = base - planned_volume(&s);
+        assert!(removed > 0.0 && removed < 250.0, "{name}: removed {removed}");
+    }
+    // The three edges end in a sphere: the volume of the rounds and the ball's corner.
+    let mut s = knife_edge_part();
+    s.execute("solid.fillet", &fillet(json!([tf, at, fu]))["params"]).unwrap_or_else(|e| panic!("three at the corner: {e}"));
+    let removed = base - planned_volume(&s);
+    assert!((removed - 67.05).abs() < 0.15, "three at the corner: removed {removed}, expected 67.05");
+}

@@ -15,6 +15,7 @@
 mod blend;
 mod blend_corner;
 mod blend_variable;
+mod blend_vertex;
 mod body;
 mod boolean_diagnostics;
 mod boolean_guard;

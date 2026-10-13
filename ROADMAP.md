@@ -214,7 +214,14 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   edges between any two smooth sides (a branch pipe on a main pipe), by a rolling ball (the
   blend a rational B-spline through exact arcs), closed or ending at planar faces square to the
   edges, where straight or curved cap edges are trimmed to the contacts (the straight edge
-  between two overlapping extruded arcs).
+  between two overlapping extruded arcs); knife edges, where the two faces have opposite
+  normals (a wall that runs out tangent into a face: the ball that fits there); an edge that
+  runs out along an end face tangent to one side (the arc top edge of that wall), cut where the
+  blend meets it; rounds that end in an earlier round on curved faces, in any order (the rounds
+  of two edges at a vertex meet in a crease, as on a box), picked together or one after the
+  other, except a round after a round of the edge between the wall and a flat face that it
+  would run over; the three edges at a vertex of any smooth faces, of one radius, end in a
+  piece of sphere.
 - Booleans: prisms along one direction (plates with holes, slots, patterns of them, equal
   sections stacked end to end) are combined exactly in 2D. Qualified axial cuts preserve
   annular holes with overrun cutters, including inward Press Pull after a joined extrusion;

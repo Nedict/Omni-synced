@@ -230,3 +230,165 @@ fn arc_top_edge_sizes_never_panic() {
         }
     }
 }
+
+fn tf() -> Vec3 {
+    Vec3::new(20.0, -R_WALL, HEIGHT)
+}
+fn fl() -> Vec3 {
+    Vec3::new(0.0, -R_WALL, HEIGHT / 2.0)
+}
+fn fu() -> Vec3 {
+    Vec3::new(TIP_X - R_WALL, -R_WALL, HEIGHT / 2.0)
+}
+
+/// Volume two blends take off together: each alone, less the corner both would take.
+fn removed_together(body: &Body, picks: &[Vec3], r: f64, overlap: f64) -> f64 {
+    let before = planned_volume(body);
+    picks.iter().map(|p| before - planned_volume(&fillet(body, &[*p], r).unwrap())).sum::<f64>() - overlap
+}
+
+/// The front's top edge and its left upright meet at a box corner; the edge's far end runs into
+/// the curved wall. In either order, and picked together, the rounds end in each other where
+/// they meet: the body is the one both would make (the two corner regions overlap by the
+/// volume integrated over the box corner).
+#[test]
+fn fillet_the_top_front_edge_and_the_front_left_upright() {
+    let body = part();
+    let (before, r) = (planned_volume(&body), 2.0);
+    let want = removed_together(&body, &[tf(), fl()], r, 0.766_957);
+    let check = |name: &str, made: Result<Body>| {
+        let made = made.unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert!(made.validity().is_empty(), "{name}: {:?}", made.validity());
+        let removed = before - planned_volume(&made);
+        assert!((removed - want).abs() < 0.02, "{name}: removed {removed}, expected {want}");
+        made.face_count()
+    };
+    let first = fillet(&body, &[tf()], r).unwrap();
+    let second = fillet(&body, &[fl()], r).unwrap();
+    let faces = [
+        check("top front, then the upright", fillet(&first, &[fl()], r)),
+        check("upright, then the top front", fillet(&second, &[tf()], r)),
+        check("together", fillet(&body, &[tf(), fl()], r)),
+    ];
+    assert!(faces.iter().all(|f| *f == faces[0]), "face counts {faces:?}");
+}
+
+/// The front's top edge and the front upright at the arc meet at the wall: the round of the one
+/// ends in the other. Either way round and picked together, the body is the one both make: each
+/// alone, less the corner both would take.
+#[test]
+fn fillet_the_top_front_edge_and_the_front_upright_at_the_arc() {
+    let body = part();
+    let (before, r) = (planned_volume(&body), 2.0);
+    let want = removed_together(&body, &[tf(), fu()], r, 0.699_134);
+    let check = |name: &str, made: Result<Body>| {
+        let made = made.unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert!(made.validity().is_empty(), "{name}: {:?}", made.validity());
+        let removed = before - planned_volume(&made);
+        assert!((removed - want).abs() < 0.02, "{name}: removed {removed}, expected {want}");
+    };
+    let first = fillet(&body, &[tf()], r).unwrap();
+    check("top front, then the upright", fillet(&first, &[fu()], r));
+    check("together", fillet(&body, &[tf(), fu()], r));
+    check("together, the other way", fillet(&body, &[fu(), tf()], r));
+}
+
+/// A blend of the edge nearest `p` (round or flat), size `r`.
+fn blend_one_edge(body: &Body, p: Vec3, r: f64, round: bool) -> Result<Body> {
+    if round { fillet(body, &[p], r) } else { chamfer(body, &[p], r) }
+}
+
+/// The arc's top edge and the front's top edge meet at the wall, where the wall's edge with the
+/// front stays sharp: the blend of each ends in the other. Either way round, picked together or
+/// one after the other, the body is each alone less the corner the two take together (volumes
+/// integrated over the swept corners).
+#[test]
+fn blend_the_arc_top_edge_and_the_top_front_edge() {
+    let body = part();
+    let before = planned_volume(&body);
+    for (name, round, overlap) in [("fillet", true, 0.759), ("chamfer", false, 2.69)] {
+        let alone = |p: Vec3| before - planned_volume(&blend_one_edge(&body, p, 2.0, round).unwrap());
+        let want = alone(tf()) + alone(arc_top()) - overlap;
+        let check = |how: &str, made: Result<Body>| {
+            let made = made.unwrap_or_else(|e| panic!("{name} {how}: {e}"));
+            assert!(made.validity().is_empty(), "{name} {how}: {:?}", made.validity());
+            let removed = before - planned_volume(&made);
+            assert!((removed - want).abs() < 0.06, "{name} {how}: removed {removed}, expected {want}");
+        };
+        let (a, t) = (blend_one_edge(&body, arc_top(), 2.0, round).unwrap(), blend_one_edge(&body, tf(), 2.0, round).unwrap());
+        check("arc, then the front", blend_one_edge(&a, tf(), 2.0, round));
+        check("front, then the arc", blend_one_edge(&t, arc_top(), 2.0, round));
+        let both = |picks: &[Vec3]| if round { fillet(&body, picks, 2.0) } else { chamfer(&body, picks, 2.0) };
+        check("together", both(&[tf(), arc_top()]));
+        check("together, the other way", both(&[arc_top(), tf()]));
+    }
+}
+
+/// The arc's top edge and the front upright at the arc meet at the same corner, with the front's
+/// top edge sharp: again the body is each alone less the corner both take.
+#[test]
+fn fillet_the_arc_top_edge_and_the_front_upright_at_the_arc() {
+    let body = part();
+    let (before, r) = (planned_volume(&body), 2.0);
+    let alone = |p: Vec3| before - planned_volume(&fillet(&body, &[p], r).unwrap());
+    let want = alone(arc_top()) + alone(fu()) - 0.682_379;
+    let check = |how: &str, made: Result<Body>| {
+        let made = made.unwrap_or_else(|e| panic!("{how}: {e}"));
+        assert!(made.validity().is_empty(), "{how}: {:?}", made.validity());
+        let removed = before - planned_volume(&made);
+        assert!((removed - want).abs() < 0.06, "{how}: removed {removed}, expected {want}");
+    };
+    // (The upright first, then the arc as a feature of its own, is not supported yet: the arc's
+    // blend would run on over the upright's round, past the crease where the two meet.)
+    let a = fillet(&body, &[arc_top()], r).unwrap();
+    check("arc, then the upright", fillet(&a, &[fu()], r));
+    check("together", fillet(&body, &[arc_top(), fu()], r));
+    check("together, the other way", fillet(&body, &[fu(), arc_top()], r));
+}
+
+/// The three edges at the arc's front corner (the front's top edge, the arc's top edge and the
+/// front upright at the arc) end in a sphere of the rounds' radius. The volume is the three
+/// rounds, each cut where the ball that touches the three faces ends it, and the corner beyond
+/// those cuts less the ball's part of it (integrated over the swept corners and the sphere's
+/// wedge).
+#[test]
+fn fillet_the_three_edges_at_the_arcs_front_corner() {
+    let body = part();
+    let before = planned_volume(&body);
+    let want = 67.05;
+    for (name, picks) in [("as picked", [tf(), arc_top(), fu()]), ("another order", [fu(), tf(), arc_top()]), ("a third", [arc_top(), fu(), tf()])] {
+        let made = fillet(&body, &picks, 2.0).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert!(made.validity().is_empty(), "{name}: {:?}", made.validity());
+        // The body's six faces, the three rounds and the sphere's patch.
+        assert_eq!(made.face_count(), 10, "{name}");
+        let removed = before - planned_volume(&made);
+        assert!((removed - want).abs() < 0.12, "{name}: removed {removed}, expected {want}");
+    }
+}
+
+/// The construction does not depend on the faces being curved: at a box's corner it gives the
+/// body the planar corner builder does (a sphere's octant where the three rounds meet).
+#[test]
+fn the_sphere_at_a_box_corner_is_the_planar_corner_builders() {
+    let b = box_solid(Vec3::ZERO, Vec3::new(30.0, 20.0, 10.0)).unwrap();
+    let picks = [Vec3::new(15.0, 0.0, 10.0), Vec3::new(0.0, 10.0, 10.0), Vec3::new(0.0, 0.0, 5.0)];
+    for r in [1.0, 2.5] {
+        let local = crate::blend_corner::fillet_radii(&b, &picks.iter().map(|p| (*p, r)).collect::<Vec<_>>()).unwrap();
+        let ball = crate::blend_vertex::fillet_ball_vertices(&b, &picks, r).unwrap_or_else(|e| panic!("r={r}: {e}"));
+        assert!(ball.validity().is_empty(), "r={r}: {:?}", ball.validity());
+        assert_eq!(ball.face_count(), local.face_count(), "r={r}");
+        let (a, c) = (planned_volume(&local), planned_volume(&ball));
+        assert!((a - c).abs() < 1e-3 * a, "r={r}: planar corner {a}, ball corner {c}");
+    }
+}
+
+/// Sizes at the ends of the range at a ball vertex: rounded or refused, never a panic.
+#[test]
+fn rounds_ending_in_a_sphere_of_any_size_never_panic() {
+    let body = part();
+    for r in [1e-5, 1e-3, 5.0, 9.0, 10.0, 21.0, 1e3] {
+        if let Ok(b) = fillet(&body, &[tf(), arc_top(), fu()], r) {
+            assert!(b.validity().is_empty(), "r={r}: {:?}", b.validity());
+        }
+    }
+}
