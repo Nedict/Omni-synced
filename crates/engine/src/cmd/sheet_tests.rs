@@ -1927,6 +1927,20 @@ fn fold_across_two_collinear_tabs() {
     assert!(bb["max"][2].as_f64().unwrap() > 7.0, "both tabs stand up: {bb}");
 }
 
+/// After one of two collinear tabs is folded, the other one folds in its own feature too (#638, follow-up to #264).
+#[test]
+fn fold_second_collinear_tab_after_the_first() {
+    let mut s = Session::default();
+    two_tab_blank(&mut s);
+    let flat = volume(&mut s);
+    run(&mut s, "sheet.fold", json!({"points": [[107, 5, 0.8], [107, 12, 0.8]], "fixed": [50, 20, 0.8]}));
+    run(&mut s, "sheet.fold", json!({"points": [[107, 28, 0.8], [107, 35, 0.8]], "fixed": [50, 20, 0.8]}));
+    assert!(rel(volume(&mut s), flat) < 1e-3, "folds keep the material");
+    let bb = &run(&mut s, "inspect.measure", json!({}))["bodies"][0]["bbox"];
+    assert!(bb["max"][2].as_f64().unwrap() > 7.0, "the tabs stand up: {bb}");
+    assert!(bb["max"][0].as_f64().unwrap() < 105.0, "neither tab still lies flat out to x 115: {bb}");
+}
+
 /// Edge flanges on both tab ends in one feature (two separate features already work) (#264).
 #[test]
 fn edge_flanges_on_two_collinear_tab_ends_in_one_feature() {
