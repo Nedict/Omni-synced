@@ -385,6 +385,17 @@ fn group_first_feature(
     direct.into_iter().chain(children).min()
 }
 
+fn group_last_feature(
+    groups: &[solidcraft_engine::doc::TimelineGroup],
+    features: &[(u64, String, &'static str, bool, &'static str, FeatureKind)],
+    id: u64,
+) -> Option<usize> {
+    let group = groups.iter().find(|group| group.id == id)?;
+    let direct = group.features.iter().filter_map(|feature| features.iter().position(|item| item.0 == *feature)).max();
+    let children = groups.iter().filter(|child| child.parent == Some(id)).filter_map(|child| group_last_feature(groups, features, child.id)).max();
+    direct.into_iter().chain(children).max()
+}
+
 fn visible_order(
     app: &SolveApp,
     features: &[(u64, String, &'static str, bool, &'static str, FeatureKind)],
@@ -476,6 +487,7 @@ fn vertical_group_row(
     drag: &mut Option<Drag>,
     depth: usize,
     position: usize,
+    end_position: usize,
     previous_visible_group: Option<u64>,
     slots: &mut Vec<VerticalSlot>,
     drop_zones: &mut Vec<(Rect, u64)>,
@@ -492,7 +504,7 @@ fn vertical_group_row(
     });
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 23.0), Sense::click_and_drag());
     drop_zones.push((rect, group.id));
-    slots.push(VerticalSlot { y: rect.bottom(), position, group: Some(group.id), indent_group: None });
+    slots.push(VerticalSlot { y: rect.bottom(), position: if open { position } else { end_position }, group: Some(group.id), indent_group: None });
     if selected || response.hovered() {
         ui.painter().rect_filled(rect, 3.0, if selected { t.accent_soft } else { t.hover });
     }
@@ -558,6 +570,10 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
     let order = visible_order(app, &features, &groups);
     let first_indices: std::collections::BTreeMap<u64, Option<usize>> =
         groups.iter().map(|group| (group.id, group_first_feature(&groups, &features, group.id))).collect();
+    let end_indices: std::collections::BTreeMap<u64, usize> = groups
+        .iter()
+        .map(|group| (group.id, group_last_feature(&groups, &features, group.id).map_or(features.len(), |index| index.saturating_add(1))))
+        .collect();
     let n = features.len();
     let marker = app.session.doc.marker.unwrap_or(n);
     let from_view = match &app.viewport.hover {
@@ -599,6 +615,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
                     &mut drag,
                     group_depth(&groups, group.id),
                     index,
+                    end_indices.get(&group.id).copied().unwrap_or(index),
                     previous_visible_group,
                     &mut slots,
                     &mut folder_drop_zones,
@@ -738,6 +755,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
                 &order,
                 &mut drag,
                 group_depth(&groups, group.id),
+                n,
                 n,
                 previous_visible_group,
                 &mut slots,
@@ -1071,5 +1089,32 @@ mod tests {
         harness.step(&json!({"click": {"handle": "timeline-folder-fold:Folder"}})).unwrap();
         assert!(handle_at("timeline-folder:Folder").is_some(), "collapsed folder row disappeared");
         assert!(handle_at("timeline:Inside").is_none(), "collapsed folder still showed its contents");
+    }
+
+    #[test]
+    fn drop_below_a_collapsed_folder_appends_to_that_folder() {
+        let mut harness = Harness::new();
+        harness.app.preferences.timeline_left = true;
+        for (name, body, x) in [("First", "FirstBody", 0), ("Second", "SecondBody", 20), ("Loose", "LooseBody", 40)] {
+            harness
+                .app
+                .run(
+                    "solid.box",
+                    json!({"length": 10, "width": 10, "height": 10, "corner": [x, 0, 0], "operation": "new_body", "name": name, "body_name": body}),
+                )
+                .unwrap();
+        }
+        let group = harness.app.run("timeline.group", json!({"name": "Folder", "features": ["First", "Second"]})).unwrap()["group"].as_u64().unwrap();
+        harness.frames(4);
+        harness.step(&json!({"click": {"handle": "timeline-folder-fold:Folder"}})).unwrap();
+        let folder = handle_at("timeline-folder:Folder").unwrap();
+
+        harness.step(&json!({"drag": [{"handle": "timeline:Loose"}, [folder.x, folder.y + 14.0]]})).unwrap();
+
+        let names: Vec<_> = harness.app.session.doc.features.iter().map(|feature| feature.name.as_str()).collect();
+        assert_eq!(names, vec!["First", "Second", "Loose"], "the dropped feature belongs at the collapsed folder's end");
+        let folder = harness.app.session.doc.timeline_groups.iter().find(|folder| folder.id == group).unwrap();
+        let loose = harness.app.session.doc.find_feature("Loose").unwrap().id;
+        assert_eq!(folder.features.last(), Some(&loose));
     }
 }
