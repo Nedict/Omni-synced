@@ -44,6 +44,9 @@ pub struct ModelBody {
     pub transferred: bool,
     /// The look it was imported with, carried through later features.
     pub imported: Option<Arc<crate::appearance::ImportedLook>>,
+    /// [`Body::retained_bytes`] of `body`, measured when a feature made or changed it (0: not
+    /// measured), so the evaluation cache's budget does not walk every body after every feature.
+    bytes: usize,
 }
 
 impl ModelBody {
@@ -62,6 +65,7 @@ impl ModelBody {
             component: 0,
             transferred: false,
             imported: None,
+            bytes: 0,
         }
     }
     pub fn definition_name(&self) -> &str {
@@ -486,6 +490,7 @@ impl ModelState {
                 Some(x) => {
                     b.key = x.key;
                     b.names = x.names.clone();
+                    b.bytes = if x.bytes > 0 { x.bytes } else { b.body.retained_bytes() };
                 }
                 None => {
                     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -507,6 +512,7 @@ impl ModelState {
                     {
                         b.imported = crate::appearance::ImportedLook::of(old);
                     }
+                    b.bytes = b.body.retained_bytes();
                 }
             }
         }
@@ -597,7 +603,7 @@ impl ModelState {
     /// topology is what makes a kept timeline snapshot expensive, so it dominates; sketches
     /// and the rest are counted from their entity counts.
     pub fn retained_bytes(&self) -> usize {
-        let bodies: usize = self.bodies.iter().map(|b| b.body.retained_bytes()).sum();
+        let bodies: usize = self.bodies.iter().map(|b| if b.bytes > 0 { b.bytes } else { b.body.retained_bytes() }).sum();
         let sketches: usize = self.sketches.iter().map(|s| s.retained_bytes()).sum();
         bodies + sketches + self.sheets.len() * 4096 + self.threads.len() * 192 + self.construct.len() * 192
     }
