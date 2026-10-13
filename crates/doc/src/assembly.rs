@@ -300,7 +300,10 @@ impl FeatureKind {
                 dir(direction);
                 dir(hook);
             }
-            FeatureKind::SheetBase { .. } | FeatureKind::SheetContour { .. } | FeatureKind::SheetUnfold { .. } => {}
+            FeatureKind::SheetBase { .. }
+            | FeatureKind::SheetContour { .. }
+            | FeatureKind::SheetUnfold { .. }
+            | FeatureKind::SheetPerforate { .. } => {}
             FeatureKind::Coil { base, axis, .. } => {
                 map_point_expr(m, base);
                 dir(axis);

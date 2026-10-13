@@ -251,6 +251,13 @@ impl FeatureKind {
                     v.push(("Bend radius", r, L));
                 }
             }
+            FeatureKind::SheetPerforate { diameter, pitch, margin, .. } => {
+                v.push(("Diameter", diameter, L));
+                v.push(("Pitch", pitch, L));
+                if let Some(m) = margin {
+                    v.push(("Margin", m, L));
+                }
+            }
             FeatureKind::SheetHem { length, gap, .. } => {
                 v.push(("Length", length, L));
                 if let Some(g) = gap {

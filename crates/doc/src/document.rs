@@ -757,6 +757,20 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
     },
+    /// A perforation field (#732): round holes of `diameter` on a staggered (60°) or square grid of `pitch` over the
+    /// whole flat sheet, kept `margin` (default: the diameter) clear of its edges, cut-outs and bend zones. Stored like
+    /// a cosmetic thread: the holes go to the flat pattern, the DXF and the measured volume, not into the B-rep, so a
+    /// panel can carry tens of thousands of them.
+    SheetPerforate {
+        diameter: String,
+        pitch: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        margin: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pattern: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        body: Option<String>,
+    },
     /// Fold a sheet along a line on its base face: a sketch line (followed when the sketch
     /// changes), else the points `a`, `b`.
     SheetFold {
@@ -1358,6 +1372,7 @@ impl FeatureKind {
             | K::Coil { .. }
             | K::SheetFlange { .. }
             | K::SheetHem { .. }
+            | K::SheetPerforate { .. }
             | K::SheetUnfold { .. }
             | K::SheetConvert { .. }
             | K::Boss { .. }
@@ -1392,6 +1407,7 @@ impl FeatureKind {
                 | FeatureKind::SheetContour { .. }
                 | FeatureKind::SheetFlange { .. }
                 | FeatureKind::SheetHem { .. }
+                | FeatureKind::SheetPerforate { .. }
                 | FeatureKind::SheetFold { .. }
                 | FeatureKind::SheetUnfold { .. }
                 | FeatureKind::SheetConvert { .. }
@@ -1445,6 +1461,7 @@ impl FeatureKind {
             FeatureKind::SheetContour { .. } => "ContourFlangeFeature",
             FeatureKind::SheetFlange { .. } => "EdgeFlangeFeature",
             FeatureKind::SheetHem { .. } => "HemFeature",
+            FeatureKind::SheetPerforate { .. } => "PerforateFeature",
             FeatureKind::SheetFold { .. } => "FoldFeature",
             FeatureKind::SheetUnfold { refold: false, .. } => "UnfoldFeature",
             FeatureKind::SheetUnfold { .. } => "RefoldFeature",
@@ -1518,6 +1535,7 @@ impl FeatureKind {
             FeatureKind::SheetContour { .. } => "ContourFlange",
             FeatureKind::SheetFlange { .. } => "EdgeFlange",
             FeatureKind::SheetHem { .. } => "Hem",
+            FeatureKind::SheetPerforate { .. } => "Perforate",
             FeatureKind::SheetFold { .. } => "Fold",
             FeatureKind::SheetUnfold { refold: false, .. } => "Unfold",
             FeatureKind::SheetUnfold { .. } => "Refold",
@@ -1758,6 +1776,10 @@ impl FeatureKind {
             FeatureKind::SheetHem { length, gap, .. } => {
                 v.push(length);
                 v.extend(gap.iter().map(String::as_str));
+            }
+            FeatureKind::SheetPerforate { diameter, pitch, margin, .. } => {
+                v.extend([diameter.as_str(), pitch]);
+                v.extend(margin.iter().map(String::as_str));
             }
             FeatureKind::SheetBase { .. } | FeatureKind::SheetUnfold { .. } | FeatureKind::SheetConvert { .. } => {}
             FeatureKind::Coil { diameter, pitch, turns, section_size, start_angle, base, .. } => {

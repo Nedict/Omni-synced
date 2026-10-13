@@ -309,6 +309,7 @@ impl FeatureKind {
             | K::ReplaceFace { body, .. }
             | K::SheetFlange { body, .. }
             | K::SheetHem { body, .. }
+            | K::SheetPerforate { body, .. }
             | K::SheetFold { body, .. }
             | K::SheetUnfold { body, .. }
             | K::Boss { body, .. }

@@ -482,6 +482,9 @@ pub struct SheetBody {
     /// pattern both carry it (#560). Derived from feature history, like `pockets`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub bores: Vec<SheetBore>,
+    /// Perforation fields (#732), flat coordinates; their holes are computed on demand and never cut into the B-rep.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub perforations: Vec<SheetPerforation>,
     /// Unfolded.
     pub flat: bool,
     /// Gap between flanges that meet at a corner.
@@ -507,6 +510,16 @@ pub struct SheetBore {
     pub axis: Vec3,
     pub radius: f64,
     pub height: f64,
+}
+
+/// A perforation field from a `sheet.perforate` feature (#732).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SheetPerforation {
+    pub feature: u64,
+    pub diameter: f64,
+    pub pitch: f64,
+    pub margin: f64,
+    pub square: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1693,6 +1706,97 @@ impl SheetBody {
             }
         }
         out
+    }
+
+    /// The flat bend zones, one per bend.
+    pub fn bend_zones(&self) -> Vec<Region2> {
+        self.flanges.iter().map(|f| self.zone(f)).collect()
+    }
+
+    /// Hole centres of a perforation field (#732), flat coordinates: a staggered (60°, odd rows shifted half a pitch)
+    /// or square grid from the flat bounding box's lower-left corner plus margin + radius; a hole is kept where it is
+    /// at least margin clear of the material's edges and cut-outs and of every bend zone.
+    pub fn perforation_holes(&self, p: &SheetPerforation) -> Result<Vec<Vec2>> {
+        let regions = self.flat_regions()?;
+        let zones = self.bend_zones();
+        let clear = p.diameter / 2.0 + p.margin;
+        let mut segs: Vec<(Vec2, Vec2)> = Vec::new();
+        let mut add = |l: &Loop2| {
+            let pts = l.polyline(1e-3);
+            for k in 0..pts.len() {
+                if let (Some(&a), Some(&b)) = (pts.get(k), pts.get((k + 1) % pts.len())) {
+                    segs.push((a, b));
+                }
+            }
+        };
+        for r in &regions {
+            add(&r.outer);
+            r.holes.iter().for_each(&mut add);
+        }
+        zones.iter().for_each(|z| add(&z.outer));
+        let (mut lo, mut hi) = (Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN));
+        for (a, _) in &segs {
+            lo = Vec2::new(lo.x.min(a.x), lo.y.min(a.y));
+            hi = Vec2::new(hi.x.max(a.x), hi.y.max(a.y));
+        }
+        if !(lo.x <= hi.x) || !(p.pitch > 0.0) {
+            return Ok(Vec::new());
+        }
+        // Segments bucketed in a grid, so each hole only checks the edges near it.
+        let cell = (2.0 * clear).max(p.pitch).max(1.0);
+        let (nx, ny) = (((hi.x - lo.x) / cell) as usize + 1, ((hi.y - lo.y) / cell) as usize + 1);
+        let mut grid: Vec<Vec<usize>> = vec![Vec::new(); nx.saturating_mul(ny)];
+        let idx = |x: f64, y: f64| -> (usize, usize) {
+            (((x - lo.x) / cell).floor().clamp(0.0, (nx - 1) as f64) as usize, ((y - lo.y) / cell).floor().clamp(0.0, (ny - 1) as f64) as usize)
+        };
+        for (i, (a, b)) in segs.iter().enumerate() {
+            let (i0, j0) = idx(a.x.min(b.x) - clear, a.y.min(b.y) - clear);
+            let (i1, j1) = idx(a.x.max(b.x) + clear, a.y.max(b.y) + clear);
+            for j in j0..=j1 {
+                for ii in i0..=i1 {
+                    if let Some(c) = grid.get_mut(j * nx + ii) {
+                        c.push(i);
+                    }
+                }
+            }
+        }
+        let dist = |c: Vec2, (a, b): (Vec2, Vec2)| -> f64 {
+            let (d, l) = (b - a, (b - a).dot(b - a));
+            let t = if l > 0.0 { ((c - a).dot(d) / l).clamp(0.0, 1.0) } else { 0.0 };
+            c.dist(a + d * t)
+        };
+        let dy = if p.square { p.pitch } else { p.pitch * 3f64.sqrt() / 2.0 };
+        let mut out = Vec::new();
+        let mut row = 0usize;
+        loop {
+            let y = lo.y + clear + row as f64 * dy;
+            if y > hi.y - clear + 1e-9 {
+                break;
+            }
+            let mut x = lo.x + clear + if !p.square && row % 2 == 1 { p.pitch / 2.0 } else { 0.0 };
+            while x <= hi.x - clear + 1e-9 {
+                let c = Vec2::new(x, y);
+                let (i, j) = idx(x, y);
+                let near = grid.get(j * nx + i).map(Vec::as_slice).unwrap_or(&[]);
+                if regions.iter().any(|r| r.contains(c))
+                    && !zones.iter().any(|z| z.contains(c))
+                    && near.iter().all(|&k| segs.get(k).is_none_or(|&s| dist(c, s) >= clear - 1e-9))
+                {
+                    out.push(c);
+                }
+                x += p.pitch;
+            }
+            row += 1;
+        }
+        Ok(out)
+    }
+
+    /// Open area of all perforation fields (mm²): what they take out of the sheet's faces.
+    pub fn perforated_area(&self) -> f64 {
+        self.perforations
+            .iter()
+            .map(|p| self.perforation_holes(p).map_or(0.0, |h| h.len() as f64) * std::f64::consts::PI * (p.diameter / 2.0).powi(2))
+            .sum()
     }
 
     /// Topology counted as Fusion does: a round hole is one face bounded by two closed circular
@@ -3844,6 +3948,7 @@ pub fn base_flange(body: &str, rule: &str, rv: &RuleValues, plane: Plane, region
         holes,
         pockets: Vec::new(),
         bores: Vec::new(),
+        perforations: Vec::new(),
         flat: false,
         gap: rv.gap,
         relief: rv.corner_relief_shape,
@@ -3900,6 +4005,7 @@ pub fn contour_flange(body: &str, rule: &str, rv: &RuleValues, plane: &Plane, pt
         holes: Vec::new(),
         pockets: Vec::new(),
         bores: Vec::new(),
+        perforations: Vec::new(),
         flat: false,
         gap: rv.gap,
         relief: rv.corner_relief_shape,
