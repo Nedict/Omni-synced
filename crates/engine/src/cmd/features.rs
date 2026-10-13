@@ -67,7 +67,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("face.delete", "Delete Face", delete_face)
         .at("SOLID", "MODIFY")
         .icon("delete")
-        .params("faces: [[x,y,z] points on the faces]; body?. The neighbouring planes close the gap, as when a rounded edge, hole or boss is taken off"),
+        .params("faces: [[x,y,z] points on the faces]; body?; heal?: bool (default true: the neighbouring planes close the gap, as when a rounded edge, hole or boss is taken off; false: the gap stays open and the faces left are a surface body)"),
     CommandSpec::new("solid.offset_face", "Offset Face", offset_face)
         .at("SOLID", "MODIFY")
         .icon("offset_face")
@@ -1649,7 +1649,8 @@ fn scale(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn delete_face(s: &mut Session, p: &Value) -> Result<Value> {
     let faces = face_points(p, "face.delete")?;
-    add_feature(s, p, FeatureKind::DeleteFace { faces, body: str_(p, "body").map(str::to_string) })
+    let heal = bool_(p, "heal").unwrap_or(true);
+    add_feature(s, p, FeatureKind::DeleteFace { faces, body: str_(p, "body").map(str::to_string), heal })
 }
 
 fn offset_face(s: &mut Session, p: &Value) -> Result<Value> {

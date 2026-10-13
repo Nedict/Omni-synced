@@ -108,6 +108,9 @@
 //!   bodies) and `ReverseNormal` (a surface body's faces turned over), each a `body` and
 //!   optional `faces` points. Version 17 designs need no transformation; the version stamp makes
 //!   0.9.0 (which reads up to 17) ask for an update instead of meeting a feature it can't read.
+//!   Under the same version, Delete Face can leave the gap open (`heal: false` on the feature:
+//!   the faces left are a surface body); a Delete Face without it heals, as it always did, and
+//!   saves as before. 0.9.0 would heal a gap the design leaves open.
 
 use serde_json::Value;
 
