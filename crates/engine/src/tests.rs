@@ -2965,8 +2965,6 @@ fn draft_on_a_cylinder_side_makes_a_frustum() {
     let expect = PI * h / 3.0 * (big * big + big * small + small * small);
     assert!(rel(volume(&mut s), expect) < 1e-3, "{} vs {expect}", volume(&mut s));
 }
-}
-
 
 /// The copies added after a rename keep their numbers through undo/redo, save/reopen and a
 /// further count change; lowering the count drops the last copies (#372).
