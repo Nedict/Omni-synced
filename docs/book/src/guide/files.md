@@ -7,6 +7,7 @@
 | STEP (AP203, AP214, AP242) | solids, assemblies, units, names, colours | AP242 with names, colours and the component tree |
 | IGES 5.3 | manifold solids, or trimmed surfaces sewn into solids | manifold solids with names and colours |
 | 3MF, STL, OBJ | mesh bodies | yes |
+| 3MF with face tags | as 3MF | each triangle tagged with its B-rep face, exact coordinates |
 | DXF, SVG | into a sketch | sketches and flat patterns as DXF |
 | PNG, JPEG | canvases and decals | |
 
@@ -27,6 +28,12 @@ polygons remain polygons when rounding would exceed it. Open/nonmanifold meshes,
 tapers, stepped parts and organic scans are refused by this first reconstruction
 method; it does not silently substitute a faceted solid. Conversion currently
 accepts at most 50,000 triangles and a bounded number of boundary segments.
+
+**File → Export 3MF with Face Tags** (`file.export` with `format: "3mf-tagged"`) writes an
+ordinary 3MF in which every triangle also names the B-rep face it lies on and every coordinate
+is the tessellation's own double-precision value. Meshing and analysis tools such as ModelCraft
+use the tags to put loads and boundary conditions on faces; other 3MF readers ignore them. The
+format is specified in ModelCraft's `docs/formats/tagged-mesh.md`.
 
 Saves are atomic: a crash at any moment leaves either the old file or the new one, and the
 replaced version is kept as `<file>.bak`. Unsaved changes are autosaved to a recovery folder,
