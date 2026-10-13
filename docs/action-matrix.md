@@ -268,7 +268,9 @@ Where the face history stands (`crates/kernel/src/history.rs`, [face attachments
 a flat face takes an attached sketch when the body carries an exact source certificate for it
 (extrude caps and sides, boxes, shells' inner walls, STEP faces, sheet metal panels), or else
 when its persistent name follows exact history (a `lineage` certificate): cut walls and floors,
-chamfers, pattern and mirror copies, sides a Join merged, and pieces of a split face. What still
-refuses a sketch is what makes faces without recording their history (revolves in some cases,
-Offset Face, the plastic features, lofts, sweeps, drafts, tapers, shell rims, sheet metal rims):
-press-pull and extrude-from-face then fall back to a legacy face sketch found again by a point.
+chamfers, pattern and mirror copies, sides a Join merged, revolves, lofts, sweeps, drafts, tapers,
+shell rims, the plastic features' faces and the faces around them, and pieces of a split face (by
+the piece's own name where Offset Face moved it off the others' plane). Sheet metal panels, their
+rims and the flat ends of bends attach by name. What still refuses a sketch is what makes faces
+without recording their history (some cuts, Split Body, Intersect): press-pull and
+extrude-from-face then fall back to a legacy face sketch found again by a point.

@@ -102,7 +102,7 @@ pub fn hint(id: &str) -> String {
         "sketch.circle.center" => "Circle: click the centre, then a point on the circle".into(),
         "sketch.arc.three_point" => "Arc: click start, end, then a point on the arc".into(),
         "sketch.arc.center_point" => "Arc: click centre and start, then click end or type a signed sweep".into(),
-        "sketch.dimension" => "Dimension: pick one or two entities, then click to place the value".into(),
+        "sketch.dimension" => "Dimension: pick one or two entities and type the value (or click to place it first); Enter applies".into(),
         "sketch.constraint.horizontal_vertical" => "Horizontal/Vertical: pick a line or two points to align".into(),
         "sketch.slot.center_to_center" | "sketch.slot.overall" => "Slot: click both ends, then the width".into(),
         _ if id.starts_with("sketch.constraint.") => "Constraint: pick the sketch entities".into(),
@@ -137,8 +137,9 @@ pub fn on_hover(app: &mut SolveApp, proj: &Proj, pos: Pos2) {
 
 pub fn on_click(app: &mut SolveApp, proj: &Proj, pos: Pos2) {
     // A click away dismisses the inline editor; it must not also pick the first entity of
-    // the next dimension before that cancellation has been processed.
-    if crate::dim_view::editing() {
+    // the next dimension before that cancellation has been processed. The type-first value
+    // of the Dimension tool takes clicks itself (a second pick, or where its text goes).
+    if crate::dim_view::editing() && crate::dim_view::live().is_none() {
         return;
     }
     let Some(mut tool) = app.tool.take() else { return };
@@ -205,12 +206,43 @@ pub fn on_click(app: &mut SolveApp, proj: &Proj, pos: Pos2) {
         Kind::Dimension => {
             let hits = pick(app, proj, pos);
             let hit = hits.iter().find_map(|h| match h {
-                Hit::SketchPoint { id, .. } | Hit::SketchCurve { id, .. } => Some(id.clone()),
+                Hit::SketchPoint { id, .. } => Some((id.clone(), false)),
+                Hit::SketchCurve { id, .. } => Some((id.clone(), true)),
                 _ => None,
             });
-            if let Some(id) = hit {
-                if !tool.picks.contains(&id) && tool.picks.len() < 2 {
+            let fresh = |tool: &Tool, id: &String| !tool.picks.contains(id) && tool.picks.len() < 2;
+            if let Some(typed) = crate::dim_view::live() {
+                match hit {
+                    // Before anything is typed, another entity joins the dimension, as in the
+                    // place-first flow (a distance, an angle between lines).
+                    Some((id, _)) if !typed && fresh(&tool, &id) => {
+                        let mut picks = tool.picks.clone();
+                        picks.push(id);
+                        match crate::dim_view::begin_live(app, picks.clone(), Some(pos)) {
+                            Ok(true) => tool.picks = picks,
+                            Ok(false) => {
+                                crate::dim_view::cancel();
+                                tool.picks = picks;
+                            }
+                            Err(error) => app.set_status(error, true),
+                        }
+                    }
+                    // Otherwise the click places the text; the value keeps the keyboard.
+                    _ => {
+                        if let Some((at, _)) = sketch_point_at(app, proj, pos) {
+                            crate::dim_view::pin(app, at);
+                        }
+                    }
+                }
+            } else if let Some((id, curve)) = hit {
+                if fresh(&tool, &id) {
                     tool.picks.push(id);
+                    // As soon as the picks determine a dimension (one line, circle or arc, or a
+                    // second entity), its value takes the keyboard: D, click, type. A pick that
+                    // doesn't keeps the place-first flow; placing reports why.
+                    if curve || tool.picks.len() == 2 {
+                        let _ = crate::dim_view::begin_live(app, tool.picks.clone(), Some(pos));
+                    }
                 }
             } else if !tool.picks.is_empty()
                 && let Some((at, _)) = sketch_point_at(app, proj, pos)

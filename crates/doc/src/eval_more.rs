@@ -340,20 +340,17 @@ fn on_sheet_material(st: &ModelState, i: usize, p: Vec3) -> bool {
     offsets.iter().any(|&dx| offsets.iter().any(|&dy| offsets.iter().any(|&dz| mesh.contains(p + Vec3::new(dx, dy, dz)))))
 }
 
-/// A region mirrored in the sketch x axis (y → −y); curves other than lines and arcs as polylines.
+/// A region mirrored in the sketch x axis (y → −y), exactly: free-form curves through their
+/// control points.
 fn mirror_y(r: &Region2) -> Region2 {
     let f = |p: Vec2| Vec2::new(p.x, -p.y);
     let m = |l: &Loop2| {
         let segs: Vec<Seg2> = l
             .segs
             .iter()
-            .flat_map(|s| match *s {
-                Seg2::Line { a, b } => vec![Seg2::Line { a: f(a), b: f(b) }],
-                Seg2::Arc { center, radius, start, sweep } => vec![Seg2::Arc { center: f(center), radius, start: -start, sweep: -sweep }],
-                other => {
-                    let pts: Vec<Vec2> = (0..=16).map(|k| f(other.point_at(k as f64 / 16.0))).collect();
-                    pts.windows(2).map(|w| Seg2::Line { a: w[0], b: w[1] }).collect()
-                }
+            .map(|s| match *s {
+                Seg2::Arc { center, radius, start, sweep } => Seg2::Arc { center: f(center), radius, start: -start, sweep: -sweep },
+                other => sheet::map_controls(&other, f),
             })
             .collect();
         Loop2 { segs }.ccw()
@@ -718,6 +715,7 @@ pub(super) fn sheet_primitive_cut(f: &Feature, st: &mut ModelState, tool: &Body,
 }
 
 /// A primitive tool's exact geometry, for [`sheet_primitive_cut`].
+#[derive(Clone, Copy, Debug)]
 pub(super) enum PrimitivePrism {
     /// An axis-aligned box between two corners.
     Box { lo: Vec3, hi: Vec3 },
@@ -1117,11 +1115,12 @@ pub(super) fn plastic_eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &F
             let base = Plane::new(*position - z * delta, x, z.cross(x)).ok_or_else(|| DocError::Invalid("boss frame".into()))?;
             let r_in = r0 + delta * dr.tan();
             let disc = Region2 { outer: Loop2::circle(Vec2::ZERO, r_in), holes: Vec::new() };
-            let mut tools = if dr.abs() > 1e-12 {
+            let post = if dr.abs() > 1e-12 {
                 vec![kernel::extrude_tapered(&base, &disc, h + delta, 1.0, -dr)?]
             } else {
                 kernel::extrude(&base, &[disc], 0.0, h + delta)?
             };
+            let mut tools: Vec<Traced> = post.into_iter().map(|b| crate::lineage::part_tool(b, "post")).collect();
             if let Some(n) = ribs {
                 let n = val(vals, n, Kind::Unitless)?.round();
                 if !(0.0..=64.0).contains(&n) {
@@ -1156,19 +1155,19 @@ pub(super) fn plastic_eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &F
                         ]),
                         holes: Vec::new(),
                     };
-                    tools.extend(kernel::extrude(&rp, &[rect], -delta, hr)?);
+                    tools.extend(kernel::extrude(&rp, &[rect], -delta, hr)?.into_iter().map(|b| crate::lineage::part_tool(b, &format!("rib{k}"))));
                 }
             }
-            apply_op(st, f, tools, Operation::Join, std::slice::from_ref(&target))?;
+            apply_traced(st, f, tools, Operation::Join, std::slice::from_ref(&target))?;
             // The root fillet: rounds the circle where the post meets the face.
             if rf > 1e-9 {
                 let i = st.bodies.iter().position(|b| b.name == target).ok_or_else(|| DocError::Invalid("boss body".into()))?;
                 let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("boss body".into())) };
                 let mut warn = None;
                 let edges = resolve_edges(&mb.body, &[*position + x * r0], &[], &mut warn)?;
-                let nb = kernel::fillet(&mb.body, &edges, rf)?;
+                let nb = mb.traced().then(kernel::fillet(&mb.body, &edges, rf)?);
                 if let Some(slot) = st.bodies.get_mut(i) {
-                    *slot = ModelBody::new(mb.name, nb, mb.feature);
+                    *slot = ModelBody::traced_new(mb.name, nb, mb.feature);
                 }
             }
             if let Some(hd) = hole_diameter {
@@ -1182,7 +1181,8 @@ pub(super) fn plastic_eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &F
                 }
                 let hp = Plane::new(*position, x, z.cross(x)).ok_or_else(|| DocError::Invalid("hole frame".into()))?;
                 let tool = kernel::extrude(&hp, &[Region2 { outer: Loop2::circle(Vec2::ZERO, rh), holes: Vec::new() }], h - depth, h + delta)?;
-                apply_op(st, f, tool, Operation::Cut, std::slice::from_ref(&target))?;
+                let tool = tool.into_iter().map(|b| crate::lineage::part_tool(b, "hole")).collect();
+                apply_traced(st, f, tool, Operation::Cut, std::slice::from_ref(&target))?;
             }
             Ok(())
         }
@@ -1215,7 +1215,7 @@ pub(super) fn plastic_eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &F
                 && let Ok(b) = kernel::raise_band(&mb.body, *face, w, h, *outside)
                 && let Some(slot) = st.bodies.iter_mut().find(|x| x.name == target)
             {
-                *slot = ModelBody::new(target.clone(), b, slot.feature);
+                *slot = ModelBody::traced_new(target.clone(), Traced::step(b, &[&mb.traced()]), slot.feature);
                 return Ok(());
             }
             // The band along the chosen edge, inside the rim face. A groove's cutter reaches past
@@ -1234,11 +1234,11 @@ pub(super) fn plastic_eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &F
             };
             let delta = (h * 0.05).clamp(1e-3, 0.5);
             if *groove {
-                let tool = kernel::extrude(&plane, &[band], -(h + g), delta)?;
-                apply_op(st, f, tool, Operation::Cut, std::slice::from_ref(&target))
+                let tool = kernel::extrude(&plane, &[band], -(h + g), delta)?.into_iter().map(|b| crate::lineage::part_tool(b, "groove")).collect();
+                apply_traced(st, f, tool, Operation::Cut, std::slice::from_ref(&target))
             } else {
-                let tool = kernel::extrude(&plane, &[band], -delta, h)?;
-                apply_op(st, f, tool, Operation::Join, std::slice::from_ref(&target))
+                let tool = kernel::extrude(&plane, &[band], -delta, h)?.into_iter().map(|b| crate::lineage::part_tool(b, "lip")).collect();
+                apply_traced(st, f, tool, Operation::Join, std::slice::from_ref(&target))
             }
         }
         FeatureKind::SnapFit { position, direction, hook, length, thickness, width, catch_depth, catch_length, body } => {
@@ -1261,7 +1261,8 @@ pub(super) fn plastic_eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &F
             let sgn = if pl.normal().dot(y) >= 0.0 { 1.0 } else { -1.0 };
             let (lo, hi) = if sgn > 0.0 { (0.0, w) } else { (-w, 0.0) };
             let tool = kernel::extrude(&pl, &[Region2 { outer: lp, holes: Vec::new() }], lo, hi)?;
-            apply_op(st, f, tool, Operation::Join, std::slice::from_ref(&target))
+            let tool = tool.into_iter().map(|b| crate::lineage::part_tool(b, "arm")).collect();
+            apply_traced(st, f, tool, Operation::Join, std::slice::from_ref(&target))
         }
         FeatureKind::Rest { position, direction, along, width, length, height, draft, thickness, body } => {
             let target = body_under(st, body, *position)?;
@@ -1310,7 +1311,8 @@ pub(super) fn plastic_eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &F
             } else {
                 kernel::extrude(&base, &[region], 0.0, h + delta)?
             };
-            apply_op(st, f, tool, Operation::Join, std::slice::from_ref(&target))
+            let tool = tool.into_iter().map(|b| crate::lineage::part_tool(b, "rest")).collect();
+            apply_traced(st, f, tool, Operation::Join, std::slice::from_ref(&target))
         }
         _ => Err(DocError::Invalid(format!("{} is not a plastic feature", f.name))),
     }

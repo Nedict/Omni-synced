@@ -247,6 +247,7 @@ pub enum Kind {
     Part(crate::dialogs_parts::Pt),
     /// Edit Text: a sketch text's content and placement (`sketch_text`).
     Text(crate::sketch_text::Tx),
+    TextMove(crate::sketch_text_move::TextMove),
 }
 
 /// The rest of the Hole dialog: placement, extents, tap type and drill point.
@@ -287,6 +288,23 @@ pub struct Dialog {
     pub collapsed: bool,
     /// Parameters the dialog doesn't show but the command needs (kept when editing).
     pub extra: serde_json::Map<String, Value>,
+    /// What the inputs were when OK was refused: `error` stays only while they still are.
+    pub refused: Option<Refused>,
+}
+
+/// The commands a dialog's inputs make (or why they make none), its picks, and the design's
+/// revision (a parameter the commands name can change without changing them).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Refused {
+    commands: Result<Vec<(String, Value)>, String>,
+    picks: Vec<SelInput>,
+    revision: u64,
+}
+
+impl Refused {
+    fn now(app: &SolveApp, d: &Dialog) -> Refused {
+        Refused { commands: apply_commands(app, d), picks: d.inputs.clone(), revision: app.session.revision }
+    }
 }
 
 /// Can a selection go into an input that accepts `a`? (Planar-ness is checked when picking.)
@@ -310,6 +328,12 @@ fn fits(a: Accept, s: &Sel) -> bool {
 }
 
 impl Dialog {
+    /// Show why OK (or starting the sketch) was refused, for as long as the inputs stay as they are.
+    fn refuse(&mut self, app: &SolveApp, error: String) {
+        self.refused = Some(Refused::now(app, self));
+        self.error = Some(error);
+    }
+
     pub(crate) fn new(kind: Kind, inputs: Vec<SelInput>) -> Dialog {
         Dialog {
             kind,
@@ -321,6 +345,7 @@ impl Dialog {
             focus: true,
             collapsed: false,
             extra: serde_json::Map::new(),
+            refused: None,
         }
     }
 
@@ -479,7 +504,8 @@ impl Dialog {
                     .or_else(|| crate::dialogs_appearance::start(app, id))
                     .or_else(|| crate::dialogs_motion::start(app, id))
                     .or_else(|| crate::dialogs_parts::start(app, id))
-                    .or_else(|| crate::sketch_text::start(app, id))?;
+                    .or_else(|| crate::sketch_text::start(app, id))
+                    .or_else(|| crate::sketch_text_move::start(app, id))?;
                 Dialog::new(kind, inputs)
             }
         };
@@ -548,7 +574,8 @@ impl Dialog {
                 _ => None,
             });
         }
-        // With nothing pre-selected, a single profile in the sketch being used is taken.
+        // With nothing pre-selected, a single profile in the sketch being used is taken (#684:
+        // not one a feature already builds from).
         if matches!(d.kind, Kind::Extrude { .. } | Kind::Revolve { .. })
             && let Some(inp) = d.inputs.first_mut()
             && inp.items.is_empty()
@@ -761,14 +788,23 @@ impl Dialog {
     }
 }
 
-/// Profiles of the sketch a feature would use (active, else the last), when there is just one.
+/// Profiles of the sketch a feature would use, when there is just one: the active sketch's, else
+/// the last sketch's while no feature builds from it yet. A used profile (a cube's sketch on its
+/// bottom face) is only taken when it is picked.
 fn default_profiles(s: &Session) -> Vec<Sel> {
     let st = s.world_state();
-    let sid = s.active_sketch.or_else(|| s.doc.features.iter().rev().find(|f| matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| f.id));
+    let sid = s.active_sketch.or_else(|| {
+        s.doc.features.iter().rev().find(|f| matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| f.id).filter(|&id| !profiles_used(s, id))
+    });
     match sid.and_then(|id| st.sketch(id).map(|ss| (id, ss.profiles.len()))) {
         Some((id, 1)) => vec![Sel::Profile { sketch: id, index: 0 }],
         _ => Vec::new(),
     }
+}
+
+/// Does a feature build from this sketch's profiles (extrude, revolve, sweep, loft, emboss…)?
+fn profiles_used(s: &Session, sketch: u64) -> bool {
+    s.doc.features.iter().any(|f| f.kind.profile_sels().iter().any(|(id, _)| *id == sketch))
 }
 
 /// The plane of a planar body face: (point on it, unit normal).
@@ -899,6 +935,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::Motion(k) => k.title(),
         Kind::Part(_) => "INSERT PART",
         Kind::Text(_) => "EDIT TEXT",
+        Kind::TextMove(_) => "MOVE/COPY TEXT",
     }
 }
 
@@ -1320,9 +1357,29 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         return;
     }
     let _language = crate::i18n::scope(&app.preferences.language);
+    if let Kind::TextMove(k) = &d.kind
+        && !crate::sketch_text_move::valid(app, k)
+    {
+        return;
+    }
     auto_operation(app, &mut d);
     update_measure(app, &mut d);
     update_fill_cells(app, &mut d);
+    // A refused OK's error is about the inputs it ran with (#641). Once a value (in the dialog,
+    // or on the canvas, which the viewport applied earlier this frame), a pick or the design (a
+    // parameter the inputs use) changes, it gives way to what the inputs make now: their own
+    // error, or nothing and the live preview. `built`: whether they make commands, for OK below.
+    let mut built = None;
+    if d.error.is_some()
+        && let Some(was) = &d.refused
+    {
+        let now = Refused::now(app, &d);
+        built = Some(now.commands.is_ok());
+        if now != *was {
+            d.error = now.commands.as_ref().err().cloned();
+            d.refused = d.error.is_some().then_some(now);
+        }
+    }
     // Physical materials: the library's, then the design's own (material.create).
     let material_names = app.session.doc.material_names();
     let t = Tokens::get();
@@ -1347,7 +1404,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let horizontal_frame = frame.inner_margin.leftf() + frame.inner_margin.rightf() + 2.0 * frame.stroke.width;
     // OK is offered once the inputs make a feature.
     let has_ok = !matches!(d.kind, Kind::Sketch | Kind::Params { .. } | Kind::Measure { .. });
-    let valid = !has_ok || !d.previews() || (apply_commands(app, &d).is_ok() && app.preview.error.is_none());
+    let valid = !has_ok || !d.previews() || (built.unwrap_or_else(|| apply_commands(app, &d).is_ok()) && app.preview.error.is_none());
     let width = if wide { crate::frame::Width::Wide } else { crate::frame::Width::Normal };
     let wkey = egui::Id::new(("sc_dialog_w", wide));
     let response = crate::frame::docked(
@@ -1434,7 +1491,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                         look_at_sketch(app);
                                         cancel = true;
                                     }
-                                    Err(error) => d.error = Some(error),
+                                    Err(error) => d.refuse(app, error),
                                 }
                             }
                             ui.end_row();
@@ -2012,6 +2069,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     Kind::Motion(k) => enter |= crate::dialogs_motion::rows(app, ui, k, &mut d.inputs),
                     Kind::Part(k) => enter |= crate::dialogs_parts::rows(app, ui, k, &d.inputs),
                     Kind::Text(k) => enter |= crate::sketch_text::rows(ui, k),
+                    Kind::TextMove(k) => enter |= crate::sketch_text_move::rows(ui, k),
                     Kind::ConfirmDelete { with, fail, .. } => {
                         if !with.is_empty() {
                             row_label(ui, "Also deletes");
@@ -2106,7 +2164,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     {
         match start_sketch(app, &sel) {
             Ok(()) => cancel = true,
-            Err(error) => d.error = Some(error),
+            Err(error) => d.refuse(app, error),
         }
     }
     if ok {
@@ -2115,14 +2173,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 cancel = true;
                 applied = true;
             }
-            Err(e) => d.error = Some(e),
+            Err(e) => d.refuse(app, e),
         }
     }
     if !keep || cancel {
         crate::dialogs_motion::closed(app, &mut d, applied);
     }
     // The edited text's outlines are new curves: the old selection would name stale ids.
-    if applied && matches!(d.kind, Kind::Text(_)) {
+    if applied && matches!(d.kind, Kind::Text(_) | Kind::TextMove(_)) {
         let _ = app.session.execute("select.clear", &json!({}));
     }
     if keep && !cancel {
@@ -3018,6 +3076,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),
         Kind::Part(k) => return crate::dialogs_parts::commands(app, k, &d.inputs),
         Kind::Text(k) => return crate::sketch_text::commands(app, k),
+        Kind::TextMove(k) => return crate::sketch_text_move::commands(app, k),
     };
     let mut params = params;
     if let Value::Object(m) = &mut params {
@@ -3904,5 +3963,159 @@ mod param_refusal_tests {
         assert_eq!(app.session.doc.param(&name).map(|p| p.expr.clone()), before);
         assert!(app.status.as_ref().is_some_and(|(m, _, error)| *error && m.contains("Tri")), "{:?}", app.status);
         assert!(change_param(&mut app, &name, "41 mm").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod refused_ok_tests {
+    //! A refused OK's error lasts only as long as the inputs it was about (#641).
+
+    use super::*;
+    use crate::scenario::Harness;
+
+    fn steps(h: &mut Harness, steps: &[Value]) {
+        for s in steps {
+            h.step(s).unwrap();
+        }
+    }
+
+    /// A box, and a hole dialog with a position picked on its top.
+    fn hole_dialog() -> Harness {
+        let mut h = Harness::new();
+        steps(
+            &mut h,
+            &[
+                json!({"call": "engine.execute", "params": {"command": "solid.box", "params": {"length": 50, "width": 30, "height": 20}}}),
+                json!({"call": "ui.view", "params": {"view": "iso"}}),
+                json!({"start": "solid.hole"}),
+                json!({"click": {"world": [25, 15, 20]}}),
+            ],
+        );
+        h
+    }
+
+    fn set_depth(h: &mut Harness, depth: &str) {
+        steps(h, &[json!({"click": {"handle": "dialog:Depth"}}), json!({"key": "A", "cmd": true}), json!({"text": depth})]);
+    }
+
+    /// What the dialog shows in red once the live preview has finished: its own error, else the
+    /// preview's.
+    fn shown(h: &mut Harness) -> Option<String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while h.app.preview.busy {
+            assert!(std::time::Instant::now() < deadline, "the preview did not finish");
+            h.frames(1);
+        }
+        h.app.dialog.as_ref().and_then(|d| d.error.clone()).or_else(|| h.app.preview.error.clone())
+    }
+
+    fn refused(h: &mut Harness) {
+        set_depth(h, "-5");
+        steps(h, &[json!({"key": "Enter"})]);
+        assert_eq!(h.app.dialog.as_ref().and_then(|d| d.error.as_deref()), Some("hole depth must be positive"));
+    }
+
+    #[test]
+    fn the_error_stays_while_the_inputs_do() {
+        let mut h = hole_dialog();
+        refused(&mut h);
+        h.frames(10);
+        assert_eq!(shown(&mut h).as_deref(), Some("hole depth must be positive"));
+    }
+
+    #[test]
+    fn a_value_fixed_in_the_dialog_clears_it() {
+        let mut h = hole_dialog();
+        refused(&mut h);
+        set_depth(&mut h, "5");
+        h.frames(2);
+        assert_eq!(shown(&mut h), None);
+    }
+
+    /// The canvas value box and the arrows change the dialog before `show` runs in a frame.
+    #[test]
+    fn a_value_fixed_outside_the_dialog_clears_it() {
+        let mut h = hole_dialog();
+        refused(&mut h);
+        if let Some(Kind::Hole { depth, .. }) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            *depth = "5 mm".into();
+        }
+        h.frames(2);
+        assert_eq!(shown(&mut h), None);
+    }
+
+    #[test]
+    fn a_refusal_for_a_missing_pick_clears_once_it_is_picked() {
+        let mut h = Harness::new();
+        steps(
+            &mut h,
+            &[
+                json!({"call": "engine.execute", "params": {"command": "solid.box", "params": {"length": 50, "width": 30, "height": 20}}}),
+                json!({"call": "ui.view", "params": {"view": "iso"}}),
+                json!({"start": "solid.hole"}),
+                json!({"key": "Enter"}),
+            ],
+        );
+        let error = h.app.dialog.as_ref().and_then(|d| d.error.clone());
+        assert!(error.as_deref().is_some_and(|e| e.contains("first")), "{error:?}");
+        steps(&mut h, &[json!({"click": {"world": [25, 15, 20]}})]);
+        h.frames(2);
+        assert_eq!(shown(&mut h), None);
+    }
+
+    /// A parameter the depth names changes the design, not the dialog's commands.
+    #[test]
+    fn a_parameter_the_inputs_use_clears_it() {
+        let mut h = hole_dialog();
+        let add = json!({"command": "parameters.add", "params": {"name": "dep", "expression": "-5 mm"}});
+        steps(&mut h, &[json!({"call": "engine.execute", "params": add})]);
+        set_depth(&mut h, "dep");
+        steps(&mut h, &[json!({"key": "Enter"})]);
+        assert!(h.app.dialog.as_ref().and_then(|d| d.error.as_deref()).is_some_and(|e| e.contains("depth")));
+        let change = json!({"command": "parameters.change", "params": {"name": "dep", "expression": "5 mm"}});
+        steps(&mut h, &[json!({"call": "engine.execute", "params": change})]);
+        h.frames(2);
+        assert_eq!(shown(&mut h), None);
+    }
+
+    /// Picks changed some other way than a click (a box selection, a cleared chip) are seen too,
+    /// and the dialog then says what the inputs lack now.
+    #[test]
+    fn a_pick_changed_outside_the_dialog_shows_what_is_missing_now() {
+        let mut h = hole_dialog();
+        refused(&mut h);
+        if let Some(input) = h.app.dialog.as_mut().and_then(|d| d.inputs.first_mut()) {
+            input.items.clear();
+        }
+        h.frames(2);
+        let error = h.app.dialog.as_ref().and_then(|d| d.error.clone());
+        assert!(error.as_deref().is_some_and(|e| e.contains("first")), "{error:?}");
+    }
+
+    /// Editing an existing hole: the refusal clears, and OK then edits that hole.
+    #[test]
+    fn editing_a_hole_clears_it_and_keeps_the_feature() {
+        let mut h = Harness::new();
+        let hole = json!({"command": "solid.hole", "params": {"position": [25, 15, 20], "diameter": "5 mm", "depth": "10 mm", "name": "Bore"}});
+        steps(
+            &mut h,
+            &[
+                json!({"call": "engine.execute", "params": {"command": "solid.box", "params": {"length": 50, "width": 30, "height": 20}}}),
+                json!({"call": "engine.execute", "params": hole}),
+                json!({"call": "ui.view", "params": {"view": "iso"}}),
+                json!({"call": "ui.editFeature", "params": {"feature": "Bore"}}),
+            ],
+        );
+        let features = h.app.session.doc.features.len();
+        refused(&mut h);
+        assert!(h.app.dialog.as_ref().is_some_and(|d| d.editing.is_some()));
+        set_depth(&mut h, "5");
+        h.frames(2);
+        assert_eq!(shown(&mut h), None);
+        steps(&mut h, &[json!({"key": "Enter"})]);
+        assert!(h.app.dialog.is_none());
+        assert_eq!(h.app.session.doc.features.len(), features);
+        let bore = h.app.session.execute("timeline.inspect", &json!({"feature": "Bore"})).unwrap();
+        assert!(bore.to_string().contains("\"depth\":\"5\""), "{bore}");
     }
 }
