@@ -17,7 +17,7 @@
   "settings.reset_intro": "다음 설정은 이 컴퓨터에서 작동하지 않아 SolidCraft를 시작할 수 없게 하므로 변경되었습니다:",
   "settings.reset_title": "설정이 변경되었습니다",
   "sketch.degrees_of_freedom": "자유도 {count}개",
-  "sketch.draw_curves": "{linetype} 곡선 그리기",
+  "sketch.draw_curves": "{linetype}(으)로 그리기",
   "sketch.make_selection": "선택 항목을 {linetype}(으)로 변경",
   "ui.1_degree_of_freedom": "자유도 1개",
   "ui.3d_sketch": "3D 스케치",

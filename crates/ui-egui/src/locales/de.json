@@ -17,7 +17,7 @@
   "settings.reset_intro": "Diese Einstellungen funktionieren auf diesem Computer nicht und würden den Start von SolidCraft verhindern. Sie wurden daher geändert:",
   "settings.reset_title": "Einstellungen wurden geändert",
   "sketch.degrees_of_freedom": "{count} Freiheitsgrade",
-  "sketch.draw_curves": "{linetype}-Kurven zeichnen",
+  "sketch.draw_curves": "Als {linetype} zeichnen",
   "sketch.make_selection": "Auswahl als {linetype} markieren",
   "ui.1_degree_of_freedom": "1 Freiheitsgrad",
   "ui.3d_sketch": "3D-Skizze",

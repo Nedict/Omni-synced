@@ -17,7 +17,7 @@
   "settings.reset_intro": "次の設定はこのコンピューターでは使用できず、SolidCraft が起動できなくなるため変更されました:",
   "settings.reset_title": "設定が変更されました",
   "sketch.degrees_of_freedom": "自由度 {count}",
-  "sketch.draw_curves": "{linetype}の曲線を描く",
+  "sketch.draw_curves": "{linetype}として描く",
   "sketch.make_selection": "選択を{linetype}にする",
   "ui.1_degree_of_freedom": "自由度 1",
   "ui.3d_sketch": "3D スケッチ",
