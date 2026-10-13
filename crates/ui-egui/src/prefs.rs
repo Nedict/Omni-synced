@@ -1,6 +1,6 @@
 //! Preferences, one dialog in the spirit of Fusion's, opened from the gear at the top right of the
 //! window, File › Preferences or Ctrl+, (Cmd+, on macOS): General (theme, UI scale, units of new
-//! designs, autosave, display precision, the agent cursor), Navigation (mouse presets, zoom
+//! designs, autosave, display precision, timeline layout, the agent cursor), Navigation (mouse presets, zoom
 //! direction, zoom to the cursor, orbit centre, Look At animation), Keyboard Shortcuts (search,
 //! rebind, conflicts; `keymap`), Design (default modelling orientation, Y up or Z up), Graphics
 //! (visual style, grid, shadow, perspective, anti-aliasing), Sketch and Selection. Changes apply
@@ -223,6 +223,13 @@ pub struct Prefs {
     pub language: String,
     /// Interface scale (1 = 100 %).
     pub ui_scale: f32,
+    /// Put the feature history above the parts browser in the left sidebar instead of along the
+    /// bottom of the viewport.
+    pub timeline_left: bool,
+    /// Height of the feature-history section when it shares the left sidebar with the browser.
+    pub timeline_left_height: f32,
+    /// Whether the browser below the left feature history is collapsed.
+    pub timeline_left_browser_collapsed: bool,
     /// The wheel zooms toward the point under the cursor (else toward the view's centre).
     pub zoom_to_cursor: bool,
     /// Spread discrete wheel input across frames (off: apply each event immediately).
@@ -285,6 +292,9 @@ impl Default for Prefs {
             theme: "dark".into(),
             language: "en".into(),
             ui_scale: 1.0,
+            timeline_left: false,
+            timeline_left_height: 360.0,
+            timeline_left_browser_collapsed: false,
             zoom_to_cursor: true,
             smooth_wheel_zoom: true,
             trackpad_pan: true,
@@ -376,6 +386,9 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.theme = d.theme;
             p.language = d.language;
             p.ui_scale = d.ui_scale;
+            p.timeline_left = d.timeline_left;
+            p.timeline_left_height = d.timeline_left_height;
+            p.timeline_left_browser_collapsed = d.timeline_left_browser_collapsed;
             p.default_units = d.default_units;
             p.length_decimals = d.length_decimals;
             p.angle_decimals = d.angle_decimals;
@@ -847,6 +860,13 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             );
             crate::scenario::publish_rect("prefs:scale", scale.rect);
             ui.end_row();
+            ui.label("Feature history");
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut app.preferences.timeline_left, false, "Bottom timeline");
+                ui.radio_value(&mut app.preferences.timeline_left, true, "Left sidebar");
+            });
+            ui.end_row();
+            note(ui, "The left layout shows the rollback bar above the parts and scene browser.");
             ui.label(app.tr("ui.units_of_new_designs"));
             egui::ComboBox::from_id_salt("pref_units").selected_text(app.preferences.default_units.clone()).show_ui(ui, |ui| {
                 for u in UNITS {
@@ -1408,8 +1428,11 @@ mod tests {
         assert_eq!(app.tr("ui.extrude"), "Extrude");
 
         // Switch language to Japanese
-        set(&mut app, &json!({"language": "ja"})).unwrap();
+        set(&mut app, &json!({"language": "ja", "timeline_left": true})).unwrap();
+        app.preferences.timeline_left_height = 275.0;
+        app.preferences.timeline_left_browser_collapsed = true;
         assert_eq!(app.preferences.language, "ja");
+        assert!(app.preferences.timeline_left);
         assert_eq!(app.tr("ui.preferences"), "環境設定");
         assert_eq!(app.tr("ui.extrude"), "押し出し");
 
@@ -1417,6 +1440,9 @@ mod tests {
         let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         other.load_prefs(&app.prefs());
         assert_eq!(other.preferences.language, "ja");
+        assert!(other.preferences.timeline_left);
+        assert_eq!(other.preferences.timeline_left_height, 275.0);
+        assert!(other.preferences.timeline_left_browser_collapsed);
         assert_eq!(other.tr("ui.preferences"), "環境設定");
     }
 

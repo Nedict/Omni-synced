@@ -97,6 +97,14 @@ fixes below (sound face pushes, no panics in the boolean's final assembly).
 
 ### Fixed
 
+- Back-to-back contact joins preserve intentional Split Face boundaries, including on
+  faces away from the contact. The glue pass retains their lines during healing and in
+  the resulting body for subsequent operations. Partial circular-contact regressions
+  cover offsets, rotation, operand order, volume, area and history; the seed-16 pattern
+  also runs in the ordinary engine suite with analytic volume and area checks.
+  Imprinting visits a shared analytic support only once: the two side faces of a
+  cylinder must not recut the same outline into redundant arcs.
+
 - **Shell corners where a curved face meets another at an angle** (the biggest cause, 215 of
   the 363 failed designs before). Moving a vertex took one linear step, exact only for planes;
   a cylinder meeting a plane at an angle (a shallow arc side) landed off the moved surface.

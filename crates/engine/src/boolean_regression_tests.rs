@@ -5,6 +5,35 @@ use serde_json::{Value, json};
 
 use crate::Session;
 
+/// Runs in PR CI as well as the heavier fixed-seed suite. Two pattern copies are
+/// disconnected, and one cylinder overlaps the block by half its volume.
+#[test]
+fn partial_face_contact_pattern_has_analytic_material() {
+    // Repeated construction exposes re-imprinting a cylinder through both of its
+    // side faces, which can create a redundant arc along the first imprint.
+    for _ in 0..8 {
+        check_partial_face_contact_pattern();
+    }
+}
+
+fn check_partial_face_contact_pattern() {
+    let s = replay(include_str!("../../../examples/regressions/partial_face_contact_pattern.json"));
+    let (mut volume, mut area, mut shells) = (0.0, 0.0, 0);
+    for b in &s.model.state().bodies {
+        assert!(b.body.validity().is_empty(), "{:?}", b.body.validity());
+        let m = b.body.tessellate(1e-5).unwrap().measure();
+        volume += m.volume;
+        area += m.area;
+        shells += b.body.shell_count();
+    }
+    let expected_volume = 25.0 * 47.5 * 37.5 + 3.5 * std::f64::consts::PI * 25.0 * 2.5;
+    let expected_area = 2.0 * (25.0 * 47.5 + 25.0 * 37.5 + 47.5 * 37.5) + 237.5 * std::f64::consts::PI - 25.0;
+    assert!((volume - expected_volume).abs() < 0.02, "{volume} expected {expected_volume}");
+    assert!((area - expected_area).abs() < 0.02, "{area} expected {expected_area}");
+    assert_eq!(shells, 3);
+    println!("#674 volume {volume:.6} / {expected_volume:.6} mm³; area {area:.6} / {expected_area:.6} mm²; {shells} shells");
+}
+
 fn replay(script: &str) -> Session {
     let mut s = Session::default();
     let script: Value = serde_json::from_str(script).unwrap();

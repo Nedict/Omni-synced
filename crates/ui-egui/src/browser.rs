@@ -56,6 +56,10 @@ pub struct TreeState {
     pub picked_components: Vec<u64>,
     /// Canvases picked in the tree.
     pub picked_canvases: Vec<u64>,
+    /// Folders picked in the feature history (features use the engine selection).
+    pub picked_timeline_groups: Vec<u64>,
+    /// Last feature-history item clicked, for Shift ranges (`f:<id>` or `g:<id>`).
+    pub timeline_anchor: Option<String>,
     /// The Edit Canvas / Calibrate panel.
     pub canvas_panel: Option<CanvasPanel>,
     /// What waits for the Capture Position question: a command id, or [`SAVE`].
@@ -497,6 +501,15 @@ struct Actions {
 }
 
 pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
+    browser_panel(app, ui, false);
+}
+
+/// The left-sidebar layout: feature history first, parts and scene browser below it.
+pub fn browser_below_timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
+    browser_panel(app, ui, true);
+}
+
+fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
     let t = Tokens::get();
     app.tree.order.clear();
     DRAWN.with(|d| d.borrow_mut().clear());
@@ -507,16 +520,66 @@ pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
         .resizable(false)
         .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(6, 6)))
         .show(ui, |ui| {
-            ui.label(RichText::new(crate::i18n::tr_label("BROWSER")).size(11.0).strong().color(t.text_dim));
-            ui.add_space(4.0);
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .scroll_source(egui::scroll_area::ScrollSource { scroll_bar: true, mouse_wheel: true, ..egui::scroll_area::ScrollSource::NONE })
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    component_rows(app, ui, 0, 0, &mut acts);
+            if timeline_above {
+                let available = ui.available_height();
+                let browser_collapsed = app.preferences.timeline_left_browser_collapsed;
+                let max_timeline_height = (available - if browser_collapsed { 30.0 } else { 130.0 }).max(150.0);
+                let remembered = app.preferences.timeline_left_height;
+                let timeline_height =
+                    if remembered.is_finite() { remembered.clamp(150.0, max_timeline_height) } else { 360.0_f32.clamp(150.0, max_timeline_height) };
+                ui.allocate_ui_with_layout(vec2(ui.available_width(), timeline_height), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    crate::timeline_left::left_timeline(app, ui)
                 });
+                if !browser_collapsed {
+                    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 8.0), egui::Sense::hover());
+                    let response = ui
+                        .interact(rect, egui::Id::new("left_history_divider"), egui::Sense::drag())
+                        .on_hover_cursor(egui::CursorIcon::ResizeVertical);
+                    if response.dragged() {
+                        let delta = ui.input(|input| input.pointer.delta().y);
+                        if delta.is_finite() {
+                            app.preferences.timeline_left_height = (timeline_height + delta).clamp(150.0, max_timeline_height);
+                        }
+                    }
+                    ui.painter().hline(rect.x_range(), rect.center().y, egui::Stroke::new(1.0, t.border));
+                    crate::scenario::publish_handle("left-history-divider", rect.center());
+                }
+                let arrow = if browser_collapsed { "▶" } else { "▼" };
+                let response =
+                    ui.add(egui::Button::new(RichText::new(format!("{arrow}  BROWSER")).size(11.0).strong().color(t.text_dim)).frame(false));
+                crate::scenario::publish_handle("left-browser-toggle", response.rect.center());
+                if response.clicked() {
+                    app.preferences.timeline_left_browser_collapsed = !browser_collapsed;
+                }
+                if !browser_collapsed {
+                    ui.add_space(4.0);
+                    browser_rows(app, ui, &mut acts);
+                }
+            } else {
+                browser_contents(app, ui, &mut acts);
+            }
         });
+    finish_browser(app, ui, acts);
+}
+
+fn browser_contents(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
+    let t = Tokens::get();
+    ui.label(RichText::new(crate::i18n::tr_label("BROWSER")).size(11.0).strong().color(t.text_dim));
+    ui.add_space(4.0);
+    browser_rows(app, ui, acts);
+}
+
+fn browser_rows(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .scroll_source(egui::scroll_area::ScrollSource { scroll_bar: true, mouse_wheel: true, ..egui::scroll_area::ScrollSource::NONE })
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            component_rows(app, ui, 0, 0, acts);
+        });
+}
+
+fn finish_browser(app: &mut SolveApp, ui: &mut egui::Ui, acts: Actions) {
     app.viewport.hover_bodies = acts.hover_bodies;
     if let Some(d) = acts.drop {
         apply_drop(app, d);

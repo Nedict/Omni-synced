@@ -175,6 +175,7 @@ pub enum RenameWhat {
     Feature(u64),
     Component(u64),
     Group(u64),
+    TimelineGroup(u64),
     Canvas(u64),
     View(String),
     Joint(u64),
@@ -185,7 +186,7 @@ pub struct Rename {
     pub what: RenameWhat,
     pub text: String,
     pub at: Pos2,
-    focused: bool,
+    pub(crate) focused: bool,
 }
 
 /// Radial slots, clockwise from the top.
@@ -1137,6 +1138,7 @@ pub fn start_rename(app: &mut SolveApp, what: RenameWhat, at: Pos2) {
         RenameWhat::Component(0) => doc.name.clone(),
         RenameWhat::Component(c) => doc.components.iter().find(|x| x.id == *c).map(|x| x.name.clone()).unwrap_or_default(),
         RenameWhat::Group(g) => crate::browser::group_name(app, *g).unwrap_or_default(),
+        RenameWhat::TimelineGroup(g) => doc.timeline_groups.iter().find(|group| group.id == *g).map(|group| group.name.clone()).unwrap_or_default(),
         RenameWhat::Canvas(c) => doc.canvases.iter().find(|x| x.id == *c).map(|x| x.name.clone()).unwrap_or_default(),
         RenameWhat::View(v) => v.clone(),
         RenameWhat::Joint(j) => doc.assembly.joints.iter().find(|x| x.id == *j).map(|x| x.name.clone()).unwrap_or_default(),
@@ -1144,7 +1146,7 @@ pub fn start_rename(app: &mut SolveApp, what: RenameWhat, at: Pos2) {
     app.menu.rename = Some(Rename { what, text, at, focused: false });
 }
 
-fn commit_rename(app: &mut SolveApp, r: &Rename) {
+pub(crate) fn commit_rename(app: &mut SolveApp, r: &Rename) {
     let name = r.text.trim().to_string();
     if name.is_empty() {
         return;
@@ -1162,6 +1164,7 @@ fn commit_rename(app: &mut SolveApp, r: &Rename) {
         RenameWhat::Feature(f) => drop(app.run("timeline.rename", json!({ "feature": f, "name": name }))),
         RenameWhat::Component(c) => drop(app.run("component.rename", json!({ "component": c, "name": name }))),
         RenameWhat::Group(g) => crate::browser::group_action(app, "ui.renameGroup", &json!({ "group": g, "name": name })),
+        RenameWhat::TimelineGroup(g) => drop(app.run("timeline.rename_group", json!({ "group": g, "name": name }))),
         RenameWhat::Canvas(c) => drop(app.run("canvas.edit", json!({ "canvas": c, "name": name }))),
         RenameWhat::View(v) => drop(app.run("view.rename", json!({ "view": v, "name": name }))),
         RenameWhat::Joint(j) => drop(app.run("joint.edit", json!({ "joint": j, "name": name }))),
@@ -1567,6 +1570,11 @@ pub fn list_row_lit(ui: &mut egui::Ui, item: &Item, lit: bool) -> Option<Item> {
 }
 
 fn show_rename(app: &mut SolveApp, ctx: &egui::Context) {
+    // Feature-history folders own their editor inside the row. Keep the shared rename state so
+    // automation and keyboard handling still use the same path, but do not draw the floating box.
+    if app.preferences.timeline_left && matches!(app.menu.rename.as_ref().map(|rename| &rename.what), Some(RenameWhat::TimelineGroup(_))) {
+        return;
+    }
     let Some(mut r) = app.menu.rename.take() else { return };
     let t = Tokens::get();
     let mut done: Option<bool> = None;

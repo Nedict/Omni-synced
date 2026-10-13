@@ -59,6 +59,8 @@ design unchanged. Projected geometry remains protected from ordinary dragging.
 
 **Project** (P) and **Intersect** bring model edges into the sketch as linked geometry that
 follows later changes. Sketching on a face projects its edges automatically.
+A projected edge stays the edge that was picked, wherever a later change moves it; when that
+edge no longer exists, the projection keeps its last shape and the sketch says it was lost.
 For Project, select visible source curves or points from another sketch, model edges,
 faces, vertices or bodies, or axes and planes, then press P. The entire supported selection
 is projected in one undo step. A rejected projection keeps the selection for correction;
