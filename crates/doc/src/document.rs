@@ -485,7 +485,7 @@ pub enum FeatureKind {
         depth: Option<String>,
         #[serde(default)]
         hole: HoleKind,
-        /// Drill at these sketch points instead (one hole each, perpendicular to the sketch);
+        /// Drill at these sketch points instead (one hole each, perpendicular to the sketch, into the material: against the sketch normal, or along it when only that side has material);
         /// the holes follow the points when the sketch changes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         points: Option<SketchPoints>,

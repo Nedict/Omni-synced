@@ -1922,6 +1922,39 @@ pub(crate) fn revolve_axis(ss: &SolvedSketch, axis: &AxisRef) -> Result<(Vec2, V
     }
 }
 
+/// Whether a drill from `p` along `d` reaches material: it starts into a body (`touches`), or,
+/// when `ahead` is set, a body lies further along `d`. A spot exactly on a surface counts only
+/// when the drill enters there, not when it leaves.
+fn hole_reaches(st: &ModelState, p: Vec3, d: Vec3, ahead: bool) -> bool {
+    let size = st.bodies.iter().map(|b| b.body.size()).fold(1.0, f64::max);
+    let eps = size * 1e-6;
+    let q = p + d * eps;
+    st.bodies.iter().any(|b| {
+        let m = b.mesh();
+        m.contains(q) || (ahead && m.raycast(q, d).is_some())
+    })
+}
+
+/// The side hole centres on a sketch drill to: into the material, whichever way the sketch plane
+/// faces. Material that touches a spot (the drill starts in it) wins over material further away,
+/// so a sketch on a plate's face drills that plate rather than one across an air gap: `-n` (away
+/// from the plane's normal) if any spot touches material that way, else `+n` if any spot touches
+/// material that way. With no touching on either side it goes by the nearest body ahead: `-n` if
+/// any spot has a body ahead that way, else `+n` if any has, else `-n`.
+fn sketch_hole_dir(st: &ModelState, spots: &[Vec3], n: Vec3) -> Vec3 {
+    let down = -n;
+    let any = |d: Vec3, ahead: bool| spots.iter().any(|p| hole_reaches(st, *p, d, ahead));
+    if any(down, false) {
+        down
+    } else if any(n, false) {
+        n
+    } else if any(down, true) || !any(n, true) {
+        down
+    } else {
+        n
+    }
+}
+
 /// Where a hole feature drills (each on the surface) and in which direction: at its sketch
 /// points perpendicular to the sketch (into the material), else at its position.
 fn hole_spots(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
@@ -1934,7 +1967,8 @@ fn hole_spots(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
                 let p = ss.sketch.points.iter().find(|p| &p.id == id).ok_or_else(|| DocError::Unknown(format!("sketch point `{id}`")))?;
                 v.push(ss.plane.to_world(p.pos));
             }
-            (v, -ss.plane.normal())
+            let dir = sketch_hole_dir(st, &v, ss.plane.normal());
+            (v, dir)
         }
         None => (vec![*position], direction.normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?),
     };
@@ -1974,7 +2008,8 @@ fn hole_spots_raw(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
             let ss = st.sketch(sp.sketch).ok_or_else(|| DocError::Unknown(format!("sketch {}", sp.sketch)))?;
             let v: Vec<Vec3> =
                 sp.ids.iter().filter_map(|id| ss.sketch.points.iter().find(|p| &p.id == id)).map(|p| ss.plane.to_world(p.pos)).take(10_000).collect();
-            Ok((v, -ss.plane.normal()))
+            let dir = sketch_hole_dir(st, &v, ss.plane.normal());
+            Ok((v, dir))
         }
         None => Ok((vec![*position], direction.normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?)),
     }
