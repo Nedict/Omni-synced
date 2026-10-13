@@ -1,5 +1,8 @@
 //! Documents and files: new, open (designs and STEP), insert STEP, save, export.
 
+#[path = "file_thumbnail.rs"]
+mod thumbnail;
+
 use serde_json::{Value, json};
 use solidcraft_doc::Document;
 use solidcraft_io::Format;
@@ -42,7 +45,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("file.export", "Export", export)
         .icon("export")
         .noundo()
-        .params("path; format?: stl|stla|obj|step|3mf|json (default from extension); bodies?: [names] (JSON exports the complete design)"),
+        .params("path; format?: stl|stla|obj|step|3mf|3mf-tagged|json (default from extension; 3mf-tagged: 3MF whose triangles carry their B-rep face, at full precision, for meshing and analysis tools; docs/formats/3mf-face-tags.md); bodies?: [names] (JSON exports the complete design)"),
     CommandSpec::new("file.save_mesh", "Save As Mesh", save_stl).icon("export").noundo().params("path; bodies?: [names]; ascii?: bool"),
 ];
 
@@ -167,6 +170,7 @@ fn rename_design(s: &mut Session, from: &str, to: &str) {
 }
 
 fn write(s: &mut Session, path: &str, format: &str, compression: &str, preview: bool, cache: bool) -> Result<Value> {
+    solidcraft_io::vfs::check(path).map_err(|e| EngineError::Other(e.to_string()))?;
     // Saving an unnamed design names it after its file (not an undoable edit).
     let renamed = default_name_for(&s.doc.name, path).map(|stem| (s.doc.name.clone(), stem));
     if let Some((from, to)) = &renamed {
@@ -187,9 +191,29 @@ fn write_file(s: &mut Session, path: &str, format: &str, compression: &str, prev
         "compact" => solidcraft_io::DesignCompression::Compact,
         _ => return Err(bad("file.save", "compression must be fast or compact")),
     };
+    // Linked designs are kept relative to the folder the design is saved in.
+    let links = super::component_link::rebased(&s.doc, s.path.as_deref(), path);
+    let old_links = (links != s.doc.links).then(|| std::mem::replace(&mut s.doc_mut().links, links));
+    let r = write_bytes(s, path, format, compression, preview, cache);
+    if r.is_err()
+        && let Some(old) = old_links
+    {
+        s.doc_mut().links = old;
+    }
+    r
+}
+
+fn write_bytes(
+    s: &mut Session,
+    path: &str,
+    format: &str,
+    compression: solidcraft_io::DesignCompression,
+    preview: bool,
+    cache: bool,
+) -> Result<Value> {
     let bytes = match format {
         "container" => s.design_container(compression, preview, cache)?,
-        "json" => solidcraft_io::write_design(&s.doc),
+        "json" => solidcraft_io::write_design(&s.design()),
         _ => return Err(bad("file.save", "format must be container or json")),
     };
     // Atomic, keeping the version being replaced as `<file>.bak`.
@@ -205,7 +229,8 @@ impl Session {
     pub fn design_container(&self, compression: solidcraft_io::DesignCompression, preview: bool, cache: bool) -> solidcraft_io::Result<Vec<u8>> {
         let geometry = cache.then(|| saved_geometry(self)).flatten();
         let preview = preview.then(|| saved_preview(self)).flatten();
-        solidcraft_io::write_design_container_with_cache(&self.doc, compression, preview.as_ref(), geometry.as_deref())
+        let thumbnail = cache.then(|| thumbnail::saved(self)).flatten();
+        solidcraft_io::write_design_container_with_thumbnail(&self.design(), compression, preview.as_ref(), geometry.as_deref(), thumbnail.as_deref())
     }
 }
 
@@ -289,7 +314,7 @@ fn export_to(s: &Session, path: &str, format: Format, bodies: &[String]) -> Resu
         if !bodies.is_empty() {
             return Err(bad("file.export", "design JSON exports the complete document; omit bodies"));
         }
-        solidcraft_io::write_design(&s.doc)
+        solidcraft_io::write_design(&s.design())
     } else if format == Format::Step && bodies.is_empty() && !s.doc.occurrences.is_empty() {
         solidcraft_io::step_assembly(&s.doc, &s.doc.painted(&s.model.state()), &name)?
     } else {
@@ -313,10 +338,13 @@ fn save_stl(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn recovery_dir(p: &Value, cmd: &str) -> Result<std::path::PathBuf> {
-    match str_(p, "dir").filter(|d| !d.trim().is_empty() && d.len() < 4096) {
-        Some(d) => Ok(d.into()),
-        None => crate::recovery::default_dir().ok_or_else(|| bad(cmd, "no recovery folder on this system (give `dir`)")),
-    }
+    let dir = match str_(p, "dir").filter(|d| !d.trim().is_empty() && d.len() < 4096) {
+        Some(d) => d.into(),
+        None => crate::recovery::default_dir().ok_or_else(|| bad(cmd, "no recovery folder on this system (give `dir`)"))?,
+    };
+    // An agent's commands reach the recovery folder only when it is one of their folders.
+    solidcraft_io::vfs::check(&dir.to_string_lossy()).map_err(|e| EngineError::Other(e.to_string()))?;
+    Ok(dir)
 }
 
 fn recovery_list(_s: &mut Session, p: &Value) -> Result<Value> {
@@ -336,7 +364,7 @@ fn recover(s: &mut Session, p: &Value) -> Result<Value> {
     s.path = entry.path.clone();
     s.mark_unsaved();
     if bool_(p, "discard").unwrap_or(false) {
-        crate::recovery::remove(&dir, id);
+        crate::recovery::remove(&dir, id)?;
     }
     let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
     Ok(json!({"id": id, "path": entry.path, "name": entry.name, "features": s.doc.features.len(), "errors": errors}))
@@ -351,7 +379,7 @@ fn recovery_discard(_s: &mut Session, p: &Value) -> Result<Value> {
         vec![str_(p, "id").ok_or_else(|| bad(cmd, "`id` or `all` is required"))?.to_string()]
     };
     for id in &ids {
-        crate::recovery::remove(&dir, id);
+        crate::recovery::remove(&dir, id)?;
     }
     Ok(json!({"discarded": ids}))
 }
@@ -507,6 +535,7 @@ mod tests {
                 session.execute(command, &params).unwrap();
                 let bytes = std::fs::read(&path).unwrap();
                 assert_eq!(solidcraft_io::read_design_geometry(&bytes).is_some(), cache == Some(true), "{command}: {cache:?}");
+                assert_eq!(solidcraft_io::read_design_thumbnail(&bytes).is_some(), cache == Some(true), "{command}: {cache:?}");
                 assert!(
                     !bytes.windows(b"cache/preview.bin".len()).any(|entry| entry == b"cache/preview.bin"),
                     "display meshes require preview: true"
@@ -705,6 +734,35 @@ mod tests {
         assert_eq!(std::fs::read(&packaged).unwrap(), before);
         session.execute("file.save", &json!({"path":packaged,"format":"json"})).unwrap();
         assert!(std::fs::read_to_string(&packaged).unwrap().contains("solidcraft/"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A watched open reports the timeline's progress; cancelled, it skips the rebuild.
+    #[test]
+    fn watched_open_reports_progress_and_stops_when_cancelled() {
+        use solidcraft_doc::progress::{Progress, watch};
+        use std::sync::Arc;
+        let dir = std::env::temp_dir().join(format!("solidcraft-watched-open-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("three.solidcraft").to_string_lossy().to_string();
+        let mut s = Session::default();
+        for x in [0, 20, 40] {
+            s.execute("solid.box", &json!({"length":10,"width":10,"height":10,"corner":[x,0,0]})).unwrap();
+        }
+        s.execute("file.save", &json!({"path":path})).unwrap();
+
+        let progress = Arc::new(Progress::default());
+        let mut opened = Session::default();
+        watch(progress.clone(), || opened.execute("doc.open", &json!({"path":path}))).unwrap();
+        assert_eq!(progress.features(), (3, 3));
+        assert_eq!(opened.world_state().bodies.len(), 3);
+
+        let progress = Arc::new(Progress::default());
+        progress.cancel();
+        let mut stopped = Session::default();
+        watch(progress, || stopped.execute("doc.open", &json!({"path":path}))).unwrap();
+        assert!(stopped.model.results.iter().all(|r| r.skipped), "no feature was rebuilt after Cancel");
+        assert!(stopped.world_state().bodies.is_empty());
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

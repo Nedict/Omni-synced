@@ -47,6 +47,10 @@ const SLOW: [&str; 7] = [
 const EDIT_SAMPLE: u64 = 6;
 /// An action that takes longer than this is recorded as a timeout.
 const ACTION_TIMEOUT: Duration = Duration::from_secs(90);
+/// Building a design and listing its actions, before the first one runs: the biggest designs
+/// (oracle 41's tube with radial holes, about 25 s here) take several times that on a loaded CI
+/// runner, and a design that never loads loses all its actions, not one.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(300);
 /// Caps per body, so one large imported or patterned body cannot dominate the run.
 const MAX_FACES: usize = 120;
 const MAX_EDGES: usize = 240;
@@ -725,7 +729,9 @@ fn run_design(design: &str, out: &Path, sample: u64) -> Vec<Value> {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        let mut seen = 0usize;
+        // Until the child writes, it is loading the design (again, after a restart).
+        let loaded_at = std::fs::metadata(out).map(|m| m.len() as usize).unwrap_or(0);
+        let mut seen = loaded_at;
         let mut last_change = Instant::now();
         let (status, timed_out) = loop {
             if let Some(status) = child.try_wait().unwrap() {
@@ -735,7 +741,7 @@ fn run_design(design: &str, out: &Path, sample: u64) -> Vec<Value> {
             if n != seen {
                 seen = n;
                 last_change = Instant::now();
-            } else if last_change.elapsed() > ACTION_TIMEOUT {
+            } else if last_change.elapsed() > if seen == loaded_at { LOAD_TIMEOUT } else { ACTION_TIMEOUT } {
                 let _ = child.kill();
                 let _ = child.wait();
                 break (None, true);
@@ -980,7 +986,6 @@ fn rectangle(plane: Value, p0: [f64; 2], p1: [f64; 2]) -> [Value; 3] {
 }
 
 #[test]
-#[ignore = "fails until #556 is fixed"]
 fn a_fillet_or_chamfer_on_one_edge_ending_at_a_cylinder() {
     for (cmd, size) in [("solid.fillet", "radius"), ("solid.chamfer", "distance")] {
         reproduces(
@@ -995,7 +1000,6 @@ fn a_fillet_or_chamfer_on_one_edge_ending_at_a_cylinder() {
 }
 
 #[test]
-#[ignore = "fails until #557 is fixed"]
 fn a_sketch_on_a_patterned_boss_top() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 20.]).into();
     c.extend([
@@ -1036,7 +1040,6 @@ fn construction_geometry_and_holes_on_a_moved_component() {
 }
 
 #[test]
-#[ignore = "fails until #559 is fixed"]
 fn a_through_hole_into_a_shelled_box_rim() {
     reproduces(
         None,
@@ -1049,7 +1052,6 @@ fn a_through_hole_into_a_shelled_box_rim() {
 }
 
 #[test]
-#[ignore = "fails until #560 is fixed"]
 fn a_hole_through_a_sheet_metal_base() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 40.]).into();
     c.extend([
@@ -1060,7 +1062,6 @@ fn a_hole_through_a_sheet_metal_base() {
 }
 
 #[test]
-#[ignore = "fails until #561 is fixed"]
 fn sketches_on_loft_and_sweep_faces() {
     let mut loft: Vec<Value> = rectangle(json!("XY"), [-20., -20.], [20., 20.]).into();
     loft.extend([
@@ -1099,7 +1100,6 @@ fn press_pull_on_the_pi_case_floor() {
 }
 
 #[test]
-#[ignore = "fails until #563 is fixed"]
 fn sketches_after_a_draft_and_on_a_tapered_extrude() {
     reproduces(
         None,
@@ -1120,7 +1120,6 @@ fn sketches_after_a_draft_and_on_a_tapered_extrude() {
 }
 
 #[test]
-#[ignore = "fails until #564 is fixed"]
 fn a_sketch_on_the_rim_a_shell_leaves() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [-35., -25.], [35., 25.]).into();
     c.extend([
@@ -1176,8 +1175,36 @@ fn a_shell_of_a_swept_bar() {
     );
 }
 
+/// The construction a drill-tip script ends with.
+struct TipConstruction(solidcraft_engine::doc::construct::ConstructGeom);
+
+impl TipConstruction {
+    fn axis(&self) -> (Vec3, Vec3) {
+        match &self.0 {
+            solidcraft_engine::doc::construct::ConstructGeom::Axis { origin, dir } => (*origin, *dir),
+            other => panic!("expected an axis, got {other:?}"),
+        }
+    }
+    fn plane(&self) -> solidcraft_engine::geom::Plane {
+        match &self.0 {
+            solidcraft_engine::doc::construct::ConstructGeom::Plane(p) => *p,
+            other => panic!("expected a plane, got {other:?}"),
+        }
+    }
+}
+
+/// Replays the script and returns its last construction.
+fn drill_tip_construction(commands: Vec<Value>) -> TipConstruction {
+    let mut s = Session::default();
+    for c in &commands {
+        let id = c["command"].as_str().unwrap();
+        s.execute(id, &c["params"]).unwrap_or_else(|e| panic!("{id}: {e}"));
+    }
+    let state = s.model.state();
+    TipConstruction(state.construct.last().map(|c| c.geom.clone()).expect("a construction"))
+}
+
 #[test]
-#[ignore = "fails until #567 is fixed"]
 fn an_axis_through_a_drill_tip() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 40.]).into();
     c.extend([
@@ -1185,7 +1212,30 @@ fn an_axis_through_a_drill_tip() {
         json!({"command": "solid.hole", "params": {"position": [50, 20, 15], "direction": [0, 0, -1], "diameter": 6, "depth": 10, "tip_angle": 118}}),
         json!({"command": "construct.axis.through_cylinder", "params": {"face": {"face": [48.44468907075447, 21.22448979591836, 4.399139380972439]}}}),
     ]);
-    reproduces(None, Value::Array(c));
+    reproduces(None, Value::Array(c.clone()));
+    // Not just "no error": the axis runs along the drill, through the hole's centre line.
+    let (origin, dir) = drill_tip_construction(c).axis();
+    assert!((origin.x - 50.).abs() < 1e-6 && (origin.y - 20.).abs() < 1e-6, "{origin:?}");
+    assert!(dir.z.abs() > 1. - 1e-9, "{dir:?}");
+}
+
+#[test]
+fn a_tangent_plane_on_a_drill_tip() {
+    let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 40.]).into();
+    c.extend([
+        json!({"command": "solid.extrude", "params": {"distance": 15}}),
+        json!({"command": "solid.hole", "params": {"position": [50, 20, 15], "direction": [0, 0, -1], "diameter": 6, "depth": 10, "tip_angle": 118}}),
+        json!({"command": "construct.plane.tangent", "params": {"face": {"face": [48.44468907075447, 21.22448979591836, 4.399139380972439]}}}),
+    ]);
+    reproduces(None, Value::Array(c.clone()));
+    // The plane touches the cone at the picked point and leans like the cone does: a 118 degree tip
+    // puts the wall 59 degrees off the drill axis, so its normal is 31 degrees off it.
+    let plane = drill_tip_construction(c).plane();
+    let picked = Vec3::new(48.44468907075447, 21.22448979591836, 4.399139380972439);
+    let distance = (picked - plane.origin).dot(plane.normal());
+    // The pick lies on the tessellated cone and the plane is the exact one, so allow for chord error.
+    assert!(distance.abs() < 0.05, "the pick is {distance} mm off the plane");
+    assert!((plane.normal().z.abs() - 31f64.to_radians().cos()).abs() < 1e-2, "{:?}", plane.normal());
 }
 
 #[test]
@@ -1201,4 +1251,31 @@ fn a_plane_on_a_patterned_counterbore_after_a_thickness_change() {
         json!({"command": "parameters.change", "params": {"name": "thick", "expression": "11 mm"}}),
     ]);
     reproduces(None, Value::Array(c));
+}
+
+/// #707: the same design builds the same body every time, in one process too. Faces were put in
+/// the hash order of their addresses in a few places (truck's connected components, the planar
+/// boolean's rebuild, healing's merges), so a later boolean on the ribbed lid passed or failed
+/// from run to run.
+#[test]
+fn the_ribbed_lid_builds_the_same_body_every_time() {
+    let path = root().join("examples/regressions/lid_ribs_flush_with_window.json");
+    let fingerprint = || {
+        let s = load(&path).unwrap();
+        let st = s.model.state();
+        st.bodies
+            .iter()
+            .map(|b| {
+                let mesh = b.body.tessellate(0.1).unwrap();
+                let bits = mesh.positions.iter().fold(0u64, |acc, p| {
+                    acc.rotate_left(7).wrapping_add(p.x.to_bits() ^ p.y.to_bits().rotate_left(21) ^ p.z.to_bits().rotate_left(42))
+                });
+                format!("{} {} {bits:x}", b.name, b.body.face_count())
+            })
+            .collect::<Vec<_>>()
+    };
+    let first = fingerprint();
+    for _ in 0..5 {
+        assert_eq!(fingerprint(), first);
+    }
 }

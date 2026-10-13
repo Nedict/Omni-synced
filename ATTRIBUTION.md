@@ -37,8 +37,10 @@ Generated-in-code assets are original and have no file to list:
 | assets/icon.iconset/icon_512x512.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
 | assets/icon.iconset/icon_512x512@2x.png | SolidCraft contributors | native sips export from assets/icon.png | MIT OR Apache-2.0 |
 | docs/screenshots/sample-plate.png | SolidCraft contributors | screenshot of SolidCraft itself (`solidcraft --sample`) | MIT OR Apache-2.0 |
-| docs/screenshots/demo-0.6.gif | SolidCraft contributors | original screen recording of the actual SolidCraft 0.6 English desktop UI modelling an original Raspberry Pi 4 case (no logos or branding), generated with examples/demo/record_ui.sh and its original animated pointer overlay (6× playback) | MIT OR Apache-2.0 |
-| docs/screenshots/demo-0.6.mp4 | SolidCraft contributors | original screen recording of the actual SolidCraft 0.6 English desktop UI modelling an original Raspberry Pi 4 case (no logos or branding), generated with examples/demo/record_ui.sh and its original animated pointer overlay (6× playback) | MIT OR Apache-2.0 |
+| docs/screenshots/demo-0.8.gif | SolidCraft contributors | original screen recording of the actual SolidCraft 0.8 English desktop UI modelling an original Raspberry Pi 4 case (no logos or branding; the engraved text is set in the system's DejaVu Sans Bold), generated with examples/demo/record_ui.sh and its original animated pointer overlay (9× playback) | MIT OR Apache-2.0 |
+| docs/screenshots/demo-0.8.mp4 | SolidCraft contributors | original screen recording of the actual SolidCraft 0.8 English desktop UI modelling an original Raspberry Pi 4 case (no logos or branding; the engraved text is set in the system's DejaVu Sans Bold), generated with examples/demo/record_ui.sh and its original animated pointer overlay (9× playback) | MIT OR Apache-2.0 |
+| docs/screenshots/rover-build.gif | 0xlillith (model); SolidCraft contributors (recording) | screen recording of the actual SolidCraft desktop UI replaying the timeline of the SELENE rover (`Rover-recorded.solidcraft` from https://github.com/0xlillith/solidcraft-rover, an original model by 0xlillith built through SolidCraft MCP); the model's lettering follows Ubuntu Light outlines (Canonical Ltd., Ubuntu Font Licence 1.0, as noted in that repository); the emblem is the SolidCraft project icon (2× playback) | MIT OR Apache-2.0 |
+| docs/screenshots/rover-build.mp4 | 0xlillith (model); SolidCraft contributors (recording) | screen recording of the actual SolidCraft desktop UI replaying the timeline of the SELENE rover (`Rover-recorded.solidcraft` from https://github.com/0xlillith/solidcraft-rover, an original model by 0xlillith built through SolidCraft MCP); the model's lettering follows Ubuntu Light outlines (Canonical Ltd., Ubuntu Font Licence 1.0, as noted in that repository); the emblem is the SolidCraft project icon | MIT OR Apache-2.0 |
 | docs/book/src/og.png | SolidCraft contributors | original 1280 × 640 social preview card (the SolidCraft mark, name and tagline), served by the docs site for link previews | MIT OR Apache-2.0 |
 | docs/book/src/generated/sample-plate.png | SolidCraft contributors | copy of docs/screenshots/sample-plate.png made by `cargo xtask book` (gitignored) | MIT OR Apache-2.0 |
 | docs/book/src/generated/bracket.png | SolidCraft contributors | rendered by `cargo xtask book` (`solidcraft-cli snapshot examples/bracket.json`; gitignored) | MIT OR Apache-2.0 |
@@ -83,6 +85,16 @@ Generated-in-code assets are original and have no file to list:
 | crates/ui-egui/src/titlebar.rs (title bar drag, caption buttons, resize zones, their tests) and the window setup in apps/solidcraft/src/main.rs | VectorCraft `crates/ui-egui/src/titlebar.rs`, `apps/vectorcraft/src/main.rs` | MIT OR Apache-2.0 |
 | LICENSE-MIT, LICENSE-APACHE (licence text) | CADCraft | — |
 | .github/workflows/release.yml, .github/workflows/packaging-lint.yml and packaging/ (release pipeline: Linux AppImage/deb/rpm/Flatpak/tar.gz, FreeBSD, macOS dmg, Windows MSI/portable zip, web zip; AppRun, nfpm, Flatpak, WiX and Info.plist templates) | PhotoCraft (https://github.com/storytold/photocraft) `.github/workflows/{release,packaging-lint}.yml`, `packaging/` | Apache-2.0 |
+
+## Incremental HDR codec adapter
+
+`crates/render/src/lighting/hdr.rs` adapts the scanline/component/old-RLE decoding
+state machines from the Radiance decoder in `image` 0.25.10
+([source](https://docs.rs/crate/image/0.25.10/source/src/codecs/hdr/decoder.rs)),
+MIT OR Apache-2.0. Metadata parsing still uses that library. The adapter makes row
+work cooperative and adds checked run lengths, zero-run rejection, width validation,
+header/input/radiance bounds and cancellation. Original licence texts are retained
+in THIRD-PARTY-LICENSES.txt; no images or artwork from that project are copied.
 
 ## Recovered contributions
 

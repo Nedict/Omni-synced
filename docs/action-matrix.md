@@ -20,7 +20,9 @@ The test is [`apps/solidcraft-cli/tests/action_matrix.rs`](../apps/solidcraft-cl
   `ACTION_MATRIX_JOBS` sets how many designs run at once.
 
 Each design runs in its own process, so an action that hangs (90 s without a result) or aborts is
-recorded as `timeout` or `crash` and the rest of the design still runs. None did in this run.
+recorded as `timeout` or `crash` and the rest of the design still runs. Loading a design, before
+its first action, may take up to 300 s (the largest take several times longer on a loaded CI
+runner than here). None did in this run.
 
 Pieces that share a name (`#2`, `~3`) are numbered by where they lie, and the numbers of pieces
 lying almost level can swap between runs (#569). The ratchet therefore counts passes per family of
@@ -37,7 +39,9 @@ lists which still fail; skip `action_matrix_` to leave out the matrix itself).
 - `oracle/*`: the 76 reference recipes, rebuilt (`solidcraft-cli recipe`).
 - `demo/enclosure_steps`: the electronics enclosure built over MCP;
   `demo/pi-case`: the Raspberry Pi 4 case of the 0.6 README demo, built through the desktop UI
-  and saved by `examples/demo/enclosure_ui_mcp.py --story pi --save`.
+  and saved by `examples/demo/enclosure_ui_mcp.py --story pi-0.6 --save`;
+  `demo/pi-case-0.8`: the 0.8 README demo's case (`--story pi`), with a rounded rim, engraved
+  text and a PETG material.
 - `typical/*`: [`tests/action_matrix/designs`](../tests/action_matrix/designs/), parts made the
   ordinary way: a stacked extrude, a filleted and shelled box, a revolved knob, a plate with a
   counterbored hole patterned 3 × 2 and a chamfered outline, a sheet metal L bracket with holes, a
@@ -263,10 +267,12 @@ make a legacy face sketch there).
 | 2 |  | A helix edge projected along its axis is a point (expected) | `edge.project` 2 | 1 | oracle/50-sweep-tight-bend `Bend/F3:side:c1#1\|F3:side:c1#2~2` |
 
 Where the face history stands (`crates/kernel/src/history.rs`, [face attachments](face-attachments.md)):
-a face takes an attached sketch only when the body carries an exact source certificate for it.
-Extrude caps and sides, boxes, shells' inner walls, STEP faces and sheet metal panels have one,
-and booleans, fillets and shells pass untouched faces' sources through. Everything that makes or
-reshapes faces without recording one (cut walls, holes, chamfers, revolves, lofts, sweeps, drafts,
-tapers, splits, intersects, shell rims, pattern and mirror copies, sheet metal rims) leaves faces
-that refuse a sketch, and press-pull and extrude-from-face then fall back to a legacy face sketch
-that is found again by a point. Together they are the largest group of failures.
+a flat face takes an attached sketch when the body carries an exact source certificate for it
+(extrude caps and sides, boxes, shells' inner walls, STEP faces, sheet metal panels), or else
+when its persistent name follows exact history (a `lineage` certificate): cut walls and floors,
+chamfers, pattern and mirror copies, sides a Join merged, revolves, lofts, sweeps, drafts, tapers,
+shell rims, the plastic features' faces and the faces around them, and pieces of a split face (by
+the piece's own name where Offset Face moved it off the others' plane). Sheet metal panels, their
+rims and the flat ends of bends attach by name. What still refuses a sketch is what makes faces
+without recording their history (some cuts, Split Body, Intersect): press-pull and
+extrude-from-face then fall back to a legacy face sketch found again by a point.

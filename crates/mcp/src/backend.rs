@@ -15,6 +15,11 @@ pub trait Backend {
     /// True when a real window is attached (`ui.screenshot` can capture it).
     fn has_ui(&self) -> bool;
     fn describe(&self) -> String;
+    /// The open design's file, when this side knows it (its folder joins the agent's folders,
+    /// see `vfs::PathScope::with_design`). A running app adds its own, so `Remote` says nothing.
+    fn design_path(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Longest reply line accepted from the app.
@@ -85,6 +90,11 @@ impl Backend for Remote {
     fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id += 1;
+        let mut params = params;
+        // The app confines the files this request reaches to the agent's folders (control.rs).
+        if let (Some(scope), Some(o)) = (solidcraft_engine::io::vfs::current_scope(), params.as_object_mut()) {
+            o.insert("allow_paths".into(), json!(scope.roots().iter().map(|r| r.to_string_lossy()).collect::<Vec<_>>()));
+        }
         let line = json!({"id": id, "method": method, "params": params}).to_string();
         let reply = match self.roundtrip(&line) {
             Ok(r) => r,
@@ -144,20 +154,33 @@ impl Backend for Headless {
             "document.inspect" => s.execute("document.inspect", &p).map_err(|e| e.to_string()),
             "ui.view" => {
                 let v = str_p("view").unwrap_or("home");
-                self.view = match v {
-                    "fit" => self.view,
-                    _ => StandardView::parse(v).ok_or_else(|| format!("unknown view `{v}`"))?,
-                };
+                match v {
+                    // Fit keeps the orientation, also of a camera `view.apply` chose.
+                    "fit" => {
+                        let b = solidcraft_engine::view::bounds(s);
+                        if let Some(c) = s.camera.as_mut() {
+                            c.fit(&b);
+                        }
+                    }
+                    _ => {
+                        self.view = StandardView::parse(v).ok_or_else(|| format!("unknown view `{v}`"))?;
+                        s.camera = None;
+                    }
+                }
                 Ok(json!({"view": self.view}))
             }
             "ui.render" => {
                 let (w, h) = (dim(&p, "width", 1280.0), dim(&p, "height", 800.0));
-                let mut cam = solidcraft_engine::view::home_camera(s);
-                cam.set_view(self.view);
+                // The camera `view.apply` chose, else the standard view framing the model.
+                let cam = s.camera.unwrap_or_else(|| {
+                    let mut cam = solidcraft_engine::view::home_camera(s);
+                    cam.set_view(self.view);
+                    cam
+                });
                 let scene = solidcraft_engine::view::scene(s, &cam);
                 let png = render_png(&scene, &cam, w, h).ok_or("render failed")?;
                 let path = str_p("path").ok_or("missing `path`")?;
-                std::fs::write(path, &png).map_err(|e| format!("{path}: {e}"))?;
+                solidcraft_engine::io::vfs::write(path, &png).map_err(|e| format!("{path}: {e}"))?;
                 Ok(json!({"path": path, "bytes": png.len(), "width": w, "height": h}))
             }
             "ui.screenshot" => Err("no window in headless mode; use ui.render".into()),
@@ -169,5 +192,8 @@ impl Backend for Headless {
     }
     fn describe(&self) -> String {
         "headless in-process SolidCraft session".into()
+    }
+    fn design_path(&self) -> Option<String> {
+        self.session.path.clone()
     }
 }
