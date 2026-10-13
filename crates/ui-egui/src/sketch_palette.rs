@@ -400,22 +400,46 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
                             ui.label(app.tr("ui.linetype"));
-                            let btn_w = 30.0;
+                            // Taller and wider than the old text-only buttons. Construction and
+                            // Centerline need a round dot and a clear gap to read apart. 30 by
+                            // 20 px left too little square room for either.
+                            let btn_w = 36.0;
                             let group_w = 3.0 * btn_w + 2.0 * ui.spacing().item_spacing.x;
                             crate::frame::right_aligned(ui, width, group_w, |ui| {
                                 ui.horizontal(|ui| {
                                     // With a selection: its line type, and a click converts it;
-                                    // without: the mode new curves are drawn in.
+                                    // without: the mode new curves are drawn in. Each button
+                                    // still carries its old glyph as hidden (transparent) text.
+                                    // That keeps its hit target, size and accessible name
+                                    // exactly as before. A drawn icon (icons.rs) paints over it.
+                                    // Construction and Centerline always draw in the theme's
+                                    // construction orange. Normal's icon never changes with the
+                                    // accent colour. It stays neutral in every case.
                                     let current = mode(app);
-                                    for (i, (label, tip)) in [("—", "Normal"), ("- -", "Construction"), ("-·-", "Centerline")].iter().enumerate() {
+                                    for (i, (label, icon, tip)) in
+                                        [("—", "normal", "Normal"), ("- -", "construction", "Construction"), ("-·-", "centerline", "Centerline")]
+                                            .iter()
+                                            .enumerate()
+                                    {
                                         let on = if has_curves { selected_types.get(i).copied().unwrap_or(false) } else { current == i as u8 };
                                         let tr_tip = app.tr_label(tip);
-                                        let tip = if has_curves {
+                                        let hover = if has_curves {
                                             crate::i18n::format("sketch.make_selection", &[("linetype", tr_tip)])
                                         } else {
                                             crate::i18n::format("sketch.draw_curves", &[("linetype", tr_tip)])
                                         };
-                                        if ui.add(egui::Button::new(*label).selected(on).min_size(vec2(btn_w, 20.0))).on_hover_text(tip).clicked() {
+                                        let btn = egui::Button::new(RichText::new(*label).color(Color32::TRANSPARENT))
+                                            .selected(on)
+                                            .min_size(vec2(btn_w, 28.0));
+                                        let resp = ui.add(btn).on_hover_text(hover);
+                                        let accent = if *icon == "normal" { t.icon } else { t.construction_geom };
+                                        // A square icon area. The button's own rect is
+                                        // text-shaped, wider than tall. A flattened diagonal
+                                        // leaves less room for a dash pattern's gaps to read.
+                                        let side = (resp.rect.width().min(resp.rect.height()) - 3.0).max(12.0);
+                                        let icon_rect = egui::Rect::from_center_size(resp.rect.center(), vec2(side, side));
+                                        crate::icons::paint(ui.painter(), icon_rect, icon, t.icon, t.icon_fill, accent);
+                                        if resp.clicked() {
                                             linetype = Some(i as u8);
                                         }
                                     }
