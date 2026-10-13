@@ -77,6 +77,7 @@ impl FeatureKind {
             }
             FeatureKind::Fillet { radius, style, .. } => match style {
                 crate::FilletStyle::Constant => v.push(("Radius", radius, L)),
+                crate::FilletStyle::Curvature => v.push(("Equivalent radius", radius, L)),
                 crate::FilletStyle::Chord => v.push(("Chord length", radius, L)),
                 crate::FilletStyle::Variable { radius2, mid, .. } => {
                     v.push(("Start radius", radius, L));

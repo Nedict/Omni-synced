@@ -1009,6 +1009,9 @@ pub enum FilletStyle {
     Constant,
     /// `radius` is the chord: the width across the blend.
     Chord,
+    /// G2 quintic blend of planar faces along a straight edge. `radius` sets the
+    /// equivalent circular setback, not a constant curvature radius.
+    Curvature,
     /// `radius` at the end of each edge nearest `start`, `radius2` at the other; `mid` radii at
     /// positions between (0 to 1 from the start end); straight between them, or `smooth`.
     Variable {
@@ -1569,7 +1572,7 @@ impl FeatureKind {
                         v.extend(mid.iter().map(|(_, r)| r.as_str()));
                     }
                     FilletStyle::Spline { radii, .. } => v.extend(radii.iter().map(String::as_str)),
-                    FilletStyle::Constant | FilletStyle::Chord => {}
+                    FilletStyle::Constant | FilletStyle::Chord | FilletStyle::Curvature => {}
                 }
             }
             FeatureKind::Chamfer { distance, distance2, angle, .. } => {

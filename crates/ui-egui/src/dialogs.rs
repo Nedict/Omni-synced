@@ -2001,7 +2001,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 &mut d.extra,
                                 "fi_type",
                                 "type",
-                                &[("Constant", "constant"), ("Chord Length", "chord"), ("Variable", "variable"), ("Spline", "spline")],
+                                &[
+                                    ("Constant", "constant"),
+                                    ("Chord Length", "chord"),
+                                    ("Variable", "variable"),
+                                    ("Spline", "spline"),
+                                    ("Curvature (G2)", "curvature"),
+                                ],
                             );
                             ui.end_row();
                         }
@@ -2011,6 +2017,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 match rtype {
                                     1 => "Chord Length",
                                     2 | 3 => "Start Radius",
+                                    4 => "Equivalent Radius",
                                     _ => "Radius",
                                 }
                             } else if *ctype == 0 {
@@ -3940,6 +3947,9 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             if let FeatureKind::Fillet { style, .. } = &f.kind {
                 match style {
                     FilletStyle::Constant => {}
+                    FilletStyle::Curvature => {
+                        d.extra.insert("type".into(), json!("curvature"));
+                    }
                     FilletStyle::Chord => {
                         d.extra.insert("type".into(), json!("chord"));
                     }
@@ -3956,7 +3966,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                                 d.extra.insert("knots".into(), json!(knots));
                                 d.extra.insert("radii".into(), json!(radii));
                             }
-                            FilletStyle::Constant | FilletStyle::Chord => {}
+                            FilletStyle::Constant | FilletStyle::Chord | FilletStyle::Curvature => {}
                         }
                         // The start was the first edge's last point: ends swapped.
                         let first_end = edges.first().and_then(|p| edge_sel(s, *p)).and_then(|x| match x {
