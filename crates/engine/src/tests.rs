@@ -1167,6 +1167,14 @@ fn threemf_export_open_insert() {
     let p = dir.join("Parts.3MF");
     run(&mut s, "file.export", json!({"path": p.to_string_lossy()}));
     let want = volume(&mut s);
+    // With face tags it is still a 3MF any reader opens, with the same bodies.
+    let tagged = dir.join("tagged.3mf");
+    let r = run(&mut s, "file.export", json!({"path": tagged.to_string_lossy(), "format": "3mf-tagged"}));
+    assert_eq!(r["format"], "ThreeMfTagged", "{r}");
+    let mut t = Session::default();
+    let r = run(&mut t, "doc.open", json!({"path": tagged.to_string_lossy()}));
+    assert_eq!(r["bodies"].as_array().unwrap().len(), 2, "{r}");
+    assert!(rel(volume(&mut t), want) < 2e-3, "{} vs {want}", volume(&mut t));
 
     let mut m = Session::default();
     let r = run(&mut m, "doc.open", json!({"path": p.to_string_lossy()}));
