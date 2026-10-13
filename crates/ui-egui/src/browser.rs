@@ -523,7 +523,7 @@ fn browser_panel(app: &mut SolveApp, ui: &mut egui::Ui, timeline_above: bool) {
                 let available = ui.available_height();
                 let timeline_height = (available * 0.56).clamp(150.0, (available - 130.0).max(150.0));
                 ui.allocate_ui_with_layout(vec2(ui.available_width(), timeline_height), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    crate::timeline::left_timeline(app, ui)
+                    crate::timeline_left::left_timeline(app, ui)
                 });
                 ui.separator();
             }

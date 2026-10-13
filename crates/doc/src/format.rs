@@ -398,6 +398,9 @@ pub fn read(s: &str) -> Result<Document> {
             }
         }
     }
+    if let Some(id) = crate::non_contiguous_timeline_group(&d.features, &d.timeline_groups) {
+        return Err(DocError::Invalid(format!("damaged design: timeline folder {id} is not contiguous")));
+    }
     for o in &d.occurrences {
         if !rigid(&o.transform) {
             return Err(DocError::Invalid(format!("damaged design: occurrence `{}` has an invalid placement", o.name)));

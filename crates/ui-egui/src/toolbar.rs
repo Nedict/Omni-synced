@@ -1236,7 +1236,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
             }
             Key::F6 => app.animate_view("fit"),
             Key::Delete | Key::Backspace => {
-                if !crate::timeline::delete_selected_folders(app) {
+                if !crate::timeline_left::delete_selected_folders(app) {
                     crate::viewport::delete_selection(app);
                 }
             }

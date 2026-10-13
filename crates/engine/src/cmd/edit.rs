@@ -36,6 +36,9 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("timeline.move_to_group", "Move Features to Folder", move_to_group)
         .doc_only()
         .params("features?: [id|name], groups?: [ids], group?: id (omit or null to move to the timeline root)"),
+    CommandSpec::new("timeline.move_many", "Move Timeline Items", move_many).params(
+        "features?: [id|name], groups?: [folder ids], group?: folder id, position: insertion slot; atomically changes folder membership and moves all selected contents as one block",
+    ),
     CommandSpec::new("timeline.rollback", "Move Timeline Marker", rollback).params("position: number of features to keep active (omit = end)"),
     CommandSpec::new("timeline.roll_to", "Roll History Marker", rollback)
         .params("position: number of features to keep active (omit = end) | feature: id|name (the marker goes right after it)"),
@@ -258,25 +261,64 @@ fn group_ids(s: &Session, p: &Value, required: bool, cmd: &str) -> Result<Vec<u6
     Ok(ids)
 }
 
-fn group_descends_from(s: &Session, group: u64, ancestor: u64) -> bool {
-    let mut current = s.doc.timeline_groups.iter().find(|candidate| candidate.id == group).and_then(|candidate| candidate.parent);
+fn group_move_would_cycle(s: &Session, target: u64, sources: &[u64]) -> bool {
+    let sources: std::collections::BTreeSet<u64> = sources.iter().copied().collect();
+    let parents: std::collections::BTreeMap<u64, Option<u64>> = s.doc.timeline_groups.iter().map(|group| (group.id, group.parent)).collect();
+    let mut current = Some(target);
     let mut steps = 0usize;
     while let Some(id) = current {
-        if id == ancestor {
+        if sources.contains(&id) {
             return true;
         }
         steps += 1;
         if steps > s.doc.timeline_groups.len() {
             return true;
         }
-        current = s.doc.timeline_groups.iter().find(|candidate| candidate.id == id).and_then(|candidate| candidate.parent);
+        current = parents.get(&id).copied().flatten();
     }
     false
 }
 
+fn group_feature_ids(doc: &solidcraft_doc::Document, roots: &[u64]) -> std::collections::BTreeSet<u64> {
+    let by_id: std::collections::BTreeMap<u64, &solidcraft_doc::TimelineGroup> = doc.timeline_groups.iter().map(|group| (group.id, group)).collect();
+    let mut children = std::collections::BTreeMap::<u64, Vec<u64>>::new();
+    for group in &doc.timeline_groups {
+        if let Some(parent) = group.parent {
+            children.entry(parent).or_default().push(group.id);
+        }
+    }
+    let mut pending = roots.to_vec();
+    let mut visited = std::collections::BTreeSet::new();
+    let mut features = std::collections::BTreeSet::new();
+    while let Some(id) = pending.pop() {
+        if !visited.insert(id) {
+            continue;
+        }
+        if let Some(group) = by_id.get(&id) {
+            features.extend(group.features.iter().copied());
+            pending.extend(children.get(&id).into_iter().flatten().copied());
+        }
+    }
+    features
+}
+
+fn sort_group_features(doc: &mut solidcraft_doc::Document) {
+    let positions: std::collections::BTreeMap<u64, usize> = doc.features.iter().enumerate().map(|(index, feature)| (feature.id, index)).collect();
+    for group in &mut doc.timeline_groups {
+        group.features.sort_by_key(|feature| positions.get(feature).copied().unwrap_or(usize::MAX));
+    }
+}
+
+fn require_contiguous_groups(doc: &solidcraft_doc::Document, cmd: &str) -> Result<()> {
+    let Some(id) = solidcraft_doc::non_contiguous_timeline_group(&doc.features, &doc.timeline_groups) else { return Ok(()) };
+    let name = doc.timeline_groups.iter().find(|group| group.id == id).map(|group| group.name.as_str()).unwrap_or("unknown");
+    Err(bad(cmd, format!("timeline folder `{name}` must contain one contiguous run of features")))
+}
+
 fn group(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "timeline.group";
-    let features = group_features(s, p, false, cmd)?;
+    let mut features = group_features(s, p, false, cmd)?;
+    let groups = group_ids(s, p, false, cmd)?;
     let name = match str_(p, "name").map(str::trim).filter(|name| !name.is_empty()) {
         Some(name) if name.len() <= 128 => name.to_string(),
         Some(_) => return Err(bad(cmd, "`name` must be 1…128 characters")),
@@ -295,12 +337,25 @@ fn group(s: &mut Session, p: &Value) -> Result<Value> {
         Some(Value::Null) | None => None,
         Some(_) => Some(timeline_group_id_field(s, p, "parent", cmd)?),
     };
-    let doc = s.doc_mut();
-    for group in &mut doc.timeline_groups {
-        group.features.retain(|feature| !features.contains(feature));
+    if let Some(parent) = parent
+        && group_move_would_cycle(s, parent, &groups)
+    {
+        return Err(bad(cmd, "a new folder cannot contain an ancestor of its parent"));
     }
-    doc.timeline_groups.push(solidcraft_doc::TimelineGroup { id, name: name.clone(), parent, features });
-    Ok(json!({"group": id, "name": name, "parent": parent}))
+    let nested = group_feature_ids(&s.doc, &groups);
+    features.retain(|feature| !nested.contains(feature));
+    let mut next = (*s.doc).clone();
+    for group in &mut next.timeline_groups {
+        group.features.retain(|feature| !features.contains(feature));
+        if groups.contains(&group.id) {
+            group.parent = Some(id);
+        }
+    }
+    next.timeline_groups.push(solidcraft_doc::TimelineGroup { id, name: name.clone(), parent, features });
+    sort_group_features(&mut next);
+    require_contiguous_groups(&next, cmd)?;
+    *s.doc_mut() = next;
+    Ok(json!({"group": id, "name": name, "parent": parent, "groups": groups}))
 }
 
 fn ungroup(s: &mut Session, p: &Value) -> Result<Value> {
@@ -325,13 +380,37 @@ fn ungroup(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let parents: std::collections::BTreeMap<u64, Option<u64>> =
         s.doc.timeline_groups.iter().filter(|group| ids.contains(&group.id)).map(|group| (group.id, group.parent)).collect();
-    let doc = s.doc_mut();
-    for group in &mut doc.timeline_groups {
-        if let Some(parent) = group.parent.filter(|parent| ids.contains(parent)) {
-            group.parent = parents.get(&parent).copied().flatten();
+    let surviving_parent = |mut parent: Option<u64>| {
+        let mut steps = 0usize;
+        while let Some(id) = parent.filter(|id| ids.contains(id)) {
+            parent = parents.get(&id).copied().flatten();
+            steps += 1;
+            if steps > parents.len() {
+                return None;
+            }
+        }
+        parent
+    };
+    let mut next = (*s.doc).clone();
+    let moved_features: Vec<(Option<u64>, Vec<u64>)> = next
+        .timeline_groups
+        .iter()
+        .filter(|group| ids.contains(&group.id))
+        .map(|group| (surviving_parent(group.parent), group.features.clone()))
+        .collect();
+    for group in &mut next.timeline_groups {
+        if ids.contains(&group.id) {
+            continue;
+        }
+        group.parent = surviving_parent(group.parent);
+        for (_, features) in moved_features.iter().filter(|(parent, _)| *parent == Some(group.id)) {
+            group.features.extend(features.iter().copied());
         }
     }
-    doc.timeline_groups.retain(|group| !ids.contains(&group.id));
+    next.timeline_groups.retain(|group| !ids.contains(&group.id));
+    sort_group_features(&mut next);
+    require_contiguous_groups(&next, cmd)?;
+    *s.doc_mut() = next;
     Ok(json!({"groups": ids}))
 }
 
@@ -360,23 +439,65 @@ fn move_to_group(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) => Some(timeline_group_id(s, p, cmd)?),
     };
     if let Some(target) = target
-        && groups.iter().any(|source| *source == target || group_descends_from(s, target, *source))
+        && group_move_would_cycle(s, target, &groups)
     {
         return Err(bad(cmd, "a folder cannot be moved into itself or one of its descendants"));
     }
-    let doc = s.doc_mut();
-    for group in &mut doc.timeline_groups {
+    let mut next = (*s.doc).clone();
+    for group in &mut next.timeline_groups {
         group.features.retain(|feature| !features.contains(feature));
         if Some(group.id) == target {
             group.features.extend(features.iter().copied());
         }
     }
-    for group in &mut doc.timeline_groups {
+    for group in &mut next.timeline_groups {
         if groups.contains(&group.id) {
             group.parent = target;
         }
     }
+    sort_group_features(&mut next);
+    require_contiguous_groups(&next, cmd)?;
+    *s.doc_mut() = next;
     Ok(json!({"features": features, "groups": groups, "group": target}))
+}
+
+fn move_many(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "timeline.move_many";
+    let mut features = group_features(s, p, false, cmd)?;
+    let groups = group_ids(s, p, false, cmd)?;
+    if features.is_empty() && groups.is_empty() {
+        return Err(bad(cmd, "list at least one feature or folder"));
+    }
+    let target = match p.get("group") {
+        Some(Value::Null) | None => None,
+        Some(_) => Some(timeline_group_id(s, p, cmd)?),
+    };
+    if let Some(target) = target
+        && group_move_would_cycle(s, target, &groups)
+    {
+        return Err(bad(cmd, "a folder cannot be moved into itself or one of its descendants"));
+    }
+    let nested = group_feature_ids(&s.doc, &groups);
+    features.retain(|feature| !nested.contains(feature));
+    let moving: Vec<u64> =
+        s.doc.features.iter().filter(|feature| nested.contains(&feature.id) || features.contains(&feature.id)).map(|feature| feature.id).collect();
+    let mut next = (*s.doc).clone();
+    for group in &mut next.timeline_groups {
+        group.features.retain(|feature| !features.contains(feature));
+        if Some(group.id) == target {
+            group.features.extend(features.iter().copied());
+        }
+        if groups.contains(&group.id) {
+            group.parent = target;
+        }
+    }
+    sort_group_features(&mut next);
+    let slot = num(p, "position").map(|x| x.max(0.0) as usize).ok_or_else(|| bad(cmd, "`position` must be a number"))?;
+    let (next, ordered) = reorder_features(s, next, &moving, slot, cmd)?;
+    if next != *s.doc {
+        *s.doc_mut() = next;
+    }
+    Ok(json!({"features": ordered, "groups": groups, "group": target, "position": slot}))
 }
 
 fn rollback(s: &mut Session, p: &Value) -> Result<Value> {
@@ -615,6 +736,8 @@ fn reorder(s: &mut Session, p: &Value) -> Result<Value> {
     let f = next.features.remove(from);
     let name = f.name.clone();
     next.features.insert(to, f);
+    sort_group_features(&mut next);
+    require_contiguous_groups(&next, cmd)?;
     // Everything that evaluated before must still evaluate.
     let mut after = solidcraft_doc::Model::new();
     after.evaluate(&next);
@@ -630,14 +753,28 @@ fn reorder(s: &mut Session, p: &Value) -> Result<Value> {
 fn reorder_many(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "timeline.reorder_many";
     let ids = group_features(s, p, true, cmd)?;
-    let n = s.doc.features.len();
-    let slot = num(p, "position").map(|x| x.max(0.0) as usize).ok_or_else(|| bad(cmd, "`position` must be a number"))?.min(n);
+    let slot = num(p, "position").map(|x| x.max(0.0) as usize).ok_or_else(|| bad(cmd, "`position` must be a number"))?;
+    let (next, ordered) = reorder_features(s, (*s.doc).clone(), &ids, slot, cmd)?;
+    if next != *s.doc {
+        *s.doc_mut() = next;
+    }
+    Ok(json!({"features": ordered, "position": slot.min(s.doc.features.len())}))
+}
+
+fn reorder_features(
+    s: &Session,
+    mut next: solidcraft_doc::Document,
+    ids: &[u64],
+    slot: usize,
+    cmd: &str,
+) -> Result<(solidcraft_doc::Document, Vec<u64>)> {
+    let n = next.features.len();
+    let slot = slot.min(n);
     let selected: std::collections::BTreeSet<u64> = ids.iter().copied().collect();
-    let ordered: Vec<u64> = s.doc.features.iter().filter(|feature| selected.contains(&feature.id)).map(|feature| feature.id).collect();
-    let before_slot = s.doc.features.iter().take(slot).filter(|feature| selected.contains(&feature.id)).count();
+    let ordered: Vec<u64> = next.features.iter().filter(|feature| selected.contains(&feature.id)).map(|feature| feature.id).collect();
+    let before_slot = next.features.iter().take(slot).filter(|feature| selected.contains(&feature.id)).count();
     let insert_at = slot.saturating_sub(before_slot).min(n.saturating_sub(ordered.len()));
 
-    let mut next = (*s.doc).clone();
     let mut moving = Vec::new();
     next.features.retain(|feature| {
         if selected.contains(&feature.id) {
@@ -652,19 +789,19 @@ fn reorder_many(s: &mut Session, p: &Value) -> Result<Value> {
         .chain(moving.iter())
         .chain(next.features[insert_at..].iter())
         .map(|feature| feature.id));
-    if unchanged {
-        return Ok(json!({"features": ordered, "position": slot}));
-    }
     next.features.splice(insert_at..insert_at, moving);
-    let mut after = solidcraft_doc::Model::new();
-    after.evaluate(&next);
-    let broken = newly_broken(&s.model, &after);
-    if !broken.is_empty() {
-        let list: Vec<String> = broken.iter().map(|(name, error)| format!("{name} ({error})")).collect();
-        return Err(bad(cmd, format!("moving the selected features there breaks {}", list.join("; "))));
+    sort_group_features(&mut next);
+    require_contiguous_groups(&next, cmd)?;
+    if !unchanged {
+        let mut after = solidcraft_doc::Model::new();
+        after.evaluate(&next);
+        let broken = newly_broken(&s.model, &after);
+        if !broken.is_empty() {
+            let list: Vec<String> = broken.iter().map(|(name, error)| format!("{name} ({error})")).collect();
+            return Err(bad(cmd, format!("moving the selected features there breaks {}", list.join("; "))));
+        }
     }
-    *s.doc_mut() = next;
-    Ok(json!({"features": ordered, "position": slot}))
+    Ok((next, ordered))
 }
 
 fn input_keys(kind: &FeatureKind) -> Vec<(String, solidcraft_doc::expr::Kind)> {

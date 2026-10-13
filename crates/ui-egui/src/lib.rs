@@ -115,6 +115,7 @@ pub mod sketch_tools;
 pub mod stand_up;
 pub mod theme;
 pub mod timeline;
+pub mod timeline_left;
 pub mod titlebar;
 pub mod toolbar;
 pub mod toolbar_custom;
@@ -1087,7 +1088,7 @@ impl SolveApp {
                 browser::browser(self, ui);
             }
         } else if left_timeline {
-            timeline::left_panel(self, ui);
+            timeline_left::left_panel(self, ui);
         }
         preview::update(self, ui.ctx());
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
