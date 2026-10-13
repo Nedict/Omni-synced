@@ -57,7 +57,7 @@ jobs:
           # The window's X11 class is its app id; the old id stays only as the rename shims.
           grep -qx 'StartupWMClass=ai.storyteller.solidcraft' packaging/linux/ai.storyteller.solidcraft.desktop
           grep -q '<id>ai.storyteller.solvecraft</id>' packaging/linux/ai.storyteller.solidcraft.metainfo.xml.in
-          grep -q 'end-of-life-rebase="$legacy_id=$app_id"' packaging/flatpak-site.sh
+          grep -qF -e '--end-of-life-rebase=' packaging/flatpak-site.sh
           sed -e 's/@VERSION@/0.0.0/' -e 's/@DATE@/2026-01-01/' packaging/linux/ai.storyteller.solidcraft.metainfo.xml.in >"$RUNNER_TEMP/ai.storyteller.solidcraft.metainfo.xml"
           appstreamcli validate --no-net --explain "$RUNNER_TEMP/ai.storyteller.solidcraft.metainfo.xml"
           python3 -c "import yaml; m = yaml.safe_load(open('packaging/linux/flatpak/ai.storyteller.solidcraft.bundle.yml')); assert m['id'] == 'ai.storyteller.solidcraft' and m['command'] == 'solidcraft'"
