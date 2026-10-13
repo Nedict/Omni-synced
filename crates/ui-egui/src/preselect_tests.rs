@@ -911,6 +911,35 @@ fn surface_sweep_dialog_takes_curves_and_a_path() {
 }
 
 #[test]
+fn surface_loft_dialog_makes_a_section_per_sketch() {
+    // A line in each of two sketches 5 apart: two sections, a 10 × 5 strip; Edit Feature brings
+    // the curves back.
+    let mut app = app_with(json!([
+        {"command": "construct.plane.offset", "params": {"base": "XY", "offset": 5, "name": "Mid"}},
+        {"command": "sketch.create", "params": {"plane": "XY"}},
+        {"command": "sketch.line", "params": {"points": [[0, 0], [10, 0]], "ids": ["a"]}},
+        {"command": "sketch.finish", "params": {}},
+        {"command": "sketch.create", "params": {"plane": "Mid"}},
+        {"command": "sketch.line", "params": {"points": [[0, 0], [10, 0]], "ids": ["b"]}},
+        {"command": "sketch.finish", "params": {}}
+    ]));
+    let mut d = start(&mut app, vec![], "surface.loft");
+    d.inputs[0].items = vec![Sel::SketchCurve { id: "a".into() }];
+    assert!(apply_commands(&app, &d).is_err(), "one section");
+    d.inputs[0].items.push(Sel::SketchCurve { id: "b".into() });
+    let (id, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!(id, "surface.loft");
+    assert_eq!(p["sections"].as_array().map(Vec::len), Some(2), "{p}");
+    assert_eq!((&p["sections"][0]["curves"], &p["sections"][1]["curves"]), (&json!(["a"]), &json!(["b"])), "{p}");
+    app.session.execute(&id, &p).unwrap();
+    let area = app.session.model.state().bodies.last().unwrap().mesh().measure().area;
+    assert!((area - 50.0).abs() < 1e-6, "{area}");
+    let fid = app.session.doc.features.last().unwrap().id;
+    let back = crate::dialogs::for_feature(&app, fid, None).unwrap();
+    assert_eq!(back.inputs[0].items, vec![Sel::SketchCurve { id: "a".into() }, Sel::SketchCurve { id: "b".into() }]);
+}
+
+#[test]
 fn patch_dialog_fills_a_loop_of_edges_that_is_not_planar() {
     // A box with its top cut away by a sideways cylinder: its rim is a closed loop of four
     // curved edges, not in a plane. Picking them in the Patch dialog fills it with one face.
