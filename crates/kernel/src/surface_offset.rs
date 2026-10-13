@@ -310,7 +310,7 @@ mod tests {
         (a - b).abs() / b.abs().max(1e-9)
     }
     fn face_at(b: &Body, p: Vec3) -> usize {
-        crate::surfaces::nearest_face_index(b, p).unwrap()
+        crate::surfaces::nearest_face(b, p).unwrap()
     }
     fn edges(b: &Body) -> usize {
         b.solid.edge_iter().map(|e| e.id()).collect::<std::collections::HashSet<_>>().len()

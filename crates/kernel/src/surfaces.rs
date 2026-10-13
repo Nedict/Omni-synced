@@ -536,12 +536,7 @@ pub fn remove_faces(body: &Body, faces: &[usize]) -> Result<Body> {
 }
 
 /// Index of the face nearest a point (over its mesh triangles).
-pub(crate) fn nearest_face_index(body: &Body, p: Vec3) -> Result<usize> {
-    nearest_face(body, p)
-}
-
-/// Index of the face nearest a point (over its mesh triangles).
-fn nearest_face(body: &Body, p: Vec3) -> Result<usize> {
+pub(crate) fn nearest_face(body: &Body, p: Vec3) -> Result<usize> {
     let m = body.tessellate(body.size() * 2e-3)?;
     let mut best: Option<(f64, u32)> = None;
     for (t, f) in m.triangles.iter().zip(&m.tri_face) {
