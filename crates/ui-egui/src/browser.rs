@@ -506,7 +506,7 @@ pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
         .resizable(false)
         .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(6, 6)))
         .show(ui, |ui| {
-            ui.label(RichText::new("BROWSER").size(11.0).strong().color(t.text_dim));
+            ui.label(RichText::new(app.tr("ui.heading_browser")).size(11.0).strong().color(t.text_dim));
             ui.add_space(4.0);
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])

@@ -279,12 +279,12 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.painter().text(
                 pos2(report.left() + 29.0, report.center().y),
                 Align2::LEFT_CENTER,
-                "Report a bug",
+                crate::i18n::tr("ui.report_a_bug"),
                 FontId::proportional(13.0),
                 t.app_bar_text,
             );
         }
-        if response.on_hover_text("Report a bug — review a screenshot and open a GitHub draft").clicked() {
+        if response.on_hover_text(crate::i18n::tr("ui.report_a_bug_hint")).clicked() {
             crate::help::run(app, &ui.ctx().clone(), "report");
         }
         // Preferences, at the top right like Fusion's profile menu (also Ctrl+,).
@@ -970,18 +970,25 @@ fn pin_icon(p: &egui::Painter, r: Rect, on: bool, col: Color32) {
 /// The SELECT panel: what a click in the view picks.
 fn selection_filter(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
-    ui.label(egui::RichText::new("Selection filter").color(t.text_dim).size(11.0));
-    ui.checkbox(&mut app.ui.pick_bodies, "Select bodies (a face picks its body)");
-    for (k, label) in [
-        ("faces", "Faces"),
-        ("edges", "Edges"),
-        ("vertices", "Vertices"),
-        ("sketch", "Sketch geometry and profiles"),
-        ("sketch_curves", "Sketch curves"),
-        ("sketch_points", "Sketch points"),
-        ("dimensions", "Sketch dimensions"),
-        ("constraints", "Sketch constraints"),
-    ] {
+    ui.label(egui::RichText::new(app.tr("ui.selection_filter")).color(t.text_dim).size(11.0));
+    // Resolve the labels before the mutable borrows below; tr() returns a &'static catalog
+    // entry, but the call itself still needs &app while those borrows are live.
+    let bodies = app.tr("ui.select_bodies").to_string();
+    let filters: Vec<(&str, String)> = [
+        ("faces", "ui.faces"),
+        ("edges", "ui.edges"),
+        ("vertices", "ui.vertices"),
+        ("sketch", "ui.sketch_geometry_and_profiles"),
+        ("sketch_curves", "ui.sketch_curves"),
+        ("sketch_points", "ui.sketch_points"),
+        ("dimensions", "ui.sketch_dimensions"),
+        ("constraints", "ui.sketch_constraints"),
+    ]
+    .into_iter()
+    .map(|(k, id)| (k, app.tr(id).to_string()))
+    .collect();
+    ui.checkbox(&mut app.ui.pick_bodies, bodies);
+    for (k, label) in filters {
         let mut on = !app.ui.pick_off.iter().any(|x| x == k);
         if ui.checkbox(&mut on, label).changed() {
             app.ui.pick_off.retain(|x| x != k);

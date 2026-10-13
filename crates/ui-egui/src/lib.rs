@@ -462,7 +462,10 @@ impl SolveApp {
         }
         match &r {
             Ok(_) => {
-                self.session.echo(format!("{} done", command_label(id)));
+                // The command's own label is translated too, so the echo reads the same way the
+                // toolbar button it came from does.
+                let label = self.tr_label(command_label(id)).to_string();
+                self.session.echo(i18n::format("ui.command_done", &[("command", label.as_str())]));
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
                     dim_view::cancel();
                     self.menu.props = None;
