@@ -2467,3 +2467,21 @@ fn designs_without_per_edge_values_are_read_and_written_as_before() {
     design["features"][flange]["edges"][3] = json!({"point": [0.0, 45.0, 2.0], "twist": "3 deg"});
     assert!(solidcraft_doc::Document::from_json(&design.to_string()).is_err());
 }
+
+#[test]
+#[ignore = "fails until #570 is fixed"]
+fn a_flange_asked_for_0_8_mm_is_0_8_mm_or_refused_never_silently_2_5_mm() {
+    // `thickness` on sheet.flange may become an inline override of the rule, or be refused as
+    // an unknown parameter; either is fine. Building the default 2.5 mm sheet silently is not.
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Base"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [100, 60]}));
+    run(&mut s, "sketch.finish", json!({}));
+    match s.execute("sheet.flange", &json!({"sketch": "Base", "thickness": 0.8})) {
+        Ok(_) => {
+            assert!((flat(&mut s)["thickness"].as_f64().unwrap_or(f64::NAN) - 0.8).abs() < 1e-9);
+            assert!((volume(&mut s) - 100.0 * 60.0 * 0.8).abs() < 1e-6, "built at {} mm3", volume(&mut s));
+        }
+        Err(e) => assert!(e.to_string().contains("thickness"), "{e}"),
+    }
+}
