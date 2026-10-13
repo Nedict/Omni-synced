@@ -464,27 +464,43 @@ impl Dialog {
             "solid.box" => Dialog::new(
                 Kind::Primitive {
                     cmd: "solid.box",
-                    fields: vec![("length", "20".into()), ("width", "20".into()), ("height", "20".into())],
+                    fields: vec![("length", length_default(s, "20")), ("width", length_default(s, "20")), ("height", length_default(s, "20"))],
                     operation: 0,
                     at: None,
                 },
                 vec![],
             ),
             "solid.cylinder" => Dialog::new(
-                Kind::Primitive { cmd: "solid.cylinder", fields: vec![("diameter", "20".into()), ("height", "20".into())], operation: 0, at: None },
+                Kind::Primitive {
+                    cmd: "solid.cylinder",
+                    fields: vec![("diameter", length_default(s, "20")), ("height", length_default(s, "20"))],
+                    operation: 0,
+                    at: None,
+                },
                 vec![],
             ),
-            "solid.sphere" => {
-                Dialog::new(Kind::Primitive { cmd: "solid.sphere", fields: vec![("diameter", "20".into())], operation: 0, at: None }, vec![])
-            }
+            "solid.sphere" => Dialog::new(
+                Kind::Primitive { cmd: "solid.sphere", fields: vec![("diameter", length_default(s, "20"))], operation: 0, at: None },
+                vec![],
+            ),
             "solid.torus" => Dialog::new(
-                Kind::Primitive { cmd: "solid.torus", fields: vec![("major", "20".into()), ("minor", "5".into())], operation: 0, at: None },
+                Kind::Primitive {
+                    cmd: "solid.torus",
+                    fields: vec![("major", length_default(s, "20")), ("minor", length_default(s, "5"))],
+                    operation: 0,
+                    at: None,
+                },
                 vec![],
             ),
             "solid.coil" => Dialog::new(
                 Kind::Primitive {
                     cmd: "solid.coil",
-                    fields: vec![("diameter", "40".into()), ("revolutions", "4".into()), ("pitch", "8".into()), ("section_size", "3".into())],
+                    fields: vec![
+                        ("diameter", length_default(s, "40")),
+                        ("revolutions", "4".into()),
+                        ("pitch", length_default(s, "8")),
+                        ("section_size", length_default(s, "3")),
+                    ],
                     operation: 0,
                     at: None,
                 },
@@ -2316,6 +2332,24 @@ fn fillet_kind(size: &str, chamfer: bool) -> Kind {
     Kind::Fillet { radius: size.into(), chamfer, chain: true, ctype: 0, distance2: size.into(), angle: "45 deg".into(), flip: false }
 }
 
+/// A length field's first text: `number` in the design's units, with the unit written out so the
+/// field shows it as the other dialogs show theirs ("20 mm", "20 in"). OK makes the size the bare
+/// number would.
+fn length_default(s: &Session, number: &str) -> String {
+    match s.doc.with_design_unit(number, ValueKind::Length) {
+        e if e != number => e,
+        // A millimetre design (or one whose units are not a length): bare numbers are mm.
+        _ => format!("{} mm", number.trim()),
+    }
+}
+
+/// A feature's length as its edit field shows it. A bare number is kept in millimetres: where the
+/// design reads bare numbers in another unit, the field says "mm" (as the configuration table
+/// does), so OK keeps the size. Anything else shows as stored.
+fn stored_length(s: &Session, e: &str) -> String {
+    if s.doc.with_design_unit(e, ValueKind::Length) == e { e.to_string() } else { format!("{} mm", e.trim()) }
+}
+
 fn hole_defaults() -> Kind {
     Kind::Hole {
         diameter: "5 mm".into(),
@@ -3080,10 +3114,15 @@ fn box_corner(s: &Session, fields: &[(&'static str, String)], p: Vec3, normal: O
             Some(_) => 1.0,
             None => 0.5,
         };
-        match size.trim().parse::<f64>() {
-            Ok(v) => json!(c - back * v),
-            Err(_) if back < 1.0 => json!(format!("{c} mm - ({size}) / 2")),
-            Err(_) => json!(format!("{c} mm - ({size})")),
+        // A plain length ("20 mm", "2 in"; a bare number has the design's unit by now) gives a
+        // plain number (mm).
+        let plain = solidcraft_engine::doc::expr::is_literal(&size)
+            .then(|| solidcraft_engine::doc::Document::eval_in(&Default::default(), &size, ValueKind::Length).ok())
+            .flatten();
+        match plain.filter(|v| v.is_finite()) {
+            Some(v) => json!(c - back * v),
+            None if back < 1.0 => json!(format!("{c} mm - ({size}) / 2")),
+            None => json!(format!("{c} mm - ({size})")),
         }
     };
     json!([coord(p.x, size("length"), Vec3::X), coord(p.y, size("width"), Vec3::Y), coord(p.z, size("height"), Vec3::Z)])
@@ -3560,7 +3599,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let mut d = start("solid.box")?;
             d.kind = Kind::Primitive {
                 cmd: "solid.box",
-                fields: vec![("length", length.clone()), ("width", width.clone()), ("height", height.clone())],
+                fields: vec![("length", stored_length(s, length)), ("width", stored_length(s, width)), ("height", stored_length(s, height))],
                 operation: op_index(operation),
                 at: None,
             };
@@ -3571,7 +3610,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let mut d = start("solid.cylinder")?;
             d.kind = Kind::Primitive {
                 cmd: "solid.cylinder",
-                fields: vec![("radius", radius.clone()), ("height", height.clone())],
+                fields: vec![("radius", stored_length(s, radius)), ("height", stored_length(s, height))],
                 operation: op_index(operation),
                 at: None,
             };
@@ -3581,7 +3620,8 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         }
         FeatureKind::Sphere { center, radius, operation } => {
             let mut d = start("solid.sphere")?;
-            d.kind = Kind::Primitive { cmd: "solid.sphere", fields: vec![("radius", radius.clone())], operation: op_index(operation), at: None };
+            d.kind =
+                Kind::Primitive { cmd: "solid.sphere", fields: vec![("radius", stored_length(s, radius))], operation: op_index(operation), at: None };
             d.extra.insert("center".into(), pt_expr(center));
             d
         }
@@ -3589,7 +3629,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let mut d = start("solid.torus")?;
             d.kind = Kind::Primitive {
                 cmd: "solid.torus",
-                fields: vec![("major", major.clone()), ("minor", minor.clone())],
+                fields: vec![("major", stored_length(s, major)), ("minor", stored_length(s, minor))],
                 operation: op_index(operation),
                 at: None,
             };

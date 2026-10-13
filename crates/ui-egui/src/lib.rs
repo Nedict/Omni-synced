@@ -74,6 +74,8 @@ pub mod prefs;
 #[cfg(test)]
 mod preselect_tests;
 pub mod preview;
+#[cfg(test)]
+mod primitive_units_tests;
 pub mod recovery_ui;
 pub mod ref_images;
 #[cfg(test)]

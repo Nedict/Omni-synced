@@ -788,8 +788,10 @@ fn primitives_go_on_the_picked_face() {
     assert_eq!(p["axis"], json!([0.0, 0.0, 1.0]), "standing on the top face: {p}");
     assert!(near(c, Vec3::new(8.0, 10.0, 30.0)), "{c:?}");
 
-    // A box stands on the face, centred on the picked point across it.
-    let (_, c) = primitive_on(&mut app, vec![top.clone()], "solid.box", |_| {});
+    // A box stands on the face, centred on the picked point across it. Sizes that are plain
+    // lengths ("20 mm") give a plain corner.
+    let (p, c) = primitive_on(&mut app, vec![top.clone()], "solid.box", |_| {});
+    assert_eq!(p["corner"], json!([-2.0, 0.0, 20.0]), "{p}");
     assert!(near(c, Vec3::new(8.0, 10.0, 30.0)), "{c:?}");
 
     let (p, c) = primitive_on(&mut app, vec![top], "solid.torus", |_| {});

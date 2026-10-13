@@ -23,8 +23,9 @@ parameter updates every expression, dimension and feature input that uses it, an
 in use can't be deleted (the error lists its users).
 
 The design's units (Document Settings in the browser: mm, cm, m, in or ft) set how a bare number
-typed into a feature is read. In an inch design `2` means 2 in. Changing the units never moves
-existing geometry.
+typed into a feature is read. In an inch design `2` means 2 in. The Box, Cylinder, Sphere, Torus
+and Coil dialogs start with their sizes in the design's units, unit shown (`20 mm`, `20 in`).
+Changing the units never moves existing geometry.
 
 Parameters export to and import from CSV or JSON (`parameters.export`, `parameters.import`).
 **Configurations** (`config.*`) keep a table of rows, each with its own parameter values and
