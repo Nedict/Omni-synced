@@ -1604,10 +1604,16 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             let fit = extra_choice(ui, &mut d.extra, "fi_fit", "fit", &[("Exact", "exact"), ("Reduce to Fit", "reduce")]);
                             ui.end_row();
                             if fit == 1
-                                && let Some(r) = app.preview.applied
+                                && let Some((lo, hi)) = app.preview.applied
                             {
+                                // A range where edges apart from each other fit different radii.
                                 row_label(ui, "Applied Radius");
-                                ui.label(RichText::new(crate::prefs::show_mm(app, r, 1)).color(t.warning));
+                                let shown = if hi > lo {
+                                    format!("{} – {}", crate::prefs::show_mm_bare(app, lo), crate::prefs::show_mm(app, hi, 1))
+                                } else {
+                                    crate::prefs::show_mm(app, lo, 1)
+                                };
+                                ui.label(RichText::new(shown).color(t.warning));
                                 ui.end_row();
                             }
                         } else if !*chamfer {

@@ -31,7 +31,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "MODIFY")
         .icon("fillet")
         .key("F")
-        .params("edges: [[x,y,z] point on edge | {body, index}]; radius: expr; body?; type?: constant|chord (radius is the width across)|variable (radius at the end nearest start, radius2 at the other); radius2?; start?: [x,y,z]; mid?: [[position 0…1 from start, radius expr], …] (variable radii between the ends); smooth?: bool (smooth instead of straight between the radii); fit?: exact|reduce (exact, the default: a radius too large for the geometry around the edges is refused; reduce: it is reduced to the largest that fits all of them, returned as `radius_applied` and noted in the feature's warning)"),
+        .params("edges: [[x,y,z] point on edge | {body, index}]; radius: expr; body?; type?: constant|chord (radius is the width across)|variable (radius at the end nearest start, radius2 at the other); radius2?; start?: [x,y,z]; mid?: [[position 0…1 from start, radius expr], …] (variable radii between the ends); smooth?: bool (smooth instead of straight between the radii); fit?: exact|reduce (exact, the default: a radius too large for the geometry around the edges is refused; reduce: where it doesn't fit it is reduced to the largest that does, one radius for edges sharing a face; the smallest used is returned as `radius_applied`, each edge's as `radii_applied: [{edge: [x,y,z], radius}]`, and noted in the feature's warning)"),
     CommandSpec::new("solid.chamfer", "Chamfer", chamfer).at("SOLID", "MODIFY").icon("chamfer").params("edges: [[x,y,z] | {body, index}]; distance: expr; distance2?: expr (along the second face) | angle?: expr (from the first face); flip?: bool (which face is first: by default the one facing up most); body?"),
     CommandSpec::new("solid.combine", "Combine", combine).at("SOLID", "MODIFY").icon("combine").params("target: body; tools: [body]; operation?: join|cut|intersect; keep_tools?: bool; new_component?: bool (the result goes into a new component; component_name?)"),
     CommandSpec::new("solid.pattern.rectangular", "Rectangular Pattern", pattern_rect)
@@ -807,11 +807,15 @@ fn fillet(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "`fit: reduce` takes a constant radius"));
     }
     let mut out = add_feature(s, p, FeatureKind::Fillet { edges, radius, body: str_(p, "body").map(str::to_string), style, fit })?;
-    // The radius the fillet used, when `fit: reduce` reduced it.
+    // The radii the fillet used, when `fit: reduce` reduced it.
     if let Some(id) = out.get("feature").and_then(Value::as_u64)
-        && let Some(r) = s.model.result(id).and_then(|res| res.state.fitted_radius(id))
+        && let Some(state) = s.model.result(id).map(|res| &res.state)
+        && let Some(r) = state.fitted_radius(id)
     {
         out["radius_applied"] = serde_json::json!(r);
+        let each: Vec<Value> =
+            state.fitted_edges(id).unwrap_or_default().into_iter().map(|(p, r)| serde_json::json!({"edge": [p.x, p.y, p.z], "radius": r})).collect();
+        out["radii_applied"] = Value::Array(each);
     }
     Ok(out)
 }
@@ -1574,6 +1578,9 @@ mod offset_edit_guard_tests;
 #[path = "offset_plane_face_tests.rs"]
 mod offset_plane_face_tests;
 
+#[cfg(test)]
+#[path = "lineage_face_tests.rs"]
+mod lineage_face_tests;
 #[cfg(test)]
 #[path = "stacked_face_tests.rs"]
 mod stacked_face_tests;

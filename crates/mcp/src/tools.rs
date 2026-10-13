@@ -68,6 +68,7 @@ pub fn tool_definitions() -> Vec<Value> {
                 json!({
                     "command": string("Command id (see list_commands)"),
                     "params": {"type": "object", "description": "The command's parameters"},
+                    "verbose": {"type": "boolean", "description": "false: omit the full feature body list and sketch ids repeated outside `created`; keep created_bodies, changed_bodies and removed_bodies (default true)"},
                 }),
                 &["command"],
             ),
@@ -344,7 +345,8 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<V
         }
         "execute" => {
             let id = str_arg(a, "command").ok_or("`command` is required")?;
-            exec(b, id, a.get("params").cloned().filter(Value::is_object).unwrap_or(json!({})))
+            let v = exec(b, id, a.get("params").cloned().filter(Value::is_object).unwrap_or(json!({})))?;
+            Ok(if a.get("verbose").and_then(Value::as_bool).unwrap_or(true) { v } else { compact(v) })
         }
         "inspect_design" => {
             let measure = a.get("measure").and_then(Value::as_bool).unwrap_or(true);
@@ -484,7 +486,7 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
     text_result(&json!({"ok": true, "completed": results.len(), "results": results}), false)
 }
 
-/// A step's result without what the design already had (`batch` with `verbose: false`): a
+/// A command's result without what the design already had (`execute` or `batch` with `verbose: false`): a
 /// feature's full body list (its created, changed and removed bodies stay), and the sketch ids
 /// a sketch command repeats outside `created`.
 fn compact(mut v: Value) -> Value {

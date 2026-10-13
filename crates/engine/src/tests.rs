@@ -830,12 +830,16 @@ fn step_open_then_model_on_it() {
     run(&mut s, "solid.hole", json!({"position": at(28.0, 15.0, 20.0), "diameter": 6}));
     want -= PI * 9.0 * 20.0;
     assert!(rel(volume(&mut s), want) < 5e-4, "{} vs {want}", volume(&mut s));
-    // Modified imported faces no longer have an immutable construction certificate.
-    // The public attachment refuses them; the user can explicitly choose a fixed plane.
-    let before_fixed = s.doc.to_json();
-    assert!(s.execute("sketch.create", &json!({"plane":{"face":at(10.0,15.0,20.0)}})).is_err());
-    assert_eq!(s.doc.to_json(), before_fixed);
-    run(&mut s, "sketch.create", json!({"plane": {"face": at(10.0, 15.0, 20.0), "fixed": true}}));
+    // Modified imported faces no longer have an immutable construction certificate; the top
+    // attaches by its exact history name instead.
+    let top = run(&mut s, "sketch.create", json!({"plane": {"face": at(10.0, 15.0, 20.0)}}))["sketch"].as_u64().unwrap();
+    assert!(matches!(
+        s.placed_document().sketch_face_attachment(top, &s.model),
+        doc::FaceAttachmentStatus::Healthy {
+            target: doc::config::ConfigFaceTarget { certificate: Some(doc::config::FaceCertificate::Lineage), .. },
+            ..
+        }
+    ));
     let c = [x0 + 10.0, y0 + 15.0];
     // Sketch coordinates on the face are relative to the model origin projected onto it.
     run(&mut s, "sketch.rectangle.two_point", json!({"p0": [c[0] - 4.0, c[1] - 4.0], "p1": [c[0] + 4.0, c[1] + 4.0]}));
@@ -2903,6 +2907,33 @@ fn fillet_fit_reduce_uses_the_largest_radius_that_fits() {
     // An unknown mode is refused, and so is reduce with a radius that is not constant.
     assert!(s.execute("solid.fillet", &json!({"edges": mids, "radius": 1, "fit": "taper"})).is_err());
     assert!(s.execute("solid.fillet", &json!({"edges": mids, "radius": 1, "fit": "reduce", "type": "chord"})).is_err());
+}
+
+#[test]
+fn fillet_fit_reduce_keeps_the_radius_where_it_fits() {
+    // A 2 mm fin on a block: its top edge can't take 4, a corner of the block far from it can.
+    // Only the fin's edge is reduced; the reply gives each edge's radius.
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 20}));
+    run(&mut s, "solid.box", json!({"length": 2, "width": 30, "height": 10, "corner": [19, 0, 20], "operation": "join"}));
+    assert_eq!(s.model.state().bodies.len(), 1);
+    let edges = json!([[21, 15, 30], [40, 0, 10]]);
+    let out = run(&mut s, "solid.fillet", json!({"edges": edges, "radius": 4, "fit": "reduce"}));
+    let fin = out["radius_applied"].as_f64().unwrap();
+    assert!(fin < 4.0, "{out}");
+    let each: Vec<(Vec<f64>, f64)> = out["radii_applied"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| (x["edge"].as_array().unwrap().iter().filter_map(Value::as_f64).collect(), x["radius"].as_f64().unwrap()))
+        .collect();
+    assert_eq!(each, [(vec![21.0, 15.0, 30.0], fin), (vec![40.0, 0.0, 10.0], 4.0)], "{out}");
+    let removed = (1.0 - PI / 4.0) * (fin * fin * 30.0 + 16.0 * 20.0);
+    let want = 40.0 * 30.0 * 20.0 + 2.0 * 30.0 * 10.0 - removed;
+    assert!(rel(volume(&mut s), want) < 2e-4, "{} vs {want}", volume(&mut s));
+    let id = out["feature"].as_u64().unwrap();
+    let warning = s.model.result(id).and_then(|r| r.warning.clone()).unwrap_or_default();
+    assert!(warning.contains("on 1 of 2 edges"), "{warning}");
 }
 
 #[test]

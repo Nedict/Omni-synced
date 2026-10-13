@@ -474,14 +474,12 @@ pub fn strip_edge_piece(n: &str) -> String {
 
 /// Edges sharing a name: number them along the longest axis of their spread.
 fn number_pieces(names: &mut [String], pts: &[Vec<Vec3>], mark: char) {
-    let mut seen: Vec<String> = Vec::new();
-    for i in 0..names.len() {
-        let n = names[i].clone();
-        if seen.contains(&n) {
-            continue;
-        }
-        seen.push(n.clone());
-        let same: Vec<usize> = (0..names.len()).filter(|j| names[*j] == n).collect();
+    // The pieces of each name, gathered in one pass (a faceted body has thousands of names).
+    let mut groups: std::collections::BTreeMap<String, Vec<usize>> = std::collections::BTreeMap::new();
+    for (i, n) in names.iter().enumerate() {
+        groups.entry(n.clone()).or_default().push(i);
+    }
+    for (n, same) in groups {
         if same.len() < 2 {
             continue;
         }

@@ -264,20 +264,35 @@ fn thread_groove(t: &ThreadInfo, radius: f64, open: (bool, bool)) -> Result<soli
 }
 
 /// A constant fillet of `edges`; with [`FilletFit::Reduce`](crate::FilletFit::Reduce), a radius too
-/// large for the geometry around them is reduced to the largest that works for all of them, which
-/// is returned.
+/// large for the geometry around them is reduced where it doesn't fit, to the largest that works
+/// for each group of edges sharing a face; the radius per edge is returned.
 fn fillet_fitted(
     body: &kernel::Body,
     edges: &[Vec3],
     r: f64,
     fit: crate::FilletFit,
-) -> std::result::Result<(kernel::Body, Option<f64>), kernel::KernelError> {
+) -> std::result::Result<(kernel::Body, Option<Vec<f64>>), kernel::KernelError> {
     match kernel::fillet(body, edges, r) {
-        Err(kernel::KernelError::TooLarge(why)) if fit == crate::FilletFit::Reduce => match kernel::fillet_max(body, edges, r) {
-            Some((used, b)) => Ok((b, Some(used))),
+        Err(kernel::KernelError::TooLarge(why)) if fit == crate::FilletFit::Reduce => match kernel::fillet_max_each(body, edges, r) {
+            // Built at the radius asked for after all (the groups apart): nothing reduced.
+            Some((used, b)) => Ok((b, used.iter().any(|u| *u < r).then_some(used))),
             None => Err(kernel::KernelError::TooLarge(why)),
         },
         other => other.map(|b| (b, None)),
+    }
+}
+
+/// The warning of a fillet whose radius `asked` was reduced to `used` (per edge).
+fn reduced_note(used: &[f64], asked: f64) -> String {
+    let mut values: Vec<f64> = used.iter().copied().filter(|r| *r < asked).collect();
+    values.sort_by(f64::total_cmp);
+    values.dedup();
+    let shown = values.iter().map(|v| show_mm(*v)).collect::<Vec<_>>().join(", ");
+    let n = used.iter().filter(|r| **r < asked).count();
+    if n == used.len() && values.len() == 1 {
+        format!("the radius is reduced to {shown} mm, the largest that fits these edges")
+    } else {
+        format!("the radius is reduced to {shown} mm on {n} of {} edges, the largest that fits them", used.len())
     }
 }
 
@@ -296,9 +311,23 @@ fn show_mm(v: f64) -> String {
 }
 
 impl ModelState {
-    /// The radius fillet `feature` used when it reduced a radius too large for its edges.
+    /// The smallest radius fillet `feature` used when it reduced a radius too large for its edges.
     pub fn fitted_radius(&self, feature: u64) -> Option<f64> {
-        self.fitted.get(&feature).copied()
+        self.fitted_range(feature).map(|(lo, _)| lo)
+    }
+
+    /// The smallest and largest radius fillet `feature` used when it reduced a radius too large
+    /// for some of its edges.
+    pub fn fitted_range(&self, feature: u64) -> Option<(f64, f64)> {
+        self.fitted.get(&feature)?.iter().fold(None, |acc, r| Some(acc.map_or((*r, *r), |(lo, hi): (f64, f64)| (lo.min(*r), hi.max(*r)))))
+    }
+
+    /// Each edge fillet `feature` blended (a point on it) with the radius it used, when it
+    /// reduced a radius too large for some of its edges.
+    pub fn fitted_edges(&self, feature: u64) -> Option<Vec<(Vec3, f64)>> {
+        let radii = self.fitted.get(&feature)?;
+        let edges = self.blend_edges.get(&feature)?;
+        Some(edges.iter().copied().zip(radii.iter().copied()).collect())
     }
 }
 
@@ -321,9 +350,9 @@ pub struct ModelState {
     /// a pattern of the feature repeats these, not the points picked when it was made, which a
     /// parameter change may have moved off the edges.
     blend_edges: BTreeMap<u64, Vec<Vec3>>,
-    /// The radius a fillet used when it reduced a radius too large for its edges (by feature id,
-    /// see `FilletFit::Reduce`).
-    fitted: BTreeMap<u64, f64>,
+    /// The radius per edge a fillet used when it reduced a radius too large for some of its edges
+    /// (by feature id, see `FilletFit::Reduce`).
+    fitted: BTreeMap<u64, Vec<f64>>,
 }
 
 impl ModelState {
@@ -349,9 +378,11 @@ impl ModelState {
                 [p.x, p.y, p.z].map(f64::to_bits).hash(&mut h);
             }
         }
-        for (feature, r) in &self.fitted {
+        for (feature, radii) in &self.fitted {
             feature.hash(&mut h);
-            r.to_bits().hash(&mut h);
+            for r in radii {
+                r.to_bits().hash(&mut h);
+            }
         }
         serde_json::to_string(&self.threads).unwrap_or_default().hash(&mut h);
         serde_json::to_string(&self.sheets).unwrap_or_default().hash(&mut h);
@@ -2955,8 +2986,10 @@ fn replay(
                 let nb = match &src.kind {
                     FeatureKind::Chamfer { distance2, angle, flip, .. } => chamfer_with(vals, &mb.body, &moved, r, distance2, angle, *flip)?,
                     // A copy is congruent to the original: the radius it was reduced to first.
-                    FeatureKind::Fillet { fit, .. } => match st.fitted.get(&src.id).copied() {
-                        Some(used) => kernel::fillet(&mb.body, &moved, used).or_else(|_| fillet_fitted(&mb.body, &moved, r, *fit).map(|x| x.0))?,
+                    FeatureKind::Fillet { fit, .. } => match st.fitted.get(&src.id) {
+                        Some(used) => {
+                            kernel::fillet_each(&mb.body, &moved, used).or_else(|_| fillet_fitted(&mb.body, &moved, r, *fit).map(|x| x.0))?
+                        }
                         None => fillet_fitted(&mb.body, &moved, r, *fit)?.0,
                     },
                     _ => kernel::fillet(&mb.body, &moved, r)?,
@@ -3731,8 +3764,8 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 FeatureKind::Fillet { fit, .. } => {
                     let (b, used) = fillet_fitted(&mb.body, &edges, r, *fit)?;
                     if let Some(used) = used {
+                        append_warning(warning, reduced_note(&used, r));
                         st.fitted.insert(f.id, used);
-                        append_warning(warning, format!("the radius is reduced to {} mm, the largest that fits these edges", show_mm(used)));
                     }
                     (b, input)
                 }

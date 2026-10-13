@@ -540,3 +540,84 @@ fn hidden_body_stays_hidden_after_save_and_reopen() {
     assert_eq!(base, true);
     assert_eq!(variant, false, "the hidden body is visible again after reopening");
 }
+
+/// Single execute calls share batch compaction without changing geometry or inspection.
+#[test]
+fn compact_execute_keeps_changes_ids_and_default_replies() {
+    let mut s = server();
+    let commands = json!([
+        {"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "body_name": "Base"}},
+        {"command": "solid.box", "params": {"length": 4, "width": 4, "height": 10, "corner": [3, 3, 5], "operation": "cut", "targets": ["Base"]}},
+        {"command": "sketch.create", "params": {"plane": "XY"}},
+        {"command": "sketch.rectangle.two_point", "params": {"p0": [20, 0], "p1": [30, 10]}}
+    ]);
+    let full: Vec<Value> = commands.as_array().unwrap().iter().map(|a| tool(&mut s, "execute", a.clone())).collect();
+    assert_eq!(full[0]["bodies"], json!(["Base"]));
+    assert_eq!(full[3]["curves"], full[3]["created"]["curves"]);
+    let expected_volume = volume(&mut s);
+    for verbose in [true, false] {
+        tool(&mut s, "new_design", json!({}));
+        for (a, expected) in commands.as_array().unwrap().iter().zip(&full) {
+            let mut a = a.clone();
+            a["verbose"] = json!(verbose);
+            let mut actual = tool(&mut s, "execute", a);
+            let mut expected = expected.clone();
+            // Independent executions have different timings; the field must still be present.
+            if expected.get("ms").is_some() {
+                assert!(actual["ms"].is_number());
+                actual.as_object_mut().unwrap().remove("ms");
+                expected.as_object_mut().unwrap().remove("ms");
+            }
+            if !verbose {
+                // Compare against the full result with only the documented repeated fields removed.
+                let o = expected.as_object_mut().unwrap();
+                if o.contains_key("created_bodies") {
+                    o.remove("bodies");
+                }
+                for key in ["points", "curves", "constraints", "dimensions"] {
+                    if o.get(key).is_some_and(|v| o.get("created").and_then(|c| c.get(key)) == Some(v)) {
+                        o.remove(key);
+                    }
+                }
+            }
+            assert_eq!(actual, expected);
+        }
+        assert!((volume(&mut s) - expected_volume).abs() < 1e-9);
+        let inspect = tool(&mut s, "execute", json!({"command": "sketch.inspect", "verbose": false}));
+        assert_eq!(inspect["curves"].as_array().map(Vec::len), Some(4));
+        let invalid = raw_tool(&mut s, "execute", json!({"command": "solid.box", "verbose": "false"}));
+        assert_eq!(invalid["error"]["code"], -32602);
+        assert!((volume(&mut s) - expected_volume).abs() < 1e-9);
+        let error = raw_tool(&mut s, "execute", json!({"command": "not.a.command", "verbose": false}));
+        assert_eq!(error["result"]["isError"], true);
+    }
+}
+
+/// A connected app sees exactly one engine call; no inventory inspection is needed.
+#[test]
+fn compact_execute_uses_one_backend_call_and_keeps_removed_bodies() {
+    struct ReplyOnly {
+        calls: usize,
+    }
+    impl crate::backend::Backend for ReplyOnly {
+        fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+            assert_eq!(method, "engine.execute");
+            assert_eq!(params, json!({"command": "test.feature", "params": {}}));
+            self.calls += 1;
+            Ok(
+                json!({"feature": 7, "name": "Combine1", "bodies": ["Base"], "created_bodies": [], "changed_bodies": ["Base"], "removed_bodies": ["Tool"]}),
+            )
+        }
+        fn has_ui(&self) -> bool {
+            true
+        }
+        fn describe(&self) -> String {
+            "test".into()
+        }
+    }
+    let mut b = ReplyOnly { calls: 0 };
+    let r = crate::tools::call_tool(&mut b, "execute", &json!({"command": "test.feature", "verbose": false}));
+    let v: Value = serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(b.calls, 1);
+    assert_eq!(v, json!({"feature": 7, "name": "Combine1", "created_bodies": [], "changed_bodies": ["Base"], "removed_bodies": ["Tool"]}));
+}

@@ -50,7 +50,7 @@ Claude Desktop (`claude_desktop_config.json`), bridged to a running app:
 | Tool | Arguments | What it does |
 |---|---|---|
 | `list_commands` | `filter?` | The command catalog: id, label, tab/panel, shortcut, parameter docs, enabled now. `filter` matches id, label, tab and panel. |
-| `execute` | `command`, `params?` | Run any command with JSON parameters (`list_commands` shows them). Failures leave the design unchanged. A feature command replies with the feature (`feature`, `name`), every body (`bodies`) and the bodies it created, changed and removed (`created_bodies`, `changed_bodies`, `removed_bodies`). |
+| `execute` | `command`, `params?`, `verbose?` (default true) | Run any command with JSON parameters (`list_commands` shows them). Failures leave the design unchanged. A feature command replies with the feature (`feature`, `name`), every body (`bodies`) and the bodies it created, changed and removed (`created_bodies`, `changed_bodies`, `removed_bodies`). `verbose: false` uses the same compact reply as `batch`. |
 | `batch` | `commands: [{command, params}]`, `rollback?` (default true), `verbose?` (default true) | Run steps in order, stop at the first error and undo the completed steps. The reply names the failing step (`failed.index`, `failed.command`, `failed.error`) and every result before it. `verbose: false` keeps the reply small in large designs: feature steps leave out the full body list (`created_bodies`, `changed_bodies`, `removed_bodies` stay) and sketch steps the ids they repeat outside `created`. |
 | `inspect_design` | `measure?` (default true), `sketches?` (default true) | Parameters, timeline (type, suppressed, rolled back, error, warning, timing), bodies (volume, area, centre of mass, bbox, face/edge/vertex counts, visible), sketches (curves, points, constraints, profiles, DOF, solve status, visible), selection, undo depth. Hide helper sketches, bodies or construction planes with `execute` `browser.visibility` (`{items, visible}` or `{folder, visible}`). |
 | `measure` | `body?` | Volume (mm³), area (mm²), centre of mass, bbox and topology counts per body, with totals. |
@@ -81,6 +81,23 @@ step: the design, the active sketch and the undo history are restored exactly as
 however long the history is. Batches that call `file.new` or `doc.open` get the design back,
 not its file path. (An older app without checkpoints falls back to undoing as many steps as
 the batch added to the undo history.)
+
+## Compact replies
+
+`execute` and `batch` default to `verbose: true`, preserving the full command results.
+For long modelling sessions, set `verbose: false` at the tool-argument level:
+
+```json
+{"name": "execute", "arguments": {"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10}, "verbose": false}}
+```
+
+Feature replies omit the full `bodies` list while keeping `feature`, `name`,
+`created_bodies`, `changed_bodies` and `removed_bodies`. A cut can therefore report a
+changed body even when no body name was added or removed. Sketch replies keep new
+IDs under `created` and omit only identical top-level `points`, `curves`,
+`constraints` and `dimensions` lists. Other fields and errors are unchanged;
+inspection commands still return their complete results. Compaction uses the
+engine's reply directly, without an additional design-inspection request.
 
 ## Demo: an enclosure built over MCP
 
