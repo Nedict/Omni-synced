@@ -3368,6 +3368,7 @@ dependencies = [
  "serde",
  "serde_json",
  "solidcraft-geom",
+ "spade",
  "thiserror 2.0.21",
  "truck-meshalgo",
  "truck-modeling",

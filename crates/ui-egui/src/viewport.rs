@@ -829,10 +829,17 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     let external_points =
         wants_points || other_sketch_points || (app.dialog.is_none() && app.tool.as_ref().is_none_or(|tool| tool.cmd == "sketch.project"));
     let point_sketches: Vec<u64> = if external_points { visible_sketches(app) } else { s.active_sketch.into_iter().collect() };
+    // A face place (the Single hole's) snaps only to points their sketches show, so a nearer
+    // point that isn't shown (a letter's outline) neither takes the pick nor hides a shown one.
+    let snapping = app.dialog.as_ref().and_then(|d| d.active_input()).is_some_and(|i| crate::dialogs::snaps_to_points(i.accept));
     let mut best = Near::new(all);
     for ss in point_sketches.iter().filter_map(|sid| st.sketch(*sid)) {
         let sid = ss.feature;
+        let shown = snapping.then(|| crate::dialogs::SnapPoints::of(&ss.sketch));
         for p in &ss.sketch.points {
+            if shown.as_ref().is_some_and(|f| !f.takes(p)) {
+                continue;
+            }
             if let Some(sp) = proj.to_screen(ss.plane.to_world(p.pos)) {
                 let dd = sp.distance(pos) - if s.active_sketch == Some(sid) { 2.0 } else { 0.0 };
                 if dd < 8.0 && best.wants(dd) {
@@ -1215,8 +1222,8 @@ pub fn hit_sel(h: &Hit) -> Option<Sel> {
 /// dialog the first hit (sketch entities only belong to the active sketch).
 pub fn candidate(app: &SolveApp, hits: &[Hit]) -> Option<(Hit, Sel)> {
     if let Some(d) = app.dialog.as_ref().filter(|d| d.wants_picks()) {
-        let face = face_under(hits);
-        return hits.iter().find_map(|h| d.candidate_on(&app.session, h, face).map(|s| (h.clone(), s)));
+        let snap = d.face_snap(&app.session, hits);
+        return hits.iter().find_map(|h| d.candidate_on(&app.session, h, snap.as_ref()).map(|s| (h.clone(), s)));
     }
     hits.iter().filter(|h| pick_allowed(app, h)).find_map(|h| hit_candidate(app, h))
 }
@@ -1224,15 +1231,12 @@ pub fn candidate(app: &SolveApp, hits: &[Hit]) -> Option<(Hit, Sel)> {
 /// Every hit a click could pick, in order, each with its selection (Select Other).
 pub fn candidates(app: &SolveApp, hits: &[Hit]) -> Vec<(Hit, Sel)> {
     if let Some(d) = app.dialog.as_ref().filter(|d| d.wants_picks()) {
-        let face = face_under(hits);
-        return hits.iter().filter_map(|h| d.candidate_on(&app.session, h, face).map(|s| (h.clone(), s))).collect();
+        // The face under the cursor is looked up once for every sketch point a face place may
+        // snap to, before Select Other caps its rows.
+        let snap = d.face_snap(&app.session, hits);
+        return hits.iter().filter_map(|h| d.candidate_on(&app.session, h, snap.as_ref()).map(|s| (h.clone(), s))).collect();
     }
     hits.iter().filter(|h| pick_allowed(app, h)).filter_map(|h| hit_candidate(app, h)).collect()
-}
-
-/// The face under the cursor: the nearest face the pick ray meets (faces come nearest first).
-fn face_under(hits: &[Hit]) -> Option<&Hit> {
-    hits.iter().find(|h| matches!(h, Hit::Face { .. }))
 }
 
 /// What the selection filter lets a click pick with no dialog.
@@ -2010,7 +2014,16 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         || app.viewport.orbit_snap.is_some()
         || app.cam_anim.is_some();
     let hits = hover.filter(|_| inside && app.viewport.boxsel.is_none() && !navigating).map(|p| pick_cached(app, &proj, p)).unwrap_or_default();
-    let cand = if app.tool.is_some() { hits.first().cloned().map(|h| (h, None)) } else { candidate(app, &hits).map(|(h, s)| (h, Some(s))) };
+    // The Fillet and Chamfer window resolves its own corners: the nearest sketch point to a
+    // corner drawn from the origin is the fixed origin, which ends no two curves.
+    let corner = hover.filter(|_| inside && !navigating).and_then(|p| crate::sketch_modify_ui::corner_hit(app, &proj, p));
+    let cand = if app.tool.is_some() {
+        hits.first().cloned().map(|h| (h, None))
+    } else if let Some((hit, sel)) = corner {
+        Some((hit, Some(sel)))
+    } else {
+        candidate(app, &hits).map(|(h, s)| (h, Some(s)))
+    };
     app.viewport.hover = cand.as_ref().map(|c| c.0.clone());
     // Select Other: a press held still opens the list of everything under it; while the list is
     // open its row under the pointer is what lights up.

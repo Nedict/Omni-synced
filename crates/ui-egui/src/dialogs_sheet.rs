@@ -33,8 +33,8 @@ const RULE_FIELDS: [(&str, &str); 8] = [
     ("gap", "Flange Gap"),
 ];
 /// The corner relief shapes the manager offers (the rule's `corner_relief_shape`) and their labels.
-const RELIEF_SHAPES: [&str; 3] = ["notch", "round", "rectangular"];
-const RELIEF_SHAPE_LABELS: [&str; 3] = ["Notch", "Round", "Rectangular"];
+const RELIEF_SHAPES: [&str; 4] = ["notch", "round", "rectangular", "tear"];
+const RELIEF_SHAPE_LABELS: [&str; 4] = ["Notch", "Round", "Rectangular", "Tear"];
 
 #[derive(Clone, Debug)]
 pub enum Sm {

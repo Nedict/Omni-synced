@@ -10,7 +10,7 @@ use solidcraft_engine::Sel;
 use solidcraft_engine::Session;
 use solidcraft_engine::doc::expr::Kind as ValueKind;
 use solidcraft_engine::doc::{AxisRef, Direction, FeatureKind, FilletStyle, HoleKind, Operation, PatternKind, PlaneRef, ProfileSel};
-use solidcraft_engine::geom::Vec3;
+use solidcraft_engine::geom::{Aabb3, Vec3};
 
 use crate::SolveApp;
 use crate::selection::{self, AXES, Accept, BODIES, CURVES, EDGES, FACES, PLANAR_FACES, PLANES, PROFILES, SelInput};
@@ -747,10 +747,32 @@ impl Dialog {
         self.candidate_on(s, h, None)
     }
 
-    /// The selection a hit would add to the active input, knowing the face under the cursor (the
-    /// nearest face the pick ray meets). A face place picked on or near a sketch point that lies
-    /// on that face (a circle's centre) is taken at the point, as a points input picks it.
-    pub fn candidate_on(&self, s: &Session, h: &Hit, face: Option<&Hit>) -> Option<Sel> {
+    /// The face under the cursor (the nearest face the pick ray meets, first among `hits`), looked
+    /// up once for all the sketch points among `hits` when the active input snaps face places to
+    /// them (the Single hole's); `None` otherwise.
+    pub(crate) fn face_snap(&self, s: &Session, hits: &[Hit]) -> Option<FaceSnap> {
+        if !self.active_input().is_some_and(|i| snaps_to_points(i.accept)) {
+            return None;
+        }
+        let Some(Hit::Face { body, index, .. }) = hits.iter().find(|h| matches!(h, Hit::Face { .. })) else { return None };
+        let st = s.world_state();
+        let near: Vec<Vec3> = hits
+            .iter()
+            .filter_map(|h| match h {
+                Hit::SketchPoint { sketch, at, .. } => st.sketch(*sketch).map(|ss| ss.plane.to_world(*at)),
+                _ => None,
+            })
+            .collect();
+        if near.is_empty() {
+            return None;
+        }
+        Some(FaceSnap::new(s, body, *index, &near))
+    }
+
+    /// The selection a hit would add to the active input, given the face under the cursor
+    /// ([`Dialog::face_snap`] of the same hits). A face place picked on or near a sketch point that
+    /// lies on that face (a circle's centre) is taken at the point, as a points input picks it.
+    pub(crate) fn candidate_on(&self, s: &Session, h: &Hit, snap: Option<&FaceSnap>) -> Option<Sel> {
         let inp = self.active_input()?;
         // Features are also picked on the canvas: a face stands for the feature that made it.
         if inp.accept == selection::FEATURES {
@@ -759,16 +781,14 @@ impl Dialog {
                 _ => None,
             };
         }
-        if inp.accept & selection::POINTS != 0
-            && inp.accept & PLANAR_FACES != 0
+        if snaps_to_points(inp.accept)
             && let Hit::SketchPoint { sketch, at, .. } = h
         {
-            return match face {
-                Some(Hit::Face { body, index, .. }) => face_place_at_sketch_point(s, *sketch, *at, body, *index),
-                _ => None,
-            };
+            let snap = snap?;
+            return snap.place_at(s.world_state().sketch(*sketch)?.plane.to_world(*at));
         }
-        inp.accepts(h, |body, face| planar_face(s, body, face).is_some())
+        // The snap looked the face under the cursor up already, planar or not.
+        inp.accepts(h, |body, face| snap.and_then(|f| f.planar(body, face)).unwrap_or_else(|| planar_face(s, body, face).is_some()))
     }
 
     /// A pick in the viewport (already accepted by the active input).
@@ -855,20 +875,248 @@ fn default_profiles(s: &Session) -> Vec<Sel> {
     }
 }
 
-/// A place on planar face `face` of `body` at a sketch point (a circle's centre or a point), when
-/// the point lies on that face (within a micrometre); `None` otherwise.
-fn face_place_at_sketch_point(s: &Session, sketch: u64, at: solidcraft_engine::geom::Vec2, body: &str, face: usize) -> Option<Sel> {
-    let st = s.world_state();
-    let p = st.sketch(sketch)?.plane.to_world(at);
-    let m = st.body(body)?.mesh();
-    // The same wherever the part is: a planar face's triangles lie in its plane.
-    let tol = 1e-3;
-    let on = m
-        .triangles
-        .iter()
-        .zip(&m.tri_face)
-        .any(|(t, f)| *f as usize == face && m.tri(t).is_some_and(|[a, b, c]| crate::preview::point_triangle_dist(p, a, b, c) < tol));
-    (p.is_finite() && on && planar_face(s, body, face).is_some()).then(|| Sel::Face { body: body.to_string(), index: face, point: p })
+/// Does an input take face places that snap to sketch points on the face (the Single hole's)?
+pub(crate) fn snaps_to_points(accept: Accept) -> bool {
+    accept & selection::POINTS != 0 && accept & PLANAR_FACES != 0
+}
+
+/// Which of a sketch's points a face place snaps to (the Single hole's): the points of geometry
+/// the sketch shows. Not a text outline's points, which are never drawn or picked on their own
+/// (as `view::sketch_point_visible` has it), nor projected points while the sketch hides
+/// projected geometry (Show Projected off), whose curves aren't picked either. Hidden sketches
+/// offer no points at all. Show Points doesn't count: it only hides the markers of the sketch
+/// being edited, and a finished sketch's circle centres are snapped to without markers.
+pub(crate) struct SnapPoints<'a> {
+    /// Show Projected is off: no linked point is taken.
+    hide_linked: bool,
+    /// The text sources' link ids (looked up once, however many points and links there are).
+    text: std::collections::HashSet<&'a str>,
+}
+
+impl<'a> SnapPoints<'a> {
+    pub(crate) fn of(sk: &'a solidcraft_engine::sketch::Sketch) -> SnapPoints<'a> {
+        let hide_linked = sk.view.hide_projected;
+        let text = if hide_linked {
+            Default::default()
+        } else {
+            // An id names its first link, as `Sketch::link` finds it.
+            let mut seen = std::collections::HashSet::new();
+            sk.links
+                .iter()
+                .filter(|l| seen.insert(l.id.as_str()))
+                .filter(|l| l.kind == solidcraft_engine::sketch::LinkKind::Text)
+                .map(|l| l.id.as_str())
+                .collect()
+        };
+        SnapPoints { hide_linked, text }
+    }
+
+    /// Does a face place snap to point `p` of the sketch?
+    pub(crate) fn takes(&self, p: &solidcraft_engine::sketch::SPoint) -> bool {
+        match p.link.as_deref() {
+            None => true,
+            Some(_) if self.hide_linked => false,
+            Some(l) => !self.text.contains(l),
+        }
+    }
+}
+
+/// How near a sketch point must be to a face to lie on it: a micrometre, wherever the part is (a
+/// planar face's triangles lie in its plane), by the true distance ([`triangle_dist`]).
+const ON_FACE: f64 = 1e-3;
+
+/// The distance from `p` to the triangle `abc`, exactly: from its plane when `p` is over it,
+/// otherwise from its nearest side. (`preview::point_triangle_dist` takes a point just past a
+/// side for one over the triangle, with an absolute tolerance that is wide for a sliver.)
+fn triangle_dist(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f64 {
+    let sides = [(a, b), (b, c), (c, a)];
+    let to_sides = || sides.iter().map(|(u, v)| p.dist_to_segment(*u, *v)).fold(f64::INFINITY, f64::min);
+    // However small the triangle: only one without area (or not finite) has no plane.
+    let n = (b - a).cross(c - a);
+    let len = n.len();
+    if !(len > 0.0 && len.is_finite()) {
+        return to_sides();
+    }
+    let unit = n / len;
+    let h = (p - a).dot(unit);
+    let q = p - unit * h;
+    if sides.iter().all(|(u, v)| (*v - *u).cross(q - *u).dot(unit) >= 0.0) { h.abs() } else { to_sides() }
+}
+
+/// The most point-in-triangle tests one pick makes for the snap. Points past it aren't snapped
+/// to (the face as picked still is), so no sketch, however dense, can stall the viewport.
+const SNAP_BUDGET: usize = 1 << 18;
+
+#[cfg(test)]
+thread_local! {
+    /// A smaller [`SNAP_BUDGET`] for a test that runs it out.
+    static TEST_BUDGET: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// Run the snap with a budget of `n` tests per pick on this thread (`None`: [`SNAP_BUDGET`]).
+#[cfg(test)]
+pub(crate) fn set_snap_budget(n: Option<usize>) {
+    TEST_BUDGET.with(|b| b.set(n));
+}
+
+fn snap_budget() -> usize {
+    #[cfg(test)]
+    if let Some(n) = TEST_BUDGET.with(std::cell::Cell::get) {
+        return n;
+    }
+    SNAP_BUDGET
+}
+
+/// The face under the cursor, looked up once for all the sketch points one pick offers a face
+/// place to (the Single hole's snap): whether it is planar, its plane, and those of its
+/// triangles near the points on that plane, with their bounding boxes. A dense sketch over a
+/// finely tessellated part costs one planarity lookup and one pass over the body's triangles per
+/// pick; then a point off the plane is turned down at once, and a point on it is tested against
+/// the face's triangles near the cursor, within [`SNAP_BUDGET`] tests in all.
+pub(crate) struct FaceSnap {
+    body: String,
+    face: usize,
+    /// A point of the plane, its unit normal, and how far a point on the face may be from it
+    /// (the triangles' own distance plus [`ON_FACE`]); `None` when the face isn't planar.
+    plane: Option<(Vec3, Vec3, f64)>,
+    tris: Vec<([Vec3; 3], Aabb3)>,
+    /// Point-in-triangle tests left for this pick.
+    budget: std::cell::Cell<usize>,
+}
+
+impl FaceSnap {
+    /// Face `face` of `body`, for sketch points at `near` (in the world).
+    fn new(s: &Session, body: &str, face: usize, near: &[Vec3]) -> FaceSnap {
+        let mut snap = FaceSnap { body: body.to_string(), face, plane: None, tris: Vec::new(), budget: std::cell::Cell::new(snap_budget()) };
+        let st = s.world_state();
+        let (Some((origin, normal)), Some(b)) = (planar_face(s, body, face), st.body(body)) else { return snap };
+        let m = b.mesh();
+        #[cfg(test)]
+        SNAP_WORK.with(|w| w.set((w.get().0, w.get().1 + m.triangles.len())));
+        let tris: Vec<[Vec3; 3]> = m.triangles.iter().zip(&m.tri_face).filter(|(_, f)| **f as usize == face).filter_map(|(t, _)| m.tri(t)).collect();
+        // Anything within ON_FACE of a triangle is within this of the plane.
+        let stray = tris.iter().flatten().map(|v| (*v - origin).dot(normal).abs()).fold(0.0, f64::max);
+        let plane = (origin, normal, stray + ON_FACE);
+        let mut region = Aabb3::EMPTY;
+        for p in near.iter().filter(|p| near_plane(plane, **p)) {
+            region.add(*p);
+        }
+        snap.tris = tris
+            .into_iter()
+            .map(|t| {
+                let mut b = Aabb3::EMPTY;
+                t.iter().for_each(|v| b.add(*v));
+                (t, b)
+            })
+            .filter(|(_, b)| boxes_meet(b, &region, ON_FACE))
+            .collect();
+        snap.plane = Some(plane);
+        snap
+    }
+
+    /// Is face `face` of `body` planar, when it is this snap's face?
+    fn planar(&self, body: &str, face: usize) -> Option<bool> {
+        (self.face == face && self.body == body).then_some(self.plane.is_some())
+    }
+
+    /// The face place at `p` (one of the points the snap was made for), when `p` lies on the face.
+    fn place_at(&self, p: Vec3) -> Option<Sel> {
+        let plane = self.plane?;
+        if !(p.is_finite() && near_plane(plane, p)) {
+            return None;
+        }
+        let at = Aabb3 { min: p, max: p };
+        for ([a, b, c], bb) in &self.tris {
+            let left = self.budget.get();
+            if left == 0 {
+                return None;
+            }
+            self.budget.set(left - 1);
+            #[cfg(test)]
+            SNAP_WORK.with(|w| w.set((w.get().0, w.get().1 + 1)));
+            if boxes_meet(bb, &at, ON_FACE) && triangle_dist(p, *a, *b, *c) < ON_FACE {
+                return Some(Sel::Face { body: self.body.clone(), index: self.face, point: p });
+            }
+        }
+        None
+    }
+}
+
+/// Is `p` within reach of the plane (a point of it, unit normal, reach)?
+fn near_plane((origin, normal, reach): (Vec3, Vec3, f64), p: Vec3) -> bool {
+    (p - origin).dot(normal).abs() <= reach
+}
+
+/// Do boxes `a` and `b` meet once `b` is grown by `pad` on every side?
+fn boxes_meet(a: &Aabb3, b: &Aabb3, pad: f64) -> bool {
+    a.min.x <= b.max.x + pad
+        && b.min.x - pad <= a.max.x
+        && a.min.y <= b.max.y + pad
+        && b.min.y - pad <= a.max.y
+        && a.min.z <= b.max.z + pad
+        && b.min.z - pad <= a.max.z
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Planar face lookups (each tessellates the body) and triangles the snap looked at, on this
+    /// thread: tests bound the work of a pick with them.
+    static SNAP_WORK: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// (planar face lookups, triangles the snap looked at) on this thread since the last call.
+#[cfg(test)]
+pub(crate) fn take_snap_work() -> (usize, usize) {
+    SNAP_WORK.with(|w| w.replace((0, 0)))
+}
+
+#[cfg(test)]
+mod face_snap_tests {
+    use super::*;
+
+    #[test]
+    fn a_point_more_than_a_micrometre_off_a_sliver_is_off_the_face() {
+        // A triangle with half-micrometre legs. Points 2 µm below its lower side and 1.6 µm past
+        // its long side get past `preview::point_triangle_dist`'s inside test (an absolute
+        // tolerance); the snap goes by the true distance and turns them down. Points on a side,
+        // or half a micrometre beyond one, are on the face.
+        let (a, b, c) = (Vec3::ZERO, Vec3::new(5e-4, 0.0, 0.0), Vec3::new(0.0, 5e-4, 0.0));
+        let out = Vec3::new(1.0, 1.0, 0.0) * std::f64::consts::FRAC_1_SQRT_2;
+        let mid = Vec3::new(2.5e-4, 2.5e-4, 0.0);
+        let off = [Vec3::new(2.5e-4, -2e-3, 0.0), Vec3::new(1.4e-3, 1.4e-3, 0.0)];
+        let on = [mid, mid + out * 5e-4, Vec3::new(1e-4, -5e-4, 0.0), Vec3::new(1e-4, 1e-4, 5e-4)];
+        let mut bb = Aabb3::EMPTY;
+        [a, b, c].into_iter().for_each(|v| bb.add(v));
+        let snap = FaceSnap {
+            body: "Body1".into(),
+            face: 0,
+            plane: Some((Vec3::ZERO, Vec3::Z, ON_FACE)),
+            tris: vec![([a, b, c], bb)],
+            budget: std::cell::Cell::new(SNAP_BUDGET),
+        };
+        for p in off {
+            assert!(crate::preview::point_triangle_dist(p, a, b, c) < ON_FACE, "the inside test alone takes {p:?}");
+            assert!(triangle_dist(p, a, b, c) > 1.5e-3, "{p:?}");
+            assert_eq!(snap.place_at(p), None, "{p:?}");
+        }
+        for p in on {
+            assert_eq!(snap.place_at(p), Some(Sel::Face { body: "Body1".into(), index: 0, point: p }), "{p:?}");
+        }
+    }
+
+    #[test]
+    fn the_distance_to_a_tiny_triangle_is_from_its_plane_over_it() {
+        // Legs of 20 nm: the triangle still has a plane, and a point just under a micrometre
+        // above it is that far from it (not from its nearest side), so it is on the face. A
+        // triangle without area is measured from its sides; nothing here panics on non-finite input.
+        let (a, b, c) = (Vec3::ZERO, Vec3::new(2e-5, 0.0, 0.0), Vec3::new(0.0, 2e-5, 0.0));
+        let p = Vec3::new(5e-6, 5e-6, 0.99999e-3);
+        assert!((triangle_dist(p, a, b, c) - 0.99999e-3).abs() < 1e-12, "{}", triangle_dist(p, a, b, c));
+        assert!((triangle_dist(Vec3::new(0.0, 3.0, 4.0), a, b, b) - 5.0).abs() < 1e-9, "a triangle without area");
+        let far = |d: f64| d.is_nan() || d >= ON_FACE;
+        assert!(far(triangle_dist(Vec3::new(f64::NAN, 0.0, 0.0), a, b, c)), "a point that isn't finite is never near");
+        assert!(far(triangle_dist(p, a, b, Vec3::new(f64::INFINITY, 0.0, 0.0))), "nor is a triangle that isn't finite");
+    }
 }
 
 /// Does a feature build from this sketch's profiles (extrude, revolve, sweep, loft, emboss…)?
@@ -878,6 +1126,8 @@ fn profiles_used(s: &Session, sketch: u64) -> bool {
 
 /// The plane of a planar body face: (point on it, unit normal).
 pub fn planar_face(s: &Session, body: &str, face: usize) -> Option<(Vec3, Vec3)> {
+    #[cfg(test)]
+    SNAP_WORK.with(|w| w.set((w.get().0 + 1, w.get().1)));
     let st = s.world_state();
     let b = st.body(body)?;
     let tol = (b.body.size() * 1e-3).max(1e-3);
@@ -939,6 +1189,39 @@ pub(crate) fn combo(ui: &mut egui::Ui, id: &str, labels: &[&str], sel: &mut usiz
         }
     });
     publish_row(&r.response);
+}
+
+/// A mode choice as a row of icon buttons rather than a drop-down: every mode is on screen at
+/// once, each drawn as the shape it makes, with its name as the tooltip. `labels` and `icons`
+/// run in step; a mode with no icon gets the fallback square. Publishes the handles a combo
+/// does, `dialog:<row label>:<label>` per mode and `dialog:<row label>` for the row.
+pub(crate) fn icon_choice(ui: &mut egui::Ui, labels: &[&str], icons: &[&str], sel: &mut usize) {
+    let t = Tokens::get();
+    let row = ROW.with(|r| r.borrow().clone());
+    let mut at = None;
+    ui.horizontal(|ui| {
+        for (i, label) in labels.iter().enumerate() {
+            let on = *sel == i;
+            let (r, resp) = ui.allocate_exact_size(vec2(28.0, 24.0), egui::Sense::click());
+            if on {
+                ui.painter().rect_filled(r, 4.0, t.accent);
+            } else if resp.hovered() {
+                ui.painter().rect_filled(r, 4.0, t.hover);
+            }
+            let ink = if on { Color32::WHITE } else { t.icon };
+            crate::icons::paint(ui.painter(), r.shrink(3.0), icons.get(i).copied().unwrap_or(""), ink, t.icon_fill, ink);
+            crate::scenario::publish_handle(&format!("dialog:{row}:{label}"), r.center());
+            if on {
+                at = Some(r.center());
+            }
+            if resp.on_hover_text(tr(label)).clicked() {
+                *sel = i;
+            }
+        }
+    });
+    if let Some(p) = at {
+        crate::scenario::publish_handle(&format!("dialog:{row}"), p);
+    }
 }
 
 thread_local! {
@@ -1028,6 +1311,8 @@ fn hint(inp: &SelInput) -> &'static str {
         "click an axis or sketch line"
     } else if a & CURVES != 0 {
         "click sketch curves"
+    } else if a & selection::POINTS != 0 {
+        "click sketch points"
     } else if a & BODIES != 0 {
         "click bodies"
     } else {
@@ -2467,7 +2752,7 @@ fn mid_points(extra: &serde_json::Map<String, Value>) -> Vec<(f64, String)> {
         .collect()
 }
 
-const CHAMFER_TYPES: [&str; 3] = ["Equal Distance", "Two Distances", "Distance and Angle"];
+pub(crate) const CHAMFER_TYPES: [&str; 3] = ["Equal Distance", "Two Distances", "Distance and Angle"];
 
 /// A new Fillet or Chamfer dialog's values.
 fn fillet_kind(size: &str, chamfer: bool) -> Kind {
