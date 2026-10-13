@@ -5,58 +5,53 @@ parameter to watch the timeline rebuild. [Documentation](https://bherbruck.githu
 [issues](https://github.com/bherbruck/solidcraft/issues). AI agents can model with it over MCP:
 `solidcraft-cli mcp` ([how](https://bherbruck.github.io/solidcraft/guide/mcp.html)).
 
-**Why 0.6:** this is a minor bump because two things change the files you work with: the
-rename to SolidCraft and the new design file format. Files from earlier builds open fine, but
-builds 0.5 and older can't open designs saved by 0.6.
+**Why 0.7:** this is a minor bump because the design file format moved to version 15 (sketches
+on cylinder caps and sheet metal panels need new references), and because it adds new features.
 
 **What's new**
-- **New design file format.** Saves are a zip container by default; plain JSON is still one
-  click away (details below).
-- **Sheet metal:** flange corners close at any angle, and cut-outs fold across bends at any
-  angle, including curved bends.
-- **Crash reports:** after a crash, Help ▸ Crash Reports… shows what happened with a ready-to-file
-  issue draft. Reports stay on your computer; nothing is sent. `solidcraft-cli crashes` lists and
-  replays them.
-- **Snap package** for x86_64 and aarch64 on every release, alongside the AppImage, `.deb`, `.rpm`
-  and Flatpak.
-- **Trackpad navigation** (two-finger pan, pinch zoom), a fillet option that shrinks a radius too
-  big for its edges, cleaner dialogs and toolbar panels, and the unfinished Generative Design
-  workspace is gone.
-- Many modelling fixes: extrude/revolve in moved components, To Object picks, very flat arcs,
-  touching lines and arcs in booleans, and `solidcraft-cli run` now fails when a feature fails.
+- **Sketching on stacked extrudes works again.** Creating a sketch on the top face of an extrude
+  stacked on another failed with "operation failed" since 0.3
+  ([#489](https://github.com/bherbruck/solidcraft/issues/489)). It's fixed, and every flat face
+  of the test models is now checked for this on every change.
+- **Select Other:** hold or right-click to pick something hidden under something else; click
+  again to cycle through what's underneath.
+- **Tabs are named after their file** instead of "Untitled".
+- **Modelling:** a flange angle and height per edge, Patch fills non-planar loops, sketches on
+  cylinder caps and on sheet metal faces, and a feature rename updates everything that refers to
+  it.
+- **Fixes:** revolve with edges on the axis, shell and fillet with small rounds, Join keeps face
+  attachments, and STEP export writes each lump of a body as its own solid.
+- **Navigation and UI:** orbiting from empty space turns around the visible geometry, Ctrl+drag
+  orbits in every preset, toolbar drops land across labels and gaps, Combine previews before OK,
+  and sketch constraints accept the sketch's own x / y axes.
+- Opening a design reads its metadata and preview through a bounded, seekable reader; the docs
+  and web app have link preview cards.
 
-**New file format.** Save and Save As now write `.solidcraft` designs as a zip container
-that stores imported STEP, mesh and image data as binary, once each, at full precision, so
-designs with imports save and open faster. What that means for you:
-- Your existing `.solidcraft` and `.solvecraft` files (plain JSON) still open as before; the
-  format is detected from the contents.
-- Want plain JSON (for diffs or scripts)? Use **File ▸ Save As JSON…**, or pick a
-  `.json` name in Save As; later saves keep JSON. **File ▸ Export Design as JSON…** writes a
-  separate JSON copy. From the CLI, `solidcraft-cli run … --save design.json`; from MCP or
-  scripts, pass `"format": "json"` to `save` / `file.save`.
-- SolidCraft 0.5 and older can't open designs saved by 0.6, as a container or as JSON (the
-  JSON format tag is now `solidcraft/14`). Keep a copy of a file you may still open in 0.5.
+**File format.** Designs are now format 15 (`solidcraft/15`). SolidCraft 0.6 and older can't
+open designs saved by 0.7, as a container or as JSON; keep a copy of a file you may still open
+in 0.6. Files from every earlier version still open in 0.7.
 
-**Renamed to SolidCraft.** Everything now uses the new name: the `solidcraft` and
-`solidcraft-cli` programs, `.solidcraft` designs, `SOLIDCRAFT_*` environment variables,
-settings folders, package names and the `solidcraft` MCP server. Upgrading from SolveCraft:
-- `.solvecraft` designs still open (double-click, Open, drag-drop, the CLI and MCP); new saves
-  are `.solidcraft`.
-- Settings, preferences and recovery files are copied to the new folders on first launch; the
-  old folders are left in place. `SOLVECRAFT_*` environment variables are still read.
-- `solvecraft-cli` remains as a deprecated alias for one release; it forwards to
-  `solidcraft-cli` and prints a note. Agents: `claude mcp add solidcraft -- solidcraft-cli mcp`;
-  an existing `claude mcp add solvecraft -- solvecraft-cli mcp` setup keeps working.
-- Windows: the `.msi` upgrades the existing installation in place (now in
-  `Program Files\SolidCraft`). Linux: the `solidcraft` `.deb`/`.rpm` replaces the `solvecraft`
-  package. The Flatpak app ID stays `ai.storyteller.solvecraft`, so `flatpak update` just works,
-  and existing AppImages find the update.
-- macOS: quit the app, move the old `SolveCraft.app` to the Trash (your designs and settings
-  stay), then drag `SolidCraft.app` from the DMG onto Applications and pin it in the Dock.
-- Details: [compatibility notes](https://github.com/bherbruck/solidcraft/blob/main/docs/compatibility.md).
+**Known limitations**
+- Some faces still need the fixed-plane fallback for sketches: side faces Join merged from two
+  extrudes ([#491](https://github.com/bherbruck/solidcraft/issues/491)), faces split by a later
+  feature ([#492](https://github.com/bherbruck/solidcraft/issues/492)), Cut walls and chamfer
+  faces ([#493](https://github.com/bherbruck/solidcraft/issues/493)), faces after Revolve,
+  Offset Face or Boss ([#494](https://github.com/bherbruck/solidcraft/issues/494)) and sheet
+  metal thickness faces ([#495](https://github.com/bherbruck/solidcraft/issues/495)).
+- Cutting a coaxial cylinder from a thin disc can lose a little volume
+  ([#500](https://github.com/bherbruck/solidcraft/issues/500)); an edge flange with different
+  per-edge angles leaves gaps at the corners
+  ([#501](https://github.com/bherbruck/solidcraft/issues/501)).
+- More in [ROADMAP.md](https://github.com/bherbruck/solidcraft/blob/main/ROADMAP.md#known-limitations).
 
-Documentation, the browser app and the Flatpak feed use the SolidCraft project Pages URLs;
-old-name Pages addresses are not permanent aliases.
+**Upgrading from 0.5 or earlier.** 0.6 renamed SolveCraft to SolidCraft and made the zip
+container the default save format. `.solvecraft` designs, old settings folders and
+`SOLVECRAFT_*` variables are still picked up, and `solvecraft-cli` still forwards to
+`solidcraft-cli`. Want plain JSON? Use **File ▸ Save As JSON…** or `--save design.json`. On
+macOS, replace `SolveCraft.app` with `SolidCraft.app`. Details:
+[compatibility notes](https://github.com/bherbruck/solidcraft/blob/main/docs/compatibility.md).
+
+Documentation, the browser app and the Flatpak feed use the SolidCraft project Pages URLs.
 
 **Which file?**
 - **Windows:** `SolidCraft-{version}-windows-x64.exe` runs as is. Or install the `.msi`, or unzip the
@@ -89,6 +84,5 @@ The builds aren't signed yet. On macOS, right-click `SolidCraft.app` in Applicat
 **Open** the first time (or run `xattr -dr com.apple.quarantine /Applications/SolidCraft.app`).
 On Windows, SmartScreen may say "Windows protected your PC": **More info**, then **Run anyway**.
 Licences are built in (Help ▸ About ▸ Licences, `solidcraft-cli licences`); the packages also
-install `THIRD-PARTY-LICENSES.txt`. Known limitations:
-[ROADMAP.md](https://github.com/bherbruck/solidcraft/blob/main/ROADMAP.md#known-limitations).
+install `THIRD-PARTY-LICENSES.txt`.
 
