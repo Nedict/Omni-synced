@@ -156,6 +156,9 @@ fn contradicted(
     (a_in_b && under_surface(ma, ia, ib, tol, false, None)) || (b_in_a && !a_in_b && under_surface(mb, ib, ia, tol, false, None))
 }
 
+/// Sampled overlap fraction below which two bodies share no material.
+const NONE: f64 = 0.003;
+
 /// Booleans that need no intersection: one body clear of the other, or inside it. These are
 /// common with coincident curved faces (a hole drilled where one already is, a body joined
 /// with itself), which the intersection can't handle. `counts`: the operands' faces and edges.
@@ -178,7 +181,6 @@ fn trivial(
     }
     let (ia, ib) = (ma.inside_index(), mb.inside_index());
     let (b_in_a, a_in_b) = overlap(ma, mb, &ia, &ib)?;
-    const NONE: f64 = 0.003;
     const ALL: f64 = 0.997;
     let disjoint = b_in_a < NONE && a_in_b < NONE;
     // The samples only say that nearly all of one body is clear of, or inside, the other. A
@@ -284,11 +286,6 @@ thread_local! {
     static BORES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Is a union with a narrowed bore running (see [`crate::coplanar::bore_union`])?
-pub(crate) fn narrowing_bores() -> bool {
-    BORES.with(|c| c.get())
-}
-
 /// Boolean of two bodies. The result may be empty (`Ok(None)`) for a cut that removes
 /// everything or an intersection of disjoint bodies. Results are checked against volume bounds
 /// and retried with shifted copies and other tolerances when they fail or look wrong.
@@ -337,6 +334,18 @@ pub fn boolean(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
         BoolOp::Cut => r = r.and_then(|result| result.map(|body| body.with_preserved_boolean_planar_sources(a, b, true)).transpose()),
         BoolOp::Union => r = r.and_then(|result| result.map(|body| body.with_preserved_union_planar_sources(a, b)).transpose()),
         BoolOp::Intersect => {}
+    }
+    // A retry's result is held to what the operation can do at all; one that fails is refused
+    // rather than returned wrong (issue #616).
+    if (!diagnostics.events.is_empty() || diagnostics.truncated)
+        && let Ok(result) = &r
+        && let Err(e) = crate::boolean_guard::check_retry(a, b, op, result.as_ref())
+    {
+        let tried = diagnostics.warning().unwrap_or_default();
+        r = Err(match e {
+            KernelError::Failed(m) => KernelError::Failed(format!("{m} ({})", tried.trim_start_matches("Boolean retry: "))),
+            other => other,
+        });
     }
     if r.is_ok() {
         merge(diagnostics);
@@ -404,6 +413,19 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
     let slack = 2e-3 * (va + vb) + 1e-9;
     // Volume bounds, then membership against the operands (catches misclassified pieces), on
     // one mesh of the result. Returns (plausible, volume).
+    // Shells that touch were never fused: coincident back-to-back faces leave the intersection
+    // nothing to cut, so it returns both operands side by side (#396). Volume and point
+    // sampling cannot see that; the shell grouping can. Only contact over an area counts
+    // (bodies tangent along a line stay two lumps), and operands already like that, saved
+    // before this was caught, stay joinable.
+    let unfused = |r: &Body| {
+        op == BoolOp::Union
+            && r.shell_count() > 1
+            && r.union_lumps().is_err()
+            && a.union_lumps().is_ok()
+            && b.union_lumps().is_ok()
+            && crate::coplanar::faces_touch(a, b)
+    };
     let check = |r: &Body| -> (bool, f64) {
         let Ok(mr) = r.tessellate_with(tol_m, true) else { return (false, f64::NAN) };
         let v = mr.measure().volume;
@@ -414,6 +436,9 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
                 BoolOp::Intersect => v <= va.min(vb) + slack,
             };
         if !bounds {
+            return (false, v);
+        }
+        if unfused(r) {
             return (false, v);
         }
         let consistent = match &meshes {
@@ -439,14 +464,20 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
     // Prisms along one direction (plates with holes): exact, in 2D (so only the volume
     // bounds are checked).
     if let Some(Ok(r)) = crate::prism::prism_boolean(a, b, op) {
-        // Slab-by-slab prism joins sew a closed solid, but leave cap and wall
-        // pieces along slab boundaries. Merge those coplanar faces just as the
-        // general B-rep boolean does, retaining intentional Split Face lines.
+        // Slab-by-slab prism booleans sew a closed solid, but leave cap and wall pieces
+        // along slab boundaries: a cut along Z through a box whose side wall already has a
+        // port in it splits that wall into strips at the port's top and bottom, though the
+        // cut never touches it. Merge those coplanar faces for every operation, just as the
+        // general B-rep boolean does, retaining intentional Split Face lines. Authored
+        // boundaries (painted faces, regularization protection) keep their pieces.
         let keep: Vec<Vec<Vec3>> = a.split_keep().iter().chain(b.split_keep()).cloned().collect();
+        let authored = |x: &Body| x.regularization_protected || x.paint().is_some_and(|p| !p.faces.is_empty());
         let r = if op == BoolOp::Union {
             r.map(|body| guard("heal prism boolean", || recorded::heal_body(&body, (*body.solid).clone(), size, &keep, &counts)).unwrap_or(body))
-        } else {
+        } else if authored(a) || authored(b) {
             r
+        } else {
+            r.map(|body| guard("heal prism boolean", || recorded::heal_prism_result(&body, size, &keep, &counts)).unwrap_or(body))
         };
         match &r {
             Some(body) => {
@@ -502,6 +533,18 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
             Some(Ok(None)) | None => {}
         }
     }
+    // A face standing wholly inside a coincident face of the other body, back to back, and no
+    // other contact (#396): exact, by topology alone.
+    if op == BoolOp::Union
+        && a.solid.boundaries().len() == 1
+        && b.solid.boundaries().len() == 1
+        && let Some(Ok(body)) = crate::coplanar::inset(a, b)
+        && let (Some(ma), Some(mb)) = &meshes
+        && overlap(ma, mb, &ma.inside_index(), &mb.inside_index()).is_some_and(|(b_in_a, a_in_b)| b_in_a < NONE && a_in_b < NONE)
+        && check(&body).0
+    {
+        return Ok(Some(body));
+    }
     // Bores on a common cylinder (a pad's bore around the hole it is joined over).
     if op == BoolOp::Union && !BORES.with(|c| c.get()) && crate::coplanar::has_coincident_cylinders(a, b) {
         BORES.with(|c| c.set(true));
@@ -509,6 +552,14 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
         BORES.with(|c| c.set(false));
         if let Some(body) = r {
             merge(diagnostics);
+            return Ok(Some(body));
+        }
+    }
+    // Faces back to back over part of their area: imprinted on each other and glued (exact; held
+    // to the retry guard's checks all the same).
+    if op == BoolOp::Union && crate::coplanar::faces_touch(a, b) {
+        let accept = |body: &Body| check(body).0 && !unfused(body) && crate::boolean_guard::check_retry(a, b, op, Some(body)).is_ok();
+        if let Some(body) = crate::coplanar::imprint_union(a, b, &accept) {
             return Ok(Some(body));
         }
     }
@@ -548,7 +599,11 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
                             }
                             return Ok(Some(body));
                         }
-                        last = format!("implausible result volume {v:.4}");
+                        last = if unfused(&body) {
+                            "the bodies touch along faces that could not be fused".into()
+                        } else {
+                            format!("implausible result volume {v:.4}")
+                        };
                     }
                     Err(e) => last = e.to_string(),
                 },

@@ -39,7 +39,7 @@ pub(crate) fn given(sk: &Sketch) -> Vec<bool> {
 
 /// The constructive seed of a plain solve.
 pub(crate) fn seed_of(sk: &Sketch) -> crate::construct::Seed {
-    crate::construct::seed(sk, &given(sk), None, &crate::solver::points_on_curves(sk), &mut crate::decompose::Budget::full())
+    crate::construct::seed(sk, &given(sk), None, true, &crate::solver::points_on_curves(sk), &mut crate::decompose::Budget::full())
 }
 
 /// Rough rectangle from four lines sharing corner points.

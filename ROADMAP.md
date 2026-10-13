@@ -59,7 +59,30 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 | M14 | Configurations: a table of rows (parameter expressions and feature suppressions per row) switched with config.activate (undoable, all or nothing), kept through parameter renames and feature deletes (config.configure, config.table, config.column/row/activate). Per-row body materials and appearances (library looks, custom colour/opacity and clearing overrides), undoable activation and save/reopen: done. Ordered typed configuration rules, atomic validation and structured rule editing: done. Component appearance and certified semantic face style columns, atomic preview/apply and independent-copy remapping: done. Exact constructed sketch-side and immutable imported-face lineage now preserve legacy names and reject retargeting. Left: ambiguous shifted/two-sided caps | in progress | 4 |
 | M13 | Never lose work: atomic saves (temporary file, flush, rename; a crash at any moment leaves the old file or the new one) with the replaced version kept as `<file>.bak`; autosave of unsaved changes to the recovery folder every 5 minutes (preference) and after big operations, only when something changed; "Recover unsaved design?" on the next launch (`doc.recovery_list`, `doc.recover`, `doc.recovery_discard`); a kill-mid-save test (process killed while saving a 0.5 MB design 25 times). File format: `"format": "solidcraft/12"`, older formats upgraded step by step (`doc::format`), newer ones refused with a message, out-of-range numbers and broken placements refused; a corpus of designs saved by M0, components-era, joints-era and current builds (apps/solidcraft-cli/tests/corpus) that must open and evaluate as saved; damaged and hostile variants (truncation, bit flips, hostile values, removed keys, repeated features, deep nesting) never panic | done | 6 |
 
+## Render foundation
+
+- R1 adds renderer-independent backend/profile metadata, strict request resolution and
+  bounded image/scratch admission checks, exposed by the read-only `render.backends`
+  command. It describes the current CPU raster snapshot path without evaluating the model.
+  Existing snapshot and viewport routes remain unchanged. The Render workspace, HDRI/PBR,
+  render jobs and optional engines remain future work; see [the contract](docs/render-backends.md)
+  and [the phased proposal (#620)](https://github.com/bherbruck/solidcraft/issues/620).
+
 ## Dimensioning and error reporting
+
+- MCP `execute` accepts `verbose: false`, sharing the compact reply helper used by
+  `batch`: body changes and created sketch IDs stay, while repeated lists are omitted.
+  Both tools retain full replies by default.
+
+- Sketch Create groups drawing variants under Line, Rectangle, Circle, Arc, Slot,
+  Polygon and Spline. Each open part remembers its last interactive choice per family
+  across sketch sessions and document-tab switches; closing the part resets these UI choices.
+- Inscribed, circumscribed and edge polygon tools preview their actual outline before
+  placement, including orientation and the selected side count.
+- Construction (X) preserves the active sketch drawing tool, picked anchors and inline
+  dimension values, so line type can change while a shape is in progress.
+- Planar sketch construction previews and hover feedback keep the same dashed pattern as
+  committed geometry; centerlines retain their dash-dot pattern.
 
 - Point has a default Sketch CREATE toolbar button alongside the existing drawing tools.
   Saved custom layouts are preserved; Reset Toolbar restores the default Point button.
@@ -67,11 +90,16 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   arguments reject such a name when an older design's construction plane already has it. Use
   the other alias, the construction feature's numeric ID or an explicit plane; existing
   stored references keep their saved meaning. Section Analysis uses the same check.
-- Sketch text can be edited from a selected outline's context menu or the Edit Text command.
+- Sketch text can be edited from a letter interior or outline's context menu or the Edit Text command.
+  Interior selection requires every profile boundary to belong to the same text source;
+  the editor highlights the whole source without replacing profile selections.
   Content, baseline X/Y, height and rotation update the original text source in one undo step;
   cancelling or rejecting an invalid value preserves the sketch. Position and height fields
   use the document units captured when editing starts; generated outlines remain associated
   with their text source, and untouched inputs preserve their saved internal values.
+  Dragging a text outline moves the entire source in one undo step; Escape restores the
+  gesture. Move/Copy on a selected text outline provides unit-aware X/Y distances and rotation
+  about its baseline; copies keep an independent editable text source.
 - Repeating the initial point of a planar multi-point sketch drawing tool is neutral: the tool
   waits for a distinct point without a degenerate-shape error or history entry. Typed input
   and programmatic commands retain their validation.
@@ -158,6 +186,11 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   top/bottom heading are preserved. Diagonals include 45-degree edge and isometric corner views.
 
 ## Known limitations
+
+- Scheduled and manual CI scan locked dependency advisories, bans and sources with
+  cargo-deny. Vulnerabilities fail the scan; unmaintained crates warn. Local vendored
+  patches require separate upstream review because advisory databases cannot version-match
+  their path dependencies. Pull requests retain the existing licence checks.
 
 - Associative shell-face sketches require a unique certified planar source. Nested shell
   attachments and ambiguous coincident sources remain unsupported.
@@ -326,6 +359,10 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   tapered or bend-crossing machining refuses atomically instead of restoring material later.
   Sketches attach to a sheet's flat faces (base and flanges, either side) by panel, in the
   flat pattern's coordinates, and follow it through rebuilds and unfold/refold.
+  A flange on another flange's far edge (a return) follows that flange's closed end and keeps
+  clear of the flange beside it, and the returns of one feature are mitred toward each other
+  with the rule's gap where their flanges meet at a corner; returns of separate features, and
+  flanges on returns, are not closed toward each other.
 - Rolling-ball fillet accuracy: independent offset-cylinder tee references check surface
   distance, actual trimmed tessellation, supporting-cylinder contacts and tangency at two
   scales. The measured trimmed-part error is below 0.0001 mm; this is an analytic geometry
@@ -359,13 +396,21 @@ and reference-object placement remain separate work, as do loft rails and center
 - Design containers (#303, phase one) separate and deduplicate STEP, raw images and
   lossless binary mesh arrays while keeping plain JSON as a supported Save As/export
   format. Generated-mesh storage measurements reduce serialization and decoding work;
-  evaluated geometry caching and instant cold display remain separate follow-up work.
+  a seekable reader defers original blobs until after provisional display.
   See [container format](docs/design-container.md) and [performance measurements](docs/perf.md).
-- Desktop Open can show an experimental, opt-in bounded saved display preview while rebuilding in the existing
-  file worker. Ordinary saves omit display caches; explicit `preview: true` saves cache
-  only already warm meshes. Document hashes and application versions reject
-  stale previews. Preview geometry cannot be edited or measured, and cancelled or stale
-  completions cannot replace a newer document. Evaluated B-rep restoration remains open.
+- Warm saves with explicit `cache: true` can include a versioned native B-rep cache through SolidCraft-owned topology
+  and geometry records, with a separate truck adapter and bounded binary reader. Exact
+  face-source certificates and operation history survive codec round trips. A provisional
+  picture can be generated before original blobs are read; editing and measurement wait
+  for authoritative reconstruction. Cached metadata binds preview and reconstruction to
+  the same document despite concurrent file writes. Default saves omit this cache and never force cold
+  evaluation or meshing; explicit `preview: true` remains a separate warm-mesh option.
+  Keys, resource budgets and document/revision guards reject incompatible, hostile or
+  stale results. A second modelling kernel still requires its own tested adapter.
+- Warm saves with explicit `cache: true` can also carry a bounded PNG thumbnail from already cached meshes.
+  Home reads it without rebuilding the design when its local picture is missing;
+  mismatched or malformed thumbnails fall back to normal generation. The image is
+  kernel-independent and saving never forces cold meshing to produce it.
 
 - Cold rebuild profiling separates parsing, geometry, placement, display meshing and
   thumbnails. Straight-line closest-point projection and exact curved-surface evaluation

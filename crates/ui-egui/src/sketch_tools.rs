@@ -413,7 +413,7 @@ pub fn hint(id: &str) -> Option<String> {
             "sketch.spline.fit_point" => "Spline: click fit points; click the start to close smoothly, or right-click to finish",
             "sketch.spline.control_point" | "sketch.spline.control_point_5" => "Control point spline: click control points; right-click to finish",
             "sketch.text" => "Text: click where the text starts",
-            "sketch.edit_text" => "Edit Text: click an outline of the text to edit",
+            "sketch.edit_text" => "Edit Text: click a letter interior or outline",
             "sketch.blend_curve" => "Blend curve: click the ends of two curves",
             "sketch.offset" => "Offset: click a curve (its chain is offset), then the side and distance",
             "sketch.fillet" => "Fillet: click the corner of two lines",
@@ -737,11 +737,20 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
                 }
                 return;
             }
-            let Some((id, _)) = sketch_entity(app, &hits) else { return };
             if cmd == "sketch.edit_text" {
-                crate::sketch_text::open(app, &id);
+                let selection = hits.first().and_then(|hit| match hit {
+                    Hit::SketchCurve { sketch, id, .. } if Some(*sketch) == active_sketch(app) => {
+                        Some(solidcraft_engine::Sel::SketchCurve { id: id.clone() })
+                    }
+                    Hit::Profile { sketch, index } => Some(solidcraft_engine::Sel::Profile { sketch: *sketch, index: *index }),
+                    _ => None,
+                });
+                if let Some(id) = selection.as_ref().and_then(|sel| crate::sketch_text::entity_for_selection(app, sel)) {
+                    crate::sketch_text::open(app, &id);
+                }
                 return;
             }
+            let Some((id, _)) = sketch_entity(app, &hits) else { return };
             if cmd == "sketch.centerline" {
                 let _ = app.run(cmd, json!({"curves": [id]}));
                 return;
@@ -973,19 +982,22 @@ pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
     {
         painter.circle_stroke(sp, if snap.is_some() { 6.0 } else { 3.0 }, stroke);
     }
-    let pts: Vec<Pos2> = t.pts.iter().filter_map(|p| to(p.0)).collect();
-    for w in pts.windows(2) {
-        painter.line_segment([w[0], w[1]], Stroke::new(1.0, tk.rubber_band.gamma_multiply(0.6)));
+    for w in t.pts.windows(2) {
+        crate::tools::paint_sketch_path(
+            &[ss.plane.to_world(w[0].0), ss.plane.to_world(w[1].0)],
+            crate::sketch_palette::mode(app),
+            painter,
+            proj,
+            Stroke::new(1.0, tk.rubber_band.gamma_multiply(0.6)),
+        );
     }
-    if let (Some(last), Some((h, _))) = (pts.last(), t.hover.as_ref())
-        && let Some(hs) = to(*h)
-    {
-        painter.line_segment([*last, hs], stroke);
+    if let (Some(last), Some((h, _))) = (t.pts.last(), t.hover.as_ref()) {
+        crate::tools::paint_sketch_path(&[ss.plane.to_world(last.0), ss.plane.to_world(*h)], crate::sketch_palette::mode(app), painter, proj, stroke);
     }
     if let Some((h, _)) = t.hover.as_ref()
         && let Some(curve) = crate::tools::preview_curve(t, *h, None)
     {
-        crate::tools::paint_preview_curve(&curve, &ss.plane, painter, proj, stroke);
+        crate::tools::paint_preview_curve(curve, &ss.plane, painter, proj, stroke, crate::sketch_palette::mode(app));
     }
     // Picked curves highlighted.
     let mut display_budget = solidcraft_engine::render::SamplingBudget::new(32_768, 65_536);
@@ -1074,6 +1086,8 @@ fn glyphs(app: &SolveApp, painter: &egui::Painter, proj: &Proj, hover: Option<Po
     for (id, sp, base) in &placed {
         let Some(c) = ss.sketch.constraints.iter().find(|c| &c.id == id) else { continue };
         let failing = ss.report.failing.contains(id);
+        // Redundant (already implied by the others, but holding): dimmed, not an error.
+        let redundant = !failing && ss.report.redundant.contains(id);
         let selected = picked.as_deref() == Some(id.as_str())
             || app.session.selection.iter().any(|s| matches!(s, solidcraft_engine::Sel::SketchConstraint { id: x } if x == id));
         let lit = selected || hovered.as_deref() == Some(id.as_str());
@@ -1081,6 +1095,8 @@ fn glyphs(app: &SolveApp, painter: &egui::Painter, proj: &Proj, hover: Option<Po
             tk.error
         } else if lit {
             tk.accent
+        } else if redundant {
+            tk.glyph_text.gamma_multiply(0.45)
         } else {
             tk.glyph_text
         };
@@ -1102,7 +1118,11 @@ fn glyphs(app: &SolveApp, painter: &egui::Painter, proj: &Proj, hover: Option<Po
     if let (Some(id), Some(h)) = (hovered, hover)
         && let Some(c) = ss.sketch.constraints.iter().find(|c| c.id == id)
     {
-        let label = format!("{} ({id})", c.kind.name());
+        let label = if ss.report.redundant.contains(&id) {
+            format!("{} ({id}), redundant: already implied by other constraints", c.kind.name())
+        } else {
+            format!("{} ({id})", c.kind.name())
+        };
         let at = h + egui::vec2(12.0, 12.0);
         let g = painter.layout_no_wrap(label, egui::FontId::proportional(11.0), tk.text);
         painter.rect_filled(egui::Rect::from_min_size(at, g.size()).expand(3.0), 3.0, tk.panel);
