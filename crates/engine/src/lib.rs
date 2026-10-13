@@ -803,6 +803,8 @@ mod construct_tests;
 #[cfg(test)]
 mod delete_face_tests;
 #[cfg(test)]
+mod derived_units_tests;
+#[cfg(test)]
 mod display_mesh_tests;
 #[cfg(test)]
 mod extent_tests;

@@ -355,13 +355,12 @@ fn mode(id: &str) -> Option<Mode> {
         "sketch.text" => Mode::Points(1),
         "sketch.edit_text" => Mode::Entities(1),
         "sketch.blend_curve" => Mode::Points(2),
-        "sketch.offset" => Mode::Entities(1),
         "sketch.fillet" | "sketch.chamfer.equal_distance" | "sketch.chamfer.distance_angle" | "sketch.chamfer.two_distance" => Mode::Entities(1),
         "sketch.constraint.curvature" | "sketch.circle.two_tangent" => Mode::Entities(2),
         "sketch.circle.three_tangent" => Mode::Entities(3),
         "sketch.constrainer" | "sketch.constraint.polygon" => Mode::Entities(0),
         "sketch.centerline" => Mode::Entities(1),
-        "sketch.mirror" | "sketch.pattern.circular" | "sketch.pattern.rectangular" => Mode::EntitiesThen,
+        "sketch.pattern.circular" | "sketch.pattern.rectangular" => Mode::EntitiesThen,
         "sketch.project_to_surface" | "sketch.intersection_curve" | "sketch.spun_profile" => Mode::Steps,
         _ => return None,
     })
@@ -413,7 +412,6 @@ pub fn hint(id: &str) -> Option<String> {
             "sketch.text" => "Text: click where the text starts",
             "sketch.edit_text" => "Edit Text: click a letter interior or outline",
             "sketch.blend_curve" => "Blend curve: click the ends of two curves",
-            "sketch.offset" => "Offset: click a curve (its chain is offset), then the side and distance",
             "sketch.fillet" => "Fillet: click the corner of two lines",
             "sketch.chamfer.equal_distance" | "sketch.chamfer.distance_angle" | "sketch.chamfer.two_distance" => {
                 "Chamfer: click the corner of two lines"
@@ -424,7 +422,6 @@ pub fn hint(id: &str) -> Option<String> {
             "sketch.constrainer" => "Constrain: click one or two entities; right-click to apply",
             "sketch.constraint.polygon" => "Polygon: click the lines of a closed chain; right-click to apply",
             "sketch.centerline" => "Centerline: click lines",
-            "sketch.mirror" => "Mirror: click entities, right-click, then click the mirror line",
             "sketch.pattern.circular" => "Circular pattern: click entities, right-click, then click the centre",
             "sketch.pattern.rectangular" => "Rectangular pattern: click entities, right-click, then click two points (direction and spacing)",
             "sketch.project_to_surface" => "Project to surface: click curves of other sketches, right-click, then click the face",
@@ -707,30 +704,6 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
                 }
                 return;
             }
-            if cmd == "sketch.offset" && !tool.picks.is_empty() {
-                // Dense derived fit nodes must not snap a nearby side click back
-                // onto the source, reducing a deliberate offset to zero.
-                let state = app.session.world_state();
-                let side = active_sketch(app).and_then(|sid| state.sketch(sid)).and_then(|ss| {
-                    let (o, d) = proj.ray(pos);
-                    ss.plane.intersect_ray(o, d).map(|p| ss.plane.to_local(p))
-                });
-                if let Some(p) = side {
-                    offset_side(app, tool, p);
-                }
-                return;
-            }
-            if cmd == "sketch.offset" {
-                if let Some(sid) = active_sketch(app)
-                    && let Some(id) = hits.iter().find_map(|hit| match hit {
-                        Hit::SketchCurve { sketch, id, .. } if *sketch == sid => Some(id.clone()),
-                        _ => None,
-                    })
-                {
-                    tool.picks.push(id);
-                }
-                return;
-            }
             if cmd == "sketch.edit_text" {
                 let selection = hits.first().and_then(|hit| match hit {
                     Hit::SketchCurve { sketch, id, .. } if Some(*sketch) == active_sketch(app) => {
@@ -766,12 +739,6 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
             if tool.picks.last().is_some_and(|x| x == "|") {
                 let ents: Vec<String> = tool.picks.iter().filter(|x| *x != "|").cloned().collect();
                 match cmd {
-                    "sketch.mirror" => {
-                        if let Some((line, false)) = sketch_entity(app, &hits) {
-                            let _ = app.run(cmd, json!({"entities": ents, "line": line}));
-                            tool.picks.clear();
-                        }
-                    }
                     "sketch.pattern.circular" => {
                         if let Some(p) = at {
                             let _ = app.run(cmd, json!({"entities": ents, "center": arg(&p), "count": 6}));
@@ -956,30 +923,6 @@ pub fn finish(app: &mut SolveApp, tool: &mut Tool) -> bool {
         }
         _ => false,
     }
-}
-
-/// Offset: the second click sets the side and distance.
-fn offset_side(app: &mut SolveApp, tool: &mut Tool, p: Vec2) -> bool {
-    if tool.cmd != "sketch.offset" || tool.picks.is_empty() {
-        return false;
-    }
-    let st = app.session.world_state();
-    let d = active_sketch(app)
-        .and_then(|s| st.sketch(s))
-        .and_then(|ss| {
-            let curve = ss.sketch.curve_index(&tool.picks[0])?;
-            if let Some(shape) = ss.sketch.shape(curve) {
-                Some(shape.dist(p))
-            } else {
-                ss.sketch.exact_segs(curve)?.iter().map(|s| s.point_at(s.closest_param(p)).dist(p)).min_by(f64::total_cmp)
-            }
-        })
-        .unwrap_or(0.0);
-    if d > 1e-6 {
-        let _ = app.run("sketch.offset", json!({"curves": [tool.picks[0]], "distance": d, "side": xy(p)}));
-    }
-    tool.picks.clear();
-    true
 }
 
 /// Rubber band for point tools and pick markers.

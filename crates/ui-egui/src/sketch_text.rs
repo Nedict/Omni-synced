@@ -431,7 +431,7 @@ const FONT_LIST_PX: f32 = 260.0;
 /// The font: a list of the installed families (the built-in font first) with a search box; a
 /// font file's path typed there can be used too.
 fn font_row(ui: &mut egui::Ui, k: &mut Tx, width: f32) {
-    let builtin = format!("{} (built-in)", solidcraft_engine::sketch::DEFAULT_FONT_FAMILY);
+    let builtin = crate::i18n::format("sketch_text.builtin_font", &[("family", solidcraft_engine::sketch::DEFAULT_FONT_FAMILY)]);
     let current = if k.font.trim().is_empty() { builtin.clone() } else { k.font.clone() };
     let mut chosen = None;
     let response = egui::ComboBox::from_id_salt("sketch_text_font")
@@ -440,12 +440,14 @@ fn font_row(ui: &mut egui::Ui, k: &mut Tx, width: f32) {
         .selected_text(current)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show_ui(ui, |ui| {
-            let search = egui::TextEdit::singleline(&mut k.font_filter).id_salt("sketch_text_font_search").hint_text("Search");
+            let search = egui::TextEdit::singleline(&mut k.font_filter)
+                .id_salt("sketch_text_font_search")
+                .hint_text(crate::i18n::tr("sketch_text.font_search"));
             let search = ui.add(search.desired_width(f32::INFINITY));
             crate::scenario::publish_handle("dialog:Font search", search.rect.center());
             let typed = k.font_filter.trim();
             if is_font_file(typed) {
-                let file = ui.selectable_label(false, format!("Use the font file {typed}"));
+                let file = ui.selectable_label(false, crate::i18n::format("sketch_text.use_font_file", &[("path", typed)]));
                 crate::scenario::publish_handle("dialog:Font file", file.rect.center());
                 if file.clicked() {
                     chosen = Some(typed.to_string());
@@ -471,7 +473,7 @@ fn font_row(ui: &mut egui::Ui, k: &mut Tx, width: f32) {
                 }
                 match families(ui.ctx()) {
                     None => {
-                        ui.label("Looking for installed fonts\u{2026}");
+                        ui.label(crate::i18n::tr("sketch_text.loading_fonts"));
                     }
                     Some(list) => {
                         for family in list.iter().filter(|f| f.to_lowercase().contains(&filter)) {

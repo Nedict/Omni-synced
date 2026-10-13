@@ -227,7 +227,7 @@ impl FeatureKind {
             }
             FeatureKind::Fillet { edges, style, .. } => {
                 edges.iter_mut().for_each(pt);
-                if let crate::FilletStyle::Variable { start, .. } = style {
+                if let crate::FilletStyle::Variable { start, .. } | crate::FilletStyle::Spline { start, .. } = style {
                     pt(start);
                 }
             }

@@ -1,19 +1,24 @@
 //! Tool windows for sketch-space modify commands, on the `dialogs_surface` pattern (#19): one
 //! `Mod` enum behind one `Kind::SketchModify` variant, grown by one variant and one arm per
-//! command rather than by a new module each time. The first variant here is Scale, whose
-//! toolbar button reached no tool and no dialog at all, so a press ran `sketch.scale` with no
-//! parameters and the engine answered "`factor` must be a positive number".
-//! `sketch.offset`, `sketch.fillet`, the three `sketch.chamfer.*` commands, the sketch
-//! patterns, `sketch.mirror` and `sketch.move` are the same gap and join this module later,
-//! each its own change.
+//! command rather than by a new module each time. Scale came first, whose toolbar button
+//! reached no tool and no dialog at all, so a press ran `sketch.scale` with no parameters and
+//! the engine answered "`factor` must be a positive number". Offset joins it here (upstream
+//! issue #162 item 1: "Offset does not create a constraint, the size of the offset seems
+//! random"). Mirror joins them here, which ran as a bare click flow: entities until a
+//! right-click, then one more click for the line, with nothing on screen saying what was
+//! picked. Move joins them too, which had no toolbar placement, no tool and no dialog: its only
+//! route into the UI was the sketch context menu, and that went through the same
+//! empty-parameter fallback and reported an engine error. `sketch.fillet`, the three
+//! `sketch.chamfer.*` commands and the sketch patterns are the same gap and join this module
+//! later, each its own change.
 
 use serde_json::{Map, Value, json};
 use solidcraft_engine::Sel;
 use solidcraft_engine::doc::expr::Kind as ValueKind;
 
 use crate::SolveApp;
-use crate::dialogs::{Kind, field, row_label};
-use crate::selection::{CURVES, POINTS, SelInput};
+use crate::dialogs::{Kind, check, field, row_label};
+use crate::selection::{AXES, CURVES, POINTS, SelInput};
 
 /// A sketch modify tool window's values.
 #[derive(Clone, Debug, PartialEq)]
@@ -22,26 +27,48 @@ pub enum Mod {
     /// input; with none picked the command scales about the sketch origin, as its own default
     /// already does.
     Scale { factor: String },
+    /// `sketch.offset`: the curves to offset, the distance typed and whether the connected
+    /// chain follows. A positive distance is left of the chain, as the command defines it;
+    /// `flip` reverses whatever sign the field holds.
+    Offset { distance: String, chain: bool, flip: bool },
+    /// `sketch.mirror`: the entities and the line they reflect in. The command has no number of
+    /// its own, so the window's whole job is to show what is picked and let a pick be changed
+    /// before anything is committed.
+    Mirror,
+    /// `sketch.move`: how far the picked entities move along the sketch's own axes, how far they
+    /// turn about the centre, and whether the originals stay behind. The command already
+    /// carries the copy flag, so the Create Copy row needs no engine change.
+    Move { x: String, y: String, angle: String, copy: bool },
 }
 
 impl Mod {
     pub fn title(&self) -> &'static str {
         match self {
             Mod::Scale { .. } => "SKETCH SCALE",
+            Mod::Offset { .. } => "OFFSET",
+            Mod::Mirror => "MIRROR",
+            Mod::Move { .. } => "MOVE/COPY",
         }
     }
 
     /// The value on the canvas.
     pub fn primary(&mut self) -> Option<(&'static str, ValueKind, &mut String)> {
-        Some(match self {
-            Mod::Scale { factor } => ("Factor", ValueKind::Unitless, factor),
-        })
+        match self {
+            Mod::Scale { factor } => Some(("Factor", ValueKind::Unitless, factor)),
+            Mod::Offset { distance, .. } => Some(("Distance", ValueKind::Length, distance)),
+            Mod::Move { x, .. } => Some(("X Distance", ValueKind::Length, x)),
+            Mod::Mirror => None,
+        }
     }
 }
 
 fn inputs(k: &Mod) -> Vec<SelInput> {
     match k {
         Mod::Scale { .. } => vec![SelInput::new("Entities", CURVES | POINTS, true), SelInput::new("Base point", POINTS, false)],
+        Mod::Offset { .. } => vec![SelInput::new("Curves", CURVES, true)],
+        // AXES is the mask that takes a straight sketch curve (`selection::SelInput::accepts`).
+        Mod::Mirror => vec![SelInput::new("Entities", CURVES | POINTS, true), SelInput::new("Mirror line", AXES, false)],
+        Mod::Move { .. } => vec![SelInput::new("Entities", CURVES | POINTS, true), SelInput::new("Center", POINTS, false)],
     }
 }
 
@@ -49,6 +76,9 @@ fn inputs(k: &Mod) -> Vec<SelInput> {
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     let k = match id {
         "sketch.scale" => Mod::Scale { factor: "2".into() },
+        "sketch.offset" => Mod::Offset { distance: "2 mm".into(), chain: true, flip: false },
+        "sketch.mirror" => Mod::Mirror,
+        "sketch.move" => Mod::Move { x: "0 mm".into(), y: "0 mm".into(), angle: "0 deg".into(), copy: false },
         _ => return None,
     };
     let i = inputs(&k);
@@ -62,6 +92,33 @@ pub fn rows(ui: &mut egui::Ui, k: &mut Mod) -> bool {
         Mod::Scale { factor } => {
             row_label(ui, "Factor");
             enter |= field(ui, factor);
+            ui.end_row();
+        }
+        Mod::Offset { distance, chain, flip } => {
+            row_label(ui, "Distance");
+            enter |= field(ui, distance);
+            ui.end_row();
+            row_label(ui, "Flip");
+            check(ui, flip);
+            ui.end_row();
+            row_label(ui, "Chain");
+            check(ui, chain);
+            ui.end_row();
+        }
+        // Mirror has no value of its own: its inputs are the whole window.
+        Mod::Mirror => {}
+        Mod::Move { x, y, angle, copy } => {
+            row_label(ui, "X Distance");
+            enter |= field(ui, x);
+            ui.end_row();
+            row_label(ui, "Y Distance");
+            enter |= field(ui, y);
+            ui.end_row();
+            row_label(ui, "Angle");
+            enter |= field(ui, angle);
+            ui.end_row();
+            row_label(ui, "Create Copy");
+            check(ui, copy);
             ui.end_row();
         }
     }
@@ -94,6 +151,11 @@ fn entity_ids(inputs: &[SelInput], i: usize) -> Vec<String> {
         .collect()
 }
 
+/// Sketch curve ids picked in input `i`.
+fn curve_ids(inputs: &[SelInput], i: usize) -> Vec<String> {
+    items(inputs, i).iter().filter_map(|x| if let Sel::SketchCurve { id } = x { Some(id.clone()) } else { None }).collect()
+}
+
 /// A typed scale factor as the command wants it: the field evaluated against the document's
 /// parameters, in the range the command accepts. Checking the range here lets the window say
 /// so in its own error line instead of the status bar.
@@ -105,9 +167,37 @@ fn factor(app: &SolveApp, text: &str) -> Result<f64, String> {
     Ok(v)
 }
 
+/// A typed field as the command wants it: evaluated against the document's parameters, so an
+/// expression works, with a bare number read in the design's own units. An empty field is zero,
+/// the way an untouched row should leave the geometry where it is.
+fn value(app: &SolveApp, text: &str, kind: ValueKind, label: &str) -> Result<f64, String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(0.0);
+    }
+    let doc = &app.session.doc;
+    let v = doc.eval(&doc.with_design_unit(text, kind), kind).map_err(|e| format!("{label}: {e}"))?;
+    if !v.is_finite() {
+        return Err(format!("{label} must be a number"));
+    }
+    Ok(v)
+}
+
+/// A typed distance as the command wants it: the field evaluated against the document's
+/// parameters, with the sign reversed when Flip is set. A bare number means the design's units,
+/// as a typed sketch value does everywhere else.
+fn signed_length(app: &SolveApp, text: &str, flip: bool) -> Result<f64, String> {
+    let doc = &app.session.doc;
+    let v = doc.eval(&doc.with_design_unit(text.trim(), ValueKind::Length), ValueKind::Length).map_err(|e| format!("Distance: {e}"))?;
+    if !v.is_finite() || v.abs() <= 1e-9 {
+        return Err("Distance must be a non-zero number".into());
+    }
+    Ok(if flip { -v } else { v })
+}
+
 /// The command a sketch modify dialog makes. `sketch.scale` takes a plain evaluated number for
-/// its factor, not an expression string: it has no model parameter to carry one, unlike
-/// `sketch.fillet`'s radius.
+/// its factor, `sketch.offset` one for its distance and `sketch.move` its distances and angle,
+/// not expression strings: none has a model parameter to carry one, unlike `sketch.fillet`'s radius.
 pub fn commands(app: &SolveApp, k: &Mod, inputs: &[SelInput], extra: &Map<String, Value>) -> Result<Vec<(String, Value)>, String> {
     let (cmd, mut params) = match k {
         Mod::Scale { factor: text } => {
@@ -121,6 +211,48 @@ pub fn commands(app: &SolveApp, k: &Mod, inputs: &[SelInput], extra: &Map<String
                 p["base"] = json!(base);
             }
             ("sketch.scale", p)
+        }
+        Mod::Offset { distance, chain, flip } => {
+            let curves = curve_ids(inputs, 0);
+            if curves.is_empty() {
+                return Err("Select the curves to offset first".into());
+            }
+            let d = signed_length(app, distance, *flip)?;
+            ("sketch.offset", json!({"curves": curves, "distance": d, "chain": chain}))
+        }
+        Mod::Mirror => {
+            let entities = entity_ids(inputs, 0);
+            if entities.is_empty() {
+                return Err("Select the sketch curves or points to mirror first".into());
+            }
+            // The AXES mask also takes an origin axis, which is not a curve of this sketch and
+            // cannot be a mirror line.
+            let line = match items(inputs, 1).first() {
+                Some(Sel::SketchCurve { id }) => id.clone(),
+                Some(_) => return Err("The mirror line must be a straight curve of this sketch, not an origin axis".into()),
+                None => return Err("Select the mirror line".into()),
+            };
+            if entities.contains(&line) {
+                return Err("The mirror line cannot also be mirrored".into());
+            }
+            ("sketch.mirror", json!({"entities": entities, "line": line}))
+        }
+        Mod::Move { x, y, angle, copy } => {
+            let entities = entity_ids(inputs, 0);
+            if entities.is_empty() {
+                return Err("Select the sketch curves or points to move first".into());
+            }
+            let dx = value(app, x, ValueKind::Length, "X Distance")?;
+            let dy = value(app, y, ValueKind::Length, "Y Distance")?;
+            let deg = value(app, angle, ValueKind::Angle, "Angle")?.to_degrees();
+            if dx.abs() < 1e-9 && dy.abs() < 1e-9 && deg.abs() < 1e-9 {
+                return Err("Type a distance or an angle to move by".into());
+            }
+            let mut p = json!({"entities": entities, "translate": [dx, dy], "angle": deg, "copy": copy});
+            if let Some(center) = items(inputs, 1).first().and_then(point_id) {
+                p["center"] = json!(center);
+            }
+            ("sketch.move", p)
         }
     };
     if let Value::Object(m) = &mut params {

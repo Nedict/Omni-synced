@@ -44,6 +44,8 @@ pub struct Built {
     /// The smallest and largest radius a fillet used when it reduced one too large for its edges
     /// (`fit: reduce`).
     pub applied: Option<(f64, f64)>,
+    /// The radius spline of each edge a fillet tapered (`fit: taper`), with a point on the edge.
+    pub tapered: Vec<(Vec3, solidcraft_engine::kernel::Taper)>,
 }
 
 type Job = Result<Built, String>;
@@ -71,6 +73,8 @@ pub struct PreviewState {
     started: f64,
     /// The smallest and largest radius the previewed fillet used when it reduced the one asked for.
     pub applied: Option<(f64, f64)>,
+    /// The radius splines the previewed fillet tapered its edges with.
+    pub tapered: Vec<(Vec3, solidcraft_engine::kernel::Taper)>,
 }
 
 impl PreviewState {
@@ -79,6 +83,7 @@ impl PreviewState {
         self.shown_key = None;
         self.error = None;
         self.applied = None;
+        self.tapered.clear();
         self.busy = false;
         if self.active || !self.replaced.is_empty() {
             self.active = false;
@@ -105,11 +110,13 @@ impl PreviewState {
                 self.active = true;
                 self.error = b.error;
                 self.applied = b.applied;
+                self.tapered = b.tapered;
                 self.set_scene(b.scene);
             }
             Err(e) => {
                 self.error = Some(e);
                 self.applied = None;
+                self.tapered.clear();
             }
         }
     }
@@ -232,7 +239,9 @@ pub fn compute(s: &Session, cmds: &[(String, Value)], colors: Colors) -> Job {
             b.bounds = state_bounds(&p.after);
             // The radius a previewed fillet used when it reduced the one asked for (a new
             // fillet or an edited one: the feature the replies name).
-            b.applied = p.replies.iter().filter_map(|r| r.get("feature").and_then(Value::as_u64)).find_map(|id| p.after.fitted_range(id));
+            let features = || p.replies.iter().filter_map(|r| r.get("feature").and_then(Value::as_u64));
+            b.applied = features().find_map(|id| p.after.fitted_range(id));
+            b.tapered = features().find_map(|id| p.after.tapered(id)).map(<[_]>::to_vec).unwrap_or_default();
             Ok(b)
         }
     }
@@ -269,7 +278,7 @@ fn build_tool(before: &ModelState, after: &ModelState, c: Colors, op: &str) -> B
             }
         }
     }
-    Built { scene: sc, replaced: Vec::new(), error: None, bounds: Aabb3::EMPTY, applied: None }
+    Built { scene: sc, replaced: Vec::new(), error: None, bounds: Aabb3::EMPTY, applied: None, tapered: Vec::new() }
 }
 
 /// The same commands making a new body instead of joining, cutting or intersecting, and the
@@ -379,7 +388,7 @@ pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
             replaced.push(b.name.clone());
         }
     }
-    Built { scene: sc, replaced, error: None, bounds: Aabb3::EMPTY, applied: None }
+    Built { scene: sc, replaced, error: None, bounds: Aabb3::EMPTY, applied: None, tapered: Vec::new() }
 }
 
 /// Which of the `nf` faces of `m` are new surface, i.e. not on the old mesh? Each is decided by

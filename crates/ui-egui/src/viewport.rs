@@ -2780,13 +2780,11 @@ fn cpu_render(app: &mut SolveApp, ctx: &egui::Context, painter: &egui::Painter, 
 
 pub(crate) fn refresh_layout(app: &mut SolveApp, scale: f32) {
     if let Some(rect) = app.viewport.rect {
-        let docks: Vec<_> = [
-            app.viewport.palette_rect.filter(|_| app.session.active_sketch.is_some() && app.dialog.is_none()),
-            app.viewport.dialog_rect.filter(|_| app.dialog.is_some()),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        let docks: Vec<_> =
+            [app.viewport.palette_rect.filter(|_| app.session.active_sketch.is_some()), app.viewport.dialog_rect.filter(|_| app.dialog.is_some())]
+                .into_iter()
+                .flatten()
+                .collect();
         app.viewport.layout = Some(crate::viewport_layout::Layout::new(rect, &docks, scale, app.preferences.navigator_style));
     }
 }
@@ -3021,7 +3019,7 @@ fn signed_axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
     crate::scenario::publish_handle("axis_view:home", home.center());
     let hr = ui.interact(home, ui.id().with("axis_view_home"), Sense::click());
     icons::paint(&painter, home, "home", t.icon, if hr.hovered() { t.accent_soft } else { t.overlay }, t.accent);
-    if hr.on_hover_text("Home view").clicked() {
+    if hr.on_hover_text(crate::i18n::tr_label("Home view")).clicked() {
         app.animate_view("home");
     }
 }
@@ -3192,19 +3190,19 @@ fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
     let r = area.show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_width(220.0);
-            ui.label(egui::RichText::new("VIEW").strong().size(11.5));
-            ui.checkbox(&mut app.ui.show_grid, "Grid");
-            ui.checkbox(&mut app.ui.ground_shadow, "Ground shadow");
+            ui.label(egui::RichText::new(crate::i18n::tr_label("VIEW")).strong().size(11.5));
+            ui.checkbox(&mut app.ui.show_grid, crate::i18n::tr_label("Grid"));
+            ui.checkbox(&mut app.ui.ground_shadow, crate::i18n::tr_label("Ground shadow"));
             ui.separator();
             let s = &mut app.ui.agent_cursor;
-            let show = ui.checkbox(&mut s.show, "Show Agent Cursor");
+            let show = ui.checkbox(&mut s.show, crate::i18n::tr_label("Show Agent Cursor"));
             crate::scenario::publish_handle("view:agent_cursor", show.rect.center());
             ui.add_enabled_ui(s.show, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Speed");
+                    ui.label(crate::i18n::tr_label("Speed"));
                     crate::agent_cursor::speed_slider(ui, &mut s.speed);
                 });
-                ui.checkbox(&mut s.follow_camera, "Follow camera (Look At sketches)");
+                ui.checkbox(&mut s.follow_camera, crate::i18n::tr_label("Follow camera (Look At sketches)"));
             });
         });
     });
