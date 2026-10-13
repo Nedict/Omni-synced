@@ -365,6 +365,8 @@ pub(super) fn add_feature(s: &mut Session, p: &Value, kind: FeatureKind) -> Resu
 /// `add_feature`; `world` is false when `kind` is already in the active component's frame.
 fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) -> Result<Value> {
     let name = str_(p, "name");
+    // The bodies before the feature, to say which ones it changed or removed.
+    let before = s.model.state();
     // Commands speak world coordinates; the feature is authored in the active component.
     let mut kind = kind;
     if world {
@@ -474,8 +476,15 @@ fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) ->
     let bodies: Vec<&str> = st.bodies.iter().map(|b| b.name.as_str()).collect();
     // The bodies this feature made, apart from the ones it changed or that were there (#374).
     let created: Vec<&str> = st.bodies.iter().filter(|b| b.feature == id).map(|b| b.name.as_str()).collect();
+    // Bodies that were there before and now have other geometry, and bodies that are gone.
+    let old: std::collections::HashMap<&str, &solidcraft_doc::kernel::Body> = before.bodies.iter().map(|b| (b.name.as_str(), &b.body)).collect();
+    let now: std::collections::HashSet<&str> = st.bodies.iter().map(|b| b.name.as_str()).collect();
+    let changed: Vec<&str> =
+        st.bodies.iter().filter(|b| b.feature != id && old.get(b.name.as_str()).is_some_and(|o| !o.same(&b.body))).map(|b| b.name.as_str()).collect();
+    let removed: Vec<&str> = before.bodies.iter().map(|b| b.name.as_str()).filter(|n| !now.contains(n)).collect();
     let fname = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
-    Ok(json!({"feature": id, "name": fname, "bodies": bodies, "created_bodies": created, "ms": r.map(|r| r.ms)}))
+    Ok(json!({"feature": id, "name": fname, "bodies": bodies, "created_bodies": created, "changed_bodies": changed,
+        "removed_bodies": removed, "ms": r.map(|r| r.ms)}))
 }
 
 fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1310,7 +1319,33 @@ fn hole(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(vec3(v).ok_or_else(|| bad(cmd, "`to` must be a point [x, y, z] on the face to drill to"))?),
         None => None,
     };
-    add_feature(s, p, FeatureKind::Hole { position, direction, diameter, depth, hole: kind, points: points.map(|x| x.0), thread, to })
+    // A hole picked on a body of another component (a moved one, shown where it is placed) cuts
+    // that body: the pick is already in that body's frame, and the component's own bodies alone
+    // would leave nothing to cut.
+    let mut p = p.clone();
+    if points.is_none()
+        && p.get("participants").is_none()
+        && let Some(body) = body_of_other_component_at(s, position)
+    {
+        p["participants"] = json!([body]);
+    }
+    add_feature(s, &p, FeatureKind::Hole { position, direction, diameter, depth, hole: kind, points: points.map(|x| x.0), thread, to })
+}
+
+/// The body whose face is nearest `p` (within its pick tolerance), when it belongs to another
+/// component than the active one.
+fn body_of_other_component_at(s: &Session, p: Vec3) -> Option<String> {
+    let st = s.model.state();
+    let (_, body) = st
+        .bodies
+        .iter()
+        .filter(|b| !b.body.is_mesh())
+        .filter_map(|b| {
+            let (d, _) = solidcraft_doc::appearance::nearest_face(b, p)?;
+            (d <= solidcraft_doc::appearance::pick_tolerance(b)).then_some((d, b))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))?;
+    (s.doc.model_body_component(body) != s.active_component).then(|| body.name.clone())
 }
 
 /// The points of a sketch a hole drills at when only the sketch is given.

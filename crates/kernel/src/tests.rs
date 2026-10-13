@@ -1,6 +1,6 @@
 use std::f64::consts::PI;
 
-use solidcraft_geom::{Loop2, Plane, Region2, Vec2, Vec3};
+use solidcraft_geom::{Loop2, Plane, Region2, Seg2, Vec2, Vec3};
 
 use crate::*;
 
@@ -427,6 +427,37 @@ fn tapered_extrudes() {
     assert!(rel(m.volume, v) < 5e-4, "{} vs {v}", m.volume);
     assert!(m.bbox.max.z < 1e-6 && m.bbox.min.z > -10.0 - 1e-6, "{:?}", m.bbox);
     assert!(extrude_tapered(&Plane::XY, &c, 10.0, 1.0, -60f64.to_radians()).is_err(), "closes the profile");
+}
+
+/// A slot (two lines and two half-circles, tangent) tapered inward: every edge moves in by
+/// d = z · tan 8°, so A(d) = A₀ − P·d + π·d² (#546). An arc meeting a line at a corner is refused.
+#[test]
+fn tapered_extrude_of_lines_and_arcs() {
+    let (r, l, h, a) = (5.0, 20.0, 12.0, 8f64.to_radians());
+    let slot = Loop2 {
+        segs: vec![
+            Seg2::Line { a: Vec2::new(0.0, -r), b: Vec2::new(l, -r) },
+            Seg2::Arc { center: Vec2::new(l, 0.0), radius: r, start: -PI / 2.0, sweep: PI },
+            Seg2::Line { a: Vec2::new(l, r), b: Vec2::new(0.0, r) },
+            Seg2::Arc { center: Vec2::ZERO, radius: r, start: PI / 2.0, sweep: PI },
+        ],
+    };
+    let b = extrude_tapered(&Plane::XY, &Region2 { outer: slot, holes: vec![] }, h, 1.0, -a).unwrap();
+    let (a0, p, t) = (2.0 * r * l + PI * r * r, 2.0 * l + 2.0 * PI * r, a.tan());
+    let v = a0 * h - p * t * h * h / 2.0 + PI * t * t * h.powi(3) / 3.0;
+    let m = measure(&b).unwrap();
+    assert!(rel(m.volume, v) < 5e-4, "{} vs {v}", m.volume);
+    assert_eq!(m.merged.faces, 6);
+    // A quarter disc: the arc meets both lines at right angles.
+    let quarter = Loop2 {
+        segs: vec![
+            Seg2::Line { a: Vec2::ZERO, b: Vec2::new(r, 0.0) },
+            Seg2::Arc { center: Vec2::ZERO, radius: r, start: 0.0, sweep: PI / 2.0 },
+            Seg2::Line { a: Vec2::new(0.0, r), b: Vec2::ZERO },
+        ],
+    };
+    let e = extrude_tapered(&Plane::XY, &Region2 { outer: quarter, holes: vec![] }, h, 1.0, a).unwrap_err();
+    assert!(e.to_string().contains("arc meets another edge at a corner"), "{e}");
 }
 
 #[test]
@@ -1534,6 +1565,21 @@ fn draft_of_a_round_ended_pocket() {
     }
     let v = measure(&d).unwrap().volume;
     assert!(rel(v, 80.0 * 60.0 * 25.0 - pocket) < 1e-4, "{v} vs {}", 80.0 * 60.0 * 25.0 - pocket);
+}
+
+/// A round wall is stored in pieces (a cylinder's two halves); one pick drafts all of it (#547).
+/// A hole drafted from the top narrows going down: a frustum from R 10 to 10 − 25 · tan 5°.
+#[test]
+fn draft_of_a_round_hole_from_one_pick() {
+    let block = box_solid(Vec3::ZERO, Vec3::new(60.0, 60.0, 25.0)).unwrap();
+    let hole = cylinder(Vec3::new(30.0, 30.0, -1.0), Vec3::Z, 10.0, 27.0).unwrap();
+    let b = boolean(&block, &hole, BoolOp::Cut).unwrap().unwrap();
+    let a = 5f64.to_radians();
+    let d = draft(&b, &[Vec3::new(40.0, 30.0, 12.5)], &Plane::XY.offset(25.0), Vec3::Z, a).unwrap();
+    let (big, small) = (10.0, 10.0 - 25.0 * a.tan());
+    let want = 60.0 * 60.0 * 25.0 - PI * 25.0 / 3.0 * (big * big + big * small + small * small);
+    let m = measure(&d).unwrap();
+    assert!(rel(m.volume, want) < 1e-4, "{} vs {want}", m.volume);
 }
 
 #[test]

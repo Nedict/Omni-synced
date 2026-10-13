@@ -204,6 +204,10 @@ pub enum Kind {
         cmd: &'static str,
         fields: Vec<(&'static str, String)>,
         operation: usize,
+        /// Where it goes: a picked point on a face or vertex, with the face's normal when the
+        /// face is planar. `None` keeps the command's own placement (the origin, or the edited
+        /// feature's).
+        at: Option<(Vec3, Option<Vec3>)>,
     },
     Combine {
         operation: usize,
@@ -438,22 +442,27 @@ impl Dialog {
                     cmd: "solid.box",
                     fields: vec![("length", "20".into()), ("width", "20".into()), ("height", "20".into())],
                     operation: 0,
+                    at: None,
                 },
                 vec![],
             ),
             "solid.cylinder" => Dialog::new(
-                Kind::Primitive { cmd: "solid.cylinder", fields: vec![("diameter", "20".into()), ("height", "20".into())], operation: 0 },
+                Kind::Primitive { cmd: "solid.cylinder", fields: vec![("diameter", "20".into()), ("height", "20".into())], operation: 0, at: None },
                 vec![],
             ),
-            "solid.sphere" => Dialog::new(Kind::Primitive { cmd: "solid.sphere", fields: vec![("diameter", "20".into())], operation: 0 }, vec![]),
-            "solid.torus" => {
-                Dialog::new(Kind::Primitive { cmd: "solid.torus", fields: vec![("major", "20".into()), ("minor", "5".into())], operation: 0 }, vec![])
+            "solid.sphere" => {
+                Dialog::new(Kind::Primitive { cmd: "solid.sphere", fields: vec![("diameter", "20".into())], operation: 0, at: None }, vec![])
             }
+            "solid.torus" => Dialog::new(
+                Kind::Primitive { cmd: "solid.torus", fields: vec![("major", "20".into()), ("minor", "5".into())], operation: 0, at: None },
+                vec![],
+            ),
             "solid.coil" => Dialog::new(
                 Kind::Primitive {
                     cmd: "solid.coil",
                     fields: vec![("diameter", "40".into()), ("revolutions", "4".into()), ("pitch", "8".into()), ("section_size", "3".into())],
                     operation: 0,
+                    at: None,
                 },
                 vec![],
             ),
@@ -530,6 +539,14 @@ impl Dialog {
                     }
                 }
             }
+        }
+        // A primitive goes where a face or vertex is picked, standing on a planar face.
+        if let Kind::Primitive { at, .. } = &mut d.kind {
+            *at = s.selection.iter().find_map(|sel| match sel {
+                Sel::Face { body, index, point } => Some((*point, planar_face(s, body, *index).map(|(_, n)| n))),
+                Sel::Vertex { point, .. } => Some((*point, None)),
+                _ => None,
+            });
         }
         // With nothing pre-selected, a single profile in the sketch being used is taken.
         if matches!(d.kind, Kind::Extrude { .. } | Kind::Revolve { .. })
@@ -1306,6 +1323,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     auto_operation(app, &mut d);
     update_measure(app, &mut d);
     update_fill_cells(app, &mut d);
+    // Physical materials: the library's, then the design's own (material.create).
+    let material_names = app.session.doc.material_names();
     let t = Tokens::get();
     let vp = app.viewport.rect.unwrap_or_else(|| ctx.content_rect());
     let top = (vp.top() + crate::viewport::AXIS_VIEW_CLEARANCE).min((vp.bottom() - 360.0).max(vp.top()));
@@ -1817,7 +1836,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         }
                     }
                     Kind::Material { index } => {
-                        let names: Vec<&str> = solidcraft_engine::doc::MATERIALS.iter().map(|(n, _)| *n).collect();
+                        let names: Vec<&str> = material_names.iter().map(String::as_str).collect();
                         row_label(ui, "Material");
                         combo(ui, "mat", &names, index);
                         ui.end_row();
@@ -1926,10 +1945,20 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             ui.end_row();
                         }
                     }
-                    Kind::Primitive { fields, operation, .. } => {
+                    Kind::Primitive { fields, operation, at, .. } => {
                         for (k, v) in fields.iter_mut() {
                             row_label(ui, k);
                             enter |= field(ui, v);
+                            ui.end_row();
+                        }
+                        if let Some((p, _)) = *at {
+                            row_label(ui, "Position");
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{:.2}, {:.2}, {:.2}", p.x, p.y, p.z));
+                                if ui.small_button("×").on_hover_text("Place at the origin instead").clicked() {
+                                    *at = None;
+                                }
+                            });
                             ui.end_row();
                         }
                         row_label(ui, "Operation");
@@ -2846,7 +2875,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         }
         Kind::Material { index } => {
             need(0, "bodies")?;
-            let name = solidcraft_engine::doc::MATERIALS.get(*index).map(|(n, _)| *n).unwrap_or("Default");
+            let name = s.doc.material_names().get(*index).cloned().unwrap_or_else(|| "Default".into());
             ("material.assign", json!({"bodies": body_names(0), "material": name}))
         }
         Kind::Section { offset, flip } => {
@@ -2929,10 +2958,26 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             }
             return Ok(out);
         }
-        Kind::Primitive { cmd, fields, operation } => {
+        Kind::Primitive { cmd, fields, operation, at } => {
             let mut p = serde_json::Map::new();
             for (k, v) in fields {
                 p.insert((*k).into(), json!(v));
+            }
+            if let Some((point, normal)) = *at {
+                match *cmd {
+                    "solid.box" => {
+                        p.insert("corner".into(), box_corner(s, fields, point, normal));
+                    }
+                    "solid.cylinder" | "solid.coil" => {
+                        p.insert("base".into(), pt(point));
+                        if let Some(n) = normal {
+                            p.insert("axis".into(), pt(n));
+                        }
+                    }
+                    _ => {
+                        p.insert("center".into(), pt(point));
+                    }
+                }
             }
             p.insert("operation".into(), json!(OPS.get(*operation).copied().unwrap_or("new")));
             (cmd, Value::Object(p))
@@ -2975,6 +3020,28 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         }
     }
     Ok(vec![(cmd.to_string(), params)])
+}
+
+/// The corner of a box placed at `p`: standing on a face whose normal is along an axis (centred
+/// on `p` across the face), otherwise centred on `p`. Sizes that are expressions stay
+/// expressions, so the box keeps standing on the face when they change.
+fn box_corner(s: &Session, fields: &[(&'static str, String)], p: Vec3, normal: Option<Vec3>) -> Value {
+    let size = |k: &str| fields.iter().find(|f| f.0 == k).map(|f| s.doc.with_design_unit(&f.1, ValueKind::Length)).unwrap_or_default();
+    let along = |axis: Vec3| normal.map(|n| n.dot(axis)).filter(|d| d.abs() > 1.0 - 1e-9);
+    let coord = |c: f64, size: String, axis: Vec3| {
+        // How much of the size lies behind `p`: none (or all) along the face normal, half across it.
+        let back = match along(axis) {
+            Some(d) if d > 0.0 => return json!(c),
+            Some(_) => 1.0,
+            None => 0.5,
+        };
+        match size.trim().parse::<f64>() {
+            Ok(v) => json!(c - back * v),
+            Err(_) if back < 1.0 => json!(format!("{c} mm - ({size}) / 2")),
+            Err(_) => json!(format!("{c} mm - ({size})")),
+        }
+    };
+    json!([coord(p.x, size("length"), Vec3::X), coord(p.y, size("width"), Vec3::Y), coord(p.z, size("height"), Vec3::Z)])
 }
 
 /// Sketch curve ids picked in an input.
@@ -3450,6 +3517,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 cmd: "solid.box",
                 fields: vec![("length", length.clone()), ("width", width.clone()), ("height", height.clone())],
                 operation: op_index(operation),
+                at: None,
             };
             d.extra.insert("corner".into(), pt_expr(corner));
             d
@@ -3460,6 +3528,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 cmd: "solid.cylinder",
                 fields: vec![("radius", radius.clone()), ("height", height.clone())],
                 operation: op_index(operation),
+                at: None,
             };
             d.extra.insert("base".into(), pt_expr(base));
             d.extra.insert("axis".into(), pt3(*axis));
@@ -3467,7 +3536,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         }
         FeatureKind::Sphere { center, radius, operation } => {
             let mut d = start("solid.sphere")?;
-            d.kind = Kind::Primitive { cmd: "solid.sphere", fields: vec![("radius", radius.clone())], operation: op_index(operation) };
+            d.kind = Kind::Primitive { cmd: "solid.sphere", fields: vec![("radius", radius.clone())], operation: op_index(operation), at: None };
             d.extra.insert("center".into(), pt_expr(center));
             d
         }
@@ -3477,6 +3546,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 cmd: "solid.torus",
                 fields: vec![("major", major.clone()), ("minor", minor.clone())],
                 operation: op_index(operation),
+                at: None,
             };
             d.extra.insert("center".into(), pt_expr(center));
             d

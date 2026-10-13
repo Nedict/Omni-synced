@@ -1,4 +1,4 @@
-use super::{Tool, preview_curve};
+use super::{Tool, polygon_outline, preview_curve};
 use crate::scenario::Harness;
 use crate::viewport::Proj;
 use serde_json::{Value, json};
@@ -119,4 +119,34 @@ fn pixel_preview_rejects_degenerate_and_unbounded_input_without_changing_documen
     assert!(preview_curve(&tool("sketch.arc.three_point", &[[0., 0.], [1., 0.]]), Vec2::new(2., 0.), None).is_none());
     let points = vec![[0., 0.]; 500];
     assert!(preview_curve(&tool("sketch.spline.fit_point", &points), Vec2::X, None).is_none());
+}
+
+#[test]
+fn polygon_preview_squares_have_the_expected_rotation_and_size() {
+    let cases = [
+        ("sketch.polygon.inscribed", [10.0, 0.0], [[10.0, 0.0], [0.0, 10.0], [-10.0, 0.0], [0.0, -10.0], [10.0, 0.0]]),
+        ("sketch.polygon.circumscribed", [10.0, 0.0], [[10.0, 10.0], [-10.0, 10.0], [-10.0, -10.0], [10.0, -10.0], [10.0, 10.0]]),
+        ("sketch.polygon.edge", [20.0, 0.0], [[0.0, 0.0], [20.0, 0.0], [20.0, 20.0], [0.0, 20.0], [0.0, 0.0]]),
+    ];
+    for (command, hover, expected) in cases {
+        let t = tool(command, &[[0.0, 0.0]]);
+        let outline = polygon_outline(&t, Vec2::new(hover[0], hover[1]), 4.0).unwrap();
+        assert_eq!(outline.len(), expected.len());
+        for (actual, expected) in outline.iter().zip(expected) {
+            assert!(actual.dist(Vec2::new(expected[0], expected[1])) < 1e-9, "{command}: {actual:?}");
+        }
+    }
+}
+
+#[test]
+fn polygon_preview_rejects_invalid_or_unbounded_input() {
+    let t = tool("sketch.polygon.inscribed", &[[0.0, 0.0]]);
+    for sides in [0.0, 2.0, 3.5, 201.0, f64::INFINITY, f64::NAN] {
+        assert!(polygon_outline(&t, Vec2::X, sides).is_none());
+    }
+    assert!(polygon_outline(&t, Vec2::ZERO, 6.0).is_none());
+    assert!(polygon_outline(&t, Vec2::new(f64::NAN, 0.0), 6.0).is_none());
+    assert_eq!(polygon_outline(&t, Vec2::X, 200.0).unwrap().len(), 201);
+    let t = tool("sketch.polygon.inscribed", &[[f64::INFINITY, 0.0]]);
+    assert!(polygon_outline(&t, Vec2::X, 6.0).is_none());
 }

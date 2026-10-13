@@ -1012,7 +1012,6 @@ fn a_sketch_on_a_patterned_boss_top() {
 }
 
 #[test]
-#[ignore = "fails until #558 is fixed"]
 fn construction_geometry_and_holes_on_a_moved_component() {
     let moved = || {
         vec![
@@ -1026,6 +1025,9 @@ fn construction_geometry_and_holes_on_a_moved_component() {
         json!({"command": "construct.axis.edge", "params": {"edge": {"edge": [25, 50, 0]}}}),
         json!({"command": "construct.plane.three_points", "params": {"a": {"vertex": [20, 50, 0]}, "b": {"vertex": [30, 50, 0]}, "c": {"vertex": [20, 54, 0]}}}),
         json!({"command": "solid.hole", "params": {"position": [25, 52, 4], "diameter": 1}}),
+        json!({"command": "solid.press_pull", "params": {"face": [25, 52, 4], "distance": 1}}),
+        json!({"command": "solid.extrude", "params": {"face": [25, 52, 4], "distance": 1, "operation": "join"}}),
+        json!({"command": "construct.plane.along_path", "params": {"path": {"edge": [25, 50, 0]}, "t": 0.5}}),
     ] {
         let mut c = moved();
         c.push(step);

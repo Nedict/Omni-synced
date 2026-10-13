@@ -294,7 +294,7 @@ pub(super) fn edit_solved<T>(
             let unsolved = sk.clone();
             #[cfg(test)]
             solve_counts::record(Analysis::Full);
-            let rep = doc.solve_sketch(&vals, &mut sk, &stored)?;
+            let rep = doc.solve_sketch(&vals, &mut sk, &stored, None)?;
             Some(settle(strict, rep, &mut sk, unsolved)?)
         }
     };
@@ -336,7 +336,7 @@ pub(super) fn counted_solve(
 pub(super) fn solve_current(sk: &mut Sketch, doc: &solidcraft_doc::Document) -> Result<SolveReport> {
     let stored = sk.driving_values();
     let (values, _) = doc.param_values();
-    Ok(doc.solve_sketch(&values, sk, &stored)?)
+    Ok(doc.solve_sketch(&values, sk, &stored, None)?)
 }
 
 /// Solves run on this thread by [`counted_solve`] and the edit's own solve: (all of them, those
