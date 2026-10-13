@@ -208,6 +208,25 @@ fn patterns_of_a_blind_hole_drill_every_copy() {
     assert!((c - 2.0 * one).abs() < 1e-3 * one, "{c} vs 2 × {one}");
 }
 
+/// Feature patterns and mirrors reference features by name; a rename follows (#401).
+#[test]
+fn renaming_a_source_feature_follows_pattern_and_mirror_references() {
+    let mut s = plate_with_hole();
+    run(&mut s, "construct.plane.offset", json!({"base": "YZ", "offset": 0, "name": "Mirror plane"}));
+    run(&mut s, "solid.pattern.rectangular", json!({"features": ["Hole1"], "dir1": [1, 0, 0], "count1": 2, "spacing1": 20, "name": "Copies"}));
+    run(&mut s, "solid.mirror", json!({"features": ["Hole1"], "plane": "Mirror plane", "name": "Mirrored"}));
+    let renamed = run(&mut s, "timeline.rename", json!({"feature": "Hole1", "name": "Single hole"}));
+    assert_eq!(renamed["name"], "Single hole", "{renamed}");
+    run(&mut s, "timeline.rename", json!({"feature": "Mirror plane", "name": "Renamed plane"}));
+    for feature in ["Copies", "Mirrored"] {
+        let inspected = run(&mut s, "timeline.inspect", json!({"feature": feature}));
+        assert!(inspected["error"].is_null(), "{feature}: {inspected}");
+        assert_eq!(inspected["definition"]["features"], json!(["Single hole"]), "{inspected}");
+    }
+    let inspected = run(&mut s, "timeline.inspect", json!({"feature": "Mirrored"}));
+    assert_eq!(inspected["definition"]["plane"]["name"], "Renamed plane", "{inspected}");
+}
+
 /// A plate with a `count1` × `count2` feature pattern of one through-hole cut: its volume and how
 /// long the pattern took. It runs on its own thread so a hang fails the test instead of CI.
 fn hole_pattern(count1: usize, count2: usize) -> (f64, std::time::Duration) {

@@ -183,6 +183,19 @@ fn capture_impl(s: &Session, value: &Value, cmd: &str, internal: bool) -> Result
             }
             None
         }
+        Err(solidcraft_doc::DocError::Invalid(message))
+            if matches!(
+                message.as_str(),
+                "this face has no exact planar source; choose a fixed plane instead"
+                    | "this face has no supported construction certificate; choose a fixed plane instead"
+            ) =>
+        {
+            return Err(bad(
+                cmd,
+                "this face can't keep an attachment: it was merged from more than one feature's faces or reshaped by an edit. \
+                 Pick another face, or use a fixed plane here (fixed:true), which won't follow later changes to the face",
+            ));
+        }
         Err(error) => return Err(bad(cmd, format!("{error}; choose a supported exact face or explicitly use fixed:true"))),
     };
     Ok(PlaneRef::Face { plane, at, name, anchor })

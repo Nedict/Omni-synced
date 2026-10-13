@@ -131,6 +131,172 @@ fn body_names_saved_before_exact_history_keep_their_pieces() {
     assert!(s.doc.appearances.bodies.contains_key("Body1 (1)"));
 }
 
+/// Flat faces that can't take an attached sketch yet, by cause: (design, body, the faces'
+/// planes as outward normal and distance from the origin, or every flat face of the body,
+/// issue). Face indices are not used: they can change between builds. Each issue has an
+/// ignored test below that checks its faces; a listed plane whose face attaches fails the main
+/// check until it is removed from here.
+type Planes = &'static [([f64; 3], f64)];
+const NO_ATTACHMENT_YET: [(&str, &str, Option<Planes>, u32); 9] = [
+    ("issue-489-stacked-join", "Body1", Some(&[([1., 0., 0.], 35.), ([-1., 0., 0.], 35.)]), 491),
+    ("issue-489-stacked-join", "Body1", Some(&[([0., 0., 1.], 30.)]), 492),
+    ("m0-revolve-primitives", "Body2", Some(&[([-FRAC_1_SQRT_2, 0., FRAC_1_SQRT_2], -21. * FRAC_1_SQRT_2)]), 493),
+    ("split-body-pieces", "Body1", Some(&[([0., FRAC_1_SQRT_2, FRAC_1_SQRT_2], 38.5 * FRAC_1_SQRT_2), ([0., -1., 0.], -18.)]), 493),
+    ("split-body-pieces", "Body1 (1)", Some(&[([0., 1., 0.], 12.)]), 493),
+    ("m0-revolve-primitives", "Body1", None, 494),
+    ("naming-split-pieces", "Body1", None, 494),
+    ("modern-plastic", "Body1", None, 494),
+    ("modern-sheet-metal", "Body1", None, 495),
+];
+use std::f64::consts::FRAC_1_SQRT_2;
+
+/// The issue a face is listed under, and whether it is listed by its plane (not as every face).
+fn known_without_attachment(design: &str, body: &str, normal: [f64; 3], distance: f64) -> Option<(u32, bool)> {
+    let same = |(n, d): &([f64; 3], f64)| (0..3).all(|i| (n[i] - normal[i]).abs() < 1e-6) && (d - distance).abs() < 1e-4;
+    NO_ATTACHMENT_YET.iter().find_map(|(d, b, planes, issue)| {
+        if *d != design || *b != body {
+            return None;
+        }
+        match planes {
+            None => Some((*issue, false)),
+            Some(planes) => planes.iter().any(same).then_some((*issue, true)),
+        }
+    })
+}
+
+fn undo_to(s: &mut Session, features: usize) {
+    for _ in 0..4 {
+        if s.doc.features.len() <= features {
+            return;
+        }
+        s.execute("edit.undo", &json!({})).unwrap();
+    }
+    assert_eq!(s.doc.features.len(), features, "undo did not remove the added feature");
+}
+
+/// Try a sketch and an offset plane on every flat face of every final body of every corpus
+/// design, through the same face pick the desktop sends (body, face index, occurrence path, a
+/// point on it), without `fixed`. Undo leaves the design as it was for the next face. Returns
+/// (design, body, face, issue it is known under, what went wrong or None).
+fn flat_face_attachments() -> Vec<(String, String, usize, Option<(u32, bool)>, Option<String>)> {
+    use solidcraft_engine::doc::{FaceAttachmentStatus, apply_point};
+    let mut out = Vec::new();
+    for p in corpus() {
+        let name = p.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let mut s = open(&p);
+        let state = s.model.state();
+        let placed = s.placed_document();
+        let mut picks = Vec::new();
+        for (world, definition, component, path, frame) in placed.body_frames_with_source(&state) {
+            let Some(body) = state.bodies.iter().find(|b| b.definition_name() == definition && placed.model_body_component(b) == component) else {
+                continue;
+            };
+            let mesh = body.body.tessellate(0.01).unwrap();
+            for index in 0..body.body.face_count() {
+                if body.body.planar_face(index).is_none() {
+                    continue;
+                }
+                // The middle of the face's largest triangle: well inside the face.
+                let point = mesh
+                    .triangles
+                    .iter()
+                    .zip(&mesh.tri_face)
+                    .filter(|(_, f)| **f as usize == index)
+                    .filter_map(|(t, _)| mesh.tri(t))
+                    .max_by(|[a, b, c], [d, e, f]| (*b - *a).cross(*c - *a).len().total_cmp(&(*e - *d).cross(*f - *d).len()))
+                    .map(|[a, b, c]| (a + b + c) * (1.0 / 3.0));
+                let Some(point) = point else { continue };
+                let point = apply_point(&frame, point);
+                let normal =
+                    body.body.planar_face(index).map(|plane| solidcraft_engine::doc::apply_vector(&frame, plane.normal())).unwrap_or_default();
+                let key = ([normal.x, normal.y, normal.z], normal.dot(point));
+                picks.push((world.clone(), index, key, json!({"face": point, "body": world, "index": index, "path": path})));
+            }
+        }
+        let before = s.doc.features.len();
+        for (body, index, (normal, distance), plane) in picks {
+            let mut problem = None;
+            match s.execute("sketch.create", &json!({"plane": plane})) {
+                Ok(created) => {
+                    let id = created["sketch"].as_u64().unwrap_or(0);
+                    match s.placed_document().sketch_face_attachment(id, &s.model) {
+                        FaceAttachmentStatus::Healthy { .. } | FaceAttachmentStatus::Sheet { .. } => {}
+                        other => problem = Some(format!("sketch attachment {other:?}")),
+                    }
+                    s.execute("sketch.finish", &json!({})).unwrap();
+                    undo_to(&mut s, before);
+                }
+                Err(e) => problem = Some(format!("sketch.create: {e}")),
+            }
+            match s.execute("construct.plane.offset", &json!({"base": plane, "offset": 5})) {
+                Ok(_) => undo_to(&mut s, before),
+                Err(e) => problem = Some(problem.map_or(String::new(), |p| p + "; ") + &format!("construct.plane.offset: {e}")),
+            }
+            let known = known_without_attachment(&name, &body, normal, distance);
+            out.push((name.clone(), body, index, known, problem));
+        }
+        assert!(s.model.results.iter().all(|r| r.error.is_none()), "{name}: left with errors after undo");
+    }
+    out
+}
+
+/// Every flat face of every corpus design takes a durable attachment (issue #489: the top face
+/// of an extrude sketched over a face's projected boundary had "no exact planar source"),
+/// except the faces listed in [`NO_ATTACHMENT_YET`] under their open issues.
+#[test]
+fn every_flat_face_of_every_corpus_design_takes_an_attached_sketch() {
+    let all = flat_face_attachments();
+    assert!(all.len() > 50, "only {} faces checked", all.len());
+    let problems: Vec<String> = all
+        .iter()
+        .filter_map(|(design, body, face, known, problem)| match (known, problem) {
+            (None, Some(problem)) => Some(format!("{design}: {body} face {face}: {problem}")),
+            (Some((issue, true)), None) => Some(format!("{design}: {body} face {face} attaches now: remove it from NO_ATTACHMENT_YET (#{issue})")),
+            _ => None,
+        })
+        .collect();
+    assert!(problems.is_empty(), "{} of {} faces:\n{}", problems.len(), all.len(), problems.join("\n"));
+}
+
+fn known_faces_attach(issue: u32) {
+    let problems: Vec<String> = flat_face_attachments()
+        .into_iter()
+        .filter(|(.., known, problem)| known.is_some_and(|(known, _)| known == issue) && problem.is_some())
+        .map(|(design, body, face, _, problem)| format!("{design}: {body} face {face}: {}", problem.unwrap_or_default()))
+        .collect();
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+#[test]
+#[ignore = "fails until #491 is fixed"]
+fn a_side_face_join_merged_from_two_extrudes_takes_an_attached_sketch() {
+    known_faces_attach(491);
+}
+
+#[test]
+#[ignore = "fails until #492 is fixed"]
+fn a_face_split_into_pieces_by_a_later_feature_takes_an_attached_sketch() {
+    known_faces_attach(492);
+}
+
+#[test]
+#[ignore = "fails until #493 is fixed"]
+fn cut_walls_and_chamfer_faces_take_an_attached_sketch() {
+    known_faces_attach(493);
+}
+
+#[test]
+#[ignore = "fails until #494 is fixed"]
+fn faces_after_revolve_offset_face_and_boss_take_an_attached_sketch() {
+    known_faces_attach(494);
+}
+
+#[test]
+#[ignore = "fails until #495 is fixed"]
+fn sheet_metal_thickness_faces_take_an_attached_sketch() {
+    known_faces_attach(495);
+}
+
 /// A small deterministic generator (xorshift).
 struct Rng(u64);
 impl Rng {

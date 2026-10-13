@@ -132,7 +132,10 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         return Ok(json!({"path": path, "features": s.doc.features.len(), "errors": errors, "bodies": r["bodies"], "warnings": r["warnings"]}));
     }
     let bytes = solidcraft_io::vfs::read(path, solidcraft_io::MAX_DESIGN_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-    let doc = solidcraft_io::read_design(&bytes)?;
+    let mut doc = solidcraft_io::read_design(&bytes)?;
+    if let Some(stem) = default_name_for(&doc.name, path) {
+        doc.name = stem;
+    }
     if let Some(notify) = s.open_preview.take()
         && let Some(preview) = solidcraft_io::read_design_preview(&bytes)
     {
@@ -141,10 +144,50 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     *s = Session::new(doc);
     s.path = Some(path.to_string());
     let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
-    Ok(json!({"path": path, "features": s.doc.features.len(), "errors": errors}))
+    Ok(json!({"path": path, "features": s.doc.features.len(), "errors": errors, "name": s.doc.name}))
+}
+
+/// The name a design never given one by its user is shown under.
+const DEFAULT_NAME: &str = "Untitled";
+
+/// A design still under the default name takes its file's name (`bracket.solidcraft` →
+/// "bracket"); a name the user chose is kept. `None` when nothing changes.
+fn default_name_for(name: &str, path: &str) -> Option<String> {
+    let name = name.trim();
+    if !name.is_empty() && name != DEFAULT_NAME {
+        return None;
+    }
+    let stem = std::path::Path::new(path).file_stem()?.to_string_lossy().trim().to_string();
+    (!stem.is_empty()).then_some(stem)
+}
+
+/// Rename the design, and the undo and redo states that still carry the old name, so undo
+/// does not bring the default name back and leave the design looking changed.
+fn rename_design(s: &mut Session, from: &str, to: &str) {
+    s.doc_mut().name = to.to_string();
+    for snap in s.undo.iter_mut().chain(s.redo.iter_mut()) {
+        if snap.doc.name == from {
+            std::sync::Arc::make_mut(&mut snap.doc).name = to.to_string();
+        }
+    }
 }
 
 fn write(s: &mut Session, path: &str, format: &str, compression: &str, preview: bool) -> Result<Value> {
+    // Saving an unnamed design names it after its file (not an undoable edit).
+    let renamed = default_name_for(&s.doc.name, path).map(|stem| (s.doc.name.clone(), stem));
+    if let Some((from, to)) = &renamed {
+        rename_design(s, from, to);
+    }
+    let r = write_file(s, path, format, compression, preview);
+    if r.is_err()
+        && let Some((from, to)) = &renamed
+    {
+        rename_design(s, to, from);
+    }
+    r
+}
+
+fn write_file(s: &mut Session, path: &str, format: &str, compression: &str, preview: bool) -> Result<Value> {
     let compression = match compression {
         "fast" => solidcraft_io::DesignCompression::Fast,
         "compact" => solidcraft_io::DesignCompression::Compact,
@@ -159,7 +202,7 @@ fn write(s: &mut Session, path: &str, format: &str, compression: &str, preview: 
     solidcraft_io::write_atomic(std::path::Path::new(path), &bytes, true).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     s.path = Some(path.to_string());
     s.mark_saved();
-    Ok(json!({"path": path, "bytes": bytes.len()}))
+    Ok(json!({"path": path, "bytes": bytes.len(), "name": s.doc.name}))
 }
 
 /// Cache only warm display geometry. A save never waits for an unevaluated mesh.
@@ -267,7 +310,10 @@ fn recover(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "doc.recover";
     let dir = recovery_dir(p, cmd)?;
     let id = str_(p, "id").ok_or_else(|| bad(cmd, "`id` is required (see doc.recovery_list)"))?;
-    let (doc, entry) = crate::recovery::load(&dir, id)?;
+    let (mut doc, entry) = crate::recovery::load(&dir, id)?;
+    if let Some(stem) = entry.path.as_deref().and_then(|path| default_name_for(&doc.name, path)) {
+        doc.name = stem;
+    }
     *s = Session::new(doc);
     s.path = entry.path.clone();
     s.mark_unsaved();
@@ -418,6 +464,67 @@ mod tests {
         }
         assert!(editing.active_sketch.is_some());
         assert!(saved_preview(&editing).is_none());
+    }
+
+    fn name_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("solidcraft-name-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn save_as_names_an_untitled_design_after_its_file() {
+        let dir = name_dir("untitled");
+        let path = dir.join("bracket.solidcraft");
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length":10,"width":20,"height":30})).unwrap();
+        assert_eq!(s.doc.name, "Untitled");
+        let r = s.execute("file.save_as", &json!({"path":path})).unwrap();
+        assert_eq!(r["name"], "bracket");
+        assert_eq!(s.doc.name, "bracket");
+        assert!(!s.is_dirty(), "taking the file's name is part of the save");
+        assert_eq!(solidcraft_io::read_design(&std::fs::read(&path).unwrap()).unwrap().name, "bracket");
+        // Undoing the box does not bring the old name back.
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc.name, "bracket");
+        // Saving under another file keeps the name it now has.
+        s.execute("file.save_as", &json!({"path":dir.join("copy.solidcraft")})).unwrap();
+        assert_eq!(s.doc.name, "bracket");
+        // A failed save leaves the name alone.
+        let mut failed = Session::default();
+        assert!(failed.execute("file.save_as", &json!({"path":dir.join("missing-dir").join("plate.solidcraft")})).is_err());
+        assert_eq!(failed.doc.name, "Untitled");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn save_as_keeps_a_name_the_user_chose() {
+        let dir = name_dir("named");
+        let mut s = Session::default();
+        s.execute("file.new", &json!({"name":"Gearbox lid"})).unwrap();
+        s.execute("file.save_as", &json!({"path":dir.join("lid-v2.solidcraft")})).unwrap();
+        assert_eq!(s.doc.name, "Gearbox lid");
+        let mut reopened = Session::default();
+        reopened.execute("doc.open", &json!({"path":dir.join("lid-v2.solidcraft")})).unwrap();
+        assert_eq!(reopened.doc.name, "Gearbox lid");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn opening_an_untitled_file_shows_its_file_name() {
+        let dir = name_dir("open");
+        for (stored, file) in [("Untitled", "hinge.solidcraft"), ("", "spacer.json")] {
+            let path = dir.join(file);
+            let bytes = solidcraft_io::write_design(&Document::new(stored));
+            std::fs::write(&path, bytes).unwrap();
+            let mut s = Session::default();
+            let r = s.execute("doc.open", &json!({"path":path})).unwrap();
+            let stem = file.split('.').next().unwrap();
+            assert_eq!(s.doc.name, stem);
+            assert_eq!(r["name"], stem);
+            assert!(!s.is_dirty(), "showing the file's name is not a change to save");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

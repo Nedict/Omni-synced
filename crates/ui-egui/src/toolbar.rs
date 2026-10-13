@@ -1045,7 +1045,9 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
         match k {
             Key::Escape => {
                 app.esc_handled = true;
-                if app.tool.is_some() {
+                if crate::select_other::is_open(app) {
+                    crate::select_other::close(app);
+                } else if app.tool.is_some() {
                     crate::tools::finish(app);
                 } else if app.dialog.is_some() {
                     crate::dialogs::cancel(app);

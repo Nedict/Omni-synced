@@ -7,6 +7,7 @@
 //! - `{"widget": "Revolute", "near"?: "Type"}`: click a dialog field, choice or button by its
 //!   text (with `near`: the one in that label's row)
 //! - `{"click": AT, "double"?, "shift"?, "ctrl"?, "button"?}`, `{"move": AT}`,
+//!   `{"hold": AT, "frames"?}` (press and hold still: Select Other),
 //!   `{"drag": [AT, AT], "shift"?, "ctrl"?, "steps"?}` where AT is `[x, y]` (screen), `{"world": [x,y,z]}`
 //!   or `{"sketch": [x,y]}` (the sketch being edited)
 //! - `{"queued": "engine.execute", "params": {…}, "min_frames"?: n, "max_frames"?: n}`: a request sent the way an
@@ -378,6 +379,16 @@ impl Harness {
                 let [x, y] = found.ok_or_else(|| format!("no widget `{text}` on screen"))?;
                 self.call("ui.move", json!({"x": x, "y": y}));
                 self.call("ui.click", json!({"x": x, "y": y}))
+            } else if let Some(at) = s.get("hold") {
+                // Press and hold still (Select Other): `frames` with the button down (default 40,
+                // about 0.67 s), then let go.
+                let [x, y] = self.at(at)?;
+                self.call("ui.move", json!({"x": x, "y": y}));
+                let frames = s.get("frames").and_then(Value::as_u64).unwrap_or(40);
+                self.call(
+                    "ui.drag",
+                    json!({"x0": x, "y0": y, "x1": x, "y1": y, "steps": 1, "hold": frames, "shift": flag("shift"), "ctrl": flag("ctrl")}),
+                )
             } else if let Some(at) = s.get("move") {
                 let [x, y] = self.at(at)?;
                 self.call("ui.move", json!({"x": x, "y": y}))

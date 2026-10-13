@@ -348,7 +348,9 @@ pub(crate) fn flat_source_matches(certificate: &FaceCertificate, source: &solidc
 /// Match a generated segment to one exact analytic sketch curve. Coincident
 /// candidates are ambiguous and never resolved by distance or candidate order.
 pub(crate) struct ExactSketchCurves<'a> {
-    segments: Vec<(&'a str, Vec<Seg2>)>,
+    /// Each analytic curve's id, whether it is projected (linked) reference geometry, and its
+    /// segments.
+    segments: Vec<(&'a str, bool, Vec<Seg2>)>,
 }
 
 impl<'a> ExactSketchCurves<'a> {
@@ -379,22 +381,33 @@ impl<'a> ExactSketchCurves<'a> {
             } else {
                 sketch.sketch.segs(index)
             };
-            segments.push((curve.id.as_str(), originals));
+            segments.push((curve.id.as_str(), curve.link.is_some(), originals));
         }
         Self { segments }
     }
 
+    /// The one sketch curve a generated segment lies on. A curve drawn over projected
+    /// reference geometry (a profile traced over a face's live boundary) is that segment's
+    /// source: the projection only marks where it was drawn. Two drawn curves, or two
+    /// projections, over the same segment stay ambiguous.
     pub(crate) fn find(&self, generated: &Seg2) -> Option<String> {
-        let mut found = None;
-        for (id, originals) in &self.segments {
+        let mut drawn = None;
+        let mut projected = None;
+        for (id, linked, originals) in &self.segments {
             if originals.iter().any(|original| exact_segment_contains(original, generated)) {
-                if found.is_some() {
-                    return None;
+                let slot = if *linked { &mut projected } else { &mut drawn };
+                if slot.is_some() {
+                    *slot = Some(None);
+                } else {
+                    *slot = Some(Some(*id));
                 }
-                found = Some(*id);
             }
         }
-        found.map(str::to_owned)
+        match (drawn, projected) {
+            (Some(id), _) => id.map(str::to_owned),
+            (None, Some(id)) => id.map(str::to_owned),
+            (None, None) => None,
+        }
     }
 }
 
@@ -605,6 +618,29 @@ mod tests {
         moved.sketch = solidcraft_sketch::Sketch::new();
         moved.sketch.add_line(Vec2::new(0., 1.), Vec2::new(10., 1.), None, None, Some("line")).unwrap();
         assert_eq!(ExactSketchCurves::new(&moved).find(&partial), None);
+    }
+
+    #[test]
+    fn a_curve_drawn_over_a_projected_boundary_is_the_source() {
+        use solidcraft_geom::Vec2;
+        // A face sketch's live boundary, with a profile edge traced over it (issue #489).
+        let mut sketch = solidcraft_sketch::Sketch::new();
+        let projected = sketch.add_line(Vec2::ZERO, Vec2::new(10., 0.), None, None, Some("edge")).unwrap();
+        sketch.curves[projected].link = Some("boundary".into());
+        let sketch = solved(sketch);
+        let edge = Seg2::Line { a: Vec2::new(10., 0.), b: Vec2::ZERO };
+        assert_eq!(ExactSketchCurves::new(&sketch).find(&edge).as_deref(), Some("edge"), "a lone projection is its own source");
+        let mut traced = sketch.clone();
+        traced.sketch.add_line(Vec2::ZERO, Vec2::new(10., 0.), None, None, Some("drawn")).unwrap();
+        assert_eq!(ExactSketchCurves::new(&traced).find(&edge).as_deref(), Some("drawn"));
+        // Two drawn curves over it, or two projections, stay ambiguous.
+        let mut twice = traced.clone();
+        twice.sketch.add_line(Vec2::ZERO, Vec2::new(10., 0.), None, None, Some("again")).unwrap();
+        assert_eq!(ExactSketchCurves::new(&twice).find(&edge), None);
+        let mut projections = sketch.clone();
+        let other = projections.sketch.add_line(Vec2::ZERO, Vec2::new(10., 0.), None, None, Some("other")).unwrap();
+        projections.sketch.curves[other].link = Some("edge link".into());
+        assert_eq!(ExactSketchCurves::new(&projections).find(&edge), None);
     }
 
     #[test]
