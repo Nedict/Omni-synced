@@ -27,6 +27,17 @@ static class Program
         Check(ok, what + " (got " + got.ToString("R") + ", want " + want.ToString("R") + ")");
     }
 
+    /// <summary>
+    /// Relative comparison. Curved features (a cut by a cylindrical hole) are measured from the
+    /// tessellated mesh, so the analytic area differs by the polygon's chord error; use a small
+    /// relative tolerance rather than an absolute one.
+    /// </summary>
+    private static void NearRel(double got, double want, double relTol, string what)
+    {
+        bool ok = Math.Abs(got - want) <= Math.Abs(want) * relTol;
+        Check(ok, what + " (got " + got.ToString("R") + ", want " + want.ToString("R") + ", rel " + (Math.Abs(got - want) / Math.Abs(want)).ToString("E2") + ")");
+    }
+
     private static int Main()
     {
         Console.WriteLine("SolidCraft C#-drives-Rust conformance");
@@ -85,11 +96,11 @@ static class Program
             Check(cut > 0, "cut creates a feature");
 
             double want = 15000.0 - Math.PI * 25.0 * 10.0;
-            Near(s.TotalVolumeMm3, want, 1e-6, "plate minus through hole");
+            NearRel(s.TotalVolumeMm3, want, 1e-4, "plate minus through hole");
 
             // Typed mass properties agree with the scalar volume.
             ScMassProperties mp = s.Measure();
-            Near(mp.VolumeMm3, want, 1e-6, "measure() volume matches");
+            NearRel(mp.VolumeMm3, want, 1e-4, "measure() volume matches");
             Check(mp.Faces > 0 && mp.Edges > 0, "measure() reports faces and edges");
 
             // Body/face/edge enumeration is typed.
@@ -183,7 +194,7 @@ static class Program
         doc.ClearSelection2(true);
         IFeature cut = doc.FeatureManager.FeatureCut3(true, false, false, (int)swEndConditions_e.swEndCondBlind, 0, 0.01, 0.01, false, false, false, false, 0, 0, false, false, false, false, false, false, true, false, false, false, 0, 0, false);
         Check(cut != null, "FeatureCut3 returns a feature");
-        Near(doc.Extension.CreateMassProperty().Volume, 0.05 * 0.03 * 0.01 - Math.PI * 0.005 * 0.005 * 0.01, 1e-14, "plate minus through hole (m^3)");
+        NearRel(doc.Extension.CreateMassProperty().Volume, 0.05 * 0.03 * 0.01 - Math.PI * 0.005 * 0.005 * 0.01, 1e-4, "plate minus through hole (m^3)");
 
         // An edge fillet with FeatureFillet.
         object[] partBodies = (object[])((IPartDoc)doc).GetBodies2(0, false);
