@@ -434,3 +434,28 @@ fn legacy_design_files_and_resource_uris() {
     let d = call(&mut s, 1, "resources/read", json!({"uri": "solvecraft://design"}));
     assert!(d["result"]["contents"][0]["text"].as_str().unwrap().contains("timeline"));
 }
+
+/// #530: in a design with many bodies every feature result lists all of them, so a batch reply
+/// is mostly the same body list once per step. A compact batch reply names only what each step
+/// added or changed.
+#[test]
+#[ignore = "fails until #530 is fixed"]
+fn compact_batch_reply_does_not_repeat_the_body_list() {
+    let mut s = server();
+    let cube =
+        |x: i64, y: i64| json!({"command": "solid.box", "params": {"length": 1, "width": 1, "height": 1, "corner": [x, y, 0], "operation": "new"}});
+    let existing: Vec<Value> = (0..50).map(|i| cube(2 * i, 0)).collect();
+    tool(&mut s, "batch", json!({"commands": existing}));
+    let more: Vec<Value> = (0..3).map(|i| cube(2 * i, 5)).collect();
+    let r = raw_tool(&mut s, "batch", json!({"commands": more, "verbose": false}));
+    assert!(r.get("error").is_none() && r["result"]["isError"] != json!(true), "{r}");
+    let reply = r["result"]["content"][0]["text"].as_str().unwrap_or_default();
+    assert_eq!(tool(&mut s, "measure", json!({}))["body_count"], 53);
+    // The new bodies are named; the 50 untouched ones are not repeated.
+    for new in ["Body51", "Body52", "Body53"] {
+        assert!(reply.contains(&format!("\"{new}\"")), "{new} missing from the compact reply: {reply}");
+    }
+    for old in ["Body1", "Body25", "Body50"] {
+        assert!(!reply.contains(&format!("\"{old}\"")), "untouched {old} repeated in the compact reply ({} bytes): {reply}", reply.len());
+    }
+}
