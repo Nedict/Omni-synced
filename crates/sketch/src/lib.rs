@@ -20,6 +20,7 @@ mod construct;
 mod curves;
 mod decompose;
 mod dims;
+mod fonts;
 mod freeform_offset;
 mod linalg;
 mod link;
@@ -41,6 +42,7 @@ pub use curves::{
 };
 pub use decompose::Budget;
 pub use dims::{DimFrame, DimLayout, chain_centres, default_text, dim_frame, dim_layout, encode_text};
+pub use fonts::{DEFAULT_FONT_FAMILY, FontData, font_data};
 pub use freeform_offset::{FreeformOffset, OFFSET_TOLERANCE};
 pub use link::{Link, LinkGeom, LinkKind, LinkSource, MAX_LINK_ENTITIES, SKETCH_AXIS_HALF, sketch_axis_geom};
 pub use model::{Constraint, ConstraintKind, Curve, CurveKind, MAX_CONSTRAINTS, MAX_CURVES, MAX_POINTS, SPoint, Sketch, SketchError, SketchView};
@@ -55,7 +57,7 @@ pub use shape::{Shape, intersections};
 pub use solver::{
     Analysis, DrivingValues, Hold, SolveReport, SolveStatus, measure_dimension, solve, solve_after_value_edit, solve_holding, solve_with,
 };
-pub use text::{MAX_TEXT_CHARS, text_geometry};
+pub use text::{MAX_TEXT_CHARS, text_geometry, text_geometry_in};
 pub use wire::{MAX_FIT_POINTS, MAX_WIRE_POINTS, Wire, WireSpace, fit_polyline};
 
 #[cfg(test)]
@@ -64,6 +66,8 @@ mod construct_rounds_tests;
 mod construct_tests;
 #[cfg(test)]
 mod continuation_tests;
+#[cfg(test)]
+mod font_tests;
 #[cfg(test)]
 mod tests;
 

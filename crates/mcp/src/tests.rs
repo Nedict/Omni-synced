@@ -434,3 +434,23 @@ fn legacy_design_files_and_resource_uris() {
     let d = call(&mut s, 1, "resources/read", json!({"uri": "solvecraft://design"}));
     assert!(d["result"]["contents"][0]["text"].as_str().unwrap().contains("timeline"));
 }
+
+/// #528: an agent saves the angle of a product photo as a named view once, then renders the
+/// model from that view after each change. The render must use the saved camera, not a
+/// standard view.
+#[test]
+#[ignore = "fails until #528 is fixed"]
+fn screenshot_renders_a_saved_named_view() {
+    let mut s = server();
+    tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 40, "width": 20, "height": 10}}));
+    let camera = json!({"target": [20, 10, 5], "yaw": 0.5, "pitch": -0.6, "distance": 150});
+    tool(&mut s, "execute", json!({"command": "view.save", "params": {"name": "Photo", "camera": camera}}));
+    let shot = |s: &mut Server, view: &str| {
+        let img = tool(s, "screenshot", json!({"view": view, "width": 96, "height": 64}));
+        img["data"].as_str().unwrap_or_default().to_string()
+    };
+    let iso = shot(&mut s, "iso");
+    let photo = shot(&mut s, "Photo");
+    assert!(photo.starts_with("iVBORw0KGgo"), "not a PNG");
+    assert_ne!(photo, iso, "the named view rendered like the standard iso view");
+}
