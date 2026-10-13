@@ -155,8 +155,10 @@ impl Server {
                     Some(a) => a.clone(),
                 };
                 check_arguments(name, &args).map_err(|e| (INVALID_PARAMS, e))?;
+                // The open design's folder counts as it is now (a save-as or open moves it).
+                let scope = self.scope.clone().map(|s| s.with_design(self.backend.design_path().as_deref()));
                 let backend = self.backend.as_mut();
-                Ok(vfs::scoped(self.scope.clone(), || call_tool(backend, name, &args)))
+                Ok(vfs::scoped(scope, || call_tool(backend, name, &args)))
             }
             "resources/list" => Ok(json!({"resources": [
                 {"uri": "solidcraft://design", "name": "Active design", "description": "document.inspect with measurements", "mimeType": "application/json"},

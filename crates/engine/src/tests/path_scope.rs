@@ -48,6 +48,13 @@ fn file_commands_stay_inside_the_agents_folders() {
         assert!(e.contains("outside the folders this agent may use"), "sketch.text: {e}");
         s.execute("sketch.text", &json!({"text": "A", "at": [0, 0]})).unwrap();
         s.execute("sketch.finish", &json!({})).unwrap();
+        // Saving follows a link to its file (#845), so a link that leads out is refused.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(out.join("part.solidcraft"), root.join("linked.solidcraft")).unwrap();
+            let e = s.execute("file.save_as", &json!({"path": at(&root, "linked.solidcraft")})).unwrap_err().to_string();
+            assert!(e.contains("outside the folders this agent may use"), "save through a link: {e}");
+        }
         // The default recovery folder isn't one of the agent's folders either.
         assert!(s.execute("doc.recovery_list", &json!({})).is_err());
     });

@@ -97,7 +97,10 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
     if let Some(o) = p.as_object_mut() {
         o.remove("allow_paths");
     }
-    vfs::scoped(Some(vfs::PathScope::new(roots)), || dispatch(app, ctx, &req.method, &p))
+    // Plus the app's own recovery folder and, when it is a safe one, the open design's folder.
+    let roots = roots.into_iter().chain(solidcraft_engine::recovery::default_dir());
+    let scope = vfs::PathScope::new(roots).with_design(app.session.path.as_deref());
+    vfs::scoped(Some(scope), || dispatch(app, ctx, &req.method, &p))
 }
 
 fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) -> Outcome {

@@ -111,38 +111,111 @@ pub use imp::*;
 /// The folders an agent's commands may read, write and delete in (an MCP server's, see
 /// docs/mcp.md). While a scope is active on this thread ([`scoped`]), every file call here
 /// refuses paths outside it; without one (the user's own file dialogs, the CLI) nothing changes.
+///
+/// Two kinds of folder: those named on purpose (`--allow-path`, the app's own recovery folder),
+/// where everything is reachable, and the open design's folder, which counts only when
+/// [`design_folder_refusal`] has nothing against it and never reaches hidden files or folders
+/// (`.env`, `.git`) inside it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PathScope {
     roots: Vec<std::path::PathBuf>,
+    design_roots: Vec<std::path::PathBuf>,
 }
 
 thread_local! {
     static SCOPE: std::cell::RefCell<Option<PathScope>> = const { std::cell::RefCell::new(None) };
 }
 
+/// `dir` resolved, if it exists.
+fn canonical(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    std::fs::canonicalize(dir).ok()
+}
+
+/// The user's home folder, resolved.
+fn home_dir() -> Option<std::path::PathBuf> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(var).filter(|h| !h.is_empty()).and_then(|h| canonical(std::path::Path::new(&h)))
+}
+
+/// A folder or file name an agent never reaches by default: hidden on Unix (`.ssh`, `.env`),
+/// and on Windows also the per-user `AppData` folder.
+fn hidden(name: &std::ffi::OsStr) -> bool {
+    let n = name.to_string_lossy();
+    n.starts_with('.') || (cfg!(windows) && n.eq_ignore_ascii_case("AppData"))
+}
+
+/// Why `dir` (an open design's folder) can't be one of an agent's folders by default, or `None`
+/// when it can: it must lie strictly inside the home folder (or the temporary folder) and not
+/// in a hidden folder. So a design saved in home itself, in `/`, on a drive root or in a system
+/// folder never puts `~/.ssh`, `~/.bashrc` or anything else of the user's in reach.
+pub fn design_folder_refusal(dir: &std::path::Path) -> Option<String> {
+    design_folder_refusal_in(dir, home_dir().as_deref(), Some(&std::env::temp_dir()))
+}
+
+/// [`design_folder_refusal`] with the home and temporary folders given (tests).
+pub fn design_folder_refusal_in(dir: &std::path::Path, home: Option<&std::path::Path>, temp: Option<&std::path::Path>) -> Option<String> {
+    let Some(d) = canonical(dir) else { return Some("it doesn't exist".into()) };
+    if d.parent().is_none() {
+        return Some("it is a drive or file-system root".into());
+    }
+    let home = home.and_then(canonical);
+    if home.as_ref().is_some_and(|h| h.starts_with(&d)) {
+        return Some("it is your home folder or a folder above it".into());
+    }
+    let temp = temp.and_then(canonical).filter(|t| t.parent().is_some());
+    // The closer of the two (a temporary folder may lie inside home, in a hidden folder).
+    let Some(base) = [home, temp].into_iter().flatten().filter(|b| d.starts_with(b) && d != *b).max_by_key(|b| b.components().count()) else {
+        return Some("it is not inside your home folder".into());
+    };
+    let rel = d.strip_prefix(&base).ok()?;
+    if rel.components().any(|c| hidden(c.as_os_str())) {
+        return Some("it is inside a hidden folder".into());
+    }
+    None
+}
+
 impl PathScope {
     /// Confine file access to `roots` (resolved now; folders that don't exist are left out, so an
     /// empty scope refuses every path).
     pub fn new(roots: impl IntoIterator<Item = std::path::PathBuf>) -> PathScope {
-        let mut out: Vec<std::path::PathBuf> = Vec::new();
-        for r in roots {
-            if let Ok(r) = std::fs::canonicalize(&r)
-                && !out.contains(&r)
-            {
-                out.push(r);
+        let mut out = PathScope::default();
+        for r in roots.into_iter().filter_map(|r| canonical(&r)) {
+            if !out.roots.contains(&r) {
+                out.roots.push(r);
             }
         }
-        PathScope { roots: out }
+        out
     }
 
+    /// Also the folder of the design at `path` (the open design), when
+    /// [`design_folder_refusal`] allows it; hidden entries inside it stay out of reach.
+    pub fn with_design(mut self, path: Option<&str>) -> PathScope {
+        let dir = path
+            .map(std::path::Path::new)
+            .and_then(std::path::Path::parent)
+            .map(|d| if d.as_os_str().is_empty() { std::path::Path::new(".") } else { d });
+        if let Some(d) = dir.filter(|d| design_folder_refusal(d).is_none()).and_then(canonical)
+            && !self.design_roots.contains(&d)
+        {
+            self.design_roots.push(d);
+        }
+        self
+    }
+
+    /// The folders named on purpose.
     pub fn roots(&self) -> &[std::path::PathBuf] {
         &self.roots
     }
 
-    /// Whether `path` lies inside one of the roots, after following symlinks and `..`.
+    /// The open design's folder, when it counts.
+    pub fn design_roots(&self) -> &[std::path::PathBuf] {
+        &self.design_roots
+    }
+
+    /// Whether `path` lies inside one of the folders, after following symlinks and `..`.
     pub fn check(&self, path: &str) -> Result<()> {
         let refused = || {
-            let roots: Vec<String> = self.roots.iter().map(|r| r.display().to_string()).collect();
+            let roots: Vec<String> = self.roots.iter().chain(&self.design_roots).map(|r| r.display().to_string()).collect();
             Error::new(
                 ErrorKind::PermissionDenied,
                 format!(
@@ -151,28 +224,49 @@ impl PathScope {
                 ),
             )
         };
+        let windows = |why: &str| Error::new(ErrorKind::PermissionDenied, format!("{path}: not allowed for this agent: {why}"));
         // Judged from the text before any filesystem call: resolving a UNC path would already
         // make Windows connect out, and a device name opens the device.
         if cfg!(windows)
             && let Some(why) = windows_refusal(path)
         {
-            return Err(Error::new(ErrorKind::PermissionDenied, format!("{path}: not allowed for this agent: {why}")));
-        }
-        #[cfg(windows)]
-        if let Some(std::path::Component::Prefix(p)) = std::path::Path::new(path).components().next()
-            && !matches!(p.kind(), std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_))
-        {
-            return Err(Error::new(ErrorKind::PermissionDenied, format!("{path}: not allowed for this agent: only paths on a local drive")));
+            return Err(windows(why));
         }
         let resolved = resolve(std::path::Path::new(path)).map_err(|_| refused())?;
-        if self.roots.iter().any(|r| resolved.starts_with(r)) { Ok(()) } else { Err(refused()) }
+        // Judged again once resolved: a link or junction inside an allowed folder may lead to a
+        // network share or a device even though the path given looked local.
+        if cfg!(windows) && !local_drive_path(&resolved) {
+            return Err(windows("only paths on a local drive"));
+        }
+        let inside_design =
+            || self.design_roots.iter().any(|r| resolved.strip_prefix(r).is_ok_and(|rel| !rel.components().any(|c| hidden(c.as_os_str()))));
+        if self.roots.iter().any(|r| resolved.starts_with(r)) || inside_design() { Ok(()) } else { Err(refused()) }
+    }
+}
+
+/// Whether a resolved path is on a local drive (`C:\…` or `\\?\C:\…`) with no `:` or device
+/// name in it. Always true off Windows, where these rules don't apply.
+fn local_drive_path(p: &std::path::Path) -> bool {
+    #[cfg(windows)]
+    {
+        let drive = matches!(
+            p.components().next(),
+            Some(std::path::Component::Prefix(x)) if matches!(x.kind(), std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_))
+        );
+        drive && windows_refusal(&p.to_string_lossy()).is_none()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = p;
+        true
     }
 }
 
 /// Why Windows would not treat `path` as a plain file on a local drive, judged by Windows rules
 /// from the text alone (so it is tested on every platform): UNC, device (`\\.\`), NT (`\??\`) and
 /// verbatim paths other than a verbatim drive (`\\?\C:\`), drive-relative paths (`C:file`), a `:`
-/// inside a name (alternate data streams) and reserved device names (`NUL`, `COM1.txt`, …).
+/// inside a name (alternate data streams), reserved device names (`NUL`, `COM1.txt`, …) and
+/// short (8.3) names.
 pub fn windows_refusal(path: &str) -> Option<&'static str> {
     let norm = path.replace('/', "\\");
     let drive = |s: &str| matches!(s.as_bytes(), [d, b':', ..] if d.is_ascii_alphabetic());
@@ -195,6 +289,12 @@ pub fn windows_refusal(path: &str) -> Option<&'static str> {
     for name in body.split('\\').filter(|n| !n.is_empty()) {
         if name.contains(':') {
             return Some("`:` in a file name (alternate data streams)");
+        }
+        // A short (8.3) name such as `PROGRA~1` or `SSH~1` is another spelling of a folder whose
+        // real name could be anything; canonicalising expands existing ones, and a new file's
+        // name must not be one.
+        if name.as_bytes().windows(2).any(|w| w[0] == b'~' && w[1].is_ascii_digit()) {
+            return Some("short (8.3) names such as `PROGRA~1`");
         }
         let stem = name.split('.').next().unwrap_or("").trim_end_matches([' ', '.']).to_uppercase();
         let numbered =
@@ -384,6 +484,8 @@ mod tests {
             r"\work\a.b.step",
             r"C:\com10\x.txt",
             r"C:\console.txt",
+            r"\\?\c:\work\part.step",
+            r"C:\work\draft~v2.step",
         ] {
             assert_eq!(w(ok), None, "{ok}");
         }
@@ -407,6 +509,24 @@ mod tests {
             r"C:\work\COM¹",
             r"C:\work\CONOUT$",
             r"work\AUX\x.step",
+            // Every spelling of the NT, device and UNC prefixes.
+            r"\\?\unc\server\share\x.step",
+            "//?/UNC/server/share/x.step",
+            r"/\?\UNC\server\share\x.step",
+            r"\??/UNC/server/share/x.step",
+            r"\\.\C:\x.step",
+            "//./pipe/x",
+            r"\\?\C:",
+            r"\\server",
+            // Device names with any extension, in any case.
+            r"C:\work\aux.tar.gz",
+            r"C:\work\Prn.",
+            r"C:\work\lPt1.step",
+            r"C:\work\conin$.txt",
+            // Alternate data streams, and short (8.3) names.
+            r"C:\work\a.step::$DATA",
+            r"C:\Users\me\SSH~1\id_ed25519",
+            r"C:\PROGRA~1\x.step",
         ] {
             assert!(w(bad).is_some(), "{bad}");
         }
@@ -436,6 +556,96 @@ mod tests {
             assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied, "{bad}: {e}");
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The open design's folder counts only when it is safe (#205): strictly inside home (or the
+    /// temporary folder), not home itself, a folder above it, a root or a hidden folder; and
+    /// hidden files inside it stay out of reach. Folders named on purpose reach everything.
+    #[cfg(all(unix, not(target_arch = "wasm32")))]
+    #[test]
+    fn the_designs_folder_counts_only_when_safe_and_never_reaches_hidden_files() {
+        use super::{PathScope, design_folder_refusal_in as refusal};
+        let base = std::env::temp_dir().join(format!("solidcraft-vfs-design-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let home = base.join("home");
+        let (proj, dotdir) = (home.join("work/proj"), home.join(".config/x"));
+        for d in [&proj.join("sub"), &dotdir, &home.join(".ssh"), &proj.join(".git")] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let sibling = base.join("homex");
+        std::fs::create_dir_all(&sibling).unwrap();
+        std::fs::write(home.join(".ssh/id_ed25519"), "key").unwrap();
+        std::fs::write(proj.join(".env"), "x").unwrap();
+        std::os::unix::fs::symlink(home.join(".ssh"), proj.join("keys")).unwrap();
+        let h = Some(home.as_path());
+        assert_eq!(refusal(&proj, h, None), None);
+        assert_eq!(refusal(&home.join("work/../work/proj"), h, None), None);
+        for (dir, why) in [
+            (home.clone(), "home"),
+            (base.clone(), "above home"),
+            ("/".into(), "root"),
+            (sibling.clone(), "a name that only starts like home"),
+            (dotdir.clone(), "hidden"),
+            (base.join("missing"), "doesn't exist"),
+        ] {
+            assert!(refusal(&dir, h, None).is_some(), "{why}: {}", dir.display());
+        }
+        assert!(refusal(&proj, None, None).is_some(), "no home known: nothing implicit");
+        assert_eq!(refusal(&base.join("homex"), None, Some(&base)), None, "inside the temporary folder");
+        assert!(refusal(&base, None, Some(&base)).is_some(), "the temporary folder itself");
+
+        // Through a scope: the design's folder reaches its own files, never hidden ones, and
+        // never a link that leads to them.
+        let s = |p: std::path::PathBuf| p.to_string_lossy().to_string();
+        let mut scope = PathScope::new([]);
+        // `with_design` judges with the real home; build the folder list directly instead.
+        scope.design_roots.push(std::fs::canonicalize(&proj).unwrap());
+        assert!(scope.check(&s(proj.join("part.step"))).is_ok());
+        assert!(scope.check(&s(proj.join("sub/../part.step"))).is_ok());
+        for bad in
+            [proj.join(".env"), proj.join(".git/config"), proj.join("keys/id_ed25519"), proj.join("../../.ssh/id_ed25519"), home.join(".bashrc")]
+        {
+            assert!(scope.check(&s(bad.clone())).is_err(), "{}", bad.display());
+        }
+        // Named on purpose, a folder reaches its hidden files too.
+        assert!(PathScope::new([proj.clone()]).check(&s(proj.join(".env"))).is_ok());
+        // A design saved at `/` or in a missing folder adds nothing.
+        assert!(PathScope::new([]).with_design(Some("/part.solidcraft")).design_roots().is_empty());
+        assert!(PathScope::new([]).with_design(Some(&s(base.join("missing/p.solidcraft")))).design_roots().is_empty());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A save follows a symbolic link to the file it points to (#845), so the link's target is
+    /// what a scope judges: a link inside an allowed folder that leads out is refused, a chain of
+    /// links that stays inside is fine.
+    #[cfg(all(unix, not(target_arch = "wasm32")))]
+    #[test]
+    fn a_link_is_judged_by_where_it_leads() {
+        use super::PathScope;
+        let base = std::env::temp_dir().join(format!("solidcraft-vfs-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (root, out) = (base.join("root"), base.join("out"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("part.solidcraft"), "outside").unwrap();
+        std::fs::write(root.join("real.solidcraft"), "inside").unwrap();
+        std::os::unix::fs::symlink(out.join("part.solidcraft"), root.join("part.solidcraft")).unwrap();
+        std::os::unix::fs::symlink("real.solidcraft", root.join("a.solidcraft")).unwrap();
+        std::os::unix::fs::symlink("a.solidcraft", root.join("b.solidcraft")).unwrap();
+        std::os::unix::fs::symlink("../out/new.solidcraft", root.join("dangling.solidcraft")).unwrap();
+        let scope = PathScope::new([root.clone()]);
+        let s = |p: std::path::PathBuf| p.to_string_lossy().to_string();
+        assert!(scope.check(&s(root.join("part.solidcraft"))).is_err());
+        assert!(scope.check(&s(root.join("dangling.solidcraft"))).is_err());
+        assert!(scope.check(&s(root.join("b.solidcraft"))).is_ok());
+        super::scoped(Some(scope), || {
+            let path = s(root.join("part.solidcraft"));
+            let refused = super::check(&path).and_then(|()| crate::safe_write::write_atomic(std::path::Path::new(&path), b"agent", false));
+            assert!(refused.is_err());
+        });
+        assert_eq!(std::fs::read_to_string(out.join("part.solidcraft")).unwrap(), "outside");
+        assert!(!out.join("new.solidcraft").exists());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// A directory is not a file either.

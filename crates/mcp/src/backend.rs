@@ -15,6 +15,11 @@ pub trait Backend {
     /// True when a real window is attached (`ui.screenshot` can capture it).
     fn has_ui(&self) -> bool;
     fn describe(&self) -> String;
+    /// The open design's file, when this side knows it (its folder joins the agent's folders,
+    /// see `vfs::PathScope::with_design`). A running app adds its own, so `Remote` says nothing.
+    fn design_path(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Longest reply line accepted from the app.
@@ -187,5 +192,8 @@ impl Backend for Headless {
     }
     fn describe(&self) -> String {
         "headless in-process SolidCraft session".into()
+    }
+    fn design_path(&self) -> Option<String> {
+        self.session.path.clone()
     }
 }

@@ -17,41 +17,51 @@ pub use backend::{Backend, Headless, Remote};
 pub use server::{PROTOCOL_VERSION, SUPPORTED_VERSIONS, Server};
 pub use tools::{call_tool, tool_definitions};
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use solidcraft_engine::io::vfs::PathScope;
 
-/// The folders `solidcraft-cli mcp` lets its agent read, write and delete in: the system's
-/// temporary folders (screenshots), each `allowed` folder (`--allow-path`), and the working
-/// folder and the `--in` design's folder when they lie strictly inside the home folder (never
-/// home itself, a folder above it or a system folder, where `~/.ssh` or `~/.bashrc` would be
-/// in reach). Also the notes to print about folders left out.
-pub fn agent_scope(design_dir: Option<PathBuf>, allowed: impl IntoIterator<Item = PathBuf>) -> (PathScope, Vec<String>) {
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).filter(|h| !h.is_empty()).map(PathBuf::from);
-    let mut roots = vec![std::env::temp_dir()];
-    if cfg!(unix) {
-        roots.push("/tmp".into());
-    }
-    let mut notes = Vec::new();
-    for (what, dir) in [("working folder", std::env::current_dir().ok()), ("--in design's folder", design_dir)] {
-        let Some(dir) = dir else { continue };
-        if under_home(&dir, home.as_deref()) {
-            roots.push(dir);
-        } else {
-            notes.push(format!(
-                "the {what} {} is not inside your home folder, so it is left out; add it with --allow-path if you mean it",
-                dir.display()
-            ));
-        }
-    }
-    roots.extend(allowed);
-    (PathScope::new(roots), notes)
+/// The folders `solidcraft-cli mcp` lets its agent read, write and delete in by default: the
+/// app's own recovery folder, this server's private scratch folder (screenshots), and each
+/// `allowed` folder (`--allow-path`). The open design's folder joins on every call when it is a
+/// safe one (`vfs::design_folder_refusal`; the server adds it). The working folder, the home
+/// folder and anything above it never count by themselves, so `~/.ssh`, `~/.bashrc` and other
+/// dotfiles are out of reach unless a folder holding them is allowed on purpose.
+pub fn agent_scope(allowed: impl IntoIterator<Item = PathBuf>) -> PathScope {
+    agent_scope_with(solidcraft_engine::recovery::default_dir(), allowed)
 }
 
-/// Whether `dir` lies strictly inside `home` (both resolved; `false` when either can't be).
-pub fn under_home(dir: &Path, home: Option<&Path>) -> bool {
-    let (Ok(dir), Some(Ok(home))) = (std::fs::canonicalize(dir), home.map(std::fs::canonicalize)) else { return false };
-    dir != home && dir.starts_with(&home)
+/// [`agent_scope`] with the recovery folder given (tests).
+pub fn agent_scope_with(recovery: Option<PathBuf>, allowed: impl IntoIterator<Item = PathBuf>) -> PathScope {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(d) = recovery
+        && std::fs::create_dir_all(&d).is_ok()
+    {
+        roots.push(d);
+    }
+    if let Some(d) = scratch_dir() {
+        roots.push(d);
+    }
+    roots.extend(allowed);
+    PathScope::new(roots)
+}
+
+/// This server's own folder for screenshots it reads back and deletes (`screenshot` without a
+/// `path`): a new `<temp>/solidcraft-mcp-<pid>-<n>` made on first use (never one that was there
+/// already, which could be someone else's), private to the user on Unix.
+pub fn scratch_dir() -> Option<PathBuf> {
+    static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let mut b = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
+        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+        (0..16u32).find_map(|i| {
+            let d = std::env::temp_dir().join(format!("solidcraft-mcp-{}-{:x}", std::process::id(), seed.wrapping_add(i)));
+            b.create(&d).ok().map(|()| d)
+        })
+    })
+    .clone()
 }
 
 #[cfg(test)]

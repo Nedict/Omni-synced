@@ -316,19 +316,20 @@ fn cmd_exec(args: &[String]) -> Result<(), String> {
 /// a running app's control port. stdout carries only protocol messages. Files the agent's tool
 /// calls reach are confined to `solidcraft_mcp::agent_scope` unless `--allow-any-path` is given.
 fn cmd_mcp(args: &[String]) -> Result<(), String> {
-    let scope = (!args.iter().any(|a| a == "--allow-any-path")).then(|| {
-        let design_dir = flag(args, "--in")
-            .and_then(|p| std::path::Path::new(p).parent())
-            .map(|d| if d.as_os_str().is_empty() { ".".into() } else { d.to_path_buf() });
-        let (scope, notes) = solidcraft_mcp::agent_scope(design_dir, flags(args, "--allow-path").into_iter().map(std::path::PathBuf::from));
-        for n in notes {
-            eprintln!("solidcraft mcp: {n}");
-        }
-        scope
-    });
+    let scope = (!args.iter().any(|a| a == "--allow-any-path"))
+        .then(|| solidcraft_mcp::agent_scope(flags(args, "--allow-path").into_iter().map(std::path::PathBuf::from)));
     if let Some(s) = &scope {
         let roots: Vec<String> = s.roots().iter().map(|r| r.display().to_string()).collect();
-        eprintln!("solidcraft mcp: files limited to {} (--allow-path DIR adds one, --allow-any-path lifts the limit)", roots.join(", "));
+        eprintln!(
+            "solidcraft mcp: files limited to {} and the open design's folder (--allow-path DIR adds one, --allow-any-path lifts the limit)",
+            roots.join(", ")
+        );
+        let design_dir = flag(args, "--in")
+            .and_then(|p| std::path::Path::new(p).parent())
+            .map(|d| if d.as_os_str().is_empty() { std::path::Path::new(".") } else { d });
+        if let Some(why) = design_dir.and_then(solidcraft_engine::io::vfs::design_folder_refusal) {
+            eprintln!("solidcraft mcp: the design's folder is left out because {why}; add it with --allow-path if you mean it");
+        }
     }
     let backend: Box<dyn solidcraft_mcp::Backend> = match (flag(args, "--connect"), flag(args, "--in")) {
         (Some(_), Some(_)) => return Err("mcp: use either --connect or --in, not both".into()),

@@ -26,26 +26,35 @@ temporary file by the app and read back by the server, so both must run on the s
 
 Tool calls read, write and delete files only inside the server's folders:
 
-- the system's temporary folders (`/tmp` and the platform's temp folder, where screenshots go);
-- every `--allow-path DIR` (repeat it for more);
-- the folder the server was started in and the folder of the `--in` design, but only when they
-  lie strictly inside your home folder. Home itself, a folder above it (`/`, `/home`, `/Users`,
-  a drive's root) and folders elsewhere are left out, so `~/.ssh` or `~/.bashrc` are never in
-  reach by default; stderr says when a folder was left out, and `--allow-path` adds it back.
+- the folder of the open design (the `--in` design, or whatever the agent last opened or saved),
+  but only when it lies strictly inside your home folder (or the temporary folder) and not in a
+  hidden folder. Home itself, a folder above it (`/`, `/home`, `/Users`, a drive's root),
+  hidden folders such as `~/.config` and folders elsewhere don't count. Hidden files and folders
+  inside the design's folder (`.env`, `.git`) are out of reach too;
+- SolidCraft's own recovery folder, so `doc.recovery_list`, `doc.recover` and
+  `doc.recovery_discard` work out of the box (discarding deletes only real recovery entries);
+- the server's own scratch folder (a new private `solidcraft-mcp-*` folder in the temporary
+  folder), where `screenshot` without a `path` goes;
+- every `--allow-path DIR` (repeat it for more). A folder named here is reached in full,
+  hidden files included.
 
-Paths are resolved before they are compared, so `..` and symlinks that lead out are refused,
-and a new file must go into a folder that exists. On Windows a path must be on a local drive
-(`C:\…` or `\\?\C:\…`): UNC, device and NT paths (`\\server\share`, `\\?\UNC\…`, `\??\…`,
-`\\.\…`), drive-relative paths (`C:file`), a `:` in a file name and reserved device names (`NUL`,
-`CON`, `COM1.txt`, …) are refused before any file system call. This includes a `sketch.text`
-font given as a file path; installed fonts named by family still work. A refused path is a tool
-error saying why; stderr lists the folders at start-up.
+The working folder the server was started in does not count by itself, so `~/.ssh`, `~/.aws`,
+`~/.bashrc` and other dotfiles are never in reach by default. stderr lists the folders at
+start-up and says when the `--in` design's folder was left out; `--allow-path` adds it back.
 
-The default recovery folder is not one of these folders, so `doc.recovery_list`, `doc.recover`
-and `doc.recovery_discard` work for an agent only when it is passed with `--allow-path` (the app's
-own Recover dialog is unaffected). A hard link inside an allowed folder can't be told apart from
-an ordinary file, so a hard link to a file elsewhere is reachable through it; don't keep such
-links in a folder you allow.
+Paths are resolved before they are compared, so `..` and symlinks that lead out are refused
+(saving through a link writes the file it points to, so the link's target is what counts), and
+a new file must go into a folder that exists. On Windows a path must be on a local drive
+(`C:\…` or `\\?\C:\…`): UNC, device and NT paths in any spelling (`\\server\share`,
+`//server/share`, `\\?\UNC\…`, `\??\…`, `\\.\…`), drive-relative paths (`C:file`), a `:` in a
+file name (alternate data streams), reserved device names with any extension (`NUL`, `CON`,
+`COM1.txt`, …) and short 8.3 names (`PROGRA~1`) are refused before any file system call, and the
+resolved path is checked again, so a link or junction that leads to a share is refused too. This
+includes a `sketch.text` font given as a file path; installed fonts named by family still work.
+A refused path is a tool error saying why.
+
+A hard link inside an allowed folder can't be told apart from an ordinary file, so a hard link
+to a file elsewhere is reachable through it; don't keep such links in a folder you allow.
 
 ```sh
 solidcraft-cli mcp --allow-path ~/designs --allow-path ~/exports
@@ -53,8 +62,9 @@ solidcraft-cli mcp --allow-any-path   # no limit (the behaviour before this opti
 ```
 
 Bridged, the server sends its folders with every request (`allow_paths`, see
-[control-protocol.md](control-protocol.md)) and the app applies the same rule, so give absolute
-paths: a relative one resolves against the app's working folder, not the server's. The app's own
+[control-protocol.md](control-protocol.md)) and the app adds its own recovery folder and the
+folder of the design open in it, under the same rules, so give absolute paths: a relative one
+resolves against the app's working folder, not the server's. The app's own
 file dialogs are never limited.
 
 ### Client configuration
