@@ -3427,9 +3427,11 @@ dependencies = [
  "egui-wgpu",
  "image",
  "log",
+ "pollster 0.4.0",
  "serde",
  "serde_json",
  "solidcraft-engine",
+ "solidcraft-gpu",
  "ttf-parser",
  "web-time",
 ]

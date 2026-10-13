@@ -54,7 +54,8 @@ pub const TABLE: &[(&str, Class)] = &[
 ];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).
-pub const INTRA_LAYER_ORDER: &[&[&str]] = &[];
+/// The viewport draws display plans the GPU crate evaluates.
+pub const INTRA_LAYER_ORDER: &[&[&str]] = &[&["gpu", "ui-egui"]];
 
 fn intra_layer_allowed(from: &str, to: &str) -> bool {
     let (from, to) = (short_name(from), short_name(to));
