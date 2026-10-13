@@ -9,7 +9,7 @@ Where the expected values come from (the **Source** column):
 
 No expected value comes from a commercial CAD product.
 
-**80 / 80 cases pass**; sources: 59 analytic, 21 freecad. 0 known failure(s) tracked in issues; 0 case(s) without expected values yet.
+**81 / 81 cases pass**; sources: 60 analytic, 21 freecad. 0 known failure(s) tracked in issues; 0 case(s) without expected values yet.
 
 | Case | Source | Result | Surface distance mm (max / mean) | Method | Notes |
 |---|---|---|---|---|---|
@@ -93,6 +93,7 @@ No expected value comes from a commercial CAD product.
 | 78-fillet-variable-to-zero | analytic | pass |  | as 77 with the radius running from 4 (x=0) down to 0 (x=40), where the round closes to the corner: V = abc - (1 - pi/4) L a^2 / 3; the round is three-sided and the corner at x=40 stays |  |
 | 79-fillet-chord-length | analytic | pass |  | box 40x30x20, top front edge rounded 4 wide across (chord c): r = c / (2 cos 45 deg) = 2 sqrt 2; V = abc - (1 - pi/4) r^2 L, A = 2(ab + bc + ca) - 2 r L + (pi/2) r L - 2 (1 - pi/4) r^2 |  |
 | 80-fillet-taper-to-fit | analytic | pass |  | plate (top 20 -> 2 wide over x 0..40, 15 high) with its top front edge filleted at 3, fit: taper. The radius is the taper law: a clamped cubic B-spline in u = x/40 on 8 equal spans, control radii min(3, 0.9 room) at the Greville abscissae, room = min(20 - 18u, 15) tan 45 deg (top face width, front face height): 3.0000, 3.0000, 3.0000, 3.0000, 3.0000, 3.0000, 3.0000, 3.0000, 3.0000, 2.4750, 1.8000. Sections are quarter rounds; V, moments and areas integrated along the edge |  |
+| 81-fillet-spline-radius | analytic | pass |  | box 40x30x20 with its top front edge (y=0, z=20) rounded at a radius that is a clamped cubic B-spline in u = x/40, knots 0,0,0,0,0.25,0.6,1,1,1,1, control radii 2, 5, 1.5, 4, 1, 3 (r(0) = 2, r(40) = 3). Sections are quarter rounds; V, moments and areas integrated along the edge, exactly per knot span |  |
 
 ## Not covered by a reference case
 
