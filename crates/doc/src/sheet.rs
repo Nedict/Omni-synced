@@ -2708,8 +2708,9 @@ impl SheetBody {
     }
 
     /// The flat face of the sheet that a point lies on (sheet coordinates, within `tol`, which
-    /// stays below a quarter of the thickness): its persistent name (`<panel>:top` or
-    /// `<panel>:bottom`) and its plane (see [`panel_face`](Self::panel_face)).
+    /// stays below a quarter of the thickness): its persistent name (`<panel>:top`,
+    /// `<panel>:bottom`, or a rim's `<panel>:rim.<edge>`) and its plane (see
+    /// [`panel_face`](Self::panel_face)).
     pub fn panel_face_at(&self, p: Vec3, tol: f64) -> Option<(String, Plane)> {
         let tol = tol.min(self.t * 0.25);
         let flat = if self.flat { self.flat_regions().ok()? } else { Vec::new() };
@@ -2727,7 +2728,165 @@ impl SheetBody {
                 return Some((format!("{}:{}", self.panel_name(pi), if top { "top" } else { "bottom" }), self.panel_face_plane(&world, top)?));
             }
         }
+        self.rim_face_at(p, tol)
+    }
+
+    /// The straight edges of each panel's outline (folded sheets only) with the name of the rim
+    /// face along each: `<panel>:rim.<edge>`, the edge as the sheet's edge names give it (a base
+    /// sketch line's id, or `far`, `side0`, `side1` of a flange).
+    fn rims(&self) -> Vec<(Option<usize>, Vec2, Vec2, String)> {
+        if self.flat {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (pi, region) in self.panels() {
+            let pts = dedup(&region.outer.ccw().polyline(1e-3));
+            let m = pts.len();
+            for i in 0..m {
+                let (Some(&a), Some(&b)) = (pts.get(i), pts.get((i + 1) % m)) else { continue };
+                if a.dist(b) < 1e-9 {
+                    continue;
+                }
+                let panel = self.panel_name(pi);
+                let Some(edge) = self.rim_edge(pi, a, b, i) else { continue };
+                if edge.is_empty() || edge.contains(':') || edge == "bend" {
+                    continue;
+                }
+                out.push((pi, a, b, format!("{panel}:rim.{edge}")));
+            }
+        }
+        out
+    }
+
+    /// What names the rim along edge `a`→`b` (the `k`-th of its panel's outline): the base sketch
+    /// line it lies on (else its place in the base's outline, `edge<k>`, for a base drawn by the
+    /// feature itself), or a flange's `far`, `side0` or `side1` (`bend` where it meets its bend).
+    fn rim_edge(&self, pi: Option<usize>, a: Vec2, b: Vec2, k: usize) -> Option<String> {
+        let d = (b - a).normalized()?;
+        match pi {
+            None => match self.edge_name_of(None, a, b, true) {
+                Some(edge) => edge.strip_prefix("base:")?.strip_suffix(":top").map(str::to_string),
+                None if self.base_curves.is_empty() => Some(format!("edge{k}")),
+                None => None,
+            },
+            Some(i) => {
+                let f = self.flanges.get(i)?;
+                Some(
+                    if d.cross(f.d).abs() < 1e-6 {
+                        if ((a - f.p).dot(f.n)) > self.allowance(f) + 1e-6 { "far" } else { "bend" }
+                    } else if ((a + b) * 0.5 - f.p).dot(f.d) < f.len / 2.0 {
+                        "side0"
+                    } else {
+                        "side1"
+                    }
+                    .to_string(),
+                )
+            }
+        }
+    }
+
+    /// The flat rim face (the sheet's thickness along a straight outline edge of a panel) that a
+    /// point lies on (sheet coordinates, within `tol`): its persistent name and plane (see
+    /// [`panel_face`](Self::panel_face)).
+    fn rim_face_at(&self, p: Vec3, tol: f64) -> Option<(String, Plane)> {
+        let mut best: Option<(f64, String)> = None;
+        for (pi, a, b, name) in self.rims() {
+            let Some(inverse) = mat_inverse(&self.world(pi)) else { continue };
+            let q = apply_point(&inverse, p);
+            if q.z < -tol || q.z > self.t + tol {
+                continue;
+            }
+            let q2 = Vec2::new(q.x, q.y);
+            let d = b - a;
+            let along = (q2 - a).dot(d) / d.len2();
+            if !(-1e-9..=1.0 + 1e-9).contains(&along) {
+                continue;
+            }
+            let off = ((a + d * along) - q2).len();
+            if off <= tol && best.as_ref().is_none_or(|(o, _)| off < *o) {
+                best = Some((off, name));
+            }
+        }
+        let name = match best {
+            Some((_, name)) => name,
+            None => self.bend_side_at(p, tol)?,
+        };
+        let plane = self.panel_face(&name)?;
+        Some((name, plane))
+    }
+
+    /// A flange's bend in its parent's flat coordinates: the parent's placement, the bend axis
+    /// (a point and unit direction along the flange's edge), and the turn's start direction
+    /// (from the axis to the material) and the direction it turns toward.
+    fn bend_frame(&self, f: &SheetFlange) -> Option<(Mat, Vec3, Vec3, Vec3, Vec3)> {
+        let (o, _, _) = self.bend_axis(f);
+        let d = v3(f.d).normalized()?;
+        let start = if f.angle >= 0.0 { Vec3::Z * -1.0 } else { Vec3::Z };
+        let toward = v3(f.n).normalized()?;
+        Some((self.world(f.parent), o, d, start, toward))
+    }
+
+    /// The flat end of a bend (where the bend stops along its flange's edge: an annular sector
+    /// square to the bend axis) that a point lies on: `<flange>:rim.bend0` at its start,
+    /// `rim.bend1` at its end.
+    fn bend_side_at(&self, p: Vec3, tol: f64) -> Option<String> {
+        if self.flat {
+            return None;
+        }
+        for (i, f) in self.flanges.iter().enumerate() {
+            let Some((world, o, d, start, toward)) = self.bend_frame(f) else { continue };
+            let Some(inverse) = mat_inverse(&world) else { continue };
+            let q = apply_point(&inverse, p) - o;
+            let u = q.dot(d);
+            let radial = q - d * u;
+            let rho = radial.len();
+            if rho < f.radius - tol || rho > f.radius + self.t + tol {
+                continue;
+            }
+            let phi = radial.dot(toward).atan2(radial.dot(start));
+            if phi < -1e-6 || phi > f.angle.abs() + 1e-6 {
+                continue;
+            }
+            let (u0, u1) = self.zone_span(f);
+            let side = if (u - u0).abs() <= tol {
+                "bend0"
+            } else if (u - u1).abs() <= tol {
+                "bend1"
+            } else {
+                continue;
+            };
+            return Some(format!("{}:rim.{side}", self.panel_name(Some(i))));
+        }
         None
+    }
+
+    /// The plane of a bend's flat end (see [`bend_side_at`](Self::bend_side_at)): facing out
+    /// along the bend axis, its origin on the axis, its x across the sheet.
+    fn bend_side(&self, i: usize, end: bool) -> Option<Plane> {
+        let f = self.flanges.get(i)?;
+        let (world, o, d, _, _) = self.bend_frame(f)?;
+        let (u0, u1) = self.zone_span(f);
+        let (u, out) = if end { (u1, d) } else { (u0, d * -1.0) };
+        let origin = o + d * u;
+        Plane::new(apply_point(&world, origin), apply_vector(&world, Vec3::Z), apply_vector(&world, out.cross(Vec3::Z)))
+    }
+
+    /// The plane of the rim face named `rim` (`<edge>` of `rim.<edge>`) of panel `pi`: on the
+    /// rim, facing out of the panel, its x along the outline (counterclockwise about the panel's
+    /// top) and its y across the thickness, its origin where the panel's origin projects onto it.
+    fn rim_face(&self, pi: Option<usize>, rim: &str) -> Option<Plane> {
+        match (pi, rim) {
+            (Some(i), "bend0") => return self.bend_side(i, false),
+            (Some(i), "bend1") => return self.bend_side(i, true),
+            _ => {}
+        }
+        let panel = self.panel_name(pi);
+        let name = format!("{panel}:rim.{rim}");
+        let (_, a, b, _) = self.rims().into_iter().find(|(p, _, _, n)| *p == pi && *n == name)?;
+        let world = self.world(pi);
+        let d = (b - a).normalized()?;
+        let foot = a + d * (Vec2::default() - a).dot(d);
+        Plane::new(apply_point(&world, Vec3::new(foot.x, foot.y, 0.0)), apply_vector(&world, Vec3::new(d.x, d.y, 0.0)), apply_vector(&world, Vec3::Z))
     }
 
     /// The plane of the flat face with this persistent name (see [`panel_face_at`](Self::panel_face_at)).
@@ -2738,6 +2897,7 @@ impl SheetBody {
         let top = match side {
             "top" => true,
             "bottom" => false,
+            _ if side.starts_with("rim.") => false,
             _ => return None,
         };
         let pi = match panel {
@@ -2749,6 +2909,9 @@ impl SheetBody {
                     .or_else(|| tag.strip_prefix('#')?.parse::<usize>().ok().filter(|i| *i < self.flanges.len()))?,
             ),
         };
+        if let Some(rim) = side.strip_prefix("rim.") {
+            return self.rim_face(pi, rim);
+        }
         self.panel_face_plane(&self.world(pi), top)
     }
 

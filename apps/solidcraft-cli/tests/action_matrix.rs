@@ -1046,7 +1046,6 @@ fn a_through_hole_into_a_shelled_box_rim() {
 }
 
 #[test]
-#[ignore = "fails until #560 is fixed"]
 fn a_hole_through_a_sheet_metal_base() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 40.]).into();
     c.extend([
@@ -1057,7 +1056,6 @@ fn a_hole_through_a_sheet_metal_base() {
 }
 
 #[test]
-#[ignore = "fails until #561 is fixed"]
 fn sketches_on_loft_and_sweep_faces() {
     let mut loft: Vec<Value> = rectangle(json!("XY"), [-20., -20.], [20., 20.]).into();
     loft.extend([
@@ -1096,7 +1094,6 @@ fn press_pull_on_the_pi_case_floor() {
 }
 
 #[test]
-#[ignore = "fails until #563 is fixed"]
 fn sketches_after_a_draft_and_on_a_tapered_extrude() {
     reproduces(
         None,
@@ -1117,7 +1114,6 @@ fn sketches_after_a_draft_and_on_a_tapered_extrude() {
 }
 
 #[test]
-#[ignore = "fails until #564 is fixed"]
 fn a_sketch_on_the_rim_a_shell_leaves() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [-35., -25.], [35., 25.]).into();
     c.extend([

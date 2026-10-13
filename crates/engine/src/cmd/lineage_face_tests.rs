@@ -164,3 +164,85 @@ fn a_piece_of_a_face_split_on_purpose_still_needs_a_fixed_plane() {
     let error = s.execute("sketch.create", &json!({"plane": {"face": [2.5, 5, 10]}})).unwrap_err().to_string();
     assert!(error.contains("fixed:true"), "{error}");
 }
+
+/// Offset Face raises one piece of a split top: the pieces no longer share a plane, so each
+/// takes a sketch by its own name (the face's, qualified by the faces around it) and follows it.
+#[test]
+fn a_raised_piece_of_a_split_top_takes_a_sketch_by_its_own_name() {
+    let mut s = slotted_block();
+    run(&mut s, "parameters.add", json!({"name": "raise", "expression": "2 mm"}));
+    run(&mut s, "solid.offset_face", json!({"faces": [[5, 15, 10]], "distance": "raise", "name": "Raise"}));
+    no_errors(&s);
+    sketch_on(&mut s, [5., 15., 12.], "Raised");
+    sketch_on(&mut s, [35., 15., 10.], "Kept");
+    let (raised, certificate) = healthy(&s, "Raised");
+    assert_eq!(certificate, Some(FaceCertificate::Lineage));
+    assert!((raised.origin.z - 12.).abs() < 1e-9 && (raised.normal().z - 1.).abs() < 1e-9, "{raised:?}");
+    assert!((healthy(&s, "Kept").0.origin.z - 10.).abs() < 1e-9);
+    run(&mut s, "parameters.change", json!({"name": "raise", "expression": "3 mm"}));
+    no_errors(&s);
+    assert!((healthy(&s, "Raised").0.origin.z - 13.).abs() < 1e-9);
+    assert!((healthy(&s, "Kept").0.origin.z - 10.).abs() < 1e-9);
+    let t = reopened(&s);
+    assert!((healthy(&t, "Raised").0.origin.z - 13.).abs() < 1e-9);
+}
+
+/// A plastic Boss keeps the history of the body it stands on (#494): the plate's faces still
+/// take attached sketches, and so does the boss's own top, which follows its height.
+#[test]
+fn faces_after_a_boss_take_a_sketch_that_follows_it() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name": "boss_h", "expression": "12 mm"}));
+    run(&mut s, "solid.box", json!({"length": 80, "width": 50, "height": 2, "name": "Plate"}));
+    run(
+        &mut s,
+        "plastic.boss",
+        json!({"position": [20, 20, 2], "diameter": 7, "height": "boss_h", "hole_diameter": 2.5, "fillet": 0.5, "name": "Boss"}),
+    );
+    no_errors(&s);
+    sketch_on(&mut s, [5., 25., 2.], "OnPlate");
+    sketch_on(&mut s, [80., 25., 1.], "OnSide");
+    sketch_on(&mut s, [22.5, 20., 14.], "OnBoss");
+    for name in ["OnPlate", "OnSide"] {
+        healthy(&s, name);
+    }
+    let (top, certificate) = healthy(&s, "OnBoss");
+    assert_eq!(certificate, Some(FaceCertificate::Lineage));
+    assert!((top.origin.z - 14.).abs() < 1e-9, "{top:?}");
+    run(&mut s, "parameters.change", json!({"name": "boss_h", "expression": "15 mm"}));
+    no_errors(&s);
+    assert!((healthy(&s, "OnBoss").0.origin.z - 17.).abs() < 1e-9);
+    healthy(&reopened(&s), "OnBoss");
+}
+
+/// A Hole names its faces by the part they cut (a counterbore's floor is `F<hole>:cbore:base`),
+/// and a pattern's copies of it as copies: each floor takes its own sketch, which follows the
+/// counterbore's depth. The plate's faces stay attachable too.
+#[test]
+fn counterbore_floors_and_their_pattern_copies_take_a_sketch() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name": "cb", "expression": "3 mm"}));
+    run(&mut s, "solid.box", json!({"length": 80, "width": 30, "height": 10, "name": "Plate"}));
+    run(
+        &mut s,
+        "solid.hole",
+        json!({"position": [15, 15, 10], "diameter": 5, "type": "counterbore", "cb_diameter": 10, "cb_depth": "cb", "name": "Hole"}),
+    );
+    run(&mut s, "solid.pattern.rectangular", json!({"features": ["Hole"], "dir1": [1, 0, 0], "count1": 3, "spacing1": 25, "name": "Row"}));
+    no_errors(&s);
+    for (name, x) in [("Seed", 18.5), ("Copy", 43.5), ("Top", 30.)] {
+        sketch_on(&mut s, [x, 15., if name == "Top" { 10. } else { 7. }], name);
+    }
+    for name in ["Seed", "Copy"] {
+        let (floor, certificate) = healthy(&s, name);
+        assert_eq!(certificate, Some(FaceCertificate::Lineage), "{name}");
+        assert!((floor.origin.z - 7.).abs() < 1e-9, "{name}: {floor:?}");
+    }
+    healthy(&s, "Top");
+    run(&mut s, "parameters.change", json!({"name": "cb", "expression": "4 mm"}));
+    no_errors(&s);
+    for name in ["Seed", "Copy"] {
+        assert!((healthy(&s, name).0.origin.z - 6.).abs() < 1e-9, "{name}");
+    }
+    healthy(&reopened(&s), "Copy");
+}

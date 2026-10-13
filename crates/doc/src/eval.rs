@@ -1872,6 +1872,63 @@ fn hole_spots_raw(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
     }
 }
 
+/// The cutting tools of a hole feature at every spot, each with its exact geometry when it is a
+/// straight cylinder (see [`hole_tools_and_prisms`]).
+fn hole_feature_tools(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature) -> Result<Vec<(Traced, Option<more::PrimitivePrism>)>> {
+    let FeatureKind::Hole { diameter, depth, hole, to, .. } = &f.kind else { return Err(DocError::Invalid("not a hole".into())) };
+    let (spots, dir) = hole_spots(st, f)?;
+    if spots.is_empty() || spots.len() > 10_000 {
+        return Err(DocError::Invalid("a hole needs 1…10000 points".into()));
+    }
+    let mut tools = Vec::new();
+    for at in spots {
+        let depth = hole_depth_to(st, &at, dir, to, depth)?;
+        tools.extend(hole_tools_and_prisms(vals, st, &at, dir, diameter, &depth, hole)?);
+    }
+    Ok(tools)
+}
+
+/// A hole drilled square into sheet metal whose tools are straight cylinders (a plain hole, a
+/// counterbore) is machined like the equivalent extrude cut, so the sheet keeps it as a cut-out
+/// or pocket of its flat pattern (#560). Returns the sheet bodies it machined; none, with the
+/// model as it was, when a tool that meets a sheet can't be kept that way (the ordinary cut then
+/// refuses it).
+fn sheet_hole_cut(st: &mut ModelState, f: &Feature, tools: &[(Traced, Option<more::PrimitivePrism>)]) -> Result<Vec<String>> {
+    if st.sheets.is_empty() {
+        return Ok(Vec::new());
+    }
+    let saved = (st.sheets.clone(), st.bodies.clone());
+    let mut handled: Vec<String> = Vec::new();
+    for (tool, prism) in tools {
+        let tool = &tool.body;
+        let done = match prism {
+            Some(prism) => more::sheet_primitive_cut(f, st, tool, *prism, Operation::Cut)?,
+            None => Vec::new(),
+        };
+        if done.is_empty() {
+            let mut meets = false;
+            for sheet in &st.sheets {
+                if let Some(mb) = st.body(&sheet.body)
+                    && kernel::boolean(&mb.body, tool, BoolOp::Intersect)?.is_some()
+                {
+                    meets = true;
+                    break;
+                }
+            }
+            if meets {
+                (st.sheets, st.bodies) = saved;
+                return Ok(Vec::new());
+            }
+        }
+        for name in done {
+            if !handled.contains(&name) {
+                handled.push(name);
+            }
+        }
+    }
+    Ok(handled)
+}
+
 /// The cutting tools of one hole at `position`, drilling along `dir`.
 #[allow(clippy::too_many_arguments)]
 fn hole_tools(
@@ -1882,7 +1939,24 @@ fn hole_tools(
     diameter: &str,
     depth: &Option<String>,
     hole: &HoleKind,
-) -> Result<Vec<Body>> {
+) -> Result<Vec<Traced>> {
+    Ok(hole_tools_and_prisms(vals, st, position, dir, diameter, depth, hole)?.into_iter().map(|(tool, _)| tool).collect())
+}
+
+/// [`hole_tools`], each with its exact geometry when it is a straight cylinder along the axis
+/// (a plain hole, a counterbore, a drill point left in the air past a through hole), so sheet
+/// metal can keep it as a flat cut-out or pocket. Each tool's faces are named by the part of the
+/// hole it cuts (`bore`, `cbore`, `csink`: `F7:cbore:base` is a counterbore's floor).
+#[allow(clippy::too_many_arguments)]
+fn hole_tools_and_prisms(
+    vals: &BTreeMap<String, Value>,
+    st: &ModelState,
+    position: &Vec3,
+    dir: Vec3,
+    diameter: &str,
+    depth: &Option<String>,
+    hole: &HoleKind,
+) -> Result<Vec<(Traced, Option<more::PrimitivePrism>)>> {
     let r = val(vals, diameter, Kind::Length)? / 2.0;
     if !(r > 1e-6) {
         return Err(DocError::Invalid("hole diameter must be positive".into()));
@@ -1905,12 +1979,15 @@ fn hole_tools(
         seam.set(seam.get() + 0.613);
         Region2 { outer: solidcraft_geom::Loop2::circle_from(Vec2::ZERO, rad, seam.get()), holes: vec![] }
     };
-    let cyl = |rad: f64, lo: f64, hi: f64| -> Result<Body> {
-        kernel::extrude(&plane, &[disc(rad)], lo, hi)?.pop().ok_or_else(|| DocError::Invalid("hole tool".into()))
+    let cyl = |rad: f64, lo: f64, hi: f64, part: &str| -> Result<(Traced, Option<more::PrimitivePrism>)> {
+        let tool = kernel::extrude(&plane, &[disc(rad)], lo, hi)?.pop().ok_or_else(|| DocError::Invalid("hole tool".into()))?;
+        let axis = plane.normal();
+        let prism = more::PrimitivePrism::Cylinder { base: *position + axis * lo, axis, radius: rad, height: hi - lo };
+        Ok((crate::lineage::part_tool(tool, part), Some(prism)))
     };
     let mut tools = Vec::new();
     match hole {
-        HoleKind::Simple => tools.push(cyl(r, bottom, top)?),
+        HoleKind::Simple => tools.push(cyl(r, bottom, top, "bore")?),
         HoleKind::Drilled { tip_angle } => {
             let half = val(vals, tip_angle, Kind::Angle)? / 2.0;
             // A hole exactly as deep as the material: the point is in the air past the exit
@@ -1927,9 +2004,13 @@ fn hole_tools(
                 let rp = Plane::new(*position, side, up).ok_or_else(|| DocError::Invalid("hole axis".into()))?;
                 let pts = [Vec2::new(0.0, top), Vec2::new(r, top), Vec2::new(r, bottom), Vec2::new(0.0, bottom - tip)];
                 let region = Region2 { outer: solidcraft_geom::Loop2::polygon(&pts), holes: vec![] };
-                tools.extend(kernel::revolve(&rp, &[region], Vec2::ZERO, Vec2::Y, std::f64::consts::TAU)?);
+                tools.extend(
+                    kernel::revolve(&rp, &[region], Vec2::ZERO, Vec2::Y, std::f64::consts::TAU)?
+                        .into_iter()
+                        .map(|tool| (crate::lineage::part_tool(tool, "bore"), None)),
+                );
             } else {
-                tools.push(cyl(r, bottom, top)?);
+                tools.push(cyl(r, bottom, top, "bore")?);
             }
         }
         HoleKind::Counterbore { cb_diameter, cb_depth } => {
@@ -1938,8 +2019,8 @@ fn hole_tools(
                 return Err(DocError::Invalid("the counterbore must be wider than the hole and shallower than it".into()));
             }
             // Wide and shallow first: the narrow hole then crosses the pocket floor.
-            tools.push(cyl(rc, -dc, top)?);
-            tools.push(cyl(r, bottom, top)?);
+            tools.push(cyl(rc, -dc, top, "cbore")?);
+            tools.push(cyl(r, bottom, top, "bore")?);
         }
         HoleKind::Countersink { cs_diameter, cs_angle } => {
             let (rc, half) = (val(vals, cs_diameter, Kind::Length)? / 2.0, val(vals, cs_angle, Kind::Angle)? / 2.0);
@@ -1951,8 +2032,8 @@ fn hole_tools(
             let r_end = r * 0.9;
             let len = (r_top - r_end) / half.tan();
             let top_plane = plane.offset(top);
-            tools.push(kernel::extrude_tapered(&top_plane, &disc(r_top), len, -1.0, -half)?);
-            tools.push(cyl(r, bottom, top)?);
+            tools.push((crate::lineage::part_tool(kernel::extrude_tapered(&top_plane, &disc(r_top), len, -1.0, -half)?, "csink"), None));
+            tools.push(cyl(r, bottom, top, "bore")?);
         }
     }
     Ok(tools)
@@ -2104,10 +2185,6 @@ fn centered_extrude(plane: &Plane, region: &Region2, start: f64, end: f64, sketc
 }
 
 /// The tool bodies a feature adds or removes (extrude, revolve, primitives), in the current state.
-fn feature_tools(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &ModelState) -> Result<Vec<Body>> {
-    Ok(feature_tools_with_constructor(doc, vals, f, st, &mut None)?.into_iter().map(|t| t.body).collect())
-}
-
 fn feature_tools_with_constructor(
     doc: &Document,
     vals: &BTreeMap<String, Value>,
@@ -2417,7 +2494,8 @@ fn feature_tools_with_constructor(
             let id = pt.point.as_deref().unwrap_or_default();
             let q = ps.sketch.points.iter().find(|p| p.id == id).ok_or_else(|| DocError::Unknown(format!("point `{id}` in {}", ps.name)))?;
             let body = kernel::loft_to_point(&ss.plane, &r.outer, ps.plane.to_world(q.pos))?;
-            Ok(vec![crate::lineage::ProfileRoles::swept(None, None).tool(body, None)])
+            // Its sides are named by the profile's curves, its base `start`.
+            Ok(vec![crate::lineage::ProfileRoles::swept(Some(ss), Some(r)).tool(body, None)])
         }
         FeatureKind::Coil { base, axis, diameter, pitch, turns, section_size, section, position, start_angle, clockwise, .. } => {
             let base = &point(vals, base)?;
@@ -2460,6 +2538,7 @@ fn feature_tools_with_constructor(
         }
         FeatureKind::Loft { sections, .. } => {
             let mut secs = Vec::new();
+            let mut sketches = Vec::new();
             for sec in sections {
                 let ss = st
                     .sketch(sec.sketch)
@@ -2467,11 +2546,13 @@ fn feature_tools_with_constructor(
                 let regions = solidcraft_sketch::merge_regions(&select_profiles(ss, &sec.profiles)?);
                 let [r] = &regions[..] else { return Err(DocError::Invalid("each loft section must be one profile".into())) };
                 secs.push((ss.plane, r.outer.clone()));
+                sketches.push(ss);
             }
-            // Its caps are the first and last sections; which section's curve a side follows is
-            // not recorded, so the sides are named from geometry.
+            // Its caps are the first and last sections, its sides named by the curves they run
+            // between.
             let body = kernel::loft(&secs)?;
-            Ok(vec![crate::lineage::ProfileRoles::swept(None, None).tool(body, None)])
+            let roles = crate::lineage::SectionRoles { sections: sketches.into_iter().zip(secs.iter().map(|(_, lp)| lp)).collect() };
+            Ok(vec![roles.tool(body)])
         }
         FeatureKind::Sweep { sketch, profiles, path_sketch, path, .. } => {
             let ss = st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?;
@@ -2536,18 +2617,7 @@ fn feature_tools_with_constructor(
         FeatureKind::Torus { center, major, minor, .. } => {
             Ok(unnamed(vec![kernel::torus(point(vals, center)?, val(vals, major, Kind::Length)?, val(vals, minor, Kind::Length)?)?]))
         }
-        FeatureKind::Hole { diameter, depth, hole, to, .. } => {
-            let (spots, dir) = hole_spots(st, f)?;
-            if spots.is_empty() || spots.len() > 10_000 {
-                return Err(DocError::Invalid("a hole needs 1…10000 points".into()));
-            }
-            let mut tools = Vec::new();
-            for at in spots {
-                let depth = hole_depth_to(st, &at, dir, to, depth)?;
-                tools.extend(hole_tools(vals, st, &at, dir, diameter, &depth, hole)?);
-            }
-            Ok(unnamed(tools))
-        }
+        FeatureKind::Hole { .. } => Ok(hole_feature_tools(vals, st, f)?.into_iter().map(|(tool, _)| tool).collect()),
         _ => Err(DocError::Invalid(format!("{} cannot be patterned or mirrored yet", f.name))),
     }
 }
@@ -2997,7 +3067,8 @@ fn replay(
                     },
                     _ => kernel::fillet(&mb.body, &moved, r)?,
                 };
-                let nb = Traced::step(nb, &[&mb.traced()]);
+                // A copy blends edges the pattern's own copies made: named after the body so far.
+                let nb = mb.traced().then(nb);
                 if let Some(slot) = st.bodies.get_mut(ti) {
                     *slot = ModelBody::traced_new(mb.name, nb, mb.feature);
                 }
@@ -3011,13 +3082,18 @@ fn replay(
             // a blind hole's depth counts from the face at the copy, not from the bottom of the
             // original hole under the original spot.
             let (spots, dir) = hole_spots_raw(st, src)?;
-            for m in mats {
+            for (k, m) in mats.iter().enumerate() {
                 let d = crate::apply_vector(m, dir).normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?;
                 for p in &spots {
                     let at = hole_on_surface(st, crate::apply_point(m, *p), d);
                     let to = to.map(|t| crate::apply_point(m, t));
                     let depth = hole_depth_to(st, &at, d, &to, depth)?;
-                    copies.extend(hole_tools(vals, st, &at, d, diameter, &depth, hole)?.into_iter().map(Traced::unnamed));
+                    // Each copy's faces are named as the hole's, with the instance.
+                    copies.extend(
+                        hole_tools(vals, st, &at, d, diameter, &depth, hole)?
+                            .into_iter()
+                            .map(|t| Traced { lineage: t.lineage.map(|l| l.copied(src.id, k + 1)), body: t.body }),
+                    );
                 }
             }
         } else {
@@ -3419,8 +3495,14 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         }
         FeatureKind::Hole { thread, diameter, .. } => {
             let (spots, dir) = hole_spots(st, f)?;
-            let tools = feature_tools(doc, vals, f, st)?;
-            apply_op(st, f, tools, Operation::Cut, &[])?;
+            let tools = hole_feature_tools(vals, st, f)?;
+            let handled = sheet_hole_cut(st, f, &tools)?;
+            let tools: Vec<Traced> = tools.into_iter().map(|(tool, _)| tool).collect();
+            if handled.is_empty() {
+                apply_traced(st, f, tools, Operation::Cut, &[])?;
+            } else {
+                apply_beside_sheet_cut(st, f, tools, Operation::Cut, &[], &handled)?;
+            }
             if let Some(d) = thread {
                 // A point on each hole's wall, a little below the entry.
                 let r = val(vals, diameter, Kind::Length)? / 2.0;

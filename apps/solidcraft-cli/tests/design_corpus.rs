@@ -137,13 +137,7 @@ fn body_names_saved_before_exact_history_keep_their_pieces() {
 /// ignored test below that checks its faces; a listed plane whose face attaches fails the main
 /// check until it is removed from here.
 type Planes = &'static [([f64; 3], f64)];
-const NO_ATTACHMENT_YET: [(&str, &str, Option<Planes>, u32); 5] = [
-    ("m0-revolve-primitives", "Body1", None, 494),
-    ("naming-split-pieces", "Body1", None, 494),
-    ("modern-plastic", "Body1", None, 494),
-    ("modern-sheet-metal", "Body1", None, 495),
-    ("issue-616-lid-ribs", "Lid", None, 628),
-];
+const NO_ATTACHMENT_YET: [(&str, &str, Option<Planes>, u32); 1] = [("issue-616-lid-ribs", "Lid", None, 628)];
 
 /// The issue a face is listed under, and whether it is listed by its plane (not as every face).
 fn known_without_attachment(design: &str, body: &str, normal: [f64; 3], distance: f64) -> Option<(u32, bool)> {
@@ -260,18 +254,6 @@ fn known_faces_attach(issue: u32) {
         .map(|(design, body, face, _, problem)| format!("{design}: {body} face {face}: {}", problem.unwrap_or_default()))
         .collect();
     assert!(problems.is_empty(), "{}", problems.join("\n"));
-}
-
-#[test]
-#[ignore = "fails until #494 is fixed"]
-fn faces_after_revolve_offset_face_and_boss_take_an_attached_sketch() {
-    known_faces_attach(494);
-}
-
-#[test]
-#[ignore = "fails until #495 is fixed"]
-fn sheet_metal_thickness_faces_take_an_attached_sketch() {
-    known_faces_attach(495);
 }
 
 #[test]

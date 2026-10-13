@@ -581,6 +581,14 @@ pub fn lineage_frame(body: &ModelBody, plane: &solidcraft_geom::Plane) -> Option
     solidcraft_geom::Plane::new(origin, x, n.cross(x))
 }
 
+/// Whether Split Face split `body`'s faces on `plane` (a split line lies on it).
+fn split_on_purpose(body: &ModelBody, plane: &solidcraft_geom::Plane) -> bool {
+    let tolerance = 1e-6 * (1. + body.body.size());
+    let on_plane =
+        |line: &Vec<solidcraft_geom::Vec3>| !line.is_empty() && line.iter().all(|p| (*p - plane.origin).dot(plane.normal()).abs() <= tolerance);
+    body.body.split_lines().is_some_and(|lines| lines.iter().any(on_plane))
+}
+
 /// Whether two exact planes are one oriented plane (pieces of one face).
 fn same_oriented_plane(a: &solidcraft_geom::Plane, b: &solidcraft_geom::Plane, scale: f64) -> bool {
     a.normal().dot(b.normal()) >= 1. - 1e-8 && (b.origin - a.origin).dot(a.normal()).abs() <= 1e-7 * (1. + scale)
@@ -599,7 +607,9 @@ impl Document {
 
     /// A target for flat face `index` of `body` by its exact history name
     /// ([`FaceCertificate::Lineage`]), when that name follows exact history, names a feature of
-    /// the design and finds this face (with its other pieces, all on one oriented plane).
+    /// the design and finds this face (with its other pieces, all on one oriented plane). Where
+    /// the face's pieces no longer share a plane (Offset Face moved one of them), the piece by
+    /// its own name: the face's name qualified by the faces around it (`F2:top#[F2:side:l4,…]`).
     pub(crate) fn lineage_face_target(
         &self,
         body: &ModelBody,
@@ -610,17 +620,24 @@ impl Document {
         if !names.verified(index) {
             return None;
         }
-        let name = crate::naming::strip_piece(names.faces.get(index)?).to_string();
-        let origin = name.strip_prefix('F')?.split_once(':')?.0.parse::<u64>().ok()?;
+        let full = names.faces.get(index)?;
+        let stem = crate::naming::strip_piece(full);
+        let origin = stem.strip_prefix('F')?.split_once(':')?.0.parse::<u64>().ok()?;
         let inverse = crate::mat_inverse(&body.source_transform)?;
-        let target = crate::config::ConfigFaceTarget {
-            body: body.definition_name().into(),
-            origin_feature: origin,
-            name,
-            point: crate::apply_point(&inverse, point),
-            certificate: Some(FaceCertificate::Lineage),
-        };
-        self.configuration_face_indices(body, &target).ok()?.contains(&index).then_some(target)
+        let mut candidates = vec![stem];
+        if full != stem {
+            candidates.push(full);
+        }
+        candidates.into_iter().find_map(|name| {
+            let target = crate::config::ConfigFaceTarget {
+                body: body.definition_name().into(),
+                origin_feature: origin,
+                name: name.to_string(),
+                point: crate::apply_point(&inverse, point),
+                certificate: Some(FaceCertificate::Lineage),
+            };
+            self.configuration_face_indices(body, &target).ok()?.contains(&index).then_some(target)
+        })
     }
 
     /// The faces of `body` an exact history name finds: those named `name` or a piece of it, else
@@ -628,8 +645,20 @@ impl Document {
     /// follow exact history and lie on one oriented plane.
     pub(crate) fn lineage_face_indices(&self, body: &ModelBody, name: &str) -> Result<Vec<usize>> {
         let names = crate::naming::names(body);
-        let mut indices: Vec<usize> =
-            names.faces.iter().enumerate().filter(|(_, face)| crate::naming::strip_piece(face) == name).map(|(index, _)| index).collect();
+        // `face` is `name` itself or a piece of it (a piece of a piece, …).
+        let piece_of = |face: &str| {
+            let mut n = face;
+            loop {
+                if n == name {
+                    return true;
+                }
+                match crate::piece_names::parent_piece(n) {
+                    Some(parent) => n = parent,
+                    None => return false,
+                }
+            }
+        };
+        let mut indices: Vec<usize> = names.faces.iter().enumerate().filter(|(_, face)| piece_of(face)).map(|(index, _)| index).collect();
         if indices.is_empty() {
             indices =
                 names.info.iter().enumerate().filter(|(_, info)| info.aliases.iter().any(|alias| alias == name)).map(|(index, _)| index).collect();
@@ -638,6 +667,16 @@ impl Document {
             return Err(DocError::Unknown(format!("face `{name}` on `{}` no longer exists", body.name)));
         }
         self.coplanar_pieces(body, &indices, |index| names.verified(index))?;
+        // A piece by its own name stands for itself, which a piece of a face split on purpose
+        // (Split Face) never does: that needs a fixed plane.
+        if crate::naming::strip_piece(name) != name
+            && let Some(plane) = indices.first().and_then(|index| body.body.planar_face(*index))
+            && split_on_purpose(body, &plane)
+        {
+            return Err(DocError::Invalid(
+                "this face was split on purpose (Split Face): pick an exact face piece's own plane with fixed:true".into(),
+            ));
+        }
         Ok(indices)
     }
 
@@ -658,16 +697,12 @@ impl Document {
                 Some(_) => return Err(DocError::Invalid("attached face pieces no longer share one oriented plane".into())),
             }
         }
-        if let (Some(plane), true) = (first, indices.len() > 1) {
-            let tolerance = 1e-6 * (1. + scale);
-            let on_plane = |line: &Vec<solidcraft_geom::Vec3>| {
-                !line.is_empty() && line.iter().all(|p| (*p - plane.origin).dot(plane.normal()).abs() <= tolerance)
-            };
-            if body.body.split_lines().is_some_and(|lines| lines.iter().any(on_plane)) {
-                return Err(DocError::Invalid(
-                    "this face was split on purpose (Split Face): pick an exact face piece's own plane with fixed:true".into(),
-                ));
-            }
+        if let (Some(plane), true) = (first, indices.len() > 1)
+            && split_on_purpose(body, &plane)
+        {
+            return Err(DocError::Invalid(
+                "this face was split on purpose (Split Face): pick an exact face piece's own plane with fixed:true".into(),
+            ));
         }
         Ok(())
     }

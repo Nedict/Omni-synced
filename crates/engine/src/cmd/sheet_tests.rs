@@ -3023,3 +3023,79 @@ fn fold_fixed_point_must_touch_the_sheet_but_any_face_will_do() {
     assert!(fold["warning"].as_str().is_some_and(|w| w.contains("fixed point is not on the sheet")), "{fold}");
     assert!((bbox(&mut f)["max"][0].as_f64().unwrap_or(f64::NAN) - x).abs() < 1e-6, "the right side stays");
 }
+
+/// The middle of the largest triangle of each flat face of the first body: well inside it.
+fn flat_face_points(s: &Session) -> Vec<(usize, solidcraft_geom::Vec3, solidcraft_geom::Vec3)> {
+    let state = s.model.state();
+    let body = &state.bodies[0].body;
+    let mesh = body.tessellate(0.01).unwrap();
+    (0..body.face_count())
+        .filter_map(|index| {
+            let normal = body.planar_face(index)?.normal();
+            let point = mesh
+                .triangles
+                .iter()
+                .zip(&mesh.tri_face)
+                .filter(|(_, f)| **f as usize == index)
+                .filter_map(|(t, _)| mesh.tri(t))
+                .max_by(|[a, b, c], [d, e, f]| (*b - *a).cross(*c - *a).len().total_cmp(&(*e - *d).cross(*f - *d).len()))
+                .map(|[a, b, c]| (a + b + c) * (1.0 / 3.0))?;
+            Some((index, point, normal))
+        })
+        .collect()
+}
+
+/// Every flat face of a sheet takes an attached sketch (#495): its panels, the rims along the
+/// panels' straight edges (named by the base sketch line or the flange's far edge and sides) and
+/// the flat ends of a bend. Each lies on its face, facing out of the sheet, and a rim's sketch
+/// follows the rim when the base grows. A press-pull on a rim pushes it out, and a plain hole into
+/// a panel is kept as a cut-out of the flat pattern (#560).
+#[test]
+fn every_flat_face_of_a_sheet_takes_an_attached_sketch() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name": "W", "expression": "100 mm"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Base"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [100, 60]}));
+    run(&mut s, "sketch.constraint.fix", json!({"entities": ["p1"]}));
+    run(&mut s, "sketch.dimension", json!({"entities": ["l1"], "value": "W"}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "sheet.flange", json!({"sketch": "Base"}));
+    run(&mut s, "sheet.flange", json!({"edges": [[50, 0, 2.5]], "height": 20}));
+    let faces = flat_face_points(&s);
+    // The base: its two faces and three rims (the fourth edge bends); the flange: its two faces,
+    // its far rim and two sides; the two ends of the bend.
+    assert_eq!(faces.len(), 12);
+    let mut on_side = None;
+    for (index, point, normal) in faces {
+        let made = run(&mut s, "sketch.create", json!({"plane": {"face": point, "body": "Body1", "index": index}}));
+        run(&mut s, "sketch.finish", json!({}));
+        assert_eq!(made["attachment"], "sheet_face", "face {index} at {point:?}");
+        let id = made["sketch"].as_u64().unwrap();
+        let solidcraft_doc::FaceAttachmentStatus::Sheet { plane: Some(plane) } = s.placed_document().sketch_face_attachment(id, &s.model) else {
+            panic!("face {index} at {point:?}")
+        };
+        assert!(plane.normal().dot(normal) > 1.0 - 1e-9 && (point - plane.origin).dot(normal).abs() < 1e-6, "face {index}: {plane:?}");
+        if (point.x - 100.0).abs() < 1e-6 && point.y > 10.0 {
+            on_side = Some(id);
+        }
+    }
+    // The base's rim along x = W (the sketch's l2) moves with W.
+    let side = on_side.expect("the base rim on x = 100");
+    run(&mut s, "parameters.change", json!({"name": "W", "expression": "120 mm"}));
+    let solidcraft_doc::FaceAttachmentStatus::Sheet { plane: Some(plane) } = s.placed_document().sketch_face_attachment(side, &s.model) else {
+        panic!("the rim sketch after the edit")
+    };
+    assert!((plane.origin.x - 120.0).abs() < 1e-9 && (plane.normal().x - 1.0).abs() < 1e-9, "{plane:?}");
+    // Press-pull the rim 5 mm out: the base grows by 5 x 60 x 2.5 less what the flange covers.
+    let v0 = volume(&mut s);
+    run(&mut s, "solid.press_pull", json!({"face": [120, 30, 1.25], "distance": 5}));
+    assert!(volume(&mut s) > v0 + 5.0 * 50.0 * 2.5, "{} {v0}", volume(&mut s));
+    // A plain hole into the base is a cut-out of the flat pattern.
+    let mut t = Session::default();
+    plate_with_flange(&mut t);
+    let v0 = volume(&mut t);
+    run(&mut t, "solid.hole", json!({"position": [50, 30, 2.5], "direction": [0, 0, -1], "diameter": 6}));
+    assert!((v0 - volume(&mut t) - PI * 9.0 * 2.5).abs() < 0.1, "{}", v0 - volume(&mut t));
+    let f = flat(&mut t);
+    assert_eq!(f["cutouts"].as_array().map(Vec::len), Some(1), "{f}");
+}

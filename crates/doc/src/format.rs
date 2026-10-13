@@ -72,7 +72,12 @@
 //!   Sketch face anchors can name a flat face by its exact history name (a `lineage`
 //!   certificate: the target's `name`, e.g. a cut wall `F5:side:l1` or a pattern copy
 //!   `F4:top@F6.2`), where no construction certificate names it alone. Anchors with
-//!   construction certificates resolve as before.
+//!   construction certificates resolve as before. A `lineage` name can also be a piece's own,
+//!   qualified by the faces around it (`F2:top#[F2:side:l4,F4:side:l4]`), where Offset Face
+//!   moved one piece of a face off the others' plane; never a numbered piece. Sheet face names
+//!   can also name a rim, the sheet's thickness along a panel's straight edge
+//!   (`sheet:<body>:<panel>:rim.<edge>`, the edge a base sketch line's id, `edge<k>`, or a
+//!   flange's `far`, `side0` or `side1`), or a flat end of a bend (`rim.bend0`, `rim.bend1`).
 
 use serde_json::Value;
 
