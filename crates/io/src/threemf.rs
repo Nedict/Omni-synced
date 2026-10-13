@@ -109,7 +109,7 @@ pub fn weld_tagged(positions: &[Vec3], triangles: &[[u32; 3]], tags: &[u32], eps
         'search: for dx in -1..=1 {
             for dy in -1..=1 {
                 for dz in -1..=1 {
-                    for &i in grid.get(&[c[0] + dx, c[1] + dy, c[2] + dz]).into_iter().flatten() {
+                    for &i in grid.get(&[c[0].saturating_add(dx), c[1].saturating_add(dy), c[2].saturating_add(dz)]).into_iter().flatten() {
                         if verts.get(i as usize).is_some_and(|q| q.dist(*p) <= eps) {
                             found = Some(i);
                             break 'search;
@@ -797,5 +797,16 @@ mod tests {
         let (objs, warnings) = read_3mf(&package(&model, None)).unwrap();
         assert!(objs.len() < 4_000, "the shared budget must stop the later items: {} built", objs.len());
         assert!(warnings.iter().any(|w| w.contains("too many triangles")), "{warnings:?}");
+    }
+
+    /// A body far from the origin (a pattern spacing of "1e12 mm" gets there) welds without
+    /// overflowing the grid's cell indices.
+    #[test]
+    fn weld_survives_extreme_coordinates() {
+        let o = Vec3::new(1e12, 0.0, 0.0);
+        let positions = [o, o + Vec3::new(0.1, 0.0, 0.0), o + Vec3::new(0.0, 0.1, 0.0), o + Vec3::new(0.0, 0.0, 0.1)];
+        let triangles = [[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]];
+        let (v, t) = weld(&positions, &triangles, 1e-7);
+        assert_eq!((v.len(), t.len()), (4, 4));
     }
 }

@@ -2339,12 +2339,7 @@ fn feature_tools_with_constructor(
                 };
             // To Object gives a signed distance from the start: one side only.
             let direction = if extent.to.is_some() { crate::Direction::Positive } else { extent.direction };
-            let (a, b) = match (&extent.distance2, direction) {
-                (Some(d2), _) => (-val(vals, d2, Kind::Length)?, d),
-                (None, crate::Direction::Positive) => (0.0, d),
-                (None, crate::Direction::Negative) => (-d, 0.0),
-                (None, crate::Direction::Symmetric) => (-d, d),
-            };
+            let (a, b) = extent_sides(vals, extent, d, direction)?;
             // A negative distance flips the side.
             let (mut lo, mut hi) = if a <= b { (a, b) } else { (b, a) };
             // To a curved (or slanted) face: run right through the target body, then keep what
@@ -2890,6 +2885,17 @@ fn path_segments(ps: &SolvedSketch, ids: &[String], start: Vec3) -> Result<Vec<k
             }
         })
         .collect())
+}
+
+/// Where an extrude of distance `d` starts and ends along the sketch normal, before any start
+/// offset: one side, the other, both (symmetric), or a second distance on the other side.
+pub(crate) fn extent_sides(vals: &BTreeMap<String, Value>, extent: &crate::Extent, d: f64, direction: crate::Direction) -> Result<(f64, f64)> {
+    Ok(match (&extent.distance2, direction) {
+        (Some(d2), _) => (-val(vals, d2, Kind::Length)?, d),
+        (None, crate::Direction::Positive) => (0.0, d),
+        (None, crate::Direction::Negative) => (-d, 0.0),
+        (None, crate::Direction::Symmetric) => (-d, d),
+    })
 }
 
 /// Operation and targets of a feature that makes tools.
@@ -3509,7 +3515,8 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         | FeatureKind::Stitch { .. }
         | FeatureKind::Thicken { .. }
         | FeatureKind::SurfaceTrim { .. }
-        | FeatureKind::SurfaceExtend { .. } => surface::eval(doc, vals, f, st),
+        | FeatureKind::SurfaceExtend { .. }
+        | FeatureKind::SurfaceExtrude { .. } => surface::eval(doc, vals, f, st),
         FeatureKind::Emboss { .. }
         | FeatureKind::Rib { .. }
         | FeatureKind::ReplaceFace { .. }

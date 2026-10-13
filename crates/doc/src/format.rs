@@ -102,6 +102,8 @@
 //!   starts); a rule that says `notch`, `round` or `rectangular` builds what it did.
 //!   A sketch's view options can also say `hide_construction` (the Sketch Palette's
 //!   Construction Geometries); a sketch that shows its construction geometry saves as before.
+//!   A `SurfaceExtrude` feature (Surface Extrude: `sketch`, optional `profiles`, `curves` and
+//!   `extent`, walls only) is first saved in 17; 0.8.0 would refuse the unknown feature.
 
 use serde_json::Value;
 

@@ -504,6 +504,26 @@ fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => (feature_sketch(s, p, cmd)?, None),
     };
+    let extent = extent_param(s, p, cmd)?;
+    let kind = FeatureKind::Extrude {
+        sketch,
+        profiles: match face_profile {
+            Some(f) => f,
+            None => profiles(p, cmd)?,
+        },
+        extent,
+        operation: match str_(p, "operation") {
+            Some(o) if o.eq_ignore_ascii_case("auto") => Operation::parse(auto_operation(s, p).unwrap_or("new")).unwrap_or(Operation::NewBody),
+            _ => operation(p, cmd)?,
+        },
+        targets: string_list(p, "targets"),
+    };
+    add_feature(s, p, kind)
+}
+
+/// An extrude's extent from its parameters: distance (or through all, or to an object), the
+/// side(s), a second distance, a start offset, a taper, and from an object.
+pub(super) fn extent_param(s: &Session, p: &Value, cmd: &str) -> Result<Extent> {
     let through_all = bool_(p, "through_all").unwrap_or(false) || str_(p, "extent").is_some_and(|e| e.eq_ignore_ascii_case("through_all"));
     let to_object = p.get("to").is_some();
     if to_object && p.get("to").and_then(vec3).is_none() {
@@ -532,30 +552,17 @@ fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(d) = &start_offset {
         check_expr(s, d, Kind::Length, cmd, "start_offset")?;
     }
-    let kind = FeatureKind::Extrude {
-        sketch,
-        profiles: match face_profile {
-            Some(f) => f,
-            None => profiles(p, cmd)?,
-        },
-        extent: Extent {
-            distance,
-            direction,
-            distance2,
-            start_offset,
-            through_all,
-            taper,
-            to: p.get("to").and_then(vec3),
-            to_offset: expr(p, "to_offset"),
-            from: p.get("from").and_then(vec3),
-        },
-        operation: match str_(p, "operation") {
-            Some(o) if o.eq_ignore_ascii_case("auto") => Operation::parse(auto_operation(s, p).unwrap_or("new")).unwrap_or(Operation::NewBody),
-            _ => operation(p, cmd)?,
-        },
-        targets: string_list(p, "targets"),
-    };
-    add_feature(s, p, kind)
+    Ok(Extent {
+        distance,
+        direction,
+        distance2,
+        start_offset,
+        through_all,
+        taper,
+        to: p.get("to").and_then(vec3),
+        to_offset: expr(p, "to_offset"),
+        from: p.get("from").and_then(vec3),
+    })
 }
 
 fn revolve(s: &mut Session, p: &Value) -> Result<Value> {
