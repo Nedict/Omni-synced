@@ -59,8 +59,8 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
   nothing from FreeCAD is linked, vendored or shipped.) The sketch solver and the blend
   operations are our own.
 - **Assets — absolutely essential.** SolidCraft contains **no iconography, images, fonts or
-  artwork from commercial CAD products — ever.** Every icon is drawn in code
-  (`crates/ui-egui/src/icons.rs`). Any file asset must be original or openly licensed and **must have a row in ATTRIBUTION.md**
+  artwork from commercial CAD products — ever.** Every UI icon is drawn in collected code
+  (`assets/icons/ui/source/`, compiled through `crates/ui-egui/src/icons.rs`). Any file asset must be original or openly licensed and **must have a row in ATTRIBUTION.md**
   (`cargo xtask assets` enforces it). Screenshots of commercial CAD software are never committed.
   Breaking this rule is the most serious mistake you can make in this repo.
 - **Everything is a command.** User-visible behaviour = a command in `crates/engine/src/cmd/*`

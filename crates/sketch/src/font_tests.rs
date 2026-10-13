@@ -1,5 +1,5 @@
 //! Font choice for sketch text. A small TrueType font is built here, so the outlines it must give are
-//! known by hand; the repository's second font (BIZ UDPGothic, `apps/solidcraft-web/fonts`) stands for
+//! known by hand; the repository's second font (BIZ UDPGothic, `assets/fonts/biz-udp-gothic`) stands for
 //! a real one.
 
 use std::path::PathBuf;
@@ -164,7 +164,7 @@ impl Drop for Folder {
 }
 
 fn web_fonts() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("apps").join("solidcraft-web").join("fonts")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts/biz-udp-gothic")
 }
 
 /// The corner points of the lines of `geometry`, as (min, max) over x and y.

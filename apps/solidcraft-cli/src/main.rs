@@ -25,7 +25,7 @@ mod spatial;
 use std::process::ExitCode;
 
 use serde_json::{Value, json};
-#[path = "../../app_icon.rs"]
+#[path = "../../../assets/icons/app/shared/source/app_icon.rs"]
 mod app_icon;
 
 use solidcraft_engine::Session;

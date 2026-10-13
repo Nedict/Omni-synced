@@ -13,7 +13,7 @@
 #![forbid(unsafe_code)]
 
 #[cfg(not(target_os = "macos"))]
-#[path = "../../app_icon.rs"]
+#[path = "../../../assets/icons/app/shared/source/app_icon.rs"]
 mod app_icon;
 mod control_server;
 #[cfg(any(target_os = "windows", target_os = "linux"))]

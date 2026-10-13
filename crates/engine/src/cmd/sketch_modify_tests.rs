@@ -500,7 +500,7 @@ fn text_takes_a_font_and_edit_text_keeps_or_changes_it() {
     // The repository's second font is BIZ UDPGothic. Its "I" is a polygon of two 606 x 145 bars and a 188 x 1369
     // stem in font units, with a capital height of 1567 units, so at 10 mm its area is
     // (2 x 606 x 145 + 188 x 1369) x (10 / 1567)^2 = 17.6385 mm². The built-in Liberation Sans "I" is 13.5557 mm².
-    let font = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/solidcraft-web/fonts/BIZUDPGothic-Regular.ttf");
+    let font = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/fonts/biz-udp-gothic/BIZUDPGothic-Regular.ttf");
     let near = |s: &Session, want: f64| {
         let a = profiles(s);
         assert!(a.len() == 1 && (a[0] - want).abs() < 1e-3, "{a:?} against {want}");

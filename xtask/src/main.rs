@@ -3,6 +3,7 @@
 //! Pure Rust (std + serde_json). External tools (`cargo`) are invoked through
 //! `std::process::Command`.
 
+mod app_icons;
 mod assets;
 mod book;
 mod features;
@@ -19,6 +20,7 @@ usage: cargo xtask <command>
 commands:
   layers          enforce the crate dependency layering (plan/architecture.md §3)
   assets          check that every non-code asset file is attributed in ATTRIBUTION.md
+  app-icons       regenerate shared app-icon exports for Linux, FreeBSD and Windows
   features        list SolidCraft's commands by area in docs/features.md (from the registry)
   oracle [--cli BIN]
                   replay the reference tests (tests/oracle/*/recipe.json), compare with each
@@ -48,6 +50,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("layers") => cmd_layers(),
         Some("assets") => assets::run(&root()),
+        Some("app-icons") => app_icons::run(&root()),
         Some("features") => features::run(&root()),
         Some("oracle") => cmd_oracle(rest.iter().position(|a| *a == "--cli").and_then(|i| rest.get(i + 1)).copied()),
         Some("action-matrix") => {

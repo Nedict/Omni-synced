@@ -1,5 +1,7 @@
 //! Application bar, the workspace toolbar (tabs and panels) and keyboard shortcuts.
 
+use crate::icons::glyphs::caret;
+use crate::icons::glyphs::pin_icon;
 use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::json;
 
@@ -168,47 +170,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         // (viewBox 357 x 412). Same 20 px height and centre as the old block.
         {
             let c = pos2(left + 20.0, r.center().y);
-            let s = 20.0 / 412.217;
-            let m =
-                |pts: &[(f32, f32)]| -> Vec<egui::Pos2> { pts.iter().map(|&(x, y)| pos2(c.x + (x - 178.5) * s, c.y + (y - 206.1) * s)).collect() };
-            let p = ui.painter();
-            // egui only fills convex shapes, so each face is a few overlapping convex pieces.
-            let face = |col: Color32, pts: &[(f32, f32)]| {
-                p.add(egui::Shape::convex_polygon(m(pts), col, Stroke::NONE));
-            };
-            let (light, mid, dark) = (Color32::from_rgb(96, 158, 236), Color32::from_rgb(58, 136, 238), Color32::from_rgb(55, 108, 197));
-            face(light, &[(3.5, 105.9), (177.0, 5.8), (263.4, 55.6), (263.8, 156.0), (177.0, 406.4)]);
-            face(light, &[(177.0, 206.1), (263.8, 156.0), (350.5, 206.2), (350.5, 306.3), (177.0, 406.4)]);
-            face(mid, &[(3.5, 105.9), (177.0, 206.1), (177.0, 406.4)]);
-            face(mid, &[(3.5, 105.9), (3.5, 205.7), (90.3, 256.2), (177.0, 206.1)]);
-            face(mid, &[(177.0, 206.1), (90.3, 256.2), (90.0, 356.2), (177.0, 406.4)]);
-            face(dark, &[(264.1, 155.8), (177.0, 206.1), (177.0, 406.4), (263.8, 256.2)]);
-            face(dark, &[(263.8, 256.2), (350.5, 206.2), (350.5, 306.3), (177.0, 406.4)]);
-            face(dark, &[(177.0, 206.1), (177.0, 406.4), (350.5, 306.3)]);
-            face(dark, &[(263.8, 55.9), (263.8, 156.0), (177.1, 105.9)]);
-            // White edge lines.
-            let edge = Stroke::new(10.0 * s, Color32::WHITE);
-            let line = |pts: &[(f32, f32)]| {
-                p.add(egui::Shape::line(m(pts), edge));
-            };
-            line(&[(263.8, 55.9), (177.1, 105.9), (263.8, 156.0), (263.8, 256.2), (350.6, 206.1)]);
-            line(&[(5.0, 105.9), (178.5, 206.1), (178.5, 406.4)]);
-            line(&[(177.0, 206.1), (263.8, 156.0)]);
-            p.add(egui::Shape::closed_line(
-                m(&[
-                    (178.5, 5.8),
-                    (5.0, 105.9),
-                    (5.0, 206.1),
-                    (91.7, 256.2),
-                    (91.7, 356.4),
-                    (178.5, 406.4),
-                    (352.0, 306.3),
-                    (352.0, 206.1),
-                    (265.2, 156.0),
-                    (265.2, 55.9),
-                ]),
-                edge,
-            ));
+            crate::icons::glyphs::brand_mark(ui.painter(), c);
         }
         if !compact_actions {
             ui.painter().text(pos2(left + 36.0, r.center().y), Align2::LEFT_CENTER, "SolidCraft", FontId::proportional(14.0), t.app_bar_text);
@@ -1109,28 +1071,9 @@ fn drag_ghost(ctx: &egui::Context, id: &str, at: egui::Pos2, removing: bool) {
         let s = Stroke::new(2.0, t.error);
         let x = Rect::from_center_size(r.right_top(), vec2(9.0, 9.0));
         p.circle_filled(x.center(), 7.0, t.toolbar);
-        p.line_segment([x.left_top(), x.right_bottom()], s);
-        p.line_segment([x.right_top(), x.left_bottom()], s);
+        crate::icons::glyphs::cross(&p, x, s);
     }
     crate::scenario::publish_handle(if removing { "toolbar_drag:remove" } else { "toolbar_drag" }, at);
-}
-
-/// A push pin (drawn in code): upright and filled when the command is on the toolbar, tilted and
-/// outlined when not.
-fn pin_icon(p: &egui::Painter, r: Rect, on: bool, col: Color32) {
-    let c = r.center();
-    let (sin, cos) = if on { (0.0, 1.0) } else { std::f32::consts::FRAC_PI_4.sin_cos() };
-    // Local coordinates: the pin points down, its head on top.
-    let at = |x: f32, y: f32| c + vec2(x * cos - y * sin, x * sin + y * cos);
-    let head = vec![at(-2.5, -7.0), at(2.5, -7.0), at(3.0, -2.0), at(-3.0, -2.0)];
-    let stroke = Stroke::new(1.4, col);
-    if on {
-        p.add(egui::Shape::convex_polygon(head, col, stroke));
-    } else {
-        p.add(egui::Shape::closed_line(head, stroke));
-    }
-    p.line_segment([at(-5.5, -2.0), at(5.5, -2.0)], stroke);
-    p.line_segment([at(0.0, -2.0), at(0.0, 7.0)], stroke);
 }
 
 /// The SELECT panel: what a click in the view picks.
@@ -1156,11 +1099,6 @@ fn selection_filter(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
         }
     }
-}
-
-/// A small drop-down caret.
-fn caret(p: &egui::Painter, c: egui::Pos2, col: Color32) {
-    p.add(egui::Shape::convex_polygon(vec![pos2(c.x - 3.5, c.y - 2.0), pos2(c.x + 3.5, c.y - 2.0), pos2(c.x, c.y + 2.5)], col, Stroke::NONE));
 }
 
 /// Global keyboard shortcuts (when no text field has focus).
