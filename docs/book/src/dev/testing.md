@@ -61,6 +61,14 @@ Pull requests skip a few heavy tests (each takes one to four minutes); they run 
 - `solidcraft-kernel`: `tests::boolean_identity_on_tangent_primitives`
 - `solidcraft-ui-egui` scenarios: `acceptance_sensor_enclosure`
 
+The **action matrix** (`apps/solidcraft-cli/tests/action_matrix.rs`) tries every ordinary action
+(sketch, offset plane, press pull, hole, draft, shell, fillet, chamfer, construction geometry, move,
+mirror, pattern) on every face, edge, vertex and body of a corpus of designs and compares with a
+checked-in baseline: an action that passed there and fails now fails the test. Every run checks a
+fixed sample; the nightly "Action matrix" job runs it all. After a fix, record what passes now with
+`cargo xtask action-matrix --bless`. The results and the causes of the failures are in
+[the action matrix page](https://github.com/bherbruck/solidcraft/blob/main/docs/action-matrix.md).
+
 To run exactly what a pull request runs: `cargo nextest run --cargo-profile ci --profile ci`;
 add `--ignore-default-filter` for the full set. A new test that takes over a minute on CI can
 join the list (the `default-filter` in `.config/nextest.toml`) if it guards robustness rather

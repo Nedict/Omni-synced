@@ -166,6 +166,11 @@ Pull requests skip a few heavy tests (one to four minutes each), which run on ev
 - `solidcraft-kernel`: `tests::boolean_identity_on_tangent_primitives`
 - `solidcraft-ui-egui` scenarios: `acceptance_sensor_enclosure`
 
+**The action matrix** tries every ordinary action on every face, edge, vertex and body of a
+corpus of designs against a checked-in ratchet ([docs/action-matrix.md](docs/action-matrix.md)).
+A pull request that makes an action pass should record it with `cargo xtask action-matrix --bless`;
+one that makes a passing action fail fails the sample every CI run checks.
+
 **The reference tests** are 76 parts in [`tests/oracle/`](tests/oracle/), each a `recipe.json`
 in our own format with an `expected.json` beside it. SolidCraft rebuilds the recipe and compares
 body count, volume, area, centre of mass and bounding box (and, where there is a `reference.stl`,
