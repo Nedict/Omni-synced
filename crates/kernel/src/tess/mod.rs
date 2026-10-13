@@ -82,8 +82,10 @@ pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
     let indexed: Vec<(usize, &mt::Face)> = faces.iter().copied().enumerate().collect();
     let planned = crate::par::map("face tessellation", &indexed, 8, |(fi, face)| {
         let fi = *fi;
-        let Some((Some(eval), Some((h, _)))) = sized.get(fi) else { return Err(unsupported(format!("face {fi}: surface not evaluable"))) };
-        let (eval, h) = (eval.clone(), *h);
+        let (eval, size) = match sized.get(fi) {
+            Some((Some(eval), Some(size))) => (eval.clone(), *size),
+            _ => return Err(unsupported(format!("face {fi}: surface not evaluable"))),
+        };
         // Boundary nodes, loop by loop (each edge's last node is the next edge's first).
         let mut loops3: Vec<Vec<Vec3>> = Vec::new();
         for wire in face.absolute_boundaries() {
@@ -98,7 +100,7 @@ pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
             }
         }
         let mut stats = PlanStats::default();
-        let fp = plan_face(fi, &eval, &loops3, tol, h, &mut stats)?;
+        let fp = plan_face(fi, &eval, &loops3, tol, size, &mut stats)?;
         let fp = FacePlan {
             flip: !face.orientation(),
             triangles: if face.orientation() { fp.triangles } else { fp.triangles.into_iter().map(|[a, b, c]| [a, c, b]).collect() },
@@ -123,8 +125,9 @@ pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
 }
 
 /// One face: boundary loops in 3D (shared edge nodes) to parameters and triangles.
-/// `h`: the face's target side length (mm).
-fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, h: f64, stats: &mut PlanStats) -> Result<FacePlan> {
+/// `size`: the face's target side length (mm) and the surface's mean speed along u and v.
+fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, size: (f64, [f64; 2]), stats: &mut PlanStats) -> Result<FacePlan> {
+    let (h, speed) = size;
     let dom = uv::domain(s);
     let accept = (tol * 10.0).max(1e-6);
     let fail = |why: &str| unsupported(format!("face {fi}: {why}"));
@@ -186,24 +189,34 @@ fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, h: f64,
     if uvs.len() < 3 {
         return Err(fail("degenerate boundary"));
     }
-    let planar = matches!(s, EvalSurface::Plane { .. });
-    let (extra, triangles) = if planar {
-        stats.planar += 1;
-        cdt::triangulate(&uvs, &ranges, cdt::Fill { seeds: &[], refine: None }).ok_or_else(|| fail("boundary crosses itself"))?
-    } else {
-        let mut bbox = [(f64::MAX, f64::MIN); 2];
-        for p in &uvs {
-            for d in 0..2 {
-                bbox[d] = (bbox[d].0.min(p[d]), bbox[d].1.max(p[d]));
-            }
+    let mut bbox = [(f64::MAX, f64::MIN); 2];
+    for p in &uvs {
+        for d in 0..2 {
+            bbox[d] = (bbox[d].0.min(p[d]), bbox[d].1.max(p[d]));
         }
+    }
+    // Constrained Delaunay in (u, v) scaled to millimetres: equilateral seeds of side `h`,
+    // refined where triangles leave the surface, are too long or bend too much, then shaped by
+    // Ruppert refinement.
+    let delaunay = || {
+        let polys: Vec<&[[f64; 2]]> = ranges.iter().filter_map(|r| uvs.get(r.clone())).collect();
+        let seeds = cdt::lattice(bbox, [h / speed[0], h / speed[1]], &polys, speed);
+        let eval = |u: f64, v: f64| s.derivs(u, v).map(|(p, su, sv)| (p, su.cross(sv).normalized()));
+        let sag = cdt::Sag { eval: &eval, tol, h, scale: speed };
+        let fill = cdt::Fill { seeds: &seeds, refine: Some((sag, MAX_REFINE)) };
+        cdt::triangulate(&uvs, &ranges, fill).ok_or_else(|| fail("boundary crosses itself"))
+    };
+    let (extra, triangles) = if matches!(s, EvalSurface::Plane { .. }) {
+        stats.planar += 1;
+        delaunay()?
+    } else {
         let mut us = uv::divide(s, 0, bbox[0], bbox[1], tol, h, MAX_LINES);
         let mut vs = uv::divide(s, 1, bbox[1], bbox[0], tol, h, MAX_LINES);
         thin(&mut us, &mut vs, grid::MAX_FACE_GRID);
         let structured = match (ranges.len(), grid::quad(&uvs)) {
             (1, Some(q)) => {
                 // Interior lines: the boundary's own where opposite sides agree, else the
-                // tolerance division.
+                // division.
                 let lines = |d: usize, div: &Vec<f64>| {
                     grid::aligned_lines(&uvs, &q, d).unwrap_or_else(|| div.iter().copied().filter(|x| *x > bbox[d].0 && *x < bbox[d].1).collect())
                 };
@@ -217,10 +230,8 @@ fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, h: f64,
             }
             _ => None,
         };
-        let cells = |lines: &Vec<f64>, (a, b): (f64, f64)| (lines.len().saturating_sub(1).max(1) as f64) / (b - a).max(f64::MIN_POSITIVE);
-        let scale = [cells(&us, bbox[0]), cells(&vs, bbox[1])];
         let structured = match structured {
-            None if ranges.len() == 1 => coons::coons(&uvs, &fixed, scale, grid::MAX_FACE_GRID),
+            None if ranges.len() == 1 => coons::coons(&uvs, &fixed, speed, grid::MAX_FACE_GRID),
             other => other,
         };
         match structured {
@@ -230,15 +241,7 @@ fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, h: f64,
             }
             None => {
                 stats.delaunay += 1;
-                let polys: Vec<&[[f64; 2]]> = ranges.iter().filter_map(|r| uvs.get(r.clone())).collect();
-                let inner = |lines: &Vec<f64>, (a, b): (f64, f64)| lines.iter().copied().filter(|x| *x > a && *x < b).collect::<Vec<f64>>();
-                let seeds = cdt::inside_grid(&inner(&us, bbox[0]), &inner(&vs, bbox[1]), &polys);
-                let eval = |u: f64, v: f64| s.derivs(u, v).map(|(p, _, _)| p);
-                // One unit per tolerance cell in each direction: a straight direction (one
-                // cell) keeps long triangles, Ruppert shapes them in that metric.
-                let sag = cdt::Sag { eval: &eval, tol, scale };
-                let fill = cdt::Fill { seeds: &seeds, refine: Some((sag, MAX_REFINE)) };
-                cdt::triangulate(&uvs, &ranges, fill).ok_or_else(|| fail("boundary crosses itself"))?
+                delaunay()?
             }
         }
     };
