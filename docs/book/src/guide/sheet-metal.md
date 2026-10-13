@@ -29,7 +29,7 @@ Where a cut-out has taken part of an edge away (a corner cut off the plate, a no
 middle of an edge), an edge flange picked on that edge runs along the stretch the cut-outs
 leave nearest the pick, and takes its setback off that stretch only. The base on the other
 side of a notch keeps its edge, and a pick there, in the same feature or a later one, makes
-a flange of its own. Where base is still left beside the bend's end at such a cut-out, it
+a flange of its own. Where the base is still left beside the bend's end at such a cut-out, it
 gets the bend relief as above. An edge that cut-outs have taken whole is refused.
 
 The setback is cut out of the base's outline as it was drawn: where the bend line crosses an
