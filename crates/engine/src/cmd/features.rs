@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use solidcraft_doc::{AxisRef, Direction, Extent, FeatureKind, Operation, PointExpr, ProfileSel, expr::Kind, point_expr};
 use solidcraft_geom::Vec3;
 
-use super::CommandSpec;
+use super::{CommandSpec, not_in_sketch};
 use crate::params::{bad, bool_, expr, req_expr, str_, string_list, vec2, vec3};
 use crate::{EngineError, Result, Session};
 
@@ -107,7 +107,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("presspull")
         .key("Q")
         .params("face: [x,y,z] and distance: expr (positive adds material, negative cuts), or edges: [[x,y,z]…] and distance (a fillet)"),
-    CommandSpec::new("solid.move", "Move/Copy", move_bodies).at("SOLID", "MODIFY").icon("move").key("M").params("bodies: [names]; translate?: [x,y,z] (exprs or numbers); axis?: [x,y,z]; angle?: expr; copy?: bool (default false: keeps the original bodies and transforms a new copy instead of moving them in place)"),
+    CommandSpec::new("solid.move", "Move/Copy", move_bodies).at("SOLID", "MODIFY").icon("move").key("M").enabled(not_in_sketch).params("bodies: [names]; translate?: [x,y,z] (exprs or numbers); axis?: [x,y,z]; angle?: expr; copy?: bool (default false: keeps the original bodies and transforms a new copy instead of moving them in place)"),
 ];
 
 /// Where an extrude starts and which way is positive: a point inside the (first) profile or
@@ -1595,3 +1595,7 @@ mod stacked_face_tests;
 #[cfg(test)]
 #[path = "solid_move_copy_tests.rs"]
 mod solid_move_copy_tests;
+
+#[cfg(test)]
+#[path = "move_in_sketch_tests.rs"]
+mod move_in_sketch_tests;
