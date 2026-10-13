@@ -42,10 +42,10 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SURFACE", "CREATE")
         .icon("surface_sweep")
         .params("sketch?: id|name; curves?: [curve ids] and/or profiles? (as surface.extrude); path_sketch: sketch; path: [curve ids in order] (a path with corners, or 3D curves, gives ruled walls mitred at the corners); name?, body_name? (a surface body, no caps)"),
-    planned!("surface.loft", "Surface Loft", "757")
+    CommandSpec::new("surface.loft", "Surface Loft", surface_loft)
         .at("SURFACE", "CREATE")
         .icon("surface_loft")
-        .params("planned: the parameters of solid.loft, with open sections as well as closed ones (no caps); caps?: bool"),
+        .params("sections: [{sketch, curves?: [curve ids], profiles?}] (2…50 in order; each one chain: a profile without holes, or curves meeting end to end; all open or all closed); name?, body_name? (a surface body: ruled between two sections, smooth through three or more; no caps)"),
     planned!("surface.offset", "Offset Surface", "758")
         .at("SURFACE", "CREATE")
         .icon("surface_offset")
@@ -165,6 +165,25 @@ fn surface_sweep(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "`path` must list 1…1000 curve ids"));
     }
     add_feature(s, p, FeatureKind::SurfaceSweep { sketch, profiles, curves, path_sketch, path })
+}
+
+fn surface_loft(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "surface.loft";
+    let given = p.get("sections").and_then(Value::as_array).ok_or_else(|| bad(cmd, "`sections` must list the sections in order"))?;
+    if !(2..=50).contains(&given.len()) {
+        return Err(bad(cmd, "a loft needs 2…50 sections"));
+    }
+    let mut sections = Vec::with_capacity(given.len());
+    for sec in given {
+        let sketch = sketch_id(s, sec.get("sketch"), cmd, "sections.sketch")?;
+        let curves = string_list(sec, "curves");
+        if curves.len() > 1000 {
+            return Err(bad(cmd, "at most 1000 curves a section"));
+        }
+        let profiles = if sec.get("profiles").is_some() { Some(profiles(sec, cmd)?) } else { None };
+        sections.push(solidcraft_doc::SheetSection { sketch, profiles, curves });
+    }
+    add_feature(s, p, FeatureKind::SurfaceLoft { sections })
 }
 
 fn bodies_param(s: &Session, p: &Value, cmd: &str) -> Result<Vec<String>> {
@@ -489,21 +508,49 @@ mod tests {
         assert!(s.execute("surface.sweep", &json!({"sketch": "S", "curves": ["l"], "path_sketch": "P", "path": ["nope"]})).is_err());
     }
 
+    /// Surface Loft between sketches 5 apart: two lines give a 10 × 5 strip, two rectangles
+    /// their four walls; undo, redo and reopening; a mix of open and closed sections, one
+    /// section, and a section of two separate curves are refused.
+    #[test]
+    fn surface_loft_open_and_closed_sections() {
+        let mut s = Session::default();
+        run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 5, "name": "Mid"}));
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "A"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [10, 0]], "ids": ["a"]}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 3], [10, 3]], "ids": ["apart"]}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [20, 0], "p1": [30, 6]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "sketch.create", json!({"plane": "Mid", "name": "B"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [10, 0]], "ids": ["b"]}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [20, 0], "p1": [30, 6]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "surface.loft", json!({"sections": [{"sketch": "A", "curves": ["a"]}, {"sketch": "B", "curves": ["b"]}], "body_name": "Strip"}));
+        assert!(s.world_state().body("Strip").unwrap().body.is_surface());
+        assert!((area(&s, "Strip") - 50.0).abs() < 1e-6, "{}", area(&s, "Strip"));
+        run(&mut s, "surface.loft", json!({"sections": [{"sketch": "A", "profiles": [0]}, {"sketch": "B", "profiles": [0]}], "body_name": "Walls"}));
+        let st = s.world_state();
+        let walls = &st.body("Walls").unwrap().body;
+        assert!(walls.is_surface() && walls.face_count() == 4);
+        assert!((area(&s, "Walls") - 160.0).abs() < 1e-6, "{}", area(&s, "Walls"));
+        run(&mut s, "edit.undo", json!({}));
+        assert!(s.world_state().body("Walls").is_none());
+        run(&mut s, "edit.redo", json!({}));
+        let cold = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        assert!((area(&cold, "Walls") - area(&s, "Walls")).abs() < 1e-9);
+        assert!(s.execute("surface.loft", &json!({"sections": [{"sketch": "A", "curves": ["a"]}, {"sketch": "B", "profiles": [0]}]})).is_err());
+        assert!(s.execute("surface.loft", &json!({"sections": [{"sketch": "A", "curves": ["a"]}]})).is_err());
+        assert!(
+            s.execute("surface.loft", &json!({"sections": [{"sketch": "A", "curves": ["a", "apart"]}, {"sketch": "B", "curves": ["b"]}]})).is_err()
+        );
+    }
+
     /// The planned surface commands are registered but refuse to run: disabled with the
     /// issue that tracks them, an error (never a panic) from every caller, and the design left
     /// as it was.
     #[test]
     fn planned_commands_refuse_and_leave_the_design_alone() {
-        let planned = [
-            "surface.loft",
-            "surface.offset",
-            "surface.ruled",
-            "surface.boundary",
-            "surface.blend",
-            "surface.untrim",
-            "surface.fillet",
-            "inspect.continuity",
-        ];
+        let planned =
+            ["surface.offset", "surface.ruled", "surface.boundary", "surface.blend", "surface.untrim", "surface.fillet", "inspect.continuity"];
         let mut s = Session::default();
         run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "B"}));
         let before = s.doc.features.len();

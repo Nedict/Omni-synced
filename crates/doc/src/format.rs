@@ -120,6 +120,8 @@
 //!   `axis`, `angle`, optional `angle2` and `symmetric`) is also first saved in 18.
 //!   A `SurfaceSweep` feature (Surface Sweep: `sketch`, optional `profiles` and `curves`,
 //!   `path_sketch`, `path`) is also first saved in 18.
+//!   A `SurfaceLoft` feature (Surface Loft: `sections`, each a `sketch` with optional `profiles`
+//!   and `curves`) is also first saved in 18.
 
 use serde_json::Value;
 

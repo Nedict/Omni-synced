@@ -1,5 +1,5 @@
 //! Evaluation of the surface features: Patch, Stitch, Thicken, Trim, Extend, Surface Extrude,
-//! Revolve and Sweep, Unstitch and Reverse Normal (kernel `surfaces`).
+//! Revolve, Sweep and Loft, Unstitch and Reverse Normal (kernel `surfaces`).
 
 use super::*;
 use solidcraft_geom::Seg2;
@@ -177,6 +177,32 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
                 Some(pts) => kernel::sweep_sheet_points(&ss.plane, &chains, &pts)?,
                 None => kernel::sweep_sheet(&ss.plane, &chains, &path_segments(ps, path, start)?)?,
             };
+            let name = new_name(st, f, 0);
+            st.bodies.push(ModelBody::new(name, body, f.id));
+            Ok(())
+        }
+        FeatureKind::SurfaceLoft { sections } => {
+            let mut secs = Vec::with_capacity(sections.len());
+            for sec in sections {
+                let ss = sketch_in_feature_frame(
+                    doc,
+                    st.sketch(sec.sketch)
+                        .ok_or_else(|| DocError::Unknown(format!("sketch {} (it must come earlier in the timeline)", sec.sketch)))?,
+                    f.component,
+                )?;
+                let profiles = match (&sec.profiles, sec.curves.is_empty()) {
+                    (None, true) => Some(&ProfileSel::All),
+                    (p, _) => p.as_ref(),
+                };
+                let mut chains = sheet_chains(&ss, profiles, &sec.curves)?.into_iter();
+                let (Some(chain), None) = (chains.next(), chains.next()) else {
+                    return Err(DocError::Invalid(
+                        "each loft section must be one chain: one profile without holes, or curves meeting end to end".into(),
+                    ));
+                };
+                secs.push((ss.plane, chain));
+            }
+            let body = kernel::loft_sheet(&secs)?;
             let name = new_name(st, f, 0);
             st.bodies.push(ModelBody::new(name, body, f.id));
             Ok(())

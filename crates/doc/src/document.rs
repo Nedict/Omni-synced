@@ -982,6 +982,11 @@ pub enum FeatureKind {
         path_sketch: u64,
         path: Vec<String>,
     },
+    /// A surface body lofted through sections in order, each one open or closed chain of
+    /// sketch curves: walls only, no caps.
+    SurfaceLoft {
+        sections: Vec<SheetSection>,
+    },
     /// A planar surface body extended outward by `distance` past the edges through `edges`.
     SurfaceExtend {
         body: String,
@@ -1134,6 +1139,17 @@ pub struct LoftSection {
     /// A sketch point instead of a profile (the loft closes to it, as a pyramid's apex).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub point: Option<String>,
+}
+
+/// A section of a surface loft: one chain from a sketch (one profile's boundary, or curves
+/// meeting end to end).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SheetSection {
+    pub sketch: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profiles: Option<ProfileSel>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub curves: Vec<String>,
 }
 
 /// Coil cross-sections.
@@ -1292,6 +1308,7 @@ impl FeatureKind {
             K::Sweep { sketch, path_sketch, .. } | K::SurfaceSweep { sketch, path_sketch, .. } => vec![*sketch, *path_sketch],
             K::Pipe { path_sketch, .. } | K::Pattern { pattern: PatternKind::Path { path_sketch, .. }, .. } => vec![*path_sketch],
             K::Loft { sections, .. } => sections.iter().map(|s| s.sketch).collect(),
+            K::SurfaceLoft { sections } => sections.iter().map(|s| s.sketch).collect(),
             K::SheetFold { sketch, .. } | K::SplitFace { sketch, .. } | K::Patch { sketch, .. } => sketch.iter().copied().collect(),
             K::Hole { points, .. } => points.iter().map(|p| p.sketch).collect(),
             K::Sketch { .. }
@@ -1420,6 +1437,7 @@ impl FeatureKind {
             FeatureKind::SurfaceExtrude { .. } => "SurfaceExtrudeFeature",
             FeatureKind::SurfaceRevolve { .. } => "SurfaceRevolveFeature",
             FeatureKind::SurfaceSweep { .. } => "SurfaceSweepFeature",
+            FeatureKind::SurfaceLoft { .. } => "SurfaceLoftFeature",
             FeatureKind::Stitch { .. } => "StitchFeature",
             FeatureKind::Thicken { .. } => "ThickenFeature",
             FeatureKind::SurfaceTrim { .. } => "TrimFeature",
@@ -1491,6 +1509,7 @@ impl FeatureKind {
             FeatureKind::SurfaceExtrude { .. } => "SurfaceExtrude",
             FeatureKind::SurfaceRevolve { .. } => "SurfaceRevolve",
             FeatureKind::SurfaceSweep { .. } => "SurfaceSweep",
+            FeatureKind::SurfaceLoft { .. } => "SurfaceLoft",
             FeatureKind::Stitch { .. } => "Stitch",
             FeatureKind::Thicken { .. } => "Thicken",
             FeatureKind::SurfaceTrim { .. } => "Trim",
@@ -1520,6 +1539,7 @@ impl FeatureKind {
                 vec![(*sk, profiles)]
             }
             FeatureKind::Loft { sections, .. } => sections.iter_mut().filter(|s| s.point.is_none()).map(|s| (s.sketch, &mut s.profiles)).collect(),
+            FeatureKind::SurfaceLoft { sections } => sections.iter_mut().filter_map(|s| Some((s.sketch, s.profiles.as_mut()?))).collect(),
             _ => Vec::new(),
         }
     }
@@ -1541,6 +1561,7 @@ impl FeatureKind {
             FeatureKind::Loft { sections, .. } => {
                 sections.iter().filter(|section| section.point.is_none()).map(|section| (section.sketch, &section.profiles)).collect()
             }
+            FeatureKind::SurfaceLoft { sections } => sections.iter().filter_map(|s| Some((s.sketch, s.profiles.as_ref()?))).collect(),
             _ => Vec::new(),
         }
     }
@@ -1648,7 +1669,7 @@ impl FeatureKind {
             },
             FeatureKind::Mirror { plane, .. } => plane_exprs(plane, &mut v),
             FeatureKind::Shell { thickness, .. } => v.push(thickness),
-            FeatureKind::Loft { .. } | FeatureKind::Sweep { .. } | FeatureKind::SurfaceSweep { .. } => {}
+            FeatureKind::Loft { .. } | FeatureKind::Sweep { .. } | FeatureKind::SurfaceSweep { .. } | FeatureKind::SurfaceLoft { .. } => {}
             FeatureKind::Draft { angle, neutral, .. } => {
                 v.push(angle);
                 plane_exprs(neutral, &mut v);
