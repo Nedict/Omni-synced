@@ -714,7 +714,7 @@ pub(crate) fn components_in_order(shell: &mt::Shell) -> Vec<mt::Shell> {
             faces
         })
         .collect();
-    comps.sort_by_key(|c| c.first().map(&key).unwrap_or(usize::MAX));
+    comps.sort_by_key(|c| c.first().map(key).unwrap_or(usize::MAX));
     comps.into_iter().map(mt::Shell::from).collect()
 }
 
