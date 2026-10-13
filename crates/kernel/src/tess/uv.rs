@@ -152,7 +152,7 @@ pub(crate) fn degenerate(s: &EvalSurface, uv: [f64; 2], d: usize) -> bool {
 /// included.
 pub(crate) fn divide(s: &EvalSurface, d: usize, range: (f64, f64), across: (f64, f64), tol: f64, h: f64, max_lines: usize) -> Vec<f64> {
     let (a0, a1) = range;
-    if matches!(s, EvalSurface::Plane { .. }) || !(a1 > a0) {
+    if !(a1 > a0) {
         return vec![a0, a1];
     }
     let uv = |x: f64, y: f64| if d == 0 { (x, y) } else { (y, x) };
@@ -180,8 +180,9 @@ pub(crate) fn divide(s: &EvalSurface, d: usize, range: (f64, f64), across: (f64,
             [0.25, 0.5, 0.75].iter().all(|f| at(a + (b - a) * f, y).is_none_or(|q| q.dist_to_segment(pa, pb) <= tol))
         })
     };
-    // Start from quarter turns at most, so a closed iso-line is not taken for a flat one.
-    let initial = ((a1 - a0) / std::f64::consts::FRAC_PI_2).ceil().clamp(1.0, 64.0) as u32;
+    // Start from quarter turns at most, so a closed iso-line is not taken for a flat one (a
+    // plane's parameters are lengths and its lines are never closed).
+    let initial = if matches!(s, EvalSurface::Plane { .. }) { 1 } else { ((a1 - a0) / std::f64::consts::FRAC_PI_2).ceil().clamp(1.0, 64.0) as u32 };
     // Both ends exactly (a0 + (a1 − a0) · 1 may round away from a1): the end lines are the
     // face's own parameter box, which the boundary nodes sit on.
     let x_at = |i: u32| {

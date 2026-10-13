@@ -206,10 +206,10 @@ fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, size: (
         let fill = cdt::Fill { seeds: &seeds, refine: Some((sag, MAX_REFINE)) };
         cdt::triangulate(&uvs, &ranges, fill).ok_or_else(|| fail("boundary crosses itself"))
     };
-    let (extra, triangles) = if matches!(s, EvalSurface::Plane { .. }) {
-        stats.planar += 1;
-        delaunay()?
-    } else {
+    // Planar and curved faces alike: a structured grid where the boundary runs along the
+    // parameter box (a rectangle, a cylinder half), a Coons grid on four corners, else Delaunay.
+    let planar = matches!(s, EvalSurface::Plane { .. });
+    let (extra, triangles) = {
         let mut us = uv::divide(s, 0, bbox[0], bbox[1], tol, h, MAX_LINES);
         let mut vs = uv::divide(s, 1, bbox[1], bbox[0], tol, h, MAX_LINES);
         thin(&mut us, &mut vs, grid::MAX_FACE_GRID);
@@ -236,11 +236,19 @@ fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, size: (
         };
         match structured {
             Some(r) => {
-                stats.structured += 1;
+                if planar {
+                    stats.planar += 1;
+                } else {
+                    stats.structured += 1;
+                }
                 r
             }
             None => {
-                stats.delaunay += 1;
+                if planar {
+                    stats.planar += 1;
+                } else {
+                    stats.delaunay += 1;
+                }
                 delaunay()?
             }
         }

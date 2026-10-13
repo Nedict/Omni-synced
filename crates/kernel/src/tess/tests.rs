@@ -63,6 +63,33 @@ fn cut(a: &Body, b: &Body) -> Body {
 
 const PI: f64 = std::f64::consts::PI;
 
+/// Smallest corner angle (degrees) over the mesh.
+fn min_angle(m: &Mesh) -> f64 {
+    let mut least = 180.0f64;
+    for t in &m.triangles {
+        let [a, b, c] = t.map(|i| m.positions[i as usize]);
+        for (p, q, r) in [(a, b, c), (b, c, a), (c, a, b)] {
+            let (u, v) = (q - p, r - p);
+            if let (Some(u), Some(v)) = (u.normalized(), v.normalized()) {
+                least = least.min(u.dot(v).clamp(-1.0, 1.0).acos().to_degrees());
+            }
+        }
+    }
+    least
+}
+
+#[test]
+fn a_box_is_a_regular_grid_on_every_face() {
+    // 40 × 30 × 20: sides at most 1/20 of the diagonal (2.69 mm), so 15 × 12 × 8 cells.
+    let b = ok(crate::box_solid(Vec3::ZERO, Vec3::new(40.0, 30.0, 20.0)));
+    let (m, s) = plan_body(&b, 0.05);
+    assert_eq!(s.planar, 6);
+    assert_watertight(&m, "box");
+    let cells = 2 * (15 * 12 + 15 * 8 + 12 * 8);
+    assert_eq!(m.triangles.len(), 2 * cells, "two triangles per grid cell");
+    assert!(min_angle(&m) > 40.0, "{}", min_angle(&m));
+}
+
 #[test]
 fn primitives_are_watertight_with_the_right_volume() {
     for tol in [0.05, 0.005] {
