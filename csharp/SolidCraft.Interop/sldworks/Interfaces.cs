@@ -14,9 +14,9 @@ using System;
 
 namespace ModelForge.Interop.sldworks
 {
-    // The public COM dispatch type: any interface may be cast to it, and the workspace wraps
-    // feature-data objects in it. It carries object identity only.
-    public interface DispatchWrapper { }
+    // Note: there is deliberately no `DispatchWrapper` declared here. The workspace wraps
+    // feature-data objects in `System.Runtime.InteropServices.DispatchWrapper` (its COM origin),
+    // so re-declaring the name would make every use an ambiguous reference.
 
     /// <summary>Selection data handed to <c>Select4</c>. Mirrors the COM <c>SelectData</c> class.</summary>
     public class SelectData
@@ -292,7 +292,7 @@ namespace ModelForge.Interop.sldworks
         object IGetDefinition();
         bool ModifyDefinition(object definition, object owner);
         bool Select2(bool append, int mark);
-        int GetErrorCode2(out int warning);
+        int GetErrorCode2(out bool warning);
         object IsSuppressed();
         object IsSuppressed2(int whichConfigurations, object configNames);
         bool SetSuppression2(int action, int whichConfigurations, object configNames);
@@ -479,7 +479,7 @@ namespace ModelForge.Interop.sldworks
         object GetDependencies2(string fileName, bool traverseDependents, bool searchAssemblies, bool includeVirtual);
         object ListExternalFileReferences2(int count, out string fileName);
         int ListExternalFileReferencesCount2(bool searchCurrentDoc);
-        bool Save3(int options, out int errors, out int warnings);
+        bool Save3(int options, ref int errors, ref int warnings);
         INote InsertNote(string text);
     }
 

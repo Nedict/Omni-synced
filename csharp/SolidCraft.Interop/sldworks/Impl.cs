@@ -74,7 +74,7 @@ namespace ModelForge.Interop.sldworks
             return r != null;
         }
 
-        public int GetErrorCode2(out int warning) { warning = 0; return 0; }
+        public int GetErrorCode2(out bool warning) { warning = false; return 0; }
         public object IsSuppressed() { return Suppressed; }
         public object IsSuppressed2(int whichConfigurations, object configNames) { return new bool[] { Suppressed }; }
 

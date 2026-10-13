@@ -184,7 +184,7 @@ namespace ModelForge.Interop.sldworks
         public object ListExternalFileReferences2(int count, out string fileName) { fileName = null; return new object[0]; }
         public int ListExternalFileReferencesCount2(bool searchCurrentDoc) { return 0; }
 
-        public bool Save3(int options, out int errors, out int warnings)
+        public bool Save3(int options, ref int errors, ref int warnings)
         {
             errors = 0;
             warnings = 0;
