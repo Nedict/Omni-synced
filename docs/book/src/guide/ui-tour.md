@@ -20,7 +20,8 @@
   trackpad, pinch zooms and two-finger scroll pans (Navigation › Two-finger scroll pans;
   off: scroll zooms like the wheel); mouse wheels zoom and the thumb wheel pans sideways.
   Shift+middle orbits freely
-  in the default and Inventor presets. Shift+right-drag snaps to the nearest standard or
+  in the default and Inventor presets. In every preset, Ctrl+left drag (Cmd on macOS) that starts
+  on empty space orbits; a Ctrl+click still adds to the selection. Shift+right-drag snaps to the nearest standard or
   diagonal view; Shift does not request snapping when the preset already requires it to orbit.
   The axis view shows the world's X/Y/Z directions in SolidCraft's colors. Click a signed
   axis tip to look along that axis; click the aligned tip again to look from the opposite side.

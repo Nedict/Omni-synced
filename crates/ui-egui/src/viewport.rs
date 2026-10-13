@@ -1726,20 +1726,24 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // A left press with the preset's keys (Alias: Shift+Alt) navigates until the button is let
     // go (kept through the release frame, so the end of the drag doesn't select either).
     if primary_pressed && inside {
-        let openscad_orbit = app.preferences.nav == crate::prefs::OPENSCAD_NAV
-            && app.tool.is_none()
-            && app.dialog.is_none()
-            && app.viewport.context_menu.is_none()
-            && !mods.shift
-            && hover.is_some_and(|p| {
-                let proj = projection(app, rect);
-                pick(app, &proj, p).is_empty() && crate::dim_view::hit(p).is_none() && crate::sketch_tools::glyph_at(p).is_none()
-            });
-        app.viewport.primary_nav = if app.preferences.nav != crate::prefs::OPENSCAD_NAV || openscad_orbit {
+        let empty_space = |app: &SolveApp| {
+            app.viewport.context_menu.is_none()
+                && hover.is_some_and(|p| {
+                    let proj = projection(app, rect);
+                    pick(app, &proj, p).is_empty() && crate::dim_view::hit(p).is_none() && crate::sketch_tools::glyph_at(p).is_none()
+                })
+        };
+        let openscad_orbit =
+            app.preferences.nav == crate::prefs::OPENSCAD_NAV && app.tool.is_none() && app.dialog.is_none() && !mods.shift && empty_space(app);
+        let preset = if app.preferences.nav != crate::prefs::OPENSCAD_NAV || openscad_orbit {
             crate::prefs::nav_mode(app, crate::prefs::NavButton::Left, mods)
         } else {
             None
         };
+        // Ctrl+left drag from empty space orbits in every preset (Cmd on macOS). A Ctrl+click
+        // still selects, and Ctrl on geometry still drags it without snapping.
+        let ctrl_orbit = (mods.ctrl || mods.command) && !mods.shift && !mods.alt && empty_space(app);
+        app.viewport.primary_nav = preset.or(ctrl_orbit.then_some(NavMode::Orbit));
     } else if !primary_down && !primary_released {
         app.viewport.primary_nav = None;
     }
@@ -3092,6 +3096,63 @@ mod tests {
             app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1 });
         }
         app
+    }
+
+    #[test]
+    fn ctrl_left_drag_from_empty_space_orbits_in_every_preset() {
+        for preset in crate::prefs::NAV_PRESETS.iter().map(|p| p.id) {
+            for action in ["orbit", "tool", "point", "click"] {
+                let ctx = egui::Context::default();
+                let mut app = hover_app(false);
+                app.preferences.nav = preset.into();
+                app.ui.show_origin = false;
+                hover_frame(&mut app, &ctx, vec![]);
+                let point = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
+                let (start, end) = match action {
+                    "point" => (point, point + vec2(30.0, 20.0)),
+                    "click" => (point, point),
+                    _ => (point - vec2(60.0, 60.0), point - vec2(20.0, 30.0)),
+                };
+                if action == "tool" {
+                    app.start("sketch.line");
+                }
+                let before = app.cam;
+                let undo = app.session.undo.len();
+                let modifiers = egui::Modifiers { ctrl: true, command: !cfg!(target_os = "macos"), ..Default::default() };
+                let frame = |app: &mut SolveApp, mut events: Vec<egui::Event>| {
+                    events.insert(0, egui::Event::ModifiersChanged(modifiers));
+                    hover_frame(app, &ctx, events);
+                };
+                frame(
+                    &mut app,
+                    vec![
+                        egui::Event::PointerMoved(start),
+                        egui::Event::PointerButton { pos: start, button: egui::PointerButton::Primary, pressed: true, modifiers },
+                    ],
+                );
+                frame(&mut app, vec![egui::Event::PointerMoved(end)]);
+                frame(&mut app, vec![]);
+                match action {
+                    "orbit" | "tool" => {
+                        assert_ne!(app.cam, before, "{preset}: Ctrl+left drag on empty space orbits ({action})");
+                        assert!(app.viewport.boxsel.is_none(), "{preset}: no box selection while orbiting");
+                    }
+                    "point" => {
+                        assert_eq!(app.cam, before, "{preset}: Ctrl+drag on sketch geometry is not an orbit");
+                        assert!(app.viewport.point_drag.is_some(), "{preset}: Ctrl+drag still drags the point");
+                    }
+                    _ => assert_eq!(app.cam, before, "{preset}: a Ctrl+click does not orbit"),
+                }
+                frame(&mut app, vec![egui::Event::PointerButton { pos: end, button: egui::PointerButton::Primary, pressed: false, modifiers }]);
+                frame(&mut app, vec![]);
+                match action {
+                    "click" => assert!(!app.session.selection.is_empty(), "{preset}: Ctrl+click still selects"),
+                    "tool" => assert_eq!(app.session.undo.len(), undo, "{preset}: the orbit drag adds no geometry"),
+                    "orbit" => assert!(app.session.selection.is_empty(), "{preset}: the end of the orbit selects nothing"),
+                    _ => {}
+                }
+            }
+        }
     }
 
     #[test]
