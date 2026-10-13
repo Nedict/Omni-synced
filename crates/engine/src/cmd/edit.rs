@@ -359,10 +359,10 @@ fn move_to_group(s: &mut Session, p: &Value) -> Result<Value> {
         Some(Value::Null) | None => None,
         Some(_) => Some(timeline_group_id(s, p, cmd)?),
     };
-    if let Some(target) = target {
-        if groups.iter().any(|source| *source == target || group_descends_from(s, target, *source)) {
-            return Err(bad(cmd, "a folder cannot be moved into itself or one of its descendants"));
-        }
+    if let Some(target) = target
+        && groups.iter().any(|source| *source == target || group_descends_from(s, target, *source))
+    {
+        return Err(bad(cmd, "a folder cannot be moved into itself or one of its descendants"));
     }
     let doc = s.doc_mut();
     for group in &mut doc.timeline_groups {
