@@ -60,18 +60,16 @@
 //!   `font` is in the built-in font, as it always was.
 //!   A Move feature can also keep its source bodies and transform a copy (`copy: true`); a
 //!   move without it saves as before.
-//! - 17: a design can define its own physical materials (`user_materials`: name, density in
+//!   A design can also define its own physical materials (`user_materials`: name, density in
 //!   g/cm³, optional look), which bodies (`materials`) and configuration material cells name
-//!   like built-in ones. Version 16 designs need no transformation; the version stamp lets
-//!   older readers request an update instead of silently giving those bodies the default
-//!   density.
+//!   like built-in ones; a design without them saves as before.
 
 use serde_json::Value;
 
 use crate::{DocError, Document, Result};
 
 /// The format this build writes.
-pub const FORMAT: u32 = 17;
+pub const FORMAT: u32 = 16;
 
 pub fn format_string(n: u32) -> String {
     format!("solidcraft/{n}")
@@ -88,7 +86,7 @@ pub fn version_of(s: &str) -> Option<u32> {
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
 type JsonStep = fn(&mut Value) -> Result<()>;
-const JSON_STEPS: [JsonStep; 16] = [
+const JSON_STEPS: [JsonStep; 15] = [
     |_| Ok(()),
     v2_to_v3,
     v3_to_v4,
@@ -102,7 +100,6 @@ const JSON_STEPS: [JsonStep; 16] = [
     |_| Ok(()),
     |_| Ok(()),
     v13_to_v14,
-    |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
 ];

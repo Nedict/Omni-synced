@@ -232,8 +232,7 @@ fn user_defined_material_refuses_bad_names_and_densities() {
 }
 
 /// #532: a design's materials are saved with it: after reopening, the bodies keep their
-/// material, its density and its look. The file says format 17, so older builds ask for an
-/// update rather than weighing the bodies with the default density.
+/// material, its density and its look.
 #[test]
 fn user_defined_material_survives_save_and_reopen() {
     let (dir, path) = temp_design("saved");
@@ -242,7 +241,7 @@ fn user_defined_material_survives_save_and_reopen() {
     run(&mut s, "material.create", json!({"name": "Leather", "density_g_cm3": 0.86, "appearance": "Rubber - Black"}));
     run(&mut s, "material.assign", json!({"bodies": ["Tab"], "material": "Leather"}));
     run(&mut s, "file.save", json!({"path": path}));
-    assert!(s.doc.to_json().contains("\"solidcraft/17\""));
+    assert!(s.doc.to_json().contains("\"solidcraft/16\""));
 
     run(&mut s, "file.new", json!({}));
     run(&mut s, "doc.open", json!({"path": path}));
@@ -274,7 +273,6 @@ fn designs_without_user_materials_open_unchanged() {
     assert!(s.doc.user_materials.is_empty());
     assert!(s.execute("material.delete", &json!({"material": "Steel"})).is_err(), "no design materials: nothing to delete");
 
-    legacy["format"] = json!("solidcraft/17");
     legacy["user_materials"] = json!([{"name": "Broken", "density": -3.0, "appearance": {"name": "Broken", "color": [1, 2, 3], "opacity": 9.0}}]);
     legacy["materials"] = json!({"Plate": "Broken"});
     std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();

@@ -54,7 +54,7 @@ with `preview: true`. Unsupported or mismatched caches are ignored. Browser open
 still rebuilds synchronously.
 The repository's `docs/design-container.md` describes limits and encoding details.
 
-Current designs use format 17, including physical materials defined in the design, the font of sketch text, sheet metal corner relief shapes, sketch face anchors on cylinder caps, sketch axis
+Current designs use format 16, including physical materials defined in the design, the font of sketch text, sheet metal corner relief shapes, sketch face anchors on cylinder caps, sketch axis
 links, persistent
 names from exact face history, exact planar shell-face anchors, persistent analytic offset boundary roles and
 association profile references, durable sketch face anchors, periodic fit splines and versioned
