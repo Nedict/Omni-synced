@@ -82,8 +82,8 @@ pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
     let indexed: Vec<(usize, &mt::Face)> = faces.iter().copied().enumerate().collect();
     let planned = crate::par::map("face tessellation", &indexed, 8, |(fi, face)| {
         let fi = *fi;
-        let Some((Some(eval), Some(_))) = sized.get(fi) else { return Err(unsupported(format!("face {fi}: surface not evaluable"))) };
-        let eval = eval.clone();
+        let Some((Some(eval), Some((h, _)))) = sized.get(fi) else { return Err(unsupported(format!("face {fi}: surface not evaluable"))) };
+        let (eval, h) = (eval.clone(), *h);
         // Boundary nodes, loop by loop (each edge's last node is the next edge's first).
         let mut loops3: Vec<Vec<Vec3>> = Vec::new();
         for wire in face.absolute_boundaries() {
@@ -98,7 +98,7 @@ pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
             }
         }
         let mut stats = PlanStats::default();
-        let fp = plan_face(fi, &eval, &loops3, tol, &mut stats)?;
+        let fp = plan_face(fi, &eval, &loops3, tol, h, &mut stats)?;
         let fp = FacePlan {
             flip: !face.orientation(),
             triangles: if face.orientation() { fp.triangles } else { fp.triangles.into_iter().map(|[a, b, c]| [a, c, b]).collect() },
@@ -123,7 +123,8 @@ pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
 }
 
 /// One face: boundary loops in 3D (shared edge nodes) to parameters and triangles.
-fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, stats: &mut PlanStats) -> Result<FacePlan> {
+/// `h`: the face's target side length (mm).
+fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, h: f64, stats: &mut PlanStats) -> Result<FacePlan> {
     let dom = uv::domain(s);
     let accept = (tol * 10.0).max(1e-6);
     let fail = |why: &str| unsupported(format!("face {fi}: {why}"));
@@ -196,8 +197,8 @@ fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, stats: 
                 bbox[d] = (bbox[d].0.min(p[d]), bbox[d].1.max(p[d]));
             }
         }
-        let mut us = uv::divide(s, 0, bbox[0], bbox[1], tol, MAX_LINES);
-        let mut vs = uv::divide(s, 1, bbox[1], bbox[0], tol, MAX_LINES);
+        let mut us = uv::divide(s, 0, bbox[0], bbox[1], tol, h, MAX_LINES);
+        let mut vs = uv::divide(s, 1, bbox[1], bbox[0], tol, h, MAX_LINES);
         thin(&mut us, &mut vs, grid::MAX_FACE_GRID);
         let structured = match (ranges.len(), grid::quad(&uvs)) {
             (1, Some(q)) => {

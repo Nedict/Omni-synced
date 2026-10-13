@@ -5,6 +5,8 @@
 use solidcraft_geom::Vec3;
 use solidcraft_geom::tess::EvalSurface;
 
+use super::size::MAX_TURN;
+
 /// The parameter box of a surface and its periods.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Domain {
@@ -144,23 +146,37 @@ pub(crate) fn degenerate(s: &EvalSurface, uv: [f64; 2], d: usize) -> bool {
     this.len() <= 1e-9 * other.len().max(1e-12)
 }
 
-/// Division of `range` along direction `d` so that the surface between neighbouring lines
-/// sags at most `tol` from its chord, checked along iso-lines across `across`; at most
-/// `max_lines` lines, ends included.
-pub(crate) fn divide(s: &EvalSurface, d: usize, range: (f64, f64), across: (f64, f64), tol: f64, max_lines: usize) -> Vec<f64> {
+/// Division of `range` along direction `d` so that between neighbouring lines the surface sags
+/// at most `tol` from its chord, the chord is at most `h` long and the normal turns at most
+/// [`MAX_TURN`], checked along iso-lines across `across`; at most `max_lines` lines, ends
+/// included.
+pub(crate) fn divide(s: &EvalSurface, d: usize, range: (f64, f64), across: (f64, f64), tol: f64, h: f64, max_lines: usize) -> Vec<f64> {
     let (a0, a1) = range;
     if matches!(s, EvalSurface::Plane { .. }) || !(a1 > a0) {
         return vec![a0, a1];
     }
+    let uv = |x: f64, y: f64| if d == 0 { (x, y) } else { (y, x) };
     let at = |x: f64, y: f64| {
-        let (u, v) = if d == 0 { (x, y) } else { (y, x) };
+        let (u, v) = uv(x, y);
         s.derivs(u, v).map(|(p, _, _)| p)
+    };
+    let normal = |x: f64, y: f64| {
+        let (u, v) = uv(x, y);
+        s.derivs(u, v).and_then(|(_, su, sv)| su.cross(sv).normalized())
     };
     const ACROSS: usize = 5;
     let ys: Vec<f64> = (0..ACROSS).map(|k| across.0 + (across.1 - across.0) * k as f64 / (ACROSS - 1) as f64).collect();
     let flat = |a: f64, b: f64| {
         ys.iter().all(|&y| {
             let (Some(pa), Some(pb)) = (at(a, y), at(b, y)) else { return true };
+            if pa.dist(pb) > h * (1.0 + 1e-9) {
+                return false;
+            }
+            if let (Some(na), Some(nb)) = (normal(a, y), normal(b, y))
+                && na.dot(nb).clamp(-1.0, 1.0).acos() > MAX_TURN
+            {
+                return false;
+            }
             [0.25, 0.5, 0.75].iter().all(|f| at(a + (b - a) * f, y).is_none_or(|q| q.dist_to_segment(pa, pb) <= tol))
         })
     };
@@ -219,11 +235,14 @@ mod tests {
     #[test]
     fn divides_the_turn_but_not_the_straight_direction() {
         let s = cylinder();
-        let turn = divide(&s, 1, (0.0, std::f64::consts::TAU), (0.0, 1.0), 0.01, 10_000);
-        let along = divide(&s, 0, (0.0, 1.0), (0.0, std::f64::consts::TAU), 0.01, 10_000);
+        let turn = divide(&s, 1, (0.0, std::f64::consts::TAU), (0.0, 1.0), 0.01, f64::INFINITY, 10_000);
+        let along = divide(&s, 0, (0.0, 1.0), (0.0, std::f64::consts::TAU), 0.01, f64::INFINITY, 10_000);
         assert_eq!(along, vec![0.0, 1.0]);
         // Chord sag r(1 − cos(θ/2)) ≤ 0.01 with r = 3 needs θ ≤ 0.163: at least 39 segments.
         assert!(turn.len() >= 40 && turn.len() < 80, "{}", turn.len());
+        // With a longest side the straight direction is divided too: 4 mm in sides ≤ 0.5.
+        let along = divide(&s, 0, (0.0, 1.0), (0.0, std::f64::consts::TAU), 0.01, 0.5, 10_000);
+        assert_eq!(along.len(), 9);
     }
 
     /// The first and last lines are the range's ends to the last bit: the boundary nodes sit on
@@ -232,7 +251,7 @@ mod tests {
     #[test]
     fn divides_with_the_ends_exactly() {
         let (a0, a1) = (-1.010485317689877, 1.083909784703316);
-        let lines = divide(&cylinder(), 1, (a0, a1), (0.0, 1.0), 0.01, 10_000);
+        let lines = divide(&cylinder(), 1, (a0, a1), (0.0, 1.0), 0.01, f64::INFINITY, 10_000);
         assert_eq!(lines.first().copied(), Some(a0));
         assert_eq!(lines.last().copied(), Some(a1));
     }
