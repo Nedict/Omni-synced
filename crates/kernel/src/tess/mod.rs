@@ -238,10 +238,17 @@ fn plan_face(
         thin(&mut us, &mut vs, grid::MAX_FACE_GRID);
         let structured = match (ranges.len(), grid::quad(&uvs)) {
             (1, Some(q)) => {
-                // Interior lines: the boundary's own where opposite sides agree, else the
-                // division.
+                // Interior lines: the boundary's own where opposite sides agree (refined where the
+                // surface turns more between them inside the face), else the division.
                 let lines = |d: usize, div: &Vec<f64>| {
-                    grid::aligned_lines(&uvs, &q, d).unwrap_or_else(|| div.iter().copied().filter(|x| *x > bbox[d].0 && *x < bbox[d].1).collect())
+                    let inner = |l: Vec<f64>| l.into_iter().filter(|x| *x > bbox[d].0 && *x < bbox[d].1).collect::<Vec<f64>>();
+                    match grid::aligned_lines(&uvs, &q, d) {
+                        Some(aligned) => {
+                            let ends: Vec<f64> = std::iter::once(bbox[d].0).chain(aligned).chain(std::iter::once(bbox[d].1)).collect();
+                            inner(uv::refine(s, d, &ends, bbox[1 - d], rules, h, MAX_LINES))
+                        }
+                        None => inner(div.clone()),
+                    }
                 };
                 let (lu, lv) = (lines(0, &us), lines(1, &vs));
                 let strip = match (lu.is_empty(), lv.is_empty()) {
@@ -254,7 +261,10 @@ fn plan_face(
             _ => None,
         };
         let structured = match structured {
-            None if ranges.len() == 1 => coons::coons(&uvs, &fixed, speed, grid::MAX_FACE_GRID),
+            None if ranges.len() == 1 => {
+                let fine = |a: [f64; 2], b: [f64; 2]| uv::fine_between(s, rules, h, a, b);
+                coons::coons(&uvs, &fixed, speed, grid::MAX_FACE_GRID, &fine)
+            }
             other => other,
         };
         match structured {
