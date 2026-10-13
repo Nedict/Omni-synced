@@ -23,9 +23,16 @@ pub(crate) fn sample_edge(edge: &mt::Edge, rules: &Rules, h: f64) -> Vec<Vec3> {
     let back = from_p3(edge.absolute_back().point());
     let curve = edge.curve();
     if matches!(curve, mt::Curve::Line(_)) {
-        // Evenly, as few segments as keep each at most `h`.
+        // Evenly, as few segments as keep each at most `h`. The ends are the vertices' own
+        // points: `front + (back − front) · 1` is not `back` to the last bit, and the face that
+        // runs the edge backwards starts its loop with that node, where the face running it
+        // forwards takes the next edge's first node (the vertex) — a crack.
         let n = if h > 0.0 { (front.dist(back) / h).ceil().clamp(1.0, (MAX_EDGE_NODES - 1) as f64) as usize } else { 1 };
-        return (0..=n).map(|i| front + (back - front) * (i as f64 / n as f64)).collect();
+        let mut pts: Vec<Vec3> = (0..=n).map(|i| front + (back - front) * (i as f64 / n as f64)).collect();
+        if let Some(p) = pts.last_mut() {
+            *p = back;
+        }
+        return pts;
     }
     let (t0, t1) = curve.range_tuple();
     if !(t0.is_finite() && t1.is_finite() && t1 > t0) {
@@ -153,6 +160,9 @@ mod tests {
                 // 5 mm in sides of at most 1.2: five equal sides.
                 assert_eq!(pts.len(), 6);
             }
+            // The ends are the vertices' own points, to the last bit.
+            assert_eq!(pts.first().copied(), Some(from_p3(e.absolute_front().point())));
+            assert_eq!(pts.last().copied(), Some(from_p3(e.absolute_back().point())));
         }
         // A coarse tolerance alone would leave a few long chords; a 30° facet angle keeps every
         // side within 30° of arc: at least 12 around each of the two circles.
