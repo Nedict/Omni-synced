@@ -537,7 +537,7 @@ fn fillet_radius_fit_reduces_and_shows_the_applied_radius() {
     assert_eq!(p["fit"], json!("reduce"));
     let job = crate::preview::compute(&app.session, &[(id.clone(), p.clone())], crate::preview::Colors::from_tokens(&crate::theme::Tokens::dark()))
         .unwrap();
-    assert_eq!(job.applied, Some(3.0));
+    assert_eq!(job.applied, Some((3.0, 3.0)));
     // Applied and edited again, the fillet keeps its fit.
     app.session.execute(&id, &p).unwrap();
     let fillet = app.session.doc.features.last().unwrap().id;
@@ -546,7 +546,7 @@ fn fillet_radius_fit_reduces_and_shows_the_applied_radius() {
     // Its edit preview shows the radius it uses too.
     let cmds = apply_commands(&app, &e).unwrap();
     let job = crate::preview::compute(&app.session, &cmds, crate::preview::Colors::from_tokens(&crate::theme::Tokens::dark())).unwrap();
-    assert_eq!(job.applied, Some(3.0));
+    assert_eq!(job.applied, Some((3.0, 3.0)));
 }
 
 /// Apply a dialog's commands to the session; the new feature's id.

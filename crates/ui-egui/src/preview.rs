@@ -41,8 +41,9 @@ pub struct Built {
     pub error: Option<String>,
     /// Extent of what the preview shows (the view's depth range must cover it).
     pub bounds: Aabb3,
-    /// The radius a fillet used when it reduced one too large for its edges (`fit: reduce`).
-    pub applied: Option<f64>,
+    /// The smallest and largest radius a fillet used when it reduced one too large for its edges
+    /// (`fit: reduce`).
+    pub applied: Option<(f64, f64)>,
 }
 
 type Job = Result<Built, String>;
@@ -68,8 +69,8 @@ pub struct PreviewState {
     /// Time the last preview took (ms), for `ui.inspect`.
     pub ms: f64,
     started: f64,
-    /// The radius the previewed fillet used when it reduced the one asked for.
-    pub applied: Option<f64>,
+    /// The smallest and largest radius the previewed fillet used when it reduced the one asked for.
+    pub applied: Option<(f64, f64)>,
 }
 
 impl PreviewState {
@@ -231,7 +232,7 @@ pub fn compute(s: &Session, cmds: &[(String, Value)], colors: Colors) -> Job {
             b.bounds = state_bounds(&p.after);
             // The radius a previewed fillet used when it reduced the one asked for (a new
             // fillet or an edited one: the feature the replies name).
-            b.applied = p.replies.iter().filter_map(|r| r.get("feature").and_then(Value::as_u64)).find_map(|id| p.after.fitted_radius(id));
+            b.applied = p.replies.iter().filter_map(|r| r.get("feature").and_then(Value::as_u64)).find_map(|id| p.after.fitted_range(id));
             Ok(b)
         }
     }

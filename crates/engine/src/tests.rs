@@ -2849,6 +2849,33 @@ fn fillet_fit_reduce_uses_the_largest_radius_that_fits() {
 }
 
 #[test]
+fn fillet_fit_reduce_keeps_the_radius_where_it_fits() {
+    // A 2 mm fin on a block: its top edge can't take 4, a corner of the block far from it can.
+    // Only the fin's edge is reduced; the reply gives each edge's radius.
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 20}));
+    run(&mut s, "solid.box", json!({"length": 2, "width": 30, "height": 10, "corner": [19, 0, 20], "operation": "join"}));
+    assert_eq!(s.model.state().bodies.len(), 1);
+    let edges = json!([[21, 15, 30], [40, 0, 10]]);
+    let out = run(&mut s, "solid.fillet", json!({"edges": edges, "radius": 4, "fit": "reduce"}));
+    let fin = out["radius_applied"].as_f64().unwrap();
+    assert!(fin < 4.0, "{out}");
+    let each: Vec<(Vec<f64>, f64)> = out["radii_applied"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| (x["edge"].as_array().unwrap().iter().filter_map(Value::as_f64).collect(), x["radius"].as_f64().unwrap()))
+        .collect();
+    assert_eq!(each, [(vec![21.0, 15.0, 30.0], fin), (vec![40.0, 0.0, 10.0], 4.0)], "{out}");
+    let removed = (1.0 - PI / 4.0) * (fin * fin * 30.0 + 16.0 * 20.0);
+    let want = 40.0 * 30.0 * 20.0 + 2.0 * 30.0 * 10.0 - removed;
+    assert!(rel(volume(&mut s), want) < 2e-4, "{} vs {want}", volume(&mut s));
+    let id = out["feature"].as_u64().unwrap();
+    let warning = s.model.result(id).and_then(|r| r.warning.clone()).unwrap_or_default();
+    assert!(warning.contains("on 1 of 2 edges"), "{warning}");
+}
+
+#[test]
 fn a_pattern_of_a_reduced_fillet_rounds_each_copy_alike() {
     // #293: a 6 mm wide post on a plate, its four vertical edges at 3.5 reduced to 3, patterned
     // three times: every copy is a full round.
