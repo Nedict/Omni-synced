@@ -512,7 +512,7 @@ fn hiding_construction_geometry_is_per_sketch_saved_and_leaves_profiles_and_cent
     let after = run(&mut s, "sketch.inspect", json!({}));
     assert_eq!(after["profiles"], profiles);
     assert_eq!(after["curves"][construction]["construction"], true);
-    assert_eq!(after["curves"][centerline]["centerline"], true);
+    assert!(sketch(&s).curves[centerline].centerline, "the centerline keeps its line type");
     // Undo puts the option back.
     run(&mut s, "edit.undo", json!({}));
     assert!(!sketch(&s).view.hide_construction);

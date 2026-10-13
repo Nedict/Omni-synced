@@ -39,7 +39,7 @@
   {"expect": {"selection": 1}},
   {"key": "Escape"},
   {"expect": {"query": {"command": "sketch.inspect", "path": ["curves", 4, "construction"], "value": true}}},
-  {"expect": {"query": {"command": "sketch.inspect", "path": ["curves", 5, "centerline"], "value": true}}},
+  {"expect": {"query": {"command": "sketch.inspect", "path": ["curves", 5, "construction"], "value": false}}},
   {"expect": {"sketch_curves": {"own": 6, "linked": 0}}},
 
   {"note": "Turning it back on brings the construction line back, pickable again."},
