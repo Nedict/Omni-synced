@@ -34,7 +34,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("view.delete", "Delete Named View", view_delete).params("view: name"),
     CommandSpec::new("view.list", "List Named Views", view_list).noundo().doc_only(),
     CommandSpec::new("view.apply", "Restore Named View", view_apply).icon("camera").noundo().params(
-        "view?: front|back|top|bottom|left|right|iso|home (frames the model) | a named view's name;          or camera?: {target: [x,y,z], yaw, pitch, distance, fov?} (radians, mm) → camera. The viewport (and the MCP screenshot)          moves there. View state: not saved, not an undo step",
+        "view?: front|back|top|bottom|left|right|iso|home (frames the model) | a named view's name; or camera?: {target: [x,y,z], yaw, pitch, distance, fov?} (radians, mm) → camera. The viewport (and the MCP screenshot) moves there. View state: not saved, not an undo step",
     ),
     CommandSpec::new("browser.order", "Order Browser Items", order).params("folder, component?, order: [keys] (the folder's items in display order)"),
     CommandSpec::new("browser.visibility", "Show/Hide", visibility).icon("eye").noundo().params(
