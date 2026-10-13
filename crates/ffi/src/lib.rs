@@ -236,9 +236,7 @@ pub unsafe extern "C" fn sldcraft_measure(handle: *mut SessionHandle, out: *mut 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sldcraft_total_volume_mm3(handle: *mut SessionHandle) -> f64 {
     let v = catch_unwind(AssertUnwindSafe(|| -> Option<f64> {
-        let Some(handle) = (unsafe { session(handle) }) else {
-            return None;
-        };
+        let handle = unsafe { session(handle) }?;
         handle.session.execute("inspect.measure", &json!({})).ok().and_then(|m| m["total"]["volume_mm3"].as_f64())
     }));
     v.ok().flatten().unwrap_or(f64::NAN)
@@ -275,7 +273,13 @@ pub unsafe extern "C" fn sldcraft_body_count(handle: *mut SessionHandle, out: *m
 /// # Safety
 /// `out` must point to `cap` writable `ScEntityRef`s; `written` a valid, writable `usize`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sldcraft_body_faces(handle: *mut SessionHandle, body: ScStr, out: *mut ScEntityRef, cap: usize, written: *mut usize) -> ScStatus {
+pub unsafe extern "C" fn sldcraft_body_faces(
+    handle: *mut SessionHandle,
+    body: ScStr,
+    out: *mut ScEntityRef,
+    cap: usize,
+    written: *mut usize,
+) -> ScStatus {
     unsafe { entity_list(handle, "model.faces", "faces", ScEntityKind::Face, body, out, cap, written) }
 }
 
@@ -284,7 +288,13 @@ pub unsafe extern "C" fn sldcraft_body_faces(handle: *mut SessionHandle, body: S
 /// # Safety
 /// As [`sldcraft_body_faces`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sldcraft_body_edges(handle: *mut SessionHandle, body: ScStr, out: *mut ScEntityRef, cap: usize, written: *mut usize) -> ScStatus {
+pub unsafe extern "C" fn sldcraft_body_edges(
+    handle: *mut SessionHandle,
+    body: ScStr,
+    out: *mut ScEntityRef,
+    cap: usize,
+    written: *mut usize,
+) -> ScStatus {
     unsafe { entity_list(handle, "model.edges", "edges", ScEntityKind::Edge, body, out, cap, written) }
 }
 
@@ -535,7 +545,10 @@ fn find_parameter(v: &Value, name: &str) -> Option<f64> {
 
 /// The name of the model's first body, used when a typed call passes an empty body name.
 fn first_body_name(session: &mut Session) -> Option<String> {
-    session.execute("inspect.measure", &json!({})).ok().and_then(|m| m["bodies"].as_array().and_then(|a| a.first()).and_then(|b| b["name"].as_str()).map(str::to_owned))
+    session
+        .execute("inspect.measure", &json!({}))
+        .ok()
+        .and_then(|m| m["bodies"].as_array().and_then(|a| a.first()).and_then(|b| b["name"].as_str()).map(str::to_owned))
 }
 
 fn straight_edge(v: &Value, id: u64) -> Option<(ScVec3, ScVec3)> {
@@ -559,11 +572,7 @@ fn straight_edge(v: &Value, id: u64) -> Option<(ScVec3, ScVec3)> {
 fn entity_ids(v: &Value, key: &str) -> Vec<u64> {
     v[key]
         .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|e| e["id"].as_str().and_then(parse_id).or_else(|| e["index"].as_u64()))
-                .collect()
-        })
+        .map(|a| a.iter().filter_map(|e| e["id"].as_str().and_then(parse_id).or_else(|| e["index"].as_u64())).collect())
         .unwrap_or_default()
 }
 
@@ -645,7 +654,8 @@ mod tests {
         exec(h, r#"{"command":"sketch.create","params":{"plane":"XY"}}"#);
         let mut written = 0usize;
         let mut edges = [ScEntityRef::none(); 4];
-        let st = unsafe { sldcraft_sketch_rectangle(h, ScVec3::new(0.0, 0.0, 0.0), ScVec3::new(40.0, 25.0, 0.0), edges.as_mut_ptr(), 4, &mut written) };
+        let st =
+            unsafe { sldcraft_sketch_rectangle(h, ScVec3::new(0.0, 0.0, 0.0), ScVec3::new(40.0, 25.0, 0.0), edges.as_mut_ptr(), 4, &mut written) };
         assert_eq!(st, ScStatus::Ok);
         assert_eq!(written, 4);
         exec(h, r#"{"command":"sketch.finish","params":{}}"#);
@@ -664,7 +674,19 @@ mod tests {
     fn hostile_input_is_rejected_not_panicked() {
         let h = sldcraft_session_new();
         // Non-finite numbers.
-        assert_eq!(unsafe { sldcraft_sketch_rectangle(h, ScVec3::new(f64::NAN, 0.0, 0.0), ScVec3::new(1.0, 1.0, 0.0), std::ptr::null_mut(), 0, std::ptr::null_mut()) }, ScStatus::NotFinite);
+        assert_eq!(
+            unsafe {
+                sldcraft_sketch_rectangle(
+                    h,
+                    ScVec3::new(f64::NAN, 0.0, 0.0),
+                    ScVec3::new(1.0, 1.0, 0.0),
+                    std::ptr::null_mut(),
+                    0,
+                    std::ptr::null_mut(),
+                )
+            },
+            ScStatus::NotFinite
+        );
         assert_eq!(unsafe { sldcraft_extrude(h, f64::INFINITY, false, std::ptr::null_mut()) }, ScStatus::NotFinite);
         // Null handles.
         assert_eq!(unsafe { sldcraft_measure(std::ptr::null_mut(), std::ptr::null_mut()) }, ScStatus::NullHandle);

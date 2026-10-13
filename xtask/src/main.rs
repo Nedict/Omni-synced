@@ -24,6 +24,8 @@ commands:
                   replay the reference tests (tests/oracle/*/recipe.json), compare with each
                   case's expected.json and write docs/oracle.md (--cli: a solidcraft-cli
                   already built, instead of cargo run --release)
+  csharp          build the solidcraft-ffi cdylib and the C# bridge, then run the
+                  C#-drives-Rust conformance harness (needs the .NET SDK; skipped when absent)
   book [--no-build]
                   generate docs/book's command reference and screenshots, then mdbook build
                   into target/book
@@ -46,6 +48,7 @@ fn main() -> ExitCode {
         Some("assets") => assets::run(&root()),
         Some("features") => features::run(&root()),
         Some("oracle") => cmd_oracle(rest.iter().position(|a| *a == "--cli").and_then(|i| rest.get(i + 1)).copied()),
+        Some("csharp") => cmd_csharp(),
         Some("book") => book::run(&root(), !rest.contains(&"--no-build")),
         Some("licences") => licences::run(&root(), rest.contains(&"--check")),
         Some("test") => {
@@ -141,6 +144,52 @@ const NO_ORACLE: [(&str, &str); 5] = [
         "library values, Thickness-based values, rule draft as the boss default (`plastic_rules_library_edit_and_assign`)",
     ),
 ];
+
+/// Build the C ABI cdylib and the C# bridge, then run the C#-drives-Rust conformance harness.
+///
+/// The .NET SDK is optional tooling for crate/CI builds: when it is missing the step is skipped
+/// with a notice rather than failing, so a Rust-only checkout still passes `cargo xtask ci`.
+fn cmd_csharp() -> Result<(), String> {
+    // 1. The Rust side (always available).
+    let mut build = cargo();
+    build.args(["build", "-p", "solidcraft-ffi"]);
+    run(build, "cargo build -p solidcraft-ffi")?;
+
+    // Locate the cdylib just built.
+    let target = std::env::var("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|_| root().join("target"));
+    // Canonicalise so the path handed to the C# host is absolute (dlopen resolves relative
+    // paths against the host's own directory, not the shell's).
+    let target = std::fs::canonicalize(&target).unwrap_or(target);
+    let so = if cfg!(target_os = "macos") {
+        "libsolidcraft_ffi.dylib"
+    } else if cfg!(target_os = "windows") {
+        "solidcraft_ffi.dll"
+    } else {
+        "libsolidcraft_ffi.so"
+    };
+    let lib = target.join("debug").join(so);
+    if !lib.is_file() {
+        return Err(format!("csharp: {} was not produced by the build", lib.display()));
+    }
+
+    // 2. The C# side, if the SDK is present.
+    let dotnet = std::env::var("DOTNET").unwrap_or_else(|_| "dotnet".into());
+    if Command::new(&dotnet).arg("--version").stdout(std::process::Stdio::null()).status().map(|s| !s.success()).unwrap_or(true) {
+        eprintln!("csharp: .NET SDK not found ({dotnet}); skipping the C# conformance harness");
+        return Ok(());
+    }
+    let conformance = root().join("csharp/SolidCraft.Conformance");
+    let env = [("SOLIDCRAFT_FFI_LIB", lib.as_os_str().to_owned())];
+    let mut b = Command::new(&dotnet);
+    b.current_dir(&conformance).args(["build", "-v", "q"]);
+    run(b, "dotnet build (SolidCraft.Conformance)")?;
+    let mut r = Command::new(&dotnet);
+    r.current_dir(&conformance).args(["run", "--no-build"]);
+    for (k, v) in env {
+        r.env(k, v);
+    }
+    run(r, "dotnet run (C# drives Rust conformance)")
+}
 
 /// Replay every reference case in tests/oracle, compare with its expected.json and write
 /// docs/oracle.md. Fails when a case fails, unless its expected.json names the issue that
@@ -293,6 +342,7 @@ fn cmd_ci() -> Result<(), String> {
     assets::run(&root())?;
     licences::run(&root(), true)?;
     cmd_layers()?;
+    cmd_csharp()?;
     let mut c = cargo();
     c.args(["clippy", "--workspace", "--all-targets", "--profile", "ci", "--", "-D", "warnings"]);
     run(c, "cargo clippy -D warnings")?;
