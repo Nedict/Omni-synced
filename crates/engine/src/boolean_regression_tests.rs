@@ -93,7 +93,6 @@ fn struts_ending_on_a_bore_wall_join_without_a_panic() {
 /// yet the cut was refused (#544). It removes π · 1² · 10 mm³ (within 5 %: the measure tessellates
 /// the small bore) and adds the bore's wall and floor to the bar's six faces.
 #[test]
-#[ignore = "fails until #544 is fixed"]
 fn blind_hole_into_a_long_d_profile_bar_stops_short_of_the_round_front() {
     let script: Value = serde_json::from_str(include_str!("../../../examples/regressions/blind_hole_in_long_d_profile.json")).unwrap();
     let steps = script.get("commands").and_then(Value::as_array).unwrap();
