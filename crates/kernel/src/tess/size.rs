@@ -67,6 +67,8 @@ pub(crate) fn face_size(s: &EvalSurface, dom: &Domain, rules: &Rules) -> (f64, [
         return (rules.max_len, [du.len(), dv.len()]);
     }
     let (Some(ru), Some(rv)) = (dom.range[0], dom.range[1]) else { return (rules.max_len, [1.0, 1.0]) };
+    // A flat spline (sheet-metal walls, chamfers): no curvature to look for, only the speeds.
+    let samples = if planar(s) { 3 } else { SAMPLES };
     let normal = |u: f64, v: f64| -> Option<(Vec3, Vec3, [f64; 2])> {
         let (p, su, sv) = s.derivs(u, v)?;
         Some((p, su.cross(sv).normalized()?, [su.len(), sv.len()]))
@@ -74,14 +76,17 @@ pub(crate) fn face_size(s: &EvalSurface, dom: &Domain, rules: &Rules) -> (f64, [
     let step = [(ru.1 - ru.0) * 1e-3, (rv.1 - rv.0) * 1e-3];
     let mut k_max: f64 = 0.0;
     let (mut speed, mut count) = ([0.0; 2], 0usize);
-    for i in 0..SAMPLES {
-        for j in 0..SAMPLES {
+    for i in 0..samples {
+        for j in 0..samples {
             // Cell centres, clear of the box edges (poles, seams).
-            let u = ru.0 + (ru.1 - ru.0) * (i as f64 + 0.5) / SAMPLES as f64;
-            let v = rv.0 + (rv.1 - rv.0) * (j as f64 + 0.5) / SAMPLES as f64;
+            let u = ru.0 + (ru.1 - ru.0) * (i as f64 + 0.5) / samples as f64;
+            let v = rv.0 + (rv.1 - rv.0) * (j as f64 + 0.5) / samples as f64;
             let Some((p, n, sp)) = normal(u, v) else { continue };
             speed = [speed[0] + sp[0], speed[1] + sp[1]];
             count += 1;
+            if samples < SAMPLES {
+                continue;
+            }
             // How fast the normal turns per mm, along u and along v (twist included).
             for (du, dv) in [(step[0], 0.0), (0.0, step[1])] {
                 let Some((q, m, _)) = normal(u + du, v + dv) else { continue };
@@ -94,6 +99,24 @@ pub(crate) fn face_size(s: &EvalSurface, dom: &Domain, rules: &Rules) -> (f64, [
     }
     let speed = if count > 0 { [speed[0] / count as f64, speed[1] / count as f64] } else { [1.0, 1.0] };
     (rules.for_curvature(k_max), speed.map(|x| if x.is_finite() && x > 0.0 { x } else { 1.0 }))
+}
+
+/// A spline surface whose control points lie in one plane, with positive weights: the
+/// surface lies in that plane (it is inside the control points' convex hull).
+fn planar(s: &EvalSurface) -> bool {
+    let EvalSurface::Nurbs { ctrl, .. } = s else { return false };
+    if ctrl.iter().any(|h| !(h[3] > 0.0)) {
+        return false;
+    }
+    let pts: Vec<Vec3> = ctrl.iter().map(|h| Vec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3])).collect();
+    let Some(&a) = pts.first() else { return false };
+    let size = pts.iter().map(|p| p.dist(a)).fold(0.0, f64::max);
+    // The two points that span the widest triangle with the first give the plane.
+    let Some(&b) = pts.iter().max_by(|p, q| p.dist(a).total_cmp(&q.dist(a))) else { return false };
+    let Some(n) = pts.iter().map(|p| (b - a).cross(*p - a)).max_by(|x, y| x.len().total_cmp(&y.len())).and_then(Vec3::normalized) else {
+        return false;
+    };
+    size > 0.0 && pts.iter().all(|p| (*p - a).dot(n).abs() <= 1e-9 * size)
 }
 
 #[cfg(test)]
@@ -118,6 +141,24 @@ mod tests {
         // Coarser: the turn limit governs.
         let (h, _) = face_size(&s, &super::super::uv::domain(&s), &Rules::new(0.5, 100.0));
         assert!((h - ASPECT * 3.0 * MAX_TURN).abs() < 0.01, "{h}");
+    }
+
+    #[test]
+    fn a_flat_spline_is_planar_and_a_bent_one_is_not() {
+        let patch = |z: f64| EvalSurface::Nurbs {
+            degree: [1, 1],
+            knots: [vec![0.0, 0.0, 1.0, 1.0], vec![0.0, 0.0, 1.0, 1.0]],
+            count: [2, 2],
+            ctrl: vec![[0.0, 0.0, 0.0, 1.0], [4.0, 0.0, 0.0, 1.0], [0.0, 3.0, 0.0, 1.0], [4.0, 3.0, z, 1.0]],
+        };
+        assert!(planar(&patch(0.0)));
+        assert!(!planar(&patch(0.5)));
+        let rules = Rules::new(0.01, 100.0);
+        let (h, speed) = face_size(&patch(0.0), &super::super::uv::domain(&patch(0.0)), &rules);
+        assert_eq!(h, rules.max_len);
+        assert!((speed[0] - 4.0).abs() < 1e-9 && (speed[1] - 3.0).abs() < 1e-9, "{speed:?}");
+        // The twisted patch (a hyperbolic paraboloid) has curvature: a smaller side.
+        assert!(face_size(&patch(0.5), &super::super::uv::domain(&patch(0.5)), &rules).0 < rules.max_len);
     }
 
     #[test]
