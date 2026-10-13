@@ -212,6 +212,28 @@ mod tests {
     }
 
     #[test]
+    fn paste_at_a_marker_inside_a_timeline_folder_joins_the_folder() {
+        let mut s = Session::default();
+        for (name, body, x) in [("First", "FirstBody", 0), ("Second", "SecondBody", 20), ("Source", "SourceBody", 40)] {
+            run(
+                &mut s,
+                "solid.box",
+                json!({"length": 10, "width": 10, "height": 10, "corner": [x, 0, 0], "operation": "new_body", "name": name, "body_name": body}),
+            );
+        }
+        let group = run(&mut s, "timeline.group", json!({"name": "Pair", "features": ["First", "Second"]}))["group"].as_u64().unwrap();
+        run(&mut s, "timeline.copy", json!({"features": ["Source"]}));
+        run(&mut s, "timeline.roll_to", json!({"position": 1}));
+
+        let pasted = run(&mut s, "timeline.paste", json!({}))["pasted"][0]["id"].as_u64().unwrap();
+        let folder = s.doc.timeline_groups.iter().find(|folder| folder.id == group).unwrap();
+        let first = s.doc.find_feature("First").unwrap().id;
+        let second = s.doc.find_feature("Second").unwrap().id;
+        assert_eq!(folder.features, vec![first, pasted, second]);
+        assert!(solidcraft_doc::Document::from_json(&s.doc.to_json()).is_ok(), "pasting inside a folder must leave a reopenable design");
+    }
+
+    #[test]
     fn pasted_fillet_rounds_the_copied_body_it_names() {
         let mut s = Session::default();
         run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));

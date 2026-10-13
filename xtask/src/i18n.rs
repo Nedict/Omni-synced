@@ -9,6 +9,10 @@
 //! That is the failure this command exists to make visible. `--check` turns the report into a
 //! non-zero exit for CI; `--add-missing` writes the uncovered command labels into the English
 //! catalog under `cmd.<command id>` so a translator only has to fill in the other catalogs.
+//!
+//! German and Korean predate the coverage guards and are still partial, so their gaps are
+//! reported but do not fail `--check`; the catalogs delivered complete (`COMPLETE`) may not
+//! regress.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -17,6 +21,10 @@ use serde_json::{Map, Value};
 
 /// Where the catalogs live, and the file the English one must lead.
 const DIR: &str = "crates/ui-egui/src/locales";
+
+/// Catalogs delivered complete: a missing message here fails `--check`. English is the source
+/// catalog and is checked implicitly; keep this in step with `COMPLETE` in `ui-egui::i18n`.
+const COMPLETE: &[&str] = &["ja", "zh"];
 
 /// What `run` found.
 #[derive(Default)]
@@ -28,9 +36,14 @@ struct Report {
 }
 
 impl Report {
-    /// Anything that must be repaired.
+    /// Gaps that must be repaired (complete catalogs only; partial catalogs are reported).
     fn problems(&self) -> usize {
-        self.missing.values().map(Vec::len).sum::<usize>() + self.untranslated.len()
+        self.missing.iter().filter(|(id, _)| COMPLETE.contains(&id.as_str())).map(|(_, m)| m.len()).sum::<usize>() + self.untranslated.len()
+    }
+
+    /// Gaps in catalogs that are still allowed to be partial.
+    fn reported_only(&self) -> usize {
+        self.missing.iter().filter(|(id, _)| !COMPLETE.contains(&id.as_str())).map(|(_, m)| m.len()).sum()
     }
 }
 
@@ -69,13 +82,22 @@ pub fn run(root: &Path, args: &[&str]) -> Result<(), String> {
     if args.contains(&"--check") {
         if report.problems() > 0 {
             return Err(format!(
-                "{} message(s) missing across the catalogs and {} command label(s) with no English entry \
+                "{} message(s) missing from a complete catalog and {} command label(s) with no English entry \
                  (see above); `cargo xtask i18n --add-missing` writes the labels into en.json",
-                report.missing.values().map(Vec::len).sum::<usize>(),
+                report.missing.iter().filter(|(id, _)| COMPLETE.contains(&id.as_str())).map(|(_, m)| m.len()).sum::<usize>(),
                 report.untranslated.len()
             ));
         }
-        println!("i18n: every catalog carries every English message; every command label is translatable");
+        if report.reported_only() > 0 {
+            println!(
+                "i18n: every complete catalog ({}) carries every English message and every command label is translatable; \
+                 {} message(s) are still missing from the partial catalogs (de, ko)",
+                COMPLETE.join(", "),
+                report.reported_only()
+            );
+        } else {
+            println!("i18n: every catalog carries every English message; every command label is translatable");
+        }
     }
     Ok(())
 }

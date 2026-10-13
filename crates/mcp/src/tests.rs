@@ -622,6 +622,117 @@ fn compact_execute_uses_one_backend_call_and_keeps_removed_bodies() {
     assert_eq!(v, json!({"feature": 7, "name": "Combine1", "created_bodies": [], "changed_bodies": ["Base"], "removed_bodies": ["Tool"]}));
 }
 
+/// The worked example in `skills/solidcraft-modeling/reference.md` is what agents copy, so it has
+/// to keep building with the volume the file documents, and follow a parameter change.
+#[test]
+fn skill_reference_example_builds_as_documented() {
+    let doc = include_str!("../../../skills/solidcraft-modeling/reference.md");
+    let start = doc.find("{\"commands\":[").expect("the reference has a worked example");
+    let end = start + doc[start..].find("```").expect("the example's code block ends");
+    let example: Value = serde_json::from_str(&doc[start..end]).expect("the example is JSON");
+    let mut s = server();
+    tool(&mut s, "batch", example);
+    // Plate with four r5 corners, minus four counterbored holes (Ø3.4 through, Ø6.5 × 3.3).
+    let expected = |l: f64| {
+        let (w, t) = (50.0, 6.0);
+        let plate = l * w * t - 4.0 * 25.0 * (1.0 - PI / 4.0) * t;
+        let hole = PI * 1.7 * 1.7 * (t - 3.3) + PI * 3.25 * 3.25 * 3.3;
+        plate - 4.0 * hole
+    };
+    assert!((expected(80.0) - 23335.2).abs() < 0.05, "the reference states {}", expected(80.0));
+    // Volume can't see where the holes are: each counterbore floor (z = T - 3.3) is centred on its
+    // hole, at (±(L/2 - inset), ±(W/2 - inset)).
+    let holes_at = |s: &mut Server, x: f64| {
+        let topo = tool(s, "body_topology", json!({"body": "Body1"}));
+        let mut floors: Vec<(i64, i64)> = topo["faces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|f| f["centroid"].as_array())
+            .filter(|c| (c[2].as_f64().unwrap() - 2.7).abs() < 1e-6)
+            .map(|c| ((c[0].as_f64().unwrap() * 1000.0).round() as i64, (c[1].as_f64().unwrap() * 1000.0).round() as i64))
+            .collect();
+        floors.sort_unstable();
+        let x = (x * 1000.0).round() as i64;
+        assert_eq!(floors, vec![(-x, -17000), (-x, 17000), (x, -17000), (x, 17000)], "{topo}");
+    };
+    let m = tool(&mut s, "measure", json!({}));
+    assert!(rel(m["total"]["volume_mm3"].as_f64().unwrap(), expected(80.0)) < 1e-5, "{m}");
+    assert_eq!(m["bodies"][0]["faces"], json!(22), "{m}");
+    holes_at(&mut s, 32.0);
+    let r = tool(&mut s, "set_parameter", json!({"name": "L", "value": "120 mm"}));
+    assert_eq!(r["errors"].as_array().map(Vec::len), Some(0), "{r}");
+    assert!(rel(volume(&mut s), expected(120.0)) < 1e-5);
+    holes_at(&mut s, 52.0);
+}
+
+/// The skill reference's sketch-plane table: where sketch (10, 20) lands and which way +distance goes.
+#[test]
+fn sketch_plane_axes_match_the_skill_reference() {
+    let mut s = server();
+    for plane in ["XY", "XZ", "YZ"] {
+        tool(
+            &mut s,
+            "batch",
+            json!({"commands": [
+                {"command": "sketch.create", "params": {"plane": plane}},
+                {"command": "sketch.circle.center", "params": {"center": [10, 20], "radius": 1}},
+                {"command": "sketch.finish"},
+                {"command": "solid.extrude", "params": {"distance": 3, "operation": "new"}},
+            ]}),
+        );
+    }
+    let m = tool(&mut s, "measure", json!({}));
+    let centres: Vec<Vec<f64>> = m["bodies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["center_of_mass"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect())
+        .collect();
+    let expected = [[10.0, 20.0, 1.5], [10.0, 1.5, -20.0], [1.5, 10.0, 20.0]];
+    assert_eq!(centres.len(), 3, "{m}");
+    for (got, want) in centres.iter().zip(expected) {
+        assert!(got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-6), "{got:?} != {want:?}");
+    }
+}
+
+/// Every tool and command the agent skills call exists, so a rename or removal can't leave the
+/// skills sending agents to names the server no longer has.
+#[test]
+fn skills_name_only_real_tools_and_commands() {
+    let docs = [
+        include_str!("../../../skills/solidcraft-modeling/SKILL.md"),
+        include_str!("../../../skills/solidcraft-modeling/reference.md"),
+        include_str!("../../../skills/solidcraft-editing/SKILL.md"),
+    ];
+    let mut s = server();
+    let tools: Vec<String> = tool_definitions().iter().filter_map(|t| t["name"].as_str()).map(str::to_owned).collect();
+    let commands: Vec<String> =
+        tool(&mut s, "list_commands", json!({})).as_array().unwrap().iter().filter_map(|c| c["id"].as_str()).map(str::to_owned).collect();
+    let mut checked = 0;
+    for doc in docs {
+        // A call in backticks is `name {}`, `name {"json":…}` or `name {placeholder}`: a tool when the
+        // name is snake_case, a command when it is a dotted id. Field lists such as
+        // `sides {bottom,right,top,left}` and `created: {…}` aren't calls. JSON examples name
+        // commands as "command":"id".
+        let ident = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.');
+        let calls = doc.split('`').skip(1).step_by(2).filter_map(|span| {
+            let (head, args) = span.split_once(" {")?;
+            let name = head.rsplit(' ').next()?;
+            let args = args.strip_suffix('}')?;
+            let call_like = args.is_empty() || args.starts_with('"') || args.chars().all(|c| c.is_ascii_lowercase() || c == '_');
+            (ident(name) && call_like).then_some(name)
+        });
+        let in_json = doc.split("\"command\":\"").skip(1).filter_map(|rest| rest.split('"').next());
+        for name in calls.chain(in_json) {
+            let known = if name.contains('.') { commands.iter().any(|c| c == name) } else { tools.iter().any(|t| t == name) };
+            assert!(known, "a skill calls `{name}`, which is neither a tool nor a command");
+            checked += 1;
+        }
+    }
+    assert!(checked > 30, "only {checked} tool and command names found in the skills");
+}
+
 /// Every tool the server instructions name (a bare `snake_case` word in backticks) is a real tool.
 #[test]
 fn instructions_name_only_real_tools() {

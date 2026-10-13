@@ -1802,6 +1802,10 @@ pub struct Document {
     /// Browser groups (folders of bodies, sketches or construction planes).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub browser_groups: Vec<BrowserGroup>,
+    /// Named folders used to organise features in the timeline. They do not affect evaluation
+    /// order; feature ids remain the source of truth when features are renamed or reordered.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timeline_groups: Vec<TimelineGroup>,
     /// Browser item order per component folder (`"<component>/<folder>"` → item keys).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub browser_order: std::collections::BTreeMap<String, Vec<String>>,
@@ -1868,6 +1872,66 @@ pub struct BrowserGroup {
     pub items: Vec<String>,
 }
 
+/// A saved feature-history folder. Folders may nest, and a feature can belong to at most one folder.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TimelineGroup {
+    pub id: u64,
+    pub name: String,
+    /// The containing feature folder. `None` places the folder at the timeline root.
+    #[serde(default)]
+    pub parent: Option<u64>,
+    #[serde(default)]
+    pub features: Vec<u64>,
+}
+
+/// The first feature-history folder whose own and nested features do not form one
+/// uninterrupted run in the timeline.
+pub fn non_contiguous_timeline_group(features: &[Feature], groups: &[TimelineGroup]) -> Option<u64> {
+    let positions: std::collections::BTreeMap<u64, usize> = features.iter().enumerate().map(|(index, feature)| (feature.id, index)).collect();
+    let mut stats = std::collections::BTreeMap::new();
+    let mut children = std::collections::BTreeMap::new();
+    for group in groups {
+        let mut count = 0usize;
+        let mut first = usize::MAX;
+        let mut last = 0usize;
+        for index in group.features.iter().filter_map(|feature| positions.get(feature)) {
+            count = count.saturating_add(1);
+            first = first.min(*index);
+            last = last.max(*index);
+        }
+        stats.insert(group.id, (count, first, last));
+        children.entry(group.id).or_insert(0usize);
+        if let Some(parent) = group.parent {
+            let child_count = children.entry(parent).or_insert(0);
+            *child_count = child_count.saturating_add(1);
+        }
+    }
+    let parents: std::collections::BTreeMap<u64, Option<u64>> = groups.iter().map(|group| (group.id, group.parent)).collect();
+    let mut pending: Vec<u64> = groups.iter().filter(|group| children.get(&group.id) == Some(&0)).map(|group| group.id).collect();
+    while let Some(id) = pending.pop() {
+        let (count, first, last) = stats.get(&id).copied().unwrap_or_default();
+        if count > 0 && last.saturating_sub(first).saturating_add(1) != count {
+            return Some(id);
+        }
+        if let Some(parent) = parents.get(&id).copied().flatten() {
+            if let Some((parent_count, parent_first, parent_last)) = stats.get_mut(&parent) {
+                *parent_count = parent_count.saturating_add(count);
+                if count > 0 {
+                    *parent_first = (*parent_first).min(first);
+                    *parent_last = (*parent_last).max(last);
+                }
+            }
+            if let Some(remaining) = children.get_mut(&parent) {
+                *remaining = remaining.saturating_sub(1);
+                if *remaining == 0 {
+                    pending.push(parent);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn default_format() -> String {
     crate::format::format_string(crate::format::FORMAT)
 }
@@ -1908,6 +1972,7 @@ impl Document {
             canvases: Vec::new(),
             param_comments: Default::default(),
             browser_groups: Vec::new(),
+            timeline_groups: Vec::new(),
             browser_order: Default::default(),
             named_views: Vec::new(),
             visibility: Visibility::default(),
@@ -2092,6 +2157,40 @@ impl Document {
         }
     }
 
+    /// The deepest timeline folder spanning the insertion slot between `marker - 1` and
+    /// `marker`. A slot at a folder's outer boundary is not inside that folder.
+    fn timeline_group_at_insertion(&self, marker: usize) -> Option<u64> {
+        let before = self.features.get(marker.checked_sub(1)?)?.id;
+        let after = self.features.get(marker)?.id;
+        let direct = |feature| self.timeline_groups.iter().find(|group| group.features.contains(&feature)).map(|group| group.id);
+        let parents: std::collections::BTreeMap<u64, Option<u64>> = self.timeline_groups.iter().map(|group| (group.id, group.parent)).collect();
+
+        let mut before_ancestors = std::collections::BTreeSet::new();
+        let mut current = direct(before);
+        let mut steps = 0usize;
+        while let Some(id) = current {
+            if !before_ancestors.insert(id) || steps >= self.timeline_groups.len() {
+                return None;
+            }
+            current = parents.get(&id).copied().flatten();
+            steps = steps.saturating_add(1);
+        }
+
+        current = direct(after);
+        steps = 0;
+        while let Some(id) = current {
+            if before_ancestors.contains(&id) {
+                return Some(id);
+            }
+            if steps >= self.timeline_groups.len() {
+                return None;
+            }
+            current = parents.get(&id).copied().flatten();
+            steps = steps.saturating_add(1);
+        }
+        None
+    }
+
     /// Insert a feature at the marker (or the end) and return its id.
     pub fn add_feature(&mut self, kind: FeatureKind, name: Option<&str>) -> Result<u64> {
         if self.features.len() >= MAX_FEATURES {
@@ -2123,12 +2222,21 @@ impl Document {
             shell_piece_order: false,
             kind,
         };
+        let insertion_group = self.marker.and_then(|marker| self.timeline_group_at_insertion(marker));
         match self.marker {
             Some(m) if m < self.features.len() => {
                 self.features.insert(m, f);
                 self.marker = Some(m + 1);
             }
             _ => self.features.push(f),
+        }
+        if let Some(group_id) = insertion_group {
+            let positions: std::collections::BTreeMap<u64, usize> =
+                self.features.iter().enumerate().map(|(index, feature)| (feature.id, index)).collect();
+            if let Some(group) = self.timeline_groups.iter_mut().find(|group| group.id == group_id) {
+                group.features.push(id);
+                group.features.sort_by_key(|feature| positions.get(feature).copied().unwrap_or(usize::MAX));
+            }
         }
         self.name_feature_inputs(id);
         Ok(id)
@@ -2144,6 +2252,9 @@ impl Document {
             .rules
             .retain(|rule| !rule.references_features(&gone) && !rule.parameter_references().iter().any(|name| gone_params.contains(name)));
         self.features.retain(|f| !gone.contains(&f.id));
+        for group in &mut self.timeline_groups {
+            group.features.retain(|feature| !gone.contains(feature));
+        }
         // Configuration columns of deleted features go with them.
         let keep: Vec<bool> = self
             .configs

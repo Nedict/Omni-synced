@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 use crate::browser;
 use crate::context_menu::{self, Item, Target};
 use crate::{Services, SolveApp};
+use serde_json::json;
 use solidcraft_engine::Session;
 
 fn sample_app() -> SolveApp {
@@ -109,4 +110,20 @@ fn every_menu_label_is_in_the_english_catalog() {
         .collect();
     missing.sort_unstable();
     assert!(missing.is_empty(), "{} menu label(s) have no English catalog entry, so they stay English in every locale: {:?}", missing.len(), missing);
+}
+
+/// The control channel and scripts call `run()` outside a render language scope, so the
+/// "command done" echo must follow the saved preference rather than the thread-local scope
+/// (otherwise its template falls back to English: "撤销 done" instead of "撤销 完成").
+#[test]
+fn command_done_echo_follows_the_language_preference_without_a_render_scope() {
+    let mut app = SolveApp::new(Session::default(), Services::default());
+    app.preferences.language = "zh".into();
+    app.run("solid.box", json!({ "length": 5, "width": 5, "height": 5 })).expect("box");
+    let echo = app.session.log.last().expect("the echo is logged");
+    let zh = crate::i18n::Locale::for_language("zh");
+    let expected = zh.format("ui.command_done", &[("command", zh.label(crate::command_label("solid.box")))]);
+    assert_eq!(echo, &expected);
+    assert!(echo.contains("完成"), "{echo}");
+    assert!(!echo.ends_with("done"), "{echo}");
 }

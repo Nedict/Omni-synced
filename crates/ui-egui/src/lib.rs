@@ -4,7 +4,7 @@
 //! commands ([`SolveApp::run`]). Nothing here owns design data. The layout follows the familiar
 //! parametric-CAD desktop: application bar, a toolbar of workspace tabs and panels, the browser
 //! on the left, the 3D viewport with an axis view and navigation bar, the command dialog on the
-//! right of the viewport, the command palette and the timeline at the bottom.
+//! right of the viewport, the command palette and a bottom or left-sidebar feature timeline.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
@@ -119,6 +119,7 @@ pub mod sketch_tools;
 pub mod stand_up;
 pub mod theme;
 pub mod timeline;
+pub mod timeline_left;
 pub mod titlebar;
 pub mod toolbar;
 pub mod toolbar_custom;
@@ -492,10 +493,13 @@ impl SolveApp {
         }
         match &r {
             Ok(_) => {
-                // The command's own label is translated too, so the echo reads the same way the
-                // toolbar button it came from does.
-                let label = self.tr_label(command_label(id)).to_string();
-                self.session.echo(i18n::format("ui.command_done", &[("command", label.as_str())]));
+                // Programmatic callers (the control channel, scripts) run outside a render
+                // language scope, so resolve the echo from the saved preference instead of the
+                // thread-local scope. The command's own label is translated too, so the echo
+                // reads the same way the toolbar button it came from does.
+                let language = i18n::Locale::for_language(&self.preferences.language);
+                let label = language.label(command_label(id));
+                self.session.echo(language.format("ui.command_done", &[("command", label)]));
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
                     self.sketch_choices = sketch_families::Choices::default();
                     dim_view::cancel();
@@ -1082,12 +1086,19 @@ impl SolveApp {
             }
         }
         toolbar::toolbar(self, ui);
-        if self.ui.show_timeline {
+        let left_timeline = self.ui.show_timeline && self.preferences.timeline_left;
+        if self.ui.show_timeline && !left_timeline {
             timeline::timeline(self, ui);
         }
         palette::palette_bar(self, ui);
         if self.ui.show_browser {
-            browser::browser(self, ui);
+            if left_timeline {
+                browser::browser_below_timeline(self, ui);
+            } else {
+                browser::browser(self, ui);
+            }
+        } else if left_timeline {
+            timeline_left::left_panel(self, ui);
         }
         preview::update(self, ui.ctx());
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {

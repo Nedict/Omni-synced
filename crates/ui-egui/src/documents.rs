@@ -396,7 +396,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
         }
         ui.painter().text(mr.center(), egui::Align2::CENTER_CENTER, format!("»{}", n - shown), FontId::proportional(12.0), t.app_bar_text);
         let id = egui::Id::new("sc_doc_more");
-        if mresp.clone().on_hover_text("All open designs").clicked() {
+        if mresp.clone().on_hover_text(crate::i18n::tr_label("All open designs")).clicked() {
             ui.ctx().data_mut(|d| d.insert_temp(id, !d.get_temp::<bool>(id).unwrap_or(false)));
         }
         if ui.ctx().data(|d| d.get_temp::<bool>(id).unwrap_or(false)) {

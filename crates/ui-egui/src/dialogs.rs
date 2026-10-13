@@ -227,7 +227,7 @@ pub enum Kind {
     },
     /// Delete a feature that others depend on.
     ConfirmDelete {
-        feature: u64,
+        features: Vec<u64>,
         with: Vec<String>,
         fail: Vec<String>,
     },
@@ -617,7 +617,11 @@ impl Dialog {
     }
 
     pub fn confirm_delete(feature: u64, with: Vec<String>, fail: Vec<String>) -> Dialog {
-        Dialog::new(Kind::ConfirmDelete { feature, with, fail }, vec![])
+        Dialog::confirm_delete_many(vec![feature], with, fail)
+    }
+
+    pub fn confirm_delete_many(features: Vec<u64>, with: Vec<String>, fail: Vec<String>) -> Dialog {
+        Dialog::new(Kind::ConfirmDelete { features, with, fail }, vec![])
     }
 
     pub fn edit_param(s: &Session, name: &str) -> Dialog {
@@ -1253,7 +1257,7 @@ fn input_rows(d: &mut Dialog, ui: &mut egui::Ui) {
             if chip.on_hover_text(tooltip).clicked() {
                 activate = Some(i);
             }
-            if !inp.items.is_empty() && ui.small_button("×").on_hover_text("Clear the selection").clicked() {
+            if !inp.items.is_empty() && ui.small_button("×").on_hover_text(tr("Clear the selection")).clicked() {
                 clear = Some(i);
             }
         });
@@ -1359,7 +1363,7 @@ fn measure_rows(app: &SolveApp, ui: &mut egui::Ui, r: Option<&Value>) {
     let t = Tokens::get();
     let Some(r) = r else {
         ui.label("");
-        ui.label(RichText::new("pick one or two vertices, edges or faces").color(t.text_dim));
+        ui.label(RichText::new(tr("pick one or two vertices, edges or faces")).color(t.text_dim));
         ui.end_row();
         return;
     };
@@ -1384,7 +1388,7 @@ fn measure_rows(app: &SolveApp, ui: &mut egui::Ui, r: Option<&Value>) {
         ui.end_row();
     }
     if r.get("distance_mm").is_some() {
-        ui.label(RichText::new("Distance").strong());
+        ui.label(RichText::new(tr("Distance")).strong());
         ui.label(RichText::new(fmt_mm(app, &r["distance_mm"])).strong());
         ui.end_row();
         let d = &r["delta"];
@@ -1395,7 +1399,7 @@ fn measure_rows(app: &SolveApp, ui: &mut egui::Ui, r: Option<&Value>) {
         }
     }
     if let Some(a) = r["angle_deg"].as_f64() {
-        ui.label(RichText::new("Angle").strong());
+        ui.label(RichText::new(tr("Angle")).strong());
         ui.label(RichText::new(format!("{a:.3}°")).strong());
         ui.end_row();
     }
@@ -1551,10 +1555,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             && let Some(selection @ Sel::Face { .. }) = d.inputs.first().and_then(|i| i.items.first())
                         {
                             row_label(ui, "Attachment");
-                            ui.label("This face cannot provide a durable attachment. Choose another face or explicitly use a fixed plane.");
+                            ui.label(tr("This face cannot provide a durable attachment. Choose another face or explicitly use a fixed plane."));
                             ui.end_row();
                             row_label(ui, "");
-                            if ui.button("Use fixed plane").clicked()
+                            if ui.button(tr("Use fixed plane")).clicked()
                                 && let Some(mut plane) = crate::sketch_attachment_ui::face_plane(app, selection)
                             {
                                 plane["fixed"] = json!(true);
@@ -1602,7 +1606,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         if *direction < 2 {
                             row_label(ui, "Reverse");
                             let mut reverse = *direction == 1;
-                            if ui.checkbox(&mut reverse, "Reverse Direction").changed() {
+                            if ui.checkbox(&mut reverse, tr("Reverse Direction")).changed() {
                                 *direction = usize::from(reverse);
                             }
                             ui.end_row();
@@ -1787,9 +1791,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 row_label(ui, "Mid Radius");
                                 ui.horizontal(|ui| {
                                     ui.add(egui::DragValue::new(t).speed(0.01).range(0.01..=0.99).fixed_decimals(2))
-                                        .on_hover_text("Position along the edge, 0 at the start end, 1 at the other");
+                                        .on_hover_text(tr("Position along the edge, 0 at the start end, 1 at the other"));
                                     enter |= field(ui, r);
-                                    if ui.small_button("×").on_hover_text("Remove this point").clicked() {
+                                    if ui.small_button("×").on_hover_text(tr("Remove this point")).clicked() {
                                         remove = Some(k);
                                     }
                                 });
@@ -1799,7 +1803,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 mids.remove(k);
                             }
                             row_label(ui, "");
-                            if ui.button("Add Mid Radius").clicked() && mids.len() < 20 {
+                            if ui.button(tr("Add Mid Radius")).clicked() && mids.len() < 20 {
                                 let t = if mids.is_empty() { 0.5 } else { (mids.iter().map(|m| m.0).fold(0.0, f64::max) + 1.0) * 0.5 };
                                 mids.push((t.min(0.99), radius.clone()));
                             }
@@ -1883,7 +1887,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         enter |= field(ui, thickness);
                         ui.end_row();
                         row_label(ui, "Depth");
-                        let r = ui.add(egui::TextEdit::singleline(depth).hint_text("to the next face"));
+                        let r = ui.add(egui::TextEdit::singleline(depth).hint_text(tr("to the next face")));
                         crate::params_dialog::complete(ui, &r, depth);
                         enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         ui.end_row();
@@ -1924,7 +1928,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     Kind::BoundaryFill { operation, cells, .. } => {
                         row_label(ui, "Cells");
                         if cells.is_empty() {
-                            ui.label(RichText::new("Pick the tool bodies").color(Tokens::get().text_dim));
+                            ui.label(RichText::new(tr("Pick the tool bodies")).color(Tokens::get().text_dim));
                         }
                         ui.end_row();
                         for (i, (_, label, on)) in cells.iter_mut().enumerate() {
@@ -1984,7 +1988,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         }
                         ui.end_row();
                         row_label(ui, "Size");
-                        let r = ui.add(egui::TextEdit::singleline(designation).hint_text("fits the face, e.g. M8"));
+                        let r = ui.add(egui::TextEdit::singleline(designation).hint_text(tr("fits the face, e.g. M8")));
                         enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         ui.end_row();
                         if !full {
@@ -2113,7 +2117,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             row_label(ui, "Position");
                             ui.horizontal(|ui| {
                                 ui.label(format!("{:.2}, {:.2}, {:.2}", p.x, p.y, p.z));
-                                if ui.small_button("×").on_hover_text("Place at the origin instead").clicked() {
+                                if ui.small_button("×").on_hover_text(tr("Place at the origin instead")).clicked() {
                                     *at = None;
                                 }
                             });
@@ -2206,7 +2210,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             let (sr, sresp) = ui.allocate_exact_size(vec2(14.0, 14.0), egui::Sense::hover());
             if app.preview.busy {
                 egui::Spinner::new().size(14.0).paint_at(ui, sr);
-                sresp.on_hover_text("Updating the preview");
+                sresp.on_hover_text(tr("Updating the preview"));
             }
             let raw_label = if matches!(d.kind, Kind::ConfirmDelete { .. }) { "Delete" } else { "OK" };
             let label = tr(raw_label);
@@ -2495,8 +2499,8 @@ fn hole_defaults() -> Kind {
 
 fn params_table(app: &mut SolveApp, ui: &mut egui::Ui, new_name: &mut String, new_expr: &mut String) {
     let t = Tokens::get();
-    ui.label(RichText::new("Name").strong());
-    ui.label(RichText::new("Expression  ·  value").strong());
+    ui.label(RichText::new(tr("Name")).strong());
+    ui.label(RichText::new(tr("Expression  ·  value")).strong());
     ui.end_row();
     let (vals, errs) = app.session.doc.param_values();
     let params = app.session.doc.params.clone();
@@ -2537,10 +2541,10 @@ fn params_table(app: &mut SolveApp, ui: &mut egui::Ui, new_name: &mut String, ne
         });
         ui.end_row();
     }
-    ui.add(egui::TextEdit::singleline(new_name).hint_text("new name").desired_width(110.0));
+    ui.add(egui::TextEdit::singleline(new_name).hint_text(tr("new name")).desired_width(110.0));
     ui.horizontal(|ui| {
-        ui.add(egui::TextEdit::singleline(new_expr).hint_text("expression, e.g. 25 mm").desired_width(160.0));
-        if ui.button("Add").clicked()
+        ui.add(egui::TextEdit::singleline(new_expr).hint_text(tr("expression, e.g. 25 mm")).desired_width(160.0));
+        if ui.button(tr("Add")).clicked()
             && !new_name.is_empty()
             && app.run("parameters.change", json!({"name": new_name, "expression": new_expr})).is_ok()
         {
@@ -3212,7 +3216,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         }
         Kind::EditParam { name, expr } => ("parameters.change", json!({"name": name, "expression": expr})),
         Kind::Rename { feature, name } => ("timeline.rename", json!({"feature": feature, "name": name})),
-        Kind::ConfirmDelete { feature, .. } => ("timeline.delete", json!({ "features": [feature.to_string()] })),
+        Kind::ConfirmDelete { features, .. } => ("timeline.delete", json!({ "features": features })),
         Kind::Sketch | Kind::Params { .. } | Kind::Measure { .. } => return Ok(Vec::new()),
         Kind::Assembly(k) => return crate::dialogs_assembly::commands(app, k, &d.inputs),
         Kind::Sheet(k) => return crate::dialogs_sheet::commands(app, k, &d.inputs, &d.extra),

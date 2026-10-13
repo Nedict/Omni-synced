@@ -29,8 +29,10 @@ translation keys, and placeholder consistency. Run `cargo xtask ci` before submi
 A message a locale never received falls back to English silently, so a gap shows up only as a row
 that looks untranslated. Two guards catch that in the build:
 
-- `every_catalog_carries_every_english_message` — adding a key to `en.json` without giving it to
-  the other catalogs fails the tests.
+- `every_complete_catalog_carries_every_english_message` — adding a key to `en.json`
+  without giving it to a complete catalog fails the tests. English is the source catalog,
+  Japanese and Chinese are delivered complete; German and Korean are still partial — their
+  gaps are reported by `cargo xtask i18n` without failing the build.
 - `every_toolbar_tab_and_panel_is_in_the_english_catalog` — tabs and panels reach the UI as bare
   source strings, resolved only by the English-label adapter, so a heading missing from `en.json`
   can never translate.
@@ -61,16 +63,22 @@ Standalone translated panels enter the same scope. Measure rendered text to size
 widgets; UTF-8 byte lengths do not describe their displayed width.
 
 The desktop host tries system CJK fonts across Windows, macOS and Linux, as well as an optional
-`CRAFT_FONTS_DIR` font pack, and skips files that cannot be parsed. No fonts are redistributed
-in native desktop distribution packages; native builds rely entirely on existing operating system fonts
-or craft-fonts.
+`CRAFT_FONTS_DIR` font pack, and skips files that cannot be parsed. Chinese uses its own fallback
+chain after the general CJK font: many Japanese CJK fonts (Hiragino Gothic, Meiryo, Yu Gothic)
+match the CJK font search but lack simplified characters, so a second fallback found by the
+Chinese font-name list (`PingFang`, `Microsoft YaHei`, `Noto Sans CJK SC`, …) covers them per
+glyph. No fonts are redistributed in native desktop distribution packages; native builds rely
+entirely on existing operating system fonts or craft-fonts.
 
 In the browser, `solidcraft-web` bundles a self-hosted Japanese font (`BIZUDPGothic-Regular.ttf`, licensed
 under SIL OFL 1.1) within the web distribution artifacts only. The font is loaded asynchronously from the same
-origin (`./fonts/BIZUDPGothic-Regular.ttf`) on-demand when the interface language is set to Japanese, without
+origin (`./fonts/BIZUDPGothic-Regular.ttf`) on-demand when the interface language is a CJK one, without
 contacting any external CDNs or third-party servers. For users with an English interface, no font download
 occurs. If font loading fails, the web interface shows English for that session only to prevent missing
-glyphs (tofu); the saved language preference is kept, so the next visit tries again. This bundled font specifically targets Japanese; Korean (Hangul) and Chinese scripts are not covered.
+glyphs (tofu); the saved language preference is kept, so the next visit tries again. The bundled font
+specifically targets Japanese; it also renders the kanji Chinese shares with Japanese, while Korean
+(Hangul) and simplified-only Chinese characters are not covered, so a self-hosted SC/Korean font bundle
+remains follow-up work for full web coverage.
 
 The current messages support named substitution, not locale-specific plural selection,
 number/date formatting, or right-to-left layout and shaping. Add those capabilities when

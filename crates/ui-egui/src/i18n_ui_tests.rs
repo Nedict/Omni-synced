@@ -61,7 +61,7 @@ fn language_preference_cancel_restores_previous_locale() {
 fn window_chrome_renders_in_the_active_language() {
     for (lang, browser, filter, faces) in [
         ("zh", "浏览器", "选择筛选", "面"),
-        ("ja", "ブラウザー", "選択フィルター", "面"),
+        ("ja", "ブラウザ", "選択フィルター", "面"),
         ("de", "BROWSER", "Auswahlfilter", "Flächen"),
         ("ko", "브라우저", "선택 필터", "면"),
     ] {
