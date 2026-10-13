@@ -26,7 +26,16 @@ pub(crate) fn sample_edge(edge: &mt::Edge, tol: f64) -> Vec<Vec3> {
     if !(t0.is_finite() && t1.is_finite() && t1 > t0) {
         return vec![front, back];
     }
-    let at = |t: f64| Some(from_p3(curve.subs(t))).filter(|p| p.is_finite());
+    // Our evaluator where the curve has a form it knows (no allocation per point); truck's
+    // for intersection curves.
+    let fast = super::surface::eval_curve(&curve);
+    let at = |t: f64| {
+        match &fast {
+            Some(c) => c.eval(t).map(|(p, _)| p),
+            None => Some(from_p3(curve.subs(t))),
+        }
+        .filter(|p| p.is_finite())
+    };
     // A closed curve's chord between its ends is empty: start from a few segments.
     let initial: u32 = 4;
     let t_at = |i: u32| t0 + (t1 - t0) * f64::from(i) / f64::from(initial);

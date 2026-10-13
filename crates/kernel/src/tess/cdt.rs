@@ -69,7 +69,6 @@ pub(crate) fn triangulate(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>
             cdt.add_constraint(a, b);
         }
     }
-    let polys: Vec<&[[f64; 2]]> = loops.iter().filter_map(|r| boundary.get(r.clone())).collect();
     for s in fill.seeds {
         if s.iter().all(|x| x.is_finite()) {
             let _ = cdt.insert(to(s));
@@ -77,7 +76,7 @@ pub(crate) fn triangulate(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>
     }
     if let Some((sag, budget)) = &fill.refine {
         let constraints = cdt.num_constraints();
-        let added = refine_sag(&mut cdt, &polys, sag, *budget, &from);
+        let added = refine_sag(&mut cdt, sag, *budget, &from);
         let params = RefinementParameters::<f64>::new()
             .keep_constraint_edges()
             .exclude_outer_faces(true)
@@ -91,13 +90,12 @@ pub(crate) fn triangulate(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>
     }
     let mut uv: Vec<[f64; 2]> = boundary.to_vec();
     let mut tris = Vec::new();
+    let region = region(&cdt);
     for face in cdt.inner_faces() {
-        let vs = face.vertices();
-        let ps = vs.map(|v| from(v.position()));
-        let c = [(ps[0][0] + ps[1][0] + ps[2][0]) / 3.0, (ps[0][1] + ps[1][1] + ps[2][1]) / 3.0];
-        if !inside(c, &polys) {
+        if !region.get(face.index()).copied().unwrap_or(false) {
             continue;
         }
+        let vs = face.vertices();
         let mut t = [0u32; 3];
         for (slot, v) in t.iter_mut().zip(vs) {
             *slot = match index.get(&v.fix()) {
@@ -119,7 +117,7 @@ pub(crate) fn triangulate(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>
 /// Insert the parameters of the surface point under every triangle centre and every
 /// non-constraint edge middle that lies more than the tolerance from the triangle, until none
 /// does or `budget` points were added. Returns the points added.
-fn refine_sag(cdt: &mut Cdt, polys: &[&[[f64; 2]]], sag: &Sag, budget: usize, from: &dyn Fn(Point2<f64>) -> [f64; 2]) -> usize {
+fn refine_sag(cdt: &mut Cdt, sag: &Sag, budget: usize, from: &dyn Fn(Point2<f64>) -> [f64; 2]) -> usize {
     let mut added = 0;
     let mut cache: HashMap<FixedVertexHandle, Option<Vec3>> = HashMap::new();
     for _ in 0..SAG_ROUNDS {
@@ -130,13 +128,14 @@ fn refine_sag(cdt: &mut Cdt, polys: &[&[[f64; 2]]], sag: &Sag, budget: usize, fr
                 (sag.eval)(q[0], q[1])
             })
         };
+        let region = region(cdt);
         for face in cdt.inner_faces() {
+            if !region.get(face.index()).copied().unwrap_or(false) {
+                continue;
+            }
             let vs = face.vertices();
             let ps = vs.map(|v| v.position());
             let c = Point2::new((ps[0].x + ps[1].x + ps[2].x) / 3.0, (ps[0].y + ps[1].y + ps[2].y) / 3.0);
-            if !inside(from(c), polys) {
-                continue;
-            }
             let (Some(a), Some(b), Some(d)) = (at(vs[0].fix(), ps[0]), at(vs[1].fix(), ps[1]), at(vs[2].fix(), ps[2])) else { continue };
             let off = |q: Point2<f64>, chord: Vec3| {
                 let uv = from(q);
@@ -174,22 +173,59 @@ fn refine_sag(cdt: &mut Cdt, polys: &[&[[f64; 2]]], sag: &Sag, budget: usize, fr
     added
 }
 
-/// Inside the region bounded by the loops (even–odd over all of them, so holes are out).
-pub(crate) fn inside(p: [f64; 2], polys: &[&[[f64; 2]]]) -> bool {
-    let mut odd = false;
-    for poly in polys {
-        let n = poly.len();
-        for k in 0..n {
-            let (Some(a), Some(b)) = (poly.get(k), poly.get((k + 1) % n)) else { continue };
-            if (a[1] > p[1]) != (b[1] > p[1]) {
-                let x = a[0] + (p[1] - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
-                if p[0] < x {
-                    odd = !odd;
-                }
+/// Per face (by index): inside the region the constraint loops bound. A flood fill from the
+/// outer face that flips parity each time it crosses a constraint edge (holes are out), linear
+/// in the number of triangles.
+fn region(cdt: &Cdt) -> Vec<bool> {
+    use spade::handles::{FixedFaceHandle, InnerTag};
+    let mut parity: Vec<Option<bool>> = vec![None; cdt.num_all_faces()];
+    let mut todo: Vec<(FixedFaceHandle<InnerTag>, bool)> = Vec::new();
+    for e in cdt.convex_hull() {
+        // Hull edges have the outer face on one side; the other side is an inner face.
+        for side in [e, e.rev()] {
+            if let Some(inner) = side.face().as_inner() {
+                todo.push((inner.fix(), e.is_constraint_edge()));
             }
         }
     }
-    odd
+    while let Some((h, odd)) = todo.pop() {
+        match parity.get_mut(h.index()) {
+            Some(slot @ None) => *slot = Some(odd),
+            _ => continue,
+        }
+        for e in cdt.face(h).adjacent_edges() {
+            if let Some(next) = e.rev().face().as_inner() {
+                todo.push((next.fix(), odd ^ e.is_constraint_edge()));
+            }
+        }
+    }
+    parity.into_iter().map(|p| p.unwrap_or(false)).collect()
+}
+
+/// The grid points `us` × `vs` inside the region bounded by the loops (even–odd, so holes are
+/// out): per grid line, the loops' crossings sorted once, then each point by binary search.
+pub(crate) fn inside_grid(us: &[f64], vs: &[f64], polys: &[&[[f64; 2]]]) -> Vec<[f64; 2]> {
+    let mut out = Vec::new();
+    let mut xs: Vec<f64> = Vec::new();
+    for &v in vs {
+        xs.clear();
+        for poly in polys {
+            let n = poly.len();
+            for k in 0..n {
+                let (Some(a), Some(b)) = (poly.get(k), poly.get((k + 1) % n)) else { continue };
+                if (a[1] > v) != (b[1] > v) {
+                    xs.push(a[0] + (v - a[1]) * (b[0] - a[0]) / (b[1] - a[1]));
+                }
+            }
+        }
+        xs.sort_by(f64::total_cmp);
+        for &u in us {
+            if xs.partition_point(|x| *x < u) % 2 == 1 {
+                out.push([u, v]);
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]

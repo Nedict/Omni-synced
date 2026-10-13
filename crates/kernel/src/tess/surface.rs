@@ -70,7 +70,7 @@ fn nurbs((pu, pv): (usize, usize), kv: &(mt::KnotVec, mt::KnotVec), rows: Vec<Ve
 }
 
 /// A profile curve in the evaluator's form (a line extends for ever, as truck's does).
-fn eval_curve(c: &mt::Curve) -> Option<EvalCurve> {
+pub(crate) fn eval_curve(c: &mt::Curve) -> Option<EvalCurve> {
     let (degree, kv, ctrl): (usize, Vec<f64>, Vec<[f64; 4]>) = match c {
         mt::Curve::Line(l) => (1, vec![0.0, 0.0, 1.0, 1.0], vec![[l.0.x, l.0.y, l.0.z, 1.0], [l.1.x, l.1.y, l.1.z, 1.0]]),
         mt::Curve::BSplineCurve(b) => (b.degree(), knots(b.knot_vec())?, b.control_points().iter().map(|p| [p.x, p.y, p.z, 1.0]).collect()),

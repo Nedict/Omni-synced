@@ -54,6 +54,7 @@ mod native;
 mod numbered;
 mod offset;
 mod ops;
+mod par;
 mod plane_fit;
 mod polybool;
 mod polyhedron;

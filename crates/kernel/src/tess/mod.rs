@@ -53,9 +53,11 @@ fn unsupported(what: impl std::fmt::Display) -> KernelError {
 pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
     let faces: Vec<&mt::Face> = solid.face_iter().collect();
     let (edges, edge_faces) = edge_order(faces.iter().copied());
+    // Every edge once, in parallel; faces then read their nodes.
+    let sampled = crate::par::map("edge nodes", &edges, 64, |e| Ok(edges::sample_edge(e, tol)));
     let mut nodes: HashMap<_, Vec<Vec3>> = HashMap::with_capacity(edges.len());
-    for e in &edges {
-        nodes.entry(e.id()).or_insert_with(|| edges::sample_edge(e, tol));
+    for (e, pts) in edges.iter().zip(sampled) {
+        nodes.insert(e.id(), pts?);
     }
     let oriented = |e: &mt::Edge| -> Option<Vec<Vec3>> {
         let mut pts = nodes.get(&e.id())?.clone();
@@ -64,9 +66,9 @@ pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
         }
         Some(pts)
     };
-    let mut plan = TessPlan::default();
-    let mut stats = PlanStats::default();
-    for (fi, face) in faces.iter().enumerate() {
+    let indexed: Vec<(usize, &mt::Face)> = faces.iter().copied().enumerate().collect();
+    let planned = crate::par::map("face tessellation", &indexed, 8, |(fi, face)| {
+        let fi = *fi;
         let surface = face.surface();
         let eval = surface::eval_surface(&surface).ok_or_else(|| unsupported(format!("face {fi}: surface not evaluable")))?;
         // Boundary nodes, loop by loop (each edge's last node is the next edge's first).
@@ -82,15 +84,25 @@ pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
                 loops3.push(pts);
             }
         }
+        let mut stats = PlanStats::default();
         let fp = plan_face(fi, &eval, &loops3, tol, &mut stats)?;
         let fp = FacePlan {
-            surface: Some(u32::try_from(plan.surfaces.len()).map_err(|_| unsupported("too many faces"))?),
             flip: !face.orientation(),
             triangles: if face.orientation() { fp.triangles } else { fp.triangles.into_iter().map(|[a, b, c]| [a, c, b]).collect() },
             ..fp
         };
+        Ok((fp, eval, stats))
+    });
+    let mut plan = TessPlan::default();
+    let mut stats = PlanStats::default();
+    for r in planned {
+        let (fp, eval, s) = r?;
+        let surface = u32::try_from(plan.surfaces.len()).map_err(|_| unsupported("too many faces"))?;
         plan.surfaces.push(eval);
-        plan.faces.push(fp);
+        plan.faces.push(FacePlan { surface: Some(surface), ..fp });
+        stats.planar += s.planar;
+        stats.structured += s.structured;
+        stats.delaunay += s.delaunay;
     }
     plan.edges = edges.iter().filter_map(oriented).collect();
     plan.edge_faces = edge_faces.into_iter().map(|fs| fs.into_iter().map(|f| u32::try_from(f).unwrap_or(u32::MAX)).collect()).collect();
@@ -205,12 +217,8 @@ fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, stats: 
             None => {
                 stats.delaunay += 1;
                 let polys: Vec<&[[f64; 2]]> = ranges.iter().filter_map(|r| uvs.get(r.clone())).collect();
-                let seeds: Vec<[f64; 2]> = vs
-                    .iter()
-                    .filter(|v| **v > bbox[1].0 && **v < bbox[1].1)
-                    .flat_map(|&v| us.iter().filter(|u| **u > bbox[0].0 && **u < bbox[0].1).map(move |&u| [u, v]))
-                    .filter(|p| cdt::inside(*p, &polys))
-                    .collect();
+                let inner = |lines: &Vec<f64>, (a, b): (f64, f64)| lines.iter().copied().filter(|x| *x > a && *x < b).collect::<Vec<f64>>();
+                let seeds = cdt::inside_grid(&inner(&us, bbox[0]), &inner(&vs, bbox[1]), &polys);
                 let eval = |u: f64, v: f64| s.derivs(u, v).map(|(p, _, _)| p);
                 // One unit per tolerance cell in each direction: a straight direction (one
                 // cell) keeps long triangles, Ruppert shapes them in that metric.
