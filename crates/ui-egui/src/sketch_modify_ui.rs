@@ -61,6 +61,9 @@ pub enum Mod {
     /// `sketch.pattern.rectangular`: how many instances along the picked direction and how far
     /// apart, then the same along the perpendicular direction the command derives from it.
     PatternRect { count: String, spacing: String, count2: String, spacing2: String },
+    /// `sketch.pattern.circular`: how many instances around the picked centre, and the total
+    /// angle they span.
+    PatternCirc { count: String, angle: String },
     /// `sketch.fillet` and the three `sketch.chamfer.*` commands. `chamfer` chooses between a
     /// fillet and a chamfer and never changes while the window is open; `ctype` chooses which
     /// of the three chamfer commands runs (0 equal distance, 1 two distances, 2 distance and
@@ -78,6 +81,7 @@ impl Mod {
             Mod::Mirror => "MIRROR",
             Mod::Move { .. } => "MOVE/COPY",
             Mod::PatternRect { .. } => "RECTANGULAR PATTERN",
+            Mod::PatternCirc { .. } => "CIRCULAR PATTERN",
             Mod::Corner { chamfer: false, .. } => "FILLET",
             Mod::Corner { .. } => "CHAMFER",
         }
@@ -91,6 +95,7 @@ impl Mod {
             Mod::Move { x, .. } => Some(("X Distance", ValueKind::Length, x)),
             Mod::Mirror => None,
             Mod::PatternRect { spacing, .. } => Some(("Spacing", ValueKind::Length, spacing)),
+            Mod::PatternCirc { angle, .. } => Some(("Angle", ValueKind::Angle, angle)),
             Mod::Corner { chamfer: false, size, .. } => Some(("Radius", ValueKind::Length, size)),
             Mod::Corner { size, .. } => Some(("Distance", ValueKind::Length, size)),
         }
@@ -107,6 +112,8 @@ fn inputs(k: &Mod) -> Vec<SelInput> {
         // The direction is optional: `sketch.pattern.rectangular` documents sketch x as its
         // default, the way the engine reads it.
         Mod::PatternRect { .. } => vec![SelInput::new("Entities", CURVES | POINTS, true), SelInput::new("Direction", AXES, false)],
+        // The centre is required: `sketch.pattern.circular` has no default for it.
+        Mod::PatternCirc { .. } => vec![SelInput::new("Entities", CURVES | POINTS, true), SelInput::new("Center", POINTS, false)],
         // A fillet rounds any number of corners to one radius (`points`). Each chamfer command
         // cuts one corner, so its input holds one.
         Mod::Corner { chamfer: false, .. } => vec![SelInput::new("Corners", POINTS, true)],
@@ -130,6 +137,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
         "sketch.mirror" => Mod::Mirror,
         "sketch.move" => Mod::Move { x: "0 mm".into(), y: "0 mm".into(), angle: "0 deg".into(), copy: false },
         "sketch.pattern.rectangular" => Mod::PatternRect { count: "3".into(), spacing: "20 mm".into(), count2: "1".into(), spacing2: "20 mm".into() },
+        "sketch.pattern.circular" => Mod::PatternCirc { count: "6".into(), angle: "360 deg".into() },
         "sketch.fillet" => corner(false, 0),
         "sketch.chamfer.equal_distance" => corner(true, 0),
         "sketch.chamfer.two_distance" => corner(true, 1),
@@ -178,6 +186,13 @@ pub fn rows(ui: &mut egui::Ui, k: &mut Mod) -> bool {
         }
         Mod::PatternRect { count, spacing, count2, spacing2 } => {
             for (label, value) in [("Quantity", count), ("Spacing", spacing), ("Quantity 2", count2), ("Spacing 2", spacing2)] {
+                row_label(ui, label);
+                enter |= field(ui, value);
+                ui.end_row();
+            }
+        }
+        Mod::PatternCirc { count, angle } => {
+            for (label, value) in [("Quantity", count), ("Total angle", angle)] {
                 row_label(ui, label);
                 enter |= field(ui, value);
                 ui.end_row();
@@ -239,6 +254,9 @@ pub fn arrow(app: &SolveApp, d: &Dialog) -> Option<Vec3> {
             };
             Some(plane.dir_to_world(dir))
         }
+        // A total angle is a rotation. The viewport draws a straight drag arrow and a rotation
+        // handle only for Revolve, through machinery tied to its own extents, so the circular
+        // pattern takes the value box alone until that manipulator is made general.
         _ => None,
     }
 }
@@ -413,6 +431,23 @@ fn corner_ref(app: &SolveApp, point: &str, flip: bool) -> Result<Value, String> 
     Ok(json!({"a": id(b)?, "b": id(a)?}))
 }
 
+/// A typed total angle as the command wants it, in degrees. A bare number means degrees, as a
+/// typed angle does everywhere else. `sketch.pattern.circular` takes the full turn as 360 and
+/// refuses anything outside that range.
+fn total_angle(app: &SolveApp, label: &str, text: &str) -> Result<f64, String> {
+    let v = app.session.doc.eval(text.trim(), ValueKind::Angle).map_err(|e| format!("{label}: {e}"))?.to_degrees();
+    if !v.is_finite() || v.abs() <= 1e-9 || v.abs() > 360.0 {
+        return Err(format!("{label} must be more than 0 and at most 360 degrees"));
+    }
+    Ok(v)
+}
+
+/// The bare sketch point id of a single point pick, as a command's `center` or `base` reads it.
+/// `point_id` above takes one `Sel`; this one takes the first pick of an input.
+fn picked_point(inputs: &[SelInput], i: usize) -> Option<String> {
+    items(inputs, i).first().and_then(point_id).map(str::to_string)
+}
+
 /// The command a sketch modify dialog makes. `sketch.scale` takes a plain evaluated number for
 /// its factor, `sketch.offset` one for its distance and `sketch.move` its distances and angle,
 /// not expression strings: none has a model parameter to carry one, unlike `sketch.fillet`'s radius.
@@ -498,6 +533,19 @@ pub fn commands(app: &SolveApp, k: &Mod, inputs: &[SelInput], extra: &Map<String
                 p["dir"] = json!([d.x, d.y]);
             }
             ("sketch.pattern.rectangular", p)
+        }
+        Mod::PatternCirc { count, angle } => {
+            let entities = entity_ids(inputs, 0);
+            if entities.is_empty() {
+                return Err("Select the sketch curves or points to pattern first".into());
+            }
+            let center = picked_point(inputs, 1).ok_or("Select the centre the pattern turns around first")?;
+            let n = whole(app, "Quantity", count)?;
+            if n < 2 {
+                return Err("Quantity must be at least 2".into());
+            }
+            let a = total_angle(app, "Total angle", angle)?;
+            ("sketch.pattern.circular", json!({"entities": entities, "center": center, "count": n, "angle": a}))
         }
         Mod::Corner { chamfer: false, size, .. } => {
             let corners = corner_ids(app, inputs, 0);

@@ -599,6 +599,7 @@
   "ui.to_object": "To Object",
   "ui.top": "Top",
   "ui.torus": "Torus",
+  "ui.total_angle": "Total angle",
   "ui.trackpad_pan_tip": "Trackpad gestures pan (off: they zoom like the wheel); mouse wheel zooms, thumb wheel pans sideways, pinch always zooms",
   "ui.trim": "Trim",
   "ui.two_finger_scroll_pans": "Two-finger scroll pans",
