@@ -154,8 +154,17 @@ fn cancel_stops_the_open_and_keeps_the_current_design() {
     let mut w = Win::new();
     w.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10})).unwrap();
     let current = w.app.session.doc.clone();
+    // The worker waits before the third feature until Cancel: the load is certainly still
+    // running when Cancel is clicked, on a fast machine or a slow one.
+    w.app.file_load.hold_at = Some(2);
     w.app.open_path_async(&path);
-    // The overlay is laid out on its first frame and shown from the next.
+    let began = std::time::Instant::now();
+    while w.app.file_load.features().is_none_or(|(done, _)| done < 2) {
+        assert!(began.elapsed() < std::time::Duration::from_secs(120), "the load reached the held feature");
+        w.frame(vec![]);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    // The overlay (and any saved preview the worker sent) is laid out and shown.
     for _ in 0..3 {
         w.frame(vec![]);
     }

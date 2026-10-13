@@ -95,12 +95,19 @@ impl Running {
 pub struct FileLoad {
     queued: VecDeque<Request>,
     running: Option<Running>,
+    /// Tests: the next load waits before this feature until cancelled.
+    #[cfg(test)]
+    pub hold_at: Option<usize>,
 }
 
 impl FileLoad {
     /// A file operation is under way: the design waits for it.
     pub fn busy(&self) -> bool {
         self.running.as_ref().is_some_and(|r| !r.cancelled()) || !self.queued.is_empty()
+    }
+    /// The running load's progress: (features rebuilt, timeline length).
+    pub fn features(&self) -> Option<(usize, usize)> {
+        self.running.as_ref().map(|r| r.progress.features())
     }
     /// Nothing running or queued (a cancelled job may still be finishing in [`Self::busy`]'s eyes).
     pub fn idle(&self) -> bool {
@@ -210,6 +217,10 @@ fn start(app: &mut SolveApp) {
     let phase = Arc::new(AtomicU8::new(0));
     let worker_phase = phase.clone();
     let progress = Arc::new(Progress::default());
+    #[cfg(test)]
+    if let Some(i) = app.file_load.hold_at.take() {
+        progress.hold_at(i);
+    }
     let worker_progress = progress.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     let (preview_tx, preview_rx) = std::sync::mpsc::channel();
@@ -491,22 +502,32 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         ui.painter().rect_filled(cover, 0.0, egui::Color32::from_black_alpha(70));
     });
     let width = 340.0f32.min(cover.width() - 16.0).max(120.0);
-    egui::Area::new(card_id).order(egui::Order::Middle).pivot(egui::Align2::CENTER_CENTER).fixed_pos(centre).show(ctx, |child| {
+    // Anchored at its top with Cancel in the heading row: the card grows downwards (the saved
+    // preview, the progress bar) and Cancel never moves under the pointer.
+    let top = egui::pos2(centre.x, (centre.y - 120.0).max(cover.top() + 8.0));
+    egui::Area::new(card_id).order(egui::Order::Middle).pivot(egui::Align2::CENTER_TOP).fixed_pos(top).show(ctx, |child| {
         egui::Frame::popup(child.style()).fill(t.panel).show(child, |ui| {
             ui.set_width(width - 16.0);
-            ui.label(
-                egui::RichText::new(if cancelled {
-                    "Waiting for file operation"
-                } else {
-                    match r.request.kind {
-                        Kind::Insert => "Inserting geometry",
-                        Kind::Open => "Opening design",
-                        Kind::Recover { .. } => "Recovering design",
-                    }
-                })
-                .strong()
-                .size(14.0),
-            );
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(if cancelled {
+                        "Waiting for file operation"
+                    } else {
+                        match r.request.kind {
+                            Kind::Insert => "Inserting geometry",
+                            Kind::Open => "Opening design",
+                            Kind::Recover { .. } => "Recovering design",
+                        }
+                    })
+                    .strong()
+                    .size(14.0),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let b = ui.button("Cancel");
+                    crate::scenario::publish_handle("file_loading:cancel", b.rect.center());
+                    cancel |= b.clicked();
+                });
+            });
             ui.label(egui::RichText::new(format!("{name}…")).weak());
             if let Some(preview) = r.preview.as_ref().filter(|_| !cancelled) {
                 let w = ui.available_width().min(320.0);
@@ -527,15 +548,15 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     }
                 });
             });
-            if phase == 0 && total > 0 && !cancelled {
-                ui.add(egui::ProgressBar::new(done as f32 / total as f32).desired_height(6.0));
-            }
-            ui.add_space(4.0);
-            ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let b = ui.button("Cancel");
-                crate::scenario::publish_handle("file_loading:cancel", b.rect.center());
-                cancel |= b.clicked();
-            });
+            // Always there, so the card keeps its height as the phases change.
+            let fraction = if cancelled || total == 0 {
+                0.0
+            } else if phase == 0 {
+                done as f32 / total as f32
+            } else {
+                1.0
+            };
+            ui.add(egui::ProgressBar::new(fraction).desired_height(6.0));
         });
     });
     if cancel && !cancelled {

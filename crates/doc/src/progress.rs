@@ -10,11 +10,19 @@ use std::sync::{
 };
 
 /// Shared between the worker evaluating a design and the window showing its progress.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Progress {
     cancelled: AtomicBool,
     done: AtomicUsize,
     total: AtomicUsize,
+    /// The feature the evaluation waits at until cancelled ([`Progress::hold_at`]).
+    hold: AtomicUsize,
+}
+
+impl Default for Progress {
+    fn default() -> Self {
+        Progress { cancelled: AtomicBool::new(false), done: AtomicUsize::new(0), total: AtomicUsize::new(0), hold: AtomicUsize::new(usize::MAX) }
+    }
 }
 
 impl Progress {
@@ -24,6 +32,11 @@ impl Progress {
     }
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Relaxed)
+    }
+    /// Make the watched evaluation wait before feature `index` until it is cancelled: tests
+    /// use it to act while a load is certainly still running, whatever the machine's speed.
+    pub fn hold_at(&self, index: usize) {
+        self.hold.store(index, Ordering::Relaxed);
     }
     /// Features evaluated so far and the timeline's length (0 before evaluation starts).
     pub fn features(&self) -> (usize, usize) {
@@ -85,6 +98,12 @@ impl Evaluation {
             let Some(cur) = c.as_ref() else { return false };
             if self.outer {
                 cur.progress.done.store(index, Ordering::Relaxed);
+                while index == cur.progress.hold.load(Ordering::Relaxed) && !cur.progress.is_cancelled() {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    #[cfg(target_arch = "wasm32")]
+                    std::hint::spin_loop();
+                }
             }
             cur.progress.is_cancelled()
         })
