@@ -215,3 +215,31 @@ fn draw(m: &Mesh, x0: f64) -> String {
     }
     out
 }
+
+/// Blind drilled holes (a box cut by a revolved drill with a 118° point, as the hole feature
+/// builds it): the point's apex is a pole of the cone faces, two copies of one boundary node.
+/// The plan is closed and has no triangle on both copies (no zero-area triangles), also where
+/// such a triangle carried a boundary side of the cone.
+#[test]
+fn a_drill_point_apex_leaves_no_zero_area_triangles() {
+    use solidcraft_geom::{Loop2, Plane, Region2, Vec2};
+    // (box size, hole position, radius, depth)
+    let cases =
+        [(Vec3::new(40.0, 30.0, 15.0), Vec3::new(20.0, 15.0, 15.0), 3.4, 8.0), (Vec3::new(60.0, 40.0, 15.0), Vec3::new(50.0, 20.0, 15.0), 3.0, 10.0)];
+    for (size, at, r, depth) in cases {
+        let bx = ok(crate::box_solid(Vec3::ZERO, size));
+        let tip = r / (118f64 / 2.0).to_radians().tan();
+        let Some(rp) = Plane::new(at, Vec3::X, Vec3::Z) else { panic!("plane") };
+        let pts = [Vec2::new(0.0, 0.6), Vec2::new(r, 0.6), Vec2::new(r, -depth), Vec2::new(0.0, -depth - tip)];
+        let region = Region2 { outer: Loop2::polygon(&pts), holes: vec![] };
+        let Some(drill) = ok(crate::revolve(&rp, &[region], Vec2::ZERO, Vec2::Y, std::f64::consts::TAU)).pop() else { panic!("drill") };
+        let body = cut(&bx, &drill);
+        let name = format!("hole r {r} depth {depth}");
+        let (m, _) = plan_body(&body, 0.02);
+        assert_watertight(&m, &name);
+        for t in &m.triangles {
+            let [a, b, c] = t.map(|i| m.positions[i as usize]);
+            assert!((b - a).cross(c - a).len() > 1e-12, "{name}: zero-area triangle {a:?} {b:?} {c:?}");
+        }
+    }
+}

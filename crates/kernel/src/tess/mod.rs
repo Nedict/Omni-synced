@@ -228,7 +228,12 @@ fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, stats: 
             }
         }
     };
-    if !closed_boundary(&ranges, &triangles) {
+    // At a pole the boundary has two copies of one node: a triangle on both copies has two
+    // corners at one point and no area (its other two sides are one segment both ways).
+    let pole_pair = |i: u32, j: u32| i != j && fixed.get(i as usize).zip(fixed.get(j as usize)).is_some_and(|(p, q)| p == q);
+    let mut triangles = triangles;
+    triangles.retain(|t| !(pole_pair(t[0], t[1]) || pole_pair(t[1], t[2]) || pole_pair(t[2], t[0])));
+    if !closed_boundary(&ranges, &fixed, &triangles) {
         return Err(fail("triangulation does not follow the boundary"));
     }
     let mut all = uvs;
@@ -236,22 +241,46 @@ fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, stats: 
     Ok(FacePlan { face: u32::try_from(fi).unwrap_or(u32::MAX), surface: None, uv: all, fixed, normals: Vec::new(), flip: false, triangles })
 }
 
-/// Every boundary segment (consecutive nodes of a loop, skipping pole copies of one node) is
-/// the side of exactly one triangle: the face covers its boundary with nothing missing or
-/// doubled, so it meets its neighbours exactly.
-fn closed_boundary(ranges: &[std::ops::Range<usize>], triangles: &[[u32; 3]]) -> bool {
+/// Every boundary segment (consecutive nodes of a loop) is the side of exactly one triangle:
+/// the face covers its boundary with nothing missing or doubled, so it meets its neighbours
+/// exactly. Pole copies of one node (consecutive in a loop, at one point) are one vertex: the
+/// segment between them has no length, and a side ending on either copy is the same side.
+fn closed_boundary(ranges: &[std::ops::Range<usize>], fixed: &[Vec3], triangles: &[[u32; 3]]) -> bool {
+    let mut one: Vec<u32> = (0..fixed.len() as u32).collect();
+    let root = |one: &[u32], mut i: u32| {
+        while let Some(&j) = one.get(i as usize).filter(|j| **j != i) {
+            i = j;
+        }
+        i
+    };
+    let segment = |r: &std::ops::Range<usize>, k: usize| ((r.start + k) as u32, (r.start + (k + 1) % r.len()) as u32);
+    for r in ranges {
+        for k in 0..r.len() {
+            let (a, b) = segment(r, k);
+            if fixed.get(a as usize).zip(fixed.get(b as usize)).is_some_and(|(p, q)| p == q) {
+                let (ra, rb) = (root(&one, a), root(&one, b));
+                if let Some(x) = one.get_mut(rb.max(ra) as usize) {
+                    *x = ra.min(rb);
+                }
+            }
+        }
+    }
+    let side = |a: u32, b: u32| {
+        let (a, b) = (root(&one, a), root(&one, b));
+        (a != b).then_some((a.min(b), a.max(b)))
+    };
     let mut sides: HashMap<(u32, u32), u32> = HashMap::with_capacity(triangles.len() * 3);
     for t in triangles {
         for e in 0..3 {
-            let (a, b) = (t[e], t[(e + 1) % 3]);
-            *sides.entry((a.min(b), a.max(b))).or_default() += 1;
+            if let Some(k) = side(t[e], t[(e + 1) % 3]) {
+                *sides.entry(k).or_default() += 1;
+            }
         }
     }
     ranges.iter().all(|r| {
-        let n = r.len();
-        (0..n).all(|k| {
-            let (a, b) = ((r.start + k) as u32, (r.start + (k + 1) % n) as u32);
-            sides.get(&(a.min(b), a.max(b))).copied() == Some(1)
+        (0..r.len()).all(|k| {
+            let (a, b) = segment(r, k);
+            side(a, b).is_none_or(|k| sides.get(&k).copied() == Some(1))
         })
     })
 }
