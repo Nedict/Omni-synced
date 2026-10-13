@@ -2321,7 +2321,7 @@ pub fn start_sketch(app: &mut SolveApp, sel: &Sel) -> Result<(), String> {
         _ => return Err("Select an origin plane, construction plane or planar body face".into()),
     };
     let before = app.cam;
-    app.run("sketch.create", json!({ "plane": plane }))?;
+    app.run("sketch.create", json!({ "plane": plane })).map_err(|error| crate::friendly_error("sketch.create", &error))?;
     app.pre_sketch_cam = Some(before);
     look_at_sketch(app);
     // On a face: look at the picked point, not the plane's origin (a corner of the face),
