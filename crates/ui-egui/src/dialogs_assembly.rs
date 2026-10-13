@@ -635,18 +635,27 @@ fn interference_rows(app: &SolveApp, ui: &mut egui::Ui, r: &Value) {
     row_label(ui, "Checked");
     ui.label(format!("{} bodies", r["checked"].as_u64().unwrap_or(0)));
     ui.end_row();
-    if hits.is_empty() {
+    let unchecked = r["unchecked"].as_array().cloned().unwrap_or_default();
+    if hits.is_empty() && unchecked.is_empty() {
         row_label(ui, "Result");
         ui.label(RichText::new("no interference").color(t.text_dim));
         ui.end_row();
         return;
     }
-    row_label(ui, "Interferes");
-    ui.label(RichText::new("Volume").strong());
-    ui.end_row();
+    if !hits.is_empty() {
+        row_label(ui, "Interferes");
+        ui.label(RichText::new("Volume").strong());
+        ui.end_row();
+    }
     for h in hits {
         row_label(ui, &format!("{} · {}", h["a"].as_str().unwrap_or(""), h["b"].as_str().unwrap_or("")));
         ui.label(RichText::new(crate::prefs::show_mm(app, h["volume_mm3"].as_f64().unwrap_or(0.0), 3)).color(t.error));
+        ui.end_row();
+    }
+    // Pairs the check could not work out: not clear, not known to interfere.
+    for u in unchecked {
+        row_label(ui, &format!("{} · {}", u["a"].as_str().unwrap_or(""), u["b"].as_str().unwrap_or("")));
+        ui.label(RichText::new("could not be checked").color(t.warning)).on_hover_text(u["reason"].as_str().unwrap_or(""));
         ui.end_row();
     }
 }
