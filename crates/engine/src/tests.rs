@@ -2938,3 +2938,17 @@ fn tapered_extrude_of_a_profile_mixing_lines_and_an_arc() {
     let expect = a0 * h + p * t * h * h / 2.0 + k * t * t * h.powi(3) / 3.0;
     assert!(rel(volume(&mut s), expect) < 1e-3, "{} vs {expect}", volume(&mut s));
 }
+
+/// Drafting a cylinder's side face 5° from the base plane makes a cone frustum (#547): radius 10
+/// at the base, 10 − 20 · tan 5° at the top.
+#[test]
+#[ignore = "fails until #547 is fixed"]
+fn draft_on_a_cylinder_side_makes_a_frustum() {
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius": 10, "height": 20}));
+    run(&mut s, "solid.draft", json!({"faces": [[10, 0, 10]], "angle": "5 deg", "neutral": "XY"}));
+    let (big, h) = (10.0, 20.0);
+    let small = big - h * 5f64.to_radians().tan();
+    let expect = PI * h / 3.0 * (big * big + big * small + small * small);
+    assert!(rel(volume(&mut s), expect) < 1e-3, "{} vs {expect}", volume(&mut s));
+}

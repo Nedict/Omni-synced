@@ -2501,3 +2501,81 @@ fn a_hole_on_a_folded_panel_keeps_the_name_of_its_sketch_circle() {
     assert_eq!(folded.len(), 2, "{folded:?}");
     assert!(folded.iter().all(|n| n.contains(&side)), "after the fold the hole is still circle {curve}: {folded:?} (before: {flat:?})");
 }
+
+#[test]
+#[ignore = "fails until #541 is fixed"]
+fn a_box_cut_straight_through_a_flat_sheet_is_a_cutout_like_the_extrude_cut() {
+    // A 10 x 10 box perpendicular to the sheet and through its whole thickness removes exactly
+    // what a sketch rectangle extruded through all removes, which is accepted today.
+    let mut s = Session::default();
+    base(&mut s, 100.0, 60.0);
+    run(&mut s, "solid.box", json!({"corner": [20, 20, -1], "length": 10, "width": 10, "height": 5, "operation": "cut"}));
+    let mut extruded = Session::default();
+    base(&mut extruded, 100.0, 60.0);
+    rectangle_tool(&mut extruded, "Hole", [20.0, 20.0], [30.0, 30.0]);
+    run(&mut extruded, "solid.extrude", json!({"sketch": "Hole", "through_all": true, "direction": "symmetric", "operation": "cut"}));
+    for session in [&mut s, &mut extruded] {
+        assert!((volume(session) - 14750.0).abs() < 1e-6);
+        assert_eq!(flat(session)["cutouts"].as_array().map(Vec::len), Some(1));
+    }
+    run(&mut s, "sheet.unfold", json!({}));
+    run(&mut s, "sheet.refold", json!({}));
+    assert!((volume(&mut s) - 14750.0).abs() < 1e-6);
+}
+
+#[test]
+#[ignore = "fails until #542 is fixed"]
+fn flat_pattern_reports_a_round_hole_as_a_circle() {
+    // The DXF export already writes this hole as a CIRCLE; the JSON flat pattern should say
+    // "circle, centre (50, 30), radius 1.6" too instead of a sampled polyline. The exact key
+    // names are open: any object in the cutout that has a `center` and a `radius` counts.
+    fn circles(v: &Value, out: &mut Vec<([f64; 2], f64)>) {
+        match v {
+            Value::Object(m) => {
+                let center = m.get("center").and_then(Value::as_array).and_then(|c| Some([c.first()?.as_f64()?, c.get(1)?.as_f64()?]));
+                if let (Some(center), Some(radius)) = (center, m.get("radius").and_then(Value::as_f64)) {
+                    out.push((center, radius));
+                }
+                m.values().for_each(|v| circles(v, out));
+            }
+            Value::Array(a) => a.iter().for_each(|v| circles(v, out)),
+            _ => {}
+        }
+    }
+    let mut s = Session::default();
+    base(&mut s, 100.0, 60.0);
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Hole"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [50, 30], "radius": 1.6}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Hole", "through_all": true, "direction": "symmetric", "operation": "cut"}));
+    let dxf = run(&mut s, "sheet.export_dxf", json!({}))["dxf"].as_str().unwrap_or_default().to_string();
+    assert!(dxf.contains("CIRCLE"), "the DXF keeps the circle");
+    let f = flat(&mut s);
+    let cutouts = f["cutouts"].as_array().cloned().unwrap_or_default();
+    assert_eq!(cutouts.len(), 1);
+    let mut found = Vec::new();
+    circles(&cutouts[0], &mut found);
+    let shown: String = cutouts[0].to_string().chars().take(120).collect();
+    assert!(
+        found.iter().any(|(c, r)| (c[0] - 50.0).abs() < 1e-9 && (c[1] - 30.0).abs() < 1e-9 && (r - 1.6).abs() < 1e-9),
+        "the round hole is not reported as a circle: {shown} ..."
+    );
+}
+
+#[test]
+#[ignore = "fails until #570 is fixed"]
+fn a_flange_asked_for_0_8_mm_is_0_8_mm_or_refused_never_silently_2_5_mm() {
+    // `thickness` on sheet.flange may become an inline override of the rule, or be refused as
+    // an unknown parameter; either is fine. Building the default 2.5 mm sheet silently is not.
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Base"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [100, 60]}));
+    run(&mut s, "sketch.finish", json!({}));
+    match s.execute("sheet.flange", &json!({"sketch": "Base", "thickness": 0.8})) {
+        Ok(_) => {
+            assert!((flat(&mut s)["thickness"].as_f64().unwrap_or(f64::NAN) - 0.8).abs() < 1e-9);
+            assert!((volume(&mut s) - 100.0 * 60.0 * 0.8).abs() < 1e-6, "built at {} mm3", volume(&mut s));
+        }
+        Err(e) => assert!(e.to_string().contains("thickness"), "{e}"),
+    }
+}
