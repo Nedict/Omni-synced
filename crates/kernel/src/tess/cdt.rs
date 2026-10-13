@@ -46,6 +46,10 @@ pub(crate) struct Fill<'a> {
     pub seeds: &'a [[f64; 2]],
     /// Refinement, adding at most this many points in all.
     pub refine: Option<(Sag<'a>, usize)>,
+    /// Ruppert refinement for shape after it. Shape matters for shading only where the normal
+    /// varies: a plane is shaded the same by any triangles, so planar faces skip it (around many
+    /// small holes it grades out from each rim and multiplies the triangles).
+    pub shape: bool,
 }
 
 /// Triangulate the region bounded by `loops` (ranges of `boundary`, each closed). Boundary
@@ -92,12 +96,14 @@ pub(crate) fn triangulate(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>
     if let Some((sag, budget)) = &fill.refine {
         let constraints = cdt.num_constraints();
         let added = refine_sag(&mut cdt, sag, *budget, &from);
-        let params = RefinementParameters::<f64>::new()
-            .keep_constraint_edges()
-            .exclude_outer_faces(true)
-            .with_angle_limit(AngleLimit::from_deg(MIN_ANGLE_DEG))
-            .with_max_additional_vertices(budget.saturating_sub(added));
-        cdt.refine(params);
+        if fill.shape {
+            let params = RefinementParameters::<f64>::new()
+                .keep_constraint_edges()
+                .exclude_outer_faces(true)
+                .with_angle_limit(AngleLimit::from_deg(MIN_ANGLE_DEG))
+                .with_max_additional_vertices(budget.saturating_sub(added));
+            cdt.refine(params);
+        }
         // A split constraint would put a point on the boundary the neighbour does not have.
         if cdt.num_constraints() != constraints {
             return None;
@@ -355,7 +361,9 @@ mod tests {
         for refine in [false, true] {
             let refine = refine.then_some((Sag { eval: &flat, tol: 1e-3, h: 0.1, turn: None, scale: [2.0, 1.0] }, 2000));
             let label = refine.is_some();
-            let Some((extra, tris)) = triangulate(&b, &loops, Fill { seeds: &[[0.2, 0.2], [0.5, 0.5]], refine }) else { panic!("meshes") };
+            let Some((extra, tris)) = triangulate(&b, &loops, Fill { seeds: &[[0.2, 0.2], [0.5, 0.5]], refine, shape: true }) else {
+                panic!("meshes")
+            };
             let mut uv = b.clone();
             uv.extend(extra);
             assert!((area(&uv, &tris) - 0.96).abs() < 1e-12, "refined: {label}");
@@ -376,7 +384,7 @@ mod tests {
     fn crossing_loops_are_refused() {
         let b = [[0.0, 0.0], [1.0, 1.0], [1.0, 0.0], [0.0, 1.0]];
         let whole = std::slice::from_ref(&(0..4));
-        assert!(triangulate(&b, whole, Fill { seeds: &[], refine: None }).is_none());
+        assert!(triangulate(&b, whole, Fill { seeds: &[], refine: None, shape: false }).is_none());
     }
 
     #[test]
@@ -400,7 +408,7 @@ mod tests {
         // A parameter that is zero in exact arithmetic, left at 1e-300 by projection.
         let b = [[1e-300, 0.0], [1.0, -1e-310], [1.0, 1.0], [0.0, 1.0]];
         let whole = std::slice::from_ref(&(0..4));
-        let Some((extra, tris)) = triangulate(&b, whole, Fill { seeds: &[], refine: None }) else { panic!("meshes") };
+        let Some((extra, tris)) = triangulate(&b, whole, Fill { seeds: &[], refine: None, shape: false }) else { panic!("meshes") };
         assert!(extra.is_empty());
         assert_eq!(tris.len(), 2);
     }

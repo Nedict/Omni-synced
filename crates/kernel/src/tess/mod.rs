@@ -265,7 +265,7 @@ fn plan_face(
         let seeds = cdt::lattice(bbox, [h / speed[0], h / speed[1]], &polys, speed);
         let eval = |u: f64, v: f64| s.derivs(u, v).map(|(p, su, sv)| (p, su.cross(sv).normalized()));
         let sag = cdt::Sag { eval: &eval, tol, h, turn: rules.turn, scale: speed };
-        let fill = cdt::Fill { seeds: &seeds, refine: Some((sag, MAX_REFINE)) };
+        let fill = cdt::Fill { seeds: &seeds, refine: Some((sag, MAX_REFINE)), shape: !matches!(s, EvalSurface::Plane { .. }) };
         cdt::triangulate(&uvs, &ranges, fill).ok_or_else(|| fail("boundary crosses itself"))
     };
     // Planar and curved faces alike: a structured grid where the boundary runs along the
