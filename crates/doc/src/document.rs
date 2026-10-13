@@ -997,13 +997,16 @@ pub enum FilletStyle {
 }
 
 /// A fillet radius too large for the geometry around its edges: refused (`Exact`, the default),
-/// or reduced to the largest that works for all of them (`Reduce`), with a warning.
+/// reduced to the largest that works for all of them (`Reduce`), or tapered along each edge it
+/// doesn't fit to the room there, down to zero where a face closes to a point (`Taper`); a
+/// warning says what was done.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FilletFit {
     #[default]
     Exact,
     Reduce,
+    Taper,
 }
 
 impl FilletFit {

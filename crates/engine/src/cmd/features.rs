@@ -31,7 +31,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "MODIFY")
         .icon("fillet")
         .key("F")
-        .params("edges: [[x,y,z] point on edge | {body, index}]; radius: expr; body?; type?: constant|chord (radius is the width across)|variable (radius at the end nearest start, radius2 at the other; one end may be 0, where the round closes to the corner); radius2?; start?: [x,y,z]; mid?: [[position 0…1 from start, radius expr], …] (variable radii between the ends); smooth?: bool (smooth instead of straight between the radii); fit?: exact|reduce (exact, the default: a radius too large for the geometry around the edges is refused; reduce: where it doesn't fit it is reduced to the largest that does, one radius for edges sharing a face; the smallest used is returned as `radius_applied`, each edge's as `radii_applied: [{edge: [x,y,z], radius}]`, and noted in the feature's warning)"),
+        .params("edges: [[x,y,z] point on edge | {body, index}]; radius: expr; body?; type?: constant|chord (radius is the width across)|variable (radius at the end nearest start, radius2 at the other; one end may be 0, where the round closes to the corner); radius2?; start?: [x,y,z]; mid?: [[position 0…1 from start, radius expr], …] (variable radii between the ends); smooth?: bool (smooth instead of straight between the radii); fit?: exact|reduce|taper (exact, the default: a radius too large for the geometry around the edges is refused; reduce: where it doesn't fit it is reduced to the largest that does, one radius for edges sharing a face; the smallest used is returned as `radius_applied`, each edge's as `radii_applied: [{edge: [x,y,z], radius}]`, and noted in the feature's warning; taper: along each straight edge between planar faces where it doesn't fit, the radius follows the room there as a smooth spline, down to 0 where a face closes to a point, noted in the feature's warning)"),
     CommandSpec::new("solid.chamfer", "Chamfer", chamfer).at("SOLID", "MODIFY").icon("chamfer").params("edges: [[x,y,z] | {body, index}]; distance: expr; distance2?: expr (along the second face) | angle?: expr (from the first face); flip?: bool (which face is first: by default the one facing up most); body?"),
     CommandSpec::new("solid.combine", "Combine", combine).at("SOLID", "MODIFY").icon("combine").params("target: body; tools: [body]; operation?: join|cut|intersect; keep_tools?: bool; new_component?: bool (the result goes into a new component; component_name?)"),
     CommandSpec::new("solid.pattern.rectangular", "Rectangular Pattern", pattern_rect)
@@ -808,10 +808,11 @@ fn fillet(s: &mut Session, p: &Value) -> Result<Value> {
     let fit = match str_(p, "fit").map(str::to_ascii_lowercase).as_deref() {
         None | Some("exact") => solidcraft_doc::FilletFit::Exact,
         Some("reduce") => solidcraft_doc::FilletFit::Reduce,
-        Some(o) => return Err(bad(cmd, format!("unknown fit `{o}` (exact or reduce)"))),
+        Some("taper") => solidcraft_doc::FilletFit::Taper,
+        Some(o) => return Err(bad(cmd, format!("unknown fit `{o}` (exact, reduce or taper)"))),
     };
-    if fit == solidcraft_doc::FilletFit::Reduce && !style.is_constant() {
-        return Err(bad(cmd, "`fit: reduce` takes a constant radius"));
+    if !fit.is_exact() && !style.is_constant() {
+        return Err(bad(cmd, "`fit: reduce` and `fit: taper` take a constant radius"));
     }
     let mut out = add_feature(s, p, FeatureKind::Fillet { edges, radius, body: str_(p, "body").map(str::to_string), style, fit })?;
     // The radii the fillet used, when `fit: reduce` reduced it.

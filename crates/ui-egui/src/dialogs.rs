@@ -1706,11 +1706,18 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         );
                         enter |= field(ui, radius);
                         ui.end_row();
-                        // A constant radius too large for the edges: refused, or reduced to the
-                        // largest that fits (the preview shows what was used).
+                        // A constant radius too large for the edges: refused, reduced to the
+                        // largest that fits (the preview shows what was used), or tapered along
+                        // the edges to the room there.
                         if !*chamfer && rtype == 0 {
                             row_label(ui, "Radius Fit");
-                            let fit = extra_choice(ui, &mut d.extra, "fi_fit", "fit", &[("Exact", "exact"), ("Reduce to Fit", "reduce")]);
+                            let fit = extra_choice(
+                                ui,
+                                &mut d.extra,
+                                "fi_fit",
+                                "fit",
+                                &[("Exact", "exact"), ("Reduce to Fit", "reduce"), ("Taper to Fit", "taper")],
+                            );
                             ui.end_row();
                             if fit == 1
                                 && let Some((lo, hi)) = app.preview.applied
@@ -3535,9 +3542,17 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                     *flip = *f;
                 }
             }
-            // A fillet that reduces a radius too large for its edges.
-            if let FeatureKind::Fillet { fit: solidcraft_engine::doc::FilletFit::Reduce, .. } = &f.kind {
-                d.extra.insert("fit".into(), json!("reduce"));
+            // A fillet that reduces or tapers a radius too large for its edges.
+            if let FeatureKind::Fillet { fit, .. } = &f.kind {
+                use solidcraft_engine::doc::FilletFit;
+                let mode = match fit {
+                    FilletFit::Exact => None,
+                    FilletFit::Reduce => Some("reduce"),
+                    FilletFit::Taper => Some("taper"),
+                };
+                if let Some(mode) = mode {
+                    d.extra.insert("fit".into(), json!(mode));
+                }
             }
             // A chord-length or variable fillet.
             if let FeatureKind::Fillet { style, .. } = &f.kind {

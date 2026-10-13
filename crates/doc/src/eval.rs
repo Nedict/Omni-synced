@@ -265,7 +265,8 @@ fn thread_groove(t: &ThreadInfo, radius: f64, open: (bool, bool)) -> Result<soli
 
 /// A constant fillet of `edges`; with [`FilletFit::Reduce`](crate::FilletFit::Reduce), a radius too
 /// large for the geometry around them is reduced where it doesn't fit, to the largest that works
-/// for each group of edges sharing a face; the radius per edge is returned.
+/// for each group of edges sharing a face; the radius per edge is returned. With
+/// [`FilletFit::Taper`](crate::FilletFit::Taper) it tapers along each edge it doesn't fit.
 fn fillet_fitted(
     body: &kernel::Body,
     edges: &[Vec3],
@@ -278,6 +279,7 @@ fn fillet_fitted(
             Some((used, b)) => Ok((b, used.iter().any(|u| *u < r).then_some(used))),
             None => Err(kernel::KernelError::TooLarge(why)),
         },
+        Err(kernel::KernelError::TooLarge(_)) if fit == crate::FilletFit::Taper => kernel::fillet_tapered(body, edges, r).map(|(b, _)| (b, None)),
         other => other.map(|b| (b, None)),
     }
 }
@@ -294,6 +296,15 @@ fn reduced_note(used: &[f64], asked: f64) -> String {
     } else {
         format!("the radius is reduced to {shown} mm on {n} of {} edges, the largest that fits them", used.len())
     }
+}
+
+/// The warning of a fillet that tapered on some of its edges (a taper per edge, None where the
+/// radius is constant), naming the smallest radius a taper ends at.
+fn tapered_note(tapers: &[Option<kernel::Taper>]) -> Option<String> {
+    let ends: Vec<f64> = tapers.iter().flatten().flat_map(|t| [t.spline.radii.first(), t.spline.radii.last()]).flatten().copied().collect();
+    let low = ends.into_iter().reduce(f64::min)?;
+    let n = tapers.iter().flatten().count();
+    Some(format!("the radius tapers to the room on {n} of {} edges, down to {} mm", tapers.len(), show_mm(low)))
 }
 
 /// Add `note` to a feature's warning.
@@ -3882,6 +3893,13 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                         Some(prev) => (b.body, prev),
                         None => return Err(DocError::Invalid("no edges to fillet".into())),
                     }
+                }
+                FeatureKind::Fillet { fit: crate::FilletFit::Taper, .. } => {
+                    let (b, tapers) = kernel::fillet_tapered(&mb.body, &edges, r)?;
+                    if let Some(note) = tapered_note(&tapers) {
+                        append_warning(warning, note);
+                    }
+                    (b, input)
                 }
                 FeatureKind::Fillet { fit, .. } => {
                     let (b, used) = fillet_fitted(&mb.body, &edges, r, *fit)?;

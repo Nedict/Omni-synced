@@ -2926,9 +2926,49 @@ fn fillet_fit_reduce_uses_the_largest_radius_that_fits() {
     // Saved only when set.
     let json = serde_json::to_string(&s.doc.features).unwrap();
     assert_eq!(json.matches("\"fit\":\"reduce\"").count(), 1, "{json}");
-    // An unknown mode is refused, and so is reduce with a radius that is not constant.
-    assert!(s.execute("solid.fillet", &json!({"edges": mids, "radius": 1, "fit": "taper"})).is_err());
+    // An unknown mode is refused, and so are reduce and taper with a radius that is not constant.
+    assert!(s.execute("solid.fillet", &json!({"edges": mids, "radius": 1, "fit": "stretch"})).is_err());
     assert!(s.execute("solid.fillet", &json!({"edges": mids, "radius": 1, "fit": "reduce", "type": "chord"})).is_err());
+    assert!(s.execute("solid.fillet", &json!({"edges": mids, "radius": 1, "fit": "taper", "type": "chord"})).is_err());
+}
+
+#[test]
+fn fillet_fit_taper_follows_the_room_along_the_edge() {
+    // #293: the top front edge of a plate whose top narrows from 20 to `tip` mm along 40 mm.
+    // At a 2 mm tip it can't take 3 mm; taper keeps 3 where it fits and comes down to 0.9 of the
+    // 2 mm there. With an 8 mm tip 3 fits and stays constant; a plate closing to a point
+    // tapers to 0. The warning says what was done.
+    let (k, edge) = (1.0 - PI / 4.0, json!([[20, 0, 15]]));
+    let plate = |tip: f64| {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XY"}));
+        let pts = if tip > 0.0 { json!([[0, 0], [40, 0], [40, tip], [0, 20]]) } else { json!([[0, 0], [40, 0], [0, 20]]) };
+        run(&mut s, "sketch.line", json!({"points": pts, "closed": true}));
+        run(&mut s, "solid.extrude", json!({"distance": 15}));
+        s
+    };
+    let warning = |s: &Session, out: &Value| out["feature"].as_u64().and_then(|id| s.model.result(id)).and_then(|r| r.warning.clone());
+
+    let mut s = plate(2.0);
+    assert!(s.execute("solid.fillet", &json!({"edges": edge, "radius": 3})).is_err());
+    let out = run(&mut s, "solid.fillet", json!({"edges": edge, "radius": 3, "fit": "taper"}));
+    let w = warning(&s, &out).unwrap_or_default();
+    assert!(w.contains("tapers to the room on 1 of 1 edges, down to 1.8 mm"), "{w}");
+    // Between the material a constant 1.8 and a constant 3 would remove.
+    let (v, full) = (volume(&mut s), 40.0 * 22.0 / 2.0 * 15.0);
+    assert!(v < full - k * 1.8 * 1.8 * 40.0 && v > full - k * 9.0 * 40.0, "{v}");
+    let json = serde_json::to_string(&s.doc.features).unwrap();
+    assert_eq!(json.matches("\"fit\":\"taper\"").count(), 1, "{json}");
+
+    let mut s = plate(8.0);
+    let out = run(&mut s, "solid.fillet", json!({"edges": edge, "radius": 3, "fit": "taper"}));
+    assert_eq!(warning(&s, &out), None);
+    assert!(rel(volume(&mut s), 40.0 * 28.0 / 2.0 * 15.0 - k * 9.0 * 40.0) < 2e-4);
+
+    let mut s = plate(0.0);
+    let out = run(&mut s, "solid.fillet", json!({"edges": edge, "radius": 16, "fit": "taper"}));
+    let w = warning(&s, &out).unwrap_or_default();
+    assert!(w.contains("on 1 of 1 edges, down to 0 mm"), "{w}");
 }
 
 #[test]
