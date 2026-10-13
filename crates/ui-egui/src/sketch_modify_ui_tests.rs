@@ -2,11 +2,16 @@
 //! dialog, so a press ran `sketch.scale` with no parameters and the engine refused it. Mirror
 //! ran as a click flow that collected entities until a right-click, took the next click as the
 //! mirror line and committed at once, with nothing on screen saying what was picked.
+//! `sketch.move` had no toolbar placement, no tool and no dialog either. Its only route into
+//! the UI was the sketch context menu, and that went through the same empty-parameter
+//! fallback, so the item reported an engine error. The rectangular pattern's click tool sent
+//! a hard-coded count of 3 and could reach neither the command's second count nor either
+//! spacing.
 
 use serde_json::json;
 use solidcraft_engine::Sel;
 
-use crate::dialogs::Kind;
+use crate::dialogs::{Kind, apply_commands};
 use crate::scenario::Harness;
 use crate::selection::{AXES, CURVES, POINTS, SelInput};
 use crate::sketch_modify_ui::{Mod, commands};
@@ -218,6 +223,141 @@ fn the_window_reflects_the_picked_circle_across_the_line() {
     assert!((*r - 3.0).abs() < 1e-6, "{r}");
 }
 
+fn move_inputs(h: &Harness) -> Vec<SelInput> {
+    let mut v = vec![SelInput::new("Entities", CURVES | POINTS, true), SelInput::new("Center", POINTS, false)];
+    v[0].items = curve_ids(h).iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect();
+    v
+}
+
+/// A fresh Move window's values, with one field replaced. Functional record update (`..base`)
+/// is a struct feature, so an enum variant has to spell every field out.
+fn moved(x: &str, y: &str, angle: &str) -> Mod {
+    Mod::Move { x: x.into(), y: y.into(), angle: angle.into(), copy: false }
+}
+
+#[test]
+fn the_command_now_has_a_toolbar_placement_and_opens_a_window() {
+    let spec = solidcraft_engine::find_command("sketch.move").expect("sketch.move is registered");
+    assert_eq!((spec.tab, spec.panel), ("SKETCH", "MODIFY"));
+    assert_eq!(spec.icon, "move");
+
+    let mut h = rectangle();
+    let before = curve_ids(&h).len();
+    h.step(&json!({"start": "sketch.move"})).unwrap();
+    let d = h.app.dialog.as_ref().expect("sketch.move opens a tool window");
+    assert!(matches!(d.kind, Kind::SketchModify(Mod::Move { .. })), "{:?}", d.kind);
+    assert_eq!(d.inputs.iter().map(|i| i.label).collect::<Vec<_>>(), vec!["Entities", "Center"]);
+    // Opening the window commits nothing, and the context menu's engine error is gone.
+    assert_eq!(curve_ids(&h).len(), before);
+    assert!(!h.app.status.as_ref().is_some_and(|(_, _, error)| *error), "{:?}", h.app.status);
+}
+
+#[test]
+fn the_context_menu_item_fills_the_window_from_the_selection() {
+    let mut h = rectangle();
+    let ids = curve_ids(&h);
+    h.app.run("select.set", json!({"items": [{"type": "sketch_curve", "id": ids[0]}]})).unwrap();
+    h.step(&json!({"start": "sketch.move"})).unwrap();
+    let d = h.app.dialog.as_ref().unwrap();
+    assert_eq!(d.inputs[0].items, vec![Sel::SketchCurve { id: ids[0].clone() }]);
+}
+
+#[test]
+fn the_typed_distances_and_angle_reach_the_command() {
+    let h = rectangle();
+    let inputs = move_inputs(&h);
+    let k = Mod::Move { x: "10 mm".into(), y: "-4 mm".into(), angle: "90 deg".into(), copy: false };
+    let out = commands(&h.app, &k, &inputs, &serde_json::Map::new()).unwrap();
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].0, "sketch.move");
+    assert_eq!(out[0].1["translate"], json!([10.0, -4.0]));
+    assert!((out[0].1["angle"].as_f64().unwrap() - 90.0).abs() < 1e-9, "{}", out[0].1["angle"]);
+    assert_eq!(out[0].1["copy"], json!(false));
+    // No centre picked: the command's own default, the sketch origin, stands.
+    assert!(out[0].1.get("center").is_none(), "{}", out[0].1);
+}
+
+#[test]
+fn an_expression_and_a_bare_angle_are_evaluated() {
+    let mut h = rectangle();
+    h.app.run("parameters.add", json!({"name": "step", "expression": "7 mm", "unit": "mm"})).unwrap();
+    let inputs = move_inputs(&h);
+    let k = Mod::Move { x: "step * 2".into(), y: String::new(), angle: "45".into(), copy: false };
+    let out = commands(&h.app, &k, &inputs, &serde_json::Map::new()).unwrap();
+    assert_eq!(out[0].1["translate"], json!([14.0, 0.0]));
+    assert!((out[0].1["angle"].as_f64().unwrap() - 45.0).abs() < 1e-9, "{}", out[0].1["angle"]);
+}
+
+#[test]
+fn an_empty_window_or_a_zero_move_is_an_error_instead_of_a_command() {
+    let h = rectangle();
+    let empty = vec![SelInput::new("Entities", CURVES | POINTS, true)];
+    assert!(commands(&h.app, &moved("5 mm", "0 mm", "0 deg"), &empty, &serde_json::Map::new()).is_err());
+    // Nothing typed: the dialog says so, and no move of zero reaches the command.
+    assert!(commands(&h.app, &moved("0 mm", "0 mm", "0 deg"), &move_inputs(&h), &serde_json::Map::new()).is_err());
+    assert!(commands(&h.app, &moved("nonsense", "0 mm", "0 deg"), &move_inputs(&h), &serde_json::Map::new()).is_err());
+}
+
+#[test]
+fn the_window_moves_the_rectangle_and_the_copy_row_leaves_the_original_behind() {
+    let mut h = rectangle();
+    let sid = h.app.session.active_sketch.unwrap();
+    h.step(&json!({"start": "sketch.move"})).unwrap();
+    // Read the ids before the dialog is borrowed mutably: `curve_ids` borrows the harness.
+    let picks: Vec<Sel> = curve_ids(&h).iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect();
+    {
+        let d = h.app.dialog.as_mut().unwrap();
+        d.inputs[0].items = picks;
+        d.kind = Kind::SketchModify(Mod::Move { x: "30 mm".into(), y: "0 mm".into(), angle: "0 deg".into(), copy: true });
+    }
+    // A frame with the picks in place: the canvas value box takes focus on the frame after a
+    // pick, and Enter only applies once it has had it.
+    h.frames(2);
+    h.step(&json!({"key": "Enter"})).unwrap();
+    h.settle();
+    assert!(h.app.dialog.is_none(), "Enter applies and closes the window");
+    let st = h.app.session.model.state();
+    let sk = &st.sketch(sid).unwrap().sketch;
+    assert_eq!(sk.curves.len(), 8, "a copy keeps the original: {:?}", h.app.status);
+    let xs: Vec<f64> = sk.points.iter().map(|p| p.pos.x).collect();
+    assert!(xs.iter().any(|x| x.abs() < 1e-6), "the original stays at x = 0: {xs:?}");
+    assert!(xs.iter().any(|x| (x - 50.0).abs() < 1e-6), "the copy's far corner is at x = 50: {xs:?}");
+}
+
+#[test]
+fn a_plain_move_takes_the_geometry_with_it() {
+    let mut h = Harness::new();
+    h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+    // Clear of the sketch origin. A rectangle drawn from the origin keeps a corner tied to it,
+    // and the solver pulls that corner back after the move, which measures the solver rather
+    // than this window.
+    let made = h.app.run("sketch.rectangle.two_point", json!({"p0": [10, 10], "p1": [30, 20]})).unwrap();
+    let corners: Vec<String> = made["corners"].as_object().into_iter().flatten().filter_map(|(_, v)| v.as_str().map(str::to_string)).collect();
+    assert_eq!(corners.len(), 4, "{made}");
+    h.settle();
+    let sid = h.app.session.active_sketch.unwrap();
+    h.step(&json!({"start": "sketch.move"})).unwrap();
+    // Read the ids before the dialog is borrowed mutably: `curve_ids` borrows the harness.
+    let picks: Vec<Sel> = curve_ids(&h).iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect();
+    {
+        let d = h.app.dialog.as_mut().unwrap();
+        d.inputs[0].items = picks;
+        d.kind = Kind::SketchModify(Mod::Move { x: "0 mm".into(), y: "5 mm".into(), angle: "0 deg".into(), copy: false });
+    }
+    // A frame with the picks in place: the canvas value box takes focus on the frame after a
+    // pick, and Enter only applies once it has had it.
+    h.frames(2);
+    h.step(&json!({"key": "Enter"})).unwrap();
+    h.settle();
+    let st = h.app.session.model.state();
+    let sk = &st.sketch(sid).unwrap().sketch;
+    assert_eq!(sk.curves.len(), 4, "a plain move makes nothing new: {:?}", h.app.status);
+    // The rectangle's own corners, not the sketch origin, which no move touches.
+    let ys: Vec<f64> = sk.points.iter().filter(|p| corners.contains(&p.id)).map(|p| p.pos.y).collect();
+    assert_eq!(ys.len(), 4, "{ys:?}");
+    assert!(ys.iter().all(|y| (*y - 15.0).abs() < 1e-6 || (*y - 25.0).abs() < 1e-6), "the rectangle moved up by 5 mm: {ys:?}");
+}
+
 #[test]
 fn escape_leaves_the_sketch_exactly_as_it_was() {
     let mut h = line_and_circle();
@@ -238,4 +378,144 @@ fn escape_leaves_the_sketch_exactly_as_it_was() {
     assert_eq!(curve_ids(&h), before);
     assert_eq!(h.app.session.undo.len(), undo);
     assert_eq!(h.app.session.model.state().sketch(sid).unwrap().sketch.constraints.len(), constraints);
+}
+
+#[test]
+fn the_x_distance_gets_a_drag_arrow_along_the_sketch_x_axis() {
+    let mut h = rectangle();
+    h.step(&json!({"start": "sketch.move"})).unwrap();
+    // Read the ids before the dialog is borrowed mutably: `curve_ids` borrows the harness.
+    let picks: Vec<Sel> = curve_ids(&h).iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect();
+    {
+        let d = h.app.dialog.as_mut().unwrap();
+        d.inputs[0].items = picks;
+    }
+    let sid = h.app.session.active_sketch.unwrap();
+    let x = h.app.session.world_state().sketch(sid).unwrap().plane.x;
+    let d = h.app.dialog.as_ref().unwrap();
+    let (_, dir) = crate::canvas::anchor(&h.app, d).expect("a picked sketch curve anchors the manipulator");
+    let dir = dir.expect("a sketch move's X Distance has a direction to drag along");
+    assert!((dir - x).len() < 1e-9, "{dir:?} is not the sketch x axis {x:?}");
+}
+
+/// A sketch holding one circle, with the window for `cmd` open on it.
+fn open(cmd: &str) -> (crate::scenario::Harness, String) {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+    h.app.run("sketch.circle.center", json!({"center": [0, 0], "radius": 5})).unwrap();
+    h.settle();
+    let sid = h.app.session.active_sketch.unwrap();
+    let id = h.app.session.model.state().sketch(sid).unwrap().sketch.curves[0].id.clone();
+    h.step(&json!({"start": cmd})).unwrap();
+    (h, id)
+}
+
+fn rect(h: &mut crate::scenario::Harness, count: &str, spacing: &str, count2: &str, spacing2: &str) {
+    let d = h.app.dialog.as_mut().expect("the window opened");
+    if let Kind::SketchModify(Mod::PatternRect { count: c1, spacing: s1, count2: c2, spacing2: s2 }) = &mut d.kind {
+        *c1 = count.into();
+        *s1 = spacing.into();
+        *c2 = count2.into();
+        *s2 = spacing2.into();
+    } else {
+        panic!("not the rectangular pattern window: {:?}", d.kind);
+    }
+}
+
+#[test]
+fn rectangular_pattern_window_opens_instead_of_a_click_tool() {
+    let (h, _) = open("sketch.pattern.rectangular");
+    assert!(h.app.tool.is_none(), "the click tool still takes the command");
+    let d = h.app.dialog.as_ref().expect("the window opened");
+    assert!(matches!(d.kind, Kind::SketchModify(Mod::PatternRect { .. })), "{:?}", d.kind);
+    assert_eq!(d.inputs.iter().map(|i| i.label).collect::<Vec<_>>(), vec!["Entities", "Direction"]);
+    // Nothing is committed by opening the window.
+    let sid = h.app.session.active_sketch.unwrap();
+    assert_eq!(h.app.session.model.state().sketch(sid).unwrap().sketch.curves.len(), 1);
+}
+
+#[test]
+fn typed_counts_and_spacings_reach_the_command_with_the_second_direction() {
+    let (mut h, id) = open("sketch.pattern.rectangular");
+    h.app.dialog.as_mut().unwrap().inputs[0].items = vec![Sel::SketchCurve { id }];
+    rect(&mut h, "5", "20", "2", "15 mm");
+    let d = h.app.dialog.clone().unwrap();
+    let cmds = apply_commands(&h.app, &d).unwrap();
+    assert_eq!(cmds.len(), 1);
+    assert_eq!(cmds[0].0, "sketch.pattern.rectangular");
+    // The click tool could only ever send a count of 3 and no second count at all.
+    assert_eq!(cmds[0].1["count"], json!(5));
+    assert_eq!(cmds[0].1["spacing"], json!(20.0));
+    assert_eq!(cmds[0].1["count2"], json!(2));
+    assert_eq!(cmds[0].1["spacing2"], json!(15.0));
+    assert!(cmds[0].1.get("dir").is_none(), "an unpicked direction leaves the command's own default");
+}
+
+#[test]
+fn a_picked_axis_becomes_an_in_plane_direction() {
+    let (mut h, id) = open("sketch.pattern.rectangular");
+    h.app.dialog.as_mut().unwrap().inputs[0].items = vec![Sel::SketchCurve { id }];
+    h.app.dialog.as_mut().unwrap().inputs[1].items = vec![Sel::Axis { name: "Y".into() }];
+    rect(&mut h, "3", "10", "1", "10");
+    let d = h.app.dialog.clone().unwrap();
+    let cmds = apply_commands(&h.app, &d).unwrap();
+    assert_eq!(cmds[0].1["dir"], json!([0.0, 1.0]), "sketch y on the XY plane");
+}
+
+#[test]
+fn an_axis_perpendicular_to_the_sketch_is_reported_not_silently_replaced() {
+    let (mut h, id) = open("sketch.pattern.rectangular");
+    h.app.dialog.as_mut().unwrap().inputs[0].items = vec![Sel::SketchCurve { id }];
+    h.app.dialog.as_mut().unwrap().inputs[1].items = vec![Sel::Axis { name: "Z".into() }];
+    rect(&mut h, "3", "10", "1", "10");
+    let d = h.app.dialog.clone().unwrap();
+    let e = apply_commands(&h.app, &d).unwrap_err();
+    assert!(e.contains("sketch plane"), "{e}");
+}
+
+/// Upstream #218 is the same shape: `solid.pattern.circular` took expressions in its axis origin
+/// and stored `[0, 0, 0]`. The sketch patterns read `count` and `angle` with `num`, which takes a
+/// JSON number only, so the window evaluates every field itself.
+#[test]
+fn a_count_expression_is_evaluated_rather_than_sent_as_a_string() {
+    let (mut h, id) = open("sketch.pattern.rectangular");
+    h.app.run("parameters.add", json!({"name": "n", "expression": "4", "unit": ""})).unwrap();
+    h.app.dialog.as_mut().unwrap().inputs[0].items = vec![Sel::SketchCurve { id }];
+    rect(&mut h, "n", "10", "1", "10");
+    let d = h.app.dialog.clone().unwrap();
+    let cmds = apply_commands(&h.app, &d).unwrap();
+    assert_eq!(cmds[0].1["count"], json!(4));
+}
+
+#[test]
+fn bad_counts_and_an_empty_selection_are_refused_before_the_command_runs() {
+    let (mut h, id) = open("sketch.pattern.rectangular");
+    rect(&mut h, "5", "20", "1", "20");
+    let d = h.app.dialog.clone().unwrap();
+    assert!(apply_commands(&h.app, &d).unwrap_err().contains("Select"));
+    h.app.dialog.as_mut().unwrap().inputs[0].items = vec![Sel::SketchCurve { id }];
+    for bad in ["0", "2.5", "501", "wat"] {
+        rect(&mut h, bad, "20", "1", "20");
+        let d = h.app.dialog.clone().unwrap();
+        assert!(apply_commands(&h.app, &d).is_err(), "count {bad} was accepted");
+    }
+    rect(&mut h, "5", "0", "1", "20");
+    let d = h.app.dialog.clone().unwrap();
+    assert!(apply_commands(&h.app, &d).unwrap_err().contains("Spacing"));
+}
+
+/// The spacing is a geometric value, so it gets the viewport's value box and a drag arrow
+/// through the existing `canvas::anchor` machinery: along the sketch's own x by default, along
+/// the picked direction once one is picked.
+#[test]
+fn the_spacing_gets_a_canvas_arrow_along_the_pattern_direction() {
+    let (mut h, id) = open("sketch.pattern.rectangular");
+    h.app.dialog.as_mut().unwrap().inputs[0].items = vec![Sel::SketchCurve { id }];
+    let d = h.app.dialog.clone().unwrap();
+    let (_, dir) = crate::canvas::anchor(&h.app, &d).expect("an anchor on the picked curve");
+    assert_eq!(dir, Some(solidcraft_engine::geom::Vec3::X));
+    h.app.dialog.as_mut().unwrap().inputs[1].items = vec![Sel::Axis { name: "Y".into() }];
+    let d = h.app.dialog.clone().unwrap();
+    let (_, dir) = crate::canvas::anchor(&h.app, &d).expect("an anchor on the picked curve");
+    assert_eq!(dir, Some(solidcraft_engine::geom::Vec3::Y));
 }

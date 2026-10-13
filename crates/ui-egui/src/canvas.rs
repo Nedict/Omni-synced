@@ -62,6 +62,16 @@ pub fn anchor(app: &SolveApp, d: &Dialog) -> Option<(Vec3, Option<Vec3>)> {
             };
             (ss.plane.to_world(mid), dir)
         }
+        // A corner picked into a sketch window ("<sketch id>:<point id>", or a bare id when it
+        // was selected outside one): the value box sits on the corner itself.
+        Sel::SketchPoint { id } => {
+            let (sketch, point) = match id.split_once(':') {
+                Some((sketch, point)) => (sketch.parse().ok()?, point),
+                None => (app.session.active_sketch?, id.as_str()),
+            };
+            let ss = st.sketch(sketch)?;
+            (ss.plane.to_world(ss.sketch.point(ss.sketch.resolve_point(point)?)?), None)
+        }
         Sel::Body { name } => (st.body(name)?.mesh().bounds().center(), None),
         Sel::Plane { name } => {
             let pl = solidcraft_engine::geom::Plane::named(name).or_else(|| {
@@ -85,8 +95,16 @@ pub fn anchor(app: &SolveApp, d: &Dialog) -> Option<(Vec3, Option<Vec3>)> {
         Kind::Sheet(_) => (at, crate::dialogs_sheet::arrow(app, d).or(normal)),
         Kind::Plastic(_) => (at, normal),
         Kind::PatternRect { .. } => (at, d.inputs.get(1).and_then(|i| i.items.first()).and_then(|x| crate::dialogs::axis_of(app, x)).map(|a| a.1)),
-        // Already computed above, per picked curve; keep it rather than the default below.
-        Kind::SketchModify(_) => (at, normal),
+        // A sketch move's X Distance grows along the sketch's own x axis, so its drag arrow
+        // lies in the sketch plane. Scale has no arrow: a factor is not a length, and the
+        // square handle it wants is its own change.
+        Kind::SketchModify(crate::sketch_modify_ui::Mod::Move { .. }) => {
+            (at, app.session.active_sketch.and_then(|id| st.sketch(id)).and_then(|ss| ss.plane.x.normalized()))
+        }
+        // The rectangular pattern's spacing grows along the direction it was given, which the
+        // module works out per variant. Offset's arrow is already computed above, per picked
+        // curve, and `arrow` returns None for it so that one stands.
+        Kind::SketchModify(_) => (at, crate::sketch_modify_ui::arrow(app, d).or(normal)),
         _ => (at, None),
     })
 }
@@ -282,8 +300,15 @@ fn draw(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj,
     };
     let symmetric = to_span.is_none() && matches!(d.kind, Kind::Extrude { direction: 2, .. });
     // Extrudes and moves go either way; radii and thicknesses stay positive.
-    let signed =
-        matches!(d.kind, Kind::Extrude { .. } | Kind::Move { .. } | Kind::Section { .. } | Kind::OffsetPlane { .. } | Kind::OffsetFaces { .. });
+    let signed = matches!(
+        d.kind,
+        Kind::Extrude { .. }
+            | Kind::Move { .. }
+            | Kind::Section { .. }
+            | Kind::OffsetPlane { .. }
+            | Kind::OffsetFaces { .. }
+            | Kind::SketchModify(crate::sketch_modify_ui::Mod::Move { .. })
+    );
     let focus = std::mem::take(&mut d.focus);
     let half_height = app.cam.half_height();
     let axis = revolve_axis(app, d);

@@ -321,6 +321,7 @@ impl FeatureKind {
             }
             FeatureKind::Revolve { .. }
             | FeatureKind::Extrude { .. }
+            | FeatureKind::SurfaceExtrude { .. }
             | FeatureKind::Combine { .. }
             | FeatureKind::Loft { .. }
             | FeatureKind::Sweep { .. }

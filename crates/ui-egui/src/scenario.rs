@@ -716,6 +716,19 @@ pub fn check(h: &mut Harness, e: &Value) -> Result<(), String> {
                     return Err(format!("{a} {lo:?} does not span {b} {hi:?} (±{tol})"));
                 }
             }
+            "disjoint" => {
+                // {"disjoint": ["a", "b"]}: both published rects are on screen and neither
+                // covers any part of the other (a dialog beside the Sketch Palette).
+                let names: Vec<&str> = v.as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+                let (Some(a), Some(b)) = (names.first(), names.get(1)) else {
+                    return Err("disjoint takes two published rect names".to_string());
+                };
+                let ra = rect_of(a).ok_or(format!("no rect {a}"))?;
+                let rb = rect_of(b).ok_or(format!("no rect {b}"))?;
+                if ra.intersect(rb).is_positive() {
+                    return Err(format!("{a} {ra:?} overlaps {b} {rb:?}"));
+                }
+            }
             "dialog_docked" => {
                 // The command dialog: docked at the viewport's right, its width in [min, max].
                 let r = h.ctx.memory(|m| m.area_rect(egui::Id::new("sc_dialog"))).ok_or("no command dialog")?;

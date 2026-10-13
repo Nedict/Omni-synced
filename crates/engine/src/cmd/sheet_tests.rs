@@ -2479,16 +2479,86 @@ fn corner_reliefs_of_the_rule_reach_the_part_the_flat_pattern_and_the_dxf() {
 }
 
 #[test]
+fn a_tear_of_the_rule_reaches_the_part_the_flat_pattern_and_the_dxf() {
+    use std::f64::consts::SQRT_2;
+    // The tray at 90° and 72° (see the doc tests): its bends meet at (s0, s0), s0 = 3·tan(θ/2), and
+    // are BA = 2θ wide in the flat. The flange on y = 0 is closed to x_end(w) = g/√2 + T·sinθ − w·cosθ.
+    // Torn, its bend's end is cut from (s0, s0) straight to (x_end(s0), s0 − BA), where the flange's
+    // end starts: grow = s0 − x_end(s0) = sinθ − 0.5/√2 past the corner, instead of square across the
+    // bend and back along the flange's edge (the notch's step).
+    for deg in [90.0f64, 72.0] {
+        let th = deg.to_radians();
+        let (s0, ba) = (3.0 * (th / 2.0).tan(), th * 2.0);
+        let x_end = |w: f64| 0.5 / SQRT_2 + 2.0 * th.sin() - w * th.cos();
+        let grow = s0 - x_end(s0);
+        assert!((grow - (th.sin() - 0.5 / SQRT_2)).abs() < 1e-12);
+        let points = |f: &Value| -> Vec<(f64, f64)> {
+            let line = f["outline"][0].as_array();
+            line.map(|l| l.iter().map(|p| (p[0].as_f64().unwrap_or(f64::NAN), p[1].as_f64().unwrap_or(f64::NAN))).collect()).unwrap_or_default()
+        };
+        let mut notch = Session::default();
+        alu_tray(&mut notch, deg, json!({}));
+        let (v0, stepped) = (volume(&mut notch), points(&flat(&mut notch)));
+        run(&mut notch, "sheet.unfold", json!({}));
+        let flat0 = volume(&mut notch);
+        let mut s = Session::default();
+        alu_tray(&mut s, deg, json!({"corner_relief_shape": "tear"}));
+        assert!(s.model.results.iter().all(|r| r.error.is_none() && r.warning.is_none()), "{deg}: {:?}", s.model.results);
+        let listed = run(&mut s, "sheet.rules", json!({}));
+        assert_eq!(listed["rules"][0]["rule"]["corner_relief_shape"], "tear");
+        assert_eq!(listed["rules"][0]["values"]["corner_relief_shape"], "tear");
+        // The flat pattern, at the corner at the origin: the flange's end, the cut, the corner of the
+        // bends, and the same on the flange on x = 0. The step is gone: a corner less at each of the
+        // eight bend ends.
+        let f = flat(&mut s);
+        let outline = points(&f);
+        let at = |pts: &[(f64, f64)], x: f64, y: f64| pts.iter().any(|p| (p.0 - x).abs() < 1e-6 && (p.1 - y).abs() < 1e-6);
+        assert_eq!(f["outline"].as_array().map(Vec::len), Some(1), "{deg}: {f}");
+        for (x, y) in [(x_end(38.6), s0 - ba - (38.6 - s0)), (x_end(s0), s0 - ba), (s0, s0)] {
+            assert!(at(&outline, x, y) && at(&outline, y, x), "{deg}: ({x}, {y}) not in {outline:?}");
+        }
+        assert!(at(&stepped, s0, s0 - ba) && !at(&outline, s0, s0 - ba) && !at(&outline, s0 - ba, s0), "{deg}");
+        assert_eq!(outline.len() + 8, stepped.len(), "{deg}");
+        // The bend table: every centre line runs between the middles of its bend's two ends.
+        let lengths: Vec<f64> =
+            f["bends"].as_array().map(|b| b.iter().map(|b| b["length"].as_f64().unwrap_or(f64::NAN)).collect()).unwrap_or_default();
+        for (got, edge) in lengths.iter().zip([120.0, 90.0, 120.0, 90.0]) {
+            assert!(lengths.len() == 4 && (got - (edge - 2.0 * s0 + grow)).abs() < 1e-6, "{deg}: {lengths:?}");
+        }
+        // The folded part gains what the flat pattern gains: the triangle BA·grow/2 at each of the
+        // eight bend ends (K = 0.5 keeps the volume of a bend).
+        let (v, want) = (volume(&mut s), 8.0 * ba * grow / 2.0 * 2.0);
+        assert!((v - v0 - want).abs() < 0.05, "{deg}: {v} - {v0} vs {want}");
+        // The DXF: the outline in straight lines, each cut one of them, and four bend lines.
+        let dxf = run(&mut s, "sheet.export_dxf", json!({}))["dxf"].as_str().unwrap_or_default().to_string();
+        assert_eq!(dxf.matches("0\nLINE\n").count(), outline.len() + 4, "{deg}");
+        assert!(dxf.contains(&format!("{:.6}\n20\n{:.6}\n", x_end(s0), s0 - ba)), "{deg}");
+        // Unfold and refold keep it, and a cut made folded still goes through: a Ø20 hole in the base.
+        run(&mut s, "sheet.unfold", json!({}));
+        assert!((volume(&mut s) - flat0 - want).abs() < 1e-6, "{deg}: unfolded {} - {flat0} vs {want}", volume(&mut s));
+        run(&mut s, "sheet.refold", json!({}));
+        assert!((volume(&mut s) - v).abs() < 1e-6 * v, "{deg}");
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Hole"}));
+        run(&mut s, "sketch.circle.center", json!({"center": [60, 45], "diameter": 20}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"sketch": "Hole", "distance": 10, "operation": "cut", "through_all": true}));
+        assert!((v - volume(&mut s) - PI * 100.0 * 2.0).abs() < 0.5, "{deg}: {v} - {}", volume(&mut s));
+        let mut reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        assert!((volume(&mut reopened) - volume(&mut s)).abs() < 1e-6, "{deg}");
+    }
+}
+
+#[test]
 fn the_corner_relief_shape_is_a_rule_setting_checked_and_undone() {
     let mut s = Session::default();
     alu_tray(&mut s, 72.0, json!({}));
     let shape = |s: &mut Session| run(s, "sheet.rules", json!({}))["rules"][0]["rule"]["corner_relief_shape"].clone();
     let v0 = volume(&mut s);
     assert_eq!(shape(&mut s), "notch");
-    // Only the three names are shapes; a refused one changes nothing.
+    // Only the four names are shapes; a refused one changes nothing.
     for wrong in [json!("star"), json!("square"), json!(""), json!(2)] {
         let e = s.execute("sheet.manage_rules", &json!({"name": "AL2", "corner_relief_shape": wrong})).map(|_| ()).unwrap_err().to_string();
-        assert!(e.contains("`corner_relief_shape` must be notch, round or rectangular"), "{e}");
+        assert!(e.contains("`corner_relief_shape` must be notch, round, rectangular or tear"), "{e}");
     }
     assert!(shape(&mut s) == "notch" && volume(&mut s) == v0);
     // Changing the rule changes the parts made with it; other settings leave the shape alone.

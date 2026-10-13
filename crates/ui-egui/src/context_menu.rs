@@ -211,6 +211,18 @@ fn sel_bodies(app: &SolveApp) -> Vec<String> {
     v
 }
 
+/// The sketch a selected sketch curve or point belongs to. Geometry of a sketch that is not
+/// being edited selects as `ExternalSketchCurve` or `ExternalSketchPoint`
+/// (`viewport::hit_candidate`). Those two carry the owning sketch's feature id. The entities of
+/// the sketch being edited are `SketchCurve` and `SketchPoint` instead. The sketch-editing menu
+/// already covers that case.
+fn sel_sketch(app: &SolveApp) -> Option<u64> {
+    app.session.selection.iter().find_map(|s| match s {
+        Sel::ExternalSketchCurve { sketch, .. } | Sel::ExternalSketchPoint { sketch, .. } => Some(*sketch),
+        _ => None,
+    })
+}
+
 /// Bodies the selection touches (bodies, and the bodies of selected faces and edges).
 fn touched_bodies(app: &SolveApp) -> Vec<String> {
     let mut v: Vec<String> = Vec::new();
@@ -367,7 +379,16 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
         v.push(cmd(app, "edit.redo", "Redo").on(!app.session.redo.is_empty()));
         return v;
     }
-    if has(|s| matches!(s, Sel::Face { .. })) {
+    // A sketch curve or point in the viewport gets the sketch's own menu, the one its browser row
+    // opens, with Edit Sketch among it. Solid geometry in the selection keeps the body menu: a
+    // right-click on a face still offers the face's commands. The picker already prefers a sketch
+    // curve to the face it lies on (`pick_hits` offers curves before faces). A right-click that
+    // resolved to a sketch curve therefore replaces any face in the selection with that curve.
+    // The menu then follows the pick.
+    let solid = has(|s| matches!(s, Sel::Face { .. } | Sel::Edge { .. } | Sel::Vertex { .. } | Sel::Body { .. }));
+    if let Some(sketch) = sel_sketch(app).filter(|_| !solid) {
+        v.extend(sketch_items(app, sketch));
+    } else if has(|s| matches!(s, Sel::Face { .. })) {
         let face = sel.iter().find_map(|s| if let Sel::Face { body, .. } = s { Some(body.clone()) } else { None }).unwrap_or_default();
         let (feature, sketch) = body_feature_and_sketch(app, &face);
         let hidden = app.session.visibility.hidden_bodies.contains(&face);

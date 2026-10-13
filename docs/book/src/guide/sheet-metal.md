@@ -34,7 +34,15 @@ gets the bend relief as above. An edge that cut-outs have taken whole is refused
 
 Where two bends of one edge flange feature meet at a corner of the base, the rule's **corner
 relief shape** (`corner_relief_shape`; Corner Relief Shape in Sheet Metal Rules) says what is
-cut there. `notch`, the default, cuts nothing more: the bends end square at the corner. `round`
+cut there. `notch`, the default, cuts nothing more: the bends end square at the corner, which
+leaves a step in the flat pattern between each bend's end and its flange's closed end. `tear`
+cuts no relief either, and no step: both bends run to the corner where the two bend lines
+meet, and each bend's end is cut straight, in the flat pattern, from that corner to where its
+flange's closed end starts. Folded, the two bends touch at the corner and open to the rule's
+gap where the flanges start; the bend table lists a torn bend between the middles of its two
+ends. A tear whose cuts would cross in the flat pattern, or that would run one bend into the
+other folded (flanges at very different angles), is left out with a warning and the corner
+keeps its notch. `round`
 and `rectangular` cut a relief the rule's **corner relief** across, centred on the corner where
 the two bend lines meet: out of the base a round with half that size as its radius, or a square
 with half that size as its side, and both bends stop where it begins, cut straight across. The
@@ -94,8 +102,8 @@ with the flange it stands on; where the flange beside that one leans in over it,
 cut back until it keeps as clear of that flange as the end of the flange it stands on does.
 Returns that can't be closed stay open with a warning, as on the base. Returns of separate
 features don't close toward each other either: make the returns round a corner in one feature.
-A corner relief changes none of this: it leaves the flanges' closed ends as they are, so the
-returns on them close over a relieved corner as over a whole one.
+A corner relief or a tear changes none of this: it leaves the flanges' closed ends as they
+are, so the returns on them close over a relieved or torn corner as over a whole one.
 
 ```json
 {"command":"sheet.flange","params":{"edges":[[60,2,20],[118,45,20],[60,88,20],[2,45,20]],
