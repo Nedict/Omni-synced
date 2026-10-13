@@ -128,9 +128,12 @@ fn report_rect(bar: Rect, captions: f32, tabs_start: f32) -> (Rect, bool) {
     (Rect::from_min_size(pos2(right - width, bar.top() + 4.0), vec2(width, 26.0)), labeled)
 }
 
+/// The application bar's height: the window's title bar on desktop builds.
+pub const APP_BAR_HEIGHT: f32 = 34.0;
+
 pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
-    egui::Panel::top("sc_appbar").exact_size(34.0).show_separator_line(false).frame(egui::Frame::NONE.fill(t.app_bar)).show(ui, |ui| {
+    egui::Panel::top("sc_appbar").exact_size(APP_BAR_HEIGHT).show_separator_line(false).frame(egui::Frame::NONE.fill(t.app_bar)).show(ui, |ui| {
         let r = ui.max_rect();
         // The bar is the window's title bar: its empty space moves the window.
         if app.custom_titlebar || app.integrated_titlebar {
@@ -211,9 +214,11 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
             let clicked = resp.on_hover_text(tip).clicked();
             enabled && clicked
         };
-        let file = click(ui, "folder", app.tr("ui.file"), true);
+        // While a file loads the design waits: no menus or commands from the bar.
+        let idle = !app.file_load.busy();
+        let file = click(ui, "folder", app.tr("ui.file"), idle);
         // Save, Undo and Redo act on the design, which Home hides.
-        let shown = design_shown(app);
+        let shown = design_shown(app) && idle;
         let tip = |id: &str, key: &str| {
             let label = app.tr(id);
             if shown { format!("{label} ({key})") } else { crate::i18n::format("ui.needs_design", &[("command", label)]) }
@@ -228,7 +233,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         if click(ui, "redo", &redo_tip, shown) {
             let _ = app.run("edit.redo", json!({}));
         }
-        if click(ui, "home", app.tr("ui.home"), true) {
+        if click(ui, "home", app.tr("ui.home"), idle) {
             let rev = app.session.revision;
             app.home.show(rev);
         }
@@ -1141,7 +1146,9 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
     if crate::keymap::capturing(app) {
         return;
     }
-    if ctx.egui_wants_keyboard_input() {
+    // A dimension value that is taking the keyboard: letters belong to it (a parameter name
+    // starting with L or D), even on the frame before its field holds the focus.
+    if ctx.egui_wants_keyboard_input() || crate::dim_view::editing() {
         return;
     }
     let (keys, mods) = ctx.input(|i| {

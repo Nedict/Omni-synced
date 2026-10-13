@@ -413,7 +413,7 @@ pub fn hint(id: &str) -> Option<String> {
             "sketch.spline.fit_point" => "Spline: click fit points; click the start to close smoothly, or right-click to finish",
             "sketch.spline.control_point" | "sketch.spline.control_point_5" => "Control point spline: click control points; right-click to finish",
             "sketch.text" => "Text: click where the text starts",
-            "sketch.edit_text" => "Edit Text: click an outline of the text to edit",
+            "sketch.edit_text" => "Edit Text: click a letter interior or outline",
             "sketch.blend_curve" => "Blend curve: click the ends of two curves",
             "sketch.offset" => "Offset: click a curve (its chain is offset), then the side and distance",
             "sketch.fillet" => "Fillet: click the corner of two lines",
@@ -737,11 +737,20 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
                 }
                 return;
             }
-            let Some((id, _)) = sketch_entity(app, &hits) else { return };
             if cmd == "sketch.edit_text" {
-                crate::sketch_text::open(app, &id);
+                let selection = hits.first().and_then(|hit| match hit {
+                    Hit::SketchCurve { sketch, id, .. } if Some(*sketch) == active_sketch(app) => {
+                        Some(solidcraft_engine::Sel::SketchCurve { id: id.clone() })
+                    }
+                    Hit::Profile { sketch, index } => Some(solidcraft_engine::Sel::Profile { sketch: *sketch, index: *index }),
+                    _ => None,
+                });
+                if let Some(id) = selection.as_ref().and_then(|sel| crate::sketch_text::entity_for_selection(app, sel)) {
+                    crate::sketch_text::open(app, &id);
+                }
                 return;
             }
+            let Some((id, _)) = sketch_entity(app, &hits) else { return };
             if cmd == "sketch.centerline" {
                 let _ = app.run(cmd, json!({"curves": [id]}));
                 return;

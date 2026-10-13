@@ -118,3 +118,38 @@ fn ring_cut_below_a_recess_keeps_the_part_in_one_body() {
     let got = volume(&s, "Frame");
     assert!((got - want).abs() < 1e-9 * want, "{got} vs {want}");
 }
+
+/// Four ribs joined on a rounded lid, standing on the plate over the skirt and flush with the
+/// window's sides: each adds exactly its own material and nothing changes away from it. The
+/// joins displaced the tool and one left a slit through the far side of the skirt and plate
+/// (#616), which no volume shows: the area does. The reply of each join carries its warning, as
+/// the timeline does (an agent placing parts over MCP saw none).
+#[test]
+fn ribs_flush_with_a_window_change_nothing_away_from_them() {
+    let script: Value = serde_json::from_str(include_str!("../../../examples/regressions/lid_ribs_flush_with_window.json")).unwrap();
+    let steps = script.get("commands").and_then(Value::as_array).unwrap();
+    let (lid, ribs) = steps.split_at(steps.len() - 4);
+    let mut s = Session::default();
+    s.run_script(&Value::Array(lid.to_vec())).unwrap();
+    let measure = |s: &Session| s.model.state().body("Lid").map(|b| solidcraft_kernel::measure(&b.body).unwrap()).unwrap();
+    let (v0, a0) = (measure(&s).volume, measure(&s).area);
+    assert!((v0 - 6703.5222).abs() < 1e-3, "{v0}");
+    for (i, rib) in ribs.iter().enumerate() {
+        let reply = s.execute(rib["command"].as_str().unwrap(), &rib["params"]).unwrap();
+        let id = reply["feature"].as_u64().unwrap();
+        let result = s.model.result(id).unwrap();
+        assert_eq!(reply["warning"], json!(result.warning), "the reply says what the timeline says");
+        assert!(!result.warning.as_deref().unwrap_or_default().contains("tool displacement"), "{:?}", result.warning);
+        let m = measure(&s);
+        let n = (i + 1) as f64;
+        // 1.6 x 6 x 11.7 less the 1.35 x 6 x 3 inside the skirt.
+        assert!((m.volume - (v0 + n * 88.02)).abs() < 1e-6, "rib {}: {}", i + 1, m.volume - v0);
+        // Top 9.6, outer side 6 x 8.7 above the skirt, inner side 6 x 11.7 (flush with the
+        // window's side), ends 2 x (1.6 x 11.7 - 1.35 x 3); the skirt top 8.1, its inner side
+        // 18 and 1.5 of the plate go under the rib.
+        let area = 9.6 + 52.2 + 70.2 + 29.34 - 8.1 - 18.0 - 1.5;
+        assert!((m.area - (a0 + n * area)).abs() < 1e-6, "rib {}: area {} (no slit adds any)", i + 1, m.area - a0);
+    }
+    let bounds = s.model.state().body("Lid").unwrap().body.tessellate(0.01).unwrap().bounds();
+    assert!((bounds.max.z - 14.1).abs() < 1e-9, "{}", bounds.max.z);
+}

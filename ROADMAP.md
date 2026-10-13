@@ -81,7 +81,9 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   arguments reject such a name when an older design's construction plane already has it. Use
   the other alias, the construction feature's numeric ID or an explicit plane; existing
   stored references keep their saved meaning. Section Analysis uses the same check.
-- Sketch text can be edited from a selected outline's context menu or the Edit Text command.
+- Sketch text can be edited from a letter interior or outline's context menu or the Edit Text command.
+  Interior selection requires every profile boundary to belong to the same text source;
+  the editor highlights the whole source without replacing profile selections.
   Content, baseline X/Y, height and rotation update the original text source in one undo step;
   cancelling or rejecting an invalid value preserves the sketch. Position and height fields
   use the document units captured when editing starts; generated outlines remain associated

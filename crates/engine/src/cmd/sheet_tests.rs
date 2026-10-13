@@ -1940,6 +1940,72 @@ fn edge_flanges_on_two_collinear_tab_ends_in_one_feature() {
     assert!(rel(volume(&mut s), volume(&mut separate)) < 1e-6);
 }
 
+/// A 160 x 30 bar with a 20 x 30 leg standing past its top edge at the left end (2 mm, R 1,
+/// K 0.5, so folding keeps the volume): a base flange, or a plate converted to sheet metal.
+fn bar_with_leg(s: &mut Session, converted: bool) {
+    run(s, "sheet.manage_rules", json!({"name": "AL2", "thickness": "2 mm", "k_factor": 0.5, "bend_radius": "1 mm", "active": true}));
+    run(s, "sketch.create", json!({"plane": "XY", "name": "Bar"}));
+    run(s, "sketch.line", json!({"points": [[0, 0], [160, 0], [160, 30], [20, 30], [20, 60], [0, 60]], "closed": true}));
+    run(s, "sketch.finish", json!({}));
+    if converted {
+        run(s, "solid.extrude", json!({"sketch": "Bar", "distance": 2, "body_name": "Plate"}));
+        run(s, "sheet.convert", json!({"body": "Plate", "face": [80, 15, 2]}));
+    } else {
+        run(s, "sheet.flange", json!({"sketch": "Bar"}));
+    }
+}
+
+/// An edge flange takes its setback off its own edge only: the leg standing past the edge's end
+/// stays, and the rule's bend relief frees the bend and the flange from it.
+#[test]
+fn an_edge_flange_beside_a_leg_of_the_base_trims_its_own_edge_and_relieves_its_bend() {
+    // Bend allowance (π/2)·(R + K·T) = π; the rule's relief is Thickness wide, half of it deep.
+    let (ba, width, depth) = (PI, 2.0, 1.0);
+    for (converted, position, setback) in [(false, "inside", 3.0), (false, "outside", 0.0), (true, "inside", 3.0)] {
+        let what = format!("converted {converted}, {position}");
+        let mut s = Session::default();
+        bar_with_leg(&mut s, converted);
+        // Where the sheet's bottom face lies.
+        let z0 = bbox(&mut s)["min"][2].as_f64().unwrap_or(f64::NAN);
+        // A 90° flange 15 high on the bar's top edge (x 20…160); the leg stands past its left end.
+        run(&mut s, "sheet.flange", json!({"edges": [[90, 30, z0 + 2.0]], "height": 15, "angle": 90, "position": position}));
+        assert!(no_errors_or_warnings(&s), "{what}: {:?}", s.model.results);
+        // By hand: the base loses the setback under that edge alone, and the relief beside the
+        // bend's end at x = 20, from `depth` before the bend line to `width` past the flange's
+        // far edge in the flat (BA and the 12 mm panel past the line).
+        let (line, panel) = (30.0 - setback, 12.0);
+        let relief = width * (depth + ba + panel + width);
+        let base = 160.0 * 30.0 + 20.0 * 30.0 - 140.0 * setback - relief;
+        let want = 2.0 * (base + 140.0 * (ba + panel));
+        assert!(rel(volume(&mut s), want) < 1e-5, "{what}: {} vs {want}", volume(&mut s));
+        assert!(contains(&s, [10.0, 50.0, z0 + 1.0]), "{what}: the leg is kept");
+        assert!(!contains(&s, [19.0, line + 0.5, z0 + 1.0]), "{what}: the relief is cut");
+        assert!(contains(&s, [17.0, line + 0.5, z0 + 1.0]), "{what}: the leg beside the relief stays");
+        assert!(contains(&s, [19.0, 50.0, z0 + 1.0]), "{what}: the leg past the relief's end stays");
+        // The flange's mid plane is R + T/2 = 2 past the bend line; it ends at the leg.
+        assert!(contains(&s, [90.0, line + 2.0, z0 + 10.0]), "{what}: the flange stands");
+        assert!(!contains(&s, [10.0, line + 2.0, z0 + 10.0]), "{what}: the flange ends at the leg");
+        let f = flat(&mut s);
+        assert_eq!(f["outline"].as_array().map(Vec::len), Some(1), "{what}: {f}");
+        assert_eq!(f["cutouts"].as_array().map(Vec::len), Some(0), "{what}: {f}");
+        assert!((f["bends"][0]["length"].as_f64().unwrap_or(f64::NAN) - 140.0).abs() < 1e-9, "{what}: {f}");
+        run(&mut s, "sheet.unfold", json!({}));
+        assert!(rel(volume(&mut s), want) < 1e-9, "{what}: flat {} vs {want}", volume(&mut s));
+    }
+}
+
+/// A bend relief the rule makes too narrow to cut is left out, and the flange says where.
+#[test]
+fn a_bend_relief_left_out_is_reported_on_the_flange() {
+    let mut s = Session::default();
+    bar_with_leg(&mut s, false);
+    run(&mut s, "sheet.manage_rules", json!({"name": "AL2", "relief_width": "0 mm"}));
+    run(&mut s, "sheet.flange", json!({"edges": [[90, 30, 2]], "height": 15, "angle": 90}));
+    let w = s.model.results.last().and_then(|r| r.warning.clone()).unwrap_or_default();
+    assert!(w.contains("no bend relief at (20.000, 27.000, 0.000)") && w.contains("relief width"), "{w}");
+    assert!(contains(&s, [10.0, 50.0, 1.0]), "the leg is kept");
+}
+
 /// `fixed` inside a cut-out touches no material: the fold must refuse it or say which side it kept (#263).
 #[test]
 fn fold_fixed_point_off_the_sheet_is_not_silently_ignored() {
@@ -2956,4 +3022,80 @@ fn fold_fixed_point_must_touch_the_sheet_but_any_face_will_do() {
     assert!(fold["error"].is_null(), "{fold}");
     assert!(fold["warning"].as_str().is_some_and(|w| w.contains("fixed point is not on the sheet")), "{fold}");
     assert!((bbox(&mut f)["max"][0].as_f64().unwrap_or(f64::NAN) - x).abs() < 1e-6, "the right side stays");
+}
+
+/// The middle of the largest triangle of each flat face of the first body: well inside it.
+fn flat_face_points(s: &Session) -> Vec<(usize, solidcraft_geom::Vec3, solidcraft_geom::Vec3)> {
+    let state = s.model.state();
+    let body = &state.bodies[0].body;
+    let mesh = body.tessellate(0.01).unwrap();
+    (0..body.face_count())
+        .filter_map(|index| {
+            let normal = body.planar_face(index)?.normal();
+            let point = mesh
+                .triangles
+                .iter()
+                .zip(&mesh.tri_face)
+                .filter(|(_, f)| **f as usize == index)
+                .filter_map(|(t, _)| mesh.tri(t))
+                .max_by(|[a, b, c], [d, e, f]| (*b - *a).cross(*c - *a).len().total_cmp(&(*e - *d).cross(*f - *d).len()))
+                .map(|[a, b, c]| (a + b + c) * (1.0 / 3.0))?;
+            Some((index, point, normal))
+        })
+        .collect()
+}
+
+/// Every flat face of a sheet takes an attached sketch (#495): its panels, the rims along the
+/// panels' straight edges (named by the base sketch line or the flange's far edge and sides) and
+/// the flat ends of a bend. Each lies on its face, facing out of the sheet, and a rim's sketch
+/// follows the rim when the base grows. A press-pull on a rim pushes it out, and a plain hole into
+/// a panel is kept as a cut-out of the flat pattern (#560).
+#[test]
+fn every_flat_face_of_a_sheet_takes_an_attached_sketch() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name": "W", "expression": "100 mm"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Base"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [100, 60]}));
+    run(&mut s, "sketch.constraint.fix", json!({"entities": ["p1"]}));
+    run(&mut s, "sketch.dimension", json!({"entities": ["l1"], "value": "W"}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "sheet.flange", json!({"sketch": "Base"}));
+    run(&mut s, "sheet.flange", json!({"edges": [[50, 0, 2.5]], "height": 20}));
+    let faces = flat_face_points(&s);
+    // The base: its two faces and three rims (the fourth edge bends); the flange: its two faces,
+    // its far rim and two sides; the two ends of the bend.
+    assert_eq!(faces.len(), 12);
+    let mut on_side = None;
+    for (index, point, normal) in faces {
+        let made = run(&mut s, "sketch.create", json!({"plane": {"face": point, "body": "Body1", "index": index}}));
+        run(&mut s, "sketch.finish", json!({}));
+        assert_eq!(made["attachment"], "sheet_face", "face {index} at {point:?}");
+        let id = made["sketch"].as_u64().unwrap();
+        let solidcraft_doc::FaceAttachmentStatus::Sheet { plane: Some(plane) } = s.placed_document().sketch_face_attachment(id, &s.model) else {
+            panic!("face {index} at {point:?}")
+        };
+        assert!(plane.normal().dot(normal) > 1.0 - 1e-9 && (point - plane.origin).dot(normal).abs() < 1e-6, "face {index}: {plane:?}");
+        if (point.x - 100.0).abs() < 1e-6 && point.y > 10.0 {
+            on_side = Some(id);
+        }
+    }
+    // The base's rim along x = W (the sketch's l2) moves with W.
+    let side = on_side.expect("the base rim on x = 100");
+    run(&mut s, "parameters.change", json!({"name": "W", "expression": "120 mm"}));
+    let solidcraft_doc::FaceAttachmentStatus::Sheet { plane: Some(plane) } = s.placed_document().sketch_face_attachment(side, &s.model) else {
+        panic!("the rim sketch after the edit")
+    };
+    assert!((plane.origin.x - 120.0).abs() < 1e-9 && (plane.normal().x - 1.0).abs() < 1e-9, "{plane:?}");
+    // Press-pull the rim 5 mm out: the base grows by 5 x 60 x 2.5 less what the flange covers.
+    let v0 = volume(&mut s);
+    run(&mut s, "solid.press_pull", json!({"face": [120, 30, 1.25], "distance": 5}));
+    assert!(volume(&mut s) > v0 + 5.0 * 50.0 * 2.5, "{} {v0}", volume(&mut s));
+    // A plain hole into the base is a cut-out of the flat pattern.
+    let mut t = Session::default();
+    plate_with_flange(&mut t);
+    let v0 = volume(&mut t);
+    run(&mut t, "solid.hole", json!({"position": [50, 30, 2.5], "direction": [0, 0, -1], "diameter": 6}));
+    assert!((v0 - volume(&mut t) - PI * 9.0 * 2.5).abs() < 0.1, "{}", v0 - volume(&mut t));
+    let f = flat(&mut t);
+    assert_eq!(f["cutouts"].as_array().map(Vec::len), Some(1), "{f}");
 }

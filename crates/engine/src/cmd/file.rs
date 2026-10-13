@@ -190,6 +190,26 @@ fn write_file(s: &mut Session, path: &str, format: &str, compression: &str, prev
         "compact" => solidcraft_io::DesignCompression::Compact,
         _ => return Err(bad("file.save", "compression must be fast or compact")),
     };
+    // Linked designs are kept relative to the folder the design is saved in.
+    let links = super::component_link::rebased(&s.doc, s.path.as_deref(), path);
+    let old_links = (links != s.doc.links).then(|| std::mem::replace(&mut s.doc_mut().links, links));
+    let r = write_bytes(s, path, format, compression, preview, cache);
+    if r.is_err()
+        && let Some(old) = old_links
+    {
+        s.doc_mut().links = old;
+    }
+    r
+}
+
+fn write_bytes(
+    s: &mut Session,
+    path: &str,
+    format: &str,
+    compression: solidcraft_io::DesignCompression,
+    preview: bool,
+    cache: bool,
+) -> Result<Value> {
     let bytes = match format {
         "container" => s.design_container(compression, preview, cache)?,
         "json" => solidcraft_io::write_design(&s.design()),
@@ -710,6 +730,35 @@ mod tests {
         assert_eq!(std::fs::read(&packaged).unwrap(), before);
         session.execute("file.save", &json!({"path":packaged,"format":"json"})).unwrap();
         assert!(std::fs::read_to_string(&packaged).unwrap().contains("solidcraft/"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A watched open reports the timeline's progress; cancelled, it skips the rebuild.
+    #[test]
+    fn watched_open_reports_progress_and_stops_when_cancelled() {
+        use solidcraft_doc::progress::{Progress, watch};
+        use std::sync::Arc;
+        let dir = std::env::temp_dir().join(format!("solidcraft-watched-open-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("three.solidcraft").to_string_lossy().to_string();
+        let mut s = Session::default();
+        for x in [0, 20, 40] {
+            s.execute("solid.box", &json!({"length":10,"width":10,"height":10,"corner":[x,0,0]})).unwrap();
+        }
+        s.execute("file.save", &json!({"path":path})).unwrap();
+
+        let progress = Arc::new(Progress::default());
+        let mut opened = Session::default();
+        watch(progress.clone(), || opened.execute("doc.open", &json!({"path":path}))).unwrap();
+        assert_eq!(progress.features(), (3, 3));
+        assert_eq!(opened.world_state().bodies.len(), 3);
+
+        let progress = Arc::new(Progress::default());
+        progress.cancel();
+        let mut stopped = Session::default();
+        watch(progress, || stopped.execute("doc.open", &json!({"path":path}))).unwrap();
+        assert!(stopped.model.results.iter().all(|r| r.skipped), "no feature was rebuilt after Cancel");
+        assert!(stopped.world_state().bodies.is_empty());
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

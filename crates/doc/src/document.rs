@@ -1698,6 +1698,18 @@ pub struct StandardPart {
     pub length: Option<f64>,
 }
 
+/// A component whose contents come from another design file (Insert Design): where that file
+/// is, and the Import feature in the component that holds its bodies (Update Links replaces
+/// them; Break Link keeps them and forgets the file).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DesignLink {
+    /// The design file: relative to this design's folder once this design is saved, else as
+    /// given (`/` separates folders).
+    pub path: String,
+    /// The Import feature holding the linked design's bodies.
+    pub feature: u64,
+}
+
 /// The document.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
@@ -1731,6 +1743,9 @@ pub struct Document {
     /// Components that are standard parts (by component id): what to rebuild them from.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub parts: std::collections::BTreeMap<u64, StandardPart>,
+    /// Components linked to another design file (by component id).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub links: std::collections::BTreeMap<u64, DesignLink>,
     /// Configurations (rows of parameter values and suppressions).
     #[serde(default, skip_serializing_if = "crate::config::ConfigTable::is_empty")]
     pub configs: crate::config::ConfigTable,
@@ -1858,6 +1873,7 @@ impl Document {
             plastic: Default::default(),
             configs: Default::default(),
             parts: Default::default(),
+            links: Default::default(),
             body_components: Default::default(),
             body_offsets: Default::default(),
             materials: Default::default(),

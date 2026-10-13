@@ -41,6 +41,13 @@ of a `.ttf` / `.otf` file, and the **Edit Text** dialog has a **Font** field for
 error, and the font is kept with the text in the design, so the text stays editable in it. `SOLIDCRAFT_FONT_DIRS`
 adds folders to the ones searched for installed fonts.
 
+Right-click a letter's filled interior or outline and choose **Edit Text**. You can also
+start **Edit Text** first and click the letter. All outlines belonging to that text are
+highlighted while the dialog is open. A profile bounded by multiple text sources or other
+geometry cannot identify one text: use **Select Other** to choose its outline instead.
+Change the text, font, baseline X/Y, height or angle, then confirm with **OK**; **Cancel**
+keeps the original text. Position and height use the document's units.
+
 **Project** (P) and **Intersect** bring model edges into the sketch as linked geometry that
 follows later changes. Sketching on a face projects its edges automatically.
 For Project, select visible source curves or points from another sketch, model edges,
@@ -130,6 +137,19 @@ coincident, horizontal/vertical, parallel, perpendicular, tangent, equal, concen
 midpoint, symmetry, fix, curvature (G2) and polygon. **Sketch Dimension** (D) adds linear,
 aligned, horizontal, vertical, radius, diameter and angle dimensions. Each is a parameter
 (`d1`, `d2`, …), so it can hold an expression.
+
+Press D, click what you want to measure and type the value: as soon as the click settles the
+dimension (one line, circle or arc, or the second point or line of a distance or angle), its
+value box takes the keyboard with the measured value selected, so typing replaces it. Numbers,
+units (`1 in`), expressions (`2*width`) and parameter names all work; letters go into the box,
+not to tool shortcuts. While you type, the dimension text follows the cursor, and Enter places
+it there (or in its default place if you haven't moved the cursor) as one undo step. Esc
+cancels the dimension.
+
+You can still place the text first. Before you type, a click on empty sketch space puts the
+text there and keeps the value box focused; a click on another point or line makes the
+dimension a distance or angle instead; Tab leaves the picks waiting for a click to place the
+text.
 
 Between two points, or on a line, that don't line up with an axis, where you place the
 dimension picks what it measures: across from them, the distance between them; above or below

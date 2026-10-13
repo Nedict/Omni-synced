@@ -137,12 +137,7 @@ fn body_names_saved_before_exact_history_keep_their_pieces() {
 /// ignored test below that checks its faces; a listed plane whose face attaches fails the main
 /// check until it is removed from here.
 type Planes = &'static [([f64; 3], f64)];
-const NO_ATTACHMENT_YET: [(&str, &str, Option<Planes>, u32); 4] = [
-    ("m0-revolve-primitives", "Body1", None, 494),
-    ("naming-split-pieces", "Body1", None, 494),
-    ("modern-plastic", "Body1", None, 494),
-    ("modern-sheet-metal", "Body1", None, 495),
-];
+const NO_ATTACHMENT_YET: [(&str, &str, Option<Planes>, u32); 1] = [("issue-616-lid-ribs", "Lid", None, 628)];
 
 /// The issue a face is listed under, and whether it is listed by its plane (not as every face).
 fn known_without_attachment(design: &str, body: &str, normal: [f64; 3], distance: f64) -> Option<(u32, bool)> {
@@ -262,15 +257,9 @@ fn known_faces_attach(issue: u32) {
 }
 
 #[test]
-#[ignore = "fails until #494 is fixed"]
-fn faces_after_revolve_offset_face_and_boss_take_an_attached_sketch() {
-    known_faces_attach(494);
-}
-
-#[test]
-#[ignore = "fails until #495 is fixed"]
-fn sheet_metal_thickness_faces_take_an_attached_sketch() {
-    known_faces_attach(495);
+#[ignore = "fails until #628 is fixed"]
+fn faces_of_a_lid_with_joined_ribs_take_an_attached_sketch() {
+    known_faces_attach(628);
 }
 
 /// A small deterministic generator (xorshift).
