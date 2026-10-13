@@ -2956,7 +2956,6 @@ fn feature_replies_list_only_the_bodies_they_created() {
 /// Drafting a cylinder's side face 5° from the base plane makes a cone frustum (#547): radius 10
 /// at the base, 10 − 20 · tan 5° at the top.
 #[test]
-#[ignore = "fails until #547 is fixed"]
 fn draft_on_a_cylinder_side_makes_a_frustum() {
     let mut s = Session::default();
     run(&mut s, "solid.cylinder", json!({"radius": 10, "height": 20}));
