@@ -249,6 +249,10 @@ pub enum Kind {
     Text(crate::sketch_text::Tx),
 }
 
+/// The Single hole placement's input: places on planar faces. A pick on or near a sketch point
+/// that lies on the face (a circle's centre) is taken at that point, as Multiple picks it.
+const HOLE_FACES: Accept = PLANAR_FACES | selection::POINTS;
+
 /// The rest of the Hole dialog: placement, extents, tap type and drill point.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HoleOpts {
@@ -460,7 +464,7 @@ impl Dialog {
                 vec![SelInput::new("Profile", PROFILES, true), SelInput::new("Path", CURVES, true)],
             ),
             "solid.move" => Dialog::new(crate::dialogs_move::kind(0), crate::dialogs_move::inputs(0)),
-            "solid.hole" => Dialog::new(hole_defaults(), vec![SelInput::new("Face", PLANAR_FACES, true)]),
+            "solid.hole" => Dialog::new(hole_defaults(), vec![SelInput::new("Face", HOLE_FACES, true)]),
             "solid.box" => Dialog::new(
                 Kind::Primitive {
                     cmd: "solid.box",
@@ -704,11 +708,27 @@ impl Dialog {
 
     /// The selection a hit would add to the active input.
     pub fn candidate(&self, s: &Session, h: &Hit) -> Option<Sel> {
+        self.candidate_on(s, h, None)
+    }
+
+    /// The selection a hit would add to the active input, knowing the face under the cursor (the
+    /// nearest face the pick ray meets). A face place picked on or near a sketch point that lies
+    /// on that face (a circle's centre) is taken at the point, as a points input picks it.
+    pub fn candidate_on(&self, s: &Session, h: &Hit, face: Option<&Hit>) -> Option<Sel> {
         let inp = self.active_input()?;
         // Features are also picked on the canvas: a face stands for the feature that made it.
         if inp.accept == selection::FEATURES {
             return match h {
                 Hit::Face { body, index, point } => feature_of_face(s, body, *index, *point).map(|id| Sel::Feature { id }),
+                _ => None,
+            };
+        }
+        if inp.accept & selection::POINTS != 0
+            && inp.accept & PLANAR_FACES != 0
+            && let Hit::SketchPoint { sketch, at, .. } = h
+        {
+            return match face {
+                Some(Hit::Face { body, index, .. }) => face_place_at_sketch_point(s, *sketch, *at, body, *index),
                 _ => None,
             };
         }
@@ -793,6 +813,22 @@ fn default_profiles(s: &Session) -> Vec<Sel> {
         Some((id, 1)) => vec![Sel::Profile { sketch: id, index: 0 }],
         _ => Vec::new(),
     }
+}
+
+/// A place on planar face `face` of `body` at a sketch point (a circle's centre or a point), when
+/// the point lies on that face (within a micrometre); `None` otherwise.
+fn face_place_at_sketch_point(s: &Session, sketch: u64, at: solidcraft_engine::geom::Vec2, body: &str, face: usize) -> Option<Sel> {
+    let st = s.world_state();
+    let p = st.sketch(sketch)?.plane.to_world(at);
+    let m = st.body(body)?.mesh();
+    // The same wherever the part is: a planar face's triangles lie in its plane.
+    let tol = 1e-3;
+    let on = m
+        .triangles
+        .iter()
+        .zip(&m.tri_face)
+        .any(|(t, f)| *f as usize == face && m.tri(t).is_some_and(|[a, b, c]| crate::preview::point_triangle_dist(p, a, b, c) < tol));
+    (p.is_finite() && on && planar_face(s, body, face).is_some()).then(|| Sel::Face { body: body.to_string(), index: face, point: p })
 }
 
 /// The plane of a planar body face: (point on it, unit normal).
@@ -1113,7 +1149,7 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui) {
     ui.end_row();
     if (m == 1) != opts.multiple {
         opts.multiple = m == 1;
-        d.inputs = vec![if opts.multiple { SelInput::new("Points", selection::POINTS, true) } else { SelInput::new("Face", PLANAR_FACES, true) }];
+        d.inputs = vec![if opts.multiple { SelInput::new("Points", selection::POINTS, true) } else { SelInput::new("Face", HOLE_FACES, true) }];
         d.active = 0;
         d.extra.remove("direction");
     }

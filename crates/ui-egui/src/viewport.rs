@@ -1213,7 +1213,8 @@ pub fn hit_sel(h: &Hit) -> Option<Sel> {
 /// dialog the first hit (sketch entities only belong to the active sketch).
 pub fn candidate(app: &SolveApp, hits: &[Hit]) -> Option<(Hit, Sel)> {
     if let Some(d) = app.dialog.as_ref().filter(|d| d.wants_picks()) {
-        return hits.iter().find_map(|h| d.candidate(&app.session, h).map(|s| (h.clone(), s)));
+        let face = face_under(hits);
+        return hits.iter().find_map(|h| d.candidate_on(&app.session, h, face).map(|s| (h.clone(), s)));
     }
     hits.iter().filter(|h| pick_allowed(app, h)).find_map(|h| hit_candidate(app, h))
 }
@@ -1221,9 +1222,15 @@ pub fn candidate(app: &SolveApp, hits: &[Hit]) -> Option<(Hit, Sel)> {
 /// Every hit a click could pick, in order, each with its selection (Select Other).
 pub fn candidates(app: &SolveApp, hits: &[Hit]) -> Vec<(Hit, Sel)> {
     if let Some(d) = app.dialog.as_ref().filter(|d| d.wants_picks()) {
-        return hits.iter().filter_map(|h| d.candidate(&app.session, h).map(|s| (h.clone(), s))).collect();
+        let face = face_under(hits);
+        return hits.iter().filter_map(|h| d.candidate_on(&app.session, h, face).map(|s| (h.clone(), s))).collect();
     }
     hits.iter().filter(|h| pick_allowed(app, h)).filter_map(|h| hit_candidate(app, h)).collect()
+}
+
+/// The face under the cursor: the nearest face the pick ray meets (faces come nearest first).
+fn face_under(hits: &[Hit]) -> Option<&Hit> {
+    hits.iter().find(|h| matches!(h, Hit::Face { .. }))
 }
 
 /// What the selection filter lets a click pick with no dialog.

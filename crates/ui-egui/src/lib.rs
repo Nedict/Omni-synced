@@ -35,6 +35,8 @@ pub mod frame;
 pub mod gizmo;
 pub mod gpu;
 pub mod help;
+#[cfg(test)]
+mod hole_placement_ui_tests;
 pub mod home;
 pub mod i18n;
 #[cfg(test)]
