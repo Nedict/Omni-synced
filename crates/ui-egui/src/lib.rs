@@ -877,6 +877,21 @@ impl SolveApp {
         self.pending_fit = request;
     }
 
+    /// Move the viewport to the camera a command asked for (`view.apply`): animated like a view
+    /// change, or at once (control requests, so a screenshot right after shows it).
+    pub fn follow_view_request(&mut self, animate: bool) {
+        let Some(mut to) = self.session.camera.take() else { return };
+        to.up = self.cam.up;
+        if animate {
+            self.animate_to(to);
+        } else if to.is_valid() {
+            self.cancel_view_animation();
+            self.viewport.orbit_snap = None;
+            self.viewport.orbit_free = None;
+            self.cam = to;
+        }
+    }
+
     /// Stop any view animation where it is (the user took over the camera).
     pub fn cancel_view_animation(&mut self) {
         self.pending_fit = None;
@@ -923,6 +938,7 @@ impl SolveApp {
         }
         self.step_view_animation(ctx);
         self.drain_control(ctx);
+        self.follow_view_request(true);
         agent_cursor::step(self, ctx);
         if !self.synthetic.is_empty() {
             ctx.request_repaint();

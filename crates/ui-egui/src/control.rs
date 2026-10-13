@@ -98,6 +98,8 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
             if r.is_ok() && app.session.active_sketch.is_none() && app.session.world_state().bodies.len() == 1 && app.session.undo.len() <= 2 {
                 app.fit_view();
             }
+            // After the first-body fit, so a camera the command asked for (`view.apply`) wins.
+            app.follow_view_request(false);
             wrap(r)
         }
         "ui.agent_cursor" => {
@@ -116,7 +118,11 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
             }
             ok(json!(app.ui.agent_cursor))
         }
-        "engine.script" => wrap(app.session.run_script(p).map(|v| json!(v)).map_err(|e| e.to_string())),
+        "engine.script" => {
+            let r = app.session.run_script(p).map(|v| json!(v)).map_err(|e| e.to_string());
+            app.follow_view_request(false);
+            wrap(r)
+        }
         "engine.commands" => wrap(app.session.execute("engine.commands", &json!({})).map_err(|e| e.to_string())),
         "document.inspect" => wrap(app.session.execute("document.inspect", p).map_err(|e| e.to_string())),
         "ui.inspect" => ok(json!({

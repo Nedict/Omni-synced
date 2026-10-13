@@ -313,7 +313,11 @@ fn unknown_tools_and_bad_arguments_are_clean_errors() {
     assert_eq!(raw_tool(&mut s, "execute", json!({}))["error"]["code"], -32602);
     assert_eq!(raw_tool(&mut s, "execute", json!({"command": 5}))["error"]["code"], -32602);
     assert_eq!(raw_tool(&mut s, "measure", json!({"bogus": 1}))["error"]["code"], -32602);
-    assert_eq!(raw_tool(&mut s, "screenshot", json!({"view": "sideways"}))["error"]["code"], -32602);
+    assert_eq!(raw_tool(&mut s, "screenshot", json!({"source": "sideways"}))["error"]["code"], -32602);
+    // `view` also takes saved named views, so an unknown name is a tool error naming it.
+    let r = raw_tool(&mut s, "screenshot", json!({"view": "sideways"}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("sideways"), "{r}");
     assert_eq!(call(&mut s, 1, "tools/call", json!({"arguments": {}}))["error"]["code"], -32602);
     // Engine errors are tool errors the model can read.
     let r = raw_tool(&mut s, "execute", json!({"command": "solid.extrude", "params": {"distance": 10}}));
@@ -439,12 +443,11 @@ fn legacy_design_files_and_resource_uris() {
 /// model from that view after each change. The render must use the saved camera, not a
 /// standard view.
 #[test]
-#[ignore = "fails until #528 is fixed"]
 fn screenshot_renders_a_saved_named_view() {
     let mut s = server();
     tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 40, "width": 20, "height": 10}}));
     let camera = json!({"target": [20, 10, 5], "yaw": 0.5, "pitch": -0.6, "distance": 150});
-    tool(&mut s, "execute", json!({"command": "view.save", "params": {"name": "Photo", "camera": camera}}));
+    tool(&mut s, "execute", json!({"command": "view.save", "params": {"name": "Photo", "camera": camera.clone()}}));
     let shot = |s: &mut Server, view: &str| {
         let img = tool(s, "screenshot", json!({"view": view, "width": 96, "height": 64}));
         img["data"].as_str().unwrap_or_default().to_string()
@@ -453,6 +456,10 @@ fn screenshot_renders_a_saved_named_view() {
     let photo = shot(&mut s, "Photo");
     assert!(photo.starts_with("iVBORw0KGgo"), "not a PNG");
     assert_ne!(photo, iso, "the named view rendered like the standard iso view");
+    // The same camera given directly renders the same picture; a standard view turns back.
+    let direct = tool(&mut s, "screenshot", json!({"camera": camera, "width": 96, "height": 64}));
+    assert_eq!(direct["data"].as_str().unwrap_or_default(), photo);
+    assert_eq!(shot(&mut s, "iso"), iso);
 }
 
 /// #530: in a design with many bodies every feature result lists all of them, so a batch reply

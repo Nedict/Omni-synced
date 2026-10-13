@@ -154,10 +154,13 @@ pub fn tool_definitions() -> Vec<Value> {
             "Render the design and return it as a PNG image. Headless: a CPU render of the model, fitted to the view. \
              Connected to the app: a screenshot of the window (source \"window\", the default) or a render of the model \
              with the app's camera (source \"model\"). Both show an active section (inspect.section) with its cut face \
-             capped. `view` first turns the camera to a standard view.",
+             capped. `view` first turns the camera to a standard view or a saved named view (view.save), `camera` to              any camera (as view.apply).",
             obj(
                 json!({
-                    "view": {"type": "string", "enum": VIEWS, "description": "Standard view (default: keep the current one; headless starts at iso)"},
+                    "view": string(
+                        "Standard view (iso, home, front, back, top, bottom, left, right, fit) or the name of a saved named view                          (default: keep the current one; headless starts at iso)"
+                    ),
+                    "camera": {"type": "object", "description": "Look from this camera instead: {target: [x,y,z], yaw, pitch, distance, fov?}                         (radians, mm; as view.save and view.apply)"},
                     "path": string("Also keep the PNG at this path"),
                     "width": {"type": "integer", "description": "Render width in pixels (model renders; default 960)"},
                     "height": {"type": "integer", "description": "Render height in pixels (model renders; default 600)"},
@@ -493,12 +496,24 @@ fn screenshot(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
 }
 
 fn capture(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<(Vec<u8>, Value), String> {
-    if let Some(v) = str_arg(a, "view") {
-        b.call("ui.view", json!({"view": v}))?;
-        // Turning to a standard view also frames the model (like a axis view click).
-        if v != "fit" && v != "home" {
-            b.call("ui.view", json!({"view": "fit"}))?;
+    let apply = |b: &mut dyn Backend, params: Value| b.call("engine.execute", json!({"command": "view.apply", "params": params}));
+    match (str_arg(a, "view"), a.get("camera").filter(|c| !c.is_null())) {
+        (Some(_), Some(_)) => return Err("screenshot: give `view` or `camera`, not both".into()),
+        (None, Some(c)) => {
+            apply(b, json!({"camera": c}))?;
         }
+        (Some(v), None) if VIEWS.contains(&v) => {
+            b.call("ui.view", json!({"view": v}))?;
+            // Turning to a standard view also frames the model (like a axis view click).
+            if v != "fit" && v != "home" {
+                b.call("ui.view", json!({"view": "fit"}))?;
+            }
+        }
+        // A saved named view.
+        (Some(v), None) => {
+            apply(b, json!({"view": v}))?;
+        }
+        (None, None) => {}
     }
     let keep = str_arg(a, "path").filter(|p| !p.trim().is_empty()).map(str::to_string);
     let path = keep.clone().unwrap_or_else(|| {

@@ -219,6 +219,10 @@ pub struct Session {
     pub analysis: Option<SurfaceAnalysis>,
     /// What is hidden or shown in the view (`browser.visibility`).
     pub visibility: Visibility,
+    /// The camera `view.apply` asked the view to use (view state, not saved). The desktop app
+    /// moves its viewport there and takes it; headless renders keep using it until a standard
+    /// view is chosen.
+    pub camera: Option<render::Camera>,
     /// States to go back to (`edit.checkpoint`, `edit.restore_checkpoint`): how batches of
     /// commands are undone however long the undo history is.
     pub(crate) checkpoints: Vec<Checkpoint>,
@@ -325,6 +329,7 @@ impl Session {
             checkpoints: Vec::new(),
             next_checkpoint: 1,
             visibility: Visibility::default(),
+            camera: None,
             #[cfg(test)]
             evaluations: 0,
             crash_journal: false,
@@ -667,6 +672,7 @@ impl Session {
             checkpoints: Vec::new(),
             next_checkpoint: 1,
             visibility: self.visibility.clone(),
+            camera: self.camera,
             #[cfg(test)]
             evaluations: 0,
             crash_journal: false,
