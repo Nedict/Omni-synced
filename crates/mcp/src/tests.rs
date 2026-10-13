@@ -544,13 +544,17 @@ fn a_bridged_request_carries_the_agents_folders() {
         let mut line = String::new();
         BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
         let req: Value = serde_json::from_str(&line).unwrap();
-        writeln!(&stream, "{}", json!({"id": req["id"], "ok": true, "result": req["params"]})).unwrap();
+        let mut result = req["params"].clone();
+        result["sent_token"] = req["token"].clone();
+        writeln!(&stream, "{}", json!({"id": req["id"], "ok": true, "result": result})).unwrap();
     });
-    let mut b = crate::Remote::connect(&addr).unwrap();
+    // The app's control token goes with the request too (#205).
+    let mut b = crate::Remote::connect_with_token(&addr, Some("0123456789abcdef0123456789abcdef")).unwrap();
     let dir = std::fs::canonicalize(std::env::temp_dir()).unwrap();
     let got = scoped(Some(PathScope::new([dir.clone()])), || crate::Backend::call(&mut b, "engine.execute", json!({"command": "file.new"}))).unwrap();
     assert_eq!(got["allow_paths"], json!([dir.to_string_lossy()]), "{got}");
     assert_eq!(got["command"], "file.new");
+    assert_eq!(got["sent_token"], "0123456789abcdef0123456789abcdef");
     echo.join().unwrap();
 }
 
@@ -861,4 +865,28 @@ fn instructions_name_only_real_tools() {
     for name in named {
         assert!(tools.iter().any(|t| t == name), "the instructions name `{name}`, which is not a tool");
     }
+}
+
+/// Tool annotations never understate what a tool may do (#205): `screenshot` writes a file when
+/// given a `path`, and `execute`, `batch`, `save`, `export` and `open` can overwrite or delete
+/// files, so none of them is read-only and all are destructive and reach the file system.
+#[test]
+fn tool_annotations_tell_the_whole_truth() {
+    let tools = crate::tool_definitions();
+    let hints = |name: &str| {
+        let t = tools.iter().find(|t| t["name"] == name).unwrap_or_else(|| panic!("no tool {name}"));
+        let a = &t["annotations"];
+        (a["readOnlyHint"].as_bool().unwrap(), a["destructiveHint"].as_bool().unwrap(), a["openWorldHint"].as_bool().unwrap())
+    };
+    for name in ["execute", "batch", "save", "export", "open", "screenshot"] {
+        assert_eq!(hints(name), (false, true, true), "{name}");
+    }
+    for name in ["list_commands", "inspect_design", "measure", "body_topology", "crash_reports"] {
+        assert_eq!(hints(name), (true, false, false), "{name}");
+    }
+    assert_eq!(hints("new_design"), (false, true, false));
+    for name in ["set_parameter", "undo", "redo"] {
+        assert_eq!(hints(name), (false, false, false), "{name}");
+    }
+    assert!(tools.iter().all(|t| t["annotations"]["readOnlyHint"].is_boolean()), "every tool is annotated");
 }

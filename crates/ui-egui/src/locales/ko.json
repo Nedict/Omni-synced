@@ -329,5 +329,13 @@
   "sketch_text.builtin_font": "{family}(내장)",
   "sketch_text.font_search": "글꼴 검색",
   "sketch_text.loading_fonts": "설치된 글꼴을 찾는 중…",
-  "sketch_text.use_font_file": "글꼴 파일 {path} 사용"
+  "sketch_text.use_font_file": "글꼴 파일 {path} 사용",
+  "sketch_text.bold": "굵게",
+  "sketch_text.italic": "기울임꼴",
+  "sketch_text.align_left": "왼쪽",
+  "sketch_text.align_center": "가운데",
+  "sketch_text.align_right": "오른쪽",
+  "sketch_text.path_hint": "텍스트가 따라갈 스케치 곡선: 여기를 클릭한 다음 곡선을 클릭",
+  "sketch_text.path_clear": "곡선에서 텍스트 떼기",
+  "sketch_text.on_path": "텍스트가 경로를 따릅니다: 위치는 곡선이 정합니다"
 }

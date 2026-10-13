@@ -2010,7 +2010,7 @@ fn sheet_hole_cut(st: &mut ModelState, f: &Feature, tools: &[(Traced, Option<mor
     for (tool, prism) in tools {
         let tool = &tool.body;
         let done = match prism {
-            Some(prism) => more::sheet_primitive_cut(f, st, tool, *prism, Operation::Cut)?,
+            Some(prism) => more::sheet_primitive_cut(f, st, tool, *prism, Operation::Cut, true)?,
             None => Vec::new(),
         };
         if done.is_empty() {
@@ -4017,7 +4017,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             let corner = point(vals, corner)?;
             let b = kernel::box_solid(corner, corner + s)?;
             let b = if matches!(operation, Operation::NewBody | Operation::Join) { b.with_box_certificate(f.id)? } else { b };
-            let handled = more::sheet_primitive_cut(f, st, &b, more::PrimitivePrism::Box { lo: corner, hi: corner + s }, *operation)?;
+            let handled = more::sheet_primitive_cut(f, st, &b, more::PrimitivePrism::Box { lo: corner, hi: corner + s }, *operation, false)?;
             let tools = vec![crate::lineage::box_tool(b)];
             if !handled.is_empty() {
                 return apply_beside_sheet_cut(st, f, tools, *operation, &[], &handled);
@@ -4029,7 +4029,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             let b = kernel::cylinder(base, *axis, radius, height)?;
             let b = if matches!(operation, Operation::NewBody | Operation::Join) { b.with_cylinder_certificate(f.id)? } else { b };
             let prism = more::PrimitivePrism::Cylinder { base, axis: *axis, radius, height };
-            let handled = more::sheet_primitive_cut(f, st, &b, prism, *operation)?;
+            let handled = more::sheet_primitive_cut(f, st, &b, prism, *operation, false)?;
             let tools = vec![crate::lineage::cylinder_tool(b)];
             if !handled.is_empty() {
                 return apply_beside_sheet_cut(st, f, tools, *operation, &[], &handled);
