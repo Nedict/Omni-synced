@@ -2461,6 +2461,12 @@ pub(crate) fn grouped_selection(s: &solidcraft_engine::Session, sel: &Sel) -> Ve
                     .collect();
             }
         }
+        // A letter stands for its whole text.
+        Sel::Profile { sketch, index } => {
+            if let Some(letters) = crate::sketch_text::text_profiles(s, *sketch, *index) {
+                return letters.into_iter().map(|index| Sel::Profile { sketch: *sketch, index }).collect();
+            }
+        }
         _ => {}
     }
     vec![sel.clone()]

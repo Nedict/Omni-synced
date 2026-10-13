@@ -14,8 +14,6 @@ use crate::tools::{Kind, Tool};
 use crate::viewport::{Hit, Proj, pick, sketch_point_at};
 
 thread_local! {
-    /// A placed text waiting for its string (position, text so far).
-    static TEXT: RefCell<Option<(Vec2, String)>> = const { RefCell::new(None) };
     /// Shift held this frame.
     static SHIFT: Cell<bool> = const { Cell::new(false) };
     /// Glyphs drawn this frame (constraint id, screen centre) and the selected one.
@@ -887,8 +885,7 @@ fn run_points(app: &mut SolveApp, t: &Tool) {
             _ => return,
         },
         ("sketch.text", [at]) => {
-            let at = at.0;
-            TEXT.with(|t| *t.borrow_mut() = Some((at, String::new())));
+            crate::sketch_text::place(app, at.0, round_nice(app.cam.half_height() * 0.1));
             return;
         }
         _ => return,
@@ -1253,7 +1250,7 @@ fn snap_hint(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     painter.text(r.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(10.0), tk.text);
 }
 
-/// Per frame, after the viewport is drawn: constraint glyphs and the text-entry box.
+/// Per frame, after the viewport is drawn: constraint glyphs, snap hints and analysis marks.
 pub fn show(app: &mut SolveApp, ui: &egui::Ui, painter: &egui::Painter, proj: &Proj) {
     SHIFT.with(|c| c.set(ui.input(|i| i.modifiers.shift)));
     glyphs(app, painter, proj, ui.input(|i| i.pointer.hover_pos()).filter(|_| ui.rect_contains_pointer(proj.rect)));
@@ -1264,39 +1261,6 @@ pub fn show(app: &mut SolveApp, ui: &egui::Ui, painter: &egui::Painter, proj: &P
     }
     marks(app, painter, proj);
     iso_lines(app, painter, proj);
-    text_entry(app, ui.ctx());
-}
-
-/// The text-entry box for a placed text.
-fn text_entry(app: &mut SolveApp, ctx: &egui::Context) {
-    let Some((at, mut text)) = TEXT.with(|t| t.borrow_mut().take()) else { return };
-    let mut done = None;
-    crate::frame::window(ctx, "Text", crate::frame::Width::Normal)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-        .show(ctx, |ui| {
-            let r = ui.text_edit_singleline(&mut text);
-            r.request_focus();
-            ui.horizontal(|ui| {
-                if ui.button("OK").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    done = Some(true);
-                }
-                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    done = Some(false);
-                }
-            });
-        });
-    match done {
-        Some(true) => {
-            if !text.trim().is_empty() {
-                let h = round_nice(app.cam.half_height() * 0.1);
-                let _ = app.run("sketch.text", json!({"text": text, "at": xy(at), "height": h}));
-            }
-        }
-        Some(false) => {}
-        None => TEXT.with(|t| *t.borrow_mut() = Some((at, text))),
-    }
 }
 
 #[cfg(test)]
