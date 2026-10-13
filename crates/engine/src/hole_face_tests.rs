@@ -202,6 +202,37 @@ fn sketch_inside_the_body_still_drills_down() {
     assert!(!solid_at(&s, 20.0, 20.0, 16.0) && solid_at(&s, 20.0, 20.0, 6.0));
 }
 
+// A center exactly on an edge or a corner of the part: half or a quarter of the hole is in the
+// material, and the side is chosen the same way as for a center well inside the face.
+
+#[test]
+fn center_on_an_edge_drills_half_a_hole_from_either_side() {
+    let half = std::f64::consts::PI * 25.0 * 8.0 / 2.0;
+    near(half, 314.2);
+    for (z, cut, kept) in [(20.0, 16.0, 6.0), (0.0, 4.0, 14.0)] {
+        let mut s = Session::default();
+        box_part(&mut s);
+        let ids = points_sketch(&mut s, z, &[[0.0, 20.0]]);
+        drill(&mut s, &ids, json!({"depth": 8}));
+        near(removed(&mut s), half);
+        assert!(!solid_at(&s, 2.0, 20.0, cut) && solid_at(&s, 2.0, 20.0, kept), "sketch at z {z}");
+    }
+}
+
+#[test]
+fn center_on_a_corner_drills_a_quarter_of_a_hole_from_either_side() {
+    let quarter = std::f64::consts::PI * 25.0 * 8.0 / 4.0;
+    near(quarter, 157.1);
+    for (z, cut, kept) in [(20.0, 16.0, 6.0), (0.0, 4.0, 14.0)] {
+        let mut s = Session::default();
+        box_part(&mut s);
+        let ids = points_sketch(&mut s, z, &[[0.0, 0.0]]);
+        drill(&mut s, &ids, json!({"depth": 8}));
+        near(removed(&mut s), quarter);
+        assert!(!solid_at(&s, 2.0, 2.0, cut) && solid_at(&s, 2.0, 2.0, kept), "sketch at z {z}");
+    }
+}
+
 #[test]
 fn pattern_of_a_flipped_hole_and_round_trip() {
     let mut s = Session::default();
