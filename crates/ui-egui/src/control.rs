@@ -37,6 +37,7 @@
 use std::sync::mpsc::Sender;
 
 use serde_json::{Value, json};
+use solidcraft_engine::io::vfs;
 use solidcraft_engine::render::{StandardView, render_png};
 
 use crate::SolveApp;
@@ -86,11 +87,27 @@ fn key_from(name: &str) -> Option<egui::Key> {
 }
 
 pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> Outcome {
-    let p = &req.params;
+    // A request from an MCP server carries the folders its agent may use; every file the
+    // request reaches must lie inside them (docs/mcp.md).
+    let Some(allowed) = req.params.get("allow_paths") else { return dispatch(app, ctx, &req.method, &req.params) };
+    let Some(roots) = allowed.as_array().and_then(|a| a.iter().map(|r| r.as_str().map(std::path::PathBuf::from)).collect::<Option<Vec<_>>>()) else {
+        return err("`allow_paths` must be a list of folders");
+    };
+    let mut p = req.params.clone();
+    if let Some(o) = p.as_object_mut() {
+        o.remove("allow_paths");
+    }
+    // Plus the app's own recovery folder and, when it is a safe one, the open design's folder.
+    let roots = roots.into_iter().chain(solidcraft_engine::recovery::default_dir());
+    let scope = vfs::PathScope::new(roots).with_design(app.session.path.as_deref());
+    vfs::scoped(Some(scope), || dispatch(app, ctx, &req.method, &p))
+}
+
+fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) -> Outcome {
     let s = |k: &str| p.get(k).and_then(Value::as_str);
     let f = |k: &str| p.get(k).and_then(Value::as_f64).filter(|x| x.is_finite());
     let b = |k: &str| p.get(k).and_then(Value::as_bool).unwrap_or(false);
-    match req.method.as_str() {
+    match method {
         "engine.execute" | "command" => {
             let Some(id) = s("command").or(s("id")) else { return err("missing `command`") };
             let params = p.get("params").cloned().filter(|v| !v.is_null()).unwrap_or(json!({}));
@@ -235,7 +252,7 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
             let (Some(x), Some(y)) = (f("x"), f("y")) else { return err("missing x/y") };
             let pos = egui::pos2(x as f32, y as f32);
             app.synthetic.push(egui::Event::PointerMoved(pos));
-            if req.method == "ui.click" {
+            if method == "ui.click" {
                 let button = match s("button") {
                     Some("right") => egui::PointerButton::Secondary,
                     Some("middle") => egui::PointerButton::Middle,
@@ -534,7 +551,10 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w.clamp(320.0, 8192.0) as f32, h.clamp(240.0, 8192.0) as f32)));
             ok(Value::Null)
         }
-        "ui.screenshot" => Outcome::Screenshot { path: s("path").map(str::to_string) },
+        "ui.screenshot" => match s("path").map(vfs::check) {
+            Some(Err(e)) => err(e),
+            _ => Outcome::Screenshot { path: s("path").map(str::to_string) },
+        },
         "ui.render" => {
             let w = f("width").unwrap_or(1280.0).clamp(16.0, 8192.0) as usize;
             let h = f("height").unwrap_or(800.0).clamp(16.0, 8192.0) as usize;
@@ -543,7 +563,7 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
             let scene = solidcraft_engine::view::scene_with_section(&app.session, &app.cam, crate::viewport::section_plane(app));
             let Some(png) = render_png(&scene, &app.cam, w, h) else { return err("render failed") };
             match s("path") {
-                Some(path) => match std::fs::write(path, &png) {
+                Some(path) => match vfs::check(path).and_then(|()| std::fs::write(path, &png)) {
                     Ok(()) => ok(json!({"path": path, "bytes": png.len()})),
                     Err(e) => err(e),
                 },
@@ -620,5 +640,48 @@ mod tests {
         app.dialog = None;
         assert!(render(&mut app, &dir.join("committed.png")) == preview, "the committed section renders differently");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A request carrying `allow_paths` (from an MCP server, #205) reaches files only inside
+    /// those folders; the same request without it, like the user's own dialogs, is unconfined.
+    #[test]
+    fn requests_with_allow_paths_stay_inside_them() {
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10})).unwrap();
+        let mut app = SolveApp::new(s, Services::default());
+        let base = std::env::temp_dir().join(format!("solidcraft-control-scope-{}", std::process::id()));
+        let (root, out) = (base.join("root"), base.join("out"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&out).unwrap();
+        let at = |d: &std::path::Path, f: &str| d.join(f).to_string_lossy().to_string();
+        let mut call = |method: &str, mut params: Value, scoped: bool| {
+            if scoped {
+                params["allow_paths"] = json!([root.to_string_lossy()]);
+            }
+            let (req, _rx) = ControlRequest::new(method, params);
+            match handle(&mut app, &egui::Context::default(), &req) {
+                Outcome::Done(v) => v,
+                Outcome::Screenshot { path } => json!({"ok": true, "screenshot": path}),
+            }
+        };
+        let export = |p: String| json!({"command": "file.export", "params": {"path": p}});
+        assert_eq!(call("engine.execute", export(at(&root, "a.step")), true)["ok"], true);
+        assert_eq!(call("ui.render", json!({"path": at(&root, "a.png"), "width": 32, "height": 32}), true)["ok"], true);
+        assert_eq!(call("ui.screenshot", json!({"path": at(&root, "b.png")}), true)["ok"], true);
+        for (method, params) in [
+            ("engine.execute", export(at(&out, "a.step"))),
+            ("engine.execute", export(at(&root, "../out/a.step"))),
+            ("engine.script", json!({"commands": [{"command": "file.export", "params": {"path": at(&out, "a.step")}}]})),
+            ("ui.render", json!({"path": at(&out, "a.png"), "width": 32, "height": 32})),
+            ("ui.screenshot", json!({"path": at(&out, "b.png")})),
+        ] {
+            let v = call(method, params, true);
+            assert!(v["ok"] == false && v.to_string().contains("outside the folders this agent may use"), "{method}: {v}");
+        }
+        assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0, "nothing written outside");
+        assert_eq!(call("engine.execute", export(at(&out, "a.step")), false)["ok"], true, "without allow_paths: unconfined");
+        let bad = call("engine.execute", json!({"command": "file.new", "allow_paths": "/"}), false);
+        assert!(bad["error"].as_str().is_some_and(|e| e.contains("allow_paths")), "{bad}");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

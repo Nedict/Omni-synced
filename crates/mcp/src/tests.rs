@@ -439,6 +439,121 @@ fn legacy_design_files_and_resource_uris() {
     assert!(d["result"]["contents"][0]["text"].as_str().unwrap().contains("timeline"));
 }
 
+/// The default folders (#205): the recovery folder works out of the box, `screenshot` without a
+/// `path` uses the server's own scratch folder, and the open design's folder counts while the
+/// design is open there, without its hidden files. The working folder doesn't count at all.
+#[test]
+fn the_default_folders_are_the_designs_the_recovery_folder_and_the_scratch_folder() {
+    let base = std::env::temp_dir().join(format!("solidcraft-mcp-defaults-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, other, recovery) = (base.join("proj"), base.join("other"), base.join("recovery"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(proj.join(".env"), "TOKEN=secret").unwrap();
+    let at = |d: &std::path::Path, f: &str| d.join(f).to_string_lossy().to_string();
+    let scope = crate::agent_scope_with(Some(recovery.clone()), []);
+    let cwd = std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
+    assert!(!scope.roots().contains(&cwd), "the working folder is not a default folder: {scope:?}");
+    assert!(scope.roots().contains(&std::fs::canonicalize(&recovery).unwrap()), "{scope:?}");
+    assert!(scope.roots().contains(&crate::scratch_dir().unwrap()), "{scope:?}");
+
+    let mut session = solidcraft_engine::Session::default();
+    session.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10})).unwrap();
+    session.execute("file.save_as", &json!({"path": at(&proj, "part.solidcraft")})).unwrap();
+    let mut s = Server::new(Box::new(Headless::new(session))).with_path_scope(Some(scope));
+    // Legitimate work in the design's folder: export, save, open, screenshots, the recovery folder.
+    tool(&mut s, "export", json!({"path": at(&proj, "part.step")}));
+    tool(&mut s, "execute", json!({"command": "parameters.export", "params": {"path": at(&proj, "params.csv")}}));
+    tool(&mut s, "save", json!({"path": at(&proj, "copy.solidcraft")}));
+    tool(&mut s, "open", json!({"path": at(&proj, "part.solidcraft")}));
+    tool(&mut s, "screenshot", json!({"width": 32, "height": 32}));
+    tool(&mut s, "execute", json!({"command": "doc.recovery_list", "params": {"dir": recovery.to_string_lossy()}}));
+    assert!(proj.join("part.step").exists() && proj.join("copy.solidcraft").exists());
+    // Hidden files in it, and folders beside it, stay out of reach.
+    for (name, args) in [
+        ("export", json!({"path": at(&proj, ".env")})),
+        ("execute", json!({"command": "parameters.import", "params": {"path": at(&proj, ".env")}})),
+        ("export", json!({"path": at(&proj, ".git/x.step")})),
+        ("export", json!({"path": at(&other, "x.step")})),
+    ] {
+        let r = raw_tool(&mut s, name, args);
+        assert_eq!(r["result"]["isError"], json!(true), "{name}: {r}");
+    }
+    assert_eq!(std::fs::read_to_string(proj.join(".env")).unwrap(), "TOKEN=secret");
+    assert_eq!(std::fs::read_dir(&other).unwrap().count(), 0);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Tool calls reach files only inside the server's folders (#205): the usual workflow (save,
+/// export, open, screenshots) works there; a path outside, directly, through `..` or through a
+/// symlink that leads out, is refused with a clear error and nothing is written.
+#[test]
+fn tool_calls_stay_inside_the_agents_folders() {
+    use solidcraft_engine::io::vfs::PathScope;
+    let base = std::env::temp_dir().join(format!("solidcraft-mcp-scope-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (root, out) = (base.join("root"), base.join("out"));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let at = |d: &std::path::Path, f: &str| d.join(f).to_string_lossy().to_string();
+    let defaults = crate::agent_scope_with(None, [root.clone()]);
+    assert!(defaults.roots().contains(&std::fs::canonicalize(&root).unwrap()), "{defaults:?}");
+    assert!(!defaults.roots().contains(&std::fs::canonicalize(std::env::temp_dir()).unwrap()), "{defaults:?}");
+    // Only `root` here, to tell inside from outside within the temporary folder.
+    let mut s = Server::new(Box::new(Headless::default())).with_path_scope(Some(PathScope::new([root.clone()])));
+    tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10}}));
+    tool(&mut s, "save", json!({"path": at(&root, "part.solidcraft")}));
+    tool(&mut s, "export", json!({"path": at(&root, "part.step")}));
+    tool(&mut s, "open", json!({"path": at(&root, "part.solidcraft")}));
+    tool(&mut s, "screenshot", json!({"path": at(&root, "shot.png"), "width": 64, "height": 64}));
+    let mut escapes = vec![at(&out, "x.step"), at(&root, "../out/x.step")];
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&out, root.join("link")).unwrap();
+        escapes.push(at(&root, "link/x.step"));
+    }
+    for p in escapes {
+        for (name, args) in [
+            ("export", json!({"path": p})),
+            ("save", json!({"path": p})),
+            ("open", json!({"path": p})),
+            ("screenshot", json!({"path": p, "width": 64, "height": 64})),
+            ("execute", json!({"command": "file.save_as", "params": {"path": p}})),
+            ("batch", json!({"commands": [{"command": "file.export", "params": {"path": p}}]})),
+        ] {
+            let r = raw_tool(&mut s, name, args);
+            assert_eq!(r["result"]["isError"], json!(true), "{name} {p}: {r}");
+            assert!(r.to_string().contains("outside the folders this agent may use"), "{name} {p}: {r}");
+        }
+    }
+    assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0, "nothing written outside");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A bridged server sends the agent's folders with every request, so the app confines the
+/// request's files the same way (`allow_paths`, crates/ui-egui/src/control.rs).
+#[test]
+fn a_bridged_request_carries_the_agents_folders() {
+    use std::io::{BufRead, BufReader, Write};
+
+    use solidcraft_engine::io::vfs::{PathScope, scoped};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    let echo = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut line = String::new();
+        BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
+        let req: Value = serde_json::from_str(&line).unwrap();
+        writeln!(&stream, "{}", json!({"id": req["id"], "ok": true, "result": req["params"]})).unwrap();
+    });
+    let mut b = crate::Remote::connect(&addr).unwrap();
+    let dir = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+    let got = scoped(Some(PathScope::new([dir.clone()])), || crate::Backend::call(&mut b, "engine.execute", json!({"command": "file.new"}))).unwrap();
+    assert_eq!(got["allow_paths"], json!([dir.to_string_lossy()]), "{got}");
+    assert_eq!(got["command"], "file.new");
+    echo.join().unwrap();
+}
+
 /// #528: an agent saves the angle of a product photo as a named view once, then renders the
 /// model from that view after each change. The render must use the saved camera, not a
 /// standard view.

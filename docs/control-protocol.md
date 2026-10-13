@@ -14,6 +14,15 @@ run per frame so a flood cannot starve drawing, and a request that the UI thread
 answered within 60 seconds is replied to with `{"ok": false, "error": "timeout"}`. The same
 16 MiB line limit applies to the MCP server.
 
+Any request's `params` may carry `allow_paths: ["/abs/folder", …]`: every file that request
+reads, writes or deletes (command paths such as `file.export`'s `path` or `doc.recovery_*`'s
+`dir`, `ui.render`, `ui.screenshot`) must then lie inside one of those folders after `..` and
+symlinks are resolved, or the request fails with `… outside the folders this agent may use …`.
+The app adds its own recovery folder and, when it lies safely inside the home folder and not in
+a hidden folder, the open design's folder (whose hidden files stay out of reach). The bridged MCP server sends its folders this way on every request ([mcp.md](mcp.md)). Without
+`allow_paths` file paths are not limited, and the channel itself has no authentication beyond
+listening on loopback only.
+
 ## Engine
 
 | Method | Params | Result |

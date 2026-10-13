@@ -726,9 +726,17 @@ fn any_eligible_sheet(f: &Feature, st: &ModelState, targets: &[String]) -> bool 
 
 /// A Box or Cylinder cut (or intersect) whose tool is a straight prism along the normal of
 /// the sheet it meets: machined like the equivalent extrude of its footprint, so the sheet
-/// keeps it as a flat cut-out or pocket. Returns the sheet bodies it handled; none when the
+/// keeps it as a flat cut-out or pocket. A hole's drill (`drill`) may also be square to a
+/// folded panel of the sheet, a flange's. Returns the sheet bodies it handled; none when the
 /// primitive is not such a prism (the generic preflight then refuses real 3D machining).
-pub(super) fn sheet_primitive_cut(f: &Feature, st: &mut ModelState, tool: &Body, prism: PrimitivePrism, operation: Operation) -> Result<Vec<String>> {
+pub(super) fn sheet_primitive_cut(
+    f: &Feature,
+    st: &mut ModelState,
+    tool: &Body,
+    prism: PrimitivePrism,
+    operation: Operation,
+    drill: bool,
+) -> Result<Vec<String>> {
     if !matches!(operation, Operation::Cut | Operation::Intersect) || !any_eligible_sheet(f, st, &[]) {
         return Ok(Vec::new());
     }
@@ -738,7 +746,14 @@ pub(super) fn sheet_primitive_cut(f: &Feature, st: &mut ModelState, tool: &Body,
         if let Some(mb) = st.body(&sh.body)
             && kernel::boolean(&mb.body, tool, kernel::BoolOp::Intersect)?.is_some()
         {
-            normal = Some(sh.frame.normal());
+            normal = Some(match prism {
+                PrimitivePrism::Cylinder { axis, .. }
+                    if drill && !sh.flat && Plane::from_normal(Vec3::ZERO, axis).is_some_and(|p| !sh.parallel_panels(&p).is_empty()) =>
+                {
+                    axis
+                }
+                _ => sh.frame.normal(),
+            });
             break;
         }
     }
