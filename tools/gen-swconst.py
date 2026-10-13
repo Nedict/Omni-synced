@@ -53,18 +53,22 @@ def load_enums(path):
     out = []
     for td in md.TypeDef.rows:
         name = str(td.TypeName)
-        if not (name.startswith("sw") and name.endswith("_e")):
+        # Every SolidWorks constant enum starts with `sw`; some end in `_e`, some do not
+        # (e.g. swObjectEquality). Include any that has a `value__` backing field.
+        if not name.startswith("sw"):
             continue
         members = []
+        is_enum = False
         for fld in td.FieldList:
             idx = fld.row_index
             fn = str(fields[idx - 1].Name)
             if fn == "value__":
+                is_enum = True
                 continue
             c = const_by_field.get(idx)
             val = number(c) if c is not None else None
             members.append((fn, val))
-        if members:
+        if is_enum and members:
             out.append((name, members))
     out.sort(key=lambda e: e[0])
     return out

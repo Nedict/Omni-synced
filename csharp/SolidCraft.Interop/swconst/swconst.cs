@@ -263,6 +263,25 @@ namespace ModelForge.Interop.swconst
         swOUTSIDE = 1,
         swSMART = 2,
     }
+    public enum swArrowPosition
+    {
+        swArrowLeftTop = 0,
+        swArrowLeftBottom = 1,
+        swArrowRightTop = 2,
+        swArrowRightBottom = 3,
+        swArrowUpTopLeft = 4,
+        swArrowUpTopRight = 5,
+        swArrowDownBottomLeft = 6,
+        swArrowDownBottomRight = 7,
+        swArrowLeftOrRightTop = 8,
+        swArrowLeftOrRightBottom = 9,
+        swArrowLeftOrRight = 10,
+        swArrowUpOrDownLeft = 11,
+        swArrowUpOrDownRight = 12,
+        swArrowUpOrDown = 13,
+        swArrowNone = 14,
+        swArrowUnknown = 15,
+    }
     public enum swArrowStyle_e
     {
         swOPEN_ARROWHEAD = 0,
@@ -573,6 +592,12 @@ namespace ModelForge.Interop.swconst
         swFreeFormBend = 10,
         swRuledBend = 11,
         swLoftedBend = 12,
+    }
+    public enum swBitMaps
+    {
+        swBitMapNone = 0,
+        swBitMapUserDefined = 1,
+        swBitMapTreeError = 2,
     }
     public enum swBitmapControlStandardTypes_e
     {
@@ -1098,6 +1123,21 @@ namespace ModelForge.Interop.swconst
         swApplyCosmeticThread_Blind = 0,
         swApplyCosmeticThread_UpToNext = 1,
         swApplyCosmeticThread_ThroughFeature = 2,
+    }
+    public enum swCosmosWorksMat
+    {
+        swCosmosWorksMatNone = 0,
+        swCosmosWorksMatAcrylic = 1,
+        swCosmosWorksMatAluminum = 2,
+        swCosmosWorksMatNylon = 3,
+        swCosmosWorksMatRubber = 4,
+        swCosmosWorksMatSteel = 5,
+    }
+    public enum swCreateCommandGroupErrors
+    {
+        swCreateCommandGroup_Failed = 0,
+        swCreateCommandGroup_Success = 1,
+        swCreateCommandGroup_Exceeds_ToolBarIDs = 2,
     }
     public enum swCreateFacesBodyAction_e
     {
@@ -2809,6 +2849,12 @@ namespace ModelForge.Interop.swconst
         swLinkDimensionError_EmptyString = 11,
         swLinkDimensionError_InvalidString = 12,
     }
+    public enum swLinkString
+    {
+        swLinkStringNone = 0,
+        swLinkStringUserDefined = 1,
+        swLinkStringTroubleShootTip = 2,
+    }
     public enum swLoadAddinError_e
     {
         swUnknownError = -1,
@@ -3279,6 +3325,12 @@ namespace ModelForge.Interop.swconst
         swNumberBox_Time = 9,
         swNumberBox_Frequency = 10,
         swNumberBox_Percent = 11,
+    }
+    public enum swObjectEquality
+    {
+        swObjectNotSame = 0,
+        swObjectSame = 1,
+        swObjectUnsupported = 2,
     }
     public enum swOffsetPlanarWireBodyOptions_e
     {
@@ -3784,6 +3836,19 @@ namespace ModelForge.Interop.swconst
         swPropertyManagerPageCursors_Okay = 1,
         swPropertyManagerPageCursors_Advance = 2,
     }
+    public enum swPropertyManagerPageMessageExpanded
+    {
+        swMessageBoxMaintainExpandState = 0,
+        swMessageBoxExpand = 1,
+        swMessageBoxCompress = 2,
+    }
+    public enum swPropertyManagerPageMessageVisibility
+    {
+        swNoMessageBox = 1,
+        swMessageBoxHidden = 2,
+        swMessageBoxVisible = 3,
+        swImportantMessageBox = 4,
+    }
     public enum swPropertyManagerPageOptions_e
     {
         swPropertyManagerOptions_OkayButton = 1,
@@ -4051,6 +4116,11 @@ namespace ModelForge.Interop.swconst
         swRemainingDofs_Unavailable = 2,
         swRemainingDofs_Failed = 3,
         swRemainingDofs_RootComponent = 4,
+    }
+    public enum swRemoveCommandGroupErrors
+    {
+        swRemoveCommandGroup_Failed = 0,
+        swRemoveCommandGroup_Success = 1,
     }
     public enum swRenameOptions_e
     {
