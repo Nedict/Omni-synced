@@ -98,9 +98,9 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             let d = val(vals, &extent.distance, Kind::Length)?;
             let off = extent.start_offset.as_deref().map(|e| val(vals, e, Kind::Length)).transpose()?.unwrap_or(0.0);
             let (a, b) = extent_sides(vals, extent, d, extent.direction)?;
-            let body = kernel::extrude_sheet(&ss.plane, &sheet_chains(&ss, profiles.as_ref(), curves)?, a + off, b + off)?;
-            let name = new_name(st, f, 0);
-            st.bodies.push(ModelBody::new(name, body, f.id));
+            let chains = sheet_chains(&ss, profiles.as_ref(), curves)?;
+            let body = kernel::extrude_sheet(&ss.plane, &chains, a + off, b + off)?;
+            push_sheet(st, f, crate::lineage::ChainRoles { sketch: &ss, chains: &chains }.tool(body));
             Ok(())
         }
         FeatureKind::SurfaceRevolve { sketch, profiles, curves, axis, angle, angle2, symmetric } => {
@@ -119,9 +119,9 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
                 (None, true) => (-a / 2.0, a),
                 (None, false) => (0.0, a),
             };
-            let body = kernel::revolve_sheet(&ss.plane, &sheet_chains(&ss, profiles.as_ref(), curves)?, o, d, start, sweep)?;
-            let name = new_name(st, f, 0);
-            st.bodies.push(ModelBody::new(name, body, f.id));
+            let chains = sheet_chains(&ss, profiles.as_ref(), curves)?;
+            let body = kernel::revolve_sheet(&ss.plane, &chains, o, d, start, sweep)?;
+            push_sheet(st, f, crate::lineage::ChainRoles { sketch: &ss, chains: &chains }.tool(body));
             Ok(())
         }
         FeatureKind::Unstitch { body, faces } => {
@@ -177,12 +177,13 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
                 Some(pts) => kernel::sweep_sheet_points(&ss.plane, &chains, &pts)?,
                 None => kernel::sweep_sheet(&ss.plane, &chains, &path_segments(ps, path, start)?)?,
             };
-            let name = new_name(st, f, 0);
-            st.bodies.push(ModelBody::new(name, body, f.id));
+            let traced = crate::lineage::ChainRoles { sketch: ss, chains: &chains }.tool(body);
+            push_sheet(st, f, traced);
             Ok(())
         }
         FeatureKind::SurfaceLoft { sections } => {
             let mut secs = Vec::with_capacity(sections.len());
+            let mut sketches = Vec::with_capacity(sections.len());
             for sec in sections {
                 let ss = sketch_in_feature_frame(
                     doc,
@@ -201,14 +202,23 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
                     ));
                 };
                 secs.push((ss.plane, chain));
+                sketches.push(ss);
             }
             let body = kernel::loft_sheet(&secs)?;
-            let name = new_name(st, f, 0);
-            st.bodies.push(ModelBody::new(name, body, f.id));
+            // Each wall named by the section curves it runs between, as a loft's sides are.
+            let loops: Vec<solidcraft_geom::Loop2> = secs.iter().map(|(_, c)| solidcraft_geom::Loop2 { segs: c.clone() }).collect();
+            let traced = crate::lineage::SectionRoles { sections: sketches.iter().zip(&loops).collect() }.tool(body);
+            push_sheet(st, f, traced);
             Ok(())
         }
         _ => Err(DocError::Invalid("not a surface feature".into())),
     }
+}
+
+/// A surface builder's body, added to the model with what its faces came from.
+fn push_sheet(st: &mut ModelState, f: &Feature, traced: crate::lineage::Traced) {
+    let name = new_name(st, f, 0);
+    st.bodies.push(ModelBody::traced_new(name, traced, f.id));
 }
 
 /// What a surface builder sweeps: the boundary loops of the picked profiles, then the picked

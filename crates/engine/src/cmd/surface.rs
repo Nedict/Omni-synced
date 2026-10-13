@@ -544,6 +544,47 @@ mod tests {
         );
     }
 
+    /// Each wall of a surface built from sketch curves is named after the curve it comes from,
+    /// exactly (not from geometry): extrude, revolve, sweep and loft.
+    #[test]
+    fn surface_walls_are_named_after_their_curves() {
+        let mut s = Session::default();
+        run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 5, "name": "Mid"}));
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
+        run(&mut s, "sketch.line", json!({"points": [[3, 0], [3, 4]], "ids": ["l1"]}));
+        run(&mut s, "sketch.line", json!({"points": [[3, 4], [6, 4]], "ids": ["l2"]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "sketch.create", json!({"plane": "XZ", "name": "P"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [0, 5]], "ids": ["up"]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "sketch.create", json!({"plane": "Mid", "name": "T"}));
+        run(&mut s, "sketch.line", json!({"points": [[3, 0], [3, 4]], "ids": ["m1"]}));
+        run(&mut s, "sketch.line", json!({"points": [[3, 4], [6, 4]], "ids": ["m2"]}));
+        run(&mut s, "sketch.finish", json!({}));
+        let made = [
+            ("surface.extrude", json!({"sketch": "S", "curves": ["l1", "l2"], "distance": 3, "body_name": "E"})),
+            ("surface.revolve", json!({"sketch": "S", "curves": ["l1", "l2"], "axis": "y", "angle": "90 deg", "body_name": "R"})),
+            ("surface.sweep", json!({"sketch": "S", "curves": ["l1", "l2"], "path_sketch": "P", "path": ["up"], "body_name": "W"})),
+            (
+                "surface.loft",
+                json!({"sections": [{"sketch": "S", "curves": ["l1", "l2"]}, {"sketch": "T", "curves": ["m1", "m2"]}], "body_name": "L"}),
+            ),
+        ];
+        for (cmd, p) in made {
+            let body = p["body_name"].as_str().unwrap().to_string();
+            run(&mut s, cmd, p);
+            let fid = s.doc.features.last().unwrap().id;
+            let st = s.model.state();
+            let b = st.body(&body).unwrap();
+            let names = solidcraft_doc::naming::face_names(b);
+            for curve in ["l1", "l2"] {
+                let want = format!("F{fid}:side:{curve}");
+                let i = names.iter().position(|n| n.starts_with(&want)).unwrap_or_else(|| panic!("{cmd}: no face named {want}: {names:?}"));
+                assert!(solidcraft_doc::naming::face_name_exact(b, i), "{cmd}: {want} is named from geometry");
+            }
+        }
+    }
+
     /// The planned surface commands are registered but refuse to run: disabled with the
     /// issue that tracks them, an error (never a panic) from every caller, and the design left
     /// as it was.
