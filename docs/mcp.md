@@ -19,6 +19,11 @@ solidcraft --control 7878 &
 solidcraft-cli mcp --connect 127.0.0.1:7878
 ```
 
+Bridged, the server finds the app's control token in the token file the app wrote for that port
+([control-protocol.md](control-protocol.md#token)); `--token T` or `SOLIDCRAFT_CONTROL_TOKEN` give
+it explicitly when the app runs in a sandbox whose data folder the server can't see (prefer the
+variable: command-line arguments are visible to other users in the process list).
+
 stdout carries only protocol messages; errors go to stderr. Bridged screenshots are written to a
 temporary file by the app and read back by the server, so both must run on the same machine.
 
@@ -66,6 +71,15 @@ Bridged, the server sends its folders with every request (`allow_paths`, see
 folder of the design open in it, under the same rules, so give absolute paths: a relative one
 resolves against the app's working folder, not the server's. The app's own
 file dialogs are never limited.
+
+### Tool annotations
+
+Each tool says what it may do, for clients that ask before running tools (or auto-approve on
+these hints). `list_commands`, `inspect_design`, `measure`, `body_topology` and `crash_reports`
+are read-only. `set_parameter`, `undo` and `redo` change the design undoably. `new_design`
+replaces it (destructive). `execute`, `batch`, `open`, `save`, `export` and `screenshot` (whose
+`path` writes a file) can read, write, overwrite or delete files: they are not read-only,
+`destructiveHint` and `openWorldHint` are true.
 
 ### Client configuration
 

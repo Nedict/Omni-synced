@@ -1267,11 +1267,22 @@ impl SheetBody {
                 }
             }
             for (pi, panel) in &panels {
-                let clipped = material_boolean(panel, std::slice::from_ref(outline), kernel::BoolOp::Intersect, work)?;
-                if clipped.is_empty() {
+                if material_boolean(panel, std::slice::from_ref(outline), kernel::BoolOp::Intersect, work)?.is_empty() {
                     continue;
                 }
-                // What the tool takes over from a free-form cut-out of the panel follows its
+                // The tool spans the cut-outs inside it (a counterbore's hole, whichever was made
+                // first): a wall of its own along a cut-out's wall would only touch it, which the
+                // cut cannot resolve. An island of the pocket that holds material stays.
+                let whole: Vec<Region2> = panel.iter().map(|r| Region2 { outer: r.outer.clone(), holes: Vec::new() }).collect();
+                let mut spanning = Region2 { outer: outline.outer.clone(), holes: Vec::new() };
+                for island in &outline.holes {
+                    let inside = Region2 { outer: island.ccw(), holes: Vec::new() };
+                    if !material_boolean(panel, std::slice::from_ref(&inside), kernel::BoolOp::Intersect, work)?.is_empty() {
+                        spanning.holes.push(island.clone());
+                    }
+                }
+                let clipped = material_boolean(&whole, std::slice::from_ref(&spanning), kernel::BoolOp::Intersect, work)?;
+                // What the tool takes over from a free-form outline of the panel follows its
                 // fitted arcs: walls of planes and cylinders, which the prism booleans take.
                 let clipped = clipped.iter().map(fitted_region).collect::<Result<Vec<_>>>()?;
                 let w = if self.flat { self.frame_mat() } else { self.world(*pi) };

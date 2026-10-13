@@ -286,7 +286,7 @@ fn main() -> eframe::Result {
             b.with_x11();
         }));
     }
-    eframe::run_native(
+    let result = eframe::run_native(
         "SolidCraft",
         options,
         Box::new(move |cc| {
@@ -344,7 +344,9 @@ fn main() -> eframe::Result {
                 space_mouse,
             }))
         }),
-    )
+    );
+    control_server::remove_token_file();
+    result
 }
 
 /// Whether to run through XWayland rather than native Wayland. winit has no file drag-and-drop

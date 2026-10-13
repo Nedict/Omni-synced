@@ -6,6 +6,42 @@ line `{"id": …, "ok": true, "result": …}` or `{"id": …, "ok": false, "erro
 handled on the UI thread between frames; pointer and keyboard input is injected as real egui
 events, one pointer event per frame.
 
+### Token
+
+Every connection must authenticate. At start the app makes a random 256-bit token for this
+launch and writes it, as one line of hex, to a file only the user can read:
+
+| System | Token file |
+|---|---|
+| Linux | `$XDG_DATA_HOME/solidcraft/control/PORT.token` (`~/.local/share/solidcraft/control/PORT.token`) |
+| macOS | `~/Library/Application Support/SolidCraft/control/PORT.token` |
+| Windows | `%LOCALAPPDATA%\SolidCraft\control\PORT.token` |
+
+On Unix the folder is `0700` and the file `0600`; on Windows the file's inherited permissions are
+replaced by a single entry for the user. `SOLIDCRAFT_CONTROL_DIR` moves the folder. The file is
+removed when the app exits, and the next launch writes a new token. The token file's path is
+printed to stderr at start-up.
+
+The first request on a connection must carry the token as a top-level `"token"` member
+(`{"id": 1, "method": "ui.inspect", "params": {}, "token": "…"}`); later requests on the same
+connection may leave it out. A first line without the right token is answered with
+`{"ok": false, "error": "unauthorized: …"}` and the connection is closed, without running
+anything. Tokens are compared in constant time.
+
+`solidcraft-cli mcp --connect 127.0.0.1:PORT` reads the token file for that port by itself
+(`--token T` or `SOLIDCRAFT_CONTROL_TOKEN` give one explicitly). For a test harness, or a
+sandboxed package whose data folder the client can't see, start the app with
+`SOLIDCRAFT_CONTROL_TOKEN` set to at least 32 hex characters (for example
+`openssl rand -hex 32`) and the app uses that token instead of making one; the file is still
+written. A one-line client in Python:
+
+```python
+token = (Path.home() / ".local/share/solidcraft/control/7878.token").read_text().strip()
+sock.sendall((json.dumps({"id": 1, "method": "ui.inspect", "params": {}, "token": token}) + "\n").encode())
+```
+
+### Limits
+
 The channel is untrusted input. A request line may be at most 16 MiB; a longer one is answered
 with `{"ok": false, "error": "request too large"}` and the connection is closed, as are
 connections that send eight lines that are not JSON. At most 16 connections are served at once
@@ -19,9 +55,9 @@ reads, writes or deletes (command paths such as `file.export`'s `path` or `doc.r
 `dir`, `ui.render`, `ui.screenshot`) must then lie inside one of those folders after `..` and
 symlinks are resolved, or the request fails with `… outside the folders this agent may use …`.
 The app adds its own recovery folder and, when it lies safely inside the home folder and not in
-a hidden folder, the open design's folder (whose hidden files stay out of reach). The bridged MCP server sends its folders this way on every request ([mcp.md](mcp.md)). Without
-`allow_paths` file paths are not limited, and the channel itself has no authentication beyond
-listening on loopback only.
+a hidden folder, the open design's folder (whose hidden files stay out of reach). The bridged
+MCP server sends its folders this way on every request ([mcp.md](mcp.md)). Without
+`allow_paths` file paths are not limited: a client holding the token can do what the user can.
 
 ## Engine
 

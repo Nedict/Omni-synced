@@ -37,11 +37,22 @@ pub struct Remote {
     addr: String,
     conn: Option<(BufReader<TcpStream>, TcpStream)>,
     next_id: u64,
+    /// The app's control token, sent with every request (docs/control-protocol.md).
+    token: Option<String>,
 }
 
 impl Remote {
+    /// Connect to the app at `addr`, with its control token found the usual way
+    /// (`SOLIDCRAFT_CONTROL_TOKEN`, else the app's token file for that port).
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1 };
+        Self::connect_with_token(addr, None)
+    }
+
+    /// [`Remote::connect`] with the token given (`--token`); `None` finds it the usual way.
+    pub fn connect_with_token(addr: &str, token: Option<&str>) -> std::io::Result<Self> {
+        let port = addr.rsplit(':').next().and_then(|p| p.parse::<u16>().ok()).unwrap_or(0);
+        let token = solidcraft_engine::control_auth::client_token(port, token);
+        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, token };
         r.reconnect()?;
         Ok(r)
     }
@@ -118,7 +129,11 @@ impl Backend for Remote {
         if let (Some(scope), Some(o)) = (solidcraft_engine::io::vfs::current_scope(), params.as_object_mut()) {
             o.insert("allow_paths".into(), json!(scope.roots().iter().map(|r| r.to_string_lossy()).collect::<Vec<_>>()));
         }
-        let line = json!({"id": id, "method": method, "params": params}).to_string();
+        let mut msg = json!({"id": id, "method": method, "params": params});
+        if let Some(t) = &self.token {
+            msg["token"] = json!(t);
+        }
+        let line = msg.to_string();
         let reply = if method == "engine.batch" {
             self.send_batch(&line).map_err(|e| format!("SolidCraft at {}: {e}", self.addr))?
         } else {

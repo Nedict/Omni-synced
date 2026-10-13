@@ -41,7 +41,7 @@ Work the part out as numbers first. Then build it in a few large `batch` calls, 
   - Picks must be plain numbers.
   - A pick is resolved once and then follows its edge when parameters change.
 - **Profiles:** extrude takes every region by default. For a ring or a boss with a hole, pass `profiles`.
-- **Order:** fillet the outside edges before you shell, so the shell follows the fillets.
+- **Order:** fillet the outside edges before you shell, so the shell follows the fillets. An edge of the face the shell removes, such as the rim of an open box, is the exception: round it after the shell, because the shell can fail on it.
 
 ## Verify
 - **Each stage:** run `measure {}` (about 1 KB) and compare the volume, bbox and face count with your numbers. A cut or hole that leaves the volume unchanged has missed, even though it reported success.
