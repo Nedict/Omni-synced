@@ -1,5 +1,6 @@
 //! Evaluation of the surface features: Patch, Stitch, Thicken, Trim, Extend, Surface Extrude,
-//! Revolve, Sweep and Loft, Unstitch and Reverse Normal (kernel `surfaces`).
+//! Revolve, Sweep and Loft, Offset, Unstitch and Reverse Normal (kernel `surfaces`,
+//! `surface_offset`).
 
 use super::*;
 use solidcraft_geom::Seg2;
@@ -209,6 +210,28 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             let loops: Vec<solidcraft_geom::Loop2> = secs.iter().map(|(_, c)| solidcraft_geom::Loop2 { segs: c.clone() }).collect();
             let traced = crate::lineage::SectionRoles { sections: sketches.iter().zip(&loops).collect() }.tool(body);
             push_sheet(st, f, traced);
+            Ok(())
+        }
+        FeatureKind::SurfaceOffset { faces, body, distance, chain, tolerance } => {
+            let d = val(vals, distance, Kind::Length)?;
+            let tol = match tolerance {
+                Some(t) => val(vals, t, Kind::Length)?,
+                None => 0.01,
+            };
+            let i = body_at(st, body, faces)?;
+            let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            let picks = if *chain { smooth_chain(&mb, faces) } else { faces.clone() };
+            let mut picked: Vec<usize> = Vec::new();
+            for p in &picks {
+                let fi =
+                    crate::appearance::face_index_at(&mb, *p).ok_or_else(|| DocError::Invalid(format!("Offset: no face of {} at {p:?}", mb.name)))?;
+                if !picked.contains(&fi) {
+                    picked.push(fi);
+                }
+            }
+            let made = Traced::step(kernel::offset_surface(&mb.body, &picked, d, tol)?, &[&mb.traced()]);
+            let name = new_name(st, f, 0);
+            st.bodies.push(ModelBody::traced_new(name, made, f.id));
             Ok(())
         }
         _ => Err(DocError::Invalid("not a surface feature".into())),
