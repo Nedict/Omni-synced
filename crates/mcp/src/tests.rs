@@ -1020,6 +1020,7 @@ fn remote_engine_batch_is_not_resent_after_a_lost_reply() {
             assert_eq!(batches, 1);
         }
     }
+}
 
 /// Tool annotations never understate what a tool may do (#205): `screenshot` writes a file when
 /// given a `path`, and `execute`, `batch`, `save`, `export` and `open` can overwrite or delete
