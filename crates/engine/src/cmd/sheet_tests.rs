@@ -2500,13 +2500,13 @@ fn a_hole_on_a_folded_panel_keeps_the_name_of_its_sketch_circle() {
     let folded = hole_face_names(&mut s);
     assert_eq!(folded.len(), 2, "{folded:?}");
     assert!(folded.iter().all(|n| n.contains(&side)), "after the fold the hole is still circle {curve}: {folded:?} (before: {flat:?})");
+}
 
 #[test]
-#[ignore = "fails until #542 is fixed"]
 fn flat_pattern_reports_a_round_hole_as_a_circle() {
     // The DXF export already writes this hole as a CIRCLE; the JSON flat pattern should say
-    // "circle, centre (50, 30), radius 1.6" too instead of a sampled polyline. The exact key
-    // names are open: any object in the cutout that has a `center` and a `radius` counts.
+    // "circle, centre (50, 30), radius 1.6" too, not only a sampled polyline: any object in the
+    // cut-out's shape that has a `center` and a `radius` counts.
     fn circles(v: &Value, out: &mut Vec<([f64; 2], f64)>) {
         match v {
             Value::Object(m) => {
@@ -2531,11 +2531,32 @@ fn flat_pattern_reports_a_round_hole_as_a_circle() {
     let f = flat(&mut s);
     let cutouts = f["cutouts"].as_array().cloned().unwrap_or_default();
     assert_eq!(cutouts.len(), 1);
+    // The point list stays for existing readers; `cutout_shapes` carries the exact shape.
+    assert!(cutouts[0].as_array().is_some_and(|p| p.len() > 8));
+    let shapes = f["cutout_shapes"].as_array().cloned().unwrap_or_default();
+    assert_eq!(shapes.len(), 1);
     let mut found = Vec::new();
-    circles(&cutouts[0], &mut found);
-    let shown: String = cutouts[0].to_string().chars().take(120).collect();
+    circles(&shapes[0], &mut found);
+    let shown: String = shapes[0].to_string().chars().take(120).collect();
     assert!(
         found.iter().any(|(c, r)| (c[0] - 50.0).abs() < 1e-9 && (c[1] - 30.0).abs() < 1e-9 && (r - 1.6).abs() < 1e-9),
         "the round hole is not reported as a circle: {shown} ..."
+    );
+    // A slot is its two lines and two half-circle arcs, exactly.
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Slot"}));
+    run(&mut s, "sketch.slot.overall", json!({"p0": [10, 10], "p1": [30, 10], "width": 4}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Slot", "through_all": true, "direction": "symmetric", "operation": "cut"}));
+    let f = flat(&mut s);
+    let shapes = f["cutout_shapes"].as_array().cloned().unwrap_or_default();
+    assert_eq!(shapes.len(), f["cutouts"].as_array().map_or(0, Vec::len));
+    let slot = shapes.iter().find(|s| s.get("segments").is_some()).cloned().unwrap_or_default();
+    let segments = slot["segments"].as_array().cloned().unwrap_or_default();
+    assert_eq!(segments.iter().filter(|s| s.get("line").is_some()).count(), 2, "{slot}");
+    let arcs: Vec<&Value> = segments.iter().filter_map(|s| s.get("arc")).collect();
+    assert_eq!(arcs.len(), 2, "{slot}");
+    assert!(
+        arcs.iter()
+            .all(|a| (a["radius"].as_f64().unwrap_or(0.0) - 2.0).abs() < 1e-9 && (a["sweep_deg"].as_f64().unwrap_or(0.0).abs() - 180.0).abs() < 1e-6)
     );
 }

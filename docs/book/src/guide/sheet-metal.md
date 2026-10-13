@@ -80,6 +80,9 @@ Base-flange profiles keep their interior holes. Through cuts that cross a sheet 
 notches in the flat outline; overlapping and repeated cuts remove their combined area once.
 The flat preview, DXF and unfolded solid use the same material boundaries. Lines and circular
 arcs remain exact; other profile curves use a 0.001 mm chord tolerance.
+Flat-pattern JSON lists each cut-out twice, in the same order: as points (`cutouts`), and
+exactly (`cutout_shapes`): a round hole as `{"circle": {"center", "radius"}}`, any other as its
+`line`, `arc` (centre, radius, start and sweep in degrees) and `polyline` segments.
 
 Cuts can leave separate material pieces, including the centre of a ring cut. These pieces
 remain one logical sheet group through Unfold / Refold and export as separate flat outlines.
