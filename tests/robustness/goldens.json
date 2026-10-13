@@ -1,7 +1,7 @@
 {
  "about": "What each robustness seed builds (crates/engine/src/tests/robustness_goldens.rs, docs/robustness.md). Record changes with ROBUSTNESS_GOLDENS_BLESS=\"why\".",
  "seeds": {
-  "0": {"area":4795.764399,"bodies":1,"edges":79,"error":null,"faces":29,"outcome":"ok","rejected":0,"shells":1,"steps":["extruded profile","hole","circular pattern","circular pattern","cut sphere","join cylinder","cut cylinder","fillet"],"unsupported":1,"volume":13466.472104},
+  "0": {"area":4785.573769,"bodies":1,"edges":78,"error":null,"faces":29,"outcome":"ok","rejected":0,"shells":1,"steps":["extruded profile","hole","circular pattern","circular pattern","cut sphere","join cylinder","cut cylinder","fillet"],"unsupported":1,"volume":13461.708575},
   "1": {"area":2642.476675,"bodies":1,"edges":37,"error":null,"faces":15,"outcome":"ok","rejected":0,"shells":1,"steps":["revolved section","cut cylinder","join cylinder"],"unsupported":0,"volume":6991.559474},
   "2": {"area":2493.96451,"bodies":1,"edges":59,"error":null,"faces":22,"outcome":"ok","rejected":0,"shells":1,"steps":["box","cut cylinder","fillet","cut sphere","rectangular pattern","cut sphere"],"unsupported":3,"volume":5020.244288},
   "3": {"area":6336.456108,"bodies":1,"edges":33,"error":null,"faces":13,"outcome":"ok","rejected":0,"shells":1,"steps":["box","cut box","hole","fillet","hole"],"unsupported":0,"volume":28037.146872},
@@ -33,7 +33,7 @@
   "29": {"area":6965.599057,"bodies":1,"edges":74,"error":null,"faces":30,"outcome":"ok","rejected":0,"shells":1,"steps":["extruded profile","shell","join cylinder"],"unsupported":0,"volume":3977.885339},
   "30": {"area":853.525389,"bodies":1,"edges":23,"error":null,"faces":10,"outcome":"ok","rejected":0,"shells":1,"steps":["revolved section","chamfer"],"unsupported":0,"volume":1337.14821},
   "31": {"area":10195.468258,"bodies":3,"edges":75,"error":null,"faces":31,"outcome":"ok","rejected":1,"shells":3,"steps":["box","cut box","fillet","join box","circular pattern","cut box","circular pattern","hole"],"unsupported":1,"volume":56416.134415},
-  "32": {"area":3220.802776,"bodies":1,"edges":51,"error":null,"faces":19,"outcome":"ok","rejected":0,"shells":1,"steps":["revolved section","cut sphere","cut box","cut box","join box"],"unsupported":0,"volume":7565.955387},
+  "32": {"area":3220.802419,"bodies":1,"edges":51,"error":null,"faces":19,"outcome":"ok","rejected":0,"shells":1,"steps":["revolved section","cut sphere","cut box","cut box","join box"],"unsupported":0,"volume":7565.955759},
   "33": {"area":5269.06481,"bodies":2,"edges":64,"error":null,"faces":29,"outcome":"ok","rejected":0,"shells":3,"steps":["revolved section","fillet","join box","cut cylinder","join box","chamfer","fillet","fillet"],"unsupported":2,"volume":13840.242661},
   "34": {"area":1086.303472,"bodies":1,"edges":30,"error":null,"faces":14,"outcome":"ok","rejected":0,"shells":1,"steps":["revolved section","cut sphere","hole"],"unsupported":0,"volume":2134.365275},
   "35": {"area":4605.630216,"bodies":1,"edges":26,"error":null,"faces":11,"outcome":"ok","rejected":0,"shells":1,"steps":["box","fillet","join box"],"unsupported":0,"volume":13965.526982},
@@ -99,6 +99,7 @@
   "95": {"area":2339.366789,"bodies":1,"edges":27,"error":null,"faces":11,"outcome":"ok","rejected":0,"shells":1,"steps":["revolved section","hole","cut cylinder","cut sphere","chamfer","circular pattern"],"unsupported":1,"volume":6587.694591}
  },
  "notes": [
-  {"reason":"First record: what each seed builds on main at 1a0100cd","seeds":[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95]}
+  {"reason":"First record: what each seed builds on main at 1a0100cd","seeds":[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95]},
+  {"reason":"seed 0 meshes differently since display tessellation plans (#805), which landed alongside these goldens (#826)","seeds":[0]}
  ]
 }
