@@ -88,3 +88,16 @@ fn struts_ending_on_a_bore_wall_join_without_a_panic() {
     result.unwrap();
     assert_eq!(s.model.state().bodies.len(), 1);
 }
+
+/// A ring pocket cut from below a recess leaves a 0.5 mm floor joining the outer wall to the inner
+/// block: one connected part, yet the cut left two bodies and lost volume (#545).
+#[test]
+#[ignore = "fails until #545 is fixed"]
+fn ring_cut_below_a_recess_keeps_the_part_in_one_body() {
+    let s = replay(include_str!("../../../examples/regressions/ring_cut_below_recess_thin_floor.json"));
+    let bodies: Vec<(String, f64)> = s.model.state().bodies.iter().map(|b| (b.name.clone(), volume(&s, &b.name))).collect();
+    let want = 100.0 * 100.0 * 30.0 - 88.0 * 88.0 * 12.0 - (95.0 * 95.0 - 68.0 * 68.0) * 17.5;
+    assert_eq!(bodies.len(), 1, "{bodies:?}");
+    let got = volume(&s, "Frame");
+    assert!((got - want).abs() < 1e-9 * want, "{got} vs {want}");
+}
