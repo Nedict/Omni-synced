@@ -2469,7 +2469,6 @@ fn designs_without_per_edge_values_are_read_and_written_as_before() {
 }
 
 #[test]
-#[ignore = "fails until #541 is fixed"]
 fn a_box_cut_straight_through_a_flat_sheet_is_a_cutout_like_the_extrude_cut() {
     // A 10 x 10 box perpendicular to the sheet and through its whole thickness removes exactly
     // what a sketch rectangle extruded through all removes, which is accepted today.
@@ -2487,4 +2486,32 @@ fn a_box_cut_straight_through_a_flat_sheet_is_a_cutout_like_the_extrude_cut() {
     run(&mut s, "sheet.unfold", json!({}));
     run(&mut s, "sheet.refold", json!({}));
     assert!((volume(&mut s) - 14750.0).abs() < 1e-6);
+    // A cylinder along the sheet normal is a round hole, exact in the flat pattern and DXF.
+    run(&mut s, "solid.cylinder", json!({"base": [70, 30, -1], "radius": 5, "height": 5, "operation": "cut"}));
+    assert_eq!(flat(&mut s)["cutouts"].as_array().map(Vec::len), Some(2));
+    let dxf = run(&mut s, "sheet.export_dxf", json!({}))["dxf"].as_str().unwrap_or_default().to_string();
+    assert!(dxf.contains("CIRCLE"), "the hole stays a circle");
+    assert!((volume(&mut s) - (14750.0 - PI * 25.0 * 2.5)).abs() < 0.5);
+    // A box that only dents the top face is a pocket of constant depth.
+    run(&mut s, "solid.box", json!({"corner": [50, 10, 1.5], "length": 10, "width": 10, "height": 5, "operation": "cut"}));
+    let f = flat(&mut s);
+    assert_eq!(f["pockets"].as_array().map(Vec::len), Some(1));
+    assert_eq!(f["pockets"][0]["depth_mm"], 1.0);
+    // A box across a folded bend, or a cylinder lying in the sheet, is still 3D machining
+    // and still refused atomically.
+    let mut tilted = Session::default();
+    base(&mut tilted, 100.0, 60.0);
+    run(&mut tilted, "sheet.flange", json!({"edges": [[50, 0, 2.5]], "height": 20}));
+    let before = tilted.doc.to_json();
+    let error = tilted
+        .execute("solid.box", &json!({"corner": [40, -10, -5], "length": 20, "width": 20, "height": 40, "operation": "cut"}))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("bend") || error.contains("preserv"), "{error}");
+    assert_eq!(tilted.doc.to_json(), before);
+    let error = s
+        .execute("solid.cylinder", &json!({"base": [10, 50, 1.25], "axis": "X", "radius": 1, "height": 20, "operation": "cut"}))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("preserv"), "{error}");
 }

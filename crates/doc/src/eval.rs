@@ -1198,6 +1198,25 @@ fn intersection_tool_union(tools: Vec<Traced>) -> Result<Vec<Traced>> {
     Ok(groups)
 }
 
+/// After a cut handled some sheet bodies as flat machining, apply it to the other targets.
+fn apply_beside_sheet_cut(st: &mut ModelState, f: &Feature, tools: Vec<Traced>, op: Operation, targets: &[String], handled: &[String]) -> Result<()> {
+    let effective = if targets.is_empty() { &f.participants } else { targets };
+    let all = effective.len() == 1 && effective.first().is_some_and(|t| t == "*");
+    let rest: Vec<String> = st
+        .bodies
+        .iter()
+        .filter(|b| {
+            !handled.contains(&b.name)
+                && (all || if effective.is_empty() { b.component == f.component || b.feature == f.id } else { effective.contains(&b.name) })
+        })
+        .map(|b| b.name.clone())
+        .collect();
+    if rest.is_empty() {
+        return Ok(());
+    }
+    apply_traced(st, f, tools, op, &rest)
+}
+
 fn apply_op(state: &mut ModelState, f: &Feature, tools: Vec<Body>, op: Operation, targets: &[String]) -> Result<()> {
     apply_traced(state, f, tools.into_iter().map(Traced::unnamed).collect(), op, targets)
 }
@@ -3311,26 +3330,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 let bodies: Vec<Body> = tools.iter().map(|t| t.body.clone()).collect();
                 let handled = more::sheet_cut(f, st, &bodies, targets, constructor.as_ref())?;
                 if !handled.is_empty() {
-                    let effective = if targets.is_empty() { &f.participants } else { targets };
-                    let all = effective.len() == 1 && effective.first().is_some_and(|t| t == "*");
-                    let rest: Vec<String> = st
-                        .bodies
-                        .iter()
-                        .filter(|b| {
-                            !handled.contains(&b.name)
-                                && (all
-                                    || if effective.is_empty() {
-                                        b.component == f.component || b.feature == f.id
-                                    } else {
-                                        effective.contains(&b.name)
-                                    })
-                        })
-                        .map(|b| b.name.clone())
-                        .collect();
-                    if rest.is_empty() {
-                        return Ok(());
-                    }
-                    return apply_traced(st, f, tools, *operation, &rest);
+                    return apply_beside_sheet_cut(st, f, tools, *operation, targets, &handled);
                 }
             }
             apply_traced(st, f, tools, *operation, targets)
@@ -3704,12 +3704,24 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             let corner = point(vals, corner)?;
             let b = kernel::box_solid(corner, corner + s)?;
             let b = if matches!(operation, Operation::NewBody | Operation::Join) { b.with_box_certificate(f.id)? } else { b };
-            apply_traced(st, f, vec![crate::lineage::box_tool(b)], *operation, &[])
+            let handled = more::sheet_primitive_cut(f, st, &b, more::PrimitivePrism::Box { lo: corner, hi: corner + s }, *operation)?;
+            let tools = vec![crate::lineage::box_tool(b)];
+            if !handled.is_empty() {
+                return apply_beside_sheet_cut(st, f, tools, *operation, &[], &handled);
+            }
+            apply_traced(st, f, tools, *operation, &[])
         }
         FeatureKind::Cylinder { base, axis, radius, height, operation } => {
-            let b = kernel::cylinder(point(vals, base)?, *axis, val(vals, radius, Kind::Length)?, val(vals, height, Kind::Length)?)?;
+            let (base, radius, height) = (point(vals, base)?, val(vals, radius, Kind::Length)?, val(vals, height, Kind::Length)?);
+            let b = kernel::cylinder(base, *axis, radius, height)?;
             let b = if matches!(operation, Operation::NewBody | Operation::Join) { b.with_cylinder_certificate(f.id)? } else { b };
-            apply_traced(st, f, vec![crate::lineage::cylinder_tool(b)], *operation, &[])
+            let prism = more::PrimitivePrism::Cylinder { base, axis: *axis, radius, height };
+            let handled = more::sheet_primitive_cut(f, st, &b, prism, *operation)?;
+            let tools = vec![crate::lineage::cylinder_tool(b)];
+            if !handled.is_empty() {
+                return apply_beside_sheet_cut(st, f, tools, *operation, &[], &handled);
+            }
+            apply_traced(st, f, tools, *operation, &[])
         }
         FeatureKind::Sphere { center, radius, operation } => {
             let b = kernel::sphere(point(vals, center)?, val(vals, radius, Kind::Length)?)?;

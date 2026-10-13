@@ -86,6 +86,10 @@ remain one logical sheet group through Unfold / Refold and export as separate fl
 Large profiles that exceed the geometry processing budget report an error instead of
 exporting a partial outline.
 
+A Box cut, or a Cylinder cut whose axis is the sheet's normal, machines the sheet like the
+extrude of its footprint: through the sheet it is a cut-out (a cylinder a round one), and
+part way it is a pocket. A primitive cut at any other angle, or across a folded bend, is refused.
+
 Parallel, untapered extrude cuts also preserve shallow pockets through Unfold / Refold.
 The pocket floor and side walls remain solid geometry; overlapping cuts from opposite sides
 become a through hole wherever they remove the whole thickness. Flat-pattern JSON lists
