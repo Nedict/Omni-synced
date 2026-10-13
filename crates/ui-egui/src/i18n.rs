@@ -229,6 +229,28 @@ mod tests {
         assert_eq!(Locale(&PARTIAL).text("ui.extrude"), "Extrude");
     }
 
+    /// `label()`'s id fallback (an argument that matches no other entry's English text is
+    /// looked up as an id directly) is how the Sketch Palette reaches `ui.palette_profile` and
+    /// `ui.palette_points` without colliding with "Profile" / "Points" elsewhere (see the
+    /// comment on `sketch_palette::TOGGLES`). Prove it resolves to each locale's own
+    /// translation, not merely to something: a broken id would fall back to the English catalog
+    /// silently (`Locale::text`'s own fallback chain), so a test that only checks "resolves to a
+    /// non-empty string" would not catch that.
+    #[test]
+    fn id_labels_resolve_to_their_own_translation_not_an_english_fallback() {
+        for (lang, profile, points) in [("de", "Profil", "Punkte"), ("ja", "プロファイル", "点"), ("ko", "프로파일", "점")] {
+            let locale = Locale::for_language(lang);
+            assert_eq!(locale.label("ui.palette_profile"), profile, "{lang}");
+            assert_eq!(locale.label("ui.palette_points"), points, "{lang}");
+        }
+        // The literal English text "Profile" / "Points" must keep naming the pre-existing,
+        // unrelated entries (the SelInput row labels in dialogs.rs, and "Show Profile" /
+        // "Hide Profile" in context_menu.rs), not the palette's own ids: that separation is the
+        // entire reason these two rows pass an id instead of their English text.
+        assert_eq!(Locale::for_language("de").label("Profile"), Locale::for_language("de").text("ui.profile"));
+        assert_eq!(Locale::for_language("de").label("Points"), Locale::for_language("de").text("ui.points"));
+    }
+
     #[test]
     fn templates_allow_reordering_and_literal_braces_in_values() {
         assert_eq!(interpolate("{second} then {first}", &[("first", "{second}"), ("second", "B")]), "B then {second}");
