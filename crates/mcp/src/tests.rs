@@ -434,3 +434,79 @@ fn legacy_design_files_and_resource_uris() {
     let d = call(&mut s, 1, "resources/read", json!({"uri": "solvecraft://design"}));
     assert!(d["result"]["contents"][0]["text"].as_str().unwrap().contains("timeline"));
 }
+
+/// #528: an agent saves the angle of a product photo as a named view once, then renders the
+/// model from that view after each change. The render must use the saved camera, not a
+/// standard view.
+#[test]
+#[ignore = "fails until #528 is fixed"]
+fn screenshot_renders_a_saved_named_view() {
+    let mut s = server();
+    tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 40, "width": 20, "height": 10}}));
+    let camera = json!({"target": [20, 10, 5], "yaw": 0.5, "pitch": -0.6, "distance": 150});
+    tool(&mut s, "execute", json!({"command": "view.save", "params": {"name": "Photo", "camera": camera}}));
+    let shot = |s: &mut Server, view: &str| {
+        let img = tool(s, "screenshot", json!({"view": view, "width": 96, "height": 64}));
+        img["data"].as_str().unwrap_or_default().to_string()
+    };
+    let iso = shot(&mut s, "iso");
+    let photo = shot(&mut s, "Photo");
+    assert!(photo.starts_with("iVBORw0KGgo"), "not a PNG");
+    assert_ne!(photo, iso, "the named view rendered like the standard iso view");
+}
+
+/// #530: in a design with many bodies every feature result lists all of them, so a batch reply
+/// is mostly the same body list once per step. A compact batch reply names only what each step
+/// added or changed.
+#[test]
+#[ignore = "fails until #530 is fixed"]
+fn compact_batch_reply_does_not_repeat_the_body_list() {
+    let mut s = server();
+    let cube =
+        |x: i64, y: i64| json!({"command": "solid.box", "params": {"length": 1, "width": 1, "height": 1, "corner": [x, y, 0], "operation": "new"}});
+    let existing: Vec<Value> = (0..50).map(|i| cube(2 * i, 0)).collect();
+    tool(&mut s, "batch", json!({"commands": existing}));
+    let more: Vec<Value> = (0..3).map(|i| cube(2 * i, 5)).collect();
+    let r = raw_tool(&mut s, "batch", json!({"commands": more, "verbose": false}));
+    assert!(r.get("error").is_none() && r["result"]["isError"] != json!(true), "{r}");
+    let reply = r["result"]["content"][0]["text"].as_str().unwrap_or_default();
+    assert_eq!(tool(&mut s, "measure", json!({}))["body_count"], 53);
+    // The new bodies are named; the 50 untouched ones are not repeated.
+    for new in ["Body51", "Body52", "Body53"] {
+        assert!(reply.contains(&format!("\"{new}\"")), "{new} missing from the compact reply: {reply}");
+    }
+    for old in ["Body1", "Body25", "Body50"] {
+        assert!(!reply.contains(&format!("\"{old}\"")), "untouched {old} repeated in the compact reply ({} bytes): {reply}", reply.len());
+    }
+}
+
+/// #531: a product model keeps an optional variant hidden in its default presentation. Hiding
+/// it must survive saving and reopening the design (suppressing it would change the design).
+#[test]
+#[ignore = "fails until #531 is fixed"]
+fn hidden_body_stays_hidden_after_save_and_reopen() {
+    let mut s = server();
+    tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "body_name": "Base"}}));
+    tool(
+        &mut s,
+        "execute",
+        json!({"command": "solid.box", "params": {"length": 5, "width": 5, "height": 5, "corner": [20, 0, 0], "operation": "new", "body_name": "Variant"}}),
+    );
+    tool(&mut s, "execute", json!({"command": "browser.visibility", "params": {"items": ["Variant"], "visible": false}}));
+    let visible = |s: &mut Server, body: &str| {
+        let d = tool(s, "inspect_design", json!({"measure": false}));
+        d["bodies"].as_array().into_iter().flatten().find(|b| b["name"] == body).map(|b| b["visible"].clone()).unwrap_or(Value::Null)
+    };
+    assert_eq!(visible(&mut s, "Variant"), false);
+
+    let dir = std::env::temp_dir().join(format!("solidcraft-mcp-visibility-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let design = dir.join("variants.solidcraft");
+    tool(&mut s, "save", json!({"path": design.to_string_lossy()}));
+    tool(&mut s, "new_design", json!({"name": "Empty"}));
+    tool(&mut s, "open", json!({"path": design.to_string_lossy()}));
+    let (base, variant) = (visible(&mut s, "Base"), visible(&mut s, "Variant"));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(base, true);
+    assert_eq!(variant, false, "the hidden body is visible again after reopening");
+}
