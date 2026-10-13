@@ -30,6 +30,10 @@ pub enum Surf {
     Patch,
     Unstitch,
     ReverseNormal,
+    Offset {
+        distance: String,
+        chain: bool,
+    },
     Stitch {
         tolerance: String,
     },
@@ -58,6 +62,7 @@ impl Surf {
             Surf::Patch => "PATCH",
             Surf::Unstitch => "UNSTITCH",
             Surf::ReverseNormal => "REVERSE NORMAL",
+            Surf::Offset { .. } => "OFFSET SURFACE",
             Surf::Stitch { .. } => "STITCH",
             Surf::ConvertMesh { .. } => "CONVERT MESH",
             Surf::Thicken { .. } => "THICKEN",
@@ -71,7 +76,7 @@ impl Surf {
     pub fn primary(&mut self) -> Option<(&'static str, ValueKind, &mut String)> {
         Some(match self {
             Surf::Thicken { thickness, .. } => ("Thickness", ValueKind::Length, thickness),
-            Surf::Extend { distance } | Surf::Extrude { distance, .. } => ("Distance", ValueKind::Length, distance),
+            Surf::Extend { distance } | Surf::Extrude { distance, .. } | Surf::Offset { distance, .. } => ("Distance", ValueKind::Length, distance),
             Surf::Revolve { angle, .. } => ("Angle", ValueKind::Angle, angle),
             _ => return None,
         })
@@ -90,6 +95,7 @@ fn inputs(k: &Surf) -> Vec<SelInput> {
         Surf::Patch => vec![SelInput::new("Boundary", PROFILES | EDGES, true)],
         Surf::Unstitch => vec![SelInput::new("Body, or faces to take out", BODIES | FACES, true)],
         Surf::ReverseNormal => vec![SelInput::new("Surface, or faces to turn over", BODIES | FACES, true)],
+        Surf::Offset { .. } => vec![SelInput::new("Faces", FACES, true)],
         Surf::Stitch { .. } => vec![SelInput::new("Surfaces", BODIES, true)],
         Surf::ConvertMesh { .. } => vec![SelInput::new("Mesh body", BODIES, false)],
         Surf::Thicken { .. } => vec![SelInput::new("Surfaces", BODIES, true)],
@@ -113,6 +119,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
         "surface.patch" => Surf::Patch,
         "surface.unstitch" => Surf::Unstitch,
         "surface.reverse_normal" => Surf::ReverseNormal,
+        "surface.offset" => Surf::Offset { distance: "2 mm".into(), chain: false },
         "surface.stitch" => Surf::Stitch { tolerance: String::new() },
         "mesh.convert" => Surf::ConvertMesh { tolerance: "0.05 mm".into() },
         "surface.thicken" => Surf::Thicken { thickness: "2 mm".into(), symmetric: false, operation: 0 },
@@ -162,6 +169,14 @@ pub fn rows(ui: &mut egui::Ui, k: &mut Surf) -> bool {
             let mut dir = usize::from(*symmetric);
             combo(ui, "sr_dir", &["One Side", "Symmetric"], &mut dir);
             *symmetric = dir == 1;
+            ui.end_row();
+        }
+        Surf::Offset { distance, chain } => {
+            row_label(ui, "Distance");
+            enter |= field(ui, distance);
+            ui.end_row();
+            row_label(ui, "Tangent chain");
+            ui.checkbox(chain, "");
             ui.end_row();
         }
         Surf::Extrude { distance, direction } => {
@@ -327,6 +342,18 @@ pub fn commands(app: &SolveApp, k: &Surf, inputs: &[SelInput], extra: &Map<Strin
                 ("surface.patch", json!({"edges": edges, "body": body}))
             }
         }
+        Surf::Offset { distance, chain } => {
+            need(0, "the faces to offset")?;
+            let (body, faces) = body_and_faces(items(inputs, 0))?;
+            if faces.is_empty() {
+                return Err("pick faces to offset".into());
+            }
+            let mut p = json!({"body": body, "faces": faces, "distance": distance});
+            if *chain {
+                p["chain"] = json!(true);
+            }
+            ("surface.offset", p)
+        }
         Surf::Unstitch | Surf::ReverseNormal => {
             need(0, "a body or some of its faces")?;
             let (body, faces) = body_and_faces(items(inputs, 0))?;
@@ -458,6 +485,9 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(K
                 }
             }
             (Surf::Patch, vec![sels])
+        }
+        FeatureKind::SurfaceOffset { faces, distance, chain, .. } => {
+            (Surf::Offset { distance: distance.clone(), chain: *chain }, vec![faces.iter().filter_map(|p| crate::dialogs::face_sel(s, *p)).collect()])
         }
         FeatureKind::Unstitch { body, faces } | FeatureKind::ReverseNormal { body, faces } => {
             let sels: Vec<Sel> = if faces.is_empty() {
