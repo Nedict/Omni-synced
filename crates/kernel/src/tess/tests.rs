@@ -8,7 +8,8 @@ use crate::{Body, BoolOp};
 /// Every triangle edge, with vertices merged by exact position, is shared by exactly two
 /// triangles: the mesh is closed and its faces meet exactly (no cracks, no T-junctions).
 fn assert_watertight(m: &Mesh, name: &str) {
-    let key = |i: u32| m.positions.get(i as usize).map(|p| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]);
+    // By value: −0.0 and 0.0 are one position (adding 0.0 makes −0.0 into 0.0).
+    let key = |i: u32| m.positions.get(i as usize).map(|p| [(p.x + 0.0).to_bits(), (p.y + 0.0).to_bits(), (p.z + 0.0).to_bits()]);
     let mut uses: HashMap<([u64; 3], [u64; 3]), i32> = HashMap::new();
     for t in &m.triangles {
         for e in 0..3 {
