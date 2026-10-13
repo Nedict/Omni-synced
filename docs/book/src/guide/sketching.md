@@ -131,6 +131,19 @@ midpoint, symmetry, fix, curvature (G2) and polygon. **Sketch Dimension** (D) ad
 aligned, horizontal, vertical, radius, diameter and angle dimensions. Each is a parameter
 (`d1`, `d2`, …), so it can hold an expression.
 
+Press D, click what you want to measure and type the value: as soon as the click settles the
+dimension (one line, circle or arc, or the second point or line of a distance or angle), its
+value box takes the keyboard with the measured value selected, so typing replaces it. Numbers,
+units (`1 in`), expressions (`2*width`) and parameter names all work; letters go into the box,
+not to tool shortcuts. While you type, the dimension text follows the cursor, and Enter places
+it there (or in its default place if you haven't moved the cursor) as one undo step. Esc
+cancels the dimension.
+
+You can still place the text first. Before you type, a click on empty sketch space puts the
+text there and keeps the value box focused; a click on another point or line makes the
+dimension a distance or angle instead; Tab leaves the picks waiting for a click to place the
+text.
+
 Between two points, or on a line, that don't line up with an axis, where you place the
 dimension picks what it measures: across from them, the distance between them; above or below
 them, the horizontal distance; beside them, the vertical distance.
