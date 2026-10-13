@@ -31,6 +31,12 @@ fit-point and control-point splines, conics, points and text. **Construction** (
 into reference geometry that doesn't form profiles. Modify tools include trim (T), extend, break,
 fillet, chamfer, offset (O), mirror, patterns, move/copy and scale.
 
+**Text** is set in the built-in font (Liberation Sans) unless it is given another: `sketch.text` and
+`sketch.edit_text` take a `font`, the family or full name of an installed font ("DejaVu Sans") or the path
+of a `.ttf` / `.otf` file, and the **Edit Text** dialog has a **Font** field for it. An unknown font is an
+error, and the font is kept with the text in the design, so the text stays editable in it. `SOLIDCRAFT_FONT_DIRS`
+adds folders to the ones searched for installed fonts.
+
 **Project** (P) and **Intersect** bring model edges into the sketch as linked geometry that
 follows later changes. Sketching on a face projects its edges automatically.
 For Project, select visible source curves or points from another sketch, model edges,

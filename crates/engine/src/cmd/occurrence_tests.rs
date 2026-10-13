@@ -424,3 +424,38 @@ fn instance_styles_follow_source_identity_after_collision_rename_and_pending_mov
     assert_eq!(imported.bodies[0].body.color(), Some([1.0, 0.0, 0.0]));
     assert!(imported.bodies[0].body.paint().unwrap().faces.iter().any(|f| f.color == [0.0, 1.0, 0.0]));
 }
+
+/// Command names for linking another design are a proposal (#533); adjust them to the real API.
+const INSERT_DESIGN: &str = "component.insert_design";
+const UPDATE_LINKS: &str = "component.update_links";
+
+fn saved_box_design(path: &std::path::Path, height: f64) {
+    let mut part = Session::default();
+    run(&mut part, "solid.box", json!({"length": 10, "width": 20, "height": height, "body_name": "Plate"}));
+    run(&mut part, "file.save", json!({"path": path}));
+}
+
+#[test]
+#[ignore = "fails until #533 is fixed"]
+fn a_linked_design_brings_its_bodies_in_and_follows_edits_to_the_part_file() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-linked-design-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let part = dir.join("plate.solidcraft");
+    // Given a part saved in its own design: a 10 x 20 x 30 plate.
+    saved_box_design(&part, 30.0);
+    // When an assembly inserts it as a linked component, the plate's body is in the assembly.
+    let mut assembly = Session::default();
+    let inserted = assembly.execute(INSERT_DESIGN, &json!({"path": part, "translate": [50, 0, 0]}));
+    let inserted = inserted.unwrap_or_else(|e| panic!("{INSERT_DESIGN}: {e}"));
+    let occurrence = inserted["occurrence"].as_u64().unwrap_or_else(|| panic!("no occurrence in {inserted}"));
+    let measured = run(&mut assembly, "occurrence.properties", json!({"occurrence": occurrence, "path": [occurrence]}));
+    near(&measured["total"]["volume_mm3"], 6000.0);
+    near(&measured["total"]["center_of_mass"][0], 55.0);
+    // When the part is edited (30 -> 45 tall) and saved again, updating the links follows it.
+    saved_box_design(&part, 45.0);
+    run(&mut assembly, UPDATE_LINKS, json!({}));
+    let measured = run(&mut assembly, "occurrence.properties", json!({"occurrence": occurrence, "path": [occurrence]}));
+    near(&measured["total"]["volume_mm3"], 9000.0);
+    near(&measured["total"]["center_of_mass"][0], 55.0);
+    let _ = std::fs::remove_dir_all(&dir);
+}

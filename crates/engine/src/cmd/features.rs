@@ -107,7 +107,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("presspull")
         .key("Q")
         .params("face: [x,y,z] and distance: expr (positive adds material, negative cuts), or edges: [[x,y,z]…] and distance (a fillet)"),
-    CommandSpec::new("solid.move", "Move/Copy", move_bodies).at("SOLID", "MODIFY").icon("move").key("M").params("bodies: [names]; translate?: [x,y,z] (exprs or numbers); axis?: [x,y,z]; angle?: expr"),
+    CommandSpec::new("solid.move", "Move/Copy", move_bodies).at("SOLID", "MODIFY").icon("move").key("M").params("bodies: [names]; translate?: [x,y,z] (exprs or numbers); axis?: [x,y,z]; angle?: expr; copy?: bool (default false: keeps the original bodies and transforms a new copy instead of moving them in place)"),
 ];
 
 /// Where an extrude starts and which way is positive: a point inside the (first) profile or
@@ -472,8 +472,10 @@ fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) ->
     }
     let st = s.model.state();
     let bodies: Vec<&str> = st.bodies.iter().map(|b| b.name.as_str()).collect();
+    // The bodies this feature made, apart from the ones it changed or that were there (#374).
+    let created: Vec<&str> = st.bodies.iter().filter(|b| b.feature == id).map(|b| b.name.as_str()).collect();
     let fname = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
-    Ok(json!({"feature": id, "name": fname, "bodies": bodies, "ms": r.map(|r| r.ms)}))
+    Ok(json!({"feature": id, "name": fname, "bodies": bodies, "created_bodies": created, "ms": r.map(|r| r.ms)}))
 }
 
 fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
@@ -875,7 +877,11 @@ fn move_bodies(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(a) = &angle {
         check_expr(s, a, Kind::Angle, cmd, "angle")?;
     }
-    add_feature(s, p, FeatureKind::Move { bodies, translate: t, rotate_axis: p.get("axis").and_then(vec3), angle })
+    add_feature(
+        s,
+        p,
+        FeatureKind::Move { bodies, translate: t, rotate_axis: p.get("axis").and_then(vec3), angle, copy: bool_(p, "copy").unwrap_or(false) },
+    )
 }
 
 fn source_features(s: &Session, p: &Value, cmd: &str) -> Result<Vec<String>> {
@@ -1536,3 +1542,7 @@ mod offset_plane_face_tests;
 #[cfg(test)]
 #[path = "stacked_face_tests.rs"]
 mod stacked_face_tests;
+
+#[cfg(test)]
+#[path = "solid_move_copy_tests.rs"]
+mod solid_move_copy_tests;
