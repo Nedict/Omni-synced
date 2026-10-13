@@ -4,7 +4,10 @@
 //! exactly; evaluation runs in f32.
 //!
 //! Use [`TessGpu::new`] with the application's device, or [`TessGpu::headless`] (native only)
-//! to open one without a window, as the CLI and tests do.
+//! to open one without a window, as the CLI and tests do. A viewport draws a plan straight from
+//! the GPU: [`TessGpu::prepare`] uploads it, [`TessGpu::record`] adds the evaluation to the
+//! frame's command encoder, and the render pass reads [`GpuMesh::vertices`] as its vertex buffer
+//! with [`GpuMesh::indices`]; nothing comes back to the CPU.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
@@ -31,6 +34,28 @@ pub enum GpuError {
 }
 
 pub type Result<T> = std::result::Result<T, GpuError>;
+
+/// Bytes per evaluated vertex in [`GpuMesh::vertices`]: the position (x, y, z, 1) then the
+/// normal (x, y, z, 0), each four f32.
+pub const VERTEX_STRIDE: u64 = 32;
+/// Byte offset of the normal within a vertex.
+pub const NORMAL_OFFSET: u64 = 16;
+
+/// A plan on the GPU: its inputs, and the buffers the evaluation writes and a render pass
+/// reads. Evaluated once [`TessGpu::record`] has run in a submitted encoder.
+pub struct GpuMesh {
+    /// Per vertex: position and normal (see [`VERTEX_STRIDE`]); a vertex and storage buffer.
+    pub vertices: wgpu::Buffer,
+    /// The plan's triangles, three u32 vertex indices each.
+    pub indices: wgpu::Buffer,
+    pub index_count: u32,
+    pub vertex_count: u32,
+    /// Each vertex's face (the plan's face numbering), for colouring by face.
+    pub vertex_face: Vec<u32>,
+    bind: wgpu::BindGroup,
+    // The inputs, kept until the evaluation has run.
+    _inputs: [wgpu::Buffer; 4],
+}
 
 /// The compute pipeline, ready to evaluate plans on one device.
 pub struct TessGpu {
@@ -155,6 +180,76 @@ impl TessGpu {
         mesh.edges = plan.edges.clone();
         mesh.edge_faces = plan.edge_faces.clone();
         Ok(mesh)
+    }
+
+    /// Upload `plan` and create the buffers its evaluation writes; nothing runs until
+    /// [`TessGpu::record`]. Refused (so the caller draws its CPU mesh) for a plan with more than
+    /// [`MAX_BATCH`] vertices or a face without an evaluable surface.
+    pub fn prepare(&self, plan: &TessPlan) -> Result<GpuMesh> {
+        let packed = pack(plan)?;
+        if packed.count > MAX_BATCH {
+            return Err(GpuError::Unsupported(format!("a plan of {} vertices on the GPU", packed.count)));
+        }
+        let d = &self.device;
+        let count = word(packed.count)?;
+        let init = |label: &str, contents: &[u8], usage| {
+            // wgpu rejects empty bindings: pad to one word.
+            let contents = if contents.is_empty() { &[0u8; 16][..] } else { contents };
+            d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some(label), contents, usage })
+        };
+        let words = |v: &[u32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+        let floats = |v: &[f32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+        let params = init("tess params", &words(&[count, 0, 0, 0]), wgpu::BufferUsages::UNIFORM);
+        let surfaces = init("tess surfaces", &words(&packed.surfaces), wgpu::BufferUsages::STORAGE);
+        let data = init("tess data", &floats(&packed.data), wgpu::BufferUsages::STORAGE);
+        let verts = init("tess vertices", &words(&packed.vertices), wgpu::BufferUsages::STORAGE);
+        let vertices = d.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("tess mesh vertices"),
+            size: (packed.count.max(1) as u64) * VERTEX_STRIDE,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let mut tri: Vec<u32> = Vec::new();
+        let mut vertex_face = Vec::with_capacity(packed.count);
+        let mut offset = 0u32;
+        for f in &plan.faces {
+            let n = word(f.uv.len())?;
+            for t in f.triangles.iter().filter(|t| t.iter().all(|&i| i < n)) {
+                tri.extend([offset + t[0], offset + t[1], offset + t[2]]);
+            }
+            vertex_face.extend(std::iter::repeat_n(f.face, f.uv.len()));
+            offset += n;
+        }
+        let indices = init("tess mesh indices", &words(&tri), wgpu::BufferUsages::INDEX);
+        let bind = d.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("tess mesh"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: surfaces.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: data.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: verts.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: vertices.as_entire_binding() },
+            ],
+        });
+        Ok(GpuMesh {
+            vertices,
+            indices,
+            index_count: word(tri.len())?,
+            vertex_count: count,
+            vertex_face,
+            bind,
+            _inputs: [params, surfaces, data, verts],
+        })
+    }
+
+    /// Add `mesh`'s evaluation to `encoder` (one dispatch, no wait, nothing read back): once the
+    /// encoder is submitted, render passes after it read the evaluated vertices.
+    pub fn record(&self, encoder: &mut wgpu::CommandEncoder, mesh: &GpuMesh) {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("tess mesh"), timestamp_writes: None });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &mesh.bind, &[]);
+        pass.dispatch_workgroups(mesh.vertex_count.div_ceil(WORKGROUP).max(1), 1, 1);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

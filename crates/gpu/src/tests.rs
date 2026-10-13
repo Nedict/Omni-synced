@@ -70,6 +70,48 @@ fn gpu_evaluation_matches_the_cpu() {
     }
 }
 
+/// A plan drawn straight from the GPU: `prepare` and `record` into an encoder, as the viewport
+/// does, give the vertices and triangles the CPU evaluator gives (read back here only to check).
+#[test]
+fn a_resident_mesh_matches_the_cpu() {
+    let Some(gpu) = gpu() else { return };
+    for (name, body) in bodies() {
+        let plan = ok(body.display_plan_angular(0.01, std::f64::consts::PI / 9.0));
+        let cpu = plan.evaluate();
+        let mesh = ok(gpu.prepare(&plan));
+        assert_eq!(mesh.vertex_count as usize, cpu.positions.len(), "{name}");
+        assert_eq!(mesh.index_count as usize, cpu.triangles.len() * 3, "{name}");
+        assert_eq!(mesh.vertex_face.len(), cpu.positions.len(), "{name}");
+        for (t, f) in cpu.triangles.iter().zip(&cpu.tri_face) {
+            assert!(t.iter().all(|&i| mesh.vertex_face[i as usize] == *f), "{name}: a triangle's vertices belong to its face");
+        }
+        let d = &gpu.device;
+        let read = |src: &wgpu::Buffer, size: u64| {
+            let dst = d.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("test read"),
+                size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let mut enc = d.create_command_encoder(&Default::default());
+            gpu.record(&mut enc, &mesh);
+            enc.copy_buffer_to_buffer(src, 0, &dst, 0, size);
+            gpu.queue.submit([enc.finish()]);
+            let slice = dst.slice(..);
+            slice.map_async(wgpu::MapMode::Read, |_| {});
+            ok(d.poll(wgpu::PollType::wait_indefinitely()));
+            let bytes = ok(slice.get_mapped_range());
+            bytes.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect::<Vec<f32>>()
+        };
+        let out = read(&mesh.vertices, u64::from(mesh.vertex_count) * VERTEX_STRIDE);
+        for (k, (p, n)) in cpu.positions.iter().zip(&cpu.normals).enumerate() {
+            let at = |i: usize| f64::from(out[8 * k + i]);
+            assert!(Vec3::new(at(0), at(1), at(2)).dist(*p) < 20.0 * 1e-5, "{name}: vertex {k}");
+            assert!(Vec3::new(at(4), at(5), at(6)).dist(*n) < 2e-3, "{name}: normal {k}");
+        }
+    }
+}
+
 /// Display meshing of a 400-hole plate (#303's benchmark): reference mesher, plan, CPU and GPU
 /// evaluation. `cargo test --release -p solidcraft-gpu bench_plate -- --ignored --nocapture`.
 #[test]
