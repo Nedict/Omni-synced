@@ -48,7 +48,7 @@ gap where the flanges start; the bend table lists a torn bend between the middle
 ends. A tear whose cuts would cross in the flat pattern, or that would run one bend into the
 other folded (flanges at very different angles), is left out with a warning and the corner
 keeps its notch. `round`
-and `rectangular` cut a relief the rule's **corner relief** across, centred on the corner where
+and `rectangular` cut a relief the size of the rule's **corner relief** across, centred on the corner where
 the two bend lines meet: out of the base a round with half that size as its radius, or a square
 with half that size as its side, and both bends stop where it begins, cut straight across. The
 flange panels keep their ends. The relief is in the folded part, the flat pattern, the bend
