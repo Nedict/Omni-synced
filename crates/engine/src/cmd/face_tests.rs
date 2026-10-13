@@ -317,3 +317,66 @@ fn join_covering_a_whole_attached_face_loses_the_attachment_without_moving_it() 
     assert!(!failed(&s, top));
     assert!((s.model.state().sketch(top).unwrap().plane.origin.z - 10.).abs() < 1e-9);
 }
+
+fn certificate_of(s: &Session, sketch: u64) -> Option<solidcraft_doc::config::FaceCertificate> {
+    let FeatureKind::Sketch { plane: PlaneRef::Face { anchor: Some(anchor), .. }, .. } = &s.doc.feature(sketch).unwrap().kind else {
+        return None;
+    };
+    anchor.target.certificate.clone()
+}
+
+#[test]
+fn cylinder_primitive_caps_take_attachments_that_follow_edits_and_reopen() {
+    use solidcraft_doc::config::FaceCertificate;
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius":10,"height":40,"name":"Post"}));
+    let top = run(&mut s, "sketch.create", json!({"plane":{"face":[2,1,40]}}))["sketch"].as_u64().unwrap();
+    run(&mut s, "sketch.finish", json!({}));
+    let bottom = run(&mut s, "sketch.create", json!({"plane":{"face":[2,1,0]}}))["sketch"].as_u64().unwrap();
+    run(&mut s, "sketch.finish", json!({}));
+    assert_eq!(certificate_of(&s, top), Some(FaceCertificate::CylinderCap { high: true }));
+    assert_eq!(certificate_of(&s, bottom), Some(FaceCertificate::CylinderCap { high: false }));
+    let heights = |s: &Session| {
+        let state = s.model.state();
+        (state.sketch(top).unwrap().plane.origin.z, state.sketch(bottom).unwrap().plane.origin.z)
+    };
+    run(&mut s, "timeline.edit", json!({"feature":"Post","set":{"height":"55","base":[0,0,5]}}));
+    s.refresh();
+    assert!(s.model.results.iter().all(|result| result.error.is_none()), "{:?}", s.model.results);
+    let (high, low) = heights(&s);
+    assert!((high - 60.).abs() < 1e-9 && (low - 5.).abs() < 1e-9, "{high} {low}");
+    let mut reopened = Session::new(Document::from_json(&s.doc.to_json()).unwrap());
+    reopened.refresh();
+    assert!(reopened.model.results.iter().all(|result| result.error.is_none()), "{:?}", reopened.model.results);
+    assert_eq!(heights(&reopened), (high, low));
+}
+
+#[test]
+fn crossed_cylinder_primitives_keep_their_caps_attachable() {
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius":10,"height":40}));
+    run(&mut s, "solid.cylinder", json!({"radius":5,"height":40,"base":[-20,0,20],"axis":"X","operation":"join"}));
+    assert_eq!(s.model.state().bodies.len(), 1);
+    for face in [[0., 0., 40.], [20., 0., 20.]] {
+        let sketch = run(&mut s, "sketch.create", json!({"plane":{"face":face}}))["sketch"].as_u64().unwrap();
+        run(&mut s, "sketch.finish", json!({}));
+        assert!(certificate_of(&s, sketch).is_some(), "{face:?}");
+    }
+}
+
+#[test]
+fn shelled_cylinder_floor_keeps_its_cap_identity() {
+    use solidcraft_doc::config::FaceCertificate;
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius":10,"height":40}));
+    run(&mut s, "solid.shell", json!({"faces":[[2,1,40]],"thickness":2}));
+    let floor = run(&mut s, "sketch.create", json!({"plane":{"face":[2,1,2]}}))["sketch"].as_u64().unwrap();
+    assert!(
+        matches!(
+            certificate_of(&s, floor),
+            Some(FaceCertificate::ShellPlanar { source, inner: true, .. }) if *source == FaceCertificate::CylinderCap { high: false }
+        ),
+        "{:?}",
+        certificate_of(&s, floor)
+    );
+}

@@ -14,13 +14,21 @@
   origin, bodies, sketches, construction planes, canvases, joints and components. The eye shows or
   hides an item, a component's radio button makes it the active component, and right-clicking any
   row gives that item's menu. Rows drag into groups and other components.
-- **Viewport.** Click to select, Shift or Ctrl to add, drag for a window or crossing box. The
+- **Viewport.** Click to select, Shift or Ctrl to add, drag for a window or crossing box. To
+  reach something under something else (two lines drawn on top of each other, coincident points,
+  an edge in front of a face, overlapping bodies), hold the left button still for half a second
+  (long-press on a touch screen) or right-click › **Select Other…**: a list of everything under
+  the cursor opens there, the sketch being edited first. Hovering a row lights it up; clicking it
+  selects it (Shift or Ctrl adds), and in a command's dialog it goes to the active selection box.
+  Esc or a click elsewhere closes the list. Clicking again on the same spot, with nothing changed
+  in between, selects the next thing in that list. The
   wheel zooms at the cursor, the middle button pans and right-drag orbits freely (the mouse
 <  preset in Preferences switches to SolidWorks, Inventor, Alias or Tinkercad style). On a
   trackpad, pinch zooms and two-finger scroll pans (Navigation › Two-finger scroll pans;
   off: scroll zooms like the wheel); mouse wheels zoom and the thumb wheel pans sideways.
   Shift+middle orbits freely
-  in the default and Inventor presets. Shift+right-drag snaps to the nearest standard or
+  in the default and Inventor presets. In every preset, Ctrl+left drag (Cmd on macOS) that starts
+  on empty space orbits; a Ctrl+click still adds to the selection. Shift+right-drag snaps to the nearest standard or
   diagonal view; Shift does not request snapping when the preset already requires it to orbit.
   The axis view shows the world's X/Y/Z directions in SolidCraft's colors. Click a signed
   axis tip to look along that axis; click the aligned tip again to look from the opposite side.

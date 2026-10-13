@@ -6,9 +6,9 @@ Sketch, constrain, and build solids with a parametric feature timeline. Change a
 and watch your model rebuild. Run it on your desktop, in your browser, or let AI agents
 model through the built-in MCP server.
 
-![SolidCraft: draw a rounded electronics enclosure, sketch its USB port directly on a face, add four mounting bosses and resize it through Parameters](docs/screenshots/enclosure-demo-0.2.1.gif)
+![SolidCraft 0.6: model a Raspberry Pi 4 case from an empty design: a sketch dimensioned with parameters, extrude, fillets and shell, standoffs patterned on the board's mounting holes, port cut-outs, vent slots, a colour and a height change in Parameters](docs/screenshots/demo-0.6.gif)
 
-*Start with an empty design and draw the original parametric electronics enclosure in the English desktop UI: rounded corners, a shell, a USB port sketched directly on the wall and a four-boss pattern. Change width from 80 → 100 mm and wall thickness from 2 → 3 mm in Parameters and watch it rebuild. Original animated pointer and click cues; 4× playback. [Full video](https://github.com/bherbruck/solidcraft/raw/refs/heads/main/docs/screenshots/enclosure-demo-0.2.1.mp4), generated with the [demo script](examples/demo/record_ui.sh).*
+*A Raspberry Pi 4 case from an empty design: a sketch dimensioned with the board's parameters, extrude, fillet, shell, an M2.5 standoff patterned on the 58 × 49 mm hole rectangle, port cut-outs, vent slots and a colour, then height 24 → 32 mm in Parameters and it all rebuilds. 6× playback. [Full video](https://github.com/bherbruck/solidcraft/raw/refs/heads/main/docs/screenshots/demo-0.6.mp4), recorded with the [demo script](examples/demo/record_ui.sh).*
 
 ## Download
 
@@ -81,11 +81,15 @@ and help is welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
   the boundary and keeps existing extrusions usable.
   Curve drawing and picking adapt together to zoom and display scale, including small circles
   at Fit and sketches in placed components.
-- **Constraints and dimensions** solved by our own solver (damped Gauss–Newton with
-  degree-of-freedom analysis): coincident, horizontal/vertical, parallel, perpendicular, tangent,
-  equal, concentric, collinear, midpoint, symmetry, fix; linear, aligned, horizontal, vertical,
-  radius, diameter and angle dimensions driven by parameters. Over-constraining edits are
-  rejected; fully constrained geometry turns black.
+- **Constraints and dimensions** solved by our own solver. Points the constraints fix relative
+  to known geometry are placed exactly by construction (loci intersections and rigid-cluster
+  decomposition, after Owen 1991 and Fudos–Hoffmann 1997); Levenberg–Marquardt solves the rest,
+  and the rank of its Jacobian gives the remaining degrees of freedom. Constraints: coincident,
+  point on curve, horizontal/vertical, parallel, perpendicular, tangent, curvature (G2), equal,
+  concentric, collinear, midpoint, symmetry, fix; linear, aligned, horizontal, vertical,
+  point-to-line, radius, diameter, angle, arc sweep, arc length and slot length dimensions driven
+  by parameters. Over-constraining edits are rejected; fully constrained geometry turns black.
+  Dragging solves the sketch every frame and rebuilds the model once, when the drag ends.
   Select a line or its two endpoints, type its dimension and press Enter to commit one undo
   step. Fit keeps sketch geometry clear of the palette and navigation controls.
 - **Profiles** found automatically, including regions split by lines and holes inside outlines.

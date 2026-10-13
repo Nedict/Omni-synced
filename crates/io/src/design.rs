@@ -1,7 +1,7 @@
 //! Versioned design packages. Geometry is rebuilt from authoritative inputs; no
-//! evaluated cache is trusted here. All archive access stays in memory, never on disk.
+//! evaluated cache is trusted here. Entries are never extracted to filesystem paths.
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -219,18 +219,25 @@ fn decode_mesh(bytes: &[u8], mesh: &mut MeshData) -> Result<()> {
     validate_mesh(mesh)
 }
 
-struct PackageReader<'a> {
-    zip: zip::ZipArchive<Cursor<&'a [u8]>>,
+struct PackageReader<R: Read + Seek> {
+    zip: zip::ZipArchive<R>,
     blobs: BTreeMap<String, Vec<u8>>,
     hydrated: usize,
 }
 
-impl<'a> PackageReader<'a> {
-    fn new(bytes: &'a [u8]) -> Result<Self> {
+impl<R: Read + Seek> PackageReader<R> {
+    fn new(mut source: R) -> Result<Self> {
+        let length = source.seek(SeekFrom::End(0)).map_err(invalid)?;
+        if length > MAX_DESIGN_BYTES as u64 {
+            return Err(invalid("compressed file too large"));
+        }
+        let tail_length = length.min(65_557) as usize;
+        source.seek(SeekFrom::Start(length - tail_length as u64)).map_err(invalid)?;
+        let mut tail = vec![0; tail_length];
+        source.read_exact(&mut tail).map_err(invalid)?;
         // zip's name index can coalesce duplicate central-directory entries. Our
         // bounded format does not need ZIP64/multiple disks: verify the declared
         // entry count as well so duplicate names cannot silently select a payload.
-        let tail = bytes.get(bytes.len().saturating_sub(65_557)..).ok_or_else(|| invalid("missing ZIP directory"))?;
         let eocd = tail.windows(4).rposition(|v| v == b"PK\x05\x06").ok_or_else(|| invalid("missing ZIP directory"))?;
         let end = tail.get(eocd..).filter(|v| v.len() >= 22).ok_or_else(|| invalid("truncated ZIP directory"))?;
         let u16_at = |offset| -> Result<u16> {
@@ -241,7 +248,7 @@ impl<'a> PackageReader<'a> {
         if declared > MAX_ENTRIES || u16_at(4)? != 0 || u16_at(6)? != 0 || u16_at(8)? as usize != declared || end.len() != 22 + u16_at(20)? as usize {
             return Err(invalid("too many entries or unsupported ZIP directory"));
         }
-        let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).map_err(invalid)?;
+        let mut zip = zip::ZipArchive::new(source).map_err(invalid)?;
         if u16_at(4)? != 0
             || u16_at(6)? != 0
             || u16_at(8)? as usize != zip.len()
@@ -342,11 +349,10 @@ pub fn read_design_preview(bytes: &[u8]) -> Option<DesignPreview> {
     if bytes.len() > MAX_DESIGN_BYTES || !is_design_container(bytes) {
         return None;
     }
-    read_preview(bytes).ok()
+    DesignContainerReader::new(Cursor::new(bytes)).ok()?.preview()
 }
 
-fn read_preview(bytes: &[u8]) -> Result<DesignPreview> {
-    let mut reader = PackageReader::new(bytes)?;
+fn read_preview<R: Read + Seek>(reader: &mut PackageReader<R>) -> Result<DesignPreview> {
     let container: Value = serde_json::from_slice(&reader.limited_part("container.json", 4096)?).map_err(invalid)?;
     if !matches!(container.get("format").and_then(Value::as_str), Some(VERSION | LEGACY_VERSION)) {
         return Err(invalid("unsupported container version"));
@@ -398,8 +404,38 @@ fn read_preview(bytes: &[u8]) -> Result<DesignPreview> {
     Ok(preview)
 }
 
+/// A bounded container reader over an immutable, seekable source.
+///
+/// Opening inspects the directory, not the source blobs. `preview` reads only the
+/// optional display entries and document metadata; `read_document` then resolves
+/// and validates authoritative blobs. Keep the source unchanged for this reader's
+/// lifetime. This type does not turn untrusted cached data into editable geometry.
+pub struct DesignContainerReader<R: Read + Seek> {
+    reader: PackageReader<R>,
+}
+
+impl<R: Read + Seek> DesignContainerReader<R> {
+    /// Open a container (not plain JSON), enforcing the same budgets as byte IO.
+    pub fn new(source: R) -> Result<Self> {
+        Ok(Self { reader: PackageReader::new(source)? })
+    }
+
+    /// Optional display-only data. Corruption or incompatibility is a cache miss.
+    pub fn preview(&mut self) -> Option<DesignPreview> {
+        read_preview(&mut self.reader).ok()
+    }
+
+    /// Consume the reader, resolving every required blob before returning a document.
+    pub fn read_document(mut self) -> Result<Document> {
+        read_document(&mut self.reader)
+    }
+}
+
 pub(super) fn read(bytes: &[u8]) -> Result<Document> {
-    let mut reader = PackageReader::new(bytes)?;
+    DesignContainerReader::new(Cursor::new(bytes))?.read_document()
+}
+
+fn read_document<R: Read + Seek>(reader: &mut PackageReader<R>) -> Result<Document> {
     let version: Value = serde_json::from_slice(&reader.part("container.json")?).map_err(invalid)?;
     if !matches!(version.get("format").and_then(Value::as_str), Some(VERSION | LEGACY_VERSION)) {
         return Err(invalid("unsupported container version"));
@@ -449,6 +485,85 @@ pub(super) fn read(bytes: &[u8]) -> Result<Document> {
 mod tests {
     use super::*;
     use solidcraft_geom::Vec2;
+
+    struct CountingReader {
+        source: Cursor<Vec<u8>>,
+        count: std::rc::Rc<std::cell::Cell<usize>>,
+    }
+
+    impl Read for CountingReader {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            let count = self.source.read(bytes)?;
+            self.count.set(self.count.get() + count);
+            Ok(count)
+        }
+    }
+
+    impl Seek for CountingReader {
+        fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+            self.source.seek(position)
+        }
+    }
+
+    #[test]
+    fn seekable_reader_rejects_oversized_source_before_reading() {
+        struct Oversized;
+        impl Read for Oversized {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                panic!("oversized input must be rejected before any allocation or read");
+            }
+        }
+        impl Seek for Oversized {
+            fn seek(&mut self, _: SeekFrom) -> std::io::Result<u64> {
+                Ok(MAX_DESIGN_BYTES as u64 + 1)
+            }
+        }
+        assert!(DesignContainerReader::new(Oversized).is_err());
+    }
+
+    #[test]
+    fn seekable_preview_defers_large_source_blob_until_document_read() {
+        let mut doc = Document::new("Deferred source");
+        let step = "ISO-10303-21;".repeat(200_000);
+        doc.add_feature(FeatureKind::Import { file: "large.step".into(), step: step.clone(), components: Vec::new() }, None).unwrap();
+        let preview = DesignPreview { meshes: vec![mesh()] };
+        let bytes = write_design_container_with_preview(&doc, DesignCompression::Fast, Some(&preview)).unwrap();
+        let count = std::rc::Rc::new(std::cell::Cell::new(0));
+        let source = CountingReader { source: Cursor::new(bytes), count: count.clone() };
+        let mut reader = DesignContainerReader::new(source).unwrap();
+        assert_eq!(reader.preview().unwrap().meshes[0].positions, preview.meshes[0].positions);
+        // ZIP directory scans may touch a bounded suffix of a stored blob. They
+        // must not load its multi-megabyte payload to obtain the saved picture.
+        assert!(count.get() < 256 * 1024, "read {} bytes before display", count.get());
+        let restored = reader.read_document().unwrap();
+        assert_eq!(restored.to_json(), doc.to_json());
+        assert!(count.get() >= step.len());
+    }
+
+    #[test]
+    fn seekable_reader_validates_required_blobs_after_preview() {
+        let doc = document();
+        let preview = DesignPreview { meshes: vec![mesh()] };
+        let mut bytes = write_design_container_with_preview(&doc, DesignCompression::Fast, Some(&preview)).unwrap();
+        let marker = b"ISO-10303-21;";
+        let offset = bytes.windows(marker.len()).position(|part| part == marker).unwrap();
+        bytes[offset] ^= 1;
+        let mut reader = DesignContainerReader::new(Cursor::new(bytes)).unwrap();
+        assert!(reader.preview().is_some());
+        assert!(reader.read_document().is_err());
+    }
+
+    #[test]
+    fn seekable_reader_without_preview_preserves_authoritative_document() {
+        let doc = document();
+        let bytes = write_design_container(&doc).unwrap();
+        let mut source = Cursor::new(bytes);
+        source.set_position(17); // Constructor starts from the whole source, not its cursor.
+        let mut reader = DesignContainerReader::new(source).unwrap();
+        assert!(reader.preview().is_none());
+        assert_eq!(reader.read_document().unwrap().to_json(), doc.to_json());
+        assert!(DesignContainerReader::new(Cursor::new(vec![0u8; 1])).is_err());
+    }
 
     fn mesh() -> MeshData {
         MeshData {
@@ -676,7 +791,7 @@ mod tests {
         let mut entries = parts(&bytes);
         let mut metadata: Value = serde_json::from_slice(&entries["document.json"]).unwrap();
         let reference = metadata["features"][0].clone();
-        let mut reader = PackageReader::new(&bytes).unwrap();
+        let mut reader = PackageReader::new(Cursor::new(&bytes)).unwrap();
         reader.hydrated = MAX_EXPANDED;
         assert!(reader.blob(&reference, "step_blob", "step").unwrap_err().to_string().contains("resolved payloads too large"));
         for name in ["../escape.step", "blobs/not-a-hash.step", "blobs/00.png"] {
@@ -696,6 +811,10 @@ mod tests {
                 std::panic::catch_unwind(|| {
                     let _ = crate::read_design(&bytes[..end]);
                     let _ = read_design_preview(&bytes[..end]);
+                    if let Ok(mut reader) = DesignContainerReader::new(Cursor::new(&bytes[..end])) {
+                        let _ = reader.preview();
+                        let _ = reader.read_document();
+                    }
                 })
                 .is_ok(),
                 "truncated at {end}"
@@ -713,6 +832,10 @@ mod tests {
                 std::panic::catch_unwind(|| {
                     let _ = crate::read_design(&changed);
                     let _ = read_design_preview(&changed);
+                    if let Ok(mut reader) = DesignContainerReader::new(Cursor::new(&changed)) {
+                        let _ = reader.preview();
+                        let _ = reader.read_document();
+                    }
                 })
                 .is_ok()
             );

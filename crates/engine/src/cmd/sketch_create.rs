@@ -75,6 +75,8 @@ pub static COMMANDS: &[CommandSpec] = &[
         .enabled(in_sketch)
         .params(concat!("a, b: end points of two curves (\"l1.end\", \"a2.start\"): a smooth (tangent) spline joining them", created_doc!())),
     CommandSpec::new("sketch.centerline", "Centerline", centerline)
+        .at("SKETCH", "CREATE")
+        .icon("centerline")
         .enabled(in_sketch)
         .params("curves: [line ids], value?: bool (default toggles): centerline line type (not in profiles; an axis)"),
     CommandSpec::new("sketch.text", "Text", text).at("SKETCH", "CREATE").icon("text").enabled(in_sketch).params(concat!(

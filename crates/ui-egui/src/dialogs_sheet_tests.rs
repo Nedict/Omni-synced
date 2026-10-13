@@ -311,6 +311,47 @@ fn bend_table_picker_writes_the_current_body() {
     assert_eq!(app.session.undo.len(), undo);
 }
 
+/// The rule manager's shape selector: picked in the dialog, the shape reaches the rule and the part
+/// made with it, and the dialog shows it the next time.
+#[test]
+fn rules_dialog_picks_the_corner_relief_shape() {
+    let mut h = crate::scenario::Harness::new();
+    h.app
+        .run(
+            "sheet.manage_rules",
+            json!({"name": "AL2", "thickness": "2 mm", "k_factor": 0.5, "bend_radius": "1 mm", "gap": "0.5 mm", "active": true}),
+        )
+        .unwrap();
+    h.app.run("sketch.create", json!({"plane": "XY", "name": "Base"})).unwrap();
+    h.app.run("sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [120, 90]})).unwrap();
+    h.app.run("sketch.finish", json!({})).unwrap();
+    h.app.run("sheet.flange", json!({"sketch": "Base"})).unwrap();
+    h.app.run("sheet.flange", json!({"edges": [[60, 0, 2], [120, 45, 2], [60, 90, 2], [0, 45, 2]], "height": 20, "angle": "72 deg"})).unwrap();
+    // The rounds in the base of the tray, and the shape the open dialog shows.
+    let rounds = |app: &SolveApp| {
+        let state = app.session.model.state();
+        state.sheets.last().map(|s| s.base.outer.segs.iter().filter(|g| matches!(g, solidcraft_engine::geom::Seg2::Arc { .. })).count())
+    };
+    let shown = |app: &SolveApp| match app.dialog.as_ref().map(|d| &d.kind) {
+        Some(Kind::Sheet(Sm::Rules { relief, .. })) => Some(*relief),
+        _ => None,
+    };
+    assert_eq!(rounds(&h.app), Some(0));
+    h.step(&json!({"start": "sheet.manage_rules"})).unwrap();
+    h.frames(3);
+    assert_eq!(shown(&h.app), Some(0), "a rule starts with the notch");
+    h.step(&json!({"click": {"handle": "dialog:Corner Relief Shape"}})).unwrap();
+    h.step(&json!({"click": {"handle": "dialog:Corner Relief Shape:Round"}})).unwrap();
+    assert_eq!(shown(&h.app), Some(1));
+    h.step(&json!({"widget": "OK"})).unwrap();
+    assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog);
+    assert_eq!(h.app.session.doc.sheet_rule(None).corner_relief_shape, "round");
+    assert_eq!(rounds(&h.app), Some(4), "one round at each corner of the tray");
+    h.step(&json!({"start": "sheet.manage_rules"})).unwrap();
+    h.frames(3);
+    assert_eq!(shown(&h.app), Some(1), "the dialog shows the rule's shape");
+}
+
 #[test]
 fn pocket_depth_labels_follow_inches_without_changing_flat_data() {
     let mut app = plate();

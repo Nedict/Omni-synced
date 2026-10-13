@@ -429,6 +429,72 @@ fn text_makes_profiles_that_extrude_and_edit() {
     assert!(s.execute("sketch.text", &json!({"text": "", "at": [0, 0]})).is_err());
 }
 
+/// Volumes (mm³) of the bodies in the design, smallest first.
+fn body_volumes(s: &mut Session) -> Vec<f64> {
+    let m = run(s, "inspect.measure", json!({}));
+    let mut v: Vec<f64> = m["bodies"].as_array().unwrap().iter().map(|b| b["volume_mm3"].as_f64().unwrap()).collect();
+    v.sort_by(f64::total_cmp);
+    v
+}
+
+#[test]
+fn text_extrudes_with_its_counters_and_beside_other_curves() {
+    // Letter areas in mm² at a capital height of 10 mm, summed from the Liberation Sans contours (shoelace
+    // formula, quadratic pieces flattened finely), each outer contour minus its counters:
+    //   A 39.2159 - 9.0647   B 68.9283 - 12.9336 - 16.6277   8 56.8394 - 10.6451 - 13.7347   I 13.5557
+    // Extruded 2 mm, so the volumes are twice that. Faceted walls: within 0.02 mm³.
+    let near = |got: &[f64], want: &[f64]| {
+        assert_eq!(got.len(), want.len(), "{got:?} against {want:?}");
+        assert!(got.iter().zip(want).all(|(g, w)| (g - w).abs() < 0.02), "{got:?} against {want:?}");
+    };
+    // Letters with counters, alone: a letter is one body with its counters as holes. (A counter used to be
+    // extruded as a body of its own, or the extrude failed with "profile has no area".)
+    for (text, want) in
+        [("AB", vec![2.0 * (39.2159 - 9.0647), 2.0 * (68.9283 - 12.9336 - 16.6277)]), ("8", vec![2.0 * (56.8394 - 10.6451 - 13.7347)])]
+    {
+        let mut s = new_sketch();
+        run(&mut s, "sketch.text", json!({"text": text, "at": [0, 0], "height": 10}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance": 2}));
+        near(&body_volumes(&mut s), &want);
+    }
+    // Text beside a drawn rectangle is extruded with it (it used to be left out): the 30 x 20 x 2 plate and an "I".
+    let mut s = new_sketch();
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [30, 20]}));
+    run(&mut s, "sketch.text", json!({"text": "I", "at": [40, 0], "height": 10}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 2}));
+    near(&body_volumes(&mut s), &[2.0 * 13.5557, 1200.0]);
+    // A counter can still be picked on its own, by a point inside it: the inner contour of an O, 47.4584 mm².
+    let mut s = new_sketch();
+    run(&mut s, "sketch.text", json!({"text": "O", "at": [0, 0], "height": 10}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 2, "profiles": [{"point": [5.65, 5.0]}]}));
+    near(&body_volumes(&mut s), &[2.0 * 47.4584]);
+}
+
+#[test]
+fn text_embossed_or_debossed_leaves_its_counters_alone() {
+    // A 40 x 30 x 5 plate (6000 mm³) with 10 mm tall text raised from, or cut 1 mm into, its top. Only the letters
+    // change the volume, by their area in mm² (see above) x 1 mm; the counters of the O and of A and B stay as
+    // they are. (Emboss and deboss used to fail with "boolean Cut: no result" or "boolean Union: no result",
+    // because each counter was a tool body of its own, filling the hole of its letter.)
+    let (o, ab) = (83.3133 - 47.4584, (39.2159 - 9.0647) + (68.9283 - 12.9336 - 16.6277));
+    for (text, mode, change) in [("O", "deboss", -o), ("O", "emboss", o), ("AB", "deboss", -ab)] {
+        let mut s = new_sketch();
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [40, 30]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance": 5, "body_name": "Plate"}));
+        run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 5, "name": "Lid"}));
+        run(&mut s, "sketch.create", json!({"plane": "Lid", "name": "Text"}));
+        run(&mut s, "sketch.text", json!({"text": text, "at": [10, 10], "height": 10}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.emboss", json!({"sketch": "Text", "depth": 1, "mode": mode}));
+        let v = body_volumes(&mut s);
+        assert!(v.len() == 1 && (v[0] - (6000.0 + change)).abs() < 0.02, "{text} {mode}: {v:?} against {}", 6000.0 + change);
+    }
+}
+
 #[test]
 fn blend_curve_joins_tangentially() {
     let mut s = new_sketch();

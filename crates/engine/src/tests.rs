@@ -96,6 +96,20 @@ fn join_extrude_from_a_chamfered_top_face() {
     }
 }
 
+#[test]
+fn a_body_cut_in_pieces_twice_gets_pieces_of_their_own_names() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 5, "height": 5, "body_name": "Bar"}));
+    for x in [10, 25] {
+        run(&mut s, "solid.box", json!({"corner": [x, -1, -1], "length": 2, "width": 7, "height": 7, "body_name": "Gap"}));
+        run(&mut s, "solid.combine", json!({"target": "Bar", "tools": ["Gap"], "operation": "cut"}));
+    }
+    let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    let unique: std::collections::BTreeSet<&String> = names.iter().collect();
+    assert_eq!(unique.len(), 3, "{names:?}");
+    assert!(names.contains(&"Bar (2)".to_string()), "{names:?}");
+}
+
 /// A join that bridges two bodies makes them one body, not an overlap of the first and the second.
 #[test]
 fn join_bridging_two_bodies_merges_them() {
@@ -361,6 +375,51 @@ fn revolve_a_spherical_shell_off_the_origin() {
         let b = &m["bodies"][0]["bbox"];
         assert!((b["min"][2].as_f64().unwrap() - (z - 40.0)).abs() < 1e-6 && (b["max"][2].as_f64().unwrap() - (z + 40.0)).abs() < 1e-6, "{b}");
     }
+}
+
+#[test]
+fn extrude_of_adjacent_profiles_has_whole_edges() {
+    // A holder from two regions of one sketch (a disc and the ring around it, both cut off by a
+    // chord): the chord used to stay split where the inner circle met it, leaving vertices right
+    // on the surface of a handle of that radius, and cutting the handle out of the holder failed.
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XZ", "name": "Holder"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": 40}));
+    run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": 35}));
+    let x = (40.0f64 * 40.0 - 33.0 * 33.0).sqrt();
+    run(&mut s, "sketch.line", json!({"points": [[-x, -33], [x, -33]]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let si = run(&mut s, "sketch.inspect", json!({"sketch": "Holder"}));
+    let below: Vec<Value> = si["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| (500.0..4900.0).contains(&p["area_mm2"].as_f64().unwrap()))
+        .map(|p| p["index"].clone())
+        .collect();
+    assert_eq!(below.len(), 2, "{si}");
+    run(&mut s, "solid.extrude", json!({"sketch": "Holder", "profiles": below, "distance": 23, "body_name": "Holder"}));
+    let topo = run(&mut s, "model.faces", json!({"body": "Holder"}));
+    assert_eq!(topo["faces"].as_array().unwrap().len(), 5, "a cut-off cylinder: {topo}");
+    let lo = run(&mut s, "inspect.measure", json!({"bodies": ["Holder"]}))["bodies"][0]["bbox"]["min"][1].as_f64().unwrap();
+    run(&mut s, "solid.move", json!({"bodies": ["Holder"], "translate": [0, -5.0 - lo, 0]}));
+    // The handle: r35 on the Y axis with a bevelled end.
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Handle"}));
+    for pts in [
+        [[0.0, 0.0], [0.0, 230.0]],
+        [[0.0, 0.0], [25.0, 0.0]],
+        [[25.0, 0.0], [35.0, 11.5]],
+        [[35.0, 11.5], [35.0, 230.0]],
+        [[35.0, 230.0], [0.0, 230.0]],
+    ] {
+        run(&mut s, "sketch.line", json!({ "points": pts }));
+    }
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.revolve", json!({"sketch": "Handle", "profiles": [0], "axis": "Y", "body_name": "Handle"}));
+    let before = run(&mut s, "inspect.measure", json!({"bodies": ["Holder"]}))["total"]["volume_mm3"].as_f64().unwrap();
+    run(&mut s, "solid.combine", json!({"target": "Holder", "tools": ["Handle"], "operation": "cut", "keep_tools": true}));
+    let after = run(&mut s, "inspect.measure", json!({"bodies": ["Holder"]}))["total"]["volume_mm3"].as_f64().unwrap();
+    assert!(after > 1000.0 && after < before * 0.5, "{before} -> {after}");
 }
 
 #[test]

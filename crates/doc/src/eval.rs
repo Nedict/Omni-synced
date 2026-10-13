@@ -924,7 +924,14 @@ impl Model {
             let f = if !explicit_emboss && f.face_names.iter().any(|n| !n.is_empty()) {
                 let mut g = f.clone();
                 let mut notes = Vec::new();
-                for (p, n) in g.kind.face_points_mut().into_iter().zip(&f.face_names) {
+                // A hole's position is a place on its face, not a pick of the face: it follows
+                // the face along the hole's axis and never slides sideways to the face's nearest
+                // point when the face no longer reaches it.
+                let hole_axis = match &f.kind {
+                    FeatureKind::Hole { direction, points: None, .. } => direction.normalized(),
+                    _ => None,
+                };
+                for (k, (p, n)) in g.kind.face_points_mut().into_iter().zip(&f.face_names).enumerate() {
                     if n.is_empty() {
                         continue;
                     }
@@ -933,7 +940,18 @@ impl Model {
                             if let Some(note) = hit.note(n) {
                                 notes.push(note);
                             }
-                            *p = hit.point;
+                            match (k, hole_axis) {
+                                (0, Some(axis)) => match hit.along(&state, *p, axis) {
+                                    Some(q) => *p = q,
+                                    // The place still lies on the face (the axis may run along it).
+                                    None if hit.on_point => {}
+                                    None => notes.push(format!(
+                                        "the hole's position [{}, {}, {}] is no longer on face `{n}`: it stays where it was placed",
+                                        p.x, p.y, p.z
+                                    )),
+                                },
+                                _ => *p = hit.point,
+                            }
                         }
                         None => notes.push(format!("face `{n}` no longer exists; using the face at the picked point")),
                     }
@@ -1045,10 +1063,12 @@ pub fn select_profiles(ss: &SolvedSketch, sel: &ProfileSel) -> Result<Vec<Region
     }
     let out: Vec<Region2> = match sel {
         // "All" means what was drawn: projected reference geometry (a face's auto-projected
-        // edges) only counts when the drawn curves alone make no profile.
+        // edges) only counts when the drawn curves alone make no profile. Text is drawn, and
+        // its letters keep their counters as holes (the counters are not filled in).
         ProfileSel::All => {
             let drawn = solidcraft_sketch::find_drawn_profiles(&ss.sketch);
-            if drawn.is_empty() { ps.iter().map(|p| p.region.clone()).collect() } else { drawn.into_iter().map(|p| p.region).collect() }
+            let chosen = if drawn.is_empty() { ps.clone() } else { drawn };
+            solidcraft_sketch::without_text_counters(&ss.sketch, chosen).into_iter().map(|p| p.region).collect()
         }
         ProfileSel::Indices { indices } => {
             let mut v = Vec::new();
@@ -1305,7 +1325,9 @@ fn apply_traced(state: &mut ModelState, f: &Feature, tools: Vec<Traced>, op: Ope
             });
             let live: std::collections::BTreeSet<&str> = state.bodies.iter().map(|b| b.name.as_str()).collect();
             state.threads.retain(|t| live.contains(t.body.as_str()));
-            // A cut can leave a body in pieces: each piece becomes its own body ("Bar", "Bar (1)").
+            // A cut can leave a body in pieces: each piece becomes its own body ("Bar", "Bar (1)"),
+            // numbered on past names already taken (a body cut in pieces before).
+            let mut taken: std::collections::BTreeSet<String> = state.bodies.iter().map(|b| b.name.clone()).collect();
             let mut split: Vec<ModelBody> = Vec::new();
             for mb in std::mem::take(&mut state.bodies) {
                 if !affected.contains(&mb.name) || state.sheets.iter().any(|s| s.body == mb.name) {
@@ -1321,7 +1343,12 @@ fn apply_traced(state: &mut ModelState, f: &Feature, tools: Vec<Traced>, op: Ope
                 // (so pieces of one face in different bodies are told apart).
                 let lineages = crate::lineage::Lineage::lumps(&mb.body, mb.lineage().as_deref(), &pieces);
                 for (k, (p, lineage)) in pieces.into_iter().zip(lineages).enumerate() {
-                    let name = if k == 0 { mb.name.clone() } else { format!("{} ({k})", mb.name) };
+                    let name = if k == 0 {
+                        mb.name.clone()
+                    } else {
+                        (k..=k + taken.len()).map(|j| format!("{} ({j})", mb.name)).find(|n| !taken.contains(n)).unwrap_or_default()
+                    };
+                    taken.insert(name.clone());
                     split.push(ModelBody::new(name, p, mb.feature).with_lineage(lineage));
                 }
             }
@@ -3074,6 +3101,38 @@ fn smooth_chain(b: &ModelBody, picks: &[Vec3]) -> Vec<Vec3> {
     out
 }
 
+/// `plane` with the sheet face it names (see `sheet::plane_sheet_face`) replaced by that face's current
+/// plane in the frame of component `comp`, or an error when the face is gone: a lost
+/// attachment is reported, never moved to the nearest face.
+pub(crate) fn sheet_face_plane_in_frame(doc: &Document, st: &ModelState, comp: u64, plane: &PlaneRef) -> Result<PlaneRef> {
+    Ok(match plane {
+        PlaneRef::Face { name: Some(name), anchor: None, .. } if crate::sheet::plane_sheet_face(plane).is_some() => {
+            let lost = || DocError::Invalid(format!("lost face attachment: the sheet face `{name}` no longer exists; reattach the sketch to a face"));
+            let (body, face) = crate::sheet::sheet_face_plane(st, name).ok_or_else(lost)?;
+            if doc.occurrences.is_empty() && doc.body_offsets.is_empty() {
+                return Ok(PlaneRef::Custom { plane: face });
+            }
+            // The body's own coordinates into the component's frame, as `state_in_frame` places its bodies.
+            let source = st.body(&body).ok_or_else(lost)?;
+            let inverse = crate::mat_inverse(&doc.component_transform(comp)).ok_or_else(lost)?;
+            let m = crate::mat_mul(&inverse, &doc.component_transform(doc.model_body_component(source)));
+            let m = doc.model_body_offset(source).map(|offset| crate::mat_mul(&m, offset)).unwrap_or(m);
+            let placed = Plane::new(crate::apply_point(&m, face.origin), crate::apply_vector(&m, face.x), crate::apply_vector(&m, face.y));
+            PlaneRef::Custom { plane: placed.ok_or_else(lost)? }
+        }
+        PlaneRef::Offset { base, distance } => {
+            PlaneRef::Offset { base: Box::new(sheet_face_plane_in_frame(doc, st, comp, base)?), distance: distance.clone() }
+        }
+        PlaneRef::AtAngle { base, axis_origin, axis_dir, angle } => PlaneRef::AtAngle {
+            base: Box::new(sheet_face_plane_in_frame(doc, st, comp, base)?),
+            axis_origin: *axis_origin,
+            axis_dir: *axis_dir,
+            angle: angle.clone(),
+        },
+        other => other.clone(),
+    })
+}
+
 /// The plane of the body face a sketch sits on, found again: among planar faces with the
 /// picked plane's normal, the one nearest `at`. The picked frame moves along its normal onto it.
 fn face_plane(st: &ModelState, picked: &Plane, at: Vec3, name: Option<&str>) -> (Plane, Option<String>) {
@@ -3205,6 +3264,10 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             };
             let (plane, face_warning) = match (anchor, plane) {
                 (Some(_), plane) => (doc.resolve_attached_plane(vals, plane, f.component, st, &fst)?, None),
+                // A flat face of a sheet: the panel's exact plane, from its flat region and fold.
+                (None, plane) if crate::sheet::plane_sheet_face(plane).is_some() => {
+                    (doc.resolve_plane_in(vals, &sheet_face_plane_in_frame(doc, st, f.component, plane)?, 0, Some(&fst))?, None)
+                }
                 (None, PlaneRef::Face { plane: picked, at, name, anchor: None }) => face_plane(&fst, picked, *at, name.as_deref()),
                 (None, other) => (doc.resolve_plane_in(vals, other, 0, Some(&fst))?, None),
             };
@@ -3643,6 +3706,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         }
         FeatureKind::Cylinder { base, axis, radius, height, operation } => {
             let b = kernel::cylinder(point(vals, base)?, *axis, val(vals, radius, Kind::Length)?, val(vals, height, Kind::Length)?)?;
+            let b = if matches!(operation, Operation::NewBody | Operation::Join) { b.with_cylinder_certificate(f.id)? } else { b };
             apply_traced(st, f, vec![crate::lineage::cylinder_tool(b)], *operation, &[])
         }
         FeatureKind::Sphere { center, radius, operation } => {

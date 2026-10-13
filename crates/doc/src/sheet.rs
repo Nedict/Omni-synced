@@ -157,6 +157,11 @@ pub struct SheetRule {
     pub relief_depth: String,
     #[serde(default = "rule_corner_relief")]
     pub corner_relief: String,
+    /// What is cut where two bends meet at a corner of the base: `notch` (nothing more: the
+    /// bends end square at the corner), `round` or `rectangular` (a relief `corner_relief`
+    /// across, centred on the corner the two bends share).
+    #[serde(default = "rule_corner_relief_shape")]
+    pub corner_relief_shape: String,
     /// Inner radius of flat hems.
     #[serde(default = "rule_hem_gap")]
     pub hem_gap: String,
@@ -178,6 +183,9 @@ fn rule_relief_depth() -> String {
 fn rule_corner_relief() -> String {
     "Thickness * 4.0".into()
 }
+fn rule_corner_relief_shape() -> String {
+    ReliefShape::Notch.name().into()
+}
 fn rule_hem_gap() -> String {
     "0.01 mm".into()
 }
@@ -193,6 +201,7 @@ impl SheetRule {
             relief_width: rule_relief_width(),
             relief_depth: rule_relief_depth(),
             corner_relief: rule_corner_relief(),
+            corner_relief_shape: rule_corner_relief_shape(),
             hem_gap: rule_hem_gap(),
             gap: rule_gap(),
         }
@@ -214,6 +223,40 @@ impl SheetSettings {
     }
 }
 
+/// The shape of the relief cut where two bends meet at a corner of the base (a rule's
+/// `corner_relief_shape`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReliefShape {
+    /// Nothing is cut: the bends end square at the corner.
+    #[default]
+    Notch,
+    /// A round about the corner of the bends, through the angle the base fills there.
+    Round,
+    /// A square with a corner on the corner of the bends (a kite where the base's corner isn't
+    /// square: both cuts leave their edge at a right angle).
+    Rectangular,
+}
+
+impl ReliefShape {
+    pub fn parse(s: &str) -> Option<ReliefShape> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "notch" => Some(ReliefShape::Notch),
+            "round" => Some(ReliefShape::Round),
+            "rectangular" => Some(ReliefShape::Rectangular),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            ReliefShape::Notch => "notch",
+            ReliefShape::Round => "round",
+            ReliefShape::Rectangular => "rectangular",
+        }
+    }
+}
+
 /// A rule's values (mm, unit-less K).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct RuleValues {
@@ -223,6 +266,7 @@ pub struct RuleValues {
     pub relief_width: f64,
     pub relief_depth: f64,
     pub corner_relief: f64,
+    pub corner_relief_shape: ReliefShape,
     pub hem_gap: f64,
     pub gap: f64,
 }
@@ -255,6 +299,8 @@ impl Document {
             relief_width: with_t(&r.relief_width, Kind::Length)?,
             relief_depth: with_t(&r.relief_depth, Kind::Length)?,
             corner_relief: with_t(&r.corner_relief, Kind::Length)?,
+            corner_relief_shape: ReliefShape::parse(&r.corner_relief_shape)
+                .ok_or_else(|| DocError::Invalid(format!("unknown corner relief shape `{}` (notch, round or rectangular)", r.corner_relief_shape)))?,
             hem_gap: with_t(&r.hem_gap, Kind::Length)?,
             gap: with_t(&r.gap, Kind::Length)?,
         };
@@ -328,6 +374,10 @@ pub struct SheetBody {
     pub flat: bool,
     /// Gap between flanges that meet at a corner.
     pub gap: f64,
+    /// The relief cut where two bends meet at a corner of the base, and how far across it is
+    /// (the rule's `corner_relief_shape` and `corner_relief`).
+    pub relief: ReliefShape,
+    pub relief_size: f64,
     /// The base sketch's lines (id, ends in flat coordinates), naming the base panel's edges.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub base_curves: Vec<(String, Vec2, Vec2)>,
@@ -479,6 +529,9 @@ fn clip(poly: &[Vec2], o: Vec2, n: Vec2) -> Vec<Vec2> {
 /// The smallest gap closed corners are given: closer than this the flanges' ends would touch.
 const MIN_CORNER_GAP: f64 = 0.01;
 
+/// The smallest corner relief (across) that is cut: a smaller one would leave hairline edges.
+const MIN_CORNER_RELIEF: f64 = 0.01;
+
 /// Two bends on the base meeting at a corner (see [`SheetBody::corners`]): flanges `a` and `b`,
 /// which end of each (false = the end at `p`), and the corner point (flat coordinates).
 #[derive(Clone, Copy, Debug)]
@@ -570,7 +623,8 @@ impl SheetBody {
     }
 
     /// The part of a bend along its parent's edge: where a later flange trimmed that edge back
-    /// (a corner), the bend stops and the flange panel runs on alone (a corner relief).
+    /// (a corner) or a corner relief cut into it, the bend stops and the flange panel runs on
+    /// alone.
     pub fn zone_span(&self, f: &SheetFlange) -> (f64, f64) {
         if f.parent.is_some() {
             return (0.0, f.len);
@@ -1361,13 +1415,13 @@ impl SheetBody {
 
     /// Edge flanges on several edges at once: every edge is trimmed back first, so flanges on
     /// adjacent edges stop at each other's bends; the corners between them are then closed with
-    /// the rule's gap (`close_corners`).
+    /// the rule's gap and given the rule's relief (`close_corners`).
     pub fn add_flanges(&mut self, picks: &[Vec3], height: f64, angle: f64, radius: f64, position: &str, flip: bool) -> Result<Vec<usize>> {
         self.add_flanges_noted(picks, height, angle, radius, position, flip).map(|(made, _)| made)
     }
 
     /// [`SheetBody::add_flanges`], also returning notes on corners that could not be closed
-    /// (they are left open, as the bends leave them).
+    /// (they are left open, as the bends leave them) or relieved (they get no relief).
     pub fn add_flanges_noted(
         &mut self,
         picks: &[Vec3],
@@ -1502,7 +1556,8 @@ impl SheetBody {
         out
     }
 
-    /// Close the corners the new flanges make. Returns a note for every corner left open.
+    /// Close the corners the new flanges make, then cut the rule's relief at each. Returns a
+    /// note for every corner left open or without its relief.
     fn close_corners(&mut self, made: &[usize]) -> Vec<String> {
         let corners = self.corners(made);
         let mut notes = Vec::new();
@@ -1513,6 +1568,14 @@ impl SheetBody {
         for k in &corners {
             if let Err(why) = self.close_corner(k) {
                 notes.push(format!("the flanges at {} are left open: {why}", at(self, k.c)));
+            }
+        }
+        // The reliefs come last: they move the bends' ends, which is how the corners were found.
+        if self.relief != ReliefShape::Notch {
+            for k in &corners {
+                if let Err(why) = self.relieve_corner(k, &corners) {
+                    notes.push(format!("no corner relief at {}: {why}", at(self, k.c)));
+                }
             }
         }
         notes
@@ -1607,6 +1670,84 @@ impl SheetBody {
         if let Some(f) = self.flanges.get_mut(k.b) {
             *f = new_b;
         }
+        Ok(())
+    }
+
+    /// Cut the rule's relief where two bends meet at a corner of the base, `relief_size / 2`
+    /// from the corner along both edges: a round about the corner through the angle the base
+    /// fills there, or the square with that side (a kite where the corner isn't square, its
+    /// cuts square to the two edges). The base's edges then start that far from the corner, so
+    /// both bends stop there, cut straight across (`zone_span`): their ends stay exact arcs,
+    /// the round runs on into them tangentially, and the bend table gets the shorter bends.
+    /// The flange panels keep the ends `close_corner` gave them. A relief too small to cut, one
+    /// that would leave nothing of an edge it starts on (with the relief at that edge's other
+    /// end, where there is one), or one reaching as far from the corner as another edge of the
+    /// base is, is refused with the reason.
+    fn relieve_corner(&mut self, k: &Corner, corners: &[Corner]) -> std::result::Result<(), String> {
+        let size = self.relief_size;
+        if !(size >= MIN_CORNER_RELIEF) {
+            return Err(format!("the relief size {size:.4} mm is below {MIN_CORNER_RELIEF} mm"));
+        }
+        let r = size / 2.0;
+        let segs = self.base.outer.ccw().segs;
+        let n = segs.len();
+        // The base's edges at the corner: `i` ends there and the next one starts there.
+        let at_corner =
+            |i: usize| segs.get(i).is_some_and(|s| s.end().dist(k.c) < 1e-6) && segs.get((i + 1) % n).is_some_and(|s| s.start().dist(k.c) < 1e-6);
+        let Some(i) = (0..n).find(|&i| at_corner(i)) else { return Err("the bends don't meet at a corner of the base".into()) };
+        let j = (i + 1) % n;
+        let (Some(&Seg2::Line { a: pa, b: c }), Some(&Seg2::Line { b: pb, .. })) = (segs.get(i), segs.get(j)) else {
+            return Err("the base's edges at the corner are not straight".into());
+        };
+        let (Some(da), Some(db)) = ((pa - c).normalized(), (pb - c).normalized()) else {
+            return Err("an edge of the base at the corner has no length".into());
+        };
+        // The angle the base fills at the corner.
+        let alpha = db.cross(da).atan2(db.dot(da));
+        if !(alpha > 1e-6 && alpha < std::f64::consts::PI - 1e-6) {
+            // An inside corner of the base: the flanges turn away from each other.
+            return Ok(());
+        }
+        // Both bends must keep some length. An edge whose far end is another of the corners has
+        // to hold a relief there too, so the reliefs at its two ends fit or are left out together.
+        let takes = |far: Vec2| if corners.iter().any(|q| q.c.dist(far) < 1e-6) { 2.0 * r } else { r };
+        if takes(pa) >= pa.dist(c) - 1e-6 || takes(pb) >= pb.dist(c) - 1e-6 {
+            return Err(format!("a relief {size:.3} mm across would take a whole bend away"));
+        }
+        // The relief from the edge that ends at the corner to the one that starts there, and
+        // how far from the corner it reaches.
+        let (relief, reach) = match self.relief {
+            ReliefShape::Notch => return Ok(()),
+            ReliefShape::Round => (vec![Seg2::Arc { center: c, radius: r, start: da.angle(), sweep: -alpha }], r),
+            ReliefShape::Rectangular => {
+                let x = snap(c + (da + db) * (r / (1.0 + da.dot(db))));
+                (vec![Seg2::Line { a: snap(c + da * r), b: x }, Seg2::Line { a: x, b: snap(c + db * r) }], x.dist(c))
+            }
+        };
+        let (Some(start), Some(end)) = (relief.first().map(Seg2::start), relief.last().map(Seg2::end)) else { return Ok(()) };
+        // The rest of the outline must stay clear of it.
+        let clear = segs.iter().enumerate().filter(|(e, _)| *e != i && *e != j).all(|(_, s)| {
+            s.polyline(1e-3).windows(2).all(|w| {
+                let d = w[1] - w[0];
+                let t = if d.len2() > 1e-30 { ((c - w[0]).dot(d) / d.len2()).clamp(0.0, 1.0) } else { 0.0 };
+                c.dist(w[0] + d * t) > reach + 1e-6
+            })
+        });
+        if !clear {
+            return Err(format!("a relief {size:.3} mm across reaches {reach:.3} mm from the corner, where another edge of the base is nearer"));
+        }
+        let mut outer = Vec::with_capacity(n + relief.len());
+        for (e, s) in segs.iter().enumerate() {
+            if e == i {
+                outer.push(Seg2::Line { a: pa, b: start });
+                outer.extend(relief.iter().copied());
+            } else if e == j {
+                outer.push(Seg2::Line { a: end, b: pb });
+            } else {
+                outer.push(*s);
+            }
+        }
+        self.base = Region2 { outer: Loop2 { segs: outer }, holes: self.base.holes.clone() };
         Ok(())
     }
 
@@ -2025,6 +2166,72 @@ impl SheetBody {
         best.map(|(_, q)| q)
     }
 
+    /// The persistent name of a panel: `base`, a flange's tag, or `#<index>` for an untagged
+    /// flange; `flat` for the whole sheet while it is unfolded.
+    fn panel_name(&self, pi: Option<usize>) -> String {
+        match pi {
+            _ if self.flat => "flat".into(),
+            None => "base".into(),
+            Some(i) => match self.flanges.get(i) {
+                Some(f) if !f.tag.is_empty() => f.tag.clone(),
+                _ => format!("#{i}"),
+            },
+        }
+    }
+
+    /// The plane of a flat face of a panel (`top`: the face at the thickness, else the bottom
+    /// one), facing out of the sheet. Its coordinates are the flat pattern's (the bottom
+    /// face's mirrored in y), so a sketch on it measures as the flat pattern does.
+    fn panel_face_plane(&self, world: &Mat, top: bool) -> Option<Plane> {
+        let (x, y) = (apply_vector(world, Vec3::X), apply_vector(world, Vec3::Y));
+        Plane::new(apply_point(world, Vec3::new(0.0, 0.0, if top { self.t } else { 0.0 })), x, if top { y } else { y * -1.0 })
+    }
+
+    /// The flat face of the sheet that a point lies on (sheet coordinates, within `tol`, which
+    /// stays below a quarter of the thickness): its persistent name (`<panel>:top` or
+    /// `<panel>:bottom`) and its plane (see [`panel_face`](Self::panel_face)).
+    pub fn panel_face_at(&self, p: Vec3, tol: f64) -> Option<(String, Plane)> {
+        let tol = tol.min(self.t * 0.25);
+        let flat = if self.flat { self.flat_regions().ok()? } else { Vec::new() };
+        let panels = if self.flat { vec![(None, self.base.clone())] } else { self.panels() };
+        for (pi, region) in panels {
+            let world = self.world(pi);
+            let Some(inverse) = mat_inverse(&world) else { continue };
+            let q = apply_point(&inverse, p);
+            let top = (q.z - self.t).abs() < q.z.abs();
+            if (if top { (q.z - self.t).abs() } else { q.z.abs() }) > tol {
+                continue;
+            }
+            let q2 = Vec2::new(q.x, q.y);
+            if if self.flat { flat.iter().any(|r| r.contains(q2)) } else { region.contains(q2) } {
+                return Some((format!("{}:{}", self.panel_name(pi), if top { "top" } else { "bottom" }), self.panel_face_plane(&world, top)?));
+            }
+        }
+        None
+    }
+
+    /// The plane of the flat face with this persistent name (see [`panel_face_at`](Self::panel_face_at)).
+    /// A face named while the sheet was folded follows its panel; one named unfolded (`flat`)
+    /// is the flat sheet's own plane.
+    pub fn panel_face(&self, name: &str) -> Option<Plane> {
+        let (panel, side) = name.rsplit_once(':')?;
+        let top = match side {
+            "top" => true,
+            "bottom" => false,
+            _ => return None,
+        };
+        let pi = match panel {
+            "flat" | "base" => None,
+            tag => Some(
+                self.flanges
+                    .iter()
+                    .position(|f| f.tag == tag)
+                    .or_else(|| tag.strip_prefix('#')?.parse::<usize>().ok().filter(|i| *i < self.flanges.len()))?,
+            ),
+        };
+        self.panel_face_plane(&self.world(pi), top)
+    }
+
     /// Map a region in a world plane to flat coordinates through a panel's placement.
     pub fn region_to_flat(&self, panel: Option<usize>, plane: &Plane, r: &Region2) -> Result<Region2> {
         region_complexity(std::slice::from_ref(r))?;
@@ -2228,6 +2435,8 @@ pub fn base_flange(body: &str, rule: &str, rv: &RuleValues, plane: Plane, region
         pockets: Vec::new(),
         flat: false,
         gap: rv.gap,
+        relief: rv.corner_relief_shape,
+        relief_size: rv.corner_relief,
         base_curves: Vec::new(),
     }
 }
@@ -2280,6 +2489,8 @@ pub fn contour_flange(body: &str, rule: &str, rv: &RuleValues, plane: &Plane, pt
         pockets: Vec::new(),
         flat: false,
         gap: rv.gap,
+        relief: rv.corner_relief_shape,
+        relief_size: rv.corner_relief,
         base_curves: Vec::new(),
     };
     let (y0, y1) = if ysign > 0.0 { (0.0, width) } else { (-width, 0.0) };
@@ -2323,6 +2534,52 @@ pub fn contour_flange(body: &str, rule: &str, rv: &RuleValues, plane: &Plane, pt
     Ok(sheet)
 }
 
+/// The name a sketch keeps for a flat face of a sheet: `sheet:<body>:<panel>:<top|bottom>`.
+pub fn sheet_face_name(body: &str, face: &str) -> String {
+    format!("sheet:{body}:{face}")
+}
+
+/// Point the sheet face a sketch plane is attached to (also beneath an offset or a rotation)
+/// at body `new`, when it is on body `old`.
+pub fn rename_plane_sheet_body(plane: &mut crate::PlaneRef, old: &str, new: &str) {
+    match plane {
+        crate::PlaneRef::Face { name: Some(name), anchor: None, .. } => {
+            let renamed = split_sheet_face_name(name).filter(|(body, _)| *body == old).map(|(_, face)| sheet_face_name(new, face));
+            if let Some(renamed) = renamed {
+                *name = renamed;
+            }
+        }
+        crate::PlaneRef::Offset { base, .. } | crate::PlaneRef::AtAngle { base, .. } => rename_plane_sheet_body(base, old, new),
+        _ => {}
+    }
+}
+
+/// The sheet face a sketch plane is attached to (also beneath an offset or a rotation): its
+/// [`sheet_face_name`].
+pub fn plane_sheet_face(plane: &crate::PlaneRef) -> Option<&str> {
+    match plane {
+        crate::PlaneRef::Face { name: Some(name), anchor: None, .. } if split_sheet_face_name(name).is_some() => Some(name),
+        crate::PlaneRef::Offset { base, .. } | crate::PlaneRef::AtAngle { base, .. } => plane_sheet_face(base),
+        _ => None,
+    }
+}
+
+/// The body and the `<panel>:<side>` of a [`sheet_face_name`].
+pub fn split_sheet_face_name(name: &str) -> Option<(&str, &str)> {
+    let rest = name.strip_prefix("sheet:")?;
+    let (head, side) = rest.rsplit_once(':')?;
+    let (body, panel) = head.rsplit_once(':')?;
+    (!body.is_empty() && !panel.is_empty() && !side.is_empty()).then_some(())?;
+    Some((body, rest.get(body.len() + 1..)?))
+}
+
+/// The plane of the sheet face with a [`sheet_face_name`], in the body's own coordinates.
+pub fn sheet_face_plane(st: &crate::ModelState, name: &str) -> Option<(String, Plane)> {
+    let (body, face) = split_sheet_face_name(name)?;
+    let plane = st.sheets.iter().find(|s| s.body == body)?.panel_face(face)?;
+    Some((body.to_string(), plane))
+}
+
 /// Persistent names of the sheet edges nearest each world point (empty when none).
 pub fn sheet_edge_names(st: &crate::ModelState, pts: &[Vec3]) -> Vec<String> {
     pts.iter()
@@ -2349,6 +2606,7 @@ mod tests {
             relief_width: 2.5,
             relief_depth: 1.25,
             corner_relief: 10.0,
+            corner_relief_shape: ReliefShape::Notch,
             hem_gap: 0.01,
             gap: 2.5,
         }
@@ -2391,6 +2649,85 @@ mod tests {
         s.add_flange(Vec3::new(50.0, 0.0, 2.5), 15.0, std::f64::consts::FRAC_PI_4, 2.5, "inside", false).unwrap();
         assert!((vol(&s.solid().unwrap()) - 18450.777).abs() < 2.0);
         assert!((s.flat_size().unwrap().1 - 73.685298).abs() < 1e-5);
+    }
+
+    #[test]
+    fn flat_faces_of_a_sheet_are_found_and_named_by_panel() {
+        use std::f64::consts::FRAC_PI_2;
+        // Steel, 2.5 thick, R = T: a 90° flange on the y = 0 edge stands between the planes
+        // y = 0 (its outer face) and y = 2.5 (its inner face) from z = 5 up.
+        let mut s = plate(100.0, 60.0);
+        s.add_flange(Vec3::new(50.0, 0.0, 2.5), 20.0, FRAC_PI_2, 2.5, "inside", false).unwrap();
+        s.flanges[0].tag = "F7.0".into();
+        let face = |s: &SheetBody, p: Vec3| s.panel_face_at(p, 1e-6);
+        let (name, plane) = face(&s, Vec3::new(50.0, 30.0, 2.5)).unwrap();
+        assert_eq!(name, "base:top");
+        assert!(plane.normal().dist(Vec3::Z) < 1e-12 && (plane.origin.z - 2.5).abs() < 1e-12);
+        // The top face's coordinates are the flat pattern's; the bottom face's mirror y.
+        assert!(plane.to_local(Vec3::new(30.0, 20.0, 2.5)).dist(Vec2::new(30.0, 20.0)) < 1e-12);
+        let (name, plane) = face(&s, Vec3::new(50.0, 30.0, 0.0)).unwrap();
+        assert_eq!(name, "base:bottom");
+        assert!(plane.normal().dist(Vec3::Z * -1.0) < 1e-12 && plane.origin.z.abs() < 1e-12);
+        assert!(plane.to_local(Vec3::new(30.0, 20.0, 0.0)).dist(Vec2::new(30.0, -20.0)) < 1e-12);
+        // The flange's inner face is the sheet's top side there; 7 mm up it is flat y = 5 − BA − 7.
+        let ba = FRAC_PI_2 * (2.5 + 0.44 * 2.5);
+        let (inner, plane) = face(&s, Vec3::new(30.0, 2.5, 12.0)).unwrap();
+        assert_eq!(inner, "F7.0:top");
+        assert!(plane.normal().dist(Vec3::Y) < 1e-12, "{:?}", plane.normal());
+        assert!(plane.to_local(Vec3::new(30.0, 2.5, 12.0)).dist(Vec2::new(30.0, 5.0 - ba - 7.0)) < 1e-9);
+        let (outer, plane) = face(&s, Vec3::new(30.0, 0.0, 12.0)).unwrap();
+        assert_eq!(outer, "F7.0:bottom");
+        assert!(plane.normal().dist(Vec3::Y * -1.0) < 1e-12, "{:?}", plane.normal());
+        // A name gives the same plane again.
+        for p in [Vec3::new(50.0, 30.0, 2.5), Vec3::new(50.0, 30.0, 0.0), Vec3::new(30.0, 2.5, 12.0), Vec3::new(30.0, 0.0, 12.0)] {
+            let (name, plane) = face(&s, p).unwrap();
+            assert_eq!(s.panel_face(&name), Some(plane), "{name}");
+        }
+        // Inside the sheet, on the bend, beside the sheet, above the flange: no flat face.
+        for p in [Vec3::new(50.0, 30.0, 1.0), Vec3::new(50.0, 1.0, 1.0), Vec3::new(150.0, 30.0, 2.5), Vec3::new(30.0, 2.5, 40.0)] {
+            assert!(face(&s, p).is_none(), "{p:?}");
+        }
+        // Names that are no face, or no flange, give no plane.
+        for name in ["base", "base:side", "nobody:top", "#7:top", "F8.0:top", ""] {
+            assert!(s.panel_face(name).is_none(), "{name}");
+        }
+        // A flange without a tag is named by its index.
+        s.flanges[0].tag.clear();
+        assert_eq!(face(&s, Vec3::new(30.0, 2.5, 12.0)).map(|f| f.0).as_deref(), Some("#0:top"));
+        assert!(s.panel_face("#0:bottom").is_some());
+        // Unfolded, the whole sheet is one panel.
+        s.flat = true;
+        assert_eq!(face(&s, Vec3::new(50.0, -10.0, 2.5)).map(|f| f.0).as_deref(), Some("flat:top"));
+        assert!(s.panel_face("flat:bottom").is_some());
+    }
+
+    #[test]
+    fn a_pick_beside_a_thin_sheet_takes_the_nearer_face() {
+        // The tolerance of a pick on a large part is far above a thin sheet's thickness, and
+        // never reaches a quarter of it here: the nearer side wins, the middle is no face.
+        let rv = RuleValues { thickness: 0.5, ..steel() };
+        let s = base_flange(
+            "Thin",
+            "Sheet",
+            &rv,
+            Plane::XY,
+            rect(Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0), Vec2::new(100.0, 60.0), Vec2::new(0.0, 60.0)),
+        );
+        let at = |z: f64| s.panel_face_at(Vec3::new(50.0, 30.0, z), 5.0).map(|f| f.0);
+        assert_eq!(at(0.4).as_deref(), Some("base:top"));
+        assert_eq!(at(0.1).as_deref(), Some("base:bottom"));
+        assert_eq!(at(0.25), None);
+        assert_eq!(at(3.0), None);
+    }
+
+    #[test]
+    fn sheet_face_names_split_from_the_right() {
+        assert_eq!(split_sheet_face_name(&sheet_face_name("Body1", "F7.0:top")), Some(("Body1", "F7.0:top")));
+        // A body name may hold colons; the panel and the side never do.
+        assert_eq!(split_sheet_face_name("sheet:Part:2:base:bottom"), Some(("Part:2", "base:bottom")));
+        for name in ["", "sheet", "sheet:Body1", "sheet:Body1:top", "sheet::base:top", "sheet:Body1::top", "sheet:Body1:base:", "Body1:base:top"] {
+            assert_eq!(split_sheet_face_name(name), None, "{name}");
+        }
     }
 
     #[test]
@@ -2636,6 +2973,7 @@ mod tests {
             relief_width: 2.0,
             relief_depth: 1.0,
             corner_relief: 8.0,
+            corner_relief_shape: ReliefShape::Notch,
             hem_gap: 0.01,
             gap: 2.0,
         };
@@ -2717,6 +3055,7 @@ mod tests {
             relief_width: 2.0,
             relief_depth: 1.0,
             corner_relief: 8.0,
+            corner_relief_shape: ReliefShape::Notch,
             hem_gap: 0.01,
             gap: 0.5,
         }
@@ -2894,6 +3233,248 @@ mod tests {
         assert!(b.validity().is_empty() && b.shell_count() == 1, "{what}: {:?}", b.validity());
         let v = vol(&b);
         assert!((v - flat_area(s) * s.t).abs() < 1e-3 * v, "{what}: {v} vs {}", flat_area(s) * s.t);
+    }
+
+    /// The flat area a corner relief `size` across takes where the base fills the angle `alpha`
+    /// and both bends are `ba` wide: of the base a sector of radius size/2 (round) or the kite
+    /// with that side, square to both edges (rectangular), and size/2 of each bend's length.
+    fn relief_area(shape: ReliefShape, size: f64, alpha: f64, ba: f64) -> f64 {
+        let r = size / 2.0;
+        match shape {
+            ReliefShape::Notch => 0.0,
+            ReliefShape::Round => r * r * alpha / 2.0 + 2.0 * r * ba,
+            ReliefShape::Rectangular => r * r * (alpha / 2.0).tan() + 2.0 * r * ba,
+        }
+    }
+
+    #[test]
+    fn the_rule_names_its_corner_relief_shape() {
+        // A rule saved before the shape existed reads as the notch it always had.
+        let old: SheetRule = serde_json::from_str(r#"{"name":"Old","thickness":"2 mm","k_factor":"0.5","bend_radius":"1 mm"}"#).unwrap();
+        assert_eq!(old.corner_relief_shape, "notch");
+        assert_eq!(SheetRule::steel().corner_relief_shape, "notch");
+        let (doc, vals) = (Document::default(), std::collections::BTreeMap::new());
+        assert_eq!(doc.rule_values(&vals, &old).unwrap().corner_relief_shape, ReliefShape::Notch);
+        for (text, shape) in [("round", ReliefShape::Round), (" Rectangular ", ReliefShape::Rectangular), ("NOTCH", ReliefShape::Notch)] {
+            let rule = SheetRule { corner_relief_shape: text.into(), ..old.clone() };
+            assert_eq!(doc.rule_values(&vals, &rule).unwrap().corner_relief_shape, shape);
+            assert_eq!(ReliefShape::parse(shape.name()), Some(shape));
+        }
+        // No other name is a shape.
+        for text in ["square", "circle", ""] {
+            let err = doc.rule_values(&vals, &SheetRule { corner_relief_shape: text.into(), ..old.clone() }).unwrap_err().to_string();
+            assert!(err.contains(&format!("unknown corner relief shape `{text}` (notch, round or rectangular)")), "{err}");
+        }
+    }
+
+    #[test]
+    fn corner_reliefs_cut_the_base_corner_and_stop_the_bends() {
+        use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
+        // The tray: the bends on x = 0 and y = 0 meet at c = (s0, s0), s0 = (R + T)·tan(θ/2) in from
+        // the sheet's corner. A relief 8 mm across reaches 4 mm from c along both edges of the base.
+        for deg in [72.0f64, 90.0] {
+            let th = deg.to_radians();
+            let (s0, ba) = (3.0 * (th / 2.0).tan(), th * 2.0);
+            let len = 120.0 - 2.0 * s0;
+            let c = Vec2::new(s0, s0);
+            let (notch, _) = tray(&alu(), deg, 38.6);
+            assert_eq!(notch.base.outer.segs.len(), 4, "{deg}°: the notch cuts nothing");
+            for shape in [ReliefShape::Round, ReliefShape::Rectangular] {
+                let what = format!("{shape:?} at {deg}°");
+                let (s, notes) = tray(&RuleValues { corner_relief_shape: shape, ..alu() }, deg, 38.6);
+                assert!(notes.is_empty(), "{what}: {notes:?}");
+                let segs = &s.base.outer.segs;
+                if shape == ReliefShape::Round {
+                    // A quarter round of radius 4 about c, from the edge x = s0 round to the edge y = s0.
+                    assert_eq!((segs.len(), segs.iter().filter(|g| matches!(g, Seg2::Arc { .. })).count()), (8, 4), "{what}");
+                    let found = segs.iter().any(|g| {
+                        matches!(g, Seg2::Arc { center, radius, .. } if center.dist(c) < 1e-8 && (radius - 4.0).abs() < 1e-12)
+                            && g.start().dist(c + Vec2::new(0.0, 4.0)) < 1e-9
+                            && g.point_at(0.5).dist(c + Vec2::from_angle(FRAC_PI_4) * 4.0) < 1e-9
+                            && g.end().dist(c + Vec2::new(4.0, 0.0)) < 1e-9
+                    });
+                    assert!(found, "{what}: {segs:?}");
+                } else {
+                    // A 4 mm square: in from the edge x = s0 to (s0 + 4, s0 + 4), out to the edge y = s0.
+                    let line =
+                        |a: Vec2, b: Vec2| segs.iter().any(|g| matches!(g, Seg2::Line { .. }) && g.start().dist(a) < 1e-9 && g.end().dist(b) < 1e-9);
+                    assert_eq!(segs.len(), 12, "{what}");
+                    assert!(
+                        line(c + Vec2::new(0.0, 4.0), c + Vec2::new(4.0, 4.0)) && line(c + Vec2::new(4.0, 4.0), c + Vec2::new(4.0, 0.0)),
+                        "{what}: {segs:?}"
+                    );
+                }
+                // The bend on y = 0 stops 4 mm from the corners at both its ends, and the bend table follows.
+                let (u0, u1) = s.zone_span(&s.flanges[0]);
+                assert!((u0 - 4.0).abs() < 1e-9 && (u1 - (len - 4.0)).abs() < 1e-9, "{what}: {u0} {u1}");
+                let bend = &s.bends()[0];
+                let (start, end) = (Vec2::new(s0 + 4.0, s0 - ba / 2.0), Vec2::new(120.0 - s0 - 4.0, s0 - ba / 2.0));
+                assert!((bend.length - (len - 8.0)).abs() < 1e-9 && bend.start.dist(start) < 1e-9 && bend.end.dist(end) < 1e-9, "{what}: {bend:?}");
+                // Only the base changes: the flanges are the ones the closing left.
+                assert_eq!(s.flanges, notch.flanges, "{what}");
+                // The flat pattern loses, at each of its four corners, the relief in the base and 4 mm of two bends.
+                let (removed, want) = (flat_area(&notch) - flat_area(&s), 4.0 * relief_area(shape, 8.0, FRAC_PI_2, ba));
+                assert!((removed - want).abs() < 1e-6, "{what}: {removed} vs {want}");
+                holds_the_flat_material(&s, &what);
+                let unfolded = vol(&s.flat_solid().unwrap());
+                assert!((unfolded - flat_area(&s) * 2.0).abs() < 1e-3 * unfolded, "{what}: {unfolded}");
+            }
+        }
+    }
+
+    /// The trapezoid of the closing tests with four flanges at `deg`, under rule `rv`.
+    fn trapezoid(rv: &RuleValues, deg: f64) -> (SheetBody, Vec<String>) {
+        let pts = [Vec2::new(0.0, 0.0), Vec2::new(120.0, 0.0), Vec2::new(100.0, 90.0), Vec2::new(20.0, 90.0)];
+        let mut s = base_flange("Body1", "AL2", rv, Plane::XY, Region2 { outer: Loop2::polygon(&pts).ccw(), holes: vec![] });
+        let picks = [Vec3::new(60.0, 0.0, 2.0), Vec3::new(110.0, 45.0, 2.0), Vec3::new(60.0, 90.0, 2.0), Vec3::new(10.0, 45.0, 2.0)];
+        let (_, notes) = s.add_flanges_noted(&picks, 38.6, deg.to_radians(), rv.bend_radius, "inside", false).unwrap();
+        (s, notes)
+    }
+
+    #[test]
+    fn corner_reliefs_follow_corners_that_are_not_square() {
+        use std::f64::consts::PI;
+        // The base fills α = atan(90/20) = 77.47° at the two lower corners of the trapezoid and 180° − α
+        // at the upper ones. With every edge trimmed by s0, the bends on y = 0 and on the left edge meet
+        // at c = (s0/tan(α/2), s0), and the left edge leaves c in the direction (cos α, sin α).
+        let th = 72f64.to_radians();
+        let (s0, ba) = (3.0 * (th / 2.0).tan(), th * 2.0);
+        let alpha = 90f64.atan2(20.0);
+        let c = Vec2::new(s0 / (alpha / 2.0).tan(), s0);
+        let (along, up) = (Vec2::new(1.0, 0.0), Vec2::from_angle(alpha));
+        let (notch, _) = trapezoid(&alu(), 72.0);
+        for shape in [ReliefShape::Round, ReliefShape::Rectangular] {
+            let what = format!("{shape:?}");
+            let (s, notes) = trapezoid(&RuleValues { corner_relief_shape: shape, ..alu() }, 72.0);
+            assert!(notes.is_empty(), "{what}: {notes:?}");
+            let segs = &s.base.outer.segs;
+            if shape == ReliefShape::Round {
+                // An arc of radius 4 about c through the angle α, tangent to both bends' straight ends.
+                let found = segs.iter().any(|g| {
+                    matches!(g, Seg2::Arc { center, radius, sweep, .. } if center.dist(c) < 1e-8 && (radius - 4.0).abs() < 1e-12 && (sweep + alpha).abs() < 1e-9)
+                        && g.start().dist(c + up * 4.0) < 1e-8
+                        && g.end().dist(c + along * 4.0) < 1e-8
+                        && g.start_tangent().dot(up).abs() < 1e-9
+                        && g.end_tangent().dot(along).abs() < 1e-9
+                });
+                assert!(found, "{what}: {segs:?}");
+            } else {
+                // A kite: both cuts square to their edge, meeting 4/cos(α/2) from c on the bisector.
+                let x = c + Vec2::from_angle(alpha / 2.0) * (4.0 / (alpha / 2.0).cos());
+                let line =
+                    |a: Vec2, b: Vec2| segs.iter().any(|g| matches!(g, Seg2::Line { .. }) && g.start().dist(a) < 1e-8 && g.end().dist(b) < 1e-8);
+                assert!(line(c + up * 4.0, x) && line(x, c + along * 4.0), "{what}: {segs:?}");
+                assert!((x - (c + up * 4.0)).dot(up).abs() < 1e-9 && (x - (c + along * 4.0)).dot(along).abs() < 1e-9);
+            }
+            // Two corners of α and two of 180° − α, eight bend ends.
+            let want = 2.0 * relief_area(shape, 8.0, alpha, ba) + 2.0 * relief_area(shape, 8.0, PI - alpha, ba);
+            let removed = flat_area(&notch) - flat_area(&s);
+            assert!((removed - want).abs() < 1e-6, "{what}: {removed} vs {want}");
+            assert_eq!(s.flanges, notch.flanges, "{what}");
+            holds_the_flat_material(&s, &what);
+        }
+    }
+
+    #[test]
+    fn corner_reliefs_hold_at_every_angle_and_size() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        // The round relief runs into the bends' straight ends tangentially, a contact the planar
+        // booleans have to keep as one point. So every 5° from 45° to 135° is built on the tray and on
+        // the trapezoid with both shapes, and on the tray reliefs from 0.5 to 20 mm across.
+        let alpha = 90f64.atan2(20.0);
+        for shape in [ReliefShape::Round, ReliefShape::Rectangular] {
+            for k in 9..=27 {
+                let deg = k as f64 * 5.0;
+                let ba = deg.to_radians() * 2.0;
+                let rv = RuleValues { corner_relief_shape: shape, ..alu() };
+                for (name, (s, notes), (notch, _), corners) in [
+                    ("tray", tray(&rv, deg, 38.6), tray(&alu(), deg, 38.6), [FRAC_PI_2; 4]),
+                    ("trapezoid", trapezoid(&rv, deg), trapezoid(&alu(), deg), [alpha, alpha, PI - alpha, PI - alpha]),
+                ] {
+                    let what = format!("{shape:?} on the {name} at {deg}°");
+                    assert!(notes.is_empty(), "{what}: {notes:?}");
+                    let want: f64 = corners.iter().map(|a| relief_area(shape, 8.0, *a, ba)).sum();
+                    let removed = flat_area(&notch) - flat_area(&s);
+                    assert!((removed - want).abs() < 1e-6, "{what}: {removed} vs {want}");
+                    holds_the_flat_material(&s, &what);
+                }
+            }
+            for size in [0.5, 1.0, 3.0, 5.0, 12.0, 20.0] {
+                for deg in [72.0f64, 90.0] {
+                    let what = format!("{shape:?} {size} mm across at {deg}°");
+                    let (s, notes) = tray(&RuleValues { corner_relief_shape: shape, corner_relief: size, ..alu() }, deg, 38.6);
+                    assert!(notes.is_empty(), "{what}: {notes:?}");
+                    let want = 4.0 * relief_area(shape, size, FRAC_PI_2, deg.to_radians() * 2.0);
+                    let removed = flat_area(&tray(&alu(), deg, 38.6).0) - flat_area(&s);
+                    assert!((removed - want).abs() < 1e-6, "{what}: {removed} vs {want}");
+                    holds_the_flat_material(&s, &what);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_relief_that_does_not_fit_is_left_out_with_a_note() {
+        let closed = tray(&alu(), 72.0, 38.6).0;
+        // 200 mm across reaches 100 mm along edges of which the shorter is 90 − 2·s0 = 85.6 mm long.
+        // 100 mm across reaches 50 mm: that fits the edge once but not from both its ends, and all four
+        // corners are left out together. Nothing, or less than nothing, is too small to cut.
+        let sizes = [(200.0, "whole bend"), (100.0, "whole bend"), (0.0, "below 0.01 mm"), (-8.0, "below 0.01 mm"), (f64::NAN, "below 0.01 mm")];
+        for (size, why) in sizes {
+            let (s, notes) = tray(&RuleValues { corner_relief_shape: ReliefShape::Round, corner_relief: size, ..alu() }, 72.0, 38.6);
+            assert_eq!(notes.len(), 4, "{size}: {notes:?}");
+            assert!(notes.iter().all(|n| n.starts_with("no corner relief at (") && n.contains(why)), "{size}: {notes:?}");
+            // The part is the one the notch gives, corners closed.
+            assert_eq!((&s.base, &s.flanges), (&closed.base, &closed.flanges), "{size}");
+        }
+        // A 120 × 12 strip with flanges on its lower and left edges, a relief 16 mm across. Its 8 mm fit
+        // on both edges at the corner (the left one is 12 − s0 = 9.82 long), but the far corner of the
+        // square is 8·√2 = 11.3 mm from the corner of the bends, and the strip's upper edge is only 9.82
+        // from it: no relief may reach as far from its corner as another edge is. The round one reaches
+        // 8 mm and fits.
+        let strip = |shape: ReliefShape| {
+            let base = rect(Vec2::new(0.0, 0.0), Vec2::new(120.0, 0.0), Vec2::new(120.0, 12.0), Vec2::new(0.0, 12.0));
+            let mut s = base_flange("Body1", "AL2", &RuleValues { corner_relief_shape: shape, corner_relief: 16.0, ..alu() }, Plane::XY, base);
+            let picks = [Vec3::new(60.0, 0.0, 2.0), Vec3::new(0.0, 6.0, 2.0)];
+            let (_, notes) = s.add_flanges_noted(&picks, 20.0, 72f64.to_radians(), 1.0, "inside", false).unwrap();
+            (s, notes)
+        };
+        let (s, notes) = strip(ReliefShape::Rectangular);
+        assert!(notes.len() == 1 && notes[0].contains("another edge of the base"), "{notes:?}");
+        assert!(s.base.outer.segs.len() == 4 && s.solid().is_ok());
+        let (s, notes) = strip(ReliefShape::Round);
+        assert!(notes.is_empty() && s.base.outer.segs.iter().filter(|g| matches!(g, Seg2::Arc { .. })).count() == 1, "{notes:?}");
+        holds_the_flat_material(&s, "the strip");
+        // A right triangle with flanges on its two legs: the base's legs are 100 − 2·s0 = 95.6 long and
+        // its long edge passes (100 − 2·s0)/√2 = 67.6 mm from the corner of the bends. A round relief of
+        // radius 75 would cut through that edge; one of radius 65 stays inside.
+        let triangle = |size: f64| {
+            let pts = [Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0), Vec2::new(0.0, 100.0)];
+            let rv = RuleValues { corner_relief_shape: ReliefShape::Round, corner_relief: size, ..alu() };
+            let mut s = base_flange("Body1", "AL2", &rv, Plane::XY, Region2 { outer: Loop2::polygon(&pts).ccw(), holes: vec![] });
+            let picks = [Vec3::new(50.0, 0.0, 2.0), Vec3::new(0.0, 50.0, 2.0)];
+            let (_, notes) = s.add_flanges_noted(&picks, 20.0, 72f64.to_radians(), 1.0, "inside", false).unwrap();
+            (s, notes)
+        };
+        let (s, notes) = triangle(150.0);
+        assert!(notes.len() == 1 && notes[0].contains("another edge of the base"), "{notes:?}");
+        assert!(s.base.outer.segs.len() == 3 && s.solid().is_ok());
+        let (s, notes) = triangle(130.0);
+        assert!(notes.is_empty() && s.base.outer.segs.len() == 4, "{notes:?}");
+        holds_the_flat_material(&s, "the triangle");
+    }
+
+    #[test]
+    fn a_corner_with_a_flange_of_an_earlier_feature_gets_no_relief() {
+        // Like the closing, the relief belongs to the corners between the flanges of one feature.
+        let rv = RuleValues { corner_relief_shape: ReliefShape::Round, ..alu() };
+        let base = rect(Vec2::new(0.0, 0.0), Vec2::new(120.0, 0.0), Vec2::new(120.0, 90.0), Vec2::new(0.0, 90.0));
+        let mut s = base_flange("Body1", "AL2", &rv, Plane::XY, base);
+        s.add_flanges(&[Vec3::new(60.0, 0.0, 2.0)], 38.6, 72f64.to_radians(), 1.0, "inside", false).unwrap();
+        let (_, notes) = s.add_flanges_noted(&[Vec3::new(120.0, 45.0, 2.0)], 25.0, 72f64.to_radians(), 1.0, "inside", false).unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
+        assert!(s.base.outer.segs.iter().all(|g| matches!(g, Seg2::Line { .. })));
+        assert!(s.solid().is_ok() && s.flat_regions().unwrap().len() == 1);
     }
 
     #[test]
@@ -3179,5 +3760,33 @@ mod tests {
             }
         }
         assert_eq!(cases, 147);
+    }
+
+    #[test]
+    fn corner_reliefs_are_cut_between_flanges_of_unequal_angle_and_height() {
+        use std::f64::consts::FRAC_PI_2;
+        // The relief is cut in the base, so flanges with their own angle and height get the same
+        // one: 4 mm into the base at each of its four corners, and every bend 4 mm shorter at both
+        // ends, each over its own width BA = θ·(R + K·T).
+        let heights = [38.6, 30.0, 45.0, 25.0];
+        let (notch, _) = tray_each(&alu(), MIXED, heights);
+        for shape in [ReliefShape::Round, ReliefShape::Rectangular] {
+            let what = format!("{shape:?}");
+            let (s, notes) = tray_each(&RuleValues { corner_relief_shape: shape, ..alu() }, MIXED, heights);
+            assert!(notes.is_empty(), "{what}: {notes:?}");
+            assert_eq!(s.flanges, notch.flanges, "{what}");
+            // The bend on y = 0 runs between the setbacks of its neighbours at 120° and 90°:
+            // 120 − 3·tan 60° − 3·tan 45° long, less the two reliefs.
+            let (bends, before) = (s.bends(), notch.bends());
+            assert_eq!((bends.len(), before.len()), (4, 4), "{what}");
+            assert!((bends[0].length - (120.0 - 3.0 * 60f64.to_radians().tan() - 3.0 - 8.0)).abs() < 1e-9, "{what}: {}", bends[0].length);
+            for (b, b0) in bends.iter().zip(&before) {
+                assert!((b.length - (b0.length - 8.0)).abs() < 1e-9, "{what}: {} vs {}", b.length, b0.length);
+            }
+            let in_the_bends: f64 = MIXED.iter().map(|deg| 8.0 * deg.to_radians() * 2.0).sum();
+            let (removed, want) = (flat_area(&notch) - flat_area(&s), 4.0 * relief_area(shape, 8.0, FRAC_PI_2, 0.0) + in_the_bends);
+            assert!((removed - want).abs() < 1e-6, "{what}: {removed} vs {want}");
+            holds_the_flat_material(&s, &what);
+        }
     }
 }

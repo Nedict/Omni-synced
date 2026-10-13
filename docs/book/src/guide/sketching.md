@@ -39,6 +39,10 @@ is projected in one undo step. A rejected projection keeps the selection for cor
 an empty or mixed selection starts the ordinary picking tool. External sketch selections
 retain their source sketch, even when the active sketch uses the same point or curve names.
 
+A sketch on a construction plane built from the model (through a sketch line, through three
+points, midway between two faces…) projects, intersects, includes and holds text like a sketch
+on any other plane, and its links follow when a parameter moves that plane.
+
 Run from a script or the control channel, every command that adds sketch geometry returns the
 ids of what it added (`created: {points, curves, constraints, dimensions}`). Ids are stable and
 never reused within a sketch, even after a delete, so a script can dimension or constrain the new

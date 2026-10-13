@@ -324,6 +324,7 @@ fn certified_planar_construction(body: &crate::ModelBody, index: usize) -> bool 
             Some(
                 solidcraft_kernel::FaceSource::ShellPlanar { producer: Some(_), .. }
                     | solidcraft_kernel::FaceSource::Box { producer: Some(_), .. }
+                    | solidcraft_kernel::FaceSource::CylinderCap { .. }
                     | solidcraft_kernel::FaceSource::CertifiedExtrudeSide { plane: Some(_), .. }
                     | solidcraft_kernel::FaceSource::CertifiedExtrudeCap { .. }
             )

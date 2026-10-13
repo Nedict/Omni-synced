@@ -7,7 +7,7 @@ self-contained input/output format. `io::write_design` keeps its JSON contract;
 `io::write_design_container` is the fallible container writer.
 
 Packages have `container.json` with `{"format":"solidcraft-container/1"}` and
-`document.json` with the versioned parametric document (currently `solidcraft/14`).
+`document.json` with the versioned parametric document (currently `solidcraft/16`).
 The independent versions let document migrations evolve without changing blob encodings.
 Existing serialized document fields are retained automatically, without a second copy
 of the document schema or a deep clone of embedded payloads.
@@ -89,3 +89,62 @@ any change of active document/revision discards both preview and completion.
 Normal design reading, CLI and browser opening still rebuild authoritatively; no
 evaluated B-rep is deserialized or adopted. Portable evaluated B-rep/state restoration
 and interactive cached viewport navigation remain further work in #303.
+
+## Seekable reader (phase 2, first increment)
+
+`io::DesignContainerReader<R: Read + Seek>` accepts a container source such as a
+file or a memory cursor. It inspects a bounded ZIP directory suffix and entry
+headers, then `preview()` reads the optional display entries and document metadata.
+`read_document()` consumes the reader and resolves and validates the required
+source blobs through the same archive. No complete archive buffer is required.
+The existing byte-based readers use this implementation too; JSON keeps its existing
+reader. This increment provides the IO API; desktop and browser integration remain
+separate. It does not yet change application opening times or saving behavior.
+
+The source must remain unchanged for the lifetime of the reader. A file handle is
+not an immutable snapshot of concurrent in-place writes: application integration
+must address that before publishing a cached view. Optional preview success never
+validates source blobs or makes a document editable. An invalid required blob still
+fails the later document read. ZIP directory scans can touch a bounded suffix of a
+stored blob; deferral means not loading or decoding the complete payload, not zero
+physical reads of its byte range. Metadata retains the existing part-size budget.
+
+A counting-reader regression uses a 2.6 MB stored source blob and obtains the saved
+preview with fewer than 256 KiB read, then verifies the authoritative document is
+identical after resolving its source. Corrupt-source and preview-miss regressions,
+and truncation/seeded mutations through the combined reader, protect the boundary.
+This is an IO-volume test, not a geometry or first-frame benchmark.
+
+## Remaining #303 increments and kernel independence
+
+Keep each increment independently reviewable after the phase-one container PR:
+
+1. Seekable IO and its read-volume/hostile-input tests (the API above).
+2. A versioned SolidCraft-owned B-rep schema and bounded binary codec, tested without
+   constructing a kernel body. Topology references, oriented edge uses and face
+   loops, geometric domains, analytic/spline curve and surface definitions, units,
+   tolerances and orientation must have explicit semantics. Preserve face-source
+   certificates, persistent names and history using SolidCraft-owned identities.
+   No truck serialized structs, memory layouts, pointers or opaque kernel blobs
+   form part of the persisted contract. No evaluated STEP round trip is a substitute.
+3. Separate adapters between the neutral schema and supported kernels. Unsupported
+   geometry or provenance is a cache miss, never a lossy approximation. A neutral
+   file schema alone does not prove interoperability: each adapter needs round-trip,
+   modelling and naming tests; compatibility with a second kernel is unverified
+   until that adapter exists. Kernel/version information belongs in producer and
+   capability metadata, not in the topology encoding. Conservative cache invalidation
+   is allowed across kernels while authoritative document reopening still works.
+4. Integrate deferred source reading and provisional B-rep display into the open
+   worker with immutable-input and document/revision guards. Rebuild authoritatively
+   before editing, picking or measuring. B-rep alone is not a complete evaluated
+   session: sketches, construction, placements and other non-solid state still matter.
+5. Measure cold first display, time until editing, save latency, size and peak memory
+   on a public STEP-based design. Include cache hits/misses, plain JSON and browser
+   fallback, and report baselines and limitations in `docs/perf.md`.
+
+Default saving must remain fast: do not force cold evaluation or meshing merely to
+produce a disposable cache. Do not add redundant display meshes by default; the
+existing preview remains opt-in. GPU tessellation is independent work. Continue
+using format/application constants rather than source-tree hashing build scripts,
+retain JSON Save As/MCP/script compatibility and the documented legacy shims, and
+run standalone wasm validation on each published code revision.
