@@ -28,7 +28,8 @@ Tool calls read, write and delete files only inside the server's folders: the fo
 started in (unless that is a drive's root, `/`), the system's temporary folders (`/tmp` and the
 platform's temp folder, where screenshots go), the folder of the `--in` design and every
 `--allow-path DIR` (repeat it for more). Paths are resolved first, so `..` and symlinks that lead
-out are refused too, as are Windows UNC paths (`\\server\share`). A refused path is a tool error
+out are refused too, as are Windows UNC paths (`\\server\share`). This includes a `sketch.text`
+font given as a file path; installed fonts named by family still work. A refused path is a tool error
 saying the path is outside the folders this agent may use; stderr lists the folders at start-up.
 The recovery folder is outside them, so `doc.recovery_*` work for an agent only with
 `--allow-path` on it.

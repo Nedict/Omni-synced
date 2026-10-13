@@ -41,6 +41,12 @@ fn file_commands_stay_inside_the_agents_folders() {
             let e = s.execute(cmd, &p).unwrap_err().to_string();
             assert!(e.contains("outside the folders this agent may use"), "{cmd}: {e}");
         }
+        // A font file named by path is a file read too; the built-in font still works.
+        s.execute("sketch.create", &json!({"plane": "XY"})).unwrap();
+        let e = s.execute("sketch.text", &json!({"text": "A", "at": [0, 0], "font": at(&out, "f.ttf")})).unwrap_err().to_string();
+        assert!(e.contains("outside the folders this agent may use"), "sketch.text: {e}");
+        s.execute("sketch.text", &json!({"text": "A", "at": [0, 0]})).unwrap();
+        s.execute("sketch.finish", &json!({})).unwrap();
         // The default recovery folder isn't one of the agent's folders either.
         assert!(s.execute("doc.recovery_list", &json!({})).is_err());
     });
