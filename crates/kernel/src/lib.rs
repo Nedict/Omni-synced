@@ -39,6 +39,8 @@ mod iges_out;
 mod intersection_curve_tests;
 #[cfg(test)]
 mod issue_616_tests;
+#[cfg(test)]
+mod issue_679_tests;
 mod lip;
 mod loopblend;
 mod measure;
@@ -72,6 +74,8 @@ mod sweep_path;
 mod thread_tests;
 mod topo;
 mod tspline;
+#[cfg(test)]
+mod untouched_faces_tests;
 
 pub use blend::{ChamferSide, chamfer, chamfer_sides, fillet, fillet_each, fillet_max, fillet_max_each};
 pub use blend_corner::fillet_radii;
@@ -93,7 +97,7 @@ pub use offset::with_same_surface;
 pub use ops::{BoolOp, boolean, can_join_touching_faces, split_by_plane, transform, transform_matrix, union_apart};
 pub use polybool::{faceted_boolean, planar_boolean};
 pub use polyhedron::{HalfSpace, convex_polyhedron, draft, offset_faces, shell};
-pub use prism::{extrude_planar_regions, planar_regions_boolean};
+pub use prism::{PLANAR_FIT_TOL, extrude_planar_regions, planar_regions_boolean};
 pub use prism_measure::certified_prism_equivalent;
 pub use sew::{EdgeSpec, FaceSpec, SurfSpec, sew};
 pub use splitface::{SplitTool, split_body, split_faces, split_faces_with_map};

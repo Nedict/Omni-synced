@@ -340,20 +340,17 @@ fn on_sheet_material(st: &ModelState, i: usize, p: Vec3) -> bool {
     offsets.iter().any(|&dx| offsets.iter().any(|&dy| offsets.iter().any(|&dz| mesh.contains(p + Vec3::new(dx, dy, dz)))))
 }
 
-/// A region mirrored in the sketch x axis (y → −y); curves other than lines and arcs as polylines.
+/// A region mirrored in the sketch x axis (y → −y), exactly: free-form curves through their
+/// control points.
 fn mirror_y(r: &Region2) -> Region2 {
     let f = |p: Vec2| Vec2::new(p.x, -p.y);
     let m = |l: &Loop2| {
         let segs: Vec<Seg2> = l
             .segs
             .iter()
-            .flat_map(|s| match *s {
-                Seg2::Line { a, b } => vec![Seg2::Line { a: f(a), b: f(b) }],
-                Seg2::Arc { center, radius, start, sweep } => vec![Seg2::Arc { center: f(center), radius, start: -start, sweep: -sweep }],
-                other => {
-                    let pts: Vec<Vec2> = (0..=16).map(|k| f(other.point_at(k as f64 / 16.0))).collect();
-                    pts.windows(2).map(|w| Seg2::Line { a: w[0], b: w[1] }).collect()
-                }
+            .map(|s| match *s {
+                Seg2::Arc { center, radius, start, sweep } => Seg2::Arc { center: f(center), radius, start: -start, sweep: -sweep },
+                other => sheet::map_controls(&other, f),
             })
             .collect();
         Loop2 { segs }.ccw()

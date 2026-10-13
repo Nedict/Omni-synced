@@ -247,6 +247,7 @@ pub enum Kind {
     Part(crate::dialogs_parts::Pt),
     /// Edit Text: a sketch text's content and placement (`sketch_text`).
     Text(crate::sketch_text::Tx),
+    TextMove(crate::sketch_text_move::TextMove),
 }
 
 /// The rest of the Hole dialog: placement, extents, tap type and drill point.
@@ -503,7 +504,8 @@ impl Dialog {
                     .or_else(|| crate::dialogs_appearance::start(app, id))
                     .or_else(|| crate::dialogs_motion::start(app, id))
                     .or_else(|| crate::dialogs_parts::start(app, id))
-                    .or_else(|| crate::sketch_text::start(app, id))?;
+                    .or_else(|| crate::sketch_text::start(app, id))
+                    .or_else(|| crate::sketch_text_move::start(app, id))?;
                 Dialog::new(kind, inputs)
             }
         };
@@ -572,7 +574,8 @@ impl Dialog {
                 _ => None,
             });
         }
-        // With nothing pre-selected, a single profile in the sketch being used is taken.
+        // With nothing pre-selected, a single profile in the sketch being used is taken (#684:
+        // not one a feature already builds from).
         if matches!(d.kind, Kind::Extrude { .. } | Kind::Revolve { .. })
             && let Some(inp) = d.inputs.first_mut()
             && inp.items.is_empty()
@@ -785,14 +788,23 @@ impl Dialog {
     }
 }
 
-/// Profiles of the sketch a feature would use (active, else the last), when there is just one.
+/// Profiles of the sketch a feature would use, when there is just one: the active sketch's, else
+/// the last sketch's while no feature builds from it yet. A used profile (a cube's sketch on its
+/// bottom face) is only taken when it is picked.
 fn default_profiles(s: &Session) -> Vec<Sel> {
     let st = s.world_state();
-    let sid = s.active_sketch.or_else(|| s.doc.features.iter().rev().find(|f| matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| f.id));
+    let sid = s.active_sketch.or_else(|| {
+        s.doc.features.iter().rev().find(|f| matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| f.id).filter(|&id| !profiles_used(s, id))
+    });
     match sid.and_then(|id| st.sketch(id).map(|ss| (id, ss.profiles.len()))) {
         Some((id, 1)) => vec![Sel::Profile { sketch: id, index: 0 }],
         _ => Vec::new(),
     }
+}
+
+/// Does a feature build from this sketch's profiles (extrude, revolve, sweep, loft, emboss…)?
+fn profiles_used(s: &Session, sketch: u64) -> bool {
+    s.doc.features.iter().any(|f| f.kind.profile_sels().iter().any(|(id, _)| *id == sketch))
 }
 
 /// The plane of a planar body face: (point on it, unit normal).
@@ -923,6 +935,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::Motion(k) => k.title(),
         Kind::Part(_) => "INSERT PART",
         Kind::Text(_) => "EDIT TEXT",
+        Kind::TextMove(_) => "MOVE/COPY TEXT",
     }
 }
 
@@ -1344,6 +1357,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         return;
     }
     let _language = crate::i18n::scope(&app.preferences.language);
+    if let Kind::TextMove(k) = &d.kind
+        && !crate::sketch_text_move::valid(app, k)
+    {
+        return;
+    }
     auto_operation(app, &mut d);
     update_measure(app, &mut d);
     update_fill_cells(app, &mut d);
@@ -2051,6 +2069,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     Kind::Motion(k) => enter |= crate::dialogs_motion::rows(app, ui, k, &mut d.inputs),
                     Kind::Part(k) => enter |= crate::dialogs_parts::rows(app, ui, k, &d.inputs),
                     Kind::Text(k) => enter |= crate::sketch_text::rows(ui, k),
+                    Kind::TextMove(k) => enter |= crate::sketch_text_move::rows(ui, k),
                     Kind::ConfirmDelete { with, fail, .. } => {
                         if !with.is_empty() {
                             row_label(ui, "Also deletes");
@@ -2161,7 +2180,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         crate::dialogs_motion::closed(app, &mut d, applied);
     }
     // The edited text's outlines are new curves: the old selection would name stale ids.
-    if applied && matches!(d.kind, Kind::Text(_)) {
+    if applied && matches!(d.kind, Kind::Text(_) | Kind::TextMove(_)) {
         let _ = app.session.execute("select.clear", &json!({}));
     }
     if keep && !cancel {
@@ -3057,6 +3076,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),
         Kind::Part(k) => return crate::dialogs_parts::commands(app, k, &d.inputs),
         Kind::Text(k) => return crate::sketch_text::commands(app, k),
+        Kind::TextMove(k) => return crate::sketch_text_move::commands(app, k),
     };
     let mut params = params;
     if let Value::Object(m) = &mut params {

@@ -128,7 +128,7 @@ pub fn begin_dimension(app: &mut SolveApp, entities: Vec<String>, at: Vec2) -> R
     if draft.driven {
         PLACEMENT.with(|preview| *preview.borrow_mut() = None);
         app.run("sketch.dimension", json!({"entities": draft.entities, "text_at": [at.x, at.y], "driven": true}))?;
-        app.set_status("That dimension would over-constrain the sketch, so it was added as a driven (reference) dimension", false);
+        app.set_status("The sketch already determines that dimension, so it was added as a driven (reference) dimension", false);
         return Ok(());
     }
     EDIT.with(|edit| *edit.borrow_mut() = Some(Edit { param, expr, at: None, fresh: FRESH, wait: 10, draft: Some(draft), live: None }));

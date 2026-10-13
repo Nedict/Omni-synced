@@ -103,6 +103,7 @@ mod sketch_edit_tests;
 mod sketch_families;
 pub mod sketch_palette;
 pub(crate) mod sketch_text;
+mod sketch_text_move;
 pub mod sketch_tools;
 pub mod stand_up;
 pub mod theme;
@@ -526,7 +527,8 @@ impl SolveApp {
             return;
         }
         // Another command ends Edit Text (its dialog is not a feature edit to keep).
-        if sketch_text::editing(self) {
+        sketch_text_move::cancel_drag(self);
+        if sketch_text::editing(self) || self.dialog.as_ref().is_some_and(|d| matches!(d.kind, dialogs::Kind::TextMove(_))) {
             dialogs::cancel(self);
         }
         // A component moved without Capture Position: ask first (Capture, Revert or Cancel).
@@ -712,7 +714,8 @@ impl SolveApp {
     /// Finish the active sketch: stop editing, restore the history marker Edit Sketch moved and
     /// return to the view from before the sketch.
     pub fn finish_sketch(&mut self) {
-        if sketch_text::editing(self) {
+        sketch_text_move::cancel_drag(self);
+        if sketch_text::editing(self) || self.dialog.as_ref().is_some_and(|d| matches!(d.kind, dialogs::Kind::TextMove(_))) {
             dialogs::cancel(self);
         }
         dim_view::cancel();
@@ -737,6 +740,7 @@ impl SolveApp {
             v.extend(d.items());
         }
         v.extend(sketch_text::highlighted(self));
+        v.extend(sketch_text_move::highlighted(self));
         v
     }
 
