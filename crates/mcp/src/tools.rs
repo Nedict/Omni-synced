@@ -62,7 +62,8 @@ pub fn tool_definitions() -> Vec<Value> {
              the command's result; failures leave the design unchanged. Sketch commands that add geometry return \
              created: {points, curves, constraints, dimensions}: the ids of what they added, stable and not reused \
              after a delete (undo rewinds the counters with the design), usable right away \
-             in sketch.dimension, sketch.constraint.* and sketch.delete.",
+             in sketch.dimension, sketch.constraint.* and sketch.delete. Feature commands return the feature's id \
+             and name, every body (bodies) and the bodies the feature created (created_bodies).",
             obj(
                 json!({
                     "command": string("Command id (see list_commands)"),
