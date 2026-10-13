@@ -2467,3 +2467,42 @@ fn designs_without_per_edge_values_are_read_and_written_as_before() {
     design["features"][flange]["edges"][3] = json!({"point": [0.0, 45.0, 2.0], "twist": "3 deg"});
     assert!(solidcraft_doc::Document::from_json(&design.to_string()).is_err());
 }
+
+#[test]
+#[ignore = "fails until #542 is fixed"]
+fn flat_pattern_reports_a_round_hole_as_a_circle() {
+    // The DXF export already writes this hole as a CIRCLE; the JSON flat pattern should say
+    // "circle, centre (50, 30), radius 1.6" too instead of a sampled polyline. The exact key
+    // names are open: any object in the cutout that has a `center` and a `radius` counts.
+    fn circles(v: &Value, out: &mut Vec<([f64; 2], f64)>) {
+        match v {
+            Value::Object(m) => {
+                let center = m.get("center").and_then(Value::as_array).and_then(|c| Some([c.first()?.as_f64()?, c.get(1)?.as_f64()?]));
+                if let (Some(center), Some(radius)) = (center, m.get("radius").and_then(Value::as_f64)) {
+                    out.push((center, radius));
+                }
+                m.values().for_each(|v| circles(v, out));
+            }
+            Value::Array(a) => a.iter().for_each(|v| circles(v, out)),
+            _ => {}
+        }
+    }
+    let mut s = Session::default();
+    base(&mut s, 100.0, 60.0);
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Hole"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [50, 30], "radius": 1.6}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Hole", "through_all": true, "direction": "symmetric", "operation": "cut"}));
+    let dxf = run(&mut s, "sheet.export_dxf", json!({}))["dxf"].as_str().unwrap_or_default().to_string();
+    assert!(dxf.contains("CIRCLE"), "the DXF keeps the circle");
+    let f = flat(&mut s);
+    let cutouts = f["cutouts"].as_array().cloned().unwrap_or_default();
+    assert_eq!(cutouts.len(), 1);
+    let mut found = Vec::new();
+    circles(&cutouts[0], &mut found);
+    let shown: String = cutouts[0].to_string().chars().take(120).collect();
+    assert!(
+        found.iter().any(|(c, r)| (c[0] - 50.0).abs() < 1e-9 && (c[1] - 30.0).abs() < 1e-9 && (r - 1.6).abs() < 1e-9),
+        "the round hole is not reported as a circle: {shown} ..."
+    );
+}
