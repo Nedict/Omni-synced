@@ -2142,6 +2142,40 @@ impl Document {
         }
     }
 
+    /// The deepest timeline folder spanning the insertion slot between `marker - 1` and
+    /// `marker`. A slot at a folder's outer boundary is not inside that folder.
+    fn timeline_group_at_insertion(&self, marker: usize) -> Option<u64> {
+        let before = self.features.get(marker.checked_sub(1)?)?.id;
+        let after = self.features.get(marker)?.id;
+        let direct = |feature| self.timeline_groups.iter().find(|group| group.features.contains(&feature)).map(|group| group.id);
+        let parents: std::collections::BTreeMap<u64, Option<u64>> = self.timeline_groups.iter().map(|group| (group.id, group.parent)).collect();
+
+        let mut before_ancestors = std::collections::BTreeSet::new();
+        let mut current = direct(before);
+        let mut steps = 0usize;
+        while let Some(id) = current {
+            if !before_ancestors.insert(id) || steps >= self.timeline_groups.len() {
+                return None;
+            }
+            current = parents.get(&id).copied().flatten();
+            steps = steps.saturating_add(1);
+        }
+
+        current = direct(after);
+        steps = 0;
+        while let Some(id) = current {
+            if before_ancestors.contains(&id) {
+                return Some(id);
+            }
+            if steps >= self.timeline_groups.len() {
+                return None;
+            }
+            current = parents.get(&id).copied().flatten();
+            steps = steps.saturating_add(1);
+        }
+        None
+    }
+
     /// Insert a feature at the marker (or the end) and return its id.
     pub fn add_feature(&mut self, kind: FeatureKind, name: Option<&str>) -> Result<u64> {
         if self.features.len() >= MAX_FEATURES {
@@ -2173,12 +2207,21 @@ impl Document {
             shell_piece_order: false,
             kind,
         };
+        let insertion_group = self.marker.and_then(|marker| self.timeline_group_at_insertion(marker));
         match self.marker {
             Some(m) if m < self.features.len() => {
                 self.features.insert(m, f);
                 self.marker = Some(m + 1);
             }
             _ => self.features.push(f),
+        }
+        if let Some(group_id) = insertion_group {
+            let positions: std::collections::BTreeMap<u64, usize> =
+                self.features.iter().enumerate().map(|(index, feature)| (feature.id, index)).collect();
+            if let Some(group) = self.timeline_groups.iter_mut().find(|group| group.id == group_id) {
+                group.features.push(id);
+                group.features.sort_by_key(|feature| positions.get(feature).copied().unwrap_or(usize::MAX));
+            }
         }
         self.name_feature_inputs(id);
         Ok(id)

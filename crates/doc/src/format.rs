@@ -91,6 +91,9 @@
 //!   edited.
 //!   A fillet's `fit` can be `taper` (the radius follows the room along each edge it doesn't
 //!   fit). Fillets with `exact` or `reduce` save as before; 0.8.0 would refuse the unknown fit.
+//!   Feature-history folders are also first saved in 17 (`timeline_groups`: stable folder id,
+//!   name, optional parent folder and feature ids). Version 16 designs have no saved timeline
+//!   folders and open with the empty default.
 
 use serde_json::Value;
 
