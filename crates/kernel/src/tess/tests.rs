@@ -27,7 +27,7 @@ fn assert_watertight(m: &Mesh, name: &str) {
 }
 
 fn plan_body(b: &Body, tol: f64) -> (Mesh, PlanStats) {
-    match plan(&b.solid, tol) {
+    match plan(&b.solid, tol, Some(crate::tess::size::Turn { angle: crate::DISPLAY_ANGLE, floor: tol * 1e-3 })) {
         Ok((p, stats)) => (p.evaluate(), stats),
         Err(e) => panic!("plan: {e}"),
     }
@@ -175,7 +175,7 @@ fn render_wireframes() {
         let Ok(old) = body.tessellate(tol) else { panic!("reference") };
         let t_old = t0.elapsed().as_secs_f64() * 1e3;
         let t0 = std::time::Instant::now();
-        let new = match plan(&body.solid, tol) {
+        let new = match plan(&body.solid, tol, Some(crate::tess::size::Turn { angle: crate::DISPLAY_ANGLE, floor: tol * 1e-3 })) {
             Ok((p, st)) => Some((p.evaluate(), st)),
             Err(e) => {
                 println!("{name}: no plan ({e})");

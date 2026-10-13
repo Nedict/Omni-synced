@@ -2,14 +2,14 @@
 //! Delaunay triangulation of the boundary loops in (u, v) scaled by the surface's mean metric,
 //! seeded with an equilateral lattice, refined wherever a triangle sags more than the
 //! tolerance from the surface, has a side longer than the target or bends more than
-//! [`MAX_TURN`], then Ruppert refinement for shape. Constraint edges are never split, so the
+//! the facet angle, then Ruppert refinement for shape. Constraint edges are never split, so the
 //! boundary stays exactly the shared edge nodes.
 
 use std::collections::HashMap;
 
 use solidcraft_geom::Vec3;
 
-use super::size::MAX_TURN;
+use super::size::Turn;
 use spade::handles::FixedVertexHandle;
 use spade::{AngleLimit, ConstrainedDelaunayTriangulation, Point2, RefinementParameters, Triangulation};
 
@@ -34,6 +34,8 @@ pub(crate) struct Sag<'a> {
     pub tol: f64,
     /// Longest triangle side (mm).
     pub h: f64,
+    /// The facet angle, if any: corner normals turning more get a point in the middle.
+    pub turn: Option<Turn>,
     /// Scale of u and v in the triangulation (the surface's mean |S_u|, |S_v|).
     pub scale: [f64; 2],
 }
@@ -128,15 +130,16 @@ pub(crate) fn triangulate(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>
 }
 
 /// Insert the parameters of the surface point under every triangle centre that lies more than
-/// the tolerance from the triangle or whose corner normals turn more than [`MAX_TURN`], and
+/// the tolerance from the triangle or whose corner normals turn more than the facet angle, and
 /// under the middle of every non-constraint side that sags more than the tolerance or is
 /// longer than [`LONG`] times `h`, until none does or `budget` points were added. Returns the points added.
 fn refine_sag(cdt: &mut Cdt, sag: &Sag, budget: usize, from: &dyn Fn(Point2<f64>) -> [f64; 2]) -> usize {
     let mut added = 0;
     let mut cache: HashMap<FixedVertexHandle, Option<(Vec3, Option<Vec3>)>> = HashMap::new();
-    let bent = |n: [Option<Vec3>; 3]| match n {
-        [Some(a), Some(b), Some(c)] => [(a, b), (b, c), (c, a)].iter().any(|(x, y)| x.dot(*y).clamp(-1.0, 1.0).acos() > MAX_TURN),
-        _ => false,
+    // The widest turn between two corner normals.
+    let spread = |n: [Option<Vec3>; 3]| match n {
+        [Some(a), Some(b), Some(c)] => [(a, b), (b, c), (c, a)].iter().map(|(x, y)| x.dot(*y).clamp(-1.0, 1.0).acos()).fold(0.0, f64::max),
+        _ => 0.0,
     };
     for _ in 0..SAG_ROUNDS {
         let mut todo: Vec<Point2<f64>> = Vec::new();
@@ -157,11 +160,14 @@ fn refine_sag(cdt: &mut Cdt, sag: &Sag, budget: usize, from: &dyn Fn(Point2<f64>
             let (Some((a, na)), Some((b, nb)), Some((d, nd))) = (at(vs[0].fix(), ps[0]), at(vs[1].fix(), ps[1]), at(vs[2].fix(), ps[2])) else {
                 continue;
             };
-            let off = |q: Point2<f64>, chord: Vec3| {
+            // How far the surface lies from the triangle at `q`.
+            let gap = |q: Point2<f64>, chord: Vec3| {
                 let uv = from(q);
-                (sag.eval)(uv[0], uv[1]).is_some_and(|(s, _)| s.dist(chord) > sag.tol)
+                (sag.eval)(uv[0], uv[1]).map_or(0.0, |(s, _)| s.dist(chord))
             };
-            if bent([na, nb, nd]) || off(c, (a + b + d) * (1.0 / 3.0)) {
+            let off = |q: Point2<f64>, chord: Vec3| gap(q, chord) > sag.tol;
+            let middle = gap(c, (a + b + d) * (1.0 / 3.0));
+            if middle > sag.tol || sag.turn.is_some_and(|t| t.exceeds(spread([na, nb, nd]), middle)) {
                 todo.push(c);
                 continue;
             }
@@ -347,7 +353,7 @@ mod tests {
         let loops = [0..4, 4..8];
         let flat = |u: f64, v: f64| Some((Vec3::new(u, v, 0.0), Some(Vec3::Z)));
         for refine in [false, true] {
-            let refine = refine.then_some((Sag { eval: &flat, tol: 1e-3, h: 0.1, scale: [2.0, 1.0] }, 2000));
+            let refine = refine.then_some((Sag { eval: &flat, tol: 1e-3, h: 0.1, turn: None, scale: [2.0, 1.0] }, 2000));
             let label = refine.is_some();
             let Some((extra, tris)) = triangulate(&b, &loops, Fill { seeds: &[[0.2, 0.2], [0.5, 0.5]], refine }) else { panic!("meshes") };
             let mut uv = b.clone();

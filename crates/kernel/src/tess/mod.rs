@@ -60,11 +60,12 @@ fn unsupported(what: impl std::fmt::Display) -> KernelError {
     KernelError::Failed(format!("not supported yet: tessellation: {what}"))
 }
 
-/// Plan the display tessellation of `solid` with chord tolerance `tol`.
-pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
+/// Plan the display tessellation of `solid` with chord tolerance `tol` and, when given, a
+/// facet angle no facet may turn more than (where it sags above the angle's floor).
+pub(crate) fn plan(solid: &Solid, tol: f64, turn: Option<size::Turn>) -> Result<(TessPlan, PlanStats)> {
     let faces: Vec<&mt::Face> = solid.face_iter().collect();
     let (edges, edge_faces) = edge_order(faces.iter().copied());
-    let rules = size::Rules::new(tol, size::extent(solid.vertex_iter().map(|v| crate::body::from_p3(v.point()))));
+    let rules = size::Rules::new(tol, size::extent(solid.vertex_iter().map(|v| crate::body::from_p3(v.point()))), turn);
     // Each face's surface and target side length, then every edge once at the smaller size of
     // its faces; faces then read their nodes. A planar face costs microseconds and a curved
     // one about a hundred, so the pool is used only where curved faces (or intersection
@@ -79,8 +80,9 @@ pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
     let edge_h: Vec<f64> = edge_faces.iter().map(|fs| fs.iter().map(|&f| face_h(f)).fold(rules.max_len, f64::min)).collect();
     let jobs: Vec<(&mt::Edge, f64)> = edges.iter().zip(edge_h).collect();
     let solved = edges.iter().filter(|e| matches!(e.curve(), mt::Curve::IntersectionCurve(_))).count();
-    let sampled =
-        crate::par::map("edge nodes", &jobs, solved >= PARALLEL_CURVES || edges.len() >= PARALLEL_EDGES, |(e, h)| Ok(edges::sample_edge(e, tol, *h)));
+    let sampled = crate::par::map("edge nodes", &jobs, solved >= PARALLEL_CURVES || edges.len() >= PARALLEL_EDGES, |(e, h)| {
+        Ok(edges::sample_edge(e, &rules, *h))
+    });
     let mut nodes: HashMap<_, Vec<Vec3>> = HashMap::with_capacity(edges.len());
     for (e, pts) in edges.iter().zip(sampled) {
         nodes.insert(e.id(), pts?);
@@ -113,7 +115,7 @@ pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
             }
         }
         let mut stats = PlanStats::default();
-        let fp = plan_face(fi, &eval, &loops3, tol, size, &mut stats)?;
+        let fp = plan_face(fi, &eval, &loops3, &rules, size, &mut stats)?;
         let fp = FacePlan {
             flip: !face.orientation(),
             triangles: if face.orientation() { fp.triangles } else { fp.triangles.into_iter().map(|[a, b, c]| [a, c, b]).collect() },
@@ -139,7 +141,15 @@ pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
 
 /// One face: boundary loops in 3D (shared edge nodes) to parameters and triangles.
 /// `size`: the face's target side length (mm) and the surface's mean speed along u and v.
-fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, size: (f64, [f64; 2]), stats: &mut PlanStats) -> Result<FacePlan> {
+fn plan_face(
+    fi: usize,
+    s: &EvalSurface,
+    loops3: &[Vec<Vec3>],
+    rules: &size::Rules,
+    size: (f64, [f64; 2]),
+    stats: &mut PlanStats,
+) -> Result<FacePlan> {
+    let tol = rules.tol;
     let (h, speed) = size;
     let dom = uv::domain(s);
     let accept = (tol * 10.0).max(1e-6);
@@ -215,7 +225,7 @@ fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, size: (
         let polys: Vec<&[[f64; 2]]> = ranges.iter().filter_map(|r| uvs.get(r.clone())).collect();
         let seeds = cdt::lattice(bbox, [h / speed[0], h / speed[1]], &polys, speed);
         let eval = |u: f64, v: f64| s.derivs(u, v).map(|(p, su, sv)| (p, su.cross(sv).normalized()));
-        let sag = cdt::Sag { eval: &eval, tol, h, scale: speed };
+        let sag = cdt::Sag { eval: &eval, tol, h, turn: rules.turn, scale: speed };
         let fill = cdt::Fill { seeds: &seeds, refine: Some((sag, MAX_REFINE)) };
         cdt::triangulate(&uvs, &ranges, fill).ok_or_else(|| fail("boundary crosses itself"))
     };
@@ -223,8 +233,8 @@ fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, size: (
     // parameter box (a rectangle, a cylinder half), a Coons grid on four corners, else Delaunay.
     let planar = matches!(s, EvalSurface::Plane { .. });
     let (extra, triangles) = {
-        let mut us = uv::divide(s, 0, bbox[0], bbox[1], tol, h, MAX_LINES);
-        let mut vs = uv::divide(s, 1, bbox[1], bbox[0], tol, h, MAX_LINES);
+        let mut us = uv::divide(s, 0, bbox[0], bbox[1], rules, h, MAX_LINES);
+        let mut vs = uv::divide(s, 1, bbox[1], bbox[0], rules, h, MAX_LINES);
         thin(&mut us, &mut vs, grid::MAX_FACE_GRID);
         let structured = match (ranges.len(), grid::quad(&uvs)) {
             (1, Some(q)) => {

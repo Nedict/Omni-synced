@@ -2,22 +2,21 @@
 //! (well-shaped triangles shade evenly) and as small as the surface needs.
 //!
 //! A face's size is the smallest of the body's longest side, the length over which the surface
-//! normal turns [`MAX_TURN`], and the chord that sags the tolerance; an edge takes the smaller
-//! size of its two faces, so a curved face and its flat neighbour meet at the same spacing.
+//! normal turns the caller's facet angle (when one is given, see [`Turn`]), and the chord that
+//! sags the tolerance; an edge takes the smaller size of its two faces, so a curved face and
+//! its flat neighbour meet at the same spacing.
 
 use solidcraft_geom::Vec3;
 use solidcraft_geom::tess::EvalSurface;
 
 use super::uv::Domain;
 
-/// Largest turn (radians) of the surface normal, or an edge's tangent, across one side.
-pub(crate) const MAX_TURN: f64 = 30.0 * std::f64::consts::PI / 180.0;
 /// Longest side, as a fraction of the body's extent.
 const MAX_LEN_FRACTION: f64 = 1.0 / 5.0;
 /// Longest side relative to the side the curvature asks for: along a straight direction (a
-/// cylinder's axis) triangles may be this many times longer than across it. With
-/// [`MAX_TURN`] and [`MAX_LEN_FRACTION`] this puts the oracle parts' display meshes at about
-/// the reference mesher's triangle count (1.2×; 5× with equilateral triangles and 15°).
+/// cylinder's axis) triangles may be this many times longer than across it. With a 30° facet
+/// angle and [`MAX_LEN_FRACTION`] this puts the oracle parts' display meshes at about the
+/// reference mesher's triangle count (1.2×; 5× with equilateral triangles and 15°).
 const ASPECT: f64 = 4.0;
 /// Shortest side the aspect limit may ask for, as a fraction of the longest side. A bend whose
 /// radius is tiny next to the body (a hem) would otherwise tie the whole length of its
@@ -28,28 +27,51 @@ const MIN_LEN_FRACTION: f64 = 1.0 / 8.0;
 /// Curvature samples per parameter direction.
 const SAMPLES: usize = 9;
 
-/// The chord tolerance and the longest side of one body.
+/// The most one facet may turn (radians): an edge segment's tangent or a cell's surface normal.
+/// The angle divides only where a facet would sag more than `floor` (mm), so a radius far below
+/// the tolerance keeps its chord facets.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Turn {
+    pub angle: f64,
+    pub floor: f64,
+}
+
+impl Turn {
+    /// Whether a facet that turns `angle` and sags `sag` from the surface must be divided.
+    pub(crate) fn exceeds(&self, angle: f64, sag: f64) -> bool {
+        sag > self.floor && angle > self.angle
+    }
+}
+
+/// The chord tolerance, the longest side and the facet angle of one body.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Rules {
     pub tol: f64,
     pub max_len: f64,
+    pub turn: Option<Turn>,
 }
 
 impl Rules {
     /// Rules for a body of extent `extent` (see [`extent`]).
-    pub(crate) fn new(tol: f64, extent: f64) -> Rules {
+    pub(crate) fn new(tol: f64, extent: f64, turn: Option<Turn>) -> Rules {
         let max_len = if extent.is_finite() && extent > 0.0 { extent * MAX_LEN_FRACTION } else { f64::INFINITY };
-        Rules { tol, max_len: max_len.max(tol) }
+        Rules { tol, max_len: max_len.max(tol), turn }
     }
 
-    /// The side length for a curvature `k` (1/mm): the normal turns at most [`MAX_TURN`] and the
-    /// chord sags at most the tolerance across it.
+    /// The side length for a curvature `k` (1/mm): the chord sags at most the tolerance across
+    /// it, and the normal turns at most the facet angle where that turn sags above its floor.
     fn for_curvature(&self, k: f64) -> f64 {
         if !(k.is_finite() && k > 0.0) {
             return self.max_len;
         }
         let r = 1.0 / k;
-        let aspect = ASPECT * (r * MAX_TURN).min((8.0 * r * self.tol).sqrt());
+        let mut across = (8.0 * r * self.tol).sqrt();
+        if let Some(t) = self.turn
+            && r * (1.0 - (0.5 * t.angle).cos()) > t.floor
+        {
+            across = across.min(r * t.angle);
+        }
+        let aspect = ASPECT * across;
         self.max_len.min(aspect.max(self.max_len * MIN_LEN_FRACTION)).max(self.tol)
     }
 }
@@ -131,6 +153,8 @@ mod tests {
     use super::*;
     use solidcraft_geom::tess::EvalCurve;
 
+    const THIRTY: Option<Turn> = Some(Turn { angle: std::f64::consts::PI / 6.0, floor: 0.0 });
+
     #[test]
     fn a_cylinder_is_sized_by_its_radius() {
         let s = EvalSurface::Revolved {
@@ -141,14 +165,21 @@ mod tests {
             swap: false,
         };
         // A 20 mm body: sides from 0.5 mm (the floor) to 4 mm.
-        let rules = Rules::new(0.01, 20.0);
+        let rules = Rules::new(0.01, 20.0, THIRTY);
         let (h, speed) = face_size(&s, &super::super::uv::domain(&s), &rules);
         // r = 3: 30° of turn is 1.57 mm; the 0.01 mm sag chord is √(8·3·0.01) = 0.49 mm.
         assert!((h - ASPECT * (8.0 * 3.0 * 0.01f64).sqrt()).abs() < 0.01, "{h}");
         assert!((speed[0] - 40.0).abs() < 1e-6 && (speed[1] - 3.0).abs() < 1e-6, "{speed:?}");
         // Coarser: the turn limit governs.
-        let (h, _) = face_size(&s, &super::super::uv::domain(&s), &Rules::new(0.5, 100.0));
-        assert!((h - ASPECT * 3.0 * MAX_TURN).abs() < 0.01, "{h}");
+        let (h, _) = face_size(&s, &super::super::uv::domain(&s), &Rules::new(0.5, 100.0, THIRTY));
+        assert!((h - ASPECT * 3.0 * std::f64::consts::PI / 6.0).abs() < 0.01, "{h}");
+        // Without a facet angle the sag alone: √(8·3·0.5) = 3.46 mm, four times along.
+        let (h, _) = face_size(&s, &super::super::uv::domain(&s), &Rules::new(0.5, 100.0, None));
+        assert!((h - ASPECT * (8.0 * 3.0 * 0.5f64).sqrt()).abs() < 0.01, "{h}");
+        // A turn that sags below its floor does not divide.
+        let floored = Some(Turn { angle: std::f64::consts::PI / 6.0, floor: 1.0 });
+        let (h, _) = face_size(&s, &super::super::uv::domain(&s), &Rules::new(0.5, 100.0, floored));
+        assert!((h - ASPECT * (8.0 * 3.0 * 0.5f64).sqrt()).abs() < 0.01, "{h}");
     }
 
     #[test]
@@ -161,7 +192,7 @@ mod tests {
         };
         assert!(planar(&patch(0.0)));
         assert!(!planar(&patch(0.5)));
-        let rules = Rules::new(0.01, 100.0);
+        let rules = Rules::new(0.01, 100.0, THIRTY);
         let (h, speed) = face_size(&patch(0.0), &super::super::uv::domain(&patch(0.0)), &rules);
         assert_eq!(h, rules.max_len);
         assert!((speed[0] - 4.0).abs() < 1e-9 && (speed[1] - 3.0).abs() < 1e-9, "{speed:?}");
@@ -178,7 +209,7 @@ mod tests {
             transform: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
             swap: false,
         };
-        let rules = Rules::new(0.1, 100.0);
+        let rules = Rules::new(0.1, 100.0, THIRTY);
         let (h, _) = face_size(&s, &super::super::uv::domain(&s), &rules);
         assert!((h - rules.max_len * MIN_LEN_FRACTION).abs() < 1e-9, "{h}");
     }
@@ -186,7 +217,7 @@ mod tests {
     #[test]
     fn a_plane_takes_the_longest_side() {
         let s = EvalSurface::Plane { origin: Vec3::ZERO, du: Vec3::X, dv: Vec3::Y };
-        let rules = Rules::new(0.01, 100.0);
+        let rules = Rules::new(0.01, 100.0, THIRTY);
         assert_eq!(face_size(&s, &super::super::uv::domain(&s), &rules).0, 20.0);
     }
 }
