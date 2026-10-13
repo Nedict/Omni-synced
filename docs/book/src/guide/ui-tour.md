@@ -33,7 +33,9 @@
   The axis view shows the world's X/Y/Z directions in SolidCraft's colors. Click a signed
   axis tip to look along that axis; click the aligned tip again to look from the opposite side.
   Drag the axis view to orbit around the view centre, with Shift for snapping. Top and bottom
-  keep the nearest quarter-turn heading. The house and navigation bar's Home button go home.
+  keep the nearest quarter-turn heading. The house, the navigation bar's Home button and a middle-button double-click in the view go
+  home, framing what is shown now (Navigation › **Middle double-click** can make it Fit, which
+  keeps the orientation, or turn it off).
   Right-click for the marking menu: eight commands around the cursor, plus a
   menu for whatever is under it.
   Shaded views omit certified smooth joins between spline spans on extruded
@@ -71,3 +73,7 @@ never sees it. To free it:
 
 Shift-orbit snapping includes 45-degree edge views and isometric corner views, with a
 lightly damped spring transition and a small boundary margin to prevent flicker.
+
+On desktop, Ctrl/Cmd+Plus (or Equals) enlarges the interface, Ctrl/Cmd+Minus reduces it,
+and Ctrl/Cmd+0 restores 100%. These shortcuts update the UI scale preference. The UI scale
+slider in Preferences applies the new layout when released, so it stays still while dragging.

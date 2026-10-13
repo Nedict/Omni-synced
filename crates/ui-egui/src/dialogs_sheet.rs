@@ -32,6 +32,9 @@ const RULE_FIELDS: [(&str, &str); 8] = [
     ("hem_gap", "Hem Gap"),
     ("gap", "Flange Gap"),
 ];
+/// The corner relief shapes the manager offers (the rule's `corner_relief_shape`) and their labels.
+const RELIEF_SHAPES: [&str; 3] = ["notch", "round", "rectangular"];
+const RELIEF_SHAPE_LABELS: [&str; 3] = ["Notch", "Round", "Rectangular"];
 
 #[derive(Clone, Debug)]
 pub enum Sm {
@@ -73,6 +76,8 @@ pub enum Sm {
         pick: usize,
         name: String,
         values: Vec<String>,
+        /// The corner relief shape (index into `RELIEF_SHAPES`).
+        relief: usize,
         active: bool,
         loaded: Option<usize>,
     },
@@ -143,12 +148,14 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
         ),
         "sheet.unfold" => (Sm::Unfold { refold: false }, vec![SelInput::new("Body (last if none)", BODIES, false)]),
         "sheet.refold" => (Sm::Unfold { refold: true }, vec![SelInput::new("Body (last if none)", BODIES, false)]),
-        "sheet.convert" => (Sm::Convert { rule: 0 }, vec![SelInput::new("Face", PLANAR_FACES, false)]),
+        "sheet.convert" => {
+            (Sm::Convert { rule: 0 }, vec![SelInput::new("Fixed Face", PLANAR_FACES, false), SelInput::new("Bend Edges", EDGES, true)])
+        }
         "sheet.manage_rules" => {
             let active = app.session.doc.sheet.active.clone();
             let rules = rule_list(app);
             let pick = active.and_then(|a| rules.iter().position(|r| r.name == a)).unwrap_or(0);
-            (Sm::Rules { pick, name: String::new(), values: Vec::new(), active: true, loaded: None }, vec![])
+            (Sm::Rules { pick, name: String::new(), values: Vec::new(), relief: 0, active: true, loaded: None }, vec![])
         }
         "sheet.flat_pattern" => (Sm::FlatPattern { data: None, key: None, status: None }, vec![SelInput::new("Body (last if none)", BODIES, false)]),
         _ => return None,
@@ -209,7 +216,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
                     combo(ui, "sm_pos", &POSITION_LABELS, position);
                     ui.end_row();
                     row_label(ui, "Bend Radius");
-                    let r = ui.add(egui::TextEdit::singleline(radius).hint_text("from the rule"));
+                    let r = ui.add(egui::TextEdit::singleline(radius).hint_text(crate::i18n::tr_label("from the rule")));
                     crate::params_dialog::complete(ui, &r, radius);
                     enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     ui.end_row();
@@ -218,7 +225,8 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
                     let points = edge_point_list(inputs);
                     if points.len() > 1 || own.iter().any(|o| !(o.1.trim().is_empty() && o.2.trim().is_empty())) {
                         row_label(ui, "Per Edge");
-                        ui.label(RichText::new("angle, height").weak()).on_hover_text("An edge's own angle and height. Empty: the values above.");
+                        ui.label(RichText::new(crate::i18n::tr_label("angle, height")).weak())
+                            .on_hover_text("An edge's own angle and height. Empty: the values above.");
                         ui.end_row();
                         let w = ((ui.spacing().text_edit_width - ui.spacing().item_spacing.x) / 2.0).max(40.0);
                         for (n, p) in points.iter().enumerate() {
@@ -259,13 +267,13 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
         }
         Sm::Hem { length, gap, flip } => {
             row_label(ui, "Type");
-            ui.label("Flat");
+            ui.label(crate::i18n::tr_label("Flat"));
             ui.end_row();
             row_label(ui, "Length");
             enter |= field(ui, length);
             ui.end_row();
             row_label(ui, "Gap");
-            let r = ui.add(egui::TextEdit::singleline(gap).hint_text("from the rule"));
+            let r = ui.add(egui::TextEdit::singleline(gap).hint_text(crate::i18n::tr_label("from the rule")));
             crate::params_dialog::complete(ui, &r, gap);
             enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             ui.end_row();
@@ -281,7 +289,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
             enter |= field(ui, angle);
             ui.end_row();
             row_label(ui, "Bend Radius");
-            let r = ui.add(egui::TextEdit::singleline(radius).hint_text("from the rule"));
+            let r = ui.add(egui::TextEdit::singleline(radius).hint_text(crate::i18n::tr_label("from the rule")));
             crate::params_dialog::complete(ui, &r, radius);
             enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             ui.end_row();
@@ -291,7 +299,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
         }
         Sm::Unfold { .. } => {}
         Sm::Convert { rule } => rule_combo(app, ui, "sm_conv_rule", rule),
-        Sm::Rules { pick, name, values, active, loaded } => {
+        Sm::Rules { pick, name, values, relief, active, loaded } => {
             let rules = rule_list(app);
             let mut names: Vec<String> = rules.iter().map(|r| r.name.clone()).collect();
             names.push("New rule…".into());
@@ -312,6 +320,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
                     base.hem_gap.clone(),
                     base.gap.clone(),
                 ];
+                *relief = RELIEF_SHAPES.iter().position(|s| s.eq_ignore_ascii_case(base.corner_relief_shape.trim())).unwrap_or(0);
                 *active = app.session.doc.sheet_rule(None).name == base.name || *pick >= rules.len();
                 if *pick >= rules.len() {
                     *name = format!("Rule{}", rules.len() + 1);
@@ -323,7 +332,13 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
                 ui.text_edit_singleline(name);
                 ui.end_row();
             }
-            for ((_, label), v) in RULE_FIELDS.iter().zip(values.iter_mut()) {
+            for ((key, label), v) in RULE_FIELDS.iter().zip(values.iter_mut()) {
+                if *key == "corner_relief" {
+                    // The shape goes with its size, the row below.
+                    row_label(ui, "Corner Relief Shape");
+                    combo(ui, "sm_relief_shape", &RELIEF_SHAPE_LABELS, relief);
+                    ui.end_row();
+                }
                 row_label(ui, label);
                 enter |= field(ui, v);
                 ui.end_row();
@@ -333,7 +348,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
             ui.end_row();
             if *pick < rules.len() && !app.session.doc.sheet.rules.is_empty() {
                 row_label(ui, "");
-                if ui.button("Delete rule").clicked() {
+                if ui.button(crate::i18n::tr_label("Delete rule")).clicked() {
                     let n = rules.get(*pick).map(|r| r.name.clone()).unwrap_or_default();
                     match app.run("sheet.manage_rules", json!({"name": n, "delete": true})) {
                         Ok(_) => {
@@ -574,14 +589,22 @@ pub fn commands(app: &SolveApp, k: &Sm, inputs: &[SelInput], extra: &Map<String,
             (if *refold { "sheet.refold" } else { "sheet.unfold" }, p)
         }
         Sm::Convert { rule } => {
-            let Some(Sel::Face { body, point, .. }) = items(inputs, 0).first() else { return Err("select the plate's large face first".into()) };
+            let Some(Sel::Face { body, point, .. }) = items(inputs, 0).first() else {
+                return Err("select the fixed face first (a plate's large face)".into());
+            };
             let mut p = json!({"body": body, "face": pt(*point)});
+            // The sharp edges of a solid or shelled body that become bends (a plate has none).
+            let bends: Vec<Value> =
+                items(inputs, 1).iter().filter_map(|x| if let Sel::Edge { point, .. } = x { Some(pt(*point)) } else { None }).collect();
+            if !bends.is_empty() {
+                p["bends"] = json!(bends);
+            }
             if let Some(r) = rule_value(app, *rule) {
                 p["rule"] = json!(r);
             }
             ("sheet.convert", p)
         }
-        Sm::Rules { pick, name, values, active, .. } => {
+        Sm::Rules { pick, name, values, relief, active, .. } => {
             let rules = rule_list(app);
             let n = match rules.get(*pick) {
                 Some(r) => r.name.clone(),
@@ -590,7 +613,7 @@ pub fn commands(app: &SolveApp, k: &Sm, inputs: &[SelInput], extra: &Map<String,
             if n.is_empty() {
                 return Err("give the rule a name".into());
             }
-            let mut p = json!({"name": n, "active": active});
+            let mut p = json!({"name": n, "active": active, "corner_relief_shape": RELIEF_SHAPES.get(*relief).copied().unwrap_or("notch")});
             for ((k, _), v) in RULE_FIELDS.iter().zip(values) {
                 if !v.trim().is_empty() {
                     p[*k] = json!(v);
@@ -699,7 +722,16 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
             return Some((Kind::Sheet(k), ins, extra));
         }
         FeatureKind::SheetUnfold { body, refold } => (Sm::Unfold { refold: *refold }, body.iter().map(|n| Sel::Body { name: n.clone() }).collect()),
-        FeatureKind::SheetConvert { face, rule, .. } => (Sm::Convert { rule: rule_index(rule) }, face_sel(s, *face).into_iter().collect()),
+        FeatureKind::SheetConvert { face, rule, bends, .. } => {
+            let (_, mut ins) = start(app, "sheet.convert")?;
+            if let Some(i) = ins.first_mut() {
+                i.items = face_sel(s, *face).into_iter().collect();
+            }
+            if let Some(i) = ins.get_mut(1) {
+                i.items = bends.iter().filter_map(|p| edge_sel(s, *p)).collect();
+            }
+            return Some((Kind::Sheet(Sm::Convert { rule: rule_index(rule) }), ins, extra));
+        }
         _ => return None,
     };
     let id = match &k {

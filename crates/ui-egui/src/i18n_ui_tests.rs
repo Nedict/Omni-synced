@@ -22,6 +22,26 @@ fn japanese_dialog_keeps_english_scenario_handles() {
 }
 
 #[test]
+fn sketch_palette_profile_and_points_rows_show_their_own_translation() {
+    // ui.palette_profile / ui.palette_points are reached by id, not by the usual English-text
+    // lookup (see the comment on sketch_palette::TOGGLES, and
+    // i18n::tests::id_labels_resolve_to_their_own_translation_not_an_english_fallback for the
+    // lookup itself). A broken id falls back to English silently rather than failing loudly, so
+    // check the word actually on screen in each locale, not just that something renders.
+    for (lang, profile, points) in [("de", "Profil", "Punkte"), ("ja", "プロファイル", "点"), ("ko", "프로파일", "점")] {
+        let mut h = Harness::new();
+        h.app.preferences.language = lang.into();
+        h.app.home.open = false;
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.frames(3);
+        assert!(h.widget(profile).is_some(), "{lang}: the Profile row must show {profile:?}");
+        assert!(h.widget(points).is_some(), "{lang}: the Points row must show {points:?}");
+        assert!(h.widget("Profile").is_none(), "{lang}: must not silently fall back to English");
+        assert!(h.widget("Points").is_none(), "{lang}: must not silently fall back to English");
+    }
+}
+
+#[test]
 fn language_preference_cancel_restores_previous_locale() {
     let mut h = Harness::new();
     h.app.home.open = false;
