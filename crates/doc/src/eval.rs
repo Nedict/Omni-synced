@@ -473,15 +473,23 @@ impl ModelState {
         if !f.shell_piece_order {
             crate::lineage::order_lumps(&mut self.bodies, &origin);
         }
+        // The bodies before the feature by name, in their order (names repeat only in damaged
+        // states): every lookup below is the first match of a linear search, without walking
+        // every earlier body for every body, after every feature.
+        let mut by_name: std::collections::HashMap<&str, Vec<&ModelBody>> = std::collections::HashMap::with_capacity(before.bodies.len());
+        for old in &before.bodies {
+            by_name.entry(old.name.as_str()).or_default().push(old);
+        }
         for b in &mut self.bodies {
+            let olds: &[&ModelBody] = by_name.get(b.name.as_str()).map(Vec::as_slice).unwrap_or_default();
             if !matches!(f.kind, FeatureKind::BodyTransfer { .. })
-                && let Some(old) = before.bodies.iter().find(|old| old.name == b.name && old.transferred)
+                && let Some(old) = olds.iter().find(|old| old.transferred)
             {
                 b.transferred = true;
                 b.component = old.component;
                 b.source_transform = old.source_transform;
             }
-            let kept = before.bodies.iter().find(|x| x.name == b.name && x.body.same(&b.body));
+            let kept = olds.iter().find(|x| x.body.same(&b.body));
             match kept {
                 Some(x) => {
                     b.key = x.key;
@@ -496,14 +504,14 @@ impl ModelState {
                     }
                     // Faces split on purpose stay split through later features (for export).
                     if b.body.split_lines().is_none()
-                        && let Some(lines) = before.bodies.iter().find(|x| x.name == b.name).and_then(|x| x.body.split_lines())
+                        && let Some(lines) = olds.first().and_then(|x| x.body.split_lines())
                     {
                         b.body = b.body.clone().with_split_lines(Some(lines.clone()));
                     }
                     // An imported look outlives the operations on the body.
                     if b.body.paint().is_none()
                         && b.body.color().is_none()
-                        && let Some(old) = before.bodies.iter().find(|x| x.name == b.name)
+                        && let Some(old) = olds.first()
                     {
                         b.imported = crate::appearance::ImportedLook::of(old);
                     }
@@ -995,6 +1003,12 @@ impl Model {
         let mut restored = 0;
         let marker = doc.marker.unwrap_or(usize::MAX);
         let ctx = context_digest(doc, &vals);
+        // Each feature's component, for `Document::legacy_body_component` on every body after
+        // every feature without searching the timeline for each (the first feature with an id).
+        let mut feature_component: std::collections::HashMap<u64, u64> = std::collections::HashMap::with_capacity(doc.features.len());
+        for f in &doc.features {
+            feature_component.entry(f.id).or_insert(f.component);
+        }
         let watched = crate::progress::begin(doc.features.len());
         for (i, f) in doc.features.iter().enumerate() {
             let rolled_back = i >= marker;
@@ -1137,7 +1151,10 @@ impl Model {
                     next.stamp(&state, f, key, mats);
                     for b in &mut next.bodies {
                         if !b.transferred {
-                            b.component = doc.legacy_body_component(&b.name, b.feature);
+                            b.component = match doc.body_components.get(&b.name) {
+                                Some(c) => *c,
+                                None => feature_component.get(&b.feature).copied().unwrap_or(0),
+                            };
                         }
                     }
                     state = Arc::new(next);
