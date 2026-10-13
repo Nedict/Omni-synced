@@ -88,3 +88,68 @@ fn struts_ending_on_a_bore_wall_join_without_a_panic() {
     result.unwrap();
     assert_eq!(s.model.state().bodies.len(), 1);
 }
+
+/// A blind Ø2 hole into the flat back of a long D-profile bar ends 2 mm short of the round front,
+/// yet the cut was refused (#544). It removes π · 1² · 10 mm³ (within 5 %: the measure tessellates
+/// the small bore) and adds the bore's wall and floor to the bar's six faces.
+#[test]
+fn blind_hole_into_a_long_d_profile_bar_stops_short_of_the_round_front() {
+    let script: Value = serde_json::from_str(include_str!("../../../examples/regressions/blind_hole_in_long_d_profile.json")).unwrap();
+    let steps = script.get("commands").and_then(Value::as_array).unwrap();
+    let mut s = Session::default();
+    s.run_script(&Value::Array(steps[..5].to_vec())).unwrap();
+    let bar = volume(&s, "Slat");
+    s.run_script(&Value::Array(steps[5..].to_vec())).unwrap();
+    let hole = std::f64::consts::PI * 10.0;
+    let removed = bar - volume(&s, "Slat");
+    assert!((removed - hole).abs() < 0.05 * hole, "removed {removed} vs {hole}");
+    let faces = s.model.state().body("Slat").map(|b| solidcraft_kernel::measure(&b.body).unwrap().merged.faces);
+    assert_eq!(faces, Some(8));
+}
+
+/// A ring pocket cut from below a recess leaves a 0.5 mm floor joining the outer wall to the inner
+/// block: one connected part, yet the cut left two bodies and lost volume (#545).
+#[test]
+fn ring_cut_below_a_recess_keeps_the_part_in_one_body() {
+    let s = replay(include_str!("../../../examples/regressions/ring_cut_below_recess_thin_floor.json"));
+    let bodies: Vec<(String, f64)> = s.model.state().bodies.iter().map(|b| (b.name.clone(), volume(&s, &b.name))).collect();
+    let want = 100.0 * 100.0 * 30.0 - 88.0 * 88.0 * 12.0 - (95.0 * 95.0 - 68.0 * 68.0) * 17.5;
+    assert_eq!(bodies.len(), 1, "{bodies:?}");
+    let got = volume(&s, "Frame");
+    assert!((got - want).abs() < 1e-9 * want, "{got} vs {want}");
+}
+
+/// Four ribs joined on a rounded lid, standing on the plate over the skirt and flush with the
+/// window's sides: each adds exactly its own material and nothing changes away from it. The
+/// joins displaced the tool and one left a slit through the far side of the skirt and plate
+/// (#616), which no volume shows: the area does. The reply of each join carries its warning, as
+/// the timeline does (an agent placing parts over MCP saw none).
+#[test]
+fn ribs_flush_with_a_window_change_nothing_away_from_them() {
+    let script: Value = serde_json::from_str(include_str!("../../../examples/regressions/lid_ribs_flush_with_window.json")).unwrap();
+    let steps = script.get("commands").and_then(Value::as_array).unwrap();
+    let (lid, ribs) = steps.split_at(steps.len() - 4);
+    let mut s = Session::default();
+    s.run_script(&Value::Array(lid.to_vec())).unwrap();
+    let measure = |s: &Session| s.model.state().body("Lid").map(|b| solidcraft_kernel::measure(&b.body).unwrap()).unwrap();
+    let (v0, a0) = (measure(&s).volume, measure(&s).area);
+    assert!((v0 - 6703.5222).abs() < 1e-3, "{v0}");
+    for (i, rib) in ribs.iter().enumerate() {
+        let reply = s.execute(rib["command"].as_str().unwrap(), &rib["params"]).unwrap();
+        let id = reply["feature"].as_u64().unwrap();
+        let result = s.model.result(id).unwrap();
+        assert_eq!(reply["warning"], json!(result.warning), "the reply says what the timeline says");
+        assert!(!result.warning.as_deref().unwrap_or_default().contains("tool displacement"), "{:?}", result.warning);
+        let m = measure(&s);
+        let n = (i + 1) as f64;
+        // 1.6 x 6 x 11.7 less the 1.35 x 6 x 3 inside the skirt.
+        assert!((m.volume - (v0 + n * 88.02)).abs() < 1e-6, "rib {}: {}", i + 1, m.volume - v0);
+        // Top 9.6, outer side 6 x 8.7 above the skirt, inner side 6 x 11.7 (flush with the
+        // window's side), ends 2 x (1.6 x 11.7 - 1.35 x 3); the skirt top 8.1, its inner side
+        // 18 and 1.5 of the plate go under the rib.
+        let area = 9.6 + 52.2 + 70.2 + 29.34 - 8.1 - 18.0 - 1.5;
+        assert!((m.area - (a0 + n * area)).abs() < 1e-6, "rib {}: area {} (no slit adds any)", i + 1, m.area - a0);
+    }
+    let bounds = s.model.state().body("Lid").unwrap().body.tessellate(0.01).unwrap().bounds();
+    assert!((bounds.max.z - 14.1).abs() < 1e-9, "{}", bounds.max.z);
+}

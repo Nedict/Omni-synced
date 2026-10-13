@@ -55,6 +55,24 @@
 //!   round or rectangular). Version 15 designs need no transformation (an absent shape is the
 //!   notch they always had); the version stamp lets older readers request an update instead of
 //!   silently building notches where a design asks for another shape.
+//!   Under the same version, sketch text can be set in a font other than the built-in one
+//!   (`font` in the text link's source: an installed family or a font file); a text without
+//!   `font` is in the built-in font, as it always was.
+//!   A Move feature can also keep its source bodies and transform a copy (`copy: true`); a
+//!   move without it saves as before.
+//!   A component can link to another design file (`links`: component id → `{path, feature}`,
+//!   the path relative to the design's folder); the linked bodies are kept in the component's
+//!   Import feature, so an older build opens the design with them and only loses the link.
+//!   A design can also define its own physical materials (`user_materials`: name, density in
+//!   g/cm³, optional look), which bodies (`materials`) and configuration material cells name
+//!   like built-in ones; a design without them saves as before.
+//!   A design can also keep what was hidden when it was saved (`visibility`: hidden bodies,
+//!   occurrence placements, sketches and origin items; `browser.visibility`). A design without
+//!   it shows everything, as it always did; a reader that ignores it loses only the hiding.
+//!   Sketch face anchors can name a flat face by its exact history name (a `lineage`
+//!   certificate: the target's `name`, e.g. a cut wall `F5:side:l1` or a pattern copy
+//!   `F4:top@F6.2`), where no construction certificate names it alone. Anchors with
+//!   construction certificates resolve as before.
 
 use serde_json::Value;
 

@@ -451,13 +451,34 @@ pub fn finish(app: &mut SolveApp) {
 
 /// Rubber-band preview of the shape being drawn.
 pub(crate) fn paint_preview_curve(
-    sketch: &solidcraft_engine::sketch::Sketch,
+    mut sketch: solidcraft_engine::sketch::Sketch,
     plane: &solidcraft_engine::geom::Plane,
     painter: &egui::Painter,
     proj: &Proj,
     stroke: Stroke,
+    mode: u8,
 ) {
-    paint_curve(sketch, 0, plane, painter, proj, stroke, &mut solidcraft_engine::render::SamplingBudget::new(4096, 65_536));
+    for curve in &mut sketch.curves {
+        curve.centerline = mode == 2 && matches!(curve.kind, solidcraft_engine::sketch::CurveKind::Line { .. });
+        curve.construction = mode != 0 && !curve.centerline;
+    }
+    paint_curve(&sketch, 0, plane, painter, proj, stroke, &mut solidcraft_engine::render::SamplingBudget::new(4096, 65_536));
+}
+
+pub(crate) fn paint_sketch_path(points: &[solidcraft_engine::geom::Vec3], mode: u8, painter: &egui::Painter, proj: &Proj, stroke: Stroke) {
+    if mode == 0 {
+        let screen: Vec<_> = points.iter().filter_map(|point| proj.to_screen(*point)).collect();
+        if screen.len() >= 2 {
+            painter.add(egui::Shape::line(screen, stroke));
+        }
+        return;
+    }
+    let unit = solidcraft_engine::view::grid_step(proj.cam.half_height()).0;
+    for (a, b) in crate::viewport::sketch_segments(points, mode, unit) {
+        if let (Some(a), Some(b)) = (proj.to_screen(a), proj.to_screen(b)) {
+            painter.line_segment([a, b], stroke);
+        }
+    }
 }
 
 pub(crate) fn paint_curve(
@@ -470,10 +491,8 @@ pub(crate) fn paint_curve(
     budget: &mut solidcraft_engine::render::SamplingBudget,
 ) {
     for part in crate::sketch_display::curve_with_budget(sketch, index, plane, proj, painter.ctx().pixels_per_point(), budget).parts {
-        let screen: Vec<_> = part.into_iter().filter_map(|point| proj.to_screen(point)).collect();
-        if screen.len() >= 2 {
-            painter.add(egui::Shape::line(screen, stroke));
-        }
+        let mode = sketch.curves.get(index).map_or(0, |c| if c.centerline { 2 } else { u8::from(c.construction) });
+        paint_sketch_path(&part, mode, painter, proj, stroke);
     }
 }
 
@@ -561,6 +580,37 @@ pub(crate) fn preview_curve(t: &Tool, hover: Vec2, sweep: Option<f64>) -> Option
     Some(sk)
 }
 
+/// The polygon's actual straight edges, in the same orientation as the eventual command.
+/// Keep preview work bounded even while a side-count expression is being edited.
+pub(crate) fn polygon_outline(t: &Tool, hover: Vec2, sides: f64) -> Option<Vec<Vec2>> {
+    if !hover.is_finite() || !(3.0..=200.0).contains(&sides) || sides.fract() != 0.0 || t.pts.len() != 1 {
+        return None;
+    }
+    let a = t.pts.first()?.0;
+    let n = sides as usize;
+    let half = std::f64::consts::PI / sides;
+    let distance = a.dist(hover);
+    if !a.is_finite() || !distance.is_finite() || distance <= 1e-9 {
+        return None;
+    }
+    let (centre, radius, start) = match t.cmd {
+        "sketch.polygon.inscribed" => (a, distance, (hover - a).angle()),
+        "sketch.polygon.circumscribed" => (a, distance / half.cos(), (hover - a).angle() + half),
+        "sketch.polygon.edge" => {
+            let radius = distance / (2.0 * half.sin());
+            let centre = (a + hover) * 0.5 + (hover - a).normalized()?.perp() * (radius * half.cos());
+            (centre, radius, (a - centre).angle())
+        }
+        _ => return None,
+    };
+    let mut corners: Vec<_> = (0..n).map(|i| centre + Vec2::from_angle(start + std::f64::consts::TAU * i as f64 / sides) * radius).collect();
+    if corners.iter().any(|p| !p.is_finite()) {
+        return None;
+    }
+    corners.push(*corners.first()?);
+    Some(corners)
+}
+
 pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
     if crate::sketch3d::preview(app, t, painter, proj) {
         return;
@@ -588,15 +638,22 @@ pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
     }
     let Some((h, _)) = t.hover.clone() else { return };
     let h = crate::sketch_dims::effective(app, t, h);
+    if let Some(corners) = polygon_outline(t, h, crate::sketch_dims::locked_value(app, t, "Sides").unwrap_or(6.0)) {
+        let outline: Vec<_> = corners.iter().map(|c| ss.plane.to_world(*c)).collect();
+        paint_sketch_path(&outline, crate::sketch_palette::mode(app), painter, proj, stroke);
+        crate::scenario::publish_count("polygon_preview_edges", (corners.len() - 1) as f64);
+        if t.cmd == "sketch.polygon.edge" {
+            return;
+        }
+    }
+
     if let Some(curve) = preview_curve(t, h, crate::sketch_dims::locked_value(app, t, "Sweep")) {
-        paint_preview_curve(&curve, &ss.plane, painter, proj, stroke);
+        paint_preview_curve(curve, &ss.plane, painter, proj, stroke, crate::sketch_palette::mode(app));
         return;
     }
     let pts: Vec<Vec2> = t.pts.iter().map(|p| p.0).collect();
     let line = |a: Vec2, b: Vec2| {
-        if let (Some(x), Some(y)) = (to(a), to(b)) {
-            painter.line_segment([x, y], stroke);
-        }
+        paint_sketch_path(&[ss.plane.to_world(a), ss.plane.to_world(b)], crate::sketch_palette::mode(app), painter, proj, stroke);
     };
     match (t.cmd, pts.as_slice()) {
         ("sketch.line", [.., last]) => {

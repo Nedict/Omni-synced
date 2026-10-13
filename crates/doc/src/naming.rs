@@ -31,6 +31,8 @@ pub struct NamingOrigin {
     pub depth: usize,
     /// Instance transforms of a pattern or mirror (its copies are named after their sources).
     pub mats: Vec<crate::Mat>,
+    /// The sheet metal bodies after a sheet feature (their folds place moved faces).
+    pub sheets: Vec<crate::sheet::SheetBody>,
 }
 
 /// The lazily computed names of a body, shared by its clones.
@@ -334,6 +336,24 @@ fn geometric_from(b: &ModelBody, o: &NamingOrigin, nf: usize, names_of: fn(&Mode
             names = got.into_iter().map(|n| n.map(|n| format!("{n}@F{fid}.{}", k + 1))).collect();
         }
     }
+    // A sheet feature that moved panels (a fold, an unfold): faces it carried along lie on the
+    // faces they were, taken back through the panel they are on.
+    if let (Some(after), Some(before), Some(input)) = (
+        o.sheets.iter().find(|s| s.body == b.name),
+        o.before.sheets.iter().find(|s| s.body == b.name),
+        inputs.iter().find(|(x, _, _)| x.name == b.name),
+    ) {
+        let input = std::slice::from_ref(input);
+        for (name, ps) in names.iter_mut().zip(&pts) {
+            if name.is_some() {
+                continue;
+            }
+            let back: Option<Vec<Vec3>> = ps.iter().map(|p| after.point_before(before, *p)).collect();
+            if let Some(back) = back.filter(|b| !b.is_empty()) {
+                *name = vote(&back, input, tol, None);
+            }
+        }
+    }
     let empty = Vec::new();
     let names: Vec<String> = names
         .into_iter()
@@ -454,14 +474,12 @@ pub fn strip_edge_piece(n: &str) -> String {
 
 /// Edges sharing a name: number them along the longest axis of their spread.
 fn number_pieces(names: &mut [String], pts: &[Vec<Vec3>], mark: char) {
-    let mut seen: Vec<String> = Vec::new();
-    for i in 0..names.len() {
-        let n = names[i].clone();
-        if seen.contains(&n) {
-            continue;
-        }
-        seen.push(n.clone());
-        let same: Vec<usize> = (0..names.len()).filter(|j| names[*j] == n).collect();
+    // The pieces of each name, gathered in one pass (a faceted body has thousands of names).
+    let mut groups: std::collections::BTreeMap<String, Vec<usize>> = std::collections::BTreeMap::new();
+    for (i, n) in names.iter().enumerate() {
+        groups.entry(n.clone()).or_default().push(i);
+    }
+    for (n, same) in groups {
         if same.len() < 2 {
             continue;
         }

@@ -27,6 +27,7 @@ pub struct DocSlot {
 /// The per-design part of the UI state (what is hidden, shown or locked).
 #[derive(Clone, Debug, Default)]
 struct DocView {
+    sketch_choices: crate::sketch_families::Choices,
     hidden_profiles: Vec<u64>,
     shown_dims: Vec<u64>,
     locked_bodies: Vec<String>,
@@ -59,6 +60,7 @@ impl Documents {
 fn take_view(app: &mut SolveApp) -> DocView {
     let u = &mut app.ui;
     DocView {
+        sketch_choices: std::mem::take(&mut app.sketch_choices),
         hidden_profiles: std::mem::take(&mut u.hidden_profiles),
         shown_dims: std::mem::take(&mut u.shown_dims),
         locked_bodies: std::mem::take(&mut u.locked_bodies),
@@ -66,6 +68,7 @@ fn take_view(app: &mut SolveApp) -> DocView {
 }
 
 fn put_view(app: &mut SolveApp, v: DocView) {
+    app.sketch_choices = v.sketch_choices;
     let u = &mut app.ui;
     u.hidden_profiles = v.hidden_profiles;
     u.shown_dims = v.shown_dims;
@@ -148,6 +151,7 @@ pub fn adopt(app: &mut SolveApp, session: Session) {
         app.menu.props = None;
         crate::sketch_attachment_ui::clear(app);
         app.session = session;
+        app.sketch_choices = crate::sketch_families::Choices::default();
         app.session.invalidate_view(rev);
         app.cam = Camera::default();
         app.fit_view();
@@ -323,7 +327,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
         if app.home.open { t.text } else { t.app_bar_text },
     );
     crate::scenario::publish_handle("tab:home", home.center());
-    if response.clicked() {
+    if response.clicked() && !app.file_load.busy() {
         app.home.show(app.session.revision);
     }
     let x0 = x0 + 70.0;
@@ -424,13 +428,16 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
     let s = Stroke::new(1.6, t.app_bar_text);
     ui.painter().line_segment([c - vec2(6.0, 0.0), c + vec2(6.0, 0.0)], s);
     ui.painter().line_segment([c - vec2(0.0, 6.0), c + vec2(0.0, 6.0)], s);
-    if presp.on_hover_text("New Design (Ctrl+N)").clicked() {
+    // A file loading into the window keeps the tabs as they are (dragging still moves it).
+    let idle = !app.file_load.busy();
+    if presp.on_hover_text("New Design (Ctrl+N)").clicked() && idle {
         new_design(app);
     }
-    if let Some(i) = shut {
-        close(app, i, false);
-    } else if let Some(i) = pick {
-        switch(app, i);
+    match (shut, pick) {
+        _ if !idle => {}
+        (Some(i), _) => close(app, i, false),
+        (None, Some(i)) => switch(app, i),
+        (None, None) => {}
     }
 }
 

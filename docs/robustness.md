@@ -50,6 +50,18 @@ placement and reports both its translation magnitude and rotation angle.
 Exact planar and piecewise fallbacks report zero displacement. The existing
 volume and spatial acceptance checks still apply to all results.
 
+The command that adds a feature carries the same `warning` in its reply, so a
+script or an agent sees a retry without asking the timeline.
+
+A join or a cut that needed any retry is then held to what it can do at all
+(`crates/kernel/src/boolean_guard.rs`, #616): the result is closed, a join
+never loses volume and a cut never gains any, and outside the tool's box the
+result's surface is the target's and the target's is the result's (a join or
+a cut can only change the target where the tool is). A cut may come out empty
+only when the tool covers the target. A result that fails is refused with an
+error naming what was wrong and where, rather than returned: a wrong result
+that looks right is worse than an error.
+
 Reports belong to the evaluated feature and survive cached rebuilds and
 undo/redo. Cold reopening regenerates them from the embedded design. Failed or
 discarded retry branches do not contribute successful-retry events. Reports

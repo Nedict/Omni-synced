@@ -496,6 +496,47 @@ fn text_embossed_or_debossed_leaves_its_counters_alone() {
 }
 
 #[test]
+fn text_takes_a_font_and_edit_text_keeps_or_changes_it() {
+    // The repository's second font is BIZ UDPGothic. Its "I" is a polygon of two 606 x 145 bars and a 188 x 1369
+    // stem in font units, with a capital height of 1567 units, so at 10 mm its area is
+    // (2 x 606 x 145 + 188 x 1369) x (10 / 1567)^2 = 17.6385 mm². The built-in Liberation Sans "I" is 13.5557 mm².
+    let font = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/solidcraft-web/fonts/BIZUDPGothic-Regular.ttf");
+    let near = |s: &Session, want: f64| {
+        let a = profiles(s);
+        assert!(a.len() == 1 && (a[0] - want).abs() < 1e-3, "{a:?} against {want}");
+    };
+    let mut s = new_sketch();
+    let r = run(&mut s, "sketch.text", json!({"text": "I", "at": [0, 0], "height": 10}));
+    near(&s, 13.5557);
+    let link = r["link"].as_str().unwrap().to_string();
+    // A font by file path changes the outlines; the same edit with the built-in family's name changes them back.
+    run(&mut s, "sketch.edit_text", json!({"link": link, "font": font}));
+    near(&s, 17.6385);
+    run(&mut s, "sketch.edit_text", json!({"link": link, "font": "Liberation Sans"}));
+    near(&s, 13.5557);
+    run(&mut s, "sketch.edit_text", json!({"link": link, "font": font}));
+    // An edit that does not name a font keeps it (the height scales the area by 4), and an empty name is the built-in font.
+    run(&mut s, "sketch.edit_text", json!({"link": link, "height": 20}));
+    near(&s, 4.0 * 17.6385);
+    run(&mut s, "sketch.edit_text", json!({"link": link, "font": ""}));
+    near(&s, 4.0 * 13.5557);
+    run(&mut s, "sketch.edit_text", json!({"link": link, "font": font}));
+    // The font is kept in the design: after saving and reopening, the text is still in it.
+    let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    let source = reopened.doc.sketch(s.active_sketch.unwrap()).unwrap().link(&link).unwrap().source.clone();
+    assert!(matches!(&source, solidcraft_sketch::LinkSource::Text { font: Some(f), .. } if f == font), "{source:?}");
+    // A new text takes the font too. Unknown fonts and values that are not names are errors.
+    let mut s = new_sketch();
+    run(&mut s, "sketch.text", json!({"text": "I", "at": [0, 0], "height": 10, "font": font}));
+    near(&s, 17.6385);
+    let e = s.execute("sketch.text", &json!({"text": "I", "at": [0, 0], "font": "No Such Family 12345"})).unwrap_err().to_string();
+    assert!(e.contains("unknown font `No Such Family 12345`"), "{e}");
+    assert!(s.execute("sketch.text", &json!({"text": "I", "at": [0, 0], "font": 12})).is_err());
+    assert!(s.execute("sketch.text", &json!({"text": "I", "at": [0, 0], "font": "C:/no/such/dir/font.ttf"})).is_err());
+    near(&s, 17.6385);
+}
+
+#[test]
 fn blend_curve_joins_tangentially() {
     let mut s = new_sketch();
     let a = ids(&run(&mut s, "sketch.line", json!({"points": [[0, 0], [10, 0]]}))["curves"])[0].clone();

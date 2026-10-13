@@ -376,8 +376,24 @@ pub fn apply(app: &mut SolveApp, ctx: &egui::Context) {
     {
         app.ui.dark = t == egui::Theme::Dark;
     }
+    // egui's end-of-frame shortcuts only change its context; the saved preference would
+    // overwrite that change next frame. Consume the desktop shortcuts into the preference.
+    if ctx.options(|o| o.zoom_with_keyboard) && !crate::keymap::capturing(app) {
+        use egui::gui_zoom::kb_shortcuts::{ZOOM_IN, ZOOM_IN_SECONDARY, ZOOM_OUT, ZOOM_RESET};
+        if ctx.input_mut(|i| i.consume_shortcut(&ZOOM_RESET)) {
+            app.preferences.ui_scale = 1.0;
+        } else {
+            let zoom_in = ctx.input_mut(|i| i.consume_shortcut(&ZOOM_IN) || i.consume_shortcut(&ZOOM_IN_SECONDARY));
+            let zoom_out = ctx.input_mut(|i| i.consume_shortcut(&ZOOM_OUT));
+            if zoom_in != zoom_out {
+                app.preferences.ui_scale = (app.preferences.ui_scale + if zoom_in { 0.1 } else { -0.1 }).clamp(0.5, 2.5);
+            }
+        }
+    }
+    // Scaling while the pointer is held moves the slider under the pointer, feeding a
+    // different value back into it. Commit the layout change after the drag ends.
     let z = app.preferences.ui_scale.clamp(0.5, 2.5);
-    if z.is_finite() && (ctx.zoom_factor() - z).abs() > 1e-3 {
+    if z.is_finite() && !ctx.input(|i| i.pointer.any_down()) && (ctx.zoom_factor() - z).abs() > 1e-3 {
         ctx.set_zoom_factor(z);
     }
 }
@@ -770,7 +786,10 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             });
             ui.end_row();
             ui.label(app.tr("ui.ui_scale"));
-            ui.add(egui::Slider::new(&mut app.preferences.ui_scale, 0.75..=2.0).step_by(0.05).custom_formatter(|v, _| format!("{:.0} %", v * 100.0)));
+            let scale = ui.add(
+                egui::Slider::new(&mut app.preferences.ui_scale, 0.5..=2.5).step_by(0.05).custom_formatter(|v, _| format!("{:.0} %", v * 100.0)),
+            );
+            crate::scenario::publish_rect("prefs:scale", scale.rect);
             ui.end_row();
             ui.label(app.tr("ui.units_of_new_designs"));
             egui::ComboBox::from_id_salt("pref_units").selected_text(app.preferences.default_units.clone()).show_ui(ui, |ui| {
@@ -1361,5 +1380,59 @@ mod tests {
         app.preferences.up_axis = "z".into();
         apply(&mut app, &ctx);
         assert_eq!(app.cam.up, UpAxis::Z);
+    }
+}
+
+#[cfg(test)]
+mod ui_scale_regression_tests {
+    use super::*;
+    use egui::{Event, Modifiers, PointerButton, pos2};
+
+    #[test]
+    fn desktop_zoom_shortcuts_update_and_persist_the_scale_preference() {
+        let mut h = crate::scenario::Harness::new();
+        h.call("ui.key", json!({"key":"Minus","cmd":true}));
+        assert!((h.app.preferences.ui_scale - 0.9).abs() < 1e-4);
+        assert!((h.ctx.zoom_factor() - 0.9).abs() < 1e-4);
+        h.frames(12);
+        assert!((h.ctx.zoom_factor() - 0.9).abs() < 1e-4, "must not flash back to the old preference");
+        h.step(&json!({"restart":"close"})).unwrap();
+        assert!((h.app.preferences.ui_scale - 0.9).abs() < 1e-4);
+        h.call("ui.key", json!({"key":"Equals","cmd":true}));
+        assert!((h.ctx.zoom_factor() - 1.0).abs() < 1e-4);
+        h.call("ui.key", json!({"key":"Plus","cmd":true}));
+        assert!((h.ctx.zoom_factor() - 1.1).abs() < 1e-4);
+        h.call("ui.key", json!({"key":"0","cmd":true}));
+        assert!((h.ctx.zoom_factor() - 1.0).abs() < 1e-4);
+        h.call("ui.prefs", json!({"ui_scale":0.5}));
+        h.call("ui.key", json!({"key":"Minus","cmd":true}));
+        assert_eq!(h.app.preferences.ui_scale, 0.5);
+        h.call("ui.prefs", json!({"ui_scale":2.5}));
+        h.call("ui.key", json!({"key":"Plus","cmd":true}));
+        assert_eq!(h.app.preferences.ui_scale, 2.5);
+    }
+
+    #[test]
+    fn dragging_the_scale_slider_keeps_its_window_still_until_release() {
+        let mut h = crate::scenario::Harness::new();
+        h.call("ui.prefs", json!({"open":"General"}));
+        let window = crate::scenario::rect_of("prefs:window").unwrap();
+        let slider = crate::scenario::rect_of("prefs:scale").unwrap();
+        let a = pos2(slider.left() + 20.0, slider.center().y);
+        let b = pos2(slider.left() + 90.0, slider.center().y);
+        h.app.synthetic.push(Event::PointerMoved(a));
+        h.app.synthetic.push(Event::PointerButton { pos: a, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        h.frames(3);
+        h.app.synthetic.push(Event::PointerMoved(b));
+        h.frames(4);
+        assert_ne!(h.app.preferences.ui_scale, 1.0, "the slider changes its value during the drag");
+        assert_eq!(h.ctx.zoom_factor(), 1.0, "layout must remain stable until release");
+        assert_eq!(crate::scenario::rect_of("prefs:window").unwrap(), window);
+        h.app.synthetic.push(Event::PointerButton { pos: b, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+        h.frames(5);
+        assert!((h.ctx.zoom_factor() - h.app.preferences.ui_scale).abs() < 1e-4);
+        h.call("ui.prefs", json!({"button":"cancel"}));
+        assert_eq!(h.app.preferences.ui_scale, 1.0, "Cancel restores the original scale");
+        assert_eq!(h.ctx.zoom_factor(), 1.0);
     }
 }

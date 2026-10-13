@@ -17,6 +17,7 @@ mod blend_corner;
 mod blend_variable;
 mod body;
 mod boolean_diagnostics;
+mod boolean_guard;
 mod boolean_record;
 mod bore_guard;
 mod build;
@@ -36,6 +37,8 @@ mod iges_in;
 mod iges_out;
 #[cfg(test)]
 mod intersection_curve_tests;
+#[cfg(test)]
+mod issue_616_tests;
 mod lip;
 mod loopblend;
 mod measure;
@@ -70,10 +73,10 @@ mod thread_tests;
 mod topo;
 mod tspline;
 
-pub use blend::{ChamferSide, chamfer, chamfer_sides, fillet, fillet_max};
+pub use blend::{ChamferSide, chamfer, chamfer_sides, fillet, fillet_each, fillet_max, fillet_max_each};
 pub use blend_corner::fillet_radii;
 pub use blend_variable::{fillet_chord, fillet_variable, fillet_variable_points};
-pub use body::{Body, CapSignature, EdgeInfo, FaceInfo, FacePaint, FaceSource, Paint};
+pub use body::{Body, CapSignature, DISPLAY_ANGLE, EdgeInfo, FaceInfo, FacePaint, FaceSource, Paint};
 pub use boolean_diagnostics::{BooleanDiagnostics, BooleanFallback, BooleanStrategy, capture_boolean_diagnostics};
 pub use build::{PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, loft, revolve, sphere, sweep, torus};
 pub use delete_face::delete_faces;
@@ -85,7 +88,7 @@ pub use lip::raise_band;
 pub use measure::{BodyMeasure, measure};
 pub use mesh_convert::convert_prismatic_mesh;
 pub use meshbody::{MAX_TRIANGLES, mesh_body};
-pub use native::{decode_native_body, encode_native_body};
+pub use native::{decode_native_body, encode_native_body, native_preview_mesh};
 pub use offset::with_same_surface;
 pub use ops::{BoolOp, boolean, can_join_touching_faces, split_by_plane, transform, transform_matrix, union_apart};
 pub use polybool::{faceted_boolean, planar_boolean};

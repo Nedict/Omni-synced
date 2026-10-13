@@ -39,7 +39,7 @@ pub(crate) fn given(sk: &Sketch) -> Vec<bool> {
 
 /// The constructive seed of a plain solve.
 pub(crate) fn seed_of(sk: &Sketch) -> crate::construct::Seed {
-    crate::construct::seed(sk, &given(sk), None, &crate::solver::points_on_curves(sk), &mut crate::decompose::Budget::full())
+    crate::construct::seed(sk, &given(sk), None, true, &crate::solver::points_on_curves(sk), &mut crate::decompose::Budget::full())
 }
 
 /// Rough rectangle from four lines sharing corner points.
@@ -343,7 +343,7 @@ fn merging_adjacent_regions() {
 /// outlines.
 fn text_sketch(text: &str, at: Vec2, height: f64) -> Sketch {
     let mut sk = Sketch::new();
-    let source = LinkSource::Text { text: text.into(), at, height, angle: 0.0 };
+    let source = LinkSource::Text { text: text.into(), at, height, angle: 0.0, font: None };
     sk.add_link(LinkKind::Text, source, &text_geometry(text, at, height, 0.0).unwrap()).unwrap();
     sk
 }

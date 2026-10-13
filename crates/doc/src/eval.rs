@@ -62,12 +62,14 @@ impl ModelBody {
     pub fn definition_name(&self) -> &str {
         self.source_name.as_deref().unwrap_or(&self.name)
     }
-    /// Display mesh (chord tolerance 1/1000 of the body size), computed once.
+    /// Display mesh, computed once: chord tolerance 1/1000 of the body size, and no facet of a
+    /// curved face or edge turning more than [`kernel::DISPLAY_ANGLE`], so that a bend or a
+    /// hole that is small beside the body is still drawn round.
     pub fn mesh(&self) -> Arc<Mesh> {
         self.mesh
             .get_or_init(|| {
                 let tol = (self.body.size() * 1e-3).max(1e-3);
-                Arc::new(self.body.display_mesh(tol).unwrap_or_default())
+                Arc::new(self.body.display_mesh_angular(tol, kernel::DISPLAY_ANGLE).unwrap_or_default())
             })
             .clone()
     }
@@ -262,20 +264,35 @@ fn thread_groove(t: &ThreadInfo, radius: f64, open: (bool, bool)) -> Result<soli
 }
 
 /// A constant fillet of `edges`; with [`FilletFit::Reduce`](crate::FilletFit::Reduce), a radius too
-/// large for the geometry around them is reduced to the largest that works for all of them, which
-/// is returned.
+/// large for the geometry around them is reduced where it doesn't fit, to the largest that works
+/// for each group of edges sharing a face; the radius per edge is returned.
 fn fillet_fitted(
     body: &kernel::Body,
     edges: &[Vec3],
     r: f64,
     fit: crate::FilletFit,
-) -> std::result::Result<(kernel::Body, Option<f64>), kernel::KernelError> {
+) -> std::result::Result<(kernel::Body, Option<Vec<f64>>), kernel::KernelError> {
     match kernel::fillet(body, edges, r) {
-        Err(kernel::KernelError::TooLarge(why)) if fit == crate::FilletFit::Reduce => match kernel::fillet_max(body, edges, r) {
-            Some((used, b)) => Ok((b, Some(used))),
+        Err(kernel::KernelError::TooLarge(why)) if fit == crate::FilletFit::Reduce => match kernel::fillet_max_each(body, edges, r) {
+            // Built at the radius asked for after all (the groups apart): nothing reduced.
+            Some((used, b)) => Ok((b, used.iter().any(|u| *u < r).then_some(used))),
             None => Err(kernel::KernelError::TooLarge(why)),
         },
         other => other.map(|b| (b, None)),
+    }
+}
+
+/// The warning of a fillet whose radius `asked` was reduced to `used` (per edge).
+fn reduced_note(used: &[f64], asked: f64) -> String {
+    let mut values: Vec<f64> = used.iter().copied().filter(|r| *r < asked).collect();
+    values.sort_by(f64::total_cmp);
+    values.dedup();
+    let shown = values.iter().map(|v| show_mm(*v)).collect::<Vec<_>>().join(", ");
+    let n = used.iter().filter(|r| **r < asked).count();
+    if n == used.len() && values.len() == 1 {
+        format!("the radius is reduced to {shown} mm, the largest that fits these edges")
+    } else {
+        format!("the radius is reduced to {shown} mm on {n} of {} edges, the largest that fits them", used.len())
     }
 }
 
@@ -294,9 +311,23 @@ fn show_mm(v: f64) -> String {
 }
 
 impl ModelState {
-    /// The radius fillet `feature` used when it reduced a radius too large for its edges.
+    /// The smallest radius fillet `feature` used when it reduced a radius too large for its edges.
     pub fn fitted_radius(&self, feature: u64) -> Option<f64> {
-        self.fitted.get(&feature).copied()
+        self.fitted_range(feature).map(|(lo, _)| lo)
+    }
+
+    /// The smallest and largest radius fillet `feature` used when it reduced a radius too large
+    /// for some of its edges.
+    pub fn fitted_range(&self, feature: u64) -> Option<(f64, f64)> {
+        self.fitted.get(&feature)?.iter().fold(None, |acc, r| Some(acc.map_or((*r, *r), |(lo, hi): (f64, f64)| (lo.min(*r), hi.max(*r)))))
+    }
+
+    /// Each edge fillet `feature` blended (a point on it) with the radius it used, when it
+    /// reduced a radius too large for some of its edges.
+    pub fn fitted_edges(&self, feature: u64) -> Option<Vec<(Vec3, f64)>> {
+        let radii = self.fitted.get(&feature)?;
+        let edges = self.blend_edges.get(&feature)?;
+        Some(edges.iter().copied().zip(radii.iter().copied()).collect())
     }
 }
 
@@ -319,9 +350,9 @@ pub struct ModelState {
     /// a pattern of the feature repeats these, not the points picked when it was made, which a
     /// parameter change may have moved off the edges.
     blend_edges: BTreeMap<u64, Vec<Vec3>>,
-    /// The radius a fillet used when it reduced a radius too large for its edges (by feature id,
-    /// see `FilletFit::Reduce`).
-    fitted: BTreeMap<u64, f64>,
+    /// The radius per edge a fillet used when it reduced a radius too large for some of its edges
+    /// (by feature id, see `FilletFit::Reduce`).
+    fitted: BTreeMap<u64, Vec<f64>>,
 }
 
 impl ModelState {
@@ -347,9 +378,11 @@ impl ModelState {
                 [p.x, p.y, p.z].map(f64::to_bits).hash(&mut h);
             }
         }
-        for (feature, r) in &self.fitted {
+        for (feature, radii) in &self.fitted {
             feature.hash(&mut h);
-            r.to_bits().hash(&mut h);
+            for r in radii {
+                r.to_bits().hash(&mut h);
+            }
         }
         serde_json::to_string(&self.threads).unwrap_or_default().hash(&mut h);
         serde_json::to_string(&self.sheets).unwrap_or_default().hash(&mut h);
@@ -362,7 +395,8 @@ impl ModelState {
     fn stamp(&mut self, before: &Arc<ModelState>, f: &Feature, key: u64, mats: Vec<Mat>) {
         let feature = f.id;
         let depth = before.bodies.iter().filter_map(|b| b.names.origin.as_ref().map(|o| o.depth)).max().unwrap_or(0) + 1;
-        let origin = Arc::new(crate::naming::NamingOrigin { feature: f.clone(), before: before.clone(), depth, mats });
+        let sheets = if f.kind.is_sheet() { self.sheets.clone() } else { Vec::new() };
+        let origin = Arc::new(crate::naming::NamingOrigin { feature: f.clone(), before: before.clone(), depth, mats, sheets });
         // Pieces a cut left are named after their faces, not the kernel's shell order (unless
         // the feature was saved when they were named in that order).
         if !f.shell_piece_order {
@@ -854,8 +888,11 @@ impl Model {
         let mut restored = 0;
         let marker = doc.marker.unwrap_or(usize::MAX);
         let ctx = context_digest(doc, &vals);
+        let watched = crate::progress::begin(doc.features.len());
         for (i, f) in doc.features.iter().enumerate() {
             let rolled_back = i >= marker;
+            // Opening was cancelled: the rest is skipped and the result discarded.
+            let cancelled = watched.step(i);
             let fp = chain_fingerprint(doc, &vals, f, prev_fp, rolled_back);
             prev_fp = fp;
             if reuse
@@ -871,7 +908,7 @@ impl Model {
                 continue;
             }
             reuse = false;
-            if f.suppressed || rolled_back {
+            if f.suppressed || rolled_back || cancelled {
                 out.push(FeatureResult {
                     id: f.id,
                     name: f.name.clone(),
@@ -1141,6 +1178,25 @@ fn new_name(state: &mut ModelState, f: &Feature, k: usize) -> String {
     }
 }
 
+/// The k-th body of a body pattern: its stored name, else a copy of `source`. Once `body.rename`
+/// has stored this feature's names, a copy beyond them (the count was raised) is numbered after
+/// the highest stored `source (n)`, so it never takes a number freed by a rename (#372).
+/// Features without stored names keep the first free `source (n)`.
+fn pattern_copy_name(state: &ModelState, f: &Feature, k: usize, source: &str) -> String {
+    if f.body_names.get(k).is_some_and(|name| !name.trim().is_empty()) {
+        return copy_body_name(state, f, k, source);
+    }
+    let base = if source.trim().is_empty() { "Body" } else { source.trim() };
+    let prefix = format!("{base} (");
+    let highest = f.body_names.iter().filter_map(|n| n.trim().strip_prefix(prefix.as_str())?.strip_suffix(')')?.parse::<u32>().ok()).max();
+    match highest {
+        Some(h) => {
+            (u64::from(h) + 1..).map(|i| format!("{base} ({i})")).find(|n| state.body(n).is_none()).unwrap_or_else(|| unique_body_name(state, base))
+        }
+        None => unique_body_name(state, base),
+    }
+}
+
 fn copy_body_name(state: &ModelState, f: &Feature, k: usize, source: &str) -> String {
     let base = f.body_names.get(k).filter(|name| !name.trim().is_empty()).map(String::as_str).unwrap_or(source);
     unique_body_name(state, base)
@@ -1194,6 +1250,25 @@ fn intersection_tool_union(tools: Vec<Traced>) -> Result<Vec<Traced>> {
         groups = next;
     }
     Ok(groups)
+}
+
+/// After a cut handled some sheet bodies as flat machining, apply it to the other targets.
+fn apply_beside_sheet_cut(st: &mut ModelState, f: &Feature, tools: Vec<Traced>, op: Operation, targets: &[String], handled: &[String]) -> Result<()> {
+    let effective = if targets.is_empty() { &f.participants } else { targets };
+    let all = effective.len() == 1 && effective.first().is_some_and(|t| t == "*");
+    let rest: Vec<String> = st
+        .bodies
+        .iter()
+        .filter(|b| {
+            !handled.contains(&b.name)
+                && (all || if effective.is_empty() { b.component == f.component || b.feature == f.id } else { effective.contains(&b.name) })
+        })
+        .map(|b| b.name.clone())
+        .collect();
+    if rest.is_empty() {
+        return Ok(());
+    }
+    apply_traced(st, f, tools, op, &rest)
 }
 
 fn apply_op(state: &mut ModelState, f: &Feature, tools: Vec<Body>, op: Operation, targets: &[String]) -> Result<()> {
@@ -1473,7 +1548,10 @@ fn grow_profile_for_coplanar(st: &ModelState, r: &Region2, op: Operation, target
 
 /// Booleans struggle with coincident faces (a cut starting on the face it cuts, a boss
 /// starting on the face it joins). Extending the tool past such an end changes nothing when the
-/// space beyond is empty (cut) or already material (join), so do exactly that.
+/// space beyond is empty (cut) or already material (join), so do exactly that. Only an end
+/// that lies on a target face parallel to it moves, and by less than half the way to the next
+/// such face level: the samples can miss material beyond the end (a thin floor between a recess
+/// above and a ring pocket below), which a longer tool would cut through.
 fn extend_for_coplanar(st: &ModelState, plane: &Plane, r: &Region2, lo: f64, hi: f64, op: Operation, targets: &[String]) -> (f64, f64) {
     if !matches!(op, Operation::Cut | Operation::Join) || st.bodies.is_empty() {
         return (lo, hi);
@@ -1488,18 +1566,40 @@ fn extend_for_coplanar(st: &ModelState, plane: &Plane, r: &Region2, lo: f64, hi:
     let samples = region_samples(r);
     let n = plane.normal();
     let inside_any = |p: Vec3| meshes.iter().any(|m| m.contains(p));
-    let ok_beyond = |h: f64, dir: f64| {
+    // Heights of the targets' faces parallel to the profile plane.
+    let tol = (size * 1e-7).max(1e-9);
+    let levels: Vec<f64> = meshes
+        .iter()
+        .flat_map(|m| {
+            m.triangles.iter().filter_map(|t| {
+                let [a, b, c] = m.tri(t)?;
+                let normal = (b - a).cross(c - a).normalized()?;
+                (normal.dot(n).abs() > 1.0 - 1e-9).then(|| (a - plane.origin).dot(n))
+            })
+        })
+        .collect();
+    // How far the end at `h` may move in `dir`: zero unless a face lies on it, then short of
+    // half the gap to the next face level beyond it.
+    let room = |h: f64, dir: f64| {
+        if !levels.iter().any(|z| (z - h).abs() < tol) {
+            return 0.0;
+        }
+        let gap = levels.iter().map(|z| (z - h) * dir).filter(|g| *g > tol).fold(f64::INFINITY, f64::min);
+        delta.min(gap * 0.5)
+    };
+    let ok_beyond = |h: f64, dir: f64, step: f64| {
         samples.iter().all(|s| {
             let base = plane.to_world(*s);
             [0.5, 1.0].iter().all(|k| {
-                let p = base + n * (h + dir * delta * k);
+                let p = base + n * (h + dir * step * k);
                 let inside = inside_any(p);
                 if op == Operation::Cut { !inside } else { inside }
             })
         })
     };
-    let lo2 = if ok_beyond(lo, -1.0) { lo - delta } else { lo };
-    let hi2 = if ok_beyond(hi, 1.0) { hi + delta } else { hi };
+    let (down, up) = (room(lo, -1.0), room(hi, 1.0));
+    let lo2 = if down > tol && ok_beyond(lo, -1.0, down) { lo - down } else { lo };
+    let hi2 = if up > tol && ok_beyond(hi, 1.0, up) { hi + up } else { hi };
     (lo2, hi2)
 }
 
@@ -2889,8 +2989,10 @@ fn replay(
                 let nb = match &src.kind {
                     FeatureKind::Chamfer { distance2, angle, flip, .. } => chamfer_with(vals, &mb.body, &moved, r, distance2, angle, *flip)?,
                     // A copy is congruent to the original: the radius it was reduced to first.
-                    FeatureKind::Fillet { fit, .. } => match st.fitted.get(&src.id).copied() {
-                        Some(used) => kernel::fillet(&mb.body, &moved, used).or_else(|_| fillet_fitted(&mb.body, &moved, r, *fit).map(|x| x.0))?,
+                    FeatureKind::Fillet { fit, .. } => match st.fitted.get(&src.id) {
+                        Some(used) => {
+                            kernel::fillet_each(&mb.body, &moved, used).or_else(|_| fillet_fitted(&mb.body, &moved, r, *fit).map(|x| x.0))?
+                        }
                         None => fillet_fitted(&mb.body, &moved, r, *fit)?.0,
                     },
                     _ => kernel::fillet(&mb.body, &moved, r)?,
@@ -3281,9 +3383,10 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             if let Some(w) = face_warning {
                 warns.insert(0, w);
             }
-            // The stored sketch is solved for its stored values.
+            // The stored sketch is solved for its stored values, with its links where they
+            // were stored: a link that moved must not change the side a dimension from it is on.
             let stored = sk.driving_values();
-            let report = doc.solve_sketch(vals, &mut sk, &stored)?;
+            let report = doc.solve_sketch(vals, &mut sk, &stored, Some(sketch))?;
             if !report.keeps_orientation() {
                 warns.insert(0, report.failure(|f| format!("the sketch constraints conflict ({f})")));
             }
@@ -3309,26 +3412,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 let bodies: Vec<Body> = tools.iter().map(|t| t.body.clone()).collect();
                 let handled = more::sheet_cut(f, st, &bodies, targets, constructor.as_ref())?;
                 if !handled.is_empty() {
-                    let effective = if targets.is_empty() { &f.participants } else { targets };
-                    let all = effective.len() == 1 && effective.first().is_some_and(|t| t == "*");
-                    let rest: Vec<String> = st
-                        .bodies
-                        .iter()
-                        .filter(|b| {
-                            !handled.contains(&b.name)
-                                && (all
-                                    || if effective.is_empty() {
-                                        b.component == f.component || b.feature == f.id
-                                    } else {
-                                        effective.contains(&b.name)
-                                    })
-                        })
-                        .map(|b| b.name.clone())
-                        .collect();
-                    if rest.is_empty() {
-                        return Ok(());
-                    }
-                    return apply_traced(st, f, tools, *operation, &rest);
+                    return apply_beside_sheet_cut(st, f, tools, *operation, targets, &handled);
                 }
             }
             apply_traced(st, f, tools, *operation, targets)
@@ -3432,13 +3516,15 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                     let fst = crate::state_in_face_anchor_frame(doc, st, anchor, f.component)?;
                     doc.resolve_attached_plane(vals, plane, f.component, st, &fst)?
                 }
-                None => doc.resolve_plane_in(vals, plane, 0, Some(st))?,
+                // Picks on bodies of other (moved) components are where those bodies are shown.
+                None => doc.resolve_plane_in(vals, plane, 0, Some(&construction_state(doc, st, f.component)))?,
             };
             st.construct.push(crate::construct::Construct { feature: f.id, name: f.name.clone(), geom: crate::construct::ConstructGeom::Plane(pl) });
             Ok(())
         }
         FeatureKind::ConstructionAxis { def } => {
-            let (origin, dir) = crate::construct::resolve_axis(&crate::construct::Ctx { doc, vals, st, depth: 0 }, def)?;
+            let (origin, dir) =
+                crate::construct::resolve_axis(&crate::construct::Ctx { doc, vals, st: &construction_state(doc, st, f.component), depth: 0 }, def)?;
             st.construct.push(crate::construct::Construct {
                 feature: f.id,
                 name: f.name.clone(),
@@ -3447,7 +3533,8 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             Ok(())
         }
         FeatureKind::ConstructionPoint { def } => {
-            let p = crate::construct::resolve_point(&crate::construct::Ctx { doc, vals, st, depth: 0 }, def)?;
+            let p =
+                crate::construct::resolve_point(&crate::construct::Ctx { doc, vals, st: &construction_state(doc, st, f.component), depth: 0 }, def)?;
             st.construct.push(crate::construct::Construct { feature: f.id, name: f.name.clone(), geom: crate::construct::ConstructGeom::Point(p) });
             Ok(())
         }
@@ -3568,7 +3655,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 let mb = st.body(n).cloned().ok_or_else(|| DocError::Unknown(format!("body `{n}`")))?;
                 for (k, m) in mats.iter().enumerate() {
                     let copy = moved_copy(&mb, kernel::transform_matrix(&mb.body, *m)?, k + 1);
-                    let name = copy_body_name(st, f, output, &mb.name);
+                    let name = pattern_copy_name(st, f, output, &mb.name);
                     st.bodies.push(ModelBody::traced_new(name, copy, f.id));
                     output += 1;
                 }
@@ -3680,8 +3767,8 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 FeatureKind::Fillet { fit, .. } => {
                     let (b, used) = fillet_fitted(&mb.body, &edges, r, *fit)?;
                     if let Some(used) = used {
+                        append_warning(warning, reduced_note(&used, r));
                         st.fitted.insert(f.id, used);
-                        append_warning(warning, format!("the radius is reduced to {} mm, the largest that fits these edges", show_mm(used)));
                     }
                     (b, input)
                 }
@@ -3702,12 +3789,24 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             let corner = point(vals, corner)?;
             let b = kernel::box_solid(corner, corner + s)?;
             let b = if matches!(operation, Operation::NewBody | Operation::Join) { b.with_box_certificate(f.id)? } else { b };
-            apply_traced(st, f, vec![crate::lineage::box_tool(b)], *operation, &[])
+            let handled = more::sheet_primitive_cut(f, st, &b, more::PrimitivePrism::Box { lo: corner, hi: corner + s }, *operation)?;
+            let tools = vec![crate::lineage::box_tool(b)];
+            if !handled.is_empty() {
+                return apply_beside_sheet_cut(st, f, tools, *operation, &[], &handled);
+            }
+            apply_traced(st, f, tools, *operation, &[])
         }
         FeatureKind::Cylinder { base, axis, radius, height, operation } => {
-            let b = kernel::cylinder(point(vals, base)?, *axis, val(vals, radius, Kind::Length)?, val(vals, height, Kind::Length)?)?;
+            let (base, radius, height) = (point(vals, base)?, val(vals, radius, Kind::Length)?, val(vals, height, Kind::Length)?);
+            let b = kernel::cylinder(base, *axis, radius, height)?;
             let b = if matches!(operation, Operation::NewBody | Operation::Join) { b.with_cylinder_certificate(f.id)? } else { b };
-            apply_traced(st, f, vec![crate::lineage::cylinder_tool(b)], *operation, &[])
+            let prism = more::PrimitivePrism::Cylinder { base, axis: *axis, radius, height };
+            let handled = more::sheet_primitive_cut(f, st, &b, prism, *operation)?;
+            let tools = vec![crate::lineage::cylinder_tool(b)];
+            if !handled.is_empty() {
+                return apply_beside_sheet_cut(st, f, tools, *operation, &[], &handled);
+            }
+            apply_traced(st, f, tools, *operation, &[])
         }
         FeatureKind::Sphere { center, radius, operation } => {
             let b = kernel::sphere(point(vals, center)?, val(vals, radius, Kind::Length)?)?;
@@ -3806,7 +3905,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             st.bodies.push(ModelBody::traced_new(name, b, f.id));
             Ok(())
         }
-        FeatureKind::Move { bodies, translate, rotate_axis, angle } => {
+        FeatureKind::Move { bodies, translate, rotate_axis, angle, copy } => {
             let t =
                 Vec3::new(val(vals, &translate[0], Kind::Length)?, val(vals, &translate[1], Kind::Length)?, val(vals, &translate[2], Kind::Length)?);
             let ang = match angle {
@@ -3814,11 +3913,20 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 None => 0.0,
             };
             let axis = rotate_axis.unwrap_or(Vec3::Z);
+            // With `copy` set, the source body is kept in place and the transform lands on a new
+            // body pushed beside it instead of replacing it.
+            let mut output = 0;
             for n in bodies {
                 let i = st.bodies.iter().position(|b| &b.name == n).ok_or_else(|| DocError::Unknown(format!("body `{n}`")))?;
-                if let Some(mb) = st.bodies.get_mut(i) {
-                    let nb = Traced::step(kernel::transform(&mb.body, t, Vec3::ZERO, axis, ang)?, &[&mb.traced()]);
-                    *mb = ModelBody::traced_new(mb.name.clone(), nb, mb.feature);
+                let Some(mb) = st.bodies.get(i).cloned() else { continue };
+                let nb = kernel::transform(&mb.body, t, Vec3::ZERO, axis, ang)?;
+                if *copy {
+                    let traced = moved_copy(&mb, nb, 1);
+                    let name = copy_body_name(st, f, output, &mb.name);
+                    st.bodies.push(ModelBody::traced_new(name, traced, f.id));
+                    output += 1;
+                } else if let Some(slot) = st.bodies.get_mut(i) {
+                    *slot = ModelBody::traced_new(mb.name.clone(), Traced::step(nb, &[&mb.traced()]), mb.feature);
                 }
             }
             Ok(())
@@ -3895,6 +4003,16 @@ fn unique_body_name(st: &ModelState, base: &str) -> String {
 /// it are moved into its frame (through both placements), so a sketch on another component's
 /// face finds the face where it is shown and projects its edges there. The model itself when
 /// every placement agrees (the usual case).
+/// What construction geometry of component `comp` is built on: the model as that component sees
+/// it, other components' bodies where they are placed. In the root, every placement of a
+/// component (its pasted instances too) is there, as the viewport shows it.
+fn construction_state<'a>(doc: &Document, st: &'a ModelState, comp: u64) -> std::borrow::Cow<'a, ModelState> {
+    if comp == 0 && !doc.occurrences.is_empty() {
+        return std::borrow::Cow::Owned(world_state(doc, st));
+    }
+    state_in_frame(doc, st, comp)
+}
+
 pub fn state_in_frame<'a>(doc: &Document, st: &'a ModelState, comp: u64) -> std::borrow::Cow<'a, ModelState> {
     state_in_frame_at(doc, st, comp, doc.component_transform(comp))
 }

@@ -603,6 +603,59 @@ fn cylinder_auto_inference_refuses_ambiguity_curves_and_seam_crossing_atomically
     }
 }
 
+/// The design from #396: a loft from a Ø12 circle on a 40 × 30 × 20 box's top to a hexagon 15 up.
+fn loft_on_box(op: &str) -> Session {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    run(&mut s, "sketch.rectangle.center", json!({"center": [0, 0], "corner": [20, 15]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 20, "body_name": "Box"}));
+    run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 20, "name": "A"}));
+    run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 35, "name": "B"}));
+    run(&mut s, "sketch.create", json!({"plane": "A", "name": "L0"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "diameter": 12}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "sketch.create", json!({"plane": "B", "name": "L1"}));
+    run(&mut s, "sketch.polygon.inscribed", json!({"center": [0, 0], "radius": 4, "sides": 6}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.loft", json!({"sections": [{"sketch": "L0"}, {"sketch": "L1"}], "operation": op}));
+    s
+}
+
+#[test]
+fn loft_joined_onto_a_box_exports_one_connected_mesh() {
+    // #396: one body, but its two shells only touched, and the STL came out in two pieces.
+    let mut apart = loft_on_box("new_body");
+    let m = measure(&mut apart);
+    assert_eq!(m["body_count"], 2);
+    let loft = m["bodies"][1]["volume_mm3"].as_f64().unwrap();
+    let mut s = loft_on_box("join");
+    let m = measure(&mut s);
+    assert_eq!(m["body_count"], 1);
+    assert_eq!(m["bodies"][0]["kernel"]["shells"], 1);
+    let v = volume(&mut s);
+    assert!(rel(v, 24000.0 + loft) < 1e-5, "{v} vs {}", 24000.0 + loft);
+    // The exported mesh, its vertices merged, is one connected piece.
+    let mesh = s.model.state().body("Box").unwrap().body.tessellate(0.01).unwrap();
+    let (positions, triangles) = solidcraft_io::weld(&mesh.positions, &mesh.triangles, 1e-4);
+    let mut piece: Vec<usize> = (0..positions.len()).collect();
+    let root = |piece: &mut Vec<usize>, mut i: usize| {
+        while piece[i] != i {
+            i = piece[i];
+        }
+        i
+    };
+    for t in &triangles {
+        let r0 = root(&mut piece, t[0] as usize);
+        for k in [1, 2] {
+            let rk = root(&mut piece, t[k] as usize);
+            piece[rk] = r0;
+        }
+    }
+    let pieces: std::collections::BTreeSet<usize> = triangles.iter().map(|t| root(&mut piece, t[0] as usize)).collect();
+    assert_eq!(pieces.len(), 1);
+}
+
 /// A cone that takes only a 1 mm chamfer off a cylinder's top edge leaves nearly all of the
 /// cylinder inside it; the intersection is still the chamfered cylinder (#443).
 #[test]

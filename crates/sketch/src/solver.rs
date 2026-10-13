@@ -1275,8 +1275,19 @@ pub type DrivingValues = std::collections::BTreeMap<String, f64>;
 /// again by stepping its changed values from old to new (see `continue_values`). Where no
 /// value changed a solve behaves as [`solve`].
 pub fn solve_after_value_edit(sk: &mut Sketch, old: &DrivingValues) -> SolveReport {
+    solve_after_edit(sk, old, None)
+}
+
+/// [`solve_after_value_edit`] of a sketch whose linked geometry may have moved as well: once
+/// its links are refreshed ([`Sketch::update_link`]), the linked points are where their sources
+/// are now and everything else is still the stored solved state. `stored` has every point's
+/// position in that state ([`Sketch::positions_in`]; `None` when no link moved), and the sides
+/// and turns the solve keeps are read there, as [`solve_with`] reads them from the positions
+/// before an interactive move. Read where the links are now, a point dimensioned from a
+/// projected line is on the far side of it as soon as the source moves the line past the point.
+pub fn solve_after_edit(sk: &mut Sketch, old: &DrivingValues, stored: Option<&[Vec2]>) -> SolveReport {
     let old_values: Vec<Option<f64>> = sk.constraints.iter().map(|c| old.get(&c.id).copied()).collect();
-    solve_from(sk, &Hold::default(), None, Analysis::Full, Some(&old_values), &mut Budget::full())
+    solve_from(sk, &Hold::default(), stored, Analysis::Full, Some(&old_values), &mut Budget::full())
 }
 
 impl Sketch {
@@ -1736,7 +1747,11 @@ fn solve_inner(
     let mut constructed = vec![false; lay.n];
     if crate::construct::switch::seed_on() {
         let given: Vec<bool> = lay.pvar.iter().map(Option::is_none).collect();
-        let seeded = crate::construct::seed(sk, &given, reference, &on_curve, budget);
+        // A drag step solves against its reference and moves only held points. Any other solve
+        // applies edits: also the one after linked geometry moved, whose reference is the
+        // stored state.
+        let edits = reference.is_none() || old_values.is_some();
+        let seeded = crate::construct::seed(sk, &given, reference, edits, &on_curve, budget);
         for (i, (at, how)) in seeded.pos.iter().zip(&seeded.placed_by).enumerate() {
             if let (Some(at), Some(how), Some(v)) = (at, how, lay.pvar.get(i).copied().flatten())
                 && how.anchors()
