@@ -40,6 +40,7 @@ truck-topology = "0.6"
 # constrained Delaunay + Ruppert refinement for trimmed faces (MIT OR Apache-2.0); already in the
 # tree through truck-meshalgo.
 spade = { version = "2.15", default-features = false, features = ["std"] }
+rayon = "1.12"
 
 # packages (3MF)
 zip = { version = "3", default-features = false, features = ["deflate"] }

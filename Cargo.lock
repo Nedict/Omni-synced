@@ -3365,6 +3365,7 @@ name = "solidcraft-kernel"
 version = "0.8.0"
 dependencies = [
  "log",
+ "rayon",
  "serde",
  "serde_json",
  "solidcraft-geom",
