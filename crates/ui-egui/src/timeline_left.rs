@@ -168,7 +168,11 @@ fn vertical_drop_group(
     }
     path.reverse();
     let mut target = base;
-    let indent_x = start + drag_x;
+    let relative_indent_x = start + drag_x;
+    // A deeply nested row can be grabbed close enough to the panel edge that there is not
+    // enough screen space for one full drag step per ancestor. Moving left therefore also
+    // honours the pointer's absolute indentation, so the panel edge always reaches root.
+    let indent_x = if drag_x < 0.0 { relative_indent_x.min(pointer.x) } else { relative_indent_x };
     for id in path {
         let threshold = drop_level_anchor(panel_left, Some(id), groups);
         if indent_x >= threshold {
@@ -1362,5 +1366,46 @@ mod tests {
         let middle = harness.app.session.doc.timeline_groups.iter().find(|folder| folder.id == middle).unwrap();
         assert!(!middle.features.contains(&feature), "a straight vertical drag to the outside boundary should remove the item from its folder");
         assert!(harness.app.session.doc.timeline_groups.iter().all(|folder| !folder.features.contains(&feature)));
+    }
+
+    #[test]
+    fn last_nested_feature_can_outdent_two_levels_at_the_same_position() {
+        let mut harness = Harness::new();
+        harness.app.preferences.timeline_left = true;
+        for (name, body, x) in [
+            ("Shell", "ShellBody", 0),
+            ("Lip", "LipBody", 20),
+            ("SnapFit", "SnapFitBody", 40),
+            ("Boss1", "Boss1Body", 60),
+            ("Boss2", "Boss2Body", 80),
+            ("Rest", "RestBody", 100),
+        ] {
+            harness
+                .app
+                .run(
+                    "solid.box",
+                    json!({"length": 10, "width": 10, "height": 10, "corner": [x, 0, 0], "operation": "new_body", "name": name, "body_name": body}),
+                )
+                .unwrap();
+        }
+        let inner = harness.app.run("timeline.group", json!({"name": "Folder1", "features": ["Lip", "SnapFit", "Boss1", "Boss2"]})).unwrap()["group"]
+            .as_u64()
+            .unwrap();
+        harness.app.run("timeline.group", json!({"name": "Folder2", "features": ["Shell"], "groups": [inner]})).unwrap();
+        harness.frames(4);
+        let row = handle_at("timeline:Boss2").unwrap();
+        let start = pos2(20.0, row.y);
+
+        harness.step(&json!({"drag": [[start.x, start.y], [6.0, start.y]]})).unwrap();
+
+        let feature = harness.app.session.doc.find_feature("Boss2").unwrap().id;
+        assert!(
+            harness.app.session.doc.timeline_groups.iter().all(|folder| !folder.features.contains(&feature)),
+            "the last nested item should reach root without moving vertically"
+        );
+        assert_eq!(
+            harness.app.session.doc.features.iter().map(|feature| feature.name.as_str()).collect::<Vec<_>>(),
+            vec!["Shell", "Lip", "SnapFit", "Boss1", "Boss2", "Rest"]
+        );
     }
 }
