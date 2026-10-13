@@ -1143,6 +1143,25 @@ fn new_name(state: &mut ModelState, f: &Feature, k: usize) -> String {
     }
 }
 
+/// The k-th body of a body pattern: its stored name, else a copy of `source`. Once `body.rename`
+/// has stored this feature's names, a copy beyond them (the count was raised) is numbered after
+/// the highest stored `source (n)`, so it never takes a number freed by a rename (#372).
+/// Features without stored names keep the first free `source (n)`.
+fn pattern_copy_name(state: &ModelState, f: &Feature, k: usize, source: &str) -> String {
+    if f.body_names.get(k).is_some_and(|name| !name.trim().is_empty()) {
+        return copy_body_name(state, f, k, source);
+    }
+    let base = if source.trim().is_empty() { "Body" } else { source.trim() };
+    let prefix = format!("{base} (");
+    let highest = f.body_names.iter().filter_map(|n| n.trim().strip_prefix(prefix.as_str())?.strip_suffix(')')?.parse::<u32>().ok()).max();
+    match highest {
+        Some(h) => {
+            (u64::from(h) + 1..).map(|i| format!("{base} ({i})")).find(|n| state.body(n).is_none()).unwrap_or_else(|| unique_body_name(state, base))
+        }
+        None => unique_body_name(state, base),
+    }
+}
+
 fn copy_body_name(state: &ModelState, f: &Feature, k: usize, source: &str) -> String {
     let base = f.body_names.get(k).filter(|name| !name.trim().is_empty()).map(String::as_str).unwrap_or(source);
     unique_body_name(state, base)
@@ -3570,7 +3589,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 let mb = st.body(n).cloned().ok_or_else(|| DocError::Unknown(format!("body `{n}`")))?;
                 for (k, m) in mats.iter().enumerate() {
                     let copy = moved_copy(&mb, kernel::transform_matrix(&mb.body, *m)?, k + 1);
-                    let name = copy_body_name(st, f, output, &mb.name);
+                    let name = pattern_copy_name(st, f, output, &mb.name);
                     st.bodies.push(ModelBody::traced_new(name, copy, f.id));
                     output += 1;
                 }

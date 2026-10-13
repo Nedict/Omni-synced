@@ -3,7 +3,7 @@
 
 use serde_json::{Value, json};
 use solidcraft_doc::expr::Kind;
-use solidcraft_doc::sheet::{SheetBody, SheetRule};
+use solidcraft_doc::sheet::{self, SheetBody, SheetRule};
 use solidcraft_doc::{FeatureKind, FlangeEdge};
 use solidcraft_geom::{Vec2, Vec3};
 
@@ -17,7 +17,8 @@ pub static COMMANDS: &[CommandSpec] = &[
         "base: sketch + profiles? (rule?, flip?) | contour: sketch + curves (open chain of lines) + distance (rule?, flip?, reverse?) | \
          edge: edges: [[x,y,z] on top/bottom edges, or {point: [x,y,z], angle?, height?} for an edge with its own angle and height] + \
          height (to the outer face), angle? (default 90 deg), radius? (default: rule), \
-         position?: inside|outside|middle, flip?, body?; type?: base|edge|contour (default from the inputs); name?, body_name? (the new body)",
+         position?: inside|outside|middle, flip?, body?; type?: base|edge|contour (default from the inputs); name?, body_name? (the new body). \
+         Thickness, K-factor and bend radius come from the rule (sheet.manage_rules); passing them here is refused",
     ),
     CommandSpec::new("sheet.hem", "Hem", hem)
         .at("SHEET METAL", "CREATE")
@@ -105,8 +106,23 @@ fn rule_param(s: &Session, p: &Value, cmd: &str) -> Result<Option<String>> {
     }
 }
 
+/// Sheet values a flange takes from its rule. Passing one to `sheet.flange` is refused rather
+/// than ignored, so a script never gets a part of another thickness than it asked for.
+const RULE_ONLY: [&str; 8] =
+    ["thickness", "k_factor", "bend_radius", "relief_width", "relief_depth", "corner_relief", "corner_relief_shape", "hem_gap"];
+
 fn flange(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sheet.flange";
+    let nested = p.get("base").filter(|b| b.is_object());
+    if let Some(key) = RULE_ONLY.iter().find(|k| p.get(**k).is_some() || nested.is_some_and(|b| b.get(**k).is_some())) {
+        return Err(bad(
+            cmd,
+            format!(
+                "`{key}` is not a sheet.flange parameter: the sheet metal rule sets it. Make a rule with \
+                 sheet.manage_rules {{name, {key}, …}} and pass its name as `rule`"
+            ),
+        ));
+    }
     let ty = match str_(p, "type") {
         Some(t) => t.to_ascii_lowercase(),
         None if p.get("edges").is_some() => "edge".into(),
@@ -218,7 +234,25 @@ fn fold(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     let body = str_(p, "body").map(str::to_string);
-    add_feature(s, p, FeatureKind::SheetFold { sketch, curve, a, b, angle, radius, position, flip: bool_(p, "flip").unwrap_or(false), fixed, body })
+    let r = add_feature(
+        s,
+        p,
+        FeatureKind::SheetFold { sketch, curve, a, b, angle, radius, position, flip: bool_(p, "flip").unwrap_or(false), fixed, body },
+    )?;
+    // A recompute keeps a stored fold whose fixed point no longer touches the sheet (with a
+    // warning); a new fold refuses one, since it picks no side (#263).
+    if let Some(f) = fixed {
+        let id = r.get("feature").and_then(Value::as_u64);
+        let off =
+            id.and_then(|id| s.model.result(id)).and_then(|res| res.warning.as_deref()).is_some_and(|w| w.contains(sheet::FOLD_FIXED_OFF_SHEET));
+        if off {
+            return Err(bad(
+                cmd,
+                format!("the fixed point ({:.3}, {:.3}, {:.3}) is not on the sheet: pick a point on the face of the side that stays", f.x, f.y, f.z),
+            ));
+        }
+    }
+    Ok(r)
 }
 
 fn unfold(s: &mut Session, p: &Value) -> Result<Value> {
