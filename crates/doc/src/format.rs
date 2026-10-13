@@ -100,6 +100,8 @@
 //!   Under the same version, a sheet metal rule's corner relief shape can also be `tear` (no
 //!   relief: each bend is cut straight from the bends' corner to where its flange's end
 //!   starts); a rule that says `notch`, `round` or `rectangular` builds what it did.
+//!   A `SurfaceExtrude` feature (Surface Extrude: `sketch`, optional `profiles`, `curves` and
+//!   `extent`, walls only) is first saved in 17; 0.8.0 would refuse the unknown feature.
 
 use serde_json::Value;
 
