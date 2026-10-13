@@ -311,7 +311,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 t.app_bar_text,
             );
         }
-        if response.on_hover_text("Report a bug — review a screenshot and open a GitHub draft").clicked() {
+        if response.on_hover_text(crate::i18n::tr_label("Report a bug — review a screenshot and open a GitHub draft")).clicked() {
             crate::help::run(app, &ui.ctx().clone(), "report");
         }
         // Preferences, at the top right like Fusion's profile menu (also Ctrl+,).
@@ -790,7 +790,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                         if *panel == "SELECT" {
                             selection_filter(app, ui);
                         } else if cmds.is_empty() {
-                            ui.label(egui::RichText::new("Not available yet").color(t.text_dim));
+                            ui.label(egui::RichText::new(crate::i18n::tr_label("Not available yet")).color(t.text_dim));
                         }
                         if sketch_create {
                             sketch_create_menu(app, ui, &cmds, &mut menu, &mut toggle);
@@ -874,7 +874,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                 });
                 crate::scenario::publish_handle("toolbar:overflow", response.response.rect.center());
-                response.response.on_hover_text("More toolbar panels");
+                response.response.on_hover_text(crate::i18n::tr_label("More toolbar panels"));
             });
         }
         painter.line_segment([pos2(r.left(), r.bottom() - 0.5), pos2(r.right(), r.bottom() - 0.5)], Stroke::new(1.0, t.border));
@@ -1136,8 +1136,8 @@ fn pin_icon(p: &egui::Painter, r: Rect, on: bool, col: Color32) {
 /// The SELECT panel: what a click in the view picks.
 fn selection_filter(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
-    ui.label(egui::RichText::new("Selection filter").color(t.text_dim).size(11.0));
-    ui.checkbox(&mut app.ui.pick_bodies, "Select bodies (a face picks its body)");
+    ui.label(egui::RichText::new(crate::i18n::tr_label("Selection filter")).color(t.text_dim).size(11.0));
+    ui.checkbox(&mut app.ui.pick_bodies, crate::i18n::tr_label("Select bodies (a face picks its body)"));
     for (k, label) in [
         ("faces", "Faces"),
         ("edges", "Edges"),
@@ -1149,7 +1149,7 @@ fn selection_filter(app: &mut SolveApp, ui: &mut egui::Ui) {
         ("constraints", "Sketch constraints"),
     ] {
         let mut on = !app.ui.pick_off.iter().any(|x| x == k);
-        if ui.checkbox(&mut on, label).changed() {
+        if ui.checkbox(&mut on, crate::i18n::tr_label(label)).changed() {
             app.ui.pick_off.retain(|x| x != k);
             if !on {
                 app.ui.pick_off.push(k.to_string());
@@ -1235,7 +1235,11 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                 crate::context_menu::rename_selection(app, at);
             }
             Key::F6 => app.animate_view("fit"),
-            Key::Delete | Key::Backspace => crate::viewport::delete_selection(app),
+            Key::Delete | Key::Backspace => {
+                if !crate::timeline_left::delete_selected_folders(app) {
+                    crate::viewport::delete_selection(app);
+                }
+            }
             _ => crate::keymap::press(app, &crate::keymap::key_name(k, mods)),
         }
     }
