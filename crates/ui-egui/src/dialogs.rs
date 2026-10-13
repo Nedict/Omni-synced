@@ -1700,7 +1700,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 &mut d.extra,
                                 "fi_type",
                                 "type",
-                                &[("Constant", "constant"), ("Chord Length", "chord"), ("Variable", "variable")],
+                                &[("Constant", "constant"), ("Chord Length", "chord"), ("Variable", "variable"), ("Spline", "spline")],
                             );
                             ui.end_row();
                         }
@@ -1709,7 +1709,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             if !*chamfer {
                                 match rtype {
                                     1 => "Chord Length",
-                                    2 => "Start Radius",
+                                    2 | 3 => "Start Radius",
                                     _ => "Radius",
                                 }
                             } else if *ctype == 0 {
@@ -1803,6 +1803,21 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 extra_check(ui, &mut d.extra, "smooth");
                                 ui.end_row();
                             }
+                        }
+                        if !*chamfer && rtype == 3 {
+                            // The radius along the edge as a B-spline: its control radii from the
+                            // start end, also dragged by their handles on the edge.
+                            row_label(ui, "Swap Ends");
+                            extra_check(ui, &mut d.extra, "swap_ends");
+                            ui.end_row();
+                            let mut radii = spline_radii(&mut d.extra, radius);
+                            let n = radii.len();
+                            for (k, r) in radii.iter_mut().enumerate() {
+                                row_label(ui, if k + 1 == n { "End Radius" } else { "Control Radius" });
+                                enter |= field(ui, r);
+                                ui.end_row();
+                            }
+                            d.extra.insert("radii".into(), json!(radii));
                         }
                         row_label(ui, "Tangent Chain");
                         ui.checkbox(chain, "");
@@ -2391,6 +2406,29 @@ fn extra_field(ui: &mut egui::Ui, extra: &mut serde_json::Map<String, Value>, ke
     enter
 }
 
+/// A spline fillet's control radii after the start radius, as expressions. A dialog without a
+/// spline yet gets a cubic one of two spans, all its control radii `radius`.
+pub(crate) fn spline_radii(extra: &mut serde_json::Map<String, Value>, radius: &str) -> Vec<String> {
+    let radii: Vec<String> = extra
+        .get("radii")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|r| match r {
+            Value::String(x) => Some(x.clone()),
+            Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        })
+        .collect();
+    let knots = extra.get("knots").and_then(Value::as_array).map_or(0, Vec::len);
+    // All control radii (the start radius and these) plus the degree (1…3) plus one.
+    if !radii.is_empty() && (radii.len() + 3..=radii.len() + 5).contains(&knots) {
+        return radii;
+    }
+    extra.insert("knots".into(), json!([0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0]));
+    vec![radius.to_string(); 4]
+}
+
 /// A variable fillet's middle radii as (position, radius expression).
 fn mid_points(extra: &serde_json::Map<String, Value>) -> Vec<(f64, String)> {
     extra
@@ -2770,7 +2808,8 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                 ("solid.chamfer", p)
             } else {
                 let mut p = json!({"edges": edges, "radius": radius});
-                if d.extra.get("type").and_then(Value::as_str) == Some("variable") {
+                let style = d.extra.get("type").and_then(Value::as_str);
+                if matches!(style, Some("variable" | "spline")) {
                     // The start radius goes at one end of the first edge (Swap Ends: the other).
                     let ends = sels(d, 0).iter().find_map(|x| match x {
                         Sel::Edge { body, index, .. } => {
@@ -2783,7 +2822,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                         p["start"] = pt(if swap { b } else { a });
                     }
                     let mids = mid_points(&d.extra);
-                    if !mids.is_empty() {
+                    if style == Some("variable") && !mids.is_empty() {
                         p["mid"] = json!(mids.iter().map(|(t, r)| json!([t, r])).collect::<Vec<_>>());
                         if d.extra.get("smooth").and_then(Value::as_bool).unwrap_or(false) {
                             p["smooth"] = json!(true);
@@ -3585,11 +3624,21 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                     FilletStyle::Chord => {
                         d.extra.insert("type".into(), json!("chord"));
                     }
-                    FilletStyle::Variable { radius2, start, mid, smooth } => {
-                        d.extra.insert("type".into(), json!("variable"));
-                        d.extra.insert("radius2".into(), json!(radius2));
-                        d.extra.insert("mid".into(), json!(mid.iter().map(|(t, r)| json!([t, r])).collect::<Vec<_>>()));
-                        d.extra.insert("smooth".into(), json!(smooth));
+                    FilletStyle::Variable { start, .. } | FilletStyle::Spline { start, .. } => {
+                        match style {
+                            FilletStyle::Variable { radius2, mid, smooth, .. } => {
+                                d.extra.insert("type".into(), json!("variable"));
+                                d.extra.insert("radius2".into(), json!(radius2));
+                                d.extra.insert("mid".into(), json!(mid.iter().map(|(t, r)| json!([t, r])).collect::<Vec<_>>()));
+                                d.extra.insert("smooth".into(), json!(smooth));
+                            }
+                            FilletStyle::Spline { knots, radii, .. } => {
+                                d.extra.insert("type".into(), json!("spline"));
+                                d.extra.insert("knots".into(), json!(knots));
+                                d.extra.insert("radii".into(), json!(radii));
+                            }
+                            FilletStyle::Constant | FilletStyle::Chord => {}
+                        }
                         // The start was the first edge's last point: ends swapped.
                         let first_end = edges.first().and_then(|p| edge_sel(s, *p)).and_then(|x| match x {
                             Sel::Edge { body, index, .. } => {

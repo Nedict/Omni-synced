@@ -70,6 +70,8 @@ mod extrude_edit_tests;
 mod file_load;
 #[cfg(test)]
 mod file_load_ui_tests;
+#[cfg(test)]
+mod fillet_spline_handle_tests;
 pub mod palette;
 pub mod params_dialog;
 pub mod prefs;

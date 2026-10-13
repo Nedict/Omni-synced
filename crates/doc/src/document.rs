@@ -994,6 +994,10 @@ pub enum FilletStyle {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         smooth: bool,
     },
+    /// The radius along each edge as a clamped B-spline of the position from the end nearest
+    /// `start` (0) to the other (1): `radius` is its first control radius and `radii` the rest,
+    /// its degree what `knots` leave (knots = control radii + degree + 1).
+    Spline { start: Vec3, knots: Vec<f64>, radii: Vec<String> },
 }
 
 /// A fillet radius too large for the geometry around its edges: refused (`Exact`, the default),
@@ -1018,6 +1022,13 @@ impl FilletFit {
 impl FilletStyle {
     pub fn is_constant(&self) -> bool {
         *self == FilletStyle::Constant
+    }
+
+    /// The spline of a [`FilletStyle::Spline`] with its control radii `values` (the first is
+    /// the feature's `radius`).
+    pub fn spline(knots: &[f64], values: Vec<f64>) -> solidcraft_kernel::RadiusSpline {
+        let degree = knots.len().saturating_sub(values.len() + 1);
+        solidcraft_kernel::RadiusSpline { degree, knots: knots.to_vec(), radii: values }
     }
 }
 
@@ -1514,9 +1525,13 @@ impl FeatureKind {
             }
             FeatureKind::Fillet { radius, style, .. } => {
                 v.push(radius);
-                if let FilletStyle::Variable { radius2, mid, .. } = style {
-                    v.push(radius2);
-                    v.extend(mid.iter().map(|(_, r)| r.as_str()));
+                match style {
+                    FilletStyle::Variable { radius2, mid, .. } => {
+                        v.push(radius2);
+                        v.extend(mid.iter().map(|(_, r)| r.as_str()));
+                    }
+                    FilletStyle::Spline { radii, .. } => v.extend(radii.iter().map(String::as_str)),
+                    FilletStyle::Constant | FilletStyle::Chord => {}
                 }
             }
             FeatureKind::Chamfer { distance, distance2, angle, .. } => {

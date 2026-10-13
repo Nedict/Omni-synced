@@ -441,10 +441,18 @@ fn input_keys(kind: &FeatureKind) -> Vec<(String, solidcraft_doc::expr::Kind)> {
         if let Some((key, _)) = keys.first_mut() {
             *key = "fillet.radius".into();
         }
-        if let solidcraft_doc::FilletStyle::Variable { mid, .. } = style {
-            for ((key, _), (position, _)) in keys.iter_mut().skip(2).zip(mid) {
-                *key = format!("fillet.mid.{}", position.to_bits());
+        match style {
+            solidcraft_doc::FilletStyle::Variable { mid, .. } => {
+                for ((key, _), (position, _)) in keys.iter_mut().skip(2).zip(mid) {
+                    *key = format!("fillet.mid.{}", position.to_bits());
+                }
             }
+            solidcraft_doc::FilletStyle::Spline { .. } => {
+                for (i, (key, _)) in keys.iter_mut().enumerate().skip(1) {
+                    *key = format!("fillet.control.{i}");
+                }
+            }
+            solidcraft_doc::FilletStyle::Constant | solidcraft_doc::FilletStyle::Chord => {}
         }
     }
     keys

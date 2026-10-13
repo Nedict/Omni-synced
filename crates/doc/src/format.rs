@@ -87,6 +87,9 @@
 //!   refuse the body as no plate.
 //!   A fillet's `fit` can be `taper` (the radius follows the room along each edge it doesn't
 //!   fit). Fillets with `exact` or `reduce` save as before; 0.8.0 would refuse the unknown fit.
+//!   A fillet's `type` can be `spline` (the radius along each edge a B-spline: `start`, `knots`,
+//!   and the control radii after `radius` in `radii`). Other fillets save as before; 0.8.0 would
+//!   refuse the unknown type.
 
 use serde_json::Value;
 

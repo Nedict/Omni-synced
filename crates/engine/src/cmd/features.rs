@@ -31,7 +31,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "MODIFY")
         .icon("fillet")
         .key("F")
-        .params("edges: [[x,y,z] point on edge | {body, index}]; radius: expr; body?; type?: constant|chord (radius is the width across)|variable (radius at the end nearest start, radius2 at the other; one end may be 0, where the round closes to the corner); radius2?; start?: [x,y,z]; mid?: [[position 0…1 from start, radius expr], …] (variable radii between the ends); smooth?: bool (smooth instead of straight between the radii); fit?: exact|reduce|taper (exact, the default: a radius too large for the geometry around the edges is refused; reduce: where it doesn't fit it is reduced to the largest that does, one radius for edges sharing a face; the smallest used is returned as `radius_applied`, each edge's as `radii_applied: [{edge: [x,y,z], radius}]`, and noted in the feature's warning; taper: along each straight edge between planar faces where it doesn't fit, the radius follows the room there as a smooth spline, down to 0 where a face closes to a point, noted in the feature's warning)"),
+        .params("edges: [[x,y,z] point on edge | {body, index}]; radius: expr; body?; type?: constant|chord (radius is the width across)|variable (radius at the end nearest start, radius2 at the other; one end may be 0, where the round closes to the corner)|spline (the radius along the edge is a clamped B-spline from the end nearest start: radius is its first control radius, radii the rest, knots its knot vector from 0 to 1; one end may be 0); radius2?; start?: [x,y,z]; radii?: [expr, …]; knots?: [number, …]; mid?: [[position 0…1 from start, radius expr], …] (variable radii between the ends); smooth?: bool (smooth instead of straight between the radii); fit?: exact|reduce|taper (exact, the default: a radius too large for the geometry around the edges is refused; reduce: where it doesn't fit it is reduced to the largest that does, one radius for edges sharing a face; the smallest used is returned as `radius_applied`, each edge's as `radii_applied: [{edge: [x,y,z], radius}]`, and noted in the feature's warning; taper: along each straight edge between planar faces where it doesn't fit, the radius follows the room there as a smooth spline, down to 0 where a face closes to a point, noted in the feature's warning)"),
     CommandSpec::new("solid.chamfer", "Chamfer", chamfer).at("SOLID", "MODIFY").icon("chamfer").params("edges: [[x,y,z] | {body, index}]; distance: expr; distance2?: expr (along the second face) | angle?: expr (from the first face); flip?: bool (which face is first: by default the one facing up most); body?"),
     CommandSpec::new("solid.combine", "Combine", combine).at("SOLID", "MODIFY").icon("combine").params("target: body; tools: [body]; operation?: join|cut|intersect; keep_tools?: bool; new_component?: bool (the result goes into a new component; component_name?)"),
     CommandSpec::new("solid.pattern.rectangular", "Rectangular Pattern", pattern_rect)
@@ -803,7 +803,32 @@ fn fillet(s: &mut Session, p: &Value) -> Result<Value> {
             let smooth = p.get("smooth").and_then(Value::as_bool).unwrap_or(false);
             solidcraft_doc::FilletStyle::Variable { radius2, start, mid, smooth }
         }
-        Some(o) => return Err(bad(cmd, format!("unknown fillet type `{o}` (constant, chord or variable)"))),
+        Some("spline") => {
+            let start = p
+                .get("start")
+                .and_then(vec3)
+                .ok_or_else(|| bad(cmd, "a spline fillet needs `start`: [x,y,z] near the end its positions start from"))?;
+            let knots: Vec<f64> = p.get("knots").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_f64).collect();
+            let mut radii = Vec::new();
+            for r in p.get("radii").and_then(Value::as_array).into_iter().flatten().take(100) {
+                let r = match r {
+                    Value::String(x) => x.clone(),
+                    Value::Number(n) => n.to_string(),
+                    _ => return Err(bad(cmd, "a control radius is a number or an expression")),
+                };
+                check_expr(s, &r, Kind::Length, cmd, "control radius")?;
+                radii.push(r);
+            }
+            // All control radii (`radius` and `radii`) plus the degree (1…3) plus one.
+            if radii.is_empty() || !(radii.len() + 3..=radii.len() + 5).contains(&knots.len()) {
+                return Err(bad(
+                    cmd,
+                    "a spline fillet needs `radii` (the control radii after `radius`) and `knots` (as many as all control radii, the degree 1…3 and one more)",
+                ));
+            }
+            solidcraft_doc::FilletStyle::Spline { start, knots, radii }
+        }
+        Some(o) => return Err(bad(cmd, format!("unknown fillet type `{o}` (constant, chord, variable or spline)"))),
     };
     let fit = match str_(p, "fit").map(str::to_ascii_lowercase).as_deref() {
         None | Some("exact") => solidcraft_doc::FilletFit::Exact,

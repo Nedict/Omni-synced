@@ -302,6 +302,11 @@ fn draw(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj,
         }
         dir = None;
     }
+    // A fillet with a radius spline is shaped by its handles along the edge; the arrow would sit
+    // on one of them.
+    if radius_spline_handles(app, ui, painter, proj, d) {
+        dir = None;
+    }
     let Some((label, kind, value)) = d.primary() else { return };
     let len = all_span.or_else(|| {
         if to_span.is_some() && value.trim().is_empty() { Some(0.0) } else { app.session.doc.eval(value, kind).ok().filter(|v| v.is_finite()) }
@@ -402,6 +407,126 @@ fn drag_arrow(
         *value = format_len(v);
     }
     Some(ts)
+}
+
+/// A fillet's radius spline on its first edge (a spline fillet, or the spline a taper gave it):
+/// the radius curve drawn into the body from the edge, and a handle per control radius at its
+/// Greville position, that far from the edge. Dragging a handle sets its control radius (snapped
+/// unless Alt/Ctrl); the first drag on a taper makes the fillet a spline fillet starting from the
+/// taper's spline. Whether the handles are shown.
+fn radius_spline_handles(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, d: &mut Dialog) -> bool {
+    use serde_json::{Value, json};
+    let t = Tokens::get();
+    let Kind::Fillet { chamfer: false, .. } = d.kind else { return false };
+    let st = app.session.world_state();
+    let Some((mesh, index)) = d.inputs.first().and_then(|i| {
+        i.items.iter().find_map(|x| match x {
+            Sel::Edge { body, index, .. } => Some((st.body(body)?.mesh(), *index)),
+            _ => None,
+        })
+    }) else {
+        return false;
+    };
+    let Some((a, b)) = mesh.edges.get(index).and_then(|e| Some((*e.first()?, *e.last()?))) else { return false };
+    let eval = |e: &str| app.session.doc.eval(e, ValueKind::Length).ok().filter(|v| v.is_finite());
+    let style = d.extra.get("type").and_then(Value::as_str).unwrap_or("constant").to_string();
+    // The spline, the end its positions start from and whether it is still the taper's.
+    let (spline, start, taper) = if style == "spline" {
+        let Kind::Fillet { radius, .. } = &d.kind else { return false };
+        let knots: Vec<f64> = d.extra.get("knots").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_f64).collect();
+        let exprs: Vec<String> =
+            d.extra.get("radii").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+        let Some(radii) = std::iter::once(radius.as_str()).chain(exprs.iter().map(String::as_str)).map(eval).collect::<Option<Vec<f64>>>() else {
+            return false;
+        };
+        let swap = d.extra.get("swap_ends").and_then(Value::as_bool).unwrap_or(false);
+        (solidcraft_engine::doc::FilletStyle::spline(&knots, radii), if swap { b } else { a }, false)
+    } else if style == "constant" && d.extra.get("fit").and_then(Value::as_str) == Some("taper") {
+        // The taper of this edge: its point lies on the edge's chord.
+        let on_edge = |p: Vec3| {
+            let ab = b - a;
+            let s = ((p - a).dot(ab) / ab.dot(ab).max(1e-300)).clamp(0.0, 1.0);
+            (a + ab * s).dist(p) <= 1e-6 * (1.0 + ab.len())
+        };
+        let Some((_, tp)) = app.preview.tapered.iter().find(|(p, _)| on_edge(*p)) else { return false };
+        (tp.spline.clone(), tp.start, true)
+    } else {
+        return false;
+    };
+    let other = if start.dist(a) <= start.dist(b) { b } else { a };
+    let at = |u: f64| start + (other - start) * u;
+    // Into the body, between the two faces (the edge is straight between planar faces).
+    let Some(n) = edge_bisector(&mesh, index, at(0.5)).map(|v| -v) else { return false };
+    let samples: Vec<Pos2> = (0..=48)
+        .filter_map(|k| {
+            let u = f64::from(k) / 48.0;
+            proj.to_screen(at(u) + n * spline.eval(u))
+        })
+        .collect();
+    painter.add(egui::Shape::line(samples, Stroke::new(1.5, t.manipulator)));
+    let g = spline.greville();
+    let tips: Vec<Option<Pos2>> = g.iter().zip(&spline.radii).map(|(u, r)| proj.to_screen(at(*u) + n * *r)).collect();
+    painter.add(egui::Shape::dashed_line(&tips.iter().flatten().copied().collect::<Vec<_>>(), Stroke::new(1.0, t.manipulator), 4.0, 3.0));
+    let half_height = app.cam.half_height();
+    let last = g.len().saturating_sub(1);
+    let mut changed = None;
+    for (k, (u, ts)) in g.iter().zip(&tips).enumerate() {
+        let Some(ts) = *ts else { continue };
+        crate::scenario::publish_handle(&format!("fillet_r{k}"), ts);
+        let r = ui.interact(egui::Rect::from_center_size(ts, vec2(16.0, 16.0)), egui::Id::new(("sc_fillet_r", k)), egui::Sense::drag());
+        let hot = r.hovered() || r.dragged();
+        let col = if hot { t.accent } else { t.manipulator };
+        if let Some(fs) = proj.to_screen(at(*u)) {
+            painter.line_segment([fs, ts], Stroke::new(1.0, col));
+        }
+        painter.circle(ts, if hot { 6.5 } else { 5.0 }, t.overlay, Stroke::new(2.0, col));
+        if hot {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+        if r.dragged()
+            && let Some(p) = r.interact_pointer_pos()
+            && let Some(v) = along(proj, p, at(*u), n)
+        {
+            let free = ui.input(|i| i.modifiers.alt || i.modifiers.ctrl || i.modifiers.command);
+            let step = snap_step(half_height);
+            let v = if free { v } else { (v / step).round() * step };
+            // Zero only at an end, where the round closes to a point.
+            let floor = if k == 0 || k == last {
+                0.0
+            } else if free {
+                1e-3
+            } else {
+                step
+            };
+            changed = Some((k, v.max(floor)));
+        }
+    }
+    if let Some((k, v)) = changed {
+        let mut radii = spline.radii.clone();
+        if let Some(r) = radii.get_mut(k) {
+            *r = v;
+        }
+        if taper {
+            // The taper's spline becomes the fillet's own.
+            d.extra.insert("type".into(), json!("spline"));
+            d.extra.remove("fit");
+            d.extra.insert("knots".into(), json!(spline.knots));
+            d.extra.insert("swap_ends".into(), json!(start.dist(b) < start.dist(a)));
+            d.extra.insert("radii".into(), json!(radii.iter().skip(1).map(|r| format_len(*r)).collect::<Vec<_>>()));
+            if let Kind::Fillet { radius, .. } = &mut d.kind {
+                *radius = format_len(radii.first().copied().unwrap_or(0.0));
+            }
+        } else if k == 0 {
+            if let Kind::Fillet { radius, .. } = &mut d.kind {
+                *radius = format_len(v);
+            }
+        } else if let Some(Value::Array(rs)) = d.extra.get_mut("radii")
+            && let Some(slot) = rs.get_mut(k - 1)
+        {
+            *slot = json!(format_len(v));
+        }
+    }
+    true
 }
 
 /// The measured distance: a line between the closest points with its length.

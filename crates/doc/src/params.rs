@@ -83,6 +83,11 @@ impl FeatureKind {
                     v.push(("End radius", radius2, L));
                     v.extend(mid.iter_mut().map(|(_, r)| ("Mid radius", r, L)));
                 }
+                crate::FilletStyle::Spline { radii, .. } => {
+                    v.push(("Start radius", radius, L));
+                    let n = radii.len();
+                    v.extend(radii.iter_mut().enumerate().map(|(i, r)| (if i + 1 == n { "End radius" } else { "Control radius" }, r, L)));
+                }
             },
             FeatureKind::Chamfer { distance, distance2, angle, .. } => {
                 v.push(("Distance", distance, L));
