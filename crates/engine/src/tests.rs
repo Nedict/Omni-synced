@@ -201,6 +201,7 @@ mod mirror_planes;
 mod primitive_points;
 mod robustness;
 mod robustness_goldens;
+mod spiral_join;
 mod xz_plane;
 
 /// Plan area a round of radius `r` fills at the concave corner `x` where circles (c1, r1) and

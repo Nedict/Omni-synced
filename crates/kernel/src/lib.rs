@@ -58,6 +58,9 @@ mod ops;
 mod par;
 #[cfg(test)]
 mod pinch_tests;
+mod planar_faces;
+#[cfg(test)]
+mod planar_faces_tests;
 mod plane_fit;
 mod polybool;
 mod polyhedron;
