@@ -222,6 +222,19 @@ pub fn export_mesh(b: &solidcraft_kernel::Body) -> Result<Mesh> {
     Ok(b.tessellate((b.size() * 2e-4).max(1e-3))?)
 }
 
+/// The distance under which export vertices are one (a millionth of the body's size).
+fn weld_eps(b: &solidcraft_kernel::Body) -> f64 {
+    (b.size() * 1e-6).max(1e-7)
+}
+
+/// The export mesh made watertight, as the 3MF is: faces meshed apart share their boundary
+/// vertices exactly, so an STL of a filleted or drilled body has no open edges (#784).
+fn welded_export_mesh(b: &solidcraft_kernel::Body) -> Result<Mesh> {
+    let m = export_mesh(b)?;
+    let (positions, triangles) = threemf::weld(&m.positions, &m.triangles, weld_eps(b));
+    Ok(Mesh { positions, triangles, ..Default::default() })
+}
+
 /// Binary STL of several meshes (one solid).
 pub fn stl_binary(meshes: &[Mesh], name: &str) -> Vec<u8> {
     let n: usize = meshes.iter().map(|m| m.triangles.len()).sum();
@@ -292,13 +305,16 @@ pub fn export(state: &ModelState, bodies: &[String], format: Format, name: &str)
         return Err(IoError::Empty);
     }
     Ok(match format {
-        Format::StlBinary | Format::StlAscii | Format::Obj => {
-            let meshes: Vec<(String, Mesh)> = sel.iter().map(|b| Ok((b.name.clone(), export_mesh(&b.body)?))).collect::<Result<_>>()?;
+        Format::StlBinary | Format::StlAscii => {
+            let meshes: Vec<Mesh> = sel.iter().map(|b| welded_export_mesh(&b.body)).collect::<Result<_>>()?;
             match format {
-                Format::StlBinary => stl_binary(&meshes.into_iter().map(|(_, m)| m).collect::<Vec<_>>(), name),
-                Format::StlAscii => stl_ascii(&meshes.into_iter().map(|(_, m)| m).collect::<Vec<_>>(), name).into_bytes(),
-                _ => obj(&meshes).into_bytes(),
+                Format::StlBinary => stl_binary(&meshes, name),
+                _ => stl_ascii(&meshes, name).into_bytes(),
             }
+        }
+        Format::Obj => {
+            let meshes: Vec<(String, Mesh)> = sel.iter().map(|b| Ok((b.name.clone(), export_mesh(&b.body)?))).collect::<Result<_>>()?;
+            obj(&meshes).into_bytes()
         }
         Format::Step => {
             let bs: Vec<solidcraft_kernel::ExportBody> =
@@ -317,7 +333,7 @@ pub fn export(state: &ModelState, bodies: &[String], format: Format, name: &str)
                 .iter()
                 .map(|b| {
                     let m = export_mesh(&b.body)?;
-                    let eps = (b.body.size() * 1e-6).max(1e-7);
+                    let eps = weld_eps(&b.body);
                     // Faces with colours of their own tag their triangles.
                     let paint = b.body.paint();
                     let mut looks = Vec::new();
@@ -587,6 +603,38 @@ mod tests {
         let mut fake = vec![0u8; 84];
         fake[80..84].copy_from_slice(&u32::MAX.to_le_bytes());
         assert!(read_stl(&fake).is_err());
+    }
+
+    /// Edges of an STL (vertices compared exactly, as written) not shared by exactly two
+    /// triangles.
+    fn stl_open_edges(bytes: &[u8]) -> usize {
+        let mut edges: std::collections::HashMap<([u32; 3], [u32; 3]), usize> = std::collections::HashMap::new();
+        for t in read_stl(bytes).unwrap() {
+            let v = t.map(|p| p.map(f32::to_bits));
+            for (a, b) in [(v[0], v[1]), (v[1], v[2]), (v[2], v[0])] {
+                *edges.entry((a.min(b), a.max(b))).or_default() += 1;
+            }
+        }
+        edges.values().filter(|n| **n != 2).count()
+    }
+
+    /// #784: where a fillet or a hole meets other faces, the faces are meshed apart and their
+    /// shared boundary vertices differ slightly; the STL is welded like the 3MF, so it is closed.
+    #[test]
+    fn stl_of_filleted_and_drilled_bodies_is_closed() {
+        use solidcraft_kernel::{BoolOp, boolean, box_solid, cylinder, fillet};
+        let filleted = fillet(&box_solid(Vec3::ZERO, Vec3::new(40.0, 30.0, 20.0)).unwrap(), &[Vec3::new(20.0, 0.0, 20.0)], 2.0).unwrap();
+        let rod = cylinder(Vec3::ZERO, Vec3::Z, 15.0, 20.0).unwrap();
+        let hole = cylinder(Vec3::new(0.0, 0.0, -1.0), Vec3::Z, 3.0, 22.0).unwrap();
+        let drilled = boolean(&rod, &hole, BoolOp::Cut).unwrap().unwrap();
+        for (name, body) in [("filleted box", &filleted), ("drilled cylinder", &drilled)] {
+            let bytes = stl_binary(&[welded_export_mesh(body).unwrap()], name);
+            assert_eq!(stl_open_edges(&bytes), 0, "{name}");
+            let want = solidcraft_kernel::measure(body).unwrap().volume;
+            assert!((stl_volume(&bytes) - want).abs() < 1e-3 * want, "{name}: {} vs {want}", stl_volume(&bytes));
+            let ascii = stl_ascii(&[welded_export_mesh(body).unwrap()], name);
+            assert_eq!(read_stl(ascii.as_bytes()).unwrap().len(), read_stl(&bytes).unwrap().len(), "{name}");
+        }
     }
 
     fn stl_volume(bytes: &[u8]) -> f64 {
