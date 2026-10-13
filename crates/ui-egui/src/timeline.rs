@@ -350,6 +350,7 @@ fn selection_actions(app: &mut SolveApp, ui: &mut egui::Ui, groups: &[solidcraft
                 if !selected_groups.is_empty() {
                     let _ = app.run("timeline.move_to_group", json!({"groups": selected_groups, "group": group}));
                 }
+                crate::context_menu::start_rename(app, crate::context_menu::RenameWhat::TimelineGroup(group), pos2(0.0, 0.0));
             }
             ui.close();
         }
@@ -501,6 +502,57 @@ fn visible_order(
     order
 }
 
+fn timeline_group_name(
+    app: &mut SolveApp,
+    ui: &mut egui::Ui,
+    group: &solidcraft_engine::doc::TimelineGroup,
+    rect: Rect,
+    offset: f32,
+    t: &Tokens,
+) -> bool {
+    let editing =
+        matches!(app.menu.rename.as_ref().map(|rename| &rename.what), Some(crate::context_menu::RenameWhat::TimelineGroup(id)) if *id == group.id);
+    if !editing {
+        ui.painter().text(
+            pos2(rect.left() + 40.0 + offset, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            &group.name,
+            egui::FontId::proportional(12.0),
+            t.text,
+        );
+        return false;
+    }
+
+    let Some(mut rename) = app.menu.rename.take() else { return false };
+    let left = rect.left() + 38.0 + offset;
+    let edit_rect = Rect::from_min_max(pos2(left, rect.top() + 1.0), pos2(rect.right() - 3.0, rect.bottom() - 1.0));
+    let edit_id = ui.id().with(("timeline_group_rename", group.id));
+    let response = ui.put(
+        edit_rect,
+        egui::TextEdit::singleline(&mut rename.text).id(edit_id).frame(egui::Frame::NONE).text_color(t.text).vertical_align(egui::Align::Center),
+    );
+    crate::scenario::publish_handle(&format!("timeline-folder-rename:{}", group.name), edit_rect.center());
+    if !rename.focused {
+        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
+            let end = rename.text.chars().count();
+            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(end))));
+            state.store(ui.ctx(), edit_id);
+        }
+        response.request_focus();
+        rename.focused = true;
+    }
+    let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
+    let commit = ui.input(|input| input.key_pressed(egui::Key::Enter)) || response.lost_focus();
+    if escape {
+        // Dropping the shared state cancels the edit and leaves the old name intact.
+    } else if commit {
+        crate::context_menu::commit_rename(app, &rename);
+    } else {
+        app.menu.rename = Some(rename);
+    }
+    true
+}
+
 fn vertical_group_row(
     app: &mut SolveApp,
     ui: &mut egui::Ui,
@@ -540,13 +592,7 @@ fn vertical_group_row(
     ui.painter().add(egui::Shape::convex_polygon(arrow, t.text_dim, Stroke::NONE));
     let icon = Rect::from_center_size(pos2(rect.left() + 27.5 + offset, rect.center().y), vec2(17.0, 17.0));
     icons::paint(ui.painter(), icon, "folder", t.icon, t.icon_fill, t.accent);
-    ui.painter().text(
-        pos2(rect.left() + 40.0 + offset, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        &group.name,
-        egui::FontId::proportional(12.0),
-        t.text,
-    );
+    let renaming = timeline_group_name(app, ui, group, rect, offset, &t);
     crate::scenario::publish_handle(&format!("timeline-folder:{}", group.name), rect.center());
     let fold_rect = Rect::from_min_max(pos2(rect.left() + offset, rect.top()), pos2(rect.left() + offset + 18.0, rect.bottom()));
     crate::scenario::publish_handle(&format!("timeline-folder-fold:{}", group.name), fold_rect.center());
@@ -557,17 +603,17 @@ fn vertical_group_row(
         } else {
             app.tree.collapsed.remove(&key);
         }
-    } else if response.clicked() {
+    } else if !renaming && response.clicked() {
         select_item(app, ui, TimelineItem::Group(group.id), order);
     }
-    if response.drag_started() {
+    if !renaming && response.drag_started() {
         if !app.tree.picked_timeline_groups.contains(&group.id) {
             select_only(app, TimelineItem::Group(group.id));
         }
         let origin_x = response.interact_pointer_pos().map_or(rect.center().x, |pointer| pointer.x);
         *drag = Some(Drag::Items(selected_drag_items(app, groups, origin_x)));
     }
-    if response.double_clicked() {
+    if !renaming && response.double_clicked() {
         crate::context_menu::start_rename(app, crate::context_menu::RenameWhat::TimelineGroup(group.id), rect.center());
     }
     if response.secondary_clicked() && !selected {
@@ -1300,6 +1346,33 @@ mod tests {
         harness.step(&json!({"click": {"handle": "timeline:Fixed"}})).unwrap();
         let after = handle_at("timeline:Fixed").unwrap();
         assert!((after.y - before.y).abs() < 0.5, "selection count shifted the row from {} to {}", before.y, after.y);
+    }
+
+    #[test]
+    fn new_folder_starts_inline_rename_with_its_name_selected() {
+        let mut harness = Harness::new();
+        harness.app.preferences.timeline_left = true;
+        harness.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "name": "Feature"})).unwrap();
+        harness.frames(4);
+
+        harness.step(&json!({"click": {"handle": "timeline:Feature"}})).unwrap();
+        harness.step(&json!({"widget": "1 selected"})).unwrap();
+        harness.step(&json!({"widget": "Add to New Folder"})).unwrap();
+        harness.frames(2);
+
+        let original = harness.app.session.doc.timeline_groups.first().unwrap().name.clone();
+        assert!(handle_at(&format!("timeline-folder-rename:{original}")).is_some(), "new folder did not show its inline name editor");
+        harness.step(&json!({"text": "Renamed"})).unwrap();
+        harness.step(&json!({"key": "Enter"})).unwrap();
+        assert_eq!(harness.app.session.doc.timeline_groups.first().map(|group| group.name.as_str()), Some("Renamed"));
+
+        let group = harness.app.session.doc.timeline_groups.first().unwrap().id;
+        crate::context_menu::start_rename(&mut harness.app, crate::context_menu::RenameWhat::TimelineGroup(group), pos2(0.0, 0.0));
+        harness.frames(2);
+        assert!(handle_at("timeline-folder-rename:Renamed").is_some(), "folder rename did not stay in the folder row");
+        harness.step(&json!({"text": "Again"})).unwrap();
+        harness.step(&json!({"key": "Enter"})).unwrap();
+        assert_eq!(harness.app.session.doc.timeline_groups.first().map(|group| group.name.as_str()), Some("Again"));
     }
 
     #[test]

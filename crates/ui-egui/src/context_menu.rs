@@ -185,7 +185,7 @@ pub struct Rename {
     pub what: RenameWhat,
     pub text: String,
     pub at: Pos2,
-    focused: bool,
+    pub(crate) focused: bool,
 }
 
 /// Radial slots, clockwise from the top.
@@ -1145,7 +1145,7 @@ pub fn start_rename(app: &mut SolveApp, what: RenameWhat, at: Pos2) {
     app.menu.rename = Some(Rename { what, text, at, focused: false });
 }
 
-fn commit_rename(app: &mut SolveApp, r: &Rename) {
+pub(crate) fn commit_rename(app: &mut SolveApp, r: &Rename) {
     let name = r.text.trim().to_string();
     if name.is_empty() {
         return;
@@ -1569,6 +1569,11 @@ pub fn list_row_lit(ui: &mut egui::Ui, item: &Item, lit: bool) -> Option<Item> {
 }
 
 fn show_rename(app: &mut SolveApp, ctx: &egui::Context) {
+    // Feature-history folders own their editor inside the row. Keep the shared rename state so
+    // automation and keyboard handling still use the same path, but do not draw the floating box.
+    if app.preferences.timeline_left && matches!(app.menu.rename.as_ref().map(|rename| &rename.what), Some(RenameWhat::TimelineGroup(_))) {
+        return;
+    }
     let Some(mut r) = app.menu.rename.take() else { return };
     let t = Tokens::get();
     let mut done: Option<bool> = None;
