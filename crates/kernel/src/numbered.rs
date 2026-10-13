@@ -6,7 +6,7 @@
 
 use std::collections::BTreeSet;
 
-use solvecraft_geom::{Loop2, Region2, Seg2};
+use solidcraft_geom::{Loop2, Region2, Seg2};
 
 /// The loops of `regions` in profile order: each region's outer loop, then its holes.
 pub(crate) fn profile_loops(regions: &[Region2]) -> impl Iterator<Item = &Loop2> {
@@ -121,6 +121,35 @@ impl NumberedLoop {
         while out.lp.segs.len() < n {
             let Some((k, _)) = out.lp.segs.iter().enumerate().max_by(|a, b| a.1.length().total_cmp(&b.1.length())) else { break };
             out.split_half(k);
+        }
+        out
+    }
+
+    /// Each run of lines that `joins` says continue one another as a single line, over what
+    /// they all ran over. (Adjacent profiles merged into one region keep a vertex where each
+    /// shared edge met the outline.)
+    pub(crate) fn merged_lines(&self, joins: impl Fn(&Seg2, &Seg2) -> bool) -> NumberedLoop {
+        let n = self.lp.segs.len();
+        let join = |i: usize, j: usize| match (self.lp.segs.get(i), self.lp.segs.get(j)) {
+            (Some(s @ Seg2::Line { .. }), Some(t @ Seg2::Line { .. })) => joins(s, t),
+            _ => false,
+        };
+        // Start where a run starts (a loop of nothing but one run stays as it is).
+        let Some(k) = (0..n).find(|&i| !join((i + n - 1) % n, i)) else { return self.clone() };
+        let mut out = NumberedLoop { lp: Loop2 { segs: Vec::new() }, from: Vec::new() };
+        for j in 0..n {
+            let i = (k + j) % n;
+            let (Some(s), from) = (self.lp.segs.get(i).copied(), self.numbers(i)) else { continue };
+            if j > 0
+                && join((i + n - 1) % n, i)
+                && let (Some(Seg2::Line { b, .. }), Some(prev)) = (out.lp.segs.last_mut(), out.from.last_mut())
+            {
+                *b = s.end();
+                *prev = union([prev.as_slice(), from]);
+                continue;
+            }
+            out.lp.segs.push(s);
+            out.from.push(from.to_vec());
         }
         out
     }

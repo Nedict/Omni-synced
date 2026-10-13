@@ -1,7 +1,9 @@
 //! Undo/redo, the timeline, deletion and selection.
 
+use std::collections::BTreeMap;
+
 use serde_json::{Value, json};
-use solvecraft_doc::{Feature, FeatureKind};
+use solidcraft_doc::{Feature, FeatureKind};
 
 use super::CommandSpec;
 use crate::params::{bad, bool_, num, str_, string_list};
@@ -22,7 +24,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("delete")
         .key("Delete")
         .params("features: [id or name] (a sketch takes its dependent features with it) → deleted: [ids]; failing?: [{feature, error}] (later features that worked and now fail)"),
-    CommandSpec::new("timeline.rename", "Rename", rename).params("feature: id|name, name"),
+    CommandSpec::new("timeline.rename", "Rename", rename).params("feature: id|name, name (references to it follow)"),
     CommandSpec::new("timeline.rollback", "Move Timeline Marker", rollback).params("position: number of features to keep active (omit = end)"),
     CommandSpec::new("timeline.roll_to", "Roll History Marker", rollback)
         .params("position: number of features to keep active (omit = end) | feature: id|name (the marker goes right after it)"),
@@ -96,7 +98,7 @@ fn restore_checkpoint(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn compute_all(s: &mut Session, _p: &Value) -> Result<Value> {
-    s.model = solvecraft_doc::Model::new();
+    s.model = solidcraft_doc::Model::new();
     s.refresh();
     let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
     Ok(json!({"features": s.model.results.len(), "errors": errors}))
@@ -163,14 +165,24 @@ fn rename(s: &mut Session, p: &Value) -> Result<Value> {
     let id = feature_id(s, p.get("feature"), cmd)?;
     let name =
         str_(p, "name").map(str::trim).filter(|n| !n.is_empty() && n.len() <= 128).ok_or_else(|| bad(cmd, "`name` must be 1…128 characters"))?;
+    let old = s.doc.feature(id).map(|f| f.name.clone()).ok_or_else(|| bad(cmd, "feature"))?;
     if s.doc.features.iter().any(|f| f.name == name && f.id != id) {
         return Err(bad(cmd, format!("another feature is called `{name}`")));
     }
     if s.doc.feature(id).is_some_and(|f| matches!(f.kind, FeatureKind::ConstructionPlane { .. })) {
         super::features::check_plane_name(name, cmd)?;
     }
-    if let Some(f) = s.doc_mut().feature_mut(id) {
+    if name == old {
+        return Ok(json!({"feature": id, "name": name}));
+    }
+    let names = BTreeMap::from([(old.clone(), name.to_string())]);
+    let sketches = BTreeMap::new();
+    let doc = s.doc_mut();
+    if let Some(f) = doc.feature_mut(id) {
         f.name = name.to_string();
+    }
+    for f in doc.features.iter_mut() {
+        f.kind.remap_refs(&sketches, &names);
     }
     Ok(json!({"feature": id, "name": name}))
 }
@@ -303,7 +315,7 @@ fn edit_feature(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "the feature type cannot change"));
     }
     if let FeatureKind::BodyTransfer { bodies, from, to, transform } = &nf.kind {
-        solvecraft_doc::validate_body_transfer(&s.doc, bodies, *from, *to, transform)?;
+        solidcraft_doc::validate_body_transfer(&s.doc, bodies, *from, *to, transform)?;
         nf.component = *to;
     }
     if let (FeatureKind::Sketch { sketch: a, .. }, FeatureKind::Sketch { sketch: b, .. }) = (&nf.kind, &f.kind)
@@ -319,8 +331,16 @@ fn edit_feature(s: &mut Session, p: &Value) -> Result<Value> {
         && a != b
     {
         let before = s.model.state_before(id);
-        nf.edge_refs = solvecraft_doc::edge_refs(&before, body, a);
-        nf.edge_names = solvecraft_doc::edge_names_for(&before, body, a);
+        nf.edge_refs = solidcraft_doc::edge_refs(&before, body, a);
+        nf.edge_names = solidcraft_doc::edge_names_for(&before, body, a);
+    }
+    // New or reordered flange edges: their names now, so each edge's own angle and height stay
+    // with the edge they were given for.
+    if let (FeatureKind::SheetFlange { edges: a, .. }, FeatureKind::SheetFlange { edges: b, .. }) = (&nf.kind, &f.kind) {
+        let points = |e: &[solidcraft_doc::FlangeEdge]| e.iter().map(|x| x.point).collect::<Vec<_>>();
+        if points(a) != points(b) {
+            nf.edge_names = solidcraft_doc::sheet::sheet_edge_names(&s.model.state_before(id), &points(a));
+        }
     }
     // Profiles picked by index or point are kept by their curves, as when the feature was made.
     if nf.kind.clone().profile_sels_mut() != f.kind.clone().profile_sels_mut() {
@@ -328,7 +348,7 @@ fn edit_feature(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // New face points: their faces' names now.
     if nf.kind.face_points() != f.kind.face_points() {
-        nf.face_names = solvecraft_doc::naming::face_names_at(&s.model.state_before(id), &nf.kind.face_points());
+        nf.face_names = solidcraft_doc::naming::face_names_at(&s.model.state_before(id), &nf.kind.face_points());
     }
     if let Some(slot) = s.doc_mut().feature_mut(id) {
         *slot = nf;
@@ -372,7 +392,7 @@ fn select_clear(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 /// Features that worked in `before` and fail in `after`: (name, error).
-fn newly_broken(before: &solvecraft_doc::Model, after: &solvecraft_doc::Model) -> Vec<(String, String)> {
+fn newly_broken(before: &solidcraft_doc::Model, after: &solidcraft_doc::Model) -> Vec<(String, String)> {
     after
         .results
         .iter()
@@ -398,7 +418,7 @@ fn reorder(s: &mut Session, p: &Value) -> Result<Value> {
     let name = f.name.clone();
     next.features.insert(to, f);
     // Everything that evaluated before must still evaluate.
-    let mut after = solvecraft_doc::Model::new();
+    let mut after = solidcraft_doc::Model::new();
     after.evaluate(&next);
     let broken = newly_broken(&s.model, &after);
     if !broken.is_empty() {
@@ -409,13 +429,13 @@ fn reorder(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"feature": id, "position": to}))
 }
 
-fn input_keys(kind: &FeatureKind) -> Vec<(String, solvecraft_doc::expr::Kind)> {
+fn input_keys(kind: &FeatureKind) -> Vec<(String, solidcraft_doc::expr::Kind)> {
     let mut keys: Vec<_> = kind.inputs().into_iter().map(|(label, _, unit)| (label.to_string(), unit)).collect();
     if let FeatureKind::Fillet { style, .. } = kind {
         if let Some((key, _)) = keys.first_mut() {
             *key = "fillet.radius".into();
         }
-        if let solvecraft_doc::FilletStyle::Variable { mid, .. } = style {
+        if let solidcraft_doc::FilletStyle::Variable { mid, .. } = style {
             for ((key, _), (position, _)) in keys.iter_mut().skip(2).zip(mid) {
                 *key = format!("fillet.mid.{}", position.to_bits());
             }
@@ -583,7 +603,7 @@ fn dependents(s: &mut Session, p: &Value) -> Result<Value> {
     let id = feature_id(s, p.get("feature"), cmd)?;
     let mut next = (*s.doc).clone();
     let gone = next.delete_feature(id)?;
-    let mut after = solvecraft_doc::Model::new();
+    let mut after = solidcraft_doc::Model::new();
     after.evaluate(&next);
     let names = |ids: &[u64]| -> Vec<String> { ids.iter().filter(|x| **x != id).filter_map(|x| s.doc.feature(*x).map(|f| f.name.clone())).collect() };
     let broken: Vec<String> = newly_broken(&s.model, &after).into_iter().map(|(n, _)| n).collect();

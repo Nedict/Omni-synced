@@ -4,7 +4,7 @@
 //! names again by sampling geometry could do.
 
 use serde_json::{Value, json};
-use solvecraft_geom::Vec3;
+use solidcraft_geom::Vec3;
 
 use crate::Session;
 
@@ -40,8 +40,8 @@ fn body_at(s: &Session, p: [f64; 3]) -> Option<String> {
 fn names(s: &Session, body: &str) -> Vec<(String, bool)> {
     let state = s.model.state();
     let b = state.body(body).unwrap_or_else(|| panic!("body {body}"));
-    let names = solvecraft_doc::naming::face_names(b);
-    names.iter().enumerate().map(|(i, n)| (n.clone(), solvecraft_doc::naming::face_name_exact(b, i))).collect()
+    let names = solidcraft_doc::naming::face_names(b);
+    names.iter().enumerate().map(|(i, n)| (n.clone(), solidcraft_doc::naming::face_name_exact(b, i))).collect()
 }
 
 /// A 40 x 30 x 10 block ("Block": sketch lines l1 bottom, l2 right, l3 top, l4 left).
@@ -230,7 +230,7 @@ fn a_name_of_a_body_without_history_is_found_by_geometry_and_says_so_once_it_mov
     run(&mut s, "solid.replace_face", json!({"faces": [[20, 15, 10]], "target": {"origin": [0, 0, 12], "normal": [0, 0, 1]}, "name": "Lift"}));
     let state = s.model.state();
     let body = state.bodies.first().unwrap();
-    assert!((0..solvecraft_doc::naming::face_names(body).len()).all(|i| !solvecraft_doc::naming::face_name_exact(body, i)));
+    assert!((0..solidcraft_doc::naming::face_names(body).len()).all(|i| !solidcraft_doc::naming::face_name_exact(body, i)));
     run(&mut s, "solid.fillet", json!({"edges": [[40, 15, 12]], "radius": 2, "name": "Round"}));
     // Where it was picked, the pick and the name agree: nothing to say.
     assert_eq!(warning(&s, "Round"), None);
@@ -263,7 +263,7 @@ fn a_sketch_on_a_certified_face_survives_a_fillet_and_a_cut_upstream_of_it() {
     assert!((top(&s) - 14.0).abs() < 1e-6);
     let state = s.model.state();
     let body = state.bodies.first().unwrap();
-    assert!((0..solvecraft_doc::naming::face_names(body).len()).all(|i| solvecraft_doc::naming::face_name_exact(body, i)));
+    assert!((0..solidcraft_doc::naming::face_names(body).len()).all(|i| solidcraft_doc::naming::face_name_exact(body, i)));
     change(&mut s, "h", "16 mm");
     for f in ["Corner", "Hole", "Top", "Peg"] {
         assert_eq!(error(&s, f), None, "{f}");

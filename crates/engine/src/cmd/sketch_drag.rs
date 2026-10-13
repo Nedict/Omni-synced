@@ -14,8 +14,8 @@
 
 use std::f64::consts::{PI, TAU};
 
-use solvecraft_geom::Vec2;
-use solvecraft_sketch::{Analysis, Budget, ConstraintKind, CurveKind, Hold, Sketch};
+use solidcraft_geom::Vec2;
+use solidcraft_sketch::{Analysis, Budget, ConstraintKind, CurveKind, Hold, Sketch};
 
 use super::{Ent, Left, counted_solve};
 

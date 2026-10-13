@@ -33,13 +33,13 @@ fn manual_projection_captures_the_requested_coincident_body_producer() {
         let sk = &state.sketch(id).unwrap().sketch;
         assert!(!sk.links[0].lost);
         assert_eq!(sk.links[0].face_name, Some(format!("F{producer}:+z")));
-        assert!(matches!(&sk.links[0].source,solvecraft_sketch::LinkSource::Face{body,at} if body=="Target" && (at.z-20.).abs()<1e-6));
+        assert!(matches!(&sk.links[0].source,solidcraft_sketch::LinkSource::Face{body,at} if body=="Target" && (at.z-20.).abs()<1e-6));
         assert!(sk.points.iter().any(|point| point.pos.x > 19.));
         assert!(sk.points.iter().any(|point| point.pos.y > 19.));
         assert!((session.world_state().body("Control").unwrap().mesh().bounds().max.z - 10.).abs() < 1e-6);
     };
     verify(&s);
-    verify(&Session::new(solvecraft_doc::Document::from_json(&s.doc.to_json()).unwrap()));
+    verify(&Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap()));
 }
 
 #[test]
@@ -48,19 +48,19 @@ fn initial_projection_retains_selected_face_when_closest_point_lands_on_shared_e
     run(&mut s, "solid.box", json!({"length":20,"width":20,"height":10,"body_name":"Target"}));
     let state = s.model.state();
     let body = state.body("Target").unwrap();
-    let source = solvecraft_sketch::LinkSource::Face { body: "Target".into(), at: solvecraft_geom::Vec3::new(-0.1, 5., 10.5) };
-    let resolved = solvecraft_doc::project::resolve(
+    let source = solidcraft_sketch::LinkSource::Face { body: "Target".into(), at: solidcraft_geom::Vec3::new(-0.1, 5., 10.5) };
+    let resolved = solidcraft_doc::project::resolve(
         &s.doc,
         &std::collections::BTreeMap::new(),
         &state,
-        &solvecraft_geom::Plane::XY,
-        solvecraft_sketch::LinkKind::Project,
+        &solidcraft_geom::Plane::XY,
+        solidcraft_sketch::LinkKind::Project,
         &source,
     )
     .unwrap();
     let index = resolved.face_index.unwrap();
-    let expected = solvecraft_doc::naming::face_names(body)[index].clone();
-    let solvecraft_sketch::LinkSource::Face { at, .. } = resolved.source else { panic!("not face") };
+    let expected = solidcraft_doc::naming::face_names(body)[index].clone();
+    let solidcraft_sketch::LinkSource::Face { at, .. } = resolved.source else { panic!("not face") };
     assert!(at.x.abs() < 1e-6 && (at.z - 10.).abs() < 1e-6, "closestpoint must be on shared top/wall edge: {at:?}");
     let plane = body.body.face_plane(index).unwrap();
     let id = run(&mut s, "sketch.create", json!({"plane":{"origin":plane.origin,"x_dir":plane.x,"y_dir":plane.y}}))["sketch"].as_u64().unwrap();
@@ -71,7 +71,7 @@ fn initial_projection_retains_selected_face_when_closest_point_lands_on_shared_e
     assert_eq!(sk.links[0].face_name, Some(expected));
     assert!(!sk.links[0].lost);
     assert_eq!(sk.curves.len(), 4);
-    let reopened = Session::new(solvecraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
     assert_eq!(reopened.model.state().sketch(id).unwrap().sketch.curves, sk.curves);
 }
 
@@ -83,7 +83,7 @@ fn box_part(s: &mut Session) {
     let l = ids(&r["curves"]);
     let sk = s.doc.sketch(s.active_sketch.unwrap()).unwrap();
     let start = match sk.curves[0].kind {
-        solvecraft_sketch::CurveKind::Line { a, .. } => sk.points[a].id.clone(),
+        solidcraft_sketch::CurveKind::Line { a, .. } => sk.points[a].id.clone(),
         _ => panic!(),
     };
     run(s, "sketch.constraint.coincident", json!({"a": start, "b": "origin"}));
@@ -446,7 +446,7 @@ fn sweeps_and_pipes_follow_3d_sketch_curves() {
     // A sweep of a square profile drawn square to the curve at its start.
     let (a, b) = (pts[0], pts[1]);
     let t = (b - a).normalized().unwrap();
-    let x = t.cross(solvecraft_geom::Vec3::Z).normalized().unwrap();
+    let x = t.cross(solidcraft_geom::Vec3::Z).normalized().unwrap();
     let y = t.cross(x);
     run(&mut s, "sketch.create", json!({"plane": {"origin": [a.x, a.y, a.z], "x_dir": [x.x, x.y, x.z], "y_dir": [y.x, y.y, y.z]}}));
     run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-1, -1], "p1": [1, 1]}));
@@ -488,11 +488,11 @@ fn project_and_include_from_other_bodies() {
     run(&mut s, "sketch.finish", json!({}));
     // Widen the second box: the projection follows (its far edge is at 70).
     run(&mut s, "parameters.change", json!({"name": "w", "expression": "20 mm"}));
-    let id = s.doc.features.iter().find(|f| matches!(f.kind, solvecraft_doc::FeatureKind::Sketch { .. })).unwrap().id;
+    let id = s.doc.features.iter().find(|f| matches!(f.kind, solidcraft_doc::FeatureKind::Sketch { .. })).unwrap().id;
     let si = run(&mut s, "sketch.inspect", json!({"sketch": id}));
     assert!(xs(&si).iter().any(|x| (x - 70.0).abs() < 1e-6), "{:?}", xs(&si));
     // Remove the cylinder: its silhouette and edge are lost, with a warning and no error.
-    let cyl = s.doc.features.iter().find(|f| matches!(f.kind, solvecraft_doc::FeatureKind::Cylinder { .. })).unwrap().id;
+    let cyl = s.doc.features.iter().find(|f| matches!(f.kind, solidcraft_doc::FeatureKind::Cylinder { .. })).unwrap().id;
     run(&mut s, "timeline.delete", json!({"feature": cyl}));
     let t = run(&mut s, "document.inspect", json!({}));
     let row = t["timeline"].as_array().unwrap().iter().find(|r| r["id"] == json!(id)).cloned().unwrap();

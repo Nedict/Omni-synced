@@ -4,9 +4,9 @@
 use std::f64::consts::TAU;
 
 use serde_json::{Value, json};
-use solvecraft_doc::ProfileSel;
-use solvecraft_geom::Vec2;
-use solvecraft_sketch::{ConstraintKind, Curve, CurveKind, Shape, Sketch, intersections};
+use solidcraft_doc::ProfileSel;
+use solidcraft_geom::Vec2;
+use solidcraft_sketch::{ConstraintKind, Curve, CurveKind, Shape, Sketch, intersections};
 
 use super::sketch::{add_c, edit, ids_of, solve_current};
 use super::{CommandSpec, in_sketch};
@@ -451,8 +451,8 @@ fn extend(s: &mut Session, p: &Value) -> Result<Value> {
         }
         pin(sk, end, oi)?;
         let before = sk.points.iter().map(|p| p.pos).collect::<Vec<_>>();
-        let hold = solvecraft_sketch::Hold { points: (0..sk.points.len()).filter(|i| *i != end).collect(), radii: (0..sk.curves.len()).collect() };
-        if !solvecraft_sketch::solve_with(sk, &hold, None, solvecraft_sketch::Analysis::Full, None).ok()
+        let hold = solidcraft_sketch::Hold { points: (0..sk.points.len()).filter(|i| *i != end).collect(), radii: (0..sk.curves.len()).collect() };
+        if !solidcraft_sketch::solve_with(sk, &hold, None, solidcraft_sketch::Analysis::Full, None).ok()
             || sk.point(end).is_none_or(|point| point.dist(q) > TOL)
             || sk.points.iter().enumerate().any(|(i, point)| i != end && point.pos.dist(before[i]) > TOL)
         {
@@ -602,7 +602,7 @@ fn fillet(s: &mut Session, p: &Value) -> Result<Value> {
         None => vec![p.clone()],
     };
     let (out, info) = edit(s, p, cmd, false, |sk, doc| {
-        let r = doc.eval(&r_expr, solvecraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("radius: {e}")))?;
+        let r = doc.eval(&r_expr, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("radius: {e}")))?;
         if !(r > 1e-9 && r < 1e8) {
             return Err(bad(cmd, "radius must be positive"));
         }
@@ -958,7 +958,7 @@ fn offset(s: &mut Session, p: &Value) -> Result<Value> {
             }
             let ci = sk.add_circle(cc, nr, Some(c), None)?;
             made.push(ci);
-            sk.offsets.push(solvecraft_sketch::OffsetChain {
+            sk.offsets.push(solidcraft_sketch::OffsetChain {
                 sources: vec![(ids[0].clone(), true)],
                 outputs: ids_of(sk, &made),
                 distance: r - nr,
@@ -1014,7 +1014,7 @@ fn offset(s: &mut Session, p: &Value) -> Result<Value> {
                 .map(|topology| topology.roles.clone())
                 .ok_or_else(|| bad(cmd, "new offset association is missing"))?;
             for (source, role) in sources.iter().zip(&roles) {
-                if role.kind == solvecraft_sketch::OffsetRoleKind::Line {
+                if role.kind == solidcraft_sketch::OffsetRoleKind::Line {
                     let a = sk.curve_index(&source.0).ok_or_else(|| bad(cmd, "offset source line vanished"))?;
                     let b = sk.curve_index(&role.output).ok_or_else(|| bad(cmd, "offset output line vanished"))?;
                     cons.push(add_c(sk, ConstraintKind::Parallel { a, b })?);
@@ -1106,7 +1106,7 @@ fn offset(s: &mut Session, p: &Value) -> Result<Value> {
         let outputs = ids_of(sk, &made);
         if pieces.iter().all(|p| !matches!(p, Piece::Free(_))) {
             let sources = order.iter().filter_map(|(i, forward)| sk.curves.get(*i).map(|c| (c.id.clone(), *forward))).collect();
-            sk.offsets.push(solvecraft_sketch::OffsetChain { sources, outputs: outputs.clone(), distance: d, closed, topology: None });
+            sk.offsets.push(solidcraft_sketch::OffsetChain { sources, outputs: outputs.clone(), distance: d, closed, topology: None });
             sk.refresh_offsets()?;
         }
         Ok((outputs, cons, None))
@@ -1172,7 +1172,7 @@ fn break_offset(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// A broken logical boundary becomes ordinary geometry. Keep downstream features
 /// on that exact current boundary while other associations retain their full roles.
-fn freeze_offset_profiles(doc: &mut solvecraft_doc::Document, sketch: u64, boundary: &Sketch, association: &str) -> Result<()> {
+fn freeze_offset_profiles(doc: &mut solidcraft_doc::Document, sketch: u64, boundary: &Sketch, association: &str) -> Result<()> {
     let cmd = "sketch.offset.break";
     let mut groups = std::collections::BTreeMap::new();
     let mut work = 0usize;

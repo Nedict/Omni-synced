@@ -14,7 +14,7 @@
 //! analysis runs only on what remains.
 
 use serde::{Deserialize, Serialize};
-use solvecraft_geom::{Seg2, Vec2};
+use solidcraft_geom::{Seg2, Vec2};
 
 use crate::decompose::Budget;
 use crate::linalg::{Mat, determined_vars, solve as lin_solve};
@@ -256,8 +256,8 @@ impl State<'_> {
                     return q.dist(p.first().copied().unwrap_or_default());
                 }
                 if *control {
-                    let k = (*degree as usize).min(solvecraft_geom::MAX_BEZIER_DEGREE).min(p.len().saturating_sub(1)).max(1);
-                    crate::curves::bspline_beziers(&p, k).iter().filter_map(|span| solvecraft_geom::bezier(span)).collect()
+                    let k = (*degree as usize).min(solidcraft_geom::MAX_BEZIER_DEGREE).min(p.len().saturating_sub(1)).max(1);
+                    crate::curves::bspline_beziers(&p, k).iter().filter_map(|span| solidcraft_geom::bezier(span)).collect()
                 } else {
                     crate::curves::fit_beziers_mode(&p, *periodic)
                         .unwrap_or_default()

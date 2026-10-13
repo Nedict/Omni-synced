@@ -21,6 +21,10 @@ constraint status and **Finish Sketch** button remain visible.
 
 ## Geometry
 
+**Point** is available directly on the default Sketch **CREATE** toolbar. Click it, then
+click in the sketch to place a point. Existing toolbar customizations are kept; use
+**Reset Toolbar** from the toolbar's context menu to restore the default buttons.
+
 Lines and polylines (L), rectangles (two-point R, three-point, centre), circles (centre C,
 two-point, three-point, tangent), arcs (three-point, centre, tangent), polygons, slots, ellipses,
 fit-point and control-point splines, conics, points and text. **Construction** (X) turns curves
@@ -34,6 +38,10 @@ faces, vertices or bodies, or axes and planes, then press P. The entire supporte
 is projected in one undo step. A rejected projection keeps the selection for correction;
 an empty or mixed selection starts the ordinary picking tool. External sketch selections
 retain their source sketch, even when the active sketch uses the same point or curve names.
+
+A sketch on a construction plane built from the model (through a sketch line, through three
+points, midway between two faces…) projects, intersects, includes and holds text like a sketch
+on any other plane, and its links follow when a parameter moves that plane.
 
 Run from a script or the control channel, every command that adds sketch geometry returns the
 ids of what it added (`created: {points, curves, constraints, dimensions}`). Ids are stable and

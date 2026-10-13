@@ -2,7 +2,7 @@
 //! which entity moves when a two-entity constraint is applied.
 
 use serde_json::{Value, json};
-use solvecraft_sketch::{DimFrame, Sketch, dim_frame, dim_layout};
+use solidcraft_sketch::{DimFrame, Sketch, dim_frame, dim_layout};
 
 use crate::Session;
 
@@ -53,7 +53,7 @@ fn every_dimension_kind_has_a_drawable_frame() {
     let mut kinds = Vec::new();
     for c in dims {
         let f = dim_frame(&sk, &c.kind).unwrap_or_else(|| panic!("no frame for {c:?}"));
-        let l = dim_layout(&f, None, 0.1, solvecraft_geom::Vec2::new(1.0, 0.5));
+        let l = dim_layout(&f, None, 0.1, solidcraft_geom::Vec2::new(1.0, 0.5));
         assert!(!l.lines.is_empty() && !l.arrows.is_empty(), "{c:?}");
         assert!(l.text.is_finite());
         kinds.push(std::mem::discriminant(&f));
@@ -80,10 +80,10 @@ fn dimension_text_is_stored_relative_to_the_dimension_and_follows_it() {
         let f = dim_frame(&sk, &c.kind).expect("frame");
         dim_layout(&f, c.text, 0.1, Default::default()).text
     };
-    assert!(text(&s).dist(solvecraft_geom::Vec2::new(20.0, -8.0)) < 1e-9);
+    assert!(text(&s).dist(solidcraft_geom::Vec2::new(20.0, -8.0)) < 1e-9);
     // Moved by the parameter name; then the line moves and the text goes with it.
     run(&mut s, "sketch.dimension_text", json!({"dimension": param, "at": [30, 12]}));
-    assert!(text(&s).dist(solvecraft_geom::Vec2::new(30.0, 12.0)) < 1e-9);
+    assert!(text(&s).dist(solidcraft_geom::Vec2::new(30.0, 12.0)) < 1e-9);
     run(&mut s, "sketch.move_point", json!({"point": "l1.start", "to": [0, 10]}));
     run(&mut s, "sketch.move_point", json!({"point": "l1.end", "to": [40, 10]}));
     // Still 10 along and 12 across from the middle of the (moved) line.
@@ -114,7 +114,7 @@ fn deleting_a_dimension_frees_its_parameter() {
 // ---------------------------------------------------------------------------------------------
 // Fix / Unfix
 
-fn pt(s: &Session, id: &str) -> solvecraft_geom::Vec2 {
+fn pt(s: &Session, id: &str) -> solidcraft_geom::Vec2 {
     let sk = sketch(s);
     sk.resolve_point(id).and_then(|i| sk.point(i)).unwrap_or_else(|| panic!("no point {id}"))
 }
@@ -163,7 +163,7 @@ fn fixing_curves_holds_their_points_and_radius() {
     assert!(si["curves"].as_array().is_some_and(|c| c.iter().all(|c| c["fixed"] == true)), "{si}");
     // A fixed circle keeps centre and radius; a dimension on it conflicts.
     run(&mut s, "sketch.move_point", json!({"point": "c1.center", "to": [0, 0]}));
-    assert_eq!(pt(&s, "c1.center"), solvecraft_geom::Vec2::new(10.0, 10.0));
+    assert_eq!(pt(&s, "c1.center"), solidcraft_geom::Vec2::new(10.0, 10.0));
     assert!(s.execute("sketch.dimension", &json!({"entities": ["c1"], "value": 20})).is_err());
     let r0 = sketch(&s).radius(0);
     assert_eq!(r0, Some(5.0));
@@ -272,7 +272,7 @@ fn projected_geometry_can_become_construction() {
 // Two-entity constraints: the first pick stays, the second moves
 
 /// Positions of an entity's points (and its radius).
-fn snap(s: &Session, id: &str) -> (Vec<solvecraft_geom::Vec2>, Option<f64>) {
+fn snap(s: &Session, id: &str) -> (Vec<solidcraft_geom::Vec2>, Option<f64>) {
     let sk = sketch(s);
     if let Some(i) = sk.curve_index(id) {
         let pts = sk.curves[i].kind.point_ids().into_iter().filter_map(|p| sk.point(p)).collect();
@@ -281,7 +281,7 @@ fn snap(s: &Session, id: &str) -> (Vec<solvecraft_geom::Vec2>, Option<f64>) {
     (vec![pt(s, id)], None)
 }
 
-fn same(a: &(Vec<solvecraft_geom::Vec2>, Option<f64>), b: &(Vec<solvecraft_geom::Vec2>, Option<f64>)) -> bool {
+fn same(a: &(Vec<solidcraft_geom::Vec2>, Option<f64>), b: &(Vec<solidcraft_geom::Vec2>, Option<f64>)) -> bool {
     a.0.len() == b.0.len() && a.0.iter().zip(&b.0).all(|(p, q)| p.dist(*q) < 1e-9) && a.1.zip(b.1).is_none_or(|(x, y)| (x - y).abs() < 1e-9)
 }
 
@@ -413,7 +413,7 @@ fn point_constraints_keep_the_first_pick() {
     let (a0, l0) = (snap(&s, "p1"), snap(&s, "l1"));
     run(&mut s, "sketch.constraint.symmetry", json!({"a": "p1", "b": "p2", "line": "l1"}));
     assert!(same(&snap(&s, "p1"), &a0) && same(&snap(&s, "l1"), &l0));
-    assert!(pt(&s, "p2").dist(solvecraft_geom::Vec2::new(3.0, -7.0)) < 1e-6, "{:?}", pt(&s, "p2"));
+    assert!(pt(&s, "p2").dist(solidcraft_geom::Vec2::new(3.0, -7.0)) < 1e-6, "{:?}", pt(&s, "p2"));
 }
 
 #[test]
@@ -468,7 +468,7 @@ fn palette_options_are_kept_with_each_sketch() {
     let first = s.active_sketch.expect("sketch");
     run(&mut s, "sketch.finish", json!({}));
     run(&mut s, "sketch.create", json!({"plane": "XZ"}));
-    assert_eq!(sketch(&s).view, solvecraft_sketch::SketchView::default());
+    assert_eq!(sketch(&s).view, solidcraft_sketch::SketchView::default());
     let o = run(&mut s, "sketch.options", json!({"sketch": first}));
     assert_eq!(o["options"]["show_dimensions"], false);
     // Saved with the design.
@@ -489,8 +489,8 @@ fn drag(s: &mut Session, e: &str, from: [f64; 2], to: [f64; 2]) {
     run(s, "sketch.drag", json!({"entity": e, "from": from, "to": to}));
 }
 
-fn v(x: f64, y: f64) -> solvecraft_geom::Vec2 {
-    solvecraft_geom::Vec2::new(x, y)
+fn v(x: f64, y: f64) -> solidcraft_geom::Vec2 {
+    solidcraft_geom::Vec2::new(x, y)
 }
 
 #[test]
@@ -610,7 +610,7 @@ fn arm_drags(links: Links) -> (usize, usize) {
         let v3 = v2 + v(b * (th1 + bend).cos(), b * (th1 + bend).sin());
         let (tr, tt) = (lo + rnd() * (hi - lo), rnd() * TAU);
         let to = o + v(tr * tt.cos(), tr * tt.sin());
-        let clear = |p: solvecraft_geom::Vec2| (lo..=hi).contains(&p.dist(o));
+        let clear = |p: solidcraft_geom::Vec2| (lo..=hi).contains(&p.dist(o));
         if !(0..=100).all(|i| clear(v3 + (to - v3) * (i as f64 / 100.0))) {
             continue;
         }
@@ -697,13 +697,13 @@ fn hanging_triangle_flips(n: usize) -> usize {
         let v3 = v2 + v(b * (th1 + bend).cos(), b * (th1 + bend).sin());
         let (tr, tt) = (lo + rnd() * (hi - lo), rnd() * TAU);
         let to = o + v(tr * tt.cos(), tr * tt.sin());
-        let clear = |p: solvecraft_geom::Vec2| (lo..=hi).contains(&p.dist(o));
+        let clear = |p: solidcraft_geom::Vec2| (lo..=hi).contains(&p.dist(o));
         if !(0..=100).all(|i| clear(v3 + (to - v3) * (i as f64 / 100.0))) {
             continue;
         }
         kept += 1;
         let turn = rnd() * TAU;
-        let u = solvecraft_geom::Vec2::from_angle(turn);
+        let u = solidcraft_geom::Vec2::from_angle(turn);
         let normal = u.perp() * if rnd() < 0.5 { 1.0 } else { -1.0 };
         let (tq, tr) = (v3 + u * 3.9, v3 + u * 1.95 + normal * (4.0f64 - 1.95 * 1.95).sqrt());
         {
@@ -821,7 +821,7 @@ fn the_step_cap_leaves_the_plan_and_is_restored() {
 /// Stored (counter-clockwise) sweep of an arc, degrees in [0, 360).
 fn sweep_deg(s: &Session, arc: &str) -> f64 {
     let sk = sketch(s);
-    let Some(solvecraft_sketch::CurveKind::Arc { c, a, b }) = sk.curve_index(arc).map(|i| sk.curves[i].kind.clone()) else { panic!("no arc {arc}") };
+    let Some(solidcraft_sketch::CurveKind::Arc { c, a, b }) = sk.curve_index(arc).map(|i| sk.curves[i].kind.clone()) else { panic!("no arc {arc}") };
     let (c, a, b) = (sk.points[c].pos, sk.points[a].pos, sk.points[b].pos);
     ((b - c).angle() - (a - c).angle()).rem_euclid(std::f64::consts::TAU).to_degrees()
 }
@@ -893,11 +893,11 @@ fn a_dragged_fillet_stays_in_its_corner() {
         run(&mut s, "sketch.constraint.fix", json!({"entities": ["l1.start"]}));
         run(&mut s, "sketch.constraint.horizontal_vertical", json!({"line": "l1", "mode": "horizontal"}));
         let sk0 = sketch(&s);
-        let arc = sk0.curves.iter().position(|c| matches!(c.kind, solvecraft_sketch::CurveKind::Arc { .. })).expect("fillet arc");
+        let arc = sk0.curves.iter().position(|c| matches!(c.kind, solidcraft_sketch::CurveKind::Arc { .. })).expect("fillet arc");
         let arc_id = sk0.curves[arc].id.clone();
         let inside = |s: &Session| {
             let sk = sketch(s);
-            let side = |p: solvecraft_geom::Vec2, a: solvecraft_geom::Vec2, b: solvecraft_geom::Vec2| (b - a).cross(p - a).signum();
+            let side = |p: solidcraft_geom::Vec2, a: solidcraft_geom::Vec2, b: solidcraft_geom::Vec2| (b - a).cross(p - a).signum();
             let c = sk.center(arc).expect("centre");
             let (p0, k1, k2, p3) = (pt(s, "l1.start"), pt(s, "l1.end"), pt(s, "l2.start"), pt(s, "l2.end"));
             let r = sk.radius(arc).unwrap_or(0.0);
@@ -1029,7 +1029,7 @@ fn the_drag_step_counts_every_held_size_but_the_dragged_length() {
     run(&mut s, "sketch.line", json!({"points": [[100, 100], [100, 110]], "ids": ["la"]}));
     run(&mut s, "sketch.line", json!({"points": [[100.05, 120], [110, 120]], "ids": ["lb"], "connect": false}));
     run(&mut s, "sketch.dimension", json!({"entities": ["la.start", "lb.start"], "type": "horizontal", "value": 0.05}));
-    assert!(sketch(&s).constraints.iter().any(|c| matches!(c.kind, solvecraft_sketch::ConstraintKind::DistanceX { .. })));
+    assert!(sketch(&s).constraints.iter().any(|c| matches!(c.kind, solidcraft_sketch::ConstraintKind::DistanceX { .. })));
     let steps = drag_steps(&s, "la.start", [100.0, 100.0], [101.0, 100.0]);
     drag(&mut s, "la.start", [100.0, 100.0], [101.0, 100.0]);
     let (a, b) = (pt(&s, "la.start"), pt(&s, "lb.start"));
@@ -1047,7 +1047,7 @@ fn a_circle_centred_on_a_dragged_end_does_not_set_the_step() {
     run(&mut s, "sketch.constraint.fix", json!({"entities": ["la.start"]}));
     run(&mut s, "sketch.dimension", json!({"entities": ["la"], "value": 20}));
     run(&mut s, "sketch.circle.center", json!({"center": [120, 100], "radius": 0.01}));
-    assert!(sketch(&s).constraints.iter().any(|c| matches!(c.kind, solvecraft_sketch::ConstraintKind::Coincident { .. })));
+    assert!(sketch(&s).constraints.iter().any(|c| matches!(c.kind, solidcraft_sketch::ConstraintKind::Coincident { .. })));
     let steps = drag_steps(&s, "la.end", [120.0, 100.0], [120.0, 101.0]);
     eprintln!("1 mm drag next to a 0.01 mm circle on the end: {steps} steps");
     assert_eq!(steps, 1);
@@ -1208,8 +1208,8 @@ fn three_d_curves_need_the_option_and_move_joined() {
     let sk = sketch(&s);
     let w = &sk.wires[sk.wire_index(&sid).expect("spline")];
     assert!(w.pts.len() > 10);
-    assert!(w.pts.first().expect("p").dist(solvecraft_geom::Vec3::new(10.0, 0.0, 10.0)) < 1e-12);
-    assert!(w.pts.last().expect("p").dist(solvecraft_geom::Vec3::new(20.0, 0.0, 20.0)) < 1e-12);
+    assert!(w.pts.first().expect("p").dist(solidcraft_geom::Vec3::new(10.0, 0.0, 10.0)) < 1e-12);
+    assert!(w.pts.last().expect("p").dist(solidcraft_geom::Vec3::new(20.0, 0.0, 20.0)) < 1e-12);
     // The shared corner moves for both lines (and the spline that starts there).
     let r = run(&mut s, "sketch.move3d", json!({"wire": ids[1], "index": 1, "by": [0, 0, 5]}));
     assert_eq!(r["moved"], 2);
@@ -1253,7 +1253,7 @@ fn pipe_and_sweep_follow_3d_sketch_curves() {
 /// past that above or below them the horizontal distance, beside them the vertical one (#257).
 #[test]
 fn auto_dimension_orientation_follows_where_its_text_is_placed() {
-    use solvecraft_sketch::ConstraintKind;
+    use solidcraft_sketch::ConstraintKind;
     // The ends of a 30 × 40 line: 50 long, and the slope keeps "across" and "past" distinct.
     let dimension = |end: [f64; 2], entities: Value, extra: Value| {
         let mut s = new_sketch();
@@ -1331,7 +1331,7 @@ fn hung_elbow_side(s: &Session) -> f64 {
 }
 
 /// The hand of `hung_arm` swung by `angle` about the shoulder.
-fn hung_hand_target(s: &Session, angle: f64, scale: f64) -> solvecraft_geom::Vec2 {
+fn hung_hand_target(s: &Session, angle: f64, scale: f64) -> solidcraft_geom::Vec2 {
     let (b, h) = (pt(s, "ab.end"), pt(s, "eh.end"));
     let r = h - b;
     let (c, si) = (angle.cos(), angle.sin());

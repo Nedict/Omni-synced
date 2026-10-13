@@ -2,7 +2,7 @@
 //! 40 × 30 × 20 box at the origin, a cylinder, a sphere and a torus.
 
 use serde_json::{Value, json};
-use solvecraft_geom::{Plane, Vec3};
+use solidcraft_geom::{Plane, Vec3};
 
 use crate::Session;
 use crate::view::{construction_axes, construction_planes, construction_points};
@@ -236,7 +236,7 @@ fn construction_on_a_3d_wire_ignores_its_sketch_plane_and_follows_edits() {
     let updated = plane(&s, "BridgePlane");
     assert!(near(updated.origin, Vec3::new(30.0, 27.5, 25.0)), "{updated:?}");
     assert!(parallel(updated.normal(), Vec3::new(40.0, 15.0, 30.0)));
-    let restored = solvecraft_doc::format::read(&s.doc.to_json()).unwrap();
+    let restored = solidcraft_doc::format::read(&s.doc.to_json()).unwrap();
     let mut cold = Session { doc: restored.into(), ..Default::default() };
     cold.refresh();
     assert!(near(plane(&cold, "BridgePlane").origin, updated.origin));
@@ -349,7 +349,7 @@ fn ambiguous_plane_aliases_refuse_without_document_or_history_changes() {
         let cut = run(&mut s, "inspect.section", json!({"plane":id}));
         assert_eq!(cut["section"]["origin"], json!([0.0, 0.0, 19.05]));
         run(&mut s, "parameters.change", json!({"name":"height","expression":"25.4 mm"}));
-        let mut reopened = Session::new(solvecraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        let mut reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
         let old = run(&mut reopened, "sketch.inspect", json!({"sketch":"Sketch1"}));
         assert_eq!(old["plane"]["origin"], json!([0.0, 0.0, 0.0]), "saved origin reference is not reinterpreted");
         let linked = run(&mut reopened, "sketch.inspect", json!({"sketch":"Sketch2"}));
@@ -380,7 +380,7 @@ fn disambiguated_top_plane_pocket_survives_undo_and_cold_reopen() {
     assert_eq!(s.doc.to_json(), before);
     run(&mut s, "edit.redo", json!({}));
     assert_eq!(s.doc.to_json(), saved);
-    let mut reopened = Session::new(solvecraft_doc::Document::from_json(&saved).unwrap());
+    let mut reopened = Session::new(solidcraft_doc::Document::from_json(&saved).unwrap());
     let measured = run(&mut reopened, "inspect.measure", json!({}));
     assert!((measured["total"]["volume_mm3"].as_f64().unwrap() - expected).abs() < 1e-6, "{measured}");
 }

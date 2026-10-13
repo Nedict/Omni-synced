@@ -6,13 +6,13 @@ kernel, and a desktop UI that agents can drive. Projects published by
 [storytold](https://github.com/storytold) can serve as references for implementation conventions.
 Any code adapted from other projects (MIT OR Apache-2.0) is noted in ATTRIBUTION.md.
 
-## Product name and compatibility
-SolidCraft is the displayed product name; `solidcraft` is the repository name. Keep existing
-`solvecraft` crate/binary names, `.solvecraft` files, format markers, environment variables,
-settings/recovery paths and package IDs compatible. Published SolveCraft release artifacts
-and attribution records keep their historical names. Public docs/web/Flatpak deployments
-use project Pages `/solidcraft/`; do not add permanent old-name Pages aliases. See README's
-compatibility notes.
+## Product name
+SolidCraft everywhere: crates `solidcraft-*`, binaries `solidcraft` and `solidcraft-cli`,
+`.solidcraft` designs, the `solidcraft/N` format tag, `SOLIDCRAFT_*` environment variables,
+settings and recovery folders, the MCP server name, docs, CI and packaging. The old name
+survives only in the explicit compatibility shims listed in `docs/compatibility.md`; don't add
+new uses of it anywhere else. Public docs/web/Flatpak deployments use project Pages
+`/solidcraft/`; do not add permanent old-name Pages aliases.
 
 ## Start every session here
 1. Read `plan/STATUS.md` (current milestone, next task), then the task in `plan/execution-plan.md`
@@ -33,10 +33,15 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
 - **Input-derived numbers are hostile** (command parameters, design files, control-channel
   input): `get()` not `[i]`, finite checks, caps on sizes and loop counts.
 - **Third-party kernel calls are guarded:** everything that calls `truck` goes through
-  `solvecraft_kernel::guard`, which turns a panic into `KernelError::Internal`.
+  `solidcraft_kernel::guard`, which turns a panic into `KernelError::Internal`.
 - **Last-resort guard:** `Session::execute` runs every command under `catch_unwind`; an escaped
   panic restores the design and reports `EngineError::Internal`.
-- **Prove it:** every crash fix lands with a regression test (see `hostile_params_never_panic`).
+- **Crash reports:** the desktop app writes every panic and every unclean exit to a local crash folder,
+  with the design and the commands that reproduce it (`solidcraft_engine::crash`, docs/crash-reports.md).
+  When someone says the app crashed, look there first: `solidcraft-cli crashes`, `crashes show <id>`,
+  `crashes replay <id>` (or the `diagnostics.crash_reports` command / MCP `crash_reports` tool).
+- **Prove it:** every crash fix lands with a regression test (see `hostile_params_never_panic`); a
+  crash report's `design.solidcraft` + `replay.json` is the test's starting point.
 - Every production crate root carries
   `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]`.
 
@@ -92,20 +97,20 @@ version bumps solely from commit prefixes, overwrite published versions, or push
 before the draft is verified.
 
 ## Running and looking at the app
-- `cargo run --release -p solvecraft -- --sample --control PORT` (sample design + control channel).
+- `cargo run --release -p solidcraft -- --sample --control PORT` (sample design + control channel).
   Pick a free port. Without a display, run it under `Xvfb :99` with `DISPLAY=:99`.
 - Drive it with JSON lines on `127.0.0.1:PORT` (see `docs/control-protocol.md`):
   - `{"id":1,"method":"engine.execute","params":{"command":"solid.extrude","params":{"distance":20}}}`
   - `{"id":2,"method":"ui.start","params":{"command":"sketch.create"}}` then `ui.click {x, y}`
   - `{"id":3,"method":"ui.screenshot","params":{"path":"/tmp/shot.png"}}` then read the PNG.
 - **For UI work, look at the result** (screenshot, read the PNG). Without a window use
-  `ui.render` or `solvecraft-cli snapshot`.
-- Headless: `solvecraft-cli run script.json --out part.step`, `solvecraft-cli eval design.solvecraft`,
-  `solvecraft-cli snapshot script.json --out shot.png`, `solvecraft-cli commands`.
+  `ui.render` or `solidcraft-cli snapshot`.
+- Headless: `solidcraft-cli run script.json --out part.step`, `solidcraft-cli eval design.solidcraft`,
+  `solidcraft-cli snapshot script.json --out shot.png`, `solidcraft-cli commands`.
 - Reference tests: `cargo xtask oracle` replays `tests/oracle/*/recipe.json` and compares with
   each case's `expected.json` (analytic or FreeCAD values; writes `docs/oracle.md`). Expected
   values never come from a commercial CAD product.
-- Build with `CARGO_TARGET_DIR=<repo>/target`. Windows: `cargo xwin build --release --target x86_64-pc-windows-msvc -p solvecraft`.
+- Build with `CARGO_TARGET_DIR=<repo>/target`. Windows: `cargo xwin build --release --target x86_64-pc-windows-msvc -p solidcraft`.
 
 ## Roadmap
 `ROADMAP.md` (committed) tracks status, milestones and estimates. Update it whenever a

@@ -35,7 +35,7 @@ The desktop host tries system CJK fonts across Windows, macOS and Linux, as well
 in native desktop distribution packages; native builds rely entirely on existing operating system fonts
 or craft-fonts.
 
-In the browser, `solvecraft-web` bundles a self-hosted Japanese font (`BIZUDPGothic-Regular.ttf`, licensed
+In the browser, `solidcraft-web` bundles a self-hosted Japanese font (`BIZUDPGothic-Regular.ttf`, licensed
 under SIL OFL 1.1) within the web distribution artifacts only. The font is loaded asynchronously from the same
 origin (`./fonts/BIZUDPGothic-Regular.ttf`) on-demand when the interface language is set to Japanese, without
 contacting any external CDNs or third-party servers. For users with an English interface, no font download

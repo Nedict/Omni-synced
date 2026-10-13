@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, OnceLock};
 
-use solvecraft_kernel::history::{FaceOrigin, FaceProv, History};
+use solidcraft_kernel::history::{FaceOrigin, FaceProv, History};
 
 use crate::ModelBody;
 use crate::lineage::{Lineage, Operand};

@@ -1,8 +1,8 @@
 # Vendored third-party crates
 
-Copies of third-party crates that SolveCraft builds with local fixes, wired in with
+Copies of third-party crates that SolidCraft builds with local fixes, wired in with
 `[patch.crates-io]` in the workspace `Cargo.toml`. They keep their own licence; changed lines
-are marked `SolveCraft:` in the source.
+are marked `SolidCraft:` in the source.
 
 ## truck-shapeops 0.4.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/truck)
 
@@ -31,7 +31,7 @@ Changes:
 
 ## truck-stepio 0.3.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/truck)
 
-Only the writer (`out`) is used; SolveCraft reads STEP with its own reader.
+Only the writer (`out`) is used; SolidCraft reads STEP with its own reader.
 
 Changes:
 - `out/geometry.rs`: an `INTERSECTION_CURVE`'s second surface was written at the first
@@ -62,6 +62,16 @@ Changes:
   point that does not evaluate counts as flat instead of recursing). Surface grids refine only
   the direction that bends, and a ruling left undivided gets cells comparable to the other
   direction (long triangles from a trim loop to the grid's far ends cut through cylinders).
+- `tessellation/mod.rs`, `tessellation/triangulation.rs`, for display: a `Deflection` is the
+  chord tolerance plus an optional bound on the angle one facet spans, and
+  `RoundMeshableShape::robust_triangulation_within` divides by it: an edge or a grid direction
+  within the chord tolerance is still halved while a piece turns more than the angle, until its
+  sag is under a floor (a radius that is small beside the tolerance was one flat facet).
+  Bounded work: a face that would be bounded by more than 4096 segments has its curved edges
+  divided at twice the angle, and again, down to the chord tolerance alone, and the angle
+  stops refining a face's grid at 16 384 points. Each edge is still divided once for both its
+  faces. `triangulation` and `robust_triangulation` divide by the chord tolerance alone, as
+  before.
 - `lib.rs`: compiler warnings no longer fail the build. Example, test and bench targets are
   dropped (their sources are not vendored).
 

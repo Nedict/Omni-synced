@@ -13,7 +13,7 @@ fn replay(script: &str) -> Session {
 }
 
 fn volume(s: &Session, body: &str) -> f64 {
-    s.model.state().body(body).map(|b| solvecraft_kernel::measure(&b.body).unwrap().volume).unwrap_or(0.0)
+    s.model.state().body(body).map(|b| solidcraft_kernel::measure(&b.body).unwrap().volume).unwrap_or(0.0)
 }
 
 /// Slab less a 557.68 × 100 × 120 pocket and the loft below its floor (556.68 × 99 down 4 mm to

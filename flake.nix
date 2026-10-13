@@ -25,8 +25,8 @@
       # that is the driver stack the compositor runs on. Verified on an Intel LNL iGPU under
       # Wayland: wgpu picks the GL backend through this loader and draws.
       # The X11 libraries are the ones the app actually uses on a Wayland desktop: with `DISPLAY`
-      # set and `SOLVECRAFT_WAYLAND` unset, winit runs through XWayland (file drag and drop exists
-      # only there). The Wayland ones are for `SOLVECRAFT_WAYLAND=1`, and both are needed under
+      # set and `SOLIDCRAFT_WAYLAND` unset, winit runs through XWayland (file drag and drop exists
+      # only there). The Wayland ones are for `SOLIDCRAFT_WAYLAND=1`, and both are needed under
       # `xvfb-run` on a machine with no display at all.
       runtimeLibs =
         pkgs:
@@ -63,8 +63,8 @@
             echo "SolidCraft: ${driverLibDir pkgs} is missing — on NixOS enable hardware.graphics; on other distributions use a matching nixGL driver wrapper." >&2
           fi
         ''}
-        command -v cc >/dev/null || echo "solvecraft: no C linker on PATH, cargo cannot link — use nix develop .#rust" >&2
-        echo "solvecraft: cargo run --release -p solvecraft -- --sample"
+        command -v cc >/dev/null || echo "solidcraft: no C linker on PATH, cargo cannot link — use nix develop .#rust" >&2
+        echo "solidcraft: cargo run --release -p solidcraft -- --sample"
         ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
           export XDG_DATA_DIRS="${driverShareDir pkgs}:''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
         ''}
@@ -97,7 +97,7 @@
           CARGO_TARGET_DIR = "target/nix";
           shellHook = ''
             ${shellHook pkgs}
-            echo "solvecraft: $(rustc --version), building into target/nix"
+            echo "solidcraft: $(rustc --version), building into target/nix"
           '';
         };
       });
@@ -116,15 +116,15 @@
           # The CLI draws the same packaging icons as the other Linux distributions.
           cargoBuildFlags = [
             "-p"
-            "solvecraft"
+            "solidcraft"
             "-p"
-            "solvecraft-cli"
+            "solidcraft-cli"
           ];
           cargoInstallFlags = [
             "-p"
-            "solvecraft"
+            "solidcraft"
             "-p"
-            "solvecraft-cli"
+            "solidcraft-cli"
           ];
           # `cargo xtask ci` is the test gate (it wants a wasm target and a GPU); the sandbox has
           # neither.
@@ -134,7 +134,6 @@
           buildInputs = runtimeLibs pkgs;
 
           postInstall = ''
-            ln -s solvecraft $out/bin/solidcraft
             ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
               install -Dm644 packaging/linux/ai.storyteller.solvecraft.desktop \
                 $out/share/applications/ai.storyteller.solvecraft.desktop
@@ -143,7 +142,7 @@
               for size in 16 24 32 48 64 128 256 512; do
                 icon=$out/share/icons/hicolor/''${size}x''${size}/apps/ai.storyteller.solvecraft.png
                 mkdir -p "$(dirname "$icon")"
-                $out/bin/solvecraft-cli icon --size "$size" --out "$icon" >/dev/null
+                $out/bin/solidcraft-cli icon --size "$size" --out "$icon" >/dev/null
               done
             ''}
           '';
@@ -151,7 +150,7 @@
           # Linux only: the app reaches the window through dlopen'd libraries, so the packaged
           # binary needs the same LD_LIBRARY_PATH the shell exports. macOS needs no wrapper.
           postFixup = pkgs.lib.optionalString pkgs.stdenv.isLinux ''
-            wrapProgram $out/bin/solvecraft \
+            wrapProgram $out/bin/solidcraft \
               --prefix LD_LIBRARY_PATH : "${libraryPath pkgs}" \
               --set-default XDG_DATA_DIRS /usr/local/share:/usr/share \
               --prefix XDG_DATA_DIRS : "$out/share:${driverShareDir pkgs}"
@@ -175,8 +174,7 @@
       in {
         default = desktop;
         solidcraft = desktop;
-        solvecraft = { type = "app"; program = "${package}/bin/solvecraft"; };
-        cli = { type = "app"; program = "${package}/bin/solvecraft-cli"; };
+        cli = { type = "app"; program = "${package}/bin/solidcraft-cli"; };
       });
     };
 }

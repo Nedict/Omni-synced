@@ -3,7 +3,7 @@
 //! They are reference geometry: drawn and usable as paths, not part of profiles or the solver.
 
 use serde::{Deserialize, Serialize};
-use solvecraft_geom::Vec3;
+use solidcraft_geom::Vec3;
 
 use crate::link::{Link, LinkGeom, LinkKind, LinkSource};
 use crate::model::{Result, Sketch, SketchError, in_range3};

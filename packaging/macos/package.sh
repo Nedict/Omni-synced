@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build and package SolidCraft for macOS:
 #
-#   $DIST/solvecraft-<version>-macos-<arch>.dmg        SolidCraft.app on a drag-to-Applications DMG
-#   $DIST/solvecraft-cli-<version>-macos-<arch>.zip    the headless CLI with the licence files
+#   $DIST/solidcraft-<version>-macos-<arch>.dmg        SolidCraft.app on a drag-to-Applications DMG
+#   $DIST/solidcraft-cli-<version>-macos-<arch>.zip    the headless CLI (and its solvecraft-cli
+#                                                      compatibility alias) with the licence files
 #
 # Usage: packaging/macos/package.sh [--arch universal|aarch64|x86_64] [--skip-build]
 #
@@ -12,6 +13,9 @@ set -euo pipefail
 # shellcheck source=../env.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
 HERE="$ROOT/packaging/macos"
+# macOS has no Flatpak-style update channel keyed by this id, so it follows the new name
+# (the Linux reverse-DNS APP_ID stays as a compatibility shim; docs/compatibility.md).
+MACOS_BUNDLE_ID=ai.storyteller.solidcraft
 
 ARCH=universal
 SKIP_BUILD=0
@@ -35,19 +39,19 @@ export MACOSX_DEPLOYMENT_TARGET=11.0
 SHORT_VERSION="${VERSION%%-*}"
 WORK="$CARGO_TARGET_DIR/macos-package"
 APP="$WORK/SolidCraft.app"
-DMG="$DIST/solvecraft-$VERSION-macos-$ARCH.dmg"
-CLI_ZIP="$DIST/solvecraft-cli-$VERSION-macos-$ARCH.zip"
+DMG="$DIST/solidcraft-$VERSION-macos-$ARCH.dmg"
+CLI_ZIP="$DIST/solidcraft-cli-$VERSION-macos-$ARCH.zip"
 
 echo "==> SolidCraft $VERSION for macOS ($ARCH)"
 if [ "$SKIP_BUILD" = 0 ]; then
   args=()
   for t in "${TARGETS[@]}"; do args+=(--target "$t"); done
-  (cd "$ROOT" && cargo build --release --locked -p solvecraft -p solvecraft-cli "${args[@]}")
+  (cd "$ROOT" && cargo build --release --locked -p solidcraft -p solidcraft-cli "${args[@]}")
 fi
 
 rm -rf "$WORK"
 mkdir -p "$WORK/bin"
-for bin in solvecraft solvecraft-cli; do
+for bin in solidcraft solidcraft-cli solvecraft-cli; do
   inputs=()
   for t in "${TARGETS[@]}"; do inputs+=("$CARGO_TARGET_DIR/$t/release/$bin"); done
   lipo -create -output "$WORK/bin/$bin" "${inputs[@]}"
@@ -57,15 +61,11 @@ done
 # ---- SolidCraft.app ----------------------------------------------------------------------------
 echo "==> assembling $APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$WORK/bin/solvecraft" "$APP/Contents/MacOS/SolidCraft"
-# The icon, drawn by the CLI (no image files are committed).
-SET="$WORK/SolidCraft.iconset"
-mkdir -p "$SET"
-for s in 16 32 128 256 512; do
-  "$WORK/bin/solvecraft-cli" icon --size "$s" --out "$SET/icon_${s}x${s}.png" >/dev/null
-  "$WORK/bin/solvecraft-cli" icon --size $((s * 2)) --out "$SET/icon_${s}x${s}@2x.png" >/dev/null
-done
-iconutil -c icns -o "$APP/Contents/Resources/SolidCraft.icns" "$SET"
+cp "$WORK/bin/solidcraft" "$APP/Contents/MacOS/SolidCraft"
+# Apple-compiled layered icon and older-macOS fallback (regeneration: assets/README.md).
+# Keep compiled resources so packaging also works on runners with older Xcode versions.
+cp "$ROOT/assets/Assets.car" "$APP/Contents/Resources/Assets.car"
+cp "$ROOT/assets/icon.icns" "$APP/Contents/Resources/SolidCraft.icns"
 mkdir -p "$APP/Contents/Resources/Licenses"
 copy_docs "$APP/Contents/Resources/Licenses"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHORT_VERSION@/$SHORT_VERSION/g" "$HERE/Info.plist.in" >"$APP/Contents/Info.plist"
@@ -95,13 +95,14 @@ hdiutil attach -readonly -nobrowse -mountpoint "$MNT" "$DMG"
 ls -la "$MNT" "$MNT/SolidCraft.app/Contents" "$MNT/SolidCraft.app/Contents/MacOS" "$MNT/SolidCraft.app/Contents/Resources"
 test -L "$MNT/Applications" && test "$(readlink "$MNT/Applications")" = /Applications
 plutil -lint "$MNT/SolidCraft.app/Contents/Info.plist"
-# Check the names Finder/LaunchServices actually use, as well as compatibility identity.
-for key in CFBundleName CFBundleDisplayName CFBundleExecutable CFBundleIconFile; do
+# Check the names Finder/LaunchServices actually use, and the bundle identity.
+for key in CFBundleName CFBundleDisplayName CFBundleExecutable CFBundleIconFile CFBundleIconName; do
   test "$(/usr/libexec/PlistBuddy -c "Print :$key" "$MNT/SolidCraft.app/Contents/Info.plist")" = SolidCraft
 done
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$MNT/SolidCraft.app/Contents/Info.plist")" = "$APP_ID"
-test ! -e "$MNT/SolveCraft.app"
+test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$MNT/SolidCraft.app/Contents/Info.plist")" = "$MACOS_BUNDLE_ID"
 test -s "$MNT/SolidCraft.app/Contents/Resources/SolidCraft.icns"
+cmp "$ROOT/assets/icon.icns" "$MNT/SolidCraft.app/Contents/Resources/SolidCraft.icns"
+cmp "$ROOT/assets/Assets.car" "$MNT/SolidCraft.app/Contents/Resources/Assets.car"
 cmp "$HERE/README.txt" "$MNT/README.txt"
 case "$ARCH" in universal) WANT=(arm64 x86_64) ;; aarch64) WANT=(arm64) ;; *) WANT=(x86_64) ;; esac
 for arch in "${WANT[@]}"; do
@@ -115,14 +116,17 @@ hdiutil detach "$MNT"
 
 # ---- CLI ---------------------------------------------------------------------------------------
 echo "==> building $CLI_ZIP"
-CLI_DIR="$WORK/solvecraft-cli-$VERSION-macos-$ARCH"
+CLI_DIR="$WORK/solidcraft-cli-$VERSION-macos-$ARCH"
 mkdir -p "$CLI_DIR"
+cp "$WORK/bin/solidcraft-cli" "$CLI_DIR/"
+codesign --force --sign - --timestamp=none --identifier "$MACOS_BUNDLE_ID-cli" "$CLI_DIR/solidcraft-cli"
+# Compatibility shim (docs/compatibility.md): the old CLI name forwards to solidcraft-cli.
 cp "$WORK/bin/solvecraft-cli" "$CLI_DIR/"
-codesign --force --sign - --timestamp=none --identifier ai.storyteller.solvecraft-cli "$CLI_DIR/solvecraft-cli"
+codesign --force --sign - --timestamp=none --identifier "$MACOS_BUNDLE_ID-cli-alias" "$CLI_DIR/solvecraft-cli"
 copy_docs "$CLI_DIR"
 rm -f "$CLI_ZIP"
 ditto -c -k --keepParent "$CLI_DIR" "$CLI_ZIP"
 
-"$WORK/bin/solvecraft-cli" --version
+"$WORK/bin/solidcraft-cli" --version
 echo "==> done"
 ls -lh "$DMG" "$CLI_ZIP"

@@ -17,23 +17,23 @@ build you also need `rustup target add wasm32-unknown-unknown` and [`trunk`](htt
 
 ```sh
 git clone https://github.com/bherbruck/solidcraft && cd solidcraft
-cargo run --release -p solvecraft -- --sample      # desktop app with a sample part
+cargo run --release -p solidcraft -- --sample      # desktop app with a sample part
 cargo xtask test                                   # unit, engine and UI-scenario tests
 cargo xtask ci                                     # everything a PR must pass (see below)
 ```
 
-SolidCraft is the product and repository name. Cargo packages and executables retain
-their `solvecraft` names for compatibility with existing scripts and MCP clients.
-Build the desktop app with `cargo build --release -p solvecraft`, or the CLI with
-`cargo build --release -p solvecraft-cli`. Run the CLI with
-`cargo run --release -p solvecraft-cli -- commands` (or `target/release/solvecraft-cli commands`
-after building). There is no Cargo package named `solidcraft`.
+SolidCraft is the product, repository, Cargo package and executable name.
+Build the desktop app with `cargo build --release -p solidcraft`, or the CLI with
+`cargo build --release -p solidcraft-cli`. Run the CLI with
+`cargo run --release -p solidcraft-cli -- commands` (or `target/release/solidcraft-cli commands`
+after building). The old name appears only in the compatibility shims listed in
+[docs/compatibility.md](docs/compatibility.md); don't add new uses of it.
 
-Web: `cd apps/solvecraft-web && trunk serve --release`, then open the printed URL (`?sample`
+Web: `cd apps/solidcraft-web && trunk serve --release`, then open the printed URL (`?sample`
 opens the sample part, `?webgl` forces WebGL2). Saving and opening files in the browser needs
 HTTPS or localhost, because it uses the Origin Private File System.
 
-Windows from Linux: `cargo xwin build --release --target x86_64-pc-windows-msvc -p solvecraft`.
+Windows from Linux: `cargo xwin build --release --target x86_64-pc-windows-msvc -p solidcraft`.
 
 ### NixOS: `nix develop`
 
@@ -43,7 +43,7 @@ loader wgpu renders through, and libdbus-1, which rfd's file dialogs reach xdg-d
 through (a dialog then never appears and the pick returns no path):
 
 ```
-ERROR solvecraft: winit EventLoopError: ... The wayland library could not be loaded
+ERROR solidcraft: winit EventLoopError: ... The wayland library could not be loaded
 ERROR eframe::native::run: Exiting because of error: WGPU error: Failed to create surface for any enabled backend: {}
 ERROR rfd::backend::xdg_desktop_portal::portal::libdbus: Can't connect to a portal: libdbus-1.so not found
 ```
@@ -59,8 +59,8 @@ The default development shell retains the Rust/C toolchain already on `PATH`;
 To launch, use `nix run .#solidcraft -- --sample`. To install the app's terminal
 commands, desktop entry and generated icons, use `nix profile install .#solidcraft`.
 `nix build` alone creates a build result; it does not install a launcher in your
-desktop menu. The installed `solidcraft` command and compatible `solvecraft`
-command run the same wrapped app; `solvecraft-cli` is included as well. See
+desktop menu. The installed `solidcraft` command runs the wrapped app; `solidcraft-cli` is included as
+well. See
 [Nix installation and troubleshooting](docs/nix.md) for remote-flake commands,
 desktop integration and how to distinguish an old executable on `PATH`.
 
@@ -82,7 +82,7 @@ The [README](README.md#architecture) has the layer table. The short version:
   commands.
 - `crates/ui-egui`: the desktop/web front end (egui + wgpu). It's swappable; nothing below it
   depends on egui.
-- `crates/mcp`, `apps/solvecraft`, `apps/solvecraft-cli`, `apps/solvecraft-web`.
+- `crates/mcp`, `apps/solidcraft`, `apps/solidcraft-cli`, `apps/solidcraft-web`.
 
 `cargo xtask layers` fails the build if a lower layer depends on a higher one.
 
@@ -107,7 +107,7 @@ The [README](README.md#architecture) has the layer table. The short version:
    - Non-test code never uses `unwrap`, `expect`, `panic!` or indexing on input-derived data.
      There's no `unsafe`, and clippy denies it.
    - An unsupported case returns an error ("not supported yet: …"); it never panics.
-   - Every call into truck goes through `solvecraft_kernel::guard`.
+   - Every call into truck goes through `solidcraft_kernel::guard`.
    - Every crash fix comes with a regression test.
 5. **Everything is a command, with a test.** A new feature means a `CommandSpec` in
    `crates/engine/src/cmd/`, engine tests that measure the result (volume, area,
@@ -159,12 +159,12 @@ Pull requests skip a few heavy tests (one to four minutes each), which run on ev
 `main` and nightly; check the `main` run after merging. They are listed in
 `.config/nextest.toml` and the [testing page](docs/book/src/dev/testing.md):
 
-- `solvecraft-engine`: `tests::hostile_params_never_panic`, everything in `tests::robustness`,
+- `solidcraft-engine`: `tests::hostile_params_never_panic`, everything in `tests::robustness`,
   `pattern_suppress_tests::enclosure_arc_extinction_keeps_a_real_sharp_inner_lip_after_resize_and_reopen`,
   `pattern_suppress_tests::enclosure_datums_follow_wall_height_and_board_depth_with_material_proofs`,
   `cmd::plastic::tests::enclosure_snap_fit_follows_resized_front_wall`
-- `solvecraft-kernel`: `tests::boolean_identity_on_tangent_primitives`
-- `solvecraft-ui-egui` scenarios: `acceptance_sensor_enclosure`
+- `solidcraft-kernel`: `tests::boolean_identity_on_tangent_primitives`
+- `solidcraft-ui-egui` scenarios: `acceptance_sensor_enclosure`
 
 **The reference tests** are 76 parts in [`tests/oracle/`](tests/oracle/), each a `recipe.json`
 in our own format with an `expected.json` beside it. SolidCraft rebuilds the recipe and compares

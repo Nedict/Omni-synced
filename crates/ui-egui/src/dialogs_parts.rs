@@ -5,7 +5,7 @@
 
 use egui::{RichText, vec2};
 use serde_json::{Value, json};
-use solvecraft_engine::{Sel, Session};
+use solidcraft_engine::{Sel, Session};
 
 use crate::SolveApp;
 use crate::dialogs::{Kind, combo, row_label};
@@ -207,14 +207,14 @@ pub fn commands(app: &SolveApp, k: &Pt, inputs: &[SelInput]) -> Result<Vec<(Stri
     };
     let p = insert_params(&lib, k, inputs.first().and_then(|i| i.items.first()))?;
     // The toolbar's command when the engine has it (same parameters).
-    let id = if solvecraft_engine::find_command("parts.fastener").is_some() { "parts.fastener" } else { "parts.insert" };
+    let id = if solidcraft_engine::find_command("parts.fastener").is_some() { "parts.fastener" } else { "parts.insert" };
     Ok(vec![(id.into(), p)])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use solvecraft_engine::geom::Vec3;
+    use solidcraft_engine::geom::Vec3;
 
     fn lib() -> Vec<Family> {
         families(&json!({"families": [

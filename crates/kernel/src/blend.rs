@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use solvecraft_geom::Vec3;
+use solidcraft_geom::Vec3;
 use truck_modeling::{self as mt, builder};
 
 use crate::body::{Body, Solid, from_p3, p3, v3};
@@ -25,6 +25,11 @@ enum Shape {
 
 pub(crate) fn unsupported(msg: &str) -> KernelError {
     KernelError::Failed(format!("not supported yet: {msg}"))
+}
+
+/// A blend too large for the faces around it.
+pub(crate) fn too_large(msg: &str) -> KernelError {
+    KernelError::TooLarge(msg.into())
 }
 
 pub(crate) fn vtx(v: &mt::Vertex) -> Vec3 {
@@ -286,7 +291,7 @@ fn blend_geometry(
             // A rail ending before the old corner extends the neighbouring rim edge away from its
             // other vertex: valid only within the trimmed side face.
             if along >= len - tol || (along < 0.0 && !faces.get(fi).is_some_and(|f| extension_fits(f, p, q, tol))) {
-                return Err(unsupported("the blend is larger than the neighbouring faces"));
+                return Err(too_large("the blend is larger than the neighbouring faces"));
             }
         }
         // Across two end faces: where the blend's cylinder crosses the edge between them, on the
@@ -332,7 +337,7 @@ fn blend_geometry(
         return Err(unsupported("both ends touch the same face"));
     }
     if (end1.a - end0.a).dot(d) <= tol || (end1.b - end0.b).dot(d) <= tol {
-        return Err(unsupported("the blend is larger than the neighbouring faces"));
+        return Err(too_large("the blend is larger than the neighbouring faces"));
     }
     // A side face whose corner edges are consumed at both ends is used up: its remaining edge,
     // parallel to the old edge at the setback, becomes the rail and the face is removed.
@@ -616,7 +621,10 @@ fn blend(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str) -> Resul
                             .collect();
                         guard(what, || crate::curveblend::curve_blend(&solid, &ids, size, r, shape == Shape::Round))
                             .map(|o| (o, if on_chain.is_empty() { vec![j] } else { on_chain }))
-                            .map_err(|e2| KernelError::Failed(format!("{e2} ({e})")))
+                            .map_err(|e2| match e2 {
+                                KernelError::TooLarge(m) => KernelError::TooLarge(format!("{m} ({e})")),
+                                e2 => KernelError::Failed(format!("{e2} ({e})")),
+                            })
                     }
                     None => Err(e),
                 },
@@ -626,8 +634,10 @@ fn blend(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str) -> Resul
                     done = Some(x);
                     break;
                 }
+                // Reported: the first refusal, unless a later one is a size a smaller radius may
+                // fit (the others may be refused only until that edge is blended).
                 Err(e) => {
-                    if first_err.is_none() {
+                    if first_err.is_none() || (matches!(e, KernelError::TooLarge(_)) && !matches!(first_err, Some(KernelError::TooLarge(_)))) {
                         first_err = Some(e);
                     }
                 }
@@ -893,14 +903,56 @@ fn loop_split(cur: &Body, pts: &[Vec3]) -> Result<Option<(Vec<Vec<Vec3>>, Vec<Ve
     Ok((!groups.is_empty()).then_some((groups, rest)))
 }
 
-/// Constant-radius fillet of the edges nearest to the given points.
+/// Constant-radius fillet of the edges nearest to the given points. A radius too large for the
+/// faces around the edges is refused with [`KernelError::TooLarge`] ([`fillet_max`] finds the
+/// largest that works).
 pub fn fillet(body: &Body, edges: &[Vec3], radius: f64) -> Result<Body> {
     body.require_brep("fillet")?;
     // Corners the local blends refuse (an earlier round at an edge's end): radius per edge.
     blend(body, edges, radius, Shape::Round, "fillet").or_else(|e| {
         let sel: Vec<(Vec3, f64)> = edges.iter().map(|p| (*p, radius)).collect();
-        crate::blend_corner::fillet_radii(body, &sel).map_err(|_| e)
+        // The local blend's refusal, unless only the corner build found the radius too large.
+        crate::blend_corner::fillet_radii(body, &sel).map_err(|e2| match (&e, e2) {
+            (KernelError::TooLarge(_), _) => e,
+            (_, e2 @ KernelError::TooLarge(_)) => e2,
+            _ => e,
+        })
     })
+}
+
+/// The step of the radius search: three significant digits of the requested radius.
+fn radius_step(radius: f64) -> f64 {
+    10f64.powf(radius.log10().floor() - 3.0)
+}
+
+/// The largest radius below `radius` (to three significant digits) at which the fillet of
+/// these edges works, with its result; `None` when none does. Each candidate is a real fillet
+/// of the edges, so the radius returned is one that was built; the search runs up to 16 of
+/// them, so it is for an explicit request, not every refusal.
+pub fn fillet_max(body: &Body, edges: &[Vec3], radius: f64) -> Option<(f64, Body)> {
+    if !(radius.is_finite() && radius > 1e-6) {
+        return None;
+    }
+    let q = radius_step(radius);
+    // Radii n·q for n in [0, hi): hi fails (it is the request, or above it), lo works.
+    let mut hi = (radius / q).ceil() as u64;
+    let mut lo = 0u64;
+    let mut best: Option<Body> = None;
+    // log2(10⁴) steps reach the step size; the cap keeps a slow body from stalling.
+    for _ in 0..16 {
+        if hi - lo <= 1 {
+            break;
+        }
+        let mid = lo + (hi - lo) / 2;
+        match fillet(body, edges, mid as f64 * q) {
+            Ok(b) => {
+                lo = mid;
+                best = Some(b);
+            }
+            Err(_) => hi = mid,
+        }
+    }
+    best.map(|b| (lo as f64 * q, b))
 }
 
 /// Equal-distance chamfer of the edges nearest to the given points. Each edge is cut with a
@@ -1132,7 +1184,7 @@ fn chamfer_tool_sides(cur: &Body, p: Vec3, s: f64, sides: Option<(ChamferSide, b
     let ext = (s * 2.0).max(size * 0.01) * (1.0 + 0.093 * (k % 5) as f64);
     // Cross-section at p0 - d*ext, in a plane with normal d.
     let base = f.p0 - f.d * ext;
-    let plane = solvecraft_geom::Plane::from_normal(base, f.d).ok_or_else(|| KernelError::Failed("chamfer plane".into()))?;
+    let plane = solidcraft_geom::Plane::from_normal(base, f.d).ok_or_else(|| KernelError::Failed("chamfer plane".into()))?;
     let a = base + f.t1 * s1;
     let b = base + f.t2 * s2;
     let ab = (a - b).normalized().ok_or_else(|| KernelError::Failed("chamfer".into()))?;
@@ -1149,15 +1201,15 @@ fn chamfer_tool_sides(cur: &Body, p: Vec3, s: f64, sides: Option<(ChamferSide, b
             return Err(unsupported("chamfers ending at a concave corner"));
         }
     }
-    let loc: Vec<solvecraft_geom::Vec2> = [a_ext, b_ext, e_far].iter().map(|q| plane.to_local(*q)).collect();
-    let mut lp = solvecraft_geom::Loop2::polygon(&loc);
+    let loc: Vec<solidcraft_geom::Vec2> = [a_ext, b_ext, e_far].iter().map(|q| plane.to_local(*q)).collect();
+    let mut lp = solidcraft_geom::Loop2::polygon(&loc);
     // The chamfer plane is swept from the segment a → b: first, or last once turned round.
     let mut chamfer_segment = 0;
     if lp.signed_area() < 0.0 {
         lp = lp.reversed();
         chamfer_segment = lp.segs.len().saturating_sub(1);
     }
-    let region = solvecraft_geom::Region2 { outer: lp, holes: vec![] };
+    let region = solidcraft_geom::Region2 { outer: lp, holes: vec![] };
     let body = crate::build::extrude(&plane, &[region], 0.0, len + 2.0 * ext)?.pop().ok_or_else(|| KernelError::Failed("chamfer tool".into()))?;
     let face = body.history().and_then(|h| h.faces.iter().position(|f| f.origins == [FaceOrigin::Profile { segment: chamfer_segment }]));
     Ok(Cutter { body, face, edge })
@@ -1166,7 +1218,7 @@ fn chamfer_tool_sides(cur: &Body, p: Vec3, s: f64, sides: Option<(ChamferSide, b
 #[cfg(test)]
 mod tests {
     use super::*;
-    use solvecraft_geom::{Loop2, Plane, Region2, Vec2};
+    use solidcraft_geom::{Loop2, Plane, Region2, Vec2};
 
     #[test]
     fn chamfer_extension_cannot_cross_a_hole_and_reenter_the_face() {

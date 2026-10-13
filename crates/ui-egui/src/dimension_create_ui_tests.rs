@@ -11,7 +11,7 @@ fn line(end: [f64; 2]) -> Harness {
     // Leave room around the measured shape while testing the draft itself. Separate Fit
     // tests exercise measured dock occlusion without changing the picking projection.
     h.app.cam.distance = 80.0;
-    h.app.cam.target = solvecraft_engine::geom::Vec3::new(end[0] * 0.5, end[1] * 0.5, 0.0);
+    h.app.cam.target = solidcraft_engine::geom::Vec3::new(end[0] * 0.5, end[1] * 0.5, 0.0);
     h.settle();
     h
 }
@@ -137,7 +137,7 @@ fn rectangle_side_and_fixed_origin_line_dimensions_preserve_other_constraints() 
         h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[20,10]})).unwrap();
         h.call("ui.view", json!({"view":"top"}));
         h.app.cam.distance = 80.;
-        h.app.cam.target = solvecraft_engine::geom::Vec3::new(10., 5., 0.);
+        h.app.cam.target = solidcraft_engine::geom::Vec3::new(10., 5., 0.);
         h.settle();
         let baseline = h.app.session.doc.to_json();
         let undo = h.app.session.undo.len();
@@ -155,7 +155,7 @@ fn rectangle_side_and_fixed_origin_line_dimensions_preserve_other_constraints() 
 
 #[test]
 fn pending_second_nested_plane_uses_world_picks_but_one_local_dimension() {
-    use solvecraft_engine::geom::Vec2;
+    use solidcraft_engine::geom::Vec2;
     crate::dim_view::cancel();
     let mut h = Harness::new();
     let parent = h.app.run("component.create", json!({"name":"Assembly"})).unwrap();
@@ -221,7 +221,7 @@ fn invalid_zero_negative_failed_open_and_click_away_leave_no_dimension() {
         h.step(&json!({"key":"Escape"})).unwrap();
     }
     place(&mut h, &[[10., 0.]], [10., 5.]);
-    assert!(h.app.run("doc.open", json!({"path":"missing-dimension-draft-design.solvecraft"})).is_err());
+    assert!(h.app.run("doc.open", json!({"path":"missing-dimension-draft-design.solidcraft"})).is_err());
     assert!(crate::dim_view::editing(), "failed replacement must preserve the draft");
     assert_eq!(h.app.session.doc.to_json(), baseline);
     h.frames(8);
@@ -247,7 +247,7 @@ fn dimension_to_fillet_virtual_sharp_keeps_the_arc_and_fixed_origin() {
     let corner = fillet["virtual_corners"][0].as_str().unwrap().to_string();
     h.call("ui.view", json!({"view":"top"}));
     h.app.cam.distance = 90.;
-    h.app.cam.target = solvecraft_engine::geom::Vec3::new(5., 10., 0.);
+    h.app.cam.target = solidcraft_engine::geom::Vec3::new(5., 10., 0.);
     h.settle();
     let baseline = h.app.session.doc.to_json();
     let undo = h.app.session.undo.len();
@@ -262,7 +262,7 @@ fn dimension_to_fillet_virtual_sharp_keeps_the_arc_and_fixed_origin() {
     let sk = &solved.sketch;
     assert!((sk.point(sk.point_index(&corner).unwrap()).unwrap().y - 30.).abs() < 1e-6);
     assert!(sk.point(sk.resolve_point("riser.start").unwrap()).unwrap().len() < 1e-8);
-    assert!(sk.curves.iter().any(|c| matches!(c.kind, solvecraft_engine::sketch::CurveKind::Arc { .. })), "the dimension retains the fillet arc");
+    assert!(sk.curves.iter().any(|c| matches!(c.kind, solidcraft_engine::sketch::CurveKind::Arc { .. })), "the dimension retains the fillet arc");
     h.app.run("edit.undo", json!({})).unwrap();
     assert_eq!(h.app.session.doc.to_json(), baseline);
 }
@@ -276,7 +276,7 @@ fn draft_annotation_does_not_move_committed_dimension_hitboxes() {
     let width = h.app.run("sketch.dimension", json!({"entities":["l3"],"value":20})).unwrap()["param"].as_str().unwrap().to_string();
     h.call("ui.view", json!({"view":"top"}));
     h.app.cam.distance = 80.;
-    h.app.cam.target = solvecraft_engine::geom::Vec3::new(10., 5., 0.);
+    h.app.cam.target = solidcraft_engine::geom::Vec3::new(10., 5., 0.);
     h.settle();
     let at = crate::dim_view::text_at(&width).unwrap();
     let drawn = crate::dim_view::drawn();
@@ -317,8 +317,8 @@ fn inch_dimension_entry_survives_unit_changes_undo_and_reopen() {
     assert_eq!(h.app.session.world_state().sketch(sketch).unwrap().sketch, before);
     h.app.run("edit.undo", json!({})).unwrap();
     assert_eq!(h.app.session.doc.units, "in");
-    let doc = solvecraft_engine::doc::Document::from_json(&h.app.session.doc.to_json()).unwrap();
-    let reopened = solvecraft_engine::Session::new(doc);
+    let doc = solidcraft_engine::doc::Document::from_json(&h.app.session.doc.to_json()).unwrap();
+    let reopened = solidcraft_engine::Session::new(doc);
     assert_eq!(reopened.doc.units, "in");
     assert_eq!(reopened.world_state().sketch(sketch).unwrap().sketch, before);
     crate::dim_view::cancel();
@@ -329,7 +329,7 @@ fn inch_dimension_entry_survives_unit_changes_undo_and_reopen() {
 #[test]
 fn placing_a_two_point_dimension_picks_horizontal_vertical_or_aligned() {
     // What each placement fixes at 10 mm: the X span, the Y span, or the length.
-    let spans = |a: solvecraft_engine::geom::Vec2, b: solvecraft_engine::geom::Vec2| [(b.x - a.x).abs(), (b.y - a.y).abs(), a.dist(b)];
+    let spans = |a: solidcraft_engine::geom::Vec2, b: solidcraft_engine::geom::Vec2| [(b.x - a.x).abs(), (b.y - a.y).abs(), a.dist(b)];
     for (at, measured) in [([6., 25.], 0), ([-10., 1.], 1), ([-5., 12.], 2)] {
         let mut h = line([12., 16.]);
         place(&mut h, &[[0., 0.], [12., 16.]], at);

@@ -2,7 +2,7 @@
 //! `fonts/OFL.txt` and ATTRIBUTION.md) as lines and conics (TrueType quadratic Béziers are
 //! conics with rho = 0.5), so text closes into profiles that can be extruded.
 
-use solvecraft_geom::Vec2;
+use solidcraft_geom::Vec2;
 
 use crate::link::LinkGeom;
 use crate::model::{Result, SketchError};

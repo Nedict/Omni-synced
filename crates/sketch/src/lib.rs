@@ -42,12 +42,15 @@ pub use curves::{
 pub use decompose::Budget;
 pub use dims::{DimFrame, DimLayout, chain_centres, default_text, dim_frame, dim_layout, encode_text};
 pub use freeform_offset::{FreeformOffset, OFFSET_TOLERANCE};
-pub use link::{Link, LinkGeom, LinkKind, LinkSource, MAX_LINK_ENTITIES};
+pub use link::{Link, LinkGeom, LinkKind, LinkSource, MAX_LINK_ENTITIES, SKETCH_AXIS_HALF, sketch_axis_geom};
 pub use model::{Constraint, ConstraintKind, Curve, CurveKind, MAX_CONSTRAINTS, MAX_CURVES, MAX_POINTS, SPoint, Sketch, SketchError, SketchView};
 pub use offset::OffsetChain;
 pub use offset_topology::{OffsetCreated, OffsetRole, OffsetRoleFlags, OffsetRoleKind, OffsetTopology};
 pub use periodic::periodic_beziers;
-pub use profiles::{CurvePick, Profile, distinct_curves, find_drawn_profiles, find_profiles, merge_regions, profile_at_point, profile_by_curves};
+pub use profiles::{
+    CurvePick, Profile, distinct_curves, find_drawn_profiles, find_profiles, merge_regions, profile_at_point, profile_by_curves,
+    without_text_counters,
+};
 pub use shape::{Shape, intersections};
 pub use solver::{
     Analysis, DrivingValues, Hold, SolveReport, SolveStatus, measure_dimension, solve, solve_after_value_edit, solve_holding, solve_with,

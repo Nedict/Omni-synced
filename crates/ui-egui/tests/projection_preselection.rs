@@ -1,6 +1,6 @@
 use serde_json::json;
-use solvecraft_engine::Sel;
-use solvecraft_ui_egui::scenario::Harness;
+use solidcraft_engine::Sel;
+use solidcraft_ui_egui::scenario::Harness;
 
 fn setup() -> (Harness, u64) {
     let mut h = Harness::new();
