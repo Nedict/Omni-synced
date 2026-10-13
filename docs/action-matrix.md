@@ -20,7 +20,9 @@ The test is [`apps/solidcraft-cli/tests/action_matrix.rs`](../apps/solidcraft-cl
   `ACTION_MATRIX_JOBS` sets how many designs run at once.
 
 Each design runs in its own process, so an action that hangs (90 s without a result) or aborts is
-recorded as `timeout` or `crash` and the rest of the design still runs. None did in this run.
+recorded as `timeout` or `crash` and the rest of the design still runs. Loading a design, before
+its first action, may take up to 300 s (the largest take several times longer on a loaded CI
+runner than here). None did in this run.
 
 Pieces that share a name (`#2`, `~3`) are numbered by where they lie, and the numbers of pieces
 lying almost level can swap between runs (#569). The ratchet therefore counts passes per family of

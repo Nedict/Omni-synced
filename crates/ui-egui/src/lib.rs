@@ -4,7 +4,7 @@
 //! commands ([`SolveApp::run`]). Nothing here owns design data. The layout follows the familiar
 //! parametric-CAD desktop: application bar, a toolbar of workspace tabs and panels, the browser
 //! on the left, the 3D viewport with an axis view and navigation bar, the command dialog on the
-//! right of the viewport, the command palette and the timeline at the bottom.
+//! right of the viewport, the command palette and a bottom or left-sidebar feature timeline.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
@@ -70,6 +70,8 @@ mod extrude_edit_tests;
 mod file_load;
 #[cfg(test)]
 mod file_load_ui_tests;
+#[cfg(test)]
+mod fillet_spline_handle_tests;
 pub mod palette;
 pub mod params_dialog;
 pub mod prefs;
@@ -105,13 +107,18 @@ mod sketch_drag_ui_tests;
 #[cfg(test)]
 mod sketch_edit_tests;
 mod sketch_families;
+pub mod sketch_modify_ui;
+#[cfg(test)]
+mod sketch_modify_ui_tests;
 pub mod sketch_palette;
 pub(crate) mod sketch_text;
+mod sketch_text_handles;
 mod sketch_text_move;
 pub mod sketch_tools;
 pub mod stand_up;
 pub mod theme;
 pub mod timeline;
+pub mod timeline_left;
 pub mod titlebar;
 pub mod toolbar;
 pub mod toolbar_custom;
@@ -528,6 +535,16 @@ impl SolveApp {
     pub fn start(&mut self, id: &str) {
         // A file is loading: the design waits for it.
         if self.file_load.busy() {
+            return;
+        }
+        // A disabled command starts nothing, however it was reached. The toolbar greys its
+        // button, but a shortcut, the command palette and the control channel all land here.
+        // Its reason goes to the status line, so the refusal is never silent.
+        if let Some(info) = solidcraft_engine::find_command(id).map(|c| c.info(&self.session))
+            && let Some(why) = info.disabled_reason
+        {
+            let label = self.tr_label(info.label).to_string();
+            self.set_status(format!("{label}: {why}"), true);
             return;
         }
         // Another command ends Edit Text (its dialog is not a feature edit to keep).
@@ -1062,12 +1079,19 @@ impl SolveApp {
             }
         }
         toolbar::toolbar(self, ui);
-        if self.ui.show_timeline {
+        let left_timeline = self.ui.show_timeline && self.preferences.timeline_left;
+        if self.ui.show_timeline && !left_timeline {
             timeline::timeline(self, ui);
         }
         palette::palette_bar(self, ui);
         if self.ui.show_browser {
-            browser::browser(self, ui);
+            if left_timeline {
+                browser::browser_below_timeline(self, ui);
+            } else {
+                browser::browser(self, ui);
+            }
+        } else if left_timeline {
+            timeline_left::left_panel(self, ui);
         }
         preview::update(self, ui.ctx());
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {

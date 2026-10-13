@@ -37,12 +37,12 @@ mod union_find;
 mod wire;
 
 pub use curves::{
-    MAX_SPLINE_POINTS, bspline_beziers, conic_point, ellipse_point, end_curvature, fit_beziers, fit_beziers_mode, spline_end_tangent,
-    spline_end_tangent_mode, spline_point, spline_point_mode, spline_polyline, spline_polyline_mode,
+    MAX_SPLINE_POINTS, bspline_beziers, conic_point, conic_rho_from_point, ellipse_point, end_curvature, fit_beziers, fit_beziers_mode,
+    spline_end_tangent, spline_end_tangent_mode, spline_point, spline_point_mode, spline_polyline, spline_polyline_mode,
 };
 pub use decompose::Budget;
 pub use dims::{DimFrame, DimLayout, chain_centres, default_text, dim_frame, dim_layout, encode_text};
-pub use fonts::{DEFAULT_FONT_FAMILY, FontData, font_data, font_file_path};
+pub use fonts::{DEFAULT_FONT_FAMILY, FontData, families_in, font_data, font_file_path, installed_families};
 pub use freeform_offset::{FreeformOffset, OFFSET_TOLERANCE};
 pub use link::{Link, LinkGeom, LinkKind, LinkSource, MAX_LINK_ENTITIES, SKETCH_AXIS_HALF, sketch_axis_geom};
 pub use model::{Constraint, ConstraintKind, Curve, CurveKind, MAX_CONSTRAINTS, MAX_CURVES, MAX_POINTS, SPoint, Sketch, SketchError, SketchView};

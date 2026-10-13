@@ -47,6 +47,10 @@ const SLOW: [&str; 7] = [
 const EDIT_SAMPLE: u64 = 6;
 /// An action that takes longer than this is recorded as a timeout.
 const ACTION_TIMEOUT: Duration = Duration::from_secs(90);
+/// Building a design and listing its actions, before the first one runs: the biggest designs
+/// (oracle 41's tube with radial holes, about 25 s here) take several times that on a loaded CI
+/// runner, and a design that never loads loses all its actions, not one.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(300);
 /// Caps per body, so one large imported or patterned body cannot dominate the run.
 const MAX_FACES: usize = 120;
 const MAX_EDGES: usize = 240;
@@ -725,7 +729,9 @@ fn run_design(design: &str, out: &Path, sample: u64) -> Vec<Value> {
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        let mut seen = 0usize;
+        // Until the child writes, it is loading the design (again, after a restart).
+        let loaded_at = std::fs::metadata(out).map(|m| m.len() as usize).unwrap_or(0);
+        let mut seen = loaded_at;
         let mut last_change = Instant::now();
         let (status, timed_out) = loop {
             if let Some(status) = child.try_wait().unwrap() {
@@ -735,7 +741,7 @@ fn run_design(design: &str, out: &Path, sample: u64) -> Vec<Value> {
             if n != seen {
                 seen = n;
                 last_change = Instant::now();
-            } else if last_change.elapsed() > ACTION_TIMEOUT {
+            } else if last_change.elapsed() > if seen == loaded_at { LOAD_TIMEOUT } else { ACTION_TIMEOUT } {
                 let _ = child.kill();
                 let _ = child.wait();
                 break (None, true);
@@ -1245,4 +1251,31 @@ fn a_plane_on_a_patterned_counterbore_after_a_thickness_change() {
         json!({"command": "parameters.change", "params": {"name": "thick", "expression": "11 mm"}}),
     ]);
     reproduces(None, Value::Array(c));
+}
+
+/// #707: the same design builds the same body every time, in one process too. Faces were put in
+/// the hash order of their addresses in a few places (truck's connected components, the planar
+/// boolean's rebuild, healing's merges), so a later boolean on the ribbed lid passed or failed
+/// from run to run.
+#[test]
+fn the_ribbed_lid_builds_the_same_body_every_time() {
+    let path = root().join("examples/regressions/lid_ribs_flush_with_window.json");
+    let fingerprint = || {
+        let s = load(&path).unwrap();
+        let st = s.model.state();
+        st.bodies
+            .iter()
+            .map(|b| {
+                let mesh = b.body.tessellate(0.1).unwrap();
+                let bits = mesh.positions.iter().fold(0u64, |acc, p| {
+                    acc.rotate_left(7).wrapping_add(p.x.to_bits() ^ p.y.to_bits().rotate_left(21) ^ p.z.to_bits().rotate_left(42))
+                });
+                format!("{} {} {bits:x}", b.name, b.body.face_count())
+            })
+            .collect::<Vec<_>>()
+    };
+    let first = fingerprint();
+    for _ in 0..5 {
+        assert_eq!(fingerprint(), first);
+    }
 }

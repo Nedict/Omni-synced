@@ -801,6 +801,60 @@ fn surface_dialogs_make_their_commands() {
 }
 
 #[test]
+fn surface_extrude_dialog_takes_profiles_and_curves() {
+    // A rectangle and a free line in one sketch: the dialog sends both (the profile's walls
+    // and the line's wall) as one surface extrude, and Edit Feature brings the picks back.
+    let mut app = app_with(json!([
+        {"command": "sketch.create", "params": {"plane": "XY"}},
+        {"command": "sketch.rectangle.two_point", "params": {"p0": [0, 0], "p1": [30, 20]}},
+        {"command": "sketch.line", "params": {"points": [[40, 0], [50, 0]], "ids": ["free"]}},
+        {"command": "sketch.finish", "params": {}}
+    ]));
+    let sk = app.session.doc.features.last().unwrap().id;
+    let mut d = start(&mut app, vec![], "surface.extrude");
+    d.inputs[0].items = vec![Sel::Profile { sketch: sk, index: 0 }, Sel::SketchCurve { id: "free".into() }];
+    let (id, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!(id, "surface.extrude");
+    assert_eq!(p["curves"], json!(["free"]), "{p}");
+    assert_eq!(p["profiles"], json!([0]), "{p}");
+    app.session.execute(&id, &p).unwrap();
+    let st = app.session.model.state();
+    let sheet = st.bodies.last().unwrap();
+    assert!(sheet.body.is_surface() && sheet.body.face_count() == 5);
+    let area = sheet.mesh().measure().area;
+    assert!((area - (100.0 + 10.0) * 10.0).abs() < 1e-6, "{area}");
+    let fid = app.session.doc.features.last().unwrap().id;
+    let back = crate::dialogs::for_feature(&app, fid, None).unwrap();
+    assert!(matches!(back.kind, Kind::Surface(_)));
+    assert_eq!(back.inputs[0].items.len(), 2);
+}
+
+#[test]
+fn unstitch_and_reverse_normal_dialogs_take_a_body_or_faces() {
+    // A whole box picked: Unstitch sends the body alone; two of its faces: their points.
+    let mut app = app_with(json!([{"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "body_name": "Box"}}]));
+    let mut d = start(&mut app, vec![], "surface.unstitch");
+    d.inputs[0].items = vec![Sel::Body { name: "Box".into() }];
+    let (id, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!((id.as_str(), &p["body"], &p["faces"]), ("surface.unstitch", &json!("Box"), &json!([])), "{p}");
+    let top = Vec3::new(5.0, 5.0, 10.0);
+    d.inputs[0].items = vec![Sel::Face { body: "Box".into(), index: 0, point: top }];
+    let (_, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!(p["faces"], json!([[5.0, 5.0, 10.0]]), "{p}");
+    app.session.execute("surface.unstitch", &p).unwrap();
+    assert_eq!(app.session.model.state().bodies.len(), 2);
+    let fid = app.session.doc.features.last().unwrap().id;
+    assert!(matches!(crate::dialogs::for_feature(&app, fid, None).unwrap().kind, Kind::Surface(_)));
+    app.dialog = None;
+    let sheet = app.session.model.state().bodies.last().unwrap().name.clone();
+    let mut d = start(&mut app, vec![], "surface.reverse_normal");
+    d.inputs[0].items = vec![Sel::Body { name: sheet.clone() }];
+    let (id, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!((id.as_str(), &p["body"]), ("surface.reverse_normal", &json!(sheet)), "{p}");
+    app.session.execute(&id, &p).unwrap();
+}
+
+#[test]
 fn patch_dialog_fills_a_loop_of_edges_that_is_not_planar() {
     // A box with its top cut away by a sideways cylinder: its rim is a closed loop of four
     // curved edges, not in a plane. Picking them in the Patch dialog fills it with one face.

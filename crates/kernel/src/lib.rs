@@ -21,6 +21,7 @@ mod boolean_guard;
 mod boolean_record;
 mod bore_guard;
 mod build;
+mod clearance;
 mod coplanar;
 mod curveblend;
 mod delete_face;
@@ -40,6 +41,8 @@ mod intersection_curve_tests;
 #[cfg(test)]
 mod issue_616_tests;
 #[cfg(test)]
+mod issue_674_tests;
+#[cfg(test)]
 mod issue_679_tests;
 mod lip;
 mod loopblend;
@@ -52,6 +55,9 @@ mod native;
 mod numbered;
 mod offset;
 mod ops;
+mod par;
+#[cfg(test)]
+mod pinch_tests;
 mod plane_fit;
 mod polybool;
 mod polyhedron;
@@ -70,6 +76,7 @@ mod step_out;
 mod surface_kind;
 mod surfaces;
 mod sweep_path;
+mod tess;
 #[cfg(test)]
 mod thread_tests;
 mod topo;
@@ -79,7 +86,7 @@ mod untouched_faces_tests;
 
 pub use blend::{ChamferSide, chamfer, chamfer_sides, fillet, fillet_each, fillet_max, fillet_max_each};
 pub use blend_corner::fillet_radii;
-pub use blend_variable::{fillet_chord, fillet_variable, fillet_variable_points};
+pub use blend_variable::{RadiusSpline, Taper, fillet_chord, fillet_tapered, fillet_variable, fillet_variable_points, fillet_variable_spline, taper};
 pub use body::{Body, CapSignature, DISPLAY_ANGLE, EdgeInfo, FaceInfo, FacePaint, FaceSource, Paint};
 pub use boolean_diagnostics::{BooleanDiagnostics, BooleanFallback, BooleanStrategy, capture_boolean_diagnostics};
 pub use build::{PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, loft, revolve, sphere, sweep, torus};
@@ -105,7 +112,7 @@ pub use step::step_export;
 pub use step_in::{ImportedBody, StepImport, StepNode, step_import, step_import_shared, step_orientation_errors, step_validate};
 pub use step_out::{ExportBody, ExportProduct, StepHeader, step_export_bodies, step_export_products};
 pub use surface_kind::{FaceSurface, face_surface};
-pub use surfaces::{copy_faces, extend, patch_edges, patch_region, stitch, thicken, trim};
+pub use surfaces::{copy_faces, extend, extrude_sheet, patch_edges, patch_region, reverse_faces, stitch, thicken, trim, unstitch};
 pub use sweep_path::sweep_path;
 pub use topo::{CylinderFace, cylinder_face_at};
 pub use topo::{TopoCounts, merged_topology, seam_flags};

@@ -10,7 +10,7 @@ use solidcraft_engine::Sel;
 use solidcraft_engine::Session;
 use solidcraft_engine::doc::expr::Kind as ValueKind;
 use solidcraft_engine::doc::{AxisRef, Direction, FeatureKind, FilletStyle, HoleKind, Operation, PatternKind, PlaneRef, ProfileSel};
-use solidcraft_engine::geom::Vec3;
+use solidcraft_engine::geom::{Aabb3, Vec3};
 
 use crate::SolveApp;
 use crate::selection::{self, AXES, Accept, BODIES, CURVES, EDGES, FACES, PLANAR_FACES, PLANES, PROFILES, SelInput};
@@ -227,7 +227,7 @@ pub enum Kind {
     },
     /// Delete a feature that others depend on.
     ConfirmDelete {
-        feature: u64,
+        features: Vec<u64>,
         with: Vec<String>,
         fail: Vec<String>,
     },
@@ -248,6 +248,9 @@ pub enum Kind {
     /// Edit Text: a sketch text's content and placement (`sketch_text`).
     Text(crate::sketch_text::Tx),
     TextMove(crate::sketch_text_move::TextMove),
+    /// Sketch-space modify tools: scale and offset, and later fillet, chamfer, the patterns,
+    /// mirror and move (`sketch_modify_ui`).
+    SketchModify(crate::sketch_modify_ui::Mod),
 }
 
 /// The Single hole placement's input: places on planar faces. A pick on or near a sketch point
@@ -294,6 +297,8 @@ pub struct Dialog {
     pub extra: serde_json::Map<String, Value>,
     /// What the inputs were when OK was refused: `error` stays only while they still are.
     pub refused: Option<Refused>,
+    /// Create Sketch opened by a sketch tool's shortcut: that tool starts once the sketch is open.
+    pub then_start: Option<&'static str>,
 }
 
 /// The commands a dialog's inputs make (or why they make none), its picks, and the design's
@@ -323,11 +328,10 @@ fn fits(a: Accept, s: &Sel) -> bool {
         Sel::SketchCurve { .. } => a & (AXES | CURVES) != 0,
         Sel::Vertex { .. } => a & selection::VERTICES != 0,
         Sel::Feature { .. } => a & selection::FEATURES != 0,
-        Sel::SketchPoint { .. }
-        | Sel::SketchConstraint { .. }
-        | Sel::Occurrence { .. }
-        | Sel::ExternalSketchCurve { .. }
-        | Sel::ExternalSketchPoint { .. } => false,
+        // Sketch points go into a sketch command's own inputs (Entities, a base point), so a
+        // box selection and a pre-selection reach them the way a click already does.
+        Sel::SketchPoint { .. } => a & selection::POINTS != 0,
+        Sel::SketchConstraint { .. } | Sel::Occurrence { .. } | Sel::ExternalSketchCurve { .. } | Sel::ExternalSketchPoint { .. } => false,
     }
 }
 
@@ -350,6 +354,7 @@ impl Dialog {
             collapsed: false,
             extra: serde_json::Map::new(),
             refused: None,
+            then_start: None,
         }
     }
 
@@ -525,7 +530,8 @@ impl Dialog {
                     .or_else(|| crate::dialogs_motion::start(app, id))
                     .or_else(|| crate::dialogs_parts::start(app, id))
                     .or_else(|| crate::sketch_text::start(app, id))
-                    .or_else(|| crate::sketch_text_move::start(app, id))?;
+                    .or_else(|| crate::sketch_text_move::start(app, id))
+                    .or_else(|| crate::sketch_modify_ui::start(app, id))?;
                 Dialog::new(kind, inputs)
             }
         };
@@ -611,7 +617,11 @@ impl Dialog {
     }
 
     pub fn confirm_delete(feature: u64, with: Vec<String>, fail: Vec<String>) -> Dialog {
-        Dialog::new(Kind::ConfirmDelete { feature, with, fail }, vec![])
+        Dialog::confirm_delete_many(vec![feature], with, fail)
+    }
+
+    pub fn confirm_delete_many(features: Vec<u64>, with: Vec<String>, fail: Vec<String>) -> Dialog {
+        Dialog::new(Kind::ConfirmDelete { features, with, fail }, vec![])
     }
 
     pub fn edit_param(s: &Session, name: &str) -> Dialog {
@@ -679,7 +689,13 @@ impl Dialog {
             Kind::Shell { thickness } => ("Thickness", ValueKind::Length, thickness),
             Kind::Draft { angle } => ("Angle", ValueKind::Angle, angle),
             Kind::Hole { diameter, .. } => ("Diameter", ValueKind::Length, diameter),
-            Kind::Move { x, .. } => ("X", ValueKind::Length, x),
+            // A move's main value follows its type: a distance along X for the ones that
+            // translate, the angle for Rotate. Point to Point is two picks with nothing to type.
+            Kind::Move { mode, x, angle, .. } => match *mode {
+                crate::dialogs_move::ROTATE => ("Angle", ValueKind::Angle, angle),
+                crate::dialogs_move::POINT_TO_POINT => return None,
+                _ => ("X", ValueKind::Length, x),
+            },
             Kind::PatternRect { spacing, .. } => ("Spacing", ValueKind::Length, spacing),
             Kind::PatternCirc { angle, .. } => ("Angle", ValueKind::Angle, angle),
             Kind::Section { offset, .. } => ("Distance", ValueKind::Length, offset),
@@ -696,6 +712,7 @@ impl Dialog {
             Kind::Sheet(k) => return k.primary(&self.inputs),
             Kind::Surface(k) => return k.primary(),
             Kind::Plastic(k) => return k.primary(),
+            Kind::SketchModify(k) => return k.primary(),
             _ => return None,
         })
     }
@@ -730,10 +747,32 @@ impl Dialog {
         self.candidate_on(s, h, None)
     }
 
-    /// The selection a hit would add to the active input, knowing the face under the cursor (the
-    /// nearest face the pick ray meets). A face place picked on or near a sketch point that lies
-    /// on that face (a circle's centre) is taken at the point, as a points input picks it.
-    pub fn candidate_on(&self, s: &Session, h: &Hit, face: Option<&Hit>) -> Option<Sel> {
+    /// The face under the cursor (the nearest face the pick ray meets, first among `hits`), looked
+    /// up once for all the sketch points among `hits` when the active input snaps face places to
+    /// them (the Single hole's); `None` otherwise.
+    pub(crate) fn face_snap(&self, s: &Session, hits: &[Hit]) -> Option<FaceSnap> {
+        if !self.active_input().is_some_and(|i| snaps_to_points(i.accept)) {
+            return None;
+        }
+        let Some(Hit::Face { body, index, .. }) = hits.iter().find(|h| matches!(h, Hit::Face { .. })) else { return None };
+        let st = s.world_state();
+        let near: Vec<Vec3> = hits
+            .iter()
+            .filter_map(|h| match h {
+                Hit::SketchPoint { sketch, at, .. } => st.sketch(*sketch).map(|ss| ss.plane.to_world(*at)),
+                _ => None,
+            })
+            .collect();
+        if near.is_empty() {
+            return None;
+        }
+        Some(FaceSnap::new(s, body, *index, &near))
+    }
+
+    /// The selection a hit would add to the active input, given the face under the cursor
+    /// ([`Dialog::face_snap`] of the same hits). A face place picked on or near a sketch point that
+    /// lies on that face (a circle's centre) is taken at the point, as a points input picks it.
+    pub(crate) fn candidate_on(&self, s: &Session, h: &Hit, snap: Option<&FaceSnap>) -> Option<Sel> {
         let inp = self.active_input()?;
         // Features are also picked on the canvas: a face stands for the feature that made it.
         if inp.accept == selection::FEATURES {
@@ -742,16 +781,14 @@ impl Dialog {
                 _ => None,
             };
         }
-        if inp.accept & selection::POINTS != 0
-            && inp.accept & PLANAR_FACES != 0
+        if snaps_to_points(inp.accept)
             && let Hit::SketchPoint { sketch, at, .. } = h
         {
-            return match face {
-                Some(Hit::Face { body, index, .. }) => face_place_at_sketch_point(s, *sketch, *at, body, *index),
-                _ => None,
-            };
+            let snap = snap?;
+            return snap.place_at(s.world_state().sketch(*sketch)?.plane.to_world(*at));
         }
-        inp.accepts(h, |body, face| planar_face(s, body, face).is_some())
+        // The snap looked the face under the cursor up already, planar or not.
+        inp.accepts(h, |body, face| snap.and_then(|f| f.planar(body, face)).unwrap_or_else(|| planar_face(s, body, face).is_some()))
     }
 
     /// A pick in the viewport (already accepted by the active input).
@@ -767,7 +804,7 @@ impl Dialog {
         let sel = if measure { crate::viewport::measurement_selection(s, &sel) } else { sel };
         let chain = matches!(self.kind, Kind::Fillet { chain: true, .. });
         let mut picked =
-            if !measure && self.active_input().is_some_and(|i| i.multi) { crate::viewport::grouped_selection(s, &sel) } else { vec![sel.clone()] };
+            if !measure && self.active_input().is_some_and(|i| i.multi) { crate::viewport::picked_selection(s, &sel) } else { vec![sel.clone()] };
         // Tangent chain: an edge brings the edges that continue it smoothly.
         if chain
             && let Sel::Edge { body, index, .. } = &sel
@@ -838,20 +875,248 @@ fn default_profiles(s: &Session) -> Vec<Sel> {
     }
 }
 
-/// A place on planar face `face` of `body` at a sketch point (a circle's centre or a point), when
-/// the point lies on that face (within a micrometre); `None` otherwise.
-fn face_place_at_sketch_point(s: &Session, sketch: u64, at: solidcraft_engine::geom::Vec2, body: &str, face: usize) -> Option<Sel> {
-    let st = s.world_state();
-    let p = st.sketch(sketch)?.plane.to_world(at);
-    let m = st.body(body)?.mesh();
-    // The same wherever the part is: a planar face's triangles lie in its plane.
-    let tol = 1e-3;
-    let on = m
-        .triangles
-        .iter()
-        .zip(&m.tri_face)
-        .any(|(t, f)| *f as usize == face && m.tri(t).is_some_and(|[a, b, c]| crate::preview::point_triangle_dist(p, a, b, c) < tol));
-    (p.is_finite() && on && planar_face(s, body, face).is_some()).then(|| Sel::Face { body: body.to_string(), index: face, point: p })
+/// Does an input take face places that snap to sketch points on the face (the Single hole's)?
+pub(crate) fn snaps_to_points(accept: Accept) -> bool {
+    accept & selection::POINTS != 0 && accept & PLANAR_FACES != 0
+}
+
+/// Which of a sketch's points a face place snaps to (the Single hole's): the points of geometry
+/// the sketch shows. Not a text outline's points, which are never drawn or picked on their own
+/// (as `view::sketch_point_visible` has it), nor projected points while the sketch hides
+/// projected geometry (Show Projected off), whose curves aren't picked either. Hidden sketches
+/// offer no points at all. Show Points doesn't count: it only hides the markers of the sketch
+/// being edited, and a finished sketch's circle centres are snapped to without markers.
+pub(crate) struct SnapPoints<'a> {
+    /// Show Projected is off: no linked point is taken.
+    hide_linked: bool,
+    /// The text sources' link ids (looked up once, however many points and links there are).
+    text: std::collections::HashSet<&'a str>,
+}
+
+impl<'a> SnapPoints<'a> {
+    pub(crate) fn of(sk: &'a solidcraft_engine::sketch::Sketch) -> SnapPoints<'a> {
+        let hide_linked = sk.view.hide_projected;
+        let text = if hide_linked {
+            Default::default()
+        } else {
+            // An id names its first link, as `Sketch::link` finds it.
+            let mut seen = std::collections::HashSet::new();
+            sk.links
+                .iter()
+                .filter(|l| seen.insert(l.id.as_str()))
+                .filter(|l| l.kind == solidcraft_engine::sketch::LinkKind::Text)
+                .map(|l| l.id.as_str())
+                .collect()
+        };
+        SnapPoints { hide_linked, text }
+    }
+
+    /// Does a face place snap to point `p` of the sketch?
+    pub(crate) fn takes(&self, p: &solidcraft_engine::sketch::SPoint) -> bool {
+        match p.link.as_deref() {
+            None => true,
+            Some(_) if self.hide_linked => false,
+            Some(l) => !self.text.contains(l),
+        }
+    }
+}
+
+/// How near a sketch point must be to a face to lie on it: a micrometre, wherever the part is (a
+/// planar face's triangles lie in its plane), by the true distance ([`triangle_dist`]).
+const ON_FACE: f64 = 1e-3;
+
+/// The distance from `p` to the triangle `abc`, exactly: from its plane when `p` is over it,
+/// otherwise from its nearest side. (`preview::point_triangle_dist` takes a point just past a
+/// side for one over the triangle, with an absolute tolerance that is wide for a sliver.)
+fn triangle_dist(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f64 {
+    let sides = [(a, b), (b, c), (c, a)];
+    let to_sides = || sides.iter().map(|(u, v)| p.dist_to_segment(*u, *v)).fold(f64::INFINITY, f64::min);
+    // However small the triangle: only one without area (or not finite) has no plane.
+    let n = (b - a).cross(c - a);
+    let len = n.len();
+    if !(len > 0.0 && len.is_finite()) {
+        return to_sides();
+    }
+    let unit = n / len;
+    let h = (p - a).dot(unit);
+    let q = p - unit * h;
+    if sides.iter().all(|(u, v)| (*v - *u).cross(q - *u).dot(unit) >= 0.0) { h.abs() } else { to_sides() }
+}
+
+/// The most point-in-triangle tests one pick makes for the snap. Points past it aren't snapped
+/// to (the face as picked still is), so no sketch, however dense, can stall the viewport.
+const SNAP_BUDGET: usize = 1 << 18;
+
+#[cfg(test)]
+thread_local! {
+    /// A smaller [`SNAP_BUDGET`] for a test that runs it out.
+    static TEST_BUDGET: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// Run the snap with a budget of `n` tests per pick on this thread (`None`: [`SNAP_BUDGET`]).
+#[cfg(test)]
+pub(crate) fn set_snap_budget(n: Option<usize>) {
+    TEST_BUDGET.with(|b| b.set(n));
+}
+
+fn snap_budget() -> usize {
+    #[cfg(test)]
+    if let Some(n) = TEST_BUDGET.with(std::cell::Cell::get) {
+        return n;
+    }
+    SNAP_BUDGET
+}
+
+/// The face under the cursor, looked up once for all the sketch points one pick offers a face
+/// place to (the Single hole's snap): whether it is planar, its plane, and those of its
+/// triangles near the points on that plane, with their bounding boxes. A dense sketch over a
+/// finely tessellated part costs one planarity lookup and one pass over the body's triangles per
+/// pick; then a point off the plane is turned down at once, and a point on it is tested against
+/// the face's triangles near the cursor, within [`SNAP_BUDGET`] tests in all.
+pub(crate) struct FaceSnap {
+    body: String,
+    face: usize,
+    /// A point of the plane, its unit normal, and how far a point on the face may be from it
+    /// (the triangles' own distance plus [`ON_FACE`]); `None` when the face isn't planar.
+    plane: Option<(Vec3, Vec3, f64)>,
+    tris: Vec<([Vec3; 3], Aabb3)>,
+    /// Point-in-triangle tests left for this pick.
+    budget: std::cell::Cell<usize>,
+}
+
+impl FaceSnap {
+    /// Face `face` of `body`, for sketch points at `near` (in the world).
+    fn new(s: &Session, body: &str, face: usize, near: &[Vec3]) -> FaceSnap {
+        let mut snap = FaceSnap { body: body.to_string(), face, plane: None, tris: Vec::new(), budget: std::cell::Cell::new(snap_budget()) };
+        let st = s.world_state();
+        let (Some((origin, normal)), Some(b)) = (planar_face(s, body, face), st.body(body)) else { return snap };
+        let m = b.mesh();
+        #[cfg(test)]
+        SNAP_WORK.with(|w| w.set((w.get().0, w.get().1 + m.triangles.len())));
+        let tris: Vec<[Vec3; 3]> = m.triangles.iter().zip(&m.tri_face).filter(|(_, f)| **f as usize == face).filter_map(|(t, _)| m.tri(t)).collect();
+        // Anything within ON_FACE of a triangle is within this of the plane.
+        let stray = tris.iter().flatten().map(|v| (*v - origin).dot(normal).abs()).fold(0.0, f64::max);
+        let plane = (origin, normal, stray + ON_FACE);
+        let mut region = Aabb3::EMPTY;
+        for p in near.iter().filter(|p| near_plane(plane, **p)) {
+            region.add(*p);
+        }
+        snap.tris = tris
+            .into_iter()
+            .map(|t| {
+                let mut b = Aabb3::EMPTY;
+                t.iter().for_each(|v| b.add(*v));
+                (t, b)
+            })
+            .filter(|(_, b)| boxes_meet(b, &region, ON_FACE))
+            .collect();
+        snap.plane = Some(plane);
+        snap
+    }
+
+    /// Is face `face` of `body` planar, when it is this snap's face?
+    fn planar(&self, body: &str, face: usize) -> Option<bool> {
+        (self.face == face && self.body == body).then_some(self.plane.is_some())
+    }
+
+    /// The face place at `p` (one of the points the snap was made for), when `p` lies on the face.
+    fn place_at(&self, p: Vec3) -> Option<Sel> {
+        let plane = self.plane?;
+        if !(p.is_finite() && near_plane(plane, p)) {
+            return None;
+        }
+        let at = Aabb3 { min: p, max: p };
+        for ([a, b, c], bb) in &self.tris {
+            let left = self.budget.get();
+            if left == 0 {
+                return None;
+            }
+            self.budget.set(left - 1);
+            #[cfg(test)]
+            SNAP_WORK.with(|w| w.set((w.get().0, w.get().1 + 1)));
+            if boxes_meet(bb, &at, ON_FACE) && triangle_dist(p, *a, *b, *c) < ON_FACE {
+                return Some(Sel::Face { body: self.body.clone(), index: self.face, point: p });
+            }
+        }
+        None
+    }
+}
+
+/// Is `p` within reach of the plane (a point of it, unit normal, reach)?
+fn near_plane((origin, normal, reach): (Vec3, Vec3, f64), p: Vec3) -> bool {
+    (p - origin).dot(normal).abs() <= reach
+}
+
+/// Do boxes `a` and `b` meet once `b` is grown by `pad` on every side?
+fn boxes_meet(a: &Aabb3, b: &Aabb3, pad: f64) -> bool {
+    a.min.x <= b.max.x + pad
+        && b.min.x - pad <= a.max.x
+        && a.min.y <= b.max.y + pad
+        && b.min.y - pad <= a.max.y
+        && a.min.z <= b.max.z + pad
+        && b.min.z - pad <= a.max.z
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Planar face lookups (each tessellates the body) and triangles the snap looked at, on this
+    /// thread: tests bound the work of a pick with them.
+    static SNAP_WORK: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// (planar face lookups, triangles the snap looked at) on this thread since the last call.
+#[cfg(test)]
+pub(crate) fn take_snap_work() -> (usize, usize) {
+    SNAP_WORK.with(|w| w.replace((0, 0)))
+}
+
+#[cfg(test)]
+mod face_snap_tests {
+    use super::*;
+
+    #[test]
+    fn a_point_more_than_a_micrometre_off_a_sliver_is_off_the_face() {
+        // A triangle with half-micrometre legs. Points 2 µm below its lower side and 1.6 µm past
+        // its long side get past `preview::point_triangle_dist`'s inside test (an absolute
+        // tolerance); the snap goes by the true distance and turns them down. Points on a side,
+        // or half a micrometre beyond one, are on the face.
+        let (a, b, c) = (Vec3::ZERO, Vec3::new(5e-4, 0.0, 0.0), Vec3::new(0.0, 5e-4, 0.0));
+        let out = Vec3::new(1.0, 1.0, 0.0) * std::f64::consts::FRAC_1_SQRT_2;
+        let mid = Vec3::new(2.5e-4, 2.5e-4, 0.0);
+        let off = [Vec3::new(2.5e-4, -2e-3, 0.0), Vec3::new(1.4e-3, 1.4e-3, 0.0)];
+        let on = [mid, mid + out * 5e-4, Vec3::new(1e-4, -5e-4, 0.0), Vec3::new(1e-4, 1e-4, 5e-4)];
+        let mut bb = Aabb3::EMPTY;
+        [a, b, c].into_iter().for_each(|v| bb.add(v));
+        let snap = FaceSnap {
+            body: "Body1".into(),
+            face: 0,
+            plane: Some((Vec3::ZERO, Vec3::Z, ON_FACE)),
+            tris: vec![([a, b, c], bb)],
+            budget: std::cell::Cell::new(SNAP_BUDGET),
+        };
+        for p in off {
+            assert!(crate::preview::point_triangle_dist(p, a, b, c) < ON_FACE, "the inside test alone takes {p:?}");
+            assert!(triangle_dist(p, a, b, c) > 1.5e-3, "{p:?}");
+            assert_eq!(snap.place_at(p), None, "{p:?}");
+        }
+        for p in on {
+            assert_eq!(snap.place_at(p), Some(Sel::Face { body: "Body1".into(), index: 0, point: p }), "{p:?}");
+        }
+    }
+
+    #[test]
+    fn the_distance_to_a_tiny_triangle_is_from_its_plane_over_it() {
+        // Legs of 20 nm: the triangle still has a plane, and a point just under a micrometre
+        // above it is that far from it (not from its nearest side), so it is on the face. A
+        // triangle without area is measured from its sides; nothing here panics on non-finite input.
+        let (a, b, c) = (Vec3::ZERO, Vec3::new(2e-5, 0.0, 0.0), Vec3::new(0.0, 2e-5, 0.0));
+        let p = Vec3::new(5e-6, 5e-6, 0.99999e-3);
+        assert!((triangle_dist(p, a, b, c) - 0.99999e-3).abs() < 1e-12, "{}", triangle_dist(p, a, b, c));
+        assert!((triangle_dist(Vec3::new(0.0, 3.0, 4.0), a, b, b) - 5.0).abs() < 1e-9, "a triangle without area");
+        let far = |d: f64| d.is_nan() || d >= ON_FACE;
+        assert!(far(triangle_dist(Vec3::new(f64::NAN, 0.0, 0.0), a, b, c)), "a point that isn't finite is never near");
+        assert!(far(triangle_dist(p, a, b, Vec3::new(f64::INFINITY, 0.0, 0.0))), "nor is a triangle that isn't finite");
+    }
 }
 
 /// Does a feature build from this sketch's profiles (extrude, revolve, sweep, loft, emboss…)?
@@ -861,6 +1126,8 @@ fn profiles_used(s: &Session, sketch: u64) -> bool {
 
 /// The plane of a planar body face: (point on it, unit normal).
 pub fn planar_face(s: &Session, body: &str, face: usize) -> Option<(Vec3, Vec3)> {
+    #[cfg(test)]
+    SNAP_WORK.with(|w| w.set((w.get().0 + 1, w.get().1)));
     let st = s.world_state();
     let b = st.body(body)?;
     let tol = (b.body.size() * 1e-3).max(1e-3);
@@ -905,6 +1172,13 @@ pub(crate) fn field(ui: &mut egui::Ui, s: &mut String) -> bool {
     r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
 }
 
+/// A checkbox row. Its row handle (`dialog:<row label>`) lets a scenario click it by the label
+/// beside it, the way `field` already publishes one for a value field.
+pub(crate) fn check(ui: &mut egui::Ui, on: &mut bool) {
+    let r = ui.checkbox(on, "");
+    publish_row(&r);
+}
+
 pub(crate) fn combo(ui: &mut egui::Ui, id: &str, labels: &[&str], sel: &mut usize) {
     let row = ROW.with(|r| r.borrow().clone());
     let selected = labels.get(*sel).copied().map(tr).unwrap_or("");
@@ -915,6 +1189,39 @@ pub(crate) fn combo(ui: &mut egui::Ui, id: &str, labels: &[&str], sel: &mut usiz
         }
     });
     publish_row(&r.response);
+}
+
+/// A mode choice as a row of icon buttons rather than a drop-down: every mode is on screen at
+/// once, each drawn as the shape it makes, with its name as the tooltip. `labels` and `icons`
+/// run in step; a mode with no icon gets the fallback square. Publishes the handles a combo
+/// does, `dialog:<row label>:<label>` per mode and `dialog:<row label>` for the row.
+pub(crate) fn icon_choice(ui: &mut egui::Ui, labels: &[&str], icons: &[&str], sel: &mut usize) {
+    let t = Tokens::get();
+    let row = ROW.with(|r| r.borrow().clone());
+    let mut at = None;
+    ui.horizontal(|ui| {
+        for (i, label) in labels.iter().enumerate() {
+            let on = *sel == i;
+            let (r, resp) = ui.allocate_exact_size(vec2(28.0, 24.0), egui::Sense::click());
+            if on {
+                ui.painter().rect_filled(r, 4.0, t.accent);
+            } else if resp.hovered() {
+                ui.painter().rect_filled(r, 4.0, t.hover);
+            }
+            let ink = if on { Color32::WHITE } else { t.icon };
+            crate::icons::paint(ui.painter(), r.shrink(3.0), icons.get(i).copied().unwrap_or(""), ink, t.icon_fill, ink);
+            crate::scenario::publish_handle(&format!("dialog:{row}:{label}"), r.center());
+            if on {
+                at = Some(r.center());
+            }
+            if resp.on_hover_text(tr(label)).clicked() {
+                *sel = i;
+            }
+        }
+    });
+    if let Some(p) = at {
+        crate::scenario::publish_handle(&format!("dialog:{row}"), p);
+    }
 }
 
 thread_local! {
@@ -988,6 +1295,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::Part(_) => "INSERT PART",
         Kind::Text(_) => "EDIT TEXT",
         Kind::TextMove(_) => "MOVE/COPY TEXT",
+        Kind::SketchModify(k) => k.title(),
     }
 }
 
@@ -1003,6 +1311,8 @@ fn hint(inp: &SelInput) -> &'static str {
         "click an axis or sketch line"
     } else if a & CURVES != 0 {
         "click sketch curves"
+    } else if a & selection::POINTS != 0 {
+        "click sketch points"
     } else if a & BODIES != 0 {
         "click bodies"
     } else {
@@ -1232,7 +1542,7 @@ fn input_rows(d: &mut Dialog, ui: &mut egui::Ui) {
             if chip.on_hover_text(tooltip).clicked() {
                 activate = Some(i);
             }
-            if !inp.items.is_empty() && ui.small_button("×").on_hover_text("Clear the selection").clicked() {
+            if !inp.items.is_empty() && ui.small_button("×").on_hover_text(tr("Clear the selection")).clicked() {
                 clear = Some(i);
             }
         });
@@ -1338,7 +1648,7 @@ fn measure_rows(app: &SolveApp, ui: &mut egui::Ui, r: Option<&Value>) {
     let t = Tokens::get();
     let Some(r) = r else {
         ui.label("");
-        ui.label(RichText::new("pick one or two vertices, edges or faces").color(t.text_dim));
+        ui.label(RichText::new(tr("pick one or two vertices, edges or faces")).color(t.text_dim));
         ui.end_row();
         return;
     };
@@ -1363,7 +1673,7 @@ fn measure_rows(app: &SolveApp, ui: &mut egui::Ui, r: Option<&Value>) {
         ui.end_row();
     }
     if r.get("distance_mm").is_some() {
-        ui.label(RichText::new("Distance").strong());
+        ui.label(RichText::new(tr("Distance")).strong());
         ui.label(RichText::new(fmt_mm(app, &r["distance_mm"])).strong());
         ui.end_row();
         let d = &r["delta"];
@@ -1374,7 +1684,7 @@ fn measure_rows(app: &SolveApp, ui: &mut egui::Ui, r: Option<&Value>) {
         }
     }
     if let Some(a) = r["angle_deg"].as_f64() {
-        ui.label(RichText::new("Angle").strong());
+        ui.label(RichText::new(tr("Angle")).strong());
         ui.label(RichText::new(format!("{a:.3}°")).strong());
         ui.end_row();
     }
@@ -1397,8 +1707,9 @@ fn auto_operation(app: &SolveApp, d: &mut Dialog) {
     }
 }
 
-/// Show the active dialog (if any), docked flush to the right edge of the viewport just below
-/// the axis view, sized to its content.
+/// Show the active dialog (if any), docked flush to an edge of the viewport just below the axis
+/// view, sized to its content. The right edge is its place, except while a sketch is open: the
+/// Sketch Palette keeps the right there, and the dialog takes the left so both stay on screen.
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     app.viewport.dialog_rect = None;
     let Some(mut d) = app.dialog.take() else { return };
@@ -1437,7 +1748,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let t = Tokens::get();
     let vp = app.viewport.rect.unwrap_or_else(|| ctx.content_rect());
     let top = (vp.top() + crate::viewport::AXIS_VIEW_CLEARANCE).min((vp.bottom() - 360.0).max(vp.top()));
-    let anchor = egui::pos2(vp.right(), top);
+    // The Sketch Palette owns the right edge for as long as a sketch is being edited. A dialog
+    // started there docks at the left instead, so neither panel hides the other.
+    let side = if crate::sketch_palette::editing(app) && crate::sketch_palette::fits_beside_a_dialog(app, ctx) {
+        crate::frame::Side::Left
+    } else {
+        crate::frame::Side::Right
+    };
+    let anchor = egui::pos2(side.anchor_x(vp), top);
     let mut keep = true;
     let mut ok = false;
     let mut applied = false;
@@ -1446,11 +1764,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let wide = d.is_wide();
     let raw_title = title(&d.kind);
     let heading = if d.editing.is_some() { crate::i18n::format("dialog.edit_title", &[("title", tr(raw_title))]) } else { tr(raw_title).to_string() };
-    let frame = egui::Frame::window(&ctx.global_style())
-        .fill(t.dialog_bg)
-        .stroke(Stroke::new(1.0, t.dialog_border))
-        .corner_radius(egui::CornerRadius { nw: 4, sw: 4, ne: 0, se: 0 })
-        .shadow(egui::Shadow { offset: [-2, 2], blur: 8, spread: 0, color: Color32::from_black_alpha(40) });
+    let frame = crate::frame::dock_frame(ctx, side);
     // The area includes the border as well as the inner margins; reserve all of it so a
     // horizontally scrolling table cannot push a wide dialog two pixels past its limit.
     let horizontal_frame = frame.inner_margin.leftf() + frame.inner_margin.rightf() + 2.0 * frame.stroke.width;
@@ -1459,12 +1773,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let valid = !has_ok || !d.previews() || (built.unwrap_or_else(|| apply_commands(app, &d).is_ok()) && app.preview.error.is_none());
     let width = if wide { crate::frame::Width::Wide } else { crate::frame::Width::Normal };
     let wkey = egui::Id::new(("sc_dialog_w", wide));
-    let response = crate::frame::docked(
+    let response = crate::frame::docked_on(
         RichText::new(heading.clone()).strong().size(13.0),
         egui::Id::new(("sc_dialog", title(&d.kind))),
         anchor,
         vp.bottom() - anchor.y - 8.0,
         width,
+        side,
     )
     .frame(frame)
     .open(&mut keep)
@@ -1530,10 +1845,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             && let Some(selection @ Sel::Face { .. }) = d.inputs.first().and_then(|i| i.items.first())
                         {
                             row_label(ui, "Attachment");
-                            ui.label("This face cannot provide a durable attachment. Choose another face or explicitly use a fixed plane.");
+                            ui.label(tr("This face cannot provide a durable attachment. Choose another face or explicitly use a fixed plane."));
                             ui.end_row();
                             row_label(ui, "");
-                            if ui.button("Use fixed plane").clicked()
+                            if ui.button(tr("Use fixed plane")).clicked()
                                 && let Some(mut plane) = crate::sketch_attachment_ui::face_plane(app, selection)
                             {
                                 plane["fixed"] = json!(true);
@@ -1581,7 +1896,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         if *direction < 2 {
                             row_label(ui, "Reverse");
                             let mut reverse = *direction == 1;
-                            if ui.checkbox(&mut reverse, "Reverse Direction").changed() {
+                            if ui.checkbox(&mut reverse, tr("Reverse Direction")).changed() {
                                 *direction = usize::from(reverse);
                             }
                             ui.end_row();
@@ -1686,7 +2001,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 &mut d.extra,
                                 "fi_type",
                                 "type",
-                                &[("Constant", "constant"), ("Chord Length", "chord"), ("Variable", "variable")],
+                                &[("Constant", "constant"), ("Chord Length", "chord"), ("Variable", "variable"), ("Spline", "spline")],
                             );
                             ui.end_row();
                         }
@@ -1695,7 +2010,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             if !*chamfer {
                                 match rtype {
                                     1 => "Chord Length",
-                                    2 => "Start Radius",
+                                    2 | 3 => "Start Radius",
                                     _ => "Radius",
                                 }
                             } else if *ctype == 0 {
@@ -1706,11 +2021,18 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         );
                         enter |= field(ui, radius);
                         ui.end_row();
-                        // A constant radius too large for the edges: refused, or reduced to the
-                        // largest that fits (the preview shows what was used).
+                        // A constant radius too large for the edges: refused, reduced to the
+                        // largest that fits (the preview shows what was used), or tapered along
+                        // the edges to the room there.
                         if !*chamfer && rtype == 0 {
                             row_label(ui, "Radius Fit");
-                            let fit = extra_choice(ui, &mut d.extra, "fi_fit", "fit", &[("Exact", "exact"), ("Reduce to Fit", "reduce")]);
+                            let fit = extra_choice(
+                                ui,
+                                &mut d.extra,
+                                "fi_fit",
+                                "fit",
+                                &[("Exact", "exact"), ("Reduce to Fit", "reduce"), ("Taper to Fit", "taper")],
+                            );
                             ui.end_row();
                             if fit == 1
                                 && let Some((lo, hi)) = app.preview.applied
@@ -1759,9 +2081,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 row_label(ui, "Mid Radius");
                                 ui.horizontal(|ui| {
                                     ui.add(egui::DragValue::new(t).speed(0.01).range(0.01..=0.99).fixed_decimals(2))
-                                        .on_hover_text("Position along the edge, 0 at the start end, 1 at the other");
+                                        .on_hover_text(tr("Position along the edge, 0 at the start end, 1 at the other"));
                                     enter |= field(ui, r);
-                                    if ui.small_button("×").on_hover_text("Remove this point").clicked() {
+                                    if ui.small_button("×").on_hover_text(tr("Remove this point")).clicked() {
                                         remove = Some(k);
                                     }
                                 });
@@ -1771,7 +2093,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 mids.remove(k);
                             }
                             row_label(ui, "");
-                            if ui.button("Add Mid Radius").clicked() && mids.len() < 20 {
+                            if ui.button(tr("Add Mid Radius")).clicked() && mids.len() < 20 {
                                 let t = if mids.is_empty() { 0.5 } else { (mids.iter().map(|m| m.0).fold(0.0, f64::max) + 1.0) * 0.5 };
                                 mids.push((t.min(0.99), radius.clone()));
                             }
@@ -1782,6 +2104,21 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 extra_check(ui, &mut d.extra, "smooth");
                                 ui.end_row();
                             }
+                        }
+                        if !*chamfer && rtype == 3 {
+                            // The radius along the edge as a B-spline: its control radii from the
+                            // start end, also dragged by their handles on the edge.
+                            row_label(ui, "Swap Ends");
+                            extra_check(ui, &mut d.extra, "swap_ends");
+                            ui.end_row();
+                            let mut radii = spline_radii(&mut d.extra, radius);
+                            let n = radii.len();
+                            for (k, r) in radii.iter_mut().enumerate() {
+                                row_label(ui, if k + 1 == n { "End Radius" } else { "Control Radius" });
+                                enter |= field(ui, r);
+                                ui.end_row();
+                            }
+                            d.extra.insert("radii".into(), json!(radii));
                         }
                         row_label(ui, "Tangent Chain");
                         ui.checkbox(chain, "");
@@ -1840,7 +2177,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         enter |= field(ui, thickness);
                         ui.end_row();
                         row_label(ui, "Depth");
-                        let r = ui.add(egui::TextEdit::singleline(depth).hint_text("to the next face"));
+                        let r = ui.add(egui::TextEdit::singleline(depth).hint_text(tr("to the next face")));
                         crate::params_dialog::complete(ui, &r, depth);
                         enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         ui.end_row();
@@ -1881,7 +2218,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     Kind::BoundaryFill { operation, cells, .. } => {
                         row_label(ui, "Cells");
                         if cells.is_empty() {
-                            ui.label(RichText::new("Pick the tool bodies").color(Tokens::get().text_dim));
+                            ui.label(RichText::new(tr("Pick the tool bodies")).color(Tokens::get().text_dim));
                         }
                         ui.end_row();
                         for (i, (_, label, on)) in cells.iter_mut().enumerate() {
@@ -1941,7 +2278,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         }
                         ui.end_row();
                         row_label(ui, "Size");
-                        let r = ui.add(egui::TextEdit::singleline(designation).hint_text("fits the face, e.g. M8"));
+                        let r = ui.add(egui::TextEdit::singleline(designation).hint_text(tr("fits the face, e.g. M8")));
                         enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         ui.end_row();
                         if !full {
@@ -2070,7 +2407,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             row_label(ui, "Position");
                             ui.horizontal(|ui| {
                                 ui.label(format!("{:.2}, {:.2}, {:.2}", p.x, p.y, p.z));
-                                if ui.small_button("×").on_hover_text("Place at the origin instead").clicked() {
+                                if ui.small_button("×").on_hover_text(tr("Place at the origin instead")).clicked() {
                                     *at = None;
                                 }
                             });
@@ -2116,6 +2453,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     Kind::Assembly(k) => enter |= crate::dialogs_assembly::rows(app, ui, k, &mut d.inputs, &mut d.active),
                     Kind::Sheet(k) => enter |= crate::dialogs_sheet::rows(app, ui, k, &mut d.inputs),
                     Kind::Surface(k) => enter |= crate::dialogs_surface::rows(ui, k),
+                    Kind::SketchModify(k) => enter |= crate::sketch_modify_ui::rows(ui, k),
                     Kind::Plastic(k) => enter |= crate::dialogs_plastic::rows(app, ui, k, &d.inputs),
                     Kind::Appearance(k) => enter |= crate::dialogs_appearance::rows(app, ui, k, &mut d.inputs),
                     Kind::Motion(k) => enter |= crate::dialogs_motion::rows(app, ui, k, &mut d.inputs),
@@ -2162,7 +2500,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             let (sr, sresp) = ui.allocate_exact_size(vec2(14.0, 14.0), egui::Sense::hover());
             if app.preview.busy {
                 egui::Spinner::new().size(14.0).paint_at(ui, sr);
-                sresp.on_hover_text("Updating the preview");
+                sresp.on_hover_text(tr("Updating the preview"));
             }
             let raw_label = if matches!(d.kind, Kind::ConfirmDelete { .. }) { "Delete" } else { "OK" };
             let label = tr(raw_label);
@@ -2194,6 +2532,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         crate::frame::remember_width(ui, wkey);
     });
     app.viewport.dialog_rect = response.map(|r| r.response.rect);
+    if let Some(r) = app.viewport.dialog_rect {
+        crate::scenario::publish_rect("dialog:outer", r);
+    }
     // Keyboard: Enter applies (from a value field, or with nothing focused), Esc cancels.
     let (enter_free, esc) = ctx.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
     let nothing_focused = ctx.memory(|m| m.focused().is_none());
@@ -2210,17 +2551,26 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         cancel = true;
     }
     // A plane picked for a new sketch starts it right away.
+    let mut then_start = None;
     if matches!(d.kind, Kind::Sketch)
         && d.error.is_none()
         && let Some(sel) = d.inputs.first().and_then(|i| i.items.first()).cloned()
     {
         match start_sketch(app, &sel) {
-            Ok(()) => cancel = true,
+            Ok(()) => {
+                cancel = true;
+                then_start = d.then_start;
+            }
             Err(error) => d.refuse(app, error),
         }
     }
     if ok {
-        match run_dialog(app, &d) {
+        // Edit Text applies its own way: its live changes and OK are one undo step.
+        let run = match &mut d.kind {
+            Kind::Text(k) => crate::sketch_text::apply(app, k),
+            _ => run_dialog(app, &d),
+        };
+        match run {
             Ok(()) => {
                 cancel = true;
                 applied = true;
@@ -2230,16 +2580,27 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
     if !keep || cancel {
         crate::dialogs_motion::closed(app, &mut d, applied);
+        if let Kind::Text(k) = &mut d.kind {
+            crate::sketch_text::closed(app, k, applied);
+        }
     }
     // The edited text's outlines are new curves: the old selection would name stale ids.
     if applied && matches!(d.kind, Kind::Text(_) | Kind::TextMove(_)) {
         let _ = app.session.execute("select.clear", &json!({}));
     }
     if keep && !cancel {
+        // The canvas follows Edit Text's fields.
+        if let Kind::Text(k) = &mut d.kind {
+            crate::sketch_text::preview(app, k);
+        }
         app.dialog = Some(d);
     } else if let Some((_, marker)) = d.editing {
         // Editing done: put the timeline marker back where it was.
         let _ = roll_marker(app, marker);
+    }
+    // The shortcut that asked for this sketch starts its tool in it.
+    if let Some(id) = then_start {
+        app.start(id);
     }
 }
 
@@ -2247,6 +2608,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 pub fn cancel(app: &mut SolveApp) {
     if let Some(mut d) = app.dialog.take() {
         crate::dialogs_motion::closed(app, &mut d, false);
+        if let Kind::Text(k) = &mut d.kind {
+            crate::sketch_text::closed(app, k, false);
+        }
         app.dialog = Some(d);
     }
     if let Some(d) = app.dialog.take()
@@ -2361,6 +2725,29 @@ fn extra_field(ui: &mut egui::Ui, extra: &mut serde_json::Map<String, Value>, ke
     enter
 }
 
+/// A spline fillet's control radii after the start radius, as expressions. A dialog without a
+/// spline yet gets a cubic one of two spans, all its control radii `radius`.
+pub(crate) fn spline_radii(extra: &mut serde_json::Map<String, Value>, radius: &str) -> Vec<String> {
+    let radii: Vec<String> = extra
+        .get("radii")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|r| match r {
+            Value::String(x) => Some(x.clone()),
+            Value::Number(n) => Some(n.to_string()),
+            _ => None,
+        })
+        .collect();
+    let knots = extra.get("knots").and_then(Value::as_array).map_or(0, Vec::len);
+    // All control radii (the start radius and these) plus the degree (1…3) plus one.
+    if !radii.is_empty() && (radii.len() + 3..=radii.len() + 5).contains(&knots) {
+        return radii;
+    }
+    extra.insert("knots".into(), json!([0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0]));
+    vec![radius.to_string(); 4]
+}
+
 /// A variable fillet's middle radii as (position, radius expression).
 fn mid_points(extra: &serde_json::Map<String, Value>) -> Vec<(f64, String)> {
     extra
@@ -2380,7 +2767,7 @@ fn mid_points(extra: &serde_json::Map<String, Value>) -> Vec<(f64, String)> {
         .collect()
 }
 
-const CHAMFER_TYPES: [&str; 3] = ["Equal Distance", "Two Distances", "Distance and Angle"];
+pub(crate) const CHAMFER_TYPES: [&str; 3] = ["Equal Distance", "Two Distances", "Distance and Angle"];
 
 /// A new Fillet or Chamfer dialog's values.
 fn fillet_kind(size: &str, chamfer: bool) -> Kind {
@@ -2420,8 +2807,8 @@ fn hole_defaults() -> Kind {
 
 fn params_table(app: &mut SolveApp, ui: &mut egui::Ui, new_name: &mut String, new_expr: &mut String) {
     let t = Tokens::get();
-    ui.label(RichText::new("Name").strong());
-    ui.label(RichText::new("Expression  ·  value").strong());
+    ui.label(RichText::new(tr("Name")).strong());
+    ui.label(RichText::new(tr("Expression  ·  value")).strong());
     ui.end_row();
     let (vals, errs) = app.session.doc.param_values();
     let params = app.session.doc.params.clone();
@@ -2462,10 +2849,10 @@ fn params_table(app: &mut SolveApp, ui: &mut egui::Ui, new_name: &mut String, ne
         });
         ui.end_row();
     }
-    ui.add(egui::TextEdit::singleline(new_name).hint_text("new name").desired_width(110.0));
+    ui.add(egui::TextEdit::singleline(new_name).hint_text(tr("new name")).desired_width(110.0));
     ui.horizontal(|ui| {
-        ui.add(egui::TextEdit::singleline(new_expr).hint_text("expression, e.g. 25 mm").desired_width(160.0));
-        if ui.button("Add").clicked()
+        ui.add(egui::TextEdit::singleline(new_expr).hint_text(tr("expression, e.g. 25 mm")).desired_width(160.0));
+        if ui.button(tr("Add")).clicked()
             && !new_name.is_empty()
             && app.run("parameters.change", json!({"name": new_name, "expression": new_expr})).is_ok()
         {
@@ -2740,7 +3127,8 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                 ("solid.chamfer", p)
             } else {
                 let mut p = json!({"edges": edges, "radius": radius});
-                if d.extra.get("type").and_then(Value::as_str) == Some("variable") {
+                let style = d.extra.get("type").and_then(Value::as_str);
+                if matches!(style, Some("variable" | "spline")) {
                     // The start radius goes at one end of the first edge (Swap Ends: the other).
                     let ends = sels(d, 0).iter().find_map(|x| match x {
                         Sel::Edge { body, index, .. } => {
@@ -2753,7 +3141,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                         p["start"] = pt(if swap { b } else { a });
                     }
                     let mids = mid_points(&d.extra);
-                    if !mids.is_empty() {
+                    if style == Some("variable") && !mids.is_empty() {
                         p["mid"] = json!(mids.iter().map(|(t, r)| json!([t, r])).collect::<Vec<_>>());
                         if d.extra.get("smooth").and_then(Value::as_bool).unwrap_or(false) {
                             p["smooth"] = json!(true);
@@ -3136,11 +3524,12 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         }
         Kind::EditParam { name, expr } => ("parameters.change", json!({"name": name, "expression": expr})),
         Kind::Rename { feature, name } => ("timeline.rename", json!({"feature": feature, "name": name})),
-        Kind::ConfirmDelete { feature, .. } => ("timeline.delete", json!({ "features": [feature.to_string()] })),
+        Kind::ConfirmDelete { features, .. } => ("timeline.delete", json!({ "features": features })),
         Kind::Sketch | Kind::Params { .. } | Kind::Measure { .. } => return Ok(Vec::new()),
         Kind::Assembly(k) => return crate::dialogs_assembly::commands(app, k, &d.inputs),
         Kind::Sheet(k) => return crate::dialogs_sheet::commands(app, k, &d.inputs, &d.extra),
         Kind::Surface(k) => return crate::dialogs_surface::commands(app, k, &d.inputs, &d.extra),
+        Kind::SketchModify(k) => return crate::sketch_modify_ui::commands(app, k, &d.inputs, &d.extra),
         Kind::Plastic(k) => return crate::dialogs_plastic::commands(app, k, &d.inputs, &d.extra),
         Kind::Appearance(k) => return Ok(crate::dialogs_appearance::commands(k, &d.inputs)),
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),
@@ -3236,7 +3625,7 @@ fn source_features(s: &Session, bodies: &[String]) -> Vec<String> {
 }
 
 /// The sketch holding all these curve ids (the active sketch first, never `not`).
-fn curves_sketch(app: &SolveApp, ids: &[String], not: Option<u64>) -> Option<u64> {
+pub(crate) fn curves_sketch(app: &SolveApp, ids: &[String], not: Option<u64>) -> Option<u64> {
     let st = app.session.world_state();
     let has =
         |sid: u64| st.sketch(sid).is_some_and(|ss| ids.iter().all(|id| ss.sketch.curve_index(id).is_some() || ss.sketch.wire_index(id).is_some()));
@@ -3535,9 +3924,17 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                     *flip = *f;
                 }
             }
-            // A fillet that reduces a radius too large for its edges.
-            if let FeatureKind::Fillet { fit: solidcraft_engine::doc::FilletFit::Reduce, .. } = &f.kind {
-                d.extra.insert("fit".into(), json!("reduce"));
+            // A fillet that reduces or tapers a radius too large for its edges.
+            if let FeatureKind::Fillet { fit, .. } = &f.kind {
+                use solidcraft_engine::doc::FilletFit;
+                let mode = match fit {
+                    FilletFit::Exact => None,
+                    FilletFit::Reduce => Some("reduce"),
+                    FilletFit::Taper => Some("taper"),
+                };
+                if let Some(mode) = mode {
+                    d.extra.insert("fit".into(), json!(mode));
+                }
             }
             // A chord-length or variable fillet.
             if let FeatureKind::Fillet { style, .. } = &f.kind {
@@ -3546,11 +3943,21 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                     FilletStyle::Chord => {
                         d.extra.insert("type".into(), json!("chord"));
                     }
-                    FilletStyle::Variable { radius2, start, mid, smooth } => {
-                        d.extra.insert("type".into(), json!("variable"));
-                        d.extra.insert("radius2".into(), json!(radius2));
-                        d.extra.insert("mid".into(), json!(mid.iter().map(|(t, r)| json!([t, r])).collect::<Vec<_>>()));
-                        d.extra.insert("smooth".into(), json!(smooth));
+                    FilletStyle::Variable { start, .. } | FilletStyle::Spline { start, .. } => {
+                        match style {
+                            FilletStyle::Variable { radius2, mid, smooth, .. } => {
+                                d.extra.insert("type".into(), json!("variable"));
+                                d.extra.insert("radius2".into(), json!(radius2));
+                                d.extra.insert("mid".into(), json!(mid.iter().map(|(t, r)| json!([t, r])).collect::<Vec<_>>()));
+                                d.extra.insert("smooth".into(), json!(smooth));
+                            }
+                            FilletStyle::Spline { knots, radii, .. } => {
+                                d.extra.insert("type".into(), json!("spline"));
+                                d.extra.insert("knots".into(), json!(knots));
+                                d.extra.insert("radii".into(), json!(radii));
+                            }
+                            FilletStyle::Constant | FilletStyle::Chord => {}
+                        }
                         // The start was the first edge's last point: ends swapped.
                         let first_end = edges.first().and_then(|p| edge_sel(s, *p)).and_then(|x| match x {
                             Sel::Edge { body, index, .. } => {

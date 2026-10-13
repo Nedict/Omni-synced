@@ -300,6 +300,17 @@ fn replace_sheet_body(mb: &mut ModelBody, body: Body) {
     *mb = next;
 }
 
+/// Put a converted sheet in the place of the body it was made from.
+fn put_sheet(st: &mut ModelState, sh: sheet::SheetBody) -> Result<()> {
+    let solid = sh.solid()?;
+    if let Some(b) = st.bodies.iter_mut().find(|b| b.name == sh.body) {
+        replace_sheet_body(b, solid);
+    }
+    st.sheets.retain(|s| s.body != sh.body);
+    st.sheets.push(sh);
+    Ok(())
+}
+
 fn rebuild_sheet(st: &mut ModelState, idx: usize) -> Result<()> {
     let sheet = st.sheets.get(idx).cloned().ok_or_else(|| DocError::Invalid("sheet".into()))?;
     let solid = sheet.solid()?;
@@ -546,7 +557,34 @@ pub(super) fn sheet_eval(
             }
             rebuild_sheet(st, i)
         }
-        FeatureKind::SheetConvert { body, face, rule } => {
+        // With bend edges: a solid or shelled body whose faces become the sheet.
+        FeatureKind::SheetConvert { body, face, rule, bends } if !bends.is_empty() => {
+            let mb = st.body(body).cloned().ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let r = doc.sheet_rule(rule.as_deref());
+            let rv = doc.rule_values(vals, &r)?;
+            // The bend edges by name first; a name that is gone keeps its point, with a warning.
+            let mut picks = Vec::with_capacity(bends.len());
+            for (i, p) in bends.iter().enumerate() {
+                let name = f.edge_names.get(i).filter(|n| !n.is_empty());
+                picks.push(match name.map(|n| (n, crate::naming::locate_edge(&mb, n, *p))) {
+                    Some((n, Ok(hit))) => {
+                        if let Some(note) = hit.note(n) {
+                            append_warning(warning, note);
+                        }
+                        hit.point
+                    }
+                    Some((n, Err(_))) => {
+                        append_warning(warning, format!("edge `{n}` no longer exists; using the edge at the picked point"));
+                        *p
+                    }
+                    None => *p,
+                });
+            }
+            let mut sh = sheet::convert_body(&mb, &r.name, &rv, *face, &picks)?;
+            tag_flanges(&mut sh, 0, f.id);
+            put_sheet(st, sh)
+        }
+        FeatureKind::SheetConvert { body, face, rule, .. } => {
             let mb = st.body(body).cloned().ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let n = planar_normal_at(&mb.body, *face).ok_or_else(|| DocError::Invalid("pick a planar face of the plate".into()))?;
             let tol = (mb.body.size() * 1e-3).max(1e-3);
@@ -565,20 +603,16 @@ pub(super) fn sheet_eval(
             let area = region.area().abs();
             let vol = kernel::measure(&mb.body)?.volume;
             if (area * t - vol).abs() > 1e-3 * vol.max(1.0) {
-                return Err(DocError::Invalid("not supported yet: converting bodies that are not a plate of even thickness".into()));
+                return Err(DocError::Invalid(
+                    "not supported yet: converting bodies that are not a plate of even thickness without bend edges (`bends`)".into(),
+                ));
             }
             let r = doc.sheet_rule(rule.as_deref());
             let mut rv = doc.rule_values(vals, &r)?;
             rv.thickness = t;
             let mut sh = sheet::base_flange(body, &r.name, &rv, plane, Region2 { outer: region.outer.clone(), holes: Vec::new() });
             sh.holes = region.holes.iter().map(|h| Region2 { outer: h.ccw(), holes: Vec::new() }).collect();
-            let solid = sh.solid()?;
-            if let Some(b) = st.bodies.iter_mut().find(|b| &b.name == body) {
-                replace_sheet_body(b, solid);
-            }
-            st.sheets.retain(|s| &s.body != body);
-            st.sheets.push(sh);
-            Ok(())
+            put_sheet(st, sh)
         }
         _ => Err(DocError::Invalid(format!("{} is not a sheet metal feature", f.name))),
     }

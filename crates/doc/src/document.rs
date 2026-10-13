@@ -782,12 +782,17 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         refold: bool,
     },
-    /// Convert a plate body (constant thickness from the face at `face`) to sheet metal.
+    /// Convert a body to sheet metal from its fixed face at `face`: a plate of constant
+    /// thickness or, with `bends`, a solid or shelled body whose faces reached from the fixed
+    /// face across those edges become the sheet.
     SheetConvert {
         body: String,
         face: Vec3,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rule: Option<String>,
+        /// Points on the sharp edges that become bends.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        bends: Vec<Vec3>,
     },
     /// Plastic boss: a round post on a face (draft, root fillet, hole, ribs).
     Boss {
@@ -920,6 +925,31 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         targets: Vec<String>,
     },
+    /// A surface body swept straight along the sketch normal from open curve chains and the
+    /// boundaries of profiles: walls only, no caps.
+    SurfaceExtrude {
+        sketch: u64,
+        /// Profiles whose boundary loops are swept (none: only `curves`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profiles: Option<ProfileSel>,
+        /// Sketch curve ids, grouped into chains of curves that meet end to end.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        curves: Vec<String>,
+        extent: Extent,
+    },
+    /// A body taken apart: each face at `faces` (every face when empty) its own surface body,
+    /// the faces left one surface body under the body's name. A solid comes apart into surfaces.
+    Unstitch {
+        body: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        faces: Vec<Vec3>,
+    },
+    /// A surface body with the faces at `faces` (every face when empty) turned over.
+    ReverseNormal {
+        body: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        faces: Vec<Vec3>,
+    },
     /// A planar surface body extended outward by `distance` past the edges through `edges`.
     SurfaceExtend {
         body: String,
@@ -989,16 +1019,23 @@ pub enum FilletStyle {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         smooth: bool,
     },
+    /// The radius along each edge as a clamped B-spline of the position from the end nearest
+    /// `start` (0) to the other (1): `radius` is its first control radius and `radii` the rest,
+    /// its degree what `knots` leave (knots = control radii + degree + 1).
+    Spline { start: Vec3, knots: Vec<f64>, radii: Vec<String> },
 }
 
 /// A fillet radius too large for the geometry around its edges: refused (`Exact`, the default),
-/// or reduced to the largest that works for all of them (`Reduce`), with a warning.
+/// reduced to the largest that works for all of them (`Reduce`), or tapered along each edge it
+/// doesn't fit to the room there, down to zero where a face closes to a point (`Taper`); a
+/// warning says what was done.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FilletFit {
     #[default]
     Exact,
     Reduce,
+    Taper,
 }
 
 impl FilletFit {
@@ -1010,6 +1047,13 @@ impl FilletFit {
 impl FilletStyle {
     pub fn is_constant(&self) -> bool {
         *self == FilletStyle::Constant
+    }
+
+    /// The spline of a [`FilletStyle::Spline`] with its control radii `values` (the first is
+    /// the feature's `radius`).
+    pub fn spline(knots: &[f64], values: Vec<f64>) -> solidcraft_kernel::RadiusSpline {
+        let degree = knots.len().saturating_sub(values.len() + 1);
+        solidcraft_kernel::RadiusSpline { degree, knots: knots.to_vec(), radii: values }
     }
 }
 
@@ -1206,6 +1250,7 @@ impl FeatureKind {
         use FeatureKind as K;
         match self {
             K::Extrude { sketch, .. }
+            | K::SurfaceExtrude { sketch, .. }
             | K::Revolve { sketch, .. }
             | K::Emboss { sketch, .. }
             | K::Rib { sketch, .. }
@@ -1254,6 +1299,8 @@ impl FeatureKind {
             | K::Thicken { .. }
             | K::SurfaceExtend { .. }
             | K::SurfaceTrim { .. }
+            | K::Unstitch { .. }
+            | K::ReverseNormal { .. }
             | K::Move { .. }
             | K::Import { .. }
             | K::MeshImport { .. }
@@ -1337,10 +1384,13 @@ impl FeatureKind {
             FeatureKind::Align { .. } => "AlignFeature",
             FeatureKind::Remove { .. } => "RemoveFeature",
             FeatureKind::Patch { .. } => "PatchFeature",
+            FeatureKind::SurfaceExtrude { .. } => "SurfaceExtrudeFeature",
             FeatureKind::Stitch { .. } => "StitchFeature",
             FeatureKind::Thicken { .. } => "ThickenFeature",
             FeatureKind::SurfaceTrim { .. } => "TrimFeature",
             FeatureKind::SurfaceExtend { .. } => "ExtendFeature",
+            FeatureKind::Unstitch { .. } => "UnstitchFeature",
+            FeatureKind::ReverseNormal { .. } => "ReverseNormalFeature",
             FeatureKind::Import { .. } => "BaseFeature",
             FeatureKind::MeshImport { .. } => "MeshFeature",
             FeatureKind::MeshConvert { .. } => "MeshConvertFeature",
@@ -1403,10 +1453,13 @@ impl FeatureKind {
             FeatureKind::Align { .. } => "Align",
             FeatureKind::Remove { .. } => "Remove",
             FeatureKind::Patch { .. } => "Patch",
+            FeatureKind::SurfaceExtrude { .. } => "SurfaceExtrude",
             FeatureKind::Stitch { .. } => "Stitch",
             FeatureKind::Thicken { .. } => "Thicken",
             FeatureKind::SurfaceTrim { .. } => "Trim",
             FeatureKind::SurfaceExtend { .. } => "Extend",
+            FeatureKind::Unstitch { .. } => "Unstitch",
+            FeatureKind::ReverseNormal { .. } => "ReverseNormal",
             FeatureKind::Import { .. } => "Import",
             FeatureKind::MeshImport { .. } => "Mesh",
             FeatureKind::MeshConvert { .. } => "ConvertMesh",
@@ -1423,7 +1476,9 @@ impl FeatureKind {
             | FeatureKind::Sweep { sketch, profiles, .. }
             | FeatureKind::Emboss { sketch, profiles, .. }
             | FeatureKind::SheetBase { sketch, profiles, .. } => vec![(*sketch, profiles)],
-            FeatureKind::Patch { sketch: Some(sk), profiles, .. } => vec![(*sk, profiles)],
+            FeatureKind::Patch { sketch: Some(sk), profiles, .. } | FeatureKind::SurfaceExtrude { sketch: sk, profiles: Some(profiles), .. } => {
+                vec![(*sk, profiles)]
+            }
             FeatureKind::Loft { sections, .. } => sections.iter_mut().filter(|s| s.point.is_none()).map(|s| (s.sketch, &mut s.profiles)).collect(),
             _ => Vec::new(),
         }
@@ -1437,7 +1492,9 @@ impl FeatureKind {
             | FeatureKind::Sweep { sketch, profiles, .. }
             | FeatureKind::Emboss { sketch, profiles, .. }
             | FeatureKind::SheetBase { sketch, profiles, .. } => vec![(*sketch, profiles)],
-            FeatureKind::Patch { sketch: Some(sketch), profiles, .. } => vec![(*sketch, profiles)],
+            FeatureKind::Patch { sketch: Some(sketch), profiles, .. } | FeatureKind::SurfaceExtrude { sketch, profiles: Some(profiles), .. } => {
+                vec![(*sketch, profiles)]
+            }
             FeatureKind::Loft { sections, .. } => {
                 sections.iter().filter(|section| section.point.is_none()).map(|section| (section.sketch, &section.profiles)).collect()
             }
@@ -1460,6 +1517,8 @@ impl FeatureKind {
             FeatureKind::Thread { face, .. } => vec![face],
             FeatureKind::Emboss { face: Some(face), .. } => vec![&mut face.at],
             FeatureKind::Boss { position, .. } | FeatureKind::SnapFit { position, .. } | FeatureKind::Rest { position, .. } => vec![position],
+            // With bend edges the fixed face is found by name (a plate keeps its point).
+            FeatureKind::SheetConvert { face, bends, .. } if !bends.is_empty() => vec![face],
             _ => Vec::new(),
         }
     }
@@ -1483,7 +1542,7 @@ impl FeatureKind {
             | FeatureKind::ConstructionPlane { plane }
             | FeatureKind::Split { plane, .. }
             | FeatureKind::SplitFace { plane, .. } => plane_exprs(plane, &mut v),
-            FeatureKind::Extrude { extent, .. } => {
+            FeatureKind::Extrude { extent, .. } | FeatureKind::SurfaceExtrude { extent, .. } => {
                 v.push(&extent.distance);
                 if let Some(d) = &extent.distance2 {
                     v.push(d);
@@ -1504,9 +1563,13 @@ impl FeatureKind {
             }
             FeatureKind::Fillet { radius, style, .. } => {
                 v.push(radius);
-                if let FilletStyle::Variable { radius2, mid, .. } = style {
-                    v.push(radius2);
-                    v.extend(mid.iter().map(|(_, r)| r.as_str()));
+                match style {
+                    FilletStyle::Variable { radius2, mid, .. } => {
+                        v.push(radius2);
+                        v.extend(mid.iter().map(|(_, r)| r.as_str()));
+                    }
+                    FilletStyle::Spline { radii, .. } => v.extend(radii.iter().map(String::as_str)),
+                    FilletStyle::Constant | FilletStyle::Chord => {}
                 }
             }
             FeatureKind::Chamfer { distance, distance2, angle, .. } => {
@@ -1625,6 +1688,7 @@ impl FeatureKind {
             FeatureKind::Thicken { thickness, .. } => v.push(thickness),
             FeatureKind::SurfaceTrim { plane, .. } => plane_exprs(plane, &mut v),
             FeatureKind::SurfaceExtend { distance, .. } => v.push(distance),
+            FeatureKind::Unstitch { .. } | FeatureKind::ReverseNormal { .. } => {}
             FeatureKind::Patch { .. } => {}
             FeatureKind::Import { .. } | FeatureKind::MeshImport { .. } | FeatureKind::BodyTransfer { .. } => {}
         }
@@ -1777,6 +1841,10 @@ pub struct Document {
     /// Browser groups (folders of bodies, sketches or construction planes).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub browser_groups: Vec<BrowserGroup>,
+    /// Named folders used to organise features in the timeline. They do not affect evaluation
+    /// order; feature ids remain the source of truth when features are renamed or reordered.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timeline_groups: Vec<TimelineGroup>,
     /// Browser item order per component folder (`"<component>/<folder>"` → item keys).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub browser_order: std::collections::BTreeMap<String, Vec<String>>,
@@ -1843,6 +1911,66 @@ pub struct BrowserGroup {
     pub items: Vec<String>,
 }
 
+/// A saved feature-history folder. Folders may nest, and a feature can belong to at most one folder.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TimelineGroup {
+    pub id: u64,
+    pub name: String,
+    /// The containing feature folder. `None` places the folder at the timeline root.
+    #[serde(default)]
+    pub parent: Option<u64>,
+    #[serde(default)]
+    pub features: Vec<u64>,
+}
+
+/// The first feature-history folder whose own and nested features do not form one
+/// uninterrupted run in the timeline.
+pub fn non_contiguous_timeline_group(features: &[Feature], groups: &[TimelineGroup]) -> Option<u64> {
+    let positions: std::collections::BTreeMap<u64, usize> = features.iter().enumerate().map(|(index, feature)| (feature.id, index)).collect();
+    let mut stats = std::collections::BTreeMap::new();
+    let mut children = std::collections::BTreeMap::new();
+    for group in groups {
+        let mut count = 0usize;
+        let mut first = usize::MAX;
+        let mut last = 0usize;
+        for index in group.features.iter().filter_map(|feature| positions.get(feature)) {
+            count = count.saturating_add(1);
+            first = first.min(*index);
+            last = last.max(*index);
+        }
+        stats.insert(group.id, (count, first, last));
+        children.entry(group.id).or_insert(0usize);
+        if let Some(parent) = group.parent {
+            let child_count = children.entry(parent).or_insert(0);
+            *child_count = child_count.saturating_add(1);
+        }
+    }
+    let parents: std::collections::BTreeMap<u64, Option<u64>> = groups.iter().map(|group| (group.id, group.parent)).collect();
+    let mut pending: Vec<u64> = groups.iter().filter(|group| children.get(&group.id) == Some(&0)).map(|group| group.id).collect();
+    while let Some(id) = pending.pop() {
+        let (count, first, last) = stats.get(&id).copied().unwrap_or_default();
+        if count > 0 && last.saturating_sub(first).saturating_add(1) != count {
+            return Some(id);
+        }
+        if let Some(parent) = parents.get(&id).copied().flatten() {
+            if let Some((parent_count, parent_first, parent_last)) = stats.get_mut(&parent) {
+                *parent_count = parent_count.saturating_add(count);
+                if count > 0 {
+                    *parent_first = (*parent_first).min(first);
+                    *parent_last = (*parent_last).max(last);
+                }
+            }
+            if let Some(remaining) = children.get_mut(&parent) {
+                *remaining = remaining.saturating_sub(1);
+                if *remaining == 0 {
+                    pending.push(parent);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn default_format() -> String {
     crate::format::format_string(crate::format::FORMAT)
 }
@@ -1883,6 +2011,7 @@ impl Document {
             canvases: Vec::new(),
             param_comments: Default::default(),
             browser_groups: Vec::new(),
+            timeline_groups: Vec::new(),
             browser_order: Default::default(),
             named_views: Vec::new(),
             visibility: Visibility::default(),
@@ -2067,6 +2196,40 @@ impl Document {
         }
     }
 
+    /// The deepest timeline folder spanning the insertion slot between `marker - 1` and
+    /// `marker`. A slot at a folder's outer boundary is not inside that folder.
+    fn timeline_group_at_insertion(&self, marker: usize) -> Option<u64> {
+        let before = self.features.get(marker.checked_sub(1)?)?.id;
+        let after = self.features.get(marker)?.id;
+        let direct = |feature| self.timeline_groups.iter().find(|group| group.features.contains(&feature)).map(|group| group.id);
+        let parents: std::collections::BTreeMap<u64, Option<u64>> = self.timeline_groups.iter().map(|group| (group.id, group.parent)).collect();
+
+        let mut before_ancestors = std::collections::BTreeSet::new();
+        let mut current = direct(before);
+        let mut steps = 0usize;
+        while let Some(id) = current {
+            if !before_ancestors.insert(id) || steps >= self.timeline_groups.len() {
+                return None;
+            }
+            current = parents.get(&id).copied().flatten();
+            steps = steps.saturating_add(1);
+        }
+
+        current = direct(after);
+        steps = 0;
+        while let Some(id) = current {
+            if before_ancestors.contains(&id) {
+                return Some(id);
+            }
+            if steps >= self.timeline_groups.len() {
+                return None;
+            }
+            current = parents.get(&id).copied().flatten();
+            steps = steps.saturating_add(1);
+        }
+        None
+    }
+
     /// Insert a feature at the marker (or the end) and return its id.
     pub fn add_feature(&mut self, kind: FeatureKind, name: Option<&str>) -> Result<u64> {
         if self.features.len() >= MAX_FEATURES {
@@ -2098,12 +2261,21 @@ impl Document {
             shell_piece_order: false,
             kind,
         };
+        let insertion_group = self.marker.and_then(|marker| self.timeline_group_at_insertion(marker));
         match self.marker {
             Some(m) if m < self.features.len() => {
                 self.features.insert(m, f);
                 self.marker = Some(m + 1);
             }
             _ => self.features.push(f),
+        }
+        if let Some(group_id) = insertion_group {
+            let positions: std::collections::BTreeMap<u64, usize> =
+                self.features.iter().enumerate().map(|(index, feature)| (feature.id, index)).collect();
+            if let Some(group) = self.timeline_groups.iter_mut().find(|group| group.id == group_id) {
+                group.features.push(id);
+                group.features.sort_by_key(|feature| positions.get(feature).copied().unwrap_or(usize::MAX));
+            }
         }
         self.name_feature_inputs(id);
         Ok(id)
@@ -2119,6 +2291,9 @@ impl Document {
             .rules
             .retain(|rule| !rule.references_features(&gone) && !rule.parameter_references().iter().any(|name| gone_params.contains(name)));
         self.features.retain(|f| !gone.contains(&f.id));
+        for group in &mut self.timeline_groups {
+            group.features.retain(|feature| !gone.contains(feature));
+        }
         // Configuration columns of deleted features go with them.
         let keep: Vec<bool> = self
             .configs

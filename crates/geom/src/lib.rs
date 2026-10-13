@@ -16,11 +16,12 @@ pub mod fill;
 mod mesh;
 mod plane;
 mod profile;
+pub mod tess;
 pub mod tspline;
 mod vec;
 
 pub use arcfit::MAX_FIT_PIECES;
-pub use mesh::{Aabb3, InsideIndex, Mesh, MeshMeasure};
+pub use mesh::{Aabb3, BoxedTriangle, InsideIndex, Mesh, MeshMeasure, find_close_pair};
 pub use plane::Plane;
 pub use profile::{Loop2, MAX_BEZIER_DEGREE, Region2, Seg2, bezier};
 pub use vec::{Vec2, Vec3};

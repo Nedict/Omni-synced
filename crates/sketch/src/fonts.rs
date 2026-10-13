@@ -103,6 +103,89 @@ pub fn find_family_in(dirs: &[PathBuf], name: &str) -> Result<Option<FontData>> 
     Ok(None)
 }
 
+/// The family names of the installed fonts, for choosing one by name: sorted, without repeats
+/// and without the built-in family. Only each file's name table is read.
+pub fn installed_families() -> Vec<String> {
+    families_in(&font_dirs())
+}
+
+/// The family names of the fonts under `dirs` (see [`installed_families`]).
+pub fn families_in(dirs: &[PathBuf]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::from([normalize(DEFAULT_FONT_FAMILY)]);
+    let mut out = Vec::new();
+    for path in font_files(dirs) {
+        for family in file_families(&path) {
+            let key = normalize(&family);
+            // Names starting with a dot are a system's private fonts.
+            if !key.is_empty() && !family.starts_with('.') && seen.insert(key) {
+                out.push(family);
+            }
+        }
+    }
+    out.sort_by_cached_key(|f| f.to_lowercase());
+    out
+}
+
+/// Largest name table read when listing families.
+const MAX_NAME_TABLE: u32 = 1 << 20;
+
+/// The family names of each face of a font file, from its name tables alone: the file's table
+/// directory says where they are, so a large font costs a few small reads, not its whole size.
+fn file_families(path: &Path) -> Vec<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else { return Vec::new() };
+    let mut read_at = |offset: u64, len: usize| -> Option<Vec<u8>> {
+        file.seek(SeekFrom::Start(offset)).ok()?;
+        let mut buf = vec![0; len];
+        file.read_exact(&mut buf).ok()?;
+        Some(buf)
+    };
+    let be16 = |b: &[u8], at: usize| b.get(at..at + 2).and_then(|s| s.try_into().ok()).map(u16::from_be_bytes);
+    let be32 = |b: &[u8], at: usize| b.get(at..at + 4).and_then(|s| s.try_into().ok()).map(u32::from_be_bytes);
+    let Some(head) = read_at(0, 12) else { return Vec::new() };
+    let faces: Vec<u32> = if head.starts_with(b"ttcf") {
+        let count = be32(&head, 8).unwrap_or(0).min(64) as usize;
+        read_at(12, count * 4).map(|b| (0..count).filter_map(|i| be32(&b, i * 4)).collect()).unwrap_or_default()
+    } else {
+        vec![0]
+    };
+    let mut out = Vec::new();
+    for face in faces {
+        let Some(dir) = read_at(u64::from(face), 12) else { continue };
+        let tables = usize::from(be16(&dir, 4).unwrap_or(0).min(512));
+        let Some(records) = read_at(u64::from(face) + 12, tables * 16) else { continue };
+        let Some(record) = (0..tables).map(|i| i * 16).find(|&r| records.get(r..r + 4) == Some(b"name")) else { continue };
+        let (Some(offset), Some(len)) = (be32(&records, record + 8), be32(&records, record + 12)) else { continue };
+        if len == 0 || len > MAX_NAME_TABLE {
+            continue;
+        }
+        let Some(data) = read_at(u64::from(offset), len as usize) else { continue };
+        if let Some(family) = ttf_parser::name::Table::parse(&data).and_then(|table| family_name(&table)) {
+            out.push(family);
+        }
+    }
+    out
+}
+
+/// A face's family name as people know it: the English one when there is one.
+fn family_name(table: &ttf_parser::name::Table) -> Option<String> {
+    use ttf_parser::name_id;
+    let mut best: Option<(u8, String)> = None;
+    for name in table.names {
+        let rank = match name.name_id {
+            name_id::FAMILY => 2,
+            name_id::TYPOGRAPHIC_FAMILY => 0,
+            _ => continue,
+        } + u8::from(name.language() == ttf_parser::Language::English_UnitedStates);
+        let Some(text) = name.to_string() else { continue };
+        let text = text.trim().to_string();
+        if !text.is_empty() && best.as_ref().is_none_or(|(b, _)| rank > *b) {
+            best = Some((rank, text));
+        }
+    }
+    best.map(|(_, name)| name)
+}
+
 /// The names of one face of a font file (normalised), for matching.
 struct FaceNames {
     index: u32,

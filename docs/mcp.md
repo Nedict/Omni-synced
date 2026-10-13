@@ -80,6 +80,14 @@ Claude Desktop (`claude_desktop_config.json`), bridged to a running app:
 }
 ```
 
+### Agent skills
+
+[`skills/`](https://github.com/bherbruck/solidcraft/tree/main/skills) holds two [Agent Skills](https://agentskills.io) for agents that model through this server:
+- `solidcraft-modeling` covers building a new part.
+- `solidcraft-editing` covers changing an existing design.
+
+They cover the workflow, the command shapes, how to verify with `measure`, and the known traps. With them an agent builds a part in a few `batch` calls and reads far less output. To install them for Claude Code, copy both folders into `~/.claude/skills/`; [skills/README.md](https://github.com/bherbruck/solidcraft/blob/main/skills/README.md) has the details.
+
 ## Tools
 
 | Tool | Arguments | What it does |
@@ -92,7 +100,7 @@ Claude Desktop (`claude_desktop_config.json`), bridged to a running app:
 | `body_topology` | `body` | Edges (index, midpoint, length, ends) and faces (index, area, centroid, normal). An edge midpoint is the `[x,y,z]` that picks that edge for fillet and chamfer. |
 | `set_parameter` | `name`, `value` (number or expression), `unit?`, `comment?` | Create or change a user parameter and recompute; reports `recomputed` (features rebuilt), `restored` (features whose earlier result for the same inputs was reused, e.g. a value set back) and features that now fail. |
 | `screenshot` | `view?` (iso, top, front, back, bottom, left, right, home, fit, or a named view saved with `view.save`), `camera?` (`{target, yaw, pitch, distance, fov?}`, as `view.apply`), `path?`, `width?`, `height?`, `source?` (window, model) | A PNG image content block. Headless: CPU render fitted to the model, or from the named view or camera. Bridged: the app window (default) or a model render with the app's camera; a named view or camera moves the app's viewport there first (`execute` `view.apply` does the same without a screenshot). |
-| `export` | `path`, `format?` (step, 3mf, stl, stla, obj), `bodies?` | STEP, 3MF or mesh export. |
+| `export` | `path`, `format?` (step, 3mf, 3mf-tagged, stl, stla, obj), `bodies?` | STEP, 3MF or mesh export. |
 | `undo`, `redo` | — | Undo / redo one change. |
 | `crash_reports` | `id?`, `limit?` | The crash reports on this computer, newest first; with `id`, the whole report (backtrace, command, recent commands, `design_path`/`replay_path`). See [crash-reports.md](crash-reports.md). |
 | `new_design` | `name?` | Start an empty design. |

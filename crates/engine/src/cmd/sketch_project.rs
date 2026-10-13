@@ -226,9 +226,12 @@ pub(super) fn add_link(s: &Session, doc: &Document, id: u64, sk: &mut Sketch, ki
     } else {
         None
     };
+    // The link is the edge that was picked, not whichever is nearest the picked point later.
+    let edge_name = solidcraft_doc::project::resolved_edge_name(&st, &r);
     let link = sk.add_link_with_wires(kind, r.source, &r.geom, &r.wires)?;
     if let Some(l) = sk.links.iter_mut().find(|l| l.id == link) {
         l.face_name = name;
+        l.edge_name = edge_name;
     }
     Ok(link)
 }
@@ -567,6 +570,10 @@ mod tests;
 #[cfg(test)]
 #[path = "sketch_project_side_tests.rs"]
 mod side_tests;
+
+#[cfg(test)]
+#[path = "sketch_project_edge_tests.rs"]
+mod edge_tests;
 
 #[cfg(test)]
 #[path = "sketch_model_plane_tests.rs"]
