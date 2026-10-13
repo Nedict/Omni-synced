@@ -11,7 +11,7 @@ Edit an existing design through its parameters instead of rebuilding it. Every s
 ## Map the design (3-4 calls)
 1. **Open:** if the design is not open yet, run `open {path}`. When the server is bridged to the app and the current design is `dirty`, ask before opening anything.
 2. **Overview:** `inspect_design {"measure":false,"sketches":false}` lists the user parameters, the sketch dimensions (`d1`, `d2`, ... with their expressions), the features in order, and their errors.
-3. **Feature inputs:** `execute parameters.list {"filter":"feature"}` gives every feature input with its name, expression, feature and label, for example `d9 | (6) / 2 | Cylinder1 | Radius`. `inspect_design` leaves these out.
+3. **Feature inputs:** `execute parameters.list {"filter":"feature"}` gives every feature input as an object such as `{"name":"d9","expression":"(6) / 2","feature":"Cylinder1","input":"Radius"}`. `inspect_design` leaves these out.
    - Match sketch dimensions by expression.
    - If that is ambiguous, `sketch.inspect {sketch}` that one sketch, which also shows its points in world coordinates.
 4. **Baseline:** `measure {}`, so you can predict every change against it.
@@ -48,7 +48,7 @@ Inspect one feature of each kind, not every copy.
    - If not, restore the checkpoint, then apply the changes one at a time, measuring after each.
    - A cut or chamfer that leaves the volume unchanged has missed.
 2. **Timeline health:** run `inspect_design {"measure":false,"sketches":false}`. Every `error` and `warning` must be null. If something broke, restore or `undo` before you try anything else.
-3. **Interior features:** take one top-view screenshot, `{"view":"top","width":480,"height":320}`. The iso view hides standoffs behind the walls.
+3. **Interior features:** take one top-view screenshot, `{"source":"model","view":"top","width":480,"height":320}`. When the server is bridged, `view` also turns the user's camera. The iso view hides standoffs behind the walls.
 4. **Still parametric:** if the user wants it kept parametric, change one driving size, `measure`, then set it back.
 
 ## When something is already broken

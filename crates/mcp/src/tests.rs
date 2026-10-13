@@ -695,3 +695,40 @@ fn sketch_plane_axes_match_the_skill_reference() {
         assert!(got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-6), "{got:?} != {want:?}");
     }
 }
+
+/// Every tool and command the agent skills call exists, so a rename or removal can't leave the
+/// skills sending agents to names the server no longer has.
+#[test]
+fn skills_name_only_real_tools_and_commands() {
+    let docs = [
+        include_str!("../../../skills/solidcraft-modeling/SKILL.md"),
+        include_str!("../../../skills/solidcraft-modeling/reference.md"),
+        include_str!("../../../skills/solidcraft-editing/SKILL.md"),
+    ];
+    let mut s = server();
+    let tools: Vec<String> = tool_definitions().iter().filter_map(|t| t["name"].as_str()).map(str::to_owned).collect();
+    let commands: Vec<String> =
+        tool(&mut s, "list_commands", json!({})).as_array().unwrap().iter().filter_map(|c| c["id"].as_str()).map(str::to_owned).collect();
+    let mut checked = 0;
+    for doc in docs {
+        // A call in backticks is `name {}`, `name {"json":…}` or `name {placeholder}`: a tool when the
+        // name is snake_case, a command when it is a dotted id. Field lists such as
+        // `sides {bottom,right,top,left}` and `created: {…}` aren't calls. JSON examples name
+        // commands as "command":"id".
+        let ident = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.');
+        let calls = doc.split('`').skip(1).step_by(2).filter_map(|span| {
+            let (head, args) = span.split_once(" {")?;
+            let name = head.rsplit(' ').next()?;
+            let args = args.strip_suffix('}')?;
+            let call_like = args.is_empty() || args.starts_with('"') || args.chars().all(|c| c.is_ascii_lowercase() || c == '_');
+            (ident(name) && call_like).then_some(name)
+        });
+        let in_json = doc.split("\"command\":\"").skip(1).filter_map(|rest| rest.split('"').next());
+        for name in calls.chain(in_json) {
+            let known = if name.contains('.') { commands.iter().any(|c| c == name) } else { tools.iter().any(|t| t == name) };
+            assert!(known, "a skill calls `{name}`, which is neither a tool nor a command");
+            checked += 1;
+        }
+    }
+    assert!(checked > 30, "only {checked} tool and command names found in the skills");
+}

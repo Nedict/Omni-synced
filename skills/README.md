@@ -43,5 +43,6 @@ Copy-Item -Recurse solidcraft\skills\solidcraft-* $HOME\.claude\skills\
 
 - The worked example in `solidcraft-modeling/reference.md` runs in CI. `skill_reference_example_builds_as_documented` in `crates/mcp/src/tests.rs` builds it, checks the documented volume, changes a parameter and checks it again.
 - The sketch-plane table is covered by `sketch_plane_axes_match_the_skill_reference` in the same file.
+- `skills_name_only_real_tools_and_commands` checks that every tool and command the skills call exists.
 - When a command, a parameter name or a behaviour that these files describe changes, update them in the same PR.
 - Facts that describe current limitations, such as edge picks without a distance limit, should go once the limitation is fixed.

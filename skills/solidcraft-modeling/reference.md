@@ -78,7 +78,7 @@ Distances are unsigned. Draw the geometry on the correct side first, and the dim
 | `solid.hole` | `position:[x,y,z]` on a face + `diameter`, or `sketch` (+ `points`) | `clearance:"M3"`. `depth` defaults to through all. `type` is one of simple/drilled/counterbore/countersink. A `countersink` needs `cs_diameter` and `cs_angle`; a `counterbore` needs `cb_diameter` and `cb_depth`. `position` is a fixed point. |
 | `solid.pattern.rectangular` | `features`, `dir1`, `count1`, `spacing1` (+ `dir2`, `count2`, `spacing2`) | Spacing takes expressions and follows parameters. |
 | `solid.pattern.circular` | `features`, `axis` (`"Z"` or `{origin, dir}`), `count` | `angle` defaults to 360 deg. A full pattern keeps the COM on the axis, so check its radius with a top-view screenshot. |
-| `solid.mirror` | `features:[names]`, `plane:"YZ"` | Follows parameters. Mirror and pattern features cannot be mirrored or patterned again. |
+| `solid.mirror` | `features:[names]`, `plane` (`XY`/`XZ`/`YZ`, a construction plane, or `{origin, normal}`) | Follows parameters. Mirror and pattern features cannot be mirrored or patterned again. |
 
 - **Names:** name every feature (`"name":"Standoff"`) and keep names unique across sketches and features. `timeline.roll_to {"feature":"Plate"}` picks the first match, which can be the sketch.
 - **Counts as parameters:** `parameters.add {"name":"n","expression":"6","unit":""}` creates a unitless parameter, and `"count":"n"` uses it in a pattern.
@@ -89,7 +89,6 @@ Distances are unsigned. Draw the geometry on the correct side first, and the dim
   Both the radius and the count follow their parameters.
 - **Several parameter changes:** use one `batch` of `parameters.change` steps instead of one `set_parameter` call each.
 - **Primitive booleans:** a `solid.box` or `solid.cylinder` cut that touches curved faces of the target can fail with `the exact fallback ... takes planar faces only`. Use a sketch profile and an extrude cut instead, for example a slot sketch rather than a box plus 2 cylinders.
-- **`list_edges`:** if the server instructions mention it, use `body_topology`.
 
 ## Worked example: parametric plate with 4 counterbored holes (1 batch)
 
@@ -126,13 +125,13 @@ After `set_parameter L=120` the volume is 35335.2 mm³, and the holes stay in th
 - **Tolerance:** analytic and measured volumes agree to about 0.001-0.01%, so treat a gap that small as a match.
 - **Face counts:** compare the logical `faces`, not the larger `kernel.faces`.
 - **Reply types:** `set_parameter` returns `recomputed` as a number. A batch reply echoes every step.
-- **Boolean warning:** a feature `warning` such as `Boolean retry: temporary coincident-face separation up to 2.05 mm per face` means the kernel nudged faces that coincide. Examples are a hole floor on another floor, or a join flush on a face. When the volume still matches your number the warning is harmless.
+- **Boolean warning:** a feature `warning` such as `Boolean retry: temporary coincident-face separation up to 2.050000e0 mm per face` means the kernel nudged faces that coincide. Examples are a hole floor on another floor, or a join flush on a face. When the volume still matches your number the warning is harmless.
 
 ## Reply cost (0.8, plate example)
 
 | Call | Size |
 |---|---|
-| `list_commands {}` | **130 KB.** Never call it unfiltered; filter on a distinctive word such as `"hole"` or `"slot"`. |
+| `list_commands {}` | **Over 100 KB.** Never call it unfiltered; filter on a distinctive word such as `"hole"` or `"slot"`. |
 | `body_topology` | 25-45 KB |
 | `inspect_design {}` | 12 KB, and it grows with the sketches |
 | `inspect_design {"measure":false,"sketches":false}` | 4 KB: parameters, timeline errors, bodies |
@@ -140,7 +139,7 @@ After `set_parameter L=120` the volume is 35335.2 mm³, and the holes stay in th
 | `parameters.list {"filter":"feature"}` | 3 KB |
 | `measure {}` | 1 KB: volume, bbox, COM, face/edge/vertex counts |
 | `sketch.solve` | under 100 B: dof, status, profile count |
-| `screenshot {"width":480,"height":320}` | one small image |
+| `screenshot {"source":"model","width":480,"height":320}` | one small image. Without `source`, a bridged server returns the whole app window and ignores the size. |
 
 ## Errors
 

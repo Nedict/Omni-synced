@@ -36,7 +36,7 @@ Work the part out as numbers first. Then build it in a few large `batch` calls, 
   - expression fields such as `solid.cylinder base:["w/2-6","d/2-6","wall"]`
 
   A plain number never follows a parameter.
-- **Repeats:** `solid.pattern.rectangular` takes expression spacing; `solid.mirror` works about `YZ` and `XZ`. A mirror or pattern feature cannot be mirrored or patterned again.
+- **Repeats:** `solid.pattern.rectangular` takes expression spacing; `solid.mirror` takes `XY`/`XZ`/`YZ`, a construction plane or `{origin, normal}`. A mirror or pattern feature cannot be mirrored or patterned again.
 - **Edge and face picks** snap to the nearest edge or face. There is no distance limit and no error, so compute the exact midpoint from your geometry (the vertical corner edge of a centred box is `[w/2, d/2, h/2]`).
   - Picks must be plain numbers.
   - A pick is resolved once and then follows its edge when parameters change.
@@ -51,7 +51,9 @@ Work the part out as numbers first. Then build it in a few large `batch` calls, 
   - On an asymmetric part, check the COM shift you computed.
   - On a symmetric part (a mirrored or patterned layout) the COM does not move, so take a top-view screenshot and compare distances in pixels against a known size.
   - `body_topology` is a last resort: it costs 25-45 KB and splits cylinders into half faces.
-- **Final look:** one `screenshot {"view":"iso","width":480,"height":320}`. Use `"view":"top"` for features inside walls, which the iso view hides.
+- **Final look:** one `screenshot {"source":"model","view":"iso","width":480,"height":320}`. Use `"view":"top"` for features inside walls, which the iso view hides.
+  - `width` and `height` apply only to model renders.
+  - When the server is bridged, `source` defaults to the whole app window and `view` also turns the user's camera, so pass `"source":"model"` and leave out `view` unless the user wants the camera moved.
 
 ## Finish
 `export {path}` writes `.step` for CAD or `.3mf`/`.stl` for printing. `save {path}` writes `.solidcraft`.
@@ -60,7 +62,7 @@ Work the part out as numbers first. Then build it in a few large `batch` calls, 
 
 | Thought | Do instead |
 |---|---|
-| "List all commands first" | `reference.md`, or `list_commands {"filter":"<distinctive word>"}`. The unfiltered list is 130 KB. |
+| "List all commands first" | `reference.md`, or `list_commands {"filter":"<distinctive word>"}`. The unfiltered list is over 100 KB. |
 | "Check positions with body_topology" | `measure` COM and bbox against your numbers. |
 | "Inspect the sketch" | `sketch.solve` returns dof and the profile count in under 100 bytes. Run `sketch.inspect` on its own, never inside a big batch. |
 | "new_design for a clean start" | When the server is bridged, ask first. |
