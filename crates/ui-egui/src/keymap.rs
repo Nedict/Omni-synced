@@ -165,6 +165,13 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                 });
             }
+            ui.label(
+                RichText::new(
+                    "Select Other: hold the left button still on the model (or right-click › Select Other…) to list everything under the cursor; click again on the same spot to select the next thing there.",
+                )
+                .size(11.0)
+                .color(t.text_dim),
+            );
             ui.separator();
             let q = app.keymap.filter.to_lowercase();
             egui::ScrollArea::both().max_height(330.0).auto_shrink([false, true]).show(ui, |ui| {

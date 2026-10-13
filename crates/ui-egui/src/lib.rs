@@ -79,6 +79,7 @@ mod revolve_edit_tests;
 #[cfg(test)]
 mod revolve_manipulator_tests;
 pub mod scenario;
+pub mod select_other;
 pub mod selection;
 #[cfg(test)]
 mod shell_face_sketch_ui_tests;
