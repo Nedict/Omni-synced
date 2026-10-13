@@ -605,6 +605,17 @@ impl ModelState {
     pub fn body(&self, name: &str) -> Option<&ModelBody> {
         self.bodies.iter().find(|b| b.name == name)
     }
+
+    /// Make every body's display mesh now, on all cores (bodies are meshed independently and
+    /// each keeps its own mesh, so the meshes are those `ModelBody::mesh` makes one by one).
+    /// Stops starting bodies once `go_on` says no.
+    pub fn warm_meshes(&self, go_on: impl Fn() -> bool + Sync) {
+        kernel::for_each_on_threads(&self.bodies, 16, |b| {
+            if go_on() {
+                let _ = b.mesh();
+            }
+        });
+    }
     pub fn sketch(&self, feature: u64) -> Option<&SolvedSketch> {
         self.sketches.iter().find(|s| s.feature == feature).map(|s| &**s)
     }
