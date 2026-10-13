@@ -1035,7 +1035,6 @@ fn construction_geometry_and_holes_on_a_moved_component() {
 }
 
 #[test]
-#[ignore = "fails until #559 is fixed"]
 fn a_through_hole_into_a_shelled_box_rim() {
     reproduces(
         None,
