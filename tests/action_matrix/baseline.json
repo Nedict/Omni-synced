@@ -9260,7 +9260,7 @@
    "Lid/F11:+x|F11:+z": "edge.axis edge.chamfer edge.fillet edge.normal_plane edge.project",
    "Lid/F11:+x|F11:-y": "edge.axis edge.chamfer edge.fillet edge.normal_plane edge.project",
    "Lid/F11:+x|F4:top": "edge.axis edge.chamfer edge.fillet edge.normal_plane edge.project",
-   "Lid/F11:+y": "face.angle_plane !face.draft_neutral !face.extrude face.hole face.midplane !face.offset_plane !face.press_pull face.shell !face.sketch",
+   "Lid/F11:+y": "face.angle_plane !face.draft_neutral !face.extrude !face.hole face.midplane !face.offset_plane !face.press_pull face.shell !face.sketch",
    "Lid/F11:+y|F11:+z": "edge.axis edge.chamfer edge.fillet edge.normal_plane edge.project",
    "Lid/F11:+y|F1:+z#[F11:+y,F1:+x,F1:+y,F1:-x,F1:-y,F2:blend:F1:+x|F1:+y,F2:blend:F1:+x|F1:-y,F2:blend:F1:+y|F1:-x,F2:blend:F1:-x|F1:-y,F4:side:l1,F4:side:l2,F4:side:l3,F4:side:l4,F4:side:l6,F4:side:l7,F4:side:l8,F5:+x,F5:-x,F5:-y,F6:+x,F6:+y,F6:-x,F6:-y,F7:+x,F7:-x,F9:+y]": "edge.axis edge.chamfer edge.fillet edge.normal_plane edge.project",
    "Lid/F11:+y|F4:side:l6#[F11:+y,F4:side:l7]": "edge.axis edge.chamfer edge.fillet edge.normal_plane edge.project",

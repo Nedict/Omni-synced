@@ -39,5 +39,6 @@ Mouse and touch:
 | Click again on the same spot | select the next thing under the cursor (click cycling) |
 | Hold the left button still (long-press on touch), or right-click › Select Other… | list everything under the cursor to pick from |
 | Double-click a sketch curve or edge | select its chain or tangent loop |
+| Double-click the middle button | go Home: the home view, framing everything shown (Preferences › Navigation › Middle double-click: Home, Fit or Off) |
 
 Help › Keyboard Shortcuts in the app lists the current bindings, including any you changed.
