@@ -22,7 +22,7 @@ mod threemf;
 pub mod vfs;
 
 pub use dxf::{read_dxf, write_dxf};
-pub use legacy_dir::adopt_legacy_dir;
+pub use legacy_dir::{adopt_legacy_dir, legacy_flatpak_path, APP_ID, LEGACY_APP_ID};
 pub use safe_write::{backup_path, write_atomic};
 pub use sketch2d::{Geom2, MAX_DRAWING_BYTES};
 pub use svg::read_svg;

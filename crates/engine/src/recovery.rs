@@ -35,10 +35,13 @@ pub fn default_dir() -> Option<PathBuf> {
         env("XDG_DATA_HOME").or_else(|| env("HOME").map(|h| h.join(".local/share")))?
     };
     let (dir, legacy) = dirs_under(&root, cfg!(windows) || cfg!(target_os = "macos"));
-    // Compatibility shim (docs/compatibility.md): autosaves made before the rename are copied
-    // to the new folder on first launch; the old folder is left as it was.
-    if let Err(e) = solidcraft_io::adopt_legacy_dir(&dir, &legacy) {
-        log::warn!("recovery: could not copy {} to {}: {e}", legacy.display(), dir.display());
+    // Compatibility shim (docs/compatibility.md): autosaves made before the rename (or, in the
+    // Flatpak sandbox, under the old app id) are copied to the new folder on first launch; the
+    // old folder is left as it was.
+    for old in solidcraft_io::legacy_flatpak_path(&dir).into_iter().chain([legacy]) {
+        if let Err(e) = solidcraft_io::adopt_legacy_dir(&dir, &old) {
+            log::warn!("recovery: could not copy {} to {}: {e}", old.display(), dir.display());
+        }
     }
     Some(dir)
 }

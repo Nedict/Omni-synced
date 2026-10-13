@@ -73,9 +73,12 @@ installing SolidCraft; keep both remotes in the same user installation:
 ```sh
 flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 flatpak remote-add --user --if-not-exists solidcraft https://bherbruck.github.io/solidcraft/flatpak/solidcraft.flatpakrepo
-flatpak install --user solidcraft ai.storyteller.solvecraft
-flatpak run ai.storyteller.solvecraft
+flatpak install --user solidcraft ai.storyteller.solidcraft
+flatpak run ai.storyteller.solidcraft
 ```
+
+Flatpak installs from 0.7 or earlier use the old ID `ai.storyteller.solvecraft`: `flatpak update --user`
+offers to replace it with `ai.storyteller.solidcraft`, and settings move along.
 
 Single-file `.flatpak` bundles include the runtime repository address; missing runtimes
 still need an internet connection. [Linux installation details](https://bherbruck.github.io/solidcraft/guide/getting-started.html#linux-flatpak).
