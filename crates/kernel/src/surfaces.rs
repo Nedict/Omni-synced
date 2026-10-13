@@ -755,9 +755,14 @@ pub(crate) fn map_surface(off: &Offset, s: &mt::Surface, d: f64) -> Result<mt::S
     })
 }
 
+/// How far Thicken's fitted faces may stray from the true offset (mm).
+const THICKEN_TOLERANCE: f64 = 0.01;
+
 /// A surface body thickened into a solid: offset along the faces' normals by `thickness`
-/// (negative: against them), or by half each way when `symmetric`. Planar faces and faces on
-/// circular cylinders; neighbouring faces must meet smoothly (their offsets agree).
+/// (negative: against them), or by half each way when `symmetric`. Planes and circular
+/// cylinders move exactly, other faces onto fitted surfaces (see `surface_offset`); a thickness
+/// that would fold a face over is refused. Neighbouring faces must meet smoothly (their offsets
+/// agree).
 pub fn thicken(body: &Body, thickness: f64, symmetric: bool) -> Result<Body> {
     body.require_brep("thicken")?;
     if !(thickness.is_finite() && thickness.abs() > 1e-9) {
@@ -772,12 +777,10 @@ pub fn thicken(body: &Body, thickness: f64, symmetric: bool) -> Result<Body> {
         if faces.is_empty() {
             return Err(KernelError::Invalid("nothing to thicken".into()));
         }
-        let offs: Vec<Offset> = faces
-            .iter()
-            .map(|f| {
-                Offset::of(f).ok_or_else(|| KernelError::Invalid("not supported yet: thickening faces that are not planar or cylindrical".into()))
-            })
-            .collect::<Result<_>>()?;
+        // Planes and circular cylinders move exactly; other faces onto surfaces fitted within the
+        // offset tolerance (Offset Surface's).
+        let offs: Vec<crate::surface_offset::FaceMover> =
+            faces.iter().map(|f| crate::surface_offset::FaceMover::new(f, &[lo, hi], THICKEN_TOLERANCE)).collect::<Result<_>>()?;
         // Each vertex and edge moved to both sides (once; every face using it must agree).
         let mut vmoved: HashMap<mt::VertexID, (mt::Vertex, mt::Vertex)> = HashMap::new();
         let mut emoved: HashMap<mt::EdgeID, (mt::Edge, mt::Edge)> = HashMap::new();
@@ -787,7 +790,7 @@ pub fn thicken(body: &Body, thickness: f64, symmetric: bool) -> Result<Body> {
                 let abs = if e.orientation() { e.clone() } else { e.inverse() };
                 *uses.entry(abs.id()).or_default() += 1;
                 for v in [abs.front(), abs.back()] {
-                    let (a, b) = (map_pt(off, v.point(), lo), map_pt(off, v.point(), hi));
+                    let (a, b) = (p3(off.point(from_p3(v.point()), lo)?), p3(off.point(from_p3(v.point()), hi)?));
                     match vmoved.get(&v.id()) {
                         Some((va, vb)) => {
                             if va.point().distance(a) > tol * 1e3 || vb.point().distance(b) > tol * 1e3 {
@@ -804,8 +807,8 @@ pub fn thicken(body: &Body, thickness: f64, symmetric: bool) -> Result<Body> {
                         continue;
                     };
                     let c = abs.curve();
-                    let lo_e = mt::Edge::new_unchecked(&a0, &b0, map_curve(off, &c, lo)?);
-                    let hi_e = mt::Edge::new_unchecked(&a1, &b1, map_curve(off, &c, hi)?);
+                    let lo_e = mt::Edge::new_unchecked(&a0, &b0, off.curve(&c, lo)?);
+                    let hi_e = mt::Edge::new_unchecked(&a1, &b1, off.curve(&c, hi)?);
                     slot.insert((lo_e, hi_e));
                 }
             }
@@ -815,7 +818,7 @@ pub fn thicken(body: &Body, thickness: f64, symmetric: bool) -> Result<Body> {
         for (id, (a, b)) in &vmoved {
             sides.insert(*id, mt::Edge::new_unchecked(a, b, mt::Curve::Line(mt::Line(a.point(), b.point()))));
         }
-        let moved_face = |f: &mt::Face, off: &Offset, which: usize, d: f64| -> Result<mt::Face> {
+        let moved_face = |f: &mt::Face, off: &crate::surface_offset::FaceMover, which: usize, d: f64| -> Result<mt::Face> {
             let wires: Vec<mt::Wire> = f
                 .absolute_boundaries()
                 .iter()
@@ -831,7 +834,7 @@ pub fn thicken(body: &Body, thickness: f64, symmetric: bool) -> Result<Body> {
                         .into()
                 })
                 .collect();
-            let mut nf = mt::Face::new_unchecked(wires, map_surface(off, &f.surface(), d)?);
+            let mut nf = mt::Face::new_unchecked(wires, off.surface(d)?);
             if !f.orientation() {
                 nf.invert();
             }
@@ -1255,6 +1258,42 @@ mod tests {
         assert!(!back.is_surface() && rel(measure(&back).unwrap().volume, 1000.0) < 1e-9);
         assert!(remove_faces(&b, &(0..6).collect::<Vec<_>>()).is_err());
         assert!(remove_faces(&b, &[]).is_err());
+    }
+
+    /// Faces that are not planes or cylinders thicken onto fitted surfaces. A sixth of a sphere
+    /// (one of its six patches) thickened out by 1 is a sixth of the shell between radii 10 and
+    /// 11; a torus patch (a symmetric share of the torus, by its area) thickened out by 1 is that
+    /// share of the shell 2π²R((r+1)² − r²); thickened in past the sphere's centre, refused.
+    #[test]
+    fn thicken_curved_faces_onto_fitted_surfaces() {
+        use crate::{sphere, torus};
+        use std::f64::consts::PI;
+        let ball = sphere(Vec3::ZERO, 10.0).unwrap();
+        let patch = copy_faces(&ball, &[Vec3::new(0.0, 0.0, 10.0)]).unwrap();
+        assert!(rel(measure(&patch).unwrap().area, 4.0 * PI * 100.0 / 6.0) < 2e-3, "one sixth");
+        let shell = thicken(&patch, 1.0, false).unwrap();
+        assert!(!shell.is_surface());
+        let want = 4.0 / 3.0 * PI * (1331.0 - 1000.0) / 6.0;
+        let v = measure(&shell).unwrap().volume;
+        assert!(rel(v, want) < 3e-3, "{v} vs {want}"); // (measured on meshes)
+        assert!(thicken(&patch, -10.0, false).is_err());
+        // A torus patch (R 20, r 5): between the tube radii r and r + 1 over its own angles, θ round
+        // the tube and φ round the axis (read off its mesh): the volume is
+        // Δφ·[R((r+1)² − r²)/2·Δθ + ((r+1)³ − r³)/3·(sin θ1 − sin θ0)].
+        let ring = torus(Vec3::ZERO, 20.0, 5.0).unwrap();
+        let face = copy_faces(&ring, &[Vec3::new(25.0, 0.0, 0.0)]).unwrap();
+        let mesh = face.tessellate(0.01).unwrap();
+        let angles: Vec<(f64, f64)> = mesh.positions.iter().map(|p| (p.z.atan2((p.x * p.x + p.y * p.y).sqrt() - 20.0), p.y.atan2(p.x))).collect();
+        let span = |f: &dyn Fn(&(f64, f64)) -> f64| {
+            let (lo, hi) = angles.iter().map(f).fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), x| (a.min(x), b.max(x)));
+            (lo, hi)
+        };
+        let ((t0, t1), (p0, p1)) = (span(&|a| a.0), span(&|a| a.1));
+        assert!(t1 - t0 < PI && p1 - p0 < PI, "a patch within half a turn each way: {t0}..{t1}, {p0}..{p1}");
+        let (r, rr, big) = (5.0f64, 6.0f64, 20.0);
+        let want = (p1 - p0) * (big * (rr * rr - r * r) / 2.0 * (t1 - t0) + (rr.powi(3) - r.powi(3)) / 3.0 * (t1.sin() - t0.sin()));
+        let v = measure(&thicken(&face, 1.0, false).unwrap()).unwrap().volume;
+        assert!(rel(v, want) < 3e-3, "{v} vs {want}"); // (measured on meshes)
     }
 
     #[test]
