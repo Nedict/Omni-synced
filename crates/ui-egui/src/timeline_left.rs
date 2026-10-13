@@ -200,6 +200,10 @@ fn selected_drag_items(app: &SolveApp, origin_x: f32, source_group: Option<u64>)
     DragItems { features: selected_feature_ids(app), groups: app.tree.picked_timeline_groups.clone(), origin_x, source_group }
 }
 
+fn drag_press_x(response: &egui::Response, fallback: f32) -> f32 {
+    response.ctx.input(|input| input.pointer.press_origin()).map_or(fallback, |origin| origin.x)
+}
+
 fn drag_indent_x(items: &DragItems, pointer_x: f32, groups: &[solidcraft_engine::doc::TimelineGroup], panel_left: f32) -> f32 {
     let start = items.source_group.map(|group| panel_left + 12.0 + (group_depth(groups, group) + 1) as f32 * 14.0).unwrap_or(panel_left + 4.0);
     start + pointer_x - items.origin_x
@@ -571,7 +575,7 @@ fn vertical_group_row(
         if !app.tree.picked_timeline_groups.contains(&group.id) {
             select_only(app, TimelineItem::Group(group.id));
         }
-        let origin_x = response.interact_pointer_pos().map_or(rect.center().x, |pointer| pointer.x);
+        let origin_x = drag_press_x(&response, rect.center().x);
         *drag = Some(Drag::Items(selected_drag_items(app, origin_x, group.parent)));
     }
     if !renaming && response.double_clicked() {
@@ -720,7 +724,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             if !selected {
                 select_only(app, TimelineItem::Feature(*id));
             }
-            let origin_x = response.interact_pointer_pos().map_or(rect.center().x, |pointer| pointer.x);
+            let origin_x = drag_press_x(&response, rect.center().x);
             drag = Some(Drag::Items(selected_drag_items(app, origin_x, group_id)));
         }
         let mut tip = format!("{name}  ({ty})");
@@ -1216,7 +1220,31 @@ mod tests {
         harness.frames(4);
         let last_row = handle_at("timeline:Last").unwrap();
 
-        harness.step(&json!({"drag": [{"handle": "timeline:Last"}, [last_row.x - 14.0, last_row.y + 15.0]]})).unwrap();
+        let start = last_row;
+        let outdented = pos2(start.x - 14.0, start.y);
+        let destination = pos2(outdented.x, outdented.y + 15.0);
+        harness.app.synthetic.push(egui::Event::PointerMoved(start));
+        harness.frame();
+        harness.app.synthetic.push(egui::Event::PointerButton {
+            pos: start,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.frame();
+        // Cross the drag threshold horizontally before moving to the boundary. The initial
+        // movement must still count when choosing the destination folder level.
+        harness.app.synthetic.push(egui::Event::PointerMoved(outdented));
+        harness.frame();
+        harness.app.synthetic.push(egui::Event::PointerMoved(destination));
+        harness.frame();
+        harness.app.synthetic.push(egui::Event::PointerButton {
+            pos: destination,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.frames(4);
 
         let last = harness.app.session.doc.find_feature("Last").unwrap().id;
         let outer = harness.app.session.doc.timeline_groups.iter().find(|folder| folder.id == outer).unwrap();
