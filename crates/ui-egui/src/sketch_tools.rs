@@ -362,7 +362,7 @@ fn mode(id: &str) -> Option<Mode> {
         "sketch.circle.three_tangent" => Mode::Entities(3),
         "sketch.constrainer" | "sketch.constraint.polygon" => Mode::Entities(0),
         "sketch.centerline" => Mode::Entities(1),
-        "sketch.mirror" | "sketch.pattern.circular" | "sketch.pattern.rectangular" => Mode::EntitiesThen,
+        "sketch.pattern.circular" | "sketch.pattern.rectangular" => Mode::EntitiesThen,
         "sketch.project_to_surface" | "sketch.intersection_curve" | "sketch.spun_profile" => Mode::Steps,
         _ => return None,
     })
@@ -424,7 +424,6 @@ pub fn hint(id: &str) -> Option<String> {
             "sketch.constrainer" => "Constrain: click one or two entities; right-click to apply",
             "sketch.constraint.polygon" => "Polygon: click the lines of a closed chain; right-click to apply",
             "sketch.centerline" => "Centerline: click lines",
-            "sketch.mirror" => "Mirror: click entities, right-click, then click the mirror line",
             "sketch.pattern.circular" => "Circular pattern: click entities, right-click, then click the centre",
             "sketch.pattern.rectangular" => "Rectangular pattern: click entities, right-click, then click two points (direction and spacing)",
             "sketch.project_to_surface" => "Project to surface: click curves of other sketches, right-click, then click the face",
@@ -742,12 +741,6 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
             if tool.picks.last().is_some_and(|x| x == "|") {
                 let ents: Vec<String> = tool.picks.iter().filter(|x| *x != "|").cloned().collect();
                 match cmd {
-                    "sketch.mirror" => {
-                        if let Some((line, false)) = sketch_entity(app, &hits) {
-                            let _ = app.run(cmd, json!({"entities": ents, "line": line}));
-                            tool.picks.clear();
-                        }
-                    }
                     "sketch.pattern.circular" => {
                         if let Some(p) = at {
                             let _ = app.run(cmd, json!({"entities": ents, "center": arg(&p), "count": 6}));
