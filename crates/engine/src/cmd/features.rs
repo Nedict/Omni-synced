@@ -616,12 +616,34 @@ fn revolve(s: &mut Session, p: &Value) -> Result<Value> {
     add_feature(s, p, kind)
 }
 
-fn radius_expr(p: &Value, cmd: &str) -> Result<String> {
+fn radius_expr(s: &Session, p: &Value, cmd: &str) -> Result<String> {
     match (expr(p, "radius"), expr(p, "diameter")) {
         (Some(r), _) => Ok(r),
-        (None, Some(d)) => Ok(format!("({d}) / 2")),
+        (None, Some(d)) => {
+            let [d] = length_operands(s, [(&d, &typed_length_unit(s))]);
+            Ok(format!("({d}) / 2"))
+        }
         _ => Err(bad(cmd, "needs `radius` or `diameter`")),
     }
+}
+
+/// The unit a bare length typed into a command means: the design's units. (A point's bare
+/// coordinates, and a bare number already stored in a feature, are millimetres.)
+pub(super) fn typed_length_unit(s: &Session) -> String {
+    solidcraft_doc::expr::length_unit_or_mm(&s.doc.units).to_string()
+}
+
+/// The lengths a command works one expression out from (a radius from a diameter, a pitch from
+/// a height), each with the unit a bare number means where it came from. Bare numbers get that
+/// unit written in, so the expression keeps the meaning they had: inside a larger expression a
+/// bare number is read in the design's units of the moment, and changing them would resize the
+/// part (#716). Next to a unit-less expression that is not a bare number (`2 * 5`, a unit-less
+/// parameter), which is read in the design's units itself, they stay bare and are read with it,
+/// as before.
+pub(super) fn length_operands<const N: usize>(s: &Session, operands: [(&str, &str); N]) -> [String; N] {
+    use solidcraft_doc::expr::is_bare_number;
+    let follows = operands.iter().any(|(e, _)| !is_bare_number(e) && s.doc.eval(e, Kind::Unitless).is_ok());
+    operands.map(|(e, unit)| if !follows && is_bare_number(e) { format!("{} {unit}", e.trim()) } else { e.to_string() })
 }
 
 /// A placement point: `[x, y, z]` (or `{x, y, z}`) of numbers (mm) or length expressions;
@@ -668,11 +690,17 @@ fn prim_box(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let corner = match (point_param(s, p, "corner", cmd)?, point_param(s, p, "center", cmd)?) {
         (Some(c), _) => c,
-        // The corner half a size back from the centre (numbers stay numbers).
+        // The corner half a size back from the centre (numbers stay numbers, in mm). The centre's
+        // bare numbers are millimetres, the sizes' the design's units.
         (None, Some([cx, cy, cz])) => {
+            let unit = typed_length_unit(s);
+            let mm_per_unit = solidcraft_doc::expr::unit_info(&unit).map_or(1.0, |(_, k)| k);
             let back = |c: String, size: &String| match (c.parse::<f64>(), size.parse::<f64>()) {
-                (Ok(a), Ok(b)) => format!("{}", a - b / 2.0),
-                _ => format!("({c}) - ({size}) / 2"),
+                (Ok(a), Ok(b)) => format!("{}", a - b * mm_per_unit / 2.0),
+                _ => {
+                    let [c, size] = length_operands(s, [(&c, "mm"), (size, &unit)]);
+                    format!("({c}) - ({size}) / 2")
+                }
             };
             [back(cx, &l), back(cy, &w), back(cz, &h)]
         }
@@ -683,7 +711,7 @@ fn prim_box(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn prim_cylinder(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.cylinder";
-    let radius = radius_expr(p, cmd)?;
+    let radius = radius_expr(s, p, cmd)?;
     let height = req_expr(cmd, p, "height")?;
     check_expr(s, &radius, Kind::Length, cmd, "radius")?;
     check_expr(s, &height, Kind::Length, cmd, "height")?;
@@ -694,7 +722,7 @@ fn prim_cylinder(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn prim_sphere(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.sphere";
-    let radius = radius_expr(p, cmd)?;
+    let radius = radius_expr(s, p, cmd)?;
     check_expr(s, &radius, Kind::Length, cmd, "radius")?;
     let center = point_param(s, p, "center", cmd)?.unwrap_or_else(|| point_expr(Vec3::ZERO));
     add_feature(s, p, FeatureKind::Sphere { center, radius, operation: operation(p, cmd)? })
@@ -758,7 +786,9 @@ fn press_pull(s: &mut Session, p: &Value) -> Result<Value> {
                 FeatureKind::Chamfer { distance, .. } => ("distance", distance.clone()),
                 _ => return Err(bad(cmd, "that face is not a fillet's or a chamfer's")),
             };
-            let new = format!("({old}) + ({distance})");
+            // A bare number stored in the feature is millimetres; the distance's, the design's units.
+            let [old, more] = length_operands(s, [(&old, "mm"), (&distance, &typed_length_unit(s))]);
+            let new = format!("({old}) + ({more})");
             let r = super::find_command("timeline.edit").ok_or_else(|| bad(cmd, "timeline.edit"))?;
             let out = (r.run)(s, &json!({"feature": f.id, "set": {key: new}}))?;
             return Ok(json!({"feature": f.id, "edited": f.name, key: new, "recomputed": out.get("recomputed"), "restored": out.get("restored")}));
@@ -767,7 +797,13 @@ fn press_pull(s: &mut Session, p: &Value) -> Result<Value> {
         let r = super::find_command("solid.offset_face").ok_or_else(|| bad(cmd, "solid.offset_face"))?;
         return (r.run)(s, &json!({"faces": [face], "distance": distance}));
     }
-    let (dist, dir, op) = if d > 0.0 { (distance, "positive", "join") } else { (format!("-({distance})"), "negative", "cut") };
+    // Pushed in: the extrude cuts the other way by as much (a bare number stays one, so it keeps
+    // being read as a bare number typed into the extrude).
+    let flipped = match distance.trim().parse::<f64>() {
+        Ok(v) if solidcraft_doc::expr::is_bare_number(&distance) => format!("{}", -v),
+        _ => format!("-({distance})"),
+    };
+    let (dist, dir, op) = if d > 0.0 { (distance, "positive", "join") } else { (flipped, "negative", "cut") };
     extrude(s, &json!({"face": face, "distance": dist, "direction": dir, "operation": op}))
 }
 
