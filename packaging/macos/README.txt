@@ -2,16 +2,15 @@ Install SolidCraft
 
 Drag SolidCraft.app onto Applications.
 
-Updating an older SolveCraft.app installation
+Updating an older installation
 
 1. Quit the app.
-2. In Applications, rename the existing SolveCraft.app to SolidCraft.app.
-3. Drag SolidCraft.app from this disk image onto Applications and choose Replace.
+2. Drag SolidCraft.app from this disk image onto Applications and choose Replace.
 
-If both names are already present, keep SolidCraft.app and move the old
-SolveCraft.app to the Trash. The disk image does not remove old installations.
-If your Dock shortcut still uses the old name, remove it from the Dock, then
-open SolidCraft.app from Applications and choose Options > Keep in Dock.
+Some earlier releases were installed as SolveCraft.app. Move that one to the Trash
+once SolidCraft.app is in Applications, and replace any Dock shortcut with the
+old name (open SolidCraft.app, then choose Options > Keep in Dock).
 
-Your designs and settings keep their existing locations. The bundle identifier
-remains ai.storyteller.solvecraft; saved designs still use .solvecraft.
+Designs saved as .solvecraft still open, and SolidCraft copies your settings
+and recovery files from the old SolveCraft folder on its first launch.
+New designs are saved as .solidcraft.

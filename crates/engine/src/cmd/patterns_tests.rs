@@ -85,7 +85,7 @@ fn circular_numeric_axis_origin_preserves_hole_geometry_and_reopens() {
         assert_eq!(s.doc.to_json(), before);
         run(&mut s, "edit.redo", json!({}));
         assert_eq!(s.doc.to_json(), saved);
-        let mut reopened = Session::new(solvecraft_doc::Document::from_json(&saved).unwrap());
+        let mut reopened = Session::new(solidcraft_doc::Document::from_json(&saved).unwrap());
         assert!(rel(volume(&mut reopened), expected) < 1e-4);
     }
     // The documented omission of origin still means zero.
@@ -94,7 +94,7 @@ fn circular_numeric_axis_origin_preserves_hole_geometry_and_reopens() {
     let before = s.doc.to_json();
     run(&mut s, "solid.pattern.circular", json!({"bodies":["Cube"],"axis":{"dir":[0,0,1]},"count":4}));
     let implicit = s.doc.to_json();
-    let mut explicit = Session::new(solvecraft_doc::Document::from_json(&before).unwrap());
+    let mut explicit = Session::new(solidcraft_doc::Document::from_json(&before).unwrap());
     run(&mut explicit, "solid.pattern.circular", json!({"bodies":["Cube"],"axis":{"origin":[0,0,0],"dir":[0,0,1]},"count":4}));
     assert_eq!(implicit, explicit.doc.to_json());
 }
@@ -208,6 +208,25 @@ fn patterns_of_a_blind_hole_drill_every_copy() {
     assert!((c - 2.0 * one).abs() < 1e-3 * one, "{c} vs 2 × {one}");
 }
 
+/// Feature patterns and mirrors reference features by name; a rename follows (#401).
+#[test]
+fn renaming_a_source_feature_follows_pattern_and_mirror_references() {
+    let mut s = plate_with_hole();
+    run(&mut s, "construct.plane.offset", json!({"base": "YZ", "offset": 0, "name": "Mirror plane"}));
+    run(&mut s, "solid.pattern.rectangular", json!({"features": ["Hole1"], "dir1": [1, 0, 0], "count1": 2, "spacing1": 20, "name": "Copies"}));
+    run(&mut s, "solid.mirror", json!({"features": ["Hole1"], "plane": "Mirror plane", "name": "Mirrored"}));
+    let renamed = run(&mut s, "timeline.rename", json!({"feature": "Hole1", "name": "Single hole"}));
+    assert_eq!(renamed["name"], "Single hole", "{renamed}");
+    run(&mut s, "timeline.rename", json!({"feature": "Mirror plane", "name": "Renamed plane"}));
+    for feature in ["Copies", "Mirrored"] {
+        let inspected = run(&mut s, "timeline.inspect", json!({"feature": feature}));
+        assert!(inspected["error"].is_null(), "{feature}: {inspected}");
+        assert_eq!(inspected["definition"]["features"], json!(["Single hole"]), "{inspected}");
+    }
+    let inspected = run(&mut s, "timeline.inspect", json!({"feature": "Mirrored"}));
+    assert_eq!(inspected["definition"]["plane"]["name"], "Renamed plane", "{inspected}");
+}
+
 /// A plate with a `count1` × `count2` feature pattern of one through-hole cut: its volume and how
 /// long the pattern took. It runs on its own thread so a hang fails the test instead of CI.
 fn hole_pattern(count1: usize, count2: usize) -> (f64, std::time::Duration) {
@@ -285,7 +304,6 @@ fn sketch_hole_cut(n: usize) -> std::time::Duration {
 /// field: 32 took 2 s and 128 took 60 s, though a feature pattern of the same holes is near
 /// linear since #261. Linear is 4×. A ratio, not a time (see the 512-hole pattern test).
 #[test]
-#[ignore = "fails until #368 is fixed"]
 fn one_extrude_of_many_sketch_circles_scales_linearly() {
     let t32 = sketch_hole_cut(32);
     let t128 = sketch_hole_cut(128);

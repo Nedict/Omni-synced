@@ -223,11 +223,20 @@ impl FeatureKind {
                 v.push(("Catch length", catch_length, L));
             }
             FeatureKind::SheetContour { distance, .. } => v.push(("Distance", distance, L)),
-            FeatureKind::SheetFlange { height, angle, radius, .. } => {
+            FeatureKind::SheetFlange { edges, height, angle, radius, .. } => {
                 v.push(("Height", height, L));
                 v.push(("Angle", angle, A));
                 if let Some(r) = radius {
                     v.push(("Bend radius", r, L));
+                }
+                // The edges' own values come last, so the inputs above keep their names.
+                for e in edges {
+                    if let Some(a) = &mut e.angle {
+                        v.push(("Edge angle", a, A));
+                    }
+                    if let Some(h) = &mut e.height {
+                        v.push(("Edge height", h, L));
+                    }
                 }
             }
             FeatureKind::SheetFold { angle, radius, .. } => {

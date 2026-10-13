@@ -32,7 +32,7 @@
 //! Tolerances are relative to the loci's own size plus the rounding of the coordinates they
 //! are computed from, so a construction far from the origin behaves like the same one near it.
 
-use solvecraft_geom::Vec2;
+use solidcraft_geom::Vec2;
 
 use crate::model::{ConstraintKind, CurveKind, MAX_COORD, Sketch, in_range, radius_in_range};
 use crate::union_find::{find, union};

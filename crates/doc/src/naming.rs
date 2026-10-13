@@ -17,7 +17,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use solvecraft_geom::{Mesh, Seg2, Vec2, Vec3};
+use solidcraft_geom::{Mesh, Seg2, Vec2, Vec3};
 
 use crate::history_names::Names;
 use crate::lineage::Lineage;
@@ -386,7 +386,7 @@ fn behind(ps: &[Vec3], ns: &[Vec3], inputs: &[(&ModelBody, FaceIndex, Arc<Vec<St
     votes.first().filter(|(_, k)| *k * 2 >= ps.len().max(1)).map(|(n, _)| n.clone())
 }
 
-fn ray_hit(o: Vec3, d: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f64> {
+pub(crate) fn ray_hit(o: Vec3, d: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f64> {
     let (e1, e2) = (b - a, c - a);
     let h = d.cross(e2);
     let det = e1.dot(h);
@@ -737,7 +737,7 @@ mod tests {
 
     #[test]
     fn merged_face_votes_collectively_for_pieces_of_one_source() {
-        let body = ModelBody::new("Input".into(), solvecraft_kernel::box_solid(Vec3::ZERO, Vec3::new(4., 1., 1.)).unwrap(), 1);
+        let body = ModelBody::new("Input".into(), solidcraft_kernel::box_solid(Vec3::ZERO, Vec3::new(4., 1., 1.)).unwrap(), 1);
         let mut mesh = Mesh::default();
         let mut points = Vec::new();
         for i in 0..3u32 {

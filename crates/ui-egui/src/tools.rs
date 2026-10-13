@@ -3,7 +3,7 @@
 
 use egui::{Pos2, Stroke};
 use serde_json::{Value, json};
-use solvecraft_engine::geom::Vec2;
+use solidcraft_engine::geom::Vec2;
 
 use crate::SolveApp;
 use crate::viewport::{Hit, Proj, pick, sketch_point_at};
@@ -336,8 +336,8 @@ fn run_shape(app: &mut SolveApp, t: &Tool) -> Result<Vec<String>, String> {
 }
 
 /// Only consume a complete, unambiguous selection; command validation owns geometry.
-pub(crate) fn constraint_preselection(command: &str, selection: &[solvecraft_engine::Sel]) -> Option<Value> {
-    use solvecraft_engine::Sel::{SketchCurve, SketchPoint};
+pub(crate) fn constraint_preselection(command: &str, selection: &[solidcraft_engine::Sel]) -> Option<Value> {
+    use solidcraft_engine::Sel::{SketchCurve, SketchPoint};
     let selected_ids = |curves_only: bool, minimum: usize| -> Option<Vec<&str>> {
         if !(minimum..=200).contains(&selection.len()) {
             return None;
@@ -360,7 +360,7 @@ pub(crate) fn constraint_preselection(command: &str, selection: &[solvecraft_eng
         ("sketch.constraint.horizontal_vertical", [SketchCurve { id }]) => Some(json!({"line":id})),
         ("sketch.constraint.horizontal_vertical", [SketchPoint { id: a }, SketchPoint { id: b }]) if a != b => Some(json!({"points":[a,b]})),
         ("sketch.constraint.coincident", [a, b]) => {
-            let entity = |s: &solvecraft_engine::Sel| match s {
+            let entity = |s: &solidcraft_engine::Sel| match s {
                 SketchPoint { id } | SketchCurve { id } => Some(id.clone()),
                 _ => None,
             };
@@ -390,8 +390,8 @@ pub(crate) fn constraint_preselection(command: &str, selection: &[solvecraft_eng
     }
 }
 
-pub(crate) fn projection_preselection(selection: &[solvecraft_engine::Sel]) -> Option<Vec<Value>> {
-    use solvecraft_engine::Sel;
+pub(crate) fn projection_preselection(selection: &[solidcraft_engine::Sel]) -> Option<Vec<Value>> {
+    use solidcraft_engine::Sel;
     // The projection command processes at most 1000 references; never consume a subset.
     if selection.is_empty() || selection.len() > 1000 {
         return None;
@@ -451,23 +451,23 @@ pub fn finish(app: &mut SolveApp) {
 
 /// Rubber-band preview of the shape being drawn.
 pub(crate) fn paint_preview_curve(
-    sketch: &solvecraft_engine::sketch::Sketch,
-    plane: &solvecraft_engine::geom::Plane,
+    sketch: &solidcraft_engine::sketch::Sketch,
+    plane: &solidcraft_engine::geom::Plane,
     painter: &egui::Painter,
     proj: &Proj,
     stroke: Stroke,
 ) {
-    paint_curve(sketch, 0, plane, painter, proj, stroke, &mut solvecraft_engine::render::SamplingBudget::new(4096, 65_536));
+    paint_curve(sketch, 0, plane, painter, proj, stroke, &mut solidcraft_engine::render::SamplingBudget::new(4096, 65_536));
 }
 
 pub(crate) fn paint_curve(
-    sketch: &solvecraft_engine::sketch::Sketch,
+    sketch: &solidcraft_engine::sketch::Sketch,
     index: usize,
-    plane: &solvecraft_engine::geom::Plane,
+    plane: &solidcraft_engine::geom::Plane,
     painter: &egui::Painter,
     proj: &Proj,
     stroke: Stroke,
-    budget: &mut solvecraft_engine::render::SamplingBudget,
+    budget: &mut solidcraft_engine::render::SamplingBudget,
 ) {
     for part in crate::sketch_display::curve_with_budget(sketch, index, plane, proj, painter.ctx().pixels_per_point(), budget).parts {
         let screen: Vec<_> = part.into_iter().filter_map(|point| proj.to_screen(point)).collect();
@@ -479,9 +479,9 @@ pub(crate) fn paint_curve(
 
 /// Temporary analytic geometry uses the same exact span extraction as committed curves.
 /// It never solves constraints or modifies the document.
-pub(crate) fn preview_curve(t: &Tool, hover: Vec2, sweep: Option<f64>) -> Option<solvecraft_engine::sketch::Sketch> {
-    use solvecraft_engine::sketch::{CurveKind, Sketch};
-    if !hover.is_finite() || t.pts.len() >= solvecraft_engine::sketch::MAX_SPLINE_POINTS || t.pts.iter().any(|p| !p.0.is_finite()) {
+pub(crate) fn preview_curve(t: &Tool, hover: Vec2, sweep: Option<f64>) -> Option<solidcraft_engine::sketch::Sketch> {
+    use solidcraft_engine::sketch::{CurveKind, Sketch};
+    if !hover.is_finite() || t.pts.len() >= solidcraft_engine::sketch::MAX_SPLINE_POINTS || t.pts.iter().any(|p| !p.0.is_finite()) {
         return None;
     }
     let mut sk = Sketch::new();

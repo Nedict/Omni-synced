@@ -1,4 +1,4 @@
-//! The command registry. Ids are SolveCraft's own dotted ids (`solid.extrude`,
+//! The command registry. Ids are SolidCraft's own dotted ids (`solid.extrude`,
 //! `sketch.rectangle.two_point`); the toolbar placement (`tab`, `panel`) follows the familiar
 //! Design workspace layout.
 
@@ -16,6 +16,7 @@ mod component_clone;
 mod component_clone_assembly;
 mod construct;
 mod delete;
+mod diagnostics;
 mod edit;
 mod face;
 mod features;
@@ -214,6 +215,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(file::COMMANDS.iter());
     v.extend(inspect::COMMANDS.iter());
     v.extend(section::COMMANDS.iter());
+    v.extend(diagnostics::COMMANDS.iter());
     v
 }
 

@@ -17,10 +17,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use solvecraft_geom::Vec3;
+use solidcraft_geom::Vec3;
 use truck_modeling::{self as mt, builder};
 
-use crate::blend::{plane_normal, unsupported, vtx};
+use crate::blend::{plane_normal, too_large, unsupported, vtx};
 use crate::body::{Body, Solid, p3, v3};
 use crate::{KernelError, Result, guard};
 
@@ -331,7 +331,7 @@ fn build(cur: &Body, sel_pts: &[(Vec3, f64)], round: bool) -> Result<Body> {
             let check_extension = |q: Vec3, fi: usize| -> Result<Vec3> {
                 let face = faces.get(fi).ok_or_else(|| KernelError::Failed("face".into()))?;
                 if !crate::blend::extension_fits(face, v, q, size * 1e-7) {
-                    return Err(unsupported("a fillet larger than the faces next to it"));
+                    return Err(too_large("a fillet larger than the faces next to it"));
                 }
                 Ok(q)
             };
@@ -465,7 +465,7 @@ fn build(cur: &Body, sel_pts: &[(Vec3, f64)], round: bool) -> Result<Body> {
             let (pa, pb) = (vtx(&a), vtx(&b));
             let orig = vtx(e.absolute_back()) - vtx(e.absolute_front());
             if (pb - pa).dot(orig) <= size * 1e-9 * orig.len() {
-                return Err(unsupported("a fillet larger than the faces next to it"));
+                return Err(too_large("a fillet larger than the faces next to it"));
             }
             let x = builder::line(&a, &b);
             lines.insert((e.id(), f), x.clone());
@@ -1142,7 +1142,7 @@ mod tests {
 
     #[test]
     fn sloped_basin_rim_fillets() {
-        use solvecraft_geom::{Loop2, Plane, Vec2};
+        use solidcraft_geom::{Loop2, Plane, Vec2};
         let rectangle = |x0, y0, x1, y1| Loop2::polygon(&[Vec2::new(x0, y0), Vec2::new(x1, y0), Vec2::new(x1, y1), Vec2::new(x0, y1)]);
         let slab = box_solid(Vec3::ZERO, Vec3::new(100.0, 60.0, 30.0)).unwrap();
         let pocket =
@@ -1170,7 +1170,7 @@ mod tests {
 
     #[test]
     fn sloped_rim_fillets_cannot_extend_outside_the_material() {
-        use solvecraft_geom::{Loop2, Plane, Vec2};
+        use solidcraft_geom::{Loop2, Plane, Vec2};
         for margin in [0.5, 1.0] {
             let rectangle = |x0, y0, x1, y1| Loop2::polygon(&[Vec2::new(x0, y0), Vec2::new(x1, y0), Vec2::new(x1, y1), Vec2::new(x0, y1)]);
             let slab = box_solid(Vec3::ZERO, Vec3::new(100.0, 60.0, 30.0)).unwrap();
@@ -1190,7 +1190,7 @@ mod tests {
 
     #[test]
     fn chamfers_meet_on_unequal_sloped_rim_walls() {
-        use solvecraft_geom::{Loop2, Plane, Vec2};
+        use solidcraft_geom::{Loop2, Plane, Vec2};
         for margin in [1.0, 4.0] {
             let rectangle = |x0, y0, x1, y1| Loop2::polygon(&[Vec2::new(x0, y0), Vec2::new(x1, y0), Vec2::new(x1, y1), Vec2::new(x0, y1)]);
             let slab = box_solid(Vec3::ZERO, Vec3::new(100.0, 60.0, 30.0)).unwrap();
@@ -1229,7 +1229,7 @@ mod tests {
 
     #[test]
     fn equal_slope_rim_loops_cannot_escape_the_face() {
-        use solvecraft_geom::{Loop2, Plane, Vec2};
+        use solidcraft_geom::{Loop2, Plane, Vec2};
         let rectangle = |x0, y0, x1, y1| Loop2::polygon(&[Vec2::new(x0, y0), Vec2::new(x1, y0), Vec2::new(x1, y1), Vec2::new(x0, y1)]);
         let slab = box_solid(Vec3::ZERO, Vec3::new(100.0, 60.0, 30.0)).unwrap();
         let pocket =

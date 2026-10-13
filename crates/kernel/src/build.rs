@@ -1,7 +1,7 @@
 //! Building bodies: extrude and revolve planar regions, primitives.
 
 use mt::builder;
-use solvecraft_geom::{Loop2, Plane, Region2, Seg2, Vec2, Vec3};
+use solidcraft_geom::{Loop2, Plane, Region2, Seg2, Vec2, Vec3};
 use truck_modeling as mt;
 
 use crate::body::{Body, Solid, from_p3, p3, v3};
@@ -136,7 +136,7 @@ fn region_ok(r: &Region2) -> Result<()> {
             }
             Seg2::Cubic { p0, p1, p2, p3 } => p0.is_finite() && p1.is_finite() && p2.is_finite() && p3.is_finite(),
             Seg2::Conic { a, apex, b, w } => a.is_finite() && apex.is_finite() && b.is_finite() && w.is_finite() && w > 1e-9,
-            Seg2::Bezier { n, p } => (4..=solvecraft_geom::MAX_BEZIER_DEGREE as u8).contains(&n) && p.iter().all(|q| q.is_finite()),
+            Seg2::Bezier { n, p } => (4..=solidcraft_geom::MAX_BEZIER_DEGREE as u8).contains(&n) && p.iter().all(|q| q.is_finite()),
         };
         if !ok {
             return Err(KernelError::Invalid("non-finite profile".into()));
@@ -341,7 +341,15 @@ pub fn revolve(plane: &Plane, regions: &[Region2], axis_origin: Vec2, axis_dir: 
                 _ => nl,
             }
         };
-        let given = numbered_region(r)?.map_loops(|l| reseam(snap_loop(l)));
+        // Adjacent profiles revolved together leave the axis edge split where they met: one
+        // edge again, so the builders for a profile with an edge on the axis take it (swept
+        // pieces of the axis are zero-area faces that booleans fail on).
+        let on_axis = |p: Vec2| d.cross(p - axis_origin).abs() < 1e-9;
+        let axis_run = |s: &Seg2, t: &Seg2| {
+            let (a, b, c) = (s.start(), s.end(), t.end());
+            on_axis(a) && on_axis(b) && on_axis(c) && (b - a).dot(c - b) > 0.0
+        };
+        let given = numbered_region(r)?.map_loops(|l| reseam(snap_loop(l).merged_lines(axis_run)));
         let r = &given.region();
         // A half disc on the axis revolved fully is a sphere: build it without poles. Every
         // patch is swept from the half disc's arcs.
@@ -384,9 +392,24 @@ pub fn revolve(plane: &Plane, regions: &[Region2], axis_origin: Vec2, axis_dir: 
             out.push(b);
             continue;
         }
-        let solid: Solid = guard("revolve", || Ok(builder::rsweep(&f, p3(o), v3(axis), mt::Rad(angle))))?;
+        // Edges on the axis (a spherical shell's two radial lines, say) sweep into degenerate faces
+        // there, which truck only tessellates reliably with the axis through the world origin. Off
+        // it, the body measured too large and booleans with it failed or removed the wrong side.
+        // Build such a profile there and move it into place, as `revolve_touching_axis` does.
+        let axis_edges = r.outer.segs.iter().filter(|s| matches!(**s, Seg2::Line { a, b } if on_axis(a) && on_axis(b))).count();
+        let shift = if axis_edges > 0 { o } else { Vec3::ZERO };
+        let (profile, f) = if shift.len() > 0.0 {
+            let local = Plane { origin: plane.origin - shift, ..*plane };
+            let profile = region_wires(&local, &given.oriented())?;
+            let f = attach_profile(&wires_of(&profile))?;
+            (profile, f)
+        } else {
+            (profile, f)
+        };
+        let solid: Solid = guard("revolve", || Ok(builder::rsweep(&f, p3(o - shift), v3(axis), mt::Rad(angle))))?;
         let closed = angle.abs() >= std::f64::consts::TAU;
         let history = guard("revolve history", || Ok(record::swept_face(&solid, &f, &seeds(&profile), closed)))?;
+        let solid = if shift.len() > 0.0 { builder::translated(&solid, v3(shift)) } else { solid };
         out.push(record::attach(Body::new(solid)?, &[], history, Default::default())?);
     }
     Ok(out)

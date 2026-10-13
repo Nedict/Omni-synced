@@ -8,7 +8,7 @@
 //!
 //! [`Constraint::text`]: crate::Constraint::text
 
-use solvecraft_geom::Vec2;
+use solidcraft_geom::Vec2;
 
 use crate::model::{ConstraintKind, CurveKind, Sketch};
 use crate::union_find::{find, union};
@@ -70,7 +70,7 @@ pub fn dim_frame(sk: &Sketch, k: &ConstraintKind) -> Option<DimFrame> {
             }
         }
         ArcSweep { c, .. } => match sk.segs(c).first()? {
-            solvecraft_geom::Seg2::Arc { center, start, sweep, .. } => {
+            solidcraft_geom::Seg2::Arc { center, start, sweep, .. } => {
                 DimFrame::Angular { vertex: *center, d0: Vec2::from_angle(*start), sweep: *sweep }
             }
             _ => return None,
@@ -96,7 +96,7 @@ pub fn dim_frame(sk: &Sketch, k: &ConstraintKind) -> Option<DimFrame> {
             DimFrame::Radial { center: sk.center(c)?, radius, diameter: matches!(k, Diameter { .. }) }
         }
         ArcLength { c, .. } => match sk.segs(c).first()? {
-            solvecraft_geom::Seg2::Arc { center, radius, start, sweep } => {
+            solidcraft_geom::Seg2::Arc { center, radius, start, sweep } => {
                 DimFrame::ArcLength { center: *center, radius: *radius, start: *start, sweep: *sweep }
             }
             _ => return None,

@@ -345,10 +345,26 @@ pub fn paint(p: &Painter, r: Rect, name: &str, ink: Color32, fill: Color32, acce
             pen.arrow((12.0, 11.0), (19.5, 11.0), a);
             pen.line(&[(9.0, 15.0), (15.0, 15.0)], ink);
         }
-        "construction" => {
-            for i in 0..4 {
-                let t = i as f32 * 4.5;
-                pen.line(&[(3.0 + t, 19.0 - t), (5.5 + t, 16.5 - t)], pen.accent);
+        // Construction geometry has one fixed meaning everywhere in the app (the theme's
+        // construction orange), independent of the tab accent the caller passes in: a plain
+        // construction curve is an even dashed line, a centerline the ISO long-short rhythm.
+        "construction" | "centerline" => {
+            let orange = crate::theme::Tokens::get().construction_geom;
+            if name == "construction" {
+                for i in 0..4 {
+                    let t = i as f32 * 4.5;
+                    pen.line(&[(3.0 + t, 19.0 - t), (5.5 + t, 16.5 - t)], orange);
+                }
+            } else {
+                let (fx, fy) = (2.5, 20.5);
+                let (dx, dy) = (19.0, -18.0);
+                let seg = |t0: f32, t1: f32| {
+                    pen.line(&[(fx + dx * t0, fy + dy * t0), (fx + dx * t1, fy + dy * t1)], orange);
+                };
+                seg(0.03, 0.32);
+                seg(0.40, 0.48);
+                seg(0.56, 0.85);
+                seg(0.93, 1.0);
             }
         }
         "c_hv" => {

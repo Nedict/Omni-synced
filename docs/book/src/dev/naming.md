@@ -2,7 +2,7 @@
 
 A fillet stores the edges it rounds, a sketch the face it sits on, a shell the faces it opens.
 If those were face and edge *indices*, an upstream edit that adds a face would move the fillet
-to another edge. SolveCraft stores **names**, and finds them again every time the timeline
+to another edge. SolidCraft stores **names**, and finds them again every time the timeline
 evaluates.
 
 ## Why names follow the kernel's history
@@ -79,6 +79,12 @@ longer lies on the face says so: `face ... was found by geometry, not exact hist
 
 An edge name is found as the edge between the two faces it names, each found as above: when
 exactly one edge runs between them it is that edge, even after a split of one of its faces.
+
+A hole placed by a position on a face is the exception to "the point nearest the reference's
+point": its position is a place, not a pick. The hole follows its face along its own axis, so it
+moves with the face when the face moves, and when the face no longer reaches the position it stays
+where it was placed and the feature says so, instead of sliding to the face's edge and drilling
+half a hole there. (Holes at sketch points follow their sketch.)
 
 ## Older designs
 
