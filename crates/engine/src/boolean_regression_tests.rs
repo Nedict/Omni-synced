@@ -153,3 +153,36 @@ fn ribs_flush_with_a_window_change_nothing_away_from_them() {
     let bounds = s.model.state().body("Lid").unwrap().body.tessellate(0.01).unwrap().bounds();
     assert!((bounds.max.z - 14.1).abs() < 1e-9, "{}", bounds.max.z);
 }
+
+/// #679: one sketch of a 2 × 2 grid of 10 mm squares; three cells extruded up 10 mm (XO/XX) and
+/// three down 10 mm, joined (XX/OX). The two L's meet back to back over two whole cells, along
+/// an edge and at the centre: one solid of 6 cells × 10 mm × 100 mm².
+#[test]
+fn ls_extruded_up_and_down_from_one_grid_join() {
+    let mut s = Session::default();
+    let run = |s: &mut Session, id: &str, p: Value| s.execute(id, &p).unwrap_or_else(|e| panic!("{id}: {e}"));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Grid"}));
+    for (p0, p1) in [([-10, -10], [0, 0]), ([0, -10], [10, 0]), ([-10, 0], [0, 10]), ([0, 0], [10, 10])] {
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": p0, "p1": p1}));
+    }
+    run(&mut s, "sketch.finish", json!({}));
+    let cells = |pts: &[[f64; 2]]| Value::Array(pts.iter().map(|p| json!({"point": p})).collect());
+    run(
+        &mut s,
+        "solid.extrude",
+        json!({"sketch": "Grid", "profiles": cells(&[[-5., 5.], [-5., -5.], [5., -5.]]), "distance": 10, "body_name": "Logo"}),
+    );
+    let reply = run(
+        &mut s,
+        "solid.extrude",
+        json!({"sketch": "Grid", "profiles": cells(&[[-5., 5.], [5., 5.], [5., -5.]]), "distance": "10 mm", "direction": "negative", "operation": "join"}),
+    );
+    assert!(reply["warning"].as_str().is_none_or(|w| !w.contains("tool displacement")), "{reply}");
+    let st = s.model.state();
+    assert_eq!(st.bodies.len(), 1);
+    let body = &st.body("Logo").unwrap().body;
+    assert_eq!(body.shell_count(), 1);
+    assert!(body.validity().is_empty(), "{:?}", body.validity());
+    let v = volume(&s, "Logo");
+    assert!((v - 6000.0).abs() < 1e-6, "{v}");
+}

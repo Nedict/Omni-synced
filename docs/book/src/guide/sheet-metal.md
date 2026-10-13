@@ -24,6 +24,13 @@ flat. A relief that can't be cut (a width under 0.01 mm, one as wide as the base
 bend, or a slot that would cut the base apart) is left out, and the flange feature reports a
 warning saying where.
 
+Where a cut-out has taken part of an edge away (a corner cut off the plate, a notch in the
+middle of an edge), an edge flange picked on that edge runs along the stretch the cut-outs
+leave nearest the pick, and takes its setback off that stretch only. The base on the other
+side of a notch keeps its edge, and a pick there, in the same feature or a later one, makes
+a flange of its own. Where base is still left beside the bend's end at such a cut-out, it
+gets the bend relief as above. An edge that cut-outs have taken whole is refused.
+
 Where two bends of one edge flange feature meet at a corner of the base, the rule's **corner
 relief shape** (`corner_relief_shape`; Corner Relief Shape in Sheet Metal Rules) says what is
 cut there. `notch`, the default, cuts nothing more: the bends end square at the corner. `round`
