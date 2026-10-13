@@ -395,6 +395,37 @@ fn meeting_size(a: &Body, b: &Body) -> f64 {
     if s.x > 0.0 && s.y > 0.0 && s.z > 0.0 { s.x.min(s.y).min(s.z) } else { f64::INFINITY }
 }
 
+/// Whether a result volume is plausible for `op`: within the bounds the operands' volumes
+/// leave, plus the slack the meshed volumes are measured to.
+fn plausible(v: f64, op: BoolOp, va: f64, vb: f64, slack: f64) -> bool {
+    v > 0.0
+        && match op {
+            BoolOp::Union => v >= va.max(vb) - slack && v <= va + vb + slack,
+            BoolOp::Cut => v >= va - vb - slack && v <= va + slack,
+            BoolOp::Intersect => v <= va.min(vb) + slack,
+        }
+}
+
+/// The prism route's result: `Some` when both operands are prisms along one direction (see
+/// [`crate::prism::prism_boolean`]), with a union's slab seams healed as the general B-rep
+/// boolean does.
+fn prism_result(a: &Body, b: &Body, op: BoolOp, size: f64, counts: &[(usize, usize)]) -> Option<Result<Option<Body>>> {
+    // Slab-by-slab prism joins sew a closed solid, but leave cap and wall pieces along slab
+    // boundaries. Merge those coplanar faces just as the general B-rep boolean does, retaining
+    // intentional Split Face lines.
+    let keep: Vec<Vec<Vec3>> = a.split_keep().iter().chain(b.split_keep()).cloned().collect();
+    crate::prism::prism_boolean(a, b, op).map(|result| {
+        result.map(|body| {
+            body.map(|body| {
+                if op == BoolOp::Union {
+                    guard("heal prism boolean", || recorded::heal_body(&body, (*body.solid).clone(), size, &keep, counts)).unwrap_or(body)
+                } else {
+                    body
+                }
+            })
+        })
+    })
+}
 fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
     a.require_brep("a boolean")?;
     b.require_brep("a boolean")?;
@@ -407,6 +438,33 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
     // floor) is otherwise spanned by triangles cutting through it, which reads as missing
     // material.
     let tol_m = (size * 5e-4).min(meeting_size(a, b) * 2e-3).max(size * 1e-5);
+    // A prism pair (a plate and the tool through it) is decided exactly in 2D, with no mesh of
+    // either operand. The sampled shortcuts below need a refined mesh of both, and that mesh is
+    // most of what a boolean costs: a pattern or a multi-profile sketch rebuilds the whole
+    // target's mesh once per tool. Only a cut or an intersection meets its tool often enough to
+    // be worth asking first - parts that stay apart are settled far more cheaply by the shell
+    // join the sampled shortcut does. A pair the route cannot answer still takes the path below,
+    // unchanged.
+    let early_prism = matches!(op, BoolOp::Cut | BoolOp::Intersect);
+    let prism = early_prism.then(|| prism_result(a, b, op, size, &counts)).flatten();
+    if let Some(Ok(Some(body))) = &prism {
+        let (va0, vb0) = (volume(a), volume(b));
+        let (v0, slack0) = (volume(body), 2e-3 * (va0 + vb0) + 1e-9);
+        // A tool that misses its target, or covers it whole, leaves it as it is, and the
+        // sampled shortcut below answers that by reusing the operand itself: the very same body.
+        // The 2D route rebuilds it instead - the same shape on new faces - which would turn an
+        // untouched body in a timeline into a different solid. Those pairs go back to the path
+        // below, which decides them, and the identity they keep, exactly as it always has.
+        let unchanged = 1e-4 * (va0 + vb0);
+        let rebuilt_from_an_operand = match op {
+            BoolOp::Cut => v0 >= va0 - unchanged,
+            BoolOp::Intersect => (v0 - va0).abs() <= unchanged || (v0 - vb0).abs() <= unchanged,
+            BoolOp::Union => false,
+        };
+        if !rebuilt_from_an_operand && plausible(v0, op, va0, vb0, slack0) {
+            return Ok(Some(body.clone()));
+        }
+    }
     let meshes = (a.tessellate_with(tol_m, true).ok(), b.tessellate_with(tol_m, true).ok());
     let (va, vb) = match &meshes {
         (Some(ma), Some(mb)) => (ma.measure().volume, mb.measure().volume),
@@ -431,12 +489,7 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
     let check = |r: &Body| -> (bool, f64) {
         let Ok(mr) = r.tessellate_with(tol_m, true) else { return (false, f64::NAN) };
         let v = mr.measure().volume;
-        let bounds = v > 0.0
-            && match op {
-                BoolOp::Union => v >= va.max(vb) - slack && v <= va + vb + slack,
-                BoolOp::Cut => v >= va - vb - slack && v <= va + slack,
-                BoolOp::Intersect => v <= va.min(vb) + slack,
-            };
+        let bounds = plausible(v, op, va, vb, slack);
         if !bounds {
             return (false, v);
         }
@@ -463,36 +516,26 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
     }
     let mut last = String::new();
     // Coincident faces make the intersection fail after many retries; push them apart first.
-    // Prisms along one direction (plates with holes): exact, in 2D (so only the volume
-    // bounds are checked).
-    if let Some(Ok(r)) = crate::prism::prism_boolean(a, b, op) {
-        // Slab-by-slab prism joins sew a closed solid, but leave cap and wall
-        // pieces along slab boundaries. Merge those coplanar faces just as the
-        // general B-rep boolean does, retaining intentional Split Face lines.
-        let keep: Vec<Vec<Vec3>> = a.split_keep().iter().chain(b.split_keep()).cloned().collect();
-        let r = if op == BoolOp::Union {
-            r.map(|body| guard("heal prism boolean", || recorded::heal_body(&body, (*body.solid).clone(), size, &keep, &counts)).unwrap_or(body))
-        } else {
-            r
-        };
-        match &r {
-            Some(body) => {
+    // Prisms along one direction (plates with holes): exact, in 2D (so only the volume bounds
+    // are checked). For a cut or an intersection this already ran above; the other operations
+    // ask here, after the sampled shortcut, which is where that shortcut is cheapest.
+    let prism = prism.or_else(|| (!early_prism).then(|| prism_result(a, b, op, size, &counts)).flatten());
+    if let Some(result) = prism {
+        match result {
+            Ok(Some(body)) => {
                 // Measured as the operands were: a coarser mesh of a plate with many holes
                 // overstates its volume by more than the slack.
                 let v = match &meshes {
                     (Some(_), Some(_)) => body.tessellate_with(tol_m, true).map(|m| m.measure().volume).unwrap_or(f64::NAN),
-                    _ => volume(body),
+                    _ => volume(&body),
                 };
-                let bounds = match op {
-                    BoolOp::Union => v >= va.max(vb) - slack && v <= va + vb + slack,
-                    BoolOp::Cut => v >= va - vb - slack && v <= va + slack,
-                    BoolOp::Intersect => v <= va.min(vb) + slack,
-                };
-                if v > 0.0 && bounds {
-                    return Ok(r);
+                if plausible(v, op, va, vb, slack) {
+                    return Ok(Some(body));
                 }
             }
-            None => return Ok(None),
+            Ok(None) => return Ok(None),
+            // A failed prism attempt keeps trying the other strategies, as it did before.
+            Err(_) => {}
         }
     }
     // Bodies touching along one whole face (a part joined with its mirror image).
@@ -1043,6 +1086,10 @@ pub(crate) fn half_box(body: &Body, plane: &solidcraft_geom::Plane, positive: bo
     let (lo, hi) = if positive { (0.0, reach) } else { (-reach, 0.0) };
     crate::build::extrude(plane, std::slice::from_ref(&sq), lo, hi)?.pop().ok_or_else(|| KernelError::Failed("half space".into()))
 }
+
+#[cfg(test)]
+#[path = "prism_fast_path_tests.rs"]
+mod prism_fast_path_tests;
 
 #[cfg(test)]
 #[path = "placement_tests.rs"]
