@@ -276,7 +276,7 @@ fn interference_box_sweep_matches_every_pair_check() {
     let cube = |x: f64, y: f64, z: f64, e: f64| Aabb3 { min: Vec3::new(x, y, z), max: Vec3::new(x + e, y + e, z + e) };
     // A deterministic scatter: overlapping, touching, and apart in only one axis.
     let boxes: Vec<Aabb3> = (0..60)
-        .map(|i| f64::from(i))
+        .map(f64::from)
         .map(|i| cube((i * 7.3) % 20.0, (i * 3.1) % 9.0, (i * 5.7) % 4.0, 1.0 + (i % 3.0)))
         .chain([cube(30.0, 0.0, 0.0, 1.0), cube(31.0, 0.0, 0.0, 1.0)])
         .collect();
