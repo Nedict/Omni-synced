@@ -580,6 +580,13 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
         let group_id = group_for(&groups, *id);
         let mut at_index: Vec<_> = groups.iter().filter(|group| first_indices.get(&group.id).copied().flatten() == Some(index)).collect();
         at_index.sort_by_key(|group| (group_depth(&groups, group.id), group.id));
+        let marker_before_group = index == marker && !at_index.is_empty();
+        if marker_before_group {
+            let group = at_index.first().and_then(|group| group.parent);
+            let indent_group = previous_visible_group.filter(|previous| Some(*previous) != group);
+            slots.push(VerticalSlot { y: ui.cursor().top(), position: index, group, indent_group });
+            vertical_marker(app, ui, &mut drag);
+        }
         let mut rendered_group_header = false;
         for group in at_index {
             if group_ancestors_are_open(app, &groups, group.id) && shown_groups.insert(group.id) {
@@ -601,7 +608,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
         let group_open = group_id.is_none_or(|id| group_is_open(app, &groups, id));
         let indent_group = (!rendered_group_header).then_some(previous_visible_group).flatten().filter(|previous| Some(*previous) != group_id);
-        if index == marker {
+        if index == marker && !marker_before_group {
             slots.push(VerticalSlot { y: ui.cursor().top(), position: index, group: group_open.then_some(group_id).flatten(), indent_group });
             vertical_marker(app, ui, &mut drag);
         }
@@ -870,6 +877,25 @@ mod tests {
         let last = handle_at("timeline:Last").unwrap();
         harness.step(&json!({"drag": [{"handle": "timeline:rollback"}, [last.x, last.y + 15.0]]})).unwrap();
         assert_eq!(harness.app.session.doc.marker, None, "dropping below the final row must restore the fully evaluated history");
+    }
+
+    #[test]
+    fn rollback_bar_before_a_folders_first_feature_is_above_its_header() {
+        let mut harness = Harness::new();
+        harness.app.preferences.timeline_left = true;
+        harness.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10, "name": "First"})).unwrap();
+        harness
+            .app
+            .run("solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [20, 0, 0], "operation": "new_body", "name": "Second"}))
+            .unwrap();
+        harness.app.run("timeline.group", json!({"name": "Folder", "features": ["First", "Second"]})).unwrap();
+        harness.app.run("timeline.roll_to", json!({"position": 0})).unwrap();
+        harness.frames(4);
+
+        let marker = handle_at("timeline:rollback").unwrap();
+        let folder = handle_at("timeline-folder:Folder").unwrap();
+        let first = handle_at("timeline:First").unwrap();
+        assert!(marker.y < folder.y && folder.y < first.y, "rollback marker must precede the folder containing the first rolled-back feature");
     }
 
     #[test]
