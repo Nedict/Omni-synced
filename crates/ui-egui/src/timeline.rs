@@ -229,17 +229,17 @@ pub fn timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
                         _ => None,
                     };
                     resp.context_menu(|ui| {
-                        if ui.button("Edit Feature").clicked() {
+                        if ui.button(crate::i18n::tr_label("Edit Feature")).clicked() {
                             edit = Some(*id);
                             ui.close();
                         }
                         if let Some(sk) = sketch_of
-                            && ui.button("Edit Profile Sketch").clicked()
+                            && ui.button(crate::i18n::tr_label("Edit Profile Sketch")).clicked()
                         {
                             app.edit_sketch(sk);
                             ui.close();
                         }
-                        if ui.button("Rename").clicked() {
+                        if ui.button(crate::i18n::tr_label("Rename")).clicked() {
                             app.dialog = Some(crate::dialogs::Dialog::rename(*id, name));
                             ui.close();
                         }
@@ -247,11 +247,11 @@ pub fn timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
                             let _ = app.run("timeline.suppress", json!({"feature": id}));
                             ui.close();
                         }
-                        if ui.button("Roll History Marker Here").clicked() {
+                        if ui.button(crate::i18n::tr_label("Roll History Marker Here")).clicked() {
                             let _ = app.run("timeline.roll_to", json!({ "feature": id }));
                             ui.close();
                         }
-                        if ui.button("Find in Browser").clicked() {
+                        if ui.button(crate::i18n::tr_label("Find in Browser")).clicked() {
                             find_in_browser(app, *id);
                             ui.close();
                         }

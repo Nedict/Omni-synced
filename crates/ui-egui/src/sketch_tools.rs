@@ -1271,7 +1271,7 @@ pub fn show(app: &mut SolveApp, ui: &egui::Ui, painter: &egui::Painter, proj: &P
 fn text_entry(app: &mut SolveApp, ctx: &egui::Context) {
     let Some((at, mut text)) = TEXT.with(|t| t.borrow_mut().take()) else { return };
     let mut done = None;
-    crate::frame::window(ctx, "Text", crate::frame::Width::Normal)
+    crate::frame::window(ctx, crate::i18n::tr_label("Text"), crate::frame::Width::Normal)
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))

@@ -18,6 +18,7 @@ use crate::dialogs::{Dialog, Kind, combo, field, row_label};
 use crate::preview::{Built, Colors};
 use crate::selection::{BODIES, EDGES, FACES, SelInput, VERTICES};
 use crate::theme::Tokens;
+
 use crate::viewport::Proj;
 
 /// Joint types in the order the Type box lists them (command names).
@@ -398,7 +399,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
     match k {
         Asm::NewComponent { name, activate } => {
             row_label(ui, "Name");
-            let r = ui.add(egui::TextEdit::singleline(name).hint_text("Component1"));
+            let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr_label("Component1")));
             enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             ui.end_row();
             row_label(ui, "Activate");
@@ -467,7 +468,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
         }
         Asm::JointOrigin { name, .. } => {
             row_label(ui, "Name");
-            let r = ui.add(egui::TextEdit::singleline(name).hint_text("Joint Origin1"));
+            let r = ui.add(egui::TextEdit::singleline(name).hint_text(crate::i18n::tr_label("Joint Origin1")));
             enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             ui.end_row();
         }
@@ -477,7 +478,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             let list = movable(s);
             if list.is_empty() {
                 row_label(ui, "");
-                ui.label(RichText::new("no joint that moves yet").color(t.text_dim));
+                ui.label(RichText::new(crate::i18n::tr_label("no joint that moves yet")).color(t.text_dim));
                 ui.end_row();
                 return false;
             }
@@ -552,7 +553,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             let joints = &s.doc.assembly.joints;
             if joints.len() < 2 {
                 row_label(ui, "");
-                ui.label(RichText::new("needs two joints").color(t.text_dim));
+                ui.label(RichText::new(crate::i18n::tr_label("needs two joints")).color(t.text_dim));
                 ui.end_row();
                 return false;
             }
@@ -638,13 +639,13 @@ fn interference_rows(app: &SolveApp, ui: &mut egui::Ui, r: &Value) {
     let unchecked = r["unchecked"].as_array().cloned().unwrap_or_default();
     if hits.is_empty() && unchecked.is_empty() {
         row_label(ui, "Result");
-        ui.label(RichText::new("no interference").color(t.text_dim));
+        ui.label(RichText::new(crate::i18n::tr_label("no interference")).color(t.text_dim));
         ui.end_row();
         return;
     }
     if !hits.is_empty() {
         row_label(ui, "Interferes");
-        ui.label(RichText::new("Volume").strong());
+        ui.label(RichText::new(crate::i18n::tr_label("Volume")).strong());
         ui.end_row();
     }
     for h in hits {
@@ -992,11 +993,11 @@ fn joint_menu(
     open: &mut Option<Dialog>,
     run: &mut Option<(&'static str, Value)>,
 ) {
-    if ui.button("Edit Joint").clicked() {
+    if ui.button(crate::i18n::tr_label("Edit Joint")).clicked() {
         *open = edit_joint(app, id);
         ui.close();
     }
-    if kind != JointKind::Rigid && ui.button("Drive Joint").clicked() {
+    if kind != JointKind::Rigid && ui.button(crate::i18n::tr_label("Drive Joint")).clicked() {
         *open = drive_joint(app, id);
         ui.close();
     }

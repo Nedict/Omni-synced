@@ -532,7 +532,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             if let Some(preview) = r.preview.as_ref().filter(|_| !cancelled) {
                 let w = ui.available_width().min(320.0);
                 ui.image((preview.id(), egui::vec2(w, w * 200.0 / 320.0)));
-                ui.label(egui::RichText::new("Saved preview. Geometry is being checked before editing.").small().weak());
+                ui.label(egui::RichText::new(crate::i18n::tr_label("Saved preview. Geometry is being checked before editing.")).small().weak());
             }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
