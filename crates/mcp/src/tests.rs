@@ -459,7 +459,6 @@ fn screenshot_renders_a_saved_named_view() {
 /// is mostly the same body list once per step. A compact batch reply names only what each step
 /// added or changed.
 #[test]
-#[ignore = "fails until #530 is fixed"]
 fn compact_batch_reply_does_not_repeat_the_body_list() {
     let mut s = server();
     let cube =
@@ -478,6 +477,31 @@ fn compact_batch_reply_does_not_repeat_the_body_list() {
     for old in ["Body1", "Body25", "Body50"] {
         assert!(!reply.contains(&format!("\"{old}\"")), "untouched {old} repeated in the compact reply ({} bytes): {reply}", reply.len());
     }
+}
+
+/// A compact batch reply keeps what each step did: the body a cut changed, and a sketch
+/// command's new ids once (under `created`); the default reply is unchanged.
+#[test]
+fn compact_batch_reply_keeps_changed_bodies_and_created_ids() {
+    let mut s = server();
+    let steps = json!([
+        {"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "body_name": "Base"}},
+        {"command": "solid.box", "params": {"length": 4, "width": 4, "height": 10, "corner": [3, 3, 5], "operation": "cut", "targets": ["Base"]}},
+        {"command": "sketch.create", "params": {"plane": "XY"}},
+        {"command": "sketch.rectangle.two_point", "params": {"p0": [20, 0], "p1": [30, 10]}},
+    ]);
+    let full = tool(&mut s, "batch", json!({"commands": steps}));
+    assert_eq!(full["results"][1]["bodies"], json!(["Base"]), "{full}");
+    assert_eq!(full["results"][3]["curves"], full["results"][3]["created"]["curves"], "{full}");
+    tool(&mut s, "new_design", json!({}));
+    let r = tool(&mut s, "batch", json!({"commands": steps, "verbose": false}));
+    let cut = &r["results"][1];
+    assert!(cut.get("bodies").is_none(), "{r}");
+    assert_eq!(cut["changed_bodies"], json!(["Base"]), "{r}");
+    let rect = &r["results"][3];
+    assert!(rect.get("curves").is_none() && rect.get("constraints").is_none(), "{r}");
+    assert_eq!(rect["created"]["curves"].as_array().map(Vec::len), Some(4), "{r}");
+    assert!(rect["sides"].is_object(), "results that are not repeated stay: {r}");
 }
 
 /// #531: a product model keeps an optional variant hidden in its default presentation. Hiding

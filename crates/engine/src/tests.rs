@@ -2953,6 +2953,25 @@ fn feature_replies_list_only_the_bodies_they_created() {
     assert_eq!(r["bodies"], json!(["Base"]), "{r}");
 }
 
+/// A feature reply also says which existing bodies it changed and which are gone, so a client
+/// that skips the full body list (MCP `batch` with `verbose: false`, #530) still sees every effect.
+#[test]
+fn feature_replies_list_the_bodies_they_changed_and_removed() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "A"}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [20, 0, 0], "operation": "new", "body_name": "B"}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [40, 0, 0], "operation": "new", "body_name": "C"}));
+    // A pocket in A changes A only.
+    let r = run(&mut s, "solid.box", json!({"length": 4, "width": 4, "height": 10, "corner": [3, 3, 5], "operation": "cut", "targets": ["A"]}));
+    assert_eq!((&r["created_bodies"], &r["changed_bodies"], &r["removed_bodies"]), (&json!([]), &json!(["A"]), &json!([])), "{r}");
+    // Joining C into B changes B and removes C.
+    let r = run(&mut s, "solid.combine", json!({"target": "B", "tools": ["C"], "operation": "join"}));
+    assert_eq!((&r["changed_bodies"], &r["removed_bodies"]), (&json!(["B"]), &json!(["C"])), "{r}");
+    // A new body changes nothing else.
+    let r = run(&mut s, "solid.box", json!({"length": 1, "width": 1, "height": 1, "corner": [0, 50, 0], "operation": "new", "body_name": "D"}));
+    assert_eq!((&r["created_bodies"], &r["changed_bodies"], &r["removed_bodies"]), (&json!(["D"]), &json!([]), &json!([])), "{r}");
+}
+
 /// Drafting a cylinder's side face 5° from the base plane makes a cone frustum (#547): radius 10
 /// at the base, 10 − 20 · tan 5° at the top.
 #[test]

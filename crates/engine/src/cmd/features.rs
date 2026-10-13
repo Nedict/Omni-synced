@@ -365,6 +365,8 @@ pub(super) fn add_feature(s: &mut Session, p: &Value, kind: FeatureKind) -> Resu
 /// `add_feature`; `world` is false when `kind` is already in the active component's frame.
 fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) -> Result<Value> {
     let name = str_(p, "name");
+    // The bodies before the feature, to say which ones it changed or removed.
+    let before = s.model.state();
     // Commands speak world coordinates; the feature is authored in the active component.
     let mut kind = kind;
     if world {
@@ -474,8 +476,15 @@ fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) ->
     let bodies: Vec<&str> = st.bodies.iter().map(|b| b.name.as_str()).collect();
     // The bodies this feature made, apart from the ones it changed or that were there (#374).
     let created: Vec<&str> = st.bodies.iter().filter(|b| b.feature == id).map(|b| b.name.as_str()).collect();
+    // Bodies that were there before and now have other geometry, and bodies that are gone.
+    let old: std::collections::HashMap<&str, &solidcraft_doc::kernel::Body> = before.bodies.iter().map(|b| (b.name.as_str(), &b.body)).collect();
+    let now: std::collections::HashSet<&str> = st.bodies.iter().map(|b| b.name.as_str()).collect();
+    let changed: Vec<&str> =
+        st.bodies.iter().filter(|b| b.feature != id && old.get(b.name.as_str()).is_some_and(|o| !o.same(&b.body))).map(|b| b.name.as_str()).collect();
+    let removed: Vec<&str> = before.bodies.iter().map(|b| b.name.as_str()).filter(|n| !now.contains(n)).collect();
     let fname = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
-    Ok(json!({"feature": id, "name": fname, "bodies": bodies, "created_bodies": created, "ms": r.map(|r| r.ms)}))
+    Ok(json!({"feature": id, "name": fname, "bodies": bodies, "created_bodies": created, "changed_bodies": changed,
+        "removed_bodies": removed, "ms": r.map(|r| r.ms)}))
 }
 
 fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
