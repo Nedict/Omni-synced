@@ -21,6 +21,7 @@ pub(crate) mod coons;
 pub(crate) mod edges;
 pub(crate) mod grid;
 pub(crate) mod size;
+pub(crate) mod ssi;
 pub(crate) mod surface;
 pub(crate) mod uv;
 

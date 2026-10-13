@@ -38,13 +38,16 @@ pub(crate) fn sample_edge(edge: &mt::Edge, rules: &Rules, h: f64) -> Vec<Vec3> {
     if !(t0.is_finite() && t1.is_finite() && t1 > t0) {
         return vec![front, back];
     }
-    // Our evaluator where the curve has a form it knows (no allocation per point); truck's
-    // for intersection curves.
+    // Our evaluators: the curve's own form where it has one (no allocation per point); for an
+    // intersection curve, Newton on both surfaces from seeded parameters (see `ssi`), and truck's
+    // evaluation only where that does not converge.
     let fast = super::surface::eval_curve(&curve);
+    let ssi = if fast.is_none() { super::ssi::Intersection::new(&curve) } else { None };
     let at = |t: f64| {
-        match &fast {
-            Some(c) => c.eval(t).map(|(p, _)| p),
-            None => Some(from_p3(curve.subs(t))),
+        match (&fast, &ssi) {
+            (Some(c), _) => c.eval(t).map(|(p, _)| p),
+            (None, Some(ix)) => ix.eval(t).or_else(|| Some(from_p3(curve.subs(t)))),
+            (None, None) => Some(from_p3(curve.subs(t))),
         }
         .filter(|p| p.is_finite())
     };
