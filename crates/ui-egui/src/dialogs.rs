@@ -1306,6 +1306,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     auto_operation(app, &mut d);
     update_measure(app, &mut d);
     update_fill_cells(app, &mut d);
+    // Physical materials: the library's, then the design's own (material.create).
+    let material_names = app.session.doc.material_names();
     let t = Tokens::get();
     let vp = app.viewport.rect.unwrap_or_else(|| ctx.content_rect());
     let top = (vp.top() + crate::viewport::AXIS_VIEW_CLEARANCE).min((vp.bottom() - 360.0).max(vp.top()));
@@ -1817,7 +1819,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         }
                     }
                     Kind::Material { index } => {
-                        let names: Vec<&str> = solidcraft_engine::doc::MATERIALS.iter().map(|(n, _)| *n).collect();
+                        let names: Vec<&str> = material_names.iter().map(String::as_str).collect();
                         row_label(ui, "Material");
                         combo(ui, "mat", &names, index);
                         ui.end_row();
@@ -2846,7 +2848,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         }
         Kind::Material { index } => {
             need(0, "bodies")?;
-            let name = solidcraft_engine::doc::MATERIALS.get(*index).map(|(n, _)| *n).unwrap_or("Default");
+            let name = s.doc.material_names().get(*index).cloned().unwrap_or_else(|| "Default".into());
             ("material.assign", json!({"bodies": body_names(0), "material": name}))
         }
         Kind::Section { offset, flip } => {

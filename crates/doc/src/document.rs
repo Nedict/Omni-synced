@@ -1746,6 +1746,9 @@ pub struct Document {
     /// Physical material per body (by body name); others use the default.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub materials: std::collections::BTreeMap<String, String>,
+    /// Physical materials defined in this design (`material.create`), next to the built-in ones.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub user_materials: Vec<UserMaterial>,
     /// Appearance colour per body (by body name, sRGB); it overrides the material's look.
     #[serde(default, skip_serializing_if = "crate::appearance::Appearances::is_empty")]
     pub appearances: crate::appearance::Appearances,
@@ -1826,6 +1829,7 @@ impl Document {
             body_components: Default::default(),
             body_offsets: Default::default(),
             materials: Default::default(),
+            user_materials: Vec::new(),
             appearances: Default::default(),
             favorites: Default::default(),
             canvases: Vec::new(),
@@ -1865,7 +1869,46 @@ impl Document {
 
     /// Density of a body's material (g/cm³).
     pub fn density(&self, body: &str) -> f64 {
-        self.materials.get(body).and_then(|m| material_density(m)).unwrap_or(DEFAULT_DENSITY)
+        self.materials.get(body).and_then(|m| self.material_density(m)).unwrap_or(DEFAULT_DENSITY)
+    }
+
+    /// A material defined in this design, by name (case-insensitive).
+    pub fn user_material(&self, name: &str) -> Option<&UserMaterial> {
+        let name = name.trim();
+        self.user_materials.iter().find(|m| m.name.eq_ignore_ascii_case(name))
+    }
+
+    /// A physical material's name as the library or this design spells it (case-insensitive
+    /// lookup): built-in materials first, then the design's own.
+    pub fn material_name(&self, name: &str) -> Option<String> {
+        MATERIALS
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name.trim()))
+            .map(|(n, _)| n.to_string())
+            .or_else(|| self.user_material(name).map(|m| m.name.clone()))
+    }
+
+    /// Density of a physical material (g/cm³): built-in or defined in this design. A design
+    /// material with an unusable density (a damaged file) has none.
+    pub fn material_density(&self, name: &str) -> Option<f64> {
+        material_density(name).or_else(|| self.user_material(name).map(|m| m.density).filter(|d| valid_density(*d)))
+    }
+
+    /// The look a physical material gives a body without an appearance of its own.
+    pub fn material_look(&self, name: &str) -> Option<crate::appearance::Look> {
+        crate::appearance::material_look(name).or_else(|| {
+            let mut look = self.user_material(name)?.appearance.clone()?;
+            // A damaged file's opacity is shown opaque rather than trusted.
+            if !(look.opacity.is_finite() && (0.0..=1.0).contains(&look.opacity)) {
+                look.opacity = 1.0;
+            }
+            Some(look)
+        })
+    }
+
+    /// Every physical material's name: the built-in library, then the design's own.
+    pub fn material_names(&self) -> Vec<String> {
+        MATERIALS.iter().map(|(n, _)| n.to_string()).chain(self.user_materials.iter().map(|m| m.name.clone())).collect()
     }
 
     /// The component a body belongs to: where it was moved, else its feature's.
@@ -2343,6 +2386,26 @@ pub fn material_color(name: &str) -> Option<[u8; 3]> {
     })
 }
 
+/// A physical material defined in a design (`material.create`): its name, its density and,
+/// optionally, the look it gives bodies without an appearance of their own.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct UserMaterial {
+    pub name: String,
+    /// Density (g/cm³).
+    pub density: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub appearance: Option<crate::appearance::Look>,
+}
+
+/// Largest density a material may have (g/cm³); the densest elements are about 22.6.
+pub const MAX_DENSITY: f64 = 1000.0;
+
+/// A density a material can have: finite, above zero and at most [`MAX_DENSITY`] g/cm³.
+pub fn valid_density(d: f64) -> bool {
+    d.is_finite() && d > 0.0 && d <= MAX_DENSITY
+}
+
+/// Density of a built-in physical material (g/cm³).
 pub fn material_density(name: &str) -> Option<f64> {
     MATERIALS.iter().find(|(n, _)| n.eq_ignore_ascii_case(name.trim())).map(|(_, d)| *d)
 }
