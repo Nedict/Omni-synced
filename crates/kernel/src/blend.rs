@@ -1619,6 +1619,14 @@ fn chamfer_tool_sides(cur: &Body, p: Vec3, s: f64, sides: Option<(ChamferSide, b
     let a_ext = a + ab * (s * 0.5 + reach * 0.05);
     let b_ext = b - ab * (s * 0.5 + reach * 0.07);
     let e_far = base + out * reach;
+    // The extension lets neighbouring convex cutters overlap into a mitre, and on a
+    // convex edge it stays outside the body. On a hole corner the same extension runs
+    // into the walls, and the cutter bites them instead of leaving one bevel (#814).
+    // The cross-section itself sits past the edge ends, so test the offset at mid-edge.
+    let mid_edge = (f.p0 + f.p1) * 0.5;
+    if cur.contains(mid_edge + (a_ext - base)) || cur.contains(mid_edge + (b_ext - base)) {
+        return Err(unsupported("chamfers whose extension enters the body"));
+    }
     // The material beyond both ends must be empty (the cutter runs past them).
     let mid = (a + b + base) / 3.0;
     for probe in [mid + f.d * (ext * 0.5), mid + f.d * (len + ext * 1.5)] {
@@ -1701,6 +1709,23 @@ mod tests {
             let removed = v0 - vol(&out);
             assert!(removed > area * 14.0 && removed < area * 15.2, "{removed}");
         }
+    }
+
+    /// The vertical corner of a square hole is one bevel: a right triangle of the chamfer
+    /// distance, for the full height. Not a notch that steps out through the wall (#814).
+    #[test]
+    fn a_chamfer_of_a_hole_corner_is_one_bevel() {
+        let plate = crate::build::box_solid(Vec3::ZERO, Vec3::new(40.0, 40.0, 10.0)).unwrap();
+        let pocket = crate::build::box_solid(Vec3::new(10.0, 10.0, -1.0), Vec3::new(30.0, 30.0, 12.0)).unwrap();
+        let body = crate::ops::boolean(&plate, &pocket, crate::BoolOp::Cut).unwrap().unwrap();
+        let v0 = body.tessellate(1e-4).unwrap().measure().volume;
+        let out = chamfer(&body, &[Vec3::new(10.0, 10.0, 5.0)], 2.0).unwrap();
+        assert!(out.validity().is_empty(), "{:?}", out.validity());
+        assert_eq!(out.unmeshed_faces(), 0);
+        let added = out.tessellate(1e-4).unwrap().measure().volume - v0;
+        // The bevel fills the hole corner: a right triangle of legs 2 mm, times the 10 mm edge.
+        assert!(added > 19.0 && added < 21.0, "added {added}, want 20");
+        assert_eq!(out.face_count(), body.face_count() + 1, "one bevel face");
     }
 
     #[test]

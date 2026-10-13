@@ -547,9 +547,9 @@ pub(crate) fn heal_traced(solid: Solid, size: f64, keep: &[Vec<Vec3>]) -> (Solid
     healed(solid, size, keep, true, false)
 }
 
-/// [`heal_traced`] that only merges coplanar neighbouring faces, leaving every edge, curve and
-/// surface as it is: for results whose geometry is already exact (a prism boolean's), where
-/// joining edges would change more than the faces split in pieces.
+/// [`heal_traced`] that merges coplanar neighbouring faces and the collinear edges those
+/// merges leave, and leaves curves and surfaces as they are. A prism boolean's geometry is
+/// already exact; the slab cuts are the edges this joins back (#818).
 pub(crate) fn merge_faces_traced(solid: Solid, size: f64, keep: &[Vec<Vec3>]) -> (Solid, Option<HealMap>) {
     healed(solid, size, keep, true, true)
 }
@@ -632,7 +632,10 @@ fn heal_shells(solid: &Solid, size: f64, keep: &[Vec<Vec3>], traced: bool, faces
             from = groups.iter().map(|g| g.iter().filter_map(|i| from.get(*i)).flatten().copied().collect()).collect();
             changed = true;
         }
-        if !faces_only && let Some(m) = merge_collinear(&cur, &mut trace) {
+        // A prism cut splits every wall at the tool's end planes, then the coplanar strips
+        // merge back and leave the split as two collinear edges. Join those. A vertex the
+        // tool actually meets has more than two edges, so the hole's own corners stay.
+        if let Some(m) = merge_collinear(&cur, &mut trace) {
             cur = m;
             changed = true;
         }

@@ -23,6 +23,10 @@ pub struct ShortcutBox {
     index: usize,
     /// What is typed.
     pub text: String,
+    /// Ask the field for focus on the next frame. Set when the box opens, then cleared.
+    /// Requesting focus on every frame restarts the text edit's held key, so a Wayland
+    /// repeat never sees the release and the key keeps repeating after the app loses focus (#724).
+    focus: bool,
     /// Most recent first.
     pub recent: Vec<String>,
     pub pinned: Vec<String>,
@@ -119,6 +123,7 @@ pub fn open(app: &mut SolveApp, at: Option<Pos2>) {
     app.sbox.at = at;
     app.sbox.index = 0;
     app.sbox.text.clear();
+    app.sbox.focus = true;
 }
 
 fn run(app: &mut SolveApp, id: &str) {
@@ -132,10 +137,15 @@ fn run(app: &mut SolveApp, id: &str) {
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     if !app.ui.palette_open {
         app.sbox.at = None;
+        app.sbox.focus = false;
         return;
     }
     let t = Tokens::get();
     let screen = ctx.content_rect();
+    // Opened without `open` (a feature edit that falls through to the box): focus once.
+    if app.sbox.at.is_none() {
+        app.sbox.focus = true;
+    }
     let at = *app.sbox.at.get_or_insert_with(|| ctx.input(|i| i.pointer.latest_pos()).unwrap_or(screen.center()));
     let list = search(app, &app.sbox.text);
     let (up, down, enter, esc) = ctx.input(|i| {
@@ -181,7 +191,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     .desired_width(W - 20.0)
                     .id(egui::Id::new("sc_sbox_text")),
             );
-            te.request_focus();
+            if std::mem::take(&mut app.sbox.focus) {
+                te.request_focus();
+            }
             if te.changed() {
                 app.sbox.index = 0;
             }

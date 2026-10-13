@@ -146,8 +146,9 @@ pub(crate) fn heal_body(body: &Body, solid: Solid, size: f64, keep: &[Vec<Vec3>]
     heal_build(solid, size, keep, faces, edges, counts)
 }
 
-/// A prism boolean's result `body` with the coplanar pieces its slabs leave merged (nothing
-/// else healed: its edges are exact as they are), its history carried through, and what else it carries kept: each face's
+/// A prism boolean's result `body` with the coplanar pieces its slabs leave merged, and the
+/// collinear edges that merge leaves joined back (#818). Curves and surfaces stay as they
+/// are. Its history is carried through, and what else it carries kept: each face's
 /// construction source where every piece merged into it had that same one, its Split Face
 /// lines and its regularization protection.
 pub(crate) fn heal_prism_result(body: &Body, size: f64, keep: &[Vec<Vec3>], counts: &[(usize, usize)]) -> Result<Body> {

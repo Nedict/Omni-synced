@@ -3879,7 +3879,13 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                         Some((_, Err(_))) | None => {
                             let mut w = None;
                             let refs: Vec<EdgeRef> = f.edge_refs.get(i).cloned().into_iter().collect();
-                            if let Ok(q) = resolve_edges(&mb.body, &[*p], &refs, &mut w) {
+                            // The name is gone. Keep the point only when it still lies on an
+                            // edge. The nearest edge within a quarter of the body is a different
+                            // edge: a pick left on the axis of a round lands on a tangency seam
+                            // and the fillet reports that seam instead of the missing edge (#775).
+                            let tight = (mb.body.size() * 2e-3).max(1e-3);
+                            let on_edge = mb.body.nearest_edge(*p, tight).ok().flatten().is_some_and(|(_, d)| d <= tight);
+                            if on_edge && let Ok(q) = resolve_edges(&mb.body, &[*p], &refs, &mut w) {
                                 out.extend(q);
                                 notes.push(match f.edge_names.get(i) {
                                     Some(n) if !n.is_empty() => format!("edge `{n}` no longer exists; using the edge at the picked point"),
@@ -3895,7 +3901,8 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                     }
                 }
                 if out.is_empty() {
-                    return Err(DocError::Invalid("none of the selected edges exist any more".into()));
+                    let why = if notes.is_empty() { String::new() } else { format!(" ({})", notes.join("; ")) };
+                    return Err(DocError::Invalid(format!("none of the selected edges exist any more{why}")));
                 }
                 if !notes.is_empty() {
                     *warning = Some(notes.join("; "));
