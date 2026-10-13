@@ -980,7 +980,6 @@ fn rectangle(plane: Value, p0: [f64; 2], p1: [f64; 2]) -> [Value; 3] {
 }
 
 #[test]
-#[ignore = "fails until #556 is fixed"]
 fn a_fillet_or_chamfer_on_one_edge_ending_at_a_cylinder() {
     for (cmd, size) in [("solid.fillet", "radius"), ("solid.chamfer", "distance")] {
         reproduces(

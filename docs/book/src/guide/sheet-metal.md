@@ -14,6 +14,16 @@ The SHEET METAL tab builds parts from a sheet of constant thickness under a **sh
 Bends follow the rule's K-factor, so flat lengths match what a press brake will make. Tests
 check flat lengths against hand-computed bend allowances.
 
+An edge flange takes its setback off its own edge only. Where that edge ends at an inside
+corner of the base (the base runs on past it, like the leg of an L), the rest of the base
+stays, and the rule's **bend relief** (`relief_width` and `relief_depth`; Relief Width and
+Relief Depth in Sheet Metal Rules) is cut into it beside the bend's end: a slot the relief
+width wide, from the relief depth before the bend line to the relief width past the flange's
+far edge in the flat pattern. The bend and the flange are then free of the base, folded and
+flat. A relief that can't be cut (a width under 0.01 mm, one as wide as the base beside the
+bend, or a slot that would cut the base apart) is left out, and the flange feature reports a
+warning saying where.
+
 Where two bends of one edge flange feature meet at a corner of the base, the rule's **corner
 relief shape** (`corner_relief_shape`; Corner Relief Shape in Sheet Metal Rules) says what is
 cut there. `notch`, the default, cuts nothing more: the bends end square at the corner. `round`

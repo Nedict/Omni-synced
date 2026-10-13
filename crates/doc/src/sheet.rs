@@ -382,6 +382,9 @@ pub struct SheetBody {
     /// (the rule's `corner_relief_shape` and `corner_relief`).
     pub relief: ReliefShape,
     pub relief_size: f64,
+    /// The rule's bend relief (`relief_width`, `relief_depth`), cut into the base where a
+    /// flange's bend ends beside more of the base.
+    pub bend_relief: (f64, f64),
     /// The base sketch's lines (id, ends in flat coordinates), naming the base panel's edges.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub base_curves: Vec<(String, Vec2, Vec2)>,
@@ -535,6 +538,9 @@ const MIN_CORNER_GAP: f64 = 0.01;
 
 /// The smallest corner relief (across) that is cut: a smaller one would leave hairline edges.
 const MIN_CORNER_RELIEF: f64 = 0.01;
+
+/// The narrowest bend relief that is cut: a narrower one would leave hairline edges.
+const MIN_BEND_RELIEF: f64 = 0.01;
 
 /// Two bends on the base meeting at a corner (see [`SheetBody::corners`]): flanges `a` and `b`,
 /// which end of each (false = the end at `p`), and the corner point (flat coordinates).
@@ -1455,21 +1461,29 @@ impl SheetBody {
                 let o = a + inward * by;
                 let mut cut = clip(&pts, o, inward);
                 // Only the material along this edge goes: other parts of the outline past the
-                // line (tabs side by side on one line) stay.
+                // line (tabs side by side on one line) stay, and so does the base where it runs
+                // on past the edge's own line (beyond an inside corner at the edge's end).
                 let mut work = FlatWork::new();
                 let off = merge_loops(&[clip(&pts, o, inward * -1.0)], &mut work)?;
-                if off.len() > 1 {
-                    let mid = (a + b) * 0.5;
-                    let touches = |p: &Vec<Vec2>| {
-                        let m = p.len();
-                        (0..m).filter_map(|i| Some((*p.get(i)?, *p.get((i + 1) % m)?))).any(|(p0, p1)| {
-                            let e = p1 - p0;
-                            let t = if e.len2() > 1e-18 { ((mid - p0).dot(e) / e.len2()).clamp(0.0, 1.0) } else { 0.0 };
-                            (p0 + e * t).dist(mid) < 1e-6
-                        })
-                    };
-                    let mut keep = vec![cut];
-                    keep.extend(off.into_iter().filter(|p| !touches(p)));
+                let mid = (a + b) * 0.5;
+                let touches = |p: &Vec<Vec2>| {
+                    let m = p.len();
+                    (0..m).filter_map(|i| Some((*p.get(i)?, *p.get((i + 1) % m)?))).any(|(p0, p1)| {
+                        let e = p1 - p0;
+                        let t = if e.len2() > 1e-18 { ((mid - p0).dot(e) / e.len2()).clamp(0.0, 1.0) } else { 0.0 };
+                        (p0 + e * t).dist(mid) < 1e-6
+                    })
+                };
+                let mut keep = Vec::new();
+                for p in off {
+                    if touches(&p) {
+                        keep.extend(kept_past_edge(&p, a, b, &mut work)?);
+                    } else {
+                        keep.push(p);
+                    }
+                }
+                if !keep.is_empty() {
+                    keep.insert(0, cut);
                     cut = match merge_loops(&keep, &mut work)?.as_slice() {
                         [one] => one.clone(),
                         _ => return Err(DocError::Invalid("not supported yet: a flange setback that splits the sheet".into())),
@@ -1530,7 +1544,9 @@ impl SheetBody {
     /// leg), so unequal flanges close like equal ones. A flange on another flange's far edge (a
     /// return) runs along that edge end to end, following its parent's closed end; two of them
     /// whose parents meet at a corner are closed toward each other as well, and one alone at a
-    /// corner is kept clear of the flange beside its parent (`close_return_corners`).
+    /// corner is kept clear of the flange beside its parent (`close_return_corners`). A bend on
+    /// the base that ends beside more of the base gets the rule's bend relief there
+    /// (`relieve_bend_ends`).
     pub fn add_flanges_each(&mut self, edges: &[EdgeFlange], radius: f64, position: &str, flip: bool) -> Result<(Vec<usize>, Vec<String>)> {
         if edges.is_empty() || edges.len() > 1000 {
             return Err(DocError::Invalid("pick 1…1000 edges".into()));
@@ -1629,9 +1645,59 @@ impl SheetBody {
             });
             made.push(self.flanges.len() - 1);
         }
-        let mut notes = self.close_corners(&made);
+        let mut notes = Vec::new();
+        for &i in &made {
+            notes.extend(self.relieve_bend_ends(i));
+        }
+        notes.extend(self.close_corners(&made));
         notes.extend(self.close_return_corners(&made));
         Ok((made, notes))
+    }
+
+    /// Where the bend of flange `i` on the base ends beside more of the base (the flange's edge
+    /// ends at an inside corner and the base runs on past it), cut the rule's bend relief into
+    /// the base there: a slot `relief_width` wide beside the bend's end, from `relief_depth`
+    /// before the bend line to `relief_width` past the flange's far edge in the flat pattern,
+    /// so that the bend and the flange come free of the base, folded and flat. Returns a note
+    /// for every such end left as it is.
+    fn relieve_bend_ends(&mut self, i: usize) -> Vec<String> {
+        let Some(f) = self.flanges.get(i).cloned() else { return Vec::new() };
+        if f.parent.is_some() || f.shape.is_some() {
+            return Vec::new();
+        }
+        let (width, depth) = (self.bend_relief.0, self.bend_relief.1.max(0.0));
+        let reach = self.allowance(&f) + f.leg;
+        let (u0, u1) = self.zone_span(&f);
+        let mut notes = Vec::new();
+        for (u, s) in [(u0, -1.0), (u1, 1.0)] {
+            // `du` past this end of the bend, `dv` past the bend line (into the flange).
+            let at = |du: f64, dv: f64| f.p + f.d * (u + s * du) + f.n * dv;
+            if !self.base.contains(at(1e-4, 1e-4)) {
+                continue;
+            }
+            let cut = if !(width >= MIN_BEND_RELIEF) {
+                Err(format!("the relief width {width:.4} mm is below {MIN_BEND_RELIEF} mm"))
+            } else if !self.base.contains(at(width + 1e-4, 1e-4)) {
+                Err(format!("a relief {width:.3} mm wide would take away all of the base beside the bend"))
+            } else {
+                let relief = rect(at(0.0, -depth), at(width, -depth), at(width, reach + width), at(0.0, reach + width));
+                planar_region(&self.base)
+                    .and_then(|base| material_boolean(&[base], &[relief], kernel::BoolOp::Cut, &mut FlatWork::new()))
+                    .map_err(|e| e.to_string())
+                    .and_then(|mut left| match (left.pop(), left.is_empty()) {
+                        (Some(base), true) if base.holes.is_empty() => Ok(base),
+                        _ => Err("it would not leave the base in one piece".to_string()),
+                    })
+            };
+            match cut {
+                Ok(base) => self.base = base,
+                Err(why) => {
+                    let w = apply_point(&self.frame_mat(), v3(at(0.0, 0.0)));
+                    notes.push(format!("no bend relief at ({:.3}, {:.3}, {:.3}): {why}", w.x, w.y, w.z));
+                }
+            }
+        }
+        notes
     }
 
     /// Flanges on the base that meet at a convex corner of it, at least one of them among `among`:
@@ -2946,6 +3012,42 @@ fn clear_of(a: Vec2, d: Vec2, len: f64, cuts: &[Region2]) -> Vec<(f64, f64)> {
     out
 }
 
+/// What stays of `piece` (counter-clockwise), the part of a base that trimming its edge a→b back
+/// along the edge's whole line would take: where the base runs on past the edge's own line
+/// (beyond an inside corner at an end of the edge), that material and the strip beneath it, up
+/// to the corner. Nothing where the base ends at the line.
+fn kept_past_edge(piece: &[Vec2], a: Vec2, b: Vec2, work: &mut FlatWork) -> Result<Vec<Vec<Vec2>>> {
+    let Some(d) = (b - a).normalized() else { return Ok(Vec::new()) };
+    let outward = Vec2::new(d.y, -d.x);
+    let mut kept = merge_loops(&[clip(piece, a, outward)], work)?;
+    // Where that material stands on the edge's line, nearest the edge's middle on either side.
+    let um = a.dist(b) / 2.0;
+    let (mut lo, mut hi) = (f64::NEG_INFINITY, f64::INFINITY);
+    for q in &kept {
+        let m = q.len();
+        for i in 0..m {
+            let (Some(&p0), Some(&p1)) = (q.get(i), q.get((i + 1) % m)) else { continue };
+            if (p0 - a).dot(outward).abs() > 1e-6 || (p1 - a).dot(outward).abs() > 1e-6 {
+                continue;
+            }
+            let (u0, u1) = ((p0 - a).dot(d), (p1 - a).dot(d));
+            if u0.max(u1) <= um {
+                lo = lo.max(u0.max(u1));
+            } else if u0.min(u1) >= um {
+                hi = hi.min(u0.min(u1));
+            }
+        }
+    }
+    let strip = clip(piece, a, outward * -1.0);
+    if lo.is_finite() {
+        kept.push(clip(&strip, a + d * lo, d * -1.0));
+    }
+    if hi.is_finite() {
+        kept.push(clip(&strip, a + d * hi, d));
+    }
+    Ok(kept)
+}
+
 /// Do two polygons' edges cross?
 fn polys_cross(a: &[Vec2], b: &[Vec2]) -> bool {
     let seg = |p: &[Vec2], i: usize| -> Option<(Vec2, Vec2)> { Some((*p.get(i)?, *p.get((i + 1) % p.len())?)) };
@@ -2983,6 +3085,7 @@ pub fn base_flange(body: &str, rule: &str, rv: &RuleValues, plane: Plane, region
         gap: rv.gap,
         relief: rv.corner_relief_shape,
         relief_size: rv.corner_relief,
+        bend_relief: (rv.relief_width, rv.relief_depth),
         base_curves: Vec::new(),
     }
 }
@@ -3037,6 +3140,7 @@ pub fn contour_flange(body: &str, rule: &str, rv: &RuleValues, plane: &Plane, pt
         gap: rv.gap,
         relief: rv.corner_relief_shape,
         relief_size: rv.corner_relief,
+        bend_relief: (rv.relief_width, rv.relief_depth),
         base_curves: Vec::new(),
     };
     let (y0, y1) = if ysign > 0.0 { (0.0, width) } else { (-width, 0.0) };
@@ -4106,6 +4210,154 @@ mod tests {
                 ends_are_gap_apart(&s, &corners, 0.5, &what);
                 holds_the_flat_material(&s, &what);
             }
+        }
+    }
+
+    /// A 160 x 30 bar with a leg 20 wide standing `leg` past its top edge at the left end: the
+    /// top edge (x 20…160) ends at an inside corner of the base.
+    fn bar_with_leg(rv: &RuleValues, leg: f64) -> SheetBody {
+        let pts = [(0.0, 0.0), (160.0, 0.0), (160.0, 30.0), (20.0, 30.0), (20.0, 30.0 + leg), (0.0, 30.0 + leg)].map(|(x, y)| Vec2::new(x, y));
+        base_flange("Body1", "AL2", rv, Plane::XY, Region2 { outer: Loop2::polygon(&pts).ccw(), holes: vec![] })
+    }
+
+    /// The base's outline has these corners, and their polygon's area.
+    fn base_is(s: &SheetBody, want: &[(f64, f64)], what: &str) {
+        let want: Vec<Vec2> = want.iter().map(|&(x, y)| Vec2::new(x, y)).collect();
+        let got = corners_of(&s.base);
+        for p in &want {
+            assert!(got.iter().any(|q| q.dist(*p) < 1e-9), "{what}: {p:?} not in {got:?}");
+        }
+        let area = signed_area(&want).abs();
+        assert!((s.base.area() - area).abs() < 1e-9, "{what}: {} vs {area}", s.base.area());
+    }
+
+    #[test]
+    fn a_flange_beside_a_leg_of_the_base_trims_its_own_edge_and_gets_a_bend_relief() {
+        // A 90° flange 15 high on the bar's top edge: setback s0 = (R + T)·tan 45° = 3 inside,
+        // half of it in the middle, none outside; bend allowance BA = (π/2)·(R + K·T) = π; panel
+        // 15 − s0 = 12. Only the strip under that edge goes, so the bend runs from x = 160 to the
+        // leg at x = 20 and the leg stays. Beside the bend's end the rule's relief (2 wide, 1 deep)
+        // is cut into the leg: x 18…20, from 1 before the bend line to 2 past the flange's far
+        // edge in the flat (BA + 12 past the line), or to the leg's end where that comes first.
+        let rv = alu();
+        let (ba, panel) = (std::f64::consts::PI, 12.0);
+        for leg in [30.0, 10.0] {
+            for (position, line) in [("inside", 27.0), ("middle", 28.5), ("outside", 30.0)] {
+                let what = format!("{position}, leg {leg}");
+                let mut s = bar_with_leg(&rv, leg);
+                let (made, notes) =
+                    s.add_flanges_noted(&[Vec3::new(90.0, 30.0, 2.0)], 15.0, std::f64::consts::FRAC_PI_2, 1.0, position, false).unwrap();
+                assert!(notes.is_empty(), "{what}: {notes:?}");
+                let (top, end) = (30.0 + leg, line + ba + panel + 2.0);
+                let mut want = vec![(0.0, 0.0), (160.0, 0.0), (160.0, line), (20.0, line), (20.0, line - 1.0), (18.0, line - 1.0)];
+                if end < top {
+                    want.extend([(18.0, end), (20.0, end), (20.0, top), (0.0, top)]);
+                } else {
+                    want.extend([(18.0, top), (0.0, top)]);
+                }
+                base_is(&s, &want, &what);
+                let f = &s.flanges[made[0]];
+                assert!(f.p.dist(Vec2::new(160.0, line)) < 1e-9 && (f.len - 140.0).abs() < 1e-9, "{what}: {f:?}");
+                assert!((s.bends()[0].length - 140.0).abs() < 1e-9, "{what}: {:?}", s.bends());
+                // The flat pattern is the base and 140 × (BA + 12) of flange in one piece; folded,
+                // the part is one valid shell holding the same material.
+                let base = 160.0 * line + 20.0 * (top - line) - 2.0 * (end.min(top) - (line - 1.0));
+                assert!((flat_area(&s) - (base + 140.0 * (ba + panel))).abs() < 1e-6, "{what}: {}", flat_area(&s));
+                holds_the_flat_material(&s, &what);
+            }
+        }
+    }
+
+    #[test]
+    fn flanges_on_both_sides_of_a_leg_each_trim_their_own_edge() {
+        // A 160 x 30 bar with a 20 x 10 leg in the middle of its top edge, and flanges on the two
+        // parts of that edge (x 0…70 and 90…160) in one call: each takes the strip under its own
+        // part, and the leg gets a relief on either side (x 70…72 and 88…90) up to its end.
+        let pts = [(0.0, 0.0), (160.0, 0.0), (160.0, 30.0), (90.0, 30.0), (90.0, 40.0), (70.0, 40.0), (70.0, 30.0), (0.0, 30.0)];
+        let outer = Loop2::polygon(&pts.map(|(x, y)| Vec2::new(x, y))).ccw();
+        let mut s = base_flange("Body1", "AL2", &alu(), Plane::XY, Region2 { outer, holes: vec![] });
+        let picks = [Vec3::new(125.0, 30.0, 2.0), Vec3::new(35.0, 30.0, 2.0)];
+        let (made, notes) = s.add_flanges_noted(&picks, 15.0, std::f64::consts::FRAC_PI_2, 1.0, "inside", false).unwrap();
+        assert!(notes.is_empty() && s.corners(&made).is_empty(), "{notes:?}");
+        let right = [(0.0, 0.0), (160.0, 0.0), (160.0, 27.0), (90.0, 27.0), (90.0, 26.0), (88.0, 26.0), (88.0, 40.0)];
+        let left = [(72.0, 40.0), (72.0, 26.0), (70.0, 26.0), (70.0, 27.0), (0.0, 27.0)];
+        base_is(&s, &[&right[..], &left[..]].concat(), "tee");
+        assert!(s.flanges.iter().all(|f| (f.len - 70.0).abs() < 1e-9), "{:?}", s.flanges);
+        holds_the_flat_material(&s, "tee");
+    }
+
+    #[test]
+    fn a_flange_on_the_side_of_a_leg_leaves_the_base_the_leg_stands_on() {
+        // The leg's right side (x = 20, y 30…60): past that edge's line the whole bar runs on. The
+        // setback takes x 17…20 of the leg alone, and the relief goes into the bar beside the
+        // bend's end at y = 30: y 28…30, from x = 16 (1 before the bend line) to 2 past the
+        // flange's far edge in the flat at x = 17 + BA + 12.
+        let mut s = bar_with_leg(&alu(), 30.0);
+        let (made, notes) = s.add_flanges_noted(&[Vec3::new(20.0, 45.0, 2.0)], 15.0, std::f64::consts::FRAC_PI_2, 1.0, "inside", false).unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
+        let end = 17.0 + std::f64::consts::PI + 12.0 + 2.0;
+        let want =
+            [(0.0, 0.0), (160.0, 0.0), (160.0, 30.0), (end, 30.0), (end, 28.0), (16.0, 28.0), (16.0, 30.0), (17.0, 30.0), (17.0, 60.0), (0.0, 60.0)];
+        base_is(&s, &want, "side");
+        let f = &s.flanges[made[0]];
+        assert!(f.p.dist(Vec2::new(17.0, 30.0)) < 1e-9 && (f.len - 30.0).abs() < 1e-9, "{f:?}");
+        holds_the_flat_material(&s, "side");
+    }
+
+    #[test]
+    fn a_bend_relief_at_one_end_leaves_the_corner_at_the_other_as_it_was() {
+        // Flanges on the bar's top and right edges in one call: their bends meet at (157, 27),
+        // where the corner is closed and relieved by the rule's shape, and the top one ends
+        // beside the leg at (20, 27), where it gets the bend relief. Against the bar without
+        // the leg, the same corner and all, the flat pattern gains the leg from the bend line
+        // up, 20 × (60 − 27), less the relief, 2 × (1 + BA + 12 + 2), and loses 20 of the top
+        // flange's length, 20 × (BA + 12).
+        let (ba, panel) = (std::f64::consts::PI, 12.0);
+        let picks = [Vec3::new(90.0, 30.0, 2.0), Vec3::new(160.0, 15.0, 2.0)];
+        for shape in [ReliefShape::Notch, ReliefShape::Round, ReliefShape::Rectangular] {
+            let what = format!("{shape:?}");
+            let rv = RuleValues { corner_relief_shape: shape, ..alu() };
+            let bar = rect(Vec2::new(0.0, 0.0), Vec2::new(160.0, 0.0), Vec2::new(160.0, 30.0), Vec2::new(0.0, 30.0));
+            let mut plain = base_flange("Body1", "AL2", &rv, Plane::XY, bar);
+            let (_, notes) = plain.add_flanges_noted(&picks, 15.0, std::f64::consts::FRAC_PI_2, 1.0, "inside", false).unwrap();
+            assert!(notes.is_empty(), "{what}, no leg: {notes:?}");
+            let mut s = bar_with_leg(&rv, 30.0);
+            let (made, notes) = s.add_flanges_noted(&picks, 15.0, std::f64::consts::FRAC_PI_2, 1.0, "inside", false).unwrap();
+            assert!(notes.is_empty() && made.len() == 2, "{what}: {notes:?}");
+            // The corner's relief reaches 4 along both bends (8 across); the notch none.
+            let cut = if shape == ReliefShape::Notch { 0.0 } else { 4.0 };
+            let lengths: Vec<f64> = s.bends().iter().map(|b| b.length).collect();
+            assert!((lengths[0] - (137.0 - cut)).abs() < 1e-9 && (lengths[1] - (27.0 - cut)).abs() < 1e-9, "{what}: {lengths:?}");
+            let got = corners_of(&s.base);
+            let end = 27.0 + ba + panel + 2.0;
+            for p in [(20.0, 27.0), (20.0, 26.0), (18.0, 26.0), (18.0, end), (20.0, end), (20.0, 60.0), (0.0, 60.0)] {
+                assert!(got.iter().any(|q| q.dist(Vec2::new(p.0, p.1)) < 1e-9), "{what}: {p:?} not in {got:?}");
+            }
+            let want = flat_area(&plain) + 20.0 * 33.0 - 2.0 * (ba + panel + 3.0) - 20.0 * (ba + panel);
+            assert!((flat_area(&s) - want).abs() < 1e-6, "{what}: {} vs {want}", flat_area(&s));
+            holds_the_flat_material(&s, &what);
+        }
+    }
+
+    #[test]
+    fn a_bend_relief_that_cannot_be_cut_is_left_out_with_a_note() {
+        let leg = [(20.0, 60.0), (0.0, 60.0)];
+        // The same leg held by a neck 2 wide: a notch from the left (x 0…18, y 43…45) under its end.
+        let neck = [(20.0, 60.0), (0.0, 60.0), (0.0, 45.0), (18.0, 45.0), (18.0, 43.0), (0.0, 43.0)];
+        // No width to cut; a relief wider than the leg, which would take the leg away; and a
+        // relief through the neck, which would cut the leg's end off.
+        for (width, top, why) in [(0.0, &leg[..], "relief width"), (25.0, &leg[..], "beside the bend"), (2.0, &neck[..], "one piece")] {
+            let rv = RuleValues { relief_width: width, ..alu() };
+            let outline = |line: f64| [&[(0.0, 0.0), (160.0, 0.0), (160.0, line), (20.0, line)][..], top].concat();
+            let pts: Vec<Vec2> = outline(30.0).iter().map(|&(x, y)| Vec2::new(x, y)).collect();
+            let mut s = base_flange("Body1", "AL2", &rv, Plane::XY, Region2 { outer: Loop2::polygon(&pts).ccw(), holes: vec![] });
+            let (_, notes) = s.add_flanges_noted(&[Vec3::new(90.0, 30.0, 2.0)], 15.0, std::f64::consts::FRAC_PI_2, 1.0, "inside", false).unwrap();
+            assert!(
+                notes.len() == 1 && notes[0].starts_with("no bend relief at (20.000, 27.000, 0.000)") && notes[0].contains(why),
+                "{why}: {notes:?}"
+            );
+            // The flange still took its own edge only.
+            base_is(&s, &outline(27.0), why);
         }
     }
 

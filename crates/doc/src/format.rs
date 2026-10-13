@@ -60,6 +60,9 @@
 //!   `font` is in the built-in font, as it always was.
 //!   A Move feature can also keep its source bodies and transform a copy (`copy: true`); a
 //!   move without it saves as before.
+//!   A component can link to another design file (`links`: component id → `{path, feature}`,
+//!   the path relative to the design's folder); the linked bodies are kept in the component's
+//!   Import feature, so an older build opens the design with them and only loses the link.
 //!   A design can also define its own physical materials (`user_materials`: name, density in
 //!   g/cm³, optional look), which bodies (`materials`) and configuration material cells name
 //!   like built-in ones; a design without them saves as before.

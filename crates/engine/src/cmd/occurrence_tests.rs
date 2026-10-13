@@ -517,7 +517,6 @@ fn saved_box_design(path: &std::path::Path, height: f64) {
 }
 
 #[test]
-#[ignore = "fails until #533 is fixed"]
 fn a_linked_design_brings_its_bodies_in_and_follows_edits_to_the_part_file() {
     let dir = std::env::temp_dir().join(format!("solidcraft-linked-design-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
