@@ -5,7 +5,7 @@ use serde_json::Value;
 use solidcraft_doc::{FaceAt, FeatureKind, PlaneRef, ProfileSel, expr::Kind};
 
 use super::CommandSpec;
-use super::features::{add_feature, check_expr, extent_param, feature_sketch, operation, plane_param, profiles};
+use super::features::{add_feature, axis_param, check_expr, extent_param, feature_sketch, operation, plane_param, profiles};
 use crate::params::{bad, bool_, expr, str_, string_list, vec3};
 use crate::{Result, Session};
 
@@ -34,10 +34,10 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SURFACE", "CREATE")
         .icon("surface_extrude")
         .params("sketch?: id|name; curves?: [curve ids] (open or closed chains of curves meeting end to end) and/or profiles? (their boundaries; the default when no curves are given); distance: expr; direction?: positive|negative|symmetric; distance2?: expr; start_offset?: expr; name?, body_name? (a surface body: walls only, no caps)"),
-    planned!("surface.revolve", "Surface Revolve", "757")
+    CommandSpec::new("surface.revolve", "Surface Revolve", surface_revolve)
         .at("SURFACE", "CREATE")
         .icon("surface_revolve")
-        .params("planned: the parameters of solid.revolve, with open curve chains as well as profiles (no caps); caps?: bool"),
+        .params("sketch?: id|name; curves?: [curve ids] and/or profiles? (as surface.extrude); axis: sketch line id|x|y|X|Y|Z|{origin, dir}; angle?: expr (default 360 deg); angle2?: expr (the other side); symmetric?: bool; name?, body_name? (a surface body, no caps; a solid where a full turn closes it)"),
     planned!("surface.sweep", "Surface Sweep", "757")
         .at("SURFACE", "CREATE")
         .icon("surface_sweep")
@@ -98,11 +98,7 @@ fn patch(s: &mut Session, p: &Value) -> Result<Value> {
 fn surface_extrude(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "surface.extrude";
     let sketch = feature_sketch(s, p, cmd)?;
-    let curves = string_list(p, "curves");
-    if curves.len() > 1000 {
-        return Err(bad(cmd, "at most 1000 curves"));
-    }
-    let profiles = if curves.is_empty() || p.get("profiles").is_some() { Some(profiles(p, cmd)?) } else { None };
+    let (profiles, curves) = sheet_inputs(p, cmd)?;
     let extent = extent_param(s, p, cmd)?;
     if extent.through_all || extent.taper.is_some() || extent.to.is_some() || extent.from.is_some() {
         return Err(bad(cmd, "not supported yet: through all, to or from an object, or a taper"));
@@ -131,6 +127,32 @@ fn unstitch(s: &mut Session, p: &Value) -> Result<Value> {
 fn reverse_normal(s: &mut Session, p: &Value) -> Result<Value> {
     let (body, faces) = body_faces(s, p, "surface.reverse_normal")?;
     add_feature(s, p, FeatureKind::ReverseNormal { body, faces })
+}
+
+/// The profiles and curves a surface builder takes: `curves`, and `profiles` (all of them when
+/// neither is given).
+fn sheet_inputs(p: &Value, cmd: &str) -> Result<(Option<solidcraft_doc::ProfileSel>, Vec<String>)> {
+    let curves = string_list(p, "curves");
+    if curves.len() > 1000 {
+        return Err(bad(cmd, "at most 1000 curves"));
+    }
+    let profiles = if curves.is_empty() || p.get("profiles").is_some() { Some(profiles(p, cmd)?) } else { None };
+    Ok((profiles, curves))
+}
+
+fn surface_revolve(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "surface.revolve";
+    let sketch = feature_sketch(s, p, cmd)?;
+    let (profiles, curves) = sheet_inputs(p, cmd)?;
+    let axis = axis_param(p, cmd)?;
+    let angle = expr(p, "angle").unwrap_or_else(|| "360 deg".into());
+    check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
+    let angle2 = expr(p, "angle2");
+    if let Some(a) = &angle2 {
+        check_expr(s, a, Kind::Angle, cmd, "angle2")?;
+    }
+    let symmetric = bool_(p, "symmetric").unwrap_or(false) || str_(p, "direction").is_some_and(|d| d.eq_ignore_ascii_case("symmetric"));
+    add_feature(s, p, FeatureKind::SurfaceRevolve { sketch, profiles, curves, axis, angle, angle2, symmetric })
 }
 
 fn bodies_param(s: &Session, p: &Value, cmd: &str) -> Result<Vec<String>> {
@@ -364,13 +386,58 @@ mod tests {
         assert!(s.execute("face.delete", &json!({"faces": all, "body": "Healed", "heal": false})).is_err());
     }
 
+    /// Surface Revolve of open curves about the sketch's y axis: a line beside the axis makes a
+    /// cylinder (all of it, a quarter, a symmetric quarter), a line from the axis a cone, a half
+    /// circle a solid ball; a profile turned all the way round is the solid solid.revolve makes.
+    #[test]
+    fn surface_revolve_curves_and_profiles() {
+        use std::f64::consts::PI;
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
+        run(&mut s, "sketch.line", json!({"points": [[3, 0], [3, 4]], "ids": ["side"]}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 10], [3, 14]], "ids": ["slant"]}));
+        run(&mut s, "sketch.finish", json!({}));
+        let close = |a: f64, want: f64| assert!((a - want).abs() < want * 2e-3, "{a} vs {want}"); // (measured on meshes)
+        run(&mut s, "surface.revolve", json!({"sketch": "S", "curves": ["side"], "axis": "y", "body_name": "Tube"}));
+        close(area(&s, "Tube"), 2.0 * PI * 3.0 * 4.0);
+        run(&mut s, "surface.revolve", json!({"sketch": "S", "curves": ["side"], "axis": "Y", "angle": "90 deg", "body_name": "Quarter"}));
+        close(area(&s, "Quarter"), PI / 2.0 * 3.0 * 4.0);
+        run(
+            &mut s,
+            "surface.revolve",
+            json!({"sketch": "S", "curves": ["side"], "axis": "y", "angle": "90 deg", "symmetric": true, "body_name": "Both"}),
+        );
+        let bb = solidcraft_kernel::measure(&s.world_state().body("Both").unwrap().body).unwrap().bbox;
+        let z = 3.0 * (PI / 4.0).sin();
+        assert!((bb.min.z + z).abs() < 1e-3 && (bb.max.z - z).abs() < 1e-3, "{bb:?}");
+        run(&mut s, "surface.revolve", json!({"sketch": "S", "curves": ["slant"], "axis": "y", "body_name": "Cone"}));
+        close(area(&s, "Cone"), PI * 3.0 * 5.0);
+        assert!(s.world_state().body("Cone").unwrap().body.is_surface());
+        run(&mut s, "edit.undo", json!({}));
+        assert!(s.world_state().body("Cone").is_none());
+        run(&mut s, "edit.redo", json!({}));
+        let cold = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        assert!((area(&cold, "Cone") - area(&s, "Cone")).abs() < 1e-9);
+        // A rectangle off the axis turned all the way round closes into the ring solid.revolve makes.
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "R"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [5, 0], "p1": [7, 3]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "surface.revolve", json!({"sketch": "R", "axis": "y", "body_name": "Ring"}));
+        run(&mut s, "solid.revolve", json!({"sketch": "R", "axis": "y", "body_name": "Solid"}));
+        assert!(!s.world_state().body("Ring").unwrap().body.is_surface());
+        close(volume(&s, "Ring"), volume(&s, "Solid"));
+        // Refused: a curve across the axis, no axis, and a turn of more than 360°.
+        assert!(s.execute("surface.revolve", &json!({"sketch": "S", "curves": ["side"], "axis": {"origin": [3, 2, 0], "dir": [1, 0, 0]}})).is_err());
+        assert!(s.execute("surface.revolve", &json!({"sketch": "S", "curves": ["side"]})).is_err());
+        assert!(s.execute("surface.revolve", &json!({"sketch": "S", "curves": ["side"], "axis": "y", "angle": "400 deg"})).is_err());
+    }
+
     /// The planned surface commands are registered but refuse to run: disabled with the
     /// issue that tracks them, an error (never a panic) from every caller, and the design left
     /// as it was.
     #[test]
     fn planned_commands_refuse_and_leave_the_design_alone() {
         let planned = [
-            "surface.revolve",
             "surface.sweep",
             "surface.loft",
             "surface.offset",

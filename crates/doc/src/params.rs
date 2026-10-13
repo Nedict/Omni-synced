@@ -69,7 +69,7 @@ impl FeatureKind {
                     v.push(("To offset", d, L));
                 }
             }
-            FeatureKind::Revolve { angle, angle2, .. } => {
+            FeatureKind::Revolve { angle, angle2, .. } | FeatureKind::SurfaceRevolve { angle, angle2, .. } => {
                 v.push(("Angle", angle, A));
                 if let Some(a) = angle2 {
                     v.push(("Angle 2", a, A));

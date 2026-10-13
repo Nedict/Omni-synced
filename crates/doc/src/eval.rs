@@ -3634,7 +3634,8 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         | FeatureKind::SurfaceExtend { .. }
         | FeatureKind::SurfaceExtrude { .. }
         | FeatureKind::Unstitch { .. }
-        | FeatureKind::ReverseNormal { .. } => surface::eval(doc, vals, f, st),
+        | FeatureKind::ReverseNormal { .. }
+        | FeatureKind::SurfaceRevolve { .. } => surface::eval(doc, vals, f, st),
         FeatureKind::Emboss { .. }
         | FeatureKind::Rib { .. }
         | FeatureKind::ReplaceFace { .. }
