@@ -16,6 +16,10 @@ use solidcraft_kernel::{self as kernel, Body, EdgeSpec, FaceSpec, SurfSpec};
 use crate::expr::{self, Kind, Value};
 use crate::{DocError, Document, IDENTITY, Mat, Result, apply_point, apply_vector, mat_inverse, mat_mul};
 
+#[path = "sheet_convert.rs"]
+mod convert;
+pub use convert::{bend_edge_names, convert_body};
+
 // Bound the aggregate geometry, including sampled curves and intermediate clipping pieces.
 // These are work limits, never geometry truncation: a larger input returns a useful error.
 // Exact lines and arcs count once each (the planar booleans work on them whole); free-form

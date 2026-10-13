@@ -2191,6 +2191,11 @@ fn drag_frame(s: &mut Session, p: &Value, live: bool) -> Result<(Value, Option<c
     let (d, rep) = edit_solved(s, id, false, |sk, doc| {
         let r = p.get("entity").and_then(Value::as_str).ok_or_else(|| bad(cmd, "`entity` must be a sketch point or curve"))?;
         let e = ent(sk, r).ok_or_else(|| bad(cmd, format!("unknown sketch entity `{r}`")))?;
+        if let Some(link) = super::sketch_create::text_link(sk, r).map(str::to_owned) {
+            let moving = sk.link_points(&link).into_iter().filter_map(|i| sk.point(i).map(|p| (i, p))).collect();
+            super::sketch_create::move_text(sk, &link, to - from, 0.0, Vec2::ZERO, false)?;
+            return Ok((drag::Dragged { reached: 1.0, moving }, Left::Unsolved));
+        }
         // The held solves work on the dimensions' current values (a solved step applies them).
         doc.apply_dimension_values(&doc.param_values().0, sk)?;
         let (d, left) = drag_entity(sk, e, from, to, live);

@@ -7,7 +7,8 @@ The SHEET METAL tab builds parts from a sheet of constant thickness under a **sh
   sketch, or an edge flange from a part edge.
 - **Hem** (`sheet.hem`) and **Fold** (`sheet.fold`) along a sketch line.
 - **Unfold / Refold** (`sheet.unfold`, `sheet.refold`) for working on the flat part.
-- **Convert** (`sheet.convert`) turns a solid of constant thickness into sheet metal.
+- **Convert** (`sheet.convert`) turns a plate of constant thickness into sheet metal, or, with
+  bend edges, a solid or a shelled body.
 - **Create Flat Pattern** (`sheet.flat_pattern`) shows the flat part with its bend lines and a
   bend table, and exports it as DXF or a bend-table CSV through the save picker.
 
@@ -103,6 +104,29 @@ returns on them close over a relieved corner as over a whole one.
 
 (The four returns of a 120 x 90 tray in 2 mm sheet with 90° walls 20 high: each point is the
 middle of a wall's far edge on its inner face, so the returns turn in over the base.)
+
+**Convert** also takes a solid or a shelled body: pick the face that stays fixed and the sharp
+edges that become bends (`bends`; Bend Edges in the dialog). The flat faces reached from the
+fixed face across those edges become the sheet. A shelled body keeps its walls and their
+thickness; any other solid's faces become the outside of the sheet, with the rule's thickness
+taken into the body. Each sharp edge stays where the faces of its bend would meet, so the part
+keeps its envelope and the flat pattern is the outside lengths less a bend deduction per bend,
+2·(R + T)·tan(θ/2) − θ·(R + K·T). A bend can be picked on either skin of a shell; bends turn
+either way, follow one another and take any angle (the walls of a tapered tray at 72°). An
+edge between two faces of the sheet that is no bend is cut open, each side half the rule's
+**gap** from the plane halfway between the two, like the corners of a tray. The result is an
+ordinary sheet body: edge flanges, cuts, Unfold, the flat pattern and its exports work on it,
+and it follows the solid when a parameter changes (the edges and the fixed face are found by
+their names). Without bend edges Convert expects a plate, as before. Not converted yet: curved
+faces (rolled sheet, a filleted edge as a bend), faces with holes or curved edges (cut them
+after converting) and bends that close a ring.
+
+```json
+{"command":"solid.box","params":{"length":100,"width":60,"height":30,"body_name":"Tray"}}
+{"command":"solid.shell","params":{"faces":[[50,30,30]],"thickness":2}}
+{"command":"sheet.convert","params":{"body":"Tray","face":[50,30,0],
+ "bends":[[50,0,0],[100,30,0],[50,60,0],[0,30,0]]}}
+```
 
 For a shop drawing or spreadsheet, `sheet.export_bend_table` returns CSV by default; choose
 `format: "json"` for structured data. It includes the sheet rule, thickness, bend angles,

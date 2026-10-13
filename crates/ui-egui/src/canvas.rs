@@ -134,12 +134,29 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj
         app.dialog = Some(d);
         return;
     }
-    // Move: the triad at the pivot; dragging it sets the distances and angles.
+    // Move: the triad at the pivot; dragging it sets the distances and angles. Its value box
+    // sits beside it and reads the move's main value, so a drag shows its number and typing
+    // one sets it. The triad is the manipulator here, so the box comes without the drag arrow
+    // every other dialog's value gets (`dir` is None below).
     if matches!(d.kind, Kind::Move { .. }) {
         if let Some(t) = crate::dialogs_move::triad(app, &d)
             && let Some(g) = crate::gizmo::show(ui, painter, proj, egui::Id::new("sc_move_triad"), &t, snap_step(app.cam.half_height()))
         {
             crate::dialogs_move::drag(app, &mut d, g);
+        }
+        // Read the triad again after the drag, so the box follows it in the same frame. Move
+        // types with no triad (Rotate, Point to Point, Point to Position) put the box on the
+        // picked bodies instead.
+        let triad = crate::dialogs_move::triad(app, &d);
+        let at = triad.map(|t| t.center).or_else(|| anchor(app, &d).map(|(base, _)| base));
+        let focus = std::mem::take(&mut d.focus);
+        if let Some(bs) = at.and_then(|base| proj.to_screen(base))
+            && let Some((label, _, value)) = d.primary()
+        {
+            // Clear of the triad: its arrows reach LEN_PX and its rings RING of that, so a box
+            // beside the centre would cover the handles the user is reaching for.
+            let off = if triad.is_some() { vec2(crate::gizmo::LEN_PX as f32 + 16.0, -12.0) } else { vec2(16.0, -30.0) };
+            value_box(ui, label, value, bs + off, focus);
         }
         app.dialog = Some(d);
         return;
@@ -311,8 +328,21 @@ fn draw(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj,
             box_at = ts + vec2(14.0, -12.0);
         }
     }
+    value_box(ui, label, value, box_at, focus);
+    if *value != before
+        && let Kind::Extrude { all, .. } = &mut d.kind
+    {
+        *all = false;
+    }
+}
+
+/// The command's main value in the viewport, next to the geometry: the keyboard goes here while
+/// the window is open, so a number typed straight after a pick sets the value. `at` is its
+/// top-left corner.
+fn value_box(ui: &mut egui::Ui, label: &str, value: &mut String, at: Pos2, focus: bool) {
+    let t = Tokens::get();
     let id = egui::Id::new("sc_canvas_value");
-    crate::frame::area(egui::Id::new("sc_canvas_area")).fixed_pos(box_at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+    crate::frame::area(egui::Id::new("sc_canvas_area")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(label).color(t.text_dim).size(11.5));
@@ -328,11 +358,6 @@ fn draw(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj,
             });
         });
     });
-    if *value != before
-        && let Kind::Extrude { all, .. } = &mut d.kind
-    {
-        *all = false;
-    }
 }
 
 /// A draggable arrow from `base` along `n` showing `l` (at least a short stub); dragging writes

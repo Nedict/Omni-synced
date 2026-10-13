@@ -263,6 +263,11 @@ pub fn on_click(app: &mut SolveApp, proj: &Proj, pos: Pos2) {
 /// the typed values as dimension constraints).
 pub fn place(app: &mut SolveApp, p: (Vec2, Option<String>)) {
     let Some(mut tool) = app.tool.take() else { return };
+    if tool.kind == Kind::Ext {
+        crate::sketch_tools::place_point(app, &mut tool, p);
+        app.tool = Some(tool);
+        return;
+    }
     let Kind::Draw(n) = tool.kind else {
         app.tool = Some(tool);
         return;
@@ -530,7 +535,7 @@ pub(crate) fn paint_curve(
 
 /// Temporary analytic geometry uses the same exact span extraction as committed curves.
 /// It never solves constraints or modifies the document.
-pub(crate) fn preview_curve(t: &Tool, hover: Vec2, sweep: Option<f64>) -> Option<solidcraft_engine::sketch::Sketch> {
+pub(crate) fn preview_curve(t: &Tool, hover: Vec2, sweep: Option<f64>, rho: Option<f64>) -> Option<solidcraft_engine::sketch::Sketch> {
     use solidcraft_engine::sketch::{CurveKind, Sketch};
     if !hover.is_finite() || t.pts.len() >= solidcraft_engine::sketch::MAX_SPLINE_POINTS || t.pts.iter().any(|p| !p.0.is_finite()) {
         return None;
@@ -587,6 +592,18 @@ pub(crate) fn preview_curve(t: &Tool, hover: Vec2, sweep: Option<f64>) -> Option
             let c = sk.add_point(*c, None).ok()?;
             let m = sk.add_point(*m, None).ok()?;
             sk.add_curve(CurveKind::Ellipse { c, m, r }, None).ok()?;
+        }
+        ("sketch.conic", [a, b]) => {
+            // Positioning the apex (the third click): the live conic through the cursor at the
+            // typed `rho` (or the default parabola's 0.5), so the curve it is about to become is
+            // on screen while it is being placed, and a typed `rho` reshapes it before the
+            // click. Without this the tool showed only the straight start-to-end, end-to-cursor
+            // rubber band every tool draws while it has points still to place.
+            let rho = rho.filter(|r| r.is_finite() && *r > 1e-6 && *r < 1.0 - 1e-6).unwrap_or(0.5);
+            let a = sk.add_point(*a, None).ok()?;
+            let b = sk.add_point(*b, None).ok()?;
+            let apex = sk.add_point(hover, None).ok()?;
+            sk.add_curve(CurveKind::Conic { a, b, apex, rho }, None).ok()?;
         }
         ("sketch.spline.fit_point" | "sketch.spline.control_point" | "sketch.spline.control_point_5", points) if !points.is_empty() => {
             let periodic = t.cmd == "sketch.spline.fit_point" && points.len() >= 3 && points.first() == Some(&hover);
@@ -679,7 +696,7 @@ pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
         }
     }
 
-    if let Some(curve) = preview_curve(t, h, crate::sketch_dims::locked_value(app, t, "Sweep")) {
+    if let Some(curve) = preview_curve(t, h, crate::sketch_dims::locked_value(app, t, "Sweep"), crate::sketch_dims::locked_value(app, t, "Rho")) {
         paint_preview_curve(curve, &ss.plane, painter, proj, stroke, crate::sketch_palette::mode(app));
         return;
     }

@@ -247,7 +247,15 @@ pub enum Kind {
     Part(crate::dialogs_parts::Pt),
     /// Edit Text: a sketch text's content and placement (`sketch_text`).
     Text(crate::sketch_text::Tx),
+    TextMove(crate::sketch_text_move::TextMove),
+    /// Sketch-space modify tools: scale, and later offset, fillet, chamfer, the patterns,
+    /// mirror and move (`sketch_modify_ui`).
+    SketchModify(crate::sketch_modify_ui::Mod),
 }
+
+/// The Single hole placement's input: places on planar faces. A pick on or near a sketch point
+/// that lies on the face (a circle's centre) is taken at that point, as Multiple picks it.
+const HOLE_FACES: Accept = PLANAR_FACES | selection::POINTS;
 
 /// The rest of the Hole dialog: placement, extents, tap type and drill point.
 #[derive(Clone, Debug, PartialEq)]
@@ -289,6 +297,8 @@ pub struct Dialog {
     pub extra: serde_json::Map<String, Value>,
     /// What the inputs were when OK was refused: `error` stays only while they still are.
     pub refused: Option<Refused>,
+    /// Create Sketch opened by a sketch tool's shortcut: that tool starts once the sketch is open.
+    pub then_start: Option<&'static str>,
 }
 
 /// The commands a dialog's inputs make (or why they make none), its picks, and the design's
@@ -318,11 +328,10 @@ fn fits(a: Accept, s: &Sel) -> bool {
         Sel::SketchCurve { .. } => a & (AXES | CURVES) != 0,
         Sel::Vertex { .. } => a & selection::VERTICES != 0,
         Sel::Feature { .. } => a & selection::FEATURES != 0,
-        Sel::SketchPoint { .. }
-        | Sel::SketchConstraint { .. }
-        | Sel::Occurrence { .. }
-        | Sel::ExternalSketchCurve { .. }
-        | Sel::ExternalSketchPoint { .. } => false,
+        // Sketch points go into a sketch command's own inputs (Entities, a base point), so a
+        // box selection and a pre-selection reach them the way a click already does.
+        Sel::SketchPoint { .. } => a & selection::POINTS != 0,
+        Sel::SketchConstraint { .. } | Sel::Occurrence { .. } | Sel::ExternalSketchCurve { .. } | Sel::ExternalSketchPoint { .. } => false,
     }
 }
 
@@ -345,6 +354,7 @@ impl Dialog {
             collapsed: false,
             extra: serde_json::Map::new(),
             refused: None,
+            then_start: None,
         }
     }
 
@@ -460,31 +470,47 @@ impl Dialog {
                 vec![SelInput::new("Profile", PROFILES, true), SelInput::new("Path", CURVES, true)],
             ),
             "solid.move" => Dialog::new(crate::dialogs_move::kind(0), crate::dialogs_move::inputs(0)),
-            "solid.hole" => Dialog::new(hole_defaults(), vec![SelInput::new("Face", PLANAR_FACES, true)]),
+            "solid.hole" => Dialog::new(hole_defaults(), vec![SelInput::new("Face", HOLE_FACES, true)]),
             "solid.box" => Dialog::new(
                 Kind::Primitive {
                     cmd: "solid.box",
-                    fields: vec![("length", "20".into()), ("width", "20".into()), ("height", "20".into())],
+                    fields: vec![("length", length_default(s, "20")), ("width", length_default(s, "20")), ("height", length_default(s, "20"))],
                     operation: 0,
                     at: None,
                 },
                 vec![],
             ),
             "solid.cylinder" => Dialog::new(
-                Kind::Primitive { cmd: "solid.cylinder", fields: vec![("diameter", "20".into()), ("height", "20".into())], operation: 0, at: None },
+                Kind::Primitive {
+                    cmd: "solid.cylinder",
+                    fields: vec![("diameter", length_default(s, "20")), ("height", length_default(s, "20"))],
+                    operation: 0,
+                    at: None,
+                },
                 vec![],
             ),
-            "solid.sphere" => {
-                Dialog::new(Kind::Primitive { cmd: "solid.sphere", fields: vec![("diameter", "20".into())], operation: 0, at: None }, vec![])
-            }
+            "solid.sphere" => Dialog::new(
+                Kind::Primitive { cmd: "solid.sphere", fields: vec![("diameter", length_default(s, "20"))], operation: 0, at: None },
+                vec![],
+            ),
             "solid.torus" => Dialog::new(
-                Kind::Primitive { cmd: "solid.torus", fields: vec![("major", "20".into()), ("minor", "5".into())], operation: 0, at: None },
+                Kind::Primitive {
+                    cmd: "solid.torus",
+                    fields: vec![("major", length_default(s, "20")), ("minor", length_default(s, "5"))],
+                    operation: 0,
+                    at: None,
+                },
                 vec![],
             ),
             "solid.coil" => Dialog::new(
                 Kind::Primitive {
                     cmd: "solid.coil",
-                    fields: vec![("diameter", "40".into()), ("revolutions", "4".into()), ("pitch", "8".into()), ("section_size", "3".into())],
+                    fields: vec![
+                        ("diameter", length_default(s, "40")),
+                        ("revolutions", "4".into()),
+                        ("pitch", length_default(s, "8")),
+                        ("section_size", length_default(s, "3")),
+                    ],
                     operation: 0,
                     at: None,
                 },
@@ -503,7 +529,9 @@ impl Dialog {
                     .or_else(|| crate::dialogs_appearance::start(app, id))
                     .or_else(|| crate::dialogs_motion::start(app, id))
                     .or_else(|| crate::dialogs_parts::start(app, id))
-                    .or_else(|| crate::sketch_text::start(app, id))?;
+                    .or_else(|| crate::sketch_text::start(app, id))
+                    .or_else(|| crate::sketch_text_move::start(app, id))
+                    .or_else(|| crate::sketch_modify_ui::start(app, id))?;
                 Dialog::new(kind, inputs)
             }
         };
@@ -572,7 +600,8 @@ impl Dialog {
                 _ => None,
             });
         }
-        // With nothing pre-selected, a single profile in the sketch being used is taken.
+        // With nothing pre-selected, a single profile in the sketch being used is taken (#684:
+        // not one a feature already builds from).
         if matches!(d.kind, Kind::Extrude { .. } | Kind::Revolve { .. })
             && let Some(inp) = d.inputs.first_mut()
             && inp.items.is_empty()
@@ -656,7 +685,13 @@ impl Dialog {
             Kind::Shell { thickness } => ("Thickness", ValueKind::Length, thickness),
             Kind::Draft { angle } => ("Angle", ValueKind::Angle, angle),
             Kind::Hole { diameter, .. } => ("Diameter", ValueKind::Length, diameter),
-            Kind::Move { x, .. } => ("X", ValueKind::Length, x),
+            // A move's main value follows its type: a distance along X for the ones that
+            // translate, the angle for Rotate. Point to Point is two picks with nothing to type.
+            Kind::Move { mode, x, angle, .. } => match *mode {
+                crate::dialogs_move::ROTATE => ("Angle", ValueKind::Angle, angle),
+                crate::dialogs_move::POINT_TO_POINT => return None,
+                _ => ("X", ValueKind::Length, x),
+            },
             Kind::PatternRect { spacing, .. } => ("Spacing", ValueKind::Length, spacing),
             Kind::PatternCirc { angle, .. } => ("Angle", ValueKind::Angle, angle),
             Kind::Section { offset, .. } => ("Distance", ValueKind::Length, offset),
@@ -673,6 +708,7 @@ impl Dialog {
             Kind::Sheet(k) => return k.primary(&self.inputs),
             Kind::Surface(k) => return k.primary(),
             Kind::Plastic(k) => return k.primary(),
+            Kind::SketchModify(k) => return k.primary(),
             _ => return None,
         })
     }
@@ -704,11 +740,27 @@ impl Dialog {
 
     /// The selection a hit would add to the active input.
     pub fn candidate(&self, s: &Session, h: &Hit) -> Option<Sel> {
+        self.candidate_on(s, h, None)
+    }
+
+    /// The selection a hit would add to the active input, knowing the face under the cursor (the
+    /// nearest face the pick ray meets). A face place picked on or near a sketch point that lies
+    /// on that face (a circle's centre) is taken at the point, as a points input picks it.
+    pub fn candidate_on(&self, s: &Session, h: &Hit, face: Option<&Hit>) -> Option<Sel> {
         let inp = self.active_input()?;
         // Features are also picked on the canvas: a face stands for the feature that made it.
         if inp.accept == selection::FEATURES {
             return match h {
                 Hit::Face { body, index, point } => feature_of_face(s, body, *index, *point).map(|id| Sel::Feature { id }),
+                _ => None,
+            };
+        }
+        if inp.accept & selection::POINTS != 0
+            && inp.accept & PLANAR_FACES != 0
+            && let Hit::SketchPoint { sketch, at, .. } = h
+        {
+            return match face {
+                Some(Hit::Face { body, index, .. }) => face_place_at_sketch_point(s, *sketch, *at, body, *index),
                 _ => None,
             };
         }
@@ -785,14 +837,39 @@ impl Dialog {
     }
 }
 
-/// Profiles of the sketch a feature would use (active, else the last), when there is just one.
+/// Profiles of the sketch a feature would use, when there is just one: the active sketch's, else
+/// the last sketch's while no feature builds from it yet. A used profile (a cube's sketch on its
+/// bottom face) is only taken when it is picked.
 fn default_profiles(s: &Session) -> Vec<Sel> {
     let st = s.world_state();
-    let sid = s.active_sketch.or_else(|| s.doc.features.iter().rev().find(|f| matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| f.id));
+    let sid = s.active_sketch.or_else(|| {
+        s.doc.features.iter().rev().find(|f| matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| f.id).filter(|&id| !profiles_used(s, id))
+    });
     match sid.and_then(|id| st.sketch(id).map(|ss| (id, ss.profiles.len()))) {
         Some((id, 1)) => vec![Sel::Profile { sketch: id, index: 0 }],
         _ => Vec::new(),
     }
+}
+
+/// A place on planar face `face` of `body` at a sketch point (a circle's centre or a point), when
+/// the point lies on that face (within a micrometre); `None` otherwise.
+fn face_place_at_sketch_point(s: &Session, sketch: u64, at: solidcraft_engine::geom::Vec2, body: &str, face: usize) -> Option<Sel> {
+    let st = s.world_state();
+    let p = st.sketch(sketch)?.plane.to_world(at);
+    let m = st.body(body)?.mesh();
+    // The same wherever the part is: a planar face's triangles lie in its plane.
+    let tol = 1e-3;
+    let on = m
+        .triangles
+        .iter()
+        .zip(&m.tri_face)
+        .any(|(t, f)| *f as usize == face && m.tri(t).is_some_and(|[a, b, c]| crate::preview::point_triangle_dist(p, a, b, c) < tol));
+    (p.is_finite() && on && planar_face(s, body, face).is_some()).then(|| Sel::Face { body: body.to_string(), index: face, point: p })
+}
+
+/// Does a feature build from this sketch's profiles (extrude, revolve, sweep, loft, emboss…)?
+fn profiles_used(s: &Session, sketch: u64) -> bool {
+    s.doc.features.iter().any(|f| f.kind.profile_sels().iter().any(|(id, _)| *id == sketch))
 }
 
 /// The plane of a planar body face: (point on it, unit normal).
@@ -923,6 +1000,8 @@ fn title(k: &Kind) -> &'static str {
         Kind::Motion(k) => k.title(),
         Kind::Part(_) => "INSERT PART",
         Kind::Text(_) => "EDIT TEXT",
+        Kind::TextMove(_) => "MOVE/COPY TEXT",
+        Kind::SketchModify(k) => k.title(),
     }
 }
 
@@ -1113,7 +1192,7 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui) {
     ui.end_row();
     if (m == 1) != opts.multiple {
         opts.multiple = m == 1;
-        d.inputs = vec![if opts.multiple { SelInput::new("Points", selection::POINTS, true) } else { SelInput::new("Face", PLANAR_FACES, true) }];
+        d.inputs = vec![if opts.multiple { SelInput::new("Points", selection::POINTS, true) } else { SelInput::new("Face", HOLE_FACES, true) }];
         d.active = 0;
         d.extra.remove("direction");
     }
@@ -1344,6 +1423,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         return;
     }
     let _language = crate::i18n::scope(&app.preferences.language);
+    if let Kind::TextMove(k) = &d.kind
+        && !crate::sketch_text_move::valid(app, k)
+    {
+        return;
+    }
     auto_operation(app, &mut d);
     update_measure(app, &mut d);
     update_fill_cells(app, &mut d);
@@ -1636,11 +1720,18 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         );
                         enter |= field(ui, radius);
                         ui.end_row();
-                        // A constant radius too large for the edges: refused, or reduced to the
-                        // largest that fits (the preview shows what was used).
+                        // A constant radius too large for the edges: refused, reduced to the
+                        // largest that fits (the preview shows what was used), or tapered along
+                        // the edges to the room there.
                         if !*chamfer && rtype == 0 {
                             row_label(ui, "Radius Fit");
-                            let fit = extra_choice(ui, &mut d.extra, "fi_fit", "fit", &[("Exact", "exact"), ("Reduce to Fit", "reduce")]);
+                            let fit = extra_choice(
+                                ui,
+                                &mut d.extra,
+                                "fi_fit",
+                                "fit",
+                                &[("Exact", "exact"), ("Reduce to Fit", "reduce"), ("Taper to Fit", "taper")],
+                            );
                             ui.end_row();
                             if fit == 1
                                 && let Some((lo, hi)) = app.preview.applied
@@ -2046,11 +2137,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     Kind::Assembly(k) => enter |= crate::dialogs_assembly::rows(app, ui, k, &mut d.inputs, &mut d.active),
                     Kind::Sheet(k) => enter |= crate::dialogs_sheet::rows(app, ui, k, &mut d.inputs),
                     Kind::Surface(k) => enter |= crate::dialogs_surface::rows(ui, k),
+                    Kind::SketchModify(k) => enter |= crate::sketch_modify_ui::rows(ui, k),
                     Kind::Plastic(k) => enter |= crate::dialogs_plastic::rows(app, ui, k, &d.inputs),
                     Kind::Appearance(k) => enter |= crate::dialogs_appearance::rows(app, ui, k, &mut d.inputs),
                     Kind::Motion(k) => enter |= crate::dialogs_motion::rows(app, ui, k, &mut d.inputs),
                     Kind::Part(k) => enter |= crate::dialogs_parts::rows(app, ui, k, &d.inputs),
                     Kind::Text(k) => enter |= crate::sketch_text::rows(ui, k),
+                    Kind::TextMove(k) => enter |= crate::sketch_text_move::rows(ui, k),
                     Kind::ConfirmDelete { with, fail, .. } => {
                         if !with.is_empty() {
                             row_label(ui, "Also deletes");
@@ -2139,12 +2232,16 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         cancel = true;
     }
     // A plane picked for a new sketch starts it right away.
+    let mut then_start = None;
     if matches!(d.kind, Kind::Sketch)
         && d.error.is_none()
         && let Some(sel) = d.inputs.first().and_then(|i| i.items.first()).cloned()
     {
         match start_sketch(app, &sel) {
-            Ok(()) => cancel = true,
+            Ok(()) => {
+                cancel = true;
+                then_start = d.then_start;
+            }
             Err(error) => d.refuse(app, error),
         }
     }
@@ -2161,7 +2258,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         crate::dialogs_motion::closed(app, &mut d, applied);
     }
     // The edited text's outlines are new curves: the old selection would name stale ids.
-    if applied && matches!(d.kind, Kind::Text(_)) {
+    if applied && matches!(d.kind, Kind::Text(_) | Kind::TextMove(_)) {
         let _ = app.session.execute("select.clear", &json!({}));
     }
     if keep && !cancel {
@@ -2169,6 +2266,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     } else if let Some((_, marker)) = d.editing {
         // Editing done: put the timeline marker back where it was.
         let _ = roll_marker(app, marker);
+    }
+    // The shortcut that asked for this sketch starts its tool in it.
+    if let Some(id) = then_start {
+        app.start(id);
     }
 }
 
@@ -2314,6 +2415,24 @@ const CHAMFER_TYPES: [&str; 3] = ["Equal Distance", "Two Distances", "Distance a
 /// A new Fillet or Chamfer dialog's values.
 fn fillet_kind(size: &str, chamfer: bool) -> Kind {
     Kind::Fillet { radius: size.into(), chamfer, chain: true, ctype: 0, distance2: size.into(), angle: "45 deg".into(), flip: false }
+}
+
+/// A length field's first text: `number` in the design's units, with the unit written out so the
+/// field shows it as the other dialogs show theirs ("20 mm", "20 in"). OK makes the size the bare
+/// number would.
+fn length_default(s: &Session, number: &str) -> String {
+    match s.doc.with_design_unit(number, ValueKind::Length) {
+        e if e != number => e,
+        // A millimetre design (or one whose units are not a length): bare numbers are mm.
+        _ => format!("{} mm", number.trim()),
+    }
+}
+
+/// A feature's length as its edit field shows it. A bare number is kept in millimetres: where the
+/// design reads bare numbers in another unit, the field says "mm" (as the configuration table
+/// does), so OK keeps the size. Anything else shows as stored.
+fn stored_length(s: &Session, e: &str) -> String {
+    if s.doc.with_design_unit(e, ValueKind::Length) == e { e.to_string() } else { format!("{} mm", e.trim()) }
 }
 
 fn hole_defaults() -> Kind {
@@ -3052,11 +3171,13 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::Assembly(k) => return crate::dialogs_assembly::commands(app, k, &d.inputs),
         Kind::Sheet(k) => return crate::dialogs_sheet::commands(app, k, &d.inputs, &d.extra),
         Kind::Surface(k) => return crate::dialogs_surface::commands(app, k, &d.inputs, &d.extra),
+        Kind::SketchModify(k) => return crate::sketch_modify_ui::commands(app, k, &d.inputs, &d.extra),
         Kind::Plastic(k) => return crate::dialogs_plastic::commands(app, k, &d.inputs, &d.extra),
         Kind::Appearance(k) => return Ok(crate::dialogs_appearance::commands(k, &d.inputs)),
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),
         Kind::Part(k) => return crate::dialogs_parts::commands(app, k, &d.inputs),
         Kind::Text(k) => return crate::sketch_text::commands(app, k),
+        Kind::TextMove(k) => return crate::sketch_text_move::commands(app, k),
     };
     let mut params = params;
     if let Value::Object(m) = &mut params {
@@ -3080,10 +3201,15 @@ fn box_corner(s: &Session, fields: &[(&'static str, String)], p: Vec3, normal: O
             Some(_) => 1.0,
             None => 0.5,
         };
-        match size.trim().parse::<f64>() {
-            Ok(v) => json!(c - back * v),
-            Err(_) if back < 1.0 => json!(format!("{c} mm - ({size}) / 2")),
-            Err(_) => json!(format!("{c} mm - ({size})")),
+        // A plain length ("20 mm", "2 in"; a bare number has the design's unit by now) gives a
+        // plain number (mm).
+        let plain = solidcraft_engine::doc::expr::is_literal(&size)
+            .then(|| solidcraft_engine::doc::Document::eval_in(&Default::default(), &size, ValueKind::Length).ok())
+            .flatten();
+        match plain.filter(|v| v.is_finite()) {
+            Some(v) => json!(c - back * v),
+            None if back < 1.0 => json!(format!("{c} mm - ({size}) / 2")),
+            None => json!(format!("{c} mm - ({size})")),
         }
     };
     json!([coord(p.x, size("length"), Vec3::X), coord(p.y, size("width"), Vec3::Y), coord(p.z, size("height"), Vec3::Z)])
@@ -3440,9 +3566,17 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                     *flip = *f;
                 }
             }
-            // A fillet that reduces a radius too large for its edges.
-            if let FeatureKind::Fillet { fit: solidcraft_engine::doc::FilletFit::Reduce, .. } = &f.kind {
-                d.extra.insert("fit".into(), json!("reduce"));
+            // A fillet that reduces or tapers a radius too large for its edges.
+            if let FeatureKind::Fillet { fit, .. } = &f.kind {
+                use solidcraft_engine::doc::FilletFit;
+                let mode = match fit {
+                    FilletFit::Exact => None,
+                    FilletFit::Reduce => Some("reduce"),
+                    FilletFit::Taper => Some("taper"),
+                };
+                if let Some(mode) = mode {
+                    d.extra.insert("fit".into(), json!(mode));
+                }
             }
             // A chord-length or variable fillet.
             if let FeatureKind::Fillet { style, .. } = &f.kind {
@@ -3560,7 +3694,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let mut d = start("solid.box")?;
             d.kind = Kind::Primitive {
                 cmd: "solid.box",
-                fields: vec![("length", length.clone()), ("width", width.clone()), ("height", height.clone())],
+                fields: vec![("length", stored_length(s, length)), ("width", stored_length(s, width)), ("height", stored_length(s, height))],
                 operation: op_index(operation),
                 at: None,
             };
@@ -3571,7 +3705,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let mut d = start("solid.cylinder")?;
             d.kind = Kind::Primitive {
                 cmd: "solid.cylinder",
-                fields: vec![("radius", radius.clone()), ("height", height.clone())],
+                fields: vec![("radius", stored_length(s, radius)), ("height", stored_length(s, height))],
                 operation: op_index(operation),
                 at: None,
             };
@@ -3581,7 +3715,8 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         }
         FeatureKind::Sphere { center, radius, operation } => {
             let mut d = start("solid.sphere")?;
-            d.kind = Kind::Primitive { cmd: "solid.sphere", fields: vec![("radius", radius.clone())], operation: op_index(operation), at: None };
+            d.kind =
+                Kind::Primitive { cmd: "solid.sphere", fields: vec![("radius", stored_length(s, radius))], operation: op_index(operation), at: None };
             d.extra.insert("center".into(), pt_expr(center));
             d
         }
@@ -3589,7 +3724,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let mut d = start("solid.torus")?;
             d.kind = Kind::Primitive {
                 cmd: "solid.torus",
-                fields: vec![("major", major.clone()), ("minor", minor.clone())],
+                fields: vec![("major", stored_length(s, major)), ("minor", stored_length(s, minor))],
                 operation: op_index(operation),
                 at: None,
             };
