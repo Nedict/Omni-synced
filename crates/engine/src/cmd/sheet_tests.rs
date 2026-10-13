@@ -2503,6 +2503,27 @@ fn a_hole_on_a_folded_panel_keeps_the_name_of_its_sketch_circle() {
 }
 
 #[test]
+#[ignore = "fails until #541 is fixed"]
+fn a_box_cut_straight_through_a_flat_sheet_is_a_cutout_like_the_extrude_cut() {
+    // A 10 x 10 box perpendicular to the sheet and through its whole thickness removes exactly
+    // what a sketch rectangle extruded through all removes, which is accepted today.
+    let mut s = Session::default();
+    base(&mut s, 100.0, 60.0);
+    run(&mut s, "solid.box", json!({"corner": [20, 20, -1], "length": 10, "width": 10, "height": 5, "operation": "cut"}));
+    let mut extruded = Session::default();
+    base(&mut extruded, 100.0, 60.0);
+    rectangle_tool(&mut extruded, "Hole", [20.0, 20.0], [30.0, 30.0]);
+    run(&mut extruded, "solid.extrude", json!({"sketch": "Hole", "through_all": true, "direction": "symmetric", "operation": "cut"}));
+    for session in [&mut s, &mut extruded] {
+        assert!((volume(session) - 14750.0).abs() < 1e-6);
+        assert_eq!(flat(session)["cutouts"].as_array().map(Vec::len), Some(1));
+    }
+    run(&mut s, "sheet.unfold", json!({}));
+    run(&mut s, "sheet.refold", json!({}));
+    assert!((volume(&mut s) - 14750.0).abs() < 1e-6);
+}
+
+#[test]
 fn flat_pattern_reports_a_round_hole_as_a_circle() {
     // The DXF export already writes this hole as a CIRCLE; the JSON flat pattern should say
     // "circle, centre (50, 30), radius 1.6" too, not only a sampled polyline: any object in the
@@ -2559,4 +2580,22 @@ fn flat_pattern_reports_a_round_hole_as_a_circle() {
         arcs.iter()
             .all(|a| (a["radius"].as_f64().unwrap_or(0.0) - 2.0).abs() < 1e-9 && (a["sweep_deg"].as_f64().unwrap_or(0.0).abs() - 180.0).abs() < 1e-6)
     );
+}
+
+#[test]
+#[ignore = "fails until #570 is fixed"]
+fn a_flange_asked_for_0_8_mm_is_0_8_mm_or_refused_never_silently_2_5_mm() {
+    // `thickness` on sheet.flange may become an inline override of the rule, or be refused as
+    // an unknown parameter; either is fine. Building the default 2.5 mm sheet silently is not.
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Base"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [100, 60]}));
+    run(&mut s, "sketch.finish", json!({}));
+    match s.execute("sheet.flange", &json!({"sketch": "Base", "thickness": 0.8})) {
+        Ok(_) => {
+            assert!((flat(&mut s)["thickness"].as_f64().unwrap_or(f64::NAN) - 0.8).abs() < 1e-9);
+            assert!((volume(&mut s) - 100.0 * 60.0 * 0.8).abs() < 1e-6, "built at {} mm3", volume(&mut s));
+        }
+        Err(e) => assert!(e.to_string().contains("thickness"), "{e}"),
+    }
 }
