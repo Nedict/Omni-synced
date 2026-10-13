@@ -823,6 +823,8 @@ mod tests;
 #[cfg(test)]
 mod thread_tests;
 #[cfg(test)]
+mod view_bounds_tests;
+#[cfg(test)]
 mod world_placement_cache_tests;
 
 /// Per sketch feature: its parameter-driven dimensions' values (see [`own_values`]).

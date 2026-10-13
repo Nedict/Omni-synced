@@ -89,7 +89,9 @@ those pending positions; undo restores the previous attachment and placement sta
 
 File format 11 introduced these optional attachments, which format 12 also preserves. Format 16
 adds the `lineage` certificate (older readers ask for an update rather than meeting an unknown
-kind); anchors saved with construction certificates resolve as before. Existing designs with face references
+kind); anchors saved with construction certificates resolve as before. Format 17 adds piece
+names qualified by the faces around them and the sheet metal rim and bend-end names; 0.8.0
+asks for an update when it opens a format 17 design. Existing designs with face references
 without an attachment retain their legacy geometry and lookup behavior when opened; they
 are not silently upgraded. Redefining such a sketch onto a supported selected face creates
 the stronger attachment. Unsupported legacy geometry can instead be retained on an explicit
