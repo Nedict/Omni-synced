@@ -1187,6 +1187,9 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
         match k {
             Key::Escape => {
                 app.esc_handled = true;
+                if crate::sketch_text_move::cancel_drag(app) {
+                    continue;
+                }
                 if crate::select_other::is_open(app) {
                     crate::select_other::close(app);
                 } else if app.tool.is_some() {

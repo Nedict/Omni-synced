@@ -1169,8 +1169,36 @@ fn a_shell_of_a_swept_bar() {
     );
 }
 
+/// The construction a drill-tip script ends with.
+struct TipConstruction(solidcraft_engine::doc::construct::ConstructGeom);
+
+impl TipConstruction {
+    fn axis(&self) -> (Vec3, Vec3) {
+        match &self.0 {
+            solidcraft_engine::doc::construct::ConstructGeom::Axis { origin, dir } => (*origin, *dir),
+            other => panic!("expected an axis, got {other:?}"),
+        }
+    }
+    fn plane(&self) -> solidcraft_engine::geom::Plane {
+        match &self.0 {
+            solidcraft_engine::doc::construct::ConstructGeom::Plane(p) => *p,
+            other => panic!("expected a plane, got {other:?}"),
+        }
+    }
+}
+
+/// Replays the script and returns its last construction.
+fn drill_tip_construction(commands: Vec<Value>) -> TipConstruction {
+    let mut s = Session::default();
+    for c in &commands {
+        let id = c["command"].as_str().unwrap();
+        s.execute(id, &c["params"]).unwrap_or_else(|e| panic!("{id}: {e}"));
+    }
+    let state = s.model.state();
+    TipConstruction(state.construct.last().map(|c| c.geom.clone()).expect("a construction"))
+}
+
 #[test]
-#[ignore = "fails until #567 is fixed"]
 fn an_axis_through_a_drill_tip() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 40.]).into();
     c.extend([
@@ -1178,7 +1206,30 @@ fn an_axis_through_a_drill_tip() {
         json!({"command": "solid.hole", "params": {"position": [50, 20, 15], "direction": [0, 0, -1], "diameter": 6, "depth": 10, "tip_angle": 118}}),
         json!({"command": "construct.axis.through_cylinder", "params": {"face": {"face": [48.44468907075447, 21.22448979591836, 4.399139380972439]}}}),
     ]);
-    reproduces(None, Value::Array(c));
+    reproduces(None, Value::Array(c.clone()));
+    // Not just "no error": the axis runs along the drill, through the hole's centre line.
+    let (origin, dir) = drill_tip_construction(c).axis();
+    assert!((origin.x - 50.).abs() < 1e-6 && (origin.y - 20.).abs() < 1e-6, "{origin:?}");
+    assert!(dir.z.abs() > 1. - 1e-9, "{dir:?}");
+}
+
+#[test]
+fn a_tangent_plane_on_a_drill_tip() {
+    let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 40.]).into();
+    c.extend([
+        json!({"command": "solid.extrude", "params": {"distance": 15}}),
+        json!({"command": "solid.hole", "params": {"position": [50, 20, 15], "direction": [0, 0, -1], "diameter": 6, "depth": 10, "tip_angle": 118}}),
+        json!({"command": "construct.plane.tangent", "params": {"face": {"face": [48.44468907075447, 21.22448979591836, 4.399139380972439]}}}),
+    ]);
+    reproduces(None, Value::Array(c.clone()));
+    // The plane touches the cone at the picked point and leans like the cone does: a 118 degree tip
+    // puts the wall 59 degrees off the drill axis, so its normal is 31 degrees off it.
+    let plane = drill_tip_construction(c).plane();
+    let picked = Vec3::new(48.44468907075447, 21.22448979591836, 4.399139380972439);
+    let distance = (picked - plane.origin).dot(plane.normal());
+    // The pick lies on the tessellated cone and the plane is the exact one, so allow for chord error.
+    assert!(distance.abs() < 0.05, "the pick is {distance} mm off the plane");
+    assert!((plane.normal().z.abs() - 31f64.to_radians().cos()).abs() < 1e-2, "{:?}", plane.normal());
 }
 
 #[test]

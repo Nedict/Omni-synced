@@ -48,6 +48,15 @@ geometry cannot identify one text: use **Select Other** to choose its outline in
 Change the text, font, baseline X/Y, height or angle, then confirm with **OK**; **Cancel**
 keeps the original text. Position and height use the document's units.
 
+Drag a text outline to move all its letters together. Let go to finish in one undo step,
+or press **Esc** during the drag to restore the original text. The text stays editable.
+For an exact displacement, select an outline and choose **Move/Copy** from its context menu.
+Enter **Distance X**, **Distance Y** and an optional **Angle** about the text's baseline;
+lengths accept document units or explicit units such as `1 in`. Enable **Create Copy** to
+leave the original in place and create a separately editable text. **Cancel** leaves the
+design unchanged. Projected geometry remains protected from ordinary dragging.
+
+
 **Project** (P) and **Intersect** bring model edges into the sketch as linked geometry that
 follows later changes. Sketching on a face projects its edges automatically.
 For Project, select visible source curves or points from another sketch, model edges,

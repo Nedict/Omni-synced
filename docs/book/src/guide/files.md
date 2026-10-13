@@ -58,7 +58,7 @@ is available. Missing or incompatible pictures use the usual thumbnail generatio
 The default `cache: false` omits the portable thumbnail too.
 The repository's `docs/design-container.md` describes limits and encoding details.
 
-Current designs use format 17, including face anchors on a piece of a face by its own name, sheet metal rims and bend ends, physical materials defined in the design, the font of sketch text, sheet metal corner relief shapes, sketch face anchors on cylinder caps, sketch axis
+Current designs use format 17, including face anchors on a piece of a face by its own name, sheet metal rims and bend ends, bend edges for Convert to Sheet Metal, physical materials defined in the design, the font of sketch text, sheet metal corner relief shapes, sketch face anchors on cylinder caps, sketch axis
 links, persistent
 names from exact face history, exact planar shell-face anchors, persistent analytic offset boundary roles and
 association profile references, durable sketch face anchors, periodic fit splines and versioned

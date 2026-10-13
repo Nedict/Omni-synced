@@ -13,11 +13,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "CREATE")
         .icon("extrude")
         .key("E")
-        .params("distance: expr (or through_all: true); taper?: angle expr; sketch?: id|name (default: active or last sketch); profiles?: all | [index] | [{curves: [ids]}] (the profile whose outer loop is made of exactly these curves, or pieces of them; found again on every recompute, so it follows parameter changes; islands inside are its holes; an error when no profile or several match) | [{point:[x,y]}] (index and point picks are stored by their curves when that finds the same profile); face?: [x,y,z] (extrude a planar body face instead of a sketch profile); direction?: positive|negative|symmetric; distance2?; start_offset?: expr (along the sketch normal, also with direction: negative); to?: [x,y,z] (To Object: a face, vertex or point; to_offset?: expr past it); from?: [x,y,z] (From Object: start at that face or point); operation?: new|join|cut|intersect|auto (cut into a body, otherwise join existing solids; new in an empty component); targets?: [body]; name?; body_name?"),
+        .params("distance: expr (or through_all: true); taper?: angle expr; sketch?: id|name (default: active or last sketch); profiles?: all | [index] | [{curves: [ids]}] (the profile whose outer loop is made of exactly these curves, or pieces of them; found again on every recompute, so it follows parameter changes; islands inside are its holes; an error when no profile or several match) | [{point:[x,y]}] (index and point picks are stored by their curves when that finds the same profile); face?: [x,y,z] (extrude a planar body face instead of a sketch profile); face_body?: name (whose face, where faces of several bodies meet at the point); direction?: positive|negative|symmetric; distance2?; start_offset?: expr (along the sketch normal, also with direction: negative); to?: [x,y,z] (To Object: a face, vertex or point; to_offset?: expr past it); from?: [x,y,z] (From Object: start at that face or point); operation?: new|join|cut|intersect|auto (cut into a body, otherwise join existing solids; new in an empty component); targets?: [body]; name?; body_name?"),
     CommandSpec::new("solid.revolve", "Revolve", revolve)
         .at("SOLID", "CREATE")
         .icon("revolve")
-        .params("axis: sketch line id | x | y (sketch axes) | X|Y|Z (world); angle?: expr (default 360 deg); angle2?: expr (Two Sides: the other side's angle); direction?: symmetric (angle split either side, independent of axis direction); convention?: sketch_normal|legacy_axis_start (default sketch_normal; legacy retains older angular starts); to?: [x,y,z] (To Object: turn until that face, vertex or point); sketch?, profiles? | face: [x,y,z] (a planar body face as the profile), operation?, targets?, name?, body_name?"),
+        .params("axis: sketch line id | x | y (sketch axes) | X|Y|Z (world); angle?: expr (default 360 deg); angle2?: expr (Two Sides: the other side's angle); direction?: symmetric (angle split either side, independent of axis direction); convention?: sketch_normal|legacy_axis_start (default sketch_normal; legacy retains older angular starts); to?: [x,y,z] (To Object: turn until that face, vertex or point); sketch?, profiles? | face: [x,y,z] (a planar body face as the profile) and face_body?: name (whose face, where faces of several bodies meet), operation?, targets?, name?, body_name?"),
     CommandSpec::new("solid.sweep", "Sweep", sweep)
         .at("SOLID", "CREATE")
         .icon("sweep")
@@ -31,7 +31,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "MODIFY")
         .icon("fillet")
         .key("F")
-        .params("edges: [[x,y,z] point on edge | {body, index}]; radius: expr; body?; type?: constant|chord (radius is the width across)|variable (radius at the end nearest start, radius2 at the other); radius2?; start?: [x,y,z]; mid?: [[position 0…1 from start, radius expr], …] (variable radii between the ends); smooth?: bool (smooth instead of straight between the radii); fit?: exact|reduce (exact, the default: a radius too large for the geometry around the edges is refused; reduce: where it doesn't fit it is reduced to the largest that does, one radius for edges sharing a face; the smallest used is returned as `radius_applied`, each edge's as `radii_applied: [{edge: [x,y,z], radius}]`, and noted in the feature's warning)"),
+        .params("edges: [[x,y,z] point on edge | {body, index}]; radius: expr; body?; type?: constant|chord (radius is the width across)|variable (radius at the end nearest start, radius2 at the other; one end may be 0, where the round closes to the corner); radius2?; start?: [x,y,z]; mid?: [[position 0…1 from start, radius expr], …] (variable radii between the ends); smooth?: bool (smooth instead of straight between the radii); fit?: exact|reduce (exact, the default: a radius too large for the geometry around the edges is refused; reduce: where it doesn't fit it is reduced to the largest that does, one radius for edges sharing a face; the smallest used is returned as `radius_applied`, each edge's as `radii_applied: [{edge: [x,y,z], radius}]`, and noted in the feature's warning)"),
     CommandSpec::new("solid.chamfer", "Chamfer", chamfer).at("SOLID", "MODIFY").icon("chamfer").params("edges: [[x,y,z] | {body, index}]; distance: expr; distance2?: expr (along the second face) | angle?: expr (from the first face); flip?: bool (which face is first: by default the one facing up most); body?"),
     CommandSpec::new("solid.combine", "Combine", combine).at("SOLID", "MODIFY").icon("combine").params("target: body; tools: [body]; operation?: join|cut|intersect; keep_tools?: bool; new_component?: bool (the result goes into a new component; component_name?)"),
     CommandSpec::new("solid.pattern.rectangular", "Rectangular Pattern", pattern_rect)
@@ -114,7 +114,7 @@ pub static COMMANDS: &[CommandSpec] = &[
 /// face, and the unit normal.
 fn extrude_base(s: &Session, p: &Value) -> Option<(Vec3, Vec3)> {
     if let Some(fp) = p.get("face").and_then(vec3) {
-        return Some((fp, super::face::face_normal(s, fp)?));
+        return Some((fp, super::face::face_normal_in(s, fp, str_(p, "face_body"))?));
     }
     let sid = feature_sketch(s, p, "Extrude").ok()?;
     let st = s.model.state();
@@ -394,6 +394,10 @@ fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) ->
             (Vec::new(), solidcraft_doc::sheet::sheet_edge_names(&s.model.state(), &points))
         }
         FeatureKind::SheetHem { edges, .. } => (Vec::new(), solidcraft_doc::sheet::sheet_edge_names(&s.model.state(), edges)),
+        // A conversion's bend edges are edges of the body it converts.
+        FeatureKind::SheetConvert { body, bends, .. } if !bends.is_empty() => {
+            (Vec::new(), solidcraft_doc::sheet::bend_edge_names(&s.model.state(), body, bends))
+        }
         _ => (Vec::new(), Vec::new()),
     };
     let face_names = {
@@ -495,7 +499,7 @@ fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
     // A planar body face extrudes like a profile: its boundary is copied into a sketch on it.
     let (sketch, face_profile) = match p.get("face").and_then(vec3) {
         Some(fp) => {
-            let (id, inside) = super::face::sketch_of_face(s, fp, cmd)?;
+            let (id, inside) = super::face::sketch_of_face(s, fp, cmd, str_(p, "face_body"))?;
             (id, Some(ProfileSel::Points { points: vec![inside] }))
         }
         None => (feature_sketch(s, p, cmd)?, None),
@@ -559,7 +563,7 @@ fn revolve(s: &mut Session, p: &Value) -> Result<Value> {
     // A planar body face revolves like a profile (its edges projected into a sketch on it).
     let (sketch, face_profile) = match p.get("face").and_then(vec3) {
         Some(fp) => {
-            let (id, inside) = super::face::sketch_of_face(s, fp, cmd)?;
+            let (id, inside) = super::face::sketch_of_face(s, fp, cmd, str_(p, "face_body"))?;
             s.active_sketch = None;
             (id, Some(ProfileSel::Points { points: vec![inside] }))
         }

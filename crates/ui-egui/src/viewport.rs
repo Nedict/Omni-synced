@@ -97,6 +97,8 @@ pub struct ViewportState {
     /// A sketch point or curve being dragged (its id, the undo depth when the drag began: the
     /// whole drag is one undo step, and for a curve where it was last under the cursor).
     pub point_drag: Option<(String, usize, Option<Vec2>)>,
+    /// Checkpoint and source for a cancellable whole-text drag.
+    pub(crate) text_drag: Option<(u64, String)>,
 }
 
 /// Something under the cursor.
@@ -1213,7 +1215,8 @@ pub fn hit_sel(h: &Hit) -> Option<Sel> {
 /// dialog the first hit (sketch entities only belong to the active sketch).
 pub fn candidate(app: &SolveApp, hits: &[Hit]) -> Option<(Hit, Sel)> {
     if let Some(d) = app.dialog.as_ref().filter(|d| d.wants_picks()) {
-        return hits.iter().find_map(|h| d.candidate(&app.session, h).map(|s| (h.clone(), s)));
+        let face = face_under(hits);
+        return hits.iter().find_map(|h| d.candidate_on(&app.session, h, face).map(|s| (h.clone(), s)));
     }
     hits.iter().filter(|h| pick_allowed(app, h)).find_map(|h| hit_candidate(app, h))
 }
@@ -1221,9 +1224,15 @@ pub fn candidate(app: &SolveApp, hits: &[Hit]) -> Option<(Hit, Sel)> {
 /// Every hit a click could pick, in order, each with its selection (Select Other).
 pub fn candidates(app: &SolveApp, hits: &[Hit]) -> Vec<(Hit, Sel)> {
     if let Some(d) = app.dialog.as_ref().filter(|d| d.wants_picks()) {
-        return hits.iter().filter_map(|h| d.candidate(&app.session, h).map(|s| (h.clone(), s))).collect();
+        let face = face_under(hits);
+        return hits.iter().filter_map(|h| d.candidate_on(&app.session, h, face).map(|s| (h.clone(), s))).collect();
     }
     hits.iter().filter(|h| pick_allowed(app, h)).filter_map(|h| hit_candidate(app, h)).collect()
+}
+
+/// The face under the cursor: the nearest face the pick ray meets (faces come nearest first).
+fn face_under(hits: &[Hit]) -> Option<&Hit> {
+    hits.iter().find(|h| matches!(h, Hit::Face { .. }))
 }
 
 /// What the selection filter lets a click pick with no dialog.
@@ -1808,8 +1817,11 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let secondary_down = secondary_down && app.viewport.context_menu.is_none();
     // The axis view handles its own clicks; the model underneath must not see them.
     let axes = axis_rect(app, rect);
-    // Floating windows and menus own input over the model, including wheel navigation.
-    let inside = resp.contains_pointer() && hover.is_some_and(|p| !axes.contains(p));
+    // Floating windows and menus own input over the model, including wheel navigation. egui's
+    // hit test also counts the model as under the pointer a few points past its own edge and
+    // inside a window's or a list's edge (#678), so the pointer must be in the viewport too,
+    // with no window or menu above it.
+    let inside = resp.contains_pointer() && ui.rect_contains_pointer(rect) && hover.is_some_and(|p| !axes.contains(p));
     app.viewport.mouse = hover.filter(|_| inside);
     // Ctrl or Alt held: drawing and dragging don't snap.
     crate::drag_snap::set_suppressed(mods.ctrl || mods.alt || mods.command);
@@ -2202,6 +2214,28 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
                 _ => {}
             }
+            if let Some((id, _, _)) = &app.viewport.point_drag {
+                let link = app.session.active_sketch.and_then(|sid| app.session.doc.sketch(sid).ok()).and_then(|sk| {
+                    let link = sk
+                        .curve_index(id)
+                        .and_then(|i| sk.curves.get(i))
+                        .and_then(|c| c.link.as_deref())
+                        .or_else(|| sk.resolve_point(id).and_then(|i| sk.points.get(i)).and_then(|p| p.link.as_deref()))?;
+                    sk.link(link).filter(|l| l.kind == solidcraft_engine::sketch::LinkKind::Text).map(|l| l.id.clone())
+                });
+                if let Some(link) = link
+                    && let Some(q) = on_plane(app, a)
+                {
+                    if let Some((_, _, grab)) = &mut app.viewport.point_drag {
+                        *grab = Some(q);
+                    }
+                    if let Ok(result) = app.session.execute("edit.checkpoint", &json!({}))
+                        && let Some(checkpoint) = result["checkpoint"].as_u64()
+                    {
+                        app.viewport.text_drag = Some((checkpoint, link));
+                    }
+                }
+            }
         }
         if let Some((id, depth, grab)) = app.viewport.point_drag.clone()
             && resp.dragged_by(egui::PointerButton::Primary)
@@ -2252,6 +2286,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
             crate::drag_snap::clear();
             app.viewport.point_drag = None;
+            crate::sketch_text_move::end_drag(app);
             crate::dim_view::drag_end();
             crate::sketch3d::drag_end();
         }
@@ -2264,6 +2299,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         app.viewport.point_drag = None;
         crate::drag_snap::clear();
         let _ = app.session.execute("sketch.drag_end", &json!({}));
+        crate::sketch_text_move::end_drag(app);
     }
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()
@@ -4110,6 +4146,91 @@ mod tests {
             let height = app.cam.half_height();
             frame(&mut app, Some(list), -120.0);
             assert_ne!(app.cam.half_height(), height);
+        }
+    }
+
+    #[test]
+    fn wheel_by_a_dialog_list_or_panel_edge_leaves_the_model_alone() {
+        // #678: scrolling the Physical Material list, a drop-down that hangs over the model,
+        // zoomed the model too. egui's hit test counts the model as under the pointer within a
+        // few points of a window's, a list's or the viewport's own edge, so near those edges
+        // the same wheel turn reached both.
+        use crate::scenario::{Harness, handle_at};
+        // One wheel turn at `p`, then frames until egui's smoothing is spent: did the camera move?
+        let wheel = |h: &mut Harness, p: Pos2, delta: f32| {
+            let before = h.app.cam;
+            h.call("ui.scroll", json!({"x": p.x, "y": p.y, "delta": delta}));
+            h.frames(20);
+            h.app.cam != before
+        };
+        // A trackpad pinch, then a two-finger scroll (which pans the model): did the camera move?
+        let gestures = |h: &mut Harness, p: Pos2| {
+            let before = h.app.cam;
+            h.call("ui.move", json!({"x": p.x, "y": p.y}));
+            h.app.synthetic.push(egui::Event::Zoom(1.2));
+            for phase in [egui::TouchPhase::Start, egui::TouchPhase::Move, egui::TouchPhase::End] {
+                let unit = egui::MouseWheelUnit::Point;
+                h.app.synthetic.push(egui::Event::MouseWheel { unit, delta: vec2(30.0, -20.0), modifiers: egui::Modifiers::NONE, phase });
+            }
+            h.settle();
+            h.frames(20);
+            h.app.cam != before
+        };
+        for smooth in [true, false] {
+            let mut h = Harness::new();
+            h.app.preferences.smooth_wheel_zoom = smooth;
+            h.app.preferences.zoom_to_cursor = false;
+            h.call("engine.execute", json!({"command": "solid.box", "params": {"length": 40, "width": 30, "height": 20}}));
+            h.call("ui.start", json!({"command": "material.assign"}));
+            let field = handle_at("dialog:Material").expect("the dialog's material field");
+            let field = json!({"x": field.x, "y": field.y});
+            h.call("ui.move", field.clone());
+            h.call("ui.click", field.clone());
+            let item = "dialog:Material:Steel";
+            let first = handle_at(item).expect("the open material list");
+            let list = h
+                .ctx
+                .memory(|m| {
+                    let popups = m.areas().visible_layer_ids().into_iter().filter(|l| l.order == egui::Order::Foreground);
+                    popups.filter_map(|l| m.area_rect(l.id)).find(|r| r.contains(first))
+                })
+                .expect("the list's popup");
+            let dialog = h.app.viewport.dialog_rect.expect("the dialog");
+            let vp = h.app.viewport.rect.expect("the viewport");
+            assert!(!dialog.contains(first) && vp.contains(first), "the list must hang over the model: {first:?} {dialog:?}");
+
+            // The wheel scrolls the list and only the list, in its middle and by its edges.
+            assert!(!wheel(&mut h, pos2(list.center().x, first.y), -60.0), "smooth {smooth}: the wheel over the list zoomed the model");
+            let moved = handle_at(item).expect("the list stays open");
+            assert!(moved.y < first.y - 1.0, "the wheel must scroll the list: {first:?} -> {moved:?}");
+            for p in [pos2(list.left() + 2.0, list.center().y), pos2(list.right() - 2.0, list.center().y), pos2(list.center().x, list.bottom() - 2.0)]
+            {
+                assert!(!wheel(&mut h, p, 60.0), "smooth {smooth}: the wheel at {p:?} by the list's edge ({list:?}) zoomed the model");
+                assert!(!gestures(&mut h, p), "a pinch or two-finger scroll at {p:?} by the list's edge ({list:?}) moved the model");
+                assert!(h.app.viewport.mouse.is_none(), "the model must not see the pointer at {p:?} over the list");
+            }
+
+            // With the list closed: by the dialog's edges, and over the browser and the timeline
+            // next to the model.
+            h.call("ui.move", field.clone());
+            h.call("ui.click", field);
+            assert!(handle_at(item).is_none(), "the list must close");
+            let (mid, x) = (vp.center().y, vp.left() + vp.width() * 0.25);
+            for p in [
+                pos2(dialog.left() + 2.0, dialog.center().y),
+                pos2(dialog.center().x, dialog.bottom() - 2.0),
+                pos2(vp.left() - 2.0, mid),
+                pos2(x, vp.bottom() + 2.0),
+            ] {
+                assert!(!wheel(&mut h, p, 60.0), "smooth {smooth}: the wheel at {p:?} off the model ({vp:?}, dialog {dialog:?}) zoomed it");
+                assert!(h.app.viewport.mouse.is_none(), "the model must not see the pointer at {p:?}");
+            }
+            // The model itself still zooms right next to them.
+            for p in [pos2(dialog.left() - 2.0, dialog.center().y), pos2(vp.left() + 2.0, mid), pos2(x, vp.bottom() - 2.0)] {
+                assert!(wheel(&mut h, p, 60.0), "smooth {smooth}: the wheel at {p:?} on the model ({vp:?}) must zoom it");
+                assert_eq!(h.app.viewport.mouse, Some(p));
+                assert!(gestures(&mut h, p), "a pinch and a two-finger scroll at {p:?} on the model must move it");
+            }
         }
     }
 

@@ -782,12 +782,17 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         refold: bool,
     },
-    /// Convert a plate body (constant thickness from the face at `face`) to sheet metal.
+    /// Convert a body to sheet metal from its fixed face at `face`: a plate of constant
+    /// thickness or, with `bends`, a solid or shelled body whose faces reached from the fixed
+    /// face across those edges become the sheet.
     SheetConvert {
         body: String,
         face: Vec3,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rule: Option<String>,
+        /// Points on the sharp edges that become bends.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        bends: Vec<Vec3>,
     },
     /// Plastic boss: a round post on a face (draft, root fillet, hole, ribs).
     Boss {
@@ -1460,6 +1465,8 @@ impl FeatureKind {
             FeatureKind::Thread { face, .. } => vec![face],
             FeatureKind::Emboss { face: Some(face), .. } => vec![&mut face.at],
             FeatureKind::Boss { position, .. } | FeatureKind::SnapFit { position, .. } | FeatureKind::Rest { position, .. } => vec![position],
+            // With bend edges the fixed face is found by name (a plate keeps its point).
+            FeatureKind::SheetConvert { face, bends, .. } if !bends.is_empty() => vec![face],
             _ => Vec::new(),
         }
     }
