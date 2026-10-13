@@ -573,7 +573,7 @@ fn key(design: &str, entity: &str, action: &str) -> String {
 
 /// An entity's name without piece numbers (`#2`, `~3`, ` (2)`): pieces that share a name are
 /// numbered by where they lie, and the numbers of pieces lying almost level can swap between runs
-/// (issue ISSUE_PIECES), so the ratchet counts passes per family of pieces.
+/// (issue #569), so the ratchet counts passes per family of pieces.
 fn family(entity: &str) -> String {
     let mut out = String::with_capacity(entity.len());
     let mut chars = entity.chars().peekable();
@@ -975,7 +975,7 @@ fn rectangle(plane: Value, p0: [f64; 2], p1: [f64; 2]) -> [Value; 3] {
 }
 
 #[test]
-#[ignore = "fails until ISSUE_BLEND is fixed"]
+#[ignore = "fails until #556 is fixed"]
 fn a_fillet_or_chamfer_on_one_edge_ending_at_a_cylinder() {
     for (cmd, size) in [("solid.fillet", "radius"), ("solid.chamfer", "distance")] {
         reproduces(
@@ -990,7 +990,7 @@ fn a_fillet_or_chamfer_on_one_edge_ending_at_a_cylinder() {
 }
 
 #[test]
-#[ignore = "fails until ISSUE_PATTERN is fixed"]
+#[ignore = "fails until #557 is fixed"]
 fn a_sketch_on_a_patterned_boss_top() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 20.]).into();
     c.extend([
@@ -1007,7 +1007,7 @@ fn a_sketch_on_a_patterned_boss_top() {
 }
 
 #[test]
-#[ignore = "fails until ISSUE_OCCURRENCE is fixed"]
+#[ignore = "fails until #558 is fixed"]
 fn construction_geometry_and_holes_on_a_moved_component() {
     let moved = || {
         vec![
@@ -1029,7 +1029,7 @@ fn construction_geometry_and_holes_on_a_moved_component() {
 }
 
 #[test]
-#[ignore = "fails until ISSUE_RIMHOLE is fixed"]
+#[ignore = "fails until #559 is fixed"]
 fn a_through_hole_into_a_shelled_box_rim() {
     reproduces(
         None,
@@ -1042,7 +1042,7 @@ fn a_through_hole_into_a_shelled_box_rim() {
 }
 
 #[test]
-#[ignore = "fails until ISSUE_SHEETHOLE is fixed"]
+#[ignore = "fails until #560 is fixed"]
 fn a_hole_through_a_sheet_metal_base() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 40.]).into();
     c.extend([
@@ -1053,7 +1053,7 @@ fn a_hole_through_a_sheet_metal_base() {
 }
 
 #[test]
-#[ignore = "fails until ISSUE_LOFT is fixed"]
+#[ignore = "fails until #561 is fixed"]
 fn sketches_on_loft_and_sweep_faces() {
     let mut loft: Vec<Value> = rectangle(json!("XY"), [-20., -20.], [20., 20.]).into();
     loft.extend([
@@ -1083,7 +1083,7 @@ fn sketches_on_loft_and_sweep_faces() {
 }
 
 #[test]
-#[ignore = "fails until ISSUE_PRESSPULL is fixed"]
+#[ignore = "fails until #562 is fixed"]
 fn press_pull_on_the_pi_case_floor() {
     reproduces(
         Some("tests/action_matrix/designs/pi-case.solidcraft"),
@@ -1092,7 +1092,7 @@ fn press_pull_on_the_pi_case_floor() {
 }
 
 #[test]
-#[ignore = "fails until ISSUE_DRAFT is fixed"]
+#[ignore = "fails until #563 is fixed"]
 fn sketches_after_a_draft_and_on_a_tapered_extrude() {
     reproduces(
         None,
@@ -1113,7 +1113,7 @@ fn sketches_after_a_draft_and_on_a_tapered_extrude() {
 }
 
 #[test]
-#[ignore = "fails until ISSUE_RIM is fixed"]
+#[ignore = "fails until #564 is fixed"]
 fn a_sketch_on_the_rim_a_shell_leaves() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [-35., -25.], [35., 25.]).into();
     c.extend([
@@ -1126,7 +1126,7 @@ fn a_sketch_on_the_rim_a_shell_leaves() {
 }
 
 #[test]
-#[ignore = "fails until ISSUE_SPLIT is fixed"]
+#[ignore = "fails until #565 is fixed"]
 fn sketches_after_split_body_and_intersect() {
     reproduces(
         None,
@@ -1150,7 +1150,7 @@ fn sketches_after_split_body_and_intersect() {
 }
 
 #[test]
-#[ignore = "fails until ISSUE_SHELLCORNER is fixed"]
+#[ignore = "fails until #566 is fixed"]
 fn a_shell_of_a_swept_bar() {
     reproduces(
         None,
@@ -1170,7 +1170,7 @@ fn a_shell_of_a_swept_bar() {
 }
 
 #[test]
-#[ignore = "fails until ISSUE_TIP is fixed"]
+#[ignore = "fails until #567 is fixed"]
 fn an_axis_through_a_drill_tip() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 40.]).into();
     c.extend([
@@ -1182,7 +1182,7 @@ fn an_axis_through_a_drill_tip() {
 }
 
 #[test]
-#[ignore = "fails until ISSUE_EDIT is fixed"]
+#[ignore = "fails until #568 is fixed"]
 fn a_plane_on_a_patterned_counterbore_after_a_thickness_change() {
     let mut c = vec![json!({"command": "parameters.change", "params": {"name": "thick", "expression": "10 mm"}})];
     c.extend(rectangle(json!("XY"), [0., 0.], [80., 30.]));

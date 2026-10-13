@@ -22,6 +22,14 @@ The test is [`apps/solidcraft-cli/tests/action_matrix.rs`](../apps/solidcraft-cl
 Each design runs in its own process, so an action that hangs (90 s without a result) or aborts is
 recorded as `timeout` or `crash` and the rest of the design still runs. None did in this run.
 
+Pieces that share a name (`#2`, `~3`) are numbered by where they lie, and the numbers of pieces
+lying almost level can swap between runs (#569). The ratchet therefore counts passes per family of
+pieces (the name without its numbers) and samples whole families, so a swap is not a regression.
+
+Each open cause below has a small reproduction among the ignored tests at the end of
+`action_matrix.rs` (`cargo test --profile ci -p solidcraft-cli --test action_matrix -- --ignored`
+lists which still fail; skip `action_matrix_` to leave out the matrix itself).
+
 ## The corpus
 
 - `corpus/*`: the old design files of [`apps/solidcraft-cli/tests/corpus`](../apps/solidcraft-cli/tests/corpus/).
@@ -226,28 +234,28 @@ make a legacy face sketch there).
 
 | Failures | Issue | Cause | Actions | Designs | Example |
 |---:|---|---|---|---:|---|
-| 982 |  | blend: one edge whose ends meet curved, slanted or several faces | `edge.chamfer` 494, `edge.fillet` 488 | 46 | corpus/components-arm `ArmBody (Arm:2)/F4:+x\|F4:+y` |
+| 982 | #556 | Fillet or chamfer of one edge whose ends meet curved, slanted or several faces | `edge.chamfer` 494, `edge.fillet` 488 | 46 | corpus/components-arm `ArmBody (Arm:2)/F4:+x\|F4:+y` |
 | 680 | #495 | Sheet metal thickness (rim) faces have no attachment | `face.extrude` 200, `face.press_pull` 200, `face.offset_plane` 140, `face.sketch` 140 | 12 | corpus/modern-sheet-metal `Body1/F2:face:0` |
 | 649 | #390 | Draft refuses walls whose neighbours aren't square to the pull (rounds, other walls), or corners that change after the draft | `face.draft_neutral` 649 | 65 | corpus/components-arm `ArmBody (Arm:2)/F4:+x` |
 | 384 | #494 | Revolve, Offset Face, Boss and the other plastic features drop the body's face sources | `face.offset_plane` 100, `face.sketch` 100, `face.extrude` 92, `face.press_pull` 92 | 11 | corpus/m0-revolve-primitives `Body1/F2:end` |
 | 380 | #493 | Cut walls, hole faces and chamfer faces have no source | `face.extrude` 95, `face.offset_plane` 95, `face.press_pull` 95, `face.sketch` 95 | 17 | corpus/split-body-pieces `Body1 (1)/F4:side:l1` |
-| 336 |  | pattern/mirror copies share or lose their source | `face.extrude` 84, `face.offset_plane` 84, `face.press_pull` 84, `face.sketch` 84 | 6 | demo/pi-case `Body1/F6:top` |
-| 285 |  | occurrence: picks on a moved or pasted component miss | `edge.normal_plane` 55, `edge.axis` 51, `vertex.plane_three_points` 36, `face.extrude` 34 | 2 | corpus/components-arm `ArmBody (Arm:2)/F4:+x` |
-| 239 |  | hole: the cut fails where it meets other faces | `face.hole` 239 | 50 | corpus/m0-revolve-primitives `Body1/F2:end` |
-| 150 |  | hole on a sheet metal face is refused | `face.hole` 150 | 12 | corpus/modern-sheet-metal `Body1/F2:face:0` |
-| 146 |  | loft/sweep/coil faces have no source | `face.offset_plane` 38, `face.sketch` 38, `face.extrude` 35, `face.press_pull` 35 | 10 | oracle/16-sweep `Tube/F3:end` |
+| 336 | #557 | Pattern and mirror copies share or lose their faces' sources | `face.extrude` 84, `face.offset_plane` 84, `face.press_pull` 84, `face.sketch` 84 | 6 | demo/pi-case `Body1/F6:top` |
+| 285 | #558 | Picks on a moved or pasted component miss (construction geometry, Hole, Press Pull, Project) | `edge.normal_plane` 55, `edge.axis` 51, `vertex.plane_three_points` 36, `face.extrude` 34 | 2 | corpus/components-arm `ArmBody (Arm:2)/F4:+x` |
+| 239 | #559 | A through-all Hole along a wall or beside curved faces: the cut fails | `face.hole` 239 | 50 | corpus/m0-revolve-primitives `Body1/F2:end` |
+| 150 | #560 | Hole on a sheet metal face is refused | `face.hole` 150 | 12 | corpus/modern-sheet-metal `Body1/F2:face:0` |
+| 146 | #561 | Loft, Sweep and Coil faces have no source | `face.offset_plane` 38, `face.sketch` 38, `face.extrude` 35, `face.press_pull` 35 | 10 | oracle/16-sweep `Tube/F3:end` |
 | 120 | #431 | Fillet or chamfer along a curved edge: the ball doesn't fit along the edge | `edge.chamfer` 70, `edge.fillet` 50 | 16 | corpus/modern-sheet-metal `Body1/F2:face:14\|F2:face:16` |
 | 100 | #492 | A face split into pieces by a later feature | `face.extrude` 25, `face.offset_plane` 25, `face.press_pull` 25, `face.sketch` 25 | 5 | corpus/issue-489-stacked-join `Body1/F2:top#[F2:side:l1,F4:side:l5]` |
 | 98 | #491 | A face that a Join merged from two features' faces | `face.sketch` 27, `face.offset_plane` 25, `face.extrude` 23, `face.press_pull` 23 | 12 | corpus/issue-489-stacked-join `Body1/F2:side:l2` |
 | 86 |  | Shell's other refusals: a removed face meeting a round as large as the wall, freeform (loft) faces, walls thinner than twice the shell (expected, not filed) | `face.shell` 86 | 22 | corpus/modern-plastic `Body1/F3:face:15` |
-| 84 |  | shell: a corner whose faces don't meet the same way after the move | `face.shell` 84 | 12 | oracle/30-fillet-after-shell `Box/F3:inner:F2:start` |
-| 82 |  | press-pull: the join fails on faces beside curved or slanted neighbours | `face.extrude` 41, `face.press_pull` 41 | 13 | demo/enclosure_steps `Enclosure/F2:start` |
+| 84 | #566 | Shell of swept and sheet metal bodies: a corner whose faces don't meet the same way | `face.shell` 84 | 12 | oracle/30-fillet-after-shell `Box/F3:inner:F2:start` |
+| 82 | #562 | Press Pull beside rounds and curved neighbours: the join fails | `face.extrude` 41, `face.press_pull` 41 | 13 | demo/enclosure_steps `Enclosure/F2:start` |
 | 69 |  | Blend larger than the faces around it (the 10% radius doesn't fit; expected, not filed) | `edge.chamfer` 38, `edge.fillet` 31 | 11 | corpus/modern-plastic `Body1/F2:inner:F1:+x\|F3:face:19` |
-| 56 |  | draft and tapered extrude faces have no source | `face.extrude` 14, `face.offset_plane` 14, `face.press_pull` 14, `face.sketch` 14 | 3 | oracle/05-taper-extrude `Frustum/F2:start` |
-| 48 |  | shell rim and inner faces | `face.extrude` 12, `face.offset_plane` 12, `face.press_pull` 12, `face.sketch` 12 | 8 | demo/pi-case `Body1/F2:top` |
-| 18 |  | construct: axis or tangent plane on a drill-tip cone (NaN) | `curved.axis` 9, `curved.tangent_plane` 9 | 3 | oracle/18-hole-features `Plate/F5:face:15` |
-| 12 |  | edit: the new feature fails after a parameter change | `vertex.plane_three_points+edit` 5, `face.midplane+edit` 2, `curved.axis+edit` 2, `edge.normal_plane+edit` 2 | 4 | demo/enclosure_steps `Enclosure/v[F2:top & F4:inner:F2:side:l4 & F4:inner:F3:blend:F2:side:l` |
-| 12 |  | split body / intersect faces have no source | `face.offset_plane` 4, `face.sketch` 4, `face.extrude` 2, `face.press_pull` 2 | 1 | oracle/22-split-body `Cyl (1)/F2:bottom` |
+| 56 | #563 | Draft and tapered Extrude drop the faces' sources | `face.extrude` 14, `face.offset_plane` 14, `face.press_pull` 14, `face.sketch` 14 | 3 | oracle/05-taper-extrude `Frustum/F2:start` |
+| 48 | #564 | The rim a Shell leaves has no source | `face.extrude` 12, `face.offset_plane` 12, `face.press_pull` 12, `face.sketch` 12 | 8 | demo/pi-case `Body1/F2:top` |
+| 18 | #567 | Axis or tangent plane on a drill tip: no face at NaN | `curved.axis` 9, `curved.tangent_plane` 9 | 3 | oracle/18-hole-features `Plate/F5:face:15` |
+| 12 | #568 | Construction geometry on model edges, faces and vertices is lost when a parameter moves it | `vertex.plane_three_points+edit` 5, `face.midplane+edit` 2, `curved.axis+edit` 2, `edge.normal_plane+edit` 2 | 4 | demo/enclosure_steps `Enclosure/v[F2:top & F4:inner:F2:side:l4 & F4:inner:F3:blend:F2:side:l` |
+| 12 | #565 | Split Body and Combine Intersect drop the faces' sources | `face.offset_plane` 4, `face.sketch` 4, `face.extrude` 2, `face.press_pull` 2 | 1 | oracle/22-split-body `Cyl (1)/F2:bottom` |
 | 8 |  | Axis through a face the kernel sees as a cylinder that the command doesn't (sensor enclosure slot ends; not filed yet) | `curved.axis` 8 | 1 | examples/sensor_enclosure `Lid/F20:side:ls#1` |
 | 7 |  | Other failures in the edit round: the hole cut and blend sizes above, and an extrude from the M0 box's top face whose profile isn't found again (not filed yet) | `face.hole+edit` 3, `face.extrude+edit` 1, `face.press_pull+edit` 1, `edge.chamfer+edit` 1 | 3 | corpus/m0-box-fillet-hole `Body1/F2:top` |
 | 2 |  | A helix edge projected along its axis is a point (expected) | `edge.project` 2 | 1 | oracle/50-sweep-tight-bend `Bend/F3:side:c1#1\|F3:side:c1#2~2` |
