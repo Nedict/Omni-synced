@@ -937,6 +937,23 @@ pub fn paint(p: &Painter, r: Rect, name: &str, ink: Color32, fill: Color32, acce
             pen.arc(8.0, 15.0, 5.0, std::f32::consts::PI, std::f32::consts::PI * 1.5, a);
             pen.arc(8.0, 9.0, 5.0, std::f32::consts::FRAC_PI_2, std::f32::consts::PI, a);
         }
+        // Offset mode icons, drawn with the house `dashed` helper. The source is the solid
+        // line and each result a dashed one. One Side has a single result; Two Sides has one
+        // each way at two different gaps; Symmetric has one each way at the same gap.
+        "offset_one_side" => {
+            pen.line(&[(8.0, 4.0), (8.0, 20.0)], ink);
+            pen.dashed(&[(18.0, 4.0), (18.0, 20.0)], a);
+        }
+        "offset_two_sides" => {
+            pen.line(&[(13.0, 4.0), (13.0, 20.0)], ink);
+            pen.dashed(&[(3.0, 4.0), (3.0, 20.0)], a);
+            pen.dashed(&[(20.0, 4.0), (20.0, 20.0)], a);
+        }
+        "offset_symmetric" => {
+            pen.line(&[(12.0, 4.0), (12.0, 20.0)], ink);
+            pen.dashed(&[(4.0, 4.0), (4.0, 20.0)], a);
+            pen.dashed(&[(20.0, 4.0), (20.0, 20.0)], a);
+        }
         "trim" => {
             pen.line(&[(12.0, 3.0), (12.0, 21.0)], ink);
             pen.line(&[(3.0, 12.0), (12.0, 12.0)], ink);

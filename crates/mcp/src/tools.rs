@@ -181,7 +181,7 @@ pub fn tool_definitions() -> Vec<Value> {
             obj(
                 json!({
                     "path": string("Output file"),
-                    "format": {"type": "string", "enum": ["step", "3mf", "stl", "stla", "obj"]},
+                    "format": {"type": "string", "enum": ["step", "3mf", "3mf-tagged", "stl", "stla", "obj"]},
                     "bodies": {"type": "array", "items": {"type": "string"}, "description": "Body names (default: all)"},
                 }),
                 &["path"],

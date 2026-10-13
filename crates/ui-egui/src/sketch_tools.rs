@@ -335,8 +335,6 @@ enum Mode {
     Points(usize),
     /// Pick sketch entities; `n` run the command (0: until right-click).
     Entities(usize),
-    /// Pick entities until right-click, then one more pick or point (mirror line, centre).
-    EntitiesThen,
     /// Model faces / sketch curves in steps (see the command).
     Steps,
 }
@@ -359,7 +357,6 @@ fn mode(id: &str) -> Option<Mode> {
         "sketch.circle.three_tangent" => Mode::Entities(3),
         "sketch.constrainer" | "sketch.constraint.polygon" => Mode::Entities(0),
         "sketch.centerline" => Mode::Entities(1),
-        "sketch.pattern.circular" => Mode::EntitiesThen,
         "sketch.project_to_surface" | "sketch.intersection_curve" | "sketch.spun_profile" => Mode::Steps,
         _ => return None,
     })
@@ -417,7 +414,6 @@ pub fn hint(id: &str) -> Option<String> {
             "sketch.constrainer" => "Constrain: click one or two entities; right-click to apply",
             "sketch.constraint.polygon" => "Polygon: click the lines of a closed chain; right-click to apply",
             "sketch.centerline" => "Centerline: click lines",
-            "sketch.pattern.circular" => "Circular pattern: click entities, right-click, then click the centre",
             "sketch.project_to_surface" => "Project to surface: click curves of other sketches, right-click, then click the face",
             "sketch.intersection_curve" => "Intersection curve: click two faces",
             "sketch.spun_profile" => "Spun profile: click the body, then the axis line",
@@ -714,27 +710,6 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
                 tool.pts.clear();
             }
         }
-        Mode::EntitiesThen => {
-            // Stage 2 (after a right-click) is marked by a "|" pick.
-            if tool.picks.last().is_some_and(|x| x == "|") {
-                let ents: Vec<String> = tool.picks.iter().filter(|x| *x != "|").cloned().collect();
-                // `sketch.pattern.rectangular` left this flow for a tool window: its count was
-                // hard-coded to 3 here and the command's second count and spacing could not be
-                // reached at all. The circular pattern is the last command still on it.
-                if cmd == "sketch.pattern.circular"
-                    && let Some(p) = at
-                {
-                    let _ = app.run(cmd, json!({"entities": ents, "center": arg(&p), "count": 6}));
-                    tool.picks.clear();
-                }
-                return;
-            }
-            if let Some((id, _)) = sketch_entity(app, &hits)
-                && !tool.picks.contains(&id)
-            {
-                tool.picks.push(id);
-            }
-        }
         Mode::Steps => match cmd {
             "sketch.intersection_curve" => {
                 if let Some(r) = hits.iter().find_map(|h| model_ref(app, h)).filter(|r| r.get("face").is_some()) {
@@ -865,7 +840,7 @@ pub fn finish(app: &mut SolveApp, tool: &mut Tool) -> bool {
             tool.pts.clear();
             true
         }
-        Mode::EntitiesThen | Mode::Steps if !tool.picks.is_empty() && tool.picks.last().is_some_and(|x| x != "|") => {
+        Mode::Steps if !tool.picks.is_empty() && tool.picks.last().is_some_and(|x| x != "|") => {
             tool.picks.push("|".into());
             true
         }
