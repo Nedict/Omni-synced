@@ -3,6 +3,16 @@
 Status as of **2026-10-11**. SolidCraft supports parametric modelling (sketch →
 features → parametric timeline) as an open, pure-Rust, agent-drivable application.
 
+## Driving SolidCraft from the ModelForge C# workspace
+
+The ModelForge C# workspace was written against the SolidWorks COM interop
+(`ModelForge.Interop.sldworks`). `crates/ffi` (a typed C ABI over a SolidCraft session) and
+`csharp/SolidCraft.Interop` (its C# mirror plus a re-implementation of the SolidWorks interfaces)
+let **that same C# drive a SolidCraft session in-process**, with the workspace source unchanged.
+`cargo xtask csharp` builds the library and bridge and runs a conformance harness (30/30); the
+whole workspace's SolidWorks API usage compiles against the interop with zero API errors. See
+[docs/modelforge-interop.md](docs/modelforge-interop.md).
+
 ## At a glance
 
 | Question | Answer |
