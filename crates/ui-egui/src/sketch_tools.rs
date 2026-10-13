@@ -406,7 +406,7 @@ pub fn hint(id: &str) -> Option<String> {
             "sketch.line.midpoint" => "Midpoint line: click the middle, then an end",
             "sketch.arc.tangent" => "Tangent arc: click the end of a line or arc, then the arc's end",
             "sketch.ellipse" => "Ellipse: click the centre, the end of the major axis, then a point on it",
-            "sketch.conic" => "Conic: click the start, the end, then the apex",
+            "sketch.conic" => "Conic: click the start, the end, then the apex; type Rho to shape it (0.5 is a parabola)",
             "sketch.slot.center_point" => "Slot: click the centre, an arc centre, then the width",
             "sketch.slot.arc_three_point" => "Arc slot: click start, a point on the arc, the end, then the width",
             "sketch.slot.arc_center" => "Arc slot: click the centre, the start, the end, then the width",
@@ -688,7 +688,7 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
                 let _ = app.run(cmd, json!({"curve": id, "at": xy(p)}));
             }
         }
-        Mode::Points(n) => {
+        Mode::Points(_) => {
             if periodic_start_snap(app, tool, proj, pos).is_some() {
                 // Only this deliberate click selects periodic interpolation. A
                 // right-click finish and all previously saved splines stay natural.
@@ -700,11 +700,7 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
                 return;
             }
             let Some(p) = at else { return };
-            tool.pts.push(p);
-            if n > 0 && tool.pts.len() >= n {
-                run_points(app, tool);
-                tool.pts.clear();
-            }
+            place_point(app, tool, p);
         }
         Mode::Entities(n) => {
             if cmd == "sketch.fillet" || cmd.starts_with("sketch.chamfer.") {
@@ -847,6 +843,22 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
     }
 }
 
+/// Put down the next point of a point tool: a click, or Enter in one of its value boxes. The
+/// last point runs the command. Typed values are checked first, so a rejected one stays in its
+/// box to be corrected rather than reaching the command.
+pub(crate) fn place_point(app: &mut SolveApp, tool: &mut Tool, p: (Vec2, Option<String>)) {
+    let Some(Mode::Points(n)) = mode(tool.cmd) else { return };
+    if let Err(error) = crate::sketch_dims::validate(app, tool) {
+        app.set_status(error, true);
+        return;
+    }
+    tool.pts.push(p);
+    if n > 0 && tool.pts.len() >= n {
+        run_points(app, tool);
+        tool.pts.clear();
+    }
+}
+
 fn run_points(app: &mut SolveApp, t: &Tool) {
     let p = &t.pts;
     let width = |a: Vec2, b: Vec2, c: Vec2| -> f64 { 2.0 * (b - a).normalized().map(|d| d.cross(c - a).abs()).unwrap_or(1.0) };
@@ -854,7 +866,11 @@ fn run_points(app: &mut SolveApp, t: &Tool) {
         ("sketch.line.midpoint", [m, e]) => json!({"mid": arg(m), "end": xy(e.0)}),
         ("sketch.arc.tangent", [s, e]) => json!({"start": arg(s), "end": xy(e.0)}),
         ("sketch.ellipse", [c, m, q]) => json!({"center": xy(c.0), "major": xy(m.0), "minor": xy(q.0)}),
-        ("sketch.conic", [a, b, x]) => json!({"start": arg(a), "end": arg(b), "apex": arg(x)}),
+        ("sketch.conic", [a, b, x]) => {
+            // The typed Rho box, or the parabola the command defaults to.
+            let rho = crate::sketch_dims::locked_value(app, t, "Rho").unwrap_or(0.5);
+            json!({"start": arg(a), "end": arg(b), "apex": arg(x), "rho": rho})
+        }
         ("sketch.slot.center_point", [c, e, w]) => json!({"center": xy(c.0), "end": xy(e.0), "width": width(c.0, e.0, w.0).max(1e-3)}),
         ("sketch.slot.arc_three_point", [a, th, b, w]) => {
             json!({"start": xy(a.0), "through": xy(th.0), "end": xy(b.0), "width": (2.0 * w.0.dist(b.0)).max(1e-3)})
@@ -982,20 +998,28 @@ pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
     {
         painter.circle_stroke(sp, if snap.is_some() { 6.0 } else { 3.0 }, stroke);
     }
+    let faint = Stroke::new(1.0, tk.rubber_band.gamma_multiply(0.6));
+    let mode = crate::sketch_palette::mode(app);
     for w in t.pts.windows(2) {
-        crate::tools::paint_sketch_path(
-            &[ss.plane.to_world(w[0].0), ss.plane.to_world(w[1].0)],
-            crate::sketch_palette::mode(app),
-            painter,
-            proj,
-            Stroke::new(1.0, tk.rubber_band.gamma_multiply(0.6)),
-        );
+        crate::tools::paint_sketch_path(&[ss.plane.to_world(w[0].0), ss.plane.to_world(w[1].0)], mode, painter, proj, faint);
     }
+    // Placing a conic's apex: the curve is the preview, and the two tangent legs it is built
+    // from are a faint guide. A full-strength cursor rubber band here read as a straight line
+    // being drawn rather than as a curve being shaped.
+    let legs = t.cmd == "sketch.conic" && t.pts.len() == 2;
     if let (Some(last), Some((h, _))) = (t.pts.last(), t.hover.as_ref()) {
-        crate::tools::paint_sketch_path(&[ss.plane.to_world(last.0), ss.plane.to_world(*h)], crate::sketch_palette::mode(app), painter, proj, stroke);
+        let hw = ss.plane.to_world(*h);
+        if legs {
+            if let Some(first) = t.pts.first() {
+                crate::tools::paint_sketch_path(&[ss.plane.to_world(first.0), hw], mode, painter, proj, faint);
+            }
+            crate::tools::paint_sketch_path(&[ss.plane.to_world(last.0), hw], mode, painter, proj, faint);
+        } else {
+            crate::tools::paint_sketch_path(&[ss.plane.to_world(last.0), hw], mode, painter, proj, stroke);
+        }
     }
     if let Some((h, _)) = t.hover.as_ref()
-        && let Some(curve) = crate::tools::preview_curve(t, *h, None)
+        && let Some(curve) = crate::tools::preview_curve(t, *h, None, crate::sketch_dims::locked_value(app, t, "Rho"))
     {
         crate::tools::paint_preview_curve(curve, &ss.plane, painter, proj, stroke, crate::sketch_palette::mode(app));
     }
