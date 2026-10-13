@@ -27,6 +27,10 @@ const MAX_FLAT_SAMPLES: usize = 65_536;
 const MAX_FLAT_PIECES: usize = 4096;
 const MAX_FLAT_WORK: usize = 500_000_000;
 
+/// Starts the warning a fold gives when its `fixed` point touches no material: a recompute keeps
+/// the side the point lies on, and the `sheet.fold` command refuses such a point (#263).
+pub const FOLD_FIXED_OFF_SHEET: &str = "the fold's fixed point is not on the sheet";
+
 fn flat_budget_error() -> DocError {
     DocError::Invalid("sheet metal flat geometry exceeds the bounded processing budget".into())
 }
@@ -1789,9 +1793,21 @@ impl SheetBody {
     /// (`centerline`), start or end (`start`/`end`, from the fixed side), or on the mould line
     /// (`mould`: where the outer faces meet, so the fixed side measures the same to it folded as
     /// flat). On the base the side holding `fixed` (default: the larger side) stays put; on a
-    /// flange the side toward its own bend does. `flip` folds the other way.
+    /// flange the side toward its own bend does. `flip` folds the other way. A `fixed` point that
+    /// touches no material still picks the side it lies on, and sets `warning` (see
+    /// [`FOLD_FIXED_OFF_SHEET`]).
     #[allow(clippy::too_many_arguments)]
-    pub fn add_fold(&mut self, a: Vec3, b: Vec3, angle: f64, radius: f64, position: &str, flip: bool, fixed: Option<Vec3>) -> Result<usize> {
+    pub fn add_fold(
+        &mut self,
+        a: Vec3,
+        b: Vec3,
+        angle: f64,
+        radius: f64,
+        position: &str,
+        flip: bool,
+        fixed: Option<Vec3>,
+        warning: &mut Option<String>,
+    ) -> Result<usize> {
         if !(angle > 1e-6 && angle <= std::f64::consts::PI - 1e-6) {
             return Err(DocError::Invalid("the fold angle must be between 0 and 180°".into()));
         }
@@ -1852,10 +1868,8 @@ impl SheetBody {
                 let in_slab = q.z > -1e-4 && q.z < self.t + 1e-4;
                 let in_hole = self.holes.iter().any(|h| h.contains(q2) && !near(&h.outer.ccw().polyline(1e-3)));
                 if in_slab && ((!point_in(&pts, q2) && !near(&pts)) || in_hole) {
-                    return Err(DocError::Invalid(format!(
-                        "the fixed point ({:.3}, {:.3}, {:.3}) is not on the sheet: pick a point on the face of the side that stays",
-                        p.x, p.y, p.z
-                    )));
+                    *warning =
+                        Some(format!("{FOLD_FIXED_OFF_SHEET} at ({:.3}, {:.3}, {:.3}); the side of the fold line it lies on stays", p.x, p.y, p.z));
                 }
                 q2.dot(n) < l0
             }

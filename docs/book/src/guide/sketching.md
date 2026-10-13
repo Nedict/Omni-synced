@@ -94,6 +94,11 @@ While drawing a fit spline, click its starting point after three distinct sample
 it smoothly. Right-click finishes an ordinary natural fit. Offset accepts both ellipse
 handles and dense fitted curves; the second click sets the side and distance from the curve.
 
+While drawing in a planar sketch, **Construction** (X) changes the line type without
+ending the tool or losing picked points and inline values. The preview and hover feedback
+keep construction dashes and centerline dash-dot patterns visible. With curves selected,
+Construction changes those curves as before.
+
 Enable **3D Sketch** in the Sketch Palette to draw lines, fit splines and points off the plane.
 While placing these points, you can snap to points on other visible sketches. For a bridge
 line, start Line and click an endpoint on each source sketch; each endpoint uses its source
