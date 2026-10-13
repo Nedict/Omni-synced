@@ -259,6 +259,9 @@ fn resolve_uncached(
                 _ => vec![LinkGeom::Point(o)],
             }
         }
+        LinkSource::SketchAxis { name } => {
+            vec![solidcraft_sketch::sketch_axis_geom(name).ok_or_else(|| DocError::Unknown(format!("sketch axis `{name}`")))?]
+        }
         LinkSource::Text { text, at, height, angle } => solidcraft_sketch::text_geometry(text, *at, *height, *angle)?,
         LinkSource::Plane { name } => {
             let pr =
