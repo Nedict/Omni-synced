@@ -140,15 +140,18 @@ fn vertical_drop_group(
     folder_drop_zones: &[(Rect, u64)],
     groups: &[solidcraft_engine::doc::TimelineGroup],
     panel_left: f32,
-    indent_x: f32,
+    drag_x: f32,
     source_group: Option<u64>,
 ) -> Option<u64> {
     if let Some((_, group)) = folder_drop_zones.iter().find(|(rect, _)| rect.shrink2(vec2(0.0, 5.0)).contains(pointer)) {
         return Some(*group);
     }
-    let (deepest, base) = match slot.indent_group {
-        Some(deepest) => (deepest, slot.group),
-        None if slot.group == source_group => (source_group?, None),
+    let (deepest, base, start) = match slot.indent_group {
+        Some(deepest) => (deepest, slot.group, drop_level_anchor(panel_left, slot.group, groups)),
+        None if slot.group == source_group => {
+            let source = source_group?;
+            (source, None, drop_level_anchor(panel_left, Some(source), groups))
+        }
         None => return slot.group,
     };
     let mut path = Vec::new();
@@ -165,13 +168,18 @@ fn vertical_drop_group(
     }
     path.reverse();
     let mut target = base;
+    let indent_x = start + drag_x;
     for id in path {
-        let threshold = panel_left + DROP_LEVEL_ANCHOR + (group_depth(groups, id) + 1) as f32 * FOLDER_INDENT;
+        let threshold = drop_level_anchor(panel_left, Some(id), groups);
         if indent_x >= threshold {
             target = Some(id);
         }
     }
     target
+}
+
+fn drop_level_anchor(panel_left: f32, group: Option<u64>, groups: &[solidcraft_engine::doc::TimelineGroup]) -> f32 {
+    panel_left + DROP_LEVEL_ANCHOR + group.map(|id| (group_depth(groups, id) + 1) as f32 * FOLDER_INDENT).unwrap_or(0.0)
 }
 
 fn vertical_drop_bar_left(panel_left: f32, target: Option<u64>, groups: &[solidcraft_engine::doc::TimelineGroup]) -> f32 {
@@ -217,12 +225,8 @@ fn drag_press_x(response: &egui::Response, fallback: f32) -> f32 {
     response.ctx.input(|input| input.pointer.press_origin()).map_or(fallback, |origin| origin.x)
 }
 
-fn drag_indent_x(items: &DragItems, pointer_x: f32, groups: &[solidcraft_engine::doc::TimelineGroup], panel_left: f32) -> f32 {
-    let start = items
-        .source_group
-        .map(|group| panel_left + DROP_LEVEL_ANCHOR + (group_depth(groups, group) + 1) as f32 * FOLDER_INDENT)
-        .unwrap_or(panel_left + DROP_LEVEL_ANCHOR);
-    start + pointer_x - items.origin_x
+fn drag_x(items: &DragItems, pointer_x: f32) -> f32 {
+    pointer_x - items.origin_x
 }
 
 fn select_only(app: &mut SolveApp, item: TimelineItem) {
@@ -830,16 +834,8 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
         let folder_target = match active {
             Drag::Items(items) => {
                 let panel_left = ui.min_rect().left();
-                vertical_drop_group(
-                    pointer,
-                    slot,
-                    &folder_drop_zones,
-                    &groups,
-                    panel_left,
-                    drag_indent_x(items, pointer.x, &groups, panel_left),
-                    items.source_group,
-                )
-                .filter(|target| valid_folder_target(items, &groups, *target))
+                vertical_drop_group(pointer, slot, &folder_drop_zones, &groups, panel_left, drag_x(items, pointer.x), items.source_group)
+                    .filter(|target| valid_folder_target(items, &groups, *target))
             }
             Drag::Marker => None,
         };
@@ -867,15 +863,8 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
             Drag::Items(items) => {
                 let panel_left = ui.min_rect().left();
-                let folder_target = vertical_drop_group(
-                    pointer,
-                    slot,
-                    &folder_drop_zones,
-                    &groups,
-                    panel_left,
-                    drag_indent_x(&items, pointer.x, &groups, panel_left),
-                    items.source_group,
-                );
+                let folder_target =
+                    vertical_drop_group(pointer, slot, &folder_drop_zones, &groups, panel_left, drag_x(&items, pointer.x), items.source_group);
                 let valid_target = folder_target.is_none_or(|target| valid_folder_target(&items, &groups, target));
                 if valid_target {
                     let mut params = json!({"group": folder_target, "position": slot.position});
@@ -1058,20 +1047,20 @@ mod tests {
             "dropping over a folder row"
         );
         assert_eq!(vertical_drop_group(pos2(80.0, 40.0), inside, &[], &groups, 0.0, 80.0, None), Some(7), "dropping between expanded folder items");
-        assert_eq!(vertical_drop_group(pos2(20.0, 60.0), at_end, &[], &groups, 0.0, 20.0, None), None);
-        assert_eq!(vertical_drop_group(pos2(30.0, 60.0), at_end, &[], &groups, 0.0, 30.0, None), Some(1));
-        assert_eq!(vertical_drop_group(pos2(44.0, 60.0), at_end, &[], &groups, 0.0, 44.0, None), Some(2));
-        assert_eq!(vertical_drop_group(pos2(58.0, 60.0), at_end, &[], &groups, 0.0, 58.0, None), Some(3));
+        assert_eq!(vertical_drop_group(pos2(20.0, 60.0), at_end, &[], &groups, 0.0, 0.0, None), None);
+        assert_eq!(vertical_drop_group(pos2(30.0, 60.0), at_end, &[], &groups, 0.0, 14.0, None), Some(1));
+        assert_eq!(vertical_drop_group(pos2(44.0, 60.0), at_end, &[], &groups, 0.0, 28.0, None), Some(2));
+        assert_eq!(vertical_drop_group(pos2(58.0, 60.0), at_end, &[], &groups, 0.0, 42.0, None), Some(3));
 
         let same_inner_row = VerticalSlot { y: 80.0, position: 2, group: Some(3), indent_group: None };
         assert_eq!(
-            vertical_drop_group(pos2(44.0, 80.0), same_inner_row, &[], &groups, 0.0, 44.0, Some(3)),
+            vertical_drop_group(pos2(44.0, 80.0), same_inner_row, &[], &groups, 0.0, -14.0, Some(3)),
             Some(2),
             "dragging left on the same row should outdent without vertical movement"
         );
         assert_eq!(vertical_drop_bar_left(0.0, Some(2), &groups), 32.0, "the bar should begin before the target level's feature icon");
         let root_drag = DragItems { features: vec![9], groups: vec![], origin_x: 100.0, source_group: None };
-        assert_eq!(drag_indent_x(&root_drag, 114.0, &groups, 0.0), 26.0, "every folder level should require the same 14-point drag");
+        assert_eq!(drag_x(&root_drag, 114.0), 14.0, "every folder level should require the same 14-point drag");
     }
 
     #[test]
@@ -1298,5 +1287,80 @@ mod tests {
             vec!["First", "Penultimate", "Last"],
             "outdenting should preserve timeline order"
         );
+    }
+
+    #[test]
+    fn last_features_in_middle_folder_can_move_to_outer_without_reordering() {
+        let mut harness = Harness::new();
+        harness.app.preferences.timeline_left = true;
+        for (name, body, x) in [
+            ("InnerFeature", "InnerBody", 0),
+            ("MiddleFirst", "MiddleFirstBody", 20),
+            ("MiddleLast", "MiddleLastBody", 40),
+            ("OuterFeature", "OuterBody", 60),
+        ] {
+            harness
+                .app
+                .run(
+                    "solid.box",
+                    json!({"length": 10, "width": 10, "height": 10, "corner": [x, 0, 0], "operation": "new_body", "name": name, "body_name": body}),
+                )
+                .unwrap();
+        }
+        let inner = harness.app.run("timeline.group", json!({"name": "Inner", "features": ["InnerFeature"]})).unwrap()["group"].as_u64().unwrap();
+        let middle = harness
+            .app
+            .run("timeline.group", json!({"name": "Middle", "features": ["MiddleFirst", "MiddleLast"], "groups": [inner]}))
+            .unwrap()["group"]
+            .as_u64()
+            .unwrap();
+        let outer = harness.app.run("timeline.group", json!({"name": "Outer", "features": ["OuterFeature"], "groups": [middle]})).unwrap()["group"]
+            .as_u64()
+            .unwrap();
+        harness.frames(4);
+        harness.step(&json!({"click": {"handle": "timeline:MiddleFirst"}})).unwrap();
+        harness.step(&json!({"click": {"handle": "timeline:MiddleLast"}, "ctrl": true})).unwrap();
+        let start = handle_at("timeline:MiddleLast").unwrap();
+        let destination = pos2(start.x - FOLDER_INDENT, start.y);
+
+        harness.step(&json!({"drag": [[start.x, start.y], [destination.x, destination.y]]})).unwrap();
+
+        let moved: Vec<_> = ["MiddleFirst", "MiddleLast"].into_iter().map(|name| harness.app.session.doc.find_feature(name).unwrap().id).collect();
+        let outer = harness.app.session.doc.timeline_groups.iter().find(|folder| folder.id == outer).unwrap();
+        let middle = harness.app.session.doc.timeline_groups.iter().find(|folder| folder.id == middle).unwrap();
+        assert!(moved.iter().all(|feature| outer.features.contains(feature)), "middle-folder items should move directly into the outer folder");
+        assert!(moved.iter().all(|feature| !middle.features.contains(feature)));
+        assert_eq!(
+            harness.app.session.doc.features.iter().map(|feature| feature.name.as_str()).collect::<Vec<_>>(),
+            vec!["InnerFeature", "MiddleFirst", "MiddleLast", "OuterFeature"]
+        );
+    }
+
+    #[test]
+    fn last_feature_in_middle_sibling_folder_can_exit_with_a_vertical_drag() {
+        let mut harness = Harness::new();
+        harness.app.preferences.timeline_left = true;
+        for (name, body, x) in [("TopFeature", "TopBody", 0), ("MiddleFeature", "MiddleBody", 20), ("BottomFeature", "BottomBody", 40)] {
+            harness
+                .app
+                .run(
+                    "solid.box",
+                    json!({"length": 10, "width": 10, "height": 10, "corner": [x, 0, 0], "operation": "new_body", "name": name, "body_name": body}),
+                )
+                .unwrap();
+        }
+        harness.app.run("timeline.group", json!({"name": "Top", "features": ["TopFeature"]})).unwrap();
+        let middle = harness.app.run("timeline.group", json!({"name": "Middle", "features": ["MiddleFeature"]})).unwrap()["group"].as_u64().unwrap();
+        harness.app.run("timeline.group", json!({"name": "Bottom", "features": ["BottomFeature"]})).unwrap();
+        harness.frames(4);
+        let start = handle_at("timeline:MiddleFeature").unwrap();
+        let bottom = handle_at("timeline-folder:Bottom").unwrap();
+
+        harness.step(&json!({"drag": [[start.x, start.y], [start.x, bottom.y - 10.0]]})).unwrap();
+
+        let feature = harness.app.session.doc.find_feature("MiddleFeature").unwrap().id;
+        let middle = harness.app.session.doc.timeline_groups.iter().find(|folder| folder.id == middle).unwrap();
+        assert!(!middle.features.contains(&feature), "a straight vertical drag to the outside boundary should remove the item from its folder");
+        assert!(harness.app.session.doc.timeline_groups.iter().all(|folder| !folder.features.contains(&feature)));
     }
 }
