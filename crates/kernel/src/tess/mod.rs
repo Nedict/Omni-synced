@@ -87,6 +87,7 @@ pub(crate) fn plan(solid: &Solid, tol: f64, turn: Option<size::Turn>) -> Result<
     for (e, pts) in edges.iter().zip(sampled) {
         nodes.insert(e.id(), pts?);
     }
+    relax_crowded_faces(&faces, &jobs, &rules, &mut nodes);
     let oriented = |e: &mt::Edge| -> Option<Vec<Vec3>> {
         let mut pts = nodes.get(&e.id())?.clone();
         if !e.orientation() {
@@ -137,6 +138,44 @@ pub(crate) fn plan(solid: &Solid, tol: f64, turn: Option<size::Turn>) -> Result<
     plan.edges = edges.iter().filter_map(oriented).collect();
     plan.edge_faces = edge_faces.into_iter().map(|fs| fs.into_iter().map(|f| u32::try_from(f).unwrap_or(u32::MAX)).collect()).collect();
     Ok((plan, stats))
+}
+
+/// Bounded work for the facet angle, as the reference mesher bounds it: a face whose boundary
+/// would get more than `MAX_ANGLE_BOUNDARY` segments has its curved edges sampled again at twice
+/// the angle, as often as it takes, down to the tolerance alone (a plate with a thousand small
+/// holes is not worth a hundred times the work to draw each hole round). An edge keeps one set
+/// of nodes for both its faces, at the coarser of their levels, so every rim of a crowded face
+/// gets the same share whatever the order of the faces.
+fn relax_crowded_faces(faces: &[&mt::Face], jobs: &[(&mt::Edge, f64)], rules: &size::Rules, nodes: &mut HashMap<mt::EdgeID, Vec<Vec3>>) {
+    use truck_meshalgo::tessellation::Deflection;
+    let Some(turn) = rules.turn else { return };
+    let h_of: HashMap<mt::EdgeID, (&mt::Edge, f64)> = jobs.iter().map(|(e, h)| (e.id(), (*e, *h))).collect();
+    let boundaries: Vec<Vec<mt::EdgeID>> =
+        faces.iter().map(|f| f.absolute_boundaries().iter().flat_map(|w| w.edge_iter().map(|e| e.id())).collect()).collect();
+    let mut level: HashMap<mt::EdgeID, u8> = HashMap::new();
+    for l in 1..=Deflection::MAX_RELAX {
+        let segments = |id: &mt::EdgeID| nodes.get(id).map_or(0, |n| n.len().saturating_sub(1));
+        let mut crowded: Vec<mt::EdgeID> = boundaries
+            .iter()
+            .filter(|ids| ids.iter().map(segments).sum::<usize>() > Deflection::MAX_ANGLE_BOUNDARY)
+            .flatten()
+            .filter(|id| level.get(*id).copied().unwrap_or(0) < l)
+            .filter(|id| h_of.get(*id).is_some_and(|(e, _)| !matches!(e.curve(), mt::Curve::Line(_))))
+            .copied()
+            .collect();
+        crowded.sort_unstable_by_key(|id| format!("{id:?}"));
+        crowded.dedup();
+        if crowded.is_empty() {
+            break;
+        }
+        let relaxed = size::Rules { turn: turn.relaxed(l), ..*rules };
+        for id in crowded {
+            if let Some((e, h)) = h_of.get(&id) {
+                nodes.insert(id, edges::sample_edge(e, &relaxed, *h));
+                level.insert(id, l);
+            }
+        }
+    }
 }
 
 /// One face: boundary loops in 3D (shared edge nodes) to parameters and triangles.

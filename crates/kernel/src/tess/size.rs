@@ -41,6 +41,14 @@ impl Turn {
     pub(crate) fn exceeds(&self, angle: f64, sag: f64) -> bool {
         sag > self.floor && angle > self.angle
     }
+
+    /// The angle doubled `level` times, as the reference mesher relaxes it for a crowded face;
+    /// from its last level, or past half a turn, no angle at all (the tolerance alone).
+    pub(crate) fn relaxed(&self, level: u8) -> Option<Turn> {
+        use truck_meshalgo::tessellation::Deflection;
+        let angle = self.angle * f64::from(1u32 << u32::from(level.min(Deflection::MAX_RELAX)));
+        (level == 0 || (level < Deflection::MAX_RELAX && angle < std::f64::consts::PI)).then_some(Turn { angle, ..*self })
+    }
 }
 
 /// The chord tolerance, the longest side and the facet angle of one body.
