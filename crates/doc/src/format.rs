@@ -116,6 +116,8 @@
 //!   Under the same version, Delete Face can leave the gap open (`heal: false` on the feature:
 //!   the faces left are a surface body); a Delete Face without it heals, as it always did, and
 //!   saves as before. 0.9.0 would heal a gap the design leaves open.
+//!   A `SurfaceRevolve` feature (Surface Revolve: `sketch`, optional `profiles`, `curves`,
+//!   `axis`, `angle`, optional `angle2` and `symmetric`) is also first saved in 18.
 
 use serde_json::Value;
 
