@@ -45,6 +45,7 @@
   "ui.break": "Break",
   "ui.cancel": "Cancel",
   "ui.canvases": "Canvases",
+  "ui.center": "Center",
   "ui.centerline": "Centerline",
   "ui.chain": "Chain",
   "ui.chamfer": "Chamfer",
@@ -146,6 +147,7 @@
   "ui.heading_modify": "MODIFY",
   "ui.heading_move": "MOVE",
   "ui.heading_offset": "OFFSET",
+  "ui.heading_move_copy": "MOVE/COPY",
   "ui.heading_offset_plane": "OFFSET PLANE",
   "ui.heading_ok": "OK",
   "ui.heading_parameters": "PARAMETERS",
@@ -311,5 +313,7 @@
   "ui.view_centre": "View centre",
   "ui.visual_style": "Visual style",
   "ui.workspace": "workspace",
+  "ui.x_distance": "X Distance",
+  "ui.y_distance": "Y Distance",
   "ui.zoom_to_the_cursor": "Zoom to the cursor"
 }

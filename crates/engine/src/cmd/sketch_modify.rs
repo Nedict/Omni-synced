@@ -68,6 +68,8 @@ pub static COMMANDS: &[CommandSpec] = &[
         .enabled(in_sketch)
         .params("entities: [curve/point ids], base: [x,y] or point ref, factor: number"),
     CommandSpec::new("sketch.move", "Move/Copy Sketch Entities", move_copy)
+        .at("SKETCH", "MODIFY")
+        .icon("move")
         .enabled(in_sketch)
         .params(concat!("entities: [ids], translate?: [dx,dy], angle?: deg, center?: [x,y], copy?: bool; picking a text outline or linked point transforms its whole text source once, and copies remain editable text", created_doc!())),
     CommandSpec::new("sketch.mirror", "Mirror", mirror)

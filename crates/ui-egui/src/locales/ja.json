@@ -45,6 +45,7 @@
   "ui.break": "分割",
   "ui.cancel": "キャンセル",
   "ui.canvases": "キャンバス",
+  "ui.center": "中心",
   "ui.centerline": "中心線",
   "ui.chain": "チェーン",
   "ui.chamfer": "面取り",
@@ -146,6 +147,7 @@
   "ui.heading_modify": "修正",
   "ui.heading_move": "移動",
   "ui.heading_offset": "オフセット",
+  "ui.heading_move_copy": "移動/コピー",
   "ui.heading_offset_plane": "オフセット平面",
   "ui.heading_ok": "OK",
   "ui.heading_parameters": "パラメータ",
@@ -311,5 +313,7 @@
   "ui.view_centre": "ビュー中心",
   "ui.visual_style": "表示スタイル",
   "ui.workspace": "ワークスペース",
+  "ui.x_distance": "X 距離",
+  "ui.y_distance": "Y 距離",
   "ui.zoom_to_the_cursor": "カーソル位置へズーム"
 }

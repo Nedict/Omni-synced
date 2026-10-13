@@ -4,9 +4,11 @@
 //! reached no tool and no dialog at all, so a press ran `sketch.scale` with no parameters and
 //! the engine answered "`factor` must be a positive number". Offset joins it here (upstream
 //! issue #162 item 1: "Offset does not create a constraint, the size of the offset seems
-//! random"). `sketch.fillet`, the three `sketch.chamfer.*` commands, the sketch patterns,
-//! `sketch.mirror` and `sketch.move` are the same gap and join this module later, each its own
-//! change.
+//! random"). Move joins them here, which had no toolbar placement, no tool and no dialog: its
+//! only route into the UI was the sketch context menu, and that went through the same
+//! empty-parameter fallback and reported an engine error. `sketch.fillet`, the three
+//! `sketch.chamfer.*` commands, the sketch patterns and `sketch.mirror` are the same gap and
+//! join this module later, each its own change.
 
 use serde_json::{Map, Value, json};
 use solidcraft_engine::Sel;
@@ -27,6 +29,10 @@ pub enum Mod {
     /// chain follows. A positive distance is left of the chain, as the command defines it;
     /// `flip` reverses whatever sign the field holds.
     Offset { distance: String, chain: bool, flip: bool },
+    /// `sketch.move`: how far the picked entities move along the sketch's own axes, how far they
+    /// turn about the centre, and whether the originals stay behind. The command already
+    /// carries the copy flag, so the Create Copy row needs no engine change.
+    Move { x: String, y: String, angle: String, copy: bool },
 }
 
 impl Mod {
@@ -34,6 +40,7 @@ impl Mod {
         match self {
             Mod::Scale { .. } => "SKETCH SCALE",
             Mod::Offset { .. } => "OFFSET",
+            Mod::Move { .. } => "MOVE/COPY",
         }
     }
 
@@ -42,6 +49,7 @@ impl Mod {
         Some(match self {
             Mod::Scale { factor } => ("Factor", ValueKind::Unitless, factor),
             Mod::Offset { distance, .. } => ("Distance", ValueKind::Length, distance),
+            Mod::Move { x, .. } => ("X Distance", ValueKind::Length, x),
         })
     }
 }
@@ -50,6 +58,7 @@ fn inputs(k: &Mod) -> Vec<SelInput> {
     match k {
         Mod::Scale { .. } => vec![SelInput::new("Entities", CURVES | POINTS, true), SelInput::new("Base point", POINTS, false)],
         Mod::Offset { .. } => vec![SelInput::new("Curves", CURVES, true)],
+        Mod::Move { .. } => vec![SelInput::new("Entities", CURVES | POINTS, true), SelInput::new("Center", POINTS, false)],
     }
 }
 
@@ -58,6 +67,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     let k = match id {
         "sketch.scale" => Mod::Scale { factor: "2".into() },
         "sketch.offset" => Mod::Offset { distance: "2 mm".into(), chain: true, flip: false },
+        "sketch.move" => Mod::Move { x: "0 mm".into(), y: "0 mm".into(), angle: "0 deg".into(), copy: false },
         _ => return None,
     };
     let i = inputs(&k);
@@ -82,6 +92,20 @@ pub fn rows(ui: &mut egui::Ui, k: &mut Mod) -> bool {
             ui.end_row();
             row_label(ui, "Chain");
             check(ui, chain);
+            ui.end_row();
+        }
+        Mod::Move { x, y, angle, copy } => {
+            row_label(ui, "X Distance");
+            enter |= field(ui, x);
+            ui.end_row();
+            row_label(ui, "Y Distance");
+            enter |= field(ui, y);
+            ui.end_row();
+            row_label(ui, "Angle");
+            enter |= field(ui, angle);
+            ui.end_row();
+            row_label(ui, "Create Copy");
+            check(ui, copy);
             ui.end_row();
         }
     }
@@ -142,9 +166,26 @@ fn signed_length(app: &SolveApp, text: &str, flip: bool) -> Result<f64, String> 
     Ok(if flip { -v } else { v })
 }
 
+/// A typed field as the command wants it: evaluated against the document's parameters, so an
+/// expression works, with a bare number read in the design's own units. An empty field is zero,
+/// the way an untouched row should leave the geometry where it is.
+fn value(app: &SolveApp, text: &str, kind: ValueKind, label: &str) -> Result<f64, String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(0.0);
+    }
+    let doc = &app.session.doc;
+    let v = doc.eval(&doc.with_design_unit(text, kind), kind).map_err(|e| format!("{label}: {e}"))?;
+    if !v.is_finite() {
+        return Err(format!("{label} must be a number"));
+    }
+    Ok(v)
+}
+
 /// The command a sketch modify dialog makes. `sketch.scale` takes a plain evaluated number for
-/// its factor and `sketch.offset` one for its distance, not an expression string: neither has a
-/// model parameter to carry one, unlike `sketch.fillet`'s radius.
+/// its factor, `sketch.offset` one for its distance and `sketch.move` ones for its distances and
+/// angle, not expression strings: none of them has a model parameter to carry one, unlike
+/// `sketch.fillet`'s radius.
 pub fn commands(app: &SolveApp, k: &Mod, inputs: &[SelInput], extra: &Map<String, Value>) -> Result<Vec<(String, Value)>, String> {
     let (cmd, mut params) = match k {
         Mod::Scale { factor: text } => {
@@ -166,6 +207,23 @@ pub fn commands(app: &SolveApp, k: &Mod, inputs: &[SelInput], extra: &Map<String
             }
             let d = signed_length(app, distance, *flip)?;
             ("sketch.offset", json!({"curves": curves, "distance": d, "chain": chain}))
+        }
+        Mod::Move { x, y, angle, copy } => {
+            let entities = entity_ids(inputs, 0);
+            if entities.is_empty() {
+                return Err("Select the sketch curves or points to move first".into());
+            }
+            let dx = value(app, x, ValueKind::Length, "X Distance")?;
+            let dy = value(app, y, ValueKind::Length, "Y Distance")?;
+            let deg = value(app, angle, ValueKind::Angle, "Angle")?.to_degrees();
+            if dx.abs() < 1e-9 && dy.abs() < 1e-9 && deg.abs() < 1e-9 {
+                return Err("Type a distance or an angle to move by".into());
+            }
+            let mut p = json!({"entities": entities, "translate": [dx, dy], "angle": deg, "copy": copy});
+            if let Some(center) = items(inputs, 1).first().and_then(point_id) {
+                p["center"] = json!(center);
+            }
+            ("sketch.move", p)
         }
     };
     if let Value::Object(m) = &mut params {

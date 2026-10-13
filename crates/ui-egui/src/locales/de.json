@@ -45,6 +45,7 @@
   "ui.break": "Unterbrechen",
   "ui.cancel": "Abbrechen",
   "ui.canvases": "Kanvas",
+  "ui.center": "Mittelpunkt",
   "ui.centerline": "Mittellinie",
   "ui.chain": "Kette",
   "ui.chamfer": "Abschrägung",
@@ -146,6 +147,7 @@
   "ui.heading_modify": "ÄNDERN",
   "ui.heading_move": "VERSCHIEBEN",
   "ui.heading_offset": "ABSTAND",
+  "ui.heading_move_copy": "VERSCHIEBEN/KOPIEREN",
   "ui.heading_offset_plane": "ABSTANDSEBENE",
   "ui.heading_ok": "OK",
   "ui.heading_parameters": "PARAMETER",
@@ -311,5 +313,7 @@
   "ui.view_centre": "Ansichtszentrum",
   "ui.visual_style": "Ansichtsstil",
   "ui.workspace": "Arbeitsbereich",
+  "ui.x_distance": "X-Abstand",
+  "ui.y_distance": "Y-Abstand",
   "ui.zoom_to_the_cursor": "Zum Cursor zoomen"
 }
