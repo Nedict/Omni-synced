@@ -23,7 +23,7 @@ const ASPECT: f64 = 4.0;
 /// straight edges to that radius; along a straight direction the normal does not turn, so
 /// long triangles there shade exactly, and the turn and sag limits still divide the bend
 /// across.
-const MIN_LEN_FRACTION: f64 = 1.0 / 8.0;
+const MIN_LEN_FRACTION: f64 = 1.0 / 4.0;
 /// Curvature samples per parameter direction.
 const SAMPLES: usize = 9;
 
