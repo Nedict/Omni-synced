@@ -318,7 +318,7 @@ fn legacy_locate<'a>(bodies: impl Iterator<Item = (usize, &'a ModelBody)>, name:
             let Some([a, bb, c]) = m.tri(t) else { continue };
             let q = closest(p, a, bb, c);
             let d = q.dist(p) - if exact { 1e-9 } else { 0.0 };
-            if best.is_none_or(|x| d < x.0) {
+            if d.is_finite() && best.is_none_or(|x| d < x.0) {
                 best = Some((d, bi, *f as usize, q, !exact, tol));
             }
         }
