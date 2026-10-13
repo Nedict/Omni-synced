@@ -104,13 +104,20 @@
 //!   Construction Geometries); a sketch that shows its construction geometry saves as before.
 //!   A `SurfaceExtrude` feature (Surface Extrude: `sketch`, optional `profiles`, `curves` and
 //!   `extent`, walls only) is first saved in 17; 0.8.0 would refuse the unknown feature.
+//! - 18: a sketch text's link source can carry a `style`: `bold` and `italic` (the font's bold
+//!   or italic face), `align` (`left`, `center` or `right`), `letter_spacing` (mm),
+//!   `line_spacing` (times the font's line distance), `path` (the id of a curve of the same
+//!   sketch the baseline follows) and `reverse`. Version 17 designs need no transformation (a
+//!   text without `style` is set as it always was); the version stamp makes 0.9.0 (which reads
+//!   up to 17) ask for an update instead of dropping the style and setting the text plain, off
+//!   its curve.
 
 use serde_json::Value;
 
 use crate::{DocError, Document, Result};
 
 /// The format this build writes.
-pub const FORMAT: u32 = 17;
+pub const FORMAT: u32 = 18;
 
 pub fn format_string(n: u32) -> String {
     format!("solidcraft/{n}")
@@ -127,7 +134,7 @@ pub fn version_of(s: &str) -> Option<u32> {
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
 type JsonStep = fn(&mut Value) -> Result<()>;
-const JSON_STEPS: [JsonStep; 16] = [
+const JSON_STEPS: [JsonStep; 17] = [
     |_| Ok(()),
     v2_to_v3,
     v3_to_v4,
@@ -141,6 +148,7 @@ const JSON_STEPS: [JsonStep; 16] = [
     |_| Ok(()),
     |_| Ok(()),
     v13_to_v14,
+    |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
