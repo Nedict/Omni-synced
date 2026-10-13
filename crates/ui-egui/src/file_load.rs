@@ -481,18 +481,18 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let t = crate::theme::Tokens::get();
     let mut cancel = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     let id = egui::Id::new("file_loading");
+    let card_id = id.with("card");
     // Above the dialogs over the design; menus, tooltips and the resize edges stay above it.
     ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, id));
+    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, card_id));
     egui::Area::new(id).order(egui::Order::Middle).fixed_pos(cover.min).interactable(true).show(ctx, |ui| {
         ui.set_min_size(cover.size());
         ui.interact(cover, egui::Id::new("file_loading_block"), egui::Sense::click_and_drag());
         ui.painter().rect_filled(cover, 0.0, egui::Color32::from_black_alpha(70));
-        let width = 340.0f32.min(cover.width() - 16.0).max(120.0);
-        let card = egui::Rect::from_center_size(centre, egui::vec2(width, 10.0));
-        let mut child = ui.new_child(
-            egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(egui::pos2(card.left(), card.top() - 60.0), egui::vec2(width, 400.0))),
-        );
-        egui::Frame::popup(child.style()).fill(t.panel).show(&mut child, |ui| {
+    });
+    let width = 340.0f32.min(cover.width() - 16.0).max(120.0);
+    egui::Area::new(card_id).order(egui::Order::Middle).pivot(egui::Align2::CENTER_CENTER).fixed_pos(centre).show(ctx, |child| {
+        egui::Frame::popup(child.style()).fill(t.panel).show(child, |ui| {
             ui.set_width(width - 16.0);
             ui.label(
                 egui::RichText::new(if cancelled {
@@ -531,7 +531,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 ui.add(egui::ProgressBar::new(done as f32 / total as f32).desired_height(6.0));
             }
             ui.add_space(4.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 24.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let b = ui.button("Cancel");
                 crate::scenario::publish_handle("file_loading:cancel", b.rect.center());
                 cancel |= b.clicked();
