@@ -71,3 +71,7 @@ never sees it. To free it:
 
 Shift-orbit snapping includes 45-degree edge views and isometric corner views, with a
 lightly damped spring transition and a small boundary margin to prevent flicker.
+
+On desktop, Ctrl/Cmd+Plus (or Equals) enlarges the interface, Ctrl/Cmd+Minus reduces it,
+and Ctrl/Cmd+0 restores 100%. These shortcuts update the UI scale preference. The UI scale
+slider in Preferences applies the new layout when released, so it stays still while dragging.

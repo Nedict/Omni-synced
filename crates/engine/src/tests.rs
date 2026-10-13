@@ -2806,7 +2806,6 @@ fn a_pattern_repeats_a_fillet_on_the_edges_it_found() {
 
 /// A copy added by raising the count after a rename takes the next number, not the freed one (#372).
 #[test]
-#[ignore = "fails until #372 is fixed"]
 fn raising_a_pattern_count_after_a_rename_numbers_the_new_copy_after_the_others() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "operation": "new_body", "body_name": "X"}));
@@ -2839,7 +2838,6 @@ fn a_profile_added_later_is_named_after_body_name() {
 
 /// The reply names the bodies the feature created, apart from the ones already there (#374).
 #[test]
-#[ignore = "fails until #374 is fixed"]
 fn extrude_reply_lists_the_bodies_it_created() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5, "corner": [0, 50, 0], "operation": "new_body", "body_name": "Base"}));
@@ -2937,4 +2935,54 @@ fn tapered_extrude_of_a_profile_mixing_lines_and_an_arc() {
     let (a0, p, k) = (7.4 * 9.2 + PI * 4.6 * 4.6 / 2.0, 2.0 * 7.4 + 9.2 + PI * 4.6, 2.0 + PI / 2.0);
     let expect = a0 * h + p * t * h * h / 2.0 + k * t * t * h.powi(3) / 3.0;
     assert!(rel(volume(&mut s), expect) < 1e-3, "{} vs {expect}", volume(&mut s));
+}
+
+/// A feature that joins into a body creates none, and its reply says so; a primitive's reply
+/// names the body it made (#374).
+#[test]
+fn feature_replies_list_only_the_bodies_they_created() {
+    let mut s = Session::default();
+    let r = run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Base"}));
+    assert_eq!(r["created_bodies"], json!(["Base"]), "{r}");
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Boss"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [5, 5], "radius": 2}));
+    run(&mut s, "sketch.finish", json!({}));
+    let r = run(&mut s, "solid.extrude", json!({"sketch": "Boss", "distance": "15", "operation": "join"}));
+    assert_eq!(r["created_bodies"], json!([]), "{r}");
+    assert_eq!(r["bodies"], json!(["Base"]), "{r}");
+}
+
+/// Drafting a cylinder's side face 5° from the base plane makes a cone frustum (#547): radius 10
+/// at the base, 10 − 20 · tan 5° at the top.
+#[test]
+#[ignore = "fails until #547 is fixed"]
+fn draft_on_a_cylinder_side_makes_a_frustum() {
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius": 10, "height": 20}));
+    run(&mut s, "solid.draft", json!({"faces": [[10, 0, 10]], "angle": "5 deg", "neutral": "XY"}));
+    let (big, h) = (10.0, 20.0);
+    let small = big - h * 5f64.to_radians().tan();
+    let expect = PI * h / 3.0 * (big * big + big * small + small * small);
+    assert!(rel(volume(&mut s), expect) < 1e-3, "{} vs {expect}", volume(&mut s));
+}
+
+/// The copies added after a rename keep their numbers through undo/redo, save/reopen and a
+/// further count change; lowering the count drops the last copies (#372).
+#[test]
+fn pattern_copies_added_after_a_rename_keep_their_numbers() {
+    let mut s = Session::default();
+    let names = |s: &Session| -> Vec<String> { s.model.state().bodies.iter().map(|b| b.name.clone()).collect() };
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "operation": "new_body", "body_name": "X"}));
+    run(&mut s, "solid.pattern.rectangular", json!({"bodies": ["X"], "dir1": [1, 0, 0], "count1": 3, "spacing1": 20, "name": "Pat"}));
+    run(&mut s, "body.rename", json!({"body": "X (2)", "name": "Second"}));
+    run(&mut s, "timeline.edit", json!({"feature": "Pat", "set": {"pattern": {"count1": "5"}}}));
+    assert_eq!(names(&s), ["X", "Second", "X (3)", "X (4)", "X (5)"]);
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(names(&s), ["X", "Second", "X (3)"]);
+    run(&mut s, "edit.redo", json!({}));
+    assert_eq!(names(&s), ["X", "Second", "X (3)", "X (4)", "X (5)"]);
+    let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    assert_eq!(names(&reopened), ["X", "Second", "X (3)", "X (4)", "X (5)"]);
+    run(&mut s, "timeline.edit", json!({"feature": "Pat", "set": {"pattern": {"count1": "2"}}}));
+    assert_eq!(names(&s), ["X", "Second"]);
 }
