@@ -53,9 +53,10 @@ pub fn anchor(app: &SolveApp, d: &Dialog) -> Option<(Vec3, Option<Vec3>)> {
             let (mid, tangent) = poly_mid(&pts)?;
             // An offset's drag arrow: the in-plane direction the distance grows along. The
             // command offsets a picked curve to its left, and the window's Flip row reverses it.
+            // Symmetric hides Flip and offsets both ways, so the arrow keeps the left side.
             let dir = match &d.kind {
-                Kind::SketchModify(crate::sketch_modify_ui::Mod::Offset { flip, .. }) => {
-                    let n = if *flip { -tangent.perp() } else { tangent.perp() };
+                Kind::SketchModify(crate::sketch_modify_ui::Mod::Offset { flip, mode, .. }) => {
+                    let n = if *flip && !crate::sketch_modify_ui::offset_symmetric(*mode) { -tangent.perp() } else { tangent.perp() };
                     Some(ss.plane.to_world(mid + n) - ss.plane.to_world(mid))
                 }
                 _ => None,

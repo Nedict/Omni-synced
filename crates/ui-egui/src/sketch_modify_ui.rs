@@ -4,7 +4,8 @@
 //! reached no tool and no dialog at all, so a press ran `sketch.scale` with no parameters and
 //! the engine answered "`factor` must be a positive number". Offset joins it here (upstream
 //! issue #162 item 1: "Offset does not create a constraint, the size of the offset seems
-//! random"). Mirror joins them here, which ran as a bare click flow: entities until a
+//! random"), and it now offers the same One Side, Two Sides and Symmetric directions
+//! `solid.extrude` already names. Mirror joins them here, which ran as a bare click flow: entities until a
 //! right-click, then one more click for the line, with nothing on screen saying what was
 //! picked. Move joins them too, which had no toolbar placement, no tool and no dialog: its only
 //! route into the UI was the sketch context menu, and that went through the same
@@ -39,6 +40,21 @@ const CHAMFER_TYPE_ICONS: [&str; 3] = ["sketch_chamfer_equal", "sketch_chamfer_t
 /// The engine's own cap on the copies one sketch pattern may make.
 const MAX_COPIES: f64 = 500.0;
 
+/// The offset directions, in the words and the order `solid.extrude` already uses for them.
+/// One Side offsets the way the distance points. Two Sides adds an independent distance the
+/// other way. Symmetric applies the one distance each way.
+pub(crate) const OFFSET_MODES: [&str; 3] = ["One Side", "Two Sides", "Symmetric"];
+const OFFSET_MODE_ICONS: [&str; 3] = ["offset_one_side", "offset_two_sides", "offset_symmetric"];
+/// Index of Two Sides in [`OFFSET_MODES`] (the mode with a second distance).
+const TWO_SIDES: usize = 1;
+/// Index of Symmetric in [`OFFSET_MODES`].
+const SYMMETRIC: usize = 2;
+
+/// Whether an offset mode index is Symmetric (which hides Flip and offsets both ways).
+pub(crate) fn offset_symmetric(mode: usize) -> bool {
+    mode == SYMMETRIC
+}
+
 /// A sketch modify tool window's values.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Mod {
@@ -48,8 +64,9 @@ pub enum Mod {
     Scale { factor: String },
     /// `sketch.offset`: the curves to offset, the distance typed and whether the connected
     /// chain follows. A positive distance is left of the chain, as the command defines it;
-    /// `flip` reverses whatever sign the field holds.
-    Offset { distance: String, chain: bool, flip: bool },
+    /// `flip` reverses whatever sign the field holds. `mode` indexes [`OFFSET_MODES`], and
+    /// `distance2` is the other side's distance that Two Sides asks for.
+    Offset { distance: String, distance2: String, mode: usize, chain: bool, flip: bool },
     /// `sketch.mirror`: the entities and the line they reflect in. The command has no number of
     /// its own, so the window's whole job is to show what is picked and let a pick be changed
     /// before anything is committed.
@@ -126,7 +143,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     };
     let k = match id {
         "sketch.scale" => Mod::Scale { factor: "2".into() },
-        "sketch.offset" => Mod::Offset { distance: "2 mm".into(), chain: true, flip: false },
+        "sketch.offset" => Mod::Offset { distance: "2 mm".into(), distance2: "2 mm".into(), mode: 0, chain: true, flip: false },
         "sketch.mirror" => Mod::Mirror,
         "sketch.move" => Mod::Move { x: "0 mm".into(), y: "0 mm".into(), angle: "0 deg".into(), copy: false },
         "sketch.pattern.rectangular" => Mod::PatternRect { count: "3".into(), spacing: "20 mm".into(), count2: "1".into(), spacing2: "20 mm".into() },
@@ -149,13 +166,24 @@ pub fn rows(ui: &mut egui::Ui, k: &mut Mod) -> bool {
             enter |= field(ui, factor);
             ui.end_row();
         }
-        Mod::Offset { distance, chain, flip } => {
+        Mod::Offset { distance, distance2, mode, chain, flip } => {
+            row_label(ui, "Direction");
+            icon_choice(ui, &OFFSET_MODES, &OFFSET_MODE_ICONS, mode);
+            ui.end_row();
             row_label(ui, "Distance");
             enter |= field(ui, distance);
             ui.end_row();
-            row_label(ui, "Flip");
-            check(ui, flip);
-            ui.end_row();
+            if *mode == TWO_SIDES {
+                row_label(ui, "Distance 2");
+                enter |= field(ui, distance2);
+                ui.end_row();
+            }
+            // Symmetric offsets both sides, so there is no side left for Flip to swap.
+            if *mode != SYMMETRIC {
+                row_label(ui, "Flip");
+                check(ui, flip);
+                ui.end_row();
+            }
             row_label(ui, "Chain");
             check(ui, chain);
             ui.end_row();
@@ -330,11 +358,11 @@ fn value(app: &SolveApp, text: &str, kind: ValueKind, label: &str) -> Result<f64
 /// A typed distance as the command wants it: the field evaluated against the document's
 /// parameters, with the sign reversed when Flip is set. A bare number means the design's units,
 /// as a typed sketch value does everywhere else.
-fn signed_length(app: &SolveApp, text: &str, flip: bool) -> Result<f64, String> {
+fn signed_length(app: &SolveApp, label: &str, text: &str, flip: bool) -> Result<f64, String> {
     let doc = &app.session.doc;
-    let v = doc.eval(&doc.with_design_unit(text.trim(), ValueKind::Length), ValueKind::Length).map_err(|e| format!("Distance: {e}"))?;
+    let v = doc.eval(&doc.with_design_unit(text.trim(), ValueKind::Length), ValueKind::Length).map_err(|e| format!("{label}: {e}"))?;
     if !v.is_finite() || v.abs() <= 1e-9 {
-        return Err("Distance must be a non-zero number".into());
+        return Err(format!("{label} must be a non-zero number"));
     }
     Ok(if flip { -v } else { v })
 }
@@ -430,13 +458,23 @@ pub fn commands(app: &SolveApp, k: &Mod, inputs: &[SelInput], extra: &Map<String
             }
             ("sketch.scale", p)
         }
-        Mod::Offset { distance, chain, flip } => {
+        Mod::Offset { distance, distance2, mode, chain, flip } => {
             let curves = curve_ids(inputs, 0);
             if curves.is_empty() {
                 return Err("Select the curves to offset first".into());
             }
-            let d = signed_length(app, distance, *flip)?;
-            ("sketch.offset", json!({"curves": curves, "distance": d, "chain": chain}))
+            // Symmetric hides Flip, so a flip left over from another mode does not travel with it.
+            let d = signed_length(app, "Distance", distance, *flip && *mode != SYMMETRIC)?;
+            let mut params = json!({"curves": curves, "distance": d, "chain": chain});
+            if let Value::Object(m) = &mut params {
+                if *mode == SYMMETRIC {
+                    m.insert("symmetric".into(), json!(true));
+                }
+                if *mode == TWO_SIDES {
+                    m.insert("distance2".into(), json!(signed_length(app, "Distance 2", distance2, false)?.abs()));
+                }
+            }
+            ("sketch.offset", params)
         }
         Mod::Mirror => {
             let entities = entity_ids(inputs, 0);
