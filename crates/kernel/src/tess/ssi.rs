@@ -88,11 +88,17 @@ impl Intersection {
         Some(it)
     }
 
-    /// The point at curve parameter `t`, or `None` (near-tangent, or Newton failed).
-    pub(crate) fn eval(&self, t: f64) -> Option<Vec3> {
+    /// The point at curve parameter `t` and both surfaces' parameters there, or `None`
+    /// (near-tangent, or Newton failed).
+    pub(crate) fn eval(&self, t: f64) -> Option<(Vec3, [f64; 4])> {
         let (x, dx) = self.leader.eval(t)?;
         let dir = Vec3::new(dx[0], dx[1], dx[2]).normalized()?;
-        self.newton(Vec3::new(x[0], x[1], x[2]), dir, [x[3], x[4], x[5], x[6]]).map(|(p, _)| p)
+        self.newton(Vec3::new(x[0], x[1], x[2]), dir, [x[3], x[4], x[5], x[6]])
+    }
+
+    /// The two surfaces, in the order of the parameters [`Intersection::eval`] gives.
+    pub(crate) fn surfaces(&self) -> &[EvalSurface; 2] {
+        &self.surfaces
     }
 
     /// Newton from the parameters `x` on S1 = S2, held on the plane through `l` normal to `dir`:
@@ -196,7 +202,7 @@ mod tests {
             let mut last: Option<Vec3> = None;
             for k in 0..=50 {
                 let t = t0 + (t1 - t0) * f64::from(k) / 50.0;
-                let Some(p) = ix.eval(t) else { continue };
+                let Some((p, _)) = ix.eval(t) else { continue };
                 for (s, dom) in ix.surfaces.iter().zip(&ix.domains) {
                     assert!(uv::project(s, dom, p, None, 1e-8).is_some(), "t {t}: {p:?} off a surface");
                 }
