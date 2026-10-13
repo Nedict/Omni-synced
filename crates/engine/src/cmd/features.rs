@@ -1310,7 +1310,33 @@ fn hole(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(vec3(v).ok_or_else(|| bad(cmd, "`to` must be a point [x, y, z] on the face to drill to"))?),
         None => None,
     };
-    add_feature(s, p, FeatureKind::Hole { position, direction, diameter, depth, hole: kind, points: points.map(|x| x.0), thread, to })
+    // A hole picked on a body of another component (a moved one, shown where it is placed) cuts
+    // that body: the pick is already in that body's frame, and the component's own bodies alone
+    // would leave nothing to cut.
+    let mut p = p.clone();
+    if points.is_none()
+        && p.get("participants").is_none()
+        && let Some(body) = body_of_other_component_at(s, position)
+    {
+        p["participants"] = json!([body]);
+    }
+    add_feature(s, &p, FeatureKind::Hole { position, direction, diameter, depth, hole: kind, points: points.map(|x| x.0), thread, to })
+}
+
+/// The body whose face is nearest `p` (within its pick tolerance), when it belongs to another
+/// component than the active one.
+fn body_of_other_component_at(s: &Session, p: Vec3) -> Option<String> {
+    let st = s.model.state();
+    let (_, body) = st
+        .bodies
+        .iter()
+        .filter(|b| !b.body.is_mesh())
+        .filter_map(|b| {
+            let (d, _) = solidcraft_doc::appearance::nearest_face(b, p)?;
+            (d <= solidcraft_doc::appearance::pick_tolerance(b)).then_some((d, b))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))?;
+    (s.doc.model_body_component(body) != s.active_component).then(|| body.name.clone())
 }
 
 /// The points of a sketch a hole drills at when only the sketch is given.

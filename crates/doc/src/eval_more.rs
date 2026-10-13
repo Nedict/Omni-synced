@@ -505,7 +505,7 @@ pub(super) fn sheet_eval(
                 return Err(DocError::Invalid("refold the sheet before folding it".into()));
             }
             let n0 = sh.flanges.len();
-            sh.add_fold(a, b, ang, rr, position, *flip, *fixed)?;
+            sh.add_fold(a, b, ang, rr, position, *flip, *fixed, warning)?;
             tag_flanges(sh, n0, f.id);
             rebuild_sheet(st, i)
         }

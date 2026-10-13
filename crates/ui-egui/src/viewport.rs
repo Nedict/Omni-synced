@@ -429,13 +429,17 @@ fn build_sketch_scene(app: &SolveApp, proj: &Proj) -> GpuScene {
         for (pts, col, cons) in sketch_lines_with_sampler(&ss.sketch, &ss.plane, active, &ss.report.curve_determined, |_, index, plane| {
             crate::sketch_display::curve_sample(app, sid, index, plane, proj).parts.clone()
         }) {
-            let segs = if !cons {
-                pts.windows(2).map(|w| (w[0], w[1])).collect()
-            } else if col == colors::SKETCH_CENTERLINE {
-                dashes(&pts, &[0.6 * unit, 0.15 * unit, 0.05 * unit, 0.15 * unit])
-            } else {
-                dashes(&pts, &[0.3 * unit, 0.2 * unit])
-            };
+            let segs = sketch_segments(
+                &pts,
+                if !cons {
+                    0
+                } else if col == colors::SKETCH_CENTERLINE {
+                    2
+                } else {
+                    1
+                },
+                unit,
+            );
             for (a, b) in segs {
                 sc.line(a.to_f32(), b.to_f32(), sketch_color(&tk, col), if cons { 1.2 } else { 2.0 }, active);
             }
@@ -499,6 +503,15 @@ fn ground_shadow(sc: &mut GpuScene, app: &SolveApp, st: &solidcraft_engine::doc:
                 sc.trans_tri(p01, [0.0; 3], c0);
             }
         }
+    }
+}
+
+/// Sketch line types share the same world-space dash phase in the scene and overlays.
+pub(crate) fn sketch_segments(pts: &[Vec3], mode: u8, unit: f64) -> Vec<(Vec3, Vec3)> {
+    match mode {
+        1 => dashes(pts, &[0.3 * unit, 0.2 * unit]),
+        2 => dashes(pts, &[0.6 * unit, 0.15 * unit, 0.05 * unit, 0.15 * unit]),
+        _ => pts.windows(2).map(|w| (w[0], w[1])).collect(),
     }
 }
 
@@ -1464,8 +1477,9 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
                     && let Some(ci) = ss.sketch.curve_index(id)
                 {
                     for pts in &crate::sketch_display::curve_sample(app, *sketch, ci, &ss.plane, &display_proj(app)).parts {
-                        for w in pts.windows(2) {
-                            sc.line(w[0].to_f32(), w[1].to_f32(), c4(t.sel_edge), 3.5, true);
+                        let mode = ss.sketch.curves.get(ci).map_or(0, |c| if c.centerline { 2 } else { u8::from(c.construction) });
+                        for (a, b) in sketch_segments(pts, mode, grid_step(app.cam.half_height()).0) {
+                            sc.line(a.to_f32(), b.to_f32(), c4(t.sel_edge), 3.5, true);
                         }
                     }
                 }
@@ -1485,8 +1499,9 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
                     && let Some(ci) = ss.sketch.curve_index(id)
                 {
                     for pts in &crate::sketch_display::curve_sample(app, ss.feature, ci, &ss.plane, &display_proj(app)).parts {
-                        for w in pts.windows(2) {
-                            sc.line(w[0].to_f32(), w[1].to_f32(), c4(t.sel_edge), 3.5, true);
+                        let mode = ss.sketch.curves.get(ci).map_or(0, |c| if c.centerline { 2 } else { u8::from(c.construction) });
+                        for (a, b) in sketch_segments(pts, mode, grid_step(app.cam.half_height()).0) {
+                            sc.line(a.to_f32(), b.to_f32(), c4(t.sel_edge), 3.5, true);
                         }
                     }
                 }
@@ -2576,8 +2591,8 @@ fn hover_highlight(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
                 && let Some(ci) = ss.sketch.curve_index(id)
             {
                 for part in &crate::sketch_display::curve_sample(app, *sketch, ci, &ss.plane, proj).parts {
-                    let pts: Vec<Pos2> = part.iter().filter_map(|q| proj.to_screen(*q)).collect();
-                    painter.add(Shape::line(pts, Stroke::new(3.0, col)));
+                    let mode = ss.sketch.curves.get(ci).map_or(0, |c| if c.centerline { 2 } else { u8::from(c.construction) });
+                    crate::tools::paint_sketch_path(part, mode, painter, proj, Stroke::new(3.0, col));
                 }
             }
         }
@@ -3069,6 +3084,53 @@ fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn construction_drawing_and_hover_overlays_preserve_visible_gaps() {
+        fn length(shape: &Shape) -> f32 {
+            match shape {
+                Shape::LineSegment { points, .. } => points[0].distance(points[1]),
+                Shape::Path(path) => path.points.windows(2).map(|w| w[0].distance(w[1])).sum(),
+                Shape::Vec(shapes) => shapes.iter().map(length).sum(),
+                _ => 0.0,
+            }
+        }
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.call("ui.view", json!({"view":"top"}));
+        h.settle();
+        let proj = display_proj(&h.app);
+        let a = Vec2::ZERO;
+        let b = Vec2::new(20.0, 8.0);
+        let whole = proj.to_screen(Vec3::new(b.x, b.y, 0.0)).unwrap().distance(proj.to_screen(Vec3::ZERO).unwrap());
+        let mut draw = crate::tools::Tool::for_command("sketch.line").unwrap();
+        draw.pts.push((a, None));
+        draw.hover = Some((b, None));
+        for mode in [0, 1, 2] {
+            crate::sketch_palette::set_mode(&mut h.app, mode);
+            let ctx = egui::Context::default();
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let painter = ui.ctx().layer_painter(egui::LayerId::background());
+                crate::tools::preview(&h.app, &draw, &painter, &proj);
+            });
+            let preview: f32 = output.shapes.iter().map(|s| length(&s.shape)).sum();
+            let r = h.app.run("sketch.line", json!({"points":[[0,0],[20,8]]})).unwrap();
+            let id = r["curves"][0].as_str().unwrap().to_string();
+            h.app.viewport.hover = Some(Hit::SketchCurve { sketch: h.app.session.active_sketch.unwrap(), id, straight: true });
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                hover_highlight(&h.app, &ui.ctx().layer_painter(egui::LayerId::background()), &proj);
+            });
+            let hover: f32 = output.shapes.iter().map(|s| length(&s.shape)).sum();
+            assert!((preview - hover).abs() < 0.01, "mode {mode}: preview {preview}, hover {hover}");
+            if mode == 0 {
+                assert!((preview - whole).abs() < 0.01);
+            } else {
+                assert!(preview > whole * 0.25 && preview < whole * 0.85, "mode {mode} covers {preview} of {whole}");
+            }
+            h.app.run("edit.undo", json!({})).unwrap();
+        }
+        crate::sketch_palette::set_mode(&mut h.app, 0);
+    }
 
     #[test]
     fn cpu_viewport_uses_section_preview_and_sketch_slice() {

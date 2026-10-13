@@ -973,19 +973,22 @@ pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
     {
         painter.circle_stroke(sp, if snap.is_some() { 6.0 } else { 3.0 }, stroke);
     }
-    let pts: Vec<Pos2> = t.pts.iter().filter_map(|p| to(p.0)).collect();
-    for w in pts.windows(2) {
-        painter.line_segment([w[0], w[1]], Stroke::new(1.0, tk.rubber_band.gamma_multiply(0.6)));
+    for w in t.pts.windows(2) {
+        crate::tools::paint_sketch_path(
+            &[ss.plane.to_world(w[0].0), ss.plane.to_world(w[1].0)],
+            crate::sketch_palette::mode(app),
+            painter,
+            proj,
+            Stroke::new(1.0, tk.rubber_band.gamma_multiply(0.6)),
+        );
     }
-    if let (Some(last), Some((h, _))) = (pts.last(), t.hover.as_ref())
-        && let Some(hs) = to(*h)
-    {
-        painter.line_segment([*last, hs], stroke);
+    if let (Some(last), Some((h, _))) = (t.pts.last(), t.hover.as_ref()) {
+        crate::tools::paint_sketch_path(&[ss.plane.to_world(last.0), ss.plane.to_world(*h)], crate::sketch_palette::mode(app), painter, proj, stroke);
     }
     if let Some((h, _)) = t.hover.as_ref()
         && let Some(curve) = crate::tools::preview_curve(t, *h, None)
     {
-        crate::tools::paint_preview_curve(&curve, &ss.plane, painter, proj, stroke);
+        crate::tools::paint_preview_curve(curve, &ss.plane, painter, proj, stroke, crate::sketch_palette::mode(app));
     }
     // Picked curves highlighted.
     let mut display_budget = solidcraft_engine::render::SamplingBudget::new(32_768, 65_536);

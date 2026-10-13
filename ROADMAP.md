@@ -61,6 +61,11 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 
 ## Dimensioning and error reporting
 
+- Construction (X) preserves the active sketch drawing tool, picked anchors and inline
+  dimension values, so line type can change while a shape is in progress.
+- Planar sketch construction previews and hover feedback keep the same dashed pattern as
+  committed geometry; centerlines retain their dash-dot pattern.
+
 - Point has a default Sketch CREATE toolbar button alongside the existing drawing tools.
   Saved custom layouts are preserved; Reset Toolbar restores the default Point button.
 - Construction planes cannot take an origin-plane name (XY, XZ, YZ, Top, Front, Right). Plane
