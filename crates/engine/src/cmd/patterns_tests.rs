@@ -260,16 +260,32 @@ fn hole_pattern(count1: usize, count2: usize) -> (f64, std::time::Duration) {
     (v, took)
 }
 
+/// Whether a job four times the size took at most about twice linear: `pair` times the small job,
+/// then the big one. Linear is 4×, the old quadratic costs 16× or more. The load of the other test
+/// binaries can rise between the two runs (on a 16-core Mac under `cargo xtask test`, 32 circles
+/// took 4.7 s and 128 took 42 s, though both together take 18 s alone), so a pair that misses is
+/// measured again, up to three times; a quadratic cost misses every time.
+fn scales_linearly(mut pair: impl FnMut() -> (std::time::Duration, std::time::Duration)) -> Result<(), String> {
+    let mut missed = Vec::new();
+    for _ in 0..3 {
+        let (small, big) = pair();
+        if big.as_secs_f64() < 8.0 * small.as_secs_f64() + 2.0 {
+            return Ok(());
+        }
+        missed.push(format!("{small:?} then {big:?}"));
+    }
+    Err(missed.join(", "))
+}
+
 /// 512 identical through-holes from a feature pattern of one cut (#261). 128 took 30 s and 512 did
 /// not finish in 150 s: each copy was cut into an ever more complex plate. The time must grow about
 /// linearly with the count. A ratio, not a time: CI runs every test binary at once and is many
 /// times slower than a machine running this alone (about 6 s for 512 holes there).
 #[test]
 fn pattern_of_512_hole_cuts_finishes_in_reasonable_time() {
-    let (_, t128) = hole_pattern(16, 8);
-    let (_, t512) = hole_pattern(32, 16);
-    // Linear is 4×, the old quadratic cost 16× or more.
-    assert!(t512.as_secs_f64() < 8.0 * t128.as_secs_f64() + 2.0, "128 holes took {t128:?}, 512 took {t512:?}");
+    if let Err(missed) = scales_linearly(|| (hole_pattern(16, 8).1, hole_pattern(32, 16).1)) {
+        panic!("128 holes, then 512, took {missed}");
+    }
 }
 
 /// A plate with `n` Ø2 circles drawn in one sketch (16 a row, 6 mm apart) and cut by one extrude:
@@ -305,7 +321,7 @@ fn sketch_hole_cut(n: usize) -> std::time::Duration {
 /// linear since #261. Linear is 4×. A ratio, not a time (see the 512-hole pattern test).
 #[test]
 fn one_extrude_of_many_sketch_circles_scales_linearly() {
-    let t32 = sketch_hole_cut(32);
-    let t128 = sketch_hole_cut(128);
-    assert!(t128.as_secs_f64() < 8.0 * t32.as_secs_f64() + 2.0, "32 circles took {t32:?}, 128 took {t128:?}");
+    if let Err(missed) = scales_linearly(|| (sketch_hole_cut(32), sketch_hole_cut(128))) {
+        panic!("32 circles, then 128, took {missed}");
+    }
 }
