@@ -282,9 +282,17 @@ fn a_shell_fillet_does_not_follow_a_gone_edge_onto_a_smooth_seam() {
     run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-27.5, -40], "p1": [27.5, 40]}));
     run(&mut s, "sketch.finish", json!({}));
     run(&mut s, "solid.extrude", json!({"distance": 25, "name": "Extrude1"}));
-    run(&mut s, "solid.fillet", json!({"radius": 5, "name": "Fillet1", "edges": [[-27.5, -40, 12.5], [27.5, -40, 12.5], [27.5, 40, 12.5], [-27.5, 40, 12.5]]}));
+    run(
+        &mut s,
+        "solid.fillet",
+        json!({"radius": 5, "name": "Fillet1", "edges": [[-27.5, -40, 12.5], [27.5, -40, 12.5], [27.5, 40, 12.5], [-27.5, 40, 12.5]]}),
+    );
     run(&mut s, "solid.shell", json!({"faces": [[0, 0, 25]], "thickness": 5, "direction": "inside", "name": "Shell1"}));
-    run(&mut s, "solid.fillet", json!({"radius": 5, "name": "Fillet2", "edges": [[-22.5, 35, 15], [22.5, 35, 15], [22.5, -35, 15], [-22.5, -35, 15]]}));
+    run(
+        &mut s,
+        "solid.fillet",
+        json!({"radius": 5, "name": "Fillet2", "edges": [[-22.5, 35, 15], [22.5, 35, 15], [22.5, -35, 15], [-22.5, -35, 15]]}),
+    );
     assert_eq!(error(&s, "Fillet2"), None);
     let edited = s.execute("timeline.edit", &json!({"feature": "Shell1", "set": {"thickness": "2"}}));
     let message = error(&s, "Fillet2").or_else(|| edited.err().map(|e| e.to_string())).unwrap_or_default();
