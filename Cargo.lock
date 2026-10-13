@@ -4848,6 +4848,7 @@ name = "xtask"
 version = "0.8.0"
 dependencies = [
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
