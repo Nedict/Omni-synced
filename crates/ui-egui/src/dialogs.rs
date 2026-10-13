@@ -1350,8 +1350,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         ui.set_max_width(if wide { DIALOG_WIDE_MAX_W } else { DIALOG_MAX_W } - margin);
         // Rows that end at the right edge line up with last frame's content width.
         let total = crate::frame::content_width(ui, wkey, min_w);
-        // Header: "−" folds the dialog, the command name, "»" at the right.
-        ui.horizontal(|ui| {
+        // Header: "−" folds the dialog, the command name, "»" at the right, on the title band.
+        crate::frame::heading(ui, crate::frame::Level::Title, total, |ui| {
+            let total = total - 2.0 * crate::frame::HEADING_MARGIN;
             let fold = if d.collapsed { "+" } else { "−" };
             if ui
                 .add(egui::Button::new(RichText::new(fold).size(14.0)).frame(false))
@@ -1853,7 +1854,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         combo(ui, "sw_op", &OP_LABELS, operation);
                         ui.end_row();
                     }
-                    k @ Kind::Move { .. } => enter |= crate::dialogs_move::rows(ui, k),
+                    k @ Kind::Move { .. } => {
+                        enter |= crate::dialogs_move::rows(ui, k);
+                        row_label(ui, "Create Copy");
+                        extra_check(ui, &mut d.extra, "copy");
+                        ui.end_row();
+                    }
                     Kind::Hole { diameter, depth, kind, cb_diameter, cb_depth, cs_diameter, cs_angle, opts } => {
                         row_label(ui, "Extents");
                         let cur = if to_object_on(&d.inputs) { 1 } else { usize::from(opts.all) * 2 };
@@ -2194,9 +2200,12 @@ fn extra_choice(ui: &mut egui::Ui, extra: &mut serde_json::Map<String, Value>, i
 /// A checkbox stored in the dialog's extra parameters.
 fn extra_check(ui: &mut egui::Ui, extra: &mut serde_json::Map<String, Value>, key: &str) {
     let mut on = extra.get(key).and_then(Value::as_bool).unwrap_or(false);
-    if ui.checkbox(&mut on, "").changed() {
+    let r = ui.checkbox(&mut on, "");
+    if r.changed() {
         extra.insert(key.into(), json!(on));
     }
+    // The box carries no text of its own, so a scenario reaches it by its row handle.
+    publish_row(&r);
 }
 
 /// A value field stored in the dialog's extra parameters (`default` until edited).
@@ -2320,7 +2329,7 @@ pub fn start_sketch(app: &mut SolveApp, sel: &Sel) -> Result<(), String> {
         _ => return Err("Select an origin plane, construction plane or planar body face".into()),
     };
     let before = app.cam;
-    app.run("sketch.create", json!({ "plane": plane }))?;
+    app.run("sketch.create", json!({ "plane": plane })).map_err(|error| crate::friendly_error("sketch.create", &error))?;
     app.pre_sketch_cam = Some(before);
     look_at_sketch(app);
     // On a face: look at the picked point, not the plane's origin (a corner of the face),
@@ -3775,9 +3784,9 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             d
         }
-        FeatureKind::Move { bodies, translate, rotate_axis, angle } => {
+        FeatureKind::Move { bodies, translate, rotate_axis, angle, copy } => {
             let mut d = start("solid.move")?;
-            crate::dialogs_move::for_feature(&mut d, bodies, translate, *rotate_axis, angle.as_ref());
+            crate::dialogs_move::for_feature(&mut d, bodies, translate, *rotate_axis, angle.as_ref(), *copy);
             d
         }
         other => {

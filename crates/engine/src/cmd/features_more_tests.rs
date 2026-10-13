@@ -655,3 +655,26 @@ fn loft_joined_onto_a_box_exports_one_connected_mesh() {
     let pieces: std::collections::BTreeSet<usize> = triangles.iter().map(|t| root(&mut piece, t[0] as usize)).collect();
     assert_eq!(pieces.len(), 1);
 }
+
+/// A cone that takes only a 1 mm chamfer off a cylinder's top edge leaves nearly all of the
+/// cylinder inside it; the intersection is still the chamfered cylinder (#443).
+#[test]
+fn loft_intersect_that_trims_one_edge_changes_the_body() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": 35}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 10, "body_name": "Body"}));
+    for (name, offset, radius) in [("A", -1, 45), ("B", 11, 33)] {
+        run(&mut s, "sketch.create", json!({"plane": "XY", "offset": offset, "name": name}));
+        run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": radius}));
+        run(&mut s, "sketch.finish", json!({}));
+    }
+    run(&mut s, "solid.loft", json!({"sections": [{"sketch": "A"}, {"sketch": "B"}], "operation": "intersect"}));
+    // r 35 up to z = 9, then a frustum to r 34 at z = 10.
+    let want = std::f64::consts::PI * (35.0 * 35.0 * 9.0 + (35.0 * 35.0 + 35.0 * 34.0 + 34.0 * 34.0) / 3.0);
+    let got = volume(&mut s);
+    assert!((got - want).abs() < want * 2e-4, "{got} vs {want}");
+    let m = measure(&mut s);
+    assert_eq!(m["bodies"][0]["face_types"]["cone"], 1, "{m}");
+}

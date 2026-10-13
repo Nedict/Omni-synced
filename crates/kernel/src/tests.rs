@@ -126,6 +126,32 @@ fn revolve_washer_and_sphere() {
 }
 
 #[test]
+fn revolve_adjacent_profiles_on_the_axis() {
+    // Two rectangles on the axis, revolved together: their merged outline keeps a vertex
+    // where the shared edge met the axis. The swept axis pieces used to be zero-area faces,
+    // and cutting the body's flat end out of another failed.
+    let r = Region2 {
+        outer: Loop2::polygon(&[
+            Vec2::new(0.0, 0.0),
+            Vec2::new(30.0, 0.0),
+            Vec2::new(60.0, 0.0),
+            Vec2::new(60.0, 20.0),
+            Vec2::new(30.0, 20.0),
+            Vec2::new(0.0, 20.0),
+        ]),
+        holes: vec![],
+    };
+    let b = revolve(&Plane::XZ, &[r], Vec2::ZERO, Vec2::X, 2.0 * PI).unwrap().pop().unwrap();
+    assert!(rel(measure(&b).unwrap().volume, PI * 400.0 * 60.0) < 5e-4);
+    let faces = b.faces(1e-3).unwrap();
+    assert!(faces.iter().all(|f| f.area > 1e-6), "{:?}", faces.iter().map(|f| f.area).collect::<Vec<_>>());
+    let disc = cylinder(Vec3::new(-1.0, 0.0, 0.0), Vec3::X, 40.0, 3.0).unwrap();
+    let cut = boolean(&disc, &b, BoolOp::Cut).unwrap().unwrap();
+    let want = PI * 1600.0 * 3.0 - PI * 400.0 * 2.0;
+    assert!(rel(measure(&cut).unwrap().volume, want) < 1e-3, "{} vs {want}", measure(&cut).unwrap().volume);
+}
+
+#[test]
 fn chamfer_and_step() {
     let b = box_solid(Vec3::ZERO, Vec3::new(20.0, 20.0, 20.0)).unwrap();
     let c = chamfer(&b, &[Vec3::new(20.0, 10.0, 20.0)], 2.0).unwrap();
@@ -354,6 +380,29 @@ fn fillet_max_finds_the_largest_radius_that_works() {
     assert!((r - 6.999).abs() < 1e-9, "{r}");
     // No edge there: no radius.
     assert!(fillet_max(&b, &[Vec3::new(500.0, 0.0, 5.0)], 1.0).is_none());
+}
+
+/// A corner's rounds too large for its faces are refused as too large, so a fit can reduce
+/// them, also where only the corner build finds it (the edge-by-edge blend failing otherwise).
+#[test]
+fn corner_rounds_larger_than_their_faces_are_too_large() {
+    let (l, eps) = (20.0, 1e-9);
+    let b = box_solid(Vec3::ZERO, Vec3::new(l, l, l)).unwrap();
+    let corner = [Vec3::new(10.0, 0.0, 0.0), Vec3::new(0.0, 10.0, 0.0), Vec3::new(0.0, 0.0, 10.0)];
+    // As wide as the faces: the first edge's round uses up its neighbour, then the edge-by-edge
+    // blend can't find it; the corner build is what says the radius is too large.
+    let e = fillet(&b, &corner, l).unwrap_err();
+    assert!(matches!(e, KernelError::TooLarge(_)), "{e}");
+    let (r, body) = fillet_max(&b, &corner, l).unwrap();
+    assert!((r - 19.99).abs() < eps, "{r}");
+    assert!(body.validity().is_empty(), "{:?}", body.validity());
+    // Three rounds along the edges past the corner cube, and the cube less its sphere octant.
+    let removed = 3.0 * (1.0 - PI / 4.0) * r * r * (l - r) + r * r * r * (1.0 - PI / 6.0);
+    assert!(rel(measure(&body).unwrap().volume, l * l * l - removed) < 2e-4);
+    // Different radii per edge, one wider than its faces.
+    let sel: Vec<(Vec3, f64)> = corner.iter().copied().zip([21.0, 5.0, 5.0]).collect();
+    let e = crate::blend_corner::fillet_radii(&b, &sel).unwrap_err();
+    assert!(matches!(e, KernelError::TooLarge(_)), "{e}");
 }
 
 #[test]
@@ -2148,5 +2197,31 @@ fn loft_joined_onto_a_box_top_is_one_shell() {
     // does, it never returns touching shells as one body.
     if let Ok(Some(r)) = boolean(&bx, &loft_at(17.0), BoolOp::Union) {
         assert!(r.shell_count() == 1 || r.union_lumps().is_ok(), "{} touching shells", r.shell_count());
+    }
+}
+
+/// A disc whose circular edge is rounded smaller than the wall (#319): moved in by the
+/// thickness the round collapses to a sharp edge, where the floor meets the side along a
+/// circle (two arcs with the same ends), not a straight line.
+#[test]
+fn shell_of_a_disc_rounded_smaller_than_the_wall() {
+    use std::f64::consts::PI;
+    let (rd, h, r) = (15.0, 5.0, 1.5);
+    let disc = cylinder(Vec3::new(0.0, 0.0, -h), Vec3::Z, rd, h).unwrap();
+    // The round takes a corner of area r²(1 − π/4) whose centroid is r(10 − 3π)/(3(4 − π))
+    // in from the rim, swept round the axis (Pappus).
+    let corner = r * r * (1.0 - PI / 4.0) * 2.0 * PI * (rd - r * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI)));
+    let (top, bottom) = ([Vec3::ZERO], [Vec3::new(0.0, 0.0, -h)]);
+    for (edge_z, open) in [(-h, &top), (-h, &bottom), (0.0, &bottom)] {
+        let rounded = fillet(&disc, &[Vec3::new(0.0, rd, edge_z), Vec3::new(0.0, -rd, edge_z)], r).unwrap();
+        let v0 = PI * rd * rd * h - corner;
+        for t in [1.6, 2.0] {
+            let s = shell(&rounded, open, t).unwrap_or_else(|e| panic!("round at z {edge_z}, t {t}: {e}"));
+            assert!(s.validity().is_empty(), "round at z {edge_z}, t {t}: {:?}", s.validity());
+            // The cavity: a plain cylinder the thickness in from the side and the closed end.
+            let want = v0 - PI * (rd - t).powi(2) * (h - t);
+            let v = measure(&s).unwrap().volume;
+            assert!(rel(v, want) < 1e-3, "round at z {edge_z}, t {t}: {v} vs {want}");
+        }
     }
 }

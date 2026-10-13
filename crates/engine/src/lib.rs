@@ -157,6 +157,8 @@ pub struct Preview {
     pub before: Arc<ModelState>,
     /// The model after the commands.
     pub after: Arc<ModelState>,
+    /// What each command replied (as `execute` returns it).
+    pub replies: Vec<Value>,
 }
 
 /// Prepared world geometry depends on design/model identity and placement context, not
@@ -191,6 +193,9 @@ pub struct Session {
     pub active_sketch: Option<u64>,
     pub selection: Vec<Sel>,
     pub path: Option<String>,
+    /// One-shot display-only notification during doc.open, before authoritative evaluation.
+    /// Interactive loaders may show it provisionally; it never becomes model state.
+    pub open_preview: Option<Box<dyn Fn(solidcraft_io::DesignPreview) + Send + Sync>>,
     saved: Arc<Document>,
     /// Messages for the command line / log.
     pub log: Vec<String>,
@@ -305,6 +310,7 @@ impl Session {
             active_sketch: None,
             selection: Vec::new(),
             path: None,
+            open_preview: None,
             log: Vec::new(),
             revision: 1,
             auto_project: true,
@@ -347,6 +353,15 @@ impl Session {
     /// Mutable document (copy-on-write).
     pub fn doc_mut(&mut self) -> &mut Document {
         Arc::make_mut(&mut self.doc)
+    }
+
+    /// Prepared placements only: optional save caches must not compute a cold world.
+    pub(crate) fn cached_world_state(&self) -> Option<Arc<solidcraft_doc::ModelState>> {
+        let state = self.model.state();
+        if self.doc.occurrences.is_empty() {
+            return Some(state);
+        }
+        self.world_cache.lock().ok()?.as_ref().filter(|cache| cache.matches(self, &state)).map(|cache| cache.world.clone())
     }
 
     /// Re-evaluate the model after a document change.
@@ -636,6 +651,7 @@ impl Session {
             active_sketch: self.active_sketch,
             selection: self.selection.clone(),
             path: None,
+            open_preview: None,
             saved: self.saved.clone(),
             log: Vec::new(),
             revision: self.revision,
@@ -693,12 +709,12 @@ impl Session {
     /// A `timeline.redefine` is shown even while the timeline is rolled back to the feature
     /// being edited.
     pub fn preview(&self, commands: &[(String, Value)]) -> Result<Preview> {
-        self.scratch().preview_in_place(commands).map(|after| Preview { before: self.model.state(), after: after.model.state() })
+        self.scratch().preview_in_place(commands).map(|(after, replies)| Preview { before: self.model.state(), after: after.model.state(), replies })
     }
 
     /// The same evaluated preview in occurrence coordinates, including uncaptured moves.
     pub fn preview_world(&self, commands: &[(String, Value)]) -> Result<Preview> {
-        self.scratch().preview_in_place(commands).map(|after| Preview { before: self.world_state(), after: after.world_state() })
+        self.scratch().preview_in_place(commands).map(|(after, replies)| Preview { before: self.world_state(), after: after.world_state(), replies })
     }
 
     /// World preview with each session's visibility applied, including new body placements.
@@ -709,15 +725,17 @@ impl Session {
             shown.bodies.retain(|body| session.body_visible(&body.name));
             Arc::new(shown)
         };
-        self.scratch().preview_in_place(commands).map(|after| Preview { before: visible(self), after: visible(&after) })
+        self.scratch().preview_in_place(commands).map(|(after, replies)| Preview { before: visible(self), after: visible(&after), replies })
     }
 
-    fn preview_in_place(mut self, commands: &[(String, Value)]) -> Result<Self> {
+    fn preview_in_place(mut self, commands: &[(String, Value)]) -> Result<(Self, Vec<Value>)> {
         if commands.is_empty() {
             return Err(EngineError::Other("nothing to preview".into()));
         }
+        let mut replies = Vec::with_capacity(commands.len());
         for (id, params) in commands {
             let r = self.execute(id, params)?;
+            replies.push(r.clone());
             if id == "timeline.redefine"
                 && let Some(fid) = r.get("feature").and_then(Value::as_u64)
                 && let Some(idx) = self.doc.feature_index(fid)
@@ -730,7 +748,7 @@ impl Session {
                 }
             }
         }
-        Ok(self)
+        Ok((self, replies))
     }
 
     /// Measure one or two selections (see `inspect.measure` with `items`); errors come back as
@@ -775,7 +793,11 @@ mod construct_tests;
 #[cfg(test)]
 mod delete_face_tests;
 #[cfg(test)]
+mod display_mesh_tests;
+#[cfg(test)]
 mod extent_tests;
+#[cfg(test)]
+mod hole_face_tests;
 #[cfg(test)]
 mod naming_history_tests;
 #[cfg(test)]

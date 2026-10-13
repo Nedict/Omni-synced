@@ -107,7 +107,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("presspull")
         .key("Q")
         .params("face: [x,y,z] and distance: expr (positive adds material, negative cuts), or edges: [[x,y,z]…] and distance (a fillet)"),
-    CommandSpec::new("solid.move", "Move/Copy", move_bodies).at("SOLID", "MODIFY").icon("move").key("M").params("bodies: [names]; translate?: [x,y,z] (exprs or numbers); axis?: [x,y,z]; angle?: expr"),
+    CommandSpec::new("solid.move", "Move/Copy", move_bodies).at("SOLID", "MODIFY").icon("move").key("M").params("bodies: [names]; translate?: [x,y,z] (exprs or numbers); axis?: [x,y,z]; angle?: expr; copy?: bool (default false: keeps the original bodies and transforms a new copy instead of moving them in place)"),
 ];
 
 /// Where an extrude starts and which way is positive: a point inside the (first) profile or
@@ -387,9 +387,11 @@ fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) ->
             (solidcraft_doc::edge_refs(&st, body, edges), solidcraft_doc::edge_names_for(&st, body, edges))
         }
         // Sheet metal edges are named by the sheet model.
-        FeatureKind::SheetFlange { edges, .. } | FeatureKind::SheetHem { edges, .. } => {
-            (Vec::new(), solidcraft_doc::sheet::sheet_edge_names(&s.model.state(), edges))
+        FeatureKind::SheetFlange { edges, .. } => {
+            let points: Vec<_> = edges.iter().map(|e| e.point).collect();
+            (Vec::new(), solidcraft_doc::sheet::sheet_edge_names(&s.model.state(), &points))
         }
+        FeatureKind::SheetHem { edges, .. } => (Vec::new(), solidcraft_doc::sheet::sheet_edge_names(&s.model.state(), edges)),
         _ => (Vec::new(), Vec::new()),
     };
     let face_names = {
@@ -790,6 +792,9 @@ fn fillet(s: &mut Session, p: &Value) -> Result<Value> {
         Some("reduce") => solidcraft_doc::FilletFit::Reduce,
         Some(o) => return Err(bad(cmd, format!("unknown fit `{o}` (exact or reduce)"))),
     };
+    if fit == solidcraft_doc::FilletFit::Reduce && !style.is_constant() {
+        return Err(bad(cmd, "`fit: reduce` takes a constant radius"));
+    }
     let mut out = add_feature(s, p, FeatureKind::Fillet { edges, radius, body: str_(p, "body").map(str::to_string), style, fit })?;
     // The radius the fillet used, when `fit: reduce` reduced it.
     if let Some(id) = out.get("feature").and_then(Value::as_u64)
@@ -870,7 +875,11 @@ fn move_bodies(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(a) = &angle {
         check_expr(s, a, Kind::Angle, cmd, "angle")?;
     }
-    add_feature(s, p, FeatureKind::Move { bodies, translate: t, rotate_axis: p.get("axis").and_then(vec3), angle })
+    add_feature(
+        s,
+        p,
+        FeatureKind::Move { bodies, translate: t, rotate_axis: p.get("axis").and_then(vec3), angle, copy: bool_(p, "copy").unwrap_or(false) },
+    )
 }
 
 fn source_features(s: &Session, p: &Value, cmd: &str) -> Result<Vec<String>> {
@@ -1527,3 +1536,11 @@ mod offset_edit_guard_tests;
 #[cfg(test)]
 #[path = "offset_plane_face_tests.rs"]
 mod offset_plane_face_tests;
+
+#[cfg(test)]
+#[path = "stacked_face_tests.rs"]
+mod stacked_face_tests;
+
+#[cfg(test)]
+#[path = "solid_move_copy_tests.rs"]
+mod solid_move_copy_tests;

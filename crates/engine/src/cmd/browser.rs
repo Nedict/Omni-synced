@@ -464,6 +464,9 @@ fn rename_body(s: &mut Session, p: &Value) -> Result<Value> {
     // Later features refer to bodies by name.
     let mut failed = None;
     for f in d.features.iter_mut().filter(|f| f.id != fid) {
+        if let FeatureKind::Sketch { plane, .. } = &mut f.kind {
+            solidcraft_doc::sheet::rename_plane_sheet_body(plane, &old, name);
+        }
         if let FeatureKind::Sketch { plane, sketch } = &mut f.kind
             && let Some(anchor) = super::sketch::face::anchor_mut(plane)
             && anchor.target.body == old
@@ -614,7 +617,13 @@ fn redefine_sketch(s: &mut Session, p: &Value) -> Result<Value> {
     s.pending_moves = trial.pending_moves;
 
     let attachment = s.doc.feature(id).and_then(|feature| match &feature.kind {
-        FeatureKind::Sketch { plane, .. } => Some(if super::sketch::face::anchor(plane).is_some() { "exact_face" } else { "fixed" }),
+        FeatureKind::Sketch { plane, .. } => Some(if super::sketch::face::anchor(plane).is_some() {
+            "exact_face"
+        } else if solidcraft_doc::sheet::plane_sheet_face(plane).is_some() {
+            "sheet_face"
+        } else {
+            "fixed"
+        }),
         _ => None,
     });
     Ok(json!({ "sketch": id,"attachment":attachment }))

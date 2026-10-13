@@ -269,6 +269,73 @@ impl EmbossFace {
     }
 }
 
+/// One edge of an edge flange feature: a point on the sheet's edge and, where given, this
+/// edge's own angle and height (expressions) in place of the feature's. In a design file an
+/// edge with neither is the point `[x, y, z]`, as every edge was before; one with its own
+/// values is `{"point": [x, y, z], "angle": "…", "height": "…"}`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FlangeEdge {
+    pub point: Vec3,
+    pub angle: Option<String>,
+    pub height: Option<String>,
+}
+
+impl FlangeEdge {
+    /// An edge that takes the feature's angle and height.
+    pub fn at(point: Vec3) -> Self {
+        Self { point, angle: None, height: None }
+    }
+}
+
+impl Serialize for FlangeEdge {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        if self.angle.is_none() && self.height.is_none() {
+            return self.point.serialize(s);
+        }
+        let mut m = s.serialize_map(None)?;
+        m.serialize_entry("point", &self.point)?;
+        if let Some(a) = &self.angle {
+            m.serialize_entry("angle", a)?;
+        }
+        if let Some(h) = &self.height {
+            m.serialize_entry("height", h)?;
+        }
+        m.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for FlangeEdge {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        use serde::de::value::{MapAccessDeserializer, SeqAccessDeserializer};
+        /// The object form; a key this build doesn't know is refused, not dropped.
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Own {
+            point: Vec3,
+            #[serde(default)]
+            angle: Option<String>,
+            #[serde(default)]
+            height: Option<String>,
+        }
+        struct Edge;
+        impl<'de> serde::de::Visitor<'de> for Edge {
+            type Value = FlangeEdge;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a point [x, y, z] or an edge {point, angle?, height?}")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, seq: A) -> std::result::Result<FlangeEdge, A::Error> {
+                Vec3::deserialize(SeqAccessDeserializer::new(seq)).map(FlangeEdge::at)
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> std::result::Result<FlangeEdge, A::Error> {
+                let o = Own::deserialize(MapAccessDeserializer::new(map))?;
+                Ok(FlangeEdge { point: o.point, angle: o.angle, height: o.height })
+            }
+        }
+        d.deserialize_any(Edge)
+    }
+}
+
 /// Feature definitions.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -659,9 +726,10 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         reverse: bool,
     },
-    /// Edge flanges on sheet edges (points on the top or bottom edges).
+    /// Edge flanges on sheet edges (points on the top or bottom edges). `height` and `angle`
+    /// hold for every edge that doesn't carry its own (see [`FlangeEdge`]).
     SheetFlange {
-        edges: Vec<Vec3>,
+        edges: Vec<FlangeEdge>,
         height: String,
         angle: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -874,6 +942,10 @@ pub enum FeatureKind {
         rotate_axis: Option<Vec3>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         angle: Option<String>,
+        /// When set, the original bodies are kept and the transform is applied to a new copy
+        /// of each instead of moving them in place.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        copy: bool,
     },
     /// A non-parametric base feature: bodies imported from a STEP file. The STEP text is kept
     /// in the design (it is the B-rep), so the design reopens without the original file.
@@ -1521,9 +1593,12 @@ impl FeatureKind {
                 v.extend([length, draft, thickness].into_iter().flatten().map(String::as_str));
             }
             FeatureKind::SheetContour { distance, .. } => v.push(distance),
-            FeatureKind::SheetFlange { height, angle, radius, .. } => {
+            FeatureKind::SheetFlange { edges, height, angle, radius, .. } => {
                 v.extend([height.as_str(), angle]);
                 v.extend(radius.iter().map(String::as_str));
+                for e in edges {
+                    v.extend([&e.angle, &e.height].into_iter().flatten().map(String::as_str));
+                }
             }
             FeatureKind::SheetFold { angle, radius, .. } => {
                 v.push(angle);

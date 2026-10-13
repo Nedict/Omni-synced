@@ -164,6 +164,8 @@ pub struct MenuState {
     pub confirm: Option<crate::delete::Pending>,
     /// The Properties window: title and measurements.
     pub props: Option<(String, Value)>,
+    /// The viewport menu opened over something: it offers Select Other.
+    pub over_geometry: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -344,6 +346,11 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
     let mut v = Vec::new();
     if let Some((_, label)) = &app.last_command {
         v.push(act("ui.repeat", &format!("Repeat {label}"), "redo"));
+        v.push(Item::sep());
+    }
+    // Everything under the cursor, for what lies beneath something else.
+    if app.menu.over_geometry {
+        v.push(act("ui.selectOther", "Select Other…", "").key("Hold click"));
         v.push(Item::sep());
     }
     if app.session.active_sketch.is_some() {
@@ -725,6 +732,9 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             if let Some((id, _)) = app.last_command.clone() {
                 app.start(&id);
             }
+        }
+        "ui.selectOther" => {
+            crate::select_other::open(app, at);
         }
         "ui.delete" if item.params.is_some() => crate::delete::request(app, p),
         "ui.delete" => delete(app),
@@ -1161,6 +1171,8 @@ fn commit_rename(app: &mut SolveApp, r: &Rename) {
 /// Open the viewport menu at a screen position. A right-click on something not selected
 /// selects it first, so the menu is about what is under the cursor.
 pub fn open(app: &mut SolveApp, at: Pos2) {
+    app.menu.over_geometry = app.viewport.hover.is_some();
+    crate::select_other::close(app);
     if app.session.active_sketch.is_none()
         && let Some(h) = app.viewport.hover.clone()
         && let Some((_, sel)) = crate::viewport::candidate(app, &[h])

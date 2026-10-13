@@ -127,3 +127,10 @@ replace any Dock shortcut with the old name (open `SolidCraft.app`, then
 
 `flatpak remote-modify --user --url=https://bherbruck.github.io/solidcraft/flatpak/repo/ solvecraft`
 (use your remote's name), then `flatpak update --user`.
+
+## Draft design containers
+
+The #303 draft used `solvecraft-container/1`. `crates/io/src/design.rs` accepts that
+marker alongside `solidcraft-container/1`, and writes only the new marker. Optional
+old previews are discarded; required document/blob validation is unchanged. The
+`draft_container_marker_remains_readable` regression covers this shim.

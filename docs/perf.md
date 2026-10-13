@@ -52,6 +52,105 @@ different worker counts: exact display meshes, measures, body/face source identi
 names, colours/opacity, units, rotated assembly placements, duplicates and partial failures
 across the batch boundary. The public analytic/FreeCAD reference suite also checks STEP
 export/import; its current results are reported in docs/oracle.md.
+## Design storage: container and binary payloads (#303, phase one)
+
+Design containers avoid formatting/parsing imported mesh coordinates as JSON numbers.
+The metadata serializer replaces embedded fields before creating JSON values, without
+cloning the full document or duplicating its schema. Binary coordinates retain `f64`
+precision, indices retain `u32`, and SHA-256 deduplicates identical payloads. The reader
+checks archive budgets, CRCs, hashes, exact lengths, finite coordinates and index bounds.
+
+Reproduce the storage measurements with an optimized `ci` IO test executable:
+
+```sh
+cargo test -p solidcraft-io --profile ci benchmark_ -- --ignored --nocapture --test-threads=1
+```
+
+The benchmarks generate an original 100,000-vertex/100,000-triangle mesh and a STEP
+containing 512 disjoint 10 mm boxes. Fixtures are written under `CARGO_TARGET_DIR`
+(or the crate's `target` directory). Each compares nine encoding/decoding samples;
+atomic-save samples include encoding, temporary-file flush, replacement and `.bak`
+creation and alternate JSON/container ordering. Documents are compared after decoding.
+These are storage measurements, separate from timeline evaluation or first-frame latency.
+
+On Windows x64, based on upstream `e6e0a7e` before STEP parallelism (#312), three
+consecutive optimized runs without concurrent compilation gave
+the following medians of the three nine-sample medians (milliseconds, fast mode):
+
+| Fixture / operation | JSON | Container |
+|---|---:|---:|
+| Mesh size, bytes | 15,139,115 | 3,600,828 |
+| Mesh encode | 23.336 | 6.094 |
+| Mesh decode | 57.175 | 2.962 |
+| Mesh atomic save | 52.924 | 14.856 |
+| STEP size, bytes | 1,998,793 | 1,950,056 |
+| STEP encode | 1.507 | 1.473 |
+| STEP decode | 1.479 | 1.318 |
+| STEP atomic save | 7.213 | 7.087 |
+
+Three alternating fresh-process `solidcraft-cli bench-open` runs of each STEP encoding
+returned the same 512 bodies and 6,144 triangles. Median read-plus-parse was 2.274 ms
+for JSON and 2.151 ms for the container; median evaluation was 218.559/236.915 ms and
+display meshing 203.160/197.790 ms respectively. Geometry dominates and these variable
+results do not establish an end-to-end STEP opening improvement. Fresh processes do
+not imply a cold operating-system file cache, and these are not desktop first-frame times.
+
+Fast mode stores STEP and mesh payloads directly. Explicit `"compression":"compact"`
+compresses them at Deflate level one; it is a space/CPU tradeoff. In the initial
+512-box STEP experiment, compression reduced 1,998,793 JSON bytes to 578,659 package
+bytes but increased median encoding from 1.68 to 5.02 ms and decoding from 1.76 to
+4.18 ms. That regression is why compression is not the default. PNG/JPEG are stored
+directly in either policy; small parametric metadata uses Deflate level one.
+
+Plain JSON remains a supported Save As/export format; `.json` saves keep JSON and
+scripts may explicitly select either format. The CLI detects packages before attempting
+JSON parsing. Desktop/browser recovery and browser downloads also use the container.
+See [the versioned container format](design-container.md) for layout and bounds.
+
+This phase does not restore evaluated B-reps, skip STEP import, or make cold geometry
+rebuilds instant. A matching cache key is not enough to trust unvalidated geometry.
+Evaluated B-rep/state restoration remains further work in #303. The provisional saved
+display described below is separate from #287's import parallelism.
+
+## Provisional saved display (#303)
+
+Desktop Open can show an experimental saved picture while the existing file worker rebuilds geometry.
+It requires an explicit `preview: true` engine Save/Save As call. Ordinary saves omit
+display caches to avoid the measured overhead; native evaluated B-rep caching remains open.
+The cache contains only already warm evaluated display meshes, capped at 8 MiB, 1,024
+bodies and 100,000 triangles. Larger or cold models save without it. Cached geometry is
+never used for editing, measurements or picking. Source/document fingerprints and
+payload validation reject stale or malformed caches; cancellation and document/revision
+checks prevent a background result from replacing newer work.
+
+The cached picture is prepared on the file worker from the same file snapshot as the
+normal Open command. It adds work before reconstruction, rather than bypassing it, so
+measure preview readiness and full editing readiness separately. Cached display also
+adds file size and save work; the storage-only results above exclude that optional data.
+
+For an engine-level save benchmark, first generate the original 512-box STEP fixture
+with the ignored IO benchmark, then run the warmed-session benchmark:
+
+```sh
+cargo test --workspace --profile ci benchmark_step_storage -- --ignored --nocapture --test-threads=1
+cargo test --workspace --profile ci benchmark_warm_design_save_with_preview -- --ignored --nocapture --test-threads=1
+```
+
+Set `CARGO_TARGET_DIR` to the workspace's absolute target directory in both commands.
+The engine benchmark alternates nine JSON/container atomic saves, includes the optional
+display cache, and verifies both preview decoding and authoritative document identity.
+Three runs on Windows, with no concurrent build or test suite, measured median atomic
+JSON saves of 7.679/7.610/7.630 ms and container-with-preview saves of
+10.319/10.633/10.541 ms. Preview decoding took 0.964/0.961/1.130 ms; the container
+was 2,510,490 bytes. This optional preview costs save time on this STEP fixture.
+An actual desktop sensor-enclosure opening on e8a8e0f prepared its saved picture in
+24.320 ms; geometry reconstruction, display warmup and thumbnail preparation took
+8,913.212 ms. The same preview experiment is now explicitly opt-in; full geometry
+readiness still requires reconstruction.
+For actual desktop opening phases, launch with `SOLIDCRAFT_PROFILE_OPEN=1`: `ready_ms`
+reports saved-picture preparation, while the normal phase log reports reconstruction,
+display warmup and thumbnail completion. Neither log measures the exact GPU first frame.
+
 ## Analytic extrusion source preparation
 
 New-body extrusion certificates now prepare the sketch's bounded analytic segments once

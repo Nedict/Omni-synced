@@ -89,11 +89,12 @@ fn mismatch(a: &solidcraft_geom::Mesh, b: &solidcraft_geom::Mesh, result: &solid
 
 /// How one body sits relative to another, from sample points: (fraction of `b`'s samples
 /// inside `a`, fraction of `a`'s samples inside `b`).
-fn overlap(a: &solidcraft_geom::Mesh, b: &solidcraft_geom::Mesh) -> Option<(f64, f64)> {
-    if a.triangles.len() + b.triangles.len() > 80_000 {
-        return None;
-    }
-    let (ia, ib) = (a.inside_index(), b.inside_index());
+fn overlap(
+    a: &solidcraft_geom::Mesh,
+    b: &solidcraft_geom::Mesh,
+    ia: &solidcraft_geom::InsideIndex,
+    ib: &solidcraft_geom::InsideIndex,
+) -> Option<(f64, f64)> {
     let frac = |inner: &solidcraft_geom::Mesh, inner_i: &solidcraft_geom::InsideIndex, outer_i: &solidcraft_geom::InsideIndex| -> Option<f64> {
         let bx = inner.bounds();
         let s = bx.size();
@@ -110,7 +111,49 @@ fn overlap(a: &solidcraft_geom::Mesh, b: &solidcraft_geom::Mesh) -> Option<(f64,
         }
         (n >= 50).then(|| hit as f64 / n as f64)
     };
-    Some((frac(b, &ib, &ia)?, frac(a, &ia, &ib)?))
+    Some((frac(b, ib, ia)?, frac(a, ia, ib)?))
+}
+
+/// Whether some facet of `m` has material just under it (`depth` in from its middle) that is
+/// inside the other body (`inside`) or outside it. With `within`, only facets in that box.
+fn under_surface(
+    m: &solidcraft_geom::Mesh,
+    own: &solidcraft_geom::InsideIndex,
+    other: &solidcraft_geom::InsideIndex,
+    depth: f64,
+    inside: bool,
+    within: Option<&solidcraft_geom::Aabb3>,
+) -> bool {
+    m.triangles.iter().filter_map(|t| m.tri(t)).any(|[p, q, r]| {
+        let Some(n) = (q - p).cross(r - p).normalized() else { return false };
+        let c = (p + q + r) * (1.0 / 3.0) - n * depth;
+        let near = within.is_none_or(|b| c.x >= b.min.x && c.x <= b.max.x && c.y >= b.min.y && c.y <= b.max.y && c.z >= b.min.z && c.z <= b.max.z);
+        // A wall thinner than `depth` puts the point outside its own body: no evidence.
+        near && other.contains(c) == inside && own.contains(c)
+    })
+}
+
+/// Whether the bodies' facetings show that the samples' answer (see [`trivial`]) is wrong:
+/// their surfaces pass through each other, or a facet of one has material under it on the
+/// wrong side of the other. Overlaps and gaps shallower than `tol` are not seen.
+fn contradicted(
+    (ma, ia): (&solidcraft_geom::Mesh, &solidcraft_geom::InsideIndex),
+    (mb, ib): (&solidcraft_geom::Mesh, &solidcraft_geom::InsideIndex),
+    (disjoint, b_in_a, a_in_b): (bool, bool, bool),
+    tol: f64,
+) -> bool {
+    if !(disjoint || b_in_a || a_in_b) {
+        return false;
+    }
+    if ma.crosses(mb, tol) {
+        return true;
+    }
+    if disjoint {
+        let (ba, bb) = (ma.bounds(), mb.bounds());
+        let shared = solidcraft_geom::Aabb3 { min: ba.min.max(bb.min), max: ba.max.min(bb.max) };
+        return !shared.is_empty() && (under_surface(ma, ia, ib, tol, true, Some(&shared)) || under_surface(mb, ib, ia, tol, true, Some(&shared)));
+    }
+    (a_in_b && under_surface(ma, ia, ib, tol, false, None)) || (b_in_a && !a_in_b && under_surface(mb, ib, ia, tol, false, None))
 }
 
 /// Sampled overlap fraction below which two bodies share no material.
@@ -119,6 +162,11 @@ const NONE: f64 = 0.003;
 /// Booleans that need no intersection: one body clear of the other, or inside it. These are
 /// common with coincident curved faces (a hole drilled where one already is, a body joined
 /// with itself), which the intersection can't handle. `counts`: the operands' faces and edges.
+/// `tol`: how far the meshes' surfaces may pass through each other and still count as touching
+/// (they are facetings of the bodies, so a few times their tolerance).
+///
+/// The second value is false when the facetings contradict the samples ([`contradicted`]):
+/// the answer is then only what to fall back on if the bodies can't be intersected.
 fn trivial(
     a: &Body,
     b: &Body,
@@ -126,11 +174,20 @@ fn trivial(
     ma: &solidcraft_geom::Mesh,
     mb: &solidcraft_geom::Mesh,
     counts: &[(usize, usize)],
-) -> Option<Option<Body>> {
-    let (b_in_a, a_in_b) = overlap(ma, mb)?;
+    tol: f64,
+) -> Option<(Option<Body>, bool)> {
+    if ma.triangles.len() + mb.triangles.len() > 80_000 {
+        return None;
+    }
+    let (ia, ib) = (ma.inside_index(), mb.inside_index());
+    let (b_in_a, a_in_b) = overlap(ma, mb, &ia, &ib)?;
     const ALL: f64 = 0.997;
     let disjoint = b_in_a < NONE && a_in_b < NONE;
-    match op {
+    // The samples only say that nearly all of one body is clear of, or inside, the other. A
+    // small part can still be on the wrong side (a peg overlapping a rib, a chamfer taken off
+    // one edge), and then the bodies have to be intersected.
+    let sure = !contradicted((ma, &ia), (mb, &ib), (disjoint, b_in_a > ALL, a_in_b > ALL), tol);
+    let answer = match op {
         // Sampling only selects this candidate. Validate every shell boundary and the
         // complete material/void nesting before preserving a disconnected union.
         BoolOp::Union if disjoint => {
@@ -153,7 +210,8 @@ fn trivial(
             Some(Some(candidate))
         }
         _ => None,
-    }
+    };
+    answer.map(|r| (r, sure))
 }
 
 #[cfg(test)]
@@ -169,13 +227,40 @@ mod shortcut_tests {
             let other = crate::sphere(direction * distance, 10.0).unwrap();
             let other_mesh = other.tessellate(0.03).unwrap();
             let counts = record::counts(&[&outer, &other]);
-            assert!(trivial(&outer, &other, BoolOp::Union, &mesh, &other_mesh, &counts).is_none());
-            assert!(trivial(&other, &outer, BoolOp::Union, &other_mesh, &mesh, &counts).is_none());
+            assert!(trivial(&outer, &other, BoolOp::Union, &mesh, &other_mesh, &counts, 0.09).is_none());
+            assert!(trivial(&other, &outer, BoolOp::Union, &other_mesh, &mesh, &counts, 0.09).is_none());
         }
         let protruding = crate::sphere(direction * 9.001, 1.0).unwrap();
         let protruding_mesh = protruding.tessellate(0.03).unwrap();
         let counts = record::counts(&[&outer, &protruding]);
-        assert!(trivial(&outer, &protruding, BoolOp::Cut, &mesh, &protruding_mesh, &counts).is_none());
+        assert!(trivial(&outer, &protruding, BoolOp::Cut, &mesh, &protruding_mesh, &counts, 0.09).is_none());
+    }
+
+    /// Bodies sharing less than the samples can see still meet: no shortcut, and the boolean
+    /// gives the shared part.
+    #[test]
+    fn a_small_overlap_is_not_taken_for_apart_or_inside() {
+        let cube = |x: f64, y: f64| crate::box_solid(Vec3::new(x, y, 0.0), Vec3::new(x + 10.0, y + 10.0, 10.0)).unwrap();
+        let a = cube(0.0, 0.0);
+        // A 0.01 slab between parallel faces (0.1 % of each cube), and a 0.02 x 0.02 corner.
+        for (b, want) in [(cube(9.99, 0.0), 1.0), (cube(9.98, 9.98), 0.004)] {
+            let (ma, mb) = (a.tessellate(0.001).unwrap(), b.tessellate(0.001).unwrap());
+            let counts = record::counts(&[&a, &b]);
+            for op in [BoolOp::Intersect, BoolOp::Cut, BoolOp::Union] {
+                assert!(trivial(&a, &b, op, &ma, &mb, &counts, 0.003).is_none_or(|(_, sure)| !sure), "{op:?} {want}");
+            }
+            let shared = boolean(&a, &b, BoolOp::Intersect).unwrap().unwrap();
+            assert!((crate::measure(&shared).unwrap().volume - want).abs() < 1e-9, "{want}");
+            let cut = boolean(&a, &b, BoolOp::Cut).unwrap().unwrap();
+            assert!((crate::measure(&cut).unwrap().volume - (1000.0 - want)).abs() < 1e-9, "{want}");
+        }
+        // Touching on a face, and one cube well inside the other, still take the shortcut.
+        let (touching, inner) = (cube(10.0, 0.0), crate::box_solid(Vec3::new(2.0, 2.0, 2.0), Vec3::new(8.0, 8.0, 8.0)).unwrap());
+        let ma = a.tessellate(0.001).unwrap();
+        for (b, op) in [(&touching, BoolOp::Intersect), (&inner, BoolOp::Intersect), (&inner, BoolOp::Union)] {
+            let counts = record::counts(&[&a, b]);
+            assert!(trivial(&a, b, op, &ma, &b.tessellate(0.001).unwrap(), &counts, 0.003).is_some_and(|(_, sure)| sure), "{op:?}");
+        }
     }
 }
 
@@ -250,8 +335,10 @@ pub fn boolean(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
         };
     }
     r = r.map(|result| result.map(|body| body.inherit_regularization_protection(a).inherit_regularization_protection(b)));
-    if matches!(op, BoolOp::Cut | BoolOp::Union) {
-        r = r.and_then(|result| result.map(|body| body.with_preserved_boolean_planar_sources(a, b, op == BoolOp::Cut)).transpose());
+    match op {
+        BoolOp::Cut => r = r.and_then(|result| result.map(|body| body.with_preserved_boolean_planar_sources(a, b, true)).transpose()),
+        BoolOp::Union => r = r.and_then(|result| result.map(|body| body.with_preserved_union_planar_sources(a, b)).transpose()),
+        BoolOp::Intersect => {}
     }
     if r.is_ok() {
         merge(diagnostics);
@@ -321,10 +408,17 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
     // one mesh of the result. Returns (plausible, volume).
     // Shells that touch were never fused: coincident back-to-back faces leave the intersection
     // nothing to cut, so it returns both operands side by side (#396). Volume and point
-    // sampling cannot see that; the shell grouping can. (Operands already like that, saved
-    // before this was caught, stay joinable.)
-    let unfused =
-        |r: &Body| op == BoolOp::Union && r.shell_count() > 1 && r.union_lumps().is_err() && a.union_lumps().is_ok() && b.union_lumps().is_ok();
+    // sampling cannot see that; the shell grouping can. Only contact over an area counts
+    // (bodies tangent along a line stay two lumps), and operands already like that, saved
+    // before this was caught, stay joinable.
+    let unfused = |r: &Body| {
+        op == BoolOp::Union
+            && r.shell_count() > 1
+            && r.union_lumps().is_err()
+            && a.union_lumps().is_ok()
+            && b.union_lumps().is_ok()
+            && crate::coplanar::faces_touch(a, b)
+    };
     let check = |r: &Body| -> (bool, f64) {
         let Ok(mr) = r.tessellate_with(tol_m, true) else { return (false, f64::NAN) };
         let v = mr.measure().volume;
@@ -347,10 +441,16 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
         (consistent, v)
     };
     // One body clear of or inside the other: no intersection needed.
+    // Kept for the end when the facetings disagree with it: bodies that touch along curved
+    // faces can pass through each other slightly, and often can't be intersected.
+    let mut doubted = None;
     if let (Some(ma), Some(mb)) = &meshes
-        && let Some(r) = trivial(a, b, op, ma, mb, &counts)
+        && let Some((r, sure)) = trivial(a, b, op, ma, mb, &counts, 3.0 * tol_m)
     {
-        return Ok(r);
+        if sure {
+            return Ok(r);
+        }
+        doubted = Some(r);
     }
     let mut last = String::new();
     // Coincident faces make the intersection fail after many retries; push them apart first.
@@ -397,19 +497,27 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
             return Ok(Some(body));
         }
     }
-    if !APART.with(|c| c.get()) && crate::coplanar::has_coincident_faces(a, b) {
+    // Coincident planar faces: push them apart (exactly). Tried once, before the general
+    // boolean; why it failed is reported if everything else fails too.
+    let mut apart_failed = String::new();
+    if !APART.with(|c| c.get()) {
         APART.with(|c| c.set(true));
         let (r, diagnostics) = capture_boolean_diagnostics(|| crate::coplanar::boolean_apart(a, b, op));
         APART.with(|c| c.set(false));
-        if let Some(Ok(Some(body))) = r {
-            let (ok, _) = check(&body);
-            if ok {
-                merge(diagnostics);
-                let mut event = BooleanFallback::new(BooleanStrategy::CoplanarSeparation);
-                event.face_shift_mm = size * 0.0229;
-                record(event);
-                return Ok(Some(body));
+        match r {
+            Some(Ok(Some(body))) => {
+                let (ok, v) = check(&body);
+                if ok {
+                    merge(diagnostics);
+                    let mut event = BooleanFallback::new(BooleanStrategy::CoplanarSeparation);
+                    event.face_shift_mm = size * 0.0229;
+                    record(event);
+                    return Ok(Some(body));
+                }
+                apart_failed = format!("; faces pushed apart gave an implausible volume {v:.4}");
             }
+            Some(Err(e)) => apart_failed = format!("; {e}"),
+            Some(Ok(None)) | None => {}
         }
     }
     // A face standing wholly inside a coincident face of the other body, back to back, and no
@@ -419,7 +527,7 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
         && b.solid.boundaries().len() == 1
         && let Some(Ok(body)) = crate::coplanar::inset(a, b)
         && let (Some(ma), Some(mb)) = &meshes
-        && overlap(ma, mb).is_some_and(|(b_in_a, a_in_b)| b_in_a < NONE && a_in_b < NONE)
+        && overlap(ma, mb, &ma.inside_index(), &mb.inside_index()).is_some_and(|(b_in_a, a_in_b)| b_in_a < NONE && a_in_b < NONE)
         && check(&body).0
     {
         return Ok(Some(body));
@@ -486,28 +594,7 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
             return Ok(None);
         }
     }
-    // Coincident planar faces: push them apart (exactly) and try again.
-    if !APART.with(|c| c.get()) {
-        APART.with(|c| c.set(true));
-        let (r, diagnostics) = capture_boolean_diagnostics(|| crate::coplanar::boolean_apart(a, b, op));
-        APART.with(|c| c.set(false));
-        match r {
-            Some(Ok(Some(body))) => {
-                let (ok, v) = check(&body);
-                if ok {
-                    merge(diagnostics);
-                    let mut event = BooleanFallback::new(BooleanStrategy::CoplanarSeparation);
-                    event.face_shift_mm = size * 0.0229;
-                    record(event);
-                    return Ok(Some(body));
-                }
-                last = format!("{last}; faces pushed apart gave an implausible volume {v:.4}");
-            }
-            Some(Ok(None)) => {}
-            Some(Err(e)) => last = format!("{last}; {e}"),
-            None => {}
-        }
-    }
+    last.push_str(&apart_failed);
     // Coincident faces defeat the B-rep boolean; bodies with only planar faces have an exact
     // polygon fallback.
     match crate::polybool::planar_boolean(a, b, op) {
@@ -560,7 +647,15 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
             Err(e) => last = format!("{last}; nudged: {e}"),
         }
     }
-    Err(KernelError::Failed(format!("boolean {op:?}: {last}")))
+    match doubted {
+        Some(r) => {
+            let mut event = BooleanFallback::new(BooleanStrategy::UnverifiedShortcut);
+            event.tolerance_mm = 3.0 * tol_m;
+            record(event);
+            Ok(r)
+        }
+        None => Err(KernelError::Failed(format!("boolean {op:?}: {last}"))),
+    }
 }
 
 /// `r`, a boolean of the target and `nb` (the tool nudged), with its history over the target and

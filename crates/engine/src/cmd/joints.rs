@@ -37,7 +37,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("joint.list", "List Joints", list).noundo().params("→ joints (type, occurrences, values, limits), origins, links, degrees of freedom, conflicts"),
     CommandSpec::new("joint.solve", "Solve Joints", solve_cmd).params("re-place the occurrences from the joints → conflicts, errors, dof"),
     CommandSpec::new("inspect.interference", "Interference", interference).at("SOLID", "INSPECT").icon("interference").noundo().params(
-        "bodies?: [names] (default: all, in world placement) → pairs that overlap with the overlap volume, area, bounding box and centre",
+        "bodies?: [names] (default: all, in world placement) → interferences: pairs that overlap with the overlap volume, area, bounding box and centre; unchecked: pairs that could not be checked, with the reason",
     ),
 ];
 
@@ -531,7 +531,7 @@ fn interference(s: &mut Session, p: &Value) -> Result<Value> {
     if bodies.len() > 200 {
         return Err(bad(cmd, "too many bodies (200 at most)"));
     }
-    let mut hits = Vec::new();
+    let (mut hits, mut unchecked) = (Vec::new(), Vec::new());
     for (i, a) in bodies.iter().enumerate() {
         for b in bodies.iter().skip(i + 1) {
             let (ba, bb) = (a.mesh().bounds(), b.mesh().bounds());
@@ -544,14 +544,34 @@ fn interference(s: &mut Session, p: &Value) -> Result<Value> {
             if apart {
                 continue;
             }
-            let Ok(Some(o)) = solidcraft_kernel::boolean(&a.body, &b.body, solidcraft_kernel::BoolOp::Intersect) else { continue };
-            let Ok(m) = solidcraft_kernel::measure(&o) else { continue };
+            // A pair whose shared part can't be worked out is reported, not passed as clear.
+            let (shared, report) =
+                solidcraft_kernel::capture_boolean_diagnostics(|| solidcraft_kernel::boolean(&a.body, &b.body, solidcraft_kernel::BoolOp::Intersect));
+            let mut skip = |reason: String| unchecked.push(json!({"a": a.name, "b": b.name, "reason": reason}));
+            let shared = match shared {
+                Ok(o) => o,
+                Err(e) => {
+                    skip(e.to_string());
+                    continue;
+                }
+            };
+            if let Some(reason) = report.unverified() {
+                skip(reason);
+            }
+            let Some(o) = shared else { continue };
+            let m = match solidcraft_kernel::measure(&o) {
+                Ok(m) => m,
+                Err(e) => {
+                    skip(e.to_string());
+                    continue;
+                }
+            };
             if m.volume > 1e-9 * a.body.size().max(1.0).powi(3) {
                 hits.push(json!({"a": a.name, "b": b.name, "volume_mm3": m.volume, "area_mm2": m.area, "center": m.centroid, "bbox": {"min": m.bbox.min, "max": m.bbox.max}}));
             }
         }
     }
-    Ok(json!({"interferences": hits, "count": hits.len(), "checked": bodies.len()}))
+    Ok(json!({"interferences": hits, "count": hits.len(), "checked": bodies.len(), "unchecked": unchecked}))
 }
 
 #[cfg(test)]

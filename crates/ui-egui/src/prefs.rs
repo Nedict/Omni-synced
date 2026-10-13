@@ -414,7 +414,9 @@ pub fn zoom_sign(app: &SolveApp) -> f64 {
 }
 
 /// Orbit by pixel deltas: around the view's centre, or, with "orbit around the cursor", around
-/// the model point that was under the cursor when the drag began (kept still on screen).
+/// the model point that was under the cursor when the drag began (kept still on screen). A drag
+/// that begins over empty space turns around the centre of the visible geometry instead, so the
+/// model never swings around a far-off point. The pivot is chosen once, when the drag begins.
 pub fn orbit(app: &mut SolveApp, rect: egui::Rect, dx: f64, dy: f64, press: Option<Pos2>) {
     if !app.preferences.orbit_cursor {
         app.cam.orbit(dx, dy);
@@ -438,7 +440,8 @@ pub fn orbit(app: &mut SolveApp, rect: egui::Rect, dx: f64, dy: f64, press: Opti
     }
 }
 
-/// The model point under a screen position, or the point at the view's depth.
+/// The model point under a screen position. Over empty space: the centre of the visible bodies
+/// and sketches (what Fit frames), or the view's centre when nothing is visible.
 fn pivot_under(app: &SolveApp, proj: &crate::viewport::Proj, at: Pos2) -> Vec3 {
     use crate::viewport::Hit;
     for h in crate::viewport::pick(app, proj, at) {
@@ -448,10 +451,8 @@ fn pivot_under(app: &SolveApp, proj: &crate::viewport::Proj, at: Pos2) -> Vec3 {
             _ => {}
         }
     }
-    let (o, d) = proj.ray(at);
-    let n = app.cam.back();
-    let den = d.dot(n);
-    if den.abs() > 1e-9 { o + d * ((app.cam.target - o).dot(n) / den) } else { app.cam.target }
+    let b = solidcraft_engine::view::bounds(&app.session);
+    if b.is_empty() { app.cam.target } else { b.center() }
 }
 
 /// Units per millimetre and the unit's name.
@@ -815,7 +816,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             });
             ui.end_row();
             let snap_help = if app.preferences.nav == OPENSCAD_NAV { "" } else { "; hold Shift during orbit to snap" };
-            note(ui, &format!("{}{snap_help}; the wheel zooms", nav_preset(&app.preferences.nav).help));
+            note(ui, &format!("{}; Ctrl+left drag on empty space orbits{snap_help}; the wheel zooms", nav_preset(&app.preferences.nav).help));
             ui.label("Context menu");
             ui.checkbox(&mut app.preferences.radial_context_menu, "Radial context menu");
             ui.end_row();
@@ -1317,6 +1318,31 @@ mod tests {
         orbit(&mut app, rect, 40.0, 25.0, Some(at));
         let s = crate::viewport::projection(&app, rect).to_screen(pivot).unwrap();
         assert!(s.distance(at) < 2.0, "{s:?}");
+    }
+
+    /// A drag that starts over empty space turns around the visible geometry's centre, not a
+    /// point far off to the side; with nothing visible it turns around the view's centre.
+    #[test]
+    fn orbiting_from_empty_space_turns_around_the_visible_geometry() {
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        app.run("solid.box", json!({"length": 40, "width": 40, "height": 40})).unwrap();
+        app.preferences.orbit_cursor = true;
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        app.fit_view();
+        let corner = egui::pos2(10.0, 10.0);
+        let proj = crate::viewport::projection(&app, rect);
+        let hits = crate::viewport::pick(&app, &proj, corner);
+        use crate::viewport::Hit;
+        assert!(!hits.iter().any(|h| matches!(h, Hit::Face { .. } | Hit::Edge { .. } | Hit::Vertex { .. })), "the corner is empty space");
+        let centre = solidcraft_engine::view::bounds(&app.session).center();
+        orbit(&mut app, rect, 40.0, 25.0, Some(corner));
+        assert_eq!(app.viewport.orbit_pivot, Some(centre));
+
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        app.preferences.orbit_cursor = true;
+        app.cam.target = solidcraft_engine::geom::Vec3::new(5.0, -3.0, 2.0);
+        orbit(&mut app, rect, 40.0, 25.0, Some(corner));
+        assert_eq!(app.viewport.orbit_pivot, Some(solidcraft_engine::geom::Vec3::new(5.0, -3.0, 2.0)));
     }
 
     /// The Y up preference turns the view: the camera's up axis follows it, startup included.

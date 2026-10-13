@@ -1,11 +1,18 @@
-//! File formats. Designs are saved as JSON (`.solidcraft`): the parametric document only, the
-//! model is recomputed on load. Bodies export as STL (binary or ASCII), OBJ, STEP and 3MF; STEP
+//! File formats. Designs use JSON or versioned containers (`.solidcraft`); the authoritative
+//! document rebuilds on load and optional display caches remain provisional. Bodies export
+//! as STL (binary or ASCII), OBJ, STEP and 3MF; STEP
 //! files import as a base feature (see [`step_import_feature`]), 3MF and STL files as mesh bodies
 //! (see [`mesh_import_feature`]).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod design;
+mod design_metadata;
 mod dxf;
+pub use design::{
+    DesignCompression, DesignContainerReader, DesignPreview, is_design_container, read_design_preview, write_design_container,
+    write_design_container_with_compression, write_design_container_with_preview,
+};
 mod legacy_dir;
 pub mod safe_write;
 mod sketch2d;
@@ -35,7 +42,10 @@ pub const DESIGN_EXTS: [&str; 2] = [DESIGN_EXT, LEGACY_DESIGN_EXT];
 
 /// Is this a design file name (`.solidcraft`, or the legacy extension), any case?
 pub fn is_design_path(path: &str) -> bool {
-    std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| DESIGN_EXTS.iter().any(|x| e.eq_ignore_ascii_case(x)))
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| DESIGN_EXTS.iter().chain(["json"].iter()).any(|x| e.eq_ignore_ascii_case(x)))
 }
 /// Largest design file we read.
 pub const MAX_DESIGN_BYTES: usize = 256 << 20;
@@ -359,6 +369,9 @@ pub fn read_design(bytes: &[u8]) -> Result<Document> {
     if bytes.len() > MAX_DESIGN_BYTES {
         return Err(IoError::Invalid("design file too large".into()));
     }
+    if is_design_container(bytes) {
+        return design::read(bytes);
+    }
     let s = std::str::from_utf8(bytes).map_err(|_| IoError::Invalid("design file is not UTF-8 JSON".into()))?;
     Ok(Document::from_json(s)?)
 }
@@ -551,6 +564,16 @@ mod tests {
         assert_eq!(f.body_names, ["Body1"]);
         assert_eq!(f.body_names.len(), 1);
         assert!(matches!(&f.kind, FeatureKind::Import { file, .. } if file == "My Part.step"));
+        let mut imported = Document::new("Imported STEP round trip");
+        imported.add_feature(f.kind, None).unwrap();
+        let packaged = read_design(&write_design_container(&imported).unwrap()).unwrap();
+        assert_eq!(packaged, imported);
+        let mut rebuilt = Model::new();
+        rebuilt.evaluate(&packaged);
+        assert!(rebuilt.results.iter().all(|r| r.error.is_none()));
+        let state = rebuilt.state();
+        assert_eq!(state.bodies.len(), 1);
+        assert!((solidcraft_kernel::measure(&state.bodies[0].body).unwrap().volume - 6000.0).abs() < 1e-6);
         assert!(step_import_feature(b"ISO-10303-21;", "x.step").is_err());
         assert!(step_import_feature(&[0xff, 0xfe, 0x00], "x.step").is_err());
         assert!(Format::from_name("a.dwg").is_err());

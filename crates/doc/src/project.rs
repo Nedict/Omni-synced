@@ -259,7 +259,10 @@ fn resolve_uncached(
                 _ => vec![LinkGeom::Point(o)],
             }
         }
-        LinkSource::Text { text, at, height, angle } => solidcraft_sketch::text_geometry(text, *at, *height, *angle)?,
+        LinkSource::SketchAxis { name } => {
+            vec![solidcraft_sketch::sketch_axis_geom(name).ok_or_else(|| DocError::Unknown(format!("sketch axis `{name}`")))?]
+        }
+        LinkSource::Text { text, at, height, angle, font } => solidcraft_sketch::text_geometry_in(font.as_deref(), text, *at, *height, *angle)?,
         LinkSource::Plane { name } => {
             let pr =
                 if Plane::named(name).is_some() { PlaneRef::Origin { name: name.clone() } } else { PlaneRef::Construction { name: name.clone() } };
@@ -321,6 +324,7 @@ fn certified_planar_construction(body: &crate::ModelBody, index: usize) -> bool 
             Some(
                 solidcraft_kernel::FaceSource::ShellPlanar { producer: Some(_), .. }
                     | solidcraft_kernel::FaceSource::Box { producer: Some(_), .. }
+                    | solidcraft_kernel::FaceSource::CylinderCap { .. }
                     | solidcraft_kernel::FaceSource::CertifiedExtrudeSide { plane: Some(_), .. }
                     | solidcraft_kernel::FaceSource::CertifiedExtrudeCap { .. }
             )

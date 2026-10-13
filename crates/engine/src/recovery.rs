@@ -193,7 +193,8 @@ impl Autosaver {
             return Ok(false);
         }
         let io = |e: std::io::Error| EngineError::Other(format!("autosave: {e}"));
-        solidcraft_io::write_atomic(&file(&self.dir, &self.id, "solidcraft"), &solidcraft_io::write_design(&s.doc), false).map_err(io)?;
+        let bytes = solidcraft_io::write_design_container(&s.doc)?;
+        solidcraft_io::write_atomic(&file(&self.dir, &self.id, solidcraft_io::DESIGN_EXT), &bytes, false).map_err(io)?;
         let entry =
             Entry { id: self.id.clone(), path: s.path.clone(), name: s.doc.name.clone(), saved_at: unix_now(), features: s.doc.features.len() };
         let meta = serde_json::to_vec_pretty(&entry).map_err(|e| EngineError::Other(e.to_string()))?;

@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use solidcraft_geom::Vec3;
 use truck_modeling::{self as mt, builder};
 
+use crate::blend::too_large;
 use crate::body::{Solid, from_p3, p3};
 use crate::record::Rebuild;
 use crate::{KernelError, Result};
@@ -299,14 +300,14 @@ fn trim_curved_seam(seam: &mt::Edge, a: Option<mt::Vertex>, b: Option<mt::Vertex
             .unwrap_or(end);
         let t = curve.search_nearest_parameter(v.point(), hint, 100).ok_or_else(|| unsupported("the blend is larger than the neighbouring faces"))?;
         if !(t.is_finite() && from_p3(mt::ParametricCurve::subs(&curve, t)).dist(from_p3(v.point())) <= size * 1e-5) {
-            return Err(unsupported("the blend is larger than the neighbouring faces"));
+            return Err(too_large("the blend is larger than the neighbouring faces"));
         }
         Ok(t)
     };
     let (ta, tb) = (at(&a, lo)?, at(&b, hi)?);
     let margin = (hi - lo) * 1e-9;
     if ta < lo - margin || tb > hi + margin || tb - ta < (hi - lo) * 1e-6 {
-        return Err(unsupported("the blend is larger than the neighbouring faces"));
+        return Err(too_large("the blend is larger than the neighbouring faces"));
     }
     if tb < hi {
         let _ = curve.cut(tb);
@@ -691,7 +692,7 @@ fn curve_blend_with_limit(solid: &Solid, ids: &[mt::EdgeID], size: f64, r: f64, 
             let (ta, oa) = a.as_ref().map(at).unwrap_or((0.0, 0.0));
             let (tb, ob) = b.as_ref().map(at).unwrap_or((1.0, 0.0));
             if oa > size * 1e-5 || ob > size * 1e-5 || ta < -1e-9 || tb > 1.0 + 1e-9 || tb - ta < 1e-6 {
-                return Err(crate::blend::too_large("the blend is larger than the neighbouring faces"));
+                return Err(too_large("the blend is larger than the neighbouring faces"));
             }
             let a = a.unwrap_or_else(|| seam.front().clone());
             let b = b.unwrap_or_else(|| seam.back().clone());
