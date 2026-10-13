@@ -621,3 +621,18 @@ fn compact_execute_uses_one_backend_call_and_keeps_removed_bodies() {
     assert_eq!(b.calls, 1);
     assert_eq!(v, json!({"feature": 7, "name": "Combine1", "created_bodies": [], "changed_bodies": ["Base"], "removed_bodies": ["Tool"]}));
 }
+
+/// Every tool the server instructions name (a bare `snake_case` word in backticks) is a real tool.
+#[test]
+fn instructions_name_only_real_tools() {
+    let mut s = server();
+    let init = call(&mut s, 1, "initialize", json!({"protocolVersion": PROTOCOL_VERSION, "capabilities": {}}));
+    let text = init["result"]["instructions"].as_str().unwrap().to_owned();
+    let tools: Vec<String> = tool_definitions().iter().map(|t| t["name"].as_str().unwrap().to_owned()).collect();
+    let named: Vec<&str> =
+        text.split('`').skip(1).step_by(2).filter(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_lowercase() || c == '_')).collect();
+    assert!(named.contains(&"body_topology"), "{named:?}");
+    for name in named {
+        assert!(tools.iter().any(|t| t == name), "the instructions name `{name}`, which is not a tool");
+    }
+}

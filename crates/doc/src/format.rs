@@ -73,13 +73,34 @@
 //!   certificate: the target's `name`, e.g. a cut wall `F5:side:l1` or a pattern copy
 //!   `F4:top@F6.2`), where no construction certificate names it alone. Anchors with
 //!   construction certificates resolve as before.
+//! - 17: a `lineage` face name can be a piece's own, qualified by the faces around it
+//!   (`F2:top#[F2:side:l4,F4:side:l4]`), where Offset Face moved one piece of a face off the
+//!   others' plane; never a numbered piece. Sheet face names can also name a rim, the sheet's
+//!   thickness along a panel's straight edge (`sheet:<body>:<panel>:rim.<edge>`, the edge a base
+//!   sketch line's id, `edge<k>`, or a flange's `far`, `side0` or `side1`), or a flat end of a
+//!   bend (`rim.bend0`, `rim.bend1`). Version 16 designs need no transformation; the version
+//!   stamp makes 0.8.0 (which reads up to 16) ask for an update instead of meeting names it
+//!   can't resolve.
+//!   Convert to Sheet Metal can take bend edges (`bends` in the feature: points on the sharp
+//!   edges of a solid or shelled body that become bends). A conversion without `bends` is the
+//!   plate conversion it always was and saves as before; 0.8.0 would drop the bend edges and
+//!   refuse the body as no plate.
+//!   A sketch's link to a projected edge can also keep the edge's persistent name (`edge_name`,
+//!   beside `face_name`) and is then found by it, wherever the edge went. A link without it is
+//!   the edge nearest its point, as it always was, and takes the name when its sketch is next
+//!   edited.
+//!   A fillet's `fit` can be `taper` (the radius follows the room along each edge it doesn't
+//!   fit). Fillets with `exact` or `reduce` save as before; 0.8.0 would refuse the unknown fit.
+//!   A fillet's `type` can be `spline` (the radius along each edge a B-spline: `start`, `knots`,
+//!   and the control radii after `radius` in `radii`). Other fillets save as before; 0.8.0 would
+//!   refuse the unknown type.
 
 use serde_json::Value;
 
 use crate::{DocError, Document, Result};
 
 /// The format this build writes.
-pub const FORMAT: u32 = 16;
+pub const FORMAT: u32 = 17;
 
 pub fn format_string(n: u32) -> String {
     format!("solidcraft/{n}")
@@ -96,7 +117,7 @@ pub fn version_of(s: &str) -> Option<u32> {
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
 type JsonStep = fn(&mut Value) -> Result<()>;
-const JSON_STEPS: [JsonStep; 15] = [
+const JSON_STEPS: [JsonStep; 16] = [
     |_| Ok(()),
     v2_to_v3,
     v3_to_v4,
@@ -110,6 +131,7 @@ const JSON_STEPS: [JsonStep; 15] = [
     |_| Ok(()),
     |_| Ok(()),
     v13_to_v14,
+    |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
 ];

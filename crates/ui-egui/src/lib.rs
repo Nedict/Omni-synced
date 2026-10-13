@@ -35,6 +35,8 @@ pub mod frame;
 pub mod gizmo;
 pub mod gpu;
 pub mod help;
+#[cfg(test)]
+mod hole_placement_ui_tests;
 pub mod home;
 pub mod i18n;
 #[cfg(test)]
@@ -70,12 +72,16 @@ mod extrude_edit_tests;
 mod file_load;
 #[cfg(test)]
 mod file_load_ui_tests;
+#[cfg(test)]
+mod fillet_spline_handle_tests;
 pub mod palette;
 pub mod params_dialog;
 pub mod prefs;
 #[cfg(test)]
 mod preselect_tests;
 pub mod preview;
+#[cfg(test)]
+mod primitive_units_tests;
 pub mod recovery_ui;
 pub mod ref_images;
 #[cfg(test)]
@@ -103,8 +109,12 @@ mod sketch_drag_ui_tests;
 #[cfg(test)]
 mod sketch_edit_tests;
 mod sketch_families;
+pub mod sketch_modify_ui;
+#[cfg(test)]
+mod sketch_modify_ui_tests;
 pub mod sketch_palette;
 pub(crate) mod sketch_text;
+mod sketch_text_move;
 pub mod sketch_tools;
 pub mod stand_up;
 pub mod theme;
@@ -467,6 +477,16 @@ impl SolveApp {
         let r = self.session.execute(id, &params).map_err(|e| e.to_string());
         self.big_operation |= now_ms() - t0 >= recovery_ui::BIG_OPERATION_MS;
         if let Ok(v) = &r {
+            if id == "view.navigate" {
+                let to: Camera = serde_json::from_value(v.get("camera").cloned().unwrap_or_default()).map_err(|e| e.to_string())?;
+                if v.get("fit").and_then(Value::as_bool).unwrap_or(false) {
+                    let bounds = solidcraft_engine::view::bounds(&self.session);
+                    self.animate_to(self.fitted(to));
+                    self.pending_fit = Some((to, bounds, true));
+                } else {
+                    self.animate_to(to);
+                }
+            }
             // Curves drawn in construction (or centerline) mode take that line type.
             sketch_palette::apply_mode(self, id, v);
         }
@@ -520,8 +540,19 @@ impl SolveApp {
         if self.file_load.busy() {
             return;
         }
+        // A disabled command starts nothing, however it was reached. The toolbar greys its
+        // button, but a shortcut, the command palette and the control channel all land here.
+        // Its reason goes to the status line, so the refusal is never silent.
+        if let Some(info) = solidcraft_engine::find_command(id).map(|c| c.info(&self.session))
+            && let Some(why) = info.disabled_reason
+        {
+            let label = self.tr_label(info.label).to_string();
+            self.set_status(format!("{label}: {why}"), true);
+            return;
+        }
         // Another command ends Edit Text (its dialog is not a feature edit to keep).
-        if sketch_text::editing(self) {
+        sketch_text_move::cancel_drag(self);
+        if sketch_text::editing(self) || self.dialog.as_ref().is_some_and(|d| matches!(d.kind, dialogs::Kind::TextMove(_))) {
             dialogs::cancel(self);
         }
         // A component moved without Capture Position: ask first (Capture, Revert or Cancel).
@@ -707,7 +738,8 @@ impl SolveApp {
     /// Finish the active sketch: stop editing, restore the history marker Edit Sketch moved and
     /// return to the view from before the sketch.
     pub fn finish_sketch(&mut self) {
-        if sketch_text::editing(self) {
+        sketch_text_move::cancel_drag(self);
+        if sketch_text::editing(self) || self.dialog.as_ref().is_some_and(|d| matches!(d.kind, dialogs::Kind::TextMove(_))) {
             dialogs::cancel(self);
         }
         dim_view::cancel();
@@ -731,6 +763,8 @@ impl SolveApp {
         if let Some(d) = &self.dialog {
             v.extend(d.items());
         }
+        v.extend(sketch_text::highlighted(self));
+        v.extend(sketch_text_move::highlighted(self));
         v
     }
 
@@ -803,14 +837,14 @@ impl SolveApp {
         self.cam_anim = None;
         self.viewport.orbit_snap = None;
         self.viewport.orbit_free = None;
-        let bounds = solidcraft_engine::view::bounds(&self.session);
+        let bounds = viewport::view_bounds(self);
         self.pending_fit = Some((self.cam, bounds, false));
         self.cam = self.fitted(self.cam);
     }
 
     /// `cam` moved to frame the whole model.
     pub fn fitted(&self, mut cam: Camera) -> Camera {
-        let b = solidcraft_engine::view::bounds(&self.session);
+        let b = viewport::view_bounds(self);
         if b.is_empty() {
             cam.target = solidcraft_engine::geom::Vec3::ZERO;
             cam.distance = 150.0;
@@ -867,6 +901,15 @@ impl SolveApp {
         self.cam_anim = Some(anim);
     }
 
+    /// Frame everything shown, keeping the orientation (animated; the selection is ignored).
+    pub fn animate_fit_all(&mut self) {
+        self.pending_fit = None;
+        let request = Some((self.cam, viewport::view_bounds(self), true));
+        let to = self.fitted(self.cam);
+        self.animate_to(to);
+        self.pending_fit = request;
+    }
+
     /// Animated view changes for the axis view and navigation bar.
     pub fn animate_view(&mut self, v: &str) {
         self.pending_fit = None;
@@ -879,13 +922,13 @@ impl SolveApp {
                     to = self.fitted_bounds(to, &b);
                 }
                 None => {
-                    self.pending_fit = Some((to, solidcraft_engine::view::bounds(&self.session), true));
+                    self.pending_fit = Some((to, viewport::view_bounds(self), true));
                     to = self.fitted(to);
                 }
             },
             "home" => {
                 to.set_view(StandardView::Iso);
-                self.pending_fit = Some((to, solidcraft_engine::view::bounds(&self.session), true));
+                self.pending_fit = Some((to, viewport::view_bounds(self), true));
                 to = self.fitted(to);
             }
             v => match StandardView::parse(v) {

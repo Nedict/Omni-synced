@@ -803,6 +803,8 @@ mod construct_tests;
 #[cfg(test)]
 mod delete_face_tests;
 #[cfg(test)]
+mod derived_units_tests;
+#[cfg(test)]
 mod display_mesh_tests;
 #[cfg(test)]
 mod extent_tests;
@@ -822,6 +824,8 @@ mod split_face_tests;
 mod tests;
 #[cfg(test)]
 mod thread_tests;
+#[cfg(test)]
+mod view_bounds_tests;
 #[cfg(test)]
 mod world_placement_cache_tests;
 

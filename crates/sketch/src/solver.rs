@@ -21,6 +21,10 @@ use crate::linalg::{Mat, determined_vars, solve as lin_solve};
 use crate::model::{ConstraintKind, CurveKind, Sketch};
 use crate::union_find::{find, union};
 
+#[path = "redundancy.rs"]
+mod redundancy;
+pub use redundancy::{CONSISTENT, constraint_residual, determined_by};
+
 const MAX_ITERS: usize = 500;
 /// Variables in one connected component. Each component is solved as a dense system: an n by n
 /// matrix for the Levenberg-Marquardt step, rows by n for the Jacobian. 4,000 variables is a
@@ -65,6 +69,12 @@ pub struct SolveReport {
     pub point_determined: Vec<bool>,
     /// Per curve: all of its defining values determined.
     pub curve_determined: Vec<bool>,
+    /// Constraints that remove no degree of freedom: everything they ask for is already implied
+    /// by the constraints before them (a second "vertical" on a side two rectangles share).
+    /// They hold, so they are not a conflict; they are shown as redundant. Only from a full
+    /// analysis, and only for components of at most a few hundred variables.
+    #[serde(default)]
+    pub redundant: Vec<String>,
 }
 
 impl SolveReport {
@@ -1298,6 +1308,60 @@ impl Sketch {
     }
 }
 
+/// The variables' values where the sketch is now.
+fn initial_x(sk: &Sketch, lay: &Layout) -> Vec<f64> {
+    let mut x = vec![0.0; lay.n];
+    for (i, p) in sk.points.iter().enumerate() {
+        if let Some(v) = lay.pvar.get(i).copied().flatten() {
+            set_point(&mut x, v, p.pos);
+        }
+    }
+    for (i, c) in sk.curves.iter().enumerate() {
+        if let (CurveKind::Circle { r, .. } | CurveKind::Ellipse { r, .. }, Some(v)) = (&c.kind, lay.rvar.get(i).copied().flatten())
+            && let Some(s) = x.get_mut(v)
+        {
+            *s = *r;
+        }
+    }
+    x
+}
+
+/// The solve's blocks in order (the curves' own relations, then the driving constraints in
+/// constraint order) with the variables each reads, and per block whether it reads a constant
+/// point.
+fn build_blocks<'a>(sk: &'a Sketch, lay: &Layout, on_curve: &[(usize, usize)]) -> (Vec<(Block<'a>, Vec<usize>)>, Vec<bool>) {
+    let mut raw = Vec::new();
+    for c in &sk.curves {
+        if let CurveKind::Spline { pts, periodic: true, .. } = &c.kind
+            && let (Some(a), Some(b)) = (pts.first(), pts.last())
+            && a != b
+        {
+            raw.push(Block::Closure { a: *a, b: *b });
+        }
+        if let CurveKind::Arc { c, a, b } = c.kind {
+            raw.push(Block::Arc { c, a, b });
+        }
+    }
+    for (i, c) in sk.constraints.iter().enumerate() {
+        if c.driven {
+            continue;
+        }
+        raw.push(match touch_point(sk, &c.kind, on_curve) {
+            Some(p) => Block::TangentAt(i, &c.kind, p),
+            None => Block::User(i, &c.kind),
+        });
+    }
+    let mut blocks: Vec<(Block, Vec<usize>)> = Vec::with_capacity(raw.len());
+    let mut reads_constant = Vec::with_capacity(raw.len());
+    for bl in raw {
+        let (vars, constant) = block_vars(sk, lay, &bl);
+        blocks.push((bl, vars));
+        reads_constant.push(constant);
+    }
+
+    (blocks, reads_constant)
+}
+
 #[cfg(not(test))]
 fn solve_from(
     sk: &mut Sketch,
@@ -1721,19 +1785,7 @@ fn solve_inner(
         }
     }
     let lay = layout(sk, hold);
-    let mut x = vec![0.0; lay.n];
-    for (i, p) in sk.points.iter().enumerate() {
-        if let Some(v) = lay.pvar.get(i).copied().flatten() {
-            set_point(&mut x, v, p.pos);
-        }
-    }
-    for (i, c) in sk.curves.iter().enumerate() {
-        if let (CurveKind::Circle { r, .. } | CurveKind::Ellipse { r, .. }, Some(v)) = (&c.kind, lay.rvar.get(i).copied().flatten())
-            && let Some(s) = x.get_mut(v)
-        {
-            *s = *r;
-        }
-    }
+    let mut x = initial_x(sk, &lay);
     let x0 = x.clone();
     let on_curve = points_on_curves(sk);
     // Start from the constructed positions of the points the constraints pin down (see
@@ -1785,34 +1837,7 @@ fn solve_inner(
     nudge_line_angles(sk, &lay, &mut x);
 
     // The blocks, and per block whether it reads a constant point.
-    let mut raw = Vec::new();
-    for c in &sk.curves {
-        if let CurveKind::Spline { pts, periodic: true, .. } = &c.kind
-            && let (Some(a), Some(b)) = (pts.first(), pts.last())
-            && a != b
-        {
-            raw.push(Block::Closure { a: *a, b: *b });
-        }
-        if let CurveKind::Arc { c, a, b } = c.kind {
-            raw.push(Block::Arc { c, a, b });
-        }
-    }
-    for (i, c) in sk.constraints.iter().enumerate() {
-        if c.driven {
-            continue;
-        }
-        raw.push(match touch_point(sk, &c.kind, &on_curve) {
-            Some(p) => Block::TangentAt(i, &c.kind, p),
-            None => Block::User(i, &c.kind),
-        });
-    }
-    let mut blocks: Vec<(Block, Vec<usize>)> = Vec::with_capacity(raw.len());
-    let mut reads_constant = Vec::with_capacity(raw.len());
-    for bl in raw {
-        let (vars, constant) = block_vars(sk, &lay, &bl);
-        blocks.push((bl, vars));
-        reads_constant.push(constant);
-    }
+    let (blocks, reads_constant) = build_blocks(sk, &lay, &on_curve);
 
     carry_with_seeded(&mut x, &x0, &constructed, &blocks, &lay);
     // The plain start, for the variables whose start the seed (or carrying along it) moved.
@@ -1981,6 +2006,7 @@ fn solve_inner(
     let mut failing: Vec<String> = Vec::new();
     let mut det = vec![false; lay.n];
     let mut rank = 0;
+    let mut redundant: Vec<String> = Vec::new();
     // A component too large to solve is a failure, not an allocation.
     if comps.iter().any(|(_, vars, bis)| !bis.is_empty() && oversized(vars)) {
         max_residual = f64::MAX;
@@ -2023,6 +2049,17 @@ fn solve_inner(
         let (rest_det, rest_rank) = if j.rows > 0 { determined_vars(&j, 1e-7) } else { (vec![false; rest.len()], 0) };
         let comp_rank = pin_flags.iter().filter(|p| **p).count() + rest_rank;
         rank += comp_rank;
+        // More rows than rank: some constraint may be implied by the others.
+        if r.len() > comp_rank && vars.len() <= redundancy::MAX_REDUNDANCY_VARS {
+            let (dependent, _) = redundancy::dependent_blocks(sk, &lay, &sub, vars, &mut x, None);
+            for ((b, _), d) in sub.iter().zip(dependent) {
+                if d && let Some(c) = redundancy::block_constraint(b).and_then(|ci| sk.constraints.get(ci))
+                    && !redundant.contains(&c.id)
+                {
+                    redundant.push(c.id.clone());
+                }
+            }
+        }
         for (&v, pinned) in vars.iter().zip(&pin_flags) {
             let flag = match rest.binary_search(&v) {
                 Ok(k) => rest_det.get(k).copied().unwrap_or(false),
@@ -2171,6 +2208,7 @@ fn solve_inner(
         continuations,
         point_determined,
         curve_determined,
+        redundant,
     }
 }
 

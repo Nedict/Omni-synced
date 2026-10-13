@@ -782,12 +782,17 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         refold: bool,
     },
-    /// Convert a plate body (constant thickness from the face at `face`) to sheet metal.
+    /// Convert a body to sheet metal from its fixed face at `face`: a plate of constant
+    /// thickness or, with `bends`, a solid or shelled body whose faces reached from the fixed
+    /// face across those edges become the sheet.
     SheetConvert {
         body: String,
         face: Vec3,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rule: Option<String>,
+        /// Points on the sharp edges that become bends.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        bends: Vec<Vec3>,
     },
     /// Plastic boss: a round post on a face (draft, root fillet, hole, ribs).
     Boss {
@@ -989,16 +994,23 @@ pub enum FilletStyle {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         smooth: bool,
     },
+    /// The radius along each edge as a clamped B-spline of the position from the end nearest
+    /// `start` (0) to the other (1): `radius` is its first control radius and `radii` the rest,
+    /// its degree what `knots` leave (knots = control radii + degree + 1).
+    Spline { start: Vec3, knots: Vec<f64>, radii: Vec<String> },
 }
 
 /// A fillet radius too large for the geometry around its edges: refused (`Exact`, the default),
-/// or reduced to the largest that works for all of them (`Reduce`), with a warning.
+/// reduced to the largest that works for all of them (`Reduce`), or tapered along each edge it
+/// doesn't fit to the room there, down to zero where a face closes to a point (`Taper`); a
+/// warning says what was done.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FilletFit {
     #[default]
     Exact,
     Reduce,
+    Taper,
 }
 
 impl FilletFit {
@@ -1010,6 +1022,13 @@ impl FilletFit {
 impl FilletStyle {
     pub fn is_constant(&self) -> bool {
         *self == FilletStyle::Constant
+    }
+
+    /// The spline of a [`FilletStyle::Spline`] with its control radii `values` (the first is
+    /// the feature's `radius`).
+    pub fn spline(knots: &[f64], values: Vec<f64>) -> solidcraft_kernel::RadiusSpline {
+        let degree = knots.len().saturating_sub(values.len() + 1);
+        solidcraft_kernel::RadiusSpline { degree, knots: knots.to_vec(), radii: values }
     }
 }
 
@@ -1460,6 +1479,8 @@ impl FeatureKind {
             FeatureKind::Thread { face, .. } => vec![face],
             FeatureKind::Emboss { face: Some(face), .. } => vec![&mut face.at],
             FeatureKind::Boss { position, .. } | FeatureKind::SnapFit { position, .. } | FeatureKind::Rest { position, .. } => vec![position],
+            // With bend edges the fixed face is found by name (a plate keeps its point).
+            FeatureKind::SheetConvert { face, bends, .. } if !bends.is_empty() => vec![face],
             _ => Vec::new(),
         }
     }
@@ -1504,9 +1525,13 @@ impl FeatureKind {
             }
             FeatureKind::Fillet { radius, style, .. } => {
                 v.push(radius);
-                if let FilletStyle::Variable { radius2, mid, .. } = style {
-                    v.push(radius2);
-                    v.extend(mid.iter().map(|(_, r)| r.as_str()));
+                match style {
+                    FilletStyle::Variable { radius2, mid, .. } => {
+                        v.push(radius2);
+                        v.extend(mid.iter().map(|(_, r)| r.as_str()));
+                    }
+                    FilletStyle::Spline { radii, .. } => v.extend(radii.iter().map(String::as_str)),
+                    FilletStyle::Constant | FilletStyle::Chord => {}
                 }
             }
             FeatureKind::Chamfer { distance, distance2, angle, .. } => {

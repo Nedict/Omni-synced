@@ -34,7 +34,12 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("sheet.convert", "Convert to Sheet Metal", convert)
         .at("SHEET METAL", "CREATE")
         .icon("convert_sheet")
-        .params("body; face: [x,y,z] on its large flat face (a plate of even thickness); rule?"),
+        .params(
+            "body; face: [x,y,z] on its large flat face (a plate of even thickness); rule?; \
+             bends?: [[x,y,z] on sharp edges] (a solid or a shelled body: `face` is the fixed face and the flat faces reached from it \
+             across these edges become the sheet; a shell keeps its thickness, a solid takes the rule's inward; \
+             edges between two of those faces that are no bends are cut open with the rule's gap)",
+        ),
     CommandSpec::new("sheet.manage_rules", "Sheet Metal Rules", rules).at("SHEET METAL", "MODIFY").icon("sheet_rules").params(
         "name (new or existing); thickness?, k_factor?, bend_radius?, relief_width?, relief_depth?, corner_relief?, hem_gap?, gap? (expressions; `Thickness` is the rule's; \
          gap: between flanges that meet at a corner, whose ends are closed toward each other at any angle); \
@@ -272,8 +277,17 @@ fn convert(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, format!("no body `{body}`")));
     }
     let face = p.get("face").and_then(vec3).ok_or_else(|| bad(cmd, "`face` must be a point [x, y, z] on the plate's face"))?;
+    // With bend edges, a solid or shelled body; without, a plate.
+    let bends = match p.get("bends") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(_) => points(p, "bends", cmd)?,
+    };
+    // Such a sheet's values are its rule's (a plate's thickness is the plate's own).
+    if let Some(key) = RULE_ONLY.iter().find(|k| !bends.is_empty() && p.get(**k).is_some()) {
+        return Err(bad(cmd, format!("`{key}` is not a sheet.convert parameter: the sheet metal rule sets it. Pass a rule's name as `rule`")));
+    }
     let rule = rule_param(s, p, cmd)?;
-    add_feature(s, p, FeatureKind::SheetConvert { body, face, rule })
+    add_feature(s, p, FeatureKind::SheetConvert { body, face, rule, bends })
 }
 
 fn rules(s: &mut Session, p: &Value) -> Result<Value> {
@@ -599,3 +613,7 @@ fn export_bend_table(s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(test)]
 #[path = "sheet_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "sheet_convert_tests.rs"]
+mod convert_tests;

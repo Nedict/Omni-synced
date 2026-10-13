@@ -7,7 +7,7 @@ use solidcraft_engine::Sel;
 use solidcraft_engine::geom::{Vec2, Vec3};
 use solidcraft_engine::render::{Camera, Mat4, Rgb};
 use solidcraft_engine::sketch::CurveKind;
-use solidcraft_engine::view::{colors, grid_step, sketch_consumed, sketch_lines_with_sampler};
+use solidcraft_engine::view::{colors, grid_step, sketch_lines_with_sampler};
 use std::hash::{Hash, Hasher};
 
 use crate::gpu::{GpuScene, GpuTarget, SceneSlot, ViewportCallback};
@@ -23,6 +23,9 @@ mod appearance_tests;
 #[path = "viewport_plane_target_tests.rs"]
 mod plane_target_tests;
 
+#[path = "navigation_cube.rs"]
+mod navigation_cube;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavMode {
     Orbit,
@@ -32,8 +35,11 @@ pub enum NavMode {
 
 #[derive(Default)]
 pub struct ViewportState {
-    /// Per-body bounding boxes for fast picking, keyed by the model they were taken from.
-    pick_bounds: std::sync::Mutex<Option<(usize, std::sync::Arc<Vec<(String, solidcraft_engine::geom::Aabb3)>>)>>,
+    /// Per-body boxes of one world state, held (not just its address, which a later state can
+    /// reuse once the old one is freed, so stale boxes would come back).
+    pick_bounds: std::sync::Mutex<Option<BodyBounds>>,
+    /// The last click in the view was the middle button's (for the middle double-click).
+    middle_clicked: bool,
     /// The last pick (its key and hits): reused while nothing it depends on changed.
     last_pick: Option<(u64, Vec<Hit>)>,
     pub rect: Option<Rect>,
@@ -91,6 +97,8 @@ pub struct ViewportState {
     /// A sketch point or curve being dragged (its id, the undo depth when the drag began: the
     /// whole drag is one undo step, and for a curve where it was last under the cursor).
     pub point_drag: Option<(String, usize, Option<Vec2>)>,
+    /// Checkpoint and source for a cancellable whole-text drag.
+    pub(crate) text_drag: Option<(u64, String)>,
 }
 
 /// Something under the cursor.
@@ -236,16 +244,13 @@ pub fn projection(app: &SolveApp, rect: Rect) -> Proj {
 /// Sketches drawn in the viewport: the active one, and finished ones not yet used by a feature.
 fn visible_sketches(app: &SolveApp) -> Vec<u64> {
     let st = app.session.world_state();
-    st.sketches
-        .iter()
-        .filter(|s| {
-            app.session.active_sketch == Some(s.feature)
-                || (!app.session.visibility.hidden_sketches.contains(&s.feature)
-                    && (app.session.visibility.shown_sketches.contains(&s.feature)
-                        || (app.ui.show_sketches && !sketch_consumed(&app.session, s.feature))))
-        })
-        .map(|s| s.feature)
-        .collect()
+    st.sketches.iter().filter(|s| solidcraft_engine::view::sketch_drawn(&app.session, s.feature, app.ui.show_sketches)).map(|s| s.feature).collect()
+}
+
+/// What Home, Fit and the orbit pivot frame: the bodies and sketches shown now, where they are
+/// now (see [`solidcraft_engine::view::visible_bounds`]).
+pub fn view_bounds(app: &SolveApp) -> solidcraft_engine::geom::Aabb3 {
+    solidcraft_engine::view::visible_bounds(&app.session, app.ui.show_sketches)
 }
 
 fn scene_key(app: &SolveApp) -> u64 {
@@ -590,7 +595,7 @@ pub fn origin_axes(app: &SolveApp) -> Vec<(&'static str, Vec3)> {
 /// from, to).
 pub fn construction_axis_segments(app: &SolveApp) -> Vec<(String, Vec3, Vec3)> {
     let h = origin_size(app.cam.half_height()) * AXIS_LEN;
-    let bb = solidcraft_engine::view::bounds(&app.session);
+    let bb = view_bounds(app);
     solidcraft_engine::view::construction_axes(&app.session)
         .into_iter()
         .filter(|(_, n, _, _)| !app.session.visibility.hidden_origin.contains(n))
@@ -642,19 +647,20 @@ fn body_bounds(
     app: &SolveApp,
     st: &std::sync::Arc<solidcraft_engine::doc::ModelState>,
 ) -> std::sync::Arc<Vec<(String, solidcraft_engine::geom::Aabb3)>> {
-    let key = std::sync::Arc::as_ptr(st) as usize;
     if let Ok(mut g) = app.viewport.pick_bounds.lock() {
         if let Some((k, b)) = g.as_ref()
-            && *k == key
+            && std::sync::Arc::ptr_eq(k, st)
         {
             return b.clone();
         }
         let b = std::sync::Arc::new(st.bodies.iter().map(|b| (b.name.clone(), b.mesh().bounds())).collect::<Vec<_>>());
-        *g = Some((key, b.clone()));
+        *g = Some((st.clone(), b.clone()));
         return b;
     }
     std::sync::Arc::new(Vec::new())
 }
+
+type BodyBounds = (std::sync::Arc<solidcraft_engine::doc::ModelState>, std::sync::Arc<Vec<(String, solidcraft_engine::geom::Aabb3)>>);
 
 /// The model's extent: bodies (from the cached boxes) and sketches.
 pub fn model_bounds(app: &SolveApp) -> solidcraft_engine::geom::Aabb3 {
@@ -1179,6 +1185,13 @@ fn section_clip(app: &SolveApp) -> [f32; 4] {
 }
 
 /// Space kept free at the top right of the viewport for the axis view (docked dialogs start below).
+pub(crate) fn axis_view_size(style: crate::prefs::NavigatorStyle) -> f32 {
+    match style {
+        crate::prefs::NavigatorStyle::Axes => 116.0,
+        crate::prefs::NavigatorStyle::Cube => navigation_cube::SIZE,
+    }
+}
+// Keep command panels anchored independently of the compact cube's display size.
 pub const AXIS_VIEW_CLEARANCE: f32 = 168.0;
 
 /// Axis length as a multiple of the origin plane size (solid part 1, dashed beyond).
@@ -1202,7 +1215,8 @@ pub fn hit_sel(h: &Hit) -> Option<Sel> {
 /// dialog the first hit (sketch entities only belong to the active sketch).
 pub fn candidate(app: &SolveApp, hits: &[Hit]) -> Option<(Hit, Sel)> {
     if let Some(d) = app.dialog.as_ref().filter(|d| d.wants_picks()) {
-        return hits.iter().find_map(|h| d.candidate(&app.session, h).map(|s| (h.clone(), s)));
+        let face = face_under(hits);
+        return hits.iter().find_map(|h| d.candidate_on(&app.session, h, face).map(|s| (h.clone(), s)));
     }
     hits.iter().filter(|h| pick_allowed(app, h)).find_map(|h| hit_candidate(app, h))
 }
@@ -1210,9 +1224,15 @@ pub fn candidate(app: &SolveApp, hits: &[Hit]) -> Option<(Hit, Sel)> {
 /// Every hit a click could pick, in order, each with its selection (Select Other).
 pub fn candidates(app: &SolveApp, hits: &[Hit]) -> Vec<(Hit, Sel)> {
     if let Some(d) = app.dialog.as_ref().filter(|d| d.wants_picks()) {
-        return hits.iter().filter_map(|h| d.candidate(&app.session, h).map(|s| (h.clone(), s))).collect();
+        let face = face_under(hits);
+        return hits.iter().filter_map(|h| d.candidate_on(&app.session, h, face).map(|s| (h.clone(), s))).collect();
     }
     hits.iter().filter(|h| pick_allowed(app, h)).filter_map(|h| hit_candidate(app, h)).collect()
+}
+
+/// The face under the cursor: the nearest face the pick ray meets (faces come nearest first).
+fn face_under(hits: &[Hit]) -> Option<&Hit> {
+    hits.iter().find(|h| matches!(h, Hit::Face { .. }))
 }
 
 /// What the selection filter lets a click pick with no dialog.
@@ -1797,11 +1817,15 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let secondary_down = secondary_down && app.viewport.context_menu.is_none();
     // The axis view handles its own clicks; the model underneath must not see them.
     let axes = axis_rect(app, rect);
-    // Floating windows and menus own input over the model, including wheel navigation.
-    let inside = resp.contains_pointer() && hover.is_some_and(|p| !axes.contains(p));
+    // Floating windows and menus own input over the model, including wheel navigation. egui's
+    // hit test also counts the model as under the pointer a few points past its own edge and
+    // inside a window's or a list's edge (#678), so the pointer must be in the viewport too,
+    // with no window or menu above it.
+    let inside = resp.contains_pointer() && ui.rect_contains_pointer(rect) && hover.is_some_and(|p| !axes.contains(p));
     app.viewport.mouse = hover.filter(|_| inside);
     // Ctrl or Alt held: drawing and dragging don't snap.
     crate::drag_snap::set_suppressed(mods.ctrl || mods.alt || mods.command);
+    middle_double_click(app, ui, inside);
 
     // ---- navigation ----
     let trackpad_pan = app.preferences.trackpad_pan;
@@ -2190,6 +2214,28 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
                 _ => {}
             }
+            if let Some((id, _, _)) = &app.viewport.point_drag {
+                let link = app.session.active_sketch.and_then(|sid| app.session.doc.sketch(sid).ok()).and_then(|sk| {
+                    let link = sk
+                        .curve_index(id)
+                        .and_then(|i| sk.curves.get(i))
+                        .and_then(|c| c.link.as_deref())
+                        .or_else(|| sk.resolve_point(id).and_then(|i| sk.points.get(i)).and_then(|p| p.link.as_deref()))?;
+                    sk.link(link).filter(|l| l.kind == solidcraft_engine::sketch::LinkKind::Text).map(|l| l.id.clone())
+                });
+                if let Some(link) = link
+                    && let Some(q) = on_plane(app, a)
+                {
+                    if let Some((_, _, grab)) = &mut app.viewport.point_drag {
+                        *grab = Some(q);
+                    }
+                    if let Ok(result) = app.session.execute("edit.checkpoint", &json!({}))
+                        && let Some(checkpoint) = result["checkpoint"].as_u64()
+                    {
+                        app.viewport.text_drag = Some((checkpoint, link));
+                    }
+                }
+            }
         }
         if let Some((id, depth, grab)) = app.viewport.point_drag.clone()
             && resp.dragged_by(egui::PointerButton::Primary)
@@ -2240,6 +2286,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
             crate::drag_snap::clear();
             app.viewport.point_drag = None;
+            crate::sketch_text_move::end_drag(app);
             crate::dim_view::drag_end();
             crate::sketch3d::drag_end();
         }
@@ -2252,6 +2299,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         app.viewport.point_drag = None;
         crate::drag_snap::clear();
         let _ = app.session.execute("sketch.drag_end", &json!({}));
+        crate::sketch_text_move::end_drag(app);
     }
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()
@@ -2700,26 +2748,24 @@ pub(crate) fn refresh_layout(app: &mut SolveApp, scale: f32) {
         .into_iter()
         .flatten()
         .collect();
-        app.viewport.layout = Some(crate::viewport_layout::Layout::new(rect, &docks, scale));
+        app.viewport.layout = Some(crate::viewport_layout::Layout::new(rect, &docks, scale, app.preferences.navigator_style));
     }
 }
 
-/// Compact orientation gizmo, drawn and hit-tested in world coordinates.
-const AXIS_LENGTH: f64 = 38.0;
-const AXIS_RADIUS: f32 = 11.0;
-
+/// Orientation controls share the layout reservation used by model fitting.
 fn axis_center(app: &SolveApp, rect: Rect) -> Pos2 {
     axis_rect(app, rect).center()
 }
 
 fn axis_rect(app: &SolveApp, rect: Rect) -> Rect {
-    app.viewport
-        .layout
-        .as_ref()
-        .filter(|l| l.viewport == rect)
-        .map(|l| l.axis_view)
-        .unwrap_or_else(|| Rect::from_center_size(pos2(rect.right() - 68.0, rect.top() + 68.0), vec2(116.0, 116.0)))
+    app.viewport.layout.as_ref().filter(|l| l.viewport == rect).map(|l| l.axis_view).unwrap_or_else(|| {
+        let size = axis_view_size(app.preferences.navigator_style);
+        Rect::from_min_size(pos2(rect.right() - size, rect.top()), vec2(size, size))
+    })
 }
+
+const AXIS_LENGTH: f64 = 38.0;
+const AXIS_RADIUS: f32 = 11.0;
 
 /// Six signed world axes, sorted back to front so overlapping tips have one owner.
 fn axis_tips(cam: &Camera, c: Pos2) -> Vec<(&'static str, Vec3, Pos2, f64)> {
@@ -2837,7 +2883,12 @@ fn axis_view_orbit(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) -> bool {
         (p.primary_pressed(), p.primary_down(), p.is_decidedly_dragging(), p.press_origin(), p.interact_pos(), i.modifiers.shift)
     });
     if pressed && ui.rect_contains_pointer(rect) {
-        app.viewport.axis_drag = origin.filter(|p| axis_rect(app, rect).contains(*p));
+        app.viewport.axis_drag = origin.filter(|p| match app.preferences.navigator_style {
+            crate::prefs::NavigatorStyle::Axes => axis_rect(app, rect).contains(*p),
+            crate::prefs::NavigatorStyle::Cube => {
+                navigation_cube::drag_origin(&app.cam, axis_center(app, rect), *p, axis_rect(app, rect).width() / navigation_cube::DESIGN_SIZE)
+            }
+        });
         if app.viewport.axis_drag.is_some() {
             app.viewport.orbit_free = None;
         }
@@ -2857,6 +2908,13 @@ fn axis_view_orbit(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) -> bool {
 }
 
 fn axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
+    match app.preferences.navigator_style {
+        crate::prefs::NavigatorStyle::Axes => signed_axis_view(app, ui, rect),
+        crate::prefs::NavigatorStyle::Cube => navigation_cube::show(app, ui, rect),
+    }
+}
+
+fn signed_axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
     if !axis_rect(app, rect).is_positive() {
         app.viewport.axis_drag = None;
         crate::scenario::publish_count("axis_view_highlights", 0.0);
@@ -2926,6 +2984,34 @@ fn axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
     icons::paint(&painter, home, "home", t.icon, if hr.hovered() { t.accent_soft } else { t.overlay }, t.accent);
     if hr.on_hover_text("Home view").clicked() {
         app.animate_view("home");
+    }
+}
+
+/// A middle-button double-click goes Home (or fits, or nothing: Preferences › Navigation). Only
+/// clicks count: a press that moves (a pan or orbit drag) or is held is not one, and the two
+/// clicks must both be the middle button's, close together in time and place.
+fn middle_double_click(app: &mut SolveApp, ui: &egui::Ui, inside: bool) {
+    use egui::PointerButton::{Extra1, Extra2, Middle, Primary, Secondary};
+    let (double, releases, middle, other, dragging) = ui.input(|i| {
+        (
+            i.pointer.button_double_clicked(Middle),
+            i.events.iter().filter(|e| matches!(e, egui::Event::PointerButton { button: Middle, pressed: false, .. })).count(),
+            i.pointer.button_clicked(Middle),
+            [Primary, Secondary, Extra1, Extra2].into_iter().any(|b| i.pointer.button_clicked(b)),
+            i.pointer.is_decidedly_dragging(),
+        )
+    });
+    // egui pairs clicks of any buttons; the first click must have been the middle one too (or
+    // both arrive in this frame).
+    let go = double && inside && !other && (app.viewport.middle_clicked || releases >= 2);
+    app.viewport.middle_clicked = if other || dragging || go { false } else { middle || app.viewport.middle_clicked };
+    if !go {
+        return;
+    }
+    match crate::prefs::MiddleDoubleClick::of(app) {
+        crate::prefs::MiddleDoubleClick::Home => app.animate_view("home"),
+        crate::prefs::MiddleDoubleClick::Fit => app.animate_fit_all(),
+        crate::prefs::MiddleDoubleClick::Off => {}
     }
 }
 
@@ -3000,7 +3086,14 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
         .map(|l| l.navigation)
         .unwrap_or_else(|| Rect::from_center_size(pos2(rect.center().x, rect.bottom() - 22.0), vec2(w, 30.0)));
     crate::scenario::publish_rect("nav:outer", bar);
-    let painter = ui.painter_at(rect);
+    let active = ui.rect_contains_pointer(bar)
+        || ui.rect_contains_pointer(axis_rect(app, rect))
+        || app.viewport.axis_drag.is_some()
+        || app.viewport.nav.is_some()
+        || app.viewport.spin
+        || menu_open;
+    let mut painter = ui.painter_at(rect);
+    painter.set_opacity(if active || app.preferences.navigator_style == crate::prefs::NavigatorStyle::Axes { 1.0 } else { 0.45 });
     painter.rect(bar, 6.0, t.overlay, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     let columns = ((bar.width() - 10.0) / 30.0).round().clamp(1.0, 10.0) as usize;
     for (i, (icon, tip)) in items.iter().enumerate() {
@@ -4057,6 +4150,91 @@ mod tests {
     }
 
     #[test]
+    fn wheel_by_a_dialog_list_or_panel_edge_leaves_the_model_alone() {
+        // #678: scrolling the Physical Material list, a drop-down that hangs over the model,
+        // zoomed the model too. egui's hit test counts the model as under the pointer within a
+        // few points of a window's, a list's or the viewport's own edge, so near those edges
+        // the same wheel turn reached both.
+        use crate::scenario::{Harness, handle_at};
+        // One wheel turn at `p`, then frames until egui's smoothing is spent: did the camera move?
+        let wheel = |h: &mut Harness, p: Pos2, delta: f32| {
+            let before = h.app.cam;
+            h.call("ui.scroll", json!({"x": p.x, "y": p.y, "delta": delta}));
+            h.frames(20);
+            h.app.cam != before
+        };
+        // A trackpad pinch, then a two-finger scroll (which pans the model): did the camera move?
+        let gestures = |h: &mut Harness, p: Pos2| {
+            let before = h.app.cam;
+            h.call("ui.move", json!({"x": p.x, "y": p.y}));
+            h.app.synthetic.push(egui::Event::Zoom(1.2));
+            for phase in [egui::TouchPhase::Start, egui::TouchPhase::Move, egui::TouchPhase::End] {
+                let unit = egui::MouseWheelUnit::Point;
+                h.app.synthetic.push(egui::Event::MouseWheel { unit, delta: vec2(30.0, -20.0), modifiers: egui::Modifiers::NONE, phase });
+            }
+            h.settle();
+            h.frames(20);
+            h.app.cam != before
+        };
+        for smooth in [true, false] {
+            let mut h = Harness::new();
+            h.app.preferences.smooth_wheel_zoom = smooth;
+            h.app.preferences.zoom_to_cursor = false;
+            h.call("engine.execute", json!({"command": "solid.box", "params": {"length": 40, "width": 30, "height": 20}}));
+            h.call("ui.start", json!({"command": "material.assign"}));
+            let field = handle_at("dialog:Material").expect("the dialog's material field");
+            let field = json!({"x": field.x, "y": field.y});
+            h.call("ui.move", field.clone());
+            h.call("ui.click", field.clone());
+            let item = "dialog:Material:Steel";
+            let first = handle_at(item).expect("the open material list");
+            let list = h
+                .ctx
+                .memory(|m| {
+                    let popups = m.areas().visible_layer_ids().into_iter().filter(|l| l.order == egui::Order::Foreground);
+                    popups.filter_map(|l| m.area_rect(l.id)).find(|r| r.contains(first))
+                })
+                .expect("the list's popup");
+            let dialog = h.app.viewport.dialog_rect.expect("the dialog");
+            let vp = h.app.viewport.rect.expect("the viewport");
+            assert!(!dialog.contains(first) && vp.contains(first), "the list must hang over the model: {first:?} {dialog:?}");
+
+            // The wheel scrolls the list and only the list, in its middle and by its edges.
+            assert!(!wheel(&mut h, pos2(list.center().x, first.y), -60.0), "smooth {smooth}: the wheel over the list zoomed the model");
+            let moved = handle_at(item).expect("the list stays open");
+            assert!(moved.y < first.y - 1.0, "the wheel must scroll the list: {first:?} -> {moved:?}");
+            for p in [pos2(list.left() + 2.0, list.center().y), pos2(list.right() - 2.0, list.center().y), pos2(list.center().x, list.bottom() - 2.0)]
+            {
+                assert!(!wheel(&mut h, p, 60.0), "smooth {smooth}: the wheel at {p:?} by the list's edge ({list:?}) zoomed the model");
+                assert!(!gestures(&mut h, p), "a pinch or two-finger scroll at {p:?} by the list's edge ({list:?}) moved the model");
+                assert!(h.app.viewport.mouse.is_none(), "the model must not see the pointer at {p:?} over the list");
+            }
+
+            // With the list closed: by the dialog's edges, and over the browser and the timeline
+            // next to the model.
+            h.call("ui.move", field.clone());
+            h.call("ui.click", field);
+            assert!(handle_at(item).is_none(), "the list must close");
+            let (mid, x) = (vp.center().y, vp.left() + vp.width() * 0.25);
+            for p in [
+                pos2(dialog.left() + 2.0, dialog.center().y),
+                pos2(dialog.center().x, dialog.bottom() - 2.0),
+                pos2(vp.left() - 2.0, mid),
+                pos2(x, vp.bottom() + 2.0),
+            ] {
+                assert!(!wheel(&mut h, p, 60.0), "smooth {smooth}: the wheel at {p:?} off the model ({vp:?}, dialog {dialog:?}) zoomed it");
+                assert!(h.app.viewport.mouse.is_none(), "the model must not see the pointer at {p:?}");
+            }
+            // The model itself still zooms right next to them.
+            for p in [pos2(dialog.left() - 2.0, dialog.center().y), pos2(vp.left() + 2.0, mid), pos2(x, vp.bottom() - 2.0)] {
+                assert!(wheel(&mut h, p, 60.0), "smooth {smooth}: the wheel at {p:?} on the model ({vp:?}) must zoom it");
+                assert_eq!(h.app.viewport.mouse, Some(p));
+                assert!(gestures(&mut h, p), "a pinch and a two-finger scroll at {p:?} on the model must move it");
+            }
+        }
+    }
+
+    #[test]
     fn floating_dialog_blocks_viewport_hover_and_clicks() {
         let mut h = crate::scenario::Harness::new();
         h.call("engine.execute", json!({"command": "solid.box", "params": {"length": 40, "width": 30, "height": 20}}));
@@ -4318,14 +4496,15 @@ mod tests {
     }
 
     #[test]
-    fn axis_view_click_again_flips_and_drag_snaps() {
+    fn navigation_cube_repeated_face_click_keeps_view_and_drag_snaps() {
         let mut h = crate::scenario::Harness::new();
+        h.call("ui.prefs", json!({"navigator_style":"cube"}));
         h.run(&json!([
             {"call":"ui.view","params":{"view":"home"}},
             {"click":{"handle":"axis_view:z"}},
             {"expect":{"camera":{"pitch_deg":90,"yaw_deg":0}}},
             {"click":{"handle":"axis_view:z"}},
-            {"expect":{"camera":{"pitch_deg":-90,"yaw_deg":0}}},
+            {"expect":{"camera":{"pitch_deg":90,"yaw_deg":0}}},
             {"call":"ui.view","params":{"view":"front"}}
         ]))
         .unwrap();
@@ -4361,3 +4540,7 @@ mod tests {
         assert!(construction_axis_segments(&app).is_empty());
     }
 }
+
+#[cfg(test)]
+#[path = "view_home_tests.rs"]
+mod view_home_tests;

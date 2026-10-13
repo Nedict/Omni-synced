@@ -34,7 +34,7 @@ const CYCLE_SLOP: f32 = 4.0;
 /// The most rows kept per kind of thing (vertices, edges, faces, …). The list exists to tell a
 /// handful of overlapping things apart; nearest first, farther ones of the same kind are dropped
 /// so it stays readable and bounded.
-const MAX_PER_KIND: usize = 20;
+pub(crate) const MAX_PER_KIND: usize = 20;
 
 /// One row of the list.
 #[derive(Clone, Debug)]
@@ -103,21 +103,24 @@ fn rows_capped(app: &SolveApp, proj: &Proj, pos: Pos2) -> (Vec<Row>, usize) {
             }
         }
     }
+    // A face place a sketch point snapped (a Single hole's) is its own row: beside the face as
+    // picked, and beside other points on that face.
+    let snapped = |h: &Hit| matches!(h, Hit::SketchPoint { .. });
     let mut out: Vec<(Hit, Sel)> = Vec::new();
     for (h, s) in found {
-        if !out.iter().any(|(_, x)| crate::selection::same_item(x, &s)) {
+        if !out.iter().any(|(hx, x)| if snapped(hx) || snapped(&h) { *x == s } else { crate::selection::same_item(x, &s) }) {
             out.push((h, s));
         }
     }
     let sketching = app.session.active_sketch.is_some();
-    out.sort_by_key(|(_, s)| rank(s, sketching));
+    out.sort_by_key(|(h, s)| rank(&shown_as(h, s), sketching));
     let total = out.len();
     // Nearest first within a kind, so capping drops the farther ones.
     let mut per_kind: std::collections::HashMap<u8, usize> = std::collections::HashMap::new();
     let rows: Vec<Row> = out
         .into_iter()
-        .filter(|(_, s)| {
-            let n = per_kind.entry(rank(s, sketching).1).or_default();
+        .filter(|(h, s)| {
+            let n = per_kind.entry(rank(&shown_as(h, s), sketching).1).or_default();
             if *n >= MAX_PER_KIND {
                 return false;
             }
@@ -125,11 +128,21 @@ fn rows_capped(app: &SolveApp, proj: &Proj, pos: Pos2) -> (Vec<Row>, usize) {
             true
         })
         .map(|(hit, sel)| {
-            let label = label(app, &sel);
-            Row { icon: icon(app, &sel), hit, sel, label }
+            let shown = shown_as(&hit, &sel);
+            let label = label(app, &shown);
+            Row { icon: icon(app, &shown), hit, sel, label }
         })
         .collect();
     (rows, total)
+}
+
+/// What a row shows itself as: a face place a sketch point snapped is that point (ranked, capped
+/// and named with the points).
+fn shown_as(hit: &Hit, sel: &Sel) -> Sel {
+    match (hit, sel) {
+        (Hit::SketchPoint { sketch, id, .. }, Sel::Face { .. }) => Sel::ExternalSketchPoint { sketch: *sketch, id: id.clone() },
+        _ => sel.clone(),
+    }
 }
 
 /// Sort key: in a sketch its own points and curves come first; then by kind.

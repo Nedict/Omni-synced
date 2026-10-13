@@ -164,3 +164,166 @@ fn a_piece_of_a_face_split_on_purpose_still_needs_a_fixed_plane() {
     let error = s.execute("sketch.create", &json!({"plane": {"face": [2.5, 5, 10]}})).unwrap_err().to_string();
     assert!(error.contains("fixed:true"), "{error}");
 }
+
+/// Offset Face raises one piece of a split top: the pieces no longer share a plane, so each
+/// takes a sketch by its own name (the face's, qualified by the faces around it) and follows it.
+#[test]
+fn a_raised_piece_of_a_split_top_takes_a_sketch_by_its_own_name() {
+    let mut s = slotted_block();
+    run(&mut s, "parameters.add", json!({"name": "raise", "expression": "2 mm"}));
+    run(&mut s, "solid.offset_face", json!({"faces": [[5, 15, 10]], "distance": "raise", "name": "Raise"}));
+    no_errors(&s);
+    sketch_on(&mut s, [5., 15., 12.], "Raised");
+    sketch_on(&mut s, [35., 15., 10.], "Kept");
+    let (raised, certificate) = healthy(&s, "Raised");
+    assert_eq!(certificate, Some(FaceCertificate::Lineage));
+    assert!((raised.origin.z - 12.).abs() < 1e-9 && (raised.normal().z - 1.).abs() < 1e-9, "{raised:?}");
+    assert!((healthy(&s, "Kept").0.origin.z - 10.).abs() < 1e-9);
+    run(&mut s, "parameters.change", json!({"name": "raise", "expression": "3 mm"}));
+    no_errors(&s);
+    assert!((healthy(&s, "Raised").0.origin.z - 13.).abs() < 1e-9);
+    assert!((healthy(&s, "Kept").0.origin.z - 10.).abs() < 1e-9);
+    let t = reopened(&s);
+    assert!((healthy(&t, "Raised").0.origin.z - 13.).abs() < 1e-9);
+}
+
+/// A plastic Boss keeps the history of the body it stands on (#494): the plate's faces still
+/// take attached sketches, and so does the boss's own top, which follows its height.
+#[test]
+fn faces_after_a_boss_take_a_sketch_that_follows_it() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name": "boss_h", "expression": "12 mm"}));
+    run(&mut s, "solid.box", json!({"length": 80, "width": 50, "height": 2, "name": "Plate"}));
+    run(
+        &mut s,
+        "plastic.boss",
+        json!({"position": [20, 20, 2], "diameter": 7, "height": "boss_h", "hole_diameter": 2.5, "fillet": 0.5, "name": "Boss"}),
+    );
+    no_errors(&s);
+    sketch_on(&mut s, [5., 25., 2.], "OnPlate");
+    sketch_on(&mut s, [80., 25., 1.], "OnSide");
+    sketch_on(&mut s, [22.5, 20., 14.], "OnBoss");
+    for name in ["OnPlate", "OnSide"] {
+        healthy(&s, name);
+    }
+    let (top, certificate) = healthy(&s, "OnBoss");
+    assert_eq!(certificate, Some(FaceCertificate::Lineage));
+    assert!((top.origin.z - 14.).abs() < 1e-9, "{top:?}");
+    run(&mut s, "parameters.change", json!({"name": "boss_h", "expression": "15 mm"}));
+    no_errors(&s);
+    assert!((healthy(&s, "OnBoss").0.origin.z - 17.).abs() < 1e-9);
+    healthy(&reopened(&s), "OnBoss");
+}
+
+/// A Hole names its faces by the part they cut (a counterbore's floor is `F<hole>:cbore:base`),
+/// and a pattern's copies of it as copies: each floor takes its own sketch, which follows the
+/// counterbore's depth. The plate's faces stay attachable too.
+#[test]
+fn counterbore_floors_and_their_pattern_copies_take_a_sketch() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name": "cb", "expression": "3 mm"}));
+    run(&mut s, "solid.box", json!({"length": 80, "width": 30, "height": 10, "name": "Plate"}));
+    run(
+        &mut s,
+        "solid.hole",
+        json!({"position": [15, 15, 10], "diameter": 5, "type": "counterbore", "cb_diameter": 10, "cb_depth": "cb", "name": "Hole"}),
+    );
+    run(&mut s, "solid.pattern.rectangular", json!({"features": ["Hole"], "dir1": [1, 0, 0], "count1": 3, "spacing1": 25, "name": "Row"}));
+    no_errors(&s);
+    for (name, x) in [("Seed", 18.5), ("Copy", 43.5), ("Top", 30.)] {
+        sketch_on(&mut s, [x, 15., if name == "Top" { 10. } else { 7. }], name);
+    }
+    for name in ["Seed", "Copy"] {
+        let (floor, certificate) = healthy(&s, name);
+        assert_eq!(certificate, Some(FaceCertificate::Lineage), "{name}");
+        assert!((floor.origin.z - 7.).abs() < 1e-9, "{name}: {floor:?}");
+    }
+    healthy(&s, "Top");
+    run(&mut s, "parameters.change", json!({"name": "cb", "expression": "4 mm"}));
+    no_errors(&s);
+    for name in ["Seed", "Copy"] {
+        assert!((healthy(&s, name).0.origin.z - 6.).abs() < 1e-9, "{name}");
+    }
+    healthy(&reopened(&s), "Copy");
+}
+
+/// The middle of the largest triangle of each flat face of the first body.
+fn flat_faces(s: &Session) -> Vec<(usize, solidcraft_geom::Vec3)> {
+    let state = s.model.state();
+    let body = &state.bodies[0].body;
+    let mesh = body.tessellate(0.01).unwrap();
+    (0..body.face_count())
+        .filter(|index| body.planar_face(*index).is_some())
+        .filter_map(|index| {
+            let point = mesh
+                .triangles
+                .iter()
+                .zip(&mesh.tri_face)
+                .filter(|(_, f)| **f as usize == index)
+                .filter_map(|(t, _)| mesh.tri(t))
+                .max_by(|[a, b, c], [d, e, f]| (*b - *a).cross(*c - *a).len().total_cmp(&(*e - *d).cross(*f - *d).len()))
+                .map(|[a, b, c]| (a + b + c) * (1.0 / 3.0))?;
+            Some((index, point))
+        })
+        .collect()
+}
+
+/// Every flat face of the first body takes an attached sketch (#681: a flat face is a flat face,
+/// whichever features it was merged from).
+fn every_flat_face_takes_a_sketch(s: &mut Session) {
+    no_errors(s);
+    let faces = flat_faces(s);
+    assert!(faces.len() >= 8, "{}", faces.len());
+    let mut failed = Vec::new();
+    for (index, point) in faces {
+        match s.execute("sketch.create", &json!({"plane": {"face": point, "body": "Body1", "index": index}})) {
+            Ok(made) => {
+                run(s, "sketch.finish", json!({}));
+                let id = made["sketch"].as_u64().unwrap();
+                if !matches!(s.placed_document().sketch_face_attachment(id, &s.model), FaceAttachmentStatus::Healthy { .. }) {
+                    failed.push(format!("face {index} at {point:?}: not healthy"));
+                }
+            }
+            Err(e) => failed.push(format!("face {index} at {point:?}: {e}")),
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+/// #681: a block with a lower step joined flush beside it. The step's side walls continue the
+/// block's (a Join merged them), and they take a sketch like every other flat face.
+#[test]
+fn every_flat_face_of_a_block_and_a_flush_step_takes_a_sketch() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "A"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [20, 10]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "A", "distance": 10, "name": "Block"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "B"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 10], "p1": [20, 20]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "B", "distance": 5, "operation": "join", "name": "Step"}));
+    every_flat_face_takes_a_sketch(&mut s);
+}
+
+/// #681 as reported: one sketch of a 2 x 2 grid, three cells extruded up (an elbow) and three
+/// joined down (the inverse elbow).
+#[test]
+#[ignore = "the join of the elbow down fails until #679 is fixed"]
+fn every_flat_face_of_an_elbow_up_and_an_elbow_down_takes_a_sketch() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Grid"}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [20, 0], [20, 20], [0, 20]], "closed": true}));
+    run(&mut s, "sketch.line", json!({"points": [[10, 0], [10, 20]]}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 10], [20, 10]]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let cells = |pts: [[f64; 2]; 3]| pts.iter().map(|p| json!({"point": p})).collect::<Vec<_>>();
+    run(&mut s, "solid.extrude", json!({"sketch": "Grid", "distance": 10, "profiles": cells([[5., 5.], [15., 5.], [5., 15.]]), "name": "Up"}));
+    let down = cells([[15., 5.], [5., 15.], [15., 15.]]);
+    run(
+        &mut s,
+        "solid.extrude",
+        json!({"sketch": "Grid", "distance": 10, "direction": "negative", "operation": "join", "profiles": down, "name": "Down"}),
+    );
+    every_flat_face_takes_a_sketch(&mut s);
+}

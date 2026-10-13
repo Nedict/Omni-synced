@@ -38,6 +38,7 @@ pub(crate) use measure_sel::measure_items;
 mod kernel_heal_tests;
 mod parameters;
 mod plastic;
+mod render;
 mod sheet;
 mod sketch;
 pub(crate) use sketch::author_path_for_rebind;
@@ -53,6 +54,7 @@ mod sketch_modify;
 mod sketch_project;
 mod surface;
 mod surface_analysis;
+mod view_navigation;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -184,6 +186,12 @@ pub fn in_sketch(s: &Session) -> std::result::Result<(), String> {
     if s.active_sketch.is_some() { Ok(()) } else { Err("no sketch is being edited (Create Sketch or Edit Sketch first)".into()) }
 }
 
+/// The mirror of [`in_sketch`], for a command that acts on bodies and has nothing to offer the
+/// geometry under the cursor while a sketch is open.
+pub fn not_in_sketch(s: &Session) -> std::result::Result<(), String> {
+    if s.active_sketch.is_none() { Ok(()) } else { Err("a sketch is being edited (this works on bodies: Finish Sketch first)".into()) }
+}
+
 /// Every command, in toolbar order.
 pub fn command_specs() -> Vec<&'static CommandSpec> {
     let mut v: Vec<&'static CommandSpec> = Vec::new();
@@ -219,7 +227,9 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(inspect::COMMANDS.iter());
     v.extend(materials::COMMANDS.iter());
     v.extend(section::COMMANDS.iter());
+    v.extend(view_navigation::COMMANDS.iter());
     v.extend(diagnostics::COMMANDS.iter());
+    v.extend(render::COMMANDS.iter());
     v
 }
 
