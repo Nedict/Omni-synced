@@ -46,7 +46,9 @@ pub(crate) fn triangulate(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>
         Some((sag, _)) if sag.scale.iter().all(|k| k.is_finite() && *k > 0.0) => sag.scale,
         _ => [1.0, 1.0],
     };
-    let to = |p: &[f64; 2]| Point2::new(p[0] * scale[0], p[1] * scale[1]);
+    // spade refuses coordinates below about 1e-43 in magnitude (other than zero), which
+    // projection leaves where a parameter is zero in exact arithmetic.
+    let to = |p: &[f64; 2]| spade::mitigate_underflow(Point2::new(p[0] * scale[0], p[1] * scale[1]));
     let from = |p: Point2<f64>| [p.x / scale[0], p.y / scale[1]];
     let mut cdt = Cdt::new();
     let mut index: HashMap<FixedVertexHandle, u32> = HashMap::new();
@@ -165,7 +167,7 @@ fn refine_sag(cdt: &mut Cdt, sag: &Sag, budget: usize, from: &dyn Fn(Point2<f64>
             if added >= budget {
                 return added;
             }
-            if cdt.insert(p).is_ok() {
+            if cdt.insert(spade::mitigate_underflow(p)).is_ok() {
                 added += 1;
             }
         }
@@ -272,5 +274,15 @@ mod tests {
         let b = [[0.0, 0.0], [1.0, 1.0], [1.0, 0.0], [0.0, 1.0]];
         let whole = std::slice::from_ref(&(0..4));
         assert!(triangulate(&b, whole, Fill { seeds: &[], refine: None }).is_none());
+    }
+
+    #[test]
+    fn coordinates_that_underflow_are_taken_as_zero() {
+        // A parameter that is zero in exact arithmetic, left at 1e-300 by projection.
+        let b = [[1e-300, 0.0], [1.0, -1e-310], [1.0, 1.0], [0.0, 1.0]];
+        let whole = std::slice::from_ref(&(0..4));
+        let Some((extra, tris)) = triangulate(&b, whole, Fill { seeds: &[], refine: None }) else { panic!("meshes") };
+        assert!(extra.is_empty());
+        assert_eq!(tris.len(), 2);
     }
 }
