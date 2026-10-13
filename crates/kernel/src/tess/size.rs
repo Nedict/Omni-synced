@@ -1,0 +1,126 @@
+//! Target triangle size: one side length per face, so triangles come out about equilateral
+//! (well-shaped triangles shade evenly) and as small as the surface needs.
+//!
+//! A face's size is the smallest of the body's longest side, the length over which the surface
+//! normal turns [`MAX_TURN`], and the chord that sags the tolerance; an edge takes the smaller
+//! size of its two faces, so a curved face and its flat neighbour meet at the same spacing.
+
+use solidcraft_geom::Vec3;
+use solidcraft_geom::tess::EvalSurface;
+
+use super::uv::Domain;
+
+/// Largest turn (radians) of the surface normal, or an edge's tangent, across one side.
+pub(crate) const MAX_TURN: f64 = 15.0 * std::f64::consts::PI / 180.0;
+/// Longest side, as a fraction of the body's extent.
+const MAX_LEN_FRACTION: f64 = 1.0 / 20.0;
+/// Longest side relative to the side the curvature asks for (1: about equilateral).
+const ASPECT: f64 = 1.0;
+/// Curvature samples per parameter direction.
+const SAMPLES: usize = 9;
+
+/// The chord tolerance and the longest side of one body.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Rules {
+    pub tol: f64,
+    pub max_len: f64,
+}
+
+impl Rules {
+    /// Rules for a body of extent `extent` (see [`extent`]).
+    pub(crate) fn new(tol: f64, extent: f64) -> Rules {
+        let max_len = if extent.is_finite() && extent > 0.0 { extent * MAX_LEN_FRACTION } else { f64::INFINITY };
+        Rules { tol, max_len: max_len.max(tol) }
+    }
+
+    /// The side length for a curvature `k` (1/mm): the normal turns at most [`MAX_TURN`] and the
+    /// chord sags at most the tolerance across it.
+    fn for_curvature(&self, k: f64) -> f64 {
+        if !(k.is_finite() && k > 0.0) {
+            return self.max_len;
+        }
+        let r = 1.0 / k;
+        self.max_len.min(ASPECT * (r * MAX_TURN).min((8.0 * r * self.tol).sqrt())).max(self.tol)
+    }
+}
+
+/// The body's extent: twice the largest distance of a vertex from the vertices' centroid. Unlike
+/// a bounding box diagonal it does not change when the body is turned, so a placed copy meshes
+/// like the original.
+pub(crate) fn extent(points: impl Iterator<Item = Vec3>) -> f64 {
+    let points: Vec<Vec3> = points.filter(|p| p.is_finite()).collect();
+    if points.is_empty() {
+        return 0.0;
+    }
+    let c = points.iter().fold(Vec3::ZERO, |a, p| a + *p) * (1.0 / points.len() as f64);
+    2.0 * points.iter().map(|p| p.dist(c)).fold(0.0, f64::max)
+}
+
+/// A face's target side length and the surface's mean speed along u and v (mm per parameter
+/// unit), from samples over the surface's parameter box (the whole box of a trimmed surface,
+/// so the size is never larger than the face needs).
+pub(crate) fn face_size(s: &EvalSurface, dom: &Domain, rules: &Rules) -> (f64, [f64; 2]) {
+    if let EvalSurface::Plane { du, dv, .. } = s {
+        return (rules.max_len, [du.len(), dv.len()]);
+    }
+    let (Some(ru), Some(rv)) = (dom.range[0], dom.range[1]) else { return (rules.max_len, [1.0, 1.0]) };
+    let normal = |u: f64, v: f64| -> Option<(Vec3, Vec3, [f64; 2])> {
+        let (p, su, sv) = s.derivs(u, v)?;
+        Some((p, su.cross(sv).normalized()?, [su.len(), sv.len()]))
+    };
+    let step = [(ru.1 - ru.0) * 1e-3, (rv.1 - rv.0) * 1e-3];
+    let mut k_max: f64 = 0.0;
+    let (mut speed, mut count) = ([0.0; 2], 0usize);
+    for i in 0..SAMPLES {
+        for j in 0..SAMPLES {
+            // Cell centres, clear of the box edges (poles, seams).
+            let u = ru.0 + (ru.1 - ru.0) * (i as f64 + 0.5) / SAMPLES as f64;
+            let v = rv.0 + (rv.1 - rv.0) * (j as f64 + 0.5) / SAMPLES as f64;
+            let Some((p, n, sp)) = normal(u, v) else { continue };
+            speed = [speed[0] + sp[0], speed[1] + sp[1]];
+            count += 1;
+            // How fast the normal turns per mm, along u and along v (twist included).
+            for (du, dv) in [(step[0], 0.0), (0.0, step[1])] {
+                let Some((q, m, _)) = normal(u + du, v + dv) else { continue };
+                let ds = p.dist(q);
+                if ds > 0.0 {
+                    k_max = k_max.max((m - n).len() / ds);
+                }
+            }
+        }
+    }
+    let speed = if count > 0 { [speed[0] / count as f64, speed[1] / count as f64] } else { [1.0, 1.0] };
+    (rules.for_curvature(k_max), speed.map(|x| if x.is_finite() && x > 0.0 { x } else { 1.0 }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solidcraft_geom::tess::EvalCurve;
+
+    #[test]
+    fn a_cylinder_is_sized_by_its_radius() {
+        let s = EvalSurface::Revolved {
+            profile: EvalCurve { degree: 1, knots: vec![0.0, 0.0, 1.0, 1.0], ctrl: vec![[3.0, 0.0, 0.0, 1.0], [3.0, 0.0, 40.0, 1.0]] },
+            origin: Vec3::ZERO,
+            axis: Vec3::Z,
+            transform: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
+            swap: false,
+        };
+        let rules = Rules::new(0.01, 100.0);
+        let (h, speed) = face_size(&s, &super::super::uv::domain(&s), &rules);
+        // r = 3: 15° of turn is 0.785 mm; the 0.01 mm sag chord is √(8·3·0.01) = 0.49 mm.
+        assert!((h - ASPECT * (8.0 * 3.0 * 0.01f64).sqrt()).abs() < 0.01, "{h}");
+        assert!((speed[0] - 40.0).abs() < 1e-6 && (speed[1] - 3.0).abs() < 1e-6, "{speed:?}");
+        // Coarser: the turn limit governs.
+        let (h, _) = face_size(&s, &super::super::uv::domain(&s), &Rules::new(0.5, 100.0));
+        assert!((h - ASPECT * 3.0 * MAX_TURN).abs() < 0.01, "{h}");
+    }
+
+    #[test]
+    fn a_plane_takes_the_longest_side() {
+        let s = EvalSurface::Plane { origin: Vec3::ZERO, du: Vec3::X, dv: Vec3::Y };
+        let rules = Rules::new(0.01, 100.0);
+        assert_eq!(face_size(&s, &super::super::uv::domain(&s), &rules).0, 5.0);
+    }
+}

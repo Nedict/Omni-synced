@@ -5,6 +5,7 @@ use solidcraft_geom::Vec3;
 use truck_meshalgo::prelude::*;
 use truck_modeling as mt;
 
+use super::size::MAX_TURN;
 use crate::body::from_p3;
 
 /// Most nodes on one edge.
@@ -12,15 +13,18 @@ pub(crate) const MAX_EDGE_NODES: usize = 20_000;
 /// Deepest bisection of one edge segment.
 const MAX_DEPTH: u32 = 24;
 
-/// Nodes of `edge` from its absolute front to its absolute back, every chord within `tol` of
-/// the curve (checked at the quarter points, so an S-bend in one segment is not missed). The
-/// end nodes are the vertices' own points, so edges meeting at a vertex meet exactly.
-pub(crate) fn sample_edge(edge: &mt::Edge, tol: f64) -> Vec<Vec3> {
+/// Nodes of `edge` from its absolute front to its absolute back: every chord within `tol` of
+/// the curve (checked at the quarter points, so an S-bend in one segment is not missed), at
+/// most `h` long, and turning at most [`MAX_TURN`] from the next. The end nodes are the
+/// vertices' own points, so edges meeting at a vertex meet exactly.
+pub(crate) fn sample_edge(edge: &mt::Edge, tol: f64, h: f64) -> Vec<Vec3> {
     let front = from_p3(edge.absolute_front().point());
     let back = from_p3(edge.absolute_back().point());
     let curve = edge.curve();
     if matches!(curve, mt::Curve::Line(_)) {
-        return vec![front, back];
+        // Evenly, as few segments as keep each at most `h`.
+        let n = if h > 0.0 { (front.dist(back) / h).ceil().clamp(1.0, (MAX_EDGE_NODES - 1) as f64) as usize } else { 1 };
+        return (0..=n).map(|i| front + (back - front) * (i as f64 / n as f64)).collect();
     }
     let (t0, t1) = curve.range_tuple();
     if !(t0.is_finite() && t1.is_finite() && t1 > t0) {
@@ -72,7 +76,12 @@ pub(crate) fn sample_edge(edge: &mt::Edge, tol: f64) -> Vec<Vec3> {
         };
         let (q1, q3) = (at(a + 0.25 * (b - a)), at(a + 0.75 * (b - a)));
         let done = sg.depth >= MAX_DEPTH || out.len() + stack.len() >= MAX_EDGE_NODES;
-        let fine = || [q1, pm, q3].iter().all(|q| q.is_none_or(|q| q.dist_to_segment(pa, pb) <= tol));
+        let fine = || {
+            let short = !(pa.dist(pb) > h * (1.0 + 1e-9));
+            // The two half chords of an arc turning θ differ by θ/2.
+            let straight = pm.is_none_or(|q| turn(q - pa, pb - q) <= 0.5 * MAX_TURN);
+            short && straight && [q1, pm, q3].iter().all(|q| q.is_none_or(|q| q.dist_to_segment(pa, pb) <= tol))
+        };
         match pm {
             Some(pm) if !done && !fine() => {
                 stack.push(Seg { a: m, b, pa: pm, pb, mid: q3, depth: sg.depth + 1 });
@@ -90,6 +99,15 @@ pub(crate) fn sample_edge(edge: &mt::Edge, tol: f64) -> Vec<Vec3> {
     out
 }
 
+/// Angle (radians) between two directions; zero when either is empty.
+fn turn(a: Vec3, b: Vec3) -> f64 {
+    let (la, lb) = (a.len(), b.len());
+    if !(la > 0.0 && lb > 0.0) {
+        return 0.0;
+    }
+    (a.dot(b) / (la * lb)).clamp(-1.0, 1.0).acos()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,7 +117,7 @@ mod tests {
         let Ok(cyl) = crate::cylinder(Vec3::ZERO, Vec3::Z, 10.0, 5.0) else { panic!("cylinder") };
         for tol in [0.1, 0.01, 0.001] {
             for e in cyl.solid.edge_iter() {
-                let pts = sample_edge(&e, tol);
+                let pts = sample_edge(&e, tol, f64::INFINITY);
                 assert!(pts.len() >= 2);
                 assert_eq!(pts.first().copied(), Some(from_p3(e.absolute_front().point())));
                 assert_eq!(pts.last().copied(), Some(from_p3(e.absolute_back().point())));
@@ -115,5 +133,30 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn edges_are_split_to_the_side_length_and_turn() {
+        let Ok(cyl) = crate::cylinder(Vec3::ZERO, Vec3::Z, 10.0, 5.0) else { panic!("cylinder") };
+        for e in cyl.solid.edge_iter() {
+            let pts = sample_edge(&e, 1.0, 1.2);
+            for w in pts.windows(2) {
+                assert!(w[0].dist(w[1]) <= 1.2 + 1e-9, "side {}", w[0].dist(w[1]));
+            }
+            if matches!(e.curve(), mt::Curve::Line(_)) {
+                // 5 mm in sides of at most 1.2: five equal sides.
+                assert_eq!(pts.len(), 6);
+            }
+        }
+        // A coarse tolerance alone would leave a few long chords; the turn limit keeps every
+        // side within 15° of arc: at least 24 around each of the two circles.
+        let mut seen = std::collections::HashSet::new();
+        let sides: usize = cyl
+            .solid
+            .edge_iter()
+            .filter(|e| seen.insert(e.id()) && !matches!(e.curve(), mt::Curve::Line(_)))
+            .map(|e| sample_edge(&e, 5.0, f64::INFINITY).len() - 1)
+            .sum();
+        assert!(sides >= 48, "{sides}");
     }
 }

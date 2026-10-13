@@ -20,6 +20,7 @@ pub(crate) mod cdt;
 pub(crate) mod coons;
 pub(crate) mod edges;
 pub(crate) mod grid;
+pub(crate) mod size;
 pub(crate) mod surface;
 pub(crate) mod uv;
 
@@ -53,8 +54,20 @@ fn unsupported(what: impl std::fmt::Display) -> KernelError {
 pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
     let faces: Vec<&mt::Face> = solid.face_iter().collect();
     let (edges, edge_faces) = edge_order(faces.iter().copied());
-    // Every edge once, in parallel; faces then read their nodes.
-    let sampled = crate::par::map("edge nodes", &edges, 64, |e| Ok(edges::sample_edge(e, tol)));
+    let rules = size::Rules::new(tol, size::extent(solid.vertex_iter().map(|v| crate::body::from_p3(v.point()))));
+    // Each face's surface and target side length, then every edge once at the smaller size of
+    // its faces, in parallel; faces then read their nodes.
+    let sized = crate::par::map("face sizes", &faces, 8, |face| {
+        let surface = face.surface();
+        let eval = surface::eval_surface(&surface);
+        let size = eval.as_ref().map(|s| size::face_size(s, &uv::domain(s), &rules));
+        Ok((eval, size))
+    });
+    let sized: Vec<(Option<EvalSurface>, Option<(f64, [f64; 2])>)> = sized.into_iter().collect::<Result<_>>()?;
+    let face_h = |f: usize| sized.get(f).and_then(|(_, s)| s.map(|(h, _)| h)).unwrap_or(rules.max_len);
+    let edge_h: Vec<f64> = edge_faces.iter().map(|fs| fs.iter().map(|&f| face_h(f)).fold(rules.max_len, f64::min)).collect();
+    let jobs: Vec<(&mt::Edge, f64)> = edges.iter().zip(edge_h).collect();
+    let sampled = crate::par::map("edge nodes", &jobs, 64, |(e, h)| Ok(edges::sample_edge(e, tol, *h)));
     let mut nodes: HashMap<_, Vec<Vec3>> = HashMap::with_capacity(edges.len());
     for (e, pts) in edges.iter().zip(sampled) {
         nodes.insert(e.id(), pts?);
@@ -69,8 +82,8 @@ pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
     let indexed: Vec<(usize, &mt::Face)> = faces.iter().copied().enumerate().collect();
     let planned = crate::par::map("face tessellation", &indexed, 8, |(fi, face)| {
         let fi = *fi;
-        let surface = face.surface();
-        let eval = surface::eval_surface(&surface).ok_or_else(|| unsupported(format!("face {fi}: surface not evaluable")))?;
+        let Some((Some(eval), Some(_))) = sized.get(fi) else { return Err(unsupported(format!("face {fi}: surface not evaluable"))) };
+        let eval = eval.clone();
         // Boundary nodes, loop by loop (each edge's last node is the next edge's first).
         let mut loops3: Vec<Vec<Vec3>> = Vec::new();
         for wire in face.absolute_boundaries() {
