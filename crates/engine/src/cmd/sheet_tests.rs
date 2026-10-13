@@ -2467,3 +2467,24 @@ fn designs_without_per_edge_values_are_read_and_written_as_before() {
     design["features"][flange]["edges"][3] = json!({"point": [0.0, 45.0, 2.0], "twist": "3 deg"});
     assert!(solidcraft_doc::Document::from_json(&design.to_string()).is_err());
 }
+
+#[test]
+#[ignore = "fails until #541 is fixed"]
+fn a_box_cut_straight_through_a_flat_sheet_is_a_cutout_like_the_extrude_cut() {
+    // A 10 x 10 box perpendicular to the sheet and through its whole thickness removes exactly
+    // what a sketch rectangle extruded through all removes, which is accepted today.
+    let mut s = Session::default();
+    base(&mut s, 100.0, 60.0);
+    run(&mut s, "solid.box", json!({"corner": [20, 20, -1], "length": 10, "width": 10, "height": 5, "operation": "cut"}));
+    let mut extruded = Session::default();
+    base(&mut extruded, 100.0, 60.0);
+    rectangle_tool(&mut extruded, "Hole", [20.0, 20.0], [30.0, 30.0]);
+    run(&mut extruded, "solid.extrude", json!({"sketch": "Hole", "through_all": true, "direction": "symmetric", "operation": "cut"}));
+    for session in [&mut s, &mut extruded] {
+        assert!((volume(session) - 14750.0).abs() < 1e-6);
+        assert_eq!(flat(session)["cutouts"].as_array().map(Vec::len), Some(1));
+    }
+    run(&mut s, "sheet.unfold", json!({}));
+    run(&mut s, "sheet.refold", json!({}));
+    assert!((volume(&mut s) - 14750.0).abs() < 1e-6);
+}
