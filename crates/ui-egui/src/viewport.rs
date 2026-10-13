@@ -23,6 +23,9 @@ mod appearance_tests;
 #[path = "viewport_plane_target_tests.rs"]
 mod plane_target_tests;
 
+#[path = "navigation_cube.rs"]
+mod navigation_cube;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavMode {
     Orbit,
@@ -1179,6 +1182,13 @@ fn section_clip(app: &SolveApp) -> [f32; 4] {
 }
 
 /// Space kept free at the top right of the viewport for the axis view (docked dialogs start below).
+pub(crate) fn axis_view_size(style: crate::prefs::NavigatorStyle) -> f32 {
+    match style {
+        crate::prefs::NavigatorStyle::Axes => 116.0,
+        crate::prefs::NavigatorStyle::Cube => navigation_cube::SIZE,
+    }
+}
+// Keep command panels anchored independently of the compact cube's display size.
 pub const AXIS_VIEW_CLEARANCE: f32 = 168.0;
 
 /// Axis length as a multiple of the origin plane size (solid part 1, dashed beyond).
@@ -2700,26 +2710,24 @@ pub(crate) fn refresh_layout(app: &mut SolveApp, scale: f32) {
         .into_iter()
         .flatten()
         .collect();
-        app.viewport.layout = Some(crate::viewport_layout::Layout::new(rect, &docks, scale));
+        app.viewport.layout = Some(crate::viewport_layout::Layout::new(rect, &docks, scale, app.preferences.navigator_style));
     }
 }
 
-/// Compact orientation gizmo, drawn and hit-tested in world coordinates.
-const AXIS_LENGTH: f64 = 38.0;
-const AXIS_RADIUS: f32 = 11.0;
-
+/// Orientation controls share the layout reservation used by model fitting.
 fn axis_center(app: &SolveApp, rect: Rect) -> Pos2 {
     axis_rect(app, rect).center()
 }
 
 fn axis_rect(app: &SolveApp, rect: Rect) -> Rect {
-    app.viewport
-        .layout
-        .as_ref()
-        .filter(|l| l.viewport == rect)
-        .map(|l| l.axis_view)
-        .unwrap_or_else(|| Rect::from_center_size(pos2(rect.right() - 68.0, rect.top() + 68.0), vec2(116.0, 116.0)))
+    app.viewport.layout.as_ref().filter(|l| l.viewport == rect).map(|l| l.axis_view).unwrap_or_else(|| {
+        let size = axis_view_size(app.preferences.navigator_style);
+        Rect::from_min_size(pos2(rect.right() - size, rect.top()), vec2(size, size))
+    })
 }
+
+const AXIS_LENGTH: f64 = 38.0;
+const AXIS_RADIUS: f32 = 11.0;
 
 /// Six signed world axes, sorted back to front so overlapping tips have one owner.
 fn axis_tips(cam: &Camera, c: Pos2) -> Vec<(&'static str, Vec3, Pos2, f64)> {
@@ -2837,7 +2845,12 @@ fn axis_view_orbit(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) -> bool {
         (p.primary_pressed(), p.primary_down(), p.is_decidedly_dragging(), p.press_origin(), p.interact_pos(), i.modifiers.shift)
     });
     if pressed && ui.rect_contains_pointer(rect) {
-        app.viewport.axis_drag = origin.filter(|p| axis_rect(app, rect).contains(*p));
+        app.viewport.axis_drag = origin.filter(|p| match app.preferences.navigator_style {
+            crate::prefs::NavigatorStyle::Axes => axis_rect(app, rect).contains(*p),
+            crate::prefs::NavigatorStyle::Cube => {
+                navigation_cube::drag_origin(&app.cam, axis_center(app, rect), *p, axis_rect(app, rect).width() / navigation_cube::DESIGN_SIZE)
+            }
+        });
         if app.viewport.axis_drag.is_some() {
             app.viewport.orbit_free = None;
         }
@@ -2857,6 +2870,13 @@ fn axis_view_orbit(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) -> bool {
 }
 
 fn axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
+    match app.preferences.navigator_style {
+        crate::prefs::NavigatorStyle::Axes => signed_axis_view(app, ui, rect),
+        crate::prefs::NavigatorStyle::Cube => navigation_cube::show(app, ui, rect),
+    }
+}
+
+fn signed_axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
     if !axis_rect(app, rect).is_positive() {
         app.viewport.axis_drag = None;
         crate::scenario::publish_count("axis_view_highlights", 0.0);
@@ -3000,7 +3020,14 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
         .map(|l| l.navigation)
         .unwrap_or_else(|| Rect::from_center_size(pos2(rect.center().x, rect.bottom() - 22.0), vec2(w, 30.0)));
     crate::scenario::publish_rect("nav:outer", bar);
-    let painter = ui.painter_at(rect);
+    let active = ui.rect_contains_pointer(bar)
+        || ui.rect_contains_pointer(axis_rect(app, rect))
+        || app.viewport.axis_drag.is_some()
+        || app.viewport.nav.is_some()
+        || app.viewport.spin
+        || menu_open;
+    let mut painter = ui.painter_at(rect);
+    painter.set_opacity(if active || app.preferences.navigator_style == crate::prefs::NavigatorStyle::Axes { 1.0 } else { 0.45 });
     painter.rect(bar, 6.0, t.overlay, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     let columns = ((bar.width() - 10.0) / 30.0).round().clamp(1.0, 10.0) as usize;
     for (i, (icon, tip)) in items.iter().enumerate() {
@@ -4318,14 +4345,15 @@ mod tests {
     }
 
     #[test]
-    fn axis_view_click_again_flips_and_drag_snaps() {
+    fn navigation_cube_repeated_face_click_keeps_view_and_drag_snaps() {
         let mut h = crate::scenario::Harness::new();
+        h.call("ui.prefs", json!({"navigator_style":"cube"}));
         h.run(&json!([
             {"call":"ui.view","params":{"view":"home"}},
             {"click":{"handle":"axis_view:z"}},
             {"expect":{"camera":{"pitch_deg":90,"yaw_deg":0}}},
             {"click":{"handle":"axis_view:z"}},
-            {"expect":{"camera":{"pitch_deg":-90,"yaw_deg":0}}},
+            {"expect":{"camera":{"pitch_deg":90,"yaw_deg":0}}},
             {"call":"ui.view","params":{"view":"front"}}
         ]))
         .unwrap();

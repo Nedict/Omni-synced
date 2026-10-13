@@ -465,6 +465,16 @@ impl SolveApp {
         let r = self.session.execute(id, &params).map_err(|e| e.to_string());
         self.big_operation |= now_ms() - t0 >= recovery_ui::BIG_OPERATION_MS;
         if let Ok(v) = &r {
+            if id == "view.navigate" {
+                let to: Camera = serde_json::from_value(v.get("camera").cloned().unwrap_or_default()).map_err(|e| e.to_string())?;
+                if v.get("fit").and_then(Value::as_bool).unwrap_or(false) {
+                    let bounds = solidcraft_engine::view::bounds(&self.session);
+                    self.animate_to(self.fitted(to));
+                    self.pending_fit = Some((to, bounds, true));
+                } else {
+                    self.animate_to(to);
+                }
+            }
             // Curves drawn in construction (or centerline) mode take that line type.
             sketch_palette::apply_mode(self, id, v);
         }
@@ -726,6 +736,7 @@ impl SolveApp {
         if let Some(d) = &self.dialog {
             v.extend(d.items());
         }
+        v.extend(sketch_text::highlighted(self));
         v
     }
 

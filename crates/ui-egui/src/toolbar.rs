@@ -1146,7 +1146,9 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
     if crate::keymap::capturing(app) {
         return;
     }
-    if ctx.egui_wants_keyboard_input() {
+    // A dimension value that is taking the keyboard: letters belong to it (a parameter name
+    // starting with L or D), even on the frame before its field holds the focus.
+    if ctx.egui_wants_keyboard_input() || crate::dim_view::editing() {
         return;
     }
     let (keys, mods) = ctx.input(|i| {

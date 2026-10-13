@@ -173,6 +173,26 @@ pub const PAGE_GRAPHICS: usize = 4;
 pub const THEMES: [(&str, &str); 3] = [("dark", "Dark"), ("light", "Light"), ("system", "System")];
 pub const MSAA: [u32; 4] = [1, 2, 4, 8];
 
+/// Original view navigators, independent of the mouse navigation preset.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NavigatorStyle {
+    #[default]
+    Axes,
+    Cube,
+}
+
+impl NavigatorStyle {
+    pub const ALL: [Self; 2] = [Self::Axes, Self::Cube];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Axes => "Signed axes",
+            Self::Cube => "Cube",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
@@ -180,6 +200,8 @@ pub struct Prefs {
     pub default_units: String,
     /// Mouse mapping: `fusion`, `solidworks` or `inventor`.
     pub nav: String,
+    /// View orientation widget: original signed axes (default) or compact cube.
+    pub navigator_style: NavigatorStyle,
     /// Show the radial ring and enable hold/flick gestures for viewport context menus.
     pub radial_context_menu: bool,
     /// The wheel zooms out when turned forward.
@@ -221,6 +243,7 @@ impl Default for Prefs {
         Prefs {
             default_units: "mm".into(),
             nav: "fusion".into(),
+            navigator_style: NavigatorStyle::default(),
             radial_context_menu: false,
             zoom_reverse: false,
             orbit_cursor: false,
@@ -332,6 +355,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
         }
         1 => {
             p.nav = d.nav;
+            p.navigator_style = d.navigator_style;
             p.radial_context_menu = d.radial_context_menu;
             p.zoom_reverse = d.zoom_reverse;
             p.zoom_to_cursor = d.zoom_to_cursor;
@@ -839,6 +863,18 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.label("Context menu");
             ui.checkbox(&mut app.preferences.radial_context_menu, "Radial context menu");
             ui.end_row();
+            ui.label("View navigator");
+            let picker =
+                egui::ComboBox::from_id_salt("pref_navigator_style").selected_text(app.preferences.navigator_style.label()).show_ui(ui, |ui| {
+                    for style in NavigatorStyle::ALL {
+                        let response = ui.selectable_value(&mut app.preferences.navigator_style, style, style.label());
+                        crate::scenario::publish_rect(&format!("prefs:navigator:{}", style.label()), response.rect);
+                        crate::scenario::publish_handle(&format!("prefs:navigator:{}", style.label()), response.rect.center());
+                    }
+                });
+            crate::scenario::publish_rect("prefs:navigator", picker.response.rect);
+            crate::scenario::publish_handle("prefs:navigator", picker.response.rect.center());
+            ui.end_row();
             ui.label("Reverse zoom direction");
             ui.checkbox(&mut app.preferences.zoom_reverse, "");
             ui.end_row();
@@ -1110,6 +1146,50 @@ mod tests {
         assert_eq!(parse_length_mm("abc", inch), None);
         assert_eq!(parse_length_mm("", inch), None);
         assert_eq!(parse_length_mm("1e400", 1.0), None);
+    }
+
+    #[test]
+    fn navigator_picker_preserves_axes_and_follows_preferences_transactions() {
+        let old: Prefs = serde_json::from_value(json!({"nav":"solidworks"})).unwrap();
+        assert_eq!(old.navigator_style, NavigatorStyle::Axes);
+        let mut h = crate::scenario::Harness::new();
+        assert!(crate::scenario::handle_at("axis_view:z").is_some());
+        assert!(crate::scenario::handle_at("navigation_cube:front").is_none());
+        let camera = h.app.cam;
+        let design = h.app.session.doc.to_json();
+        let nav = h.app.preferences.nav.clone();
+        h.call("ui.prefs", json!({"open":"Navigation"}));
+        let picker = crate::scenario::rect_of("prefs:navigator").unwrap().center();
+        h.call("ui.click", json!({"x":picker.x,"y":picker.y}));
+        let cube = crate::scenario::rect_of("prefs:navigator:Cube").unwrap().center();
+        assert!(crate::scenario::rect_of("prefs:navigator:Signed axes").is_some());
+        h.call("ui.click", json!({"x":cube.x,"y":cube.y}));
+        assert_eq!(h.app.preferences.navigator_style, NavigatorStyle::Cube);
+        assert!(crate::scenario::handle_at("navigation_cube:front").is_some());
+        assert_eq!(h.app.preferences.nav, nav);
+        assert_eq!(h.app.cam, camera);
+        assert_eq!(h.app.session.doc.to_json(), design);
+        let mut restored = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        restored.load_prefs(&h.app.prefs());
+        assert_eq!(restored.preferences.navigator_style, NavigatorStyle::Cube);
+        let before = h.app.preferences.clone();
+        assert!(control(&mut h.app, &json!({"navigator_style":"unknown", "nav":"solidworks"})).is_err());
+        assert_eq!(h.app.preferences, before, "invalid settings must fail atomically");
+        h.call("ui.prefs", json!({"button":"cancel"}));
+        assert_eq!(h.app.preferences.navigator_style, NavigatorStyle::Axes);
+        assert!(crate::scenario::handle_at("navigation_cube:front").is_none());
+        h.call("ui.prefs", json!({"open":"Navigation","navigator_style":"cube"}));
+        h.call("ui.prefs", json!({"button":"apply"}));
+        h.call("ui.prefs", json!({"button":"defaults"}));
+        assert_eq!(h.app.preferences.navigator_style, NavigatorStyle::Axes);
+        h.call("ui.prefs", json!({"button":"cancel"}));
+        assert_eq!(h.app.preferences.navigator_style, NavigatorStyle::Cube);
+        h.call("ui.prefs", json!({"navigator_style":"axes", "look_at_anim":false}));
+        h.call("ui.view", json!({"view":"front"}));
+        let axis = crate::scenario::handle_at("axis_view:-y").unwrap();
+        h.call("ui.click", json!({"x":axis.x,"y":axis.y}));
+        assert!(h.app.cam.back().dist(Vec3::Y) < 1e-6, "original axes retain click-again reversal");
+        assert_eq!(h.app.session.doc.to_json(), design);
     }
 
     #[test]

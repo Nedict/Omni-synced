@@ -95,7 +95,12 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
             let Some(id) = s("command").or(s("id")) else { return err("missing `command`") };
             let params = p.get("params").cloned().filter(|v| !v.is_null()).unwrap_or(json!({}));
             let r = app.run(id, params);
-            if r.is_ok() && app.session.active_sketch.is_none() && app.session.world_state().bodies.len() == 1 && app.session.undo.len() <= 2 {
+            if r.is_ok()
+                && id != "view.navigate"
+                && app.session.active_sketch.is_none()
+                && app.session.world_state().bodies.len() == 1
+                && app.session.undo.len() <= 2
+            {
                 app.fit_view();
             }
             // After the first-body fit, so a camera the command asked for (`view.apply`) wins.

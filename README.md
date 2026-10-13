@@ -101,7 +101,7 @@ rebuild with no errors, replayed here at 2× speed.
   by parameters. Over-constraining edits are rejected; fully constrained geometry turns black.
   Dragging solves the sketch every frame and rebuilds the model once, when the drag ends.
   Select a line or its two endpoints, type its dimension and press Enter to commit one undo
-  step. Fit keeps sketch geometry clear of the palette and navigation controls.
+  step; with Sketch Dimension it's D, click, type, Enter. Fit keeps sketch geometry clear of the palette and navigation controls.
 - **Profiles** found automatically, including regions split by lines and holes inside outlines.
   Newly captured complete adaptive boundaries retain their outer and hole source identities
   when spline span counts change. Partial or ambiguous boundaries do not qualify.
