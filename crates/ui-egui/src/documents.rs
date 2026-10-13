@@ -327,7 +327,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
         if app.home.open { t.text } else { t.app_bar_text },
     );
     crate::scenario::publish_handle("tab:home", home.center());
-    if response.clicked() {
+    if response.clicked() && !app.file_load.busy() {
         app.home.show(app.session.revision);
     }
     let x0 = x0 + 70.0;
@@ -428,13 +428,16 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
     let s = Stroke::new(1.6, t.app_bar_text);
     ui.painter().line_segment([c - vec2(6.0, 0.0), c + vec2(6.0, 0.0)], s);
     ui.painter().line_segment([c - vec2(0.0, 6.0), c + vec2(0.0, 6.0)], s);
-    if presp.on_hover_text("New Design (Ctrl+N)").clicked() {
+    // A file loading into the window keeps the tabs as they are (dragging still moves it).
+    let idle = !app.file_load.busy();
+    if presp.on_hover_text("New Design (Ctrl+N)").clicked() && idle {
         new_design(app);
     }
-    if let Some(i) = shut {
-        close(app, i, false);
-    } else if let Some(i) = pick {
-        switch(app, i);
+    match (shut, pick) {
+        _ if !idle => {}
+        (Some(i), _) => close(app, i, false),
+        (None, Some(i)) => switch(app, i),
+        (None, None) => {}
     }
 }
 

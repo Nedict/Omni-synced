@@ -66,6 +66,8 @@ mod expression_complete;
 #[cfg(test)]
 mod extrude_edit_tests;
 mod file_load;
+#[cfg(test)]
+mod file_load_ui_tests;
 pub mod palette;
 pub mod params_dialog;
 pub mod prefs;
@@ -263,6 +265,8 @@ pub struct SolveApp {
     /// The modifiers of the synthetic press in progress (a Ctrl-drag keeps Ctrl while it moves).
     pub synthetic_mods: egui::Modifiers,
     control_rx: Option<Receiver<ControlRequest>>,
+    /// Control requests that change the design, held while a file loads.
+    control_held: std::collections::VecDeque<ControlRequest>,
     /// The agent cursor acting out control requests.
     pub agent: agent_cursor::AgentCursor,
     pending_shots: Vec<(u64, Option<String>, std::sync::mpsc::Sender<Value>, f64)>,
@@ -323,6 +327,7 @@ impl SolveApp {
             synthetic: Vec::new(),
             synthetic_mods: egui::Modifiers::default(),
             control_rx: None,
+            control_held: Default::default(),
             agent: Default::default(),
             pending_shots: Vec::new(),
             queued_shots: Vec::new(),
@@ -506,6 +511,10 @@ impl SolveApp {
     /// Start a command the way a toolbar click does: interactive tools and dialogs for commands
     /// that have them, otherwise run it with defaults.
     pub fn start(&mut self, id: &str) {
+        // A file is loading: the design waits for it.
+        if self.file_load.busy() {
+            return;
+        }
         // Another command ends Edit Text (its dialog is not a feature edit to keep).
         if sketch_text::editing(self) {
             dialogs::cancel(self);
@@ -1059,13 +1068,33 @@ impl SolveApp {
         /// queued for the next frame.
         const PER_FRAME: usize = 64;
 
+        /// Held requests beyond this are refused rather than kept.
+        const MAX_HELD: usize = 256;
+
         let Some(rx) = self.control_rx.take() else { return };
         // While the agent cursor acts out a request, later ones wait their turn.
         for _ in 0..PER_FRAME {
             if self.agent.busy() {
                 break;
             }
-            let Ok(req) = rx.try_recv() else { break };
+            // Held requests go first, in order, once the file is in.
+            let held = if self.file_load.busy() { None } else { self.control_held.pop_front() };
+            let Some(req) = held.or_else(|| rx.try_recv().ok()) else { break };
+            // A file is loading: commands that change the design wait for it (the window,
+            // inspection and screenshots still answer).
+            if self.file_load.busy() && matches!(req.method.as_str(), "engine.execute" | "command" | "engine.script") {
+                if self.control_held.len() < MAX_HELD {
+                    self.control_held.push_back(req);
+                } else {
+                    let _ = req.reply.send(json!({"ok": false, "error": "a file operation is in progress"}));
+                }
+                continue;
+            }
+            // Opening or importing a file: answered when the file is in, without freezing the window.
+            let Some(req) = file_load::control(self, req) else {
+                ctx.request_repaint();
+                continue;
+            };
             let reply = req.reply.clone();
             if agent_cursor::intercept(self, &req.method, &req.params, &reply) {
                 ctx.request_repaint();

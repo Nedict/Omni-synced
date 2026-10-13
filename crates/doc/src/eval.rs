@@ -888,8 +888,11 @@ impl Model {
         let mut restored = 0;
         let marker = doc.marker.unwrap_or(usize::MAX);
         let ctx = context_digest(doc, &vals);
+        let watched = crate::progress::begin(doc.features.len());
         for (i, f) in doc.features.iter().enumerate() {
             let rolled_back = i >= marker;
+            // Opening was cancelled: the rest is skipped and the result discarded.
+            let cancelled = watched.step(i);
             let fp = chain_fingerprint(doc, &vals, f, prev_fp, rolled_back);
             prev_fp = fp;
             if reuse
@@ -905,7 +908,7 @@ impl Model {
                 continue;
             }
             reuse = false;
-            if f.suppressed || rolled_back {
+            if f.suppressed || rolled_back || cancelled {
                 out.push(FeatureResult {
                     id: f.id,
                     name: f.name.clone(),
