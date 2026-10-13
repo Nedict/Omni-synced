@@ -20,6 +20,8 @@ pub enum Surf {
         direction: usize,
     },
     Patch,
+    Unstitch,
+    ReverseNormal,
     Stitch {
         tolerance: String,
     },
@@ -43,6 +45,8 @@ impl Surf {
         match self {
             Surf::Extrude { .. } => "SURFACE EXTRUDE",
             Surf::Patch => "PATCH",
+            Surf::Unstitch => "UNSTITCH",
+            Surf::ReverseNormal => "REVERSE NORMAL",
             Surf::Stitch { .. } => "STITCH",
             Surf::ConvertMesh { .. } => "CONVERT MESH",
             Surf::Thicken { .. } => "THICKEN",
@@ -69,6 +73,8 @@ fn inputs(k: &Surf) -> Vec<SelInput> {
     match k {
         Surf::Extrude { .. } => vec![SelInput::new("Profiles or curves", PROFILES | CURVES, true)],
         Surf::Patch => vec![SelInput::new("Boundary", PROFILES | EDGES, true)],
+        Surf::Unstitch => vec![SelInput::new("Body, or faces to take out", BODIES | FACES, true)],
+        Surf::ReverseNormal => vec![SelInput::new("Surface, or faces to turn over", BODIES | FACES, true)],
         Surf::Stitch { .. } => vec![SelInput::new("Surfaces", BODIES, true)],
         Surf::ConvertMesh { .. } => vec![SelInput::new("Mesh body", BODIES, false)],
         Surf::Thicken { .. } => vec![SelInput::new("Surfaces", BODIES, true)],
@@ -87,6 +93,8 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     let k = match id {
         "surface.extrude" => Surf::Extrude { distance: "10 mm".into(), direction: 0 },
         "surface.patch" => Surf::Patch,
+        "surface.unstitch" => Surf::Unstitch,
+        "surface.reverse_normal" => Surf::ReverseNormal,
         "surface.stitch" => Surf::Stitch { tolerance: String::new() },
         "mesh.convert" => Surf::ConvertMesh { tolerance: "0.05 mm".into() },
         "surface.thicken" => Surf::Thicken { thickness: "2 mm".into(), symmetric: false, operation: 0 },
@@ -136,7 +144,7 @@ pub fn rows(ui: &mut egui::Ui, k: &mut Surf) -> bool {
             combo(ui, "sx_dir", &EXTRUDE_SIDES.map(|(label, _)| label), direction);
             ui.end_row();
         }
-        Surf::Patch | Surf::Trim | Surf::SplitFace => {}
+        Surf::Patch | Surf::Trim | Surf::SplitFace | Surf::Unstitch | Surf::ReverseNormal => {}
     }
     enter
 }
@@ -151,6 +159,20 @@ fn pt(v: Vec3) -> Value {
 
 fn bodies(inputs: &[SelInput], i: usize) -> Vec<String> {
     items(inputs, i).iter().filter_map(|x| if let Sel::Body { name } = x { Some(name.clone()) } else { None }).collect()
+}
+
+/// One body and points on the picked faces of it (none: a whole body picked).
+fn body_and_faces(picks: &[Sel]) -> Result<(String, Vec<Value>), String> {
+    let body_of = |x: &Sel| match x {
+        Sel::Body { name } | Sel::Face { body: name, .. } => Some(name.clone()),
+        _ => None,
+    };
+    let body = picks.iter().find_map(body_of).ok_or("pick a body or some of its faces")?;
+    if picks.iter().any(|x| body_of(x).as_ref() != Some(&body)) {
+        return Err("pick faces of one body".into());
+    }
+    let faces = picks.iter().filter_map(|x| if let Sel::Face { point, .. } = x { Some(pt(*point)) } else { None }).collect();
+    Ok((body, faces))
 }
 
 /// A splitting or trimming tool: a plane by name, a planar face as its plane, or any other
@@ -209,6 +231,12 @@ pub fn commands(app: &SolveApp, k: &Surf, inputs: &[SelInput], extra: &Map<Strin
                 let body = items(inputs, 0).iter().find_map(|x| if let Sel::Edge { body, .. } = x { Some(body.clone()) } else { None });
                 ("surface.patch", json!({"edges": edges, "body": body}))
             }
+        }
+        Surf::Unstitch | Surf::ReverseNormal => {
+            need(0, "a body or some of its faces")?;
+            let (body, faces) = body_and_faces(items(inputs, 0))?;
+            let cmd = if matches!(k, Surf::Unstitch) { "surface.unstitch" } else { "surface.reverse_normal" };
+            (cmd, json!({"body": body, "faces": faces}))
         }
         Surf::Stitch { tolerance } => {
             need(0, "the surfaces to stitch")?;
@@ -314,6 +342,14 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
                 }
             }
             (Surf::Patch, vec![sels])
+        }
+        FeatureKind::Unstitch { body, faces } | FeatureKind::ReverseNormal { body, faces } => {
+            let sels: Vec<Sel> = if faces.is_empty() {
+                vec![Sel::Body { name: body.clone() }]
+            } else {
+                faces.iter().filter_map(|p| crate::dialogs::face_sel(s, *p)).collect()
+            };
+            (if matches!(kind, FeatureKind::Unstitch { .. }) { Surf::Unstitch } else { Surf::ReverseNormal }, vec![sels])
         }
         FeatureKind::Stitch { bodies, tolerance } => (
             Surf::Stitch { tolerance: if tolerance.trim() == "0" { String::new() } else { tolerance.clone() } },
