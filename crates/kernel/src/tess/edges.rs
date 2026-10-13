@@ -40,8 +40,9 @@ pub(crate) fn sample_edge(edge: &mt::Edge, tol: f64, h: f64) -> Vec<Vec3> {
         }
         .filter(|p| p.is_finite())
     };
-    // A closed curve's chord between its ends is empty: start from a few segments.
-    let initial: u32 = 4;
+    // A closed curve's chord between its ends is empty: start it from a few segments. An open
+    // one starts whole, so an arc the tolerance leaves flat stays one segment.
+    let initial: u32 = if edge.absolute_front().id() == edge.absolute_back().id() { 4 } else { 1 };
     let t_at = |i: u32| t0 + (t1 - t0) * f64::from(i) / f64::from(initial);
     let mut ends: Vec<Vec3> = Vec::with_capacity(initial as usize + 1);
     for i in 0..=initial {
