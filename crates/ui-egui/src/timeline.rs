@@ -830,64 +830,61 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     crate::dialogs_assembly::timeline_joints_vertical(app, ui);
 
-    if let (Some(active), Some(pointer)) = (drag.as_ref(), pointer) {
-        if let Some(slot) = nearest_vertical_slot(&slots, pointer.y) {
-            let folder_target = match active {
-                Drag::Items(items) => vertical_drop_group(pointer, slot, &folder_drop_zones, items.origin_x)
-                    .filter(|target| valid_folder_target(items, &groups, *target)),
-                Drag::Marker | Drag::Feature(_) => None,
-            };
-            let hovered_folder = folder_target.and_then(|target| {
-                folder_drop_zones
-                    .iter()
-                    .find(|(rect, group)| *group == target && rect.shrink2(vec2(0.0, 5.0)).contains(pointer))
-                    .map(|(rect, _)| *rect)
-            });
-            if let Some(rect) = hovered_folder {
-                ui.painter().rect_stroke(rect.shrink(1.0), 3.0, Stroke::new(2.0, t.sketch_accent), egui::StrokeKind::Inside);
-            } else {
-                let left = folder_target
-                    .map(|group| ui.min_rect().left() + 12.0 + (group_depth(&groups, group) + 1) as f32 * 14.0)
-                    .unwrap_or(ui.min_rect().left() + 4.0);
-                ui.painter().line_segment(
-                    [pos2(left, slot.y), pos2(ui.max_rect().right() - 5.0, slot.y)],
-                    Stroke::new(2.0, if matches!(active, Drag::Marker) { t.accent } else { t.sketch_accent }),
-                );
+    if let (Some(active), Some(pointer)) = (drag.as_ref(), pointer)
+        && let Some(slot) = nearest_vertical_slot(&slots, pointer.y)
+    {
+        let folder_target = match active {
+            Drag::Items(items) => {
+                vertical_drop_group(pointer, slot, &folder_drop_zones, items.origin_x).filter(|target| valid_folder_target(items, &groups, *target))
             }
+            Drag::Marker | Drag::Feature(_) => None,
+        };
+        let hovered_folder = folder_target.and_then(|target| {
+            folder_drop_zones.iter().find(|(rect, group)| *group == target && rect.shrink2(vec2(0.0, 5.0)).contains(pointer)).map(|(rect, _)| *rect)
+        });
+        if let Some(rect) = hovered_folder {
+            ui.painter().rect_stroke(rect.shrink(1.0), 3.0, Stroke::new(2.0, t.sketch_accent), egui::StrokeKind::Inside);
+        } else {
+            let left = folder_target
+                .map(|group| ui.min_rect().left() + 12.0 + (group_depth(&groups, group) + 1) as f32 * 14.0)
+                .unwrap_or(ui.min_rect().left() + 4.0);
+            ui.painter().line_segment(
+                [pos2(left, slot.y), pos2(ui.max_rect().right() - 5.0, slot.y)],
+                Stroke::new(2.0, if matches!(active, Drag::Marker) { t.accent } else { t.sketch_accent }),
+            );
         }
     }
     if ui.input(|input| input.pointer.any_released())
         && let Some(active) = drag.take()
         && let Some(pointer) = pointer
+        && let Some(slot) = nearest_vertical_slot(&slots, pointer.y)
     {
-        if let Some(slot) = nearest_vertical_slot(&slots, pointer.y) {
-            match active {
-                Drag::Marker => {
-                    let _ = app.run("timeline.roll_to", if slot.position >= n { json!({}) } else { json!({"position": slot.position}) });
-                }
-                Drag::Items(items) => {
-                    let folder_target = vertical_drop_group(pointer, slot, &folder_drop_zones, items.origin_x);
-                    let valid_target = folder_target.is_none_or(|target| valid_folder_target(&items, &groups, target));
-                    if valid_target {
-                        let mut params = json!({"group": folder_target});
-                        if !items.features.is_empty() {
-                            params["features"] = json!(items.features);
-                        }
-                        if !items.groups.is_empty() {
-                            params["groups"] = json!(items.groups);
-                        }
-                        let _ = app.run("timeline.move_to_group", params);
-                        if let Some(group) = folder_target {
-                            app.tree.collapsed.remove(&format!("timeline_group:{group}"));
-                        }
+        match active {
+            Drag::Marker => {
+                let _ = app.run("timeline.roll_to", if slot.position >= n { json!({}) } else { json!({"position": slot.position}) });
+            }
+            Drag::Items(items) => {
+                let folder_target = vertical_drop_group(pointer, slot, &folder_drop_zones, items.origin_x);
+                let valid_target = folder_target.is_none_or(|target| valid_folder_target(&items, &groups, target));
+                if valid_target {
+                    let mut params = json!({"group": folder_target});
+                    if !items.features.is_empty() {
+                        params["features"] = json!(items.features);
                     }
-                    if !items.reorder.is_empty() {
-                        let _ = app.run("timeline.reorder_many", json!({"features": items.reorder, "position": slot.position}));
+                    if !items.groups.is_empty() {
+                        params["groups"] = json!(items.groups);
+                    }
+                    let _ = app.run("timeline.move_to_group", params);
+                    if let Some(group) = folder_target {
+                        app.tree.collapsed.remove(&format!("timeline_group:{group}"));
                     }
                 }
-                Drag::Feature(id) => {
-                    let _ = app.run("timeline.reorder_many", json!({"features": [id], "position": slot.position}));
+                if !items.reorder.is_empty() {
+                    let _ = app.run("timeline.reorder_many", json!({"features": items.reorder, "position": slot.position}));
                 }
+            }
+            Drag::Feature(id) => {
+                let _ = app.run("timeline.reorder_many", json!({"features": [id], "position": slot.position}));
             }
         }
     }
