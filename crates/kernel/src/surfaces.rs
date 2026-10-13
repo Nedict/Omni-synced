@@ -672,7 +672,7 @@ mod tests {
     #[test]
     fn extrude_sheet_of_open_and_closed_chains() {
         let line = vec![Seg2::Line { a: Vec2::new(0.0, 0.0), b: Vec2::new(10.0, 0.0) }];
-        let s = extrude_sheet(&Plane::XY, &[line.clone()], 0.0, 5.0).unwrap();
+        let s = extrude_sheet(&Plane::XY, std::slice::from_ref(&line), 0.0, 5.0).unwrap();
         assert!(s.is_surface() && s.face_count() == 1);
         assert!(rel(measure(&s).unwrap().area, 50.0) < 1e-9);
         // A quarter arc of radius 4, swept from -1 to 2: area r θ h.
@@ -688,7 +688,7 @@ mod tests {
             outer: Loop2::polygon(&[Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0), Vec2::new(0.0, 10.0)]),
             holes: vec![],
         };
-        let walls = extrude_sheet(&Plane::XY, &[sq.outer.segs.clone()], 0.0, 4.0).unwrap();
+        let walls = extrude_sheet(&Plane::XY, std::slice::from_ref(&sq.outer.segs), 0.0, 4.0).unwrap();
         assert!(walls.is_surface() && walls.face_count() == 4);
         assert!(rel(measure(&walls).unwrap().area, 160.0) < 1e-9);
         let (bottom, top) = (patch_region(&Plane::XY, &sq).unwrap(), patch_region(&Plane::XY.offset(4.0), &sq).unwrap());
@@ -700,8 +700,8 @@ mod tests {
     #[test]
     fn extrude_sheet_refuses_bad_input() {
         let line = vec![Seg2::Line { a: Vec2::new(0.0, 0.0), b: Vec2::new(10.0, 0.0) }];
-        assert!(extrude_sheet(&Plane::XY, &[line.clone()], 0.0, 0.0).is_err());
-        assert!(extrude_sheet(&Plane::XY, &[line.clone()], 0.0, f64::NAN).is_err());
+        assert!(extrude_sheet(&Plane::XY, std::slice::from_ref(&line), 0.0, 0.0).is_err());
+        assert!(extrude_sheet(&Plane::XY, std::slice::from_ref(&line), 0.0, f64::NAN).is_err());
         assert!(extrude_sheet(&Plane::XY, &[], 0.0, 1.0).is_err());
         assert!(extrude_sheet(&Plane::XY, &[vec![]], 0.0, 1.0).is_err());
         let gap = vec![line[0], Seg2::Line { a: Vec2::new(11.0, 0.0), b: Vec2::new(12.0, 0.0) }];
