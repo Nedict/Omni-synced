@@ -576,7 +576,8 @@ impl Dialog {
                 _ => None,
             });
         }
-        // With nothing pre-selected, a single profile in the sketch being used is taken.
+        // With nothing pre-selected, a single profile in the sketch being used is taken (#684:
+        // not one a feature already builds from).
         if matches!(d.kind, Kind::Extrude { .. } | Kind::Revolve { .. })
             && let Some(inp) = d.inputs.first_mut()
             && inp.items.is_empty()
@@ -805,10 +806,14 @@ impl Dialog {
     }
 }
 
-/// Profiles of the sketch a feature would use (active, else the last), when there is just one.
+/// Profiles of the sketch a feature would use, when there is just one: the active sketch's, else
+/// the last sketch's while no feature builds from it yet. A used profile (a cube's sketch on its
+/// bottom face) is only taken when it is picked.
 fn default_profiles(s: &Session) -> Vec<Sel> {
     let st = s.world_state();
-    let sid = s.active_sketch.or_else(|| s.doc.features.iter().rev().find(|f| matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| f.id));
+    let sid = s.active_sketch.or_else(|| {
+        s.doc.features.iter().rev().find(|f| matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| f.id).filter(|&id| !profiles_used(s, id))
+    });
     match sid.and_then(|id| st.sketch(id).map(|ss| (id, ss.profiles.len()))) {
         Some((id, 1)) => vec![Sel::Profile { sketch: id, index: 0 }],
         _ => Vec::new(),
@@ -829,6 +834,11 @@ fn face_place_at_sketch_point(s: &Session, sketch: u64, at: solidcraft_engine::g
         .zip(&m.tri_face)
         .any(|(t, f)| *f as usize == face && m.tri(t).is_some_and(|[a, b, c]| crate::preview::point_triangle_dist(p, a, b, c) < tol));
     (p.is_finite() && on && planar_face(s, body, face).is_some()).then(|| Sel::Face { body: body.to_string(), index: face, point: p })
+}
+
+/// Does a feature build from this sketch's profiles (extrude, revolve, sweep, loft, emboss…)?
+fn profiles_used(s: &Session, sketch: u64) -> bool {
+    s.doc.features.iter().any(|f| f.kind.profile_sels().iter().any(|(id, _)| *id == sketch))
 }
 
 /// The plane of a planar body face: (point on it, unit normal).
