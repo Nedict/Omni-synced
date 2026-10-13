@@ -187,25 +187,29 @@ fn draw(m: &Mesh, x0: f64) -> String {
     }
     let k = 700.0 / (hi.0 - lo.0).max(hi.1 - lo.1).max(1e-9);
     let sx = |p: (f64, f64, f64)| (x0 + 50.0 + (p.0 - lo.0) * k, 800.0 - (p.1 - lo.1) * k);
-    let mut tris: Vec<(f64, [u32; 3])> = m.triangles.iter().map(|t| (t.iter().map(|&i| pts[i as usize].2).sum::<f64>(), *t)).collect();
+    let mut tris: Vec<(f64, [u32; 3], u32)> =
+        m.triangles.iter().zip(&m.tri_face).map(|(t, f)| (t.iter().map(|&i| pts[i as usize].2).sum::<f64>(), *t, *f)).collect();
     tris.sort_by(|a, b| b.0.total_cmp(&a.0));
     let light = Vec3::new(0.3, -0.5, 0.8).normalized().unwrap_or(Vec3::new(0.0, 0.0, 1.0));
     let mut out = String::new();
-    for (_, t) in tris {
+    let tint = [(1.0, 1.0, 1.15), (1.15, 1.0, 1.0), (1.0, 1.15, 1.0), (1.1, 1.1, 0.9), (0.9, 1.1, 1.1), (1.1, 0.9, 1.1)];
+    for (_, t, f) in tris {
+        let (tr, tg, tb) = tint[f as usize % tint.len()];
         let [a, b, c] = t.map(|i| m.positions[i as usize]);
         let n = (b - a).cross(c - a).normalized().unwrap_or(Vec3::new(0.0, 0.0, 1.0));
         let shade = (90.0 + 150.0 * n.dot(light).max(0.0)) as u8;
-        let pp: Vec<String> = t
-            .iter()
-            .map(|&i| {
-                let (x, y) = sx(pts[i as usize]);
-                format!("{x:.1},{y:.1}")
-            })
-            .collect();
+        let q: Vec<(f64, f64)> = t.iter().map(|&i| sx(pts[i as usize])).collect();
+        // Back faces away (screen y points down, so outward triangles wind clockwise here).
+        if (q[1].0 - q[0].0) * (q[2].1 - q[0].1) - (q[2].0 - q[0].0) * (q[1].1 - q[0].1) > 0.0 {
+            continue;
+        }
+        let pp: Vec<String> = q.iter().map(|(x, y)| format!("{x:.1},{y:.1}")).collect();
         out += &format!(
-            "<polygon points='{}' fill='rgb({shade},{shade},{})' stroke='#1d3557' stroke-width='0.5'/>",
+            "<polygon points='{}' fill='rgb({},{},{})' stroke='#1d3557' stroke-width='0.5'/>",
             pp.join(" "),
-            shade.saturating_add(20)
+            (f64::from(shade) * tr).min(255.0) as u8,
+            (f64::from(shade) * tg).min(255.0) as u8,
+            (f64::from(shade) * tb).min(255.0) as u8,
         );
     }
     out

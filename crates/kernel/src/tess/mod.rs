@@ -172,7 +172,10 @@ fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, stats: 
         let mut vs = uv::divide(s, 1, bbox[1], bbox[0], tol, MAX_LINES);
         thin(&mut us, &mut vs, grid::MAX_FACE_GRID);
         let structured = match (ranges.len(), grid::quad(&uvs)) {
-            (1, Some(q)) => grid::structured(&uvs, &q, &grid::interior(us.clone(), bbox[0]), &grid::interior(vs.clone(), bbox[1])),
+            (1, Some(q)) => {
+                let lines = |d: usize, div: &Vec<f64>| grid::aligned_lines(&uvs, &q, d).unwrap_or_else(|| grid::interior(div.clone(), bbox[d]));
+                grid::structured(&uvs, &q, &lines(0, &us), &lines(1, &vs))
+            }
             _ => None,
         };
         match structured {
@@ -190,7 +193,10 @@ fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, stats: 
                     .filter(|p| cdt::inside(*p, &polys))
                     .collect();
                 let eval = |u: f64, v: f64| s.derivs(u, v).map(|(p, _, _)| p);
-                let sag = cdt::Sag { eval: &eval, tol, scale: mean_metric(s, bbox) };
+                // One unit per tolerance cell in each direction: a straight direction (one
+                // cell) keeps long triangles, Ruppert shapes them in that metric.
+                let cells = |lines: &Vec<f64>, (a, b): (f64, f64)| (lines.len().saturating_sub(1).max(1) as f64) / (b - a).max(f64::MIN_POSITIVE);
+                let sag = cdt::Sag { eval: &eval, tol, scale: [cells(&us, bbox[0]), cells(&vs, bbox[1])] };
                 let fill = cdt::Fill { seeds: &seeds, refine: Some((sag, MAX_REFINE)) };
                 cdt::triangulate(&uvs, &ranges, fill).ok_or_else(|| fail("boundary crosses itself"))?
             }
@@ -222,25 +228,6 @@ fn closed_boundary(ranges: &[std::ops::Range<usize>], triangles: &[[u32; 3]]) ->
             sides.get(&(a.min(b), a.max(b))).copied() == Some(1)
         })
     })
-}
-
-/// Mean |S_u| and |S_v| over the parameter box: the scale that makes (u, v) distances
-/// roughly model distances for the triangulation.
-fn mean_metric(s: &EvalSurface, bbox: [(f64, f64); 2]) -> [f64; 2] {
-    const N: usize = 5;
-    let (mut acc, mut n) = ([0.0, 0.0], 0.0);
-    for i in 0..N {
-        for j in 0..N {
-            let u = bbox[0].0 + (bbox[0].1 - bbox[0].0) * (i as f64 + 0.5) / N as f64;
-            let v = bbox[1].0 + (bbox[1].1 - bbox[1].0) * (j as f64 + 0.5) / N as f64;
-            if let Some((_, su, sv)) = s.derivs(u, v) {
-                acc[0] += su.len();
-                acc[1] += sv.len();
-                n += 1.0;
-            }
-        }
-    }
-    if n > 0.0 && acc[0] > 0.0 && acc[1] > 0.0 { [acc[0] / n, acc[1] / n] } else { [1.0, 1.0] }
 }
 
 /// Keep at most `cap` grid points by taking every k-th line in both directions (ends kept).

@@ -113,6 +113,29 @@ pub(crate) fn quad(boundary: &[[f64; 2]]) -> Option<Quad> {
     Some(Quad { sides, bbox })
 }
 
+/// Lines along direction `d` taken from the boundary, when the two sides running along `d`
+/// carry the same parameters (as opposite iso-lines of one surface sampled alike do): the grid
+/// then meets both sides node for node. Interior values only.
+pub(crate) fn aligned_lines(boundary: &[[f64; 2]], q: &Quad, d: usize) -> Option<Vec<f64>> {
+    let (a, b) = if d == 0 { (q.sides.first()?, q.sides.get(2)?) } else { (q.sides.get(1)?, q.sides.get(3)?) };
+    if a.len() != b.len() || a.len() < 3 {
+        return None;
+    }
+    let (lo, hi) = q.bbox.get(d).copied()?;
+    let eps = (hi - lo) * 1e-9;
+    let mut lines = Vec::with_capacity(a.len());
+    for (i, j) in a.iter().zip(b) {
+        let (x, y) = (boundary.get(*i as usize)?[d], boundary.get(*j as usize)?[d]);
+        if (x - y).abs() > eps {
+            return None;
+        }
+        if x > lo + eps && x < hi - eps {
+            lines.push(x);
+        }
+    }
+    Some(lines)
+}
+
 /// The interior lines of a structured face: `us`, `vs` strictly inside the box. Each
 /// direction gets at least one line so every side has an inner chain to zip to.
 pub(crate) fn interior(lines: Vec<f64>, (a, b): (f64, f64)) -> Vec<f64> {
@@ -153,14 +176,14 @@ pub(crate) fn structured(boundary: &[[f64; 2]], q: &Quad, us: &[f64], vs: &[f64]
             Side::UMin => (0..nv).map(|j| g(0, j)).collect(),
             Side::UMax => (0..nv).map(|j| g(nu - 1, j)).collect(),
         };
-        zip(&uv, outer, &inner, side.along(), q.bbox, &mut tris)?;
+        // The strip lies inside the box from its side: below the top and left of the right
+        // side its triangles come out clockwise.
+        let flip = matches!(side, Side::VMax | Side::UMin);
+        zip(&uv, outer, &inner, side.along(), flip, &mut tris)?;
     }
-    // Every triangle counter-clockwise and none folded.
-    for t in &mut tris {
-        let area = signed_area(&uv, *t)?;
-        if area < 0.0 {
-            t.swap(1, 2);
-        } else if area == 0.0 {
+    // Every triangle counter-clockwise: one that is not has folded over.
+    for t in &tris {
+        if !(signed_area(&uv, *t)? > 0.0) {
             return None;
         }
     }
@@ -174,16 +197,11 @@ fn signed_area(uv: &[[f64; 2]], t: [u32; 3]) -> Option<f64> {
 }
 
 /// Join a side's outer chain (edge nodes) to the inner chain (grid line), both ordered along
-/// direction `d`: advance whichever chain's next node comes first along the side, as a
-/// fraction of the chain's own span.
-fn zip(uv: &[[f64; 2]], outer: &[u32], inner: &[u32], d: usize, bbox: [(f64, f64); 2], tris: &mut Vec<[u32; 3]>) -> Option<()> {
-    let coord = |i: u32| uv.get(i as usize).map(|p| p[d]);
-    let frac = |chain: &[u32], k: usize, lo: f64, hi: f64| -> Option<f64> {
-        let x = coord(*chain.get(k)?)?;
-        Some(if hi > lo { (x - lo) / (hi - lo) } else { 0.0 })
-    };
-    let (olo, ohi) = bbox.get(d).copied()?;
-    let (ilo, ihi) = (coord(*inner.first()?)?, coord(*inner.last()?)?);
+/// direction `d`: advance whichever chain's next node comes first along the side, so nodes at
+/// the same parameter on both chains are joined straight across.
+fn zip(uv: &[[f64; 2]], outer: &[u32], inner: &[u32], d: usize, flip: bool, tris: &mut Vec<[u32; 3]>) -> Option<()> {
+    let mut push = |a: u32, b: u32, c: u32| tris.push(if flip { [a, c, b] } else { [a, b, c] });
+    let coord = |chain: &[u32], k: usize| chain.get(k).and_then(|i| uv.get(*i as usize)).map(|p| p[d]);
     let (mut a, mut b) = (0usize, 0usize);
     while a + 1 < outer.len() || b + 1 < inner.len() {
         let advance_outer = if a + 1 >= outer.len() {
@@ -191,13 +209,13 @@ fn zip(uv: &[[f64; 2]], outer: &[u32], inner: &[u32], d: usize, bbox: [(f64, f64
         } else if b + 1 >= inner.len() {
             true
         } else {
-            frac(outer, a + 1, olo, ohi)? <= frac(inner, b + 1, ilo, ihi)?
+            coord(outer, a + 1)? <= coord(inner, b + 1)?
         };
         if advance_outer {
-            tris.push([*outer.get(a)?, *outer.get(a + 1)?, *inner.get(b)?]);
+            push(*outer.get(a)?, *outer.get(a + 1)?, *inner.get(b)?);
             a += 1;
         } else {
-            tris.push([*outer.get(a)?, *inner.get(b + 1)?, *inner.get(b)?]);
+            push(*outer.get(a)?, *inner.get(b + 1)?, *inner.get(b)?);
             b += 1;
         }
     }
