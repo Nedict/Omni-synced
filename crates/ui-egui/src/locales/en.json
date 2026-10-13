@@ -18,7 +18,7 @@
   "settings.reset_title": "Settings were changed",
   "sketch.degrees_of_freedom": "{count} degrees of freedom",
   "sketch.draw_curves": "Draw as {linetype}",
-  "sketch.make_selection": "Make the selection as {linetype}",
+  "sketch.make_selection": "Convert the selection to {linetype}",
   "ui.1_degree_of_freedom": "1 degree of freedom",
   "ui.3d_sketch": "3D Sketch",
   "ui.about": "About",
