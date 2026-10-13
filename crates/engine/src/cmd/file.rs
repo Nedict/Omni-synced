@@ -193,6 +193,19 @@ fn write_file(s: &mut Session, path: &str, format: &str, compression: &str, prev
         "compact" => solidcraft_io::DesignCompression::Compact,
         _ => return Err(bad("file.save", "compression must be fast or compact")),
     };
+    // Linked designs are kept relative to the folder the design is saved in.
+    let links = super::component_link::rebased(&s.doc, s.path.as_deref(), path);
+    let old_links = (links != s.doc.links).then(|| std::mem::replace(&mut s.doc_mut().links, links));
+    let r = write_bytes(s, path, format, compression, preview);
+    if r.is_err()
+        && let Some(old) = old_links
+    {
+        s.doc_mut().links = old;
+    }
+    r
+}
+
+fn write_bytes(s: &mut Session, path: &str, format: &str, compression: solidcraft_io::DesignCompression, preview: bool) -> Result<Value> {
     let bytes = match format {
         "container" => solidcraft_io::write_design_container_with_preview(&s.doc, compression, preview.then(|| saved_preview(s)).flatten().as_ref())?,
         "json" => solidcraft_io::write_design(&s.doc),

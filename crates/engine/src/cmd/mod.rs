@@ -22,6 +22,7 @@ mod face;
 mod features;
 mod features_more;
 pub use features::auto_operation;
+mod component_link;
 mod config;
 mod file;
 mod inspect;
@@ -203,6 +204,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(sheet::COMMANDS.iter());
     v.extend(plastic::COMMANDS.iter());
     v.extend(component::COMMANDS.iter());
+    v.extend(component_link::COMMANDS.iter());
     v.extend(joints::COMMANDS.iter());
     v.extend(motion::COMMANDS.iter());
     v.extend(config::COMMANDS.iter());
