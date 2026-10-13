@@ -173,8 +173,18 @@ fn plan_face(fi: usize, s: &EvalSurface, loops3: &[Vec<Vec3>], tol: f64, stats: 
         thin(&mut us, &mut vs, grid::MAX_FACE_GRID);
         let structured = match (ranges.len(), grid::quad(&uvs)) {
             (1, Some(q)) => {
-                let lines = |d: usize, div: &Vec<f64>| grid::aligned_lines(&uvs, &q, d).unwrap_or_else(|| grid::interior(div.clone(), bbox[d]));
-                grid::structured(&uvs, &q, &lines(0, &us), &lines(1, &vs))
+                // Interior lines: the boundary's own where opposite sides agree, else the
+                // tolerance division.
+                let lines = |d: usize, div: &Vec<f64>| {
+                    grid::aligned_lines(&uvs, &q, d).unwrap_or_else(|| div.iter().copied().filter(|x| *x > bbox[d].0 && *x < bbox[d].1).collect())
+                };
+                let (lu, lv) = (lines(0, &us), lines(1, &vs));
+                let strip = match (lu.is_empty(), lv.is_empty()) {
+                    (false, true) => grid::strip(&uvs, &q, 0),
+                    (true, false) => grid::strip(&uvs, &q, 1),
+                    _ => None,
+                };
+                strip.map(|t| (Vec::new(), t)).or_else(|| grid::structured(&uvs, &q, &grid::interior(lu, bbox[0]), &grid::interior(lv, bbox[1])))
             }
             _ => None,
         };

@@ -136,6 +136,25 @@ pub(crate) fn aligned_lines(boundary: &[[f64; 2]], q: &Quad, d: usize) -> Option
     Some(lines)
 }
 
+/// A face straight across direction `1 − d` (no interior lines there, as a cylinder wall along
+/// its axis): the two sides running along `d` zipped straight to each other, when the other two
+/// sides are single segments. Triangles counter-clockwise, or `None`.
+pub(crate) fn strip(boundary: &[[f64; 2]], q: &Quad, d: usize) -> Option<Vec<[u32; 3]>> {
+    // Sides along u are VMin (low) and VMax (high); along v, UMax (high) and UMin (low).
+    let (low, high, cross) = if d == 0 { (0, 2, [1, 3]) } else { (3, 1, [0, 2]) };
+    if cross.iter().any(|&k| q.sides.get(k).is_none_or(|c| c.len() != 2)) {
+        return None;
+    }
+    let mut tris = Vec::new();
+    zip(boundary, q.sides.get(low)?, q.sides.get(high)?, d, d == 1, &mut tris)?;
+    for t in &tris {
+        if !(signed_area(boundary, *t)? > 0.0) {
+            return None;
+        }
+    }
+    Some(tris)
+}
+
 /// The interior lines of a structured face: `us`, `vs` strictly inside the box. Each
 /// direction gets at least one line so every side has an inner chain to zip to.
 pub(crate) fn interior(lines: Vec<f64>, (a, b): (f64, f64)) -> Vec<f64> {
@@ -275,6 +294,22 @@ mod tests {
         let Some(q) = quad(&b) else { panic!("a quad") };
         let Some((_, tris)) = structured(&b, &q, &[0.5], &[0.5]) else { panic!("meshes") };
         assert!(!tris.is_empty());
+    }
+
+    #[test]
+    fn straight_faces_are_one_strip() {
+        // Five nodes along the bottom, three along the top, single-segment ends.
+        let b = vec![[0.0, 0.0], [0.25, 0.0], [0.5, 0.0], [0.75, 0.0], [1.0, 0.0], [1.0, 1.0], [0.5, 1.0], [0.0, 1.0]];
+        let Some(q) = quad(&b) else { panic!("a quad") };
+        let Some(tris) = strip(&b, &q, 0) else { panic!("a strip") };
+        assert_eq!(tris.len(), 6);
+        assert!((area(&b, &tris) - 1.0).abs() < 1e-12);
+        // Transposed: the long sides run along v.
+        let t: Vec<[f64; 2]> = b.iter().map(|p| [p[1], p[0]]).rev().collect();
+        let Some(q) = quad(&t) else { panic!("a quad") };
+        let Some(tris) = strip(&t, &q, 1) else { panic!("a strip") };
+        assert!((area(&t, &tris) - 1.0).abs() < 1e-12);
+        assert!(strip(&b, &q, 0).is_none() || strip(&t, &q, 0).is_none());
     }
 
     #[test]
