@@ -4,7 +4,7 @@
 //! between stations, mitred at the corners.
 
 use mt::builder;
-use solidcraft_geom::{Plane, Region2, Vec2, Vec3};
+use solidcraft_geom::{Plane, Region2, Seg2, Vec2, Vec3};
 use truck_modeling as mt;
 
 use crate::body::{Body, p3};
@@ -175,9 +175,9 @@ fn start_cos(plane: &Plane, tangents: &[Vec3]) -> f64 {
     tangents.first().map(|t| t.dot(plane.normal()).abs()).unwrap_or(1.0).max(1e-3)
 }
 
-/// Ruled walls between stations at the path's points (mitred at corners), every loop of the
-/// (oriented) profile.
-fn ruled(plane: &Plane, profile: &NumberedRegion, pts: &[Vec3]) -> Result<Body> {
+/// Stations at the path's points (at most [`MAX_RULED_STATIONS`]), mitred at corners, with the
+/// points they stand at.
+fn ruled_stations(pts: &[Vec3]) -> Result<(Vec<Vec3>, Vec<Station>)> {
     let pts: Vec<Vec3> = if pts.len() > MAX_RULED_STATIONS { resample(pts, MAX_RULED_STATIONS) } else { pts.to_vec() };
     let n = pts.len();
     let seg_dir = |i: usize| -> Option<Vec3> { (*pts.get(i + 1)? - *pts.get(i)?).normalized() };
@@ -202,6 +202,43 @@ fn ruled(plane: &Plane, profile: &NumberedRegion, pts: &[Vec3]) -> Result<Body> 
         mitre.push(m);
     }
     let st = stations(&pts, &tangents, &mitre)?;
+    Ok((pts, st))
+}
+
+/// Walls of chains of sketch segments on `plane` (open, or closed) carried along a 3D polyline
+/// path that starts near them: ruled between stations at the path's points, mitred at corners,
+/// with no caps. Neighbouring walls share their edges.
+pub(crate) fn ruled_sheet(plane: &Plane, chains: &[Vec<Seg2>], path: &[Vec3]) -> Result<Vec<mt::Face>> {
+    let (pts, st) = ruled_stations(&clean(path)?)?;
+    let edges: usize = chains.iter().map(Vec::len).sum();
+    if st.len().saturating_mul(edges) > 400_000 {
+        return Err(KernelError::Invalid("the sweep is too detailed (curves × path points)".into()));
+    }
+    let s0 = pts.first().copied().unwrap_or_default();
+    let wires: Vec<Vec<mt::Wire>> = st
+        .iter()
+        .map(|s| {
+            let pl = station_plane(plane, s0, s);
+            chains.iter().map(|c| crate::build::chain_wire(&pl, c)).collect::<Result<Vec<_>>>()
+        })
+        .collect::<Result<_>>()?;
+    guard("path sweep", || {
+        let mut faces = Vec::new();
+        for w in wires.windows(2) {
+            let (Some(w0), Some(w1)) = (w.first(), w.get(1)) else { continue };
+            for (a, b) in w0.iter().zip(w1) {
+                let sides: mt::Shell = builder::try_wire_homotopy(a, b).map_err(|e| KernelError::Failed(format!("path sweep: {e}")))?;
+                faces.extend(sides.face_iter().cloned());
+            }
+        }
+        Ok(faces)
+    })
+}
+
+/// Ruled walls between stations at the path's points (mitred at corners), every loop of the
+/// (oriented) profile.
+fn ruled(plane: &Plane, profile: &NumberedRegion, pts: &[Vec3]) -> Result<Body> {
+    let (pts, st) = ruled_stations(pts)?;
     let s0 = pts.first().copied().unwrap_or_default();
     let loops: Vec<&NumberedLoop> = profile.loops().collect();
     let mut wires: Vec<Vec<mt::Wire>> = Vec::with_capacity(st.len());
