@@ -62,6 +62,16 @@ pub fn anchor(app: &SolveApp, d: &Dialog) -> Option<(Vec3, Option<Vec3>)> {
             };
             (ss.plane.to_world(mid), dir)
         }
+        // A corner picked into a sketch window ("<sketch id>:<point id>", or a bare id when it
+        // was selected outside one): the value box sits on the corner itself.
+        Sel::SketchPoint { id } => {
+            let (sketch, point) = match id.split_once(':') {
+                Some((sketch, point)) => (sketch.parse().ok()?, point),
+                None => (app.session.active_sketch?, id.as_str()),
+            };
+            let ss = st.sketch(sketch)?;
+            (ss.plane.to_world(ss.sketch.point(ss.sketch.resolve_point(point)?)?), None)
+        }
         Sel::Body { name } => (st.body(name)?.mesh().bounds().center(), None),
         Sel::Plane { name } => {
             let pl = solidcraft_engine::geom::Plane::named(name).or_else(|| {
