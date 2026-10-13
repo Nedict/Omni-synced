@@ -24,6 +24,13 @@ flat. A relief that can't be cut (a width under 0.01 mm, one as wide as the base
 bend, or a slot that would cut the base apart) is left out, and the flange feature reports a
 warning saying where.
 
+Where a cut-out has taken part of an edge away (a corner cut off the plate, a notch in the
+middle of an edge), an edge flange picked on that edge runs along the stretch the cut-outs
+leave nearest the pick, and takes its setback off that stretch only. The base on the other
+side of a notch keeps its edge, and a pick there, in the same feature or a later one, makes
+a flange of its own. Where base is still left beside the bend's end at such a cut-out, it
+gets the bend relief as above. An edge that cut-outs have taken whole is refused.
+
 Where two bends of one edge flange feature meet at a corner of the base, the rule's **corner
 relief shape** (`corner_relief_shape`; Corner Relief Shape in Sheet Metal Rules) says what is
 cut there. `notch`, the default, cuts nothing more: the bends end square at the corner. `round`
@@ -118,10 +125,13 @@ adaptively. The `OUTLINE`, `BEND_UP` and `BEND_DOWN` layers separate cuts from b
 Base-flange profiles keep their interior holes. Through cuts that cross a sheet edge become
 notches in the flat outline; overlapping and repeated cuts remove their combined area once.
 The flat preview, DXF and unfolded solid use the same material boundaries. Lines and circular
-arcs remain exact; other profile curves use a 0.001 mm chord tolerance.
+arcs remain exact. An ellipse, a spline or text stays the curve it was drawn as in the flat
+pattern and the unfolded solid; the folded solid follows it with tangent arcs within 0.001 mm,
+and the DXF and the point lists write it as chords within 0.001 mm.
 Flat-pattern JSON lists each cut-out twice, in the same order: as points (`cutouts`), and
 exactly (`cutout_shapes`): a round hole as `{"circle": {"center", "radius"}}`, any other as its
-`line`, `arc` (centre, radius, start and sweep in degrees) and `polyline` segments.
+`line`, `arc` (centre, radius, start and sweep in degrees) and `polyline` segments (one
+`polyline` for each ellipse quarter, spline or glyph curve).
 
 Cuts can leave separate material pieces, including the centre of a ring cut. These pieces
 remain one logical sheet group through Unfold / Refold and export as separate flat outlines.

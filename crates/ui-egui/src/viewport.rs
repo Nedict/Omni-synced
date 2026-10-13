@@ -97,6 +97,8 @@ pub struct ViewportState {
     /// A sketch point or curve being dragged (its id, the undo depth when the drag began: the
     /// whole drag is one undo step, and for a curve where it was last under the cursor).
     pub point_drag: Option<(String, usize, Option<Vec2>)>,
+    /// Checkpoint and source for a cancellable whole-text drag.
+    pub(crate) text_drag: Option<(u64, String)>,
 }
 
 /// Something under the cursor.
@@ -2202,6 +2204,28 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
                 _ => {}
             }
+            if let Some((id, _, _)) = &app.viewport.point_drag {
+                let link = app.session.active_sketch.and_then(|sid| app.session.doc.sketch(sid).ok()).and_then(|sk| {
+                    let link = sk
+                        .curve_index(id)
+                        .and_then(|i| sk.curves.get(i))
+                        .and_then(|c| c.link.as_deref())
+                        .or_else(|| sk.resolve_point(id).and_then(|i| sk.points.get(i)).and_then(|p| p.link.as_deref()))?;
+                    sk.link(link).filter(|l| l.kind == solidcraft_engine::sketch::LinkKind::Text).map(|l| l.id.clone())
+                });
+                if let Some(link) = link
+                    && let Some(q) = on_plane(app, a)
+                {
+                    if let Some((_, _, grab)) = &mut app.viewport.point_drag {
+                        *grab = Some(q);
+                    }
+                    if let Ok(result) = app.session.execute("edit.checkpoint", &json!({}))
+                        && let Some(checkpoint) = result["checkpoint"].as_u64()
+                    {
+                        app.viewport.text_drag = Some((checkpoint, link));
+                    }
+                }
+            }
         }
         if let Some((id, depth, grab)) = app.viewport.point_drag.clone()
             && resp.dragged_by(egui::PointerButton::Primary)
@@ -2252,6 +2276,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
             crate::drag_snap::clear();
             app.viewport.point_drag = None;
+            crate::sketch_text_move::end_drag(app);
             crate::dim_view::drag_end();
             crate::sketch3d::drag_end();
         }
@@ -2264,6 +2289,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         app.viewport.point_drag = None;
         crate::drag_snap::clear();
         let _ = app.session.execute("sketch.drag_end", &json!({}));
+        crate::sketch_text_move::end_drag(app);
     }
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()
