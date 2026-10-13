@@ -27,6 +27,7 @@ pub struct DocSlot {
 /// The per-design part of the UI state (what is hidden, shown or locked).
 #[derive(Clone, Debug, Default)]
 struct DocView {
+    sketch_choices: crate::sketch_families::Choices,
     hidden_profiles: Vec<u64>,
     shown_dims: Vec<u64>,
     locked_bodies: Vec<String>,
@@ -59,6 +60,7 @@ impl Documents {
 fn take_view(app: &mut SolveApp) -> DocView {
     let u = &mut app.ui;
     DocView {
+        sketch_choices: std::mem::take(&mut app.sketch_choices),
         hidden_profiles: std::mem::take(&mut u.hidden_profiles),
         shown_dims: std::mem::take(&mut u.shown_dims),
         locked_bodies: std::mem::take(&mut u.locked_bodies),
@@ -66,6 +68,7 @@ fn take_view(app: &mut SolveApp) -> DocView {
 }
 
 fn put_view(app: &mut SolveApp, v: DocView) {
+    app.sketch_choices = v.sketch_choices;
     let u = &mut app.ui;
     u.hidden_profiles = v.hidden_profiles;
     u.shown_dims = v.shown_dims;
@@ -148,6 +151,7 @@ pub fn adopt(app: &mut SolveApp, session: Session) {
         app.menu.props = None;
         crate::sketch_attachment_ui::clear(app);
         app.session = session;
+        app.sketch_choices = crate::sketch_families::Choices::default();
         app.session.invalidate_view(rev);
         app.cam = Camera::default();
         app.fit_view();

@@ -675,6 +675,8 @@ def main():
         if any(abs(v - w) > 1e-5 for side in want for v, w in zip(box.get(side, []), want[side])):
             raise RuntimeError(f"the case did not rebuild to 95 x 66 x 32 mm: {box}")
         if a.save:
+            # The finished case, as built through the UI (tests/action_matrix uses it).
+            d.execute("file.save_as", {"path": a.save, "format": "json"})
             with open(a.save + ".measure.json", "w") as proof:
                 json.dump(design, proof, indent=2)
     elif a.save and a.until == 10**6:

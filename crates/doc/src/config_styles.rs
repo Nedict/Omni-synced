@@ -145,6 +145,7 @@ impl Document {
                         && self.feature(*sketch).is_some_and(|feature| matches!(&feature.kind, FeatureKind::Sketch { sketch, .. } if sketch.curves.iter().any(|candidate| candidate.id == *curve && !candidate.construction && matches!(candidate.kind, solidcraft_sketch::CurveKind::Line { .. } | solidcraft_sketch::CurveKind::Circle { .. } | solidcraft_sketch::CurveKind::Arc { .. }))))
                 }
                 (super::FaceCertificate::Imported { .. }, FeatureKind::Import { .. }) => role.strip_prefix("face:").is_some_and(|index| index.parse::<usize>().is_ok()),
+                (super::FaceCertificate::Lineage, _) => !role.is_empty(),
                 (super::FaceCertificate::ShellPlanar { source_producer, source, inner }, FeatureKind::Shell { .. }) => {
                     *source_producer != target.origin_feature
                         && self.flat_certificate_producer_matches(*source_producer, source)
@@ -184,6 +185,9 @@ impl Document {
         self.certify_config_face(target)?;
         if body.body.is_mesh() || body.definition_name() != target.body {
             return Err(DocError::Invalid("configured face definition does not match".into()));
+        }
+        if let Some(super::FaceCertificate::Lineage) = &target.certificate {
+            return self.lineage_face_indices(body, &target.name);
         }
         if let Some(super::FaceCertificate::ShellPlanar { source_producer, source, inner }) = &target.certificate {
             let indices: Vec<_> = body.body.face_sources().into_iter().flatten().enumerate().filter_map(|(index, current)| {
@@ -238,10 +242,10 @@ impl Document {
                     matched.then_some(index)
                 })
                 .collect();
-            if indices.len() != 1 {
+            if indices.is_empty() {
                 return Err(DocError::Unknown("attached planar face certificate is missing or ambiguous".into()));
             }
-            return Ok(indices);
+            return self.certified_pieces(body, indices, target.origin_feature);
         }
         if let Some(super::FaceCertificate::ExtrudeSide { sketch, curve }) = &target.certificate {
             let indices: Vec<_> = body.body.face_sources().into_iter().flatten().enumerate().filter_map(|(index, source)| {
@@ -250,7 +254,7 @@ impl Document {
             if indices.is_empty() {
                 return Err(DocError::Unknown("constructed side certificate no longer exists".into()));
             }
-            return Ok(indices);
+            return Ok(self.without_copies(body, indices));
         }
         if let Some(super::FaceCertificate::Imported { payload_sha256, item, face }) = &target.certificate {
             let indices: Vec<_> = body.body.face_sources().into_iter().flatten().enumerate().filter_map(|(index, source)| {
@@ -259,7 +263,7 @@ impl Document {
             if indices.is_empty() {
                 return Err(DocError::Unknown("immutable import face certificate no longer exists".into()));
             }
-            return Ok(indices);
+            return Ok(self.without_copies(body, indices));
         }
         let names = crate::naming::face_names(body);
         let indices: Vec<usize> =

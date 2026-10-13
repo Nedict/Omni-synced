@@ -40,7 +40,7 @@ pub struct Body {
     pub(crate) history: Option<std::sync::Arc<crate::history::History>>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum FaceSource {
     ExtrudeSide {
         segment: solidcraft_geom::Seg2,
@@ -110,7 +110,7 @@ impl FaceSource {
 }
 
 /// How a body looks beyond its colour, for export: its opacity and its faces' own colours.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Paint {
     /// 1 = opaque.
     pub opacity: f32,
@@ -118,7 +118,7 @@ pub struct Paint {
 }
 
 /// A face's own colour: the B-rep face index (`face_iter` order), sRGB as 0..1, opacity.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FacePaint {
     pub face: usize,
     pub color: [f32; 3],
@@ -477,13 +477,26 @@ impl Body {
             if lo.x.is_finite() { (hi - lo).len() } else { 1.0 }
         };
         let tol = (span * 0.01).clamp(1e-3, 1.0);
-        let (v, missing) = guard("orient", || {
-            let shells = mesh_shells(&solid, tol);
-            let volume = shells.iter().map(|s| s.to_polygon().volume()).sum::<f64>();
-            let missing =
-                shells.iter().flat_map(|s| s.face_iter()).filter(|f| f.surface().is_none_or(|m| m.faces().triangle_iter().next().is_none())).count();
-            Ok((volume, missing))
-        })?;
+        let orient = |tol: f64| {
+            guard("orient", || {
+                let shells = mesh_shells(&solid, tol);
+                let volume = shells.iter().map(|s| s.to_polygon().volume()).sum::<f64>();
+                let missing = shells
+                    .iter()
+                    .flat_map(|s| s.face_iter())
+                    .filter(|f| f.surface().is_none_or(|m| m.faces().triangle_iter().next().is_none()))
+                    .count();
+                Ok((volume, missing))
+            })
+        };
+        let (mut v, mut missing) = orient(tol)?;
+        // A long thin round part (a through hole's tool: a cylinder whose vertices all lie on
+        // its seam, so they span its length only) meshed that coarsely can come out with a
+        // negative volume when it is outward already: check finely before turning it inside out.
+        let fine = (tol * 0.02).max(1e-4);
+        if v < 0.0 && fine < tol {
+            (v, missing) = orient(fine)?;
+        }
         if v < 0.0 {
             solid.not();
         }

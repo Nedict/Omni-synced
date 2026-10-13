@@ -55,7 +55,8 @@ pub use profiles::{
 };
 pub use shape::{Shape, intersections};
 pub use solver::{
-    Analysis, DrivingValues, Hold, SolveReport, SolveStatus, measure_dimension, solve, solve_after_value_edit, solve_holding, solve_with,
+    Analysis, DrivingValues, Hold, SolveReport, SolveStatus, measure_dimension, solve, solve_after_edit, solve_after_value_edit, solve_holding,
+    solve_with,
 };
 pub use text::{MAX_TEXT_CHARS, text_geometry, text_geometry_in};
 pub use wire::{MAX_FIT_POINTS, MAX_WIRE_POINTS, Wire, WireSpace, fit_polyline};

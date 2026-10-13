@@ -5,8 +5,10 @@ set -euo pipefail
 
 site="${1:?site directory required}"
 tag="${RELEASE_TAG:-}"
-# Compatibility shim (docs/compatibility.md): the Flatpak app id keeps its pre-rename value.
-app_id=ai.storyteller.solvecraft
+app_id=ai.storyteller.solidcraft
+# Compatibility shim (docs/compatibility.md): releases before 0.8 used this app id. Its refs stay
+# in the repository, marked end-of-life with a rebase to $app_id.
+legacy_id=ai.storyteller.solvecraft
 if [ -z "$tag" ]; then
   tag="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
     --jq '[.[] | select(.draft == false and .prerelease == false)][0].tag_name // empty')"
@@ -49,6 +51,18 @@ for arch in x86_64 aarch64; do
   flatpak build-import-bundle "$validation_repo" "$bundles/$asset"
   ostree --repo="$validation_repo" refs | grep -Fxq "app/$app_id/$arch/stable"
   flatpak build-import-bundle "$repo_dir" "$bundles/$asset"
+done
+# `flatpak update` then offers existing installs of the old id the move to the new one, and
+# Flatpak moves their ~/.var/app data folder along. The mark is a new commit on the old ref (the
+# same app, so a skipped update changes nothing); it is made once and mirrored by later runs.
+for arch in x86_64 aarch64; do
+  legacy_ref="app/$legacy_id/$arch/stable"
+  ostree --repo="$repo_dir" rev-parse "$legacy_ref" >/dev/null 2>&1 || continue
+  if ! ostree --repo="$repo_dir" show --print-metadata-key=ostree.endoflife-rebase "$legacy_ref" >/dev/null 2>&1; then
+    flatpak build-commit-from --no-update-summary --end-of-life-rebase="$legacy_id=$app_id" \
+      --src-ref="$legacy_ref" "$repo_dir" "$legacy_ref"
+  fi
+  test "$(ostree --repo="$repo_dir" show --print-metadata-key=ostree.endoflife-rebase "$legacy_ref")" = "'app/$app_id/$arch/stable'"
 done
 flatpak build-update-repo --title="SolidCraft" --comment='Official SolidCraft releases' \
   --description='Official Flatpak repository for SolidCraft' \

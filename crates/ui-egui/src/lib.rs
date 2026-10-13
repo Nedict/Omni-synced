@@ -98,6 +98,7 @@ mod sketch_display_ui_tests;
 mod sketch_drag_ui_tests;
 #[cfg(test)]
 mod sketch_edit_tests;
+mod sketch_families;
 pub mod sketch_palette;
 pub(crate) mod sketch_text;
 pub mod sketch_tools;
@@ -227,6 +228,7 @@ pub struct SolveApp {
     pub crashes: crash_ui::CrashUi,
     /// Toolbar buttons the user pinned, removed or reordered.
     pub toolbar_custom: toolbar_custom::ToolbarCustom,
+    pub sketch_choices: sketch_families::Choices,
     /// Preferences kept between runs, and their window.
     pub preferences: prefs::Prefs,
     pub prefs_window: prefs::PrefsWindow,
@@ -300,6 +302,7 @@ impl SolveApp {
             issue_report: issue_report::ReportState::default(),
             crashes: crash_ui::CrashUi::default(),
             toolbar_custom: toolbar_custom::ToolbarCustom::default(),
+            sketch_choices: sketch_families::Choices::default(),
             preferences: prefs::Prefs::default(),
             prefs_window: prefs::PrefsWindow::default(),
             preview: preview::PreviewState::default(),
@@ -464,6 +467,7 @@ impl SolveApp {
             Ok(_) => {
                 self.session.echo(format!("{} done", command_label(id)));
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
+                    self.sketch_choices = sketch_families::Choices::default();
                     dim_view::cancel();
                     self.menu.props = None;
                     sketch_attachment_ui::clear(self);
@@ -511,6 +515,12 @@ impl SolveApp {
             self.tree.capture_prompt = Some(id.to_string());
             return;
         }
+        // A line-type toggle changes the current drawing, including a partly picked shape.
+        // Handle it before cancelling tools or inline dimensions.
+        if id == "sketch.construction" {
+            sketch_palette::toggle_construction(self);
+            return;
+        }
         dim_view::cancel();
         self.tool = None;
         self.home.open = false;
@@ -529,6 +539,9 @@ impl SolveApp {
         if !sketch_tools::start_hook(self, id) {
             return;
         }
+        if solidcraft_engine::find_command(id).is_some_and(|c| c.info(&self.session).enabled) {
+            self.sketch_choices.remember(id);
+        }
         if id == "parameters.change" {
             params_dialog::open(self);
             return;
@@ -541,12 +554,6 @@ impl SolveApp {
         if id == "solid.press_pull" {
             let edges = self.session.selection.iter().any(|s| matches!(s, solidcraft_engine::Sel::Edge { .. }));
             return self.start(if edges { "solid.fillet" } else { "solid.extrude" });
-        }
-        // Construction toggle: selected sketch curves switch at once, otherwise pick them.
-        // Construction (X): convert the selection, or switch construction mode; no pick tool.
-        if id == "sketch.construction" {
-            sketch_palette::toggle_construction(self);
-            return;
         }
         if let Some(spec) = solidcraft_engine::find_command(id)
             && (tools::Tool::for_command(id).is_some() || dialogs::Dialog::for_command(self, id).is_some())
@@ -877,6 +884,21 @@ impl SolveApp {
         self.pending_fit = request;
     }
 
+    /// Move the viewport to the camera a command asked for (`view.apply`): animated like a view
+    /// change, or at once (control requests, so a screenshot right after shows it).
+    pub fn follow_view_request(&mut self, animate: bool) {
+        let Some(mut to) = self.session.camera.take() else { return };
+        to.up = self.cam.up;
+        if animate {
+            self.animate_to(to);
+        } else if to.is_valid() {
+            self.cancel_view_animation();
+            self.viewport.orbit_snap = None;
+            self.viewport.orbit_free = None;
+            self.cam = to;
+        }
+    }
+
     /// Stop any view animation where it is (the user took over the camera).
     pub fn cancel_view_animation(&mut self) {
         self.pending_fit = None;
@@ -923,6 +945,7 @@ impl SolveApp {
         }
         self.step_view_animation(ctx);
         self.drain_control(ctx);
+        self.follow_view_request(true);
         agent_cursor::step(self, ctx);
         if !self.synthetic.is_empty() {
             ctx.request_repaint();

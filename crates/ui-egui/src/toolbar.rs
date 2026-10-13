@@ -562,7 +562,10 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 (panel, cmds, shown)
             })
             .collect();
-        let widths: Vec<f32> = lists.iter().map(|(_, _, shown)| panel_width(shown.len())).collect();
+        let width_of = |panel: &str, count: usize| {
+            if tab == "SKETCH" && panel == "CREATE" { (count.max(1) as f32 * 68.0).max(64.0) + 8.0 } else { panel_width(count) }
+        };
+        let widths: Vec<f32> = lists.iter().map(|(panel, _, shown)| width_of(panel, shown.len())).collect();
         let fits = fit(&widths, r.right() - 40.0 - px);
         crate::scenario::publish_count("toolbar_collapsed", fits.iter().filter(|f| **f == Fit::Collapsed).count() as f64);
         crate::scenario::publish_count("toolbar_more", fits.iter().filter(|f| **f == Fit::More).count() as f64);
@@ -573,16 +576,18 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 continue;
             }
             let collapsed = fit == Fit::Collapsed;
-            let width = if collapsed { COLLAPSED_WIDTH.min(panel_width(shown.len())) } else { panel_width(shown.len()) };
+            let width = if collapsed { COLLAPSED_WIDTH.min(width_of(panel, shown.len())) } else { width_of(panel, shown.len()) };
+            let sketch_create = tab == "SKETCH" && *panel == "CREATE";
+            let stride = if sketch_create { 68.0 } else { 40.0 };
             let enabled_panel = !cmds.is_empty() || *panel == "SELECT";
             let popup_id = ui.id().with(("panel_menu", panel));
             // Dropped on the panel's free space (all of a collapsed panel): the button goes to
             // its end.
             let drawn = if collapsed { 0 } else { shown.len() };
             // Buttons narrower than the panel's minimum width (a one-button panel) are centred.
-            let inset = if drawn == 0 { 0.0 } else { ((width - 8.0 - (drawn as f32 * 40.0 - 2.0)) / 2.0).max(0.0).floor() };
+            let inset = if drawn == 0 { 0.0 } else { ((width - 8.0 - (drawn as f32 * stride - 2.0)) / 2.0).max(0.0).floor() };
             let bx = px + 4.0 + inset;
-            let free_x = bx + drawn as f32 * 40.0;
+            let free_x = bx + drawn as f32 * stride;
             let free = Rect::from_min_size(pos2(free_x, top + 2.0), vec2((px + width - 4.0 - free_x).max(8.0), 38.0));
             let fresp = ui.interact(free, ui.id().with(("panel_free", panel)), if collapsed { Sense::click() } else { Sense::hover() });
             let mut opened = false;
@@ -606,12 +611,23 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
             }
             for (i, c) in shown.iter().enumerate().take(drawn) {
-                let br = Rect::from_min_size(pos2(bx + i as f32 * 40.0, top + 2.0), vec2(38.0, 38.0));
-                let info = c.info(&app.session);
+                // Only the family's default pin follows the part's choice. Explicitly pinned
+                // variants remain exact commands, including in customised toolbars.
+                let family = crate::sketch_families::family(c.id).filter(|f| sketch_create && f.commands.first().copied() == Some(c.id));
+                let selected = family.and_then(|f| app.sketch_choices.selected(f)).unwrap_or(c);
+                let whole = Rect::from_min_size(pos2(bx + i as f32 * stride, top + 2.0), vec2(stride - 2.0, 38.0));
+                let mut br = whole;
+                if family.is_some() {
+                    br.max.y -= 12.0;
+                }
+                let info = selected.info(&app.session);
                 let resp = ui.interact(br, ui.id().with(("cmd", c.id)), Sense::click_and_drag());
                 crate::scenario::publish_handle(&format!("toolbar:{}", c.id), br.center());
                 // The button itself (`toolbar:<id>` is also a drop-down row's while one is open).
                 crate::scenario::publish_handle(&format!("button:{}", c.id), br.center());
+                if selected.id != c.id {
+                    crate::scenario::publish_handle(&format!("button:{}", selected.id), br.center());
+                }
                 if resp.drag_started() {
                     resp.dnd_set_drag_payload(ToolbarDrag { id: c.id, from_menu: false });
                 }
@@ -629,33 +645,59 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 if resp.secondary_clicked() {
                     menu = Some((resp.interact_pointer_pos().unwrap_or(br.left_bottom()), c.id));
                 }
-                if running.as_deref() == Some(c.id) {
+                if running.as_deref() == Some(selected.id) {
                     painter.rect_filled(br, 4.0, t.border.gamma_multiply(0.7));
                 } else if resp.hovered() && info.enabled {
                     painter.rect_filled(br, 4.0, t.hover);
                 }
                 let (ink, fill, acc) =
                     if info.enabled { (t.icon, t.icon_fill, panel_accent(t, &tab, panel)) } else { (t.border, t.panel_header, t.border) };
-                let icon = match c.id {
+                let icon = match selected.id {
                     "sketch.finish" => "finish",
                     "config.table" => "configuration_table",
-                    _ => c.icon,
+                    _ => selected.icon,
                 };
-                icons::paint(&painter, br.shrink(6.0), icon, ink, fill, acc);
+                let icon_rect =
+                    if sketch_create { Rect::from_center_size(pos2(br.center().x, br.top() + 13.0), vec2(24.0, 24.0)) } else { br.shrink(6.0) };
+                icons::paint(&painter, icon_rect, icon, ink, fill, acc);
                 let label = match c.id {
                     "parameters.change" if *panel == "CONFIGURE" => "Parameters",
                     "config.table" if *panel == "CONFIGURE" => "Configurations",
-                    _ => c.label,
+                    _ => selected.label,
                 };
                 let tr_label = app.tr_label(label);
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled() && info.enabled, tr_label));
                 let tip = match &info.disabled_reason {
                     Some(why) => format!("{}\n{why}", tr_label),
-                    None => format!("{}{}", tr_label, c.shortcut.map(|k| format!("  ({k})")).unwrap_or_default()),
+                    None => format!("{}{}", tr_label, selected.shortcut.map(|k| format!("  ({k})")).unwrap_or_default()),
                 };
                 if resp.on_hover_text(tip).clicked() && info.enabled {
-                    let id = c.id;
+                    let id = selected.id;
                     app.start(id);
+                }
+                if let Some(f) = family {
+                    let ar = Rect::from_min_max(pos2(whole.left(), br.bottom()), whole.right_bottom());
+                    let arrow = ui.interact(ar, ui.id().with(("family", f.label)), Sense::click());
+                    crate::scenario::publish_handle(&format!("family:{}", f.label), ar.center());
+                    if arrow.hovered() {
+                        painter.rect_filled(ar, 3.0, t.hover);
+                    }
+                    painter.text(ar.center() - vec2(4.0, 0.0), Align2::CENTER_CENTER, app.tr_label(f.label), FontId::proportional(10.0), t.text);
+                    caret(&painter, pos2(ar.right() - 5.0, ar.center().y), t.text);
+                    arrow.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{} variants", f.label)));
+                    egui::Popup::menu(&arrow).show(|ui| {
+                        let variants: Vec<_> = f.commands.iter().filter_map(|id| solidcraft_engine::find_command(id)).collect();
+                        dropdown_keys(app, ui, &variants);
+                        sketch_menu_rows(app, ui, &variants, &mut menu, &mut toggle);
+                    });
+                } else if sketch_create {
+                    painter.text(
+                        pos2(br.center().x, br.bottom() - 5.0),
+                        Align2::CENTER_CENTER,
+                        app.tr_label(c.label),
+                        FontId::proportional(10.0),
+                        t.text,
+                    );
                 }
             }
             if shown.is_empty() && !collapsed {
@@ -698,9 +740,9 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             // Labels, gaps and margins append; actual buttons keep their insert-before target.
             // Respect the current layer so a dropdown covering the panel is not a drop target.
             let panel_rect = Rect::from_min_max(pos2(px, top + 2.0), pos2(px + width, r.bottom()));
-            let over_button = ui
-                .input(|input| input.pointer.hover_pos())
-                .is_some_and(|p| (0..drawn).any(|i| Rect::from_min_size(pos2(bx + i as f32 * 40.0, top + 2.0), vec2(38.0, 38.0)).contains(p)));
+            let over_button = ui.input(|input| input.pointer.hover_pos()).is_some_and(|p| {
+                (0..drawn).any(|i| Rect::from_min_size(pos2(bx + i as f32 * stride, top + 2.0), vec2(stride - 2.0, 38.0)).contains(p))
+            });
             if !over_button && ui.rect_contains_pointer(panel_rect) && egui::DragAndDrop::payload::<ToolbarDrag>(ui.ctx()).is_some() {
                 painter.line_segment([pos2(px + width - 4.0, top + 4.0), pos2(px + width - 4.0, top + 38.0)], Stroke::new(2.0, t.accent));
                 if ui.input(|input| input.pointer.any_released())
@@ -719,6 +761,10 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                             selection_filter(app, ui);
                         } else if cmds.is_empty() {
                             ui.label(egui::RichText::new("Not available yet").color(t.text_dim));
+                        }
+                        if sketch_create {
+                            sketch_create_menu(app, ui, &cmds, &mut menu, &mut toggle);
+                            return;
                         }
                         let row_w = dropdown_width(app, ui, &cmds);
                         // Up and Down move the keyboard focus through the enabled rows (from none
@@ -778,6 +824,10 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let response = ui.menu_button("»", |ui| {
                     for (panel, cmds) in &overflow {
                         ui.menu_button(*panel, |ui| {
+                            if tab == "SKETCH" && *panel == "CREATE" {
+                                sketch_create_menu(app, ui, cmds, &mut menu, &mut toggle);
+                                return;
+                            }
                             if *panel == "SELECT" {
                                 selection_filter(app, ui);
                             }
@@ -922,6 +972,91 @@ fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solidcraft_engine
         return RowAction::Start;
     }
     RowAction::None
+}
+
+/// Creation menus keep related variants together, including collapsed and overflow panels.
+fn sketch_create_menu(
+    app: &mut SolveApp,
+    ui: &mut egui::Ui,
+    cmds: &[&'static solidcraft_engine::CommandSpec],
+    menu: &mut Option<(egui::Pos2, &'static str)>,
+    toggle: &mut Option<&'static str>,
+) {
+    let room = (ui.ctx().content_rect().bottom() - ui.cursor().top() - 12.0).max(ROW_H * 3.0);
+    egui::ScrollArea::vertical().id_salt("sketch_create_rows").max_height(room).show(ui, |ui| {
+        for f in crate::sketch_families::FAMILIES {
+            let variants: Vec<_> = f.commands.iter().filter_map(|id| cmds.iter().find(|c| c.id == *id).copied()).collect();
+            if !variants.is_empty() {
+                let response = ui.menu_button(app.tr_label(f.label).to_string(), |ui| {
+                    dropdown_keys(app, ui, &variants);
+                    sketch_menu_rows(app, ui, &variants, menu, toggle);
+                });
+                crate::scenario::publish_handle(&format!("create_family:{}", f.label), response.response.rect.center());
+            }
+        }
+        ui.separator();
+        let rest: Vec<_> = cmds.iter().copied().filter(|c| crate::sketch_families::family(c.id).is_none()).collect();
+        dropdown_keys(app, ui, &rest);
+        sketch_menu_rows(app, ui, &rest, menu, toggle);
+    });
+}
+
+/// Family popups use the same ordered arrow-key navigation as a panel's command list.
+fn dropdown_keys(app: &SolveApp, ui: &egui::Ui, cmds: &[&'static solidcraft_engine::CommandSpec]) {
+    let (down, up) = ui.input(|i| (i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::ArrowUp)));
+    if !down && !up {
+        return;
+    }
+    // A submenu renders before the remaining rows of its parent. Handle a key once, but
+    // leave the event available for the focused row's scroll-into-view behaviour.
+    let handled = egui::Id::new("sketch_menu_key_pass");
+    let pass = ui.ctx().cumulative_pass_nr();
+    if ui.ctx().data(|d| d.get_temp::<u64>(handled)) == Some(pass) {
+        return;
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(handled, pass));
+    let enabled: Vec<_> = cmds.iter().filter(|c| c.info(&app.session).enabled).collect();
+    if enabled.is_empty() {
+        return;
+    }
+    let focused = ui.ctx().memory(|m| m.focused());
+    let at = enabled.iter().position(|c| focused == Some(dropdown_row_id(c.id)));
+    let n = enabled.len();
+    let next = match (at, down) {
+        (None, true) => 0,
+        (None, false) => n - 1,
+        (Some(i), true) => (i + 1) % n,
+        (Some(i), false) => (i + n - 1) % n,
+    };
+    if let Some(c) = enabled.get(next) {
+        ui.ctx().memory_mut(|m| {
+            m.request_focus(dropdown_row_id(c.id));
+            m.move_focus(egui::FocusDirection::None);
+        });
+    }
+}
+
+fn sketch_menu_rows(
+    app: &mut SolveApp,
+    ui: &mut egui::Ui,
+    cmds: &[&'static solidcraft_engine::CommandSpec],
+    menu: &mut Option<(egui::Pos2, &'static str)>,
+    toggle: &mut Option<&'static str>,
+) {
+    let width = dropdown_width(app, ui, cmds);
+    for c in cmds {
+        let pinned = crate::toolbar_custom::pinned_on(app, "SKETCH", c.id).is_some();
+        match dropdown_row(app, ui, c, width, pinned) {
+            RowAction::None => {}
+            RowAction::Menu(at) => *menu = Some((at, c.id)),
+            RowAction::TogglePin => *toggle = Some(c.id),
+            RowAction::Start => {
+                app.start(c.id);
+                ui.ctx().data_mut(|d| d.remove::<egui::Id>(egui::Id::new("sc_panel_open")));
+                ui.close();
+            }
+        }
+    }
 }
 
 /// A command being dragged: a toolbar button, or a row of a panel drop-down (`from_menu`).
