@@ -539,8 +539,8 @@ fn radius_spline_handles(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Pain
     } else {
         return false;
     };
-    // Each drawn edge: its spline, a point at a position along it, into the body, and the curve
-    // on screen with its positions.
+    // Each drawn edge: its spline, the ends its positions run between, the direction into the
+    // body, and the curve on screen with its positions.
     struct Drawn<'a> {
         spline: &'a RadiusSpline,
         start: Vec3,
