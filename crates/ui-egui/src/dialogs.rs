@@ -2200,9 +2200,12 @@ fn extra_choice(ui: &mut egui::Ui, extra: &mut serde_json::Map<String, Value>, i
 /// A checkbox stored in the dialog's extra parameters.
 fn extra_check(ui: &mut egui::Ui, extra: &mut serde_json::Map<String, Value>, key: &str) {
     let mut on = extra.get(key).and_then(Value::as_bool).unwrap_or(false);
-    if ui.checkbox(&mut on, "").changed() {
+    let r = ui.checkbox(&mut on, "");
+    if r.changed() {
         extra.insert(key.into(), json!(on));
     }
+    // The box carries no text of its own, so a scenario reaches it by its row handle.
+    publish_row(&r);
 }
 
 /// A value field stored in the dialog's extra parameters (`default` until edited).
