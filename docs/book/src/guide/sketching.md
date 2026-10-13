@@ -31,6 +31,10 @@ fit-point and control-point splines, conics, points and text. **Construction** (
 into reference geometry that doesn't form profiles. Modify tools include trim (T), extend, break,
 fillet, chamfer, offset (O), mirror, patterns, move/copy and scale.
 
+Polygon tools show their edge outline while positioning the second point, so the orientation
+can be checked before placement. Inscribed and circumscribed polygons retain their support
+circle and update the outline when the inline **Sides** value changes.
+
 **Text** is set in the built-in font (Liberation Sans) unless it is given another: `sketch.text` and
 `sketch.edit_text` take a `font`, the family or full name of an installed font ("DejaVu Sans") or the path
 of a `.ttf` / `.otf` file, and the **Edit Text** dialog has a **Font** field for it. An unknown font is an

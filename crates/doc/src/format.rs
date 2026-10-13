@@ -63,6 +63,9 @@
 //!   A design can also define its own physical materials (`user_materials`: name, density in
 //!   g/cm³, optional look), which bodies (`materials`) and configuration material cells name
 //!   like built-in ones; a design without them saves as before.
+//!   A design can also keep what was hidden when it was saved (`visibility`: hidden bodies,
+//!   occurrence placements, sketches and origin items; `browser.visibility`). A design without
+//!   it shows everything, as it always did; a reader that ignores it loses only the hiding.
 
 use serde_json::Value;
 
