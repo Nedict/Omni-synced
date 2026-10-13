@@ -7,6 +7,7 @@
 mod backend;
 mod camera;
 mod curve_display;
+pub mod lighting;
 mod raster;
 
 pub use backend::{

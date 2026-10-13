@@ -112,6 +112,7 @@ pub mod sketch_modify_ui;
 mod sketch_modify_ui_tests;
 pub mod sketch_palette;
 pub(crate) mod sketch_text;
+mod sketch_text_handles;
 mod sketch_text_move;
 pub mod sketch_tools;
 pub mod stand_up;

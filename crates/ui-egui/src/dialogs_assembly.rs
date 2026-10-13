@@ -529,6 +529,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                 row_label(ui, "");
                 ui.spacing_mut().slider_width = 160.0;
                 let r = ui.add(egui::Slider::new(&mut shown, lo * scale..=hi * scale).show_value(false));
+                crate::scenario::publish_handle(&format!("drive_slider:{i}"), r.rect.center());
                 if r.changed() {
                     *v = if angle { format!("{shown:.1} deg") } else { format!("{shown:.2} mm") };
                 }

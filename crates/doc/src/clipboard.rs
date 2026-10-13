@@ -321,6 +321,8 @@ impl FeatureKind {
             | K::SheetConvert { body, .. }
             | K::SurfaceExtend { body, .. }
             | K::SurfaceTrim { body, .. }
+            | K::Unstitch { body, .. }
+            | K::ReverseNormal { body, .. }
             | K::MeshConvert { body, .. } => mapped_name(body, bodies),
             _ => {}
         }

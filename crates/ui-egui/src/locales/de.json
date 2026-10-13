@@ -311,6 +311,7 @@
   "ui.to_object": "Bis Objekt",
   "ui.top": "Oben",
   "ui.torus": "Torus",
+  "ui.total_angle": "Gesamtwinkel",
   "ui.trim": "Kürzen",
   "ui.two_sides": "Beidseitig",
   "ui.ui_scale": "UI-Skalierung",
@@ -324,5 +325,9 @@
   "ui.workspace": "Arbeitsbereich",
   "ui.x_distance": "X-Abstand",
   "ui.y_distance": "Y-Abstand",
-  "ui.zoom_to_the_cursor": "Zum Cursor zoomen"
+  "ui.zoom_to_the_cursor": "Zum Cursor zoomen",
+  "sketch_text.builtin_font": "{family} (integriert)",
+  "sketch_text.font_search": "Schriftarten suchen",
+  "sketch_text.loading_fonts": "Installierte Schriftarten werden gesucht…",
+  "sketch_text.use_font_file": "Schriftdatei {path} verwenden"
 }

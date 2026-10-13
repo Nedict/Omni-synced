@@ -751,9 +751,39 @@ fn edge_points(s: &Session, p: &Value, cmd: &str) -> Result<Vec<Vec3>> {
         return Err(bad(cmd, "select 1…1000 edges"));
     }
     let st = s.model.state();
+    // A picked point must lie on an edge (within the distance the kernel re-finds an edge from)
+    // of the body the feature names, or of any body: a pick far from every edge would round
+    // whichever edge is nearest (#783). Each body's edges are worked out once.
+    let named = str_(p, "body").filter(|n| st.body(n).is_some());
+    let mut candidates: Option<Vec<(f64, Vec<solidcraft_kernel::EdgeInfo>)>> = None;
     let mut out = Vec::new();
     for e in a {
         if let Some(pt) = vec3(e).or_else(|| e.get("point").and_then(vec3)) {
+            let bodies = candidates.get_or_insert_with(|| {
+                // Mesh bodies have no edges to pick: rounding one is refused later, saying why.
+                st.bodies
+                    .iter()
+                    .filter(|b| named.is_none_or(|n| b.name == n) && !b.body.is_mesh())
+                    .filter_map(|b| {
+                        let size = b.body.size();
+                        b.body.edges((size * 2e-3).max(1e-3)).ok().map(|edges| (size, edges))
+                    })
+                    .collect()
+            });
+            let mut nearest = f64::INFINITY;
+            let on_edge = bodies.iter().any(|(size, edges)| {
+                let d = edges
+                    .iter()
+                    .flat_map(|e| e.points.windows(2))
+                    .filter_map(|w| Some(pt.dist_to_segment(*w.first()?, *w.get(1)?)))
+                    .fold(f64::INFINITY, f64::min);
+                nearest = nearest.min(d);
+                d <= size * 0.05 + 1e-3
+            });
+            if !on_edge && !bodies.is_empty() {
+                let far = if nearest.is_finite() { format!("the nearest edge is {nearest:.3} mm away") } else { "there is no edge".to_string() };
+                return Err(bad(cmd, format!("no edge at [{}, {}, {}]: {far}", pt.x, pt.y, pt.z)));
+            }
             out.push(pt);
             continue;
         }

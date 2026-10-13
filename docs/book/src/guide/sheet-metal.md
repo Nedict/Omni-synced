@@ -32,6 +32,11 @@ side of a notch keeps its edge, and a pick there, in the same feature or a later
 a flange of its own. Where base is still left beside the bend's end at such a cut-out, it
 gets the bend relief as above. An edge that cut-outs have taken whole is refused.
 
+The setback is cut out of the base's outline as it was drawn: where the bend line crosses an
+arc of the outline (a plate with rounded corners, bent inside or in the middle), the arc stays
+an arc and ends there, in the flat pattern and the DXF. A free-form curve (an ellipse, a
+spline) in an outline that a setback cuts is followed by tangent arcs within 0.001 mm.
+
 Where two bends of one edge flange feature meet at a corner of the base, the rule's **corner
 relief shape** (`corner_relief_shape`; Corner Relief Shape in Sheet Metal Rules) says what is
 cut there. `notch`, the default, cuts nothing more: the bends end square at the corner, which

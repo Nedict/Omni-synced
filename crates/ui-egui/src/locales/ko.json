@@ -311,6 +311,7 @@
   "ui.to_object": "객체까지",
   "ui.top": "상면",
   "ui.torus": "토러스",
+  "ui.total_angle": "전진 각도",
   "ui.trim": "트림",
   "ui.two_sides": "양방향",
   "ui.ui_scale": "UI 배율",
@@ -324,5 +325,9 @@
   "ui.workspace": "작업 공간",
   "ui.x_distance": "X 거리",
   "ui.y_distance": "Y 거리",
-  "ui.zoom_to_the_cursor": "커서 위치로 확대/축소"
+  "ui.zoom_to_the_cursor": "커서 위치로 확대/축소",
+  "sketch_text.builtin_font": "{family}(내장)",
+  "sketch_text.font_search": "글꼴 검색",
+  "sketch_text.loading_fonts": "설치된 글꼴을 찾는 중…",
+  "sketch_text.use_font_file": "글꼴 파일 {path} 사용"
 }

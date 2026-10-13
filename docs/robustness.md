@@ -36,6 +36,24 @@ rejected before any jobs or output directories are created. The maximum seed
 - `cargo test` runs a fixed set of seeds that must stay clean
   (`crates/engine/src/tests/robustness.rs`), next to the minimised cases fixed so far.
 
+## Seeded goldens
+
+`tests/robustness/goldens.json` records what each of seeds 0–95 builds (eight steps at most):
+its steps, how it ended (ok, or the kind and the start of the error it was refused with), and
+for the design it left the bodies' total volume and area (within a relative 1e-6) and their
+face, edge and shell counts (exact). `tests::robustness_goldens` fails on any change, better or
+worse, so a kernel change shows every seed it moves. Pull requests that touch `crates/kernel`
+run every 8th seed (`sample_0` … `sample_3`, about two minutes); pushes to `main` and the
+nightly run them all (`all_0` … `all_3`).
+
+To record an intended change, give the reason:
+
+```
+ROBUSTNESS_GOLDENS_BLESS="why it changed" cargo test --profile ci -p solidcraft-engine --lib robustness_goldens::all
+```
+
+The changed seeds and the reason are added to the file's `notes`; say why in the pull request too.
+
 ## Successful Boolean retries
 
 When an accepted Boolean result needs a numerical retry, the feature shows a

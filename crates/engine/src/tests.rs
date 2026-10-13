@@ -33,6 +33,31 @@ fn round_as_tall_as_a_disc_uses_up_its_wall() {
     assert!(rel(volume(&mut s), expect) < 2e-4, "{} vs {expect}", volume(&mut s));
 }
 
+/// #783: an edge pick far from every edge (beside the body, above it, inside it, or on another
+/// body than the one named) is refused and adds nothing, instead of rounding the nearest edge;
+/// a pick on an edge, or a little off it as a click lands, still works.
+#[test]
+fn edge_picks_far_from_every_edge_are_refused() {
+    let mut s = Session::default();
+    for (name, x) in [("A", 0), ("B", 40), ("C", 80), ("D", 120)] {
+        run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 10, "corner": [x, 0, 0], "operation": "new", "body_name": name}));
+    }
+    run(&mut s, "solid.fillet", json!({"body": "A", "edges": [[10, 0, 10]], "radius": 1}));
+    run(&mut s, "solid.fillet", json!({"body": "B", "edges": [[50, 0.4, 10.3]], "radius": 1}));
+    let features = s.doc.features.len();
+    for (id, p, far) in [
+        ("solid.fillet", json!({"body": "B", "edges": [[50, -15, 10]], "radius": 1}), "15.0"),
+        ("solid.chamfer", json!({"body": "C", "edges": [[90, 10, 40]], "distance": 1}), "31.623 mm"),
+        ("solid.fillet", json!({"edges": [[130, 10, 5]], "radius": 1}), "11.180 mm"),
+        ("solid.fillet", json!({"body": "C", "edges": [[10, 20, 10]], "radius": 1}), "mm away"),
+        ("solid.press_pull", json!({"edges": [[50, -15, 10]], "distance": 1}), "15.0"),
+    ] {
+        let err = s.execute(id, &p).expect_err(&format!("{id} {p}")).to_string();
+        assert!(err.contains("no edge at") && err.contains(far), "{id} {p}: {err}");
+    }
+    assert_eq!(s.doc.features.len(), features);
+}
+
 #[test]
 fn fillet_as_wide_as_a_face_rounds_it_off() {
     // #199: 14 x 6 x 10 box, the four vertical edges at r = 3 (half the 6 mm end faces).
@@ -175,6 +200,7 @@ mod component_frames;
 mod mirror_planes;
 mod primitive_points;
 mod robustness;
+mod robustness_goldens;
 mod xz_plane;
 
 /// Plan area a round of radius `r` fills at the concave corner `x` where circles (c1, r1) and
@@ -1167,6 +1193,14 @@ fn threemf_export_open_insert() {
     let p = dir.join("Parts.3MF");
     run(&mut s, "file.export", json!({"path": p.to_string_lossy()}));
     let want = volume(&mut s);
+    // With face tags it is still a 3MF any reader opens, with the same bodies.
+    let tagged = dir.join("tagged.3mf");
+    let r = run(&mut s, "file.export", json!({"path": tagged.to_string_lossy(), "format": "3mf-tagged"}));
+    assert_eq!(r["format"], "ThreeMfTagged", "{r}");
+    let mut t = Session::default();
+    let r = run(&mut t, "doc.open", json!({"path": tagged.to_string_lossy()}));
+    assert_eq!(r["bodies"].as_array().unwrap().len(), 2, "{r}");
+    assert!(rel(volume(&mut t), want) < 2e-3, "{} vs {want}", volume(&mut t));
 
     let mut m = Session::default();
     let r = run(&mut m, "doc.open", json!({"path": p.to_string_lossy()}));

@@ -804,7 +804,7 @@ impl Dialog {
         let sel = if measure { crate::viewport::measurement_selection(s, &sel) } else { sel };
         let chain = matches!(self.kind, Kind::Fillet { chain: true, .. });
         let mut picked =
-            if !measure && self.active_input().is_some_and(|i| i.multi) { crate::viewport::grouped_selection(s, &sel) } else { vec![sel.clone()] };
+            if !measure && self.active_input().is_some_and(|i| i.multi) { crate::viewport::picked_selection(s, &sel) } else { vec![sel.clone()] };
         // Tangent chain: an edge brings the edges that continue it smoothly.
         if chain
             && let Sel::Edge { body, index, .. } = &sel
@@ -2565,7 +2565,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         }
     }
     if ok {
-        match run_dialog(app, &d) {
+        // Edit Text applies its own way: its live changes and OK are one undo step.
+        let run = match &mut d.kind {
+            Kind::Text(k) => crate::sketch_text::apply(app, k),
+            _ => run_dialog(app, &d),
+        };
+        match run {
             Ok(()) => {
                 cancel = true;
                 applied = true;
@@ -2575,12 +2580,19 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
     if !keep || cancel {
         crate::dialogs_motion::closed(app, &mut d, applied);
+        if let Kind::Text(k) = &mut d.kind {
+            crate::sketch_text::closed(app, k, applied);
+        }
     }
     // The edited text's outlines are new curves: the old selection would name stale ids.
     if applied && matches!(d.kind, Kind::Text(_) | Kind::TextMove(_)) {
         let _ = app.session.execute("select.clear", &json!({}));
     }
     if keep && !cancel {
+        // The canvas follows Edit Text's fields.
+        if let Kind::Text(k) = &mut d.kind {
+            crate::sketch_text::preview(app, k);
+        }
         app.dialog = Some(d);
     } else if let Some((_, marker)) = d.editing {
         // Editing done: put the timeline marker back where it was.
@@ -2596,6 +2608,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 pub fn cancel(app: &mut SolveApp) {
     if let Some(mut d) = app.dialog.take() {
         crate::dialogs_motion::closed(app, &mut d, false);
+        if let Kind::Text(k) = &mut d.kind {
+            crate::sketch_text::closed(app, k, false);
+        }
         app.dialog = Some(d);
     }
     if let Some(d) = app.dialog.take()

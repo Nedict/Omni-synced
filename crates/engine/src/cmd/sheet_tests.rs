@@ -1176,6 +1176,59 @@ fn an_edge_flange_on_a_flange_runs_along_what_a_flat_cut_left_of_its_far_edge() 
 }
 
 #[test]
+fn a_flange_bent_inside_keeps_the_base_sketchs_arcs_in_the_flat_pattern_and_the_dxf() {
+    // A 200 x 100 plate with its corners rounded 8, drawn as arcs, and a 40 high flange on its
+    // bottom edge (2 mm, R 1, K 0.5: setback 3 inside, half of it in the middle; BA π, panel
+    // 37). With the bend inside or in the middle the base is cut back through the two lower
+    // arcs: the DXF's outline was about 150 LINEs then, every arc as chords a quarter
+    // millimetre long, where the bend outside gives 8 LINEs and 4 ARCs.
+    let h = 8.0 * (1.0 - 0.5f64.sqrt());
+    // ∫ √(64 − z²): the area under an arc of radius 8, from its centre's height on.
+    let under = |z: f64| z / 2.0 * (64.0 - z * z).sqrt() + 32.0 * (z / 8.0).asin();
+    for (position, setback) in [("outside", 0.0f64), ("middle", 3.0 / 2.0), ("inside", 3.0)] {
+        let mut s = Session::default();
+        run(&mut s, "sheet.manage_rules", json!({"name": "R", "thickness": "2 mm", "k_factor": "0.5", "bend_radius": "1 mm", "active": true}));
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
+        run(&mut s, "sketch.line", json!({"points": [[8, 0], [192, 0]]}));
+        run(&mut s, "sketch.arc.three_point", json!({"start": [192, 0], "end": [200, 8], "through": [200.0 - h, h]}));
+        run(&mut s, "sketch.line", json!({"points": [[200, 8], [200, 92]]}));
+        run(&mut s, "sketch.arc.three_point", json!({"start": [200, 92], "end": [192, 100], "through": [200.0 - h, 100.0 - h]}));
+        run(&mut s, "sketch.line", json!({"points": [[192, 100], [8, 100]]}));
+        run(&mut s, "sketch.arc.three_point", json!({"start": [8, 100], "end": [0, 92], "through": [h, 100.0 - h]}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 92], [0, 8]]}));
+        run(&mut s, "sketch.arc.three_point", json!({"start": [0, 8], "end": [8, 0], "through": [h, h]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "sheet.flange", json!({"sketch": "S"}));
+        run(&mut s, "sheet.flange", json!({"edges": [[100, 0, 2]], "height": 40, "angle": 90, "position": position}));
+        assert!(no_errors_or_warnings(&s), "{position}: {:?}", s.model.results);
+        let text = run(&mut s, "sheet.export_dxf", json!({}))["dxf"].as_str().unwrap_or_default().to_string();
+        let shapes = solidcraft_io::read_dxf(&text).unwrap();
+        let lines = shapes.iter().filter(|g| matches!(g, solidcraft_io::Geom2::Line(..))).count();
+        let radii: Vec<f64> =
+            shapes.iter().filter_map(|g| if let solidcraft_io::Geom2::Arc { c, a, .. } = g { Some(c.dist(*a)) } else { None }).collect();
+        // Eight lines of outline and the bend's centre line; the four corners.
+        assert_eq!((lines, radii.len(), shapes.len()), (9, 4, 13), "{position}");
+        assert!(radii.iter().all(|r| (r - 8.0).abs() < 1e-9), "{position}: {radii:?}");
+        // The plate less what lies below the bend line, ∫ 184 + 2·√(64 − (8 − y)²) from 0 to the
+        // setback, and the flange along the trimmed edge, which runs from arc to arc.
+        let below = 184.0 * setback + 2.0 * (under(8.0) - under(8.0 - setback));
+        let edge = 184.0 + 2.0 * (64.0 - (8.0 - setback) * (8.0 - setback)).sqrt();
+        let want = 20_000.0 - (4.0 - PI) * 64.0 - below + edge * (PI + 37.0);
+        let regions = s.model.state().sheets[0].flat_regions().unwrap();
+        assert!(regions.len() == 1 && (regions[0].area() - want).abs() < 1e-6, "{position}: {} vs {want}", regions[0].area());
+        let f = flat(&mut s);
+        assert!((f["bends"][0]["length"].as_f64().unwrap_or(f64::NAN) - edge).abs() < 1e-9, "{position}: {}", f["bends"]);
+        // Folded it holds the same (K 0.5), and so it does unfolded and folded again.
+        for command in [None, Some("sheet.unfold"), Some("sheet.refold")] {
+            if let Some(command) = command {
+                run(&mut s, command, json!({}));
+            }
+            assert!(rel(volume(&mut s), want * 2.0) < 1e-3, "{position} {command:?}: {} vs {}", volume(&mut s), want * 2.0);
+        }
+    }
+}
+
+#[test]
 fn bend_table_exports_shop_dimensions_and_tracks_parameter_changes() {
     let mut s = Session::default();
     run(&mut s, "sheet.manage_rules", json!({"name": "Shop, \"steel\"", "thickness": 2, "bend_radius": 3, "k_factor": 0.4}));

@@ -937,6 +937,19 @@ pub enum FeatureKind {
         curves: Vec<String>,
         extent: Extent,
     },
+    /// A body taken apart: each face at `faces` (every face when empty) its own surface body,
+    /// the faces left one surface body under the body's name. A solid comes apart into surfaces.
+    Unstitch {
+        body: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        faces: Vec<Vec3>,
+    },
+    /// A surface body with the faces at `faces` (every face when empty) turned over.
+    ReverseNormal {
+        body: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        faces: Vec<Vec3>,
+    },
     /// A planar surface body extended outward by `distance` past the edges through `edges`.
     SurfaceExtend {
         body: String,
@@ -1286,6 +1299,8 @@ impl FeatureKind {
             | K::Thicken { .. }
             | K::SurfaceExtend { .. }
             | K::SurfaceTrim { .. }
+            | K::Unstitch { .. }
+            | K::ReverseNormal { .. }
             | K::Move { .. }
             | K::Import { .. }
             | K::MeshImport { .. }
@@ -1374,6 +1389,8 @@ impl FeatureKind {
             FeatureKind::Thicken { .. } => "ThickenFeature",
             FeatureKind::SurfaceTrim { .. } => "TrimFeature",
             FeatureKind::SurfaceExtend { .. } => "ExtendFeature",
+            FeatureKind::Unstitch { .. } => "UnstitchFeature",
+            FeatureKind::ReverseNormal { .. } => "ReverseNormalFeature",
             FeatureKind::Import { .. } => "BaseFeature",
             FeatureKind::MeshImport { .. } => "MeshFeature",
             FeatureKind::MeshConvert { .. } => "MeshConvertFeature",
@@ -1441,6 +1458,8 @@ impl FeatureKind {
             FeatureKind::Thicken { .. } => "Thicken",
             FeatureKind::SurfaceTrim { .. } => "Trim",
             FeatureKind::SurfaceExtend { .. } => "Extend",
+            FeatureKind::Unstitch { .. } => "Unstitch",
+            FeatureKind::ReverseNormal { .. } => "ReverseNormal",
             FeatureKind::Import { .. } => "Import",
             FeatureKind::MeshImport { .. } => "Mesh",
             FeatureKind::MeshConvert { .. } => "ConvertMesh",
@@ -1669,6 +1688,7 @@ impl FeatureKind {
             FeatureKind::Thicken { thickness, .. } => v.push(thickness),
             FeatureKind::SurfaceTrim { plane, .. } => plane_exprs(plane, &mut v),
             FeatureKind::SurfaceExtend { distance, .. } => v.push(distance),
+            FeatureKind::Unstitch { .. } | FeatureKind::ReverseNormal { .. } => {}
             FeatureKind::Patch { .. } => {}
             FeatureKind::Import { .. } | FeatureKind::MeshImport { .. } | FeatureKind::BodyTransfer { .. } => {}
         }
