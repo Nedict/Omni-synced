@@ -1000,8 +1000,9 @@ fn curved_case(solid: &Solid, edge: &mt::Edge) -> bool {
 fn smooth_chain(solid: &Solid, edge: &mt::Edge) -> Option<Vec<mt::EdgeID>> {
     use mt::{BoundedCurve, ParametricCurve};
     let all = Body::unique_edges(solid);
+    // Along the edge as it runs from its front to its back (an edge may run against its curve).
     let dir = |e: &mt::Edge, at_end: bool| -> Option<Vec3> {
-        let c = e.curve();
+        let c = e.oriented_curve();
         let (t0, t1) = c.range_tuple();
         let d = c.der(if at_end { t1 } else { t0 });
         Vec3::new(d.x, d.y, d.z).normalized()
@@ -1650,6 +1651,28 @@ mod tests {
         let removed = vol(&c) - vol(&out);
         let along = 0.5 * 120f64.to_radians().sin() * k * 3f64.sqrt();
         assert!(removed > along * 0.8 && removed < along * 1.2, "{removed} vs {along}");
+    }
+
+    #[test]
+    fn a_curved_edge_blend_ends_in_a_face_at_an_angle() {
+        // A groove of radius 8 along y with its axis 4 below the top: the arcs where it meets the
+        // front and back faces end in the top face at 60° to it.
+        let b = crate::build::box_solid(Vec3::ZERO, Vec3::new(40.0, 20.0, 20.0)).unwrap();
+        let c = crate::build::cylinder(Vec3::new(20.0, -1.0, 16.0), Vec3::Y, 8.0, 22.0).unwrap();
+        let body = crate::ops::boolean(&b, &c, crate::BoolOp::Cut).unwrap().unwrap();
+        let vol = |b: &Body| b.tessellate(1e-4).unwrap().measure().volume;
+        let v0 = vol(&body);
+        for shape in [Shape::Round, Shape::Flat] {
+            let out = blend(&body, &[Vec3::new(20.0, 0.0, 8.0)], 0.5, shape, "blend").unwrap();
+            assert!(out.validity().is_empty(), "{:?}", out.validity());
+            // One blend face per piece of the arc (the groove's surface is in two faces).
+            assert_eq!(out.face_count(), body.face_count() + 2);
+            // About the section along the arc (240°, at the section's distance from the axis).
+            let area = if shape == Shape::Round { (1.0 - std::f64::consts::PI / 4.0) * 0.25 } else { 0.125 };
+            let along = 8.2 * 240f64.to_radians();
+            let removed = v0 - vol(&out);
+            assert!(removed > area * along * 0.9 && removed < area * along * 1.1, "{removed} vs {}", area * along);
+        }
     }
 
     #[test]
