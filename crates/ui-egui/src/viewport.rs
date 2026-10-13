@@ -2014,7 +2014,16 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         || app.viewport.orbit_snap.is_some()
         || app.cam_anim.is_some();
     let hits = hover.filter(|_| inside && app.viewport.boxsel.is_none() && !navigating).map(|p| pick_cached(app, &proj, p)).unwrap_or_default();
-    let cand = if app.tool.is_some() { hits.first().cloned().map(|h| (h, None)) } else { candidate(app, &hits).map(|(h, s)| (h, Some(s))) };
+    // The Fillet and Chamfer window resolves its own corners: the nearest sketch point to a
+    // corner drawn from the origin is the fixed origin, which ends no two curves.
+    let corner = hover.filter(|_| inside && !navigating).and_then(|p| crate::sketch_modify_ui::corner_hit(app, &proj, p));
+    let cand = if app.tool.is_some() {
+        hits.first().cloned().map(|h| (h, None))
+    } else if let Some((hit, sel)) = corner {
+        Some((hit, Some(sel)))
+    } else {
+        candidate(app, &hits).map(|(h, s)| (h, Some(s)))
+    };
     app.viewport.hover = cand.as_ref().map(|c| c.0.clone());
     // Select Other: a press held still opens the list of everything under it; while the list is
     // open its row under the pointer is what lights up.

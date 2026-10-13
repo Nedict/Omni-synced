@@ -887,6 +887,45 @@ pub fn paint(p: &Painter, r: Rect, name: &str, ink: Color32, fill: Color32, acce
                 1.5 * pen.s(),
             ));
         }
+        // The three chamfer types, for the Chamfer Type row of the corner tool window. Each
+        // draws the cut it makes: equal legs with a tick on each, two unequal legs, and one leg
+        // with the angle the cut leaves it at.
+        "sketch_chamfer_equal" => {
+            pen.line(&[(4.0, 21.0), (4.0, 12.0)], ink);
+            pen.line(&[(12.0, 4.0), (21.0, 4.0)], ink);
+            pen.line(&[(4.0, 12.0), (12.0, 4.0)], a);
+            pen.line(&[(2.5, 9.5), (5.5, 6.5)], a);
+            pen.line(&[(9.5, 2.5), (6.5, 5.5)], a);
+            p.add(Shape::dashed_line(
+                &[pen.at(4.0, 12.0), pen.at(4.0, 4.0), pen.at(12.0, 4.0)],
+                Stroke::new(pen.w * 0.7, ink.gamma_multiply(0.5)),
+                2.0 * pen.s(),
+                1.5 * pen.s(),
+            ));
+        }
+        "sketch_chamfer_two" => {
+            pen.line(&[(4.0, 21.0), (4.0, 10.0)], ink);
+            pen.line(&[(18.0, 4.0), (21.0, 4.0)], ink);
+            pen.line(&[(4.0, 10.0), (18.0, 4.0)], a);
+            p.add(Shape::dashed_line(
+                &[pen.at(4.0, 10.0), pen.at(4.0, 4.0), pen.at(18.0, 4.0)],
+                Stroke::new(pen.w * 0.7, ink.gamma_multiply(0.5)),
+                2.0 * pen.s(),
+                1.5 * pen.s(),
+            ));
+        }
+        "sketch_chamfer_angle" => {
+            pen.line(&[(4.0, 21.0), (4.0, 13.0)], ink);
+            pen.line(&[(14.0, 4.0), (21.0, 4.0)], ink);
+            pen.line(&[(4.0, 13.0), (14.0, 4.0)], a);
+            pen.arc(4.0, 13.0, 6.0, -std::f32::consts::FRAC_PI_2, 0.73, a);
+            p.add(Shape::dashed_line(
+                &[pen.at(4.0, 13.0), pen.at(4.0, 4.0), pen.at(14.0, 4.0)],
+                Stroke::new(pen.w * 0.7, ink.gamma_multiply(0.5)),
+                2.0 * pen.s(),
+                1.5 * pen.s(),
+            ));
+        }
         "offset" => {
             pen.closed(&[(8.0, 9.0), (16.0, 9.0), (16.0, 15.0), (8.0, 15.0)], ink);
             pen.line(&[(8.0, 4.0), (16.0, 4.0)], a);

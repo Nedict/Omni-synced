@@ -1191,6 +1191,39 @@ pub(crate) fn combo(ui: &mut egui::Ui, id: &str, labels: &[&str], sel: &mut usiz
     publish_row(&r.response);
 }
 
+/// A mode choice as a row of icon buttons rather than a drop-down: every mode is on screen at
+/// once, each drawn as the shape it makes, with its name as the tooltip. `labels` and `icons`
+/// run in step; a mode with no icon gets the fallback square. Publishes the handles a combo
+/// does, `dialog:<row label>:<label>` per mode and `dialog:<row label>` for the row.
+pub(crate) fn icon_choice(ui: &mut egui::Ui, labels: &[&str], icons: &[&str], sel: &mut usize) {
+    let t = Tokens::get();
+    let row = ROW.with(|r| r.borrow().clone());
+    let mut at = None;
+    ui.horizontal(|ui| {
+        for (i, label) in labels.iter().enumerate() {
+            let on = *sel == i;
+            let (r, resp) = ui.allocate_exact_size(vec2(28.0, 24.0), egui::Sense::click());
+            if on {
+                ui.painter().rect_filled(r, 4.0, t.accent);
+            } else if resp.hovered() {
+                ui.painter().rect_filled(r, 4.0, t.hover);
+            }
+            let ink = if on { Color32::WHITE } else { t.icon };
+            crate::icons::paint(ui.painter(), r.shrink(3.0), icons.get(i).copied().unwrap_or(""), ink, t.icon_fill, ink);
+            crate::scenario::publish_handle(&format!("dialog:{row}:{label}"), r.center());
+            if on {
+                at = Some(r.center());
+            }
+            if resp.on_hover_text(tr(label)).clicked() {
+                *sel = i;
+            }
+        }
+    });
+    if let Some(p) = at {
+        crate::scenario::publish_handle(&format!("dialog:{row}"), p);
+    }
+}
+
 thread_local! {
     /// The label of the dialog row being laid out (its widgets publish `dialog:<label>` handles).
     static ROW: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
@@ -1278,6 +1311,8 @@ fn hint(inp: &SelInput) -> &'static str {
         "click an axis or sketch line"
     } else if a & CURVES != 0 {
         "click sketch curves"
+    } else if a & selection::POINTS != 0 {
+        "click sketch points"
     } else if a & BODIES != 0 {
         "click bodies"
     } else {
@@ -2717,7 +2752,7 @@ fn mid_points(extra: &serde_json::Map<String, Value>) -> Vec<(f64, String)> {
         .collect()
 }
 
-const CHAMFER_TYPES: [&str; 3] = ["Equal Distance", "Two Distances", "Distance and Angle"];
+pub(crate) const CHAMFER_TYPES: [&str; 3] = ["Equal Distance", "Two Distances", "Distance and Angle"];
 
 /// A new Fillet or Chamfer dialog's values.
 fn fillet_kind(size: &str, chamfer: bool) -> Kind {
