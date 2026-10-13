@@ -2088,6 +2088,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
 
     // ---- interaction ----
     let add = mods.shift || mods.command || mods.ctrl;
+    crate::sketch_text::set_one_letter(mods.shift);
     if let Some(p) = hover.filter(|_| inside) {
         if app.tool.is_some() {
             crate::tools::on_hover(app, &proj, p);
@@ -2408,7 +2409,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
 pub(crate) fn select(app: &mut SolveApp, sel: Option<Sel>, add: bool) {
     match sel {
         Some(x) => {
-            let items = grouped_selection(&app.session, &x);
+            let items = picked_selection(&app.session, &x);
             if add && items.iter().all(|x| app.session.selection.iter().any(|y| crate::selection::same_item(x, y))) {
                 let rest: Vec<Sel> =
                     app.session.selection.iter().filter(|y| !items.iter().any(|x| crate::selection::same_item(x, y))).cloned().collect();
@@ -2422,6 +2423,18 @@ pub(crate) fn select(app: &mut SolveApp, sel: Option<Sel>, add: bool) {
         }
         None => {}
     }
+}
+
+/// What a click on `sel` picks: its pieces ([`grouped_selection`]), and for a letter of a sketch
+/// text the whole text, unless Shift is held (Shift picks the one letter).
+pub(crate) fn picked_selection(s: &solidcraft_engine::Session, sel: &Sel) -> Vec<Sel> {
+    if let Sel::Profile { sketch, index } = sel
+        && !crate::sketch_text::one_letter()
+        && let Some(letters) = crate::sketch_text::text_profiles(s, *sketch, *index)
+    {
+        return letters.into_iter().map(|index| Sel::Profile { sketch: *sketch, index }).collect();
+    }
+    grouped_selection(s, sel)
 }
 
 /// Expand a visible rim or surface into the kernel pieces a command needs. The original
@@ -2459,12 +2472,6 @@ pub(crate) fn grouped_selection(s: &solidcraft_engine::Session, sel: &Sel) -> Ve
                         })
                     })
                     .collect();
-            }
-        }
-        // A letter stands for its whole text.
-        Sel::Profile { sketch, index } => {
-            if let Some(letters) = crate::sketch_text::text_profiles(s, *sketch, *index) {
-                return letters.into_iter().map(|index| Sel::Profile { sketch: *sketch, index }).collect();
             }
         }
         _ => {}

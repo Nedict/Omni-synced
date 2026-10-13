@@ -84,6 +84,20 @@ pub(crate) fn entity_for_selection(app: &SolveApp, selection: &Sel) -> Option<St
     ids.into_iter().next()
 }
 
+thread_local! {
+    /// Shift is held in the viewport: a click picks one letter of a text, not the whole text.
+    static ONE_LETTER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The viewport's modifiers each frame: Shift picks letters one by one.
+pub(crate) fn set_one_letter(on: bool) {
+    ONE_LETTER.with(|c| c.set(on));
+}
+
+pub(crate) fn one_letter() -> bool {
+    ONE_LETTER.with(std::cell::Cell::get)
+}
+
 /// A text is picked whole: the profiles of its letters when profile `index` of `sketch` is
 /// bounded by one text alone (none when other geometry shares it). The letters' counters (the
 /// inside of an O) are left out; inside one, a letter is a letter again. The picked profile
@@ -1066,5 +1080,27 @@ mod tests {
         let picked = h.app.dialog.as_ref().unwrap().inputs[0].items.clone();
         assert_eq!(picked.len(), 2, "{picked:?}");
         assert!(has(&picked, i) && has(&picked, ring));
+        // Shift takes one letter out again (and would put it back alone).
+        h.step(&json!({"click":{"world":[at.x,at.y,0.0]},"shift":true})).unwrap();
+        h.frames(2);
+        let picked = h.app.dialog.as_ref().unwrap().inputs[0].items.clone();
+        assert_eq!(picked.len(), 1, "{picked:?}");
+        assert!(has(&picked, ring));
+    }
+
+    #[test]
+    fn shift_clicking_a_letter_selects_that_letter_alone() {
+        let (mut h, sid, i, ring, _) = letters();
+        let at = h.app.session.world_state().sketch(sid).unwrap().profiles[i].centroid;
+        h.step(&json!({"click":{"sketch":[at.x,at.y]},"shift":true})).unwrap();
+        h.frames(2);
+        assert_eq!(h.app.session.selection, vec![Sel::Profile { sketch: sid, index: i }]);
+        // It is shown alone too: the rest of the text is not drawn as selected.
+        let shown = h.app.session.selection.iter().flat_map(|sel| crate::viewport::grouped_selection(&h.app.session, sel)).collect::<Vec<_>>();
+        assert!(!shown.contains(&Sel::Profile { sketch: sid, index: ring }));
+        // A plain click picks the whole text again.
+        h.step(&json!({"click":{"sketch":[at.x,at.y]}})).unwrap();
+        h.frames(2);
+        assert_eq!(h.app.session.selection.len(), 2);
     }
 }
