@@ -246,3 +246,52 @@ fn faces_mate_by_default() {
     run(&mut s, "joint.edit", json!({"joint": "Stack", "flip": true}));
     assert!(near(place(&s, "B", Vec3::new(25.0, 5.0, 10.0)), Vec3::new(5.0, 5.0, 0.0)), "{:?}", place(&s, "B", Vec3::new(25.0, 5.0, 10.0)));
 }
+
+/// #527: an assembly with its fasteners passes 200 bodies quickly; the clash check must still
+/// cover the whole design. 201 separate 1 mm cubes 2 mm apart, plus one cube pushed half-way
+/// into the first: exactly that pair overlaps, by 0.5 mm³.
+#[test]
+fn interference_checks_designs_with_more_than_200_bodies() {
+    let mut s = Session::default();
+    for i in 0..201 {
+        run(&mut s, "solid.box", json!({"length": 1, "width": 1, "height": 1, "corner": [2 * i, 0, 0], "operation": "new"}));
+    }
+    run(&mut s, "solid.box", json!({"length": 1, "width": 1, "height": 1, "corner": [0.5, 0, 0], "operation": "new", "body_name": "Clash"}));
+    assert_eq!(s.model.state().bodies.len(), 202);
+    let i = run(&mut s, "inspect.interference", json!({}));
+    assert_eq!(i["checked"], 202, "{i}");
+    assert_eq!(i["count"], 1, "{i}");
+    let hit = &i["interferences"][0];
+    let mut pair = [hit["a"].as_str().unwrap_or(""), hit["b"].as_str().unwrap_or("")];
+    pair.sort_unstable();
+    assert_eq!(pair, ["Body1", "Clash"], "{i}");
+    assert!((hit["volume_mm3"].as_f64().unwrap_or(0.0) - 0.5).abs() < 1e-6, "{i}");
+}
+
+/// The bounding-box sweep behind `inspect.interference` finds exactly the pairs a check of every
+/// pair finds (touching boxes count), and reports how many it left out past its limit.
+#[test]
+fn interference_box_sweep_matches_every_pair_check() {
+    use solidcraft_geom::Aabb3;
+    let cube = |x: f64, y: f64, z: f64, e: f64| Aabb3 { min: Vec3::new(x, y, z), max: Vec3::new(x + e, y + e, z + e) };
+    // A deterministic scatter: overlapping, touching, and apart in only one axis.
+    let boxes: Vec<Aabb3> = (0..60)
+        .map(f64::from)
+        .map(|i| cube((i * 7.3) % 20.0, (i * 3.1) % 9.0, (i * 5.7) % 4.0, 1.0 + (i % 3.0)))
+        .chain([cube(30.0, 0.0, 0.0, 1.0), cube(31.0, 0.0, 0.0, 1.0)])
+        .collect();
+    let mut every = Vec::new();
+    for (i, a) in boxes.iter().enumerate() {
+        for (j, b) in boxes.iter().enumerate().skip(i + 1) {
+            let apart = a.max.x < b.min.x || b.max.x < a.min.x || a.max.y < b.min.y || b.max.y < a.min.y || a.max.z < b.min.z || b.max.z < a.min.z;
+            if !apart {
+                every.push((i, j));
+            }
+        }
+    }
+    assert!(every.contains(&(60, 61)), "touching boxes are a candidate pair");
+    let (pairs, skipped) = super::overlapping_pairs(&boxes, usize::MAX);
+    assert_eq!((pairs, skipped), (every.clone(), 0));
+    let (pairs, skipped) = super::overlapping_pairs(&boxes, 10);
+    assert_eq!((pairs.len(), skipped), (10, every.len() - 10));
+}
