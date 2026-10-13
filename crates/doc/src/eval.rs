@@ -3808,7 +3808,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             st.bodies.push(ModelBody::traced_new(name, b, f.id));
             Ok(())
         }
-        FeatureKind::Move { bodies, translate, rotate_axis, angle } => {
+        FeatureKind::Move { bodies, translate, rotate_axis, angle, copy } => {
             let t =
                 Vec3::new(val(vals, &translate[0], Kind::Length)?, val(vals, &translate[1], Kind::Length)?, val(vals, &translate[2], Kind::Length)?);
             let ang = match angle {
@@ -3816,11 +3816,20 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 None => 0.0,
             };
             let axis = rotate_axis.unwrap_or(Vec3::Z);
+            // With `copy` set, the source body is kept in place and the transform lands on a new
+            // body pushed beside it instead of replacing it.
+            let mut output = 0;
             for n in bodies {
                 let i = st.bodies.iter().position(|b| &b.name == n).ok_or_else(|| DocError::Unknown(format!("body `{n}`")))?;
-                if let Some(mb) = st.bodies.get_mut(i) {
-                    let nb = Traced::step(kernel::transform(&mb.body, t, Vec3::ZERO, axis, ang)?, &[&mb.traced()]);
-                    *mb = ModelBody::traced_new(mb.name.clone(), nb, mb.feature);
+                let Some(mb) = st.bodies.get(i).cloned() else { continue };
+                let nb = kernel::transform(&mb.body, t, Vec3::ZERO, axis, ang)?;
+                if *copy {
+                    let traced = moved_copy(&mb, nb, 1);
+                    let name = copy_body_name(st, f, output, &mb.name);
+                    st.bodies.push(ModelBody::traced_new(name, traced, f.id));
+                    output += 1;
+                } else if let Some(slot) = st.bodies.get_mut(i) {
+                    *slot = ModelBody::traced_new(mb.name.clone(), Traced::step(nb, &[&mb.traced()]), mb.feature);
                 }
             }
             Ok(())
