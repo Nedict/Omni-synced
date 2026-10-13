@@ -337,6 +337,7 @@ impl FeatureKind {
             | FeatureKind::MeshConvert { .. }
             | FeatureKind::BodyTransfer { .. } => {}
             FeatureKind::Patch { edges, .. } | FeatureKind::SurfaceExtend { edges, .. } => edges.iter_mut().for_each(pt),
+            FeatureKind::Unstitch { faces, .. } | FeatureKind::ReverseNormal { faces, .. } => faces.iter_mut().for_each(pt),
             FeatureKind::SurfaceTrim { plane, tool, keep, .. } => {
                 map_plane_ref(m, plane);
                 if let Some(t) = tool {

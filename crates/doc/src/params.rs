@@ -277,6 +277,7 @@ impl FeatureKind {
             FeatureKind::Thicken { thickness, .. } => v.push(("Thickness", thickness, L)),
             FeatureKind::SurfaceTrim { plane, .. } => plane_inputs_mut(plane, &mut v),
             FeatureKind::SurfaceExtend { distance, .. } => v.push(("Distance", distance, L)),
+            FeatureKind::Unstitch { .. } | FeatureKind::ReverseNormal { .. } => {}
             FeatureKind::Patch { .. } => {}
             FeatureKind::Combine { .. }
             | FeatureKind::SheetBase { .. }

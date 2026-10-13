@@ -104,6 +104,8 @@
 //!   Construction Geometries); a sketch that shows its construction geometry saves as before.
 //!   A `SurfaceExtrude` feature (Surface Extrude: `sketch`, optional `profiles`, `curves` and
 //!   `extent`, walls only) is first saved in 17; 0.8.0 would refuse the unknown feature.
+//!   `Unstitch` and `ReverseNormal` features (a `body` and optional `faces` points) are first
+//!   saved in 17; 0.8.0 would refuse the unknown features.
 
 use serde_json::Value;
 
