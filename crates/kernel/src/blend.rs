@@ -296,7 +296,14 @@ pub(crate) fn retarget(e: &mt::Edge, v: &mt::Vertex, nv: &mt::Vertex, tol: f64) 
     use mt::Cut;
     let q = vtx(nv);
     if let Some(t) = on_edge(e, q, tol) {
+        use mt::BoundedCurve;
         let mut c = e.curve();
+        // The piece kept must not shrink to nothing.
+        let (lo, hi) = c.range_tuple();
+        let margin = (hi - lo) * 1e-6;
+        if (f == v && t >= hi - margin) || (f != v && t <= lo + margin) {
+            return Err(too_large("the blend is larger than the neighbouring faces"));
+        }
         let rest = c.cut(t);
         let (piece, a, b) = if f == v { (rest, nv, bk) } else { (c, f, nv) };
         return mt::Edge::try_new(a, b, piece).map_err(|err| KernelError::Failed(format!("blend: corner edge: {err}")));
@@ -840,32 +847,45 @@ fn blend(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str) -> Resul
                 return Err(KernelError::Invalid(format!("no edge near {:?}", [p.x, p.y, p.z])));
             }
             let edge = Body::unique_edges(&solid).into_iter().nth(idx).ok_or_else(|| KernelError::Invalid("edge index".into()))?;
-            let attempt = match guard(what, || blend_one(&solid, &edge, size, r, shape)) {
-                Ok(o) => Ok((o, vec![j])),
-                // A curved edge, or one between curved faces: roll a ball along its smooth chain.
-                Err(e) if !curved_case(&solid, &edge) => Err(e),
-                Err(e) => match smooth_chain(&solid, &edge) {
-                    Some(ids) => {
-                        let on_chain: Vec<usize> = todo
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, q)| {
-                                cur.nearest_edge(**q, tol)
-                                    .ok()
-                                    .flatten()
-                                    .and_then(|(i, _)| Body::unique_edges(&solid).into_iter().nth(i))
-                                    .is_some_and(|x| ids.contains(&x.id()))
-                            })
-                            .map(|(i, _)| i)
-                            .collect();
-                        guard(what, || crate::curveblend::curve_blend(&solid, &ids, size, r, shape == Shape::Round))
-                            .map(|o| (o, if on_chain.is_empty() { vec![j] } else { on_chain }))
-                            .map_err(|e2| match e2 {
-                                KernelError::TooLarge(m) => KernelError::TooLarge(format!("{m} ({e})")),
-                                e2 => KernelError::Failed(format!("{e2} ({e})")),
-                            })
-                    }
-                    None => Err(e),
+            // Roll a ball along the edge's smooth chain (the points of `todo` on it go with it).
+            let roll = |ids: &[mt::EdgeID]| {
+                let on_chain: Vec<usize> = todo
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, q)| {
+                        cur.nearest_edge(**q, tol)
+                            .ok()
+                            .flatten()
+                            .and_then(|(i, _)| Body::unique_edges(&solid).into_iter().nth(i))
+                            .is_some_and(|x| ids.contains(&x.id()))
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+                guard(what, || crate::curveblend::curve_blend(&solid, ids, size, r, shape == Shape::Round))
+                    .map(|o| (o, if on_chain.is_empty() { vec![j] } else { on_chain }))
+            };
+            // A straight edge running on smoothly into curved ones (a flange into its bend, a
+            // side into a rounded corner): the blend follows the whole smooth chain, as the
+            // rolling ball would.
+            let chain = smooth_chain(&solid, &edge);
+            let runs_on = !curved_case(&solid, &edge)
+                && chain.as_ref().is_some_and(|ids| {
+                    ids.len() > 1 && Body::unique_edges(&solid).iter().any(|x| ids.contains(&x.id()) && !matches!(x.curve(), mt::Curve::Line(_)))
+                });
+            let attempt = match chain.as_deref().filter(|_| runs_on).map(roll) {
+                Some(Ok(o)) => Ok(o),
+                Some(Err(e2)) => guard(what, || blend_one(&solid, &edge, size, r, shape)).map(|o| (o, vec![j])).map_err(|_| e2),
+                None => match guard(what, || blend_one(&solid, &edge, size, r, shape)) {
+                    Ok(o) => Ok((o, vec![j])),
+                    // A curved edge, or one between curved faces: roll a ball along its smooth chain.
+                    Err(e) if !curved_case(&solid, &edge) => Err(e),
+                    Err(e) => match chain.as_deref() {
+                        Some(ids) => roll(ids).map_err(|e2| match e2 {
+                            KernelError::TooLarge(m) => KernelError::TooLarge(format!("{m} ({e})")),
+                            e2 => KernelError::Failed(format!("{e2} ({e})")),
+                        }),
+                        None => Err(e),
+                    },
                 },
             };
             match attempt.and_then(|((o, rec), js)| record::rebuilt(o, &[&solid], &rec).map(|b| (b, js))) {
@@ -1672,6 +1692,19 @@ mod tests {
             let along = 8.2 * 240f64.to_radians();
             let removed = v0 - vol(&out);
             assert!(removed > area * along * 0.9 && removed < area * along * 1.1, "{removed} vs {}", area * along);
+        }
+    }
+
+    #[test]
+    fn a_blend_of_an_edge_running_into_a_rounded_corner_follows_it() {
+        // A box with one vertical edge rounded: a top edge meeting that round smoothly is blended
+        // with the round's top arc and the next top edge, as one smooth chain.
+        let b = crate::build::box_solid(Vec3::ZERO, Vec3::new(40.0, 30.0, 20.0)).unwrap();
+        let rounded = blend(&b, &[Vec3::new(40.0, 30.0, 10.0)], 5.0, Shape::Round, "fillet").unwrap();
+        for shape in [Shape::Round, Shape::Flat] {
+            let out = blend(&rounded, &[Vec3::new(20.0, 30.0, 20.0)], 1.0, shape, "blend").unwrap();
+            assert!(out.validity().is_empty(), "{:?}", out.validity());
+            assert_eq!(out.face_count(), rounded.face_count() + 3);
         }
     }
 
