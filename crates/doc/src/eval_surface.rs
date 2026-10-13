@@ -1,5 +1,5 @@
-//! Evaluation of the surface features: Patch, Stitch, Thicken, Trim, Extend and Surface Extrude
-//! (kernel `surfaces`).
+//! Evaluation of the surface features: Patch, Stitch, Thicken, Trim, Extend, Surface Extrude,
+//! Unstitch and Reverse Normal (kernel `surfaces`).
 
 use super::*;
 use solidcraft_geom::Seg2;
@@ -111,6 +111,37 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             let body = kernel::extrude_sheet(&ss.plane, &chains, a + off, b + off)?;
             let name = new_name(st, f, 0);
             st.bodies.push(ModelBody::new(name, body, f.id));
+            Ok(())
+        }
+        FeatureKind::Unstitch { body, faces } => {
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            let (pieces, rest) = kernel::unstitch(&mb.body, faces)?;
+            let source = mb.traced();
+            // The faces left keep the body's name; each face taken out is a new surface body.
+            match rest {
+                Some(rest) => {
+                    if let Some(slot) = st.bodies.get_mut(i) {
+                        *slot = ModelBody::traced_new(mb.name.clone(), source.then(rest), mb.feature);
+                    }
+                }
+                None => {
+                    st.bodies.remove(i);
+                }
+            }
+            for (k, piece) in pieces.into_iter().enumerate() {
+                let name = new_name(st, f, k);
+                st.bodies.push(ModelBody::traced_new(name, source.then(piece), f.id));
+            }
+            Ok(())
+        }
+        FeatureKind::ReverseNormal { body, faces } => {
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            let turned = mb.traced().then(kernel::reverse_faces(&mb.body, faces)?);
+            if let Some(slot) = st.bodies.get_mut(i) {
+                *slot = ModelBody::traced_new(mb.name, turned, mb.feature);
+            }
             Ok(())
         }
         _ => Err(DocError::Invalid("not a surface feature".into())),

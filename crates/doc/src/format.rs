@@ -104,13 +104,15 @@
 //!   Construction Geometries); a sketch that shows its construction geometry saves as before.
 //!   A `SurfaceExtrude` feature (Surface Extrude: `sketch`, optional `profiles`, `curves` and
 //!   `extent`, walls only) is first saved in 17; 0.8.0 would refuse the unknown feature.
-//! - 18: a sketch text's link source can carry a `style`: `bold` and `italic` (the font's bold
-//!   or italic face), `align` (`left`, `center` or `right`), `letter_spacing` (mm),
-//!   `line_spacing` (times the font's line distance), `path` (the id of a curve of the same
-//!   sketch the baseline follows) and `reverse`. Version 17 designs need no transformation (a
-//!   text without `style` is set as it always was); the version stamp makes 0.9.0 (which reads
-//!   up to 17) ask for an update instead of dropping the style and setting the text plain, off
-//!   its curve.
+//! - 18: surface features 0.9.0 doesn't know: `Unstitch` (a body's faces taken out as surface
+//!   bodies) and `ReverseNormal` (a surface body's faces turned over), each a `body` and
+//!   optional `faces` points. Version 17 designs need no transformation; the version stamp makes
+//!   0.9.0 (which reads up to 17) ask for an update instead of meeting a feature it can't read.
+//!   Under the same version, a sketch text's link source can carry a `style`: `bold` and
+//!   `italic` (the font's bold or italic face), `align` (`left`, `center` or `right`),
+//!   `letter_spacing` (mm), `line_spacing` (times the font's line distance), `path` (the id of a
+//!   curve of the same sketch the baseline follows) and `reverse`. A text without `style` is set
+//!   as it always was; 0.9.0 would drop the style and set the text plain, off its curve.
 
 use serde_json::Value;
 

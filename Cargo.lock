@@ -3347,7 +3347,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-gpu"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "log",
  "pollster 0.4.0",
