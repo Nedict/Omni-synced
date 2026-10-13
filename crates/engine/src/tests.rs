@@ -2972,6 +2972,37 @@ fn fillet_fit_taper_follows_the_room_along_the_edge() {
 }
 
 #[test]
+fn spline_fillet_takes_over_a_taper() {
+    // A tapered fillet keeps each edge's radius spline; given back as a `spline` fillet it makes
+    // the same part, and its control radii are then the user's to change.
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [40, 0], [40, 2], [0, 20]], "closed": true}));
+    run(&mut s, "solid.extrude", json!({"distance": 15}));
+    let edge = json!([[20, 0, 15]]);
+    let out = run(&mut s, "solid.fillet", json!({"edges": edge, "radius": 3, "fit": "taper"}));
+    let id = out["feature"].as_u64().unwrap();
+    let tapered = s.model.result(id).and_then(|r| r.state.tapered(id).map(<[_]>::to_vec)).unwrap();
+    let [(_, t)] = &tapered[..] else { panic!("{tapered:?}") };
+    let tapered_volume = volume(&mut s);
+    let radii: Vec<Value> = t.spline.radii.iter().skip(1).map(|r| json!(r)).collect();
+    let spline = json!({"edges": edge, "radius": t.spline.radii[0], "type": "spline", "start": [t.start.x, t.start.y, t.start.z], "knots": t.spline.knots, "radii": radii});
+    run(&mut s, "timeline.redefine", json!({"feature": id, "command": "solid.fillet", "params": spline}));
+    assert!(rel(volume(&mut s), tapered_volume) < 1e-9, "{} vs {tapered_volume}", volume(&mut s));
+    let json = serde_json::to_string(&s.doc.features).unwrap();
+    assert!(json.contains("\"type\":\"spline\""), "{json}");
+    // A control radius raised in the middle: more material goes.
+    let mut raised = spline.clone();
+    raised["radii"][2] = json!("4 mm");
+    run(&mut s, "timeline.redefine", json!({"feature": id, "command": "solid.fillet", "params": raised}));
+    assert!(volume(&mut s) < tapered_volume);
+    // Knots that don't match the radii are refused.
+    let mut bad = spline;
+    bad["knots"] = json!([0, 1]);
+    assert!(s.execute("solid.fillet", &bad).is_err());
+}
+
+#[test]
 fn fillet_fit_reduce_keeps_the_radius_where_it_fits() {
     // A 2 mm fin on a block: its top edge can't take 4, a corner of the block far from it can.
     // Only the fin's edge is reduced; the reply gives each edge's radius.

@@ -94,6 +94,9 @@
 //!   Feature-history folders are also first saved in 17 (`timeline_groups`: stable folder id,
 //!   name, optional parent folder and feature ids). Version 16 designs have no saved timeline
 //!   folders and open with the empty default.
+//!   A fillet's `type` can be `spline` (the radius along each edge a B-spline: `start`, `knots`,
+//!   and the control radii after `radius` in `radii`). Other fillets save as before; 0.8.0 would
+//!   refuse the unknown type.
 
 use serde_json::Value;
 

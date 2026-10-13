@@ -307,6 +307,21 @@ fn tapered_note(tapers: &[Option<kernel::Taper>]) -> Option<String> {
     Some(format!("the radius tapers to the room on {n} of {} edges, down to {} mm", tapers.len(), show_mm(low)))
 }
 
+/// Blend `edges` one at a time with `blend`, each blend's lineage over the one before: the
+/// result and the lineage of what the last blend started from.
+fn one_by_one(input: Traced, edges: &[Vec3], blend: impl Fn(&kernel::Body, Vec3) -> kernel::Result<kernel::Body>) -> Result<(kernel::Body, Traced)> {
+    let mut b = input;
+    let mut from = None;
+    for p in edges {
+        let next = Traced::step(blend(&b.body, *p)?, &[&b]);
+        from = Some(std::mem::replace(&mut b, next));
+    }
+    match from {
+        Some(prev) => Ok((b.body, prev)),
+        None => Err(DocError::Invalid("no edges to fillet".into())),
+    }
+}
+
 /// Add `note` to a feature's warning.
 fn append_warning(warning: &mut Option<String>, note: String) {
     *warning = Some(match warning.take() {
@@ -331,6 +346,11 @@ impl ModelState {
     /// for some of its edges.
     pub fn fitted_range(&self, feature: u64) -> Option<(f64, f64)> {
         self.fitted.get(&feature)?.iter().fold(None, |acc, r| Some(acc.map_or((*r, *r), |(lo, hi): (f64, f64)| (lo.min(*r), hi.max(*r)))))
+    }
+
+    /// Each edge fillet `feature` tapered (a point on it) with the radius spline it was given.
+    pub fn tapered(&self, feature: u64) -> Option<&[(Vec3, kernel::Taper)]> {
+        self.tapered.get(&feature).map(Vec::as_slice)
     }
 
     /// Each edge fillet `feature` blended (a point on it) with the radius it used, when it
@@ -364,6 +384,9 @@ pub struct ModelState {
     /// The radius per edge a fillet used when it reduced a radius too large for some of its edges
     /// (by feature id, see `FilletFit::Reduce`).
     fitted: BTreeMap<u64, Vec<f64>>,
+    /// The radius spline of each edge a fillet tapered (a point on the edge with it, by feature
+    /// id, see `FilletFit::Taper`).
+    tapered: BTreeMap<u64, Vec<(Vec3, kernel::Taper)>>,
 }
 
 impl ModelState {
@@ -393,6 +416,16 @@ impl ModelState {
             feature.hash(&mut h);
             for r in radii {
                 r.to_bits().hash(&mut h);
+            }
+        }
+        for (feature, tapers) in &self.tapered {
+            feature.hash(&mut h);
+            for (p, t) in tapers {
+                let s = &t.spline;
+                for x in [p.x, p.y, p.z, t.start.x, t.start.y, t.start.z].iter().chain(&s.knots).chain(&s.radii) {
+                    x.to_bits().hash(&mut h);
+                }
+                s.degree.hash(&mut h);
             }
         }
         serde_json::to_string(&self.threads).unwrap_or_default().hash(&mut h);
@@ -3882,22 +3915,24 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                     for (t, e) in mid {
                         pts.push((*t, val(vals, e, Kind::Length)?));
                     }
-                    // One edge at a time: each blend's lineage over the one before.
-                    let mut b = input;
-                    let mut from = None;
-                    for p in &edges {
-                        let next = Traced::step(kernel::fillet_variable_points(&b.body, *p, *start, &pts, *smooth)?, &[&b]);
-                        from = Some(std::mem::replace(&mut b, next));
+                    one_by_one(input, &edges, |b, p| kernel::fillet_variable_points(b, p, *start, &pts, *smooth))?
+                }
+                FeatureKind::Fillet { style: crate::FilletStyle::Spline { start, knots, radii }, .. } => {
+                    let mut values = vec![r];
+                    for e in radii {
+                        values.push(val(vals, e, Kind::Length)?);
                     }
-                    match from {
-                        Some(prev) => (b.body, prev),
-                        None => return Err(DocError::Invalid("no edges to fillet".into())),
-                    }
+                    let law = crate::FilletStyle::spline(knots, values);
+                    one_by_one(input, &edges, |b, p| kernel::fillet_variable_spline(b, p, *start, &law))?
                 }
                 FeatureKind::Fillet { fit: crate::FilletFit::Taper, .. } => {
                     let (b, tapers) = kernel::fillet_tapered(&mb.body, &edges, r)?;
                     if let Some(note) = tapered_note(&tapers) {
                         append_warning(warning, note);
+                    }
+                    let tapered: Vec<(Vec3, kernel::Taper)> = edges.iter().copied().zip(tapers).filter_map(|(p, t)| Some((p, t?))).collect();
+                    if !tapered.is_empty() {
+                        st.tapered.insert(f.id, tapered);
                     }
                     (b, input)
                 }

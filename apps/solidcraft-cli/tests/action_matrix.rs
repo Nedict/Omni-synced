@@ -1246,3 +1246,30 @@ fn a_plane_on_a_patterned_counterbore_after_a_thickness_change() {
     ]);
     reproduces(None, Value::Array(c));
 }
+
+/// #707: the same design builds the same body every time, in one process too. Faces were put in
+/// the hash order of their addresses in a few places (truck's connected components, the planar
+/// boolean's rebuild, healing's merges), so a later boolean on the ribbed lid passed or failed
+/// from run to run.
+#[test]
+fn the_ribbed_lid_builds_the_same_body_every_time() {
+    let path = root().join("examples/regressions/lid_ribs_flush_with_window.json");
+    let fingerprint = || {
+        let s = load(&path).unwrap();
+        let st = s.model.state();
+        st.bodies
+            .iter()
+            .map(|b| {
+                let mesh = b.body.tessellate(0.1).unwrap();
+                let bits = mesh.positions.iter().fold(0u64, |acc, p| {
+                    acc.rotate_left(7).wrapping_add(p.x.to_bits() ^ p.y.to_bits().rotate_left(21) ^ p.z.to_bits().rotate_left(42))
+                });
+                format!("{} {} {bits:x}", b.name, b.body.face_count())
+            })
+            .collect::<Vec<_>>()
+    };
+    let first = fingerprint();
+    for _ in 0..5 {
+        assert_eq!(fingerprint(), first);
+    }
+}
