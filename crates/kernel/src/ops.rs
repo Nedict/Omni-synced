@@ -35,7 +35,9 @@ pub fn can_join_touching_faces(a: &Body, b: &Body) -> bool {
 const JITTER: [[f64; 3]; 4] = [[0.0, 0.0, 0.0], [0.1373, 0.2719, 0.3911], [-0.5127, 0.0833, 0.2291], [0.6911, -0.3337, -0.6127]];
 
 fn volume(b: &Body) -> f64 {
-    b.tessellate(b.size() * 2e-3).map(|m| m.measure().volume).unwrap_or(f64::NAN)
+    // Measured once per (solid, tolerance) and shared by clones, so an operand a later
+    // boolean takes again is not meshed twice for the same number.
+    b.volume_at(b.size() * 2e-3).unwrap_or(f64::NAN)
 }
 
 /// Halton low-discrepancy value (base `b`) for index `i`.
@@ -841,7 +843,20 @@ pub(crate) fn join_pieces(pieces: Vec<Body>) -> Result<Option<Body>> {
     }
 }
 
-/// Affine transform by a column-major 4×4 matrix (rotations, translations, reflections).
+/// Determinant of the linear part of a column-major 4x4 matrix: negative means the placement
+/// mirrors, which turns a solid inside out.
+fn det3(m: &[[f64; 4]; 4]) -> f64 {
+    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+}
+
+/// Whether the linear part is a rigid motion (rotation or reflection: no scale or shear).
+fn rigid_placement(m: &[[f64; 4]; 4]) -> bool {
+    let r = [Vec3::new(m[0][0], m[0][1], m[0][2]), Vec3::new(m[1][0], m[1][1], m[1][2]), Vec3::new(m[2][0], m[2][1], m[2][2])];
+    (0..3).all(|i| (r[i].dot(r[i]) - 1.0).abs() < 1e-9) && r[0].dot(r[1]).abs() < 1e-9 && r[0].dot(r[2]).abs() < 1e-9 && r[1].dot(r[2]).abs() < 1e-9
+}
+
+/// Affine transform by a column-major 4x4 matrix (rotations, translations, reflections).
 pub fn transform_matrix(body: &Body, m: [[f64; 4]; 4]) -> Result<Body> {
     if m.iter().flatten().any(|x| !x.is_finite()) {
         return Err(KernelError::Invalid("non-finite transform".into()));
@@ -865,7 +880,19 @@ pub fn transform_matrix(body: &Body, m: [[f64; 4]; 4]) -> Result<Body> {
         for (copy, face) in solid.face_iter().zip(body.solid.face_iter()) {
             rec.whole(copy, face);
         }
-        let placed = record::rebuilt(solid, &[&body.solid], &rec)?;
+        let (faces, edges) = rec.history(&solid, &[&body.solid]).unzip();
+        let counts = record::solid_counts(&[&body.solid]);
+        // A rigid placement leaves every face's mesh, and so the missing-face count, as it was;
+        // a mirrored one turns the solid inside out. Either way the orientation is read from the
+        // matrix instead of meshing the whole copy again.
+        let placed = record::build_placed(
+            solid,
+            &counts,
+            faces,
+            edges.as_ref(),
+            det3(&m) < 0.0,
+            rigid_placement(&m).then_some(body.coarse_missing).flatten(),
+        )?;
         Ok(placed.with_color(body.color()).with_paint(body.paint().cloned()).with_face_sources(sources).inherit_regularization_protection(body))
     })
 }
