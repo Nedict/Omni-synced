@@ -19,6 +19,12 @@ const MAX_LEN_FRACTION: f64 = 1.0 / 5.0;
 /// [`MAX_TURN`] and [`MAX_LEN_FRACTION`] this puts the oracle parts' display meshes at about
 /// the reference mesher's triangle count (1.2×; 5× with equilateral triangles and 15°).
 const ASPECT: f64 = 4.0;
+/// Shortest side the aspect limit may ask for, as a fraction of the longest side. A bend whose
+/// radius is tiny next to the body (a hem) would otherwise tie the whole length of its
+/// straight edges to that radius; along a straight direction the normal does not turn, so
+/// long triangles there shade exactly, and the turn and sag limits still divide the bend
+/// across.
+const MIN_LEN_FRACTION: f64 = 1.0 / 8.0;
 /// Curvature samples per parameter direction.
 const SAMPLES: usize = 9;
 
@@ -43,7 +49,8 @@ impl Rules {
             return self.max_len;
         }
         let r = 1.0 / k;
-        self.max_len.min(ASPECT * (r * MAX_TURN).min((8.0 * r * self.tol).sqrt())).max(self.tol)
+        let aspect = ASPECT * (r * MAX_TURN).min((8.0 * r * self.tol).sqrt());
+        self.max_len.min(aspect.max(self.max_len * MIN_LEN_FRACTION)).max(self.tol)
     }
 }
 
@@ -133,7 +140,8 @@ mod tests {
             transform: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
             swap: false,
         };
-        let rules = Rules::new(0.01, 100.0);
+        // A 20 mm body: sides from 0.5 mm (the floor) to 4 mm.
+        let rules = Rules::new(0.01, 20.0);
         let (h, speed) = face_size(&s, &super::super::uv::domain(&s), &rules);
         // r = 3: 30° of turn is 1.57 mm; the 0.01 mm sag chord is √(8·3·0.01) = 0.49 mm.
         assert!((h - ASPECT * (8.0 * 3.0 * 0.01f64).sqrt()).abs() < 0.01, "{h}");
@@ -159,6 +167,20 @@ mod tests {
         assert!((speed[0] - 4.0).abs() < 1e-9 && (speed[1] - 3.0).abs() < 1e-9, "{speed:?}");
         // The twisted patch (a hyperbolic paraboloid) has curvature: a smaller side.
         assert!(face_size(&patch(0.5), &super::super::uv::domain(&patch(0.5)), &rules).0 < rules.max_len);
+    }
+
+    #[test]
+    fn a_tiny_radius_does_not_shrink_the_side_below_the_floor() {
+        let s = EvalSurface::Revolved {
+            profile: EvalCurve { degree: 1, knots: vec![0.0, 0.0, 1.0, 1.0], ctrl: vec![[0.05, 0.0, 0.0, 1.0], [0.05, 0.0, 80.0, 1.0]] },
+            origin: Vec3::ZERO,
+            axis: Vec3::Z,
+            transform: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
+            swap: false,
+        };
+        let rules = Rules::new(0.1, 100.0);
+        let (h, _) = face_size(&s, &super::super::uv::domain(&s), &rules);
+        assert!((h - rules.max_len * MIN_LEN_FRACTION).abs() < 1e-9, "{h}");
     }
 
     #[test]
