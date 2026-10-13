@@ -45,6 +45,14 @@ Claude Desktop (`claude_desktop_config.json`), bridged to a running app:
 }
 ```
 
+### Agent skills
+
+[`skills/`](https://github.com/bherbruck/solidcraft/tree/main/skills) holds two [Agent Skills](https://agentskills.io) for agents that model through this server:
+- `solidcraft-modeling` covers building a new part.
+- `solidcraft-editing` covers changing an existing design.
+
+They cover the workflow, the command shapes, how to verify with `measure`, and the known traps. With them an agent builds a part in a few `batch` calls and reads far less output. To install them for Claude Code, copy both folders into `~/.claude/skills/`; [skills/README.md](https://github.com/bherbruck/solidcraft/blob/main/skills/README.md) has the details.
+
 ## Tools
 
 | Tool | Arguments | What it does |
