@@ -555,8 +555,8 @@ fn interference(s: &mut Session, p: &Value) -> Result<Value> {
                     continue;
                 }
             };
-            if report.unverified() {
-                skip(report.warning().unwrap_or_default());
+            if let Some(reason) = report.unverified() {
+                skip(reason);
             }
             let Some(o) = shared else { continue };
             let m = match solidcraft_kernel::measure(&o) {

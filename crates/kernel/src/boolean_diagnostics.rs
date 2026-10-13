@@ -73,10 +73,10 @@ impl BooleanDiagnostics {
         }
     }
 
-    /// Whether the result ignores a place where the bodies seem to pass through each other
-    /// ([`BooleanStrategy::UnverifiedShortcut`]).
-    pub fn unverified(&self) -> bool {
-        self.events.iter().any(|event| event.strategy == BooleanStrategy::UnverifiedShortcut)
+    /// Why the result is not verified, when it ignores a place where the bodies seem to pass
+    /// through each other ([`BooleanStrategy::UnverifiedShortcut`]).
+    pub fn unverified(&self) -> Option<String> {
+        self.events.iter().find(|event| event.strategy == BooleanStrategy::UnverifiedShortcut).map(BooleanFallback::description)
     }
 
     pub fn warning(&self) -> Option<String> {

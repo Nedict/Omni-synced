@@ -195,7 +195,7 @@ fn interference_lists_a_pair_it_could_not_check() {
     assert_eq!(i["count"], 0, "{i}");
     let unchecked = i["unchecked"].as_array().cloned().unwrap_or_default();
     assert_eq!(unchecked.len(), 1, "{i}");
-    assert!(unchecked[0]["reason"].as_str().is_some_and(|r| r.contains("not verified")), "{i}");
+    assert!(unchecked[0]["reason"].as_str().is_some_and(|r| r.starts_with("not verified") && !r.contains("displacement")), "{i}");
     // Bodies that are clear of each other, or overlap plainly, leave the list empty.
     let mut s = two_cubes();
     let i = run(&mut s, "inspect.interference", json!({}));
