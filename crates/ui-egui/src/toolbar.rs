@@ -1173,11 +1173,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                 Key::Z => drop(app.run("edit.undo", json!({}))),
                 Key::Y => drop(app.run("edit.redo", json!({}))),
                 Key::S => save(app),
-                _ => {
-                    if let Some(id) = crate::keymap::command_for(app, &crate::keymap::key_name(k, mods)) {
-                        app.start(id);
-                    }
-                }
+                _ => crate::keymap::press(app, &crate::keymap::key_name(k, mods)),
             }
             continue;
         }
@@ -1214,11 +1210,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
             }
             Key::F6 => app.animate_view("fit"),
             Key::Delete | Key::Backspace => crate::viewport::delete_selection(app),
-            _ => {
-                if let Some(id) = crate::keymap::command_for(app, &crate::keymap::key_name(k, mods)) {
-                    app.start(id);
-                }
-            }
+            _ => crate::keymap::press(app, &crate::keymap::key_name(k, mods)),
         }
     }
 }

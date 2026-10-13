@@ -294,6 +294,8 @@ pub struct Dialog {
     pub extra: serde_json::Map<String, Value>,
     /// What the inputs were when OK was refused: `error` stays only while they still are.
     pub refused: Option<Refused>,
+    /// Create Sketch opened by a sketch tool's shortcut: that tool starts once the sketch is open.
+    pub then_start: Option<&'static str>,
 }
 
 /// The commands a dialog's inputs make (or why they make none), its picks, and the design's
@@ -350,6 +352,7 @@ impl Dialog {
             collapsed: false,
             extra: serde_json::Map::new(),
             refused: None,
+            then_start: None,
         }
     }
 
@@ -2210,12 +2213,16 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         cancel = true;
     }
     // A plane picked for a new sketch starts it right away.
+    let mut then_start = None;
     if matches!(d.kind, Kind::Sketch)
         && d.error.is_none()
         && let Some(sel) = d.inputs.first().and_then(|i| i.items.first()).cloned()
     {
         match start_sketch(app, &sel) {
-            Ok(()) => cancel = true,
+            Ok(()) => {
+                cancel = true;
+                then_start = d.then_start;
+            }
             Err(error) => d.refuse(app, error),
         }
     }
@@ -2240,6 +2247,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     } else if let Some((_, marker)) = d.editing {
         // Editing done: put the timeline marker back where it was.
         let _ = roll_marker(app, marker);
+    }
+    // The shortcut that asked for this sketch starts its tool in it.
+    if let Some(id) = then_start {
+        app.start(id);
     }
 }
 
