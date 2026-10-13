@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod cmd;
+pub mod control_auth;
 pub mod crash;
 pub mod frames;
 pub mod fuzz;
