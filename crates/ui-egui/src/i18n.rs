@@ -256,7 +256,8 @@ mod tests {
     /// the row's two-word text must reach its own entry rather than that one.
     #[test]
     fn the_construction_geometries_row_reaches_its_own_entry_not_the_line_type() {
-        for (lang, want) in [("de", "Konstruktionsgeometrien"), ("ja", "構築ジオメトリ"), ("ko", "구성 형상")] {
+        let rows = [("de", "Konstruktionsgeometrien"), ("ja", "構築ジオメトリ"), ("ko", "구성 형상")];
+        for (lang, want) in rows {
             let locale = Locale::for_language(lang);
             assert_eq!(locale.label("Construction Geometries"), want, "{lang}");
             assert_ne!(locale.label("Construction Geometries"), locale.text("ui.construction"), "{lang}");

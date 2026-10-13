@@ -2093,8 +2093,18 @@ fn options_json(v: &solidcraft_sketch::SketchView) -> Value {
 
 fn sketch_options(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.options";
-    let keys =
-        ["show_profile", "show_points", "show_dimensions", "show_constraints", "show_projected", "show_construction", "grid", "snap", "slice", "sketch_3d"];
+    let keys = [
+        "show_profile",
+        "show_points",
+        "show_dimensions",
+        "show_constraints",
+        "show_projected",
+        "show_construction",
+        "grid",
+        "snap",
+        "slice",
+        "sketch_3d",
+    ];
     if let Some(o) = p.as_object()
         && let Some(k) = o.keys().find(|k| *k != "sketch" && !keys.contains(&k.as_str()))
     {
