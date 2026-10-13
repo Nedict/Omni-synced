@@ -39,6 +39,13 @@ Command labels are the same case on a larger scale: every label in the engine's 
 an entry under `cmd.<command id>`, and `every_command_label_is_in_the_english_catalog` fails if a
 command is added without one.
 
+The context menu and the browser are the same case again, and they carry the most labels of all:
+`every_menu_label_is_in_the_english_catalog` opens every menu the app can reach, flips the state
+each conditional label branches on (origin shown, bodies locked, bodies hidden) so both branches
+are seen, and fails on any label the catalog has never seen. Unit symbols are left out of the
+sweep: `mm` is `mm` in every language, so they are not prose to translate. The sweep also asserts
+it keeps reaching a broad set of labels, so it cannot pass by finding nothing.
+
 `cargo xtask i18n` prints the same picture across every locale — which messages each one is
 missing and which command labels English cannot translate. `--check` turns it into a non-zero exit
 for CI. `--add-missing` writes each uncovered label into `en.json` under `cmd.<command id>`, with
