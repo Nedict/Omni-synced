@@ -483,7 +483,6 @@ fn compact_batch_reply_does_not_repeat_the_body_list() {
 /// #531: a product model keeps an optional variant hidden in its default presentation. Hiding
 /// it must survive saving and reopening the design (suppressing it would change the design).
 #[test]
-#[ignore = "fails until #531 is fixed"]
 fn hidden_body_stays_hidden_after_save_and_reopen() {
     let mut s = server();
     tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "body_name": "Base"}}));

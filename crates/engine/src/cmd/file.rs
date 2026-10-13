@@ -189,7 +189,7 @@ fn write_file(s: &mut Session, path: &str, format: &str, compression: &str, prev
     };
     let bytes = match format {
         "container" => s.design_container(compression, preview, cache)?,
-        "json" => solidcraft_io::write_design(&s.doc),
+        "json" => solidcraft_io::write_design(&s.design()),
         _ => return Err(bad("file.save", "format must be container or json")),
     };
     // Atomic, keeping the version being replaced as `<file>.bak`.
@@ -205,7 +205,7 @@ impl Session {
     pub fn design_container(&self, compression: solidcraft_io::DesignCompression, preview: bool, cache: bool) -> solidcraft_io::Result<Vec<u8>> {
         let geometry = cache.then(|| saved_geometry(self)).flatten();
         let preview = preview.then(|| saved_preview(self)).flatten();
-        solidcraft_io::write_design_container_with_cache(&self.doc, compression, preview.as_ref(), geometry.as_deref())
+        solidcraft_io::write_design_container_with_cache(&self.design(), compression, preview.as_ref(), geometry.as_deref())
     }
 }
 
@@ -289,7 +289,7 @@ fn export_to(s: &Session, path: &str, format: Format, bodies: &[String]) -> Resu
         if !bodies.is_empty() {
             return Err(bad("file.export", "design JSON exports the complete document; omit bodies"));
         }
-        solidcraft_io::write_design(&s.doc)
+        solidcraft_io::write_design(&s.design())
     } else if format == Format::Step && bodies.is_empty() && !s.doc.occurrences.is_empty() {
         solidcraft_io::step_assembly(&s.doc, &s.doc.painted(&s.model.state()), &name)?
     } else {
