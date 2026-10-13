@@ -1,15 +1,15 @@
-//! Dialogs for the surface tools and face splitting (#19): Surface Extrude, Patch, Stitch,
-//! Thicken, Extend, Trim and Split Face. Each has a live preview and Edit Feature.
+//! Dialogs for the surface tools and face splitting (#19): Surface Extrude and Revolve, Patch,
+//! Stitch, Thicken, Extend, Trim and Split Face. Each has a live preview and Edit Feature.
 
 use serde_json::{Map, Value, json};
 use solidcraft_engine::Sel;
 use solidcraft_engine::doc::expr::Kind as ValueKind;
-use solidcraft_engine::doc::{Direction, FaceAt, FeatureKind, PlaneRef, ProfileSel};
+use solidcraft_engine::doc::{AxisRef, Direction, FaceAt, FeatureKind, Mat, PlaneRef, ProfileSel};
 use solidcraft_engine::geom::Vec3;
 
 use crate::SolveApp;
 use crate::dialogs::{Kind, OP_LABELS, OPS, combo, field, op_index, row_label};
-use crate::selection::{BODIES, CURVES, EDGES, FACES, PLANES, PROFILES, SelInput};
+use crate::selection::{AXES, BODIES, CURVES, EDGES, FACES, PLANES, PROFILES, SelInput};
 
 /// A surface tool dialog's values.
 #[derive(Clone, Debug, PartialEq)]
@@ -18,6 +18,12 @@ pub enum Surf {
     Extrude {
         distance: String,
         direction: usize,
+    },
+    /// `axis`: a stored {origin, dir} axis, used while no axis is picked.
+    Revolve {
+        angle: String,
+        symmetric: bool,
+        axis: Option<Value>,
     },
     Patch,
     Unstitch,
@@ -44,6 +50,7 @@ impl Surf {
     pub fn title(&self) -> &'static str {
         match self {
             Surf::Extrude { .. } => "SURFACE EXTRUDE",
+            Surf::Revolve { .. } => "SURFACE REVOLVE",
             Surf::Patch => "PATCH",
             Surf::Unstitch => "UNSTITCH",
             Surf::ReverseNormal => "REVERSE NORMAL",
@@ -61,6 +68,7 @@ impl Surf {
         Some(match self {
             Surf::Thicken { thickness, .. } => ("Thickness", ValueKind::Length, thickness),
             Surf::Extend { distance } | Surf::Extrude { distance, .. } => ("Distance", ValueKind::Length, distance),
+            Surf::Revolve { angle, .. } => ("Angle", ValueKind::Angle, angle),
             _ => return None,
         })
     }
@@ -72,6 +80,7 @@ const EXTRUDE_SIDES: [(&str, &str); 3] = [("One Side", "positive"), ("Symmetric"
 fn inputs(k: &Surf) -> Vec<SelInput> {
     match k {
         Surf::Extrude { .. } => vec![SelInput::new("Profiles or curves", PROFILES | CURVES, true)],
+        Surf::Revolve { .. } => vec![SelInput::new("Profiles or curves", PROFILES | CURVES, true), SelInput::new("Axis", AXES, false)],
         Surf::Patch => vec![SelInput::new("Boundary", PROFILES | EDGES, true)],
         Surf::Unstitch => vec![SelInput::new("Body, or faces to take out", BODIES | FACES, true)],
         Surf::ReverseNormal => vec![SelInput::new("Surface, or faces to turn over", BODIES | FACES, true)],
@@ -92,6 +101,7 @@ fn inputs(k: &Surf) -> Vec<SelInput> {
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     let k = match id {
         "surface.extrude" => Surf::Extrude { distance: "10 mm".into(), direction: 0 },
+        "surface.revolve" => Surf::Revolve { angle: "360 deg".into(), symmetric: false, axis: None },
         "surface.patch" => Surf::Patch,
         "surface.unstitch" => Surf::Unstitch,
         "surface.reverse_normal" => Surf::ReverseNormal,
@@ -136,6 +146,16 @@ pub fn rows(ui: &mut egui::Ui, k: &mut Surf) -> bool {
             enter |= field(ui, distance);
             ui.end_row();
         }
+        Surf::Revolve { angle, symmetric, .. } => {
+            row_label(ui, "Angle");
+            enter |= field(ui, angle);
+            ui.end_row();
+            row_label(ui, "Direction");
+            let mut dir = usize::from(*symmetric);
+            combo(ui, "sr_dir", &["One Side", "Symmetric"], &mut dir);
+            *symmetric = dir == 1;
+            ui.end_row();
+        }
         Surf::Extrude { distance, direction } => {
             row_label(ui, "Distance");
             enter |= field(ui, distance);
@@ -175,6 +195,39 @@ fn body_and_faces(picks: &[Sel]) -> Result<(String, Vec<Value>), String> {
     Ok((body, faces))
 }
 
+/// The sketch, profiles and curves of a surface builder's picks (all in one sketch).
+fn sheet_picks(app: &SolveApp, picks: &[Sel]) -> Result<Value, String> {
+    let profiles: Vec<(u64, usize)> =
+        picks.iter().filter_map(|x| if let Sel::Profile { sketch, index } = x { Some((*sketch, *index)) } else { None }).collect();
+    let curves: Vec<String> = picks.iter().filter_map(|x| if let Sel::SketchCurve { id } = x { Some(id.clone()) } else { None }).collect();
+    let sketch = match profiles.first() {
+        Some((sk, _)) => *sk,
+        None => crate::dialogs::curves_sketch(app, &curves, None).ok_or("the curves must be in one sketch")?,
+    };
+    if profiles.iter().any(|(sk, _)| *sk != sketch) {
+        return Err("the profiles and curves must be in one sketch".into());
+    }
+    let mut p = json!({ "sketch": sketch });
+    if !curves.is_empty() {
+        p["curves"] = json!(curves);
+    }
+    if !profiles.is_empty() {
+        p["profiles"] = json!(profiles.iter().map(|(_, i)| *i).collect::<Vec<_>>());
+    }
+    Ok(p)
+}
+
+/// A surface builder's stored picks as selections again: its profiles, then its curves.
+fn sheet_sels(app: &SolveApp, sketch: u64, profiles: Option<&ProfileSel>, curves: &[String]) -> Vec<Sel> {
+    let st = app.session.world_state();
+    let mut sels: Vec<Sel> = match (profiles, st.sketch(sketch)) {
+        (Some(sel), Some(ss)) => crate::dialogs::profile_indices(ss, sel).into_iter().map(|index| Sel::Profile { sketch, index }).collect(),
+        _ => Vec::new(),
+    };
+    sels.extend(curves.iter().map(|id| Sel::SketchCurve { id: id.clone() }));
+    sels
+}
+
 /// A splitting or trimming tool: a plane by name, a planar face as its plane, or any other
 /// face as {body, point} (its surface extended).
 fn tool(app: &SolveApp, sel: Option<&Sel>) -> Result<(&'static str, Value), String> {
@@ -194,29 +247,24 @@ pub fn commands(app: &SolveApp, k: &Surf, inputs: &[SelInput], extra: &Map<Strin
     let (cmd, mut p) = match k {
         Surf::Extrude { distance, direction } => {
             need(0, "profiles or curves to extrude")?;
-            let picks = items(inputs, 0);
-            let profiles: Vec<(u64, usize)> =
-                picks.iter().filter_map(|x| if let Sel::Profile { sketch, index } = x { Some((*sketch, *index)) } else { None }).collect();
-            let curves: Vec<String> = picks.iter().filter_map(|x| if let Sel::SketchCurve { id } = x { Some(id.clone()) } else { None }).collect();
-            let sketch = match profiles.first() {
-                Some((sk, _)) => *sk,
-                None => crate::dialogs::curves_sketch(app, &curves, None).ok_or("the curves must be in one sketch")?,
-            };
-            if profiles.iter().any(|(sk, _)| *sk != sketch) {
-                return Err("the profiles and curves must be in one sketch".into());
-            }
-            let mut p = json!({
-                "sketch": sketch,
-                "distance": distance,
-                "direction": EXTRUDE_SIDES.get(*direction).map_or("positive", |(_, d)| *d),
-            });
-            if !curves.is_empty() {
-                p["curves"] = json!(curves);
-            }
-            if !profiles.is_empty() {
-                p["profiles"] = json!(profiles.iter().map(|(_, i)| *i).collect::<Vec<_>>());
-            }
+            let mut p = sheet_picks(app, items(inputs, 0))?;
+            p["distance"] = json!(distance);
+            p["direction"] = json!(EXTRUDE_SIDES.get(*direction).map_or("positive", |(_, d)| *d));
             ("surface.extrude", p)
+        }
+        Surf::Revolve { angle, symmetric, axis } => {
+            need(0, "profiles or curves to revolve")?;
+            let mut p = sheet_picks(app, items(inputs, 0))?;
+            p["axis"] = match items(inputs, 1).first() {
+                Some(Sel::Axis { name }) => json!(name),
+                Some(Sel::SketchCurve { id }) => json!(id),
+                _ => axis.clone().ok_or("select an axis")?,
+            };
+            p["angle"] = json!(angle);
+            if *symmetric {
+                p["symmetric"] = json!(true);
+            }
+            ("surface.revolve", p)
         }
         Surf::Patch => {
             need(0, "a boundary (sketch profiles or a loop of edges)")?;
@@ -309,23 +357,37 @@ fn tool_sel(app: &SolveApp, plane: &PlaneRef, tool: Option<&FaceAt>) -> Option<S
 }
 
 /// The dialog for editing a surface feature.
-pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelInput>, Map<String, Value>)> {
+/// `frame` maps the feature's component frame to the world, for an axis stored as a line.
+pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(Kind, Vec<SelInput>, Map<String, Value>)> {
     let s = &app.session;
     let edge = |p: &Vec3| crate::dialogs::edge_sel(s, *p);
     let (k, fill): (Surf, Vec<Vec<Sel>>) = match kind {
-        FeatureKind::SurfaceExtrude { sketch, profiles, curves, extent } => {
-            let mut sels: Vec<Sel> = Vec::new();
-            let st = s.world_state();
-            if let (Some(sel), Some(ss)) = (profiles, st.sketch(*sketch)) {
-                let all = 0..ss.profiles.len();
-                match sel {
-                    ProfileSel::Indices { indices } => {
-                        sels.extend(indices.iter().filter(|i| all.contains(i)).map(|index| Sel::Profile { sketch: *sketch, index: *index }))
-                    }
-                    _ => sels.extend(all.map(|index| Sel::Profile { sketch: *sketch, index })),
-                }
+        FeatureKind::SurfaceRevolve { sketch, profiles, curves, axis, angle, angle2, symmetric } => {
+            let (pick, stored) = match axis {
+                AxisRef::World { axis } => (Some(Sel::Axis { name: axis.to_ascii_uppercase() }), None),
+                AxisRef::SketchAxis { axis } => (Some(Sel::Axis { name: axis.to_ascii_lowercase() }), None),
+                AxisRef::SketchLine { curve } => (Some(Sel::SketchCurve { id: curve.clone() }), None),
+                AxisRef::Line { origin, dir } => (
+                    None,
+                    Some(json!({
+                        "origin": pt(solidcraft_engine::doc::apply_point(frame, *origin)),
+                        "dir": pt(solidcraft_engine::doc::apply_vector(frame, *dir))
+                    })),
+                ),
+            };
+            let mut extra = Map::new();
+            if let Some(a2) = angle2 {
+                extra.insert("angle2".into(), json!(a2));
             }
-            sels.extend(curves.iter().map(|id| Sel::SketchCurve { id: id.clone() }));
+            let k = Surf::Revolve { angle: angle.clone(), symmetric: *symmetric, axis: stored };
+            let mut ins = inputs(&k);
+            for (inp, items) in ins.iter_mut().zip([sheet_sels(app, *sketch, profiles.as_ref(), curves), pick.into_iter().collect()]) {
+                inp.items = items;
+            }
+            return Some((Kind::Surface(k), ins, extra));
+        }
+        FeatureKind::SurfaceExtrude { sketch, profiles, curves, extent } => {
+            let sels = sheet_sels(app, *sketch, profiles.as_ref(), curves);
             let direction = match extent.direction {
                 Direction::Positive => 0,
                 Direction::Symmetric => 1,

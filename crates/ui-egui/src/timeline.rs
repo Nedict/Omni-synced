@@ -14,6 +14,7 @@ pub(crate) fn icon_of(k: &FeatureKind) -> &'static str {
         FeatureKind::SurfaceExtrude { .. } => "surface_extrude",
         FeatureKind::Unstitch { .. } => "unstitch",
         FeatureKind::ReverseNormal { .. } => "reverse_normal",
+        FeatureKind::SurfaceRevolve { .. } => "surface_revolve",
         FeatureKind::Revolve { .. } => "revolve",
         FeatureKind::Fillet { .. } => "fillet",
         FeatureKind::Chamfer { .. } => "chamfer",
