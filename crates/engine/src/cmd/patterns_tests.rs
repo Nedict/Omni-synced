@@ -264,17 +264,38 @@ fn hole_pattern(count1: usize, count2: usize) -> (f64, std::time::Duration) {
 /// then the big one. Linear is 4×, the old quadratic costs 16× or more. The load of the other test
 /// binaries can rise between the two runs (on a 16-core Mac under `cargo xtask test`, 32 circles
 /// took 4.7 s and 128 took 42 s, though both together take 18 s alone), so a pair that misses is
-/// measured again, up to three times; a quadratic cost misses every time.
+/// measured again, up to three times. Load only ever slows a run, so each size keeps its fastest
+/// time and the ratio is taken of those: a retry cannot pass a regression on a small run that a
+/// spike happened to slow, once an earlier small run was fast. (A spike on the very first small
+/// run can still hide one, as it could before the retries.)
 fn scales_linearly(mut pair: impl FnMut() -> (std::time::Duration, std::time::Duration)) -> Result<(), String> {
-    let mut missed = Vec::new();
+    let (mut small, mut big) = (f64::INFINITY, f64::INFINITY);
+    let mut runs = Vec::new();
     for _ in 0..3 {
-        let (small, big) = pair();
-        if big.as_secs_f64() < 8.0 * small.as_secs_f64() + 2.0 {
+        let (s, b) = pair();
+        small = small.min(s.as_secs_f64());
+        big = big.min(b.as_secs_f64());
+        runs.push(format!("{s:?} then {b:?}"));
+        if big < 8.0 * small + 2.0 {
             return Ok(());
         }
-        missed.push(format!("{small:?} then {big:?}"));
     }
-    Err(missed.join(", "))
+    Err(format!("{}; fastest {small:.2} s and {big:.2} s, limit {:.2} s", runs.join(", "), 8.0 * small + 2.0))
+}
+
+#[test]
+fn scales_linearly_keeps_each_sizes_fastest_run() {
+    use std::time::Duration;
+    let pairs = |p: Vec<(u64, u64)>| {
+        let mut p = p.into_iter().map(|(s, b)| (Duration::from_secs(s), Duration::from_secs(b)));
+        move || p.next().unwrap_or((Duration::from_secs(1000), Duration::from_secs(1000)))
+    };
+    assert!(scales_linearly(pairs(vec![(1, 4)])).is_ok());
+    // A big run slowed by load, then a quiet pair.
+    assert!(scales_linearly(pairs(vec![(1, 30), (1, 5)])).is_ok());
+    // A quadratic cost (16×) whose later small runs a spike slowed: the fast first one still counts.
+    let r = scales_linearly(pairs(vec![(1, 16), (3, 16), (3, 16)]));
+    assert!(r.as_ref().is_err_and(|e| e.contains("fastest 1.00 s and 16.00 s, limit 10.00 s")), "{r:?}");
 }
 
 /// 512 identical through-holes from a feature pattern of one cut (#261). 128 took 30 s and 512 did
