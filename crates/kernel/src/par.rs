@@ -4,15 +4,18 @@
 
 use crate::{Result, guard};
 
-/// `f` over `items`, results in item order. Runs serially below `min_items` items.
-pub(crate) fn map<T: Sync, R: Send>(what: &'static str, items: &[T], min_items: usize, f: impl Fn(&T) -> Result<R> + Sync) -> Vec<Result<R>> {
+/// `f` over `items`, results in item order: on the pool when `parallel`, else on the calling
+/// thread. Waking the pool's workers costs tens of microseconds, so callers ask for it only
+/// when the items carry more work than that (decided from the work, not the item count).
+pub(crate) fn map<T: Sync, R: Send>(what: &'static str, items: &[T], parallel: bool, f: impl Fn(&T) -> Result<R> + Sync) -> Vec<Result<R>> {
     let one = |item: &T| guard(what, || f(item));
+    // The browser build has no worker pool: everything runs on the calling thread.
+    #[cfg(target_arch = "wasm32")]
+    let _ = parallel;
     #[cfg(not(target_arch = "wasm32"))]
     {
         use rayon::prelude::*;
-        if items.len() >= min_items.max(2) && rayon::current_num_threads() > 1 {
-            // The pool's threads live for the whole process: handing out work costs
-            // microseconds, where starting threads per call cost tens of them.
+        if parallel && items.len() > 1 && rayon::current_num_threads() > 1 {
             return items.par_iter().map(one).collect();
         }
     }
@@ -27,7 +30,7 @@ mod tests {
     #[test]
     fn keeps_order_and_errors() {
         let items: Vec<u32> = (0..1000).collect();
-        let out = map("test", &items, 1, |x| if *x == 500 { Err(KernelError::Invalid("five hundred".into())) } else { Ok(x * 2) });
+        let out = map("test", &items, true, |x| if *x == 500 { Err(KernelError::Invalid("five hundred".into())) } else { Ok(x * 2) });
         assert_eq!(out.len(), 1000);
         for (i, r) in out.iter().enumerate() {
             match r {

@@ -41,6 +41,16 @@ pub struct PlanStats {
     pub delaunay: usize,
 }
 
+/// Curved faces from which their sizes are worked out on the worker pool.
+const PARALLEL_SIZES: usize = 8;
+/// Curved faces from which faces are planned on the worker pool (measured on the oracle
+/// parts: two curved faces plan faster serially, four break even, six run twice as fast).
+const PARALLEL_FACES: usize = 4;
+/// Intersection curves (a Newton solve per point), or edges of any kind, from which edges are
+/// sampled on the worker pool.
+const PARALLEL_CURVES: usize = 2;
+const PARALLEL_EDGES: usize = 256;
+
 /// Most lines a curved face's grid gets in one direction.
 const MAX_LINES: usize = 1024;
 /// Most points Ruppert refinement may add to one face, beyond its seeds.
@@ -56,18 +66,21 @@ pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
     let (edges, edge_faces) = edge_order(faces.iter().copied());
     let rules = size::Rules::new(tol, size::extent(solid.vertex_iter().map(|v| crate::body::from_p3(v.point()))));
     // Each face's surface and target side length, then every edge once at the smaller size of
-    // its faces, in parallel; faces then read their nodes.
-    let sized = crate::par::map("face sizes", &faces, 8, |face| {
-        let surface = face.surface();
-        let eval = surface::eval_surface(&surface);
-        let size = eval.as_ref().map(|s| size::face_size(s, &uv::domain(s), &rules));
-        Ok((eval, size))
-    });
-    let sized: Vec<(Option<EvalSurface>, Option<(f64, [f64; 2])>)> = sized.into_iter().collect::<Result<_>>()?;
+    // its faces; faces then read their nodes. A planar face costs microseconds and a curved
+    // one about a hundred, so the pool is used only where curved faces (or intersection
+    // curves) make up the work.
+    let evals: Vec<Option<EvalSurface>> = faces.iter().map(|f| surface::eval_surface(&f.surface())).collect();
+    let curved = evals.iter().filter(|e| !matches!(e, Some(EvalSurface::Plane { .. }))).count();
+    let sizes =
+        crate::par::map("face sizes", &evals, curved >= PARALLEL_SIZES, |eval| Ok(eval.as_ref().map(|s| size::face_size(s, &uv::domain(s), &rules))));
+    let sized: Vec<(Option<EvalSurface>, Option<(f64, [f64; 2])>)> =
+        evals.into_iter().zip(sizes).map(|(e, s)| s.map(|s| (e, s))).collect::<Result<_>>()?;
     let face_h = |f: usize| sized.get(f).and_then(|(_, s)| s.map(|(h, _)| h)).unwrap_or(rules.max_len);
     let edge_h: Vec<f64> = edge_faces.iter().map(|fs| fs.iter().map(|&f| face_h(f)).fold(rules.max_len, f64::min)).collect();
     let jobs: Vec<(&mt::Edge, f64)> = edges.iter().zip(edge_h).collect();
-    let sampled = crate::par::map("edge nodes", &jobs, 64, |(e, h)| Ok(edges::sample_edge(e, tol, *h)));
+    let solved = edges.iter().filter(|e| matches!(e.curve(), mt::Curve::IntersectionCurve(_))).count();
+    let sampled =
+        crate::par::map("edge nodes", &jobs, solved >= PARALLEL_CURVES || edges.len() >= PARALLEL_EDGES, |(e, h)| Ok(edges::sample_edge(e, tol, *h)));
     let mut nodes: HashMap<_, Vec<Vec3>> = HashMap::with_capacity(edges.len());
     for (e, pts) in edges.iter().zip(sampled) {
         nodes.insert(e.id(), pts?);
@@ -80,7 +93,7 @@ pub(crate) fn plan(solid: &Solid, tol: f64) -> Result<(TessPlan, PlanStats)> {
         Some(pts)
     };
     let indexed: Vec<(usize, &mt::Face)> = faces.iter().copied().enumerate().collect();
-    let planned = crate::par::map("face tessellation", &indexed, 8, |(fi, face)| {
+    let planned = crate::par::map("face tessellation", &indexed, curved >= PARALLEL_FACES, |(fi, face)| {
         let fi = *fi;
         let (eval, size) = match sized.get(fi) {
             Some((Some(eval), Some(size))) => (eval.clone(), *size),
