@@ -1969,7 +1969,6 @@ fn hole_beside_a_bend_with_a_round_cut_out_cuts_and_the_bend_stays_guarded() {
 /// A fold whose stored `fixed` point ends up off the sheet after a parameter change keeps working:
 /// the point still says which side stays (#370). Only a new pick off the sheet is refused (#263).
 #[test]
-#[ignore = "fails until #370 is fixed"]
 fn fold_keeps_working_when_a_parameter_moves_the_sheet_off_its_fixed_point() {
     let mut s = Session::default();
     run(&mut s, "parameters.change", json!({"name": "w", "expression": "100 mm"}));
@@ -2563,7 +2562,6 @@ fn flat_pattern_reports_a_round_hole_as_a_circle() {
 }
 
 #[test]
-#[ignore = "fails until #570 is fixed"]
 fn a_flange_asked_for_0_8_mm_is_0_8_mm_or_refused_never_silently_2_5_mm() {
     // `thickness` on sheet.flange may become an inline override of the rule, or be refused as
     // an unknown parameter; either is fine. Building the default 2.5 mm sheet silently is not.
@@ -2578,4 +2576,33 @@ fn a_flange_asked_for_0_8_mm_is_0_8_mm_or_refused_never_silently_2_5_mm() {
         }
         Err(e) => assert!(e.to_string().contains("thickness"), "{e}"),
     }
+}
+
+/// A new fold still refuses a `fixed` point in a cut-out or past the outline, leaving the design
+/// untouched (#263); a stored one that drifts off the sheet keeps its side with a warning (#370).
+#[test]
+fn fold_refuses_a_new_fixed_point_off_the_sheet_but_warns_on_recompute() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.change", json!({"name": "w", "expression": "100 mm"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Blank"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [100, 60]}));
+    run(&mut s, "sketch.dimension", json!({"entities": ["l1"], "value": "w"}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "sheet.flange", json!({"sketch": "Blank"}));
+    rectangle_tool(&mut s, "Window", [10.0, 15.0], [30.0, 45.0]);
+    run(&mut s, "solid.extrude", json!({"sketch": "Window", "through_all": true, "direction": "symmetric", "operation": "cut"}));
+    let before = s.doc.to_json();
+    let undo = s.undo.len();
+    for fixed in [json!([20, 30, 2.5]), json!([150, 30, 2.5])] {
+        let e = s.execute("sheet.fold", &json!({"points": [[40, 0, 2.5], [40, 60, 2.5]], "fixed": fixed})).unwrap_err().to_string();
+        assert!(e.contains("fixed") && e.contains("not on the sheet"), "{fixed}: {e}");
+        assert_eq!(s.doc.to_json(), before);
+        assert_eq!(s.undo.len(), undo);
+    }
+    run(&mut s, "sheet.fold", json!({"points": [[40, 0, 2.5], [40, 60, 2.5]], "fixed": [90, 30, 2.5], "name": "Fold1"}));
+    assert!(run(&mut s, "timeline.inspect", json!({"feature": "Fold1"}))["warning"].is_null());
+    run(&mut s, "parameters.change", json!({"name": "w", "expression": "80 mm"}));
+    let fold = run(&mut s, "timeline.inspect", json!({"feature": "Fold1"}));
+    assert!(fold["error"].is_null(), "{fold}");
+    assert!(fold["warning"].as_str().is_some_and(|w| w.contains("fixed point is not on the sheet") && w.contains("stays")), "{fold}");
 }

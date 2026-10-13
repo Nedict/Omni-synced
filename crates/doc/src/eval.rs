@@ -1143,6 +1143,25 @@ fn new_name(state: &mut ModelState, f: &Feature, k: usize) -> String {
     }
 }
 
+/// The k-th body of a body pattern: its stored name, else a copy of `source`. Once `body.rename`
+/// has stored this feature's names, a copy beyond them (the count was raised) is numbered after
+/// the highest stored `source (n)`, so it never takes a number freed by a rename (#372).
+/// Features without stored names keep the first free `source (n)`.
+fn pattern_copy_name(state: &ModelState, f: &Feature, k: usize, source: &str) -> String {
+    if f.body_names.get(k).is_some_and(|name| !name.trim().is_empty()) {
+        return copy_body_name(state, f, k, source);
+    }
+    let base = if source.trim().is_empty() { "Body" } else { source.trim() };
+    let prefix = format!("{base} (");
+    let highest = f.body_names.iter().filter_map(|n| n.trim().strip_prefix(prefix.as_str())?.strip_suffix(')')?.parse::<u32>().ok()).max();
+    match highest {
+        Some(h) => {
+            (u64::from(h) + 1..).map(|i| format!("{base} ({i})")).find(|n| state.body(n).is_none()).unwrap_or_else(|| unique_body_name(state, base))
+        }
+        None => unique_body_name(state, base),
+    }
+}
+
 fn copy_body_name(state: &ModelState, f: &Feature, k: usize, source: &str) -> String {
     let base = f.body_names.get(k).filter(|name| !name.trim().is_empty()).map(String::as_str).unwrap_or(source);
     unique_body_name(state, base)
@@ -3434,13 +3453,15 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                     let fst = crate::state_in_face_anchor_frame(doc, st, anchor, f.component)?;
                     doc.resolve_attached_plane(vals, plane, f.component, st, &fst)?
                 }
-                None => doc.resolve_plane_in(vals, plane, 0, Some(st))?,
+                // Picks on bodies of other (moved) components are where those bodies are shown.
+                None => doc.resolve_plane_in(vals, plane, 0, Some(&construction_state(doc, st, f.component)))?,
             };
             st.construct.push(crate::construct::Construct { feature: f.id, name: f.name.clone(), geom: crate::construct::ConstructGeom::Plane(pl) });
             Ok(())
         }
         FeatureKind::ConstructionAxis { def } => {
-            let (origin, dir) = crate::construct::resolve_axis(&crate::construct::Ctx { doc, vals, st, depth: 0 }, def)?;
+            let (origin, dir) =
+                crate::construct::resolve_axis(&crate::construct::Ctx { doc, vals, st: &construction_state(doc, st, f.component), depth: 0 }, def)?;
             st.construct.push(crate::construct::Construct {
                 feature: f.id,
                 name: f.name.clone(),
@@ -3449,7 +3470,8 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             Ok(())
         }
         FeatureKind::ConstructionPoint { def } => {
-            let p = crate::construct::resolve_point(&crate::construct::Ctx { doc, vals, st, depth: 0 }, def)?;
+            let p =
+                crate::construct::resolve_point(&crate::construct::Ctx { doc, vals, st: &construction_state(doc, st, f.component), depth: 0 }, def)?;
             st.construct.push(crate::construct::Construct { feature: f.id, name: f.name.clone(), geom: crate::construct::ConstructGeom::Point(p) });
             Ok(())
         }
@@ -3570,7 +3592,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 let mb = st.body(n).cloned().ok_or_else(|| DocError::Unknown(format!("body `{n}`")))?;
                 for (k, m) in mats.iter().enumerate() {
                     let copy = moved_copy(&mb, kernel::transform_matrix(&mb.body, *m)?, k + 1);
-                    let name = copy_body_name(st, f, output, &mb.name);
+                    let name = pattern_copy_name(st, f, output, &mb.name);
                     st.bodies.push(ModelBody::traced_new(name, copy, f.id));
                     output += 1;
                 }
@@ -3906,6 +3928,16 @@ fn unique_body_name(st: &ModelState, base: &str) -> String {
 /// it are moved into its frame (through both placements), so a sketch on another component's
 /// face finds the face where it is shown and projects its edges there. The model itself when
 /// every placement agrees (the usual case).
+/// What construction geometry of component `comp` is built on: the model as that component sees
+/// it, other components' bodies where they are placed. In the root, every placement of a
+/// component (its pasted instances too) is there, as the viewport shows it.
+fn construction_state<'a>(doc: &Document, st: &'a ModelState, comp: u64) -> std::borrow::Cow<'a, ModelState> {
+    if comp == 0 && !doc.occurrences.is_empty() {
+        return std::borrow::Cow::Owned(world_state(doc, st));
+    }
+    state_in_frame(doc, st, comp)
+}
+
 pub fn state_in_frame<'a>(doc: &Document, st: &'a ModelState, comp: u64) -> std::borrow::Cow<'a, ModelState> {
     state_in_frame_at(doc, st, comp, doc.component_transform(comp))
 }

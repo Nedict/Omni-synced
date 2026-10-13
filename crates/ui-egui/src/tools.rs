@@ -451,13 +451,34 @@ pub fn finish(app: &mut SolveApp) {
 
 /// Rubber-band preview of the shape being drawn.
 pub(crate) fn paint_preview_curve(
-    sketch: &solidcraft_engine::sketch::Sketch,
+    mut sketch: solidcraft_engine::sketch::Sketch,
     plane: &solidcraft_engine::geom::Plane,
     painter: &egui::Painter,
     proj: &Proj,
     stroke: Stroke,
+    mode: u8,
 ) {
-    paint_curve(sketch, 0, plane, painter, proj, stroke, &mut solidcraft_engine::render::SamplingBudget::new(4096, 65_536));
+    for curve in &mut sketch.curves {
+        curve.centerline = mode == 2 && matches!(curve.kind, solidcraft_engine::sketch::CurveKind::Line { .. });
+        curve.construction = mode != 0 && !curve.centerline;
+    }
+    paint_curve(&sketch, 0, plane, painter, proj, stroke, &mut solidcraft_engine::render::SamplingBudget::new(4096, 65_536));
+}
+
+pub(crate) fn paint_sketch_path(points: &[solidcraft_engine::geom::Vec3], mode: u8, painter: &egui::Painter, proj: &Proj, stroke: Stroke) {
+    if mode == 0 {
+        let screen: Vec<_> = points.iter().filter_map(|point| proj.to_screen(*point)).collect();
+        if screen.len() >= 2 {
+            painter.add(egui::Shape::line(screen, stroke));
+        }
+        return;
+    }
+    let unit = solidcraft_engine::view::grid_step(proj.cam.half_height()).0;
+    for (a, b) in crate::viewport::sketch_segments(points, mode, unit) {
+        if let (Some(a), Some(b)) = (proj.to_screen(a), proj.to_screen(b)) {
+            painter.line_segment([a, b], stroke);
+        }
+    }
 }
 
 pub(crate) fn paint_curve(
@@ -470,10 +491,8 @@ pub(crate) fn paint_curve(
     budget: &mut solidcraft_engine::render::SamplingBudget,
 ) {
     for part in crate::sketch_display::curve_with_budget(sketch, index, plane, proj, painter.ctx().pixels_per_point(), budget).parts {
-        let screen: Vec<_> = part.into_iter().filter_map(|point| proj.to_screen(point)).collect();
-        if screen.len() >= 2 {
-            painter.add(egui::Shape::line(screen, stroke));
-        }
+        let mode = sketch.curves.get(index).map_or(0, |c| if c.centerline { 2 } else { u8::from(c.construction) });
+        paint_sketch_path(&part, mode, painter, proj, stroke);
     }
 }
 
@@ -589,14 +608,12 @@ pub fn preview(app: &SolveApp, t: &Tool, painter: &egui::Painter, proj: &Proj) {
     let Some((h, _)) = t.hover.clone() else { return };
     let h = crate::sketch_dims::effective(app, t, h);
     if let Some(curve) = preview_curve(t, h, crate::sketch_dims::locked_value(app, t, "Sweep")) {
-        paint_preview_curve(&curve, &ss.plane, painter, proj, stroke);
+        paint_preview_curve(curve, &ss.plane, painter, proj, stroke, crate::sketch_palette::mode(app));
         return;
     }
     let pts: Vec<Vec2> = t.pts.iter().map(|p| p.0).collect();
     let line = |a: Vec2, b: Vec2| {
-        if let (Some(x), Some(y)) = (to(a), to(b)) {
-            painter.line_segment([x, y], stroke);
-        }
+        paint_sketch_path(&[ss.plane.to_world(a), ss.plane.to_world(b)], crate::sketch_palette::mode(app), painter, proj, stroke);
     };
     match (t.cmd, pts.as_slice()) {
         ("sketch.line", [.., last]) => {
