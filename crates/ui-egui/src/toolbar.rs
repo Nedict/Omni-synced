@@ -677,8 +677,11 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 } else if resp.hovered() && info.enabled {
                     painter.rect_filled(br, 4.0, t.hover);
                 }
-                let (ink, fill, acc) =
-                    if info.enabled { (t.icon, t.icon_fill, command_accent(t, &tab, panel, selected.id)) } else { (t.border, t.panel_header, t.border) };
+                let (ink, fill, acc) = if info.enabled {
+                    (t.icon, t.icon_fill, command_accent(t, &tab, panel, selected.id))
+                } else {
+                    (t.border, t.panel_header, t.border)
+                };
                 let icon = match selected.id {
                     "sketch.finish" => "finish",
                     "config.table" => "configuration_table",
