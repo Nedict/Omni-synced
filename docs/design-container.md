@@ -60,7 +60,7 @@ use the same container reader/writer; JSON export and Save As remain available.
 Experimental engine saves with `preview: true` can include `cache/preview.json` and
 `cache/preview.bin` when the evaluated
 world display meshes are already warm. Ordinary saves omit this redundant display data
-to avoid extra save work; it is not the proposed evaluated B-rep cache. Saving never triangulates a cold body for this
+to avoid extra save work; it is separate from the native B-rep cache below. Saving never triangulates a cold body for this
 cache. Pending occurrence moves, active sketch edits, feature errors and oversized
 previews omit it. The cache is bounded to 8 MiB, 1,024 bodies and 100,000 triangles;
 its manifest is at most 64 KiB. Body names/colours and contiguous binary mesh slices
@@ -86,9 +86,9 @@ geometry, used for measurements, or used to seed evaluated model state. The orig
 design remains intact until the complete rebuilt session is ready. Cancellation or
 any change of active document/revision discards both preview and completion.
 
-Normal design reading, CLI and browser opening still rebuild authoritatively; no
-evaluated B-rep is deserialized or adopted. Portable evaluated B-rep/state restoration
-and interactive cached viewport navigation remain further work in #303.
+Normal design reading, CLI and browser opening still rebuild authoritatively.
+Native B-rep caches can supply provisional display as described below; they never
+supply evaluated session state. The saved picture is not an interactive viewport.
 
 ## Seekable reader (phase 2, first increment)
 
@@ -98,16 +98,51 @@ headers, then `preview()` reads the optional display entries and document metada
 `read_document()` consumes the reader and resolves and validates the required
 source blobs through the same archive. No complete archive buffer is required.
 The existing byte-based readers use this implementation too; JSON keeps its existing
-reader. This increment provides the IO API; desktop and browser integration remain
-separate. It does not yet change application opening times or saving behavior.
+reader. `read_design_file` integrates it with desktop Open using one file handle,
+without buffering the complete container. Browser VFS uses a memory cursor.
 
-The source must remain unchanged for the lifetime of the reader. A file handle is
-not an immutable snapshot of concurrent in-place writes: application integration
-must address that before publishing a cached view. Optional preview success never
-validates source blobs or makes a document editable. An invalid required blob still
+Metadata used to validate a provisional cache is retained in an immutable buffer
+and reused for authoritative reconstruction. Concurrent in-place writes therefore
+either retain that document or fail required-part CRC/hash validation. Optional
+preview success never validates source blobs or makes a document editable. An invalid required blob still
 fails the later document read. ZIP directory scans can touch a bounded suffix of a
 stored blob; deferral means not loading or decoding the complete payload, not zero
-physical reads of its byte range. Metadata retains the existing part-size budget.
+physical reads of its byte range. Optional cache metadata is capped at 16 MiB;
+larger metadata misses the cache and uses the normal authoritative part-size budget.
+
+## Native evaluated cache
+
+Engine Save/Save As can include `cache/key.json` and `cache/brep.bin` when
+explicitly requested with `cache: true` and geometry is warm. The default is
+`cache: false`, including browser downloads, to avoid extra save time and file size.
+JSON and recovery/autosave
+remain independent of the native cache. Saving never forces cold placement,
+evaluation or tessellation. Active sketches, uncaptured moves, errors, mesh bodies,
+unsupported adapter representations and exceeded budgets omit the cache.
+
+The manifest records `solidcraft-brep-cache/1`, the package version, the explicit
+producer revision `solidcraft-truck-adapter/2`, exact document/payload SHA-256 hashes
+and contiguous named body slices. The producer revision is deliberately maintained
+when adapter semantics change; it is not a source-tree fingerprint or build script.
+The binary data uses [SolidCraft's portable B-rep schema and codec](native-brep.md),
+including topology, curves/surfaces, face-source certificates, appearances and
+operation history. Truck's serialized structures are never stored. A different
+kernel can implement the same schema; until its adapter is tested it conservatively
+misses this producer's cache and rebuilds the authoritative document.
+
+Native caches cap 4,096 bodies, 100,000 total faces, a 1 MiB manifest and 64 MiB
+binary payload. Individual bodies have the schema/codec's additional limits.
+The reader validates metadata, manifest, slices and bodies before requesting a
+bounded provisional mesh. Original STEP/image/mesh blobs are resolved afterwards.
+No redundant display mesh is stored by default: `preview: true` remains a separate
+opt-in for already warm display meshes, which take precedence when present.
+
+Every failure in the optional cache is a miss. Even a checksum-valid forged body
+never becomes editable state: Open builds a fresh session from the document and
+original blobs, then replaces the provisional picture. Picking, measurements,
+persistent names and subsequent modelling use that rebuilt session. Existing
+cancellation/document-revision guards also apply. The web build retains synchronous
+authoritative rebuilding; portability does not imply background web evaluation.
 
 A counting-reader regression uses a 2.6 MB stored source blob and obtains the saved
 preview with fewer than 256 KiB read, then verifies the authoritative document is
@@ -115,9 +150,10 @@ identical after resolving its source. Corrupt-source and preview-miss regression
 and truncation/seeded mutations through the combined reader, protect the boundary.
 This is an IO-volume test, not a geometry or first-frame benchmark.
 
-## Remaining #303 increments and kernel independence
+## Review increments and kernel independence
 
-Keep each increment independently reviewable after the phase-one container PR:
+The implementation is split into the following review increments after the
+phase-one container PR (#327):
 
 1. Seekable IO and its read-volume/hostile-input tests (the API above).
 2. A versioned SolidCraft-owned B-rep schema and bounded binary codec, tested without
@@ -128,7 +164,8 @@ Keep each increment independently reviewable after the phase-one container PR:
    No truck serialized structs, memory layouts, pointers or opaque kernel blobs
    form part of the persisted contract. No evaluated STEP round trip is a substitute.
 3. Separate adapters between the neutral schema and supported kernels. Unsupported
-   geometry or provenance is a cache miss, never a lossy approximation. A neutral
+   geometry or provenance is a cache miss. Explicitly fitted intersection splines
+   carry their fitting target and remain provisional display geometry. A neutral
    file schema alone does not prove interoperability: each adapter needs round-trip,
    modelling and naming tests; compatibility with a second kernel is unverified
    until that adapter exists. Kernel/version information belongs in producer and

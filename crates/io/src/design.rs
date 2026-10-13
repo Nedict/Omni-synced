@@ -2,6 +2,10 @@
 //! evaluated cache is trusted here. Entries are never extracted to filesystem paths.
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::sync::Arc;
+
+mod native_cache;
+pub use native_cache::{DesignGeometry, read_design_geometry};
 
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -96,6 +100,17 @@ pub fn write_design_container_with_compression(doc: &Document, compression: Desi
 
 /// Optional display cache failure never prevents saving the authoritative design.
 pub fn write_design_container_with_preview(doc: &Document, compression: DesignCompression, preview: Option<&DesignPreview>) -> Result<Vec<u8>> {
+    write_design_container_with_cache(doc, compression, preview, None)
+}
+
+/// Save an optional warm native cache without making document saving depend on it.
+/// Display meshes remain separately opt-in; no evaluation or meshing happens here.
+pub fn write_design_container_with_cache(
+    doc: &Document,
+    compression: DesignCompression,
+    preview: Option<&DesignPreview>,
+    geometry: Option<&[DesignGeometry]>,
+) -> Result<Vec<u8>> {
     let mut writer = PackageWriter { zip: zip::ZipWriter::new(Cursor::new(Vec::new())), names: BTreeSet::new(), expanded: 0, resolved: 0 };
     let mut features = Vec::with_capacity(doc.features.len());
     for feature in &doc.features {
@@ -143,6 +158,19 @@ pub fn write_design_container_with_preview(doc: &Document, compression: DesignCo
     let metadata = serde_json::to_vec(&metadata).map_err(invalid)?;
     writer.part("document.json", &metadata, true)?;
     writer.part("container.json", &serde_json::to_vec(&json!({"format": VERSION})).map_err(invalid)?, false)?;
+    if let Some((manifest, data)) = geometry.and_then(|g| native_cache::encode_geometry(g, &metadata).ok())
+        && writer.names.len().saturating_add(2) <= MAX_ENTRIES
+        && writer
+            .expanded
+            .saturating_add(manifest.len())
+            .saturating_add(data.len())
+            .saturating_add(writer.names.len().saturating_mul(256))
+            .saturating_add(65_536)
+            <= MAX_DESIGN_BYTES
+    {
+        writer.part("cache/key.json", &manifest, false)?;
+        writer.part("cache/brep.bin", &data, compression == DesignCompression::Compact)?;
+    }
     if let Some((manifest, data)) = preview.and_then(|p| encode_preview(p, &metadata).ok())
         && writer.names.len().saturating_add(2) <= MAX_ENTRIES
         && writer
@@ -223,6 +251,7 @@ struct PackageReader<R: Read + Seek> {
     zip: zip::ZipArchive<R>,
     blobs: BTreeMap<String, Vec<u8>>,
     hydrated: usize,
+    document: Option<Arc<[u8]>>,
 }
 
 impl<R: Read + Seek> PackageReader<R> {
@@ -274,7 +303,15 @@ impl<R: Read + Seek> PackageReader<R> {
                 return Err(invalid("expanded package too large"));
             }
         }
-        Ok(Self { zip, blobs: BTreeMap::new(), hydrated: 0 })
+        Ok(Self { zip, blobs: BTreeMap::new(), hydrated: 0, document: None })
+    }
+    // Bind provisional caches and authoritative reconstruction to identical metadata,
+    // even if another process overwrites the open file in place. Blobs remain hash-checked.
+    fn document(&mut self, limit: usize) -> Result<Arc<[u8]>> {
+        if self.document.is_none() {
+            self.document = Some(self.limited_part("document.json", limit)?.into());
+        }
+        self.document.as_ref().filter(|d| d.len() <= limit).cloned().ok_or_else(|| invalid("metadata budget"))
     }
     fn part(&mut self, name: &str) -> Result<Vec<u8>> {
         self.limited_part(name, MAX_DESIGN_BYTES)
@@ -363,7 +400,7 @@ fn read_preview<R: Read + Seek>(reader: &mut PackageReader<R>) -> Result<DesignP
     {
         return Err(invalid("incompatible preview"));
     }
-    if manifest.get("document").and_then(Value::as_str) != Some(digest(&reader.part("document.json")?).as_str()) {
+    if manifest.get("document").and_then(Value::as_str) != Some(digest(&reader.document(16 << 20)?).as_str()) {
         return Err(invalid("stale preview"));
     }
     let data = reader.limited_part("cache/preview.bin", MAX_PREVIEW_BYTES)?;
@@ -404,12 +441,13 @@ fn read_preview<R: Read + Seek>(reader: &mut PackageReader<R>) -> Result<DesignP
     Ok(preview)
 }
 
-/// A bounded container reader over an immutable, seekable source.
+/// A bounded container reader over a seekable source.
 ///
 /// Opening inspects the directory, not the source blobs. `preview` reads only the
 /// optional display entries and document metadata; `read_document` then resolves
-/// and validates authoritative blobs. Keep the source unchanged for this reader's
-/// lifetime. This type does not turn untrusted cached data into editable geometry.
+/// and validates authoritative blobs against the same retained metadata snapshot.
+/// Concurrent source changes either retain that document or fail validation.
+/// This type does not turn untrusted cached data into editable geometry.
 pub struct DesignContainerReader<R: Read + Seek> {
     reader: PackageReader<R>,
 }
@@ -422,7 +460,15 @@ impl<R: Read + Seek> DesignContainerReader<R> {
 
     /// Optional display-only data. Corruption or incompatibility is a cache miss.
     pub fn preview(&mut self) -> Option<DesignPreview> {
-        read_preview(&mut self.reader).ok()
+        // An explicitly saved mesh avoids tessellation. Native cache is the default
+        // fallback, generating a bounded provisional mesh without source imports.
+        read_preview(&mut self.reader).ok().or_else(|| native_cache::geometry_preview(self.geometry()?).ok())
+    }
+
+    /// Native geometry is provisional, never a substitute for rebuilding the document.
+    pub fn geometry(&mut self) -> Option<Vec<DesignGeometry>> {
+        let document = self.reader.document(16 << 20).ok()?;
+        native_cache::read_geometry_with(&mut self.reader, &document).ok()
     }
 
     /// Consume the reader, resolving every required blob before returning a document.
@@ -435,12 +481,58 @@ pub(super) fn read(bytes: &[u8]) -> Result<Document> {
     DesignContainerReader::new(Cursor::new(bytes))?.read_document()
 }
 
+/// Open from disk (or browser VFS), publishing only provisional display before
+/// authoritative blob hydration. Desktop keeps one seekable file handle instead
+/// of buffering the complete archive. JSON continues through the normal migrations.
+pub fn read_design_file(path: &str, notify: Option<impl FnOnce(DesignPreview)>) -> Result<Document> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut source = {
+        let metadata = std::fs::metadata(path).map_err(invalid)?;
+        if !metadata.is_file() {
+            return Err(invalid("not a regular file"));
+        }
+        if metadata.len() > MAX_DESIGN_BYTES as u64 {
+            return Err(invalid("file too large"));
+        }
+        let file = std::fs::File::open(path).map_err(invalid)?;
+        if !file.metadata().map_err(invalid)?.is_file() {
+            return Err(invalid("not a regular file"));
+        }
+        file
+    };
+    #[cfg(target_arch = "wasm32")]
+    let mut source = Cursor::new(crate::vfs::read(path, MAX_DESIGN_BYTES).map_err(invalid)?);
+    let size = source.seek(SeekFrom::End(0)).map_err(invalid)?;
+    if size > MAX_DESIGN_BYTES as u64 {
+        return Err(invalid("file too large"));
+    }
+    source.seek(SeekFrom::Start(0)).map_err(invalid)?;
+    let mut prefix = [0u8; 4];
+    if size >= 4 {
+        source.read_exact(&mut prefix).map_err(invalid)?;
+    }
+    source.seek(SeekFrom::Start(0)).map_err(invalid)?;
+    if is_design_container(&prefix) {
+        let mut reader = DesignContainerReader::new(source)?;
+        if let Some(notify) = notify
+            && let Some(preview) = reader.preview()
+        {
+            notify(preview);
+        }
+        reader.read_document()
+    } else {
+        let mut bytes = Vec::new();
+        source.take(MAX_DESIGN_BYTES as u64 + 1).read_to_end(&mut bytes).map_err(invalid)?;
+        crate::read_design(&bytes)
+    }
+}
+
 fn read_document<R: Read + Seek>(reader: &mut PackageReader<R>) -> Result<Document> {
     let version: Value = serde_json::from_slice(&reader.part("container.json")?).map_err(invalid)?;
     if !matches!(version.get("format").and_then(Value::as_str), Some(VERSION | LEGACY_VERSION)) {
         return Err(invalid("unsupported container version"));
     }
-    let bytes = reader.part("document.json")?;
+    let bytes = reader.document(MAX_DESIGN_BYTES)?;
     let metadata: Value = serde_json::from_slice(&bytes).map_err(invalid)?;
     let text = std::str::from_utf8(&bytes).map_err(invalid)?;
     // Migrations and all document validation run on the small parametric metadata.
@@ -563,6 +655,124 @@ mod tests {
         assert!(reader.preview().is_none());
         assert_eq!(reader.read_document().unwrap().to_json(), doc.to_json());
         assert!(DesignContainerReader::new(Cursor::new(vec![0u8; 1])).is_err());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn file_reader_refuses_nonfiles_before_notifying_preview() {
+        let directory = std::env::temp_dir();
+        let result = read_design_file(directory.to_str().unwrap(), Some(|_| panic!("non-file supplied a preview")));
+        assert!(result.is_err_and(|e| e.to_string().contains("not a regular file")));
+    }
+
+    fn native_geometry() -> Vec<DesignGeometry> {
+        vec![DesignGeometry {
+            name: "Cube".into(),
+            body: solidcraft_kernel::box_solid(solidcraft_geom::Vec3::ZERO, solidcraft_geom::Vec3::new(10., 20., 30.)).unwrap(),
+        }]
+    }
+
+    #[test]
+    fn native_cache_round_trip_and_preview_defer_original_sources() {
+        let mut doc = Document::new("Native cache");
+        let step = "ISO-10303-21;".repeat(200_000);
+        doc.add_feature(FeatureKind::Import { file: "large.step".into(), step: step.clone(), components: Vec::new() }, None).unwrap();
+        let bodies = native_geometry();
+        let bytes = write_design_container_with_cache(&doc, DesignCompression::Fast, None, Some(&bodies)).unwrap();
+        let entries = parts(&bytes);
+        assert!(entries.contains_key("cache/brep.bin"));
+        assert!(!entries.contains_key("cache/preview.bin"));
+        assert_eq!(read_design_geometry(&bytes).unwrap()[0].body.face_count(), bodies[0].body.face_count());
+        assert_eq!(bytes, write_design_container_with_cache(&doc, DesignCompression::Fast, None, Some(&bodies)).unwrap());
+        let count = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut reader = DesignContainerReader::new(CountingReader { source: Cursor::new(bytes), count: count.clone() }).unwrap();
+        assert!(!reader.preview().unwrap().meshes.is_empty());
+        assert!(count.get() < 256 * 1024, "read {} bytes before native display", count.get());
+        assert_eq!(reader.read_document().unwrap().to_json(), doc.to_json());
+        assert!(count.get() >= step.len());
+    }
+
+    #[test]
+    fn native_cache_mismatch_is_only_a_cache_miss() {
+        let doc = document();
+        let bytes = write_design_container_with_cache(&doc, DesignCompression::Fast, None, Some(&native_geometry())).unwrap();
+        let original = parts(&bytes);
+        for key in ["format", "producer", "app", "document", "payload"] {
+            let mut entries = original.clone();
+            let mut manifest: Value = serde_json::from_slice(&entries["cache/key.json"]).unwrap();
+            manifest[key] = json!("unsupported-or-stale");
+            entries.insert("cache/key.json".into(), serde_json::to_vec(&manifest).unwrap());
+            let bytes = package(&entries);
+            assert!(read_design_geometry(&bytes).is_none());
+            assert!(read_design_preview(&bytes).is_none());
+            assert_eq!(crate::read_design(&bytes).unwrap().to_json(), doc.to_json());
+        }
+        let mut entries = original;
+        entries.get_mut("cache/brep.bin").unwrap()[0] ^= 1;
+        let bytes = package(&entries);
+        assert!(read_design_geometry(&bytes).is_none());
+        assert_eq!(crate::read_design(&bytes).unwrap().to_json(), doc.to_json());
+    }
+
+    #[test]
+    fn metadata_snapshot_survives_in_place_changes_after_preview() {
+        use std::{cell::RefCell, rc::Rc};
+        struct Shared {
+            bytes: Rc<RefCell<Vec<u8>>>,
+            position: u64,
+        }
+        impl Read for Shared {
+            fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+                let bytes = self.bytes.borrow();
+                let mut cursor = Cursor::new(bytes.as_slice());
+                cursor.set_position(self.position);
+                let n = cursor.read(out)?;
+                self.position = cursor.position();
+                Ok(n)
+            }
+        }
+        impl Seek for Shared {
+            fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+                let bytes = self.bytes.borrow();
+                let mut cursor = Cursor::new(bytes.as_slice());
+                cursor.set_position(self.position);
+                self.position = cursor.seek(pos)?;
+                Ok(self.position)
+            }
+        }
+        let doc = document();
+        let preview = DesignPreview { meshes: vec![mesh()] };
+        let bytes = write_design_container_with_preview(&doc, DesignCompression::Fast, Some(&preview)).unwrap();
+        let offset = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap().by_name("document.json").unwrap().data_start() as usize;
+        let bytes = Rc::new(RefCell::new(bytes));
+        let mut reader = DesignContainerReader::new(Shared { bytes: bytes.clone(), position: 0 }).unwrap();
+        assert!(reader.preview().is_some());
+        bytes.borrow_mut()[offset] ^= 0xff;
+        assert_eq!(reader.read_document().unwrap().to_json(), doc.to_json());
+        assert!(crate::read_design(&bytes.borrow()).is_err());
+    }
+
+    #[test]
+    fn native_cache_prefixes_and_mutations_never_panic() {
+        let bytes = write_design_container_with_cache(&document(), DesignCompression::Fast, None, Some(&native_geometry())).unwrap();
+        for n in (0..bytes.len()).step_by((bytes.len() / 128).max(1)) {
+            assert!(
+                std::panic::catch_unwind(|| {
+                    let _ = read_design_preview(&bytes[..n]);
+                    let _ = read_design_geometry(&bytes[..n]);
+                })
+                .is_ok()
+            );
+            let mut changed = bytes.clone();
+            changed[n] ^= 0xff;
+            assert!(
+                std::panic::catch_unwind(|| {
+                    let _ = read_design_preview(&changed);
+                    let _ = read_design_geometry(&changed);
+                })
+                .is_ok()
+            );
+        }
     }
 
     fn mesh() -> MeshData {

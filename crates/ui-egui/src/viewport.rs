@@ -19,6 +19,10 @@ use crate::{SolveApp, icons};
 #[path = "viewport_appearance_tests.rs"]
 mod appearance_tests;
 
+#[cfg(test)]
+#[path = "viewport_plane_target_tests.rs"]
+mod plane_target_tests;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavMode {
     Orbit,
@@ -546,6 +550,16 @@ pub fn origin_planes(app: &SolveApp) -> Vec<(&'static str, Vec3, [Vec3; 4])> {
         .into_iter()
         .filter(|(n, _, _)| creating || !app.session.visibility.hidden_origin.iter().any(|h| h == n))
         .collect()
+}
+
+/// A point on origin plane `name`'s square that a click at its screen point picks: the middle,
+/// or else the middle of a quarter the other planes don't cover from this view (in an iso view
+/// the XZ square hides the middle of the XY one). The middle when no candidate is picked.
+pub fn origin_plane_target(app: &SolveApp, proj: &Proj, name: &str) -> Option<Vec3> {
+    let (_, _, q) = origin_planes(app).into_iter().find(|(n, _, _)| *n == name)?;
+    let mid = (q[0] + q[1] + q[2] + q[3]) / 4.0;
+    let picked = |w: &Vec3| proj.to_screen(*w).is_some_and(|p| matches!(pick(app, proj, p).first(), Some(Hit::Plane { name: n, .. }) if n == name));
+    Some(std::iter::once(mid).chain(q.iter().map(|c| (mid + *c) / 2.0)).find(picked).unwrap_or(mid))
 }
 
 pub fn origin_axes(app: &SolveApp) -> Vec<(&'static str, Vec3)> {

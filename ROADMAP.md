@@ -359,13 +359,17 @@ and reference-object placement remain separate work, as do loft rails and center
 - Design containers (#303, phase one) separate and deduplicate STEP, raw images and
   lossless binary mesh arrays while keeping plain JSON as a supported Save As/export
   format. Generated-mesh storage measurements reduce serialization and decoding work;
-  evaluated geometry caching and instant cold display remain separate follow-up work.
+  a seekable reader defers original blobs until after provisional display.
   See [container format](docs/design-container.md) and [performance measurements](docs/perf.md).
-- Desktop Open can show an experimental, opt-in bounded saved display preview while rebuilding in the existing
-  file worker. Ordinary saves omit display caches; explicit `preview: true` saves cache
-  only already warm meshes. Document hashes and application versions reject
-  stale previews. Preview geometry cannot be edited or measured, and cancelled or stale
-  completions cannot replace a newer document. Evaluated B-rep restoration remains open.
+- Warm saves with explicit `cache: true` can include a versioned native B-rep cache through SolidCraft-owned topology
+  and geometry records, with a separate truck adapter and bounded binary reader. Exact
+  face-source certificates and operation history survive codec round trips. A provisional
+  picture can be generated before original blobs are read; editing and measurement wait
+  for authoritative reconstruction. Cached metadata binds preview and reconstruction to
+  the same document despite concurrent file writes. Default saves omit this cache and never force cold
+  evaluation or meshing; explicit `preview: true` remains a separate warm-mesh option.
+  Keys, resource budgets and document/revision guards reject incompatible, hostile or
+  stale results. A second modelling kernel still requires its own tested adapter.
 
 - Cold rebuild profiling separates parsing, geometry, placement, display meshing and
   thumbnails. Straight-line closest-point projection and exact curved-surface evaluation
