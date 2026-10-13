@@ -248,7 +248,7 @@ pub enum Kind {
     /// Edit Text: a sketch text's content and placement (`sketch_text`).
     Text(crate::sketch_text::Tx),
     TextMove(crate::sketch_text_move::TextMove),
-    /// Sketch-space modify tools: scale, and later offset, fillet, chamfer, the patterns,
+    /// Sketch-space modify tools: scale and offset, and later fillet, chamfer, the patterns,
     /// mirror and move (`sketch_modify_ui`).
     SketchModify(crate::sketch_modify_ui::Mod),
 }
@@ -916,6 +916,13 @@ pub(crate) fn field(ui: &mut egui::Ui, s: &mut String) -> bool {
     publish_row(&r);
     crate::params_dialog::complete(ui, &r, s);
     r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+}
+
+/// A checkbox row. Its row handle (`dialog:<row label>`) lets a scenario click it by the label
+/// beside it, the way `field` already publishes one for a value field.
+pub(crate) fn check(ui: &mut egui::Ui, on: &mut bool) {
+    let r = ui.checkbox(on, "");
+    publish_row(&r);
 }
 
 pub(crate) fn combo(ui: &mut egui::Ui, id: &str, labels: &[&str], sel: &mut usize) {

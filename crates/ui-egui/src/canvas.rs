@@ -8,7 +8,7 @@
 use egui::{Color32, Pos2, Stroke, vec2};
 use solidcraft_engine::Sel;
 use solidcraft_engine::doc::expr::Kind as ValueKind;
-use solidcraft_engine::geom::{Mesh, Vec3};
+use solidcraft_engine::geom::{Mesh, Vec2, Vec3};
 
 use crate::SolveApp;
 use crate::dialogs::{Dialog, Kind};
@@ -50,7 +50,17 @@ pub fn anchor(app: &SolveApp, d: &Dialog) -> Option<(Vec3, Option<Vec3>)> {
         Sel::SketchCurve { id } => {
             let ss = st.sketches.iter().rev().find(|ss| ss.sketch.curve_index(id).is_some())?;
             let pts = ss.sketch.polyline(ss.sketch.curve_index(id)?);
-            (ss.plane.to_world(*pts.get(pts.len() / 2)?), None)
+            let (mid, tangent) = poly_mid(&pts)?;
+            // An offset's drag arrow: the in-plane direction the distance grows along. The
+            // command offsets a picked curve to its left, and the window's Flip row reverses it.
+            let dir = match &d.kind {
+                Kind::SketchModify(crate::sketch_modify_ui::Mod::Offset { flip, .. }) => {
+                    let n = if *flip { -tangent.perp() } else { tangent.perp() };
+                    Some(ss.plane.to_world(mid + n) - ss.plane.to_world(mid))
+                }
+                _ => None,
+            };
+            (ss.plane.to_world(mid), dir)
         }
         Sel::Body { name } => (st.body(name)?.mesh().bounds().center(), None),
         Sel::Plane { name } => {
@@ -75,8 +85,34 @@ pub fn anchor(app: &SolveApp, d: &Dialog) -> Option<(Vec3, Option<Vec3>)> {
         Kind::Sheet(_) => (at, crate::dialogs_sheet::arrow(app, d).or(normal)),
         Kind::Plastic(_) => (at, normal),
         Kind::PatternRect { .. } => (at, d.inputs.get(1).and_then(|i| i.items.first()).and_then(|x| crate::dialogs::axis_of(app, x)).map(|a| a.1)),
+        // Already computed above, per picked curve; keep it rather than the default below.
+        Kind::SketchModify(_) => (at, normal),
         _ => (at, None),
     })
+}
+
+/// The point halfway along a polyline, with the unit tangent there. Indexing the middle sample
+/// instead would land on a two-point line's far end, putting the value box and its arrow on a
+/// corner. None for a polyline with no length.
+fn poly_mid(poly: &[Vec2]) -> Option<(Vec2, Vec2)> {
+    let total: f64 = poly.windows(2).map(|w| w[0].dist(w[1])).sum();
+    if !total.is_finite() || total <= 0.0 {
+        return None;
+    }
+    let half = total / 2.0;
+    let mut walked = 0.0;
+    let mut last = None;
+    for w in poly.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let Some(dir) = (b - a).normalized() else { continue };
+        let len = a.dist(b);
+        if walked + len >= half {
+            return Some((a + dir * (half - walked), dir));
+        }
+        walked += len;
+        last = Some((b, dir));
+    }
+    last
 }
 
 fn profile_plane(app: &SolveApp, sketch: u64) -> Option<solidcraft_engine::geom::Plane> {
