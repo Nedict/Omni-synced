@@ -254,6 +254,7 @@
   "ui.shell": "シェル",
   "ui.show": "表示",
   "ui.show_constraints": "拘束",
+  "ui.show_construction_geometries": "構築ジオメトリ",
   "ui.show_dimensions": "寸法",
   "ui.show_points": "点を表示",
   "ui.show_profile": "プロファイルを表示",

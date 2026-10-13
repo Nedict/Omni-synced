@@ -254,6 +254,7 @@
   "ui.shell": "쉘",
   "ui.show": "표시",
   "ui.show_constraints": "구속 조건",
+  "ui.show_construction_geometries": "구성 형상",
   "ui.show_dimensions": "치수",
   "ui.show_points": "점 표시",
   "ui.show_profile": "프로파일 표시",

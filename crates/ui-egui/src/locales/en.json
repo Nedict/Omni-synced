@@ -254,6 +254,7 @@
   "ui.shell": "Shell",
   "ui.show": "Show",
   "ui.show_constraints": "Constraints",
+  "ui.show_construction_geometries": "Construction Geometries",
   "ui.show_dimensions": "Dimensions",
   "ui.show_points": "Show Points",
   "ui.show_profile": "Show Profile",

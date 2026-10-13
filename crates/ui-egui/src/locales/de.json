@@ -254,6 +254,7 @@
   "ui.shell": "Hülle",
   "ui.show": "Einblenden",
   "ui.show_constraints": "Bedingungen",
+  "ui.show_construction_geometries": "Konstruktionsgeometrien",
   "ui.show_dimensions": "Maße",
   "ui.show_points": "Punkte anzeigen",
   "ui.show_profile": "Profil anzeigen",
