@@ -166,7 +166,12 @@ pub(crate) fn divide(s: &EvalSurface, d: usize, range: (f64, f64), across: (f64,
     };
     // Start from quarter turns at most, so a closed iso-line is not taken for a flat one.
     let initial = ((a1 - a0) / std::f64::consts::FRAC_PI_2).ceil().clamp(1.0, 64.0) as u32;
-    let x_at = |i: u32| a0 + (a1 - a0) * f64::from(i) / f64::from(initial);
+    // Both ends exactly (a0 + (a1 − a0) · 1 may round away from a1): the end lines are the
+    // face's own parameter box, which the boundary nodes sit on.
+    let x_at = |i: u32| {
+        let t = f64::from(i) / f64::from(initial);
+        a0 * (1.0 - t) + a1 * t
+    };
     let mut out = vec![a0];
     let mut stack: Vec<(f64, f64, u32)> = (0..initial).rev().map(|i| (x_at(i), x_at(i + 1), 0)).collect();
     while let Some((a, b, depth)) = stack.pop() {
@@ -219,6 +224,17 @@ mod tests {
         assert_eq!(along, vec![0.0, 1.0]);
         // Chord sag r(1 − cos(θ/2)) ≤ 0.01 with r = 3 needs θ ≤ 0.163: at least 39 segments.
         assert!(turn.len() >= 40 && turn.len() < 80, "{}", turn.len());
+    }
+
+    /// The first and last lines are the range's ends to the last bit: the boundary nodes sit on
+    /// them, and a line a rounding inside would be taken for an interior one (a drill point's
+    /// cone, where a0 + (a1 − a0) is not a1).
+    #[test]
+    fn divides_with_the_ends_exactly() {
+        let (a0, a1) = (-1.010485317689877, 1.083909784703316);
+        let lines = divide(&cylinder(), 1, (a0, a1), (0.0, 1.0), 0.01, 10_000);
+        assert_eq!(lines.first().copied(), Some(a0));
+        assert_eq!(lines.last().copied(), Some(a1));
     }
 
     #[test]
