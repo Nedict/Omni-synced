@@ -1,5 +1,5 @@
-//! Dialogs for the surface tools and face splitting (#19): Surface Extrude and Revolve, Patch,
-//! Stitch, Thicken, Extend, Trim and Split Face. Each has a live preview and Edit Feature.
+//! Dialogs for the surface tools and face splitting (#19): Surface Extrude, Revolve and Sweep,
+//! Patch, Stitch, Thicken, Extend, Trim and Split Face. Each has a live preview and Edit Feature.
 
 use serde_json::{Map, Value, json};
 use solidcraft_engine::Sel;
@@ -25,6 +25,7 @@ pub enum Surf {
         symmetric: bool,
         axis: Option<Value>,
     },
+    Sweep,
     Patch,
     Unstitch,
     ReverseNormal,
@@ -51,6 +52,7 @@ impl Surf {
         match self {
             Surf::Extrude { .. } => "SURFACE EXTRUDE",
             Surf::Revolve { .. } => "SURFACE REVOLVE",
+            Surf::Sweep => "SURFACE SWEEP",
             Surf::Patch => "PATCH",
             Surf::Unstitch => "UNSTITCH",
             Surf::ReverseNormal => "REVERSE NORMAL",
@@ -81,6 +83,7 @@ fn inputs(k: &Surf) -> Vec<SelInput> {
     match k {
         Surf::Extrude { .. } => vec![SelInput::new("Profiles or curves", PROFILES | CURVES, true)],
         Surf::Revolve { .. } => vec![SelInput::new("Profiles or curves", PROFILES | CURVES, true), SelInput::new("Axis", AXES, false)],
+        Surf::Sweep => vec![SelInput::new("Profiles or curves", PROFILES | CURVES, true), SelInput::new("Path", CURVES, true)],
         Surf::Patch => vec![SelInput::new("Boundary", PROFILES | EDGES, true)],
         Surf::Unstitch => vec![SelInput::new("Body, or faces to take out", BODIES | FACES, true)],
         Surf::ReverseNormal => vec![SelInput::new("Surface, or faces to turn over", BODIES | FACES, true)],
@@ -102,6 +105,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     let k = match id {
         "surface.extrude" => Surf::Extrude { distance: "10 mm".into(), direction: 0 },
         "surface.revolve" => Surf::Revolve { angle: "360 deg".into(), symmetric: false, axis: None },
+        "surface.sweep" => Surf::Sweep,
         "surface.patch" => Surf::Patch,
         "surface.unstitch" => Surf::Unstitch,
         "surface.reverse_normal" => Surf::ReverseNormal,
@@ -164,7 +168,7 @@ pub fn rows(ui: &mut egui::Ui, k: &mut Surf) -> bool {
             combo(ui, "sx_dir", &EXTRUDE_SIDES.map(|(label, _)| label), direction);
             ui.end_row();
         }
-        Surf::Patch | Surf::Trim | Surf::SplitFace | Surf::Unstitch | Surf::ReverseNormal => {}
+        Surf::Patch | Surf::Trim | Surf::SplitFace | Surf::Unstitch | Surf::ReverseNormal | Surf::Sweep => {}
     }
     enter
 }
@@ -265,6 +269,17 @@ pub fn commands(app: &SolveApp, k: &Surf, inputs: &[SelInput], extra: &Map<Strin
                 p["symmetric"] = json!(true);
             }
             ("surface.revolve", p)
+        }
+        Surf::Sweep => {
+            need(0, "profiles or curves to sweep")?;
+            need(1, "the path")?;
+            let mut p = sheet_picks(app, items(inputs, 0))?;
+            let path: Vec<String> =
+                items(inputs, 1).iter().filter_map(|x| if let Sel::SketchCurve { id } = x { Some(id.clone()) } else { None }).collect();
+            p["path_sketch"] =
+                json!(crate::dialogs::curves_sketch(app, &path, p["sketch"].as_u64()).ok_or("the path curves must be in one other sketch")?);
+            p["path"] = json!(path);
+            ("surface.sweep", p)
         }
         Surf::Patch => {
             need(0, "a boundary (sketch profiles or a loop of edges)")?;
@@ -386,6 +401,10 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(K
             }
             return Some((Kind::Surface(k), ins, extra));
         }
+        FeatureKind::SurfaceSweep { sketch, profiles, curves, path, .. } => (
+            Surf::Sweep,
+            vec![sheet_sels(app, *sketch, profiles.as_ref(), curves), path.iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect()],
+        ),
         FeatureKind::SurfaceExtrude { sketch, profiles, curves, extent } => {
             let sels = sheet_sels(app, *sketch, profiles.as_ref(), curves);
             let direction = match extent.direction {

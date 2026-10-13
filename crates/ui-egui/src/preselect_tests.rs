@@ -883,6 +883,34 @@ fn surface_revolve_dialog_takes_curves_and_an_axis() {
 }
 
 #[test]
+fn surface_sweep_dialog_takes_curves_and_a_path() {
+    // A line along y carried 5 up a line in the XZ plane: a 10 × 5 sheet. Edit Feature brings
+    // back the curve and the path.
+    let mut app = app_with(json!([
+        {"command": "sketch.create", "params": {"plane": "XY"}},
+        {"command": "sketch.line", "params": {"points": [[0, 0], [0, 10]], "ids": ["l"]}},
+        {"command": "sketch.finish", "params": {}},
+        {"command": "sketch.create", "params": {"plane": "XZ"}},
+        {"command": "sketch.line", "params": {"points": [[0, 0], [0, 5]], "ids": ["up"]}},
+        {"command": "sketch.finish", "params": {}}
+    ]));
+    let mut d = start(&mut app, vec![], "surface.sweep");
+    d.inputs[0].items = vec![Sel::SketchCurve { id: "l".into() }];
+    assert!(apply_commands(&app, &d).is_err(), "no path yet");
+    d.inputs[1].items = vec![Sel::SketchCurve { id: "up".into() }];
+    let (id, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!((id.as_str(), &p["path"], &p["curves"]), ("surface.sweep", &json!(["up"]), &json!(["l"])), "{p}");
+    assert_ne!(p["path_sketch"], p["sketch"], "{p}");
+    app.session.execute(&id, &p).unwrap();
+    let area = app.session.model.state().bodies.last().unwrap().mesh().measure().area;
+    assert!((area - 50.0).abs() < 1e-6, "{area}");
+    let fid = app.session.doc.features.last().unwrap().id;
+    let back = crate::dialogs::for_feature(&app, fid, None).unwrap();
+    assert_eq!(back.inputs[0].items, vec![Sel::SketchCurve { id: "l".into() }]);
+    assert_eq!(back.inputs[1].items, vec![Sel::SketchCurve { id: "up".into() }]);
+}
+
+#[test]
 fn patch_dialog_fills_a_loop_of_edges_that_is_not_planar() {
     // A box with its top cut away by a sideways cylinder: its rim is a closed loop of four
     // curved edges, not in a plane. Picking them in the Patch dialog fills it with one face.
