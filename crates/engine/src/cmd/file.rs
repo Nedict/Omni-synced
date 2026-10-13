@@ -78,7 +78,7 @@ fn add_step(s: &mut Session, path: &str, name: Option<&str>) -> Result<Value> {
     let st = s.model.state();
     let bodies: Vec<&str> = st.bodies.iter().filter(|b| b.feature == id).map(|b| b.name.as_str()).collect();
     let fname = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
-    Ok(json!({"path": path, "feature": id, "name": fname, "bodies": bodies, "warnings": sf.warnings}))
+    Ok(json!({"path": path, "feature": id, "name": fname, "bodies": bodies, "created_bodies": bodies, "warnings": sf.warnings}))
 }
 
 /// Add a MeshImport feature for a 3MF or STL file.
@@ -98,7 +98,7 @@ fn add_mesh(s: &mut Session, path: &str, name: Option<&str>) -> Result<Value> {
     let st = s.model.state();
     let bodies: Vec<&str> = st.bodies.iter().filter(|b| b.feature == id).map(|b| b.name.as_str()).collect();
     let fname = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
-    Ok(json!({"path": path, "feature": id, "name": fname, "bodies": bodies, "warnings": mf.warnings}))
+    Ok(json!({"path": path, "feature": id, "name": fname, "bodies": bodies, "created_bodies": bodies, "warnings": mf.warnings}))
 }
 
 fn insert_mesh(s: &mut Session, p: &Value) -> Result<Value> {

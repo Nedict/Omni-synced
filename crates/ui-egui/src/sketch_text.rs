@@ -22,6 +22,9 @@ pub struct Tx {
     pub(crate) link: String,
     pub(crate) text: String,
     initial_text: String,
+    /// The font as typed: an installed font's family name or a font file's path; empty is the built-in font.
+    pub(crate) font: String,
+    initial_font: String,
     values: [String; 4],
     /// The fields as first shown; an untouched field keeps its exact saved value.
     initial: [String; 4],
@@ -57,15 +60,16 @@ fn shown(value: f64, unit: &str) -> String {
     format!("{text} {unit}")
 }
 
-/// The saved text source behind `link` in the active sketch.
-fn source(app: &SolveApp, sketch: u64, link: &str) -> Option<(String, [f64; 4])> {
+/// The saved text source behind `link` in the active sketch: its text, its font (empty: the built-in
+/// font), and x, y, height and angle.
+fn source(app: &SolveApp, sketch: u64, link: &str) -> Option<(String, String, [f64; 4])> {
     if app.session.active_sketch != Some(sketch) {
         return None;
     }
     let sk = app.session.doc.sketch(sketch).ok()?;
     let source = sk.link(link).filter(|source| source.kind == LinkKind::Text)?;
-    let LinkSource::Text { text, at, height, angle } = &source.source else { return None };
-    Some((text.clone(), [at.x, at.y, *height, *angle]))
+    let LinkSource::Text { text, at, height, angle, font } = &source.source else { return None };
+    Some((text.clone(), font.clone().unwrap_or_default(), [at.x, at.y, *height, *angle]))
 }
 
 fn fields(original: &[f64; 4], unit: &'static str, scale: f64) -> [String; 4] {
@@ -80,10 +84,22 @@ fn kind_for(app: &SolveApp, entity: &str) -> Option<Kind> {
     let sketch = app.session.active_sketch?;
     let sk = app.session.doc.sketch(sketch).ok()?;
     let link = sk.curves.iter().find(|curve| curve.id == entity).and_then(|curve| curve.link.clone())?;
-    let (text, original) = source(app, sketch, &link)?;
+    let (text, font, original) = source(app, sketch, &link)?;
     let (scale, unit) = crate::prefs::unit_scale(&app.session.doc.units);
     let values = fields(&original, unit, scale);
-    Some(Kind::Text(Tx { sketch, link, initial_text: text.clone(), text, initial: values.clone(), values, original, unit, focus: true }))
+    Some(Kind::Text(Tx {
+        sketch,
+        link,
+        initial_text: text.clone(),
+        text,
+        initial_font: font.clone(),
+        font,
+        initial: values.clone(),
+        values,
+        original,
+        unit,
+        focus: true,
+    }))
 }
 
 /// `Dialog::for_command`: Edit Text with one text's outlines selected.
@@ -114,7 +130,7 @@ pub(crate) fn editing(app: &SolveApp) -> bool {
 /// text deleted or undone). Other design changes leave it open; when the saved source itself
 /// changed (undo, a script), fields the user has not touched follow it.
 pub(crate) fn refresh(app: &SolveApp, k: &mut Tx) -> bool {
-    let Some((text, original)) = source(app, k.sketch, &k.link) else { return false };
+    let Some((text, font, original)) = source(app, k.sketch, &k.link) else { return false };
     if original != k.original {
         let (scale, unit) = crate::prefs::unit_scale(&app.session.doc.units);
         let fresh = fields(&original, unit, scale);
@@ -133,6 +149,12 @@ pub(crate) fn refresh(app: &SolveApp, k: &mut Tx) -> bool {
         }
         k.initial_text = text;
     }
+    if font != k.initial_font {
+        if k.font == k.initial_font {
+            k.font = font.clone();
+        }
+        k.initial_font = font;
+    }
     true
 }
 
@@ -146,6 +168,12 @@ pub(crate) fn rows(ui: &mut egui::Ui, k: &mut Tx) -> bool {
         response.request_focus();
         k.focus = false;
     }
+    ui.end_row();
+    crate::dialogs::row_label(ui, "Font");
+    // Empty means the built-in font: its name is the hint.
+    let hint = solidcraft_engine::sketch::DEFAULT_FONT_FAMILY;
+    let response = ui.add(egui::TextEdit::singleline(&mut k.font).id_salt("sketch_text_font").hint_text(hint).desired_width(width));
+    crate::scenario::publish_handle("dialog:Font", response.rect.center());
     ui.end_row();
     let mut enter = false;
     for (label, value) in LABELS.iter().zip(k.values.iter_mut()) {
@@ -182,6 +210,10 @@ pub(crate) fn commands(app: &SolveApp, k: &Tx) -> Result<Vec<(String, Value)>, S
     // Omitting an unchanged angle keeps its exact saved radians.
     if k.values.get(3) != k.initial.get(3) {
         params["angle"] = json!(angle.to_degrees());
+    }
+    // An untouched font stays as saved; an emptied one is the built-in font.
+    if k.font.trim() != k.initial_font.trim() {
+        params["font"] = json!(k.font.trim());
     }
     Ok(vec![("sketch.edit_text".into(), params)])
 }
@@ -247,6 +279,7 @@ mod tests {
             at: solidcraft_engine::geom::Vec2::new(25.0, 12.0),
             height: 20.0,
             angle: std::f64::consts::FRAC_PI_2,
+            font: None,
         };
         assert_eq!(sk.link(&link).unwrap().source, expected);
         assert!(!h.app.session.world_state().sketch(sid).unwrap().profiles.is_empty());
@@ -272,7 +305,10 @@ mod tests {
         replace(&mut h, "dialog:Text", "O");
         ok(&mut h);
         let LinkSource::Text { at, height, angle, .. } = original else { panic!("text source") };
-        assert_eq!(h.app.session.doc.sketch(sid).unwrap().link(&link).unwrap().source, LinkSource::Text { text: "O".into(), at, height, angle });
+        assert_eq!(
+            h.app.session.doc.sketch(sid).unwrap().link(&link).unwrap().source,
+            LinkSource::Text { text: "O".into(), at, height, angle, font: None }
+        );
         h.app.session.selection = vec![Sel::SketchCurve { id: h.app.session.doc.sketch(sid).unwrap().curves[0].id.clone() }];
         h.app.start("sketch.edit_text");
         h.frames(3);
@@ -289,6 +325,64 @@ mod tests {
         assert!((size - 6.35).abs() < 1e-12);
         assert_eq!(rotation, angle);
         assert_eq!(h.app.session.undo.len(), undo + 1);
+    }
+
+    #[test]
+    fn the_font_row_sets_keeps_and_clears_the_font_of_a_text() {
+        // The repository's second font, BIZ UDPGothic: its "I" is 17.6385 mm² at a capital height of 10 mm, the built-in
+        // font's 13.5557 mm².
+        let font = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/solidcraft-web/fonts/BIZUDPGothic-Regular.ttf");
+        let (mut h, link, _) = setup();
+        // The dialog closes with the selection; the text's first outline is selected again to open it.
+        let reopen = |h: &mut Harness| {
+            let sid = h.app.session.active_sketch.unwrap();
+            let id = h.app.session.doc.sketch(sid).unwrap().curves[0].id.clone();
+            h.app.session.selection = vec![Sel::SketchCurve { id }];
+            h.app.start("sketch.edit_text");
+            h.frames(3);
+        };
+        let area = |h: &Harness| -> f64 {
+            let sid = h.app.session.active_sketch.unwrap();
+            h.app.session.world_state().sketch(sid).unwrap().profiles.iter().map(|p| p.area).sum()
+        };
+        assert!((area(&h) - 13.5557).abs() < 2e-3);
+        h.app.start("sketch.edit_text");
+        h.frames(3);
+        assert_eq!(tx(&h.app).font, "");
+        // A font that is not there keeps the dialog open with the reason, and the design as it was.
+        let before = (h.app.session.doc.to_json(), h.app.session.undo.len());
+        replace(&mut h, "dialog:Font", "No Such Family 12345");
+        ok(&mut h);
+        assert!(editing(&h.app));
+        assert!(h.app.dialog.as_ref().unwrap().error.as_ref().is_some_and(|e| e.contains("unknown font")));
+        assert_eq!((h.app.session.doc.to_json(), h.app.session.undo.len()), before);
+        // A font file: one undo step, other outlines, and the dialog shows the font when it is opened again.
+        replace(&mut h, "dialog:Font", font);
+        ok(&mut h);
+        assert!(!editing(&h.app));
+        assert_eq!(h.app.session.undo.len(), before.1 + 1);
+        let sid = h.app.session.active_sketch.unwrap();
+        let font_of = |h: &Harness| match &h.app.session.doc.sketch(sid).unwrap().link(&link).unwrap().source {
+            LinkSource::Text { font, .. } => font.clone(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(font_of(&h).as_deref(), Some(font));
+        assert!((area(&h) - 17.6385).abs() < 2e-3);
+        reopen(&mut h);
+        assert_eq!(tx(&h.app).font, font);
+        // Changing only the text keeps the font: two I's of it.
+        replace(&mut h, "dialog:Text", "II");
+        ok(&mut h);
+        assert_eq!(font_of(&h).as_deref(), Some(font));
+        assert!((area(&h) - 2.0 * 17.6385).abs() < 2e-3);
+        // An emptied field is the built-in font again: two I's of it.
+        reopen(&mut h);
+        h.step(&json!({"click":{"handle":"dialog:Font"}})).unwrap();
+        h.step(&json!({"key":"A","cmd":true})).unwrap();
+        h.step(&json!({"key":"Backspace"})).unwrap();
+        ok(&mut h);
+        assert_eq!(font_of(&h), None);
+        assert!((area(&h) - 2.0 * 13.5557).abs() < 2e-3);
     }
 
     #[test]

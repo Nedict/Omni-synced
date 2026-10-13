@@ -51,7 +51,7 @@ keeps the current design. Previews cannot be edited or measured. This experiment
 requires `preview: true` in an engine Save/Save As call; ordinary saves omit display caches.
 The repository's `docs/design-container.md` describes limits and encoding details.
 
-Current designs use format 16, including sheet metal corner relief shapes, sketch face anchors on cylinder caps, sketch axis
+Current designs use format 16, including the font of sketch text, sheet metal corner relief shapes, sketch face anchors on cylinder caps, sketch axis
 links, persistent
 names from exact face history, exact planar shell-face anchors, persistent analytic offset boundary roles and
 association profile references, durable sketch face anchors, periodic fit splines and versioned

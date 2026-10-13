@@ -147,6 +147,9 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 
 ## View navigation
 
+- Desktop Ctrl/Cmd +/- and 0 change or reset the saved UI scale. The scale slider keeps
+  its layout stable during a drag and applies the selected scale on release.
+
 - OpenSCAD navigation preset: left drag orbits, right/middle drag pans, Shift+right/middle
   drag zooms, and the wheel zooms. Available in the shared desktop/web Navigation preferences.
 - Compact clickable signed X/Y/Z axis tips, smooth drag-to-orbit, and Shift-orbit snapping
