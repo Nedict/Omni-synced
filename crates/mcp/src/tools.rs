@@ -4,13 +4,14 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Map, Value, json};
+use solidcraft_engine::io::vfs;
 
 use crate::backend::Backend;
 
 /// Most commands in one `batch` call.
 const MAX_BATCH: usize = 10_000;
 /// Largest image returned by `screenshot`.
-const MAX_IMAGE_BYTES: u64 = 32 << 20;
+const MAX_IMAGE_BYTES: usize = 32 << 20;
 
 const VIEWS: &[&str] = &["iso", "home", "front", "back", "top", "bottom", "left", "right", "fit"];
 
@@ -540,7 +541,8 @@ fn capture(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<(Vec<u8>, Valu
     let keep = str_arg(a, "path").filter(|p| !p.trim().is_empty()).map(str::to_string);
     let path = keep.clone().unwrap_or_else(|| {
         let n = SHOT.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("solidcraft-mcp-{}-{n}.png", std::process::id())).to_string_lossy().to_string()
+        let dir = crate::scratch_dir().unwrap_or_else(std::env::temp_dir);
+        dir.join(format!("shot-{n}.png")).to_string_lossy().to_string()
     });
     let window = match str_arg(a, "source") {
         Some("model") => false,
@@ -558,12 +560,9 @@ fn capture(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<(Vec<u8>, Valu
     } else {
         (render(b)?, "model")
     };
-    let read = std::fs::metadata(&path)
-        .map_err(|e| format!("{path}: {e}"))
-        .and_then(|m| if m.len() > MAX_IMAGE_BYTES { Err(format!("{path}: image too large")) } else { Ok(()) })
-        .and_then(|()| std::fs::read(&path).map_err(|e| format!("{path}: {e} (is the app on another machine?)")));
+    let read = vfs::read(&path, MAX_IMAGE_BYTES).map_err(|e| format!("{path}: {e} (is the app on another machine?)"));
     if keep.is_none() {
-        let _ = std::fs::remove_file(&path);
+        let _ = vfs::remove(&path);
     }
     let png = read?;
     let (w, h) = match source {

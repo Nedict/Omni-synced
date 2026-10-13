@@ -6,7 +6,7 @@ use std::sync::{Arc, OnceLock};
 
 use serde::Serialize;
 use solidcraft_geom::tess::TessPlan;
-use solidcraft_geom::{Mesh, Plane, Region2, Vec2, Vec3};
+use solidcraft_geom::{Mesh, Plane, Region2, Vec2, Vec3, regions_apart};
 use solidcraft_kernel::{self as kernel, Body, BoolOp};
 use solidcraft_sketch::{CurveKind, Profile, SolveReport, find_profiles};
 
@@ -2292,6 +2292,9 @@ fn centered_extrude(plane: &Plane, region: &Region2, start: f64, end: f64, sketc
         .collect()
 }
 
+/// How far apart (mm) profiles must stay for their extruded tools to be cut as one.
+const APART_GAP: f64 = 1e-3;
+
 /// The tool bodies a feature adds or removes (extrude, revolve, primitives), in the current state.
 fn feature_tools_with_constructor(
     doc: &Document,
@@ -2386,6 +2389,8 @@ fn feature_tools_with_constructor(
             }
             let mut tools = Vec::new();
             let mut untrimmed = extent.to.is_none() && extent.from.is_none() && !extent.through_all;
+            // The footprint of each tool in the sketch: a tool lies in the prism over it.
+            let mut footprints = Vec::with_capacity(regions.len());
             for r in &regions {
                 if *operation == Operation::Join {
                     let exact = centered_extrude(&ss.plane, r, lo + off, hi + off, Some(&ss))?;
@@ -2398,6 +2403,7 @@ fn feature_tools_with_constructor(
                         // Preserve a whole touching face: extending into a chamfer replaces
                         // the sewable seam with a coincident curved intersection.
                         tools.extend(exact);
+                        footprints.push(r.clone());
                         continue;
                     }
                 }
@@ -2407,6 +2413,20 @@ fn feature_tools_with_constructor(
                 let r = grow_profile_for_coplanar(st, r, *operation, targets, &probe);
                 untrimmed &= l2 == lo + off && h2 == hi + off && &r == original;
                 tools.extend(centered_extrude(&ss.plane, &r, l2, h2, Some(&ss))?);
+                footprints.push(r);
+            }
+            // A cut by profiles apart in the sketch (the letters of a text): each tool lies in the
+            // prism over its footprint, so the tools are apart too (whatever their heights, and
+            // trimmed or not). The body is then cut once by all of them rather than once per
+            // profile, each cut working on a body grown by the one before.
+            // (Sheet metal keeps its own way of cutting, tool by tool, to keep its flat pattern.)
+            let sheet =
+                if targets.is_empty() { !st.sheets.is_empty() } else { targets.iter().any(|t| st.sheets.iter().any(|sheet| &sheet.body == t)) };
+            if *operation == Operation::Cut && !sheet && tools.len() > 1 && regions_apart(&footprints, APART_GAP) {
+                let bodies: Vec<Body> = tools.iter().map(|t| t.body.clone()).collect();
+                if let Ok(Some(one)) = kernel::join_apart(&bodies) {
+                    tools = vec![Traced::step(one, &tools.iter().collect::<Vec<_>>())];
+                }
             }
             if let Some(tb) = curved.and_then(|bi| st.bodies.get(bi)) {
                 let start = if hi > 0.0 { lo + off } else { hi + off };
