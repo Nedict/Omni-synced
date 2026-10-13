@@ -377,3 +377,7 @@ mod tests;
 #[cfg(test)]
 #[path = "sketch_typed_intent_tests.rs"]
 mod typed_intent_tests;
+
+#[cfg(test)]
+#[path = "sketch_clover_ui_tests.rs"]
+mod clover_ui_tests;
