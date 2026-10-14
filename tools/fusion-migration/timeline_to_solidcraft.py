@@ -443,6 +443,54 @@ def verify(cli, script_path):
             "faces": t.get("faces")}
 
 
+def fusion_volumes(export_dir):
+    """Fusion's own volume per design, from the export manifest.
+
+    Building without error only proves a script ran; it says nothing about whether the result is
+    the part you started with. A rebuilt timeline and the STEP export of the same design should
+    agree on how much material there is, and that is the only check here that can actually catch
+    a translation that is quietly wrong -- a missed cut, a fillet on the wrong edge, an extrude
+    that went the other way.
+    """
+    manifest = os.path.join(export_dir, "manifest.json")
+    if not os.path.exists(manifest):
+        return {}
+    out = {}
+    try:
+        with open(manifest, encoding="utf-8") as fh:
+            for r in json.load(fh).get("designs", []):
+                m = r.get("measure") or {}
+                if m.get("volume_mm3") and r.get("step"):
+                    stem = os.path.splitext(r["step"].replace("\\", "/"))[0]
+                    out[stem.lower()] = m["volume_mm3"]
+    except Exception:
+        return {}
+    return out
+
+
+# Volume on curved faces is measured from a tessellation; a plain cylinder reads 1.1e-4 under
+# analytic, so this sits above that floor and far below anything a real mistranslation costs.
+REBUILD_TOL = 1e-3
+
+
+def compare_to_fusion(report, rel_stem, volumes):
+    """Judge a rebuilt design against Fusion's measurement of the original."""
+    want = volumes.get(rel_stem.lower())
+    v = report.get("verify") or {}
+    if want is None or not v.get("ok") or not v.get("volume_mm3"):
+        return
+    got = v["volume_mm3"]
+    drift = abs(got - want) / want if want else None
+    report["fusion_volume_mm3"] = want
+    report["volume_drift"] = drift
+    if drift is not None and drift <= REBUILD_TOL:
+        # Only a design whose every step translated can be called a faithful rebuild; a partial
+        # one matching by luck is still partial.
+        report["fidelity"] = ("exact" if report["coverage"] >= 1.0 else "partial-but-matching")
+    else:
+        report["fidelity"] = "volume-mismatch"
+
+
 def one(path, out_path, cli, do_verify):
     with open(path, encoding="utf-8") as fh:
         doc = json.load(fh)
@@ -469,6 +517,8 @@ def main():
     ap.add_argument("--outdir", default=os.path.join(HOME, "cad", "rebuilt"))
     ap.add_argument("--verify", action="store_true", help="build each script and measure it")
     ap.add_argument("--cli", default=DEFAULT_CLI)
+    ap.add_argument("--against", default=os.path.join(HOME, "cad", "fusion-export"),
+                    help="export tree whose manifest holds Fusion's own volumes")
     args = ap.parse_args()
 
     if args.verify and not os.path.exists(args.cli):
@@ -495,6 +545,14 @@ def main():
             )
         files.sort()
 
+        volumes = fusion_volumes(args.against) if args.verify else {}
+        if args.verify:
+            print("{} designs have a Fusion volume to check against\n".format(len(volumes))
+                  if volumes else
+                  "no export manifest at {} -- builds will be checked for success only,\n"
+                  "not for correctness. Run ExportAllDesigns in Fusion to enable that.\n"
+                  .format(args.against))
+
         reports = []
         for f in files:
             rel = os.path.relpath(f, root).replace("\\", "/")
@@ -502,14 +560,29 @@ def main():
             out_path = os.path.join(args.outdir, stem + ".json")
             try:
                 r = one(f, out_path, args.cli, args.verify)
+                # The document's own "path" is its folder, so two designs in one folder share it.
+                # Carry the full stem as well, which is what identifies a design everywhere else
+                # (the export manifest, the rebuilt scripts, this report).
+                r["stem"] = stem
             except Exception as e:
                 print("FAIL {} - {}".format(rel, e))
                 continue
+            if args.verify and volumes:
+                compare_to_fusion(r, stem, volumes)
             reports.append(r)
             v = r.get("verify") or {}
             vs = ""
             if args.verify:
-                vs = " | built {} bodies".format(v.get("bodies")) if v.get("ok") else " | BUILD FAILED"
+                if not v.get("ok"):
+                    vs = " | BUILD FAILED"
+                elif r.get("fidelity") == "exact":
+                    vs = " | MATCHES FUSION"
+                elif r.get("fidelity") == "partial-but-matching":
+                    vs = " | volume matches (partial)"
+                elif r.get("fidelity") == "volume-mismatch":
+                    vs = " | VOLUME OFF {:.2%}".format(r.get("volume_drift") or 0)
+                else:
+                    vs = " | built {} bodies".format(v.get("bodies"))
             print("{:>5.0%}  {:>3}/{:<3} steps  {}{}".format(
                 r["coverage"], r["steps_translated"], r["steps_total"], stem[:48], vs))
 
@@ -521,6 +594,14 @@ def main():
         got = sum(r["steps_translated"] for r in reports)
         print("\n{} designs, {}/{} timeline steps translated ({:.0%})".format(
             len(reports), got, tot, (got / tot) if tot else 0))
+
+        checked = [r for r in reports if r.get("fidelity")]
+        if checked:
+            exact = sum(1 for r in checked if r["fidelity"] == "exact")
+            part = sum(1 for r in checked if r["fidelity"] == "partial-but-matching")
+            off = sum(1 for r in checked if r["fidelity"] == "volume-mismatch")
+            print("\nchecked against Fusion's own volumes: {} faithful, {} matching but "
+                  "partial, {} wrong".format(exact, part, off))
 
         missing = {}
         for r in reports:
