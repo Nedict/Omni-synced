@@ -40,6 +40,7 @@ pub use profile_refs::{capture_profile_selection, profile_selection_indices};
 pub mod plastic;
 pub mod project;
 mod project3d;
+pub mod render_settings;
 pub use project3d::iso_grid;
 pub mod sheet;
 

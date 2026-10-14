@@ -349,22 +349,40 @@ fn mismatch(a: &Mat, b: &Mat) -> (f64, f64) {
     (t, sin2.atan2(c(0, 0) + c(1, 1) + c(2, 2) - 1.0))
 }
 
-/// Passes over the motion links: a chain of this many links carries a value through in any order.
-const MAX_LINK_HOPS: usize = 4;
+/// Passes over the motion links at most: a chain of up to this many links carries its value
+/// through, whatever order its links are stored in.
+const MAX_LINK_PASSES: usize = 64;
 
-/// Motion links in order (a few passes for chains), then the linked values' limits.
+/// Motion links, pass after pass until nothing changes (a chain stored from its end takes a pass
+/// per link), each linked value within its joint's limits as it is set. The result is the same
+/// whatever the values were before and however the links are stored, so applying them again
+/// changes nothing (links that form a cycle stop after `MAX_LINK_PASSES`).
 fn apply_links(asm: &Assembly, vals: &mut Values) {
-    for _ in 0..MAX_LINK_HOPS {
+    let limits: BTreeMap<(u64, usize), (f64, f64)> = asm
+        .links
+        .iter()
+        .filter_map(|l| {
+            let (lo, hi) = asm.joints.iter().find(|j| j.id == l.b)?.limits.get(l.ib).copied().flatten()?;
+            Some(((l.b, l.ib), (lo.min(hi), hi.max(lo))))
+        })
+        .collect();
+    // The linked values, to see whether a pass changed any (several links writing one value
+    // change it within a pass, but settle from one pass to the next).
+    let linked = |vals: &Values| -> Vec<Option<f64>> { asm.links.iter().map(|l| vals.get(&l.b).and_then(|q| q.get(l.ib)).copied()).collect() };
+    for _ in 0..MAX_LINK_PASSES {
+        let before = linked(vals);
         for l in &asm.links {
             let Some(src) = vals.get(&l.a).and_then(|q| q.get(l.ia)).copied() else { continue };
+            let mut next = l.ratio * src + l.offset;
+            if let Some((lo, hi)) = limits.get(&(l.b, l.ib)) {
+                next = next.max(*lo).min(*hi);
+            }
             if let Some(v) = vals.get_mut(&l.b).and_then(|q| q.get_mut(l.ib)) {
-                *v = l.ratio * src + l.offset;
+                *v = next;
             }
         }
-    }
-    for l in &asm.links {
-        if let (Some(j), Some(q)) = (asm.joints.iter().find(|j| j.id == l.b), vals.get_mut(&l.b)) {
-            clamp(j, q);
+        if linked(vals) == before {
+            break;
         }
     }
 }
@@ -481,7 +499,7 @@ fn link_chains(asm: &Assembly, tree: &Tree, around: &BTreeSet<u64>, linked: &BTr
     let mut frontier: BTreeSet<(u64, usize)> =
         around.iter().filter_map(|id| tree.joints.get(id)).flat_map(|j| (0..j.kind.dofs().len()).map(|i| (j.id, i))).collect();
     let mut seen = frontier.clone();
-    for _ in 0..MAX_LINK_HOPS {
+    for _ in 0..MAX_LINK_PASSES {
         let next: BTreeSet<(u64, usize)> =
             asm.links.iter().filter(|l| frontier.contains(&(l.b, l.ib))).map(|l| (l.a, l.ia)).filter(|v| !seen.contains(v)).collect();
         if next.is_empty() {
@@ -988,6 +1006,48 @@ mod tests {
     fn close(a: &Mat, b: &Mat) -> bool {
         let (t, r) = mismatch(a, b);
         t < 1e-9 && r < 1e-9
+    }
+
+    /// Revolute joints 1…n (joint 1 at `start`, the others at 0) linked 1 → 2 → … → n with
+    /// ratio 2, the links stored from the end of the chain; joint 3 limited to ±50.
+    fn chain(n: u64, start: f64) -> Assembly {
+        let origin = JointOrigin { occurrence: 0, snap: Snap::Point { point: Vec3::ZERO, z: None } };
+        let joints = (1..=n)
+            .map(|id| Joint {
+                id,
+                name: format!("J{id}"),
+                kind: JointKind::Revolute,
+                a: origin.clone(),
+                b: origin.clone(),
+                values: vec![if id == 1 { start } else { 0.0 }],
+                limits: vec![(id == 3).then_some((-50.0, 50.0))],
+                flip: false,
+                offset: 0.0,
+                angle: 0.0,
+                suppressed: false,
+            })
+            .collect();
+        let links = (1..n).rev().map(|a| MotionLink { a, ia: 0, b: a + 1, ib: 0, ratio: 2.0, offset: 0.0 }).collect();
+        Assembly { joints, links, ..Assembly::default() }
+    }
+
+    /// Links carry a value down a chain stored from its end, each linked value within its limits
+    /// as it is set, and applying them again changes nothing.
+    #[test]
+    fn links_settle_whatever_order_they_are_stored_in() {
+        let asm = chain(8, 10.0);
+        let vals = joint_values(&asm);
+        let at = |id: u64| vals.get(&id).and_then(|q| q.first()).copied().unwrap_or(f64::NAN);
+        // 10 → 20 → 40 (within joint 3's limit) → 80 → … → 1280.
+        assert_eq!((at(1), at(2), at(3), at(4), at(8)), (10.0, 20.0, 40.0, 80.0, 1280.0));
+        let asm = chain(8, 40.0);
+        let vals = joint_values(&asm);
+        let at = |id: u64| vals.get(&id).and_then(|q| q.first()).copied().unwrap_or(f64::NAN);
+        // Joint 3 would be 160: held at 50, and what follows it follows the 50.
+        assert_eq!((at(3), at(4), at(8)), (50.0, 100.0, 1600.0));
+        let mut again = vals.clone();
+        apply_links(&asm, &mut again);
+        assert_eq!(again, vals);
     }
 
     #[test]

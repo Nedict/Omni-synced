@@ -325,6 +325,7 @@ surface_offset
   expressions: soff.distance, soff.tolerance
 unstitch
 reverse_normal
+surface_untrim
 surface_extend
   inputs:
     Distance = extend.distance (Length)

@@ -360,7 +360,7 @@ macro_rules! feature_walk {
                         f("Angle", a, A, I);
                     }
                 }
-                FeatureKind::Unstitch { .. } | FeatureKind::ReverseNormal { .. } => {}
+                FeatureKind::Unstitch { .. } | FeatureKind::ReverseNormal { .. } | FeatureKind::SurfaceUntrim { .. } => {}
                 FeatureKind::SurfaceOffset { distance, tolerance, .. } => {
                     f("Distance", distance, L, I);
                     if let Some(t) = tolerance {

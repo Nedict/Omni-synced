@@ -53,6 +53,9 @@ pub struct Built {
     pub applied: Option<(f64, f64)>,
     /// The radius spline of each edge a fillet tapered (`fit: taper`), with a point on the edge.
     pub tapered: Vec<(Vec3, solidcraft_engine::kernel::Taper)>,
+    /// The reply of a previewed drive that stopped short of the asked values (the dialog says
+    /// where and why, in the UI's language).
+    pub stopped: Option<serde_json::Value>,
 }
 
 type Job = Result<Built, String>;
@@ -90,6 +93,8 @@ pub struct PreviewState {
     started: f64,
     /// The smallest and largest radius the previewed fillet used when it reduced the one asked for.
     pub applied: Option<(f64, f64)>,
+    /// The reply of a previewed drive that stopped short (see [`Built::stopped`]).
+    pub stopped: Option<serde_json::Value>,
     /// The radius splines the previewed fillet tapered its edges with.
     pub tapered: Vec<(Vec3, solidcraft_engine::kernel::Taper)>,
 }
@@ -101,6 +106,7 @@ impl PreviewState {
         self.shown_key = None;
         self.error = None;
         self.applied = None;
+        self.stopped = None;
         self.tapered.clear();
         self.sketches.clear();
         self.busy = false;
@@ -130,6 +136,7 @@ impl PreviewState {
                 self.active = true;
                 self.error = b.error;
                 self.applied = b.applied;
+                self.stopped = b.stopped;
                 self.tapered = b.tapered;
                 self.set_scene(b.scene);
             }
@@ -137,6 +144,7 @@ impl PreviewState {
                 self.sketches.clear();
                 self.error = Some(e);
                 self.applied = None;
+                self.stopped = None;
                 self.tapered.clear();
             }
         }
@@ -338,6 +346,7 @@ fn compute_staged(s: &Session, cmds: &[(String, Value)], colors: Colors, partial
                 bounds: b.bounds,
                 applied: None,
                 tapered: Vec::new(),
+                stopped: None,
             });
             b.error = s.preview(cmds).err().map(|e| e.to_string());
             Ok(b)
@@ -387,7 +396,16 @@ fn build_tool(before: &ModelState, after: &ModelState, c: Colors, op: &str) -> B
             }
         }
     }
-    Built { scene: sc, sketches: Vec::new(), replaced: Vec::new(), error: None, bounds: Aabb3::EMPTY, applied: None, tapered: Vec::new() }
+    Built {
+        scene: sc,
+        sketches: Vec::new(),
+        replaced: Vec::new(),
+        error: None,
+        bounds: Aabb3::EMPTY,
+        applied: None,
+        tapered: Vec::new(),
+        stopped: None,
+    }
 }
 
 /// The same commands making a new body instead of joining, cutting or intersecting, and the
@@ -524,7 +542,7 @@ pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
             if indices.is_empty() && points.is_empty() { None } else { Some(SketchPreview { sketch: sketch.clone(), curves: indices, points }) }
         })
         .collect();
-    Built { scene: sc, sketches, replaced, error: None, bounds: Aabb3::EMPTY, applied: None, tapered: Vec::new() }
+    Built { scene: sc, sketches, replaced, error: None, bounds: Aabb3::EMPTY, applied: None, tapered: Vec::new(), stopped: None }
 }
 
 /// Which of the `nf` faces of `m` are new surface, i.e. not on the old mesh? Each is decided by
@@ -719,6 +737,7 @@ mod tests {
             bounds: Aabb3::EMPTY,
             applied: None,
             tapered: Vec::new(),
+            stopped: None,
         }
     }
 

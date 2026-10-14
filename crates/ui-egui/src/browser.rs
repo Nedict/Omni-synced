@@ -57,6 +57,8 @@ pub struct TreeState {
     pub picked_components: Vec<u64>,
     /// Canvases picked in the tree.
     pub picked_canvases: Vec<u64>,
+    /// Joints picked in the tree (a hidden one shows highlighted while it is picked).
+    pub picked_joints: Vec<u64>,
     /// Folders picked in the feature history (features use the engine selection).
     pub picked_timeline_groups: Vec<u64>,
     /// Last feature-history item clicked, for Shift ranges (`f:<id>` or `g:<id>`).
@@ -429,6 +431,7 @@ fn click_select(app: &mut SolveApp, ui: &egui::Ui, key: String, sel: Option<Sel>
         }
     } else {
         app.tree.picked_components.clear();
+        app.tree.picked_joints.clear();
         let _ = app.run("select.set", json!({ "items": [sel] }));
     }
 }
@@ -1032,6 +1035,7 @@ fn canvas_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &mut A
             if !ui.input(|i| i.modifiers.command || i.modifiers.ctrl) {
                 app.tree.picked_canvases.clear();
                 app.tree.picked_components.clear();
+                app.tree.picked_joints.clear();
                 let _ = app.run("select.clear", json!({}));
             }
             if selected {
