@@ -842,3 +842,45 @@ fn older_designs_show_every_joint_and_new_joints_start_shown() {
     assert!(s.joint_visible(again), "id {again} reused from {glue}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Dials R0…R4 on revolute joints to ground, linked R0 → R1 → … → `last` (ratio 1), the links
+/// stored from the end of the chain to its start.
+fn reverse_link_chain(s: &mut Session, last: &str) {
+    for k in 0..5 {
+        let x = 100.0 + 10.0 * f64::from(k);
+        part(s, &format!("R{k}"), [x, 0.0, -5.0]);
+        pin(s, "revolute", &format!("R{k}"), "Ground", &format!("R{k}"), Vec3::new(x, 0.0, 0.0), Vec3::Z);
+    }
+    for k in (0..5).rev() {
+        let b = if k == 4 { last.to_string() } else { format!("R{}", k + 1) };
+        run(s, "joint.motion_link", json!({"a": format!("R{k}"), "b": b, "ratio": 1}));
+    }
+}
+
+/// A motion link chain carries a value through all its links, however they are stored: five
+/// links stored from the end still turn the last joint with the first.
+#[test]
+fn a_link_chain_stored_backwards_carries_its_value_through() {
+    let (mut s, _, _) = four_bar();
+    part(&mut s, "Last", [200.0, 0.0, -5.0]);
+    pin(&mut s, "revolute", "Last", "Ground", "Last", Vec3::new(200.0, 0.0, 0.0), Vec3::Z);
+    reverse_link_chain(&mut s, "Last");
+    run(&mut s, "joint.drive", json!({"joint": "R0", "value": 10}));
+    let l = run(&mut s, "joint.list", json!({}));
+    let last = l["joints"].as_array().into_iter().flatten().find(|j| j["name"] == "Last").map(|j| j["values"][0]["value"].clone());
+    assert!((last.and_then(|v| v.as_f64()).unwrap_or(f64::NAN) - 10.0).abs() < 1e-9, "{l}");
+}
+
+/// Driving the start of such a chain into a four-bar's crank turns the mechanism, and never
+/// reports its loop as opened.
+#[test]
+fn a_link_chain_stored_backwards_drives_a_loop() {
+    let (mut s, _, q0) = four_bar();
+    reverse_link_chain(&mut s, "Crank");
+    for v in [1.0, 30.0] {
+        let r = run(&mut s, "joint.drive", json!({"joint": "R0", "value": v}));
+        assert_eq!(r["conflicts"].as_array().map(Vec::len), Some(0), "{v}: {r}");
+        assert!(r["stopped_by_loop"].is_null(), "{v}: {r}");
+        assert!(near(place(&s, "Rocker", q0), rocker_pin(0.0, v, q0)), "{v}: {:?}", place(&s, "Rocker", q0));
+    }
+}

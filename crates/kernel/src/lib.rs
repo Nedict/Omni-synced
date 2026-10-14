@@ -49,6 +49,8 @@ mod issue_674_tests;
 #[cfg(test)]
 mod issue_679_tests;
 #[cfg(test)]
+mod issue_788_tests;
+#[cfg(test)]
 mod issue_851_tests;
 #[cfg(test)]
 mod issue_871_tests;
@@ -90,6 +92,7 @@ mod surface_offset;
 mod surface_untrim;
 mod surfaces;
 mod sweep_path;
+mod tangent_cylinders;
 mod tess;
 #[cfg(test)]
 mod thread_tests;

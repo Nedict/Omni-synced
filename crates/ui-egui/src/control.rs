@@ -630,14 +630,14 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
         "ui.render" => {
             let w = f("width").unwrap_or(1280.0).clamp(16.0, 8192.0) as usize;
             let h = f("height").unwrap_or(800.0).clamp(16.0, 8192.0) as usize;
-            // In the window's theme, and cut by the section the viewport shows (an open Section
+            // In the window's theme and colour vision mode, and cut by the section the viewport shows (an open Section
             // Analysis dialog's preview, a sketch's Slice), not only the committed one.
             let scene = solidcraft_engine::view::scene_with_palette(
                 &app.session,
                 &app.cam,
                 crate::viewport::section_plane(app),
                 solidcraft_engine::view::world_curve_parts,
-                &crate::viewport::scene_palette(app.ui.dark),
+                &crate::viewport::scene_palette(app.ui.dark, app.preferences.color_vision),
             );
             let Some(png) = render_png(&scene, &app.cam, w, h) else { return err("render failed") };
             match s("path") {
