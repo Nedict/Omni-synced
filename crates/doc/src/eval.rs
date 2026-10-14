@@ -31,6 +31,9 @@ pub struct ModelBody {
     /// The display plan (none when the body has no plan: a mesh body, or one the planner
     /// refuses), shared like the mesh. A GPU viewport draws it.
     plan: Arc<OnceLock<Option<Arc<TessPlan>>>>,
+    /// The plan evaluated on the CPU (none without a plan), shared like the mesh: the triangles a
+    /// GPU viewport draws, so a highlight over a face lies exactly on it.
+    plan_mesh: Arc<OnceLock<Option<Arc<Mesh>>>>,
     /// Identity of this body's content for the evaluation cache: the key of the evaluation
     /// that produced it (kept while later features pass it through unchanged).
     key: u64,
@@ -59,6 +62,7 @@ impl ModelBody {
             feature,
             mesh: Arc::new(OnceLock::new()),
             plan: Arc::new(OnceLock::new()),
+            plan_mesh: Arc::new(OnceLock::new()),
             key: 0,
             names: Default::default(),
             made: Default::default(),
@@ -96,6 +100,14 @@ impl ModelBody {
                 }
             })
             .clone()
+    }
+
+    /// The display plan's mesh, evaluated on the CPU once: the same triangles a GPU viewport
+    /// evaluates and draws for this body. Highlights over a face drawn from the plan use it, since
+    /// the reference mesh ([`ModelBody::mesh`]) triangulates the face differently and the two
+    /// would fight at equal depth. `None` when the body has no plan.
+    pub fn plan_mesh(&self) -> Option<Arc<Mesh>> {
+        self.plan_mesh.get_or_init(|| self.display_plan().and_then(|plan| self.body.display_mesh_of(&plan).ok()).map(Arc::new)).clone()
     }
 
     /// The display mesh's chord tolerance: 1/1000 of the body's size.
@@ -263,6 +275,24 @@ fn thread_groove(t: &ThreadInfo, radius: f64, open: (bool, bool)) -> Result<soli
     }
     if len / p > 190.0 {
         return Err(DocError::Invalid(format!("a modelled thread is limited to 190 turns ({:.0} mm at this pitch); use a cosmetic one", 190.0 * p)));
+    }
+    // How deep the groove cuts into the material: from the hole wall out to the major diameter,
+    // or from the shaft's surface in to the root. Next to nothing (a hole as wide as the thread,
+    // #995) is refused: the faceted cut would leave the face faceted and unthreaded.
+    let basic = 5.0 * h / 8.0;
+    let depth = if t.internal { d / 2.0 - radius } else { radius - (d / 2.0 - basic) };
+    if !(depth >= basic / 4.0) {
+        let (m, dia) = (&t.designation, 2.0 * radius);
+        let cut = format!("it would cut {:.2} mm of the thread's {basic:.2} mm depth", depth.max(0.0));
+        let alt = thread_for(dia, t.internal).map(|(n, q)| format_thread(n, q)).filter(|a| a != m);
+        let shown = show_mm(dia);
+        return Err(DocError::Invalid(if t.internal {
+            let alt = alt.map(|a| format!(", or thread this hole {a}")).unwrap_or_default();
+            format!("this {shown} mm hole is too wide for a modelled {m} thread: {cut}; drill {} mm for {m}{alt}", show_mm(d - p))
+        } else {
+            let alt = alt.map(|a| format!(", or thread this shaft {a}")).unwrap_or_default();
+            format!("this {shown} mm shaft is too thin for a modelled {m} thread: {cut}; make the shaft {} mm for {m}{alt}", show_mm(d))
+        }));
     }
     // (radius, half width of the groove) at its two ends: a trapezoid in the axial plane.
     let (r0, w0, r1, w1) = if t.internal {
