@@ -50,6 +50,8 @@ pub struct Documents {
     pub quitting: Option<Vec<usize>>,
     /// The "save changes?" button the arrow keys have picked; Enter gives it.
     pub choice: Answer,
+    /// Save As is answering a Close/Quit prompt.
+    saving: bool,
 }
 
 impl Documents {
@@ -111,6 +113,9 @@ fn swap_in(app: &mut SolveApp, slot: DocSlot) -> DocSlot {
 
 /// Make tab `i` the active design.
 pub fn switch(app: &mut SolveApp, i: usize) {
+    if app.file_picker_busy() {
+        return;
+    }
     app.home.open = false;
     if i == app.docs.active || i >= app.docs.slots.len() {
         return;
@@ -167,6 +172,9 @@ pub fn adopt(app: &mut SolveApp, session: Session) {
 
 /// A new, empty design in its own tab.
 pub fn new_design(app: &mut SolveApp) {
+    if app.file_picker_busy() {
+        return;
+    }
     app.home.open = false;
     if active_is_blank(app) {
         return;
@@ -188,6 +196,9 @@ pub fn prepare_open(app: &mut SolveApp) {
 
 /// Close tab `i`: asks first when it has unsaved changes (`force`: close anyway).
 pub fn close(app: &mut SolveApp, i: usize, force: bool) {
+    if app.file_picker_busy() {
+        return;
+    }
     let n = app.docs.count();
     if i >= n {
         return;
@@ -227,6 +238,9 @@ pub fn close(app: &mut SolveApp, i: usize, force: bool) {
 /// design with unsaved changes, then sets `app.quit_requested` for the host to close the window.
 /// Cancel, or a Save that didn't save, stays open.
 pub fn request_quit(app: &mut SolveApp) {
+    if app.file_picker_busy() {
+        return;
+    }
     if app.docs.quitting.is_none() {
         app.docs.quitting = Some(Vec::new());
     }
@@ -536,21 +550,18 @@ pub fn prompt(app: &mut SolveApp, ctx: &egui::Context) {
 
 /// Act on the "save changes?" answer (also the control channel's `ui.documents {answer}`).
 pub fn answer_prompt(app: &mut SolveApp, answer: Answer) {
+    if app.file_picker_busy() {
+        return;
+    }
     let Some(i) = app.docs.closing else { return };
     app.docs.choice = Answer::Save;
     match answer {
         Answer::Save => {
             switch(app, i);
+            app.docs.saving = true;
             crate::toolbar::save(app);
-            let saved = !app.session.is_dirty();
-            app.docs.closing = None;
-            if app.docs.quitting.is_some() {
-                // Quit only once it is saved; a cancelled picker or a failed save stays open.
-                if !saved {
-                    app.docs.quitting = None;
-                }
-            } else if saved {
-                close(app, app.docs.active, true);
+            if !app.file_picker_busy() {
+                saved_for_close(app);
             }
         }
         Answer::DontSave => {
@@ -565,6 +576,23 @@ pub fn answer_prompt(app: &mut SolveApp, answer: Answer) {
             app.docs.closing = None;
             app.docs.quitting = None;
         }
+    }
+    quit_step(app);
+}
+
+/// Resume Close/Quit only after Save As has answered and the write succeeded.
+pub(crate) fn saved_for_close(app: &mut SolveApp) {
+    if !std::mem::take(&mut app.docs.saving) || app.docs.closing.is_none() {
+        return;
+    }
+    let saved = !app.session.is_dirty();
+    app.docs.closing = None;
+    if app.docs.quitting.is_some() {
+        if !saved {
+            app.docs.quitting = None;
+        }
+    } else if saved {
+        close(app, app.docs.active, true);
     }
     quit_step(app);
 }
@@ -723,9 +751,11 @@ mod tests {
         let file = std::env::temp_dir().join(format!("solidcraft-quit-saveas-{}.solidcraft", std::process::id()));
         let _ = std::fs::remove_file(&file);
         let to = file.to_string_lossy().to_string();
-        a.services.pick_save = Some(Box::new(move |_: &str, _: &[&str]| Some(to.clone())));
+        a.services.pick_save = Some(Box::new(move |_: &str, _: &[&str]| Box::pin(std::future::ready(Some(to.clone())))));
         request_quit(&mut a);
         answer_prompt(&mut a, Answer::Save);
+        assert!(!a.quit_requested && a.file_picker_busy());
+        crate::file_picker::tick(&mut a, &egui::Context::default());
         assert!(a.quit_requested && file.exists());
         let _ = std::fs::remove_file(&file);
     }
