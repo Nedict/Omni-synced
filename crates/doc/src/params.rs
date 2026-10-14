@@ -459,7 +459,7 @@ impl Document {
         v
     }
 
-    fn name_taken(&self, n: &str) -> bool {
+    pub(crate) fn name_taken(&self, n: &str) -> bool {
         self.param(n).is_some() || self.features.iter().any(|f| f.param_names.iter().any(|x| x == n))
     }
 

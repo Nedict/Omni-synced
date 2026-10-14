@@ -56,6 +56,9 @@ file name (alternate data streams), reserved device names with any extension (`N
 `COM1.txt`, …) and short 8.3 names (`PROGRA~1`) are refused before any file system call, and the
 resolved path is checked again, so a link or junction that leads to a share is refused too. This
 includes a `sketch.text` font given as a file path; installed fonts named by family still work.
+The server spells its own folders (scratch, recovery) with long names, so they work when the
+temporary folder's path has a short name (`…\NAME~1.XYZ\AppData\Local\Temp`, as Windows often
+gives when the user folder's name is long).
 A refused path is a tool error saying why.
 
 A hard link inside an allowed folder can't be told apart from an ordinary file, so a hard link
