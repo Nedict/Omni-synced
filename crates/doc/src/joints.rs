@@ -351,8 +351,6 @@ fn mismatch(a: &Mat, b: &Mat) -> (f64, f64) {
 
 /// Passes over the motion links: a chain of this many links carries a value through in any order.
 const MAX_LINK_HOPS: usize = 4;
-/// Links followed back from a loop's values at most.
-const MAX_LINKS_FOLLOWED: usize = 1000;
 
 /// Motion links in order (a few passes for chains), then the linked values' limits.
 fn apply_links(asm: &Assembly, vals: &mut Values) {
@@ -483,8 +481,7 @@ fn link_chains(asm: &Assembly, tree: &Tree, around: &BTreeSet<u64>, linked: &BTr
     let mut frontier: BTreeSet<(u64, usize)> =
         around.iter().filter_map(|id| tree.joints.get(id)).flat_map(|j| (0..j.kind.dofs().len()).map(|i| (j.id, i))).collect();
     let mut seen = frontier.clone();
-    // Every link at most once along a chain (a chain stored in order is carried in one pass).
-    for _ in 0..asm.links.len().min(MAX_LINKS_FOLLOWED) {
+    for _ in 0..MAX_LINK_HOPS {
         let next: BTreeSet<(u64, usize)> =
             asm.links.iter().filter(|l| frontier.contains(&(l.b, l.ib))).map(|l| (l.a, l.ia)).filter(|v| !seen.contains(v)).collect();
         if next.is_empty() {
