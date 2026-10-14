@@ -795,16 +795,16 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
         // A nudge that pushes a face into a curved face it only touched (a cut whose end lies
         // tangent to a round side) leaves a sliver of that face behind, a fraction of a
         // millimetre wide, which later features (a shell, a fillet) can't work with. The
-        // opposite nudge parts them instead. Its result is taken when this one failed or when
-        // it is the simpler one (fewer faces); an empty result stays as it is.
-        if !matches!(r, Ok(None)) {
-            let faces = match &r {
-                Ok(Some(body)) if check(body).0 => body.face_count(),
-                _ => usize::MAX,
-            };
+        // opposite nudge parts them instead. It is tried when this one failed or left slivers,
+        // and taken when it works with fewer; an empty result stays as it is.
+        let slivers = match &r {
+            Ok(Some(body)) if check(body).0 => Some(sliver_faces(body)),
+            _ => None,
+        };
+        if !matches!(r, Ok(None)) && slivers != Some(0) {
             let (r2, diagnostics2) = nudge(-1.0);
             if let Ok(Some(body)) = &r2
-                && body.face_count() < faces
+                && slivers.is_none_or(|n| sliver_faces(body) < n)
                 && check(body).0
             {
                 (r, diagnostics) = (r2, diagnostics2);
@@ -849,6 +849,35 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
         }
         None => Err(KernelError::Failed(format!("boolean {op:?}: {last}"))),
     }
+}
+
+/// Faces of `b` narrower than 1/200 of its size (twice their area over their boundary's
+/// length): the slivers a nudged tool leaves where it was pushed into a face it touched.
+fn sliver_faces(b: &Body) -> usize {
+    use std::collections::HashMap;
+    let size = b.size();
+    let Ok(m) = b.tessellate((size * 1e-3).max(1e-4)) else { return usize::MAX };
+    let q = (size * 1e-7).max(1e-12);
+    let key = |p: Vec3| ((p.x / q).round() as i64, (p.y / q).round() as i64, (p.z / q).round() as i64);
+    // Per face: its area, and how many of its triangles use each mesh edge (its boundary once).
+    let mut area: HashMap<u32, f64> = HashMap::new();
+    let mut sides: HashMap<(u32, (i64, i64, i64), (i64, i64, i64)), (u32, f64)> = HashMap::new();
+    for (t, f) in m.triangles.iter().zip(&m.tri_face) {
+        let Some([a, b, c]) = m.tri(t) else { continue };
+        *area.entry(*f).or_default() += (b - a).cross(c - a).len() * 0.5;
+        for (p, r) in [(a, b), (b, c), (c, a)] {
+            let (kp, kr) = (key(p), key(r));
+            let k = if kp <= kr { (*f, kp, kr) } else { (*f, kr, kp) };
+            sides.entry(k).or_insert((0, p.dist(r))).0 += 1;
+        }
+    }
+    let mut boundary: HashMap<u32, f64> = HashMap::new();
+    for ((f, _, _), (n, len)) in &sides {
+        if *n == 1 {
+            *boundary.entry(*f).or_default() += len;
+        }
+    }
+    area.iter().filter(|(f, a)| boundary.get(f).is_some_and(|l| *l > 0.0 && 2.0 * **a / l < size * 5e-3)).count()
 }
 
 /// `r`, a boolean of the target and `nb` (the tool nudged), with its history over the target and
