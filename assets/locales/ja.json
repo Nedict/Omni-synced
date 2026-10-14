@@ -1012,7 +1012,7 @@
   "update.installer_started": "SolidCraft の終了後にインストーラーが起動します。",
   "update.dmg_opened": "ディスクイメージを検証して開きました: SolidCraft をアプリケーションフォルダにドラッグして古いものを置き換え、SolidCraft を再起動してください。",
   "update.install_failed": "アップデートをインストールできませんでした: {error}。何も変更されていません。「ダウンロード」でパッケージを入手できます。",
-  "dialog.computing": "計算中… {seconds} 秒"
+  "dialog.computing": "計算中… {seconds} 秒",
   "cmd.render_settings_get": "レンダリング設定",
   "cmd.render_settings_set": "レンダリング設定を保存"
 }
