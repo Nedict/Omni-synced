@@ -956,5 +956,6 @@
   "Letter Spacing": "文字間隔",
   "Line Spacing": "行間",
   "Path": "パス",
-  "sketch_text.on_path": "文字はパスに沿います: 位置は曲線で決まります"
+  "sketch_text.on_path": "文字はパスに沿います: 位置は曲線で決まります",
+  "cmd.material_properties_validate":"物理材料データを検証"
 }
