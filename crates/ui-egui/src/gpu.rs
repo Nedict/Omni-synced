@@ -830,11 +830,7 @@ fn tessellation(adapter: &wgpu::Adapter, device: &wgpu::Device, queue: &wgpu::Qu
         return None;
     }
     let info = adapter.get_info();
-    // The AMD FirePro D300/D500/D700 (Mac Pro 2013, Tahiti) Metal driver hangs on the evaluation
-    // shader and macOS resets the GPU, freezing the whole desktop. `SOLIDCRAFT_CPU_TESS=1`
-    // forces CPU evaluation on any device.
-    let hangs = info.backend == wgpu::Backend::Metal && info.name.contains("FirePro");
-    if hangs || std::env::var_os("SOLIDCRAFT_CPU_TESS").is_some() {
+    if hangs_on_gpu_tessellation(info.backend, &info.name) || std::env::var_os("SOLIDCRAFT_CPU_TESS").is_some() {
         log::warn!("bodies are built on the CPU on {} ({:?})", info.name, info.backend);
         return None;
     }
@@ -845,6 +841,13 @@ fn tessellation(adapter: &wgpu::Adapter, device: &wgpu::Device, queue: &wgpu::Qu
             None
         }
     }
+}
+
+/// A device whose driver hangs on the evaluation shader, so bodies are built on the CPU there:
+/// the AMD FirePro D300/D500/D700 (Mac Pro 2013, Tahiti) under Metal, where macOS resets the GPU
+/// and the whole desktop freezes. `SOLIDCRAFT_CPU_TESS=1` forces CPU evaluation on any device.
+fn hangs_on_gpu_tessellation(backend: wgpu::Backend, name: &str) -> bool {
+    backend == wgpu::Backend::Metal && name.contains("FirePro")
 }
 
 /// Create the pipelines. Call once with the app's render state and its depth/stencil/MSAA
@@ -1165,7 +1168,18 @@ pub fn uniform_bytes(cb: &ViewportCallback, w: f32, h: f32, linear: bool) -> Vec
 
 #[cfg(test)]
 mod tests {
-    use egui_wgpu::wgpu::naga;
+    use egui_wgpu::wgpu::{self, naga};
+
+    /// Only the FirePro under Metal skips GPU evaluation; the same card under another backend
+    /// and other Metal GPUs keep it.
+    #[test]
+    fn firepro_under_metal_builds_bodies_on_the_cpu() {
+        assert!(super::hangs_on_gpu_tessellation(wgpu::Backend::Metal, "AMD FirePro D500"));
+        assert!(super::hangs_on_gpu_tessellation(wgpu::Backend::Metal, "AMD FirePro D700"));
+        assert!(!super::hangs_on_gpu_tessellation(wgpu::Backend::Metal, "Apple M2"));
+        assert!(!super::hangs_on_gpu_tessellation(wgpu::Backend::Metal, "AMD Radeon Pro 560X"));
+        assert!(!super::hangs_on_gpu_tessellation(wgpu::Backend::Vulkan, "AMD FirePro W5100"));
+    }
 
     /// The viewport shader parses and validates (a bad shader would only fail at run time).
     #[test]
