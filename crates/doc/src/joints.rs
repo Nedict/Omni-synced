@@ -481,7 +481,8 @@ fn link_chains(asm: &Assembly, tree: &Tree, around: &BTreeSet<u64>, linked: &BTr
         for i in 0..j.kind.dofs().len() {
             let mut cur = (j.id, i);
             for _ in 0..MAX_LINK_HOPS {
-                let Some(l) = asm.links.iter().find(|l| (l.b, l.ib) == cur) else { break };
+                // The last link to a value wins, as in `apply_links`.
+                let Some(l) = asm.links.iter().rev().find(|l| (l.b, l.ib) == cur) else { break };
                 cur = (l.a, l.ia);
                 feeds.insert(l.a);
                 if !linked.contains(&cur) {
@@ -833,7 +834,8 @@ pub fn solve_holding(doc: &Document, st: &ModelState, held: &Held) -> Solution {
     }
     sol.fixed = placed.keys().copied().collect();
     let mut tree =
-        Tree { joints: joints.iter().map(|j| (j.id, *j)).collect(), frames, fixed: placed.clone(), parent: BTreeMap::new(), order: Vec::new() };
+        // Every joint's values are known, suppressed ones too (their motion links still set values).
+        Tree { joints: asm.joints.iter().take(MAX_JOINTS).map(|j| (j.id, j)).collect(), frames, fixed: placed.clone(), parent: BTreeMap::new(), order: Vec::new() };
     let mut used: BTreeSet<u64> = BTreeSet::new();
     let mut queue: VecDeque<u64> = placed.keys().copied().collect();
     while let Some(occ) = queue.pop_front() {

@@ -571,6 +571,10 @@ fn a_full_turn_stops_from_a_suppressed_dial_or_a_missing_value() {
     run(&mut s, "joint.edit", json!({"joint": "Dial", "suppressed": true}));
     let r = run(&mut s, "joint.drive", json!({"joint": "Dial", "value": 720}));
     assert!(r["stopped_by_loop"].is_object(), "{r}");
+    // Undriven, the suppressed dial still follows the rocker when the crank turns.
+    run(&mut s, "joint.drive", json!({"joint": "Dial", "value": 0}));
+    let r = run(&mut s, "joint.drive", json!({"joint": "Crank", "value": 60}));
+    assert!(r["stopped_by_loop"].is_null() && r["conflicts"].as_array().map(Vec::len) == Some(0), "{r}");
     let (mut s, _, _) = four_bar();
     if let Some(j) = s.doc_mut().assembly.joints.iter_mut().find(|j| j.name == "Rocker") {
         j.values.clear();
