@@ -3316,8 +3316,8 @@ mod tests {
             let proj = projection(&app, rect);
             let e = proj.cam.eye().to_f32();
             let eye = [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }];
-            let planned = scene.planned.len();
-            (planned, scene.tris.len(), crate::gpu::render_offscreen(scene, None, proj.vp.to_f32(), proj.cam.back().to_f32(), eye, SIZE, tess))
+            let (planned, shader) = (scene.planned.len(), tess.then_some(solidcraft_gpu::SHADER));
+            (planned, scene.tris.len(), crate::gpu::render_offscreen(scene, None, proj.vp.to_f32(), proj.cam.back().to_f32(), eye, SIZE, shader))
         };
         let (planned, gpu_tris, gpu) = render(true);
         let (none, cpu_tris, cpu) = render(false);
@@ -3333,6 +3333,45 @@ mod tests {
         assert!(drawn > n / 20, "the model covers the view: {drawn} pixels");
         let differ = (0..n).filter(|&i| px(&gpu, i).iter().zip(px(&cpu, i)).any(|(a, b)| a.abs_diff(b) > 24)).count();
         assert!(differ * 100 < drawn, "{differ} of {drawn} model pixels differ");
+    }
+
+    /// A device that cannot build the tessellation pipeline (D3D12's FXC rejected the shader
+    /// at startup and the app panicked) still shows the model: the failure is caught, logged,
+    /// and bodies are built on the CPU and drawn. A shader the device rejects stands in for FXC.
+    /// Skipped without a GPU adapter.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn bodies_are_built_on_the_cpu_when_the_tessellation_pipeline_fails() {
+        const REJECTED: &str = "
+            @group(0) @binding(1) var<storage, read_write> surfaces: array<u32>;
+            @compute @workgroup_size(64)
+            fn main(@builtin(global_invocation_id) gid: vec3<u32>) { surfaces[gid.x] = 1u; }
+        ";
+        let Some(tess) = crate::gpu::offscreen_tessellates(REJECTED) else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        assert!(!tess, "the rejected shader built a pipeline");
+        let mut s = solidcraft_engine::Session::default();
+        s.run_script(&solidcraft_engine::sample::script()).unwrap();
+        let mut app = SolveApp::new(s, crate::Services::default());
+        app.viewport.no_pixels = true;
+        app.fit_view();
+        app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess });
+        const SIZE: u32 = 256;
+        let rect = Rect::from_min_size(Pos2::ZERO, vec2(SIZE as f32, SIZE as f32));
+        let scene = build_scene(&app);
+        assert!(scene.planned.is_empty(), "no body waits for the GPU evaluation");
+        assert!(!scene.tris.is_empty(), "the bodies are meshed on the CPU");
+        let proj = projection(&app, rect);
+        let e = proj.cam.eye().to_f32();
+        let eye = [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }];
+        let Some(img) = crate::gpu::render_offscreen(scene, None, proj.vp.to_f32(), proj.cam.back().to_f32(), eye, SIZE, Some(REJECTED)) else {
+            return;
+        };
+        let n = (SIZE * SIZE) as usize;
+        let drawn = img.chunks(4).filter(|p| p[..3] != [255, 255, 255]).count();
+        assert!(drawn > n / 20, "the model is drawn: {drawn} pixels");
     }
 
     /// A hovered face lights solidly over a body drawn from its display plan on the GPU: the
@@ -3362,7 +3401,8 @@ mod tests {
             let proj = projection(&app, rect);
             let e = proj.cam.eye().to_f32();
             let eye = [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }];
-            crate::gpu::render_offscreen(scene, Some(highlight), proj.vp.to_f32(), proj.cam.back().to_f32(), eye, SIZE, tess)
+            let shader = tess.then_some(solidcraft_gpu::SHADER);
+            crate::gpu::render_offscreen(scene, Some(highlight), proj.vp.to_f32(), proj.cam.back().to_f32(), eye, SIZE, shader)
         };
         let lit = |plain: &[u8], hovered: &[u8]| -> Vec<bool> { plain.chunks(4).zip(hovered.chunks(4)).map(|(a, b)| a != b).collect() };
         let (Some(gpu_plain), Some(cpu_plain)) = (render(true, None), render(false, None)) else {
