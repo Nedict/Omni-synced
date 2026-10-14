@@ -95,6 +95,9 @@ pub struct StepFeature {
     /// Body names from the file (solid names, else product names).
     pub body_names: Vec<String>,
     pub warnings: Vec<String>,
+    /// The file as read. Hold it until the feature has been evaluated: the timeline then reuses
+    /// it instead of reading the file again (it is freed with the last holder).
+    pub import: std::sync::Arc<solidcraft_kernel::StepImport>,
 }
 
 /// Read STEP bytes (`file` is the source file name) into an Import base feature. The file is
@@ -125,8 +128,9 @@ pub fn step_import_feature(bytes: &[u8], file: &str) -> Result<StepFeature> {
     Ok(StepFeature {
         name,
         body_names: imp.bodies.iter().map(|b| b.name.clone()).collect(),
-        kind: solidcraft_doc::FeatureKind::Import { file: file_name, step: text, components: imp.tree.clone() },
+        kind: solidcraft_doc::FeatureKind::Import { file: file_name, step: text.into(), components: imp.tree.clone() },
         warnings: iges_warnings.into_iter().chain(imp.warnings.iter().cloned()).collect(),
+        import: imp,
     })
 }
 

@@ -2204,6 +2204,13 @@ fn sketch_delete(s: &mut Session, p: &Value) -> Result<Value> {
                 return Err(bad(cmd, "break the offset association before deleting only part of its curved boundary"));
             }
         }
+        if sk.constraints.iter().any(|c| cons.contains(&c.id) && matches!(c.kind, ConstraintKind::OffsetDistance { .. })) {
+            let report = solve_current(sk, doc)?;
+            if !report.keeps_orientation() {
+                return Err(bad(cmd, "cannot remove an offset dimension from a conflicting sketch"));
+            }
+            sk.refresh_offsets()?;
+        }
         sk.constraints.retain(|c| !cons.contains(&c.id));
         let pids: Vec<String> = points.iter().filter_map(|q| sk.points.get(*q).map(|x| x.id.clone())).collect();
         sk.remove_curves(&curves);

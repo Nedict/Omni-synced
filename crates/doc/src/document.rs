@@ -1032,8 +1032,9 @@ pub enum FeatureKind {
     Import {
         /// Source file name (display only).
         file: String,
-        /// The STEP (ISO 10303-21) text.
-        step: String,
+        /// The STEP (ISO 10303-21) text, shared by every copy of the design (undo states,
+        /// previews, scratch sessions): a large file is held once, not once per edit.
+        step: std::sync::Arc<str>,
         /// The file's product/assembly tree, kept for components.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         components: Vec<solidcraft_kernel::StepNode>,
@@ -1059,6 +1060,9 @@ pub enum FilletStyle {
     Constant,
     /// `radius` is the chord: the width across the blend.
     Chord,
+    /// G2 quintic blend of planar faces along a straight edge. `radius` sets the
+    /// equivalent circular setback, not a constant curvature radius.
+    Curvature,
     /// `radius` at the end of each edge nearest `start`, `radius2` at the other; `mid` radii at
     /// positions between (0 to 1 from the start end); straight between them, or `smooth`.
     Variable {
@@ -1131,6 +1135,9 @@ pub struct MeshData {
 pub struct SketchPoints {
     pub sketch: u64,
     pub ids: Vec<String>,
+    /// Drill the other way: away from the side the holes would go into by themselves.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flip: bool,
 }
 
 /// A component: a node of the design tree that owns sketches, features and bodies. The root

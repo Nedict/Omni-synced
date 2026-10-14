@@ -473,7 +473,7 @@ fn the_default_folders_are_the_designs_the_recovery_folder_and_the_scratch_folde
     let cwd = std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
     assert!(!scope.roots().contains(&cwd), "the working folder is not a default folder: {scope:?}");
     assert!(scope.roots().contains(&std::fs::canonicalize(&recovery).unwrap()), "{scope:?}");
-    assert!(scope.roots().contains(&crate::scratch_dir().unwrap()), "{scope:?}");
+    assert!(scope.roots().contains(&std::fs::canonicalize(crate::scratch_dir().unwrap()).unwrap()), "{scope:?}");
 
     let mut session = solidcraft_engine::Session::default();
     session.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10})).unwrap();

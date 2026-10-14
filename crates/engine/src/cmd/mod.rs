@@ -38,6 +38,7 @@ mod config;
 mod file;
 mod inspect;
 pub(crate) mod joints;
+mod material_properties;
 mod materials;
 mod measure_sel;
 mod mesh;
@@ -248,6 +249,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(file::COMMANDS.iter());
     v.extend(inspect::COMMANDS.iter());
     v.extend(materials::COMMANDS.iter());
+    v.extend(material_properties::COMMANDS.iter());
     v.extend(section::COMMANDS.iter());
     v.extend(view_navigation::COMMANDS.iter());
     v.extend(diagnostics::COMMANDS.iter());

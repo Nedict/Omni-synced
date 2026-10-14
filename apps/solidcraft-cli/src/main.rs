@@ -410,10 +410,13 @@ fn cmd_bench_open(args: &[String]) -> Result<(), String> {
     let read_ms = t.elapsed().as_secs_f64() * 1000.0;
     println!("{}", json!({"step": "read", "ms": read_ms, "bytes": bytes.len()}));
     let t = std::time::Instant::now();
+    // The file as read, held until the timeline has evaluated it (as the import command does).
+    let mut read = None;
     let doc = if step {
         let imported = solidcraft_engine::io::step_import_feature(&bytes, path).map_err(|e| e.to_string())?;
         let mut doc = solidcraft_engine::doc::Document::new(&imported.name);
         doc.add_feature(imported.kind, Some(&imported.name)).map_err(|e| e.to_string())?;
+        read = Some(imported.import);
         doc
     } else {
         solidcraft_engine::io::read_design(&bytes).map_err(|e| e.to_string())?
@@ -425,6 +428,7 @@ fn cmd_bench_open(args: &[String]) -> Result<(), String> {
     }
     let t = std::time::Instant::now();
     let s = Session::new(doc);
+    drop(read);
     println!("{}", json!({"step": "evaluate", "ms": t.elapsed().as_secs_f64() * 1000.0}));
     for r in &s.model.results {
         println!("{}", json!({"step": "feature", "id": r.id, "name": r.name, "ms": r.ms, "error": r.error}));

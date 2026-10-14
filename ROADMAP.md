@@ -59,6 +59,14 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 | M14 | Configurations: a table of rows (parameter expressions and feature suppressions per row) switched with config.activate (undoable, all or nothing), kept through parameter renames and feature deletes (config.configure, config.table, config.column/row/activate). Per-row body materials and appearances (library looks, custom colour/opacity and clearing overrides), undoable activation and save/reopen: done. Ordered typed configuration rules, atomic validation and structured rule editing: done. Component appearance and certified semantic face style columns, atomic preview/apply and independent-copy remapping: done. Exact constructed sketch-side and immutable imported-face lineage now preserve legacy names and reject retargeting. Left: ambiguous shifted/two-sided caps | in progress | 4 |
 | M13 | Never lose work: atomic saves (temporary file, flush, rename; a crash at any moment leaves the old file or the new one) with the replaced version kept as `<file>.bak`; autosave of unsaved changes to the recovery folder every 5 minutes (preference) and after big operations, only when something changed; "Recover unsaved design?" on the next launch (`doc.recovery_list`, `doc.recover`, `doc.recovery_discard`); a kill-mid-save test (process killed while saving a 0.5 MB design 25 times). File format: `"format": "solidcraft/12"`, older formats upgraded step by step (`doc::format`), newer ones refused with a message, out-of-range numbers and broken placements refused; a corpus of designs saved by M0, components-era, joints-era and current builds (apps/solidcraft-cli/tests/corpus) that must open and evaluate as saved; damaged and hostile variants (truncation, bit flips, hostile values, removed keys, repeated features, deep nesting) never panic | done | 6 |
 
+## Physical material data
+
+- Physical material card validation (#923/#922) provides typed SI mechanical and
+  thermal data, per-property sources/conditions and isotropic/orthotropic stability
+  checks through read-only `material.properties.validate`. It does not assign or
+  persist properties, provide a solver or enable rendering; see
+  [the contract and staged follow-ups](docs/physical-material-cards.md).
+
 ## Library foundations (#785, #786, #787)
 
 - Proposed phases cover offline bundled/project/user packs, physical materials and
@@ -207,6 +215,9 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 
 - Associative shell-face sketches require a unique certified planar source. Nested shell
   attachments and ambiguous coincident sources remain unsupported.
+- G2 fillets: exact quintic blends of straight edges between planar faces, with one perpendicular
+  planar end face at each end. The UI and `solid.fillet` expose `curvature` (alias `g2`); the size
+  is an equivalent circular setback. Curved faces/edges, sloped ends and corner junctions remain unsupported.
 - Fillets and chamfers: constant, variable-radius and chord-length fillets; a radius per edge,
   rounds next to earlier rounds of another radius, and smooth corner patches where three rounds
   meet (a sphere for equal radii); straight edges (convex or concave) between planar faces with perpendicular
@@ -267,8 +278,12 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   Sweeps along 3D sketch curves follow their polyline (smooth walls when the path is smooth).
 - Extend intersects exact ellipses and rational/high-degree splines without moving the line or
   circular support. Associative free-form offsets have a whole-span 0.002 mm normal-distance
-  certificate and refine within bounded node limits while retaining existing IDs. Singular,
-  self-intersecting and ambiguous curves refuse atomically; mixed junctions and nonsmooth
+  certificate and refine within bounded node limits while retaining existing IDs.
+  At the node limit, geometric certificate subdivisions accommodate unequal spline parameter
+  speeds without changing stored nodes or relaxing the distance tolerance (#971).
+  Associated offset fit nodes stay hidden from display, picking and snapping; dragging the
+  editable source updates the derived boundary live. Break Association restores point editing.
+  Singular, self-intersecting and ambiguous curves refuse atomically; mixed junctions and nonsmooth
   closed natural-spline seams remain limitations. New explicitly closed fit splines and closed
   offset outputs use periodic C2 interpolation, supporting repeated certified offsets; older
   natural splines are preserved. Clicking the starting fit point deliberately closes a new loop.
