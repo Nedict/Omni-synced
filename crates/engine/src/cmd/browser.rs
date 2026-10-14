@@ -511,6 +511,11 @@ fn rename_body(s: &mut Session, p: &Value) -> Result<Value> {
     // Later features refer to bodies by name.
     let mut failed = None;
     for f in d.features.iter_mut().filter(|f| f.id != fid) {
+        // The bodies a join/cut/intersect may change (a primitive's `targets`) are kept beside
+        // the feature's kind, not in it (#1108).
+        for b in f.participants.iter_mut().filter(|b| **b == old) {
+            *b = name.to_string();
+        }
         if let FeatureKind::Sketch { plane, .. } = &mut f.kind {
             solidcraft_doc::sheet::rename_plane_sheet_body(plane, &old, name);
         }
@@ -709,6 +714,29 @@ mod tests {
         assert!(s.execute("body.rename", &json!({"body": "Lid", "name": " "})).is_err());
         run(&mut s, "edit.undo", json!({}));
         assert_eq!(names(&s)[1], b);
+    }
+
+    /// #1108: a primitive's `targets` are its participants, kept beside its kind; a rename
+    /// follows them, as it follows the names inside the kind (a combine's target and tools).
+    #[test]
+    fn renamed_body_keeps_the_primitives_that_target_it() {
+        let mut s = Session::default();
+        let total = |s: &mut Session| run(s, "inspect.measure", json!({}))["total"]["volume_mm3"].as_f64().unwrap();
+        run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 10, "name": "Block", "body_name": "A"}));
+        run(&mut s, "solid.cylinder", json!({"diameter": 5, "height": 12, "base": [5, 5, -1], "operation": "cut", "targets": ["A"], "name": "Hole"}));
+        run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5, "corner": [20, 0, 0], "operation": "new", "body_name": "Tab"}));
+        run(&mut s, "solid.combine", json!({"target": "A", "tools": ["Tab"], "operation": "join", "name": "Joined"}));
+        let want = total(&mut s);
+        run(&mut s, "body.rename", json!({"body": "A", "name": "B"}));
+        assert!(
+            s.model.results.iter().all(|r| r.error.is_none()),
+            "{:?}",
+            s.model.results.iter().filter_map(|r| r.error.clone()).collect::<Vec<_>>()
+        );
+        assert_eq!(s.doc.find_feature("Hole").unwrap().participants, vec!["B".to_string()]);
+        assert!((total(&mut s) - want).abs() < 1e-6);
+        run(&mut s, "edit.undo", json!({}));
+        assert_eq!(s.doc.find_feature("Hole").unwrap().participants, vec!["A".to_string()]);
     }
 
     #[test]
