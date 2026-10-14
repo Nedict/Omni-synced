@@ -275,6 +275,7 @@ fn scene_key(app: &SolveApp) -> u64 {
     app.preview.replaced.hash(&mut h);
     app.tree.redefine.hash(&mut h);
     crate::theme::is_dark().hash(&mut h);
+    crate::theme::vision().hash(&mut h);
     app.session.active_sketch.hash(&mut h);
     h.finish()
 }
@@ -1409,6 +1410,7 @@ fn highlight_key(app: &SolveApp) -> u64 {
     app.viewport.hover_bodies.hash(&mut h);
     app.ui.pick_bodies.hash(&mut h);
     crate::theme::is_dark().hash(&mut h);
+    crate::theme::vision().hash(&mut h);
     app.preview.replaced.hash(&mut h);
     app.origin_visible().hash(&mut h);
     app.session.visibility.hidden_origin.hash(&mut h);
@@ -2822,10 +2824,11 @@ fn cpu_render(app: &mut SolveApp, ctx: &egui::Context, painter: &egui::Painter, 
     let key = h.finish();
     if app.viewport.cpu.as_ref().is_none_or(|(k, _)| *k != key) {
         let mut budget = solidcraft_engine::render::SamplingBudget::new(131_072, 1_048_576);
-        let scene =
+        let mut scene =
             solidcraft_engine::view::scene_with_section_and_sketch_sampler(&app.session, &proj.cam, section_plane(app), |sk, index, plane| {
                 crate::sketch_display::curve_with_budget(sk, index, plane, proj, app.viewport.pixels_per_point(), &mut budget).parts
             });
+        vision_tags(&mut scene.lines, crate::theme::vision());
         let w = (rect.width() as usize).clamp(16, 4096);
         let hh = (rect.height() as usize).clamp(16, 4096);
         let c = solidcraft_engine::render::render(&scene, &proj.cam, w, hh);
@@ -2835,6 +2838,31 @@ fn cpu_render(app: &mut SolveApp, ctx: &egui::Context, painter: &egui::Painter, 
     }
     if let Some((_, tex)) = &app.viewport.cpu {
         painter.image(tex.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+    }
+}
+
+/// The colour vision mode on the engine's colour tags in a CPU picture (the CPU viewport and
+/// `ui.render`, which keep the light theme's colours): a tag whose light-theme token the mode
+/// changes takes the mode's value. Off changes nothing.
+pub(crate) fn vision_tags(lines: &mut [solidcraft_engine::render::SceneLine], mode: crate::theme::ColorVision) {
+    let (off, on) = (Tokens::light(), Tokens::themed(false, mode));
+    let tags = [
+        (colors::SKETCH, off.sketch, on.sketch),
+        (colors::SKETCH_DONE, off.sketch_fixed, on.sketch_fixed),
+        (colors::SKETCH_FIXED, off.sketch_fixed, on.sketch_fixed),
+        (colors::SKETCH_LOCKED, off.sketch_locked, on.sketch_locked),
+        (colors::SKETCH_PROJECTED, off.sketch_projected, on.sketch_projected),
+        (colors::SKETCH_LOST, off.sketch_lost, on.sketch_lost),
+        (colors::SKETCH_CONSTRUCTION, off.sketch_construction, on.sketch_construction),
+        (colors::SKETCH_CENTERLINE, off.sketch_centerline, on.sketch_centerline),
+        (colors::AXIS_X, off.triad[0], on.triad[0]),
+        (colors::AXIS_Y, off.triad[1], on.triad[1]),
+        (colors::AXIS_Z, off.triad[2], on.triad[2]),
+    ];
+    for l in lines {
+        if let Some((_, _, to)) = tags.iter().find(|(tag, from, to)| l.color == *tag && from != to) {
+            l.color = Rgb(to.r(), to.g(), to.b());
+        }
     }
 }
 
@@ -3278,7 +3306,20 @@ mod tests {
             let e = proj.cam.eye().to_f32();
             let eye = [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }];
             let planned = scene.planned.len();
-            (planned, scene.tris.len(), crate::gpu::render_offscreen(scene, proj.vp.to_f32(), proj.cam.back().to_f32(), eye, SIZE, tess))
+            (
+                planned,
+                scene.tris.len(),
+                crate::gpu::render_offscreen(
+                    scene,
+                    proj.vp.to_f32(),
+                    proj.cam.back().to_f32(),
+                    eye,
+                    SIZE,
+                    tess,
+                    [0.0; 8],
+                    crate::gpu::analysis_colors(&Tokens::get().analysis),
+                ),
+            )
         };
         let (planned, gpu_tris, gpu) = render(true);
         let (none, cpu_tris, cpu) = render(false);
@@ -4656,6 +4697,150 @@ mod tests {
         assert!(o.dist(Vec3::new(0.0, 0.0, 20.0)) < 1e-6 && dir.dist(d) < 1e-6);
         app.session.visibility.hidden_origin.push(name);
         assert!(construction_axis_segments(&app).is_empty());
+    }
+
+    /// Draft Analysis on the GPU takes its colours from the tokens: the sample design through the
+    /// viewport's real pipeline, offscreen (skipped without a GPU). In Off the faces that pass are
+    /// green; in Protan they are the red-green table's blue, and the negative faces are striped.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn draft_analysis_on_the_gpu_draws_the_modes_colours_and_stripes() {
+        use crate::theme::ColorVision;
+        let mut s = solidcraft_engine::Session::default();
+        s.run_script(&solidcraft_engine::sample::script()).unwrap();
+        let mut app = SolveApp::new(s, crate::Services::default());
+        app.viewport.no_pixels = true;
+        app.fit_view();
+        app.run("inspect.draft", json!({"pull": [-1, -1, 0]})).unwrap();
+        app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess: false });
+        const SIZE: u32 = 256;
+        let proj = projection(&app, Rect::from_min_size(Pos2::ZERO, vec2(SIZE as f32, SIZE as f32)));
+        let e = proj.cam.eye().to_f32();
+        let eye = [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }];
+        let render = |c: &crate::theme::AnalysisColors| {
+            crate::gpu::render_offscreen(
+                build_scene(&app),
+                proj.vp.to_f32(),
+                proj.cam.back().to_f32(),
+                eye,
+                SIZE,
+                false,
+                analysis_uniform(&app),
+                crate::gpu::analysis_colors(c),
+            )
+        };
+        let off = Tokens::themed(false, ColorVision::Off).analysis;
+        let protan = Tokens::themed(false, ColorVision::Protan).analysis;
+        let flat = crate::theme::AnalysisColors { hatch: false, ..protan };
+        let (Some(a), Some(b), Some(c)) = (render(&off), render(&protan), render(&flat)) else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        // Pixels of a colour under any light: the same hue, so the same ratios between channels.
+        let like = |img: &[u8], c: [f32; 3]| {
+            img.as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|p| {
+                    let m = c.iter().copied().fold(0.0, f32::max);
+                    let k = f32::from(p[0].max(p[1]).max(p[2])) / 255.0 / m;
+                    k > 0.3 && (0..3).all(|i| (f32::from(p[i]) / 255.0 - c[i] * k).abs() < 0.04)
+                })
+                .count()
+        };
+        let n = (SIZE * SIZE) as usize;
+        assert!(like(&a, off.draft[0]) > n / 50 && like(&a, protan.draft[0]) == 0, "Off: green passing faces");
+        assert!(like(&b, protan.draft[0]) > n / 50 && like(&b, off.draft[0]) == 0, "Protan: blue passing faces");
+        // The stripes: with them on, some negative pixels are darker, and nothing else changes.
+        let negative = |p: &[u8]| like(p, protan.draft[2]) == 1;
+        let changed: Vec<usize> = (0..n).filter(|&i| b[4 * i..4 * i + 3] != c[4 * i..4 * i + 3]).collect();
+        let neg = (0..n).filter(|&i| negative(&c[4 * i..4 * i + 4])).count();
+        assert!(!changed.is_empty() && changed.len() * 2 < neg, "{} striped of {neg} negative pixels", changed.len());
+        assert!(changed.iter().all(|&i| negative(&c[4 * i..4 * i + 4])), "only negative faces are striped");
+        assert!(changed.iter().all(|&i| b[4 * i..4 * i + 3].iter().zip(&c[4 * i..4 * i + 3]).all(|(x, y)| x <= y)), "stripes are darker");
+    }
+
+    /// The CPU picture's engine tags follow the mode; Off changes nothing.
+    #[test]
+    fn cpu_picture_tags_follow_the_colour_vision_mode() {
+        use crate::theme::ColorVision;
+        let all = [
+            colors::SKETCH,
+            colors::SKETCH_DONE,
+            colors::SKETCH_LOCKED,
+            colors::SKETCH_PROJECTED,
+            colors::SKETCH_LOST,
+            colors::SKETCH_CONSTRUCTION,
+            colors::SKETCH_CENTERLINE,
+            colors::AXIS_X,
+            colors::AXIS_Y,
+            colors::AXIS_Z,
+            colors::BODY,
+            colors::GRID,
+        ];
+        let lines = || -> Vec<solidcraft_engine::render::SceneLine> {
+            all.iter().map(|c| solidcraft_engine::render::SceneLine { points: Vec::new(), color: *c, width: 1.0, on_top: false }).collect()
+        };
+        let mut off = lines();
+        vision_tags(&mut off, ColorVision::Off);
+        assert!(off.iter().zip(all).all(|(l, c)| l.color == c));
+        let mut rg = lines();
+        vision_tags(&mut rg, ColorVision::Protan);
+        let t = Tokens::themed(false, ColorVision::Protan);
+        let rgb = |c: Color32| Rgb(c.r(), c.g(), c.b());
+        assert_eq!(rg[3].color, rgb(t.sketch_projected));
+        assert_eq!(rg[2].color, rgb(t.sketch_locked));
+        assert_eq!((rg[7].color, rg[8].color, rg[9].color), (rgb(t.triad[0]), rgb(t.triad[1]), colors::AXIS_Z));
+        assert_eq!((rg[0].color, rg[10].color, rg[11].color), (colors::SKETCH, colors::BODY, colors::GRID));
+        let mut by = lines();
+        vision_tags(&mut by, ColorVision::Tritan);
+        assert_eq!(by[2].color, rgb(Tokens::themed(false, ColorVision::Tritan).sketch_locked));
+        assert_eq!(by[3].color, colors::SKETCH_PROJECTED);
+    }
+
+    /// The mode is on from the next frame (theme, widgets, caches, `ui.render`), and Cancel puts
+    /// it back.
+    #[test]
+    fn colour_vision_mode_reaches_the_frame_and_the_view_caches() {
+        use crate::theme::ColorVision;
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        let keys = |app: &SolveApp| (scene_key(app), highlight_key(app));
+        h.call("ui.prefs", json!({"open": "Graphics"}));
+        assert!(h.widget("Colour vision").is_some() && h.widget("Mode").is_some());
+        let before = keys(&h.app);
+        h.call("ui.prefs", json!({"color_vision": "deutan"}));
+        h.frame();
+        assert_eq!(crate::theme::vision(), ColorVision::Deutan);
+        assert_eq!(Tokens::get(), Tokens::themed(crate::theme::is_dark(), ColorVision::Deutan));
+        let after = keys(&h.app);
+        assert!(before.0 != after.0 && before.1 != after.1, "both caches are keyed on the mode");
+        h.call("ui.prefs", json!({"button": "cancel"}));
+        h.frame();
+        assert_eq!((h.app.preferences.color_vision, crate::theme::vision()), (ColorVision::Off, ColorVision::Off));
+        assert_eq!(keys(&h.app), before);
+        // `ui.render` (the CPU picture) shows the mode too: a fixed sketch line in Deutan's value.
+        h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+        let made = h.app.run("sketch.line", json!({"points": [[-30, -20], [30, 20]]})).unwrap();
+        h.app.run("sketch.constraint.fix", json!({"entity": made["created"]["curves"][0]})).unwrap();
+        h.call("ui.view", json!({"view": "top"}));
+        let path = std::env::temp_dir().join(format!("sc_colour_vision_render_{}.png", std::process::id()));
+        let near = |h: &mut crate::scenario::Harness, c: Color32| {
+            let r = h.call("ui.render", json!({"path": path.to_string_lossy(), "width": 400, "height": 300}));
+            assert_eq!(r["ok"], true, "{r}");
+            let img = image::open(&path).unwrap().to_rgb8();
+            img.pixels().filter(|p| p.0.iter().zip([c.r(), c.g(), c.b()]).all(|(a, b)| a.abs_diff(b) <= 8)).count()
+        };
+        let (off, deutan) = (Tokens::light().sketch_locked, Tokens::themed(false, ColorVision::Deutan).sketch_locked);
+        let (a, b) = (near(&mut h, off), near(&mut h, deutan));
+        assert!(a > 20 && b == 0, "Off: {a} fixed-line pixels, {b} in Deutan's colour");
+        h.call("ui.prefs", json!({"color_vision": "deutan"}));
+        h.frame();
+        let (a, b) = (near(&mut h, off), near(&mut h, deutan));
+        h.call("ui.prefs", json!({"color_vision": "off"}));
+        h.frame();
+        let _ = std::fs::remove_file(&path);
+        assert!(a == 0 && b > 20, "Deutan: {a} fixed-line pixels in Off's colour, {b} in Deutan's");
     }
 }
 

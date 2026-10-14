@@ -179,4 +179,56 @@ impl Tokens {
         t.bend_down = Color32::from_rgb(240, 150, 80);
         t
     }
+
+    /// Colour vision, red-green (Protan and Deutan share it, #778): values of the theme's colours
+    /// that a weak red or green sense still tells apart. Each was measured against normal vision,
+    /// protan and deutan, with two simulations of each loss (`colour_vision_tests`).
+    pub(super) const fn red_green(self, dark: bool) -> Tokens {
+        let mut t = self;
+        let positive = [0.20, 0.45, 0.90];
+        let negative = [0.85, 0.40, 0.05];
+        t.triad[0] = Color32::from_rgb(200, 40, 40);
+        t.triad[1] = Color32::from_rgb(120, 210, 80);
+        t.gizmo[1] = Color32::from_rgb(140, 220, 90);
+        t.preview_sketch = Color32::from_rgb(80, 185, 145);
+        t.analysis.draft = [positive, [0.95, 0.90, 0.60], negative];
+        t.analysis.access = [positive, negative];
+        t.analysis.hatch = true;
+        // The icons that show the same meanings follow; on the dark toolbar the blue is a little
+        // stronger, to stay clear of the icon fill.
+        let good = if dark { Color32::from_rgb(35, 115, 245) } else { Color32::from_rgb(51, 115, 230) };
+        t.icons.axes[0] = t.triad[0];
+        t.icons.axes[1] = t.triad[1];
+        t.icons.access = [good, Color32::from_rgb(217, 102, 13)];
+        t.icons.draft = [good, Color32::from_rgb(242, 230, 153)];
+        if dark {
+            t.bend_up = Color32::from_rgb(110, 165, 255);
+            t.bend_down = Color32::from_rgb(240, 180, 70);
+            t.sketch_accent = Color32::from_rgb(150, 225, 195);
+        } else {
+            t.sketch_projected = Color32::from_rgb(205, 120, 215);
+            t.sketch_locked = Color32::from_rgb(60, 150, 120);
+            t.timeline_item_error = Color32::from_rgb(232, 196, 170);
+            t.bend_up = Color32::from_rgb(30, 100, 210);
+            t.bend_down = Color32::from_rgb(200, 120, 0);
+            t.sketch_accent = Color32::from_rgb(60, 150, 105);
+        }
+        t
+    }
+
+    /// Colour vision, blue-yellow (Tritan, #778), measured against normal vision and tritan.
+    pub(super) const fn blue_yellow(self, dark: bool) -> Tokens {
+        let mut t = self;
+        t.analysis.hatch = true;
+        t.preview_sketch = Color32::from_rgb(125, 180, 105);
+        if dark {
+            t.sketch_locked = Color32::from_rgb(140, 225, 110);
+            t.box_crossing = Color32::from_rgb(240, 110, 170);
+            t.glyph_text = Color32::from_rgb(240, 180, 165);
+        } else {
+            t.sketch_locked = Color32::from_rgb(20, 165, 70);
+            t.box_crossing = Color32::from_rgb(200, 60, 120);
+        }
+        t
+    }
 }

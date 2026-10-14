@@ -872,8 +872,20 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
 /// Render `scene` offscreen on a device of its own, through the viewport's real resources and
 /// frame callback (`prepare`, then `paint`), and read the pixels back: straight RGBA, `size` ×
 /// `size`. `None` without a GPU adapter. With `tess`, planned bodies are evaluated on the GPU.
+/// `analysis` is the surface analysis uniform (`viewport::analysis_uniform`; zeros for none) and
+/// `colors` its colours (`analysis_colors`).
 #[cfg(all(test, not(target_arch = "wasm32")))]
-pub(crate) fn render_offscreen(scene: GpuScene, view_proj: [[f32; 4]; 4], back: [f32; 3], eye: [f32; 4], size: u32, tess: bool) -> Option<Vec<u8>> {
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_offscreen(
+    scene: GpuScene,
+    view_proj: [[f32; 4]; 4],
+    back: [f32; 3],
+    eye: [f32; 4],
+    size: u32,
+    tess: bool,
+    analysis: [f32; 8],
+    colors: [f32; 36],
+) -> Option<Vec<u8>> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -902,8 +914,8 @@ pub(crate) fn render_offscreen(scene: GpuScene, view_proj: [[f32; 4]; 4], back: 
         clip: [0.0; 4],
         cap: [0.0; 4],
         images: Vec::new(),
-        analysis: [0.0; 8],
-        analysis_colors: analysis_colors(&crate::theme::Tokens::get().analysis),
+        analysis,
+        analysis_colors: colors,
         access: None,
         outline: false,
         eye,

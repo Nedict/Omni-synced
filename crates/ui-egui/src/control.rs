@@ -622,7 +622,8 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
             let h = f("height").unwrap_or(800.0).clamp(16.0, 8192.0) as usize;
             // Cut by the section the viewport shows (an open Section Analysis dialog's preview,
             // a sketch's Slice), not only the committed one.
-            let scene = solidcraft_engine::view::scene_with_section(&app.session, &app.cam, crate::viewport::section_plane(app));
+            let mut scene = solidcraft_engine::view::scene_with_section(&app.session, &app.cam, crate::viewport::section_plane(app));
+            crate::viewport::vision_tags(&mut scene.lines, crate::theme::vision());
             let Some(png) = render_png(&scene, &app.cam, w, h) else { return err("render failed") };
             match s("path") {
                 Some(path) => match vfs::check(path).and_then(|()| std::fs::write(path, &png)) {

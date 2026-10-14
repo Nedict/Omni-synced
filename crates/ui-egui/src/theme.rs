@@ -1,18 +1,106 @@
 //! Colours and widget style: a dark theme (the default, a blue-grey in the spirit of desktop CAD
-//! tools, viewport #2e3440) and a light one. Every colour the UI uses comes from [`Tokens`].
+//! tools, viewport #2e3440) and a light one, each with colour vision modes. Every colour the UI
+//! uses comes from [`Tokens`].
 
+use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[path = "../../../assets/styles/ui/palettes.rs"]
 mod palettes;
 
 use egui::{Color32, Stroke};
+use serde::{Deserialize, Serialize};
 
 static DARK: AtomicBool = AtomicBool::new(true);
+
+thread_local! {
+    /// The colour vision mode, per thread: the window's thread draws in it (`SolveApp` keeps it in
+    /// step with the preference every frame); other threads (thumbnails, and tests running beside
+    /// each other) keep their own, Off unless they set it.
+    static VISION: Cell<ColorVision> = const { Cell::new(ColorVision::Off) };
+}
 
 /// Is the dark theme on?
 pub fn is_dark() -> bool {
     DARK.load(Ordering::Relaxed)
+}
+
+/// Colour vision modes (#778): a second set of values for the colours that carry a meaning, for
+/// a weak or missing red (protan), green (deutan) or blue (tritan) sense. Not a filter: Off gives
+/// back the theme's colours unchanged. Protan and Deutan share one red-green table, measured
+/// clear for both (`colour_vision_tests`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorVision {
+    #[default]
+    Off,
+    Protan,
+    Deutan,
+    Tritan,
+}
+
+impl ColorVision {
+    pub const ALL: [ColorVision; 4] = [ColorVision::Off, ColorVision::Protan, ColorVision::Deutan, ColorVision::Tritan];
+
+    /// The saved value (`ui.prefs` `color_vision`).
+    pub fn id(self) -> &'static str {
+        match self {
+            ColorVision::Off => "off",
+            ColorVision::Protan => "protan",
+            ColorVision::Deutan => "deutan",
+            ColorVision::Tritan => "tritan",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<ColorVision> {
+        ColorVision::ALL.into_iter().find(|m| m.id() == id)
+    }
+
+    /// Its name in the Preferences (a message id).
+    pub fn label_id(self) -> &'static str {
+        match self {
+            ColorVision::Off => "ui.colour_vision_off",
+            ColorVision::Protan => "ui.colour_vision_protan",
+            ColorVision::Deutan => "ui.colour_vision_deutan",
+            ColorVision::Tritan => "ui.colour_vision_tritan",
+        }
+    }
+
+    /// Who it is for, in one line (its tooltip; a message id).
+    pub fn help_id(self) -> &'static str {
+        match self {
+            ColorVision::Off => "ui.colour_vision_off_tip",
+            ColorVision::Protan => "ui.colour_vision_protan_tip",
+            ColorVision::Deutan => "ui.colour_vision_deutan_tip",
+            ColorVision::Tritan => "ui.colour_vision_tritan_tip",
+        }
+    }
+}
+
+/// From saved preferences: a value this version doesn't know (a later version's mode, a hand
+/// edit) is Off rather than an error, which would lose every other saved preference with it.
+/// `ui.prefs` refuses such a value before it gets here (`prefs::set`).
+impl<'de> Deserialize<'de> for ColorVision {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let v = serde_json::Value::deserialize(d)?;
+        Ok(v.as_str().and_then(ColorVision::from_id).unwrap_or_default())
+    }
+}
+
+/// The colour vision mode on now (on this thread).
+pub fn vision() -> ColorVision {
+    VISION.with(Cell::get)
+}
+
+/// Switch the colour vision mode (the visuals follow on the next [`apply`]).
+pub fn set_vision(mode: ColorVision) {
+    VISION.with(|v| v.set(mode));
+}
+
+/// An sRGB colour given as 0..1 (the analysis colours), for drawing in the UI.
+pub fn srgb(c: [f32; 3]) -> Color32 {
+    let byte = |x: f32| (x.clamp(0.0, 1.0) * 255.0).round() as u8;
+    Color32::from_rgb(byte(c[0]), byte(c[1]), byte(c[2]))
 }
 
 /// Surface analysis colours, straight sRGB 0..1 as the shader takes them (exact, so they read
@@ -206,9 +294,24 @@ pub struct Tokens {
 }
 
 impl Tokens {
-    /// The tokens of the current theme.
+    /// The tokens of the current theme and colour vision mode.
     pub fn get() -> Tokens {
-        if is_dark() { Tokens::dark() } else { Tokens::light() }
+        Tokens::themed(is_dark(), vision())
+    }
+
+    /// The tokens of a theme and colour vision mode.
+    pub fn themed(dark: bool, mode: ColorVision) -> Tokens {
+        (if dark { Tokens::dark() } else { Tokens::light() }).with_vision(dark, mode)
+    }
+
+    /// These tokens with a colour vision mode's values on top (the tables in `palettes.rs`); Off
+    /// gives them back unchanged.
+    pub fn with_vision(self, dark: bool, mode: ColorVision) -> Tokens {
+        match mode {
+            ColorVision::Off => self,
+            ColorVision::Protan | ColorVision::Deutan => self.red_green(dark),
+            ColorVision::Tritan => self.blue_yellow(dark),
+        }
     }
 
     /// Fade idle cube colours into the viewport while retaining opaque facets.
@@ -238,7 +341,7 @@ pub fn set_dark(dark: bool) {
 }
 
 fn visuals(dark: bool) -> egui::Visuals {
-    let t = if dark { Tokens::dark() } else { Tokens::light() };
+    let t = Tokens::themed(dark, vision());
     let mut v = if dark { egui::Visuals::dark() } else { egui::Visuals::light() };
     v.panel_fill = t.panel;
     v.window_fill = t.panel;
