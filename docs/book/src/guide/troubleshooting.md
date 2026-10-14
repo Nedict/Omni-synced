@@ -62,6 +62,13 @@ saying what failed (earlier versions closed without a word). Things to try:
 - Run `solidcraft --crash-log` to list recent crash reports, and attach the newest one to an
   issue.
 
+## The desktop stutters or freezes while SolidCraft builds bodies
+
+Some graphics drivers hang on the shader SolidCraft uses to build bodies on the GPU, and the
+system then resets the GPU. SolidCraft already builds bodies on the CPU on the AMD FirePro
+D300/D500/D700 (Mac Pro 2013). On another GPU that does this, start SolidCraft with
+`SOLIDCRAFT_CPU_TESS=1` set to build bodies on the CPU, and open an issue with the GPU's name.
+
 ## SolidCraft closes right away on Windows
 
 A graphics driver can crash the app while it starts, before SolidCraft can show anything (an
