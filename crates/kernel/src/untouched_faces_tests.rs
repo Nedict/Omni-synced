@@ -152,8 +152,12 @@ fn random_cuts_and_joins_never_split_other_faces() {
 /// The edges of `b` lying along the line through `a` and `z`.
 fn edges_along(b: &Body, a: Vec3, z: Vec3) -> usize {
     let on = |p: Vec3| p.dist_to_segment(a, z) < 1e-6;
-    let edges: std::collections::HashSet<_> =
-        b.solid.edge_iter().filter(|e| on(crate::body::from_p3(e.front().point())) && on(crate::body::from_p3(e.back().point()))).map(|e| e.id()).collect();
+    let edges: std::collections::HashSet<_> = b
+        .solid
+        .edge_iter()
+        .filter(|e| on(crate::body::from_p3(e.front().point())) && on(crate::body::from_p3(e.back().point())))
+        .map(|e| e.id())
+        .collect();
     edges.len()
 }
 
