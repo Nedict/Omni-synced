@@ -893,7 +893,9 @@ fn taper_loop(levels: &[(Plane, &[Option<Seg2>])], numbers: impl Fn(usize) -> Ve
     let mut ruling = |a: &mt::Vertex, b: &mt::Vertex| rulings.entry((a.id(), b.id())).or_insert_with(|| builder::line(a, b)).clone();
     let flat = |wire: mt::Wire| builder::try_attach_plane(&[wire]).map_err(|e| KernelError::Failed(format!("taper sides: {e}")));
     let mut sides = Vec::new();
-    for ((bv, bottom), (tv, top)) in built.iter().zip(built.iter().skip(1)) {
+    for (((bv, bottom), (tv, top)), (low_segs, high_segs)) in
+        built.iter().zip(built.iter().skip(1)).zip(levels.iter().map(|(_, s)| s).zip(levels.iter().skip(1).map(|(_, s)| s)))
+    {
         for i in 0..n {
             let j = (i + 1) % n;
             let (Some(b0), Some(b1), Some(t0), Some(t1)) = (bv.get(i), bv.get(j), tv.get(i), tv.get(j)) else { return Err(bad()) };
@@ -903,8 +905,18 @@ fn taper_loop(levels: &[(Plane, &[Option<Seg2>])], numbers: impl Fn(usize) -> Ve
                     if low.len() != high.len() {
                         return Err(bad());
                     }
+                    // A line and its moved copy run side by side: their side is a plane, kept
+                    // one (a flat side the booleans meet exactly, however slight the taper).
+                    let lines = matches!(
+                        (low_segs.get(i).copied().flatten(), high_segs.get(i).copied().flatten()),
+                        (Some(Seg2::Line { .. }), Some(Seg2::Line { .. }))
+                    );
                     for (e, t) in low.iter().zip(high) {
                         let wire: mt::Wire = vec![e.clone(), ruling(e.back(), t.back()), t.inverse(), ruling(e.front(), t.front()).inverse()].into();
+                        if lines {
+                            sides.push((flat(wire)?, prov.clone()));
+                            continue;
+                        }
                         let surface = mt::BSplineSurface::homotopy(e.oriented_curve().lift_up(), t.oriented_curve().lift_up());
                         sides.push((mt::Face::new(vec![wire], mt::Surface::NurbsSurface(mt::NurbsSurface::new(surface))), prov.clone()));
                     }
