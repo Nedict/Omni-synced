@@ -384,6 +384,8 @@
   "ui.updateToCurrentView": "Auf aktuelle Ansicht aktualisieren",
   "ui.zoom": "Zoomen",
   "ui.command_done": "{command} fertig",
+  "drive.stopped_by_loop": "Angehalten bei {value}: die Schleife über {joint} lässt sich nicht weiter schließen",
+  "drive.stopped_by_contact": "Angehalten bei {value}: {a} würde {b} durchdringen",
   "cmd.appearance_assign": "Erscheinungsbild",
   "cmd.appearance_library": "Erscheinungsbild-Bibliothek",
   "cmd.appearance_list": "Erscheinungsbilder auflisten",

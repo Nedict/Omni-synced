@@ -933,6 +933,8 @@
   "ui.updateToCurrentView": "更新为当前视图",
   "ui.zoom": "缩放",
   "ui.command_done": "{command} 完成",
+  "drive.stopped_by_loop": "停在 {value}：经过 {joint} 的环路无法再闭合",
+  "drive.stopped_by_contact": "停在 {value}：{a} 会穿过 {b}",
   "timeline.group": "新建特征文件夹",
   "timeline.ungroup": "移除特征文件夹",
   "timeline.rename_group": "重命名特征文件夹",

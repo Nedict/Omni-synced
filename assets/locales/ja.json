@@ -935,6 +935,8 @@
   "ui.updateToCurrentView": "現在のビューに更新",
   "ui.zoom": "ズーム",
   "ui.command_done": "{command} 完了",
+  "drive.stopped_by_loop": "{value} で停止: {joint} を通るループはこれ以上閉じられません",
+  "drive.stopped_by_contact": "{value} で停止: {a} が {b} を通り抜けてしまいます",
   "timeline.group": "フィーチャーフォルダを新規作成",
   "timeline.ungroup": "フィーチャーフォルダを削除",
   "timeline.rename_group": "フィーチャーフォルダの名前を変更",

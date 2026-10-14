@@ -932,6 +932,8 @@
   "ui.updateToCurrentView": "Обновить до текущего вида",
   "ui.zoom": "Масштаб",
   "ui.command_done": "{command} — готово",
+  "drive.stopped_by_loop": "Остановлено на {value}: контур через {joint} дальше не замыкается",
+  "drive.stopped_by_contact": "Остановлено на {value}: {a} прошёл бы сквозь {b}",
   "timeline.group": "Новая папка операций",
   "timeline.ungroup": "Убрать папки операций",
   "timeline.rename_group": "Переименовать папку операций",
