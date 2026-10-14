@@ -27,12 +27,17 @@ SKETCH_GEOMETRY = True   # curve-by-curve sketch contents (the bulk of the outpu
 
 # Bumped whenever the captured shape changes, so re-running upgrades older files in place
 # instead of skipping them -- a resumable run should not also mean a stale one.
-SCHEMA = 4
+SCHEMA = 5
 
 # A plain text file of design paths (one per line, as written under OUT_DIR, without the
 # ".timeline.json" suffix); only those are processed. Most hubs hold a lot of imported bodies
 # with no history to recover, and re-reading those costs real time for nothing.
 ONLY_LIST = os.path.join(OUT_DIR, "_reextract.txt")
+
+# A fillet consumes the edges it rounds, so they are absent from the finished body and can only
+# be read with the model rolled back to that step. That costs a recompute per such feature, so
+# it is a switch: turn it off if a hub is large and you would rather have the rest sooner.
+ROLLBACK_FOR_EDGES = True
 
 # Try a few designs before committing to a whole hub. Each design has to be downloaded and
 # loaded to be read, so a smoke test on five beats discovering a problem on five hundred.
@@ -123,6 +128,42 @@ def as_items(coll):
         return [coll]
 
 
+def point_on(item, point_attr):
+    """One world-space point on an edge or face, in millimetres.
+
+    `pointOnEdge` is the direct answer but it fails on an edge the feature itself consumed --
+    a fillet destroys the very edges it rounds, so by the time the design is read back they are
+    gone from the body. The curve's own geometry usually survives that, so fall back to it, and
+    finally to the bounding box, before giving up.
+    """
+    p = get(item, point_attr)
+    if callable(p):
+        try:
+            p = p()
+        except Exception:
+            p = None
+    q = pt(p) if p is not None else None
+    if q:
+        return q
+
+    g = get(item, "geometry", "worldGeometry")
+    if g is not None:
+        s, e = pt(get(g, "startPoint")), pt(get(g, "endPoint"))
+        if s and e:
+            return [round((s[i] + e[i]) / 2.0, 9) for i in range(3)]
+        for attr in ("center", "origin"):
+            c = pt(get(g, attr))
+            if c:
+                return c
+
+    bb = get(item, "boundingBox")
+    if bb is not None:
+        lo, hi = pt(get(bb, "minPoint")), pt(get(bb, "maxPoint"))
+        if lo and hi:
+            return [round((lo[i] + hi[i]) / 2.0, 9) for i in range(3)]
+    return None
+
+
 def picks(coll, point_attr):
     """A world-space point lying on each edge or face, in millimetres.
 
@@ -131,19 +172,44 @@ def picks(coll, point_attr):
     """
     out = []
     for item in as_items(coll):
-        p = get(item, point_attr)
-        if p is None:
-            continue
-        # Some builds expose it as a method rather than a property.
-        if callable(p):
-            try:
-                p = p()
-            except Exception:
-                continue
-        q = pt(p)
+        q = point_on(item, point_attr)
         if q:
             out.append(q)
     return out
+
+
+# Set per document so a feature can be read with the model rolled back to just before it.
+_ROLLBACK = {"timeline": None}
+
+
+def rolled_back_to(index, fn):  # noqa: C901 - guarded by ROLLBACK_FOR_EDGES below
+    """Run fn() with the design rolled back to just before timeline step `index`.
+
+    A fillet consumes the edges it rounds, so those edges are absent from the finished body and
+    cannot be located there at all. Rolling the marker back puts the model into the state the
+    feature actually saw, where its inputs exist. The marker is always restored, and nothing is
+    saved, so the design on disk is untouched either way.
+    """
+    if not ROLLBACK_FOR_EDGES:
+        return None
+    tl = _ROLLBACK.get("timeline")
+    if tl is None or index is None:
+        return None
+    saved = None
+    try:
+        saved = tl.markerPosition
+        tl.markerPosition = index
+        adsk.doEvents()
+        return fn()
+    except Exception:
+        return None
+    finally:
+        if saved is not None:
+            try:
+                tl.markerPosition = saved
+            except Exception:
+                pass
+        adsk.doEvents()
 
 
 def edge_sets(ent):
@@ -422,7 +488,7 @@ def describe_sketch(sk):
 # features
 # ---------------------------------------------------------------------------
 
-def describe_feature(ent):
+def describe_feature(ent, index=None):
     """Pull the parametric intent out of one timeline entity."""
     kind = type(ent).__name__
     rec = {"entity": kind, "name": get(ent, "name")}
@@ -464,6 +530,11 @@ def describe_feature(ent):
     # Most CAD tools (SolidCraft included) select exactly that way, so this is the bridge that
     # lets a fillet or a shell be re-created rather than merely reported as missing.
     sets = edge_sets(ent)
+    if not sets and ("Fillet" in kind or "Chamfer" in kind):
+        # Its own operation removed these edges, so they cannot be found in the finished body.
+        sets = rolled_back_to(index, lambda: edge_sets(ent)) or []
+        if sets:
+            rec["edges_via_rollback"] = True
     if sets:
         rec["edge_sets"] = sets
         rec["edge_count"] = sum(len(s["edge_points"]) for s in sets)
@@ -473,7 +544,12 @@ def describe_feature(ent):
         edges = get(ent, "edges")
         if edges is not None:
             rec["edge_count"] = count_of(edges)
+        if "Fillet" in kind or "Chamfer" in kind:
             rec["edge_points_missing"] = True
+            sizes = rolled_back_to(index, lambda: [
+                {k: v for k, v in st.items() if k != "edge_points"} for st in edge_sets(ent)])
+            if sizes:
+                rec["edge_set_sizes"] = sizes
 
     faces = get(ent, "faces", "inputFaces")
     if faces is not None:
@@ -598,6 +674,7 @@ def describe_design(design, data_file, parts):
     unknown = {}
     try:
         tl = design.timeline
+        _ROLLBACK["timeline"] = tl
         for i in range(tl.count):
             tobj = tl.item(i)
             rec = {"index": i}
@@ -616,7 +693,7 @@ def describe_design(design, data_file, parts):
                 rec["entity_error"] = str(e)
             if ent is not None:
                 try:
-                    rec.update(describe_feature(ent))
+                    rec.update(describe_feature(ent, i))
                 except Exception as e:
                     rec["describe_error"] = "{}: {}".format(type(e).__name__, e)
                     rec["entity"] = type(ent).__name__
@@ -854,6 +931,7 @@ def run(context):
                     "error": "{}: {}".format(type(e).__name__, e),
                 })
             finally:
+                _ROLLBACK["timeline"] = None
                 if doc is not None:
                     try:
                         doc.close(False)
