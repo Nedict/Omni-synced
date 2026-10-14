@@ -266,11 +266,11 @@ fn drive_with_contact(s: &mut Session, want: &[(u64, Vec<f64>)], given: &BTreeSe
     // Closed loops follow the driven values from where they start.
     let held: joints::Held = given
         .iter()
-        .filter_map(|&(id, i)| {
-            let to = want.iter().find(|(w, _)| *w == id)?.1.get(i).copied()?;
-            let from = start.iter().find(|(s, _)| *s == id).and_then(|(_, q)| q.get(i).copied());
+        .filter(|&&(id, i)| want.iter().any(|(w, q)| *w == id && i < q.len()))
+        .map(|&(id, i)| {
             // A value the file leaves out is 0, as the solver reads it.
-            Some(((id, i), from.unwrap_or(0.0)))
+            let from = start.iter().find(|(s, _)| *s == id).and_then(|(_, q)| q.get(i).copied());
+            ((id, i), from.unwrap_or(0.0))
         })
         .collect();
     let set = |s: &mut Session, t: f64| {
