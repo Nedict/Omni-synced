@@ -180,6 +180,41 @@ pub(super) fn with_refs(name: &str, mut v: Value) -> Value {
     v
 }
 
+/// The positions and directions a fixture leaves out (they don't change its expressions or
+/// references), set here so every point, direction and axis the geometry walks read is present:
+/// `to` / `from` picks, line axes, normals and origins. `hole_simple` places its hole at
+/// `position` (no sketch points), the other holes at sketch points.
+pub(super) fn with_points(name: &str, mut v: Value) -> Value {
+    let p = |i: f64| json!([i, i + 0.5, i + 0.25]);
+    let line = json!({"type": "line", "origin": p(9.0), "dir": [0.0, 0.6, 0.8]});
+    let extra = match name {
+        "extrude" | "surface_extrude" => {
+            if let Some(e) = v.get_mut("extent").and_then(Value::as_object_mut) {
+                e.insert("to".into(), p(1.0));
+                e.insert("from".into(), p(2.0));
+            }
+            json!({})
+        }
+        "revolve" => json!({"to": p(3.0), "axis": line}),
+        "surface_revolve" => json!({"axis": line}),
+        "hole_simple" => json!({"points": null, "to": p(4.0)}),
+        "hole_drilled" | "hole_counterbore" | "hole_countersink" => json!({"to": p(4.0)}),
+        "emboss" => json!({"face": {"body": "B", "at": p(5.0)}}),
+        "sheet_convert" => json!({"bends": [p(6.0)]}),
+        "sheet_fold" => json!({"fixed": p(7.0)}),
+        "rest" => json!({"along": [0.6, 0.8, 0.0]}),
+        "align" => json!({"from_normal": [0.0, 0.0, 1.0], "to_normal": [1.0, 0.0, 0.0]}),
+        "scale" => json!({"origin": p(8.0)}),
+        "move" => json!({"rotate_axis": [0.0, 1.0, 0.0]}),
+        "unstitch" | "reverse_normal" => json!({"faces": [p(10.0)]}),
+        _ => json!({}),
+    };
+    if let (Some(o), Some(e)) = (v.as_object_mut(), extra.as_object()) {
+        o.extend(e.clone());
+    }
+    v
+}
+
 /// The paths of the leaves that differ between two JSON values.
 pub(super) fn changed(a: &Value, b: &Value, path: &str, out: &mut Vec<String>) {
     match (a, b) {
