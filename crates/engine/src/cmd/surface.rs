@@ -338,6 +338,32 @@ mod tests {
         assert!(s.execute("surface.reverse_normal", &json!({"body": "Cube"})).is_err());
     }
 
+    /// Delete Face without healing: a box's top taken off leaves a five-face surface; patching
+    /// the opening and stitching gives back a box of the same volume. By default the gap still
+    /// heals (here it can't: refused); deleting every face is refused.
+    #[test]
+    fn delete_face_without_healing_leaves_an_open_surface() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Box"}));
+        run(&mut s, "face.delete", json!({"faces": [[5, 5, 10]], "heal": false}));
+        let st = s.world_state();
+        let open = &st.body("Box").unwrap().body;
+        assert!(open.is_surface() && open.face_count() == 5);
+        let rim = json!([[5, 0, 10], [10, 5, 10], [5, 10, 10], [0, 5, 10]]);
+        run(&mut s, "surface.patch", json!({"edges": rim, "body": "Box", "body_name": "Lid"}));
+        run(&mut s, "surface.stitch", json!({"bodies": ["Box", "Lid"]}));
+        assert!(!s.world_state().body("Box").unwrap().body.is_surface());
+        assert!((volume(&s, "Box") - 1000.0).abs() < 1e-9);
+        let cold = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        assert!((volume(&cold, "Box") - 1000.0).abs() < 1e-9);
+        // By default the gap heals, and a box's sides can't close its top: refused, the box kept.
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [20, 0, 0], "body_name": "Healed"}));
+        assert!(s.execute("face.delete", &json!({"faces": [[25, 5, 10]], "body": "Healed"})).is_err());
+        assert!(!s.world_state().body("Healed").unwrap().body.is_surface());
+        let all = json!([[25, 5, 10], [25, 5, 0], [25, 0, 5], [25, 10, 5], [20, 5, 5], [30, 5, 5]]);
+        assert!(s.execute("face.delete", &json!({"faces": all, "body": "Healed", "heal": false})).is_err());
+    }
+
     /// The planned surface commands are registered but refuse to run: disabled with the
     /// issue that tracks them, an error (never a panic) from every caller, and the design left
     /// as it was.

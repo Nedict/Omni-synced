@@ -370,11 +370,9 @@ fn compute(mut session: Session, command: &str, params: &Value, thumbnail: bool,
     let placement_ms = view_began.elapsed().as_secs_f64() * 1000.0;
     let mesh_began = std::time::Instant::now();
     // Fit, picking and the first viewport frame must not trigger cold tessellation on the UI.
-    for b in &world.bodies {
-        if progress.is_cancelled() {
-            return cancelled();
-        }
-        let _ = b.mesh();
+    world.warm_meshes(|| !progress.is_cancelled());
+    if progress.is_cancelled() {
+        return cancelled();
     }
     let tessellation_ms = mesh_began.elapsed().as_secs_f64() * 1000.0;
     phase.store(2, Ordering::Relaxed);

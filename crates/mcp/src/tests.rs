@@ -867,6 +867,161 @@ fn instructions_name_only_real_tools() {
     }
 }
 
+/// A fake app that records what it is asked and answers `engine.batch` as configured.
+struct Recorder {
+    calls: Vec<(String, Value)>,
+    batch: Result<Value, String>,
+}
+
+impl crate::backend::Backend for Recorder {
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        self.calls.push((method.to_string(), params.clone()));
+        match method {
+            "engine.batch" => self.batch.clone(),
+            "engine.execute" => match params["command"].as_str() {
+                Some("edit.checkpoint") => Ok(json!({"checkpoint": 3})),
+                Some(c) => Ok(json!({"ran": c})),
+                None => Err("missing `command`".into()),
+            },
+            "document.inspect" => Ok(json!({"undo": 0})),
+            other => Err(format!("unknown method `{other}`")),
+        }
+    }
+    fn has_ui(&self) -> bool {
+        true
+    }
+    fn describe(&self) -> String {
+        "recorder".into()
+    }
+}
+
+fn recorded_batch(batch: Result<Value, String>, args: Value) -> (Recorder, Value, bool) {
+    let mut b = Recorder { calls: Vec::new(), batch };
+    let r = crate::tools::call_tool(&mut b, "batch", &args);
+    let body = serde_json::from_str(r["content"][0]["text"].as_str().unwrap()).unwrap_or_else(|_| r["content"][0]["text"].clone());
+    let is_error = r["isError"] == json!(true);
+    (b, body, is_error)
+}
+
+fn methods(b: &Recorder) -> Vec<&str> {
+    b.calls.iter().map(|(m, _)| m.as_str()).collect()
+}
+
+/// #743: bridged to an app that has `engine.batch`, a batch is one control request.
+#[test]
+fn batch_is_one_engine_batch_call() {
+    let reply = json!({"completed": 2, "results": [{"feature": 1, "bodies": ["B"], "created_bodies": ["B"]}, {"x": 2}], "undone": 0});
+    let steps = json!([{"command": "a.one", "params": {"v": 1}}, {"command": "a.two"}]);
+    let (b, body, is_error) = recorded_batch(Ok(reply.clone()), json!({"commands": steps}));
+    assert_eq!(methods(&b), ["engine.batch"]);
+    assert_eq!(b.calls[0].1, json!({"commands": steps, "rollback": true}));
+    assert!(!is_error);
+    assert_eq!(body, json!({"ok": true, "completed": 2, "results": reply["results"]}));
+    // `verbose: false` compacts each step's result as the per-step path does.
+    let (_, body, _) = recorded_batch(Ok(reply), json!({"commands": steps, "verbose": false}));
+    assert_eq!(body["results"][0], json!({"feature": 1, "created_bodies": ["B"]}), "{body}");
+}
+
+#[test]
+fn batch_reports_a_failed_engine_batch_like_before() {
+    let reply = json!({"completed": 1, "results": [{"x": 1}], "failed": {"index": 1, "command": "a.two", "error": "boom"}, "undone": 1});
+    let (b, body, is_error) = recorded_batch(Ok(reply), json!({"commands": [{"command": "a.one"}, {"command": "a.two"}]}));
+    assert_eq!(methods(&b), ["engine.batch"]);
+    assert!(is_error);
+    assert_eq!(
+        body,
+        json!({"ok": false, "completed": 1, "failed": {"index": 1, "command": "a.two", "error": "boom"}, "rolled_back": true, "undone": 1, "results": [{"x": 1}]})
+    );
+}
+
+#[test]
+fn batch_falls_back_when_the_app_lacks_engine_batch() {
+    let (b, body, is_error) =
+        recorded_batch(Err("unknown method `engine.batch`".into()), json!({"commands": [{"command": "a.one"}, {"command": "a.two"}]}));
+    assert!(!is_error, "{body}");
+    let ran: Vec<&str> = b.calls.iter().filter(|(m, _)| m == "engine.execute").map(|(_, p)| p["command"].as_str().unwrap_or("")).collect();
+    assert!(ran.contains(&"a.one") && ran.contains(&"a.two"), "{ran:?}");
+    assert_eq!(body["results"], json!([{"ran": "a.one"}, {"ran": "a.two"}]));
+}
+
+#[test]
+fn batch_falls_back_while_the_agent_cursor_is_shown() {
+    let (b, body, is_error) =
+        recorded_batch(Err("engine.batch unavailable: the agent cursor is shown".into()), json!({"commands": [{"command": "a.one"}]}));
+    assert!(!is_error, "{body}");
+    assert!(b.calls.iter().any(|(m, p)| m == "engine.execute" && p["command"] == "a.one"), "{:?}", b.calls);
+}
+
+/// The app may have run the batch: sending the steps again would apply them twice.
+#[test]
+fn batch_does_not_resend_after_a_transport_error() {
+    let (b, body, is_error) =
+        recorded_batch(Err("SolidCraft at 127.0.0.1:1: timed out".into()), json!({"commands": [{"command": "a.one"}, {"command": "a.two"}]}));
+    assert_eq!(methods(&b), ["engine.batch"]);
+    assert!(is_error);
+    assert!(body.as_str().is_some_and(|t| t.contains("may have run") && t.contains("timed out")), "{body}");
+}
+
+/// A batch longer than one control line goes step by step instead of being refused unrun.
+#[test]
+fn batch_too_large_for_one_control_line_goes_per_step() {
+    let big = "x".repeat(solidcraft_engine::MAX_LINE);
+    let (b, body, is_error) = recorded_batch(Ok(json!({})), json!({"commands": [{"command": "a.one", "params": {"text": big}}]}));
+    assert!(!is_error, "{body}");
+    assert!(!methods(&b).contains(&"engine.batch"), "{:?}", methods(&b));
+    assert!(b.calls.iter().any(|(m, p)| m == "engine.execute" && p["command"] == "a.one"));
+}
+
+/// A fake app on a loopback port: counts connections and `engine.batch` lines, never replies to
+/// them (`close_first`: close a connection as soon as it is accepted).
+fn silent_app(close_first: bool) -> (String, std::sync::Arc<std::sync::Mutex<(usize, usize)>>) {
+    use std::io::BufRead;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new((0usize, 0usize)));
+    let counts = seen.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            counts.lock().unwrap().0 += 1;
+            let counts = counts.clone();
+            std::thread::spawn(move || {
+                if close_first && counts.lock().unwrap().0 > 1 {
+                    return;
+                }
+                let mut r = std::io::BufReader::new(stream);
+                let mut line = String::new();
+                while r.read_line(&mut line).is_ok_and(|n| n > 0) {
+                    if line.contains("engine.batch") {
+                        counts.lock().unwrap().1 += 1;
+                        return;
+                    }
+                    line.clear();
+                }
+            });
+        }
+    });
+    (addr, seen)
+}
+
+#[test]
+fn remote_engine_batch_is_not_resent_after_a_lost_reply() {
+    use crate::backend::Backend;
+    for close_first in [false, true] {
+        let (addr, seen) = silent_app(close_first);
+        let mut remote = crate::Remote::connect(&addr).unwrap();
+        let r = remote.call("engine.batch", json!({"commands": [{"command": "solid.box"}]}));
+        assert!(r.is_err(), "{r:?}");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let (connections, batches) = *seen.lock().unwrap();
+        // The connection from `connect`, and one fresh one for the batch: no resend.
+        assert_eq!(connections, 2, "close_first {close_first}: {connections} connections");
+        assert!(batches <= 1, "close_first {close_first}: the batch arrived {batches} times");
+        if !close_first {
+            assert_eq!(batches, 1);
+        }
+    }
+}
+
 /// Tool annotations never understate what a tool may do (#205): `screenshot` writes a file when
 /// given a `path`, and `execute`, `batch`, `save`, `export` and `open` can overwrite or delete
 /// files, so none of them is read-only and all are destructive and reach the file system.
