@@ -477,6 +477,23 @@ impl Session {
         }
     }
 
+    /// Only persistent render intent changed. Never evaluate or clear a stale model here.
+    fn render_only_change(&self, before: &Snapshot) -> bool {
+        self.active_sketch == before.active_sketch && self.pending_moves == before.pending_moves && self.doc.differs_only_in_render(&before.doc)
+    }
+
+    fn refresh_render(&mut self, previous: &Arc<Document>) {
+        self.revision += 1;
+        // Geometry/placements have been proved identical. Retarget the cache's document key
+        // instead of discarding prepared meshes merely because the document Arc changed.
+        if let Ok(mut cache) = self.world_cache.lock()
+            && let Some(cache) = cache.as_mut()
+            && Arc::ptr_eq(&cache.doc, previous)
+        {
+            cache.doc = self.doc.clone();
+        }
+    }
+
     /// Show the sketch a live frame changed, leaving the features after it as they were last
     /// evaluated (marked stale); a full `refresh` when the model cannot show it that way.
     fn refresh_live(&mut self, edit: LiveEdit) {
@@ -583,6 +600,8 @@ impl Session {
             Ok((v, live_edit)) => {
                 let v = if changed { self.with_created(spec.id, params, &before, v) } else { v };
                 if changed {
+                    let render_only = self.render_only_change(&before);
+                    let previous_doc = before.doc.clone();
                     if spec.undoable {
                         self.undo.push(before);
                         if self.undo.len() > MAX_UNDO {
@@ -592,6 +611,7 @@ impl Session {
                     }
                     match live_edit {
                         Some(edit) => self.refresh_live(edit),
+                        None if render_only => self.refresh_render(&previous_doc),
                         None => self.refresh(),
                     }
                 }
@@ -653,13 +673,19 @@ impl Session {
     pub fn restore_checkpoint(&mut self, id: u64) -> Result<()> {
         let i = self.checkpoints.iter().position(|c| c.id == id).ok_or_else(|| EngineError::Other(format!("no checkpoint {id}")))?;
         let Some(c) = self.checkpoints.drain(i..).next() else { return Err(EngineError::Other(format!("no checkpoint {id}"))) };
+        let before =
+            Snapshot { label: String::new(), doc: self.doc.clone(), active_sketch: self.active_sketch, pending_moves: self.pending_moves.clone() };
         self.doc = c.doc;
         self.active_sketch = c.active_sketch;
         self.pending_moves = c.pending_moves;
         self.undo = c.undo;
         self.redo = c.redo;
         self.selection.clear();
-        self.refresh();
+        if self.render_only_change(&before) {
+            self.refresh_render(&before.doc);
+        } else if !Arc::ptr_eq(&self.doc, &before.doc) || self.active_sketch != before.active_sketch || self.pending_moves != before.pending_moves {
+            self.refresh();
+        }
         Ok(())
     }
 

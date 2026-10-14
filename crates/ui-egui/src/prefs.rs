@@ -3,10 +3,10 @@
 //! designs, autosave, display precision, timeline layout, the agent cursor), Navigation (mouse presets, zoom
 //! direction, zoom to the cursor, orbit centre, Look At animation), Keyboard Shortcuts (search,
 //! rebind, conflicts; `keymap`), Design (default modelling orientation, Y up or Z up), Graphics
-//! (visual style, grid, shadow, perspective, anti-aliasing), Sketch and Selection. Changes apply
-//! at once; Cancel puts back what was there when the dialog opened, OK keeps them, Apply keeps
-//! them and stays open, and Restore Defaults resets the page shown. Everything is kept between
-//! runs, except anti-aliasing, which needs a restart.
+//! (visual style, grid, shadow, perspective, anti-aliasing, colour vision), Sketch and Selection.
+//! Changes apply at once; Cancel puts back what was there when the dialog opened, OK keeps them,
+//! Apply keeps them and stays open, and Restore Defaults resets the page shown. Everything is
+//! kept between runs, except anti-aliasing, which needs a restart.
 
 use egui::{Modifiers, Pos2, RichText};
 use serde::{Deserialize, Serialize};
@@ -246,6 +246,8 @@ pub struct Prefs {
     pub offer_stand_up: bool,
     /// What a middle-button double-click in the view does: `home`, `fit` or `off`.
     pub middle_double_click: String,
+    /// Colour vision mode (#778): `off`, `protan`, `deutan` or `tritan`.
+    pub color_vision: crate::theme::ColorVision,
     /// Check for updates at start and once a day (docs/updates.md).
     pub check_updates: bool,
     /// When the last update check ran, and the versions skipped or put off (`update::Memo`).
@@ -308,6 +310,7 @@ impl Default for Prefs {
             up_axis: "z".into(),
             offer_stand_up: true,
             middle_double_click: "home".into(),
+            color_vision: crate::theme::ColorVision::Off,
             check_updates: true,
             update: crate::update::Memo::default(),
         }
@@ -431,6 +434,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
         PAGE_GRAPHICS => {
             let msaa = p.msaa != d.msaa;
             p.msaa = d.msaa;
+            p.color_vision = d.color_vision;
             app.ui.visual_style = 0;
             app.ui.show_grid = true;
             app.ui.ground_shadow = true;
@@ -1055,6 +1059,28 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 _ => "CPU (software)".to_string(),
             });
             ui.end_row();
+            // Colour vision (#778): its own section at the end of the page.
+            ui.label("");
+            ui.end_row();
+            ui.label(RichText::new(app.tr("ui.colour_vision")).strong());
+            ui.label("");
+            ui.end_row();
+            ui.label(app.tr("ui.colour_vision_mode"));
+            let mode = app.preferences.color_vision;
+            egui::ComboBox::from_id_salt("pref_color_vision").selected_text(app.tr(mode.label_id())).show_ui(ui, |ui| {
+                for m in crate::theme::ColorVision::ALL {
+                    ui.selectable_value(&mut app.preferences.color_vision, m, crate::i18n::tr(m.label_id())).on_hover_text(crate::i18n::tr(m.help_id()));
+                }
+            });
+            if app.preferences.color_vision != mode {
+                // At once, like the theme: the next frame draws in the new colours.
+                ui.ctx().request_repaint();
+            }
+            ui.end_row();
+            ui.label(app.tr("ui.colour_vision_sample"));
+            colour_vision_sample(ui, t);
+            ui.end_row();
+            note(ui, app.tr("ui.colour_vision_note"));
         }
         5 => {
             ui.label(crate::i18n::tr_label("Project face edges into new sketches"));
@@ -1070,6 +1096,76 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.end_row();
         }
     });
+}
+
+/// The names under the Colour vision sample (message ids).
+pub(crate) const COLOUR_VISION_SAMPLE: [&str; 6] =
+    ["ui.colour_vision_fixed", "ui.colour_vision_projected", "ui.axes", "Bends", "ui.draft", "ui.colour_vision_failed"];
+
+/// The Colour vision sample (#778): fixed and projected sketch lines, the X and Y axes, bends up
+/// and down, Draft Analysis and a failed feature, each drawn as it is where it appears, in the
+/// colours on now. One fixed-size area, so the grid row is as tall as what it draws.
+fn colour_vision_sample(ui: &mut egui::Ui, t: &Tokens) {
+    const W: f32 = 72.0;
+    const LINE: f32 = 4.0;
+    let (area, _) = ui.allocate_exact_size(egui::vec2(W * COLOUR_VISION_SAMPLE.len() as f32, 50.0), egui::Sense::hover());
+    let p = ui.painter_at(area);
+    let line = |c| egui::Stroke::new(LINE, c);
+    for (i, name) in COLOUR_VISION_SAMPLE.iter().enumerate() {
+        let cell = egui::Rect::from_min_size(area.min + egui::vec2(W * i as f32, 0.0), egui::vec2(W - 8.0, 32.0));
+        let (a, b) = (cell.left_center() + egui::vec2(8.0, 0.0), cell.right_center() - egui::vec2(8.0, 0.0));
+        match i {
+            0 | 1 => {
+                p.rect_filled(cell, 3.0, t.viewport_top);
+                p.line_segment([a, b], line(if i == 0 { t.sketch_locked } else { t.sketch_projected }));
+            }
+            2 => {
+                // X along and Y up from one corner, as the view triad draws them.
+                p.rect_filled(cell, 3.0, t.viewport_top);
+                let o = cell.left_bottom() + egui::vec2(12.0, -7.0);
+                p.line_segment([o, egui::pos2(cell.right() - 10.0, o.y)], line(t.triad[0]));
+                p.line_segment([o, egui::pos2(o.x, cell.top() + 6.0)], line(t.triad[1]));
+            }
+            3 => {
+                // Dashed, as the flat pattern draws them.
+                p.rect_filled(cell, 3.0, t.viewport_top);
+                for (dy, c) in [(-7.0, t.bend_up), (7.0, t.bend_down)] {
+                    p.extend(egui::Shape::dashed_line(&[a + egui::vec2(0.0, dy), b + egui::vec2(0.0, dy)], line(c), 8.0, 5.0));
+                }
+            }
+            4 => {
+                // The three bands of Draft Analysis; in a mode the negative one is striped.
+                let w = cell.width() / 3.0;
+                for (k, c) in t.analysis.draft.iter().enumerate() {
+                    let band = egui::Rect::from_min_size(cell.min + egui::vec2(w * k as f32, 0.0), egui::vec2(w, cell.height()));
+                    p.rect_filled(band, 0.0, crate::theme::srgb(*c));
+                    if k == 2 && t.analysis.hatch {
+                        let stripes = p.with_clip_rect(band);
+                        let dark = crate::theme::srgb(c.map(|x| x * 0.6));
+                        let mut x = band.left() - band.height();
+                        while x < band.right() {
+                            stripes.line_segment(
+                                [egui::pos2(x, band.bottom()), egui::pos2(x + band.height(), band.top())],
+                                egui::Stroke::new(2.0, dark),
+                            );
+                            x += 9.0;
+                        }
+                    }
+                }
+            }
+            _ => {
+                // A failed feature on the timeline.
+                p.rect(cell.shrink2(egui::vec2(10.0, 3.0)), 3.0, t.timeline_item_error, egui::Stroke::new(1.0, t.error), egui::StrokeKind::Inside);
+            }
+        }
+        p.text(
+            cell.center_bottom() + egui::vec2(0.0, 3.0),
+            egui::Align2::CENTER_TOP,
+            crate::i18n::tr(name),
+            egui::FontId::proportional(11.0),
+            t.text_dim,
+        );
+    }
 }
 
 /// The control channel's `ui.prefs`: `open` (a page name) opens the dialog there, `button`
@@ -1141,6 +1237,12 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
             }
             o.insert(k.clone(), v.clone());
         }
+    }
+    // Saved preferences read an unknown mode as Off; asked for here, it is an error.
+    if let Some(v) = p.get("color_vision")
+        && v.as_str().and_then(crate::theme::ColorVision::from_id).is_none()
+    {
+        return Err("`color_vision` must be off, protan, deutan or tritan".into());
     }
     let new: Prefs = serde_json::from_value(cur).map_err(|e| e.to_string())?;
     if !UNITS.contains(&new.default_units.as_str()) {

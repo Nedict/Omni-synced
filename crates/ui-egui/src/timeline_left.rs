@@ -719,6 +719,11 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             egui::FontId::proportional(12.0),
             text_colour,
         );
+        // A failed feature has a mark of its own, not only its colour (#972).
+        if error.is_some() {
+            let at = Rect::from_min_size(pos2(rect.right() - 15.0, rect.center().y - 6.0), vec2(12.0, 12.0));
+            icons::paint(ui.painter(), at, "error", t.panel, t.error, t.error);
+        }
         if warning.is_some() && error.is_none() {
             icons::paint(
                 ui.painter(),

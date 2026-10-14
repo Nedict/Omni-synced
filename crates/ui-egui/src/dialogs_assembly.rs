@@ -866,7 +866,9 @@ pub fn overlay(app: &SolveApp, painter: &egui::Painter, proj: &Proj, d: &mut Dia
                     continue;
                 }
                 let k = 0.55 + 0.45 * facing;
-                let fill = Color32::from_rgba_unmultiplied((235.0 * k) as u8, (45.0 * k) as u8, (40.0 * k) as u8, 210);
+                let shade = |c: u8| (f64::from(c) * k) as u8;
+                let ic = t.interference;
+                let fill = Color32::from_rgba_unmultiplied(shade(ic.r()), shade(ic.g()), shade(ic.b()), 210);
                 let sp: Vec<Pos2> = ps.iter().filter_map(|p| proj.to_screen(*p)).collect();
                 if sp.len() == 3 {
                     let base = em.vertices.len() as u32;
