@@ -264,6 +264,24 @@ fn thread_groove(t: &ThreadInfo, radius: f64, open: (bool, bool)) -> Result<soli
     if len / p > 190.0 {
         return Err(DocError::Invalid(format!("a modelled thread is limited to 190 turns ({:.0} mm at this pitch); use a cosmetic one", 190.0 * p)));
     }
+    // How deep the groove cuts into the material: from the hole wall out to the major diameter,
+    // or from the shaft's surface in to the root. Next to nothing (a hole as wide as the thread,
+    // #995) is refused: the faceted cut would leave the face faceted and unthreaded.
+    let basic = 5.0 * h / 8.0;
+    let depth = if t.internal { d / 2.0 - radius } else { radius - (d / 2.0 - basic) };
+    if !(depth >= basic / 4.0) {
+        let (m, dia) = (&t.designation, 2.0 * radius);
+        let cut = format!("it would cut {:.2} mm of the thread's {basic:.2} mm depth", depth.max(0.0));
+        let alt = thread_for(dia, t.internal).map(|(n, q)| format_thread(n, q)).filter(|a| a != m);
+        let shown = show_mm(dia);
+        return Err(DocError::Invalid(if t.internal {
+            let alt = alt.map(|a| format!(", or thread this hole {a}")).unwrap_or_default();
+            format!("this {shown} mm hole is too wide for a modelled {m} thread: {cut}; drill {} mm for {m}{alt}", show_mm(d - p))
+        } else {
+            let alt = alt.map(|a| format!(", or thread this shaft {a}")).unwrap_or_default();
+            format!("this {shown} mm shaft is too thin for a modelled {m} thread: {cut}; make the shaft {} mm for {m}{alt}", show_mm(d))
+        }));
+    }
     // (radius, half width of the groove) at its two ends: a trapezoid in the axial plane.
     let (r0, w0, r1, w1) = if t.internal {
         // From inside the hole wall out to the major diameter, where the bolt's crest sits
