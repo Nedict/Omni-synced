@@ -129,13 +129,19 @@
 //!   taken from another face whose plane passed near the point, such as the far side of a thin
 //!   plate or a face of another body at the same height) is mirrored into that face when the
 //!   design is evaluated. Holes whose direction enters their face build as before.
+//!   Holes at sketch points can be flipped (`flip: true` in the hole's `points`): they drill away
+//!   from the side they would go into by themselves. Holes without it save as before; 0.9.0 would
+//!   drop the flip and drill the other way.
+
+//! - 19: editable associative offset-distance dimensions. Older offsets retain their saved
+//!   fixed distances; migration does not invent dimensions or change geometry.
 
 use serde_json::Value;
 
 use crate::{DocError, Document, Result};
 
 /// The format this build writes.
-pub const FORMAT: u32 = 18;
+pub const FORMAT: u32 = 19;
 
 pub fn format_string(n: u32) -> String {
     format!("solidcraft/{n}")
@@ -152,7 +158,7 @@ pub fn version_of(s: &str) -> Option<u32> {
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
 type JsonStep = fn(&mut Value) -> Result<()>;
-const JSON_STEPS: [JsonStep; 17] = [
+const JSON_STEPS: [JsonStep; 18] = [
     |_| Ok(()),
     v2_to_v3,
     v3_to_v4,
@@ -166,6 +172,7 @@ const JSON_STEPS: [JsonStep; 17] = [
     |_| Ok(()),
     |_| Ok(()),
     v13_to_v14,
+    |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),

@@ -2050,6 +2050,16 @@ fn hole_reaches(st: &ModelState, p: Vec3, d: Vec3, ahead: bool) -> bool {
 /// from the plane's normal) if any spot touches material that way, else `+n` if any spot touches
 /// material that way. With no touching on either side it goes by the nearest body ahead: `-n` if
 /// any spot has a body ahead that way, else `+n` if any has, else `-n`.
+/// The way holes at these points of a sketch drill (see [`sketch_hole_dir`]), flipped or not.
+/// None when the sketch or a point is not there.
+pub fn sketch_hole_direction(st: &ModelState, sketch: u64, ids: &[String], flip: bool) -> Option<Vec3> {
+    let ss = st.sketch(sketch)?;
+    let spots: Vec<Vec3> =
+        ids.iter().map(|id| ss.sketch.points.iter().find(|p| &p.id == id).map(|p| ss.plane.to_world(p.pos))).collect::<Option<_>>()?;
+    let dir = sketch_hole_dir(st, &spots, ss.plane.normal());
+    Some(if flip { -dir } else { dir })
+}
+
 fn sketch_hole_dir(st: &ModelState, spots: &[Vec3], n: Vec3) -> Vec3 {
     let down = -n;
     let any = |d: Vec3, ahead: bool| spots.iter().any(|p| hole_reaches(st, *p, d, ahead));
@@ -2077,6 +2087,7 @@ fn hole_spots(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
                 v.push(ss.plane.to_world(p.pos));
             }
             let dir = sketch_hole_dir(st, &v, ss.plane.normal());
+            let dir = if sp.flip { -dir } else { dir };
             (v, dir)
         }
         None => {
@@ -2123,6 +2134,7 @@ fn hole_spots_raw(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
             let v: Vec<Vec3> =
                 sp.ids.iter().filter_map(|id| ss.sketch.points.iter().find(|p| &p.id == id)).map(|p| ss.plane.to_world(p.pos)).take(10_000).collect();
             let dir = sketch_hole_dir(st, &v, ss.plane.normal());
+            let dir = if sp.flip { -dir } else { dir };
             Ok((v, dir))
         }
         None => {

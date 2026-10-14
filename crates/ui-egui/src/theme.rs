@@ -71,6 +71,8 @@ pub struct Tokens {
     pub manipulator: Color32,
     /// New surface in a feature preview.
     pub preview_add: Color32,
+    /// Proposed sketch geometry, distinct from blue selections.
+    pub preview_sketch: Color32,
     /// Removed material in a feature preview (translucent).
     pub preview_cut: Color32,
     /// Navigation cube faces, outline and labels.
