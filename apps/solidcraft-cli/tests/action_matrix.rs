@@ -639,7 +639,14 @@ fn action_matrix_worker() {
     }
     let list = actions(&s);
     let edit = driving_parameter(&s);
+    // Local runs only: `ACTION_MATRIX_ACTIONS=edge.fillet,edge.chamfer` tries just those actions
+    // (don't bless such a run), `ACTION_MATRIX_VALIDITY=1` adds each passing action's body check.
+    let only: Option<Vec<String>> = std::env::var("ACTION_MATRIX_ACTIONS").ok().map(|v| v.split(',').map(str::to_string).collect());
+    let validity = std::env::var_os("ACTION_MATRIX_VALIDITY").is_some();
     for (i, a) in list.iter().enumerate().skip(from) {
+        if only.as_ref().is_some_and(|o| !o.iter().any(|x| x == a.action)) {
+            continue;
+        }
         // Whole families of pieces are sampled together (see [`family`]).
         let k = key(&design, &family(&a.entity), a.action);
         if !stable_hash(&k).is_multiple_of(sample) {
@@ -650,6 +657,11 @@ fn action_matrix_worker() {
         let mut scratch = s.scratch();
         let r = perform(&mut scratch, &a.act, &before);
         let mut line = outcome(&design, &a.entity, a.action, &r, t.elapsed().as_millis());
+        if validity && r.is_ok() {
+            let st = scratch.model.state();
+            let bad: Vec<String> = st.bodies.iter().flat_map(|b| b.body.validity().into_iter().map(|v| format!("{}: {v}", b.name))).collect();
+            line["validity"] = json!(bad);
+        }
         // What was sent, for reproducing a failure (kept in the results, not the baseline).
         line["command"] = match &a.act {
             Act::Run(id, p) => json!({"command": id, "params": p}),
@@ -1048,6 +1060,18 @@ fn a_through_hole_into_a_shelled_box_rim() {
             {"command": "solid.shell", "params": {"faces": [[0, 0, 30]], "thickness": 2}},
             {"command": "solid.hole", "params": {"position": [0, 24, 30], "diameter": 1}}
         ]),
+    );
+}
+
+/// #559: a 6 mm hole drilled at an angle through a 920 mm prism, its through-all tool nearly
+/// 1.9 m long beside a thin bar it misses. The bar's cut came out empty: the tool filled too
+/// little of its own box for the sampled shortcut, and the boolean's tolerances (from the
+/// tool's length) were wider than the hole.
+#[test]
+fn an_oblique_through_hole_beside_a_thin_bar() {
+    reproduces(
+        Some("examples/regressions/oblique_cut_of_cylinder.json"),
+        json!([{"command": "solid.hole", "params": {"diameter": 6.0, "position": [296.66666666666663, -458.66666666666663, 848.7633333333333]}}]),
     );
 }
 

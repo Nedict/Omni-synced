@@ -40,6 +40,8 @@ mod hole_placement_ui_tests;
 pub mod home;
 pub mod i18n;
 #[cfg(test)]
+mod i18n_menu_tests;
+#[cfg(test)]
 mod i18n_ui_tests;
 pub mod icons;
 pub mod inference;
@@ -47,6 +49,8 @@ pub mod issue_report;
 pub mod keymap;
 #[cfg(test)]
 mod menu_tests;
+#[cfg(test)]
+mod surface_clamp_tests;
 #[cfg(test)]
 mod status_tests {
     #[test]
@@ -492,7 +496,13 @@ impl SolveApp {
         }
         match &r {
             Ok(_) => {
-                self.session.echo(format!("{} done", command_label(id)));
+                // Programmatic callers (the control channel, scripts) run outside a render
+                // language scope, so resolve the echo from the saved preference instead of the
+                // thread-local scope. The command's own label is translated too, so the echo
+                // reads the same way the toolbar button it came from does.
+                let language = i18n::Locale::for_language(&self.preferences.language);
+                let label = language.label(command_label(id));
+                self.session.echo(language.format("ui.command_done", &[("command", label)]));
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
                     self.sketch_choices = sketch_families::Choices::default();
                     dim_view::cancel();
@@ -1134,7 +1144,7 @@ impl SolveApp {
             let Some(req) = held.or_else(|| rx.try_recv().ok()) else { break };
             // A file is loading: commands that change the design wait for it (the window,
             // inspection and screenshots still answer).
-            if self.file_load.busy() && matches!(req.method.as_str(), "engine.execute" | "command" | "engine.script") {
+            if self.file_load.busy() && matches!(req.method.as_str(), "engine.execute" | "command" | "engine.script" | "engine.batch") {
                 if self.control_held.len() < MAX_HELD {
                     self.control_held.push_back(req);
                 } else {
