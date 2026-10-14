@@ -39,13 +39,13 @@ fn edges() -> Vec<Vec3> {
 #[test]
 fn overlapping_rounds_are_refused() {
     let p = part();
-    assert_eq!(p.open_mesh_edges().unwrap(), 0);
+    assert_eq!(p.crossed_face_loops().unwrap(), 0);
     assert!(crate::fillet(&p, &edges(), 1.0).is_err(), "a fillet with openings in its surface was accepted");
     // The corner build makes that body (what #871 got): closed as topology, every face meshes,
-    // but its end faces mesh across the window.
+    // but the loops of its end faces cross.
     let sel: Vec<(Vec3, f64)> = edges().into_iter().map(|e| (e, 1.0)).collect();
     if let Ok(b) = crate::blend_corner::fillet_radii(&p, &sel) {
-        assert!(b.validity().is_empty() && b.open_mesh_edges().unwrap() > 0);
+        assert!(b.validity().is_empty() && b.crossed_face_loops().unwrap() > 0);
     }
 }
 
@@ -55,6 +55,6 @@ fn rounds_that_fit_are_closed() {
     let p = part();
     let b = crate::fillet(&p, &edges(), 0.5).unwrap();
     assert!(b.validity().is_empty(), "{:?}", b.validity());
-    assert_eq!(b.open_mesh_edges().unwrap(), 0);
+    assert_eq!(b.crossed_face_loops().unwrap(), 0);
     assert_eq!(b.face_count(), p.face_count() + edges().len());
 }

@@ -1623,12 +1623,12 @@ fn loop_split(cur: &Body, pts: &[Vec3]) -> Result<Option<(Vec<Vec<Vec3>>, Vec<Ve
     Ok((!groups.is_empty()).then_some((groups, rest)))
 }
 
-/// A fillet's result, refused when its surface has openings (#871): rounds that overlap
-/// where a wall is thinner than both leave faces whose boundaries cross, which the topology
-/// checks don't see but which show as holes in the model. A fillet either closes the solid or
-/// is refused.
+/// A fillet's result, refused when a face's boundary crosses itself (#871): rounds that
+/// overlap where a wall is thinner than both leave such faces, which the topology checks
+/// don't see but which show as holes in the model. A fillet either closes the solid or is
+/// refused.
 fn closed(b: Body) -> Result<Body> {
-    match b.open_mesh_edges()? {
+    match b.crossed_face_loops()? {
         0 => Ok(b),
         _ => Err(KernelError::Failed(
             "fillet: the rounds would leave openings in the surface (they overlap where a wall or a face is narrower than both)".into(),

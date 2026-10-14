@@ -83,12 +83,12 @@ fn fillet_that_would_open_the_surface_is_refused() {
     assert!(result.is_err(), "a fillet with openings in the model was accepted");
     assert!((total_volume(&s) - before).abs() < 1e-9);
     for body in &s.model.state().bodies {
-        assert!(body.body.validity().is_empty() && body.body.open_mesh_edges().unwrap() == 0);
+        assert!(body.body.validity().is_empty() && body.body.crossed_face_loops().unwrap() == 0);
     }
     // At half the radius the rounds fit.
     run(&mut s, "solid.fillet", json!({"edges": feature["edges"], "radius": "0.5"}));
     for body in &s.model.state().bodies {
-        assert!(body.body.validity().is_empty() && body.body.open_mesh_edges().unwrap() == 0);
+        assert!(body.body.validity().is_empty() && body.body.crossed_face_loops().unwrap() == 0);
     }
 }
 
