@@ -38,6 +38,10 @@ pub struct ViewportState {
     /// Per-body boxes of one world state, held (not just its address, which a later state can
     /// reuse once the old one is freed, so stale boxes would come back).
     pick_bounds: std::sync::Mutex<Option<BodyBounds>>,
+    /// The model scene's blocks of bodies by key, from the last scene built.
+    pub(crate) blocks: std::sync::Mutex<std::collections::HashMap<u64, CachedBlock>>,
+    /// Each body mesh's box (the mesh held, so its address stays its own), from the last state.
+    mesh_bounds: std::sync::Mutex<std::collections::HashMap<usize, (std::sync::Arc<solidcraft_engine::geom::Mesh>, solidcraft_engine::geom::Aabb3)>>,
     /// The last click in the view was the middle button's (for the middle double-click).
     middle_clicked: bool,
     /// The last pick (its key and hits): reused while nothing it depends on changed.
@@ -350,6 +354,110 @@ fn shown_mesh(
         .unwrap_or_else(|| b.mesh())
 }
 
+/// A model scene block kept by the viewport: its bytes and the meshes they were built from
+/// (held, so no other mesh can take their addresses while the block is kept).
+pub(crate) struct CachedBlock {
+    bytes: std::sync::Arc<crate::gpu::BlockBytes>,
+    meshes: Vec<std::sync::Arc<solidcraft_engine::geom::Mesh>>,
+}
+
+/// One body as the model scene draws it.
+struct BodyDraw {
+    mesh: std::sync::Arc<solidcraft_engine::geom::Mesh>,
+    col: [u8; 4],
+    faded: bool,
+    opacity: f64,
+    face_looks: std::collections::HashMap<usize, solidcraft_engine::doc::appearance::Look>,
+    /// Its faces are drawn from its plan on the GPU (only its edges are built here).
+    on_gpu: bool,
+}
+
+impl BodyDraw {
+    /// Everything [`BodyDraw::build`] reads.
+    fn key(&self, shaded: bool, edges: bool, hidden_edges: bool, edge_col: [u8; 4], hidden_col: [u8; 4]) -> u64 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (std::sync::Arc::as_ptr(&self.mesh) as usize).hash(&mut h);
+        (self.col, self.faded, self.opacity.to_bits(), self.on_gpu, shaded, edges, hidden_edges, edge_col, hidden_col).hash(&mut h);
+        let mut looks: Vec<_> = self.face_looks.iter().map(|(f, l)| (*f, l.color, l.opacity.to_bits())).collect();
+        looks.sort_unstable();
+        looks.hash(&mut h);
+        h.finish()
+    }
+
+    fn build(&self, sc: &mut crate::gpu::BlockBytes, shaded: bool, edges: bool, hidden_edges: bool, edge_col: [u8; 4], hidden_col: [u8; 4]) {
+        let m = &self.mesh;
+        let mut out = GpuScene::default();
+        for (ti, t) in m.triangles.iter().enumerate().filter(|_| shaded && !self.on_gpu) {
+            let (mut col, a) = match m.tri_face.get(ti).and_then(|f| self.face_looks.get(&(*f as usize))) {
+                Some(l) => {
+                    let c = Color32::from_rgb(l.color[0], l.color[1], l.color[2]);
+                    (if self.faded { c4(c.gamma_multiply(0.35)) } else { c4(c) }, l.opacity)
+                }
+                None => (self.col, self.opacity),
+            };
+            let glass = !self.faded && a < 0.999;
+            if glass {
+                col[3] = (a.clamp(0.05, 1.0) * 255.0).round() as u8;
+            }
+            for k in t {
+                let i = *k as usize;
+                if let (Some(p), Some(n)) = (m.positions.get(i), m.normals.get(i)) {
+                    if self.faded {
+                        out.trans_tri(p.to_f32(), n.to_f32(), col);
+                    } else if glass {
+                        out.glass_tri(p.to_f32(), n.to_f32(), col);
+                    } else {
+                        out.tri(p.to_f32(), n.to_f32(), col);
+                    }
+                }
+            }
+        }
+        for (ei, e) in m.edges.iter().enumerate().filter(|_| edges) {
+            if !m.edge_pickable(ei) || (shaded && !m.shaded_edge_visible(ei)) {
+                continue;
+            }
+            for w in e.windows(2) {
+                out.line(w[0].to_f32(), w[1].to_f32(), edge_col, 1.3, false);
+                if hidden_edges {
+                    out.hidden_line(w[0].to_f32(), w[1].to_f32(), hidden_col, 1.0);
+                }
+            }
+        }
+        sc.tris.extend_from_slice(&out.tris);
+        sc.trans.extend_from_slice(&out.trans);
+        sc.glass.extend_from_slice(&out.glass);
+        sc.lines.extend_from_slice(&out.lines);
+        sc.hidden.extend_from_slice(&out.hidden);
+    }
+}
+
+/// Add a block of bodies to the scene: the bytes built for the same bodies last time when
+/// there were any, else built now.
+fn push_block(
+    sc: &mut GpuScene,
+    kept: &mut std::collections::HashMap<u64, CachedBlock>,
+    made: &mut std::collections::HashMap<u64, CachedBlock>,
+    key: u64,
+    draws: Vec<BodyDraw>,
+    build: impl Fn(&BodyDraw, &mut crate::gpu::BlockBytes),
+) {
+    let same = |c: &CachedBlock| c.meshes.len() == draws.len() && c.meshes.iter().zip(&draws).all(|(m, d)| std::sync::Arc::ptr_eq(m, &d.mesh));
+    let block = match kept.remove(&key).or_else(|| made.remove(&key)).filter(same) {
+        Some(c) => c,
+        None => {
+            let mut bytes = crate::gpu::BlockBytes::default();
+            for d in &draws {
+                build(d, &mut bytes);
+            }
+            CachedBlock { bytes: std::sync::Arc::new(bytes), meshes: draws.iter().map(|d| d.mesh.clone()).collect() }
+        }
+    };
+    // See-through triangles are sorted with the rest of the glass, every view.
+    sc.glass.extend_from_slice(&block.bytes.glass);
+    sc.blocks.push(crate::gpu::SceneBlock { key, bytes: block.bytes.clone() });
+    made.insert(key, block);
+}
+
 fn build_scene(app: &SolveApp) -> GpuScene {
     let tk = Tokens::get();
     let mut sc = GpuScene::default();
@@ -357,6 +465,20 @@ fn build_scene(app: &SolveApp) -> GpuScene {
     // Bodies where their occurrences place them.
     let st = s.world_state();
     let active_bodies = s.active_occurrence_path.as_ref().and_then(|p| s.occurrence_bodies(p, true).ok());
+    let (shaded, edges) = match app.ui.visual_style {
+        1 => (true, false),
+        2 => (false, true),
+        _ => (true, true),
+    };
+    let edge_col = if shaded { c4(tk.body_edge) } else { c4(tk.text) };
+    // Shaded with hidden edges: edges behind the model show faintly.
+    let hidden_edges = app.ui.visual_style == 3;
+    let hidden_col = c4(tk.text.gamma_multiply(0.35));
+    // The blocks the last scene built, reused when their bodies come back as they were.
+    let mut kept = app.viewport.blocks.lock().map(|mut b| std::mem::take(&mut *b)).unwrap_or_default();
+    let mut made: std::collections::HashMap<u64, CachedBlock> = std::collections::HashMap::new();
+    let mut run: Vec<BodyDraw> = Vec::new();
+    let mut run_key = std::collections::hash_map::DefaultHasher::new();
     for b in &st.bodies {
         if !app.session.body_visible(&b.name) || app.preview.replaced.contains(&b.name) {
             continue;
@@ -364,16 +486,6 @@ fn build_scene(app: &SolveApp) -> GpuScene {
         let faded = body_faded(app, b, &active_bodies);
         let base = body_color(&s.doc, b).unwrap_or(tk.body);
         let col = if faded { c4(base.gamma_multiply(0.35)) } else { c4(base) };
-        let m = b.mesh();
-        let (shaded, edges) = match app.ui.visual_style {
-            1 => (true, false),
-            2 => (false, true),
-            _ => (true, true),
-        };
-        let edge_col = if shaded { c4(tk.body_edge) } else { c4(tk.text) };
-        // Shaded with hidden edges: edges behind the model show faintly.
-        let hidden_edges = app.ui.visual_style == 3;
-        let hidden_col = c4(tk.text.gamma_multiply(0.35));
         // Appearances: the body's opacity, and faces with looks of their own.
         let opacity = s.doc.model_body_opacity(b);
         let face_looks: std::collections::HashMap<usize, solidcraft_engine::doc::appearance::Look> =
@@ -390,42 +502,23 @@ fn build_scene(app: &SolveApp) -> GpuScene {
                 .collect();
             sc.planned.push(crate::gpu::PlannedBody { plan, face_colors });
         }
-        for (ti, t) in m.triangles.iter().enumerate().filter(|_| shaded && !on_gpu) {
-            let (mut col, a) = match m.tri_face.get(ti).and_then(|f| face_looks.get(&(*f as usize))) {
-                Some(l) => {
-                    let c = Color32::from_rgb(l.color[0], l.color[1], l.color[2]);
-                    (if faded { c4(c.gamma_multiply(0.35)) } else { c4(c) }, l.opacity)
-                }
-                None => (col, opacity),
-            };
-            let glass = !faded && a < 0.999;
-            if glass {
-                col[3] = (a.clamp(0.05, 1.0) * 255.0).round() as u8;
-            }
-            for k in t {
-                let i = *k as usize;
-                if let (Some(p), Some(n)) = (m.positions.get(i), m.normals.get(i)) {
-                    if faded {
-                        sc.trans_tri(p.to_f32(), n.to_f32(), col);
-                    } else if glass {
-                        sc.glass_tri(p.to_f32(), n.to_f32(), col);
-                    } else {
-                        sc.tri(p.to_f32(), n.to_f32(), col);
-                    }
-                }
-            }
+        let body = BodyDraw { mesh: b.mesh(), col, faded, opacity, face_looks, on_gpu };
+        let key = body.key(shaded, edges, hidden_edges, edge_col, hidden_col);
+        key.hash(&mut run_key);
+        run.push(body);
+        // Blocks end where a body's own key says, so a body added or removed changes only its
+        // own block, not every block after it.
+        if key.is_multiple_of(16) || run.len() >= 64 {
+            let draws = std::mem::take(&mut run);
+            let block_key = std::mem::replace(&mut run_key, std::collections::hash_map::DefaultHasher::new()).finish();
+            push_block(&mut sc, &mut kept, &mut made, block_key, draws, |d, out| d.build(out, shaded, edges, hidden_edges, edge_col, hidden_col));
         }
-        for (ei, e) in m.edges.iter().enumerate().filter(|_| edges) {
-            if !m.edge_pickable(ei) || (shaded && !m.shaded_edge_visible(ei)) {
-                continue;
-            }
-            for w in e.windows(2) {
-                sc.line(w[0].to_f32(), w[1].to_f32(), edge_col, 1.3, false);
-                if hidden_edges {
-                    sc.hidden_line(w[0].to_f32(), w[1].to_f32(), hidden_col, 1.0);
-                }
-            }
-        }
+    }
+    if !run.is_empty() {
+        push_block(&mut sc, &mut kept, &mut made, run_key.finish(), run, |d, out| d.build(out, shaded, edges, hidden_edges, edge_col, hidden_col));
+    }
+    if let Ok(mut b) = app.viewport.blocks.lock() {
+        *b = made;
     }
     if app.ui.ground_shadow && app.ui.visual_style != 2 && app.cam.pitch > 0.0 {
         ground_shadow(&mut sc, app, &st);
@@ -511,12 +604,12 @@ fn build_sketch_scene(app: &SolveApp, proj: &Proj) -> GpuScene {
     sc
 }
 
-fn ground_shadow(sc: &mut GpuScene, app: &SolveApp, st: &solidcraft_engine::doc::ModelState) {
+fn ground_shadow(sc: &mut GpuScene, app: &SolveApp, st: &std::sync::Arc<solidcraft_engine::doc::ModelState>) {
     // The bodies' box in the camera's Z-up frame (the ground is its XY plane).
     let mut b = solidcraft_engine::geom::Aabb3::EMPTY;
-    for x in st.bodies.iter().filter(|x| app.session.body_visible(&x.name)) {
-        let bb = x.mesh().bounds();
-        if bb.is_empty() {
+    let boxes = body_bounds(app, st);
+    for (x, (_, bb)) in st.bodies.iter().zip(boxes.iter()) {
+        if bb.is_empty() || !app.session.body_visible(&x.name) {
             continue;
         }
         for i in 0..8 {
@@ -705,7 +798,27 @@ fn body_bounds(
         {
             return b.clone();
         }
-        let b = std::sync::Arc::new(st.bodies.iter().map(|b| (b.name.clone(), b.mesh().bounds())).collect::<Vec<_>>());
+        // Boxes of meshes the last state had too are kept (each body's box walks its mesh).
+        let mut known = app.viewport.mesh_bounds.lock().map(|mut k| std::mem::take(&mut *k)).unwrap_or_default();
+        let mut now = std::collections::HashMap::with_capacity(st.bodies.len());
+        let b = std::sync::Arc::new(
+            st.bodies
+                .iter()
+                .map(|b| {
+                    let mesh = b.mesh();
+                    let ptr = std::sync::Arc::as_ptr(&mesh) as usize;
+                    let bounds = match known.remove(&ptr).or_else(|| now.remove(&ptr)) {
+                        Some((_, bounds)) => bounds,
+                        None => mesh.bounds(),
+                    };
+                    now.insert(ptr, (mesh, bounds));
+                    (b.name.clone(), bounds)
+                })
+                .collect::<Vec<_>>(),
+        );
+        if let Ok(mut k) = app.viewport.mesh_bounds.lock() {
+            *k = now;
+        }
         *g = Some((st.clone(), b.clone()));
         return b;
     }
@@ -2214,7 +2327,11 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
         }
         // Double-click a dimension: edit its value in place.
-        let dim_edit = resp.double_clicked() && !held && app.tool.is_none() && app.dialog.is_none() && crate::dim_view::double_click(app, p);
+        let dim_edit = resp.double_clicked()
+            && !held
+            && app.tool.is_none()
+            && app.dialog.is_none()
+            && (crate::sketch_modify_ui::double_click_pattern(app, p) || crate::dim_view::double_click(app, p));
         // Double-click a text (an outline or inside a letter; the first click selected it): edit it.
         if resp.double_clicked()
             && !held
@@ -2440,6 +2557,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::preview::paint_sketches(app, &painter, &proj);
     crate::ref_images::show(app, ui, &painter, &proj);
     crate::dialogs_assembly::origins(app, &painter, &proj);
+    crate::dialogs_assembly::joint_glyphs(app, &painter, &proj);
     overlays(app, &painter, &proj);
     crate::dim_view::show(app, ui, &painter, &proj);
     crate::sketch_text_handles::show(app, ui, &painter, &proj, hover);
@@ -2493,6 +2611,10 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
 /// A click without a command: select the candidate (replacing the selection, or toggling it
 /// in with Shift/Ctrl); a click on nothing clears.
 pub(crate) fn select(app: &mut SolveApp, sel: Option<Sel>, add: bool) {
+    if !add {
+        // A joint picked in the browser (highlighted even when hidden) lets go.
+        app.tree.picked_joints.clear();
+    }
     match sel {
         Some(x) => {
             let items = picked_selection(&app.session, &x);
@@ -2858,13 +2980,18 @@ fn cpu_render(app: &mut SolveApp, ctx: &egui::Context, painter: &egui::Painter, 
         v.to_bits().hash(&mut h);
     }
     (rect.width() as u32, rect.height() as u32).hash(&mut h);
+    app.ui.dark.hash(&mut h);
     let key = h.finish();
     if app.viewport.cpu.as_ref().is_none_or(|(k, _)| *k != key) {
         let mut budget = solidcraft_engine::render::SamplingBudget::new(131_072, 1_048_576);
-        let scene =
-            solidcraft_engine::view::scene_with_section_and_sketch_sampler(&app.session, &proj.cam, section_plane(app), |sk, index, plane| {
-                crate::sketch_display::curve_with_budget(sk, index, plane, proj, app.viewport.pixels_per_point(), &mut budget).parts
-            });
+        let palette = scene_palette(app.ui.dark);
+        let scene = solidcraft_engine::view::scene_with_palette(
+            &app.session,
+            &proj.cam,
+            section_plane(app),
+            |sk, index, plane| crate::sketch_display::curve_with_budget(sk, index, plane, proj, app.viewport.pixels_per_point(), &mut budget).parts,
+            &palette,
+        );
         let w = (rect.width() as usize).clamp(16, 4096);
         let hh = (rect.height() as usize).clamp(16, 4096);
         let c = solidcraft_engine::render::render(&scene, &proj.cam, w, hh);
@@ -2874,6 +3001,29 @@ fn cpu_render(app: &mut SolveApp, ctx: &egui::Context, painter: &egui::Painter, 
     }
     if let Some((_, tex)) = &app.viewport.cpu {
         painter.image(tex.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+    }
+}
+
+/// The colours of a CPU picture of the model (`ui.render` and the CPU viewport) in the dark or
+/// the light theme, from the tokens the window draws with, so the picture matches the window. The
+/// light theme's are the engine's own colours, so a light render is unchanged. The sketch states
+/// and axes the window draws in the engine's colours stay so.
+pub(crate) fn scene_palette(dark: bool) -> solidcraft_engine::view::Palette {
+    let t = if dark { Tokens::dark() } else { Tokens::light() };
+    let rgb = |c: Color32| Rgb(c.r(), c.g(), c.b());
+    solidcraft_engine::view::Palette {
+        background: (rgb(t.viewport_top), rgb(t.viewport_bottom)),
+        grid: rgb(t.grid),
+        grid_major: rgb(t.grid_major),
+        edge: rgb(t.body_edge),
+        body: rgb(t.body),
+        body_selected: rgb(t.body_selected),
+        sketch: rgb(t.sketch),
+        sketch_fixed: rgb(t.sketch_fixed),
+        sketch_done: rgb(t.sketch_fixed),
+        sketch_locked: rgb(t.sketch_locked),
+        cap: rgb(t.section_cap),
+        ..solidcraft_engine::view::Palette::DEFAULT
     }
 }
 
@@ -3312,7 +3462,7 @@ mod tests {
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(SIZE as f32, SIZE as f32));
         let mut render = |tess: bool| {
             app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess });
-            let scene = build_scene(&app);
+            let scene = build_scene(&app).merged();
             let proj = projection(&app, rect);
             let e = proj.cam.eye().to_f32();
             let eye = [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }];
@@ -3360,7 +3510,7 @@ mod tests {
         app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess });
         const SIZE: u32 = 256;
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(SIZE as f32, SIZE as f32));
-        let scene = build_scene(&app);
+        let scene = build_scene(&app).merged();
         assert!(scene.planned.is_empty(), "no body waits for the GPU evaluation");
         assert!(!scene.tris.is_empty(), "the bodies are meshed on the CPU");
         let proj = projection(&app, rect);
@@ -3476,6 +3626,76 @@ mod tests {
             h.app.run("edit.undo", json!({})).unwrap();
         }
         crate::sketch_palette::set_mode(&mut h.app, 0);
+    }
+
+    /// The CPU pictures (`ui.render`, the CPU viewport) are drawn in the window's theme (#974).
+    /// The light theme's tokens are the engine's own colours, so a light picture is unchanged; in
+    /// the dark theme each part takes the token the window draws it with. Sketch states follow
+    /// what the window does with them (`sketch_color`), so the two can't drift apart.
+    #[test]
+    fn cpu_pictures_are_drawn_in_the_windows_theme() {
+        use solidcraft_engine::view::Palette;
+        assert_eq!(scene_palette(false), Palette::DEFAULT, "the light theme is the engine's colours");
+        let rgb = |c: Color32| Rgb(c.r(), c.g(), c.b());
+        let (p, t) = (scene_palette(true), Tokens::dark());
+        assert_eq!(p.background, (rgb(t.viewport_top), rgb(t.viewport_bottom)));
+        assert_eq!(
+            [p.grid, p.grid_major, p.edge, p.body, p.body_selected, p.cap],
+            [t.grid, t.grid_major, t.body_edge, t.body, t.body_selected, t.section_cap].map(rgb)
+        );
+        assert_ne!(p.background, Palette::DEFAULT.background);
+        for dark in [false, true] {
+            let (p, t) = (scene_palette(dark), if dark { Tokens::dark() } else { Tokens::light() });
+            for (tag, cpu) in [
+                (colors::SKETCH, p.sketch),
+                (colors::SKETCH_FIXED, p.sketch_fixed),
+                (colors::SKETCH_DONE, p.sketch_done),
+                (colors::SKETCH_LOCKED, p.sketch_locked),
+                (colors::SKETCH_PROJECTED, p.sketch_projected),
+                (colors::SKETCH_LOST, p.sketch_lost),
+                (colors::SKETCH_CONSTRUCTION, p.sketch_construction),
+                (colors::SKETCH_CENTERLINE, p.sketch_centerline),
+            ] {
+                let [r, g, b, _] = sketch_color(&t, tag);
+                assert_eq!(cpu, Rgb(r, g, b), "dark {dark}: the window draws {tag:?} in another colour");
+            }
+        }
+    }
+
+    /// The CPU viewport follows a theme change at once: the theme is part of its picture's key.
+    #[test]
+    fn cpu_viewport_redraws_in_the_new_theme() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("solid.box", json!({"length": 40, "width": 30, "height": 20})).unwrap();
+        let rect = Rect::from_min_size(Pos2::ZERO, vec2(160.0, 120.0));
+        let cam = solidcraft_engine::view::home_camera(&h.app.session);
+        let proj = Proj { cam, vp: cam.view_proj(4.0 / 3.0, 100.0), rect };
+        h.app.viewport.no_pixels = false;
+        // The new picture's top row, most common colour first (the background's top); None when
+        // nothing new was drawn.
+        let top_row = |h: &mut crate::scenario::Harness| {
+            let mut out = h.ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
+                cpu_render(&mut h.app, ui.ctx(), ui.painter(), rect, &proj);
+            });
+            let id = h.app.viewport.cpu.as_ref().map(|(_, tex)| tex.id());
+            let top = id.and_then(|id| out.textures_delta.set.get(&id)).and_then(|d| d.iter().find(|delta| delta.pos.is_none())).map(|upload| {
+                let egui::ImageData::Color(image) = &upload.image;
+                let mut counts = std::collections::HashMap::new();
+                for px in image.pixels.iter().take(image.size[0]) {
+                    *counts.entry(*px).or_insert(0) += 1;
+                }
+                counts.into_iter().max_by_key(|(_, n)| *n).map(|(c, _)| c).unwrap_or_default()
+            });
+            out.textures_delta.clear();
+            top
+        };
+        for dark in [false, true, false] {
+            h.app.ui.dark = dark;
+            let Some(px) = top_row(&mut h) else { panic!("dark {dark}: the CPU viewport kept the old picture") };
+            let want = if dark { Tokens::dark() } else { Tokens::light() }.viewport_top;
+            let near = [px.r(), px.g(), px.b()].iter().zip([want.r(), want.g(), want.b()]).all(|(a, b)| a.abs_diff(b) <= 2);
+            assert!(near, "dark {dark}: top row {px:?}, the window's background {want:?}");
+        }
     }
 
     #[test]
@@ -3876,11 +4096,11 @@ mod tests {
         assert_eq!(mesh.smooth_edges.iter().filter(|f| **f).count(), 512);
         let smooth = mesh.smooth_edges.iter().position(|f| *f).unwrap();
         let expected = mesh.edges.iter().enumerate().filter(|(i, _)| mesh.shaded_edge_visible(*i)).map(|(_, e)| e.len() - 1).sum::<usize>();
-        let shaded = build_scene(&app);
+        let shaded = build_scene(&app).merged();
         assert_eq!(shaded.lines.len() / crate::gpu::LINE_SIZE, expected);
         assert!(!shaded.tris.is_empty());
         app.ui.visual_style = 2;
-        let wire = build_scene(&app);
+        let wire = build_scene(&app).merged();
         let expected_wire =
             mesh.edges.iter().enumerate().filter(|(i, _)| !mesh.seams.get(*i).copied().unwrap_or(false)).map(|(_, e)| e.len() - 1).sum::<usize>();
         assert_eq!(wire.lines.len() / crate::gpu::LINE_SIZE, expected_wire);

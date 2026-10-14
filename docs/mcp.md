@@ -49,13 +49,14 @@ start-up and says when the `--in` design's folder was left out; `--allow-path` a
 
 Paths are resolved before they are compared, so `..` and symlinks that lead out are refused
 (saving through a link writes the file it points to, so the link's target is what counts), and
-a new file must go into a folder that exists. On Windows a path must be on a local drive
+a new file must go into a folder that exists (a missing folder inside an allowed one is reported as missing; it is not created and does not call for a wider `--allow-path`). On Windows a path must be on a local drive
 (`C:\…` or `\\?\C:\…`): UNC, device and NT paths in any spelling (`\\server\share`,
 `//server/share`, `\\?\UNC\…`, `\??\…`, `\\.\…`), drive-relative paths (`C:file`), a `:` in a
 file name (alternate data streams), reserved device names with any extension (`NUL`, `CON`,
 `COM1.txt`, …) and short 8.3 names (`PROGRA~1`) are refused before any file system call, and the
 resolved path is checked again, so a link or junction that leads to a share is refused too. This
-includes a `sketch.text` font given as a file path; installed fonts named by family still work.
+includes a `sketch.text` font given as a file path and the font file a design's text names when
+the design is opened; installed fonts named by family still work.
 The server spells its own folders (scratch, recovery) with long names, so they work when the
 temporary folder's path has a short name (`…\NAME~1.XYZ\AppData\Local\Temp`, as Windows often
 gives when the user folder's name is long).
@@ -123,7 +124,7 @@ They cover the workflow, the command shapes, how to verify with `measure`, and t
 | `list_commands` | `filter?` | The command catalog: id, label, tab/panel, shortcut, parameter docs, enabled now. `filter` matches id, label, tab and panel. |
 | `execute` | `command`, `params?`, `verbose?` (default true) | Run any command with JSON parameters (`list_commands` shows them). Failures leave the design unchanged. A feature command replies with the feature (`feature`, `name`), every body (`bodies`) and the bodies it created, changed and removed (`created_bodies`, `changed_bodies`, `removed_bodies`). `verbose: false` uses the same compact reply as `batch`. |
 | `batch` | `commands: [{command, params}]`, `rollback?` (default true), `verbose?` (default true) | Run steps in order, stop at the first error and undo the completed steps. The reply names the failing step (`failed.index`, `failed.command`, `failed.error`) and every result before it. `verbose: false` keeps the reply small in large designs: feature steps leave out the full body list (`created_bodies`, `changed_bodies`, `removed_bodies` stay) and sketch steps the ids they repeat outside `created`. Bridged to an app that has `engine.batch`, the whole batch is one control request (one frame of the app). Older apps, and apps showing the agent cursor, get the steps one by one. |
-| `inspect_design` | `measure?` (default true), `sketches?` (default true) | Parameters, timeline (type, suppressed, rolled back, error, warning, timing), bodies (volume, area, centre of mass, bbox, face/edge/vertex counts, visible), sketches (curves, points, constraints, profiles, DOF, solve status, visible), selection, undo depth. Hide helper sketches, bodies or construction planes with `execute` `browser.visibility` (`{items, visible}` or `{folder, visible}`). |
+| `inspect_design` | `measure?` (default true), `sketches?` (default true) | Parameters, timeline (type, suppressed, rolled back, error, warning, timing), bodies (volume, area, centre of mass, bbox, face/edge/vertex counts, visible), sketches (curves, points, constraints, profiles, DOF, solve status, visible), selection, undo depth. Hide helper sketches, bodies or construction planes with `execute` `browser.visibility` (`{items, visible}` or `{folder, visible}`), and joint glyphs with `{joints: [id or name], visible}` or `{folder: "joints", visible}` (a hidden joint still constrains and drives; `joint.list` reports each joint's `visible`). |
 | `measure` | `body?` | Volume (mm³), area (mm²), centre of mass, bbox and topology counts per body, with totals. |
 | `body_topology` | `body` | Edges (index, midpoint, length, ends) and faces (index, area, centroid, normal). An edge midpoint is the `[x,y,z]` that picks that edge for fillet and chamfer. |
 | `set_parameter` | `name`, `value` (number or expression), `unit?`, `comment?` | Create or change a user parameter and recompute; reports `recomputed` (features rebuilt), `restored` (features whose earlier result for the same inputs was reused, e.g. a value set back) and features that now fail. |

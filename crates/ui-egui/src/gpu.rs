@@ -51,6 +51,49 @@ pub struct GpuScene {
     pub under: Vec<u8>,
     /// Opaque bodies drawn from their plans on the GPU, like `tris`.
     pub planned: Vec<PlannedBody>,
+    /// The model's bodies, a few at a time, drawn before the loose geometry above (`tris`,
+    /// `trans`, `lines` and `hidden` of each block, in order, then the scene's own). A block
+    /// that comes back unchanged keeps its buffers: a design changing one body at a time (an
+    /// agent adding bodies over MCP) uploads only the blocks that changed, not the whole model.
+    pub blocks: Vec<SceneBlock>,
+}
+
+#[cfg(test)]
+impl GpuScene {
+    /// The blocks' geometry moved into the scene's own lists, in drawing order (for tests that
+    /// count what the scene holds).
+    pub fn merged(mut self) -> GpuScene {
+        let mut out = GpuScene { glass: std::mem::take(&mut self.glass), ..Default::default() };
+        for block in std::mem::take(&mut self.blocks) {
+            out.tris.extend_from_slice(&block.bytes.tris);
+            out.trans.extend_from_slice(&block.bytes.trans);
+            out.lines.extend_from_slice(&block.bytes.lines);
+            out.hidden.extend_from_slice(&block.bytes.hidden);
+        }
+        out.tris.append(&mut self.tris);
+        out.trans.append(&mut self.trans);
+        out.lines.append(&mut self.lines);
+        out.hidden.append(&mut self.hidden);
+        GpuScene { tris: out.tris, trans: out.trans, glass: out.glass, lines: out.lines, hidden: out.hidden, ..self }
+    }
+}
+
+/// A run of the model's bodies in the scene: their triangles and edges, and a key that names
+/// exactly this content (the viewport keeps the bytes while the key comes back).
+#[derive(Clone)]
+pub struct SceneBlock {
+    pub key: u64,
+    pub bytes: Arc<BlockBytes>,
+}
+
+/// A block's geometry, laid out as in [`GpuScene`].
+#[derive(Default)]
+pub struct BlockBytes {
+    pub tris: Vec<u8>,
+    pub trans: Vec<u8>,
+    pub glass: Vec<u8>,
+    pub lines: Vec<u8>,
+    pub hidden: Vec<u8>,
 }
 
 impl GpuScene {
@@ -194,8 +237,28 @@ struct PlannedDraw {
     colors: wgpu::Buffer,
 }
 
+/// A scene block on the GPU, with the bytes it was uploaded from.
+struct BlockGpu {
+    bytes: Arc<BlockBytes>,
+    tris: Option<Batch>,
+    trans: Option<Batch>,
+    lines: Option<Batch>,
+    hidden: Option<Batch>,
+}
+
+/// The blocks' buffers, then the scene's own, as one batch (the blocks' buffers are shared,
+/// not copied).
+fn joined<'a>(blocks: impl Iterator<Item = &'a Option<Batch>>, own: Option<Batch>) -> Option<Batch> {
+    let mut parts: Vec<(wgpu::Buffer, u32)> = blocks.flatten().flat_map(|b| b.parts.iter().cloned()).collect();
+    let chunk = own.as_ref().map(|b| b.chunk).unwrap_or(0);
+    parts.extend(own.into_iter().flat_map(|b| b.parts));
+    (!parts.is_empty()).then_some(Batch { parts, chunk })
+}
+
 #[derive(Default)]
 struct Batches {
+    /// The scene blocks on the GPU, by key.
+    blocks: std::collections::HashMap<u64, BlockGpu>,
     key: Option<u64>,
     tris: Option<Batch>,
     trans: Option<Batch>,
@@ -227,13 +290,33 @@ impl Batches {
                 Some((tess, encoder)) => self.planned(device, tess, encoder, &sc.planned),
                 None => Vec::new(),
             };
-            self.tris = upload(device, "sc_tris", &sc.tris, TRI_SIZE);
-            self.trans = upload(device, "sc_trans", &sc.trans, TRI_SIZE);
+            let mut kept = std::mem::take(&mut self.blocks);
+            let mut blocks: Vec<&BlockGpu> = Vec::with_capacity(sc.blocks.len());
+            for block in &sc.blocks {
+                let gpu = match kept.remove(&block.key).filter(|g| Arc::ptr_eq(&g.bytes, &block.bytes)) {
+                    Some(g) => g,
+                    None => BlockGpu {
+                        bytes: block.bytes.clone(),
+                        tris: upload(device, "sc_tris", &block.bytes.tris, TRI_SIZE),
+                        trans: upload(device, "sc_trans", &block.bytes.trans, TRI_SIZE),
+                        lines: upload(device, "sc_lines", &block.bytes.lines, LINE_SIZE),
+                        hidden: upload(device, "sc_hidden", &block.bytes.hidden, LINE_SIZE),
+                    },
+                };
+                self.blocks.insert(block.key, gpu);
+            }
+            for block in &sc.blocks {
+                if let Some(g) = self.blocks.get(&block.key) {
+                    blocks.push(g);
+                }
+            }
+            self.tris = joined(blocks.iter().map(|b| &b.tris), upload(device, "sc_tris", &sc.tris, TRI_SIZE));
+            self.trans = joined(blocks.iter().map(|b| &b.trans), upload(device, "sc_trans", &sc.trans, TRI_SIZE));
             self.glass = upload_with(device, "sc_glass", &sc.glass, TRI_SIZE, wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST);
             self.glass_cpu = sc.glass;
             self.glass_sorted_for = None;
-            self.lines = upload(device, "sc_lines", &sc.lines, LINE_SIZE);
-            self.hidden = upload(device, "sc_hidden", &sc.hidden, LINE_SIZE);
+            self.lines = joined(blocks.iter().map(|b| &b.lines), upload(device, "sc_lines", &sc.lines, LINE_SIZE));
+            self.hidden = joined(blocks.iter().map(|b| &b.hidden), upload(device, "sc_hidden", &sc.hidden, LINE_SIZE));
             self.overlays = upload(device, "sc_overlay", &sc.overlay, LINE_SIZE);
             self.ghost = upload(device, "sc_ghost", &sc.ghost, TRI_SIZE);
             self.xray = upload(device, "sc_xray", &sc.xray, TRI_SIZE);
@@ -757,9 +840,10 @@ fn tessellation(adapter: &wgpu::Adapter, device: &wgpu::Device, queue: &wgpu::Qu
 }
 
 /// Create the pipelines. Call once with the app's render state and its depth/stencil/MSAA
-/// settings. Without a stencil the section cap does not hide the inside of cut bodies.
-pub fn install(rs: &egui_wgpu::RenderState, depth_bits: u8, stencil_bits: u8, samples: u32) -> GpuTarget {
-    let tess = tessellation(&rs.adapter, &rs.device, &rs.queue, solidcraft_gpu::SHADER);
+/// settings. Without a stencil the section cap does not hide the inside of cut bodies. Without
+/// `gpu_meshing` (safe mode) bodies are meshed on the CPU.
+pub fn install(rs: &egui_wgpu::RenderState, depth_bits: u8, stencil_bits: u8, samples: u32, gpu_meshing: bool) -> GpuTarget {
+    let tess = if gpu_meshing { tessellation(&rs.adapter, &rs.device, &rs.queue, solidcraft_gpu::SHADER) } else { None };
     let t = GpuTarget { format: rs.target_format, depth: egui_wgpu::depth_format_from_bits(depth_bits, stencil_bits), samples, tess: tess.is_some() };
     let res = Resources::new(&rs.device, t, tess);
     rs.renderer.write().callback_resources.insert(res);

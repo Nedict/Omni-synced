@@ -23,6 +23,33 @@ fn display_order(mut catalog: Catalog) -> Catalog {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+/// Runs `f` on the open Appearance dialog's state, once a file picker has answered.
+fn with_state(app: &mut SolveApp, f: impl FnOnce(&mut SolveApp, &mut Ap)) {
+    let Some(mut dialog) = app.dialog.take() else { return };
+    if let crate::dialogs::Kind::Appearance(k) = &mut dialog.kind {
+        f(app, k);
+    }
+    if app.dialog.is_none() {
+        app.dialog = Some(dialog);
+    }
+}
+
+/// Exports the design's library to `path` and shows it as the local library.
+fn export(app: &mut SolveApp, k: &mut Ap, path: String, overwrite: bool) {
+    k.note = Some(match app.run("library.export", json!({"path":path,"overwrite":overwrite})) {
+        Ok(result) => {
+            let parsed = result.get("catalog").cloned().and_then(|v| serde_json::from_value::<Catalog>(v).ok()).map(display_order);
+            let count = parsed.as_ref().map_or(0, |c| c.entries.len());
+            k.local.path = path;
+            k.local.catalog = parsed;
+            k.local.selected = None;
+            k.local.search.clear();
+            format!("Saved {count} reusable definitions. The design is unchanged.")
+        }
+        Err(error) => error,
+    });
+}
+
 fn load(app: &mut SolveApp, library: &mut LocalLibrary) -> Result<String, String> {
     let result = app.run("library.inspect", json!({"path":library.path}))?;
     let catalog: Catalog = serde_json::from_value(result.get("catalog").cloned().ok_or("Library response is missing")?).map_err(|e| e.to_string())?;
@@ -47,23 +74,17 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &[SelInpu
         let save = ui.button(crate::i18n::tr_label("Export design library..."));
         crate::scenario::publish_handle("library:export", save.rect.center());
         if save.clicked() {
-            let chosen = match app.services.pick_save.as_ref() {
-                Some(pick) => pick("my-library.solidcraft-library.json", &["json"]),
-                None => (!k.local.path.is_empty()).then(|| k.local.path.clone()),
-            };
-            if let Some(path) = chosen {
-                k.note = Some(match app.run("library.export", json!({"path":path,"overwrite":k.local.overwrite})) {
-                    Ok(result) => {
-                        let parsed = result.get("catalog").cloned().and_then(|v| serde_json::from_value::<Catalog>(v).ok()).map(display_order);
-                        let count = parsed.as_ref().map_or(0, |c| c.entries.len());
-                        k.local.path = path;
-                        k.local.catalog = parsed;
-                        k.local.selected = None;
-                        k.local.search.clear();
-                        format!("Saved {count} reusable definitions. The design is unchanged.")
+            let overwrite = k.local.overwrite;
+            if app.services.pick_save.is_some() {
+                // The picker answers in a later frame (#1088); the export runs then.
+                app.pick_save("my-library.solidcraft-library.json", &["json"], move |app, path| {
+                    if let Some(path) = path {
+                        with_state(app, |app, k| export(app, k, path, overwrite));
                     }
-                    Err(error) => error,
                 });
+            } else if !k.local.path.is_empty() {
+                let path = k.local.path.clone();
+                export(app, k, path, overwrite);
             }
         }
         ui.label(
@@ -84,13 +105,18 @@ fn import_rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &[SelI
         k.local.selected = None;
     }
     ui.horizontal(|ui| {
-        if ui.button(crate::i18n::tr_label("Open library...")).clicked()
-            && let Some(path) = app.services.pick_open.as_ref().and_then(|pick| pick())
-        {
-            k.local.path = path;
-            k.local.catalog = None;
-            k.local.selected = None;
-            k.note = Some(load(app, &mut k.local).unwrap_or_else(|error| error));
+        if ui.button(crate::i18n::tr_label("Open library...")).clicked() {
+            // The picker answers in a later frame (#1088); the library loads then.
+            app.pick_open(|app, path| {
+                if let Some(path) = path {
+                    with_state(app, |app, k| {
+                        k.local.path = path;
+                        k.local.catalog = None;
+                        k.local.selected = None;
+                        k.note = Some(load(app, &mut k.local).unwrap_or_else(|error| error));
+                    });
+                }
+            });
         }
         let load_button = ui.add_enabled(!k.local.path.is_empty(), egui::Button::new(crate::i18n::tr_label("Load library")));
         crate::scenario::publish_handle("library:load", load_button.rect.center());
