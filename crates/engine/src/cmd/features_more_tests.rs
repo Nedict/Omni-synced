@@ -748,6 +748,13 @@ fn knife_edge_part() -> Session {
     s
 }
 
+/// The volume of the session's bodies through the display plan (the measure's mesh cuts across
+/// the concave arc). It holds to about 1e-3 of what a blend removes here; the bounds below are
+/// about twice what each test reads.
+fn planned(s: &Session) -> f64 {
+    s.model.state().bodies.iter().map(|b| b.body.display_plan(2e-4).unwrap().evaluate().measure().volume).sum()
+}
+
 /// The middle of the part's arc.
 const KNIFE_ARC_MID: [f64; 2] = [62.166666666666664 - 21.0 * std::f64::consts::FRAC_1_SQRT_2, -21.0 + 21.0 * std::f64::consts::FRAC_1_SQRT_2];
 
@@ -773,13 +780,13 @@ fn round_along(length: impl Fn(f64) -> f64) -> f64 {
 #[test]
 fn fillet_an_arc_that_runs_into_a_knife_edge_tip() {
     let mut s = knife_edge_part();
-    let before = volume(&mut s);
+    let before = planned(&s);
     let [x, y] = KNIFE_ARC_MID;
     run(&mut s, "solid.fillet", json!({"edges": [[x, y, 0.0]], "radius": 2}));
     run(&mut s, "solid.fillet", json!({"edges": [[x, y, 10.0]], "radius": 2}));
     let removed = round_along(|rho| rho * (21.0 / rho).asin());
-    let after = volume(&mut s);
-    assert!(rel(before - after, 2.0 * removed) < 0.03, "removed {} vs {}", before - after, 2.0 * removed);
+    let after = planned(&s);
+    assert!(rel(before - after, 2.0 * removed) < 2e-3, "removed {} vs {}", before - after, 2.0 * removed);
 }
 
 /// The part's front corner (the front face into the arc) rounded with 2 first, then the bottom
@@ -791,7 +798,7 @@ fn fillet_an_arc_that_runs_into_a_knife_edge_tip() {
 fn fillet_a_run_over_a_corner_rounded_with_the_same_radius() {
     let mut s = knife_edge_part();
     run(&mut s, "solid.fillet", json!({"edges": [[41.1667, -21.0, 5.0]], "radius": 2}));
-    let before = volume(&mut s);
+    let before = planned(&s);
     let [x, y] = KNIFE_ARC_MID;
     // The corner round: about (62.17 - √(23² - 2²), -19), its arc's middle 2 from there.
     let cx = 62.166666666666664 - (23.0f64 * 23.0 - 4.0).sqrt();
@@ -800,8 +807,8 @@ fn fillet_a_run_over_a_corner_rounded_with_the_same_radius() {
     let corner_mid = [cx + 2.0 * (theta / 2.0).sin(), -19.0 - 2.0 * (theta / 2.0).cos()];
     run(&mut s, "solid.fillet", json!({"edges": [[x, y, 0.0], [corner_mid[0], corner_mid[1], 0.0], [20.0, -21.0, 0.0]], "radius": 2}));
     let removed = (1.0 - std::f64::consts::FRAC_PI_4) * 4.0 * cx + theta * 8.0 / 6.0 + round_along(|rho| rho * ((21.0 / rho).asin() - joint));
-    let after = volume(&mut s);
-    assert!(rel(before - after, removed) < 0.01, "removed {} vs {removed}", before - after);
+    let after = planned(&s);
+    assert!(rel(before - after, removed) < 1e-3, "removed {} vs {removed}", before - after);
 }
 
 /// Straight edges of the part ending at its arc wall: the long front edge at the top (the wall
@@ -813,14 +820,14 @@ fn fillet_straight_edges_that_end_at_the_arc_wall() {
     let cx = 62.166666666666664;
     for (edge, cut) in [([20.0, -21.0, 10.0], 0.0), ([30.0, 0.0, 10.0], 21.0)] {
         let mut s = knife_edge_part();
-        let before = volume(&mut s);
+        let before = planned(&s);
         run(&mut s, "solid.fillet", json!({"edges": [edge], "radius": 2}));
         let removed = round_along(|rho| {
             let d = rho - 21.0;
             cx - (441.0 - (cut - d) * (cut - d)).sqrt()
         });
-        let after = volume(&mut s);
-        assert!(rel(before - after, removed) < 0.02, "{edge:?}: removed {} vs {removed}", before - after);
+        let after = planned(&s);
+        assert!(rel(before - after, removed) < 3e-3, "{edge:?}: removed {} vs {removed}", before - after);
     }
 }
 
@@ -847,36 +854,40 @@ fn fillet_the_knife_edge_at_the_tip() {
         x += hx;
     }
     let mut s = knife_edge_part();
-    let before = volume(&mut s);
+    let before = planned(&s);
     run(&mut s, "solid.fillet", json!({"edges": [[cx, 0.0, 5.0]], "radius": 2}));
-    let after = volume(&mut s);
-    // The measure's mesh cuts across the concave arc (the part measures 0.35 over its volume).
-    assert!(rel(before - after, area * 10.0) < 5e-3, "removed {} vs {}", before - after, area * 10.0);
+    let after = planned(&s);
+    assert!(rel(before - after, area * 10.0) < 5e-4, "removed {} vs {}", before - after, area * 10.0);
     let mut s = knife_edge_part();
     run(&mut s, "solid.chamfer", json!({"edges": [[cx, 0.0, 5.0]], "distance": 2}));
-    assert!(before - volume(&mut s) > before - after, "the chamfer takes the ball's bulge off too");
+    assert!(before - planned(&s) > before - after, "the chamfer takes the ball's bulge off too");
 }
 
 /// Rounds of the edges at the arc's top front corner, two or all three together (r 2): they meet
-/// in creases (with all three, a piece of sphere fills the corner). Each set takes off more than
-/// its largest round alone and less than all its rounds alone, and the round of all three the
-/// most.
+/// in creases (with all three, a piece of sphere fills the corner). Each set takes off its rounds
+/// alone, less what each alone takes in a box about the corner, plus what they take there
+/// together: the CSG grid of the kernel's `rounds_meeting_at_a_corner_of_an_arc_wall`
+/// (curvecorner_tests.rs, 0.02 mm cells), within its accuracy.
 #[test]
 fn fillet_edges_meeting_at_the_front_corner_of_the_arc() {
+    // In the box about the corner: what the long edge's, the arc's and the upright's rounds take
+    // alone, and what two or all three take together.
+    let corner = [2.719176, 3.015864, 1.863];
+    let together = [(vec![0, 2], 3.886936), (vec![0, 1], 4.971256), (vec![1, 2], 4.19864), (vec![0, 1, 2], 6.3332)];
     let [x, y] = KNIFE_ARC_MID;
     let (long, arc, upright) = ([20.0, -21.0, 10.0], [x, y, 10.0], [41.1667, -21.0, 5.0]);
     let off = |edges: Vec<[f64; 3]>| {
         let mut s = knife_edge_part();
-        let before = volume(&mut s);
+        let before = planned(&s);
         run(&mut s, "solid.fillet", json!({"edges": edges, "radius": 2}));
-        before - volume(&mut s)
+        before - planned(&s)
     };
-    let alone = [off(vec![long]), off(vec![arc]), off(vec![upright])];
-    let all = off(vec![long, arc, upright]);
-    for (pair, which) in [(vec![long, upright], [0, 2]), (vec![long, arc], [0, 1]), (vec![arc, upright], [1, 2])] {
-        let (a, b) = (alone[which[0]], alone[which[1]]);
-        let got = off(pair);
-        assert!(got > a.max(b) && got < a + b && got < all, "{which:?}: {got} ({a}, {b}, all {all})");
+    let edges = [long, arc, upright];
+    let alone = edges.map(|e| off(vec![e]));
+    for (which, both) in together {
+        let want = which.iter().map(|i| alone[*i] - corner[*i]).sum::<f64>() + both;
+        let got = off(which.iter().map(|i| edges[*i]).collect());
+        assert!((got - want).abs() < 0.03, "{which:?}: removed {got} vs {want}");
     }
 }
 
@@ -885,29 +896,30 @@ fn fillet_edges_meeting_at_the_front_corner_of_the_arc() {
 #[test]
 fn fillet_the_long_edge_then_the_small_left_edge() {
     let mut s = knife_edge_part();
-    let before = volume(&mut s);
+    let before = planned(&s);
     run(&mut s, "solid.fillet", json!({"edges": [[20.0, -21.0, 10.0]], "radius": 2}));
     run(&mut s, "solid.fillet", json!({"edges": [[0.0, -21.0, 5.0]], "radius": 2}));
-    let one_by_one = before - volume(&mut s);
+    let one_by_one = before - planned(&s);
     let mut s = knife_edge_part();
     run(&mut s, "solid.fillet", json!({"edges": [[20.0, -21.0, 10.0], [0.0, -21.0, 5.0]], "radius": 2}));
-    let together = before - volume(&mut s);
-    // Within the measure's mesh (the two are built of different faces).
-    assert!(rel(one_by_one, together) < 1e-3, "one by one {one_by_one} vs together {together}");
+    let together = before - planned(&s);
+    // Within the display meshes' accuracy (the two are built of different faces).
+    assert!(rel(one_by_one, together) < 2e-4, "one by one {one_by_one} vs together {together}");
 }
 
 /// The long top front edge and the front-left vertical edge rounded together (r 2): the long
 /// round ends at the arc wall, the two meet at the top-left corner (the top-left edge sharp).
 /// Each removes its own round (the long one cut off by the wall), less what both would take at
-/// the corner: in its 2 mm cube, what lies outside both quarter circles (0.766 mm³ by sampling).
+/// the corner: in its 2 mm cube, what lies outside both quarter circles, ∫ (2 − √(4 − t²))² dt
+/// over 0..2 = 16 − 8/3 − 4π.
 #[test]
 fn fillet_two_edges_meeting_at_a_corner_one_running_into_the_arc_wall() {
     let mut s = knife_edge_part();
-    let before = volume(&mut s);
+    let before = planned(&s);
     run(&mut s, "solid.fillet", json!({"edges": [[20.0, -21.0, 10.0], [0.0, -21.0, 5.0]], "radius": 2}));
     let long = round_along(|rho| 62.166666666666664 - (441.0 - (rho - 21.0) * (rho - 21.0)).sqrt());
     let upright = (1.0 - std::f64::consts::FRAC_PI_4) * 4.0 * 10.0;
-    let removed = long + upright - 0.766;
-    let after = volume(&mut s);
-    assert!(rel(before - after, removed) < 0.02, "removed {} vs {removed}", before - after);
+    let removed = long + upright - (16.0 - 8.0 / 3.0 - 4.0 * std::f64::consts::PI);
+    let after = planned(&s);
+    assert!(rel(before - after, removed) < 1e-3, "removed {} vs {removed}", before - after);
 }

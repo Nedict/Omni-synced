@@ -10,13 +10,19 @@ const CX: f64 = X0 + 21.0;
 /// (CX, −21) leaves against the top line it touches (its arc square to the front, a knife edge
 /// at the tip), extruded 10.
 fn arc_part() -> Body {
+    scaled_arc_part(1.0)
+}
+
+/// [`arc_part`] scaled by `k` about the origin.
+fn scaled_arc_part(k: f64) -> Body {
+    let p = |x: f64, y: f64| Vec2::new(x * k, y * k);
     let segs = vec![
-        Seg2::Line { a: Vec2::new(0.0, 0.0), b: Vec2::new(0.0, -21.0) },
-        Seg2::Line { a: Vec2::new(0.0, -21.0), b: Vec2::new(X0, -21.0) },
-        Seg2::Arc { center: Vec2::new(CX, -21.0), radius: 21.0, start: std::f64::consts::PI, sweep: -std::f64::consts::FRAC_PI_2 },
-        Seg2::Line { a: Vec2::new(CX, 0.0), b: Vec2::new(0.0, 0.0) },
+        Seg2::Line { a: p(0.0, 0.0), b: p(0.0, -21.0) },
+        Seg2::Line { a: p(0.0, -21.0), b: p(X0, -21.0) },
+        Seg2::Arc { center: p(CX, -21.0), radius: 21.0 * k, start: std::f64::consts::PI, sweep: -std::f64::consts::FRAC_PI_2 },
+        Seg2::Line { a: p(CX, 0.0), b: p(0.0, 0.0) },
     ];
-    crate::extrude(&Plane::XY, &[Region2 { outer: Loop2 { segs }, holes: vec![] }], 0.0, 10.0).unwrap().pop().unwrap()
+    crate::extrude(&Plane::XY, &[Region2 { outer: Loop2 { segs }, holes: vec![] }], 0.0, 10.0 * k).unwrap().pop().unwrap()
 }
 
 /// Points on the edges at the top: the long front edge, the arc, the back edge; the uprights
@@ -222,7 +228,6 @@ fn chamfers_meeting_at_a_corner_of_an_arc_wall() {
 /// is shorter than the new round), taking off what the two take together.
 #[test]
 fn a_round_ending_in_an_earlier_round_matches_both_together() {
-    let body = arc_part();
     for (first, then) in [
         (LONG, LEFT),
         (LONG, LEFT_FRONT),
@@ -234,16 +239,29 @@ fn a_round_ending_in_an_earlier_round_matches_both_together() {
         (arc_top(), TIP),
         (BACK, TIP),
         (arc_top(), BACK),
-        // Not yet (BACK, arc_top()): the arc's round built after the back edge's leaves 0.05 mm³
-        // more at the tip than both together, or the other order.
     ] {
-        let step = crate::fillet(&body, &[first], 2.0).unwrap();
-        let after = crate::fillet(&step, &[then], 2.0).unwrap();
-        let v = volume(&after);
-        let together = volume(&crate::fillet(&body, &[first, then], 2.0).unwrap());
-        // Within the display meshes' accuracy (two different B-reps, meshed apart).
-        assert!((v - together).abs() < 5e-3, "{first:?} then {then:?}: {v} vs together {together}");
+        one_then_the_other(first, then);
     }
+}
+
+/// The back edge rounded first, then the arc's top edge: the arc's round leaves 0.05 mm³ more at
+/// the knife-edge tip than both together, or the other order.
+#[test]
+#[ignore = "not yet: the arc's round after the back edge's leaves 0.05 mm³ more at the tip"]
+fn the_arc_rounded_after_the_back_edge_matches_both_together() {
+    one_then_the_other(BACK, arc_top());
+}
+
+/// The edge at `first` rounded (2), then the one at `then` as a fillet of its own, against both
+/// rounded together.
+fn one_then_the_other(first: Vec3, then: Vec3) {
+    let body = arc_part();
+    let step = crate::fillet(&body, &[first], 2.0).unwrap();
+    let after = crate::fillet(&step, &[then], 2.0).unwrap();
+    let v = volume(&after);
+    let together = volume(&crate::fillet(&body, &[first, then], 2.0).unwrap());
+    // Within the display meshes' accuracy (two different B-reps, meshed apart).
+    assert!((v - together).abs() < 5e-3, "{first:?} then {then:?}: {v} vs together {together}");
 }
 
 /// Edges rounded together come out the same in any order: a round made first doesn't carry the
@@ -255,5 +273,40 @@ fn rounds_together_in_any_order() {
         let v = |x: &[Vec3]| volume(&crate::fillet(&body, x, 2.0).unwrap());
         let (ab, ba) = (v(&[a, b]), v(&[b, a]));
         assert!((ab - ba).abs() < 1e-3, "{a:?} + {b:?}: {ab} vs {ba}");
+    }
+}
+
+/// The blends this part needs the corner build for (and the back edge, rolled into the tip) at
+/// 0.01 and 100 times the part's size, the radius scaled with it: they take off what they take at
+/// full size, scaled by the cube, so the build's tolerances and limits follow the model's size.
+#[test]
+fn corner_blends_hold_at_any_scale() {
+    let cases: [(&str, Vec<Vec<Vec3>>); 6] = [
+        ("tip and arc", vec![vec![TIP, arc_top()]]),
+        ("arc and tip", vec![vec![arc_top(), TIP]]),
+        ("back into the tip", vec![vec![BACK]]),
+        ("arc, then tip", vec![vec![arc_top()], vec![TIP]]),
+        ("back, then tip", vec![vec![BACK], vec![TIP]]),
+        ("arc, then back", vec![vec![arc_top()], vec![BACK]]),
+    ];
+    // What a blend takes off the part scaled by `k`, over k³, through a display plan of matching
+    // accuracy.
+    let removed = |k: f64, steps: &[Vec<Vec3>]| {
+        let volume = |b: &Body| b.display_plan(2e-4 * k).unwrap().evaluate().measure().volume;
+        let body = scaled_arc_part(k);
+        let mut b = body.clone();
+        for pts in steps {
+            let pts: Vec<Vec3> = pts.iter().map(|p| *p * k).collect();
+            b = crate::fillet(&b, &pts, 2.0 * k).unwrap_or_else(|e| panic!("at {k}x: {steps:?}: {e}"));
+            assert!(b.validity().is_empty(), "at {k}x: {steps:?}: {:?}", b.validity());
+        }
+        (volume(&body) - volume(&b)) / (k * k * k)
+    };
+    for (name, steps) in &cases {
+        let full = removed(1.0, steps);
+        for k in [0.01, 100.0] {
+            let got = removed(k, steps);
+            assert!((got - full).abs() < full * 1e-4, "{name} at {k}x: removed {got} (scaled back) vs {full}");
+        }
     }
 }
