@@ -279,6 +279,9 @@
   "dialog.edit_title": "EDIT {title}",
   "dialog.select": "↖ Select",
   "dialog.selected_count": "↖ {count} selected",
+  "dialog.step": "Step",
+  "dialog.selection_step": "{step} of {total}: Select {input}",
+  "dialog.selection_guidance": "Select an input to change it. Click selected objects to remove them; Ctrl/Cmd-click also toggles them. Review the preview, then press OK.",
   "document.save_changes": "Save changes to {name}?",
   "document.unsaved_changes": "{name} has unsaved changes. If you don't save, they are lost.",
   "settings.msaa_applies_on_restart": "Anti-aliasing applies the next time SolidCraft starts",
@@ -325,6 +328,8 @@
   "ui.chamfer_type": "Chamfer Type",
   "ui.change_workspace": "Change workspace",
   "ui.chord_length": "Chord Length",
+  "ui.curvature_g2": "Curvature (G2)",
+  "ui.equivalent_radius": "Equivalent Radius",
   "ui.circle": "Circle",
   "ui.circular_pattern": "Circular Pattern",
   "ui.clear": "Clear",
@@ -951,5 +956,7 @@
   "Letter Spacing": "Letter Spacing",
   "Line Spacing": "Line Spacing",
   "Path": "Path",
-  "sketch_text.on_path": "The text follows its path: the curve places it"
+  "sketch_text.on_path": "The text follows its path: the curve places it",
+  "cmd.material_properties_validate":"Validate Physical Material Data",
+  "cmd.material_properties_directional":"Directional Elastic Modulus"
 }

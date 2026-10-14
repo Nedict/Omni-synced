@@ -36,6 +36,8 @@ pub mod gizmo;
 pub mod gpu;
 pub mod help;
 #[cfg(test)]
+mod hole_direction_ui_tests;
+#[cfg(test)]
 mod hole_placement_ui_tests;
 pub mod home;
 pub mod i18n;
@@ -111,6 +113,8 @@ mod sketch_drag_ui_tests;
 #[cfg(test)]
 mod sketch_edit_tests;
 mod sketch_families;
+#[cfg(test)]
+mod sketch_guidance_ui_tests;
 pub mod sketch_modify_ui;
 #[cfg(test)]
 mod sketch_modify_ui_tests;

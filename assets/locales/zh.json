@@ -279,6 +279,9 @@
   "dialog.edit_title": "编辑 {title}",
   "dialog.select": "↖ 选择",
   "dialog.selected_count": "↖ 已选择 {count} 个",
+  "dialog.step": "步骤",
+  "dialog.selection_step": "第 {step} 步，共 {total} 步：选择{input}",
+  "dialog.selection_guidance": "选择输入项进行修改。点击已选对象可取消选择；按住 Ctrl/Cmd 点击也可切换选择。检查预览后，再按“确定”。",
   "document.save_changes": "保存对 {name} 的更改？",
   "document.unsaved_changes": "{name} 有未保存的更改。如果不保存，将丢失这些更改。",
   "settings.msaa_applies_on_restart": "抗锯齿将在下次启动 SolidCraft 时生效",
@@ -324,6 +327,8 @@
   "ui.chamfer_type": "倒角类型",
   "ui.change_workspace": "更改工作区",
   "ui.chord_length": "弦长",
+  "ui.curvature_g2": "曲率连续 (G2)",
+  "ui.equivalent_radius": "等效半径",
   "ui.circle": "圆",
   "ui.circular_pattern": "圆形阵列",
   "ui.clear": "清除",
@@ -951,5 +956,7 @@
   "Path": "路径",
   "sketch_text.on_path": "文字沿路径排列：由曲线放置",
   "ui.analysis": "分析",
-  "ui.edit_section_analysis": "编辑截面分析"
+  "ui.edit_section_analysis": "编辑截面分析",
+  "cmd.material_properties_validate":"验证物理材料数据",
+  "cmd.material_properties_directional":"方向弹性模量"
 }
