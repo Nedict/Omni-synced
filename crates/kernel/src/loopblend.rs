@@ -1,9 +1,10 @@
 //! Blending a whole boundary loop of a planar face whose neighbours are walls standing
 //! perpendicular to it (planes, and cylinders with axes along the face normal): a pocket floor,
-//! the top outline of an extruded plate. The loop must be smooth (lines and arcs meeting
-//! tangentially). The face shrinks by the radius, the walls are trimmed by it, and each loop edge
+//! the top outline of an extruded plate. Lines and arcs can meet tangentially or at mitred sharp
+//! corners. The face shrinks by the radius, the walls are trimmed by it, and each loop edge
 //! gets a blend face: a cylinder (or plane, for a chamfer) along a line, a torus (or cone) along
-//! an arc, all meeting along the profile arcs at the joints. The result is exact.
+//! an arc, all meeting along the profile arcs at the joints. Smooth joins are exact; sharp joints
+//! involving arcs use tangent mitres to approximate the true offset intersections.
 
 use std::collections::HashMap;
 
@@ -158,10 +159,19 @@ fn face_normal(f: &mt::Face, p: Vec3) -> Option<Vec3> {
     Vec3::new(n.x, n.y, n.z).normalized()
 }
 
-/// Blend the loop of `edges` (by id) if it is a whole smooth boundary loop of a planar face with
+/// Blend `edges` (by id) if they form a boundary loop or neighbouring run of a planar face with
 /// perpendicular walls, with what it built from `solid` (each blend face in place of its loop
 /// edge). `None` when the edges are not such a loop.
 pub(crate) fn loop_blend(solid: &Solid, edge_ids: &[mt::EdgeID], size: f64, r: f64, round: bool) -> Option<Result<(Solid, Rebuild)>> {
+    match crate::guard("loop blend", || Ok(loop_blend_inner(solid, edge_ids, size, r, round))) {
+        Ok(result) => result,
+        Err(error) => Some(Err(error)),
+    }
+}
+
+fn loop_blend_inner(solid: &Solid, edge_ids: &[mt::EdgeID], size: f64, r: f64, round: bool) -> Option<Result<(Solid, Rebuild)>> {
+    #[cfg(test)]
+    assert!(crate::guarded(), "loop selection must run inside the kernel guard");
     let tol = (size * 1e-6).max(1e-7);
     for (si, shell) in solid.boundaries().iter().enumerate() {
         let faces: Vec<&mt::Face> = shell.face_iter().collect();
@@ -204,6 +214,8 @@ fn build(
     round: bool,
     run: Option<(usize, usize)>,
 ) -> Result<(Solid, Rebuild)> {
+    #[cfg(test)]
+    assert!(crate::guarded(), "loop construction must run inside the kernel guard");
     let f = faces.get(fi).ok_or_else(|| KernelError::Failed("face".into()))?;
     let wire = f.boundaries().get(wi).cloned().ok_or_else(|| KernelError::Failed("loop".into()))?;
     let all_edges: Vec<mt::Edge> = wire.edge_iter().cloned().collect();
@@ -451,10 +463,9 @@ fn build(
         let cc = centre(i) + d1 * lam;
         let q = p + t * sb + d1 * lam;
         let mid = cc + ((pa_i - cc) + (q - cc)).normalized().unwrap_or(t) * r;
-        let previous = (i + k - 1) % k;
-        let line_corner = matches!(segs.get(previous), Some(Seg::Line { .. })) && matches!(segs.get(i), Some(Seg::Line { .. }));
-        let end = if line_corner { q } else { pb_i };
-        let arc = builder::circle_arc(&builder::vertex(p3(pa_i)), &builder::vertex(p3(end)), p3(mid));
+        // q projects onto the wall rail at pb_i; fitting through pb_i before projection
+        // would distort the circular cross-section at mixed line/arc corners.
+        let arc = builder::circle_arc(&builder::vertex(p3(pa_i)), &builder::vertex(p3(q)), p3(mid));
         let nb = (pa_i - p).cross(pb_i - p).normalized().ok_or_else(|| unsupported("mitre plane"))?;
         let den = d1.dot(nb);
         if den.abs() < 1e-9 {
