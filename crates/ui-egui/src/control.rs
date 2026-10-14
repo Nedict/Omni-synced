@@ -214,6 +214,21 @@ fn assistant(app: &mut SolveApp, ctx: &egui::Context, p: &Value) -> Outcome {
     ok(assistant_ui::summary(app))
 }
 
+/// The model as the window shows it (its camera, theme and section), rendered on the CPU as a
+/// PNG: what `ui.render` writes and what the assistant attaches to a message.
+pub fn render_model_png(app: &SolveApp, w: usize, h: usize) -> Result<Vec<u8>, String> {
+    // In the window's theme, and cut by the section the viewport shows (an open Section
+    // Analysis dialog's preview, a sketch's Slice), not only the committed one.
+    let scene = solidcraft_engine::view::scene_with_palette(
+        &app.session,
+        &app.cam,
+        crate::viewport::section_plane(app),
+        solidcraft_engine::view::world_curve_parts,
+        &crate::viewport::scene_palette(app.ui.dark),
+    );
+    render_png(&scene, &app.cam, w, h).ok_or_else(|| "render failed".to_string())
+}
+
 pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> Outcome {
     let scope = match request_scope(app, &req.params) {
         Ok(Some(scope)) => scope,
@@ -674,16 +689,10 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
         "ui.render" => {
             let w = f("width").unwrap_or(1280.0).clamp(16.0, 8192.0) as usize;
             let h = f("height").unwrap_or(800.0).clamp(16.0, 8192.0) as usize;
-            // In the window's theme, and cut by the section the viewport shows (an open Section
-            // Analysis dialog's preview, a sketch's Slice), not only the committed one.
-            let scene = solidcraft_engine::view::scene_with_palette(
-                &app.session,
-                &app.cam,
-                crate::viewport::section_plane(app),
-                solidcraft_engine::view::world_curve_parts,
-                &crate::viewport::scene_palette(app.ui.dark),
-            );
-            let Some(png) = render_png(&scene, &app.cam, w, h) else { return err("render failed") };
+            let png = match render_model_png(app, w, h) {
+                Ok(png) => png,
+                Err(e) => return err(e),
+            };
             match s("path") {
                 Some(path) => match vfs::check(path).and_then(|()| std::fs::write(path, &png)) {
                     Ok(()) => ok(json!({"path": path, "bytes": png.len()})),

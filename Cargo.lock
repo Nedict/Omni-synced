@@ -3475,8 +3475,10 @@ name = "solidcraft-assistant"
 version = "0.11.0"
 dependencies = [
  "serde_json",
+ "sha2",
  "solidcraft-engine",
  "solidcraft-mcp",
+ "web-time",
 ]
 
 [[package]]

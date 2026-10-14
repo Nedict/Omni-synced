@@ -226,6 +226,10 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
             app.ui.dark = !app.ui.dark;
             app.preferences.theme = if app.ui.dark { "dark" } else { "light" }.into();
         }
+        let assistant_tip = crate::i18n::format("assistant.toggle_tip", &[("key", "Ctrl+Shift+A")]);
+        if click(ui, "assistant", &assistant_tip, idle) {
+            app.ui.show_assistant = !app.ui.show_assistant;
+        }
         if click(ui, "help", app.tr("ui.help"), true) {
             app.help.menu = !app.help.menu;
             let at = ui.ctx().input(|i| i.pointer.latest_pos()).map_or(300.0, |p| p.x);
@@ -1139,6 +1143,11 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
     }
     // The Keyboard Shortcuts window is waiting for a key: it is not a shortcut.
     if crate::keymap::capturing(app) {
+        return;
+    }
+    // The assistant sidebar toggles from anywhere, also from inside its text box.
+    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, egui::Key::A)) {
+        app.ui.show_assistant = !app.ui.show_assistant;
         return;
     }
     // A dimension value that is taking the keyboard: letters belong to it (a parameter name

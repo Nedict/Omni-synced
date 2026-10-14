@@ -29,6 +29,8 @@ use solidcraft_assistant::tool_loop::{Event, Finish, MAX_STEPS, ToolHost, call_t
 use crate::SolveApp;
 use crate::control::ControlRequest;
 
+pub mod panel;
+
 #[cfg(test)]
 mod tests;
 
@@ -116,6 +118,14 @@ pub struct State {
     pub scroll_to_end: bool,
     /// A picture of the viewport waiting to go with the next message (mime, base64).
     pub picture: Option<(String, String)>,
+    /// The API key being typed in the settings.
+    pub key_edit: String,
+    /// The saved conversation this chat is kept in (`None`: not saved yet).
+    conv_id: Option<String>,
+    /// The design tab the conversation belongs to.
+    design_tab: Option<(usize, usize)>,
+    /// Where settings and conversations are kept instead of the data folder (tests).
+    pub data_root: Option<std::path::PathBuf>,
 }
 
 impl Default for State {
@@ -140,6 +150,10 @@ impl Default for State {
             settings_open: false,
             scroll_to_end: false,
             picture: None,
+            key_edit: String::new(),
+            conv_id: None,
+            design_tab: None,
+            data_root: None,
         }
     }
 }
@@ -155,10 +169,21 @@ impl State {
         self.active.as_ref().map(|a| a.started.elapsed())
     }
 
+    /// The folder holding the settings file and the conversations.
+    fn root(&self) -> Option<std::path::PathBuf> {
+        self.data_root.clone().or_else(solidcraft_assistant::settings::data_folder)
+    }
+
+    fn store(&self) -> Option<solidcraft_assistant::store::Store> {
+        Some(solidcraft_assistant::store::Store::at(self.root()?.join("conversations")))
+    }
+
     /// Read the settings file the first time the sidebar is used.
     pub fn ensure_loaded(&mut self) {
         if !self.settings_loaded {
-            self.settings = Settings::load();
+            if let Some(root) = self.root() {
+                self.settings = Settings::load_from(&root.join("settings.json"));
+            }
             self.settings_loaded = true;
         }
     }
@@ -171,7 +196,8 @@ impl State {
 
     /// Save the settings, telling the person when it fails.
     pub fn save_settings(&mut self) {
-        if let Err(e) = self.settings.save() {
+        let Some(root) = self.root() else { return };
+        if let Err(e) = self.settings.save_to(&root.join("settings.json")) {
             self.notice(e, true);
         }
     }
@@ -189,6 +215,7 @@ impl State {
         self.usage = Usage::default();
         self.note = None;
         self.picture = None;
+        self.conv_id = None;
     }
 
     /// Stop the running turn: it ends after the step in progress, and everything waiting for a
@@ -347,8 +374,8 @@ pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: &str) -> Sent {
     }
 }
 
-/// What quick actions may refer to: failing features and the selection, in words.
-fn situation(app: &SolveApp) -> Situation {
+/// Features with an error or a warning, as `name: message`.
+pub(crate) fn situation_failing(app: &SolveApp) -> Vec<String> {
     let mut failing = Vec::new();
     for f in &app.session.doc.features {
         if let Some(r) = app.session.model.result(f.id) {
@@ -359,13 +386,41 @@ fn situation(app: &SolveApp) -> Situation {
             }
         }
     }
+    failing
+}
+
+/// What quick actions may refer to: failing features and the selection, in words.
+fn situation(app: &SolveApp) -> Situation {
+    let failing = situation_failing(app);
     let selection = if app.session.selection.is_empty() { String::new() } else { format!("{} item(s); see `selection` in the design state", app.session.selection.len()) };
     Situation { failing, selection }
+}
+
+/// Render the current view and keep it for the next message (a vision model sees it).
+pub(crate) fn attach_view(app: &mut SolveApp) {
+    match crate::control::render_model_png(app, 960, 600) {
+        Ok(png) => app.assistant.picture = Some(("image/png".into(), base64(&png))),
+        Err(e) => app.assistant.notice(format!("Cannot attach the view: {e}"), true),
+    }
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for c in bytes.chunks(3) {
+        let n = (u32::from(c[0]) << 16) | (u32::from(c.get(1).copied().unwrap_or(0)) << 8) | u32::from(c.get(2).copied().unwrap_or(0));
+        out.push(A[(n >> 18) as usize & 63] as char);
+        out.push(A[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 { A[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if c.len() > 2 { A[n as usize & 63] as char } else { '=' });
+    }
+    out
 }
 
 /// Run once per frame: take what the worker reported, and end a turn that belongs to a design
 /// that is no longer shown.
 pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
+    follow_design(app);
     let Some(a) = &app.assistant.active else { return };
     if a.tab != (app.docs.active, app.docs.count()) && !a.handle.cancel.is_cancelled() {
         a.handle.cancel.cancel();
@@ -395,6 +450,24 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
     }
     if app.assistant.active.is_some() {
         ctx.request_repaint_after(Duration::from_millis(100));
+    }
+}
+
+/// A chat belongs to one design: when another design tab is picked, this one is saved and the
+/// newest chat of the design now shown comes up (or an empty one).
+fn follow_design(app: &mut SolveApp) {
+    let tab = (app.docs.active, app.docs.count());
+    match app.assistant.design_tab {
+        None => app.assistant.design_tab = Some(tab),
+        Some(t) if t == tab => {}
+        Some(_) if app.assistant.busy() => {}
+        Some(_) => {
+            app.assistant.design_tab = Some(tab);
+            app.assistant.new_chat();
+            if let Some(first) = saved_conversations(app).first().map(|s| s.id.clone()) {
+                load_conversation(app, &first);
+            }
+        }
     }
 }
 
@@ -464,6 +537,7 @@ fn finish(app: &mut SolveApp, outcome: solidcraft_assistant::tool_loop::TurnOutc
         app.session.drop_checkpoint(a.checkpoint);
     }
     app.assistant.scroll_to_end = true;
+    save_conversation(app);
 }
 
 /// Put the design back to before the last turn that changed it. `force` goes ahead although
@@ -588,6 +662,81 @@ impl ToolHost for UiHost {
             }
         }
     }
+}
+
+/// The folder name of the open design's conversations.
+fn conversation_key(app: &SolveApp) -> String {
+    solidcraft_assistant::store::key_for(app.session.path.as_deref())
+}
+
+/// Save the conversation (after a turn). Failures are shown, never fatal.
+fn save_conversation(app: &mut SolveApp) {
+    use solidcraft_assistant::store::{self, Saved};
+    if app.assistant.history.is_empty() {
+        return;
+    }
+    let Some(store) = app.assistant.store() else { return };
+    let id = app.assistant.conv_id.get_or_insert_with(store::new_id).clone();
+    let saved = Saved { id, title: store::title_of(&app.assistant.history), updated: store::now(), messages: app.assistant.history.clone(), usage: app.assistant.usage };
+    if let Err(e) = store.save(&conversation_key(app), &saved) {
+        log::warn!("assistant: {e}");
+    }
+}
+
+/// The conversations saved for the open design, newest first.
+pub fn saved_conversations(app: &SolveApp) -> Vec<solidcraft_assistant::store::Summary> {
+    app.assistant.store().map(|s| s.list(&conversation_key(app))).unwrap_or_default()
+}
+
+/// Continue a saved conversation of the open design.
+pub fn load_conversation(app: &mut SolveApp, id: &str) -> bool {
+    if app.assistant.busy() {
+        return false;
+    }
+    let Some(store) = app.assistant.store() else { return false };
+    let Some(saved) = store.load(&conversation_key(app), id) else { return false };
+    app.assistant.items = items_from_history(&saved.messages);
+    app.assistant.history = saved.messages;
+    app.assistant.usage = saved.usage;
+    app.assistant.conv_id = Some(saved.id);
+    app.assistant.note = None;
+    app.assistant.scroll_to_end = true;
+    true
+}
+
+/// The transcript of a conversation that was loaded from disk.
+fn items_from_history(history: &[Message]) -> Vec<Item> {
+    use solidcraft_assistant::model::{Block, Part, Role};
+    let mut items: Vec<Item> = Vec::new();
+    for m in history {
+        for b in &m.blocks {
+            match (m.role, b) {
+                (Role::User, Block::Text(t)) if !t.starts_with(context::CONTEXT_OPEN) => items.push(Item::User { text: t.clone(), picture: false }),
+                (Role::Assistant, Block::Text(t)) => items.push(Item::Assistant { text: t.clone(), thinking: String::new() }),
+                (Role::Assistant, Block::ToolUse { id, name, input, .. }) => {
+                    items.push(Item::Tool(ToolCard { id: id.clone(), name: name.clone(), title: call_title(name, input), input: input.clone(), result: None }));
+                }
+                (_, Block::ToolResult { id, parts, is_error }) => {
+                    let text = parts.iter().filter_map(|p| if let Part::Text(t) = p { Some(t.as_str()) } else { None }).collect::<Vec<_>>().join("\n");
+                    for it in items.iter_mut().rev() {
+                        if let Item::Tool(c) = it {
+                            if &c.id == id {
+                                c.result = Some(ToolOutcome { is_error: *is_error, text, images: 0 });
+                                break;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    items
+}
+
+/// The conversation as Markdown, for the Export command.
+pub fn export_text(app: &SolveApp) -> String {
+    solidcraft_assistant::store::export_markdown(&app.assistant.history)
 }
 
 /// A summary of the sidebar for `ui.assistant {action: "state"}`: no secrets.

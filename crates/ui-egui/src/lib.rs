@@ -432,6 +432,7 @@ impl SolveApp {
             "autosave_minutes": self.autosave_minutes,
             "ground_shadow": self.ui.ground_shadow,
             "agent_cursor": self.ui.agent_cursor,
+            "assistant_open": self.ui.show_assistant,
             "preferences": self.preferences,
         })
         .to_string()
@@ -456,6 +457,9 @@ impl SolveApp {
         }
         if let Some(a) = flag("auto_project") {
             self.session.auto_project = a;
+        }
+        if let Some(o) = flag("assistant_open") {
+            self.ui.show_assistant = o;
         }
         if let Some(m) = v.get("autosave_minutes").and_then(Value::as_f64).filter(|m| m.is_finite()) {
             self.autosave_minutes = m.clamp(0.0, 600.0);
@@ -1153,6 +1157,7 @@ impl SolveApp {
         } else if left_timeline {
             timeline_left::left_panel(self, ui);
         }
+        assistant_ui::panel::show(self, ui);
         preview::update(self, ui.ctx());
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
             viewport::show(self, ui);

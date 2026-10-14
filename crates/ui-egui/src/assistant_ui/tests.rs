@@ -54,6 +54,7 @@ fn install(h: &mut Harness, replies: Vec<String>) -> Arc<Service> {
     s.openai.base_url = "http://127.0.0.1:9/v1".into();
     s.openai.model = "test-model".into();
     h.app.assistant.set_settings(s);
+    h.app.assistant.data_root = Some(h.dir.join("assistant"));
     svc
 }
 
@@ -227,15 +228,27 @@ fn raw_control_methods_and_stale_turns_are_refused() {
 }
 
 #[test]
-fn stopping_ends_the_turn() {
+fn stopping_ends_the_turn_and_declines_what_waited() {
     let mut h = Harness::new();
-    install(&mut h, vec![calls(&[("c1", "execute", box_args())]), say("never shown")]);
+    // The model asks to replace the design; the request waits for a yes.
+    install(&mut h, vec![calls(&[("c1", "new_design", json!({}))]), say("never shown")]);
     send_ok(&mut h, "go");
+    for _ in 0..4000 {
+        h.frame();
+        if !h.app.assistant.confirms.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert_eq!(h.app.assistant.confirms.len(), 1);
     let r = h.call("ui.assistant", json!({"action": "stop"}));
     assert_eq!(r["ok"], true);
+    assert!(h.app.assistant.confirms.is_empty());
     wait_idle(&mut h);
     let s = summary(&h.app);
-    assert!(s["items"].as_array().unwrap().iter().any(|i| i["kind"] == "notice"), "{s}");
+    let items = s["items"].as_array().unwrap();
+    assert!(items.iter().any(|i| i["kind"] == "notice" && i["text"] == "Stopped."), "{s}");
+    assert!(!items.iter().any(|i| i["kind"] == "assistant"), "{s}");
 }
 
 #[test]
@@ -245,6 +258,7 @@ fn missing_settings_say_what_to_do() {
     s.backend = BackendKind::Anthropic;
     s.anthropic.api_key = solidcraft_assistant::settings::Secret::default();
     h.app.assistant.set_settings(s);
+    h.app.assistant.data_root = Some(h.dir.join("assistant"));
     install_http_only(&mut h);
     // SAFETY of the test: the environment may hold a key; only assert when it does not.
     if std::env::var("ANTHROPIC_API_KEY").is_err() && solidcraft_engine::geom::env::var("ANTHROPIC_API_KEY").is_none() {
@@ -295,4 +309,40 @@ fn the_toggle_is_a_ui_state() {
     assert_eq!(h.call("ui.assistant", json!({"action": "toggle"}))["result"]["open"], true);
     assert_eq!(h.call("ui.assistant", json!({"action": "close"}))["result"]["open"], false);
     assert_eq!(h.call("ui.assistant", json!({"action": "bogus"}))["ok"], false);
+}
+
+#[test]
+fn conversations_are_saved_per_design_and_come_back() {
+    let mut h = Harness::new();
+    install(&mut h, vec![calls(&[("c1", "execute", box_args())]), say("Made the box.")]);
+    send_ok(&mut h, "make a box");
+    wait_idle(&mut h);
+    let saved = saved_conversations(&h.app);
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].title, "make a box");
+    // A new chat is empty; the saved one comes back with its transcript.
+    h.call("ui.assistant", json!({"action": "new_chat"}));
+    assert_eq!(summary(&h.app)["items"].as_array().unwrap().len(), 0);
+    assert!(load_conversation(&mut h.app, &saved[0].id));
+    let s = summary(&h.app);
+    let kinds: Vec<&str> = s["items"].as_array().unwrap().iter().map(|i| i["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["user", "tool", "assistant"], "{s}");
+    assert_eq!(s["items"][1]["result"]["is_error"], false);
+    // The model has the conversation: a follow-up carries it.
+    assert!(export_text(&h.app).contains("## Assistant\n\nMade the box."));
+}
+
+#[test]
+fn a_picture_goes_to_a_vision_model() {
+    let mut h = Harness::new();
+    let svc = install(&mut h, vec![say("It is a box.")]);
+    h.app.assistant.settings.openai.vision = true;
+    attach_view(&mut h.app);
+    assert!(h.app.assistant.picture.is_some());
+    send_ok(&mut h, "what is this?");
+    wait_idle(&mut h);
+    let body = svc.seen.lock().unwrap()[0].clone();
+    let user = body["messages"].as_array().unwrap().iter().find(|m| m["role"] == "user").unwrap().to_string();
+    assert!(user.contains("data:image/png;base64,"), "{}", &user[..200.min(user.len())]);
+    assert!(h.app.assistant.picture.is_none());
 }
