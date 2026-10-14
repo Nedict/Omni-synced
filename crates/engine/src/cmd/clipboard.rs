@@ -150,10 +150,18 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
             m[3][2] = t.z;
             kind.transform_geometry(&m);
         }
+        // A cylinder Emboss finds its face only by the persistent name recorded when it was made
+        // (#1035): the copy keeps that name, pointed at the pasted features and bodies.
+        let face_names: Vec<String> = if matches!(kind, FeatureKind::Emboss { face: Some(_), .. }) {
+            f.face_names.iter().map(|n| solidcraft_doc::remap_topology(n, &sketches, &bodies)).collect()
+        } else {
+            Vec::new()
+        };
         let id = doc.add_feature(kind, None)?;
         if let Some(nf) = doc.feature_mut(id) {
             nf.component = comp;
             nf.body_names = copied_names;
+            nf.face_names = face_names;
         }
         let new_name = doc.feature(id).map(|x| x.name.clone()).unwrap_or_default();
         sketches.insert(f.id, id);
@@ -369,6 +377,39 @@ mod tests {
         let plain = [[0.0, 0.0, 0.0], [30.0, 0.0, 0.0], [60.0, 0.0, 0.0]];
         let at: Vec<Vec<f64>> = plain.iter().chain(&LIFTED).chain(&LIFTED).map(|c| c.to_vec()).collect();
         assert_eq!(corners(&mut s), at, "{:?}", body_names(&s));
+    }
+
+    /// A cylinder Emboss finds its face by the persistent name it recorded when it was made. The
+    /// pasted Emboss keeps that name, moved onto the pasted cylinder, so the copy gets its own
+    /// badge, with or without a translate (#1035).
+    #[test]
+    fn pasted_cylinder_emboss_badges_the_pasted_cylinder() {
+        for translate in [Some(json!([50, 0, 0])), None] {
+            let mut s = Session::default();
+            run(&mut s, "solid.cylinder", json!({"radius": "10 mm", "height": "20 mm", "body_name": "Sleeve", "name": "Tube"}));
+            run(&mut s, "sketch.create", json!({"plane": {"origin": [0, 10, 0], "x_dir": [-1, 0, 0], "y_dir": [0, 0, 1]}, "name": "Badge"}));
+            run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-2, 5], "p1": [2, 10]}));
+            run(&mut s, "sketch.finish", json!({}));
+            run(&mut s, "solid.emboss", json!({"sketch": "Badge", "face": [0, 10, 7.5], "depth": 1, "targets": ["Sleeve"], "name": "Mark"}));
+            let one = volume(&mut s);
+            let plain = std::f64::consts::PI * 100.0 * 20.0;
+            assert!(one > plain + 1.0, "the badge adds material: {one}");
+            run(&mut s, "timeline.copy", json!({"features": ["Tube", "Badge", "Mark"]}));
+            let p = translate.clone().map_or(json!({}), |t| json!({"translate": t}));
+            let r = run(&mut s, "timeline.paste", p);
+            assert_eq!(r["errors"].as_array().map(Vec::len), Some(0), "{translate:?}: {r}");
+            let mark = s.doc.find_feature(r["pasted"][2]["name"].as_str().unwrap_or_default()).cloned().unwrap();
+            let tube = r["pasted"][0]["id"].as_u64().unwrap();
+            assert!(mark.face_names.first().is_some_and(|n| n.starts_with(&format!("F{tube}:"))), "{:?}", mark.face_names);
+            assert!((volume(&mut s) - 2.0 * one).abs() < 1e-6, "{translate:?}: both cylinders carry a badge");
+            if translate.is_some() {
+                let m = run(&mut s, "inspect.measure", json!({"bodies": ["Sleeve (copy)"]}));
+                let body = &m["bodies"][0];
+                let x = body["center_of_mass"][0].as_f64().unwrap_or(f64::NAN);
+                let y = body["bbox"]["max"][1].as_f64().unwrap_or(f64::NAN);
+                assert!((x - 50.0).abs() < 1e-3 && (y - 11.0).abs() < 1e-6, "the copy's badge sits on the moved cylinder: {m}");
+            }
+        }
     }
 
     #[test]
