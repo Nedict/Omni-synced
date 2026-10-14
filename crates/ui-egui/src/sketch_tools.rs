@@ -165,10 +165,15 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
     if !matches!(id, "canvas.insert" | "canvas.decal") {
         return true;
     }
-    let path = app.services.pick_open.as_ref().and_then(|f| f());
-    let ok = path.is_some();
-    IMAGE.with(|i| *i.borrow_mut() = path);
-    ok
+    let command = id.to_string();
+    app.pick_open(move |app, path| {
+        if let Some(path) = path {
+            IMAGE.with(|i| *i.borrow_mut() = Some(path));
+            app.last_command = solidcraft_engine::find_command(&command).map(|spec| (spec.id.into(), spec.label.into()));
+            app.tool = crate::tools::Tool::for_command(&command);
+        }
+    });
+    false
 }
 
 fn v3(v: &Value) -> Option<Vec3> {

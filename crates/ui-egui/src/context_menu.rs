@@ -862,10 +862,7 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         }
         "ui.export" => {
             let name = bodies.first().cloned().unwrap_or_else(|| app.session.doc.name.clone());
-            if let Some(path) = app.services.pick_save.as_ref().and_then(|f| f(&format!("{name}.step"), &["step", "stp", "igs", "stl", "3mf", "obj"]))
-            {
-                let _ = app.run("file.export", json!({ "path": path, "bodies": bodies }));
-            }
+            app.pick_save_command(&format!("{name}.step"), &["step", "stp", "igs", "stl", "3mf", "obj"], "file.export", json!({"bodies": bodies}));
         }
         "ui.findBrowser" => {
             if let Some(b) = p.get("body").and_then(Value::as_str) {
@@ -1033,16 +1030,12 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         }
         "ui.saveMesh" => {
             let name = bodies.first().cloned().unwrap_or_else(|| app.session.doc.name.clone());
-            if let Some(path) = app.services.pick_save.as_ref().and_then(|f| f(&format!("{name}.stl"), &["stl"])) {
-                let _ = app.run("file.save_mesh", json!({ "path": path, "bodies": bodies }));
-            }
+            app.pick_save_command(&format!("{name}.stl"), &["stl"], "file.save_mesh", json!({"bodies": bodies}));
         }
         "ui.exportDxf" => {
             if let Some(id) = id_of(&p, "sketch") {
                 let name = app.session.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
-                if let Some(path) = app.services.pick_save.as_ref().and_then(|f| f(&format!("{name}.dxf"), &["dxf"])) {
-                    let _ = app.run("sketch.export_dxf", json!({ "sketch": id, "path": path }));
-                }
+                app.pick_save_command(&format!("{name}.dxf"), &["dxf"], "sketch.export_dxf", json!({"sketch": id}));
             }
         }
         "ui.extrudeSketch" => {

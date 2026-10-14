@@ -22,7 +22,7 @@ mod decompose;
 mod dims;
 mod fonts;
 mod freeform_offset;
-mod linalg;
+pub mod linalg;
 mod link;
 mod loci;
 mod model;

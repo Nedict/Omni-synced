@@ -4753,9 +4753,61 @@ pub fn state_in_frame_at<'a>(doc: &Document, st: &'a ModelState, comp: u64, fram
 /// occurrence of it (bodies of the first placement keep their names; further instances get the
 /// occurrence path in brackets). Without components this is the model itself.
 pub fn world_state(doc: &Document, st: &ModelState) -> ModelState {
+    world_state_reusing(doc, st, &mut PlacedBodies::default())
+}
+
+/// Bodies a [`world_state_reusing`] call placed away from their definition (a moved
+/// component's bodies), by their definition and placement: the next call reuses each one whose
+/// definition and placement are unchanged instead of transforming it again, and so keeps its
+/// display mesh. Without this every change anywhere in a design transformed and meshed every
+/// body of every moved component again.
+#[derive(Default)]
+pub struct PlacedBodies {
+    by_source: std::collections::HashMap<(usize, [u64; 16]), (ModelBody, ModelBody)>,
+}
+
+impl PlacedBodies {
+    /// The body `b` placed by `m`, from an earlier call when `b` is the same body as then.
+    fn placed(&self, b: &ModelBody, m: &crate::Mat, name: String) -> ModelBody {
+        let reused = self.by_source.get(&placed_key(b, m)).filter(|(source, _)| {
+            Arc::ptr_eq(&source.mesh, &b.mesh)
+                && source.body.same(&b.body)
+                && source.body.color() == b.body.color()
+                && source.body.paint() == b.body.paint()
+                && match (source.body.split_lines(), b.body.split_lines()) {
+                    (Some(x), Some(y)) => Arc::ptr_eq(x, y),
+                    (None, None) => true,
+                    _ => false,
+                }
+        });
+        match reused {
+            Some((_, placed)) => {
+                let mut fresh = ModelBody::new(name, placed.body.clone(), b.feature);
+                fresh.mesh = placed.mesh.clone();
+                fresh.plan = placed.plan.clone();
+                fresh.plan_mesh = placed.plan_mesh.clone();
+                fresh
+            }
+            None => ModelBody::new(name, kernel::transform_matrix(&b.body, *m).unwrap_or_else(|_| b.body.clone()), b.feature),
+        }
+    }
+}
+
+fn placed_key(b: &ModelBody, m: &crate::Mat) -> (usize, [u64; 16]) {
+    let mut bits = [0u64; 16];
+    for (slot, v) in bits.iter_mut().zip(m.iter().flatten()) {
+        *slot = v.to_bits();
+    }
+    (Arc::as_ptr(&b.mesh) as usize, bits)
+}
+
+/// [`world_state`], reusing the bodies `placed` holds from an earlier call and leaving it holding
+/// this call's.
+pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut PlacedBodies) -> ModelState {
     if doc.occurrences.is_empty() {
         return st.clone();
     }
+    let mut placed_now = PlacedBodies::default();
     let comp_of_feature = |id: u64| doc.feature(id).map(|f| f.component).unwrap_or(0);
     let first_path = |comp: u64| -> Vec<u64> {
         let mut path = Vec::new();
@@ -4785,8 +4837,9 @@ pub fn world_state(doc: &Document, st: &ModelState) -> ModelState {
                 placed.name = name;
                 placed
             } else {
-                let body = kernel::transform_matrix(&b.body, bm).unwrap_or_else(|_| b.body.clone());
-                ModelBody::new(name, body, b.feature)
+                let placed = placed_before.placed(b, &bm, name);
+                placed_now.by_source.insert(placed_key(b, &bm), (b.clone(), placed.clone()));
+                placed
             };
             // World states keep their previous display-only evaluation-key semantics.
             placed.key = 0;
@@ -4834,6 +4887,7 @@ pub fn world_state(doc: &Document, st: &ModelState) -> ModelState {
             }
         }
     }
+    *placed_before = placed_now;
     out
 }
 

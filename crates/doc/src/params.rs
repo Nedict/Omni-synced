@@ -467,10 +467,14 @@ impl Document {
 
     /// The next free `dN` name.
     pub fn next_d_name(&self) -> String {
+        // Every taken name at once: asking `name_taken` for d1, d2, … searched the whole
+        // design once per number, quadratic in the number of named inputs.
+        let taken: std::collections::HashSet<&str> =
+            self.params.iter().map(|p| p.name.as_str()).chain(self.features.iter().flat_map(|f| f.param_names.iter().map(String::as_str))).collect();
         let mut n = 1;
         loop {
             let c = format!("d{n}");
-            if !self.name_taken(&c) {
+            if !taken.contains(c.as_str()) {
                 return c;
             }
             n += 1;
@@ -657,7 +661,15 @@ impl Document {
         let (vals, errs) = self.param_values();
         let all = self.all_param_exprs();
         let refs: BTreeMap<String, Vec<String>> = all.iter().map(|(n, e, _)| (n.clone(), expr::references(e))).collect();
-        let used_by = |n: &str| -> Vec<String> { refs.iter().filter(|(_, r)| r.iter().any(|x| x == n)).map(|(k, _)| k.clone()).collect() };
+        // Who uses each name, in name order: one pass over the references (a design an agent
+        // built names every feature input, so a search per row was quadratic).
+        let mut users: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+        for (k, r) in &refs {
+            for x in r {
+                users.entry(x.as_str()).or_default().push(k.clone());
+            }
+        }
+        let used_by = |n: &str| -> Vec<String> { users.get(n).cloned().unwrap_or_default() };
         let value = |n: &str, k: Kind| vals.get(n).and_then(|v| v.to_kind(k).ok()).map(|x| if k == Kind::Angle { x.to_degrees() } else { x });
         let mut rows = Vec::new();
         for p in &self.params {

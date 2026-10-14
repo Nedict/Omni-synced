@@ -2869,14 +2869,19 @@ fn cpu_render(app: &mut SolveApp, ctx: &egui::Context, painter: &egui::Painter, 
         v.to_bits().hash(&mut h);
     }
     (rect.width() as u32, rect.height() as u32).hash(&mut h);
+    app.ui.dark.hash(&mut h);
+    app.preferences.color_vision.hash(&mut h);
     let key = h.finish();
     if app.viewport.cpu.as_ref().is_none_or(|(k, _)| *k != key) {
         let mut budget = solidcraft_engine::render::SamplingBudget::new(131_072, 1_048_576);
-        let mut scene =
-            solidcraft_engine::view::scene_with_section_and_sketch_sampler(&app.session, &proj.cam, section_plane(app), |sk, index, plane| {
-                crate::sketch_display::curve_with_budget(sk, index, plane, proj, app.viewport.pixels_per_point(), &mut budget).parts
-            });
-        vision_tags(&mut scene.lines, crate::theme::vision());
+        let palette = scene_palette(app.ui.dark, app.preferences.color_vision);
+        let scene = solidcraft_engine::view::scene_with_palette(
+            &app.session,
+            &proj.cam,
+            section_plane(app),
+            |sk, index, plane| crate::sketch_display::curve_with_budget(sk, index, plane, proj, app.viewport.pixels_per_point(), &mut budget).parts,
+            &palette,
+        );
         let w = (rect.width() as usize).clamp(16, 4096);
         let hh = (rect.height() as usize).clamp(16, 4096);
         let c = solidcraft_engine::render::render(&scene, &proj.cam, w, hh);
@@ -2889,28 +2894,30 @@ fn cpu_render(app: &mut SolveApp, ctx: &egui::Context, painter: &egui::Painter, 
     }
 }
 
-/// The colour vision mode on the engine's colour tags in a CPU picture (the CPU viewport and
-/// `ui.render`, which keep the light theme's colours): a tag whose light-theme token the mode
-/// changes takes the mode's value. Off changes nothing.
-pub(crate) fn vision_tags(lines: &mut [solidcraft_engine::render::SceneLine], mode: crate::theme::ColorVision) {
-    let (off, on) = (Tokens::light(), Tokens::themed(false, mode));
-    let tags = [
-        (colors::SKETCH, off.sketch, on.sketch),
-        (colors::SKETCH_DONE, off.sketch_fixed, on.sketch_fixed),
-        (colors::SKETCH_FIXED, off.sketch_fixed, on.sketch_fixed),
-        (colors::SKETCH_LOCKED, off.sketch_locked, on.sketch_locked),
-        (colors::SKETCH_PROJECTED, off.sketch_projected, on.sketch_projected),
-        (colors::SKETCH_LOST, off.sketch_lost, on.sketch_lost),
-        (colors::SKETCH_CONSTRUCTION, off.sketch_construction, on.sketch_construction),
-        (colors::SKETCH_CENTERLINE, off.sketch_centerline, on.sketch_centerline),
-        (colors::AXIS_X, off.triad[0], on.triad[0]),
-        (colors::AXIS_Y, off.triad[1], on.triad[1]),
-        (colors::AXIS_Z, off.triad[2], on.triad[2]),
-    ];
-    for l in lines {
-        if let Some((_, _, to)) = tags.iter().find(|(tag, from, to)| l.color == *tag && from != to) {
-            l.color = Rgb(to.r(), to.g(), to.b());
-        }
+/// The colours of a CPU picture of the model (`ui.render` and the CPU viewport) in the dark or
+/// the light theme and a colour vision mode, from the tokens the window draws with, so the picture
+/// matches the window. The light theme's tokens (Off) are the engine's own colours, so a light
+/// render is unchanged.
+pub(crate) fn scene_palette(dark: bool, mode: crate::theme::ColorVision) -> solidcraft_engine::view::Palette {
+    let t = Tokens::themed(dark, mode);
+    let rgb = |c: Color32| Rgb(c.r(), c.g(), c.b());
+    solidcraft_engine::view::Palette {
+        background: (rgb(t.viewport_top), rgb(t.viewport_bottom)),
+        grid: rgb(t.grid),
+        grid_major: rgb(t.grid_major),
+        edge: rgb(t.body_edge),
+        body: rgb(t.body),
+        body_selected: rgb(t.body_selected),
+        sketch: rgb(t.sketch),
+        sketch_fixed: rgb(t.sketch_fixed),
+        sketch_done: rgb(t.sketch_fixed),
+        sketch_locked: rgb(t.sketch_locked),
+        sketch_projected: rgb(t.sketch_projected),
+        sketch_lost: rgb(t.sketch_lost),
+        sketch_construction: rgb(t.sketch_construction),
+        sketch_centerline: rgb(t.sketch_centerline),
+        axes: t.triad.map(rgb),
+        cap: rgb(t.section_cap),
     }
 }
 
@@ -3547,6 +3554,84 @@ mod tests {
             h.app.run("edit.undo", json!({})).unwrap();
         }
         crate::sketch_palette::set_mode(&mut h.app, 0);
+    }
+
+    /// The CPU pictures (`ui.render`, the CPU viewport) are drawn in the window's theme (#974)
+    /// and colour vision mode (#778). The light theme's tokens are the engine's own colours, so a
+    /// light picture in Off is unchanged; otherwise each part takes the token the window draws it
+    /// with. Sketch states follow what the window does with them (`sketch_color`) and the axes the
+    /// mode's triad, so the two can't drift apart.
+    #[test]
+    fn cpu_pictures_are_drawn_in_the_windows_theme() {
+        use crate::theme::ColorVision;
+        use solidcraft_engine::view::Palette;
+        assert_eq!(scene_palette(false, ColorVision::Off), Palette::DEFAULT, "the light theme is the engine's colours");
+        let rgb = |c: Color32| Rgb(c.r(), c.g(), c.b());
+        let (p, t) = (scene_palette(true, ColorVision::Off), Tokens::dark());
+        assert_eq!(p.background, (rgb(t.viewport_top), rgb(t.viewport_bottom)));
+        assert_eq!(
+            [p.grid, p.grid_major, p.edge, p.body, p.body_selected, p.cap],
+            [t.grid, t.grid_major, t.body_edge, t.body, t.body_selected, t.section_cap].map(rgb)
+        );
+        assert_ne!(p.background, Palette::DEFAULT.background);
+        for (dark, mode) in [false, true].into_iter().flat_map(|d| ColorVision::ALL.map(|m| (d, m))) {
+            let (p, t) = (scene_palette(dark, mode), Tokens::themed(dark, mode));
+            assert_eq!(p.axes, t.triad.map(rgb), "dark {dark}, {mode:?}: the axes");
+            for (tag, cpu) in [
+                (colors::SKETCH, p.sketch),
+                (colors::SKETCH_FIXED, p.sketch_fixed),
+                (colors::SKETCH_DONE, p.sketch_done),
+                (colors::SKETCH_LOCKED, p.sketch_locked),
+                (colors::SKETCH_PROJECTED, p.sketch_projected),
+                (colors::SKETCH_LOST, p.sketch_lost),
+                (colors::SKETCH_CONSTRUCTION, p.sketch_construction),
+                (colors::SKETCH_CENTERLINE, p.sketch_centerline),
+            ] {
+                let [r, g, b, _] = sketch_color(&t, tag);
+                assert_eq!(cpu, Rgb(r, g, b), "dark {dark}, {mode:?}: the window draws {tag:?} in another colour");
+            }
+        }
+    }
+
+    /// The CPU viewport follows a theme or colour vision mode change at once: both are part of its
+    /// picture's key.
+    #[test]
+    fn cpu_viewport_redraws_in_the_new_theme() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("solid.box", json!({"length": 40, "width": 30, "height": 20})).unwrap();
+        let rect = Rect::from_min_size(Pos2::ZERO, vec2(160.0, 120.0));
+        let cam = solidcraft_engine::view::home_camera(&h.app.session);
+        let proj = Proj { cam, vp: cam.view_proj(4.0 / 3.0, 100.0), rect };
+        h.app.viewport.no_pixels = false;
+        // The new picture's top row, most common colour first (the background's top); None when
+        // nothing new was drawn.
+        let top_row = |h: &mut crate::scenario::Harness| {
+            let mut out = h.ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
+                cpu_render(&mut h.app, ui.ctx(), ui.painter(), rect, &proj);
+            });
+            let id = h.app.viewport.cpu.as_ref().map(|(_, tex)| tex.id());
+            let top = id.and_then(|id| out.textures_delta.set.get(&id)).and_then(|d| d.iter().find(|delta| delta.pos.is_none())).map(|upload| {
+                let egui::ImageData::Color(image) = &upload.image;
+                let mut counts = std::collections::HashMap::new();
+                for px in image.pixels.iter().take(image.size[0]) {
+                    *counts.entry(*px).or_insert(0) += 1;
+                }
+                counts.into_iter().max_by_key(|(_, n)| *n).map(|(c, _)| c).unwrap_or_default()
+            });
+            out.textures_delta.clear();
+            top
+        };
+        for dark in [false, true, false] {
+            h.app.ui.dark = dark;
+            let Some(px) = top_row(&mut h) else { panic!("dark {dark}: the CPU viewport kept the old picture") };
+            let want = if dark { Tokens::dark() } else { Tokens::light() }.viewport_top;
+            let near = [px.r(), px.g(), px.b()].iter().zip([want.r(), want.g(), want.b()]).all(|(a, b)| a.abs_diff(b) <= 2);
+            assert!(near, "dark {dark}: top row {px:?}, the window's background {want:?}");
+        }
+        // And a colour vision mode change, on its own.
+        h.app.preferences.color_vision = crate::theme::ColorVision::Deutan;
+        assert!(top_row(&mut h).is_some(), "a new mode kept the old picture");
+        assert!(top_row(&mut h).is_none(), "no change, no new picture");
     }
 
     #[test]
@@ -4926,42 +5011,59 @@ mod tests {
         assert!(changed.iter().all(|&i| b[4 * i..4 * i + 3].iter().zip(&c[4 * i..4 * i + 3]).all(|(x, y)| x <= y)), "stripes are darker");
     }
 
-    /// The CPU picture's engine tags follow the mode; Off changes nothing.
+    /// The CPU viewport draws in the colour vision mode: a fixed sketch line in the light theme
+    /// takes Deutan's value, and Off's is gone.
     #[test]
-    fn cpu_picture_tags_follow_the_colour_vision_mode() {
+    fn cpu_viewport_draws_in_the_colour_vision_mode() {
         use crate::theme::ColorVision;
-        let all = [
-            colors::SKETCH,
-            colors::SKETCH_DONE,
-            colors::SKETCH_LOCKED,
-            colors::SKETCH_PROJECTED,
-            colors::SKETCH_LOST,
-            colors::SKETCH_CONSTRUCTION,
-            colors::SKETCH_CENTERLINE,
-            colors::AXIS_X,
-            colors::AXIS_Y,
-            colors::AXIS_Z,
-            colors::BODY,
-            colors::GRID,
-        ];
-        let lines = || -> Vec<solidcraft_engine::render::SceneLine> {
-            all.iter().map(|c| solidcraft_engine::render::SceneLine { points: Vec::new(), color: *c, width: 1.0, on_top: false }).collect()
+        let mut h = crate::scenario::Harness::new();
+        h.app.ui.dark = false;
+        h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+        let made = h.app.run("sketch.line", json!({"points": [[-30, -20], [30, 20]]})).unwrap();
+        h.app.run("sketch.constraint.fix", json!({"entity": made["created"]["curves"][0]})).unwrap();
+        let rect = Rect::from_min_size(Pos2::ZERO, vec2(320.0, 240.0));
+        let mut cam = solidcraft_engine::view::home_camera(&h.app.session);
+        cam.set_view(solidcraft_engine::render::StandardView::Top);
+        let proj = Proj { cam, vp: cam.view_proj(4.0 / 3.0, 100.0), rect };
+        h.app.viewport.no_pixels = false;
+        let count = |h: &mut crate::scenario::Harness, c: Color32| {
+            h.app.viewport.cpu = None;
+            let mut out = h.ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
+                cpu_render(&mut h.app, ui.ctx(), ui.painter(), rect, &proj);
+            });
+            let id = h.app.viewport.cpu.as_ref().map(|(_, tex)| tex.id());
+            let n = id.and_then(|id| out.textures_delta.set.get(&id)).and_then(|d| d.iter().find(|delta| delta.pos.is_none())).map_or(0, |upload| {
+                let egui::ImageData::Color(image) = &upload.image;
+                image.pixels.iter().filter(|p| [p.r(), p.g(), p.b()].iter().zip([c.r(), c.g(), c.b()]).all(|(a, b)| a.abs_diff(b) <= 8)).count()
+            });
+            out.textures_delta.clear();
+            n
         };
-        let mut off = lines();
-        vision_tags(&mut off, ColorVision::Off);
-        assert!(off.iter().zip(all).all(|(l, c)| l.color == c));
-        let mut rg = lines();
-        vision_tags(&mut rg, ColorVision::Protan);
-        let t = Tokens::themed(false, ColorVision::Protan);
+        let (off, deutan) = (Tokens::light().sketch_locked, Tokens::themed(false, ColorVision::Deutan).sketch_locked);
+        let (a, b) = (count(&mut h, off), count(&mut h, deutan));
+        assert!(a > 20 && b == 0, "Off: {a} fixed-line pixels, {b} in Deutan's colour");
+        h.app.preferences.color_vision = ColorVision::Deutan;
+        let (a, b) = (count(&mut h, off), count(&mut h, deutan));
+        assert!(a == 0 && b > 20, "Deutan: {a} fixed-line pixels in Off's colour, {b} in Deutan's");
+    }
+
+    /// A mode's table reaches the CPU picture: the sketch states and axes it changes, and nothing
+    /// else (the light theme in Off is the engine's own colours).
+    #[test]
+    fn cpu_picture_follows_the_colour_vision_mode() {
+        use crate::theme::ColorVision;
         let rgb = |c: Color32| Rgb(c.r(), c.g(), c.b());
-        assert_eq!(rg[3].color, rgb(t.sketch_projected));
-        assert_eq!(rg[2].color, rgb(t.sketch_locked));
-        assert_eq!((rg[7].color, rg[8].color, rg[9].color), (rgb(t.triad[0]), rgb(t.triad[1]), colors::AXIS_Z));
-        assert_eq!((rg[0].color, rg[10].color, rg[11].color), (colors::SKETCH, colors::BODY, colors::GRID));
-        let mut by = lines();
-        vision_tags(&mut by, ColorVision::Tritan);
-        assert_eq!(by[2].color, rgb(Tokens::themed(false, ColorVision::Tritan).sketch_locked));
-        assert_eq!(by[3].color, colors::SKETCH_PROJECTED);
+        let off = scene_palette(false, ColorVision::Off);
+        let rg = scene_palette(false, ColorVision::Protan);
+        let t = Tokens::themed(false, ColorVision::Protan);
+        assert_eq!((rg.sketch_projected, rg.sketch_locked), (rgb(t.sketch_projected), rgb(t.sketch_locked)));
+        assert_ne!(rg.sketch_projected, off.sketch_projected, "the red-green table changes projected lines in light");
+        assert_eq!((rg.axes[0], rg.axes[1], rg.axes[2]), (rgb(t.triad[0]), rgb(t.triad[1]), off.axes[2]));
+        assert_eq!((rg.sketch, rg.background, rg.grid, rg.body), (off.sketch, off.background, off.grid, off.body));
+        let by = scene_palette(false, ColorVision::Tritan);
+        assert_eq!(by.sketch_locked, rgb(Tokens::themed(false, ColorVision::Tritan).sketch_locked));
+        assert_ne!(by.sketch_locked, off.sketch_locked);
+        assert_eq!(by.sketch_projected, off.sketch_projected);
     }
 
     /// The mode is on from the next frame (theme, widgets, caches, `ui.render`), and Cancel puts
@@ -4985,7 +5087,10 @@ mod tests {
         h.frame();
         assert_eq!((h.app.preferences.color_vision, crate::theme::vision()), (ColorVision::Off, ColorVision::Off));
         assert_eq!(keys(&h.app), before);
-        // `ui.render` (the CPU picture) shows the mode too: a fixed sketch line in Deutan's value.
+        // `ui.render` (the CPU picture) shows the mode too: a fixed sketch line in Deutan's value
+        // (in the light theme, where the red-green table changes it; the render follows the theme).
+        h.call("ui.prefs", json!({"theme": "light"}));
+        h.frame();
         h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
         let made = h.app.run("sketch.line", json!({"points": [[-30, -20], [30, 20]]})).unwrap();
         h.app.run("sketch.constraint.fix", json!({"entity": made["created"]["curves"][0]})).unwrap();

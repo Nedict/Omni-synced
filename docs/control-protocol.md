@@ -71,6 +71,10 @@ MCP server sends its folders this way on every request ([mcp.md](mcp.md)). Witho
 
 Commands never open dialogs when run this way. `solidcraft-cli commands` prints the same registry.
 
+While an interactive native file picker is open, `ui.inspect` reports `file_picker_busy: true`.
+Engine commands, `ui.file` and `ui.home` requests wait for its answer; window resizing,
+inspection and screenshots remain available.
+
 Every `sketch.*` command that changes a sketch adds `created: {points, curves, constraints,
 dimensions}` to its result (and `wires` for 3D curves): the ids of what it added, in creation
 order, next to whatever else the command returns (`curves`, `sides`, `corners`…). Sketch ids are
@@ -116,7 +120,7 @@ unit regardless of the design, pass an expression with one: `"value": "50 mm"` o
 | `ui.key` | `key` (egui key name, `Enter`, `Escape`…), `cmd?`, `shift?` | |
 | `ui.text` | `text` | typed text |
 | `ui.screenshot` | `path?` | PNG of the window (needs a presented frame) |
-| `ui.render` | `path`, `width?`, `height?` | CPU render of the model with the current camera (no window needed); cut by the section the viewport shows (`inspect.section`, an open Section Analysis dialog's preview, a sketch's Slice), with the cut face capped |
+| `ui.render` | `path`, `width?`, `height?` | CPU render of the model with the current camera (no window needed), in the window's theme (light or dark; `solidcraft-cli snapshot` keeps the light colours); cut by the section the viewport shows (`inspect.section`, an open Section Analysis dialog's preview, a sketch's Slice), with the cut face capped |
 | `ui.confirm` | `accept?`: bool | answers the Delete confirmation (shown when a delete takes other features with it or makes some fail); without `accept`, what it lists |
 | `ui.documents` | `action?`: `new`, `switch`, `close`, `quit`; `index?`; `force?` (close without asking); `answer?`: `save`, `dont_save`, `cancel` (answers "save changes?") | the open designs (tabs): names, unsaved flags, the active one, a pending "save changes?" prompt, whether a quit is asking |
 | `ui.file` | `path`; `insert?`: bool | starts an interactive background Open or Insert; poll `ui.inspect.file_busy` for completion; the window stays responsive |

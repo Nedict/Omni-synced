@@ -184,6 +184,19 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
     None
 }
 
+/// An autosave that failed to load goes back in the recovery list, so it can be discarded (or
+/// left for later) instead of coming back unasked.
+fn reoffer(app: &mut SolveApp, id: &str, dir: Option<&str>) {
+    let dir = dir.map(std::path::PathBuf::from).or_else(|| app.autosave.as_ref().map(|a| a.dir.clone()));
+    let Some(dir) = dir else { return };
+    if app.recoverable.iter().any(|e| e.id == id) {
+        return;
+    }
+    if let Some(e) = solidcraft_engine::recovery::orphans(&dir).into_iter().find(|e| e.id == id) {
+        app.recoverable.insert(0, e);
+    }
+}
+
 /// A recovered design is ours now: autosave it under this app's entry before the old one goes.
 fn recovered(app: &mut SolveApp, request: &Request) {
     let Kind::Recover { id, dir } = &request.kind else { return };
@@ -448,7 +461,12 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
             }
             Err(e) => {
                 request.answer(Err(e.clone()));
-                app.set_status(e, true);
+                if let Kind::Recover { id, dir } = &request.kind {
+                    reoffer(app, id, dir.as_deref());
+                    app.set_status(format!("could not recover {}: {e}. Discard it or choose Later", request.path), true);
+                } else {
+                    app.set_status(e, true);
+                }
             }
         }
     }
