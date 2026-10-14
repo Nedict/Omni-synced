@@ -4407,9 +4407,12 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         FeatureKind::Import { step, .. } => {
             let imp = kernel::step_import_shared(step)?;
             let digest = crate::config::payload_digest(step);
+            // Files from board and assembly tools give thousands of bodies the same name: name
+            // them from a set, not by searching the bodies for every candidate (cubic).
+            let mut names = BodyNames::new(st);
             for (k, b) in imp.bodies.iter().enumerate() {
                 let base = f.body_names.get(k).filter(|n| !n.trim().is_empty()).unwrap_or(&b.name);
-                let name = unique_body_name(st, base);
+                let name = names.unique(base);
                 let b = crate::lineage::numbered_tool(b.body.clone().with_import_certificate(&digest, f.id)?);
                 st.bodies.push(ModelBody::traced_new(name, b, f.id));
             }
@@ -4440,6 +4443,35 @@ fn mesh_bodies(meshes: &[crate::MeshData]) -> Result<Vec<(String, Body)>> {
         out.push((m.name.clone(), b.with_color(m.color)));
     }
     Ok(out)
+}
+
+/// [`unique_body_name`] for many bodies in a row: the same names, in time linear in the bodies.
+struct BodyNames {
+    taken: std::collections::HashSet<String>,
+    /// The next suffix worth trying for each base (smaller ones are all taken).
+    next: std::collections::HashMap<String, usize>,
+}
+
+impl BodyNames {
+    fn new(st: &ModelState) -> Self {
+        BodyNames { taken: st.bodies.iter().map(|b| b.name.clone()).collect(), next: std::collections::HashMap::new() }
+    }
+    fn unique(&mut self, base: &str) -> String {
+        let base = if base.trim().is_empty() { "Body" } else { base.trim() };
+        if self.taken.insert(base.to_string()) {
+            return base.to_string();
+        }
+        let mut i = self.next.get(base).copied().unwrap_or(2);
+        let name = loop {
+            let candidate = format!("{base} ({i})");
+            i += 1;
+            if self.taken.insert(candidate.clone()) {
+                break candidate;
+            }
+        };
+        self.next.insert(base.to_string(), i);
+        name
+    }
 }
 
 /// `base`, or `base (2)`, `base (3)`… if a body already has that name.
@@ -4778,5 +4810,35 @@ mod chain_tests {
         let pts = smooth_chain(b, &[Vec3::new(20.0, 15.0, 20.0)]);
         let faces: std::collections::BTreeSet<usize> = pts.iter().filter_map(|p| crate::appearance::face_index_at(b, *p)).collect();
         assert_eq!(faces.len(), 3, "{faces:?}");
+    }
+}
+
+#[cfg(test)]
+mod body_name_tests {
+    use super::*;
+
+    /// Imported bodies get the names one-at-a-time naming gives them, in time linear in the
+    /// bodies: a board file with thousands of same-named parts once took minutes (#883).
+    #[test]
+    fn many_same_named_bodies_are_named_in_linear_time() {
+        let mut st = ModelState::default();
+        let body = kernel::box_solid(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0)).unwrap();
+        for name in ["R", "R (3)", "C"] {
+            st.bodies.push(ModelBody::new(name.into(), body.clone(), 1));
+        }
+        // The same names as asking the bodies one at a time.
+        let mut names = BodyNames::new(&st);
+        let mut slow = st.clone();
+        for base in ["R", "R", "C", " ", "Body", "R", "R (2)", "X"] {
+            let expected = unique_body_name(&slow, base);
+            assert_eq!(names.unique(base), expected);
+            slow.bodies.push(ModelBody::new(expected, body.clone(), 2));
+        }
+        // 50,000 parts named alike: milliseconds (one-at-a-time naming would take hours).
+        let began = std::time::Instant::now();
+        let mut names = BodyNames::new(&ModelState::default());
+        let last = (0..50_000).map(|_| names.unique("R_0603")).last().unwrap();
+        assert_eq!(last, "R_0603 (50000)");
+        assert!(began.elapsed() < std::time::Duration::from_secs(5), "{:?}", began.elapsed());
     }
 }

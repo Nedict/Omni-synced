@@ -30,6 +30,7 @@ pub mod motion;
 mod name_lookup;
 pub mod naming;
 mod params;
+pub mod physical_material;
 mod piece_names;
 mod profile_refs;
 pub mod progress;
