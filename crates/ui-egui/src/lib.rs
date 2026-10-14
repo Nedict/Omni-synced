@@ -300,6 +300,9 @@ pub struct SolveApp {
     pub file_load: file_load::FileLoad,
     /// The other open designs (tabs).
     pub docs: documents::Documents,
+    /// The language the installed font fallback chain is ordered for (`fonts::fallback_order`);
+    /// changing `preferences.language` re-installs the fonts on the next frame.
+    applied_fonts_language: String,
 }
 
 impl SolveApp {
@@ -358,6 +361,7 @@ impl SolveApp {
             home: home::HomeState::default(),
             file_load: file_load::FileLoad::default(),
             docs: documents::Documents::default(),
+            applied_fonts_language: "en".into(),
         }
     }
 
@@ -1066,6 +1070,10 @@ impl SolveApp {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         expression_complete::begin_frame(ui.ctx());
         let t0 = now_ms();
+        if self.preferences.language != self.applied_fonts_language {
+            self.applied_fonts_language.clone_from(&self.preferences.language);
+            crate::fonts::setup_fonts_for(ui.ctx(), &self.preferences.language);
+        }
         let _language = crate::i18n::scope(&self.preferences.language);
         let mut report_input = None;
         issue_report::CadInput::block(self, ui, &mut report_input);
