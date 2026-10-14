@@ -771,6 +771,45 @@ pub(super) fn sheet_primitive_cut(
     sheet_prism_cut(f, st, &plane, std::slice::from_ref(&region), operation, &tools, &[], None, false)
 }
 
+/// A hole's straight drill along a panel of a sheet (into its rim), kept as a bore of each
+/// panel it meets (see [`crate::sheet::SheetBore`]), so the sheet still unfolds. Returns the
+/// sheet bodies it machined; None, with the model as it was, when the drill is not a plain
+/// cylinder or a sheet it meets can't keep it that way (it runs into a bend, or crosses a
+/// panel at an angle).
+pub(super) fn sheet_bore_cut(f: &Feature, st: &mut ModelState, prism: PrimitivePrism) -> Result<Option<Vec<String>>> {
+    let PrimitivePrism::Cylinder { base, axis, radius, height } = prism else { return Ok(None) };
+    let mut plans = Vec::new();
+    for original in &st.sheets {
+        if !sheet_eligible(f, st, &[], original) {
+            continue;
+        }
+        let mut sh = original.clone();
+        match sh.add_bore(base, axis, radius, height) {
+            Ok(true) => {}
+            Ok(false) => continue,
+            // Refused here, the hole keeps the message of the machining it was first tried as.
+            Err(DocError::Invalid(_)) => return Ok(None),
+            Err(e) => return Err(e),
+        }
+        let body = sh.solid()?;
+        plans.push((sh, body));
+    }
+    if plans.is_empty() {
+        return Ok(None);
+    }
+    let mut handled = Vec::new();
+    for (sh, body) in plans {
+        if let Some(mb) = st.bodies.iter_mut().find(|b| b.name == sh.body) {
+            replace_sheet_body(mb, body);
+        }
+        handled.push(sh.body.clone());
+        if let Some(slot) = st.sheets.iter_mut().find(|s| s.body == sh.body) {
+            *slot = sh;
+        }
+    }
+    Ok(Some(handled))
+}
+
 /// A primitive tool's exact geometry, for [`sheet_primitive_cut`].
 #[derive(Clone, Copy, Debug)]
 pub(super) enum PrimitivePrism {

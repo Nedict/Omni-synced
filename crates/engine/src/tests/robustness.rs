@@ -54,6 +54,55 @@ fn shell_with_a_hole_through_a_curved_side() {
     ]));
 }
 
+/// A cut whose end only touches the plate's arc side (#897, robustness seed 14): the end lies
+/// tangent to the arc at its apex, the direct boolean fails, and the last-resort nudge used to
+/// push the end into the arc, leaving a sliver of it a tenth of a millimetre wide that a shell
+/// then couldn't offset. The nudge the other way parts them: the same faces as a cut clear of
+/// the apex, and seed 14 shells and fillets again.
+#[test]
+fn cut_whose_end_touches_an_arc_side_leaves_no_sliver() {
+    let plate = |x: f64| {
+        script(json!([
+            {"command": "sketch.create", "params": {"plane": "XY"}},
+            {"command": "sketch.line", "params": {"points": [[0, 0], [42.5, 0], [42.5, 20.0], [0, 20.0]]}},
+            {"command": "sketch.arc.three_point", "params": {"end": [0, 0], "start": [0, 20.0], "through": [-10.0, 10.0]}},
+            {"command": "sketch.finish", "params": {}},
+            {"command": "solid.extrude", "params": {"distance": 27.5}},
+            {"command": "solid.cylinder", "params": {"axis": [1.0, 0.0, 0.0], "base": [x, 12.5, 12.5], "height": 17.5, "operation": "cut", "radius": 5.0}}
+        ]))
+    };
+    let (touching, clear) = (plate(-10.0), plate(-10.1));
+    let faces = |s: &Session| s.model.state().bodies.iter().map(|b| b.body.face_count()).sum::<usize>();
+    assert_eq!(faces(&touching), faces(&clear), "a sliver face was left where the cut's end touches the arc");
+    let r = fuzz::run(14, 8);
+    let kinds: Vec<&str> = r.steps.iter().map(|s| s.kind).collect();
+    assert!(r.outcome.kind == "ok" && kinds.contains(&"shell"), "seed 14: {:?} {kinds:?}\n{}", r.outcome, r.script());
+}
+
+/// #827: a hinge barrel joined to a laptop lid through its mounting leaf. The barrel's top lies
+/// tangent to the lid's underside where the leaf ends, so the direct boolean fails, and the
+/// last-resort nudge pushed the barrel into the lid and failed too; the nudge the other way
+/// parts them and the join builds. The barrel adds three quarters of a cylinder (the quarter
+/// inside the leaf was there already).
+#[test]
+fn hinge_barrel_joins_a_filleted_lid() {
+    let all = json!([
+        {"command": "solid.box", "params": {"length": 320, "width": 220, "height": 6, "corner": [-160, 4, 21], "body_name": "Lid Housing"}},
+        {"command": "solid.fillet", "params": {"body": "Lid Housing", "edges": [[-160, 4, 24], [160, 4, 24], [-160, 224, 24], [160, 224, 24]], "radius": 5}},
+        {"command": "solid.fillet", "params": {"body": "Lid Housing", "edges": [[0, 4, 27], [0, 224, 27], [-160, 114, 27], [160, 114, 27]], "radius": 1}},
+        {"command": "solid.box", "params": {"length": 296, "width": 190, "height": 1.1, "corner": [-148, 17, 20.9], "operation": "cut", "targets": ["Lid Housing"]}},
+        {"command": "solid.box", "params": {"length": 14, "width": 10, "height": 6, "corner": [-123.5, 214, 16], "operation": "join", "targets": ["Lid Housing"]}},
+        {"command": "solid.cylinder", "params": {"radius": 5, "height": 14, "axis": "X", "base": [-123.5, 224, 16], "operation": "join", "targets": ["Lid Housing"]}}
+    ]);
+    let steps = all.as_array().unwrap();
+    let before = total_volume(&script(Value::Array(steps[..5].to_vec())));
+    let s = script(all.clone());
+    assert_eq!(s.model.state().bodies.len(), 1);
+    let added = total_volume(&s) - before;
+    let want = 0.75 * PI * 5.0 * 5.0 * 14.0;
+    assert!((added - want).abs() < want * 1e-3, "the barrel added {added} mm³, not {want}");
+}
+
 /// #871: the fillet from the report (its feature as saved) on a plate with a block on top and
 /// a window through both. Radius 1 on the window's edges and on the block's sides overlaps in
 /// the 1.26 mm wall between them; the result had openings in its end faces and was accepted.

@@ -113,7 +113,15 @@ pub fn run(root: &Path, site: Option<&str>, required: bool) -> Result<(), String
     let server = Server::start(v2.clone())?;
     let browser = Chrome::launch(&chrome, &work.0.join("profile"))?;
     let mut cdp = browser.connect()?;
-    let state_js = STATE_JS.replace("STARTED", started);
+    // Every file any build keeps, by name (the state counts a cache's entries among them).
+    let mut files = std::collections::BTreeSet::new();
+    for dir in [&v1, &v2, &v3, &v4, &v5, &v6] {
+        let path = dir.join("build.json");
+        let build: Value =
+            std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).ok_or_else(|| format!("{}: not readable", path.display()))?;
+        files.extend(build["files"].as_array().into_iter().flatten().filter_map(|f| f["file"].as_str().map(str::to_string)));
+    }
+    let state_js = STATE_JS.replace("STARTED", started).replace("BUILD_FILES", &json!(files.into_iter().collect::<Vec<_>>()).to_string());
     let count = std::cell::Cell::new(0);
     let launch_at = |cdp: &mut Cdp, at: &str, build: &str| -> Result<Duration, String> {
         let n = count.get() + 1;
@@ -245,15 +253,7 @@ pub fn run(root: &Path, site: Option<&str>, required: bool) -> Result<(), String
     server.set(Mode::Serve(v6));
     let t = launch(&mut cdp, "v6")?;
     wait_for(&mut cdp, &state_js, "v5's download is finished, not dropped", |s| s["complete"].as_array().is_some_and(|c| c.contains(&json!(name5))))?;
-    // A complete cache precedes activation: an update requested now can still join v5's
-    // pending install instead of fetching v6. Wait for v5 to take over before the next update.
-    wait_for(&mut cdp, &state_js, "v5's worker has taken over", |s| {
-        s["installing"].is_null()
-            && s["waiting"].is_null()
-            && s["active"] == "activated"
-            && s["retired"].as_array().is_some_and(|r| r.contains(&json!(name4)))
-    })?;
-    cdp.eval("navigator.serviceWorker.getRegistration().then((r) => r.update().then(() => true))")?;
+    cdp.eval(update)?;
     wait_for(&mut cdp, &state_js, "the worker keeps build v6", keeps(5))?;
     step("overlapping downloads: v6 starts; v5's worker still finishes its own; v6 takes over", t);
 
@@ -295,19 +295,22 @@ const STATE_JS: &str = "(async () => {
   const scope = new URL('.', location.href).href;
   const prefix = 'solidcraft-app ' + new URL(scope).pathname + ' ';
   const caches_ = {}, kept = {}, retired = [], complete = [];
+  // Each cache is read with `caches.match`, never opened: opening a cache that a worker has just
+  // deleted makes it again (empty), and nothing would delete it after that.
+  const marks = ['build-complete', 'build-retired'];
   for (const k of await caches.keys()) {
     if (!k.startsWith(prefix)) continue;
-    const c = await caches.open(k);
-    caches_[k] = (await c.keys()).length;
-    if (await c.match(new URL('build-complete', location.href).href)) complete.push(k);
-    if (await c.match(new URL('build-retired', location.href).href)) retired.push(k);
-    else kept[k] = caches_[k];
+    const here = async (file) => Boolean(await caches.match(new URL(file, scope).href, { cacheName: k }));
+    let n = 0;
+    for (const file of BUILD_FILES.concat(marks)) if (await here(file)) n += 1;
+    caches_[k] = n;
+    if (await here('build-complete')) complete.push(k);
+    if (await here('build-retired')) retired.push(k);
+    else kept[k] = n;
   }
   const filling = (await navigator.locks.query()).held.map((l) => l.name).filter((n) => n.startsWith(prefix));
-  const registration = await navigator.serviceWorker.getRegistration();
   return { search: location.search, ready: document.readyState, build: document.documentElement.dataset.build ?? null,
     started: STARTED, controlled: !!navigator.serviceWorker.controller, caches: caches_, kept, retired, complete, filling,
-    installing: registration?.installing?.state ?? null, waiting: registration?.waiting?.state ?? null, active: registration?.active?.state ?? null,
     registered: (await navigator.serviceWorker.getRegistrations()).filter((r) => r.scope === scope).length };
 })()";
 

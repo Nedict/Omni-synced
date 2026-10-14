@@ -668,6 +668,26 @@ fn action_matrix_worker() {
             Act::Project { plane, edge } => json!({"command": "sketch.project", "params": {"refs": [edge]}, "sketch_plane": plane}),
         };
         emit(line);
+        // With ACTION_MATRIX_UNFOLD, sheet metal must still unfold and fold back after the action.
+        if r.is_ok() && std::env::var_os("ACTION_MATRIX_UNFOLD").is_some() {
+            let t = Instant::now();
+            let sheets: Vec<String> = scratch.model.state().sheets.iter().map(|sh| sh.body.clone()).collect();
+            let mut r = Ok(());
+            for body in &sheets {
+                for id in ["sheet.unfold", "sheet.refold"] {
+                    if r.is_ok() {
+                        r = scratch
+                            .execute(id, &json!({"body": body}))
+                            .map(|_| ())
+                            .map_err(|e| (command_kind(&e).to_string(), format!("{body}: {e}")));
+                    }
+                }
+            }
+            if !sheets.is_empty() {
+                let unfold: &'static str = Box::leak(format!("{}+unfold", a.action).into_boxed_str());
+                emit(outcome(&design, &a.entity, unfold, &r, t.elapsed().as_millis()));
+            }
+        }
         // The edit round: a driving parameter changes; the new feature still resolves.
         if r.is_ok()
             && let Some((name, expr)) = &edit
@@ -1083,6 +1103,29 @@ fn a_hole_through_a_sheet_metal_base() {
         json!({"command": "solid.hole", "params": {"position": [30, 20, 0], "direction": [0, 0, 1], "diameter": 5}}),
     ]);
     reproduces(None, Value::Array(c));
+}
+
+/// `face.hole` on a rim of the sheet metal corpus (#560): drilled along the panel, the hole is a
+/// bore of that panel, and the part still unfolds and folds back.
+#[test]
+fn a_hole_drilled_into_a_sheet_metal_rim() {
+    // What the matrix sends: the face's point, the hole square into it.
+    for (design, at, diameter) in [
+        // The base's end rim of the L bracket, through to the other end.
+        ("typical/sheet-metal-bracket", [60.0, 7.777777777777779, 0.8333333333333333], 0.667),
+        // The end rim of a tray's wall, beside the corner.
+        ("oracle/69-sm-tray", [99.58333333333333, 4.267766952966369, 15.0], 0.333),
+    ] {
+        let Some((_, path)) = designs().into_iter().find(|(n, _)| n == design) else { panic!("no design {design}") };
+        let mut s = load(&path).unwrap();
+        let before = errors(&s);
+        let start = s.doc.features.len();
+        s.execute("solid.hole", &json!({"position": at, "diameter": diameter})).unwrap_or_else(|e| panic!("{design}: {e}"));
+        check(&s, start, &before).unwrap_or_else(|(kind, e)| panic!("{design}: {kind}: {e}"));
+        for id in ["sheet.unfold", "sheet.refold"] {
+            s.execute(id, &json!({})).unwrap_or_else(|e| panic!("{design} {id}: {e}"));
+        }
+    }
 }
 
 #[test]

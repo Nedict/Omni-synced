@@ -21,6 +21,11 @@ The test is [`apps/solidcraft-cli/tests/action_matrix.rs`](../apps/solidcraft-cl
   For a quick local look, `ACTION_MATRIX_ACTIONS=edge.fillet,edge.chamfer` tries only those actions (never
   bless such a run) and `ACTION_MATRIX_VALIDITY=1` adds each passing action's body check (`Body::validity`)
   to the results.
+  `ACTION_MATRIX_UNFOLD=1` also unfolds and refolds every sheet metal body after each action that
+  passed, recorded as `<action>+unfold`. To recheck one design on its own:
+  `ACTION_MATRIX_DESIGN=oracle/69-sm-tray ACTION_MATRIX_OUT=out.jsonl ACTION_MATRIX_ACTIONS=face.hole
+  cargo test --profile ci -p solidcraft-cli --test action_matrix action_matrix_worker -- --exact --ignored`
+  (from `apps/solidcraft-cli`).
 
 Each design runs in its own process, so an action that hangs (90 s without a result) or aborts is
 recorded as `timeout` or `crash` and the rest of the design still runs. Loading a design, before

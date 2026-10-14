@@ -689,7 +689,16 @@ impl Dialog {
             Kind::Extrude { to_offset, .. } if to_object_on(&self.inputs) => ("To Offset", ValueKind::Length, to_offset),
             Kind::Extrude { distance, .. } => ("Distance", ValueKind::Length, distance),
             Kind::Revolve { angle, .. } => ("Angle", ValueKind::Angle, angle),
-            Kind::Fillet { radius, chamfer, .. } => (if *chamfer { "Distance" } else { "Radius" }, ValueKind::Length, radius),
+            Kind::Fillet { radius, chamfer, .. } => {
+                let label = if *chamfer {
+                    "Distance"
+                } else if matches!(self.extra.get("type").and_then(Value::as_str), Some("curvature" | "g2")) {
+                    "Equivalent Radius"
+                } else {
+                    "Radius"
+                };
+                (label, ValueKind::Length, radius)
+            }
             Kind::Shell { thickness } => ("Thickness", ValueKind::Length, thickness),
             Kind::Draft { angle } => ("Angle", ValueKind::Angle, angle),
             Kind::Hole { diameter, .. } => ("Diameter", ValueKind::Length, diameter),

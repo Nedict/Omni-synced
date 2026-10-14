@@ -2174,8 +2174,20 @@ fn sheet_hole_cut(st: &mut ModelState, f: &Feature, tools: &[(Traced, Option<mor
     for (tool, prism) in tools {
         let tool = &tool.body;
         let done = match prism {
-            Some(prism) => more::sheet_primitive_cut(f, st, tool, *prism, Operation::Cut, true)?,
+            Some(prism) => match more::sheet_primitive_cut(f, st, tool, *prism, Operation::Cut, true) {
+                Ok(done) => done,
+                // Drilled along a panel (into a rim) the hole is no flat cut-out: a bore of
+                // that panel, when it stays inside it.
+                Err(e) => match more::sheet_bore_cut(f, st, *prism)? {
+                    Some(done) => done,
+                    None => return Err(e),
+                },
+            },
             None => Vec::new(),
+        };
+        let done = match (done.is_empty(), prism) {
+            (true, Some(prism)) => more::sheet_bore_cut(f, st, *prism)?.unwrap_or_default(),
+            _ => done,
         };
         if done.is_empty() {
             let mut meets = false;
