@@ -29,6 +29,10 @@ fillet_chord
   inputs:
     Chord length = fillet.radius (Length)
   expressions: fillet.radius
+fillet_curvature
+  inputs:
+    Equivalent radius = fillet.radius (Length)
+  expressions: fillet.radius
 fillet_variable
   inputs:
     Start radius = fillet.radius (Length)

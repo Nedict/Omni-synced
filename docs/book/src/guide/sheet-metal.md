@@ -130,9 +130,11 @@ edge between two faces of the sheet that is no bend is cut open, each side half 
 **gap** from the plane halfway between the two, like the corners of a tray. The result is an
 ordinary sheet body: edge flanges, cuts, Unfold, the flat pattern and its exports work on it,
 and it follows the solid when a parameter changes (the edges and the fixed face are found by
-their names). Without bend edges Convert expects a plate, as before. Not converted yet: curved
-faces (rolled sheet, a filleted edge as a bend), faces with holes or curved edges (cut them
-after converting) and bends that close a ring.
+their names). Without bend edges Convert expects a plate, as before; its round walls (holes, slot
+ends, rounded corners) stay circles and arcs in the flat pattern and the DXF, also where a STEP
+file writes one in pieces. Not converted yet: curved faces (rolled sheet, a filleted edge as a
+bend), faces with holes or curved edges in a body with bend edges (cut them after converting)
+and bends that close a ring.
 
 ```json
 {"command":"solid.box","params":{"length":100,"width":60,"height":30,"body_name":"Tray"}}

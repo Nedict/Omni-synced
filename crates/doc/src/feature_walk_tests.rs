@@ -47,6 +47,7 @@ fn fixtures() -> Vec<(&'static str, Value)> {
         ),
         ("fillet_constant", fillet(json!({"type": "constant"}))),
         ("fillet_chord", fillet(json!({"type": "chord"}))),
+        ("fillet_curvature", fillet(json!({"type": "curvature"}))),
         ("fillet_variable", fillet(json!({"type": "variable", "radius2": "fillet.radius2", "start": o, "mid": [[0.5, "fillet.mid"]]}))),
         ("fillet_spline", fillet(json!({"type": "spline", "start": o, "knots": [0.0, 1.0], "radii": ["fillet.r1", "fillet.r2", "fillet.r3"]}))),
         (
