@@ -124,6 +124,8 @@
 //!   and `curves`) is also first saved in 18.
 //!   A `SurfaceOffset` feature (Offset Surface: `faces` points, optional `body`, `distance`,
 //!   `chain` and `tolerance`) is also first saved in 18.
+//!   A `SurfaceRuled` feature (Ruled Surface: `body`, `edges` points, `distance`, optional
+//!   `mode`, `angle`, `direction`, `flip`, `corners` and `face`) is also first saved in 18.
 //!   Nothing new is saved for holes, but a hole on a face is now drilled into the material: a
 //!   saved `direction` that leaves the face the hole starts on (designs up to 17 could save one,
 //!   taken from another face whose plane passed near the point, such as the far side of a thin

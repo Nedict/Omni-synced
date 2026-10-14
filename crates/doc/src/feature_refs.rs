@@ -176,6 +176,7 @@ macro_rules! feature_walk {
                 }
                 FeatureKind::SheetConvert { body, .. }
                 | FeatureKind::SurfaceExtend { body, .. }
+                | FeatureKind::SurfaceRuled { body, .. }
                 | FeatureKind::Unstitch { body, .. }
                 | FeatureKind::ReverseNormal { body, .. }
                 | FeatureKind::MeshConvert { body, .. } => f(B(body)),

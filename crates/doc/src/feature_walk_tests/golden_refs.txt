@@ -170,6 +170,8 @@ reverse_normal
   remap_bodies: body
 surface_extend
   remap_bodies: body
+surface_ruled
+  remap_bodies: body
 surface_trim
   remap_refs: plane.base.base.name
   remap_bodies: body, tool.body
