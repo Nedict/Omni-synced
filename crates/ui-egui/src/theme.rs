@@ -134,6 +134,18 @@ pub struct Tokens {
 }
 
 impl Tokens {
+    /// The colour of axis 0, 1 or 2 (X, Y, Z), from the theme's own tokens. One definition per
+    /// axis: the origin axes, the view triad, the navigation cube, the gizmo, 3D sketches and
+    /// joints all read these, so a theme or a colour-vision mode reaches every one of them
+    /// (solidcraft#976).
+    pub fn axis(&self, i: usize) -> Color32 {
+        match i {
+            0 => self.axis_x,
+            1 => self.axis_y,
+            _ => self.axis_z,
+        }
+    }
+
     /// The tokens of the current theme.
     pub fn get() -> Tokens {
         if is_dark() { Tokens::dark() } else { Tokens::light() }
@@ -202,6 +214,19 @@ pub fn apply(ctx: &egui::Context) {
 
 #[cfg(test)]
 mod tests {
+    /// The axis accessor maps 0/1/2 to X/Y/Z, and anything else falls back to Z rather than
+    /// panicking. It is the single definition the drawing code reads (#976).
+    #[test]
+    fn axis_tokens_map_to_x_y_z() {
+        let t = super::Tokens::light();
+        assert_eq!(t.axis(0), t.axis_x);
+        assert_eq!(t.axis(1), t.axis_y);
+        assert_eq!(t.axis(2), t.axis_z);
+        assert_eq!(t.axis(9), t.axis_z, "an out-of-range axis falls back to Z");
+        assert_ne!(t.axis_x, t.axis_y);
+        assert_ne!(t.axis_y, t.axis_z);
+    }
+
     /// Title and section bands stand out from a dialog, the title more than its sections.
     #[test]
     fn heading_bands_are_darker_than_the_dialog_in_order() {
