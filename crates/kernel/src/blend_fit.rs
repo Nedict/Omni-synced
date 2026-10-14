@@ -62,6 +62,9 @@ struct Frame {
     /// edge and every face at its ends.
     allowed: Vec<usize>,
     ends: [mt::VertexID; 2],
+    /// Another edge of the two faces runs on from an end tangentially: the blend runs on along
+    /// that chain past this edge.
+    chained: bool,
 }
 
 /// One edge's region: the triangle edge, setback on face a, setback on face b, swept along the
@@ -191,12 +194,14 @@ fn select_in(body: &Body, pts: &[Vec3]) -> Result<Selection> {
             .enumerate()
             .map(|(i, poly)| (i, poly.windows(2).filter_map(|w| Some(p.dist_to_segment(*w.first()?, *w.get(1)?))).fold(f64::INFINITY, f64::min)))
             .min_by(|a, b| a.1.total_cmp(&b.1));
-        let frame = match best {
-            Some((i, dist)) if dist <= size * 0.05 + 1e-3 => all.get(i).filter(|e| !taken.contains(&e.id())).and_then(|e| {
+        // Points on the same edge (pieces healed into one) count once.
+        let frame = match best.and_then(|(i, dist)| all.get(i).filter(|_| dist <= size * 0.05 + 1e-3)) {
+            Some(e) if taken.contains(&e.id()) => continue,
+            Some(e) => {
                 taken.push(e.id());
                 frame(&faces, e)
-            }),
-            _ => None,
+            }
+            None => None,
         };
         frames.push(frame);
     }
@@ -216,6 +221,7 @@ fn frame(faces: &[&mt::Face], e: &mt::Edge) -> Option<Frame> {
     // counter-clockwise about the normal, so the face lies to the left of the edge's use).
     let mut beside = Vec::new();
     let mut allowed = Vec::new();
+    let mut chained = false;
     for (i, f) in faces.iter().enumerate() {
         let mut uses: Vec<mt::Edge> = f.boundaries().iter().flat_map(|w| w.edge_iter()).filter(|x| x.id() == id).cloned().collect();
         let at_end = f.boundaries().iter().flat_map(|w| w.edge_iter()).any(|x| ends.contains(&x.front().id()) || ends.contains(&x.back().id()));
@@ -232,13 +238,26 @@ fn frame(faces: &[&mt::Face], e: &mt::Edge) -> Option<Frame> {
         }
         let dir = (vtx(u.back()) - vtx(u.front())).normalized()?;
         beside.push((n, n.cross(dir).normalized()?));
+        chained |= f.boundaries().iter().flat_map(|w| w.edge_iter()).filter(|x| x.id() != id).any(|x| {
+            ends.iter().any(|v| *v == x.front().id() && tangent_at(x, false).is_some_and(|t| t.dot(d).abs() > 1.0 - 1e-6))
+                || ends.iter().any(|v| *v == x.back().id() && tangent_at(x, true).is_some_and(|t| t.dot(d).abs() > 1.0 - 1e-6))
+        });
     }
     let [(na, ta), (nb, tb)] = beside[..] else { return None };
     // Both directions perpendicular to the edge, within their faces.
     if ta.dot(d).abs() > 1e-6 || tb.dot(d).abs() > 1e-6 {
         return None;
     }
-    Some(Frame { p0, p1, ta, tb, na, nb, allowed, ends })
+    Some(Frame { p0, p1, ta, tb, na, nb, allowed, ends, chained })
+}
+
+/// The unit tangent of an edge (as used) at its start or end.
+fn tangent_at(e: &mt::Edge, at_end: bool) -> Option<Vec3> {
+    use mt::{BoundedCurve, ParametricCurve};
+    let c = e.oriented_curve();
+    let (t0, t1) = c.range_tuple();
+    let d = c.der(if at_end { t1 } else { t0 });
+    Vec3::new(d.x, d.y, d.z).normalized()
 }
 
 /// What a blend that doesn't fit runs into.
@@ -365,7 +384,7 @@ pub(crate) fn check_volume(input: &Body, out: Body, edges: &[Vec3], size: Size) 
     for f in &sel.frames {
         // An edge the wedges can't describe: no bound.
         let Some(w) = f.as_ref().and_then(|f| f.wedge(size)) else { return Ok(out) };
-        let Some(f) = f else { return Ok(out) };
+        let Some(f) = f.as_ref().filter(|f| !f.chained) else { return Ok(out) };
         // Past an edge's ends a chamfer may still cut under a sloping end face.
         let (sa, sb) = f.setbacks(size).unwrap_or((0.0, 0.0));
         let len = f.p0.dist(f.p1);

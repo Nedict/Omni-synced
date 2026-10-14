@@ -1801,17 +1801,11 @@ fn loop_split(cur: &Body, pts: &[Vec3]) -> Result<Option<(Vec<Vec<Vec3>>, Vec<Ve
 /// don't see but which show as holes in the model. A fillet either closes the solid or is
 /// refused.
 fn closed(b: Body) -> Result<Body> {
-    closed_as(b, "fillet")
-}
-
-/// [`closed`] for a fillet or a chamfer (`what`).
-fn closed_as(b: Body, what: &str) -> Result<Body> {
     match b.crossed_face_loops()? {
         0 => Ok(b),
-        _ => Err(KernelError::Failed(format!(
-            "{what}: the {} would leave openings in the surface (they overlap where a wall or a face is narrower than both)",
-            if what == "fillet" { "rounds" } else { "chamfers" }
-        ))),
+        _ => Err(KernelError::Failed(
+            "fillet: the rounds would leave openings in the surface (they overlap where a wall or a face is narrower than both)".into(),
+        )),
     }
 }
 
@@ -2044,11 +2038,11 @@ pub fn chamfer(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
     if edges.is_empty() || edges.len() > 1000 {
         return Err(KernelError::Invalid("select 1…1000 edges".into()));
     }
-    // A chamfer that would run past its faces into other geometry or another chamfer (#1080),
-    // or whose result has openings (#871) or changes more than the chamfers can.
+    // A chamfer that would run past its faces into other geometry or another chamfer, or whose
+    // result changes more than the chamfers can (#1080).
     let size = crate::blend_fit::Size::Chamfer(distance);
     match chamfer_built(body, edges, distance) {
-        Ok(b) => crate::blend_fit::accept(body, b, edges, size).and_then(|b| closed_as(b, "chamfer")),
+        Ok(b) => crate::blend_fit::accept(body, b, edges, size),
         Err(e) => Err(crate::blend_fit::explain(body, edges, size, e)),
     }
 }
@@ -2268,7 +2262,7 @@ pub fn chamfer_sides(body: &Body, edges: &[Vec3], d1: f64, side: ChamferSide, fl
         let step = cut_one(&cur, &t)?.ok_or_else(|| KernelError::Failed("the chamfer removed everything".into()))?;
         cur = record::after(step, &cur, &counts);
     }
-    crate::blend_fit::accept(body, cur, edges, size).and_then(|b| closed_as(b, "chamfer"))
+    crate::blend_fit::accept(body, cur, edges, size)
 }
 
 /// The prism that cuts a chamfer: the body, which of its faces is the chamfer plane, and the
