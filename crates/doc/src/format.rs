@@ -455,7 +455,10 @@ pub fn read(s: &str) -> Result<Document> {
             return Err(DocError::Invalid(format!("damaged design: occurrence `{}` has an invalid placement", o.name)));
         }
     }
-    if !all_unique(d.features.iter().map(|f| f.id)) || !all_unique(d.components.iter().map(|c| c.id)) || !all_unique(d.occurrences.iter().map(|o| o.id)) {
+    if !all_unique(d.features.iter().map(|f| f.id))
+        || !all_unique(d.components.iter().map(|c| c.id))
+        || !all_unique(d.occurrences.iter().map(|o| o.id))
+    {
         return Err(DocError::Invalid("damaged design: duplicate feature, component or occurrence id".into()));
     }
     let component_ids: std::collections::BTreeSet<_> = d.components.iter().map(|component| component.id).chain(std::iter::once(0)).collect();
@@ -481,7 +484,8 @@ pub fn read(s: &str) -> Result<Document> {
     normalise(&mut d)?;
     // `next_id` is trusted by nothing: a hand-edited or generated file may omit it or leave it stale,
     // and the next feature, component or occurrence would then reuse an id that is already taken.
-    let largest = d.features.iter().map(|f| f.id).chain(d.components.iter().map(|c| c.id)).chain(d.occurrences.iter().map(|o| o.id)).max().unwrap_or(0);
+    let largest =
+        d.features.iter().map(|f| f.id).chain(d.components.iter().map(|c| c.id)).chain(d.occurrences.iter().map(|o| o.id)).max().unwrap_or(0);
     let floor = largest.checked_add(1).ok_or_else(|| DocError::Invalid("damaged design: the id space is exhausted".into()))?;
     d.next_id = d.next_id.max(floor).max(1);
     d.format = format_string(FORMAT);
