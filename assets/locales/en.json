@@ -1068,5 +1068,6 @@
   "assistant.agent_hint": "The program is started by SolidCraft and connects back through its own local, token-protected connection. Presets are starting points: check the program's documentation if one does not start.",
   "assistant.cli": "solidcraft-cli program (empty: next to the app, then on PATH)",
   "assistant.auto_allow": "Let agents use SolidCraft's tools without asking",
-  "assistant.ask_title": "The agent asks:"
+  "assistant.ask_title": "The agent asks:",
+  "assistant.picture": "Picture"
 }

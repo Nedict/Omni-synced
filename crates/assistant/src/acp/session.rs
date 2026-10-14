@@ -322,7 +322,7 @@ fn update(params: &Value, tools: &mut HashMap<String, String>, out: &mut TurnOut
                         .take(30)
                         .map(|e| {
                             let done = e.get("status").and_then(Value::as_str) == Some("completed");
-                            format!("{} {}", if done { "☑" } else { "☐" }, e.get("content").and_then(Value::as_str).unwrap_or(""))
+                            format!("{} {}", if done { "[x]" } else { "[ ]" }, e.get("content").and_then(Value::as_str).unwrap_or(""))
                         })
                         .collect()
                 })

@@ -54,6 +54,17 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::scenario::publish_rect("assistant:panel", out.response.rect);
 }
 
+/// A small square button drawn with one of the app's own icons.
+fn icon_button(ui: &mut egui::Ui, icon: &str, selected: bool) -> egui::Response {
+    let t = Tokens::get();
+    let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), egui::Sense::click());
+    if selected || resp.hovered() {
+        ui.painter().rect_filled(r, 4.0, t.hover);
+    }
+    crate::icons::paint(ui.painter(), r.shrink(4.0), icon, t.text, t.panel_header, t.accent);
+    resp
+}
+
 fn header(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     ui.horizontal(|ui| {
@@ -61,17 +72,22 @@ fn header(app: &mut SolveApp, ui: &mut egui::Ui) {
         crate::icons::paint(ui.painter(), r.shrink(2.0), "assistant", t.text, t.panel_header, t.accent);
         ui.label(RichText::new(app.tr("assistant.title")).size(13.0).strong().color(t.text));
         ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-            if ui.add(egui::Button::new("✕").frame(false)).on_hover_text(app.tr("assistant.close")).clicked() {
+            let (r, close) = ui.allocate_exact_size(vec2(24.0, 24.0), egui::Sense::click());
+            if close.hovered() {
+                ui.painter().rect_filled(r, 4.0, t.hover);
+            }
+            crate::icons::glyphs::cross(ui.painter(), r.shrink(7.0), Stroke::new(1.5, t.text));
+            if close.on_hover_text(app.tr("assistant.close")).clicked() {
                 app.ui.show_assistant = false;
             }
-            let gear = ui.add(egui::Button::new("⚙").frame(false).selected(app.assistant.settings_open)).on_hover_text(app.tr("assistant.settings"));
+            let gear = icon_button(ui, "settings", app.assistant.settings_open).on_hover_text(app.tr("assistant.settings"));
             crate::scenario::publish_handle("assistant:settings", gear.rect.center());
             if gear.clicked() {
                 app.assistant.settings_open = !app.assistant.settings_open;
             }
             let mut chosen: Option<String> = None;
             let mut export = false;
-            let history = ui.menu_button("🕘", |ui| {
+            let history = ui.menu_button(RichText::new(" ").size(14.0), |ui| {
                 let all = super::saved_conversations(app);
                 if all.is_empty() {
                     ui.label(RichText::new(app.tr("assistant.no_history")).size(12.0).color(t.text_dim));
@@ -89,6 +105,8 @@ fn header(app: &mut SolveApp, ui: &mut egui::Ui) {
                     ui.close();
                 }
             });
+            let hr = history.response.rect;
+            crate::icons::paint(ui.painter(), hr.shrink2(vec2((hr.width() - 16.0).max(0.0) / 2.0, (hr.height() - 16.0).max(0.0) / 2.0)), "history", t.text, t.panel_header, t.accent);
             history.response.on_hover_text(app.tr("assistant.history"));
             if let Some(id) = chosen {
                 super::load_conversation(app, &id);
@@ -101,7 +119,7 @@ fn header(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                 });
             }
-            let new = ui.add(egui::Button::new("✚").frame(false)).on_hover_text(app.tr("assistant.new_chat"));
+            let new = icon_button(ui, "new", false).on_hover_text(app.tr("assistant.new_chat"));
             crate::scenario::publish_handle("assistant:new", new.rect.center());
             if new.clicked() {
                 app.assistant.new_chat();
@@ -140,9 +158,12 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                 }
                 Item::Notice { text, error } => {
-                    let c = if error { t.error } else { t.text_dim };
                     ui.add_space(2.0);
-                    ui.label(RichText::new(text).size(12.0).color(c));
+                    if error {
+                        ui.add(egui::Label::new(RichText::new(text).size(12.0).color(t.error)).wrap());
+                    } else {
+                        render_markdown(ui, &text);
+                    }
                 }
                 Item::TurnEnd { .. } => {}
             }
@@ -208,7 +229,7 @@ fn user_bubble(ui: &mut egui::Ui, text: &str, picture: bool) {
     let t = Tokens::get();
     egui::Frame::NONE.fill(t.accent_soft).corner_radius(6.0).inner_margin(Margin::symmetric(8, 6)).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        let shown = if picture { format!("{text}\n📷") } else { text.to_string() };
+        let shown = if picture { format!("{text}\n({})", crate::i18n::tr_label("assistant.attached")) } else { text.to_string() };
         ui.add(egui::Label::new(RichText::new(shown).size(13.0).color(t.text)).wrap());
     });
 }
@@ -249,7 +270,7 @@ fn links(ui: &mut egui::Ui, spans: &[Span]) {
     }
     ui.horizontal_wrapped(|ui| {
         for (label, url) in found {
-            ui.hyperlink_to(RichText::new(format!("↗ {label}")).size(11.0), url).on_hover_text(url);
+            ui.hyperlink_to(RichText::new(label).size(11.0), url).on_hover_text(url);
         }
     });
 }
@@ -335,7 +356,7 @@ fn tool_card(app: &mut SolveApp, ui: &mut egui::Ui, card: &ToolCard) -> Option<u
                 let c = if r.is_error { t.error } else { t.text };
                 ui.add(egui::Label::new(RichText::new(solidcraft_assistant::model::truncate(&r.text, CARD_TEXT, "cut")).monospace().size(11.0).color(c)).wrap());
                 if r.images > 0 {
-                    ui.label(RichText::new("📷").size(11.0).color(t.text_dim));
+                    ui.label(RichText::new(format!("({})", app.tr("assistant.picture"))).size(11.0).color(t.text_dim));
                 }
             }
         });
@@ -447,8 +468,8 @@ fn composer(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut go = enter;
     ui.horizontal(|ui| {
         if app.assistant.picture.is_some() {
-            ui.label(RichText::new(format!("📷 {}", app.tr("assistant.attached"))).size(11.0).color(t.text_dim));
-        } else if app.services.assistant_http.is_some() && ui.small_button("📷").on_hover_text(app.tr("assistant.attach_view")).clicked() {
+            ui.label(RichText::new(app.tr("assistant.attached")).size(11.0).color(t.text_dim));
+        } else if app.services.assistant_http.is_some() && icon_button(ui, "view_attach", false).on_hover_text(app.tr("assistant.attach_view")).clicked() {
             super::attach_view(app);
         }
         ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
@@ -495,7 +516,7 @@ fn compact(n: u64) -> String {
 
 fn settings(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
-    if ui.button(format!("← {}", app.tr("assistant.back"))).clicked() {
+    if ui.button(app.tr("assistant.back")).clicked() {
         app.assistant.settings_open = false;
     }
     ui.add_space(6.0);

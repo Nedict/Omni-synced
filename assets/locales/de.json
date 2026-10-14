@@ -789,5 +789,6 @@
   "assistant.agent_add": "Agent hinzufügen:",
   "assistant.agent_remove": "Entfernen",
   "assistant.agent_command": "Programm",
-  "assistant.ask_title": "Der Agent fragt:"
+  "assistant.ask_title": "Der Agent fragt:",
+  "assistant.picture": "Bild"
 }

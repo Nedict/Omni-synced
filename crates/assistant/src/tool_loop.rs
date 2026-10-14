@@ -128,6 +128,10 @@ pub fn run_turn(cfg: &TurnConfig, history: &mut Vec<Message>, user: Message, hos
     loop {
         if cancel.is_cancelled() {
             out.finish = Finish::Cancelled;
+            // Stopped before the model was asked anything: the message was never sent.
+            if out.steps == 0 {
+                history.truncate(base);
+            }
             return out;
         }
         if out.steps >= cfg.max_steps {

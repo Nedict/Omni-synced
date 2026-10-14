@@ -297,3 +297,16 @@ fn titles_name_the_command() {
     assert_eq!(call_title("measure", &json!({})), "measure");
     assert_eq!(call_title("execute", &json!(null)), "execute");
 }
+
+#[test]
+fn a_stop_before_anything_was_sent_leaves_the_conversation_alone() {
+    let host = HeadlessHost::new();
+    let cancel = Cancel::new();
+    cancel.cancel();
+    let script = Script::new(vec![text_reply("never")]);
+    let mut history = vec![Message::user_text("earlier"), Message::assistant(vec![Block::Text("hello".into())])];
+    let (out, _) = Fixture::new().run(&script, &host, &mut history, "go", &cancel, MAX_STEPS);
+    assert_eq!((out.finish, out.steps), (Finish::Cancelled, 0));
+    assert_eq!(history.len(), 2);
+    assert!(script.seen.lock().unwrap().is_empty());
+}

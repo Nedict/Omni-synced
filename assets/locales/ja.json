@@ -1068,5 +1068,6 @@
   "assistant.agent_hint": "プログラムは SolidCraft が起動し、トークンで保護されたローカル接続で戻ってきます。プリセットは出発点です。起動しない場合はプログラムのドキュメントを確認してください。",
   "assistant.cli": "solidcraft-cli プログラム (空欄: アプリの隣、次に PATH)",
   "assistant.auto_allow": "エージェントが確認なしで SolidCraft のツールを使えるようにする",
-  "assistant.ask_title": "エージェントからの確認:"
+  "assistant.ask_title": "エージェントからの確認:",
+  "assistant.picture": "画像"
 }

@@ -1068,5 +1068,6 @@
   "assistant.agent_hint": "程序由 SolidCraft 启动，并通过受令牌保护的本地连接回连。预设只是起点：如果某个程序无法启动，请查阅其文档。",
   "assistant.cli": "solidcraft-cli 程序（留空：应用旁边，然后是 PATH）",
   "assistant.auto_allow": "允许代理无需询问即可使用 SolidCraft 的工具",
-  "assistant.ask_title": "代理询问："
+  "assistant.ask_title": "代理询问：",
+  "assistant.picture": "图片"
 }

@@ -115,7 +115,7 @@ fn a_turn_streams_text_tools_and_permissions() {
     assert_eq!(text, "Making a box.");
     assert!(events.iter().any(|e| matches!(e, Event::ToolCall { name, input, .. } if name == "solidcraft: execute" && input["command"] == "solid.box")));
     assert!(events.iter().any(|e| matches!(e, Event::ToolResult { is_error: false, text, .. } if text == "created Body1")));
-    assert!(events.iter().any(|e| matches!(e, Event::Notice(n) if n.contains("☑ Make box") && n.contains("☐ Fillet"))));
+    assert!(events.iter().any(|e| matches!(e, Event::Notice(n) if n.contains("[x] Make box") && n.contains("[ ] Fillet"))));
     // The permission was answered with the first allow-once option, and the file read refused.
     let perm = wait_for(&seen, |m| m["id"] == 900);
     assert_eq!(perm["result"]["outcome"], json!({"outcome": "selected", "optionId": "yes"}));

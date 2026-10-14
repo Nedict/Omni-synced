@@ -255,6 +255,69 @@ fn serve(stream: TcpStream, token: &str, tx: Sender<ControlRequest>, ctx: egui::
 mod tests {
     use super::*;
 
+    /// The assistant's agent endpoint: its own random token (wrong or missing ones are refused),
+    /// every accepted request tagged with the running turn, and no more connections once the
+    /// endpoint is dropped.
+    #[test]
+    fn the_agent_endpoint_tags_requests_with_the_turn_and_stops() {
+        use solidcraft_ui_egui::assistant_ui::EndpointSpec;
+        use std::io::Read;
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicU64;
+        let (tx, rx) = channel::<ControlRequest>();
+        let turn = Arc::new(AtomicU64::new(7));
+        let ep = start_agent_endpoint(EndpointSpec { inlet: tx, turn: turn.clone(), ctx: egui::Context::default() }).unwrap();
+        assert_ne!(ep.port, 0);
+        assert!(ep.token.len() >= 32);
+        let seen: Arc<std::sync::Mutex<Vec<Value>>> = Arc::default();
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for req in rx {
+                log.lock().unwrap().push(json!({"method": req.method, "params": req.params}));
+                let _ = req.reply.send(json!({"ok": true, "result": 1}));
+            }
+        });
+        let talk = |lines: &[Value]| {
+            let mut s = TcpStream::connect(("127.0.0.1", ep.port)).unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            for l in lines {
+                writeln!(s, "{l}").unwrap();
+            }
+            let _ = s.shutdown(std::net::Shutdown::Write);
+            let mut text = String::new();
+            let _ = s.read_to_string(&mut text);
+            text.lines().map(|l| serde_json::from_str::<Value>(l).unwrap()).collect::<Vec<_>>()
+        };
+        let denied = talk(&[json!({"id": 1, "method": "engine.execute", "params": {}, "token": "nope"})]);
+        assert_eq!(denied[0]["ok"], false);
+        assert!(seen.lock().unwrap().is_empty());
+        let ok = talk(&[json!({"id": 2, "method": "engine.execute", "params": {"command": "solid.box"}, "token": ep.token})]);
+        assert_eq!(ok[0]["ok"], true);
+        assert_eq!(ok[0]["id"], 2);
+        let got = seen.lock().unwrap().clone();
+        assert_eq!(got[0]["params"]["_turn"], 7);
+        assert_eq!(got[0]["params"]["command"], "solid.box");
+        // The turn number is read per request.
+        turn.store(9, std::sync::atomic::Ordering::SeqCst);
+        talk(&[json!({"id": 3, "method": "document.inspect", "params": {}, "token": ep.token})]);
+        assert_eq!(seen.lock().unwrap()[1]["params"]["_turn"], 9);
+        // No token file is left for anyone to read.
+        assert!(control_auth::token_path(ep.port).is_none_or(|p| !p.exists()));
+        // Dropping the endpoint ends it: nothing more is served, even with the right token.
+        let (port, token) = (ep.port, ep.token.clone());
+        drop(ep);
+        std::thread::sleep(Duration::from_millis(500));
+        if let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) {
+            s.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let _ = writeln!(s, "{}", json!({"id": 4, "method": "document.inspect", "params": {}, "token": token}));
+            let _ = s.shutdown(std::net::Shutdown::Write);
+            let mut text = String::new();
+            let _ = s.read_to_string(&mut text);
+            assert!(text.is_empty(), "served after the endpoint ended: {text}");
+        }
+        assert_eq!(seen.lock().unwrap().len(), 2);
+    }
+
     /// #205: a connection runs nothing until a request carries the launch's token; a wrong or
     /// missing token, or garbage, is refused and the connection closed. Once shown, the token
     /// need not be repeated on that connection.
