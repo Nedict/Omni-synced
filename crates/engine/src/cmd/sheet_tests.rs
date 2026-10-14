@@ -494,9 +494,17 @@ fn unfold_cut_refold_and_convert() {
     run(&mut s, "sheet.convert", json!({"body": "Plate", "face": [50, 30, 2.5]}));
     run(&mut s, "sheet.flange", json!({"edges": [[50, 0, 2.5]], "height": 20}));
     assert!(rel(volume(&mut s), 18972.622) < 1e-4, "{}", volume(&mut s));
+    // A rod picked on its end is a round plate as thick as the rod is long (as a 20 x 20 x 30 bar
+    // is a square one); a block thicker at one end is no plate.
     let mut t = Session::default();
     run(&mut t, "solid.cylinder", json!({"radius": 10, "height": 30, "body_name": "Rod"}));
-    assert!(t.execute("sheet.convert", &json!({"body": "Rod", "face": [0, 0, 30]})).is_err());
+    run(&mut t, "sheet.convert", json!({"body": "Rod", "face": [0, 0, 30]}));
+    let f = flat(&mut t);
+    assert!(rel(f["thickness"].as_f64().unwrap_or(0.0), 30.0) < 1e-9 && rel(f["flat_size_mm"][0].as_f64().unwrap_or(0.0), 20.0) < 1e-4, "{f}");
+    let mut t = Session::default();
+    run(&mut t, "solid.box", json!({"length": 100, "width": 60, "height": 2.5, "body_name": "Block"}));
+    run(&mut t, "solid.box", json!({"corner": [0, 0, 0], "length": 20, "width": 60, "height": 10, "operation": "join"}));
+    assert!(t.execute("sheet.convert", &json!({"body": "Block", "face": [50, 30, 2.5]})).is_err());
 }
 
 /// A sketch line across a 100 x 60 plate's top face at x = 40.
