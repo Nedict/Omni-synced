@@ -34,7 +34,7 @@
   "30": {"area":853.525389,"bodies":1,"edges":23,"error":null,"faces":10,"outcome":"ok","rejected":0,"shells":1,"steps":["revolved section","chamfer"],"unsupported":0,"volume":1337.14821},
   "31": {"area":10195.468237,"bodies":3,"edges":75,"error":null,"faces":31,"outcome":"ok","rejected":1,"shells":3,"steps":["box","cut box","fillet","join box","circular pattern","cut box","circular pattern","hole"],"unsupported":1,"volume":56416.134686},
   "32": {"area":3220.802769,"bodies":1,"edges":51,"error":null,"faces":19,"outcome":"ok","rejected":0,"shells":1,"steps":["revolved section","cut sphere","cut box","cut box","join box"],"unsupported":0,"volume":7565.955897},
-  "33": {"area":5269.06481,"bodies":2,"edges":64,"error":null,"faces":29,"outcome":"ok","rejected":0,"shells":3,"steps":["revolved section","fillet","join box","cut cylinder","join box","chamfer","fillet","fillet"],"unsupported":2,"volume":13840.242661},
+  "33": {"area":5285.817318,"bodies":2,"edges":59,"error":null,"faces":27,"outcome":"ok","rejected":0,"shells":3,"steps":["revolved section","fillet","join box","cut cylinder","chamfer","join box","chamfer","fillet"],"unsupported":2,"volume":13859.24945},
   "34": {"area":1086.303472,"bodies":1,"edges":30,"error":null,"faces":14,"outcome":"ok","rejected":0,"shells":1,"steps":["revolved section","cut sphere","hole"],"unsupported":0,"volume":2134.365275},
   "35": {"area":4605.630216,"bodies":1,"edges":26,"error":null,"faces":11,"outcome":"ok","rejected":0,"shells":1,"steps":["box","fillet","join box"],"unsupported":0,"volume":13965.526982},
   "36": {"area":10408.825748,"bodies":1,"edges":60,"error":null,"faces":26,"outcome":"ok","rejected":0,"shells":2,"steps":["revolved section","cut cylinder","join box","fillet","join cylinder"],"unsupported":0,"volume":55729.313103},
@@ -109,6 +109,7 @@
   {"reason":"#946: small tools in large bodies are traced at their own scale; seeds 26 and 85 now build, 18, 43, 61, 63 and 71 fail with a different message, 19 builds two fewer faces (its fillet pick is also refused as in #936)","seeds":[18,19,26,43,61,63,71,85]},
   {"reason":"#921 with its grid lines kept to display and export meshes (Booleans mesh as before #921): measured volume and area move by about 1e-6 (seed 94 also as in #936)","seeds":[22,78,94]},
   {"reason":"a hole placed on a face without a direction drills into that face (it took the direction from any face whose plane passed through the point, the last one found, such as a side of a patterned box standing on the point's plane): the holes on these seeds now go straight in (#950)","seeds":[7,21,85]},
-  {"reason":"Record seed 91 for upstream ordinary-filleting behavior: the fillet now succeeds instead of being refused, replacing the later chamfer. Reproduced without G2 on ea23401 and on 9c51f9d, including the surface-opening checks from #949.","seeds":[91]}
+  {"reason":"Record seed 91 for upstream ordinary-filleting behavior: the fillet now succeeds instead of being refused, replacing the later chamfer. Reproduced without G2 on ea23401 and on 9c51f9d, including the surface-opening checks from #949.","seeds":[91]},
+  {"reason":"Synchronize seed 33 with the existing upstream ordinary-filleting baseline. Upstream 9c51f9d without G2 and PR b13412b produce identical volume, area, topology and accepted steps; the seed does not request G2. Keep exact topology/step comparisons and the existing measurement tolerances.","seeds":[33]}
  ]
 }

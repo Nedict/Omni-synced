@@ -245,7 +245,15 @@ pub fn run(root: &Path, site: Option<&str>, required: bool) -> Result<(), String
     server.set(Mode::Serve(v6));
     let t = launch(&mut cdp, "v6")?;
     wait_for(&mut cdp, &state_js, "v5's download is finished, not dropped", |s| s["complete"].as_array().is_some_and(|c| c.contains(&json!(name5))))?;
-    cdp.eval(update)?;
+    // A complete cache precedes activation: an update requested now can still join v5's
+    // pending install instead of fetching v6. Wait for v5 to take over before the next update.
+    wait_for(&mut cdp, &state_js, "v5's worker has taken over", |s| {
+        s["installing"].is_null()
+            && s["waiting"].is_null()
+            && s["active"] == "activated"
+            && s["retired"].as_array().is_some_and(|r| r.contains(&json!(name4)))
+    })?;
+    cdp.eval("navigator.serviceWorker.getRegistration().then((r) => r.update().then(() => true))")?;
     wait_for(&mut cdp, &state_js, "the worker keeps build v6", keeps(5))?;
     step("overlapping downloads: v6 starts; v5's worker still finishes its own; v6 takes over", t);
 
@@ -296,8 +304,10 @@ const STATE_JS: &str = "(async () => {
     else kept[k] = caches_[k];
   }
   const filling = (await navigator.locks.query()).held.map((l) => l.name).filter((n) => n.startsWith(prefix));
+  const registration = await navigator.serviceWorker.getRegistration();
   return { search: location.search, ready: document.readyState, build: document.documentElement.dataset.build ?? null,
     started: STARTED, controlled: !!navigator.serviceWorker.controller, caches: caches_, kept, retired, complete, filling,
+    installing: registration?.installing?.state ?? null, waiting: registration?.waiting?.state ?? null, active: registration?.active?.state ?? null,
     registered: (await navigator.serviceWorker.getRegistrations()).filter((r) => r.scope === scope).length };
 })()";
 
