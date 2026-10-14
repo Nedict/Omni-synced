@@ -281,7 +281,10 @@ fn a_law_running_to_zero_along_a_curved_edge_is_refused() {
         assert!(made.validity().is_empty(), "{:?}", made.validity());
         let mesh = made.tessellate_with(5e-4, true).unwrap();
         let about = |o: Vec3| {
-            mesh.triangles.iter().map(|t| (mesh.positions[t[0] as usize] - o).dot((mesh.positions[t[1] as usize] - o).cross(mesh.positions[t[2] as usize] - o)) / 6.0).sum::<f64>()
+            mesh.triangles
+                .iter()
+                .map(|t| (mesh.positions[t[0] as usize] - o).dot((mesh.positions[t[1] as usize] - o).cross(mesh.positions[t[2] as usize] - o)) / 6.0)
+                .sum::<f64>()
         };
         assert!((about(Vec3::ZERO) - about(Vec3::new(-100.0, 50.0, 30.0))).abs() < 1e-2, "the mesh is not closed");
     }
