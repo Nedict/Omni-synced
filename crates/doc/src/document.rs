@@ -2150,7 +2150,7 @@ impl Document {
             0
         };
         let id = self.next_id.max(1);
-        self.next_id = id + 1;
+        self.next_id = id.checked_add(1).ok_or_else(|| DocError::Invalid("feature ids are used up".into()))?;
         let name = match name {
             Some(n) if !n.trim().is_empty() => n.trim().to_string(),
             _ => self.unique_name(kind.base_name()),
@@ -2169,6 +2169,30 @@ impl Document {
             shell_piece_order: false,
             kind,
         };
+        Ok(self.place_feature(f))
+    }
+
+    /// Insert a complete feature as a design file holds it (its own id, names and references)
+    /// at the marker (or the end), as `add_feature` places a new one. The id must be new to the
+    /// design; ids made later come after it.
+    pub fn insert_feature(&mut self, f: Feature) -> Result<u64> {
+        if self.features.len() >= MAX_FEATURES {
+            return Err(DocError::Invalid("too many features".into()));
+        }
+        if f.id == 0 {
+            return Err(DocError::Invalid("feature id 0 is not an id".into()));
+        }
+        if self.features.iter().any(|g| g.id == f.id) {
+            return Err(DocError::Invalid(format!("feature id {} is already used", f.id)));
+        }
+        let next = f.id.checked_add(1).ok_or_else(|| DocError::Invalid("feature id out of range".into()))?;
+        self.next_id = self.next_id.max(next);
+        Ok(self.place_feature(f))
+    }
+
+    /// Put `f` at the marker (or the end), in the timeline folder the marker is in.
+    fn place_feature(&mut self, f: Feature) -> u64 {
+        let id = f.id;
         let insertion_group = self.marker.and_then(|marker| self.timeline_group_at_insertion(marker));
         match self.marker {
             Some(m) if m < self.features.len() => {
@@ -2186,7 +2210,7 @@ impl Document {
             }
         }
         self.name_feature_inputs(id);
-        Ok(id)
+        id
     }
 
     /// Delete a feature (and, for a sketch, the features that use it).

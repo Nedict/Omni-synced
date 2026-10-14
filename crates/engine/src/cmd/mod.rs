@@ -44,6 +44,7 @@ mod measure_sel;
 mod mesh;
 pub(crate) mod motion;
 mod parts;
+mod script;
 mod section;
 pub(crate) use measure_sel::measure_items;
 #[cfg(test)]
@@ -245,6 +246,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(delete::COMMANDS.iter());
     v.extend(edit::COMMANDS.iter());
     v.extend(clipboard::COMMANDS.iter());
+    v.extend(script::COMMANDS.iter());
     v.extend(parameters::COMMANDS.iter());
     v.extend(file::COMMANDS.iter());
     v.extend(inspect::COMMANDS.iter());

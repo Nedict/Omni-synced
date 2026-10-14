@@ -93,6 +93,30 @@ fn old_designs_open_and_evaluate_as_saved() {
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
+/// Every corpus design exported as a script (#886) replays into the same design: the same
+/// document (timeline folders aside, which scripts leave out) and the same bodies.
+#[test]
+fn designs_replay_from_their_scripts() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scripts-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for p in corpus() {
+        let name = p.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let mut s = open(&p);
+        let out = dir.join(format!("{name}.json"));
+        let r = s.execute("file.export", &json!({"path": out.to_string_lossy(), "format": "script"})).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(r["steps"].as_u64(), Some(s.doc.features.len() as u64 + 1 + u64::from(s.doc.marker.is_some())), "{name}: {r}");
+        let script: Value = serde_json::from_slice(&std::fs::read(&out).unwrap()).unwrap();
+        let mut replayed = Session::default();
+        replayed.run_script(&script).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let mut want = s.design().into_owned();
+        want.timeline_groups.clear();
+        assert_eq!(replayed.design().to_json(), want.to_json(), "{name}: replayed document");
+        let measure = |s: &mut Session| s.execute("inspect.measure", &json!({})).unwrap();
+        assert_eq!(measure(&mut replayed), measure(&mut s), "{name}: replayed bodies");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Names saved before format 14 were worked out from geometry, pieces of a split face numbered by
 /// where their centres lay (`F2:top#2`). They keep naming the faces they named: marked as such,
 /// they are found as the build that saved them found them, without new notes.

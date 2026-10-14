@@ -264,6 +264,7 @@
   "cmd.timeline_dependents": "特征依存项",
   "cmd.timeline_inspect": "检查特征",
   "cmd.timeline_paste": "粘贴特征",
+  "cmd.timeline_append": "追加特征",
   "cmd.timeline_redefine": "编辑特征",
   "cmd.timeline_rename": "重命名",
   "cmd.timeline_reorder": "重排特征",

@@ -264,6 +264,7 @@
   "cmd.timeline_dependents": "Feature Dependents",
   "cmd.timeline_inspect": "Inspect Feature",
   "cmd.timeline_paste": "Paste Features",
+  "cmd.timeline_append": "Append Feature",
   "cmd.timeline_redefine": "Edit Feature",
   "cmd.timeline_rename": "Rename",
   "cmd.timeline_reorder": "Reorder Feature",

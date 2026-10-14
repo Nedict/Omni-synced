@@ -36,6 +36,14 @@ is the tessellation's own double-precision value. Meshing and analysis tools can
 keep a model's faces (for loads, boundary conditions or feature edges); other 3MF readers ignore
 them. The format is specified in [`docs/formats/3mf-face-tags.md`](https://github.com/bherbruck/solidcraft/blob/main/docs/formats/3mf-face-tags.md).
 
+**File → Export Design as Script…** (`file.export` with `format: "script"`) writes the design as
+a command script: a `doc.open` step with everything but the timeline (parameters, components,
+rules, materials), then one `timeline.append` step per feature, each the feature as the design
+file holds it, then the timeline marker. `solidcraft-cli eval script.json` replays it into the
+same design. Deleting steps from the end gives the design as it was up to that feature, which
+cuts a bug report down to the step that fails. Timeline folders are left out; they only organise
+the timeline.
+
 **File → Export URDF…** (`file.export` with a `.urdf` path) writes the assembly for robot
 simulators and ROS: a link per component placement with its mesh, mass and inertia, and the
 assembly's joints, so the parts move in the simulator as they do in SolidCraft. The meshes are

@@ -644,6 +644,7 @@
   "cmd.timeline_dependents": "Merkmalsabhängigkeiten",
   "cmd.timeline_inspect": "Merkmal prüfen",
   "cmd.timeline_paste": "Merkmale einfügen",
+  "cmd.timeline_append": "Merkmal anhängen",
   "cmd.timeline_redefine": "Merkmal bearbeiten",
   "cmd.timeline_rename": "Umbenennen",
   "cmd.timeline_reorder": "Merkmal neu ordnen",

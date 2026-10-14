@@ -644,6 +644,7 @@
   "cmd.timeline_dependents": "특성 종속 항목",
   "cmd.timeline_inspect": "특성 검사",
   "cmd.timeline_paste": "특성 붙여넣기",
+  "cmd.timeline_append": "특성 추가",
   "cmd.timeline_redefine": "특성 편집",
   "cmd.timeline_rename": "이름 변경",
   "cmd.timeline_reorder": "특성 순서 변경",

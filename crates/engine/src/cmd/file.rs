@@ -17,7 +17,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solidcraft design, or a .step/.stp file (opens as a new design)"),
+        .params("path: .solidcraft design, or a .step/.stp file (opens as a new design) | design: a design as its file holds it, in JSON (opens unsaved; the first step of a script from file.export format script)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -45,7 +45,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("file.export", "Export", export)
         .icon("export")
         .noundo()
-        .params("path; format?: stl|stla|obj|step|3mf|3mf-tagged|urdf|json (default from extension; 3mf-tagged: 3MF whose triangles carry their B-rep face, at full precision, for meshing and analysis tools; docs/formats/3mf-face-tags.md; urdf: the whole assembly as a robot, with STL meshes written next to it; docs/urdf.md); bodies?: [names] (JSON and URDF export the complete design); urdf only: mesh_prefix? (before each mesh file name, e.g. package://robot/meshes/), effort? (default 1000), velocity? (default 10)"),
+        .params("path; format?: stl|stla|obj|step|3mf|3mf-tagged|urdf|json|script (default from extension; script: the design as a command script, one timeline feature per step, that solidcraft-cli eval replays; 3mf-tagged: 3MF whose triangles carry their B-rep face, at full precision, for meshing and analysis tools; docs/formats/3mf-face-tags.md; urdf: the whole assembly as a robot, with STL meshes written next to it; docs/urdf.md); bodies?: [names] (JSON and URDF export the complete design); urdf only: mesh_prefix? (before each mesh file name, e.g. package://robot/meshes/), effort? (default 1000), velocity? (default 10)"),
     CommandSpec::new("file.save_mesh", "Save As Mesh", save_stl).icon("export").noundo().params("path; bodies?: [names]; ascii?: bool"),
 ];
 
@@ -123,6 +123,13 @@ fn insert_step(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
+    if let Some(design) = p.get("design") {
+        // Read as a design file is: a script is as untrusted as a file.
+        let doc = Document::from_json(&design.to_string()).map_err(|e| bad("doc.open", format!("`design`: {e}")))?;
+        s.replace_design(Session::new(doc));
+        let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
+        return Ok(json!({"features": s.doc.features.len(), "errors": errors, "name": s.doc.name}));
+    }
     let path = path_arg(p, "doc.open")?;
     if solidcraft_io::is_step_path(path) || solidcraft_io::is_mesh_path(path) {
         // A new, unsaved design holding the file's bodies.
@@ -327,6 +334,9 @@ fn export_to(s: &Session, path: &str, format: Format, bodies: &[String]) -> Resu
 
 fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let path = path_arg(p, "file.export")?;
+    if str_(p, "format") == Some("script") {
+        return super::script::export(s, path, p);
+    }
     let format = Format::from_name(str_(p, "format").unwrap_or(path))?;
     if format == Format::Urdf {
         return export_urdf(s, path, p);

@@ -264,6 +264,7 @@
   "cmd.timeline_dependents": "従属フィーチャー",
   "cmd.timeline_inspect": "フィーチャーを検査",
   "cmd.timeline_paste": "フィーチャーを貼り付け",
+  "cmd.timeline_append": "フィーチャーを追加",
   "cmd.timeline_redefine": "フィーチャーを編集",
   "cmd.timeline_rename": "名前を変更",
   "cmd.timeline_reorder": "フィーチャーの順序を変更",

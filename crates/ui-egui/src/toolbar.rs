@@ -407,6 +407,10 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     export(app, "json");
                     close = true;
                 }
+                if item(ui, "Export Design as Script…", "") {
+                    export_as(app, "json", Some("script"));
+                    close = true;
+                }
                 ui.separator();
                 if item(ui, &format!("{}…", app.tr("ui.preferences")), "") {
                     app.prefs_window.open = true;
@@ -1227,6 +1231,14 @@ mod header_report_tests {
         h.step(&json!({"widget":"Export Design as JSON…"})).unwrap();
         assert_eq!(h.app.session.path.as_deref(), Some(saved.as_str()));
         assert!(h.dir.join("Exported copy.json").is_file());
+        h.frames(3);
+        h.step(&json!({"click":{"handle":"appbar:folder"}})).unwrap();
+        h.step(&json!({"widget":"Export Design as Script…"})).unwrap();
+        let script: serde_json::Value = serde_json::from_slice(&std::fs::read(h.dir.join("Exported copy.json")).unwrap()).unwrap();
+        let mut replayed = solidcraft_engine::Session::default();
+        replayed.run_script(&script).unwrap();
+        assert_eq!(*replayed.doc, *h.app.session.doc, "the script replays the design");
+        assert_eq!(h.app.session.path.as_deref(), Some(saved.as_str()));
         h.app.run("file.save", json!({})).unwrap();
         assert!(!solidcraft_engine::io::is_design_container(&std::fs::read(saved).unwrap()), "subsequent Save keeps a .json choice");
     }
