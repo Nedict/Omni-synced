@@ -27,7 +27,7 @@ SKETCH_GEOMETRY = True   # curve-by-curve sketch contents (the bulk of the outpu
 
 # Bumped whenever the captured shape changes, so re-running upgrades older files in place
 # instead of skipping them -- a resumable run should not also mean a stale one.
-SCHEMA = 3
+SCHEMA = 4
 
 # A plain text file of design paths (one per line, as written under OUT_DIR, without the
 # ".timeline.json" suffix); only those are processed. Most hubs hold a lot of imported bodies
@@ -283,6 +283,9 @@ def sketch_curves(sk):
         for i in range(coll.count):
             c = coll.item(i)
             rec = {"type": kind, "construction": bool(get(c, "isConstruction"))}
+            tok = token_of(c)
+            if tok:
+                rec["token"] = tok
             try:
                 if kind == "line":
                     rec["start"] = pt2(c.startSketchPoint.geometry)
@@ -309,6 +312,44 @@ def sketch_curves(sk):
     return out
 
 
+# Where Fusion's constraints and dimensions keep the things they act on. Each subclass names
+# them differently and there is no common accessor, so probe the documented names.
+REF_ATTRS = (
+    "line", "lineOne", "lineTwo", "curveOne", "curveTwo", "entityOne", "entityTwo",
+    "entity", "point", "pointOne", "pointTwo", "midPointCurve", "symmetryLine",
+    "circle", "arc", "parentCurve",
+)
+
+
+def token_of(obj):
+    """A stable identity for a sketch entity, used to tie a constraint back to its curves."""
+    try:
+        t = obj.entityToken
+        return t or None
+    except Exception:
+        return None
+
+
+def refs_of(obj):
+    """Tokens of whatever this constraint or dimension is attached to.
+
+    A constraint recorded without its operands is unusable -- it says a relationship existed but
+    not between what -- which is why these were captured but could never be rebuilt before.
+    """
+    out = []
+    for attr in REF_ATTRS:
+        try:
+            v = getattr(obj, attr)
+        except Exception:
+            continue
+        if v is None:
+            continue
+        t = token_of(v)
+        if t and t not in out:
+            out.append(t)
+    return out
+
+
 def sketch_constraints(sk):
     out = []
     try:
@@ -319,7 +360,11 @@ def sketch_constraints(sk):
         c = cons.item(i)
         name = type(c).__name__
         name = re.sub(r"^.*?([A-Za-z]+)Constraint$", r"\1", name) or name
-        out.append({"type": name.lower()})
+        rec = {"type": name.lower()}
+        refs = refs_of(c)
+        if refs:
+            rec["refs"] = refs
+        out.append(rec)
     return out
 
 
@@ -339,6 +384,9 @@ def sketch_dimensions(sk):
             rec["name"] = p.name
         except Exception:
             pass
+        refs = refs_of(d)
+        if refs:
+            rec["refs"] = refs
         out.append(rec)
     return out
 

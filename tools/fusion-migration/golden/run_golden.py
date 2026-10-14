@@ -125,8 +125,34 @@ def case_negative_controls():
     return doc, W * H * 10.0, 2  # only sketch+extrude should translate
 
 
+
+def case_constrained_sketch():
+    """Re-applying Fusion's constraints must not change the solid, or over-constrain it."""
+    W, H, T = 45.0, 25.0, 10.0
+    sk = sketch_rect(W, H)
+    # Tokens are what tie a constraint back to its curves; Fusion supplies them per entity.
+    for i, c in enumerate(sk["curves"]):
+        c["token"] = "tok%d" % i
+    sk["constraints"] = [
+        {"type": "parallel", "refs": ["tok0", "tok2"]},
+        {"type": "parallel", "refs": ["tok1", "tok3"]},
+        {"type": "equal", "refs": ["tok0", "tok2"]},
+    ]
+    sk["dimensions"] = [
+        {"type": "linear", "expression": "plate_w", "value_mm": W, "refs": ["tok0"]},
+    ]
+    doc = design("ConstrainedSketch", [
+        {"name": "plate_w", "expression": "45 mm", "unit": "mm", "value": 4.5, "comment": ""}], [
+        {"index": 0, "name": "Sketch1", "entity": "Sketch", "suppressed": False, "sketch": sk},
+        {"index": 1, "name": "Extrude1", "entity": "ExtrudeFeature", "suppressed": False,
+         "distance": {"expression": "10 mm", "value_mm": T}, "operation": "3",
+         "profiles": [{"sketch": "Sketch1", "point": [W / 2, H / 2], "area_mm2": W * H}]}])
+    return doc, W * H * T, 2
+
+
 CASES = [case_rounded_plate, case_chamfered_block, case_shelled_box,
-         case_parametric_rebuild, case_negative_controls]
+         case_parametric_rebuild, case_negative_controls,
+         case_constrained_sketch]
 
 
 def run(cmd):
@@ -159,7 +185,10 @@ def main():
         with open(tj, "w", encoding="utf-8") as fh:
             json.dump(doc, fh, indent=2)
 
-        p = run([sys.executable, TRANSLATOR, tj, "-o", sj])
+        argv = [sys.executable, TRANSLATOR, tj, "-o", sj]
+        if name == "ConstrainedSketch":
+            argv.append("--constraints")
+        p = run(argv)
         if p.returncode != 0:
             failures.append((name, "translator failed: " + (p.stderr or "")[:160]))
             print("{:<20} {:>14} {:>14} {:>10}  TRANSLATOR FAILED".format(name, "-", "-", "-"))

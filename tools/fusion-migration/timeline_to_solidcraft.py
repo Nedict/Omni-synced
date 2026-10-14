@@ -168,6 +168,14 @@ def emit_sketch(step, out, ctx):
 
     made = 0
     unsupported = {}
+    # SolidCraft names sketch curves predictably and per type -- l1, l2 for lines, c1 for
+    # circles, a1 for arcs -- and addresses their points as "l1.start", "c1.center". Counting
+    # as we emit therefore tells us the id of every curve without having to read anything back,
+    # which is what lets a constraint be written in the same script that creates its operands.
+    seq = {"line": 0, "circle": 0, "arc": 0}
+    prefix = {"line": "l", "circle": "c", "arc": "a"}
+    ids = {}  # Fusion entity token -> SolidCraft curve id
+
     for c in curves:
         kind = c.get("type")
         cons = bool(c.get("construction"))
@@ -194,6 +202,11 @@ def emit_sketch(step, out, ctx):
             else:
                 raise ValueError("no mapping")
             made += 1
+            if kind in seq:
+                seq[kind] += 1
+                tok = c.get("token")
+                if tok:
+                    ids[tok] = "{}{}".format(prefix[kind], seq[kind])
         except Exception as e:
             unsupported[kind] = unsupported.get(kind, 0) + 1
             del e
@@ -204,7 +217,69 @@ def emit_sketch(step, out, ctx):
 
     ctx["sketches"].add(sk.get("name"))
 
+    extra = {}
+    if ctx.get("constraints"):
+        extra = emit_sketch_relations(sk, ids, out)
+    return dict({"curves_made": made}, **extra) if not unsupported else \
+        dict({"curves_made": made, "curves_skipped": unsupported}, **extra)
+
     return {"curves_made": made, "curves_skipped": unsupported} if unsupported else {"curves_made": made}
+
+
+
+# Fusion constraint name -> SolidCraft command, for the ones that take two operands the same way.
+CONSTRAINT_CMDS = {
+    "parallel": "sketch.constraint.parallel",
+    "perpendicular": "sketch.constraint.perpendicular",
+    "collinear": "sketch.constraint.collinear",
+    "concentric": "sketch.constraint.concentric",
+    "equal": "sketch.constraint.equal",
+    "tangent": "sketch.constraint.tangent",
+    "symmetry": "sketch.constraint.symmetry",
+    "midpoint": "sketch.constraint.midpoint",
+}
+
+# Dimension class name -> the kind of dimension to place.
+DIMENSION_KINDS = {
+    "linear": "distance", "offset": "distance", "lineardiameter": "diameter",
+    "radial": "radius", "diameter": "diameter", "angular": "angle",
+    "distancebetweenlines": "distance", "distancebetweenpointandline": "distance",
+}
+
+
+def emit_sketch_relations(sk, ids, out):
+    """Re-apply Fusion's constraints and dimensions to the curves just created.
+
+    Without these the geometry lands in the right place but holds no relationships, so changing a
+    parameter moves nothing in the sketch. With them, a dimension driven by "width" still drives
+    the part. Coincidence is left to the curve commands, which already join points that meet;
+    re-stating it would only risk an over-constrained sketch for no gain.
+    """
+    made = {"constraints": 0, "dimensions": 0, "skipped": 0}
+
+    for k in sk.get("constraints") or []:
+        cmd = CONSTRAINT_CMDS.get((k.get("type") or "").lower())
+        refs = [ids.get(t) for t in (k.get("refs") or [])]
+        refs = [r for r in refs if r]
+        if not cmd or len(refs) < 2:
+            made["skipped"] += 1
+            continue
+        out.append({"command": cmd, "params": {"a": refs[0], "b": refs[1]}})
+        made["constraints"] += 1
+
+    for d in sk.get("dimensions") or []:
+        kind = DIMENSION_KINDS.get((d.get("type") or "").lower())
+        refs = [ids.get(t) for t in (d.get("refs") or [])]
+        refs = [r for r in refs if r]
+        value = d.get("expression")
+        if not kind or not refs or not value:
+            made["skipped"] += 1
+            continue
+        params = {"entities": refs[:2], "type": kind, "value": value}
+        out.append({"command": "sketch.dimension", "params": params})
+        made["dimensions"] += 1
+
+    return {"relations": made} if (made["constraints"] or made["dimensions"]) else {}
 
 
 # ---------------------------------------------------------------------------
@@ -335,11 +410,11 @@ HANDLERS = {
 }
 
 
-def translate(doc):
+def translate(doc, with_constraints=False):
     """Timeline document -> (command script, coverage report)."""
     cmds = []
     steps = []
-    ctx = {"sketches": set()}
+    ctx = {"sketches": set(), "constraints": with_constraints}
 
     # Fusion's auto-named model parameters ("d4") are driven by features, not set by hand, so
     # they cannot be re-created as inputs. Where a user parameter leans on one, substitute its
@@ -491,10 +566,10 @@ def compare_to_fusion(report, rel_stem, volumes):
         report["fidelity"] = "volume-mismatch"
 
 
-def one(path, out_path, cli, do_verify):
+def one(path, out_path, cli, do_verify, with_constraints=False):
     with open(path, encoding="utf-8") as fh:
         doc = json.load(fh)
-    script, report = translate(doc)
+    script, report = translate(doc, with_constraints)
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as fh:
@@ -517,6 +592,10 @@ def main():
     ap.add_argument("--outdir", default=os.path.join(HOME, "cad", "rebuilt"))
     ap.add_argument("--verify", action="store_true", help="build each script and measure it")
     ap.add_argument("--cli", default=DEFAULT_CLI)
+    ap.add_argument("--constraints", action="store_true",
+                    help="also re-apply sketch constraints and dimensions "
+                         "(parametric sketches, but an over-constrained one fails "
+                         "the whole script)")
     ap.add_argument("--against", default=os.path.join(HOME, "cad", "fusion-export"),
                     help="export tree whose manifest holds Fusion's own volumes")
     args = ap.parse_args()
@@ -559,7 +638,7 @@ def main():
             stem = rel[: -len(".timeline.json")]
             out_path = os.path.join(args.outdir, stem + ".json")
             try:
-                r = one(f, out_path, args.cli, args.verify)
+                r = one(f, out_path, args.cli, args.verify, args.constraints)
                 # The document's own "path" is its folder, so two designs in one folder share it.
                 # Carry the full stem as well, which is what identifies a design everywhere else
                 # (the export manifest, the rebuilt scripts, this report).
@@ -616,7 +695,7 @@ def main():
         return 0
 
     out_path = args.out or os.path.splitext(os.path.splitext(args.input)[0])[0] + ".json"
-    r = one(args.input, out_path, args.cli, args.verify)
+    r = one(args.input, out_path, args.cli, args.verify, args.constraints)
     print("{}: {}/{} steps translated ({:.0%}), {} commands".format(
         r["design"], r["steps_translated"], r["steps_total"], r["coverage"], r["commands"]))
     for s in r["steps"]:
