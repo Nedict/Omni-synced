@@ -197,6 +197,7 @@ fn join_meeting_nothing_keeps_the_first_body() {
 
 mod boolean_diagnostics;
 mod component_frames;
+mod loft_cut;
 mod mirror_planes;
 mod primitive_points;
 mod robustness;
