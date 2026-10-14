@@ -120,7 +120,12 @@ pub fn open(app: &mut SolveApp) {
 
 /// Draw the dialog when it is open. Called once per frame.
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
-    publish(app, ctx);
+    // Completions are offered only under a focused text box; gathering them evaluates every
+    // parameter, so a design changing command after command (an agent building over MCP)
+    // does not pay for it on every change while nobody is typing.
+    if app.params.is_some() || ctx.memory(|m| m.focused().is_some()) {
+        publish(app, ctx);
+    }
     let Some(mut d) = app.params.take() else { return };
     let t = Tokens::get();
     let mut open = true;
