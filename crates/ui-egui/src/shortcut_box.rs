@@ -293,6 +293,35 @@ mod tests {
         assert_eq!(score("xyz", "Extrude"), 0);
     }
 
+    fn frame(app: &mut SolveApp, ctx: &egui::Context) {
+        let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))), ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| show(app, ui.ctx()));
+        out.textures_delta.clear();
+    }
+
+    /// The field takes focus when the box opens and is not asked again on later frames: asking on
+    /// every frame restarts the text edit's held key, which kept a Wayland key repeat running (#724).
+    #[test]
+    fn the_search_field_asks_for_focus_once_per_opening() {
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        let ctx = egui::Context::default();
+        let field = egui::Id::new("sc_sbox_text");
+        open(&mut app, None);
+        frame(&mut app, &ctx);
+        frame(&mut app, &ctx);
+        assert!(ctx.memory(|m| m.has_focus(field)), "the field has focus once the box opens");
+        ctx.memory_mut(|m| m.surrender_focus(field));
+        frame(&mut app, &ctx);
+        frame(&mut app, &ctx);
+        assert!(!ctx.memory(|m| m.has_focus(field)), "the field asked for focus again while open");
+        app.ui.palette_open = false;
+        frame(&mut app, &ctx);
+        open(&mut app, None);
+        frame(&mut app, &ctx);
+        frame(&mut app, &ctx);
+        assert!(ctx.memory(|m| m.has_focus(field)), "reopening the box focuses the field again");
+    }
+
     #[test]
     fn search_finds_by_name_id_and_panel_and_puts_recent_first() {
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
