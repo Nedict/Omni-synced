@@ -42,6 +42,11 @@ fn fixtures() -> Vec<(&'static str, Value)> {
         ("sketch_along_path", json!({"type": "sketch", "plane": along("sketch"), "sketch": sk})),
         ("extrude", json!({"type": "extrude", "sketch": 1, "profiles": {"type": "all"}, "extent": extent("extrude")})),
         (
+            "extrude_thin",
+            json!({"type": "extrude", "sketch": 1, "profiles": {"type": "all"}, "extent": extent("thin"),
+                "thin": {"curves": ["c1"], "thickness": "thin.thickness", "side": "two_sides", "thickness2": "thin.thickness2"}}),
+        ),
+        (
             "revolve",
             json!({"type": "revolve", "sketch": 1, "profiles": {"type": "all"}, "axis": {"type": "world", "axis": "X"}, "angle": "revolve.angle", "angle2": "revolve.angle2"}),
         ),
