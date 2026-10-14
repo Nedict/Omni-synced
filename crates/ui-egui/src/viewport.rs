@@ -591,8 +591,31 @@ fn build_scene(app: &SolveApp) -> GpuScene {
             }
         }
     }
+    // Continuity analysis: each seam `inspect.continuity` measured, drawn over the model in the
+    // colour of its worst verdict.
+    for seam in &s.continuity {
+        let col = continuity_color(seam.verdict);
+        for w in seam.points.windows(2) {
+            if let (Some(a), Some(b)) = (w.first(), w.get(1)) {
+                sc.line(a.to_f32(), b.to_f32(), col, 2.6, true);
+            }
+        }
+    }
 
     sc
+}
+
+/// The colour of a measured seam: green within every tolerance, yellow where the faces only
+/// meet at an angle (over G1), red where they do not meet at all or the curvature jumps across
+/// them (over G2, the defect no chord tolerance shows). The greens, yellows and reds are the
+/// ones the shader's own analyses use (`assets/shaders/viewport.wgsl`).
+fn continuity_color(verdict: solidcraft_engine::kernel::SeamVerdict) -> [u8; 4] {
+    use solidcraft_engine::kernel::SeamVerdict as V;
+    match verdict {
+        V::Smooth => [51, 191, 77, 255],
+        V::Sharp => [242, 204, 38, 255],
+        V::CurvatureJump | V::Gap => [217, 56, 51, 255],
+    }
 }
 
 /// A soft dark ellipse on the ground under the shown bodies (darkest in the middle).

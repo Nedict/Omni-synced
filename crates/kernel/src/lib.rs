@@ -27,6 +27,7 @@ mod bridge;
 mod build;
 mod clearance;
 mod coplanar;
+mod continuity;
 mod curveblend;
 mod delete_face;
 mod emboss;
@@ -126,6 +127,9 @@ pub use bridge::{Continuity, Frame, blend_between, bridge, chain, chain_closes, 
 pub use build::{
     PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, extrude_tapered_between, loft, revolve, sphere, sweep,
     sweep_with, torus,
+};
+pub use continuity::{
+    ContinuityReport, ContinuityTolerances, EdgePick, MAX_SAMPLES, MIN_SAMPLES, SeamReport, SeamVerdict, SeamWorst, pick_edges, seam_diagnostics,
 };
 pub use delete_face::delete_faces;
 pub use emboss::{cylinder_emboss_anchor, emboss_cylinder, emboss_cylinder_at, has_cylinder_emboss_wall, infer_cylinder_emboss};

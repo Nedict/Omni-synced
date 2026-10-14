@@ -226,6 +226,9 @@ pub struct Session {
     pub section: Option<(Vec3, Vec3)>,
     /// Surface analysis shading the model (zebra, draft, curvature map).
     pub analysis: Option<SurfaceAnalysis>,
+    /// The seams `inspect.continuity` last measured, for the viewport to shade. View state: not
+    /// part of the design and not an undo step.
+    pub continuity: Vec<ContinuitySeam>,
     /// What is hidden or shown in the view (`browser.visibility`): saved with the design, not an
     /// undo step. A design brings its saved visibility when it opens (`Session::new`).
     pub visibility: Visibility,
@@ -288,6 +291,16 @@ pub enum SurfaceAnalysis {
     Access { dir: Vec3 },
 }
 
+/// One seam measured by `inspect.continuity`, where the viewport shades it: the stations it was
+/// sampled at, in world coordinates, and how it reads. View state only: the design is untouched.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct ContinuitySeam {
+    /// Sample points along the seam, in world coordinates.
+    pub points: Vec<Vec3>,
+    /// The seam's worst verdict along its length.
+    pub verdict: kernel::SeamVerdict,
+}
+
 const MAX_UNDO: usize = 200;
 /// Checkpoints kept (the oldest go first).
 const MAX_CHECKPOINTS: usize = 16;
@@ -328,6 +341,7 @@ impl Session {
             clipboard: Vec::new(),
             section: None,
             analysis: None,
+            continuity: Vec::new(),
             checkpoints: Vec::new(),
             next_checkpoint: 1,
             saved_visibility: visibility.clone(),
@@ -794,6 +808,7 @@ impl Session {
             clipboard: self.clipboard.clone(),
             section: None,
             analysis: None,
+            continuity: Vec::new(),
             checkpoints: Vec::new(),
             next_checkpoint: 1,
             visibility: self.visibility.clone(),
