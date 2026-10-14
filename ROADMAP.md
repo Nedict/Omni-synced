@@ -67,6 +67,10 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   persist properties, provide a solver or enable rendering; see
   [the contract and staged follow-ups](docs/physical-material-cards.md).
 
+- Directional elasticity (#994) queries the validated card in material-local axes
+  through read-only `material.properties.directional`, with source/condition review.
+  It does not assign body frames, predict structural behavior or enable a solver.
+
 ## Library foundations (#785, #786, #787)
 
 - Proposed phases cover offline bundled/project/user packs, physical materials and
