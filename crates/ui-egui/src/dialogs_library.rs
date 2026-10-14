@@ -22,8 +22,8 @@ fn display_order(mut catalog: Catalog) -> Catalog {
     catalog
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-/// Runs `f` on the open Appearance dialog's state, once a file picker has answered.
+/// Runs `f` on the open Appearance dialog's state, once a file picker has answered (the export's
+/// save picker on every platform, the import's open picker on the desktop).
 fn with_state(app: &mut SolveApp, f: impl FnOnce(&mut SolveApp, &mut Ap)) {
     let Some(mut dialog) = app.dialog.take() else { return };
     if let crate::dialogs::Kind::Appearance(k) = &mut dialog.kind {
