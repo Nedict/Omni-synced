@@ -1104,7 +1104,7 @@ pub fn fillet_g2(body: &Body, edges: &[Vec3], radius: f64) -> Result<Body> {
         let (made, rec) = guard("G2 fillet", || blend_one(&solid, &edge, size, radius, Shape::Curvature))?;
         cur = record::after(record::rebuilt(made, &[&solid], &rec)?, &cur, &counts);
     }
-    Ok(cur)
+    closed(cur)
 }
 
 /// Most edges whose other orders are tried when the order given is refused.
@@ -2219,6 +2219,34 @@ mod tests {
         let out = fillet_g2(&body, &[Vec3::new(20.0, 0.0, 10.0), Vec3::new(0.0, 20.0, 10.0)], 2.0).unwrap();
         assert!(out.validity().is_empty(), "{:?}", out.validity());
         assert_eq!(out.face_count(), body.face_count() + 2);
+    }
+
+    #[test]
+    fn g2_fillet_refuses_sections_crossing_a_cap_hole() {
+        // The hole lies inside the setback without touching either side face.
+        // The larger quintic crosses its loop on both perpendicular end faces,
+        // even though the rebuilt shell is closed according to topology alone.
+        let region = Region2 {
+            outer: Loop2::polygon(&[Vec2::ZERO, Vec2::new(20.0, 0.0), Vec2::new(20.0, 20.0), Vec2::new(0.0, 20.0)]),
+            holes: vec![Loop2::circle(Vec2::new(0.5, 0.5), 0.15)],
+        };
+        for plane in [Plane::XY, Plane::XZ] {
+            let body = crate::extrude(&plane, std::slice::from_ref(&region), 0.0, 20.0).unwrap().remove(0);
+            let pick = plane.to_world(Vec2::ZERO) + plane.normal() * 10.0;
+            assert_eq!(body.crossed_face_loops().unwrap(), 0);
+            let out = fillet_g2(&body, &[pick], 0.5).unwrap();
+            assert!(out.validity().is_empty(), "{:?}", out.validity());
+            assert_eq!(out.crossed_face_loops().unwrap(), 0);
+            assert_eq!(out.face_count(), body.face_count() + 1);
+            let result = fillet_g2(&body, &[pick], 2.0);
+            if let Ok(out) = &result {
+                eprintln!("accepted G2 result: validity={:?}, crossed_faces={}", out.validity(), out.crossed_face_loops().unwrap());
+            }
+            assert!(matches!(
+                result,
+                Err(KernelError::Failed(message)) if message.contains("rounds would leave openings")
+            ));
+        }
     }
 
     #[test]
