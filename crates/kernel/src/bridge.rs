@@ -190,7 +190,8 @@ pub fn frames(face: &mt::Face, edges: &[mt::Edge], leave: Vec3, count: usize) ->
     if !(2..=4097).contains(&count) {
         return Err(KernelError::Invalid("a bridge needs 2 to 4097 stations".into()));
     }
-    let leave = leave.normalized().filter(|l| l.is_finite()).ok_or_else(|| KernelError::Invalid("the leave direction must be a finite vector".into()))?;
+    let leave =
+        leave.normalized().filter(|l| l.is_finite()).ok_or_else(|| KernelError::Invalid("the leave direction must be a finite vector".into()))?;
     let (pts, length) = chain_samples(edges, count)?;
     let surf = face.surface();
     let (Some(range_u), Some(range_v)) = surf.try_range_tuple() else {
@@ -366,7 +367,9 @@ fn third_derivative(d1: Vec3, d2: Vec3, target: Vec3) -> Result<Vec3> {
 /// each side. `speed` is how fast the cross-section leaves each boundary (any positive value; it
 /// shapes the middle without touching the conditions).
 fn section(a: &Frame, b: &Frame, orders: [Continuity; 2], n: usize, speed: [f64; 2]) -> Result<Vec<Vec3>> {
-    let (Some(speed_a), Some(speed_b)) = (speed.first().copied(), speed.get(1).copied()) else { return Err(KernelError::Failed("bridge: speed".into())) };
+    let (Some(speed_a), Some(speed_b)) = (speed.first().copied(), speed.get(1).copied()) else {
+        return Err(KernelError::Failed("bridge: speed".into()));
+    };
     let (ka, kb) = (orders[0].conditions(), orders[1].conditions());
     if ka + kb - 1 != n {
         return Err(KernelError::Failed("bridge: degree".into()));
@@ -522,19 +525,20 @@ pub fn sample_grid(body: &Body, along: usize, across: usize) -> Result<Vec<Vec<V
     Ok(out)
 }
 
-/// The most any point of a bridge's `v = v0` boundary row is from the chain it was built on: what
-/// a stitch of the bridge to its supports would have to close up.
-fn boundary_gap(made: &Body, chain: &[mt::Edge]) -> Result<f64> {
+/// The most any point of a bridge's boundary row is from the chain it was built on — the row at
+/// `v0` for the first boundary, at `v1` for the second: what a stitch would have to close up.
+fn boundary_gap(made: &Body, chain: &[mt::Edge], at_end: bool) -> Result<f64> {
     let face = made.solid.face_iter().next().ok_or_else(|| KernelError::Failed("bridge: no face".into()))?;
     let surf = face.surface();
-    let (Some((u0, u1)), Some((v0, _))) = surf.try_range_tuple() else {
+    let (Some((u0, u1)), Some((v0, v1))) = surf.try_range_tuple() else {
         return Err(KernelError::Failed("bridge: the surface is unbounded".into()));
     };
+    let v = if at_end { v1 } else { v0 };
     let (poly, _) = chain_samples(chain, 257)?;
     let mut worst: f64 = 0.0;
     for i in 0..=256 {
         let u = u0 + (u1 - u0) * i as f64 / 256.0;
-        let p = from_p3(surf.subs(u, v0));
+        let p = from_p3(surf.subs(u, v));
         let mut best = f64::INFINITY;
         for w in poly.windows(2) {
             let (Some(a), Some(b)) = (w.first(), w.get(1)) else { continue };
@@ -630,7 +634,7 @@ pub fn blend_between(
         frames_b.reverse();
     }
     let made = bridge(&frames_a, &frames_b, orders, crown)?;
-    let gap = boundary_gap(&made, &chain_a)?.max(boundary_gap(&made, &chain_b)?);
+    let gap = boundary_gap(&made, &chain_a, false)?.max(boundary_gap(&made, &chain_b, true)?);
     let faces: Vec<mt::Face> = made.solid.face_iter().cloned().collect();
     let mut rec = crate::record::Rebuild::default();
     for f in &faces {

@@ -2,7 +2,8 @@
 //! solids), and the planned surface toolset (`planned!`: registered, not built yet).
 
 use serde_json::Value;
-use solidcraft_doc::{ExtendMode, ExtendTo, FaceAt, FeatureKind, PlaneRef, ProfileSel, RuledCorners, RuledMode, expr::Kind};
+use solidcraft_doc::{BlendSide, ExtendMode, ExtendTo, FaceAt, FeatureKind, PlaneRef, ProfileSel, RuledCorners, RuledMode, expr::Kind};
+use solidcraft_kernel::Continuity;
 
 use super::CommandSpec;
 use super::features::{add_feature, axis_param, check_expr, extent_param, feature_sketch, operation, plane_param, profiles, sketch_id};
@@ -58,10 +59,10 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SURFACE", "CREATE")
         .icon("boundary")
         .params("planned: u: [curves], v?: [curves] (sketch curves, 3D sketch wires or {body, point} edges; 2–4 boundaries, more make a network); continuity?: [{curve, g: 0|1|2}] for edge boundaries; operation?: new|join"),
-    planned!("surface.blend", "Blend Surface", "764")
+    CommandSpec::new("surface.blend", "Blend Surface", blend)
         .at("SURFACE", "CREATE")
         .icon("surface_blend")
-        .params("planned: from, to: {body, edges: [[x,y,z]]} (two edge chains apart); continuity?: [g0|g1|g2, g0|g1|g2] (each side); bulge?: [number, number]; align?: auto|[[x,y,z], [x,y,z]]; stitch?: bool"),
+        .params("from, to: {body, edges: [[x,y,z]]} (points on the edges of one chain of each body: two picks on the same edge is that one edge, more chain up); continuity?: [g0|g1|g2|g3, g0|g1|g2|g3] (each end, default g1: how much of the surface at the picked edges the blend repeats — the tangent plane, the curvature, or how that curvature changes); bulge?: [number, number] (default 0: how full each end leaves, -0.9 flattest to 3 fullest); align?: [[x,y,z], [x,y,z]] (a point each end leaves towards, when the faces at the picks do not say); stitch?: bool (sew the blend onto its two bodies where the boundaries meet, replacing them); name?, body_name?"),
     CommandSpec::new("surface.untrim", "Untrim", untrim)
         .at("SURFACE", "MODIFY")
         .icon("untrim")
@@ -93,6 +94,59 @@ fn patch(s: &mut Session, p: &Value) -> Result<Value> {
     let sketch = feature_sketch(s, p, cmd)?;
     let profiles = profiles(p, cmd)?;
     add_feature(s, p, FeatureKind::Patch { sketch: Some(sketch), profiles, body: None, edges: Vec::new() })
+}
+
+/// One end of a blend: the body and the picks that chain its edges.
+fn blend_side(p: &Value, cmd: &str, key: &str) -> Result<BlendSide> {
+    let side = p.get(key).ok_or_else(|| bad(cmd, format!("`{key}` must be {{body, edges}}")))?;
+    let body = str_(side, "body").ok_or_else(|| bad(cmd, format!("`{key}.body` must name a body")))?;
+    let edges: Vec<solidcraft_geom::Vec3> =
+        side.get("edges").and_then(Value::as_array).map(|a| a.iter().filter_map(vec3).collect()).unwrap_or_default();
+    if edges.is_empty() || edges.len() > 10_000 {
+        return Err(bad(cmd, format!("`{key}.edges` must list 1 to 10000 points on the edges of a chain")));
+    }
+    Ok(BlendSide { body: body.to_string(), edges })
+}
+
+/// `surface.blend`: a blend surface bridging two picked edge chains of two bodies.
+fn blend(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "surface.blend";
+    let from = blend_side(p, cmd, "from")?;
+    let to = blend_side(p, cmd, "to")?;
+    let continuity = match p.get("continuity") {
+        None => [Continuity::G1, Continuity::G1],
+        Some(v) => {
+            let list = v.as_array().filter(|a| a.len() == 2).ok_or_else(|| bad(cmd, "`continuity` must be two words, one per end"))?;
+            let word = |x: Option<&Value>| -> Result<Continuity> {
+                x.and_then(Value::as_str).and_then(Continuity::parse).ok_or_else(|| bad(cmd, "`continuity` entries must be g0, g1, g2 or g3"))
+            };
+            [word(list.first())?, word(list.get(1))?]
+        }
+    };
+    let bulge = match p.get("bulge") {
+        None => [0.0, 0.0],
+        Some(v) => {
+            let list = v.as_array().filter(|a| a.len() == 2).ok_or_else(|| bad(cmd, "`bulge` must be two numbers, one per end"))?;
+            let one = |x: Option<&Value>| -> Result<f64> {
+                x.and_then(Value::as_f64)
+                    .filter(|x| x.is_finite() && (-0.9..=3.0).contains(x))
+                    .ok_or_else(|| bad(cmd, "each `bulge` entry must be between -0.9 (flattest) and 3 (fullest)"))
+            };
+            [one(list.first())?, one(list.get(1))?]
+        }
+    };
+    let align = match p.get("align") {
+        None | Some(Value::Null) => None,
+        Some(v) => {
+            let list = v.as_array().filter(|a| a.len() == 2).ok_or_else(|| bad(cmd, "`align` must be two points, one per end"))?;
+            let point = |x: Option<&Value>| -> Result<solidcraft_geom::Vec3> {
+                x.and_then(vec3).ok_or_else(|| bad(cmd, "each `align` entry must be a point [x,y,z]"))
+            };
+            Some([point(list.first())?, point(list.get(1))?])
+        }
+    };
+    let stitch = bool_(p, "stitch").unwrap_or(false);
+    add_feature(s, p, FeatureKind::SurfaceBlend { from, to, continuity, bulge, align, stitch })
 }
 
 fn surface_extrude(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1077,5 +1131,56 @@ mod tests {
         assert!((area - want).abs() < want * 1e-2, "{area} vs {want}");
         assert!(s.execute("surface.thicken", &json!({"bodies": ["Nope"], "thickness": 1})).is_err());
         assert!(s.execute("surface.trim", &json!({"body": "Sheet"})).is_err());
+    }
+
+    /// `surface.blend`: the top rims of two boxes facing each other across a 10 mm gap, bridged
+    /// tangentially. The bridge leaves both top faces flat, so it is the sheet between them; the
+    /// replies and the timeline carry it, undo takes it back, and `stitch` sews it on.
+    #[test]
+    fn surface_blend_bridges_two_box_rims() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 40, "width": 10, "height": 10, "corner": [0, 0, 0], "body_name": "A"}));
+        run(&mut s, "solid.box", json!({"length": 40, "width": 10, "height": 10, "corner": [0, 20, 0], "body_name": "B"}));
+        let blend = json!({
+            "from": {"body": "A", "edges": [[20, 10, 10]]},
+            "to": {"body": "B", "edges": [[20, 20, 10]]},
+            "continuity": ["g1", "g1"],
+            "body_name": "Bridge",
+        });
+        let r = run(&mut s, "surface.blend", blend.clone());
+        assert_eq!(r["created_bodies"], json!(["Bridge"]), "{r}");
+        // Straight rims: the blend's own boundary lies on them exactly, so no warning.
+        assert_eq!(r["warning"], json!(null), "{r}");
+        // The flat sheet between the two top faces: 40 x 10, at z = 10.
+        assert!((area(&s, "Bridge") - 400.0).abs() < 1e-6, "{}", area(&s, "Bridge"));
+        let bb = solidcraft_kernel::measure(&s.world_state().body("Bridge").unwrap().body).unwrap().bbox;
+        assert!((bb.min.z - 10.0).abs() < 1e-9 && (bb.max.z - 10.0).abs() < 1e-9, "{bb:?}");
+        assert!(s.world_state().body("Bridge").unwrap().body.is_surface());
+        // Undo, redo and a cold reopen keep it and its bodies.
+        run(&mut s, "edit.undo", json!({}));
+        assert!(s.world_state().body("Bridge").is_none());
+        run(&mut s, "edit.redo", json!({}));
+        assert!((area(&s, "Bridge") - 400.0).abs() < 1e-6);
+        let cold = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        assert!((area(&cold, "Bridge") - 400.0).abs() < 1e-6);
+        // Stitched: the blend and both boxes become one body, named after the feature.
+        let mut sewn = blend.clone();
+        sewn["stitch"] = json!(true);
+        sewn["body_name"] = json!("Seam");
+        let stitched = run(&mut s, "surface.blend", sewn);
+        assert_eq!(stitched["removed_bodies"], json!(["A", "B"]), "{stitched}");
+        let st = s.world_state();
+        assert!(st.body("A").is_none() && st.body("B").is_none() && st.body("Seam").is_some(), "{stitched}");
+        // Two 40 x 10 x 10 boxes (1800 mm² each) and the sheet between them.
+        let want = 2.0 * 1800.0 + 400.0;
+        let got = area(&s, "Seam");
+        assert!((got - want).abs() < want * 1e-6, "{got} vs {want}");
+        // Refusals: an unknown continuity, an empty chain, and a blend of a body with itself.
+        assert!(s.execute("surface.blend", &json!({"from": {"body": "Seam", "edges": [[20, 10, 10]]}, "to": {"body": "Seam", "edges": [[20, 20, 10]]}, "continuity": ["g5", "g1"]})).is_err());
+        assert!(s.execute("surface.blend", &json!({"from": {"body": "Seam", "edges": []}, "to": {"body": "Seam", "edges": []}})).is_err());
+        assert!(
+            s.execute("surface.blend", &json!({"from": {"body": "Nope", "edges": [[0, 0, 0]]}, "to": {"body": "Seam", "edges": [[20, 20, 10]]}}))
+                .is_err()
+        );
     }
 }

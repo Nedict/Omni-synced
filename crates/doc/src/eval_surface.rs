@@ -6,7 +6,7 @@ use super::*;
 use crate::{RuledCorners, RuledMode};
 use solidcraft_geom::Seg2;
 
-pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut ModelState) -> Result<()> {
+pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut ModelState, warning: &mut Option<String>) -> Result<()> {
     match &f.kind {
         FeatureKind::Patch { sketch, profiles, body, edges } => {
             let mut made = Vec::new();
@@ -105,6 +105,26 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             if let Some(slot) = st.bodies.get_mut(i) {
                 *slot = ModelBody::new(mb.name, out, mb.feature);
             }
+            Ok(())
+        }
+        FeatureKind::SurfaceBlend { from, to, continuity, bulge, align, stitch } => {
+            let a = st.body(&from.body).ok_or_else(|| DocError::Unknown(format!("body `{}`", from.body)))?.body.clone();
+            let b = st.body(&to.body).ok_or_else(|| DocError::Unknown(format!("body `{}`", to.body)))?.body.clone();
+            if from.edges.is_empty() || to.edges.is_empty() {
+                return Err(DocError::Invalid("a blend needs a chain of edges at each end".into()));
+            }
+            let (made, gap) = kernel::blend_between(&a, &from.edges, &b, &to.edges, *continuity, *bulge, *align, BLEND_STATIONS, *stitch)?;
+            if gap > 1e-9 {
+                *warning = Some(format!("the blend's boundary lies up to {gap:.4} mm from the edges it was built on"));
+            }
+            let name = new_name(st, f, 0);
+            // A stitched blend takes the place of both bodies it joins; otherwise it is a new
+            // surface body of its own.
+            if *stitch {
+                let gone = [from.body.clone(), to.body.clone()];
+                st.bodies.retain(|x| !gone.contains(&x.name));
+            }
+            st.bodies.push(ModelBody::new(name, made, f.id));
             Ok(())
         }
         FeatureKind::SurfaceExtrude { sketch, profiles, curves, extent } => {
@@ -329,6 +349,9 @@ fn sheet_chains(ss: &SolvedSketch, profiles: Option<&ProfileSel>, curves: &[Stri
 
 /// Most sketch curves one feature chains.
 const MAX_CHAIN_CURVES: usize = 1000;
+/// Stations a blend samples each of its two boundaries at: enough that the boundary it fits is
+/// within a small part of a thousandth of the chain's length of the edges it was built on.
+const BLEND_STATIONS: usize = 41;
 
 /// The sketch curves `ids` (free-form ones exactly where they can be) grouped into chains of segments that meet end to end, each oriented
 /// to run one way. Curves are joined greedily at their free ends: where three meet, one of them
