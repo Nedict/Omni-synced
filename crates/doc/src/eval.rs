@@ -4393,8 +4393,16 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             };
             st.blend_edges.insert(f.id, edges.clone());
             let input = mb.traced();
+            // A G2 corner is built by the corner construction alone, for a constant radius: any
+            // other style (or a fitted radius) has no corner patch to repeat.
+            if let FeatureKind::Fillet { corner: crate::FilletCorner::G2, style, fit, .. } = &f.kind
+                && (!matches!(style, crate::FilletStyle::Constant) || !matches!(fit, crate::FilletFit::Exact))
+            {
+                return Err(DocError::Invalid("a G2 corner is built for a constant-radius fillet (type: constant, fit: exact) only".into()));
+            }
             // The blended body, and the lineage of what the last blend started from.
             let (nb, from) = match &f.kind {
+                FeatureKind::Fillet { corner: crate::FilletCorner::G2, .. } => (kernel::fillet_g2_corners(&mb.body, &edges, r)?, input),
                 FeatureKind::Fillet { style: crate::FilletStyle::Curvature, .. } => (kernel::fillet_g2(&mb.body, &edges, r)?, input),
                 FeatureKind::Fillet { style: crate::FilletStyle::Chord, .. } => (kernel::fillet_chord(&mb.body, &edges, r)?, input),
                 FeatureKind::Fillet { style: crate::FilletStyle::Variable { radius2, start, mid, smooth }, .. } => {

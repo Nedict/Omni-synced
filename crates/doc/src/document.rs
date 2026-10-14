@@ -562,6 +562,10 @@ pub enum FeatureKind {
         /// What to do when the radius is too large for the geometry around the edges.
         #[serde(default, skip_serializing_if = "FilletFit::is_exact")]
         fit: FilletFit,
+        /// What fills the corners where three blended edges meet: the rolling ball's sphere
+        /// (default) or a G2 patch repeating each blend up to the second order.
+        #[serde(default, skip_serializing_if = "FilletCorner::is_rolling")]
+        corner: FilletCorner,
     },
     Chamfer {
         #[walk(pos)]

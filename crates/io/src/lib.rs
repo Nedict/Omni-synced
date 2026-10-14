@@ -845,6 +845,7 @@ mod tests {
                 body: None,
                 style: Default::default(),
                 fit: Default::default(),
+                corner: Default::default(),
             },
             None,
         )
@@ -929,6 +930,7 @@ mod tests {
                 body: None,
                 style: Default::default(),
                 fit: Default::default(),
+                corner: Default::default(),
             },
             None,
         )

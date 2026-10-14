@@ -468,23 +468,34 @@ mod fillet_corner_tests {
     }
 
     #[test]
-    fn a_g2_corner_repeats_the_blends_where_the_rolling_ball_does_not() {
-        let tolerances = ContinuityTolerances { gap_mm: 1e-3, angle_deg: 1.0, curvature_per_mm: 1e-6 };
-        let mut jumps = Vec::new();
-        for g2 in [false, true] {
-            let body = cornered(g2);
-            let volume = measure(&body).unwrap().volume;
-            assert!(volume > 7000.0 && volume < 8000.0, "the box is still a solid: {volume}");
-            let report = seam_diagnostics(&body, &[], 33, tolerances).unwrap();
-            // Every seam of a filleted box is tangent; the corner's three are the short ones (the
-            // blend-to-face seams run the edge's own 12 mm and more).
-            let tangent: Vec<&SeamReport> = report.seams.iter().filter(|s| s.normal_angle_deg.value < 0.01).collect();
-            let corner: Vec<&&SeamReport> = tangent.iter().filter(|s| s.length < 8.0).collect();
-            assert_eq!(corner.len(), 3, "three corner seams among {} tangent ones: {:?}", tangent.len(), tangent.iter().map(|s| s.length).collect::<Vec<_>>());
-            let worst = corner.iter().map(|s| s.curvature_jump_per_mm.value).fold(0.0f64, f64::max);
-            eprintln!("{}: corner seams jump {worst:.6} per mm (volume {volume:.3})", if g2 { "G2" } else { "rolling ball" });
-            jumps.push(worst);
-        }
-        assert!(jumps[1] < jumps[0] * 0.5, "the G2 corner repeats the blends: {} against {}", jumps[1], jumps[0]);
+    fn the_ball_corner_is_measurably_g1_and_a_g2_corner_is_refused_until_it_sews() {
+        // The rolling ball: tangent to every blend, keeping its own 1/r across each corner seam.
+        let body = cornered(false);
+        let volume = measure(&body).unwrap().volume;
+        assert!(volume > 7000.0 && volume < 8000.0, "the box is still a solid: {volume}");
+        let report = seam_diagnostics(&body, &[], 33, ContinuityTolerances { gap_mm: 1e-3, angle_deg: 1.0, curvature_per_mm: 1e-6 }).unwrap();
+        // Every seam of a filleted box is tangent; the corner's three are the short ones (the
+        // blend-to-face seams run the edge's own 12 mm and more).
+        let tangent: Vec<&SeamReport> = report.seams.iter().filter(|s| s.normal_angle_deg.value < 0.01).collect();
+        let corner: Vec<&&SeamReport> = tangent.iter().filter(|s| s.length < 8.0).collect();
+        assert_eq!(
+            corner.len(),
+            3,
+            "three corner seams among {} tangent ones: {:?}",
+            tangent.len(),
+            tangent.iter().map(|s| s.length).collect::<Vec<_>>()
+        );
+        let worst = corner.iter().map(|s| s.curvature_jump_per_mm.value).fold(0.0f64, f64::max);
+        eprintln!("rolling ball: corner seams jump {worst:.6} per mm (volume {volume:.3})");
+        assert!((worst - 0.25).abs() < 1e-3, "the ball keeps its own 1/r (r = 4) across the seam: {worst}");
+
+        // The G2 corner patch is built on the blends' own sections, but sewing it into the shell
+        // is not done yet: the fillet with `corner: g2` refuses with a clear message rather than
+        // leaving the shell open, and leaves the ball the corner.
+        let b = crate::box_solid(Vec3::ZERO, Vec3::new(20.0, 20.0, 20.0)).unwrap();
+        let edges = [Vec3::new(10.0, 0.0, 0.0), Vec3::new(0.0, 10.0, 0.0), Vec3::new(0.0, 0.0, 10.0)];
+        let err = crate::fillet_g2_corners(&b, &edges, 4.0).unwrap_err().to_string();
+        eprintln!("G2 corner: {err}");
+        assert!(err.contains("not supported yet:") && err.contains("G2 corner"), "{err}");
     }
 }
