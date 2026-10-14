@@ -57,6 +57,8 @@ pub struct TreeState {
     pub picked_components: Vec<u64>,
     /// Canvases picked in the tree.
     pub picked_canvases: Vec<u64>,
+    /// Joints picked in the tree (a hidden one shows highlighted while it is picked).
+    pub picked_joints: Vec<u64>,
     /// Folders picked in the feature history (features use the engine selection).
     pub picked_timeline_groups: Vec<u64>,
     /// Last feature-history item clicked, for Shift ranges (`f:<id>` or `g:<id>`).
@@ -216,6 +218,7 @@ pub fn selection_group(app: &SolveApp, target: &Target) -> Option<Value> {
             (b.component, "bodies")
         }
         Target::Sketch { id } => (app.session.doc.feature(*id)?.component, "sketches"),
+        Target::Plane { id } => (app.session.doc.feature(*id)?.component, "construction"),
         _ => return None,
     };
     let sel = selected_keys(app, comp, folder);
@@ -428,6 +431,7 @@ fn click_select(app: &mut SolveApp, ui: &egui::Ui, key: String, sel: Option<Sel>
         }
     } else {
         app.tree.picked_components.clear();
+        app.tree.picked_joints.clear();
         let _ = app.run("select.set", json!({ "items": [sel] }));
     }
 }
@@ -1031,6 +1035,7 @@ fn canvas_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &mut A
             if !ui.input(|i| i.modifiers.command || i.modifiers.ctrl) {
                 app.tree.picked_canvases.clear();
                 app.tree.picked_components.clear();
+                app.tree.picked_joints.clear();
                 let _ = app.run("select.clear", json!({}));
             }
             if selected {
@@ -1287,7 +1292,7 @@ fn entries(app: &SolveApp, comp: u64, folder: &str) -> Vec<Entry> {
                 color: None,
                 locked: false,
                 sel: Some(Sel::Plane { name: f.name.clone() }),
-                target: None,
+                target: Some(Target::Plane { id: f.id }),
                 bodies: Vec::new(),
             })
             .collect(),
@@ -1373,9 +1378,15 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
     let prefix = path.map(occurrence_key).unwrap_or_else(|| format!("c{comp}"));
     if let Some(path) = path {
         let Ok(placement) = app.session.occurrence_placement(path) else { return };
+        // Each row's placed body by its definition's name (a search per row was quadratic in a
+        // component's bodies, every frame).
+        let mut placed: std::collections::HashMap<&str, &_> = std::collections::HashMap::with_capacity(placement.bodies.len());
+        for b in &placement.bodies {
+            placed.entry(b.source.as_str()).or_insert(b);
+        }
         for e in &mut all {
             if folder == "bodies" {
-                let Some(body) = placement.bodies.iter().find(|b| b.source == e.key) else { continue };
+                let Some(body) = placed.get(e.key.as_str()) else { continue };
                 e.sel = Some(Sel::Body { name: body.world.clone() });
                 e.target = Some(Target::Body { name: body.world.clone() });
                 e.bodies = vec![body.world.clone()];
