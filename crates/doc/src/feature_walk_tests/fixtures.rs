@@ -37,6 +37,11 @@ pub(super) fn fixtures() -> Vec<(&'static str, Value)> {
         ("sketch_along_path", json!({"type": "sketch", "plane": along("sketch"), "sketch": sk})),
         ("extrude", json!({"type": "extrude", "sketch": 1, "profiles": {"type": "all"}, "extent": extent("extrude")})),
         (
+            "extrude_thin",
+            json!({"type": "extrude", "sketch": 1, "profiles": {"type": "all"}, "extent": extent("thin"),
+                "thin": {"curves": ["c1"], "thickness": "thin.thickness", "side": "two_sides", "thickness2": "thin.thickness2"}}),
+        ),
+        (
             "revolve",
             json!({"type": "revolve", "sketch": 1, "profiles": {"type": "all"}, "axis": {"type": "world", "axis": "X"}, "angle": "revolve.angle", "angle2": "revolve.angle2"}),
         ),
@@ -158,7 +163,7 @@ pub(super) fn with_refs(name: &str, mut v: Value) -> Value {
     let o = [0, 0, 0];
     let tool = json!({"body": "B", "point": o});
     let extra = match name {
-        "extrude" | "revolve" | "sweep" | "pipe" | "coil" | "thicken" => json!({"targets": ["B"]}),
+        "extrude" | "extrude_thin" | "revolve" | "sweep" | "pipe" | "coil" | "thicken" => json!({"targets": ["B"]}),
         "fillet_constant" | "fillet_chord" | "fillet_curvature" | "fillet_variable" | "fillet_spline" | "chamfer" | "shell" | "draft"
         | "offset_face" | "delete_face" | "replace_face" | "sheet_flange" | "sheet_hem" | "sheet_unfold" | "boss" | "lip" | "snap_fit" | "rest"
         | "surface_offset" => {

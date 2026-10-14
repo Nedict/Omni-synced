@@ -2551,6 +2551,35 @@ fn centered_extrude(plane: &Plane, region: &Region2, start: f64, end: f64, sketc
         .collect()
 }
 
+/// The regions a thin extrude's wall covers in its sketch.
+pub(crate) fn thin_regions(vals: &BTreeMap<String, Value>, ss: &SolvedSketch, thin: &crate::ThinWall) -> Result<Vec<Region2>> {
+    if thin.curves.is_empty() || thin.curves.len() > 1000 {
+        return Err(DocError::Invalid("a thin extrude needs 1…1000 sketch curves".into()));
+    }
+    let t = val(vals, &thin.thickness, Kind::Length)?;
+    let (inside, outside) = match thin.side {
+        crate::ThinSide::Center => (t / 2.0, t / 2.0),
+        crate::ThinSide::Inside => (t, 0.0),
+        crate::ThinSide::Outside => (0.0, t),
+        crate::ThinSide::TwoSides => {
+            let e = thin.thickness2.as_deref().ok_or_else(|| DocError::Invalid("a two-sided thin wall needs `thickness2`".into()))?;
+            (t, val(vals, e, Kind::Length)?)
+        }
+    };
+    if !(inside >= 0.0 && outside >= 0.0 && inside + outside > 0.0) {
+        return Err(DocError::Invalid("the wall thickness must be positive".into()));
+    }
+    let curves = thin
+        .curves
+        .iter()
+        .map(|id| {
+            let ci = ss.sketch.curve_index(id).ok_or_else(|| DocError::Unknown(format!("curve `{id}` of {}", ss.name)))?;
+            Ok(ss.sketch.exact_segs(ci).unwrap_or_else(|| ss.sketch.segs(ci)))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    solidcraft_sketch::thin_wall_regions(&curves, inside, outside).map_err(|e| DocError::Invalid(format!("thin wall: {e}")))
+}
+
 /// How far apart (mm) profiles must stay for their extruded tools to be cut as one.
 const APART_GAP: f64 = 1e-3;
 
@@ -2564,13 +2593,16 @@ fn feature_tools_with_constructor(
 ) -> Result<Vec<Traced>> {
     let unnamed = |bodies: Vec<Body>| -> Vec<Traced> { bodies.into_iter().map(Traced::unnamed).collect() };
     match &f.kind {
-        FeatureKind::Extrude { sketch, profiles, extent, operation, targets } => {
+        FeatureKind::Extrude { sketch, profiles, extent, operation, targets, thin } => {
             let ss = sketch_in_feature_frame(
                 doc,
                 st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?,
                 f.component,
             )?;
-            let regions = solidcraft_sketch::merge_regions(&select_profiles(&ss, profiles)?);
+            let regions = match thin {
+                Some(thin) => thin_regions(vals, &ss, thin)?,
+                None => solidcraft_sketch::merge_regions(&select_profiles(&ss, profiles)?),
+            };
             // From / To Object: where the face or point lies along the normal, measured over the
             // middle of the profiles. The points are in this feature's component frame, so the
             // model is seen from there: a target in another, moved component where it is shown.

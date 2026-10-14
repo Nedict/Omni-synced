@@ -7,6 +7,10 @@ extrude
   sketches: [1]
   remap_refs: sketch
   remap_bodies: targets[0]
+extrude_thin
+  sketches: [1]
+  remap_refs: sketch
+  remap_bodies: targets[0]
 revolve
   sketches: [1]
   remap_refs: sketch

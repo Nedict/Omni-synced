@@ -52,8 +52,11 @@ macro_rules! geometry_walk {
                         f(Construct(r));
                     }
                 }
-                FeatureKind::Extrude { sketch, profiles, extent, .. } => {
-                    f(Profiles(*sketch, profiles));
+                FeatureKind::Extrude { sketch, profiles, extent, thin, .. } => {
+                    // A thin extrude follows curves; its profiles are not used.
+                    if thin.is_none() {
+                        f(Profiles(*sketch, profiles));
+                    }
                     if let Some(p) = & $($m)? extent.to {
                         f(Pick(p));
                     }

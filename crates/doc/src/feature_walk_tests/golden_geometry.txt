@@ -7,6 +7,7 @@ extrude
   moves: extent.from[0], extent.from[1], extent.from[2], extent.to[0], extent.to[1], extent.to[2]
   face points: [1, 1.5, 1.25], [2, 2.5, 2.25]
   profiles: 1 all
+extrude_thin
 revolve
   moves: axis.dir[0], axis.dir[1], axis.dir[2], axis.origin[0], axis.origin[1], axis.origin[2], to[0], to[1], to[2]
   face points: [3, 3.5, 3.25]

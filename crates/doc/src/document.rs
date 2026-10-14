@@ -179,6 +179,51 @@ pub struct Extent {
     pub from: Option<Vec3>,
 }
 
+/// Thin Extrude: a wall of constant thickness along sketch curves instead of the profiles.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ThinWall {
+    /// The sketch curves the wall follows: open chains and closed loops, joined where they
+    /// meet end to end.
+    pub curves: Vec<String>,
+    /// The wall thickness (expression); with `side: two_sides`, the thickness inside.
+    pub thickness: String,
+    #[serde(default, skip_serializing_if = "ThinSide::is_center")]
+    pub side: ThinSide,
+    /// With `side: two_sides`, the thickness outside (expression).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thickness2: Option<String>,
+}
+
+/// Where a thin wall lies against its curves. A closed loop's inside is the area it encloses;
+/// an open chain's is the side it bends toward (a straight one's, the left of its first
+/// curve as drawn).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinSide {
+    /// Half the thickness either side of the curves.
+    #[default]
+    Center,
+    Inside,
+    Outside,
+    /// `thickness` inside and `thickness2` outside.
+    TwoSides,
+}
+
+impl ThinSide {
+    pub fn is_center(&self) -> bool {
+        *self == ThinSide::Center
+    }
+    pub fn parse(s: &str) -> Option<ThinSide> {
+        match s.trim().to_ascii_lowercase().replace([' ', '-'], "_").as_str() {
+            "center" | "centre" | "centered" | "centred" | "symmetric" => Some(ThinSide::Center),
+            "inside" | "side1" | "side_1" => Some(ThinSide::Inside),
+            "outside" | "side2" | "side_2" => Some(ThinSide::Outside),
+            "two_sides" | "both" => Some(ThinSide::TwoSides),
+            _ => None,
+        }
+    }
+}
+
 /// Revolve axis.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -365,6 +410,9 @@ pub enum FeatureKind {
         /// Target body names for join/cut/intersect (empty = all bodies).
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         targets: Vec<String>,
+        /// Thin: a wall along sketch curves instead of the profiles (which are then unused).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thin: Option<ThinWall>,
     },
     Revolve {
         sketch: u64,
