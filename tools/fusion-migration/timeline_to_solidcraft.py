@@ -122,16 +122,45 @@ def op_of(step, default="auto"):
 # sketches
 # ---------------------------------------------------------------------------
 
+def plane_frame(sk):
+    """Rebuild a sketch's plane from its own coordinate frame.
+
+    Most sketches in real designs sit on construction planes or faces rather than on XY/XZ/YZ,
+    and their identity cannot be carried across. Their *frame* can: Fusion's sketch transform is
+    sketch space to model space, so its axes and origin define the plane directly, and the target
+    accepts a plane given that way. This is what rescues the majority of real sketches.
+
+    Fusion's matrix is row-major with the translation in the last column, and its lengths are in
+    centimetres.
+    """
+    t = sk.get("transform")
+    if not t or len(t) < 12:
+        return None
+    x_dir = [t[0], t[4], t[8]]
+    y_dir = [t[1], t[5], t[9]]
+    origin = [t[3] * 10.0, t[7] * 10.0, t[11] * 10.0]
+    # A degenerate frame would silently place the sketch somewhere arbitrary.
+    for v in (x_dir, y_dir):
+        if sum(c * c for c in v) < 0.5:
+            return None
+    return {"origin": [round(c, 9) for c in origin],
+            "x_dir": [round(c, 9) for c in x_dir],
+            "y_dir": [round(c, 9) for c in y_dir]}
+
+
 def emit_sketch(step, out, ctx):
     sk = step.get("sketch") or {}
     plane = (sk.get("plane") or {}).get("name")
-    if plane not in ORIGIN_PLANES:
-        raise Skip(
-            "sketch is on {}, not an origin plane -- face and offset-plane attachments need the "
-            "parent geometry to exist first".format(plane or "an unnamed plane")
-        )
+    if plane in ORIGIN_PLANES:
+        spec = plane
+    else:
+        spec = plane_frame(sk)
+        if spec is None:
+            raise Skip(
+                "sketch is on {} and carries no usable coordinate frame".format(
+                    plane or "an unnamed plane"))
 
-    out.append({"command": "sketch.create", "params": {"plane": plane}})
+    out.append({"command": "sketch.create", "params": {"plane": spec}})
 
     curves = sk.get("curves") or []
     if not curves:

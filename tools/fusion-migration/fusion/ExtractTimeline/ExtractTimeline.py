@@ -27,7 +27,12 @@ SKETCH_GEOMETRY = True   # curve-by-curve sketch contents (the bulk of the outpu
 
 # Bumped whenever the captured shape changes, so re-running upgrades older files in place
 # instead of skipping them -- a resumable run should not also mean a stale one.
-SCHEMA = 2
+SCHEMA = 3
+
+# A plain text file of design paths (one per line, as written under OUT_DIR, without the
+# ".timeline.json" suffix); only those are processed. Most hubs hold a lot of imported bodies
+# with no history to recover, and re-reading those costs real time for nothing.
+ONLY_LIST = os.path.join(OUT_DIR, "_reextract.txt")
 
 # Try a few designs before committing to a whole hub. Each design has to be downloaded and
 # loaded to be read, so a smoke test on five beats discovering a problem on five hundred.
@@ -180,6 +185,52 @@ def edge_sets(ent):
         if pts:
             return [{"edge_points": pts, "kind": "direct"}]
     return sets
+
+
+def axis_of(ent):
+    """A revolve's axis as two points in model space.
+
+    The axis is usually a sketch line or a construction axis, neither of which keeps its identity
+    across a migration. Its geometry does, and two points define the same axis anywhere.
+    """
+    for attr in ("axis", "axisEntity", "centerAxis"):
+        a = get(ent, attr)
+        if a is None:
+            continue
+        g = get(a, "geometry", "worldGeometry")
+        if g is None:
+            continue
+        start, end = pt(get(g, "startPoint")), pt(get(g, "endPoint"))
+        if start and end:
+            return {"start": start, "end": end, "kind": type(a).__name__}
+        origin, direction = get(g, "origin"), get(g, "direction")
+        if origin is not None and direction is not None:
+            o, d = pt(origin), pt(direction)
+            if o and d:
+                return {"start": o, "end": [o[i] + d[i] for i in range(3)],
+                        "kind": type(a).__name__}
+    return None
+
+
+def path_of(ent):
+    """A sweep's path as the points along its curves, so the route survives the move."""
+    p = get(ent, "path")
+    if p is None:
+        return None
+    pts = []
+    try:
+        for i in range(p.count):
+            c = p.item(i)
+            g = get(c, "geometry", "worldGeometry")
+            if g is None:
+                continue
+            for attr in ("startPoint", "endPoint"):
+                q = pt(get(g, attr))
+                if q and (not pts or q != pts[-1]):
+                    pts.append(q)
+    except Exception:
+        return None
+    return pts or None
 
 
 def profile_picks(prof):
@@ -396,6 +447,31 @@ def describe_feature(ent):
         rec["suppressed"] = bool(ent.isSuppressed)
     except Exception:
         pass
+
+    # Feature-specific geometry that would otherwise be unrecoverable.
+    if "Revolve" in kind:
+        a = axis_of(ent)
+        if a:
+            rec["axis"] = a
+    if "Sweep" in kind:
+        p = path_of(ent)
+        if p:
+            rec["path_points"] = p
+    if "Thread" in kind:
+        info = {}
+        for key, names in (("designation", ("threadDesignation",)),
+                           ("type", ("threadType",)),
+                           ("class", ("threadClass",)),
+                           ("is_internal", ("isInternal",)),
+                           ("full_length", ("isFullLength",))):
+            v = get(ent, *names)
+            if v is not None and not hasattr(v, "objectType"):
+                info[key] = str(v)
+        d = expr_of(ent, "threadLength")
+        if d:
+            info["length"] = d
+        if info:
+            rec["thread"] = info
 
     # Sketches carry their whole contents.
     if kind == "Sketch":
@@ -637,6 +713,17 @@ def run(context):
                 ui.messageBox('Nothing matched ONLY = "{}" among {} designs.'.format(
                     ONLY, found_all))
                 return
+        if ONLY_LIST and os.path.exists(ONLY_LIST):
+            try:
+                with open(ONLY_LIST, encoding="utf-8") as fh:
+                    wanted = {ln.strip().replace("\\", "/").lower()
+                              for ln in fh if ln.strip()}
+            except Exception:
+                wanted = set()
+            if wanted:
+                designs = [(f, p) for (f, p) in designs
+                           if "/".join(p + [safe(get(f, "name") or "")]).lower() in wanted]
+
         if LIMIT and LIMIT > 0:
             designs = designs[:LIMIT]
 
