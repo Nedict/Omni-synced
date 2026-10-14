@@ -259,6 +259,7 @@ mod path_scope;
 mod primitive_points;
 mod robustness;
 mod robustness_goldens;
+mod spiral_join;
 mod xz_plane;
 
 /// Plan area a round of radius `r` fills at the concave corner `x` where circles (c1, r1) and
@@ -957,6 +958,36 @@ fn step_open_then_model_on_it() {
     let mut s2 = Session::default();
     run(&mut s2, "doc.open", json!({"path": design.to_string_lossy()}));
     assert!(rel(volume(&mut s2), before) < 1e-6);
+}
+
+/// A join onto an imported body of thousands of planar faces (a converted mesh, say): each face of
+/// the result was compared with every planar face of the inputs whose source is unknown, and the
+/// join was refused past the comparison budget.
+#[test]
+fn join_onto_a_finely_faceted_import() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-step-faceted-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let n = 4000;
+    let mut pts: Vec<[f64; 2]> =
+        (0..n).map(|i| std::f64::consts::TAU * f64::from(i) / f64::from(n)).map(|a| [20.0 * a.cos(), 20.0 * a.sin()]).collect();
+    pts.push(pts[0]);
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "P"}));
+    run(&mut s, "sketch.line", json!({"points": pts}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "P", "distance": 10}));
+    let p = dir.join("Faceted.step");
+    run(&mut s, "file.export", json!({"path": p.to_string_lossy()}));
+    let prism = volume(&mut s);
+
+    let mut d = Session::default();
+    run(&mut d, "file.insert_step", json!({"path": p.to_string_lossy()}));
+    run(&mut d, "sketch.create", json!({"plane": "XY", "name": "Pin"}));
+    run(&mut d, "sketch.rectangle.two_point", json!({"p0": [-5, -5], "p1": [5, 5]}));
+    run(&mut d, "sketch.finish", json!({}));
+    run(&mut d, "solid.extrude", json!({"sketch": "Pin", "distance": 25, "operation": "join"}));
+    assert_eq!(d.model.state().bodies.len(), 1);
+    assert!(rel(volume(&mut d), prism + 10.0 * 10.0 * 15.0) < 1e-6, "{}", volume(&mut d));
 }
 
 /// Shell an imported body; insert STEP into an existing design; extension case; bad files.
