@@ -2217,6 +2217,45 @@ fn fold_across_two_collinear_tabs() {
     assert!(bb["max"][2].as_f64().unwrap() > 7.0, "both tabs stand up: {bb}");
 }
 
+/// After one of two collinear tabs is folded, the other one folds in its own feature too (#638, follow-up to #264).
+#[test]
+fn fold_second_collinear_tab_after_the_first() {
+    let mut s = Session::default();
+    two_tab_blank(&mut s);
+    let flat = volume(&mut s);
+    run(&mut s, "sheet.fold", json!({"points": [[107, 5, 0.8], [107, 12, 0.8]], "fixed": [50, 20, 0.8]}));
+    run(&mut s, "sheet.fold", json!({"points": [[107, 28, 0.8], [107, 35, 0.8]], "fixed": [50, 20, 0.8]}));
+    assert!(rel(volume(&mut s), flat) < 1e-3, "folds keep the material");
+    let bb = &run(&mut s, "inspect.measure", json!({}))["bodies"][0]["bbox"];
+    assert!(bb["max"][2].as_f64().unwrap() > 7.0, "the tabs stand up: {bb}");
+    // The tabs stand at the bend, x 106.1 .. 107.9 (centerline at x 107).
+    assert!(bb["max"][0].as_f64().unwrap() < 110.0, "neither tab still lies flat out to x 115: {bb}");
+}
+
+/// An L blank (100 x 50 bottom leg, 40 x 50 upright leg on the right) with a tab x 45..60, y 60..90 on the inside
+/// edge x 60. The fold line x 59, extended, runs into the bottom leg.
+fn l_blank_with_inside_tab(s: &mut Session) {
+    outline_blank(s, json!([[0, 0], [100, 0], [100, 100], [60, 100], [60, 90], [45, 90], [45, 60], [60, 60], [60, 50], [0, 50]]));
+}
+
+/// The tab on the inside edge folds wherever on the L sheet `fixed` lies: also when it is on the leg the extended
+/// fold line runs into (#639: "folding tabs that join again beyond the bend").
+#[test]
+fn fold_tab_on_inside_edge_of_l_blank_with_fixed_on_the_far_leg() {
+    let mut near = Session::default();
+    l_blank_with_inside_tab(&mut near);
+    run(&mut near, "sheet.fold", json!({"points": [[59, 60, 0.8], [59, 90, 0.8]], "fixed": [80, 20, 0.8]}));
+    let mut far = Session::default();
+    l_blank_with_inside_tab(&mut far);
+    let flat = volume(&mut far);
+    run(&mut far, "sheet.fold", json!({"points": [[59, 60, 0.8], [59, 90, 0.8]], "fixed": [40, 30, 0.8]}));
+    assert!(rel(volume(&mut far), flat) < 1e-3, "a fold keeps the material");
+    let a = &run(&mut near, "inspect.measure", json!({}))["bodies"][0]["bbox"];
+    let b = &run(&mut far, "inspect.measure", json!({}))["bodies"][0]["bbox"];
+    assert!(b["max"][2].as_f64().unwrap() > 7.0, "the tab stands up: {b}");
+    assert_eq!(a, b, "both fixed points are on the same L sheet, so the fold must give the same part");
+}
+
 /// Edge flanges on both tab ends in one feature (two separate features already work) (#264).
 #[test]
 fn edge_flanges_on_two_collinear_tab_ends_in_one_feature() {

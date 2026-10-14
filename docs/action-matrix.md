@@ -44,11 +44,14 @@ lists which still fail; skip `action_matrix_` to leave out the matrix itself).
   `demo/pi-case`: the Raspberry Pi 4 case of the 0.6 README demo, built through the desktop UI
   and saved by `examples/demo/enclosure_ui_mcp.py --story pi-0.6 --save`;
   `demo/pi-case-0.8`: the 0.8 README demo's case (`--story pi`), with a rounded rim, engraved
-  text and a PETG material.
+  text and a PETG material;
+  `demo/logo-up-down-join`: the SolidCraft logo as it was reported in #954, one sketch extruded
+  up and down and joined.
 - `typical/*`: [`tests/action_matrix/designs`](../tests/action_matrix/designs/), parts made the
   ordinary way: a stacked extrude, a filleted and shelled box, a revolved knob, a plate with a
   counterbored hole patterned 3 × 2 and a chamfered outline, a sheet metal L bracket with holes, a
-  join and a cut of three bodies, a loft on a plate, and a sweep.
+  join and a cut of three bodies, a loft on a plate, a sweep, and one sketch of squares drawn edge
+  to edge extruded up and down and joined (`up-down-join`).
 
 ## The actions
 

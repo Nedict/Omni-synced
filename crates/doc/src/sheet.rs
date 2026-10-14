@@ -33,6 +33,8 @@ const MAX_FLAT_WORK: usize = 500_000_000;
 
 /// Starts the warning a fold gives when its `fixed` point touches no material: a recompute keeps
 /// the side the point lies on, and the `sheet.fold` command refuses such a point (#263).
+/// Tabs folded on one line whose material beyond the bend joins again.
+const FOLD_TABS_REJOIN: &str = "not supported yet: folding tabs that join again beyond the bend";
 pub const FOLD_FIXED_OFF_SHEET: &str = "the fold's fixed point is not on the sheet";
 
 fn flat_budget_error() -> DocError {
@@ -2637,6 +2639,30 @@ impl SheetBody {
         fixed: Option<Vec3>,
         warning: &mut Option<String>,
     ) -> Result<usize> {
+        match self.fold_side(a, b, angle, radius, position, flip, fixed, warning, false) {
+            // The tabs the line folds can't take the side beyond them along, since it joins
+            // the side that stays through other material (a tab on an inside edge of an L,
+            // the fixed point on the far leg): the tabs' own ends fold instead, and the
+            // fixed point's material still stays (#639).
+            Err(DocError::Invalid(m)) if m == FOLD_TABS_REJOIN => self.fold_side(a, b, angle, radius, position, flip, fixed, warning, true),
+            r => r,
+        }
+    }
+
+    /// [`Self::add_fold`]; `other_side` moves the side the fixed point would keep.
+    #[allow(clippy::too_many_arguments)]
+    fn fold_side(
+        &mut self,
+        a: Vec3,
+        b: Vec3,
+        angle: f64,
+        radius: f64,
+        position: &str,
+        flip: bool,
+        fixed: Option<Vec3>,
+        warning: &mut Option<String>,
+        other_side: bool,
+    ) -> Result<usize> {
         if !(angle > 1e-6 && angle <= std::f64::consts::PI - 1e-6) {
             return Err(DocError::Invalid("the fold angle must be between 0 and 180°".into()));
         }
@@ -2704,7 +2730,7 @@ impl SheetBody {
             }
             (None, None) => side_area(n) <= side_area(n * -1.0),
         };
-        if !moves_n {
+        if moves_n == other_side {
             n = n * -1.0;
         }
         let l = a2.dot(n);
@@ -2740,6 +2766,12 @@ impl SheetBody {
         // Separate tabs on one line (the zone falls apart into several pieces): fold the ones
         // the line's points span, each as its own bend.
         let strips = merge_loops(std::slice::from_ref(&strip), &mut FlatWork::new())?;
+        // A zone clipped across the root of a tab folded before on the same line keeps a sliver
+        // of no width there: one real piece is the zone (#638).
+        let strip = match strips.as_slice() {
+            [one] => one.clone(),
+            _ => strip,
+        };
         if strips.len() > 1 {
             let span = (a2.dot(d).min(b2.dot(d)), a2.dot(d).max(b2.dot(d)));
             let angle = if flip { -angle } else { angle };
@@ -2857,7 +2889,7 @@ impl SheetBody {
                         h.push(k);
                     }
                 }
-                _ => return Err(DocError::Invalid("not supported yet: folding tabs that join again beyond the bend".into())),
+                _ => return Err(DocError::Invalid(FOLD_TABS_REJOIN.into())),
             }
         }
         let chosen: Vec<usize> = (0..strips.len()).filter(|&i| strip_u.get(i).is_some_and(|&u| overlap(u, span) > EPS)).collect();
