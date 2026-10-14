@@ -114,14 +114,6 @@ fn ring_basis(i: usize) -> (Vec3, Vec3) {
     }
 }
 
-fn axis_color(i: usize) -> Color32 {
-    match i {
-        0 => Color32::from_rgb(225, 70, 60),
-        1 => Color32::from_rgb(80, 190, 80),
-        _ => Color32::from_rgb(70, 130, 240),
-    }
-}
-
 /// Distance from `p` to the screen segment a–b.
 fn seg_dist(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     let ab = b - a;
@@ -263,7 +255,7 @@ pub fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::I
     let hovered = if state.is_none() { pointer.filter(|_| ui.rect_contains_pointer(proj.rect)).and_then(|p| hit(&sh, p)) } else { None };
     let active = state.map(|s| s.handle).or(hovered);
     let hot = |h: Handle| active == Some(h);
-    let col = |h: Handle, i: usize| if hot(h) { tk.accent } else { axis_color(i) };
+    let col = |h: Handle, i: usize| if hot(h) { tk.accent } else { tk.gizmo[i.min(2)] };
     for (i, pts) in &sh.rings {
         painter.add(Shape::line(pts.clone(), Stroke::new(if hot(Handle::Ring(*i)) { 3.0 } else { 1.8 }, col(Handle::Ring(*i), *i))));
     }

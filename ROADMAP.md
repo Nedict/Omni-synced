@@ -89,6 +89,16 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 
 ## Render foundation
 
+- R2 adds bounded named render setups in document format 21 and the read/save
+  `render.settings.get/set` commands. Proven render-only changes preserve geometry
+  and prepared world data through undo/redo and checkpoint restore. This slice does
+  not add a Render workspace, PBR, environments or image jobs; see
+  [settings and refresh policy](docs/render-settings.md).
+- Bounded PNG/JPEG texture admission (#900) validates in-memory sources and returns
+  completed RGBA8 pixels with explicit color/data roles. It is an input utility only:
+  ICC/16-bit normalization, local wood mapping, resource persistence and the renderer
+  consumer remain separate work. See [limits and licensed-file probes](docs/render-texture-input.md).
+
 - The initial opaque surface numerical contract for #1004 provides bounded linear
   color/metallic/roughness/IOR admission and an original tested direct-light BRDF.
   It does not enable PBR rendering or change stored appearances. See
@@ -488,6 +498,14 @@ and reference-object placement remain separate work, as do loft rails and center
   events by strategy and reports any bounded-log truncation. Existing geometry
   acceptance checks remain in force.
 
+- Cylinders of one radius whose axes cross (a second bore across a bore of the same size, a pipe
+  tee of equal pipes) touch at two points, where the mesh intersection cannot trace the curves
+  and a boolean cannot tell the four arms of the crossing apart. When the ordinary boolean fails
+  on such a pair, both faces are split along the line of their cylinder through the touching
+  points (the solids are unchanged), the boolean is taken of those, and its history is composed
+  back over the operands as given (#788). The result keeps the split lines as edges of the bore
+  walls. A crossing the ordinary route fails on and the split faces do not help (a radius of 17.5
+  in a 45 mm block with a tool of 80 mm) is still refused.
 - Boolean intersection-curve construction refuses point-only, collapsed and non-finite
   polylines without panicking. Direct constructor regressions retain valid open endpoints
   and closed spherical intersections; the original interactive trigger remains unidentified.

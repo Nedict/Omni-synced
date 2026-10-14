@@ -17,6 +17,15 @@ Changes:
 - `transversal/integrate/mod.rs`: the result's shells and faces keep the order of the shell
   they come from (truck's connected components followed hash order of face addresses, so a
   boolean's faces came out in a different order on every run).
+- `transversal/loops_store/mod.rs`: an intersection edge added to a face at a vertex that more
+  than one wire visits (several curves end on it: the touching point of two equal cylinders) goes
+  into the corner that holds its direction, swept counterclockwise about the face's normal from
+  the wire's outgoing edge to the way back along its incoming one (`add_edge_by_angle`, told on
+  the polygon loops and followed by the geometry loops). Taking the first visit of each end
+  joined wires that are different regions of a face and left a wire visiting a vertex twice.
+  With no direction to go by, the edge goes where both of its ends are in one wire.
+- `transversal/divide_face/mod.rs`: a face piece whose wire is not simple makes the operation
+  give up (`Face::try_new`) instead of panicking.
 - `lib.rs`: `tr!` reports where an operation gives up when `SHAPEOPS_TRACE` is set; compiler
   warnings no longer fail the build.
 - Face and edge history (`transversal/history.rs`, new): `and_with_history` / `or_with_history`
@@ -125,6 +134,10 @@ SolidCraft changes:
   guarantees 1x and 4x).
 - `src/setup.rs`: the default device asks for the adapter's largest 2D texture (at least 8192)
   instead of exactly 8192.
+- `src/lib.rs`, `src/winit.rs`: `set_startup_hook` is told before each step of getting the
+  device and the window's surface up (instance, surface, adapter request, the chosen adapter,
+  device, renderer, surface configure, first present), so the app's crash journal can say which
+  step a crash inside the graphics driver happened in.
 - `src/lib.rs`, `src/winit.rs`: a window larger than the device's largest texture gets a surface
   clamped to it (`clamp_surface_extent`, aspect ratio kept) and egui is drawn at the matching
   smaller scale, instead of a `Surface::configure` validation panic (#869). The resize path and

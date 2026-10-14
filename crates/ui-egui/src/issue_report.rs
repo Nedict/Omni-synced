@@ -298,7 +298,7 @@ pub fn crash_draft(report: &serde_json::Value) -> Draft {
     let what = match report.get("kind").and_then(serde_json::Value::as_str) {
         Some("command_panic") => "An internal error stopped a command (the design was left unchanged)",
         Some("kernel_panic_recovered") => "The geometry kernel hit an internal error (caught; the operation failed)",
-        Some("unclean_exit") => "SolidCraft closed unexpectedly (abort, stack overflow or the process was killed)",
+        Some("unclean_exit") => "SolidCraft closed unexpectedly (abort, stack overflow, a crash in a graphics driver or the process was killed)",
         _ => "SolidCraft hit an internal error",
     };
     let command = report.get("command").and_then(|c| c.get("command")).and_then(serde_json::Value::as_str);
