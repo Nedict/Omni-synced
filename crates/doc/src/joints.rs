@@ -657,14 +657,6 @@ fn loop_dof(tree: &Tree, closing: &[u64], asm: &Assembly, vals: &Values, dof: &m
     let (mut spent, mut counted) = (0usize, 0usize);
     for occ in &tree.order {
         let path: Vec<u64> = tree.path(*occ).1.iter().map(|(k, _)| *k).collect();
-        let hit: Vec<&Group> = groups.iter().filter(|(_, around, _)| path.iter().any(|k| around.contains(k))).collect();
-        if hit.is_empty() {
-            continue;
-        }
-        counted += 1;
-        if counted > MAX_DOF_OCCURRENCES || spent > MAX_LOOP_WORK {
-            return;
-        }
         let mut values: Vec<(u64, usize)> = Vec::new();
         for j in path.iter().filter_map(|k| tree.joints.get(k)) {
             for v in (0..j.kind.dofs().len()).map(|i| (j.id, i)) {
@@ -705,6 +697,15 @@ fn loop_dof(tree: &Tree, closing: &[u64], asm: &Assembly, vals: &Values, dof: &m
                 }
             }
             taken.extend(more);
+        }
+        // No loop reaches this occurrence's values (not even through a motion link it drives):
+        // the tree's count stands.
+        if taken.is_empty() {
+            continue;
+        }
+        counted += 1;
+        if counted > MAX_DOF_OCCURRENCES || spent > MAX_LOOP_WORK {
+            return;
         }
         if values.len() > MAX_LOOP_VALUES {
             continue;

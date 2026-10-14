@@ -765,6 +765,11 @@ fn loops_report_their_mobility() {
     for part in ["Crank", "Coupler", "Rocker"] {
         assert_eq!(dof_of(&mut s, part), 0, "locked {part}");
     }
+    // A rotor whose turn a motion link carries into the locked crank can't turn either.
+    part(&mut s, "Rotor", [100.0, 0.0, -5.0]);
+    pin(&mut s, "revolute", "Rotor", "Ground", "Rotor", Vec3::new(100.0, 0.0, 0.0), Vec3::Z);
+    run(&mut s, "joint.motion_link", json!({"a": "Rotor", "b": "Crank", "ratio": 1}));
+    assert_eq!(dof_of(&mut s, "Rotor"), 0);
     // A chain of five links stored in order, from a free dial to the flag's hinge.
     let (mut s, p0, q0) = four_bar();
     let mid = (p0 + q0) * 0.5;
