@@ -768,12 +768,13 @@ mod tests {
         for (p, shift, alt) in [(10.0, true, false), (20.0, false, true), (30.0, false, false)] {
             let mut raw = egui::RawInput::default();
             app.raw_input_hook(&mut raw);
-            let _ = ctx.run_ui(raw, |ui| {
+            let mut out = ctx.run_ui(raw, |ui| {
                 ui.input(|i| {
                     assert_eq!(i.pointer.hover_pos(), Some(egui::pos2(p, p)));
                     assert_eq!((i.modifiers.shift, i.modifiers.alt), (shift, alt));
                 });
             });
+            out.textures_delta.clear();
         }
         assert!(app.synthetic.is_empty());
     }
@@ -789,13 +790,14 @@ mod tests {
         for (p, shift, alt) in [(10.0, true, false), (20.0, false, true), (30.0, false, false)] {
             let mut raw = egui::RawInput::default();
             app.raw_input_hook(&mut raw);
-            let _ = ctx.run_ui(raw, |ui| {
+            let mut out = ctx.run_ui(raw, |ui| {
                 ui.input(|i| {
                     assert_eq!(i.pointer.hover_pos(), Some(egui::pos2(p, p)));
                     assert_eq!((i.modifiers.shift, i.modifiers.alt), (shift, alt));
                     assert!(!i.pointer.any_down());
                 });
             });
+            out.textures_delta.clear();
         }
         assert!(app.synthetic.is_empty());
     }

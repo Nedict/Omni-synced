@@ -4305,7 +4305,7 @@ mod tests {
         app.preferences.nav = "touchpad".into();
         let alt = egui::Modifiers { alt: true, ..Default::default() };
         let frame = |app: &mut SolveApp, focused: bool, p: Pos2| {
-            let _ = ctx.run_ui(
+            let mut out = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
                     focused,
@@ -4314,6 +4314,7 @@ mod tests {
                 },
                 |ui| show(app, ui),
             );
+            out.textures_delta.clear();
         };
         frame(&mut app, true, pos2(300.0, 300.0));
         frame(&mut app, true, pos2(310.0, 300.0));
