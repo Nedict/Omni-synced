@@ -280,3 +280,19 @@ fn a_placed_body_meshes_like_the_original() {
     let (p, _) = plan_body(&placed, 0.005);
     assert_eq!(m.tri_face, p.tri_face);
 }
+
+/// Seeds on a motorcycle trace start at the spacing of the boundary it leaves and grow
+/// geometrically to the spacing at its other end (here 0.1 to 1 over 5 mm).
+#[test]
+fn trace_seeds_grade_from_one_end_to_the_other() {
+    let t = graded([0.0, 0.0], [5.0, 0.0], 0.1, 1.0, 10.0, [1.0, 1.0], &|_, _| true);
+    let all: Vec<f64> = std::iter::once(0.0).chain(t.iter().copied()).chain(std::iter::once(1.0)).map(|f| f * 5.0).collect();
+    let sizes: Vec<f64> = all.windows(2).map(|w| w[1] - w[0]).collect();
+    assert!((sizes[0] - 0.1).abs() < 0.03, "first {}", sizes[0]);
+    assert!((sizes[sizes.len() - 1] - 1.0).abs() < 0.3, "last {}", sizes[sizes.len() - 1]);
+    assert!(sizes.windows(2).all(|w| w[1] >= w[0] - 1e-12), "growing: {sizes:?}");
+    // Equal ends: even; a segment no longer than its spacing: no seeds.
+    let even = graded([0.0, 0.0], [4.0, 0.0], 1.0, 1.0, 10.0, [1.0, 1.0], &|_, _| true);
+    assert_eq!(even.len(), 3);
+    assert!(graded([0.0, 0.0], [0.5, 0.0], 1.0, 1.0, 10.0, [1.0, 1.0], &|_, _| true).is_empty());
+}
