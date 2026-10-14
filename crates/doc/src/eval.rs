@@ -1789,6 +1789,26 @@ fn extend_for_coplanar(st: &ModelState, plane: &Plane, r: &Region2, lo: f64, hi:
     (lo2, hi2)
 }
 
+/// How high (mm) a tapered tool's sides stand straight where it starts on a face it can't run
+/// on into.
+const TAPER_FOOT: f64 = 0.01;
+
+/// Whether a face of the targets (all bodies when none are named) lies in the plane at height
+/// `h` along `plane`'s normal.
+fn face_level_at(st: &ModelState, plane: &Plane, h: f64, targets: &[String]) -> bool {
+    let n = plane.normal();
+    st.bodies.iter().filter(|b| targets.is_empty() || targets.contains(&b.name)).any(|b| {
+        let m = b.mesh();
+        let tol = (b.body.size() * 1e-7).max(1e-9);
+        m.triangles.iter().any(|t| {
+            m.tri(t).is_some_and(|[a, b, c]| {
+                (b - a).cross(c - a).normalized().is_some_and(|normal| normal.dot(n).abs() > 1.0 - 1e-9)
+                    && ((a - plane.origin).dot(n) - h).abs() < tol
+            })
+        })
+    })
+}
+
 /// The body a face-based feature applies to: by name, or the one whose surface is nearest the
 /// first point.
 fn body_at(st: &ModelState, body: &Option<String>, points: &[Vec3]) -> Result<usize> {
@@ -1947,6 +1967,24 @@ pub fn edge_names_for(st: &ModelState, body: &Option<String>, pts: &[Vec3]) -> V
     match blend_target(st, body, pts).ok().and_then(|i| st.bodies.get(i)) {
         Some(b) => crate::naming::edge_names_at(b, pts),
         None => Vec::new(),
+    }
+}
+
+/// The stored pick sits on the axis of a round, not on an edge. The nearest edge within a
+/// quarter of the body is that round's tangency seam, which is a different edge (#775).
+fn pick_lies_on_a_round_axis(body: &Body, p: Vec3) -> bool {
+    let Some(cyl) = kernel::cylinder_face_at(body, p) else { return false };
+    let Some(axis) = cyl.axis.normalized() else { return false };
+    let radial = p - cyl.axis_point;
+    let dist = (radial - axis * radial.dot(axis)).len();
+    if !(cyl.radius > 1e-6 && dist < cyl.radius * 0.35) {
+        return false;
+    }
+    let tight = (body.size() * 2e-3).max(1e-3);
+    // A pick on the wall itself is the seam. Only an axial pick is the vanished corner.
+    match body.nearest_edge(p, cyl.radius * 2.0) {
+        Ok(Some((_, d))) => d > tight,
+        _ => true,
     }
 }
 
@@ -2513,6 +2551,35 @@ fn centered_extrude(plane: &Plane, region: &Region2, start: f64, end: f64, sketc
         .collect()
 }
 
+/// The regions a thin extrude's wall covers in its sketch.
+pub(crate) fn thin_regions(vals: &BTreeMap<String, Value>, ss: &SolvedSketch, thin: &crate::ThinWall) -> Result<Vec<Region2>> {
+    if thin.curves.is_empty() || thin.curves.len() > 1000 {
+        return Err(DocError::Invalid("a thin extrude needs 1…1000 sketch curves".into()));
+    }
+    let t = val(vals, &thin.thickness, Kind::Length)?;
+    let (inside, outside) = match thin.side {
+        crate::ThinSide::Center => (t / 2.0, t / 2.0),
+        crate::ThinSide::Inside => (t, 0.0),
+        crate::ThinSide::Outside => (0.0, t),
+        crate::ThinSide::TwoSides => {
+            let e = thin.thickness2.as_deref().ok_or_else(|| DocError::Invalid("a two-sided thin wall needs `thickness2`".into()))?;
+            (t, val(vals, e, Kind::Length)?)
+        }
+    };
+    if !(inside >= 0.0 && outside >= 0.0 && inside + outside > 0.0) {
+        return Err(DocError::Invalid("the wall thickness must be positive".into()));
+    }
+    let curves = thin
+        .curves
+        .iter()
+        .map(|id| {
+            let ci = ss.sketch.curve_index(id).ok_or_else(|| DocError::Unknown(format!("curve `{id}` of {}", ss.name)))?;
+            Ok(ss.sketch.exact_segs(ci).unwrap_or_else(|| ss.sketch.segs(ci)))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    solidcraft_sketch::thin_wall_regions(&curves, inside, outside).map_err(|e| DocError::Invalid(format!("thin wall: {e}")))
+}
+
 /// How far apart (mm) profiles must stay for their extruded tools to be cut as one.
 const APART_GAP: f64 = 1e-3;
 
@@ -2526,13 +2593,16 @@ fn feature_tools_with_constructor(
 ) -> Result<Vec<Traced>> {
     let unnamed = |bodies: Vec<Body>| -> Vec<Traced> { bodies.into_iter().map(Traced::unnamed).collect() };
     match &f.kind {
-        FeatureKind::Extrude { sketch, profiles, extent, operation, targets } => {
+        FeatureKind::Extrude { sketch, profiles, extent, operation, targets, thin } => {
             let ss = sketch_in_feature_frame(
                 doc,
                 st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?,
                 f.component,
             )?;
-            let regions = solidcraft_sketch::merge_regions(&select_profiles(&ss, profiles)?);
+            let regions = match thin {
+                Some(thin) => thin_regions(vals, &ss, thin)?,
+                None => solidcraft_sketch::merge_regions(&select_profiles(&ss, profiles)?),
+            };
             // From / To Object: where the face or point lies along the normal, measured over the
             // middle of the profiles. The points are in this feature's component frame, so the
             // model is seen from there: a target in another, moved component where it is shown.
@@ -2582,13 +2652,51 @@ fn feature_tools_with_constructor(
                     Some(crate::lineage::extrude_cap_role(from)),
                     Some(crate::lineage::extrude_cap_role(if sign < 0.0 { from - len } else { from + len })),
                 ];
-                return regions
+                // How far a tool grows past its profile at either end, at most.
+                let mut growth: f64 = 0.0;
+                let tools: Vec<Traced> = regions
                     .iter()
                     .map(|r| {
-                        let body = kernel::extrude_tapered(&start_plane, r, len, sign, taper)?;
+                        // An end on a face of the target runs on into it, as a prism's does: tapered
+                        // sides standing on a face are curved where they meet it (along text, say),
+                        // and the boolean finds no result there. The sides keep their slope, so
+                        // the profile stays the section at the start.
+                        let (lo, hi) = if sign < 0.0 { (from - len, from) } else { (from, from + len) };
+                        let (l2, h2) = extend_for_coplanar(st, &ss.plane, r, lo, hi, *operation, targets);
+                        let (a, b) = if sign < 0.0 { (from - h2, from - l2) } else { (l2 - from, h2 - from) };
+                        // A start that can't run on (the profile hangs over the face's edge):
+                        // the sides stand straight for a hair first, so the boolean can push the
+                        // face the tool stands on into the body.
+                        let foot = if a >= 0.0 && matches!(operation, Operation::Join | Operation::Cut) && face_level_at(st, &ss.plane, from, targets)
+                        {
+                            TAPER_FOOT.min((b - a) * 0.01)
+                        } else {
+                            0.0
+                        };
+                        let body = kernel::extrude_tapered_between(&start_plane, r, a, b, foot, sign, taper)?;
+                        growth = growth.max(a.abs().max(b.abs()) * taper.tan().abs());
                         Ok(crate::lineage::ProfileRoles { sketch: Some(&ss), region: Some(r), caps: caps.clone() }.tool(body, None))
                     })
-                    .collect();
+                    .collect::<Result<_>>()?;
+                // Profiles apart by more than the tools grow (the letters of a text): the tools
+                // are apart too, and go into the body as one, in one boolean rather than one per
+                // profile, each on a body grown or cut by the ones before. (A join meeting several
+                // bodies keeps joining them tool by tool; sheet metal keeps cutting tool by tool.)
+                let sheet =
+                    if targets.is_empty() { !st.sheets.is_empty() } else { targets.iter().any(|t| st.sheets.iter().any(|sheet| &sheet.body == t)) };
+                let one_target = if targets.is_empty() { st.bodies.len() == 1 } else { targets.len() == 1 };
+                let at_once = match operation {
+                    Operation::Cut => !sheet,
+                    Operation::Join => one_target && !sheet,
+                    _ => false,
+                };
+                if at_once && tools.len() > 1 && regions_apart(&regions, APART_GAP + 2.0 * growth) {
+                    let bodies: Vec<Body> = tools.iter().map(|t| t.body.clone()).collect();
+                    if let Ok(Some(one)) = kernel::join_apart(&bodies) {
+                        return Ok(vec![Traced::step(one, &tools.iter().collect::<Vec<_>>())]);
+                    }
+                }
+                return Ok(tools);
             }
             let off = from
                 + match &extent.start_offset {
@@ -3800,6 +3908,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         | FeatureKind::SheetContour { .. }
         | FeatureKind::SheetFlange { .. }
         | FeatureKind::SheetHem { .. }
+        | FeatureKind::SheetPerforate { .. }
         | FeatureKind::SheetFold { .. }
         | FeatureKind::SheetUnfold { .. }
         | FeatureKind::SheetConvert { .. } => more::sheet_eval(doc, vals, f, st, warning),
@@ -4187,23 +4296,28 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                         Some((_, Err(_))) | None => {
                             let mut w = None;
                             let refs: Vec<EdgeRef> = f.edge_refs.get(i).cloned().into_iter().collect();
-                            if let Ok(q) = resolve_edges(&mb.body, &[*p], &refs, &mut w) {
+                            let skipped =
+                                format!("edge `{}` no longer exists and was skipped", f.edge_names.get(i).map(String::as_str).unwrap_or("?"));
+                            // The name is gone. A pick on the axis of a round must not fall
+                            // through to the tangency seam (#775). A sharp edge that moved
+                            // still resolves from the point, which an edit relies on.
+                            if pick_lies_on_a_round_axis(&mb.body, *p) {
+                                notes.push(skipped);
+                            } else if let Ok(q) = resolve_edges(&mb.body, &[*p], &refs, &mut w) {
                                 out.extend(q);
                                 notes.push(match f.edge_names.get(i) {
                                     Some(n) if !n.is_empty() => format!("edge `{n}` no longer exists; using the edge at the picked point"),
                                     _ => "an edge reference without a name was found by its point".into(),
                                 });
                             } else {
-                                notes.push(format!(
-                                    "edge `{}` no longer exists and was skipped",
-                                    f.edge_names.get(i).map(String::as_str).unwrap_or("?")
-                                ));
+                                notes.push(skipped);
                             }
                         }
                     }
                 }
                 if out.is_empty() {
-                    return Err(DocError::Invalid("none of the selected edges exist any more".into()));
+                    let why = if notes.is_empty() { String::new() } else { format!(" ({})", notes.join("; ")) };
+                    return Err(DocError::Invalid(format!("none of the selected edges exist any more{why}")));
                 }
                 if !notes.is_empty() {
                     *warning = Some(notes.join("; "));
@@ -4639,9 +4753,61 @@ pub fn state_in_frame_at<'a>(doc: &Document, st: &'a ModelState, comp: u64, fram
 /// occurrence of it (bodies of the first placement keep their names; further instances get the
 /// occurrence path in brackets). Without components this is the model itself.
 pub fn world_state(doc: &Document, st: &ModelState) -> ModelState {
+    world_state_reusing(doc, st, &mut PlacedBodies::default())
+}
+
+/// Bodies a [`world_state_reusing`] call placed away from their definition (a moved
+/// component's bodies), by their definition and placement: the next call reuses each one whose
+/// definition and placement are unchanged instead of transforming it again, and so keeps its
+/// display mesh. Without this every change anywhere in a design transformed and meshed every
+/// body of every moved component again.
+#[derive(Default)]
+pub struct PlacedBodies {
+    by_source: std::collections::HashMap<(usize, [u64; 16]), (ModelBody, ModelBody)>,
+}
+
+impl PlacedBodies {
+    /// The body `b` placed by `m`, from an earlier call when `b` is the same body as then.
+    fn placed(&self, b: &ModelBody, m: &crate::Mat, name: String) -> ModelBody {
+        let reused = self.by_source.get(&placed_key(b, m)).filter(|(source, _)| {
+            Arc::ptr_eq(&source.mesh, &b.mesh)
+                && source.body.same(&b.body)
+                && source.body.color() == b.body.color()
+                && source.body.paint() == b.body.paint()
+                && match (source.body.split_lines(), b.body.split_lines()) {
+                    (Some(x), Some(y)) => Arc::ptr_eq(x, y),
+                    (None, None) => true,
+                    _ => false,
+                }
+        });
+        match reused {
+            Some((_, placed)) => {
+                let mut fresh = ModelBody::new(name, placed.body.clone(), b.feature);
+                fresh.mesh = placed.mesh.clone();
+                fresh.plan = placed.plan.clone();
+                fresh.plan_mesh = placed.plan_mesh.clone();
+                fresh
+            }
+            None => ModelBody::new(name, kernel::transform_matrix(&b.body, *m).unwrap_or_else(|_| b.body.clone()), b.feature),
+        }
+    }
+}
+
+fn placed_key(b: &ModelBody, m: &crate::Mat) -> (usize, [u64; 16]) {
+    let mut bits = [0u64; 16];
+    for (slot, v) in bits.iter_mut().zip(m.iter().flatten()) {
+        *slot = v.to_bits();
+    }
+    (Arc::as_ptr(&b.mesh) as usize, bits)
+}
+
+/// [`world_state`], reusing the bodies `placed` holds from an earlier call and leaving it holding
+/// this call's.
+pub fn world_state_reusing(doc: &Document, st: &ModelState, placed_before: &mut PlacedBodies) -> ModelState {
     if doc.occurrences.is_empty() {
         return st.clone();
     }
+    let mut placed_now = PlacedBodies::default();
     let comp_of_feature = |id: u64| doc.feature(id).map(|f| f.component).unwrap_or(0);
     let first_path = |comp: u64| -> Vec<u64> {
         let mut path = Vec::new();
@@ -4671,8 +4837,9 @@ pub fn world_state(doc: &Document, st: &ModelState) -> ModelState {
                 placed.name = name;
                 placed
             } else {
-                let body = kernel::transform_matrix(&b.body, bm).unwrap_or_else(|_| b.body.clone());
-                ModelBody::new(name, body, b.feature)
+                let placed = placed_before.placed(b, &bm, name);
+                placed_now.by_source.insert(placed_key(b, &bm), (b.clone(), placed.clone()));
+                placed
             };
             // World states keep their previous display-only evaluation-key semantics.
             placed.key = 0;
@@ -4720,6 +4887,7 @@ pub fn world_state(doc: &Document, st: &ModelState) -> ModelState {
             }
         }
     }
+    *placed_before = placed_now;
     out
 }
 

@@ -8,7 +8,7 @@ use solidcraft_sketch::{ConstraintKind, CurveKind, LinkKind, LinkSource, Sketch,
 /// The style parameters of `sketch.text` and `sketch.edit_text`.
 macro_rules! text_style_doc {
     () => {
-        "bold?, italic?: bool (an installed family's bold or italic face; italic without one is slanted), align?: left|center|right (the lines against `at`, or along the path), letter_spacing?: extra mm between letters, line_spacing?: times the font's line distance (default 1), path?: a curve id of the sketch the baseline follows (\"\": none; `at` and `angle` then do not place the text), reverse?: bool (the other way along the path)"
+        "bold?, italic?: bool (an installed family's bold or italic face; italic without one is slanted), align?: left|center|right (the lines against `at`, or along the path), letter_spacing?: extra mm between letters, line_spacing?: times the font's line distance (default 1), path?: a curve id of the sketch the baseline follows (\"\": none; `at` and `angle` then do not place the text; the curve becomes construction, a guide the letters stand on), reverse?: bool (the other way along the path)"
     };
 }
 
@@ -145,21 +145,40 @@ fn text_style(p: &Value, cmd: &str, old: TextStyle) -> Result<TextStyle> {
     Ok(style)
 }
 
+/// What a text's `at` must be.
+const AT_MUST: &str = "`at` must be the baseline start [x, y]";
+
+/// The number given for `key`: `None` when it is left out or null, and an error when it is
+/// anything but a number (not read as left out).
+fn given_num(p: &Value, cmd: &str, key: &str, what: &str) -> Result<Option<f64>> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => num(p, key).map(Some).ok_or_else(|| bad(cmd, format!("`{key}` must be {what}"))),
+    }
+}
+
 fn text_source(p: &Value, cmd: &str, old: Option<(String, Vec2, f64, f64, Option<String>, TextStyle)>) -> Result<LinkSource> {
     let (t0, at0, h0, a0, f0, s0) = old.unwrap_or((String::new(), Vec2::ZERO, 5.0, 0.0, None, TextStyle::default()));
-    let text = str_(p, "text").map(str::to_string).unwrap_or(t0);
+    let text = match p.get("text") {
+        None | Some(Value::Null) => t0,
+        Some(Value::String(t)) => t.clone(),
+        Some(_) => return Err(bad(cmd, "`text` must be a string")),
+    };
     if text.trim().is_empty() {
         return Err(bad(cmd, "`text` must not be empty"));
     }
     if text.chars().count() > solidcraft_sketch::MAX_TEXT_CHARS {
         return Err(bad(cmd, "text too long"));
     }
-    let at = p.get("at").and_then(crate::params::vec2).unwrap_or(at0);
-    let height = num(p, "height").unwrap_or(h0);
+    let at = match p.get("at") {
+        None | Some(Value::Null) => at0,
+        Some(v) => crate::params::vec2(v).ok_or_else(|| bad(cmd, AT_MUST))?,
+    };
+    let height = given_num(p, cmd, "height", "a length in mm")?.unwrap_or(h0);
     if !(height > 1e-6 && height < 1e5) {
         return Err(bad(cmd, "`height` must be positive"));
     }
-    let angle = num(p, "angle").map(f64::to_radians).unwrap_or(a0);
+    let angle = given_num(p, cmd, "angle", "an angle in degrees")?.map_or(a0, f64::to_radians);
     let font = match p.get("font") {
         None | Some(Value::Null) => f0,
         Some(Value::String(f)) if f.trim().is_empty() => None,
@@ -167,19 +186,16 @@ fn text_source(p: &Value, cmd: &str, old: Option<(String, Vec2, f64, f64, Option
         Some(_) => return Err(bad(cmd, "`font` must be a font family name or a font file path")),
     };
     let style = text_style(p, cmd, s0)?;
-    // A font file an agent names must lie in its folders (installed families are found by name).
-    if let Some(path) = font.as_deref().and_then(solidcraft_sketch::font_file_path) {
-        solidcraft_io::vfs::check(&path.to_string_lossy()).map_err(|e| bad(cmd, e.to_string()))?;
-    }
-    // An unknown font, an unreadable file or a style the font lacks is an error now, not a lost link later.
+    // An unknown font, an unreadable file or a style the font lacks is an error now, not a lost
+    // link later; so is a font file outside an agent's folders (the font reader asks `vfs`).
     solidcraft_sketch::font_data_styled(font.as_deref(), style.bold, style.italic).map_err(|e| bad(cmd, e.to_string()))?;
     Ok(LinkSource::Text { text, at, height, angle, font, style })
 }
 
 fn text(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.text";
-    if p.get("at").is_none() {
-        return Err(bad(cmd, "`at` must be the baseline start [x, y]"));
+    if p.get("at").is_none_or(Value::is_null) {
+        return Err(bad(cmd, AT_MUST));
     }
     let src = text_source(p, cmd, None)?;
     let id = s.active_sketch.ok_or_else(|| bad(cmd, "no sketch is being edited"))?;
@@ -190,11 +206,28 @@ fn text(s: &mut Session, p: &Value) -> Result<Value> {
     if geom.is_empty() {
         return Err(bad(cmd, "the text makes no outline"));
     }
+    let guide = guide(&mut sk, &src);
     let l = sk.add_link(LinkKind::Text, src, &geom)?;
     let curves = ids_of(&sk, &sk.link_curves(&l));
     *doc.sketch_mut(id)? = sk;
     *s.doc_mut() = doc;
-    Ok(json!({"link": l, "curves": curves}))
+    Ok(json!({"link": l, "curves": curves, "guide": guide}))
+}
+
+/// A text's path is its guide: the curve it follows becomes construction. Left as it was, it
+/// would cut the letters standing on it (and the ones hanging below it) into pieces, each
+/// profile a piece of a letter and of the curve, and picking the text would pick those pieces.
+/// Taking the text off the curve leaves the curve as it is. The curve made construction, if any.
+fn guide(sk: &mut Sketch, src: &LinkSource) -> Option<String> {
+    let LinkSource::Text { style, .. } = src else { return None };
+    let id = style.path.as_ref()?;
+    let curve = sk.curve_index(id).and_then(|c| sk.curves.get_mut(c))?;
+    if curve.construction {
+        return None;
+    }
+    curve.construction = true;
+    curve.centerline = false;
+    Some(id.clone())
 }
 
 /// The text source owning an outline or one of its linked points.
@@ -271,10 +304,11 @@ fn apply_text_edit(sk: &mut Sketch, p: &Value) -> Result<Value> {
     if geom.is_empty() {
         return Err(bad(cmd, "the text makes no outline"));
     }
+    let guide = guide(sk, &src);
     sk.set_link_source(&l, src.clone());
     sk.update_link(&l, &geom)?;
     let curves = ids_of(sk, &sk.link_curves(&l));
-    Ok(json!({"link": l, "curves": curves}))
+    Ok(json!({"link": l, "curves": curves, "guide": guide}))
 }
 
 /// The curve ending at point `pi` and the direction leaving it there.

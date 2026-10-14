@@ -250,7 +250,9 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let captions = if app.custom_titlebar { crate::titlebar::WIDTH } else { 0.0 };
         let tabs_start = x + 16.0;
         let (report, report_label) = report_rect(r, captions, tabs_start);
-        let tabs_end = report.left() - 8.0;
+        // A newer release: its Update button, left of Report a bug (`update`).
+        let update = crate::update::button(app, ui, report.left() - 6.0, report.top(), report_label);
+        let tabs_end = update.map_or(report.left(), |u| u.left()) - 8.0;
         // Narrow title bars can fit only part of the tab strip. Its hit regions must not
         // extend into the persistent report and window controls.
         let tabs_rect = Rect::from_min_max(pos2(tabs_start.min(tabs_end), r.top()), pos2(tabs_end, r.bottom()));
@@ -296,7 +298,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         ui.painter().text(
             pos2(r.right() - 12.0 - captions, r.center().y),
             Align2::RIGHT_CENTER,
-            format!("v{}", env!("CARGO_PKG_VERSION")),
+            format!("v{}", crate::update::current_version()),
             FontId::proportional(11.0),
             Color32::from_rgb(160, 168, 182),
         );
@@ -335,9 +337,11 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     close = true;
                 }
                 if item(ui, &format!("{}…", app.tr("ui.open")), "Ctrl+O") {
-                    if let Some(p) = app.services.pick_open.as_ref().and_then(|f| f()) {
-                        app.open_path_async(&p);
-                    }
+                    app.pick_open(|app, path| {
+                        if let Some(path) = path {
+                            app.open_path_async(&path);
+                        }
+                    });
                     close = true;
                 }
                 ui.menu_button(app.tr("ui.open_recent"), |ui| {
@@ -453,9 +457,12 @@ fn save_as(app: &mut SolveApp) {
 
 fn save_as_with_extension(app: &mut SolveApp, extension: &str) {
     let name = format!("{}.{extension}", app.session.doc.name);
-    if let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name, &[solidcraft_engine::io::DESIGN_EXT, "json"])) {
-        let _ = app.run("file.save_as", json!({"path": p}));
-    }
+    app.pick_save(&name, &[solidcraft_engine::io::DESIGN_EXT, "json"], |app, path| {
+        if let Some(path) = path {
+            let _ = app.run("file.save_as", json!({"path": path}));
+        }
+        crate::documents::saved_for_close(app);
+    });
 }
 
 fn export(app: &mut SolveApp, ext: &str) {
@@ -465,14 +472,17 @@ fn export(app: &mut SolveApp, ext: &str) {
 /// Export to a file with extension `ext`, in `format` when the extension alone doesn't name it.
 fn export_as(app: &mut SolveApp, ext: &str, format: Option<&str>) {
     let name = format!("{}.{ext}", app.session.doc.name);
-    let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name, &[ext])) else { return };
-    let params = match format {
-        Some(f) => json!({"path": p, "format": f}),
-        None => json!({"path": p}),
-    };
-    if app.run("file.export", params).is_ok() {
-        app.set_status(format!("Exported {p}"), false);
-    }
+    let format = format.map(str::to_string);
+    app.pick_save(&name, &[ext], move |app, path| {
+        let Some(path) = path else { return };
+        let mut params = json!({"path": path});
+        if let Some(format) = format {
+            params["format"] = json!(format);
+        }
+        if app.run("file.export", params).is_ok() {
+            app.set_status(format!("Exported {path}"), false);
+        }
+    });
 }
 
 pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
@@ -1150,9 +1160,11 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                 Key::N => crate::documents::new_design(app),
                 Key::Comma => crate::prefs::open_at(app, 0),
                 Key::O => {
-                    if let Some(p) = app.services.pick_open.as_ref().and_then(|f| f()) {
-                        app.open_path_async(&p);
-                    }
+                    app.pick_open(|app, path| {
+                        if let Some(path) = path {
+                            app.open_path_async(&path);
+                        }
+                    });
                 }
                 _ if !shown => {}
                 Key::Z => drop(app.run("edit.undo", json!({}))),
@@ -1213,7 +1225,8 @@ mod header_report_tests {
         let mut h = crate::scenario::Harness::new();
         h.app.run("solid.box", json!({"length":2,"width":3,"height":4})).unwrap();
         let dir = h.dir.clone();
-        h.app.services.pick_save = Some(Box::new(move |name, _extensions| Some(dir.join(name).to_string_lossy().into_owned())));
+        h.app.services.pick_save =
+            Some(Box::new(move |name, _extensions| Box::pin(std::future::ready(Some(dir.join(name).to_string_lossy().into_owned())))));
         h.frames(3);
         h.step(&json!({"click":{"handle":"appbar:folder"}})).unwrap();
         h.step(&json!({"widget":"Save As JSON…"})).unwrap();

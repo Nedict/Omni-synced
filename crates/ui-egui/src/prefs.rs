@@ -177,6 +177,7 @@ pub const MSAA: [u32; 4] = [1, 2, 4, 8];
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NavigatorStyle {
+    /// Also what a navigator this version doesn't know reads as (`lenient`).
     #[default]
     Axes,
     Cube,
@@ -245,6 +246,10 @@ pub struct Prefs {
     pub offer_stand_up: bool,
     /// What a middle-button double-click in the view does: `home`, `fit` or `off`.
     pub middle_double_click: String,
+    /// Check for updates at start and once a day (docs/updates.md).
+    pub check_updates: bool,
+    /// When the last update check ran, and the versions skipped or put off (`update::Memo`).
+    pub update: crate::update::Memo,
 }
 
 /// What a middle-button double-click in the view does.
@@ -303,6 +308,8 @@ impl Default for Prefs {
             up_axis: "z".into(),
             offer_stand_up: true,
             middle_double_click: "home".into(),
+            check_updates: true,
+            update: crate::update::Memo::default(),
         }
     }
 }
@@ -359,7 +366,10 @@ impl Snapshot {
     }
     fn restore(self, app: &mut SolveApp) {
         let msaa = app.preferences.msaa;
+        // Update bookkeeping isn't a setting: a check that finished while the dialog was open stays.
+        let update = std::mem::take(&mut app.preferences.update);
         app.preferences = self.prefs;
+        app.preferences.update = update;
         app.ui.dark = self.dark;
         app.ui.show_grid = self.grid;
         app.ui.ground_shadow = self.shadow;
@@ -392,6 +402,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.default_units = d.default_units;
             p.length_decimals = d.length_decimals;
             p.angle_decimals = d.angle_decimals;
+            p.check_updates = d.check_updates;
             app.ui.dark = true;
             app.ui.agent_cursor = Default::default();
             app.autosave_minutes = 5.0;
@@ -901,6 +912,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.label("");
             ui.add_enabled(s.show, egui::Checkbox::new(&mut s.follow_camera, crate::i18n::tr_label("Follow the camera (Look At sketches)")));
             ui.end_row();
+            crate::update::prefs_rows(app, ui, t);
         }
         1 => {
             ui.label(app.tr_label("Pan, zoom, orbit"));
@@ -1090,6 +1102,28 @@ pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::
     Ok(out)
 }
 
+/// Saved preferences, keeping every one that still reads. A value this version doesn't
+/// understand (a setting a newer or older release saved differently, a hand edit) falls back to
+/// its default on its own instead of discarding all of them.
+pub fn lenient(saved: &serde_json::Value) -> Prefs {
+    if let Ok(p) = serde_json::from_value::<Prefs>(saved.clone()) {
+        return p;
+    }
+    let Ok(mut cur) = serde_json::to_value(Prefs::default()) else { return Prefs::default() };
+    if let (Some(o), Some(src)) = (cur.as_object_mut(), saved.as_object()) {
+        for (k, v) in src.iter().take(1000) {
+            // Keys this version doesn't have are ignored anyway.
+            let Some(old) = o.get(k).cloned() else { continue };
+            o.insert(k.clone(), v.clone());
+            if serde_json::from_value::<Prefs>(serde_json::Value::Object(o.clone())).is_err() {
+                log::warn!("preferences: `{k}` is not understood by this version; using its default");
+                o.insert(k.clone(), old);
+            }
+        }
+    }
+    serde_json::from_value(cur).unwrap_or_default()
+}
+
 /// Set preferences from JSON (control channel); returns them all.
 pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Value, String> {
     let mut cur = serde_json::to_value(&app.preferences).map_err(|e| e.to_string())?;
@@ -1140,6 +1174,26 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_value_this_version_does_not_understand_keeps_the_other_preferences() {
+        use serde_json::json;
+        // A navigator, a field of the wrong type and a key from another release.
+        let saved = json!({"nav": "solidworks", "navigator_style": "hologram", "ui_scale": "big", "zoom_reverse": true, "from_the_future": 3});
+        let p = super::lenient(&saved);
+        assert_eq!(p.nav, "solidworks");
+        assert!(p.zoom_reverse);
+        assert_eq!(p.navigator_style, super::NavigatorStyle::Axes);
+        assert_eq!(p.ui_scale, super::Prefs::default().ui_scale);
+        assert_eq!(super::lenient(&json!("garbage")), super::Prefs::default());
+        // Whole-app load: the other saved state is kept too, and nothing panics.
+        let mut app = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        app.load_prefs(&json!({"grid": false, "preferences": saved}).to_string());
+        assert!(!app.ui.show_grid && app.preferences.nav == "solidworks" && app.preferences.zoom_reverse);
+        for junk in ["", "{", "[]", "null", "{\"preferences\": 7, \"recent\": {}, \"shortcuts\": 1, \"toolbar\": \"x\"}"] {
+            crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default()).load_prefs(junk);
+        }
+    }
+
     #[test]
     fn stored_prefs_fall_back_to_the_legacy_key() {
         let only_old = |k: &str| (k == super::LEGACY_STORAGE_KEY).then(|| "old".to_string());

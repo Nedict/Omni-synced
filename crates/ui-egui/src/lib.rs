@@ -19,6 +19,7 @@ pub mod delete;
 pub mod dialogs;
 pub mod dialogs_appearance;
 pub mod dialogs_assembly;
+pub mod dialogs_library;
 pub mod dialogs_motion;
 pub mod dialogs_move;
 pub mod dialogs_parts;
@@ -74,6 +75,8 @@ mod expression_complete;
 #[cfg(test)]
 mod extrude_edit_tests;
 mod file_load;
+mod file_picker;
+pub use file_picker::FilePickerFuture;
 #[cfg(test)]
 mod file_load_ui_tests;
 #[cfg(test)]
@@ -125,12 +128,15 @@ mod sketch_text_move;
 pub mod sketch_tools;
 pub mod stand_up;
 pub mod theme;
+#[cfg(test)]
+mod thin_extrude_tests;
 pub mod timeline;
 pub mod timeline_left;
 pub mod titlebar;
 pub mod toolbar;
 pub mod toolbar_custom;
 pub mod tools;
+pub mod update;
 pub mod viewport;
 mod viewport_layout;
 pub mod workspace;
@@ -207,11 +213,15 @@ impl Default for UiState {
 /// Host services (file pickers) injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
-    pub pick_open: Option<Box<dyn Fn() -> Option<String>>>,
-    pub pick_save: Option<Box<dyn Fn(&str, &[&str]) -> Option<String>>>,
+    pub pick_open: Option<Box<dyn Fn() -> FilePickerFuture>>,
+    pub pick_save: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
     pub show_in_folder: Option<Box<dyn Fn(&str)>>,
     /// Where the host reads the anti-aliasing preference at start (a small JSON file).
     pub graphics_path: Option<String>,
+    /// HTTPS GET for the update check (`update`); None: never check (browser, tests).
+    pub http_get: Option<update::HttpGet>,
+    /// HTTPS download to a file, with progress, for one-click updates (`update::install`).
+    pub http_download: Option<update::install::HttpDownload>,
 }
 
 pub struct SolveApp {
@@ -228,6 +238,7 @@ pub struct SolveApp {
     /// restores it.
     pub pre_sketch_marker: Option<Option<usize>>,
     pub services: Services,
+    file_picker: Option<file_picker::Pending>,
     pub viewport: viewport::ViewportState,
     pub tool: Option<tools::Tool>,
     pub dialog: Option<dialogs::Dialog>,
@@ -248,6 +259,8 @@ pub struct SolveApp {
     pub issue_report: issue_report::ReportState,
     /// The Crash Reports window.
     pub crashes: crash_ui::CrashUi,
+    /// The update check and its window (`update`).
+    pub updater: update::Updater,
     /// Toolbar buttons the user pinned, removed or reordered.
     pub toolbar_custom: toolbar_custom::ToolbarCustom,
     pub sketch_choices: sketch_families::Choices,
@@ -280,6 +293,9 @@ pub struct SolveApp {
     pub custom_titlebar: bool,
     /// macOS: the traffic lights sit over the application bar's left end.
     pub integrated_titlebar: bool,
+    /// Build bodies' display meshes on the CPU even where the GPU could (safe mode). Read by
+    /// [`SolveApp::set_wgpu`].
+    pub cpu_meshing: bool,
     pub frame_ms: f64,
     pub synthetic: Vec<egui::Event>,
     /// The modifiers of the synthetic press in progress (a Ctrl-drag keeps Ctrl while it moves).
@@ -300,6 +316,9 @@ pub struct SolveApp {
     pub file_load: file_load::FileLoad,
     /// The other open designs (tabs).
     pub docs: documents::Documents,
+    /// The language the installed font fallback chain is ordered for (`fonts::fallback_order`);
+    /// changing `preferences.language` re-installs the fonts on the next frame.
+    applied_fonts_language: String,
 }
 
 impl SolveApp {
@@ -313,6 +332,7 @@ impl SolveApp {
             pre_sketch_cam: None,
             pre_sketch_marker: None,
             services,
+            file_picker: None,
             viewport: viewport::ViewportState::default(),
             tool: None,
             dialog: None,
@@ -325,6 +345,7 @@ impl SolveApp {
             help: help::HelpState::default(),
             issue_report: issue_report::ReportState::default(),
             crashes: crash_ui::CrashUi::default(),
+            updater: update::Updater::default(),
             toolbar_custom: toolbar_custom::ToolbarCustom::default(),
             sketch_choices: sketch_families::Choices::default(),
             preferences: prefs::Prefs::default(),
@@ -343,6 +364,7 @@ impl SolveApp {
             autosave_minutes: 5.0,
             custom_titlebar: false,
             integrated_titlebar: false,
+            cpu_meshing: false,
             frame_ms: 0.0,
             synthetic: Vec::new(),
             synthetic_mods: egui::Modifiers::default(),
@@ -358,6 +380,7 @@ impl SolveApp {
             home: home::HomeState::default(),
             file_load: file_load::FileLoad::default(),
             docs: documents::Documents::default(),
+            applied_fonts_language: "en".into(),
         }
     }
 
@@ -374,7 +397,7 @@ impl SolveApp {
     /// Draw the viewport on the GPU (eframe's wgpu render state, with the app's depth and
     /// stencil buffer bits and MSAA sample count). Without it the viewport renders on the CPU.
     pub fn set_wgpu(&mut self, rs: &egui_wgpu::RenderState, depth_bits: u8, stencil_bits: u8, samples: u32) {
-        self.viewport.gpu = Some(gpu::install(rs, depth_bits, stencil_bits, samples));
+        self.viewport.gpu = Some(gpu::install(rs, depth_bits, stencil_bits, samples, !self.cpu_meshing));
         self.msaa_supported = rs.msaa_supported.clone();
         let info = rs.adapter.get_info();
         self.help.gpu = Some(format!("{} ({:?}, {:?})", info.name.trim(), info.backend, info.device_type));
@@ -453,7 +476,7 @@ impl SolveApp {
         if let Some(t) = v.get("toolbar") {
             self.toolbar_custom.load(t);
         }
-        if let Some(mut p) = v.get("preferences").and_then(|p| serde_json::from_value::<prefs::Prefs>(p.clone()).ok()) {
+        if let Some(mut p) = v.get("preferences").filter(|p| p.is_object()).map(prefs::lenient) {
             if !prefs::MSAA.contains(&p.msaa) {
                 p.msaa = prefs::Prefs::default().msaa;
             }
@@ -478,7 +501,7 @@ impl SolveApp {
 
     /// Run a command programmatically (JSON parameters, no dialogs).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
-        if self.file_load.busy() {
+        if self.file_load.busy() || self.file_picker.is_some() {
             return Err("a file operation is in progress".into());
         }
         let t0 = now_ms();
@@ -548,7 +571,7 @@ impl SolveApp {
     /// that have them, otherwise run it with defaults.
     pub fn start(&mut self, id: &str) {
         // A file is loading: the design waits for it.
-        if self.file_load.busy() {
+        if self.file_load.busy() || self.file_picker.is_some() {
             return;
         }
         // A disabled command starts nothing, however it was reached. The toolbar greys its
@@ -581,15 +604,15 @@ impl SolveApp {
         self.tool = None;
         self.home.open = false;
         if matches!(id, "sketch.insert_dxf" | "sketch.insert_svg") {
-            if let Some(path) = self.services.pick_open.as_ref().and_then(|f| f()) {
-                let _ = self.run(id, json!({"path": path}));
-            }
+            self.pick_open_command(id, json!({}));
             return;
         }
         if matches!(id, "file.insert_step" | "file.insert_mesh") {
-            if let Some(p) = self.services.pick_open.as_ref().and_then(|f| f()) {
-                self.insert_path_async(&p);
-            }
+            self.pick_open(|app, path| {
+                if let Some(path) = path {
+                    app.insert_path_async(&path);
+                }
+            });
             return;
         }
         if !sketch_tools::start_hook(self, id) {
@@ -995,6 +1018,7 @@ impl SolveApp {
 
     /// Per-frame logic before layout.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        file_picker::tick(self, ctx);
         file_load::tick(self, ctx);
         self.esc_handled = false;
         prefs::apply(self, ctx);
@@ -1021,11 +1045,12 @@ impl SolveApp {
         issue_report::tick(self, ctx);
         self.collect_screenshots(ctx);
         self.issue_screenshots(ctx);
-        if self.issue_report.draft.is_none() {
+        if self.issue_report.draft.is_none() && self.file_picker.is_none() {
             toolbar::shortcuts(self, ctx);
         }
         recovery_ui::tick(self);
-        if self.issue_report.draft.is_none() {
+        update::tick(self, ctx);
+        if self.issue_report.draft.is_none() && self.file_picker.is_none() {
             for f in ctx.input(|i| i.raw.dropped_files.clone()) {
                 let p = f.path().to_string_lossy().to_string();
                 if !p.is_empty() {
@@ -1066,14 +1091,23 @@ impl SolveApp {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         expression_complete::begin_frame(ui.ctx());
         let t0 = now_ms();
+        if self.preferences.language != self.applied_fonts_language {
+            self.applied_fonts_language.clone_from(&self.preferences.language);
+            crate::fonts::setup_fonts_for(ui.ctx(), &self.preferences.language);
+        }
         let _language = crate::i18n::scope(&self.preferences.language);
         let mut report_input = None;
         issue_report::CadInput::block(self, ui, &mut report_input);
         self.cad_ui(ui, &mut report_input);
         drop(report_input);
-        issue_report::show(self, ui.ctx());
+        if self.file_picker.is_none() {
+            issue_report::show(self, ui.ctx());
+        }
         if !self.home.open {
             agent_cursor::paint(self, ui.ctx());
+        }
+        if self.file_picker_busy() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
         }
         self.frame_ms = now_ms() - t0;
     }
@@ -1084,6 +1118,7 @@ impl SolveApp {
         issue_report::CadInput::block(self, ui, report_input);
         file_load::show(self, ui.ctx());
         documents::prompt(self, ui.ctx());
+        update::show(self, ui.ctx());
         if self.home.open {
             home::show(self, ui);
             if self.home.open {
@@ -1144,11 +1179,14 @@ impl SolveApp {
                 break;
             }
             // Held requests go first, in order, once the file is in.
-            let held = if self.file_load.busy() { None } else { self.control_held.pop_front() };
+            let held = if self.file_load.busy() || self.file_picker.is_some() { None } else { self.control_held.pop_front() };
             let Some(req) = held.or_else(|| rx.try_recv().ok()) else { break };
             // A file is loading: commands that change the design wait for it (the window,
             // inspection and screenshots still answer).
-            if self.file_load.busy() && matches!(req.method.as_str(), "engine.execute" | "command" | "engine.script" | "engine.batch") {
+            if ((self.file_load.busy() || self.file_picker.is_some())
+                && matches!(req.method.as_str(), "engine.execute" | "command" | "engine.script" | "engine.batch"))
+                || (self.file_picker_busy() && matches!(req.method.as_str(), "ui.file" | "ui.home"))
+            {
                 if self.control_held.len() < MAX_HELD {
                     self.control_held.push_back(req);
                 } else {
