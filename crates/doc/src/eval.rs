@@ -31,6 +31,9 @@ pub struct ModelBody {
     /// The display plan (none when the body has no plan: a mesh body, or one the planner
     /// refuses), shared like the mesh. A GPU viewport draws it.
     plan: Arc<OnceLock<Option<Arc<TessPlan>>>>,
+    /// The plan evaluated on the CPU (none without a plan), shared like the mesh: the triangles a
+    /// GPU viewport draws, so a highlight over a face lies exactly on it.
+    plan_mesh: Arc<OnceLock<Option<Arc<Mesh>>>>,
     /// Identity of this body's content for the evaluation cache: the key of the evaluation
     /// that produced it (kept while later features pass it through unchanged).
     key: u64,
@@ -59,6 +62,7 @@ impl ModelBody {
             feature,
             mesh: Arc::new(OnceLock::new()),
             plan: Arc::new(OnceLock::new()),
+            plan_mesh: Arc::new(OnceLock::new()),
             key: 0,
             names: Default::default(),
             made: Default::default(),
@@ -96,6 +100,14 @@ impl ModelBody {
                 }
             })
             .clone()
+    }
+
+    /// The display plan's mesh, evaluated on the CPU once: the same triangles a GPU viewport
+    /// evaluates and draws for this body. Highlights over a face drawn from the plan use it, since
+    /// the reference mesh ([`ModelBody::mesh`]) triangulates the face differently and the two
+    /// would fight at equal depth. `None` when the body has no plan.
+    pub fn plan_mesh(&self) -> Option<Arc<Mesh>> {
+        self.plan_mesh.get_or_init(|| self.display_plan().and_then(|plan| self.body.display_mesh_of(&plan).ok()).map(Arc::new)).clone()
     }
 
     /// The display mesh's chord tolerance: 1/1000 of the body's size.
