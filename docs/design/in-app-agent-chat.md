@@ -128,8 +128,8 @@ MCP server it is given) against the release app under Xvfb:
    `session/new` carried `solidcraft-cli mcp --connect 127.0.0.1:PORT`, and the MCP server
    listed SolidCraft's tools.
 3. A prompt streamed text and a plan, showed a tool call, and asked permission; *Allow* ran
-   `batch [solid.box 40×30×20]` through the bridge, the box appeared in the window, and
-   `measure` reported 24 000 mm³. *Reject* left the design unchanged.
+   `batch [solid.box 40×30×20]` through the bridge, the box appeared in the window and the
+   browser, and `measure` reported its 40 × 30 × 20 mm bounding box.
 4. A `save` to `/etc/…` was refused by the #205 folder check and shown as a failed tool call.
 5. Against the real Claude and Codex adapters with no credentials, the panel reached
    *Sign-in needed* and listed the adapters' own login methods.
