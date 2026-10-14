@@ -1219,6 +1219,8 @@ impl Model {
                         }
                     }
                     state = Arc::new(next);
+                    // A window opening the design can show what is built so far.
+                    watched.offer(i + 1, doc, &state);
                     None
                 }
                 Err(e) => Some(e.to_string().trim_start_matches("the operation failed: ").to_string()),

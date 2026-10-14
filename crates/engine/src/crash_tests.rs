@@ -28,6 +28,14 @@ fn child() {
         s.execute("document.inspect", &json!({})).unwrap();
     }
     match mode.as_str() {
+        "render" => {
+            s.execute("render.settings.set", &json!({"name":"Studio","set":{"exposure_ev":2}})).unwrap();
+            s.execute("render.settings.get", &json!({"name":"Studio"})).unwrap();
+            s.execute("render.settings.set", &json!({"name":"Studio","set":{"exposure_ev":3}})).unwrap();
+            s.execute("edit.undo", &json!({})).unwrap();
+            s.execute("edit.redo", &json!({})).unwrap();
+            let _ = s.execute("diagnostics.crash_test", &json!({"mode":"abort"}));
+        }
         "command" => {
             for _ in 0..3 {
                 let r = s.execute("diagnostics.crash_test", &json!({"mode": "panic"}));
@@ -154,6 +162,28 @@ fn an_abort_is_reported_at_the_next_start_with_a_replay() {
     // Told once: the start after that has nothing new.
     let (out, _) = run_child(&d, "none");
     assert!(out.contains("FRESH []"), "{out}");
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn render_settings_survive_unclean_exit_and_journal_replay() {
+    let d = fresh_dir("render");
+    assert!(!run_child(&d, "render").1);
+    assert!(run_child(&d, "none").1);
+    let (_, report) = only_report(&d);
+    let replay: Value = serde_json::from_slice(&fs::read(report["replay_path"].as_str().unwrap()).unwrap()).unwrap();
+    let commands = replay["commands"].as_array().unwrap();
+    assert!(!commands.iter().any(|c| c["command"] == "render.settings.get"));
+    assert_eq!(commands.iter().filter(|c| c["command"] == "render.settings.set").count(), 2);
+    let mut recovered = Session::default();
+    for command in commands {
+        let id = command["command"].as_str().unwrap();
+        if id != "diagnostics.crash_test" {
+            recovered.execute(id, &command["params"]).unwrap();
+        }
+    }
+    assert_eq!(recovered.doc.features.len(), 1);
+    assert_eq!(recovered.doc.render.setups["Studio"].exposure_ev, 3.0);
     let _ = fs::remove_dir_all(&d);
 }
 
