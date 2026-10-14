@@ -724,6 +724,66 @@ fn offset_free_form_curves() {
 }
 
 #[test]
+fn irregular_closed_spline_offset_certificate_edits_undoes_and_reopens() {
+    // Public-safe reproduction of #971: the fit uses chord-length parameters,
+    // while its exact offset's speed varies across eight unequal source spans.
+    let mut s = new_sketch();
+    run(
+        &mut s,
+        "sketch.spline.fit_point",
+        json!({
+            "points":[[-17,15],[0,8],[17,13],[15,0],[5,-7],[-1,-14],[-9,-1],[-21,-1]],
+            "periodic":true
+        }),
+    );
+    let original = sketch(&s);
+    let before = s.doc.to_json();
+    let result = run(&mut s, "sketch.offset", json!({"curves":["s1"],"distance":2.0,"chain":true}));
+    let output = result["curves"][0].as_str().unwrap().to_string();
+    let parameter = result["param"].as_str().unwrap().to_string();
+    let point_ids = sketch(&s).curves[1].kind.point_ids();
+    let verify = |s: &Session, distance: f64| {
+        let state = s.world_state();
+        let sk = &state.sketch(1).unwrap().sketch;
+        assert_eq!(sk.curves[0], original.curves[0]);
+        assert_eq!(&sk.points[..original.points.len()], &original.points);
+        let index = sk.curve_index(&output).unwrap();
+        assert_eq!(sk.curves[index].kind.point_ids(), point_ids);
+        assert!(matches!(sk.curves[index].kind, CurveKind::Spline { periodic: true, .. }));
+        let exact = sk.exact_segs(0).unwrap();
+        let fitted = sk.exact_segs(index).unwrap();
+        let mut max_error = 0.0_f64;
+        for curve in &fitted {
+            for j in 0..=8 {
+                let p = curve.point_at(j as f64 / 8.0);
+                let normal_distance = exact.iter().map(|s| s.point_at(s.closest_param(p)).dist(p)).fold(f64::INFINITY, f64::min);
+                max_error = max_error.max((normal_distance - distance).abs());
+            }
+        }
+        assert!(max_error < solidcraft_sketch::OFFSET_TOLERANCE, "normal-distance error {max_error}");
+        eprintln!("#971 offset {distance} mm: maximum sampled normal-distance error {max_error} mm");
+        assert_eq!(sk.freeform_offsets.len(), 1);
+        assert_eq!(sk.freeform_offsets[0].divisions, 32);
+        sk.validate_freeform_offsets().unwrap();
+        sk.validate_periodic_splines().unwrap();
+        assert_eq!(state.sketch(1).unwrap().profiles.len(), 2);
+    };
+    verify(&s, 2.0);
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.doc.to_json(), before);
+    run(&mut s, "edit.redo", json!({}));
+    verify(&s, 2.0);
+    run(&mut s, "parameters.change", json!({"name":parameter,"expression":"3 mm"}));
+    verify(&s, 3.0);
+    run(&mut s, "edit.undo", json!({}));
+    verify(&s, 2.0);
+    let mut reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    verify(&reopened, 2.0);
+    run(&mut reopened, "parameters.change", json!({"name":parameter,"expression":"3 mm"}));
+    verify(&reopened, 3.0);
+}
+
+#[test]
 fn certified_offset_follows_dimension_drag_reopen_break_and_undo() {
     let mut s = new_sketch();
     let ellipse = ids(&run(&mut s, "sketch.ellipse", json!({"center":[0,0],"major":[10,0],"minor_radius":5,"connect":false}))["curves"])[0].clone();
