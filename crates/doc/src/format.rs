@@ -135,6 +135,9 @@
 
 //! - 19: editable associative offset-distance dimensions. Older offsets retain their saved
 //!   fixed distances; migration does not invent dimensions or change geometry.
+//!   Under the same version, a fillet's style can be `curvature` (a G2 quintic blend; `radius`
+//!   is the equivalent circular setback). Fillets of the other styles save as before; 0.9.0
+//!   would refuse the unknown style.
 
 use serde_json::Value;
 
