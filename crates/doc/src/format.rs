@@ -129,6 +129,9 @@
 //!   taken from another face whose plane passed near the point, such as the far side of a thin
 //!   plate or a face of another body at the same height) is mirrored into that face when the
 //!   design is evaluated. Holes whose direction enters their face build as before.
+//!   Holes at sketch points can be flipped (`flip: true` in the hole's `points`): they drill away
+//!   from the side they would go into by themselves. Holes without it save as before; 0.9.0 would
+//!   drop the flip and drill the other way.
 
 use serde_json::Value;
 

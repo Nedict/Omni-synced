@@ -1131,6 +1131,9 @@ pub struct MeshData {
 pub struct SketchPoints {
     pub sketch: u64,
     pub ids: Vec<String>,
+    /// Drill the other way: away from the side the holes would go into by themselves.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flip: bool,
 }
 
 /// A component: a node of the design tree that owns sketches, features and bodies. The root

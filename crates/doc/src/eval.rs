@@ -2077,6 +2077,7 @@ fn hole_spots(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
                 v.push(ss.plane.to_world(p.pos));
             }
             let dir = sketch_hole_dir(st, &v, ss.plane.normal());
+            let dir = if sp.flip { -dir } else { dir };
             (v, dir)
         }
         None => {
@@ -2123,6 +2124,7 @@ fn hole_spots_raw(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
             let v: Vec<Vec3> =
                 sp.ids.iter().filter_map(|id| ss.sketch.points.iter().find(|p| &p.id == id)).map(|p| ss.plane.to_world(p.pos)).take(10_000).collect();
             let dir = sketch_hole_dir(st, &v, ss.plane.normal());
+            let dir = if sp.flip { -dir } else { dir };
             Ok((v, dir))
         }
         None => {

@@ -255,7 +255,8 @@ pub enum Kind {
 
 /// The Single hole placement's input: places on planar faces. A pick on or near a sketch point
 /// that lies on the face (a circle's centre) is taken at that point, as Multiple picks it.
-const HOLE_FACES: Accept = PLANAR_FACES | selection::POINTS;
+/// Holes go on any face (flat or curved; the engine drills against the face's normal there).
+const HOLE_FACES: Accept = PLANAR_FACES | FACES | selection::POINTS;
 
 /// The rest of the Hole dialog: placement, extents, tap type and drill point.
 #[derive(Clone, Debug, PartialEq)]
@@ -2352,6 +2353,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             row_label(ui, "All Sketch Points");
                             extra_check(ui, &mut d.extra, "all_points");
                             ui.end_row();
+                            // The holes go into the part the sketch touches; Flip drills the
+                            // other way.
+                            row_label(ui, "Flip");
+                            extra_check(ui, &mut d.extra, "flip");
+                            ui.end_row();
                         }
                         row_label(ui, "Hole Type");
                         combo(ui, "hole_kind", &HOLE_LABELS, kind);
@@ -3450,11 +3456,29 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                     }
                 }
                 let all_points = d.extra.get("all_points").and_then(Value::as_bool).unwrap_or(false);
+                let flip = d.extra.get("flip").and_then(Value::as_bool).unwrap_or(false);
                 places.extend(
-                    by_sketch.into_iter().map(|(sk, ids)| if all_points { json!({ "sketch": sk }) } else { json!({"sketch": sk, "points": ids}) }),
+                    by_sketch
+                        .into_iter()
+                        .map(|(sk, ids)| if all_points { json!({ "sketch": sk }) } else { json!({"sketch": sk, "points": ids}) })
+                        .map(|mut place| {
+                            if flip {
+                                place["flip"] = json!(true);
+                            }
+                            place
+                        }),
                 );
             } else {
-                places.extend(face_points(0).into_iter().map(|p| json!({ "position": p })));
+                // One hole per pick: a curved surface split at its seam is picked whole (both
+                // halves, the clicked one first), but the hole goes where it was clicked only.
+                let mut taken: Vec<Sel> = Vec::new();
+                for x in sels(d, 0) {
+                    if !matches!(x, Sel::Face { .. }) || taken.iter().any(|t| same_face(t, x)) {
+                        continue;
+                    }
+                    taken.extend(crate::viewport::grouped_selection(s, x));
+                    places.extend(face_point(x).map(|p| json!({ "position": p })));
+                }
             }
             let mut out = Vec::new();
             for place in places {
@@ -4045,6 +4069,9 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                     if let Some(inp) = d.inputs.first_mut() {
                         inp.items = sp.ids.iter().map(|id| Sel::SketchPoint { id: format!("{}:{id}", sp.sketch) }).collect();
                     }
+                    if sp.flip {
+                        d.extra.insert("flip".into(), json!(true));
+                    }
                 }
                 None => {
                     if let Some(inp) = d.inputs.first_mut() {
@@ -4608,4 +4635,14 @@ mod refused_ok_tests {
         let bore = h.app.session.execute("timeline.inspect", &json!({"feature": "Bore"})).unwrap();
         assert!(bore.to_string().contains("\"depth\":\"5\""), "{bore}");
     }
+}
+
+/// Whether two picks are the same face of the same body (wherever on it they were made).
+fn same_face(a: &Sel, b: &Sel) -> bool {
+    matches!((a, b), (Sel::Face { body: ba, index: ia, .. }, Sel::Face { body: bb, index: ib, .. }) if ba == bb && ia == ib)
+}
+
+/// Where a face was picked.
+fn face_point(x: &Sel) -> Option<Value> {
+    if let Sel::Face { point, .. } = x { Some(pt(*point)) } else { None }
 }

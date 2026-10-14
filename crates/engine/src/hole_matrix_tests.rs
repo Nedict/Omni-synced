@@ -506,6 +506,27 @@ fn cases() -> Vec<Case> {
             vec![spot([10.0, 10.0, 0.0], UP, 15.0, Some(15.0))],
         )
         .faces(2),
+        // Inside the part the holes go down from the top; Flip drills up from the bottom.
+        Case::new(
+            "points/mid-plane/blind",
+            with(block(), points(lifted(10.0), &[[10.0, 10.0]])),
+            hole(json!({"sketch": "P", "points": ["q0"], "depth": 5})),
+            cyl(r, 5.0),
+            r,
+            vec![spot([10.0, 10.0, 20.0], DOWN, 5.0, Some(5.0))],
+        )
+        .faces(2),
+        Case::new(
+            "points/mid-plane/flip",
+            with(block(), points(lifted(10.0), &[[10.0, 10.0]])),
+            hole(json!({"sketch": "P", "points": ["q0"], "depth": 5, "flip": true})),
+            cyl(r, 5.0),
+            r,
+            vec![spot([10.0, 10.0, 0.0], UP, 5.0, Some(5.0))],
+        )
+        .faces(2)
+        // Saved and opened again, it still drills up.
+        .then(Vec::new(), cyl(r, 5.0)),
         Case::new(
             "points/xy-over-part-below-xy/blind",
             with(
