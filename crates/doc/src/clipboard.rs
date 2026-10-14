@@ -305,6 +305,7 @@ impl FeatureKind {
             | K::SplitFace { body, .. }
             | K::OffsetFace { body, .. }
             | K::DeleteFace { body, .. }
+            | K::SurfaceOffset { body, .. }
             | K::ReplaceFace { body, .. }
             | K::SheetFlange { body, .. }
             | K::SheetHem { body, .. }

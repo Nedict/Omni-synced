@@ -987,6 +987,19 @@ pub enum FeatureKind {
     SurfaceLoft {
         sections: Vec<SheetSection>,
     },
+    /// The faces at `faces` copied out at a signed `distance` along their normals as a new
+    /// surface body (0 copies them); `chain` takes each pick's whole smooth chain of faces;
+    /// fitted faces within `tolerance`.
+    SurfaceOffset {
+        faces: Vec<Vec3>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        body: Option<String>,
+        distance: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        chain: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tolerance: Option<String>,
+    },
     /// A planar surface body extended outward by `distance` past the edges through `edges`.
     SurfaceExtend {
         body: String,
@@ -1331,6 +1344,7 @@ impl FeatureKind {
             | K::Scale { .. }
             | K::OffsetFace { .. }
             | K::DeleteFace { .. }
+            | K::SurfaceOffset { .. }
             | K::BoundingSolid { .. }
             | K::ReplaceFace { .. }
             | K::Align { .. }
@@ -1410,6 +1424,7 @@ impl FeatureKind {
             FeatureKind::Scale { .. } => "ScaleFeature",
             FeatureKind::OffsetFace { .. } => "OffsetFacesFeature",
             FeatureKind::DeleteFace { .. } => "DeleteFaceFeature",
+            FeatureKind::SurfaceOffset { .. } => "OffsetSurfaceFeature",
             FeatureKind::BoundingSolid { .. } => "BoundingSolidFeature",
             FeatureKind::Pipe { .. } => "PipeFeature",
             FeatureKind::Emboss { .. } => "EmbossFeature",
@@ -1482,6 +1497,7 @@ impl FeatureKind {
             FeatureKind::Scale { .. } => "Scale",
             FeatureKind::OffsetFace { .. } => "OffsetFace",
             FeatureKind::DeleteFace { .. } => "DeleteFace",
+            FeatureKind::SurfaceOffset { .. } => "OffsetSurface",
             FeatureKind::BoundingSolid { .. } => "BoundingSolid",
             FeatureKind::Pipe { .. } => "Pipe",
             FeatureKind::Emboss { .. } => "Emboss",
@@ -1572,6 +1588,7 @@ impl FeatureKind {
             | FeatureKind::Draft { faces, .. }
             | FeatureKind::OffsetFace { faces, .. }
             | FeatureKind::DeleteFace { faces, .. }
+            | FeatureKind::SurfaceOffset { faces, .. }
             | FeatureKind::SplitFace { faces, .. }
             | FeatureKind::ReplaceFace { faces, .. } => faces.iter_mut().collect(),
             FeatureKind::Hole { position, points: None, to, .. } => std::iter::once(position).chain(to.iter_mut()).collect(),
@@ -1747,6 +1764,12 @@ impl FeatureKind {
             }
             FeatureKind::ReplaceFace { target, .. } => plane_exprs(target, &mut v),
             FeatureKind::Align { .. } | FeatureKind::Remove { .. } | FeatureKind::BoundaryFill { .. } | FeatureKind::DeleteFace { .. } => {}
+            FeatureKind::SurfaceOffset { distance, tolerance, .. } => {
+                v.push(distance);
+                if let Some(t) = tolerance {
+                    v.push(t);
+                }
+            }
             FeatureKind::Stitch { tolerance, .. } => v.push(tolerance),
             FeatureKind::MeshConvert { tolerance, .. } => v.push(tolerance),
             FeatureKind::Thicken { thickness, .. } => v.push(thickness),

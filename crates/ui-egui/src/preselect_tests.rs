@@ -940,6 +940,31 @@ fn surface_loft_dialog_makes_a_section_per_sketch() {
 }
 
 #[test]
+fn offset_surface_dialog_takes_faces_a_distance_and_the_chain() {
+    // A box top picked, moved up 5: a 10 × 10 square at z = 15; Edit Feature brings it back.
+    let mut app = app_with(json!([{"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "body_name": "Box"}}]));
+    let mut d = start(&mut app, vec![], "surface.offset");
+    assert!(apply_commands(&app, &d).is_err(), "no faces yet");
+    d.inputs[0].items = vec![Sel::Face { body: "Box".into(), index: 0, point: Vec3::new(5.0, 5.0, 10.0) }];
+    if let Kind::Surface(crate::dialogs_surface::Surf::Offset { distance, chain }) = &mut d.kind {
+        *distance = "5 mm".into();
+        *chain = true;
+    }
+    let (id, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!(
+        (id.as_str(), &p["body"], &p["faces"], &p["chain"]),
+        ("surface.offset", &json!("Box"), &json!([[5.0, 5.0, 10.0]]), &json!(true)),
+        "{p}"
+    );
+    app.session.execute(&id, &p).unwrap();
+    let m = app.session.model.state().bodies.last().unwrap().mesh().measure();
+    assert!((m.area - 100.0).abs() < 1e-6, "{}", m.area);
+    let fid = app.session.doc.features.last().unwrap().id;
+    let back = crate::dialogs::for_feature(&app, fid, None).unwrap();
+    assert_eq!(back.inputs[0].items.len(), 1);
+}
+
+#[test]
 fn patch_dialog_fills_a_loop_of_edges_that_is_not_planar() {
     // A box with its top cut away by a sideways cylinder: its rim is a closed loop of four
     // curved edges, not in a plane. Picking them in the Patch dialog fills it with one face.

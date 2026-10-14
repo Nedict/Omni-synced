@@ -278,6 +278,12 @@ impl FeatureKind {
             FeatureKind::SurfaceTrim { plane, .. } => plane_inputs_mut(plane, &mut v),
             FeatureKind::SurfaceExtend { distance, .. } => v.push(("Distance", distance, L)),
             FeatureKind::Unstitch { .. } | FeatureKind::ReverseNormal { .. } => {}
+            FeatureKind::SurfaceOffset { distance, tolerance, .. } => {
+                v.push(("Distance", distance, L));
+                if let Some(t) = tolerance {
+                    v.push(("Tolerance", t, L));
+                }
+            }
             FeatureKind::Patch { .. } => {}
             FeatureKind::Combine { .. }
             | FeatureKind::SheetBase { .. }

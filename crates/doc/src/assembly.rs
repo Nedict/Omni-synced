@@ -237,9 +237,10 @@ impl FeatureKind {
                 }
             }
             FeatureKind::Chamfer { edges, .. } => edges.iter_mut().for_each(pt),
-            FeatureKind::Shell { faces, .. } | FeatureKind::OffsetFace { faces, .. } | FeatureKind::DeleteFace { faces, .. } => {
-                faces.iter_mut().for_each(pt)
-            }
+            FeatureKind::Shell { faces, .. }
+            | FeatureKind::OffsetFace { faces, .. }
+            | FeatureKind::DeleteFace { faces, .. }
+            | FeatureKind::SurfaceOffset { faces, .. } => faces.iter_mut().for_each(pt),
             FeatureKind::Draft { faces, neutral, pull, .. } => {
                 faces.iter_mut().for_each(pt);
                 map_plane_ref(m, neutral);

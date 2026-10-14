@@ -46,10 +46,10 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SURFACE", "CREATE")
         .icon("surface_loft")
         .params("sections: [{sketch, curves?: [curve ids], profiles?}] (2…50 in order; each one chain: a profile without holes, or curves meeting end to end; all open or all closed); name?, body_name? (a surface body: ruled between two sections, smooth through three or more; no caps)"),
-    planned!("surface.offset", "Offset Surface", "758")
+    CommandSpec::new("surface.offset", "Offset Surface", offset)
         .at("SURFACE", "CREATE")
         .icon("surface_offset")
-        .params("planned: faces: [{body, point}]; distance: expr (signed, along the normals; 0 copies the faces); chain?: bool (the whole tangent chain of each pick); tolerance?: expr (B-spline fit, default 0.01 mm)"),
+        .params("faces: [[x,y,z]] (points on the faces); body?; distance: expr (signed, along the faces' normals; 0 copies the faces); chain?: bool (each pick's whole smooth chain of faces); tolerance?: expr (how far a fitted face may stray, default 0.01 mm). Planes and cylinders move exactly; other faces are fitted. A new surface body (a solid where its faces close)"),
     planned!("surface.ruled", "Ruled Surface", "762")
         .at("SURFACE", "CREATE")
         .icon("ruled")
@@ -184,6 +184,28 @@ fn surface_loft(s: &mut Session, p: &Value) -> Result<Value> {
         sections.push(solidcraft_doc::SheetSection { sketch, profiles, curves });
     }
     add_feature(s, p, FeatureKind::SurfaceLoft { sections })
+}
+
+fn offset(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "surface.offset";
+    let faces: Vec<solidcraft_geom::Vec3> = p.get("faces").and_then(Value::as_array).map(|a| a.iter().filter_map(vec3).collect()).unwrap_or_default();
+    if faces.is_empty() || faces.len() > 10_000 {
+        return Err(bad(cmd, "`faces` must list points on the faces to offset"));
+    }
+    let distance = expr(p, "distance").ok_or_else(|| bad(cmd, "`distance` is required"))?;
+    check_expr(s, &distance, Kind::Length, cmd, "distance")?;
+    let tolerance = expr(p, "tolerance");
+    if let Some(t) = &tolerance {
+        check_expr(s, t, Kind::Length, cmd, "tolerance")?;
+    }
+    let kind = FeatureKind::SurfaceOffset {
+        faces,
+        body: str_(p, "body").map(str::to_string),
+        distance,
+        chain: bool_(p, "chain").unwrap_or(false),
+        tolerance,
+    };
+    add_feature(s, p, kind)
 }
 
 fn bodies_param(s: &Session, p: &Value, cmd: &str) -> Result<Vec<String>> {
@@ -585,13 +607,43 @@ mod tests {
         }
     }
 
+    /// Offset Surface: a cylinder's side picked once with its chain (both halves) moved out to
+    /// radius 12; a box top moved up exactly; a zero distance copies; past the axis refused, the
+    /// design left as it was; undo, redo and reopening.
+    #[test]
+    fn offset_surface_of_a_cylinder_and_a_box_top() {
+        let mut s = Session::default();
+        run(&mut s, "solid.cylinder", json!({"radius": 10, "height": 20, "body_name": "Can"}));
+        run(&mut s, "surface.offset", json!({"faces": [[10, 0, 10]], "chain": true, "distance": 2, "body": "Can", "body_name": "Sleeve"}));
+        let st = s.world_state();
+        let sleeve = &st.body("Sleeve").unwrap().body;
+        assert!(sleeve.is_surface() && sleeve.face_count() == 2);
+        let want = 2.0 * std::f64::consts::PI * 12.0 * 20.0;
+        assert!((area(&s, "Sleeve") - want).abs() < want * 1e-3, "{} vs {want}", area(&s, "Sleeve")); // (measured on meshes)
+        assert!(st.body("Can").is_some(), "the source body stays");
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [30, 0, 0], "body_name": "Box"}));
+        run(&mut s, "surface.offset", json!({"faces": [[35, 5, 10]], "distance": "5 mm", "body_name": "Lid"}));
+        let bb = solidcraft_kernel::measure(&s.world_state().body("Lid").unwrap().body).unwrap().bbox;
+        assert!((bb.min.z - 15.0).abs() < 1e-9 && (area(&s, "Lid") - 100.0).abs() < 1e-9);
+        run(&mut s, "surface.offset", json!({"faces": [[35, 5, 10]], "distance": 0, "body_name": "Copy"}));
+        assert!((area(&s, "Copy") - 100.0).abs() < 1e-9);
+        let before = s.doc.features.len();
+        assert!(s.execute("surface.offset", &json!({"faces": [[10, 0, 10]], "chain": true, "distance": -11, "body": "Can"})).is_err());
+        assert_eq!(s.doc.features.len(), before);
+        run(&mut s, "edit.undo", json!({}));
+        assert!(s.world_state().body("Copy").is_none());
+        run(&mut s, "edit.redo", json!({}));
+        let cold = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        assert!((area(&cold, "Sleeve") - area(&s, "Sleeve")).abs() < 1e-9);
+        assert!(s.execute("surface.offset", &json!({"distance": 1})).is_err());
+    }
+
     /// The planned surface commands are registered but refuse to run: disabled with the
     /// issue that tracks them, an error (never a panic) from every caller, and the design left
     /// as it was.
     #[test]
     fn planned_commands_refuse_and_leave_the_design_alone() {
-        let planned =
-            ["surface.offset", "surface.ruled", "surface.boundary", "surface.blend", "surface.untrim", "surface.fillet", "inspect.continuity"];
+        let planned = ["surface.ruled", "surface.boundary", "surface.blend", "surface.untrim", "surface.fillet", "inspect.continuity"];
         let mut s = Session::default();
         run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "B"}));
         let before = s.doc.features.len();

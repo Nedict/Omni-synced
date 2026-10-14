@@ -68,6 +68,8 @@ pub enum Target {
     Canvas {
         id: u64,
     },
+    /// The Section Analysis in the browser's Analysis folder.
+    Section,
     /// A component's Bodies, Sketches or Construction folder.
     Folder {
         component: u64,
@@ -261,7 +263,8 @@ pub fn target_bodies(app: &SolveApp, target: &Target) -> Vec<String> {
         | Target::Toolbar
         | Target::Workspace
         | Target::NamedViews
-        | Target::NamedView { .. } => Vec::new(),
+        | Target::NamedView { .. }
+        | Target::Section => Vec::new(),
     }
 }
 
@@ -315,6 +318,7 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
         Target::Canvas { id } => crate::browser::canvas_items(app, *id),
         Target::Origin => crate::browser::origin_items(app),
         Target::NamedViews => vec![act("ui.newView", "New Named View", "perspective")],
+        Target::Section => crate::browser::section_items(app),
         Target::Joint { id } => joint_items(app, *id),
         Target::ToolbarCommand { id } => crate::toolbar_custom::command_items(app, id),
         Target::Toolbar => crate::toolbar_custom::toolbar_items(app),
@@ -858,7 +862,12 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         "ui.tangentChain" => tangent_chain(app),
         "ui.origin" => app.ui.show_origin = !app.ui.show_origin,
         "ui.clear" => drop(app.run("select.clear", json!({}))),
-        "ui.unsection" => drop(app.run("inspect.section", json!({"clear": true}))),
+        "ui.unsection" => {
+            app.tree.hidden_section = None;
+            drop(app.run("inspect.section", json!({"clear": true})));
+        }
+        "ui.editSection" => app.start("inspect.section"),
+        "ui.sectionVisible" => crate::browser::set_section_visible(app, p.get("visible").and_then(Value::as_bool).unwrap_or(true)),
         "ui.fit" => app.animate_view("fit"),
         "ui.home" => app.animate_view("home"),
         // One command for the whole selection: all fixed unless all already are.

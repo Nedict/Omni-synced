@@ -122,6 +122,8 @@
 //!   `path_sketch`, `path`) is also first saved in 18.
 //!   A `SurfaceLoft` feature (Surface Loft: `sections`, each a `sketch` with optional `profiles`
 //!   and `curves`) is also first saved in 18.
+//!   A `SurfaceOffset` feature (Offset Surface: `faces` points, optional `body`, `distance`,
+//!   `chain` and `tolerance`) is also first saved in 18.
 
 use serde_json::Value;
 

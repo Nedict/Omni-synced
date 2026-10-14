@@ -28,8 +28,8 @@ pub struct ModelBody {
     // Timeline snapshots are cloned before meshes are requested. Share the cell itself so
     // meshing any snapshot also warms every unchanged copy of this body.
     mesh: Arc<OnceLock<Arc<Mesh>>>,
-    /// The display plan the mesh is evaluated from (none when the body has no plan: a mesh
-    /// body, or one the planner refuses), shared like the mesh. A GPU viewport draws it.
+    /// The display plan (none when the body has no plan: a mesh body, or one the planner
+    /// refuses), shared like the mesh. A GPU viewport draws it.
     plan: Arc<OnceLock<Option<Arc<TessPlan>>>>,
     /// Identity of this body's content for the evaluation cache: the key of the evaluation
     /// that produced it (kept while later features pass it through unchanged).
@@ -75,19 +75,17 @@ impl ModelBody {
     /// curved face or edge turning more than [`kernel::DISPLAY_ANGLE`], so that a bend or a
     /// hole that is small beside the body is still drawn round.
     pub fn mesh(&self) -> Arc<Mesh> {
+        // From the reference mesher, not the display plan: the model reads this mesh (holes
+        // finding their surface, picks naming their face, sketch planes), and a different
+        // triangulation moved those and changed what designs build. A GPU viewport draws the
+        // plan ([`ModelBody::display_plan`]).
         self.mesh
-            .get_or_init(|| {
-                let mesh = match self.display_plan() {
-                    Some(plan) => self.body.display_mesh_of(&plan),
-                    None => self.body.reference_display_mesh_angular(self.display_tol(), kernel::DISPLAY_ANGLE),
-                };
-                Arc::new(mesh.unwrap_or_default())
-            })
+            .get_or_init(|| Arc::new(self.body.reference_display_mesh_angular(self.display_tol(), kernel::DISPLAY_ANGLE).unwrap_or_default()))
             .clone()
     }
 
-    /// The display plan behind [`ModelBody::mesh`] (same tolerance and angle), made once; `None`
-    /// when the body has no plan and its mesh comes from the reference mesher.
+    /// The display plan of this body (the same tolerance and angle as [`ModelBody::mesh`]), made
+    /// once; `None` when the body has no plan (a mesh body, or one the planner refuses).
     pub fn display_plan(&self) -> Option<Arc<TessPlan>> {
         self.plan
             .get_or_init(|| match self.body.display_plan_angular(self.display_tol(), kernel::DISPLAY_ANGLE) {
@@ -3650,7 +3648,8 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         | FeatureKind::ReverseNormal { .. }
         | FeatureKind::SurfaceRevolve { .. }
         | FeatureKind::SurfaceSweep { .. }
-        | FeatureKind::SurfaceLoft { .. } => surface::eval(doc, vals, f, st),
+        | FeatureKind::SurfaceLoft { .. }
+        | FeatureKind::SurfaceOffset { .. } => surface::eval(doc, vals, f, st),
         FeatureKind::Emboss { .. }
         | FeatureKind::Rib { .. }
         | FeatureKind::ReplaceFace { .. }
