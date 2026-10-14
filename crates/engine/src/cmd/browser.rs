@@ -520,7 +520,33 @@ fn rename_body(s: &mut Session, p: &Value) -> Result<Value> {
     let fid = b.feature;
     let siblings: Vec<String> = st.bodies.iter().filter(|x| x.feature == fid).map(|x| x.name.clone()).collect();
     let k = siblings.iter().position(|n| *n == old).unwrap_or(0);
+    // A body numbered by the counter (`BodyN`) gives its number back once it has a name of its
+    // own, and every counted body after it would move down one (`Body3` becoming `Body1`) and
+    // break what names it. Those later features keep the names they made too (#1109): each one's
+    // own result holds them, also for bodies a later feature joins away.
+    let counted = |f: &solidcraft_doc::Feature, i: usize| {
+        let first = f.body_names.first().is_some_and(|n| !n.trim().is_empty());
+        f.body_names.get(i).is_none_or(|n| n.trim().is_empty()) && (f.shell_piece_order || i < f.body_names.len() || !first)
+    };
+    let later: Vec<(u64, Vec<String>)> = match s.doc.features.iter().position(|f| f.id == fid) {
+        Some(at) if s.doc.features.get(at).is_some_and(|f| counted(f, k)) => s
+            .doc
+            .features
+            .iter()
+            .skip(at + 1)
+            .filter_map(|f| {
+                let made: Vec<String> = s.model.result(f.id)?.state.bodies.iter().filter(|x| x.feature == f.id).map(|x| x.name.clone()).collect();
+                (0..made.len()).any(|i| counted(f, i)).then_some((f.id, made))
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
     let d = s.doc_mut();
+    for (id, made) in &later {
+        if let Some(f) = d.feature_mut(*id) {
+            f.body_names.clone_from(made);
+        }
+    }
     let f = d.feature_mut(fid).ok_or_else(|| bad(cmd, "the body's feature is gone"))?;
     while f.body_names.len() < siblings.len().max(k + 1) {
         let i = f.body_names.len();
@@ -761,6 +787,36 @@ mod tests {
         assert!((total(&mut s) - want).abs() < 1e-6);
         run(&mut s, "edit.undo", json!({}));
         assert_eq!(s.doc.find_feature("Hole").unwrap().participants, vec!["A".to_string()]);
+    }
+
+    /// #1109: renaming counted bodies (`Body1`, `Body2` of one pattern) leaves the counted bodies
+    /// of later features as they were (`Body3`, `Body4`), and what names them keeps working.
+    #[test]
+    fn renaming_counted_bodies_keeps_later_counted_names() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5, "center": [0, 0, 2.5], "name": "B1", "body_name": "First"}));
+        run(&mut s, "solid.pattern.rectangular", json!({"features": ["B1"], "dir1": [1, 0, 0], "count1": 3, "spacing1": 10, "name": "P1"}));
+        run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5, "center": [0, 20, 2.5], "name": "B2", "body_name": "Second"}));
+        run(&mut s, "solid.pattern.rectangular", json!({"features": ["B2"], "dir1": [1, 0, 0], "count1": 3, "spacing1": 10, "name": "P2"}));
+        run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5, "center": [10, 25, 2.5], "operation": "new", "name": "Bar"}));
+        let before = names(&s);
+        assert!(["Body1", "Body2", "Body3", "Body4", "Body5"].iter().all(|n| before.contains(&n.to_string())), "{before:?}");
+        run(&mut s, "solid.combine", json!({"target": "Body3", "tools": ["Body5"], "operation": "join", "name": "Joined"}));
+        // Renaming a body that already has a name of its own stores nothing elsewhere.
+        run(&mut s, "body.rename", json!({"body": "Second", "name": "Row"}));
+        assert!(s.doc.find_feature("P2").unwrap().body_names.is_empty());
+        run(&mut s, "body.rename", json!({"body": "Body1", "name": "FirstCopyA"}));
+        run(&mut s, "body.rename", json!({"body": "Body2", "name": "FirstCopyB"}));
+        assert!(
+            s.model.results.iter().all(|r| r.error.is_none()),
+            "{:?}",
+            s.model.results.iter().filter_map(|r| r.error.clone()).collect::<Vec<_>>()
+        );
+        let after = names(&s);
+        assert!(after.contains(&"Body3".to_string()) && after.contains(&"Body4".to_string()), "{after:?}");
+        assert!(!after.contains(&"Body1".to_string()) && !after.contains(&"Body5".to_string()), "{after:?}");
+        run(&mut s, "edit.undo", json!({}));
+        assert!(names(&s).contains(&"Body2".to_string()) && names(&s).contains(&"Body4".to_string()), "{:?}", names(&s));
     }
 
     #[test]

@@ -678,6 +678,34 @@ fn ellipse_radii_dimensions() {
     assert!((a - std::f64::consts::PI * 60.0).abs() < 1e-6, "{a}");
 }
 
+/// #1026: a construction diagonal ending at a rectangle's corner is not one of the corner's
+/// sides. The corner is rounded, and the diagonal keeps its end on the virtual sharp corner.
+#[test]
+fn fillet_a_corner_a_construction_diagonal_ends_in() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [50, 0], [50, 30], [0, 30]], "closed": true, "ids": ["a", "b", "c", "d"]}));
+    let diag = ids(&run(&mut s, "sketch.line", json!({"points": ["c.end", "a.end"], "construction": true}))["curves"])[0].clone();
+    let f = run(&mut s, "sketch.fillet", json!({"point": "a.end", "radius": 2}));
+    let arc = ids(&f["curves"])[0].clone();
+    let sk = sketch(&s);
+    let ai = sk.curve_index(&arc).unwrap();
+    assert!((sk.radius(ai).unwrap() - 2.0).abs() < 1e-7);
+    let c = sk.center(ai).unwrap();
+    assert!(c.dist(Vec2::new(48.0, 2.0)) < 1e-6, "{c:?}");
+    // The diagonal still runs from (0, 30) to the sharp corner (50, 0).
+    let di = sk.curve_index(&diag).unwrap();
+    let Some(CurveKind::Line { a, b }) = sk.curves.get(di).map(|x| &x.kind) else { panic!("the diagonal is a line") };
+    let (pa, pb) = (sk.point(*a).unwrap(), sk.point(*b).unwrap());
+    assert!(pa.dist(Vec2::new(0.0, 30.0)) < 1e-6 && pb.dist(Vec2::new(50.0, 0.0)) < 1e-6, "{pa:?} {pb:?}");
+    assert!(sk.curves.get(di).unwrap().construction);
+    // Three lines at a corner, none of them construction, stay ambiguous.
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [50, 0], [50, 30]], "ids": ["a", "b"]}));
+    run(&mut s, "sketch.line", json!({"points": ["a.end", [80, 20]]}));
+    let e = s.execute("sketch.fillet", &json!({"point": "a.end", "radius": 2})).unwrap_err().to_string();
+    assert!(e.contains("exactly two lines") && e.contains("`a` and `b`"), "{e}");
+}
+
 #[test]
 fn fillet_a_line_and_an_arc() {
     let mut s = new_sketch();
