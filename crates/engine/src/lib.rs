@@ -820,6 +820,8 @@ mod extent_tests;
 #[cfg(test)]
 mod hole_face_tests;
 #[cfg(test)]
+mod hole_matrix_tests;
+#[cfg(test)]
 mod large_assembly_tests;
 #[cfg(test)]
 mod naming_history_tests;

@@ -596,13 +596,18 @@ pub(super) fn sheet_eval(
             let ds: Vec<f64> = mesh.positions.iter().map(|p| (*p - *face).dot(n)).collect();
             let (lo, hi) = (ds.iter().cloned().fold(f64::MAX, f64::min), ds.iter().cloned().fold(f64::MIN, f64::max));
             let t = hi - lo;
-            // The face outline: boundary edges of the triangles on that face's plane.
+            // The face outline: boundary edges of the triangles on that face's plane, where it runs
+            // along a round wall an arc of the wall's circle (not chords: the plate check below
+            // compares its area with the exact volume).
             let plane = Plane::from_normal(*face + n * lo, n * -1.0).ok_or_else(|| DocError::Invalid("face".into()))?;
-            let mut loops = face_loops(&mesh, &plane, *face, n, lo, tol);
-            loops.sort_by(|a, b| poly_area(b).abs().total_cmp(&poly_area(a).abs()));
+            let mut walls = std::collections::HashMap::new();
+            let mut wall = |f: u32| *walls.entry(f).or_insert_with(|| round_wall(&mb.body, &plane, n, f));
+            let mut loops: Vec<Loop2> =
+                face_outline(&mesh, &plane, *face, n, lo, tol).iter().map(|l| outline_loop(l, &mut wall, tol * 1e-2)).collect();
+            loops.sort_by(|a, b| b.signed_area().abs().total_cmp(&a.signed_area().abs()));
             let mut it = loops.into_iter();
-            let outer = Loop2::polygon(&it.next().ok_or_else(|| DocError::Invalid("no outline on that face".into()))?).ccw();
-            let region = Region2 { outer, holes: it.map(|l| Loop2::polygon(&l).ccw().reversed()).collect() };
+            let outer = it.next().ok_or_else(|| DocError::Invalid("no outline on that face".into()))?.ccw();
+            let region = Region2 { outer, holes: it.map(|l| l.ccw().reversed()).collect() };
             let area = region.area().abs();
             let vol = kernel::measure(&mb.body)?.volume;
             if (area * t - vol).abs() > 1e-3 * vol.max(1.0) {
@@ -1032,50 +1037,78 @@ fn sheet_prism_cut(
 /// Outline loops (in `plane` coordinates) of the mesh triangles lying in the plane at distance
 /// `level` from `at` along `n`: the edges used by one of them only, chained.
 fn face_loops(mesh: &solidcraft_geom::Mesh, plane: &Plane, at: Vec3, n: Vec3, level: f64, tol: f64) -> Vec<Vec<Vec2>> {
-    let on: Vec<[u32; 3]> = mesh
-        .triangles
-        .iter()
-        .copied()
-        .filter(|t| t.iter().all(|k| mesh.positions.get(*k as usize).is_some_and(|p| ((*p - at).dot(n) - level).abs() < tol)))
-        .collect();
+    face_outline(mesh, plane, at, n, level, tol).into_iter().map(|l| l.into_iter().map(|(p, _)| p).collect()).collect()
+}
+
+/// [`face_loops`] with each point's B-rep face across the outline from it to the next point (the
+/// wall the outline runs along there): the face off the plane that meets both points.
+fn face_outline(mesh: &solidcraft_geom::Mesh, plane: &Plane, at: Vec3, n: Vec3, level: f64, tol: f64) -> Vec<Vec<(Vec2, Option<u32>)>> {
+    let on_plane = |t: &[u32; 3]| t.iter().all(|k| mesh.positions.get(*k as usize).is_some_and(|p| ((*p - at).dot(n) - level).abs() < tol));
+    let on: Vec<[u32; 3]> = mesh.triangles.iter().copied().filter(on_plane).collect();
     // Boundary edges by position (meshes may repeat vertices per triangle).
     let pos = |k: u32| mesh.positions.get(k as usize).copied().unwrap_or_default();
     let q = |p: Vec3| ((p.x * 1e6).round() as i64, (p.y * 1e6).round() as i64, (p.z * 1e6).round() as i64);
+    let key = |a: Vec3, b: Vec3| {
+        let (ka, kb) = (q(a), q(b));
+        (ka.min(kb), ka.max(kb))
+    };
     let mut count: std::collections::HashMap<((i64, i64, i64), (i64, i64, i64)), i32> = Default::default();
     let edges: Vec<(Vec3, Vec3)> = on.iter().flat_map(|t| [(pos(t[0]), pos(t[1])), (pos(t[1]), pos(t[2])), (pos(t[2]), pos(t[0]))]).collect();
     for (a, b) in &edges {
-        let (ka, kb) = (q(*a), q(*b));
-        *count.entry((ka.min(kb), ka.max(kb))).or_insert(0) += 1;
+        *count.entry(key(*a, *b)).or_insert(0) += 1;
     }
-    let mut boundary: Vec<(Vec3, Vec3)> = edges
-        .into_iter()
-        .filter(|(a, b)| {
-            let (ka, kb) = (q(*a), q(*b));
-            count.get(&(ka.min(kb), ka.max(kb))) == Some(&1)
-        })
-        .collect();
+    // The faces off the plane at each point on it, by position to a millionth of a millimetre
+    // either way (a neighbouring face's mesh may round a shared point differently).
+    let mut touch: std::collections::HashMap<(i64, i64, i64), Vec<u32>> = Default::default();
+    for (t, f) in mesh.triangles.iter().zip(&mesh.tri_face).filter(|(t, _)| !on_plane(t)) {
+        for p in t.iter().map(|k| pos(*k)).filter(|p| ((*p - at).dot(n) - level).abs() < tol) {
+            let faces = touch.entry(q(p)).or_default();
+            if !faces.contains(f) {
+                faces.push(*f);
+            }
+        }
+    }
+    let near = |p: Vec3| {
+        let (x, y, z) = q(p);
+        let cells = (-1..=1).flat_map(|i| (-1..=1).flat_map(move |j| (-1..=1).map(move |k| (x + i, y + j, z + k))));
+        let mut faces: Vec<u32> = cells.filter_map(|c| touch.get(&c)).flatten().copied().collect();
+        faces.sort_unstable();
+        faces.dedup();
+        faces
+    };
+    let across = |a: Vec3, b: Vec3| {
+        let at_b = near(b);
+        near(a).into_iter().find(|f| at_b.contains(f))
+    };
+    let mut boundary: Vec<(Vec3, Vec3)> = edges.into_iter().filter(|(a, b)| count.get(&key(*a, *b)) == Some(&1)).collect();
     // Chain into loops (plane coordinates).
-    let mut loops: Vec<Vec<Vec2>> = Vec::new();
+    let mut loops: Vec<Vec<(Vec2, Option<u32>)>> = Vec::new();
     for _ in 0..10_000 {
         let Some((s0, mut cur)) = boundary.pop() else { break };
-        let mut lp = vec![s0];
+        let mut lp = vec![(s0, across(s0, cur))];
         for _ in 0..boundary.len() + 1 {
             if q(cur) == q(s0) {
                 break;
             }
-            lp.push(cur);
             match boundary.iter().position(|(a, _)| q(*a) == q(cur)) {
-                Some(k) => cur = boundary.remove(k).1,
-                None => break,
+                Some(k) => {
+                    let b = boundary.remove(k).1;
+                    lp.push((cur, across(cur, b)));
+                    cur = b;
+                }
+                None => {
+                    lp.push((cur, None));
+                    break;
+                }
             }
         }
-        let raw: Vec<Vec2> = lp.iter().map(|p| plane.to_local(*p)).collect();
+        let raw: Vec<(Vec2, Option<u32>)> = lp.iter().map(|(p, f)| (plane.to_local(*p), *f)).collect();
         // Drop points in the middle of straight runs.
         let m = raw.len();
-        let pts: Vec<Vec2> = (0..m)
+        let pts: Vec<(Vec2, Option<u32>)> = (0..m)
             .filter_map(|i| {
-                let (p, c, n) = (*raw.get((i + m - 1) % m)?, *raw.get(i)?, *raw.get((i + 1) % m)?);
-                ((c - p).cross(n - c).abs() > 1e-9 * (c - p).len().max(1e-9) * (n - c).len().max(1e-9)).then_some(c)
+                let (p, c, n) = (raw.get((i + m - 1) % m)?.0, *raw.get(i)?, raw.get((i + 1) % m)?.0);
+                ((c.0 - p).cross(n - c.0).abs() > 1e-9 * (c.0 - p).len().max(1e-9) * (n - c.0).len().max(1e-9)).then_some(c)
             })
             .collect();
         if pts.len() >= 3 {
@@ -1083,6 +1116,62 @@ fn face_loops(mesh: &solidcraft_geom::Mesh, plane: &Plane, at: Vec3, n: Vec3, le
         }
     }
     loops
+}
+
+/// The circle (centre in `plane` coordinates, radius) of face `f` when it is a round wall
+/// standing square on the plane: a cylinder about the plane's normal `n`.
+fn round_wall(body: &Body, plane: &Plane, n: Vec3, f: u32) -> Option<(Vec2, f64)> {
+    match kernel::face_surface(body, f as usize)? {
+        kernel::FaceSurface::Cylinder { origin, axis, radius } if axis.cross(n).len() < 1e-6 => Some((plane.to_local(origin), radius)),
+        _ => None,
+    }
+}
+
+/// A loop of [`face_outline`] as segments: each run along one round wall (`wall` gives a face's
+/// circle) is an arc of that circle, the rest stays straight. Coaxial cylinders of one radius are
+/// one wall, however many faces it comes in (many systems write a round hole's wall as two
+/// half-cylinders), so such a hole is one circle. `eps`: how far off its circle a point may be.
+fn outline_loop(pts: &[(Vec2, Option<u32>)], wall: &mut impl FnMut(u32) -> Option<(Vec2, f64)>, eps: f64) -> Loop2 {
+    use std::f64::consts::{PI, TAU};
+    let m = pts.len();
+    let point = |i: usize| pts.get(i % m).map(|x| x.0).unwrap_or_default();
+    // The circle each segment runs along: its wall's, when both its ends lie on it.
+    let circles: Vec<Option<(Vec2, f64)>> = (0..m)
+        .map(|i| {
+            let (c, r) = wall(pts.get(i)?.1?)?;
+            ((point(i).dist(c) - r).abs() <= eps && (point(i + 1).dist(c) - r).abs() <= eps).then_some((c, r))
+        })
+        .collect();
+    let circle = |i: usize| circles.get(i % m).copied().flatten();
+    let same = |i: usize, (c, r): (Vec2, f64)| circle(i).is_some_and(|(d, s)| d.dist(c) <= eps && (s - r).abs() <= eps);
+    // Start where no arc runs on across the start (anywhere when the whole loop is one circle).
+    let start = (0..m).find(|i| circle(*i + m - 1).is_none_or(|c| !same(*i, c))).unwrap_or(0);
+    let mut segs = Vec::new();
+    let mut i = 0;
+    while i < m {
+        let k = start + i;
+        let Some((c, r)) = circle(k) else {
+            segs.push(Seg2::Line { a: point(k), b: point(k + 1) });
+            i += 1;
+            continue;
+        };
+        let mut j = i + 1;
+        while j < m && same(start + j, (c, r)) {
+            j += 1;
+        }
+        let sweep: f64 = (i..j)
+            .map(|s| {
+                let d = (point(start + s + 1) - c).angle() - (point(start + s) - c).angle();
+                (d + PI).rem_euclid(TAU) - PI
+            })
+            .sum();
+        // Arcs of up to half a turn each.
+        let pieces = ((sweep.abs() / PI - 1e-9).ceil() as usize).clamp(1, 4);
+        let (a0, step) = ((point(k) - c).angle(), sweep / pieces as f64);
+        segs.extend((0..pieces).map(|p| Seg2::Arc { center: c, radius: r, start: a0 + step * p as f64, sweep: step }));
+        i = j;
+    }
+    Loop2 { segs }
 }
 
 /// The body a placed plastic feature joins: by name, else the one under the point.
