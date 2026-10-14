@@ -28,6 +28,8 @@ mod history_names;
 pub use format_offsets::whole_profile_selection_from_value;
 pub mod joints;
 mod lineage;
+pub mod metadata;
+pub use metadata::Metadata;
 pub mod motion;
 mod name_lookup;
 pub mod naming;

@@ -150,6 +150,12 @@
 //!   Associative, editable sketch patterns (`patterns` in a sketch) and their point/radius
 //!   relations are also first saved in 20. Old sketch copies stay independent: migration cannot
 //!   infer which curves formed a pattern.
+//!   Under the same version, a design can carry `metadata` (#1015): design properties
+//!   (`project`, `part_number`, `revision`, `author`, `organization`, `description`, `license`,
+//!   each text) and other tools' data, each tool's under its own reverse-DNS key
+//!   (`com.example.tool`). Every key is kept as it is, and nothing in it is checked when the
+//!   design opens. A design without it saves as before. 0.10.0 refuses format 20, so no
+//!   released build drops the properties when it saves.
 
 use serde_json::Value;
 
@@ -391,7 +397,7 @@ pub fn read(s: &str) -> Result<Document> {
             "this design was saved by a newer SolidCraft (file format {version}; this version reads formats up to {FORMAT}): update SolidCraft to open it"
         )));
     }
-    check_numbers(&v, 0)?;
+    check_design_numbers(&v)?;
     crate::config::validate_rules_json(&v)?;
     crate::config::validate_styles_json(&v)?;
     crate::face_anchor::validate_face_anchors_json(&v)?;
@@ -859,6 +865,16 @@ fn validate_freeform_offsets(value: &Value) -> Result<()> {
 /// Largest coordinate or size a design may hold (mm): a kilometre-scale part is already far
 /// outside what the kernel's tolerances serve.
 const MAX_REAL: f64 = 1e9;
+
+/// Every number the design itself holds is in range ([`check_numbers`]). `metadata` is left
+/// alone: it is other tools' data, kept as it is and never read as a number (#1015); parsing
+/// already bounds its nesting.
+fn check_design_numbers(v: &Value) -> Result<()> {
+    match v {
+        Value::Object(m) => m.iter().filter(|(k, _)| k.as_str() != "metadata").try_for_each(|(_, x)| check_numbers(x, 1)),
+        v => check_numbers(v, 0),
+    }
+}
 
 /// Every non-integer number in the file is finite and within ±`MAX_REAL` (a damaged or hostile
 /// file is refused instead of overflowing the geometry later).

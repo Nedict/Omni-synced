@@ -87,6 +87,7 @@ fn swap_in(app: &mut SolveApp, slot: DocSlot) -> DocSlot {
     crate::dim_view::cancel();
     app.tool = None;
     app.params = None;
+    app.design_properties = None;
     app.cancel_view_animation();
     app.viewport.orbit_snap = None;
     app.viewport.orbit_free = None;
