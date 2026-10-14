@@ -65,7 +65,7 @@
   "61": {"area":5020.413157,"bodies":1,"edges":36,"error":"boolean Cut: the operation failed: no result; the operation ","faces":15,"outcome":"failed","rejected":0,"shells":1,"steps":["extruded profile","cut cylinder","shell","rectangular pattern"],"unsupported":0,"volume":4906.628359},
   "62": {"area":8771.003707,"bodies":1,"edges":60,"error":null,"faces":23,"outcome":"ok","rejected":0,"shells":1,"steps":["extruded profile","cut cylinder","circular pattern","cut box","cut box","join cylinder"],"unsupported":2,"volume":40107.001722},
   "63": {"area":3060.376634,"bodies":1,"edges":57,"error":"boolean Union: the operation failed: no result; the operatio","faces":21,"outcome":"failed","rejected":1,"shells":1,"steps":["revolved section","join box","cut cylinder","hole","cut cylinder","join box"],"unsupported":0,"volume":6534.395244},
-  "64": {"area":4137.422404,"bodies":1,"edges":36,"error":null,"faces":14,"outcome":"ok","rejected":0,"shells":1,"steps":["extruded profile","join cylinder","hole"],"unsupported":1,"volume":8399.391489},
+  "64": {"area":4088.335645,"bodies":1,"edges":36,"error":null,"faces":14,"outcome":"ok","rejected":0,"shells":1,"steps":["extruded profile","fillet","join cylinder"],"unsupported":0,"volume":8495.220295},
   "65": {"area":8469.64766,"bodies":1,"edges":30,"error":null,"faces":12,"outcome":"ok","rejected":0,"shells":1,"steps":["box","cut cylinder","fillet","rectangular pattern","circular pattern","circular pattern","fillet","cut box"],"unsupported":0,"volume":45143.068793},
   "66": {"area":9222.76638,"bodies":1,"edges":99,"error":null,"faces":37,"outcome":"ok","rejected":0,"shells":1,"steps":["extruded profile","join box","join box","join box","cut sphere","cut box"],"unsupported":1,"volume":35217.203139},
   "67": {"area":7942.099033,"bodies":2,"edges":85,"error":null,"faces":35,"outcome":"ok","rejected":0,"shells":2,"steps":["extruded profile","cut cylinder","hole","join cylinder","join box","hole","chamfer","rectangular pattern"],"unsupported":2,"volume":27607.71011},
@@ -103,6 +103,7 @@
   {"reason":"seed 0 meshes differently since display tessellation plans (#805), which landed alongside these goldens (#826)","seeds":[0]},
   {"reason":"the kernel fixes merged together on 13 October (#838, #839, #841, #855, #856) change what these seeds build: several joins that used to fail now succeed, small volume and area shifts, and shell now refuses seeds 6, 14, 43 and 73 with an offset corner error (seed 14 built before: #897)","seeds":[2,6,14,22,36,43,50,63,71,73,94]},
   {"reason":"#936: a fillet or chamfer of a smooth seam is refused as an invalid pick (no corner to round) instead of as unsupported","seeds":[72]},
-  {"reason":"the model's body mesh is the reference mesher's again (the display plan's since #805, which moved these seeds rather than the kernel fixes above): they build as they did before #805, and seed 14 builds again (#897)","seeds":[0,2,14,36,43,71,94]}
+  {"reason":"the model's body mesh is the reference mesher's again (the display plan's since #805, which moved these seeds rather than the kernel fixes above): they build as they did before #805, and seed 14 builds again (#897)","seeds":[0,2,14,36,43,71,94]},
+  {"reason":"a fillet that used to be refused as unsupported on seed 64's extruded profile now builds, so the design goes on differently: rounds that meet at corners on curved faces (#851)","seeds":[64]}
  ]
 }

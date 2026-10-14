@@ -32,5 +32,11 @@
 <body>
   <canvas id="solidcraft_canvas"></canvas>
   <div id="solidcraft_loading">Loading SolidCraft&hellip;</div>
+  <script>
+    // Offline use and updates (sw.js; written into release builds by `cargo xtask web-offline`).
+    if ("serviceWorker" in navigator) {
+      addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+    }
+  </script>
 </body>
 </html>
