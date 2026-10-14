@@ -389,11 +389,11 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                     );
                     resp.clicked()
                 };
-                if big(ui, "new", "New Design", true) {
+                if big(ui, "new", app.tr("ui.new_design"), true) {
                     action = Some(Box::new(|app: &mut SolveApp| crate::documents::new_design(app)));
                 }
                 ui.add_space(10.0);
-                if big(ui, "open", "Open…", false) {
+                if big(ui, "open", app.tr("home.open"), false) {
                     action = Some(Box::new(|app: &mut SolveApp| {
                         app.pick_open(|app, path| {
                             if let Some(path) = path {
@@ -406,19 +406,19 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             });
             ui.add_space(24.0);
             ui.horizontal_wrapped(|ui| {
-                ui.hyperlink_to("Documentation", crate::help::DOCS_URL);
-                ui.hyperlink_to("Report an Issue", "https://github.com/bherbruck/solidcraft/issues/new");
-                ui.hyperlink_to("What's new", "https://github.com/bherbruck/solidcraft/releases/latest");
-                if ui.link("Keyboard Shortcuts").clicked() {
+                ui.hyperlink_to(app.tr("home.documentation"), crate::help::DOCS_URL);
+                ui.hyperlink_to(app.tr("home.report_issue"), "https://github.com/bherbruck/solidcraft/issues/new");
+                ui.hyperlink_to(app.tr("home.whats_new"), "https://github.com/bherbruck/solidcraft/releases/latest");
+                if ui.link(app.tr("ui.keyboard_shortcuts")).clicked() {
                     app.keymap.open = true;
                     app.keymap.read_only = true;
                 }
-                if ui.link("Preferences").clicked() {
+                if ui.link(app.tr("ui.preferences")).clicked() {
                     crate::prefs::open_at(app, 0);
                 }
             });
             ui.add_space(16.0);
-            section(ui, "Recent");
+            section(ui, app.tr("home.recent"));
             if recent.is_empty() {
                 ui.label(RichText::new(crate::i18n::tr_label("Designs you open or save appear here.")).color(t.text_dim));
             } else {
@@ -428,26 +428,27 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                     let name = path.file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| p.clone());
                     let missing = !solidcraft_engine::io::vfs::exists(p);
                     let mut sub = if missing {
-                        "missing".to_string()
+                        app.tr("home.missing").to_string()
                     } else if p.starts_with("/opfs/") {
                         // The web build keeps designs in the browser's own storage.
-                        "in this browser".to_string()
+                        app.tr("home.in_this_browser").to_string()
                     } else {
                         p.clone()
                     };
                     if let Some(time) = app.home.opened_at.get(p) {
                         let now = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(*time);
                         let seconds = now.saturating_sub(*time);
-                        let ago = if seconds < 60 {
-                            "just now".to_string()
+                        let opened = if seconds < 60 {
+                            app.tr("home.opened_just_now").to_string()
                         } else if seconds < 3600 {
-                            format!("{} min ago", seconds / 60)
+                            crate::i18n::format("home.opened_minutes_ago", &[("count", &(seconds / 60).to_string())])
                         } else if seconds < 86400 {
-                            format!("{} h ago", seconds / 3600)
+                            crate::i18n::format("home.opened_hours_ago", &[("count", &(seconds / 3600).to_string())])
                         } else {
-                            format!("{} days ago", seconds / 86400)
+                            crate::i18n::format("home.opened_days_ago", &[("count", &(seconds / 86400).to_string())])
                         };
-                        sub.push_str(&format!("\nOpened {ago}"));
+                        sub.push('\n');
+                        sub.push_str(&opened);
                     }
                     let response = card(ui, Pic::Ready(app.home.thumbs.get(p.as_str()).and_then(Option::as_ref)), &name, &sub, missing)
                         .on_hover_text(p.as_str());
@@ -472,17 +473,19 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 });
             }
             ui.add_space(24.0);
-            section(ui, "Samples");
+            section(ui, app.tr("home.samples"));
             grid(ui, samples.len(), |ui, i| {
                 let Some(s) = samples.get(i) else { return };
                 let key = format!("sample:{i}");
                 let busy = app.home.wanted == Some(i);
-                let sub = if busy { "opening…" } else { s.about };
+                // The engine's sample table holds English text; the opened design keeps it as its name.
+                let about = app.tr_label(s.about);
+                let sub = if busy { app.tr("home.opening") } else { about };
                 let tex = match app.home.thumbs.get(&key) {
                     Some(t) => Pic::Ready(t.as_ref()),
                     None => Pic::Icon("box"),
                 };
-                if card(ui, tex, s.name, sub, false).on_hover_text(s.about).clicked() {
+                if card(ui, tex, app.tr_label(s.name), sub, false).on_hover_text(about).clicked() {
                     action = Some(Box::new(move |app: &mut SolveApp| open_sample(app, i)));
                 }
             });

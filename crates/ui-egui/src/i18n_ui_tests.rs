@@ -84,6 +84,61 @@ fn window_chrome_renders_in_the_active_language() {
     }
 }
 
+/// The start page is the first thing a user sees. Its buttons, links, headings and cards were
+/// English literals, mostly painted rather than laid out as widgets, so check the text actually
+/// painted in each complete language: a broken message id falls back to English silently.
+#[test]
+fn home_page_renders_in_the_active_language() {
+    fn painted(shape: &egui::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Text(text) => out.push(text.galley.job.text.clone()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| painted(s, out)),
+            _ => {}
+        }
+    }
+    let cases = [
+        (
+            "ja",
+            [
+                "新規デザイン",
+                "開く…",
+                "ドキュメント",
+                "問題を報告",
+                "新機能",
+                "キーボードショートカット",
+                "環境設定",
+                "最近使用した項目",
+                "サンプル",
+                "サンプル プレート",
+            ],
+            "見つかりません\n2 時間前に開きました",
+        ),
+        ("zh", ["新建设计", "打开…", "文档", "报告问题", "新功能", "键盘快捷键", "首选项", "最近使用", "示例", "示例板"], "文件不存在\n2 小时前打开"),
+    ];
+    for (lang, words, missing_recent) in cases {
+        let mut h = Harness::new();
+        h.app.preferences.language = lang.into();
+        let gone = h.dir.join("gone.solidcraft").to_string_lossy().into_owned();
+        h.app.home.add_recent(&gone);
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        h.app.home.opened_at.insert(gone, now - 2 * 3600);
+        let rev = h.app.session.revision;
+        h.app.home.show(rev);
+        h.frames(2);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0));
+        let mut out = h.ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| h.app.ui(ui));
+        out.textures_delta.clear();
+        let mut texts = Vec::new();
+        out.shapes.iter().for_each(|shape| painted(&shape.shape, &mut texts));
+        for word in words.into_iter().chain([missing_recent]) {
+            assert!(texts.iter().any(|t| t == word), "{lang}: {word:?} must be painted, got {texts:?}");
+        }
+        for english in ["New Design", "Open…", "Documentation", "Report an Issue", "What's new", "Recent", "Samples", "Sample Plate"] {
+            assert!(!texts.iter().any(|t| t == english), "{lang}: {english:?} is still painted in English");
+        }
+    }
+}
+
 /// The command palette's hint embeds a JSON example, so its braces must not be mistaken for a
 /// placeholder name by the catalog's parser, and the example must survive interpolation whole.
 #[test]
