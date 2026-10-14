@@ -2183,6 +2183,28 @@ fn fold_one_of_two_collinear_tabs() {
     assert!(rel(volume(&mut s), flat) < 1e-3, "a fold keeps the material");
 }
 
+/// #685: a `fixed` point exactly on the sheet's top face is "on the sheet" (0.8.0 refused it, while a point 0.4 mm
+/// above the sheet was accepted). A frame blank 507.4 .. 508.2 with two flange tabs, folded on one of them.
+#[test]
+fn fold_accepts_a_fixed_point_on_the_top_face() {
+    for fixed_z in [508.2, 507.8, 507.4] {
+        let mut s = Session::default();
+        run(&mut s, "sheet.manage_rules", json!({"name": "SGCC 0.8", "thickness": "0.8", "k_factor": "0.44", "bend_radius": "0.8", "active": true}));
+        run(&mut s, "sketch.create", json!({"plane": {"origin": [0, 0, 507.4], "x_dir": [1, 0, 0], "y_dir": [0, 1, 0]}, "name": "Blank"}));
+        run(
+            &mut s,
+            "sketch.line",
+            json!({"points": [[1.7, 10.75], [30, 10.75], [30, 0.64], [440, 0.64], [440, 10.75], [465.5, 10.75], [465.5, 229.25],
+                              [440, 229.25], [440, 239.36], [30, 239.36], [30, 229.25], [1.7, 229.25]], "closed": true}),
+        );
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "sheet.flange", json!({"base": {"sketch": "Blank"}, "rule": "SGCC 0.8"}));
+        let flat = volume(&mut s);
+        run(&mut s, "sheet.fold", json!({"points": [[30, 230.255, 508.2], [440, 230.255, 508.2]], "fixed": [420, 120, fixed_z], "flip": true}));
+        assert!(rel(volume(&mut s), flat) < 1e-3, "fixed z {fixed_z}: a fold keeps the material");
+    }
+}
+
 /// One fold line across both tabs bends both (#264).
 #[test]
 fn fold_across_two_collinear_tabs() {
