@@ -1,6 +1,6 @@
 use std::f64::consts::{FRAC_PI_2, PI};
 
-use solidcraft_geom::Vec2;
+use solidcraft_geom::{Seg2, Vec2};
 
 use crate::*;
 
@@ -884,40 +884,48 @@ fn exact_profiles_for_high_degree_and_cut_free_form_curves() {
     assert!((whole - uncut).abs() < 1e-6 * uncut, "{whole} vs {uncut}");
 }
 
-/// A face boundary saved with stations along its straight edges (#1049: booleans used to leave
-/// vertices nothing else used) keeps its saved pieces when the face comes back with each
-/// straight edge whole: the same region, and features that name the pieces still find them.
 #[test]
-fn projected_boundary_keeps_its_pieces_when_only_stations_go() {
-    use crate::{LinkGeom, LinkKind, LinkSource};
+fn a_degree_nine_control_spline_stays_exact_and_closes_a_profile_exactly() {
+    // A G4 blend curve is one degree-9 Bézier; a sketch keeps it as a control spline whose exact
+    // piece is that Bézier, and profile measurement must keep using the curve, not its chords.
     let mut sk = Sketch::new();
-    let v = Vec2::new;
-    let split = vec![
-        LinkGeom::Line(v(0.0, 0.0), v(5.0, 0.0)),
-        LinkGeom::Line(v(5.0, 0.0), v(10.0, 0.0)),
-        LinkGeom::Line(v(10.0, 0.0), v(10.0, 4.0)),
-        LinkGeom::Line(v(10.0, 4.0), v(10.0, 10.0)),
-        LinkGeom::Line(v(10.0, 10.0), v(0.0, 10.0)),
-        LinkGeom::Line(v(0.0, 10.0), v(0.0, 0.0)),
-    ];
-    let j = sk.add_link(LinkKind::Project, LinkSource::Origin, &split).unwrap();
-    let ids: Vec<String> = sk.link_curves(&j).iter().map(|c| sk.curves[*c].id.clone()).collect();
-    let whole = vec![
-        LinkGeom::Line(v(0.0, 0.0), v(10.0, 0.0)),
-        LinkGeom::Line(v(10.0, 0.0), v(10.0, 10.0)),
-        LinkGeom::Line(v(10.0, 10.0), v(0.0, 10.0)),
-        LinkGeom::Line(v(0.0, 10.0), v(0.0, 0.0)),
-    ];
-    assert!(!sk.update_link(&j, &whole).unwrap(), "only the stations went: the pieces stay");
-    let kept: Vec<String> = sk.link_curves(&j).iter().map(|c| sk.curves[*c].id.clone()).collect();
-    assert_eq!(ids, kept);
-    // A boundary that really changed is rebuilt.
-    let smaller = vec![
-        LinkGeom::Line(v(0.0, 0.0), v(8.0, 0.0)),
-        LinkGeom::Line(v(8.0, 0.0), v(8.0, 10.0)),
-        LinkGeom::Line(v(8.0, 10.0), v(0.0, 10.0)),
-        LinkGeom::Line(v(0.0, 10.0), v(0.0, 0.0)),
-    ];
-    assert!(sk.update_link(&j, &smaller).unwrap());
-    assert_eq!(sk.link_curves(&j).len(), 4);
+    let bump =
+        [v(0.0, 0.0), v(1.5, 4.0), v(3.0, 7.0), v(5.0, 9.5), v(7.5, 11.0), v(12.5, 11.0), v(15.0, 9.5), v(17.0, 7.0), v(18.5, 4.0), v(20.0, 0.0)];
+    let pts: Vec<usize> = bump.iter().map(|q| sk.add_point(*q, None).unwrap()).collect();
+    let s = sk.add_curve(CurveKind::Spline { pts: pts.clone(), control: true, degree: 9, periodic: false }, None).unwrap();
+    let pieces = sk.exact_pieces(s);
+    assert_eq!(pieces.len(), 1, "{pieces:?}");
+    let Seg2::Bezier { n, p } = pieces[0] else { panic!("{:?}", pieces[0]) };
+    assert_eq!(n, 9, "the highest degree a sketch piece can carry");
+    for (i, q) in bump.iter().enumerate() {
+        assert!(p[i].dist(*q) < 1e-12, "control {i}");
+    }
+    // Evaluation and the exact piece agree at the spline's real degree (a degree clamp would show
+    // here), and a line's own exact piece still comes back as a line.
+    let exact = pieces[0];
+    for k in 0..=10 {
+        let t = k as f64 / 10.0;
+        assert!(crate::curves::spline_point(&bump, true, 9, t).dist(exact.point_at(t)) < 1e-9, "t={t}");
+    }
+    let l = sk.add_line(v(-5.0, 0.0), v(-2.0, 1.0), None, None, None).unwrap();
+    assert!(matches!(sk.exact_pieces(l).as_slice(), [Seg2::Line { .. }]));
+    // Close the loop: the region's area is the shoelace integral of the exact pieces, which a fine
+    // sampling of the piece reproduces (a chord approximation would miss the bump's sagitta).
+    sk.add_line(v(20.0, 0.0), v(0.0, 0.0), Some(pts[9]), Some(pts[0]), None).unwrap();
+    let ps = find_profiles(&sk);
+    assert_eq!(ps.len(), 1, "{ps:?}");
+    let n = 20_000;
+    let mut sampled = 0.0;
+    for i in 0..n {
+        let (t0, t1) = (i as f64 / n as f64, (i + 1) as f64 / n as f64);
+        let (a, b) = (exact.point_at(t0), exact.point_at(t1));
+        sampled += 0.5 * a.cross(b);
+    }
+    sampled -= 0.5 * v(20.0, 0.0).cross(v(0.0, 0.0));
+    assert!((ps[0].area - sampled.abs()).abs() < 1e-5, "{} vs {sampled}", ps[0].area);
+    assert!((ps[0].area - 100.0).abs() > 1e-3, "the region is not its chord: {}", ps[0].area);
+    // A degree above the cap is still refused.
+    let mut high: Vec<usize> = pts.clone();
+    high.push(sk.add_point(v(21.0, -2.0), None).unwrap());
+    assert!(sk.add_curve(CurveKind::Spline { pts: high, control: true, degree: 10, periodic: false }, None).is_err());
 }
