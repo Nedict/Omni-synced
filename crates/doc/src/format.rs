@@ -477,6 +477,19 @@ pub fn read(s: &str) -> Result<Document> {
     crate::format_offsets::validate_typed(&d)?;
     normalise(&mut d)?;
     d.format = format_string(FORMAT);
+    // A design SolidCraft did not write may carry a stale next_id, or duplicate IDs. Either lets
+    // allocation hand out an ID that is already in use, after which references silently resolve to
+    // the wrong item (solidcraft#1016). next_id only moves forward, and duplicates are a damaged
+    // design, like an invalid timeline folder is.
+    let mut ids = std::collections::BTreeSet::new();
+    for id in d.features.iter().map(|f| f.id).chain(d.components.iter().map(|c| c.id)).chain(d.occurrences.iter().map(|o| o.id)) {
+        if !ids.insert(id) {
+            return Err(DocError::Invalid(format!("damaged design: duplicate id {id}")));
+        }
+    }
+    if let Some(largest) = ids.iter().next_back() {
+        d.next_id = d.next_id.max(largest.saturating_add(1));
+    }
     Ok(d)
 }
 
@@ -857,6 +870,39 @@ fn normalise(d: &mut Document) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    /// A design SolidCraft did not write can carry a missing or stale `next_id`. Allocation then
+    /// hands out an ID that is already in use, and every reference holding it resolves to the wrong
+    /// item with nothing reporting it (solidcraft#1016).
+    #[test]
+    fn a_stale_next_id_does_not_reuse_an_existing_id() {
+        let mut d = Document::new("t");
+        let first = d.add_component(None, 0).expect("component");
+        let mut v: Value = serde_json::from_str(&d.to_json()).expect("json");
+
+        v.as_object_mut().expect("object").remove("next_id");
+        let mut back = read(&v.to_string()).expect("a design without next_id still loads");
+        assert_ne!(back.add_component(None, 0).expect("component"), first, "a missing next_id reused an existing id");
+
+        v.as_object_mut().expect("object").insert("next_id".into(), Value::from(1));
+        let mut back = read(&v.to_string()).expect("a design with a stale next_id still loads");
+        assert_ne!(back.add_component(None, 0).expect("component"), first, "a stale next_id reused an existing id");
+    }
+
+    /// Duplicate IDs are a damaged design: `Document::feature(id)` returns the first match, so a
+    /// folder, a link or an edit can point at the wrong item without any error (solidcraft#1016).
+    #[test]
+    fn duplicate_ids_are_a_damaged_design() {
+        let mut d = Document::new("t");
+        d.add_component(None, 0).expect("component");
+        let mut v: Value = serde_json::from_str(&d.to_json()).expect("json");
+        let components = v["components"].as_array_mut().expect("components");
+        let mut copy = components[0].clone();
+        copy["name"] = Value::from("Copy");
+        components.push(copy);
+        let err = read(&v.to_string()).expect_err("duplicate component ids must be rejected");
+        assert!(err.to_string().contains("duplicate id"), "{err}");
+    }
+
     use super::*;
 
     #[test]

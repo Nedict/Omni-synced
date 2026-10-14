@@ -2232,7 +2232,7 @@ impl Document {
             return Err(DocError::Invalid("too many components".into()));
         }
         let id = self.next_id.max(1);
-        self.next_id = id + 1;
+        self.next_id = id.checked_add(1).ok_or_else(|| DocError::Invalid("id space exhausted".into()))?;
         let name = match name.map(str::trim) {
             Some(n) if !n.is_empty() => n.to_string(),
             _ => {
@@ -2344,7 +2344,7 @@ impl Document {
             0
         };
         let id = self.next_id.max(1);
-        self.next_id = id + 1;
+        self.next_id = id.checked_add(1).ok_or_else(|| DocError::Invalid("id space exhausted".into()))?;
         let name = match name {
             Some(n) if !n.trim().is_empty() => n.trim().to_string(),
             _ => self.unique_name(kind.base_name()),
