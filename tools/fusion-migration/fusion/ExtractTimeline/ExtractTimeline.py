@@ -24,6 +24,15 @@ import time
 OUT_DIR = os.path.expanduser("~/cad/fusion-timeline")
 ALL_HUBS = False
 SKETCH_GEOMETRY = True   # curve-by-curve sketch contents (the bulk of the output)
+
+# Bumped whenever the captured shape changes, so re-running upgrades older files in place
+# instead of skipping them -- a resumable run should not also mean a stale one.
+SCHEMA = 2
+
+# Try a few designs before committing to a whole hub. Each design has to be downloaded and
+# loaded to be read, so a smoke test on five beats discovering a problem on five hundred.
+LIMIT = 0        # 0 = every design; otherwise stop after this many
+ONLY = ""        # case-insensitive substring of the design name or its folder path
 # ---------------------------------------------------------------------------
 
 _INVALID = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -130,6 +139,47 @@ def picks(coll, point_attr):
         if q:
             out.append(q)
     return out
+
+
+def edge_sets(ent):
+    """Edge picks for fillets and chamfers, which do not keep their edges where you'd expect.
+
+    A FilletFeature holds `edgeSets`, and each set carries its own radius -- a single feature can
+    round several groups of edges to different radii. Chamfers are the same shape on newer
+    builds. Returns one record per set so each can be re-created with its own size, falling back
+    to a plain `edges` collection where that is all there is.
+    """
+    sets = []
+    for attr in ("edgeSets", "filletEdgeSets", "chamferEdgeSets"):
+        coll = get(ent, attr)
+        if coll is None:
+            continue
+        for s in as_items(coll):
+            pts = picks(get(s, "edges") or [], "pointOnEdge")
+            if not pts:
+                continue
+            rec = {"edge_points": pts, "kind": type(s).__name__}
+            for key, names in (("radius", ("radius", "radiusOne")),
+                               ("radius2", ("radiusTwo",)),
+                               ("distance", ("distance", "distanceOne")),
+                               ("distance2", ("distanceTwo",)),
+                               ("angle", ("angle",))):
+                v = expr_of(s, *names)
+                if v:
+                    rec[key] = v
+            sets.append(rec)
+        if sets:
+            return sets
+
+    # Older shape: the edges hang directly off the feature.
+    for attr in ("edges", "inputEntities"):
+        coll = get(ent, attr)
+        if coll is None:
+            continue
+        pts = picks(coll, "pointOnEdge")
+        if pts:
+            return [{"edge_points": pts, "kind": "direct"}]
+    return sets
 
 
 def profile_picks(prof):
@@ -314,12 +364,17 @@ def describe_feature(ent):
     # another tool, but a *point lying on* each edge or face is geometry, and geometry travels.
     # Most CAD tools (SolidCraft included) select exactly that way, so this is the bridge that
     # lets a fillet or a shell be re-created rather than merely reported as missing.
-    edges = get(ent, "edges")
-    if edges is not None:
-        pts = picks(edges, "pointOnEdge")
-        rec["edge_count"] = len(pts) if pts else count_of(edges)
-        if pts:
-            rec["edge_points"] = pts
+    sets = edge_sets(ent)
+    if sets:
+        rec["edge_sets"] = sets
+        rec["edge_count"] = sum(len(s["edge_points"]) for s in sets)
+        # Flattened too, so a consumer that only wants "every edge" need not walk the sets.
+        rec["edge_points"] = [p for s in sets for p in s["edge_points"]]
+    else:
+        edges = get(ent, "edges")
+        if edges is not None:
+            rec["edge_count"] = count_of(edges)
+            rec["edge_points_missing"] = True
 
     faces = get(ent, "faces", "inputFaces")
     if faces is not None:
@@ -351,6 +406,7 @@ def describe_feature(ent):
 
 def describe_design(design, data_file, parts):
     doc = {
+        "schema": SCHEMA,
         "name": get(data_file, "name"),
         "id": get(data_file, "id"),
         "version": get(data_file, "versionNumber"),
@@ -379,6 +435,29 @@ def describe_design(design, data_file, parts):
             })
     except Exception as e:
         doc["parameters_error"] = str(e)
+
+    # User parameters routinely refer to *model* parameters -- Fusion's auto-named dimensions
+    # like "d4" ("outerDiameter = d4 + 58.8 mm"). Those are driven by features rather than set
+    # by hand, so they cannot be re-created as inputs elsewhere; capture their values so a
+    # translator can at least resolve the reference instead of emitting an undefined name.
+    try:
+        user_names = {p["name"] for p in doc["parameters"]}
+        model = []
+        allp = design.allParameters
+        for i in range(allp.count):
+            p = allp.item(i)
+            name = get(p, "name")
+            if not name or name in user_names:
+                continue
+            model.append({
+                "name": name,
+                "expression": get(p, "expression"),
+                "unit": get(p, "unit"),
+                "value": round(p.value, 9),
+            })
+        doc["model_parameters"] = model
+    except Exception as e:
+        doc["model_parameters_error"] = str(e)
 
     try:
         for i in range(design.allComponents.count):
@@ -433,17 +512,37 @@ def describe_design(design, data_file, parts):
 
 # ---------------------------------------------------------------------------
 
-def collect(folder, rel_parts, found):
-    for i in range(folder.dataFiles.count):
-        f = folder.dataFiles.item(i)
+def collect(folder, rel_parts, found, stats=None):
+    """Walk a folder for designs, recording what was seen so a miss can be explained."""
+    if stats is None:
+        stats = {}
+    try:
+        n = folder.dataFiles.count
+    except Exception as e:
+        stats.setdefault("folder_errors", []).append("{}: {}".format("/".join(rel_parts), e))
+        return
+    stats["folders"] = stats.get("folders", 0) + 1
+    for i in range(n):
         try:
-            if f.fileExtension == "f3d":
-                found.append((f, list(rel_parts)))
+            f = folder.dataFiles.item(i)
         except Exception:
-            pass
-    for i in range(folder.dataFolders.count):
-        sub = folder.dataFolders.item(i)
-        collect(sub, rel_parts + [safe(sub.name)], found)
+            continue
+        stats["files"] = stats.get("files", 0) + 1
+        try:
+            ext = f.fileExtension
+        except Exception as e:
+            stats.setdefault("ext_errors", []).append(str(e))
+            continue
+        exts = stats.setdefault("extensions", {})
+        exts[ext or "(none)"] = exts.get(ext or "(none)", 0) + 1
+        if ext == "f3d":
+            found.append((f, list(rel_parts)))
+    try:
+        for i in range(folder.dataFolders.count):
+            sub = folder.dataFolders.item(i)
+            collect(sub, rel_parts + [safe(sub.name)], found, stats)
+    except Exception as e:
+        stats.setdefault("folder_errors", []).append("{}: {}".format("/".join(rel_parts), e))
 
 
 def run(context):
@@ -473,6 +572,7 @@ def run(context):
             return
 
         designs = []
+        stats = {"hubs": [], "projects": 0, "project_errors": []}
         for hub in hubs:
             if len(hubs) > 1:
                 try:
@@ -480,18 +580,71 @@ def run(context):
                 except Exception:
                     pass
             adsk.doEvents()
-            projects = app.data.dataProjects
-            for p in range(projects.count):
-                proj = projects.item(p)
+            stats["hubs"].append(get(hub, "name") or "(unnamed)")
+            try:
+                projects = app.data.dataProjects
+                pcount = projects.count
+            except Exception as e:
+                stats["project_errors"].append("listing projects: {}".format(e))
+                continue
+            stats["projects"] += pcount
+            for p in range(pcount):
                 try:
+                    proj = projects.item(p)
                     root = proj.rootFolder
-                except Exception:
+                except Exception as e:
+                    stats["project_errors"].append("project {}: {}".format(p, e))
                     continue
-                collect(root, [safe(hub.name), safe(proj.name)], designs)
+                collect(root, [safe(hub.name), safe(get(proj, "name") or "project")],
+                        designs, stats)
 
         if not designs:
-            ui.messageBox("No Fusion designs found in your hub.")
+            # Say what was actually seen. "No designs found" with no evidence is the kind of
+            # answer that sends you looking in the wrong place.
+            exts = stats.get("extensions") or {}
+            lines = [
+                "No Fusion designs (.f3d) found.",
+                "",
+                "hub(s):   {}".format(", ".join(stats["hubs"]) or "none"),
+                "projects: {}".format(stats["projects"]),
+                "folders:  {}".format(stats.get("folders", 0)),
+                "files:    {}".format(stats.get("files", 0)),
+                "file types seen: {}".format(
+                    ", ".join("{} x{}".format(k, v) for k, v in sorted(exts.items()))
+                    or "none"),
+            ]
+            for key, label in (("project_errors", "project errors"),
+                               ("folder_errors", "folder errors"),
+                               ("ext_errors", "file errors")):
+                errs = stats.get(key) or []
+                if errs:
+                    lines += ["", "{}:".format(label)] + ["  " + e for e in errs[:5]]
+                    if len(errs) > 5:
+                        lines.append("  ... and {} more".format(len(errs) - 5))
+            if stats["projects"] == 0:
+                lines += ["", "No projects at all usually means the hub list has not loaded.",
+                          "Open the Data Panel in Fusion once, then run this again."]
+            ui.messageBox("\n".join(lines))
             return
+
+        found_all = len(designs)
+        if ONLY:
+            needle = ONLY.lower()
+            designs = [(f, p) for (f, p) in designs
+                       if needle in (get(f, "name") or "").lower()
+                       or needle in "/".join(p).lower()]
+            if not designs:
+                ui.messageBox('Nothing matched ONLY = "{}" among {} designs.'.format(
+                    ONLY, found_all))
+                return
+        if LIMIT and LIMIT > 0:
+            designs = designs[:LIMIT]
+
+        if len(designs) != found_all:
+            ui.messageBox(
+                "Running on {} of {} designs (LIMIT = {}, ONLY = \"{}\").\n\n"
+                "Edit those settings at the top of the script to change the scope.".format(
+                    len(designs), found_all, LIMIT or "off", ONLY))
 
         os.makedirs(OUT_DIR, exist_ok=True)
         total = len(designs)
@@ -514,8 +667,13 @@ def run(context):
             os.makedirs(out_dir, exist_ok=True)
             dest = os.path.join(out_dir, safe(data_file.name) + ".timeline.json")
             if os.path.exists(dest):
-                skipped += 1
-                continue
+                try:
+                    with open(dest, encoding="utf-8") as fh:
+                        if json.load(fh).get("schema", 0) >= SCHEMA:
+                            skipped += 1
+                            continue
+                except Exception:
+                    pass  # unreadable or older: re-extract it
 
             doc = None
             design = None

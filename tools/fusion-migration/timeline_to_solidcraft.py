@@ -15,6 +15,7 @@ quietly: a half-migrated part that claims to be whole is worse than one that adm
 
 import argparse
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -60,6 +61,41 @@ EXTENT = {"0": "one_side", "1": "two_sides", "2": "symmetric"}
 
 ORIGIN_PLANES = {"XY", "XZ", "YZ"}
 
+# Fusion stores lengths in centimetres; everything written here is millimetres.
+CM_UNITS = {"cm"}
+UNITS = {"mm", "cm", "m", "in", "ft", "deg", "rad"}
+
+
+def order_parameters(params):
+    """Define parameters before whatever uses them.
+
+    Fusion lists user parameters in creation order, which is not dependency order -- a design can
+    define "length = cutOut * 2" before "cutOut" exists. Emitting that order verbatim fails on the
+    first forward reference, so sort dependencies first and leave genuine cycles in their original
+    place for the engine to reject with its own message.
+    """
+    by_name = {p["name"]: p for p in params if p.get("name")}
+    ordered, state = [], {}
+
+    def visit(name):
+        if state.get(name) == "done":
+            return
+        if state.get(name) == "visiting":
+            return  # a cycle: leave it, the expression engine will report it properly
+        state[name] = "visiting"
+        p = by_name[name]
+        for tok in re.findall(r"\b[A-Za-z_]\w*\b", p.get("expression") or ""):
+            if tok in by_name and tok != name:
+                visit(tok)
+        state[name] = "done"
+        ordered.append(p)
+
+    for p in params:
+        if p.get("name"):
+            visit(p["name"])
+    return ordered
+
+
 
 class Skip(Exception):
     """This step cannot be rebuilt faithfully; say why rather than emit something wrong."""
@@ -86,7 +122,7 @@ def op_of(step, default="auto"):
 # sketches
 # ---------------------------------------------------------------------------
 
-def emit_sketch(step, out):
+def emit_sketch(step, out, ctx):
     sk = step.get("sketch") or {}
     plane = (sk.get("plane") or {}).get("name")
     if plane not in ORIGIN_PLANES:
@@ -137,6 +173,8 @@ def emit_sketch(step, out):
         raise Skip("no curve in this sketch could be translated ({})".format(
             ", ".join("{}x{}".format(v, k) for k, v in unsupported.items()) or "empty"))
 
+    ctx["sketches"].add(sk.get("name"))
+
     return {"curves_made": made, "curves_skipped": unsupported} if unsupported else {"curves_made": made}
 
 
@@ -144,20 +182,30 @@ def emit_sketch(step, out):
 # features
 # ---------------------------------------------------------------------------
 
-def profiles_param(step):
-    """Re-find each profile by a point inside it, which survives parameter changes."""
+def profiles_param(step, ctx):
+    """Re-find each profile by a point inside it, which survives parameter changes.
+
+    If the profile's own sketch was not translated, the feature cannot be built either: emitting
+    it anyway produces a script that fails halfway, which is worse than one that stops short and
+    says why.
+    """
     profs = step.get("profiles")
     if not profs:
         return "all"
+    wanted = {p.get("sketch") for p in profs if p.get("sketch")}
+    missing = {w for w in wanted if w and w not in ctx["sketches"]}
+    if missing:
+        raise Skip("needs sketch {}, which was not translated".format(
+            ", ".join(sorted(missing))))
     pts = [{"point": p["point"]} for p in profs if p.get("point")]
     return pts or "all"
 
 
-def emit_extrude(step, out):
+def emit_extrude(step, out, ctx):
     d = expr(step.get("distance"))
     if not d:
         raise Skip("no distance expression (extent may be to-object or through-all)")
-    params = {"distance": d, "profiles": profiles_param(step), "operation": op_of(step)}
+    params = {"distance": d, "profiles": profiles_param(step, ctx), "operation": op_of(step)}
     t = expr(step.get("taper"))
     if t and not str(t).startswith("0"):
         params["taper"] = t
@@ -170,30 +218,54 @@ def emit_extrude(step, out):
     return {}
 
 
-def emit_fillet(step, out):
+def _sets_of(step, size_keys):
+    """One record per edge set. A single Fusion fillet can round groups to different radii, so
+    each set becomes its own command rather than being flattened to one size."""
+    sets = step.get("edge_sets")
+    if sets:
+        return [(s["edge_points"], next((expr(s.get(k)) for k in size_keys if s.get(k)), None))
+                for s in sets if s.get("edge_points")]
     pts = step.get("edge_points")
-    if not pts:
+    if pts:
+        return [(pts, next((expr(step.get(k)) for k in size_keys if step.get(k)), None))]
+    return []
+
+
+def emit_fillet(step, out, ctx):
+    sets = _sets_of(step, ("radius",))
+    if not sets:
         raise Skip("no edge geometry captured ({} edges referenced)".format(
             step.get("edge_count", "?")))
-    r = expr(step.get("radius"))
-    if not r:
-        raise Skip("no radius expression")
-    out.append({"command": "solid.fillet", "params": {"edges": pts, "radius": r}})
-    return {"edges": len(pts)}
+    made = 0
+    for pts, size in sets:
+        size = size or expr(step.get("radius"))
+        if not size:
+            continue
+        out.append({"command": "solid.fillet", "params": {"edges": pts, "radius": size}})
+        made += 1
+    if not made:
+        raise Skip("no radius expression on any edge set")
+    return {"edge_sets": made, "edges": sum(len(p) for p, _ in sets)}
 
 
-def emit_chamfer(step, out):
-    pts = step.get("edge_points")
-    if not pts:
-        raise Skip("no edge geometry captured")
-    d = expr(step.get("distance")) or expr(step.get("radius"))
-    if not d:
-        raise Skip("no chamfer distance expression")
-    out.append({"command": "solid.chamfer", "params": {"edges": pts, "distance": d}})
-    return {"edges": len(pts)}
+def emit_chamfer(step, out, ctx):
+    sets = _sets_of(step, ("distance", "radius"))
+    if not sets:
+        raise Skip("no edge geometry captured ({} edges referenced)".format(
+            step.get("edge_count", "?")))
+    made = 0
+    for pts, size in sets:
+        size = size or expr(step.get("distance")) or expr(step.get("radius"))
+        if not size:
+            continue
+        out.append({"command": "solid.chamfer", "params": {"edges": pts, "distance": size}})
+        made += 1
+    if not made:
+        raise Skip("no chamfer distance on any edge set")
+    return {"edge_sets": made, "edges": sum(len(p) for p, _ in sets)}
 
 
-def emit_shell(step, out):
+def emit_shell(step, out, ctx):
     pts = step.get("face_points") or []
     t = expr(step.get("thickness"))
     if not t:
@@ -203,7 +275,7 @@ def emit_shell(step, out):
     return {"faces": len(pts)}
 
 
-def emit_draft(step, out):
+def emit_draft(step, out, ctx):
     pts = step.get("face_points")
     if not pts:
         raise Skip("no face geometry captured")
@@ -215,10 +287,10 @@ def emit_draft(step, out):
     return {"faces": len(pts)}
 
 
-def emit_revolve(step, out):
+def emit_revolve(step, out, ctx):
     a = expr(step.get("angle"), "360 deg")
     out.append({"command": "solid.revolve",
-                "params": {"axis": "x", "angle": a, "profiles": profiles_param(step),
+                "params": {"axis": "x", "angle": a, "profiles": profiles_param(step, ctx),
                            "operation": op_of(step)}})
     return {"note": "axis guessed as sketch x -- check it"}
 
@@ -238,13 +310,45 @@ def translate(doc):
     """Timeline document -> (command script, coverage report)."""
     cmds = []
     steps = []
+    ctx = {"sketches": set()}
 
-    for p in doc.get("parameters", []):
-        prm = {"name": p["name"], "expression": p["expression"]}
+    # Fusion's auto-named model parameters ("d4") are driven by features, not set by hand, so
+    # they cannot be re-created as inputs. Where a user parameter leans on one, substitute its
+    # measured value: the number survives even though the link to the feature does not.
+    model = {m["name"]: m for m in doc.get("model_parameters", []) if m.get("name")}
+    user_names = {p["name"] for p in doc.get("parameters", [])}
+    substituted = {}
+
+    def resolve(expression):
+        if not expression:
+            return expression, []
+        used = []
+
+        def sub(m):
+            tok = m.group(0)
+            if tok in user_names or tok in UNITS or tok not in model:
+                return tok
+            val = model[tok].get("value")
+            if val is None:
+                return tok
+            used.append(tok)
+            # Fusion reports lengths in centimetres; parameters here are written in mm.
+            unit = (model[tok].get("unit") or "").strip()
+            return "({} {})".format(round(val * (10.0 if unit in CM_UNITS else 1.0), 9),
+                                    "mm" if unit in CM_UNITS else unit).rstrip() \
+                if unit else "({})".format(round(val, 9))
+
+        return re.sub(r"\b[A-Za-z_]\w*\b", sub, expression), used
+
+    for p in order_parameters(doc.get("parameters", [])):
+        expression, used = resolve(p["expression"])
+        prm = {"name": p["name"], "expression": expression}
         if p.get("unit"):
             prm["unit"] = p["unit"]
         if p.get("comment"):
             prm["comment"] = p["comment"]
+        if used:
+            substituted[p["name"]] = used
         cmds.append({"command": "parameters.add", "params": prm})
 
     for step in doc.get("timeline", []):
@@ -264,7 +368,7 @@ def translate(doc):
 
         mark = len(cmds)
         try:
-            detail = handler(step, cmds) or {}
+            detail = handler(step, cmds, ctx) or {}
             rec.update(status="translated", commands=len(cmds) - mark, **detail)
         except Skip as e:
             del cmds[mark:]  # never leave half a feature behind
@@ -284,6 +388,7 @@ def translate(doc):
         "steps_translated": done,
         "coverage": round(done / len(steps), 4) if steps else 0.0,
         "commands": len(cmds),
+        "substituted_model_params": substituted,
         "steps": steps,
     }
     return {"commands": cmds}, report
