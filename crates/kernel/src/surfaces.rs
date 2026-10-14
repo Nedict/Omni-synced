@@ -3,17 +3,17 @@
 //! planar sketch region), Stitch (surfaces sharing edges sewn
 //! into one body, a solid when they close), Trim (a surface cut by a tool, one side kept),
 //! Thicken (a surface offset along its normals into a solid), copying faces out of a body, and
-//! sheets swept from sketch curves (surface extrude).
+//! sheets swept from sketch curves (surface extrude, revolve, sweep and loft).
 
 use std::collections::HashMap;
 
 use mt::{BoundedCurve, InnerSpace, MetricSpace, ParametricCurve, ParametricSurface3D, SearchNearestParameter};
-use solidcraft_geom::{Plane, Region2, Seg2, Vec3};
+use solidcraft_geom::{Plane, Region2, Seg2, Vec2, Vec3};
 use truck_modeling as mt;
 
 use crate::body::{Body, from_p3, p3};
-use crate::history::{Change, EdgeOrigin, FaceOrigin};
-use crate::record::{Rebuild, rebuilt_body};
+use crate::history::{Change, EdgeOrigin, FaceOrigin, FaceProv};
+use crate::record::{self, Rebuild, Side, rebuilt_body};
 use crate::{KernelError, Result, guard};
 
 impl Body {
@@ -64,6 +64,33 @@ pub fn patch_region(plane: &Plane, region: &Region2) -> Result<Body> {
     Ok(rebuilt_body(surface_body(vec![f]), &[], &rec))
 }
 
+/// A chain's edge seeds numbered across all the chains: the segment at `i` of the chain that
+/// starts at segment `offset` is segment `offset + i`.
+fn numbered(seeds: &[(mt::EdgeID, usize)], offset: usize) -> Vec<(mt::EdgeID, Vec<usize>)> {
+    seeds.iter().map(|(id, i)| (*id, vec![offset + i])).collect()
+}
+
+/// The faces truck swept from the edges `seeds`, each with the segments under the edge whose
+/// column it lies in (none where the faces don't follow the pattern; see [`record::follow`]).
+fn swept_sides(shell: &mt::Shell, seeds: &[(mt::EdgeID, Vec<usize>)], fixed: &[mt::VertexID]) -> Vec<Side> {
+    let provs = record::columns(shell.face_iter(), seeds, None, record::Column::ToEnd, fixed);
+    shell.face_iter().enumerate().map(|(k, f)| (f.clone(), provs.as_ref().and_then(|p| p.get(k).cloned().flatten()))).collect()
+}
+
+/// A body of a sheet builder's faces: a surface, or a solid where they close; with the history
+/// of a body built from the chains' segments (none unless every face's is known).
+fn sheet_body(sides: Vec<Side>) -> Result<Body> {
+    let history: Option<Vec<FaceProv>> = sides.iter().map(|(_, p)| p.clone()).collect();
+    let shell = mt::Shell::from(sides.into_iter().map(|(f, _)| f).collect::<Vec<_>>());
+    if shell.shell_condition() == mt::ShellCondition::Closed {
+        return match crate::body::Solid::try_new(vec![shell.clone()]) {
+            Ok(solid) => record::attach(Body::new(solid)?, &[], history, Default::default()),
+            Err(_) => crate::record::rebuilt(mt::Solid::new_unchecked(vec![shell]), &[], &Rebuild::default()),
+        };
+    }
+    record::attach(surface_of(shell), &[], history, Default::default())
+}
+
 /// Most curve chains one surface extrude takes.
 const MAX_CHAINS: usize = 10_000;
 
@@ -87,17 +114,263 @@ pub fn extrude_sheet(plane: &Plane, chains: &[Vec<Seg2>], start: f64, end: f64) 
     }
     let base = plane.offset(lo);
     let along = crate::body::v3(plane.normal() * (hi - lo));
-    let mut rec = Rebuild::default();
-    let mut faces = Vec::new();
+    let mut sides = Vec::new();
+    let mut offset = 0;
     for chain in chains {
-        let wire = crate::build::chain_wire(&base, chain)?;
+        let (wire, seeds) = crate::build::chain_wire_seeds(&base, chain)?;
         let walls: mt::Shell = guard("surface extrude", || Ok(mt::builder::tsweep(&wire, along)))?;
-        for f in walls.face_iter() {
-            rec.made(f, Vec::new());
-            faces.push(f.clone());
-        }
+        sides.extend(swept_sides(&walls, &numbered(&seeds, offset), &[]));
+        offset += chain.len();
     }
-    Ok(rebuilt_body(surface_body(faces), &[], &rec))
+    sheet_body(sides)
+}
+
+/// A surface revolved from chains of sketch segments on `plane` about the sketch line through
+/// `axis_origin` along `axis_dir`: each chain turned from `start` through `sweep` radians (a
+/// full turn at most), positive angles carrying it toward the sketch normal. A chain end on the
+/// axis stays put there (a cone's apex, a sphere's pole). The walls form one surface body with
+/// no caps, or a solid where they close (a full turn of a closed curve, or of a curve from the
+/// axis back to it); its history has no operands: every face is new.
+pub fn revolve_sheet(plane: &Plane, chains: &[Vec<Seg2>], axis_origin: Vec2, axis_dir: Vec2, start: f64, sweep: f64) -> Result<Body> {
+    use std::f64::consts::TAU;
+    if !crate::build::frame_ok(plane) || !axis_origin.is_finite() || !axis_dir.is_finite() {
+        return Err(KernelError::Invalid("revolve frame is not finite and orthonormal".into()));
+    }
+    if !(start.is_finite() && sweep.is_finite() && start.abs() <= TAU && sweep.abs() <= TAU + 1e-9) {
+        return Err(KernelError::Invalid("revolve angles must be finite, a full turn at most".into()));
+    }
+    if sweep.abs() < 1e-6 {
+        return Err(KernelError::Invalid("revolve angle is zero".into()));
+    }
+    if chains.is_empty() || chains.len() > MAX_CHAINS {
+        return Err(KernelError::Invalid("pick the curves or profiles to revolve".into()));
+    }
+    let d = axis_dir.normalized().ok_or_else(|| KernelError::Invalid("revolve axis has no direction".into()))?;
+    let side = |p: Vec2| d.cross(p - axis_origin);
+    let on_axis = |p: Vec2| side(p).abs() < 1e-7;
+    let (origin, n) = (plane.to_world(axis_origin), plane.normal());
+    let axis = plane.dir_to_world(d).normalized().ok_or_else(|| KernelError::Invalid("revolve frame has no axis".into()))?;
+    let mut sides = Vec::new();
+    let mut offset = 0;
+    for chain in chains {
+        // On one side of the axis; the point farthest from it fixes the turning sense.
+        let pts: Vec<Vec2> = chain.iter().flat_map(|s| s.polyline(1e-3)).collect();
+        if pts.iter().any(|p| side(*p) < -1e-7) && pts.iter().any(|p| side(*p) > 1e-7) {
+            return Err(KernelError::Invalid("the curves cross the revolve axis".into()));
+        }
+        let far = pts.iter().copied().max_by(|a, b| side(*a).abs().total_cmp(&side(*b).abs())).filter(|p| !on_axis(*p));
+        let Some(far) = far else { return Err(KernelError::Invalid("the curves lie on the revolve axis".into())) };
+        let radial = plane.to_world(far) - origin;
+        let a = if axis.cross(radial).dot(n) < 0.0 { -axis } else { axis };
+        let (first, last) = match (chain.first(), chain.last()) {
+            (Some(f), Some(l)) => (f.start(), l.end()),
+            _ => return Err(KernelError::Invalid("an empty curve chain".into())),
+        };
+        let closed = first.dist(last) <= 1e-6;
+        if closed && pts.iter().any(|p| on_axis(*p)) {
+            return Err(KernelError::Invalid("not supported yet: a closed curve touching the revolve axis".into()));
+        }
+        // The chain starts `start` round: its sketch frame turned there, so the wire's own edges
+        // are the ones swept (and its faces can be followed back to them).
+        let turn = |v: Vec3| crate::build::rotate_about(v, Vec3::ZERO, a, start);
+        let turned = Plane { origin: crate::build::rotate_about(plane.origin, origin, a, start), x: turn(plane.x), y: turn(plane.y) };
+        let (wire, seeds) = crate::build::chain_wire_seeds(&turned, chain)?;
+        let fixed: Vec<mt::VertexID> = [(on_axis(first), wire.front_vertex()), (on_axis(last), wire.back_vertex())]
+            .into_iter()
+            .filter_map(|(apex, v)| v.filter(|_| apex).map(|v| v.id()))
+            .collect();
+        let walls: mt::Shell = guard("surface revolve", || {
+            Ok(match (on_axis(first), on_axis(last)) {
+                (true, _) => mt::builder::cone(&wire, crate::body::v3(a), mt::Rad(sweep)),
+                (false, true) => mt::builder::cone(&wire.inverse(), crate::body::v3(a), mt::Rad(sweep)),
+                (false, false) => mt::builder::rsweep(&wire, p3(origin), crate::body::v3(a), mt::Rad(sweep)),
+            })
+        })?;
+        sides.extend(swept_sides(&walls, &numbered(&seeds, offset), &fixed));
+        offset += chain.len();
+    }
+    sheet_body(sides)
+}
+
+/// A surface swept from chains of sketch segments on `plane` along a path that starts near
+/// them. Along a path whose direction runs on across every joint, lines slide the chains and
+/// arcs turn them, exactly; any other path (curves followed as polylines) goes through
+/// [`sweep_sheet_points`]. The walls form one surface body with no caps (a solid where they
+/// close); its history has no operands: every face is new.
+pub fn sweep_sheet(plane: &Plane, chains: &[Vec<Seg2>], path: &[crate::PathSeg]) -> Result<Body> {
+    use crate::PathSeg;
+    if !crate::build::frame_ok(plane) {
+        return Err(KernelError::Invalid("sweep frame is not finite and orthonormal".into()));
+    }
+    if chains.is_empty() || chains.len() > MAX_CHAINS {
+        return Err(KernelError::Invalid("pick the curves or profiles to sweep".into()));
+    }
+    if path.is_empty() || path.len() > 1000 {
+        return Err(KernelError::Invalid("the path needs 1…1000 segments".into()));
+    }
+    let ends: Vec<(Vec3, Vec3)> =
+        path.iter().map(PathSeg::tangents).collect::<Option<_>>().ok_or_else(|| KernelError::Invalid("a path segment has no direction".into()))?;
+    let first = match path.first() {
+        Some(PathSeg::Line { a, .. } | PathSeg::Arc { a, .. }) => *a,
+        None => return Err(KernelError::Invalid("the path needs 1…1000 segments".into())),
+    };
+    if ends.windows(2).any(|w| w[0].1.dot(w[1].0) < (1e-3f64).cos()) {
+        let mut pts = vec![first];
+        for seg in path {
+            pts.extend(seg.points_after_start(1e-2));
+        }
+        return sweep_sheet_points(plane, chains, &pts);
+    }
+    let mut sides = Vec::new();
+    let mut offset = 0;
+    for chain in chains {
+        let (mut cur, seeds) = crate::build::chain_wire_seeds(plane, chain)?;
+        // Each edge's segments: the next stretch of the path starts from the edges the last one
+        // carried them onto, in the same order.
+        let mut seeds = numbered(&seeds, offset);
+        for seg in path {
+            let (part, map): (mt::Shell, Box<dyn Fn(Vec3) -> Vec3>) = match *seg {
+                PathSeg::Line { a, b } => {
+                    (guard("surface sweep", || Ok(mt::builder::tsweep(&cur, crate::body::v3(b - a))))?, Box::new(move |p| p + (b - a)))
+                }
+                PathSeg::Arc { center, axis, angle, .. } => {
+                    let k = axis.normalized().ok_or_else(|| KernelError::Invalid("a path arc has no axis".into()))?;
+                    let part = guard("surface sweep", || Ok(mt::builder::rsweep(&cur, p3(center), crate::body::v3(k), mt::Rad(angle))))?;
+                    (part, Box::new(move |p| crate::build::rotate_about(p, center, k, angle)))
+                }
+            };
+            let next = far_wire(&part, &cur, map.as_ref())?;
+            sides.extend(swept_sides(&part, &seeds, &[]));
+            seeds = next.edge_iter().map(|e| e.id()).zip(seeds.into_iter().map(|(_, n)| n)).collect();
+            cur = next;
+        }
+        offset += chain.len();
+    }
+    sheet_body(sides)
+}
+
+/// A surface swept from chains of sketch segments on `plane` along a 3D polyline path: one smooth
+/// B-spline wall per segment where the path has no corners, else ruled walls between the path's
+/// points, mitred at the corners (see [`sweep_sheet`]).
+pub fn sweep_sheet_points(plane: &Plane, chains: &[Vec<Seg2>], path: &[Vec3]) -> Result<Body> {
+    if !crate::build::frame_ok(plane) {
+        return Err(KernelError::Invalid("sweep frame is not finite and orthonormal".into()));
+    }
+    if chains.is_empty() || chains.len() > MAX_CHAINS {
+        return Err(KernelError::Invalid("pick the curves or profiles to sweep".into()));
+    }
+    let ruled = sheet_body(crate::sweep_path::ruled_sheet(plane, chains, path)?)?;
+    // Smooth walls where the path has no corners, kept when their area agrees with the ruled
+    // walls' (a fit that went wrong falls back to those).
+    if let Ok(Some(sides)) = crate::sweep_path::smooth_sheet(plane, chains, path)
+        && let Ok(smooth) = sheet_body(sides)
+        && let (Ok(a), Ok(b)) = (crate::measure(&smooth), crate::measure(&ruled))
+        && (a.area - b.area).abs() <= 0.02 * b.area.abs()
+    {
+        return Ok(smooth);
+    }
+    Ok(ruled)
+}
+
+/// The far side of a sweep of the wire `start`: for each of its edges, in order and the same
+/// way round, the edge of `swept` that `map` carries it onto (matched by its ends and middle).
+fn far_wire(swept: &mt::Shell, start: &mt::Wire, map: &dyn Fn(Vec3) -> Vec3) -> Result<mt::Wire> {
+    let near = |p: Vec3, q: Vec3| p.dist(q) <= 1e-6 * (1.0 + p.len().max(q.len()));
+    let mid = |e: &mt::Edge| {
+        let c = e.oriented_curve();
+        let (t0, t1) = c.range_tuple();
+        from_p3(c.subs((t0 + t1) / 2.0))
+    };
+    let mut out = Vec::new();
+    for e in start.edge_iter() {
+        let (a, b, m) = (map(from_p3(e.front().point())), map(from_p3(e.back().point())), map(mid(e)));
+        let found = swept.edge_iter().find_map(|f| {
+            let (fa, fb) = (from_p3(f.front().point()), from_p3(f.back().point()));
+            if !near(mid(&f), m) {
+                None
+            } else if near(fa, a) && near(fb, b) {
+                Some(f)
+            } else if near(fa, b) && near(fb, a) {
+                Some(f.inverse())
+            } else {
+                None
+            }
+        });
+        out.push(found.ok_or_else(|| KernelError::Failed("sweep: lost the curves along the path".into()))?);
+    }
+    Ok(out.into())
+}
+
+/// A surface lofted through two or more sections, each a chain of sketch segments on its plane,
+/// all open or all closed: ruled between two sections, one smooth face per segment through
+/// three or more. Closed sections are matched as the solid loft matches them; open ones are
+/// split to the same number of segments (longest first) and each turned to run the way the one
+/// before it does. Walls only, no caps; the history has no operands: every face is new.
+pub fn loft_sheet(sections: &[(Plane, Vec<Seg2>)]) -> Result<Body> {
+    if sections.len() < 2 || sections.len() > 50 {
+        return Err(KernelError::Invalid("a loft needs 2…50 sections".into()));
+    }
+    let closed: Vec<bool> = sections
+        .iter()
+        .map(|(_, c)| match (c.first(), c.last()) {
+            (Some(f), Some(l)) if c.len() <= 4096 => Ok(l.end().dist(f.start()) <= 1e-6),
+            _ => Err(KernelError::Invalid("a loft section has no curves, or too many".into())),
+        })
+        .collect::<Result<_>>()?;
+    let all_closed = closed.iter().all(|c| *c);
+    if !all_closed && closed.iter().any(|c| *c) {
+        return Err(KernelError::Invalid("the loft sections must be all open or all closed".into()));
+    }
+    for (plane, chain) in sections {
+        // Checks the frame, the numbers and that each chain runs end to end.
+        if !crate::build::frame_ok(plane) {
+            return Err(KernelError::Invalid("a loft section's frame is not finite and orthonormal".into()));
+        }
+        crate::build::chain_wire(plane, chain)?;
+    }
+    let (wires, sources) = if all_closed {
+        let loops: Vec<(Plane, solidcraft_geom::Loop2)> = sections.iter().map(|(p, c)| (*p, solidcraft_geom::Loop2 { segs: c.clone() })).collect();
+        let (wires, sources, _) = crate::build::loft_wires(&loops)?;
+        (wires, sources)
+    } else {
+        let n = sections.iter().map(|(_, c)| c.len()).max().unwrap_or(0);
+        let mut wires = Vec::with_capacity(sections.len());
+        let mut sources = Vec::with_capacity(sections.len());
+        let mut prev: Option<(Vec3, Vec3)> = None;
+        // Segments are numbered through the sections in the order given.
+        let mut offset = 0;
+        for (plane, chain) in sections {
+            // Each piece with the segment it is (part of).
+            let mut segs: Vec<(Seg2, usize)> = chain.iter().enumerate().map(|(i, s)| (*s, offset + i)).collect();
+            offset += chain.len();
+            // Split the longest segment in half until the counts match.
+            while segs.len() < n {
+                let Some(i) = segs.iter().enumerate().max_by(|a, b| a.1.0.length().total_cmp(&b.1.0.length())).map(|(i, _)| i) else { break };
+                let (s, k) = segs[i];
+                let (a, b) = s.split_half();
+                segs.splice(i..=i, [(a, k), (b, k)]);
+            }
+            let ends = |c: &[(Seg2, usize)]| c.first().zip(c.last()).map(|(f, l)| (plane.to_world(f.0.start()), plane.to_world(l.0.end())));
+            if let (Some((ps, pe)), Some((s, e))) = (prev, ends(&segs))
+                && s.dist(ps) + e.dist(pe) > s.dist(pe) + e.dist(ps)
+            {
+                segs = segs.iter().rev().map(|(s, k)| (s.reversed(), *k)).collect();
+            }
+            prev = ends(&segs);
+            let pieces: Vec<Seg2> = segs.iter().map(|(s, _)| *s).collect();
+            wires.push(crate::build::uniform_chain_wire(plane, &pieces, false)?);
+            sources.push(segs.iter().map(|(_, k)| vec![*k]).collect::<Vec<_>>());
+        }
+        (wires, sources)
+    };
+    let faces = guard("surface loft", || {
+        let smooth = if wires.len() >= 3 { crate::build::smooth_loft_faces(&wires, &sources, all_closed).ok() } else { None };
+        match smooth {
+            Some(f) => Ok(f),
+            None => crate::build::ruled_loft_faces(&wires, &sources),
+        }
+    })?;
+    sheet_body(faces)
 }
 
 /// The edge of a body nearest a point (by samples along each edge).
@@ -247,8 +520,23 @@ pub fn reverse_faces(body: &Body, at: &[Vec3]) -> Result<Body> {
     Ok(rebuilt_body(surface_body(faces), &[&body.solid], &rec))
 }
 
+/// A body with some of its faces (indices in its face order) taken away and the gap left open:
+/// a surface body of the faces left. Deleting every face is refused. The history is over
+/// `[body]`: each face left is the body's.
+pub fn remove_faces(body: &Body, faces: &[usize]) -> Result<Body> {
+    body.require_brep("Delete Face")?;
+    if faces.is_empty() {
+        return Err(KernelError::Invalid("no faces given".into()));
+    }
+    let left: Vec<mt::Face> = body.solid.face_iter().enumerate().filter(|(i, _)| !faces.contains(i)).map(|(_, f)| f.clone()).collect();
+    if left.is_empty() {
+        return Err(KernelError::Invalid("that would delete every face of the body".into()));
+    }
+    Ok(rebuilt_body(surface_body(left), &[&body.solid], &Rebuild::default()))
+}
+
 /// Index of the face nearest a point (over its mesh triangles).
-fn nearest_face(body: &Body, p: Vec3) -> Result<usize> {
+pub(crate) fn nearest_face(body: &Body, p: Vec3) -> Result<usize> {
     let m = body.tessellate(body.size() * 2e-3)?;
     let mut best: Option<(f64, u32)> = None;
     for (t, f) in m.triangles.iter().zip(&m.tri_face) {
@@ -374,19 +662,19 @@ pub fn stitch(bodies: &[&Body], tol: f64) -> Result<Body> {
 
 /// How a face moves along its normal: a plane slides, a circular cylinder changes radius.
 #[derive(Clone, Copy)]
-enum Offset {
+pub(crate) enum Offset {
     Plane { n: Vec3 },
     Cylinder { o: Vec3, axis: Vec3, r: f64, out: f64 },
 }
 
 impl Offset {
-    fn of(f: &mt::Face) -> Option<Offset> {
+    pub(crate) fn of(f: &mt::Face) -> Option<Offset> {
         match crate::splitface::analytic_field(&f.oriented_surface())? {
             crate::splitface::Analytic::Plane { n } => Some(Offset::Plane { n }),
             crate::splitface::Analytic::Cylinder { o, axis, r, out } => Some(Offset::Cylinder { o, axis, r, out }),
         }
     }
-    fn map(&self, p: Vec3, d: f64) -> Vec3 {
+    pub(crate) fn map(&self, p: Vec3, d: f64) -> Vec3 {
         match *self {
             Offset::Plane { n } => p + n * d,
             // Scaled about the axis (control points of a NURBS circle stay exact).
@@ -405,7 +693,7 @@ fn map_pt(off: &Offset, p: mt::Point3, d: f64) -> mt::Point3 {
 
 /// A curve moved by an offset (control points mapped; exact for lines, and for circles square
 /// to a cylinder's axis or in a plane).
-fn map_curve(off: &Offset, c: &mt::Curve, d: f64) -> Result<mt::Curve> {
+pub(crate) fn map_curve(off: &Offset, c: &mt::Curve, d: f64) -> Result<mt::Curve> {
     Ok(match c {
         mt::Curve::Line(l) => mt::Curve::Line(mt::Line(map_pt(off, l.0, d), map_pt(off, l.1, d))),
         mt::Curve::BSplineCurve(b) => {
@@ -435,7 +723,7 @@ fn map_curve(off: &Offset, c: &mt::Curve, d: f64) -> Result<mt::Curve> {
 }
 
 /// A surface moved by an offset (control points mapped; exact for planes and NURBS cylinders).
-fn map_surface(off: &Offset, s: &mt::Surface, d: f64) -> Result<mt::Surface> {
+pub(crate) fn map_surface(off: &Offset, s: &mt::Surface, d: f64) -> Result<mt::Surface> {
     Ok(match s {
         mt::Surface::Plane(pl) => {
             let (o, a, b) = (pl.origin(), pl.u_axis(), pl.v_axis());
@@ -758,6 +1046,151 @@ mod tests {
         assert!(rel(measure(&closed).unwrap().volume, 400.0) < 1e-9);
     }
 
+    /// Sheets revolved about the sketch's y axis, against their analytic areas: a cylinder (and a
+    /// quarter of one, started a quarter turn round), cones with the apex at either end, a sphere
+    /// from a half circle, and a square's ring (Pappus: 2π × centroid distance × length).
+    #[test]
+    fn revolve_sheet_areas() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        let sheet = |chain: Vec<Seg2>, start: f64, sweep: f64| {
+            revolve_sheet(&Plane::XY, &[chain], Vec2::new(0.0, 0.0), Vec2::new(0.0, 1.0), start, sweep).unwrap()
+        };
+        let rev = |chain: Vec<Seg2>, start: f64, sweep: f64| measure(&sheet(chain, start, sweep)).unwrap().area;
+        let line = |a: (f64, f64), b: (f64, f64)| Seg2::Line { a: Vec2::new(a.0, a.1), b: Vec2::new(b.0, b.1) };
+        let close = |a: f64, want: f64| assert!(rel(a, want) < 2e-3, "{a} vs {want}"); // (measured on meshes)
+        close(rev(vec![line((3.0, 0.0), (3.0, 4.0))], 0.0, 2.0 * PI), 2.0 * PI * 3.0 * 4.0);
+        close(rev(vec![line((3.0, 0.0), (3.0, 4.0))], FRAC_PI_2, FRAC_PI_2), FRAC_PI_2 * 3.0 * 4.0);
+        close(rev(vec![line((0.0, 0.0), (3.0, 4.0))], 0.0, 2.0 * PI), PI * 3.0 * 5.0);
+        close(rev(vec![line((3.0, 4.0), (0.0, 0.0))], 0.0, 2.0 * PI), PI * 3.0 * 5.0);
+        assert!(sheet(vec![line((3.0, 0.0), (3.0, 4.0))], 0.0, 1.0).is_surface());
+        // Closing shells are solids, outward: a sphere from a half circle, a square's ring.
+        let half = Seg2::Arc { center: Vec2::new(0.0, 0.0), radius: 2.0, start: -FRAC_PI_2, sweep: PI };
+        let ball = measure(&sheet(vec![half], 0.0, 2.0 * PI)).unwrap();
+        close(ball.area, 4.0 * PI * 4.0);
+        close(ball.volume, 4.0 / 3.0 * PI * 8.0);
+        assert!(sheet(vec![half], 0.0, PI).is_surface());
+        let sq = Loop2::polygon(&[Vec2::new(2.0, 0.0), Vec2::new(3.0, 0.0), Vec2::new(3.0, 1.0), Vec2::new(2.0, 1.0)]);
+        let ring = measure(&sheet(sq.segs.clone(), 0.0, 2.0 * PI)).unwrap();
+        close(ring.area, 2.0 * PI * (2.0 + 3.0 + 2.5 + 2.5));
+        close(ring.volume, 2.0 * PI * 2.5);
+    }
+
+    #[test]
+    fn revolve_sheet_refuses_bad_input() {
+        let rev = |chain: Vec<Seg2>, sweep: f64| revolve_sheet(&Plane::XY, &[chain], Vec2::new(0.0, 0.0), Vec2::new(0.0, 1.0), 0.0, sweep);
+        let line = |a: (f64, f64), b: (f64, f64)| Seg2::Line { a: Vec2::new(a.0, a.1), b: Vec2::new(b.0, b.1) };
+        assert!(rev(vec![line((-1.0, 0.0), (1.0, 1.0))], 1.0).is_err(), "crosses the axis");
+        assert!(rev(vec![line((0.0, 0.0), (0.0, 1.0))], 1.0).is_err(), "on the axis");
+        assert!(rev(vec![line((1.0, 0.0), (1.0, 1.0))], 0.0).is_err(), "zero angle");
+        assert!(rev(vec![line((1.0, 0.0), (1.0, 1.0))], 7.0).is_err(), "more than a turn");
+        assert!(rev(vec![line((1.0, 0.0), (1.0, 1.0))], f64::NAN).is_err());
+        let touching = Loop2::polygon(&[Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(0.0, 1.0)]);
+        assert!(rev(touching.segs, 1.0).is_err(), "a closed curve touching the axis");
+        assert!(revolve_sheet(&Plane::XY, &[], Vec2::new(0.0, 0.0), Vec2::new(0.0, 1.0), 0.0, 1.0).is_err());
+        assert!(revolve_sheet(&Plane::XY, &[vec![line((1.0, 0.0), (1.0, 1.0))]], Vec2::new(0.0, 0.0), Vec2::new(0.0, 0.0), 0.0, 1.0).is_err());
+    }
+
+    /// A line along x swept up z: straight (length × height), then on round a quarter turn
+    /// (a quarter cylinder of radius 5 about an axis along x: 10 × 5π/2, the arc taking up the
+    /// line's far edge), and along a path with a corner (mitred ruled walls, 10 × both legs); a
+    /// closed square's four walls; a 3D point path.
+    #[test]
+    fn sweep_sheet_areas() {
+        use crate::PathSeg;
+        use std::f64::consts::FRAC_PI_2;
+        let line = vec![Seg2::Line { a: Vec2::new(0.0, 0.0), b: Vec2::new(10.0, 0.0) }];
+        let up = PathSeg::Line { a: Vec3::ZERO, b: Vec3::new(0.0, 0.0, 5.0) };
+        let area = |b: &Body| measure(b).unwrap().area;
+        let straight = sweep_sheet(&Plane::XY, std::slice::from_ref(&line), &[up]).unwrap();
+        assert!(straight.is_surface() && rel(area(&straight), 50.0) < 1e-9);
+        let bend = PathSeg::Arc { a: Vec3::new(0.0, 0.0, 5.0), center: Vec3::new(0.0, 5.0, 5.0), axis: -Vec3::X, angle: FRAC_PI_2 };
+        let smooth = sweep_sheet(&Plane::XY, std::slice::from_ref(&line), &[up, bend]).unwrap();
+        assert!(smooth.is_surface());
+        let want = 50.0 + 10.0 * 5.0 * FRAC_PI_2;
+        assert!(rel(area(&smooth), want) < 2e-3, "{} vs {want}", area(&smooth)); // (measured on meshes)
+        let over = PathSeg::Line { a: Vec3::new(0.0, 0.0, 5.0), b: Vec3::new(0.0, 5.0, 5.0) };
+        let cornered = sweep_sheet(&Plane::XY, std::slice::from_ref(&line), &[up, over]).unwrap();
+        assert!(cornered.is_surface() && rel(area(&cornered), 100.0) < 1e-9, "{}", area(&cornered));
+        let sq = Loop2::polygon(&[Vec2::new(0.0, 0.0), Vec2::new(4.0, 0.0), Vec2::new(4.0, 4.0), Vec2::new(0.0, 4.0)]);
+        let walls = sweep_sheet(&Plane::XY, std::slice::from_ref(&sq.segs), &[up]).unwrap();
+        assert!(walls.is_surface() && walls.face_count() == 4 && rel(area(&walls), 80.0) < 1e-9);
+        let pts: Vec<Vec3> = (0..=10).map(|i| Vec3::new(0.0, 0.0, i as f64)).collect();
+        assert!(rel(area(&sweep_sheet_points(&Plane::XY, std::slice::from_ref(&line), &pts).unwrap()), 100.0) < 1e-6);
+        // A smooth point path: a quarter circle of radius 30 in the YZ plane. One smooth wall (not
+        // forty ruled strips), a piece of cylinder: 10 × 15π.
+        let arc: Vec<Vec3> = (0..=40)
+            .map(|i| {
+                let t = i as f64 / 40.0 * FRAC_PI_2;
+                Vec3::new(0.0, 30.0 * (1.0 - t.cos()), 30.0 * t.sin())
+            })
+            .collect();
+        let curved = sweep_sheet_points(&Plane::XY, std::slice::from_ref(&line), &arc).unwrap();
+        assert_eq!(curved.face_count(), 1, "smooth wall");
+        let want = 10.0 * 30.0 * FRAC_PI_2;
+        assert!(rel(area(&curved), want) < 2e-3, "{} vs {want}", area(&curved)); // (measured on meshes)
+        // A bent chain along the same path: two smooth walls joined by one shared seam edge.
+        let bent = vec![line[0], Seg2::Line { a: Vec2::new(10.0, 0.0), b: Vec2::new(10.0, 5.0) }];
+        let two = sweep_sheet_points(&Plane::XY, &[bent], &arc).unwrap();
+        assert_eq!(two.face_count(), 2);
+        let edges: std::collections::HashSet<_> = two.solid.edge_iter().map(|e| e.id()).collect();
+        assert_eq!(edges.len(), 7, "the walls share their seam");
+    }
+
+    #[test]
+    fn sweep_sheet_refuses_bad_input() {
+        use crate::PathSeg;
+        let line = vec![Seg2::Line { a: Vec2::new(0.0, 0.0), b: Vec2::new(10.0, 0.0) }];
+        let up = PathSeg::Line { a: Vec3::ZERO, b: Vec3::new(0.0, 0.0, 5.0) };
+        assert!(sweep_sheet(&Plane::XY, std::slice::from_ref(&line), &[]).is_err());
+        assert!(sweep_sheet(&Plane::XY, &[], &[up]).is_err());
+        assert!(sweep_sheet(&Plane::XY, std::slice::from_ref(&line), &[PathSeg::Line { a: Vec3::ZERO, b: Vec3::ZERO }]).is_err());
+        let no_axis = PathSeg::Arc { a: Vec3::ZERO, center: Vec3::new(0.0, 5.0, 0.0), axis: Vec3::ZERO, angle: 1.0 };
+        assert!(sweep_sheet(&Plane::XY, std::slice::from_ref(&line), &[no_axis]).is_err());
+        assert!(sweep_sheet_points(&Plane::XY, std::slice::from_ref(&line), &[Vec3::ZERO]).is_err());
+        assert!(sweep_sheet_points(&Plane::XY, std::slice::from_ref(&line), &[Vec3::ZERO, Vec3::new(f64::NAN, 0.0, 0.0)]).is_err());
+    }
+
+    /// Sheets lofted between open lines and closed loops: a ruled strip (even when the second
+    /// line runs the other way, or is in two pieces), a smooth strip through three, the walls
+    /// between two squares, and a cylinder through three circles.
+    #[test]
+    fn loft_sheet_areas() {
+        use std::f64::consts::PI;
+        let at = |z: f64| Plane::XY.offset(z);
+        let line = |a: f64, b: f64| Seg2::Line { a: Vec2::new(a, 0.0), b: Vec2::new(b, 0.0) };
+        let area = |b: &Body| measure(b).unwrap().area;
+        let strip = loft_sheet(&[(at(0.0), vec![line(0.0, 10.0)]), (at(5.0), vec![line(0.0, 10.0)])]).unwrap();
+        assert!(strip.is_surface() && rel(area(&strip), 50.0) < 1e-6, "{}", area(&strip));
+        let turned = loft_sheet(&[(at(0.0), vec![line(0.0, 10.0)]), (at(5.0), vec![line(10.0, 0.0)])]).unwrap();
+        assert!(rel(area(&turned), 50.0) < 1e-6, "not twisted: {}", area(&turned));
+        let pieces = loft_sheet(&[(at(0.0), vec![line(0.0, 10.0)]), (at(5.0), vec![line(0.0, 5.0), line(5.0, 10.0)])]).unwrap();
+        assert!(rel(area(&pieces), 50.0) < 1e-6 && pieces.face_count() == 2, "{}", area(&pieces));
+        let three = loft_sheet(&[(at(0.0), vec![line(0.0, 10.0)]), (at(5.0), vec![line(0.0, 10.0)]), (at(10.0), vec![line(0.0, 10.0)])]).unwrap();
+        assert!(rel(area(&three), 100.0) < 1e-3, "{}", area(&three)); // (measured on meshes)
+        let sq = Loop2::polygon(&[Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0), Vec2::new(0.0, 10.0)]);
+        let walls = loft_sheet(&[(at(0.0), sq.segs.clone()), (at(4.0), sq.segs.clone())]).unwrap();
+        assert!(walls.is_surface() && walls.face_count() == 4 && rel(area(&walls), 160.0) < 1e-6, "{}", area(&walls));
+        let circle = Loop2::circle(Vec2::ZERO, 2.0).segs;
+        let tube = loft_sheet(&[(at(0.0), circle.clone()), (at(5.0), circle.clone()), (at(10.0), circle)]).unwrap();
+        assert!(tube.is_surface());
+        let want = 2.0 * PI * 2.0 * 10.0;
+        assert!(rel(area(&tube), want) < 2e-3, "{} vs {want}", area(&tube)); // (measured on meshes)
+    }
+
+    #[test]
+    fn loft_sheet_refuses_bad_input() {
+        let at = |z: f64| Plane::XY.offset(z);
+        let line = vec![Seg2::Line { a: Vec2::new(0.0, 0.0), b: Vec2::new(10.0, 0.0) }];
+        let sq = Loop2::polygon(&[Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0)]).segs;
+        assert!(loft_sheet(&[(at(0.0), line.clone())]).is_err(), "one section");
+        assert!(loft_sheet(&[(at(0.0), line.clone()), (at(1.0), sq)]).is_err(), "open and closed");
+        assert!(loft_sheet(&[(at(0.0), line.clone()), (at(1.0), vec![])]).is_err(), "an empty section");
+        let gap = vec![line[0], Seg2::Line { a: Vec2::new(11.0, 0.0), b: Vec2::new(12.0, 0.0) }];
+        assert!(loft_sheet(&[(at(0.0), line.clone()), (at(1.0), gap)]).is_err(), "a section with a gap");
+        let nan = vec![Seg2::Line { a: Vec2::new(f64::NAN, 0.0), b: Vec2::new(1.0, 0.0) }];
+        assert!(loft_sheet(&[(at(0.0), line), (at(1.0), nan)]).is_err());
+    }
+
     #[test]
     fn extrude_sheet_refuses_bad_input() {
         let line = vec![Seg2::Line { a: Vec2::new(0.0, 0.0), b: Vec2::new(10.0, 0.0) }];
@@ -805,6 +1238,23 @@ mod tests {
         let down = measure(&thicken(&turned, 2.0, false).unwrap()).unwrap().bbox;
         assert!((up.min.z - down.min.z - 2.0).abs() < 1e-9 && (up.max.z - down.max.z - 2.0).abs() < 1e-9, "{up:?} vs {down:?}");
         assert!(reverse_faces(&box_solid(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0)).unwrap(), &[]).is_err());
+    }
+
+    /// A box's top taken away without healing: a five-face surface; patching the opening and
+    /// stitching closes the same box. Every face, or none, is refused.
+    #[test]
+    fn remove_faces_leaves_the_gap_open() {
+        let b = box_solid(Vec3::ZERO, Vec3::new(10.0, 10.0, 10.0)).unwrap();
+        let top = nearest_face(&b, Vec3::new(5.0, 5.0, 10.0)).unwrap();
+        let open = remove_faces(&b, &[top]).unwrap();
+        assert!(open.is_surface() && open.face_count() == 5);
+        assert!(rel(measure(&open).unwrap().area, 500.0) < 1e-9);
+        let lid = patch_edges(&open, &[Vec3::new(5.0, 0.0, 10.0), Vec3::new(10.0, 5.0, 10.0), Vec3::new(5.0, 10.0, 10.0), Vec3::new(0.0, 5.0, 10.0)])
+            .unwrap();
+        let back = stitch(&[&open, &lid], 1e-6).unwrap();
+        assert!(!back.is_surface() && rel(measure(&back).unwrap().volume, 1000.0) < 1e-9);
+        assert!(remove_faces(&b, &(0..6).collect::<Vec<_>>()).is_err());
+        assert!(remove_faces(&b, &[]).is_err());
     }
 
     #[test]

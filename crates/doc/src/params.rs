@@ -69,7 +69,7 @@ impl FeatureKind {
                     v.push(("To offset", d, L));
                 }
             }
-            FeatureKind::Revolve { angle, angle2, .. } => {
+            FeatureKind::Revolve { angle, angle2, .. } | FeatureKind::SurfaceRevolve { angle, angle2, .. } => {
                 v.push(("Angle", angle, A));
                 if let Some(a) = angle2 {
                     v.push(("Angle 2", a, A));
@@ -278,6 +278,12 @@ impl FeatureKind {
             FeatureKind::SurfaceTrim { plane, .. } => plane_inputs_mut(plane, &mut v),
             FeatureKind::SurfaceExtend { distance, .. } => v.push(("Distance", distance, L)),
             FeatureKind::Unstitch { .. } | FeatureKind::ReverseNormal { .. } => {}
+            FeatureKind::SurfaceOffset { distance, tolerance, .. } => {
+                v.push(("Distance", distance, L));
+                if let Some(t) = tolerance {
+                    v.push(("Tolerance", t, L));
+                }
+            }
             FeatureKind::Patch { .. } => {}
             FeatureKind::Combine { .. }
             | FeatureKind::SheetBase { .. }
@@ -289,6 +295,8 @@ impl FeatureKind {
             | FeatureKind::BoundaryFill { .. }
             | FeatureKind::Loft { .. }
             | FeatureKind::Sweep { .. }
+            | FeatureKind::SurfaceSweep { .. }
+            | FeatureKind::SurfaceLoft { .. }
             | FeatureKind::Import { .. }
             | FeatureKind::MeshImport { .. }
             | FeatureKind::BodyTransfer { .. } => {}

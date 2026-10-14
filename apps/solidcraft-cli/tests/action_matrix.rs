@@ -1051,6 +1051,18 @@ fn a_through_hole_into_a_shelled_box_rim() {
     );
 }
 
+/// #559: a 6 mm hole drilled at an angle through a 920 mm prism, its through-all tool nearly
+/// 1.9 m long beside a thin bar it misses. The bar's cut came out empty: the tool filled too
+/// little of its own box for the sampled shortcut, and the boolean's tolerances (from the
+/// tool's length) were wider than the hole.
+#[test]
+fn an_oblique_through_hole_beside_a_thin_bar() {
+    reproduces(
+        Some("examples/regressions/oblique_cut_of_cylinder.json"),
+        json!([{"command": "solid.hole", "params": {"diameter": 6.0, "position": [296.66666666666663, -458.66666666666663, 848.7633333333333]}}]),
+    );
+}
+
 #[test]
 fn a_hole_through_a_sheet_metal_base() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 40.]).into();

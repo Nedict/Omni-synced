@@ -123,6 +123,17 @@ fn unauthorized() -> Value {
     json!({"ok": false, "error": "unauthorized: send the control token as \"token\" (see docs/control-protocol.md)"})
 }
 
+/// Refuse the connection: the reply, then the end of what we send, then what the client had
+/// already sent read and dropped (a little, briefly). Closing a socket with unread input resets
+/// the connection, and a reset can reach the client before it has read the refusal.
+fn refuse(out: &mut TcpStream, reader: &mut BufReader<TcpStream>) {
+    use std::io::Read;
+    let _ = writeln!(out, "{}", unauthorized());
+    let _ = out.shutdown(std::net::Shutdown::Write);
+    let _ = reader.get_ref().set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = std::io::copy(&mut reader.by_ref().take(64 * 1024), &mut std::io::sink());
+}
+
 fn serve(stream: TcpStream, token: &str, tx: Sender<ControlRequest>, ctx: egui::Context) {
     let Ok(read) = stream.try_clone() else { return };
     let mut out = stream;
@@ -148,7 +159,7 @@ fn serve(stream: TcpStream, token: &str, tx: Sender<ControlRequest>, ctx: egui::
                     match msg.get("token").and_then(Value::as_str) {
                         Some(t) if control_auth::tokens_match(t, token) => authenticated = true,
                         _ => {
-                            let _ = writeln!(out, "{}", unauthorized());
+                            refuse(&mut out, &mut reader);
                             break;
                         }
                     }
@@ -156,19 +167,21 @@ fn serve(stream: TcpStream, token: &str, tx: Sender<ControlRequest>, ctx: egui::
                 let id = msg.get("id").cloned().unwrap_or(Value::Null);
                 let method = msg.get("method").and_then(Value::as_str).unwrap_or("").to_string();
                 let params = msg.get("params").cloned().unwrap_or(json!({}));
+                // A batch replaces many short requests: the whole of it may take long (#743).
+                let wait = Duration::from_secs(if method == "engine.batch" { 3600 } else { 60 });
                 let (req, rrx) = ControlRequest::new(method, params);
                 if tx.send(req).is_err() {
                     break;
                 }
                 ctx.request_repaint();
-                let mut r = rrx.recv_timeout(Duration::from_secs(60)).unwrap_or_else(|_| json!({"ok": false, "error": "timeout"}));
+                let mut r = rrx.recv_timeout(wait).unwrap_or_else(|_| json!({"ok": false, "error": "timeout"}));
                 if let Some(o) = r.as_object_mut() {
                     o.insert("id".into(), id);
                 }
                 r
             }
             Err(_) if !authenticated => {
-                let _ = writeln!(out, "{}", unauthorized());
+                refuse(&mut out, &mut reader);
                 break;
             }
             Err(e) => {

@@ -27,6 +27,7 @@
   "ui.agent_cursor": "에이전트 커서",
   "ui.agent_cursor_speed": "에이전트 커서 속도",
   "ui.all": "모두",
+  "ui.analysis": "분석",
   "ui.angle": "각도",
   "ui.angle_decimals": "각도 소수점 자릿수",
   "ui.animate_view_changes": "뷰 변경 애니메이션",
@@ -100,6 +101,7 @@
   "ui.drawing": "도면",
   "ui.drill_point": "드릴 선단",
   "ui.edit": "편집",
+  "ui.edit_section_analysis": "단면 분석 편집",
   "ui.ellipse": "타원",
   "ui.end_radius": "끝 반지름",
   "ui.entities": "요소",
@@ -329,5 +331,13 @@
   "sketch_text.builtin_font": "{family}(내장)",
   "sketch_text.font_search": "글꼴 검색",
   "sketch_text.loading_fonts": "설치된 글꼴을 찾는 중…",
-  "sketch_text.use_font_file": "글꼴 파일 {path} 사용"
+  "sketch_text.use_font_file": "글꼴 파일 {path} 사용",
+  "sketch_text.bold": "굵게",
+  "sketch_text.italic": "기울임꼴",
+  "sketch_text.align_left": "왼쪽",
+  "sketch_text.align_center": "가운데",
+  "sketch_text.align_right": "오른쪽",
+  "sketch_text.path_hint": "텍스트가 따라갈 스케치 곡선: 여기를 클릭한 다음 곡선을 클릭",
+  "sketch_text.path_clear": "곡선에서 텍스트 떼기",
+  "sketch_text.on_path": "텍스트가 경로를 따릅니다: 위치는 곡선이 정합니다"
 }

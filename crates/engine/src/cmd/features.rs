@@ -51,7 +51,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "CREATE")
         .icon("hole")
         .key("H")
-        .params("position: [x,y,z] on a face | sketch + points: [sketch point ids] (one hole each, perpendicular to the sketch) | sketch alone (every sketch point: standalone points and circle centres); direction?: [x,y,z] (default: into the face); diameter | thread (a tapped hole: the tap drill, major − pitch) | clearance: \"M6\" with fit?: close|normal|loose (ISO 273); depth? (default through all) | to?: [x,y,z] (To Object: drill to that face or point); type?: simple|drilled|counterbore|countersink; tip_angle?; cb_diameter?, cb_depth?; cs_diameter?, cs_angle?; thread?: \"M6\" (cosmetic)"),
+        .params("position: [x,y,z] on a face | sketch + points: [sketch point ids] (one hole each, perpendicular to the sketch, into the material on whichever side of the sketch plane it is) | sketch alone (every sketch point: standalone points and circle centres); direction?: [x,y,z] (default: into the face; ignored with sketch points); diameter | thread (a tapped hole: the tap drill, major − pitch) | clearance: \"M6\" with fit?: close|normal|loose (ISO 273); depth? (default through all) | to?: [x,y,z] (To Object: drill to that face or point); type?: simple|drilled|counterbore|countersink; tip_angle?; cb_diameter?, cb_depth?; cs_diameter?, cs_angle?; thread?: \"M6\" (cosmetic)"),
     CommandSpec::new("solid.pipe", "Pipe", pipe)
         .at("SOLID", "CREATE")
         .icon("pipe")
@@ -67,7 +67,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("face.delete", "Delete Face", delete_face)
         .at("SOLID", "MODIFY")
         .icon("delete")
-        .params("faces: [[x,y,z] points on the faces]; body?. The neighbouring planes close the gap, as when a rounded edge, hole or boss is taken off"),
+        .params("faces: [[x,y,z] points on the faces]; body?; heal?: bool (default true: the neighbouring planes close the gap, as when a rounded edge, hole or boss is taken off; false: the gap stays open and the faces left are a surface body)"),
     CommandSpec::new("solid.offset_face", "Offset Face", offset_face)
         .at("SOLID", "MODIFY")
         .icon("offset_face")
@@ -576,18 +576,7 @@ fn revolve(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => (feature_sketch(s, p, cmd)?, None),
     };
-    let axis = if let Some(o) = p.get("axis").filter(|v| v.is_object()) {
-        let origin = o.get("origin").and_then(vec3).unwrap_or(Vec3::ZERO);
-        let dir = o.get("dir").and_then(vec3).ok_or_else(|| bad(cmd, "axis needs `dir`"))?;
-        AxisRef::Line { origin, dir }
-    } else {
-        match str_(p, "axis") {
-            Some(a @ ("X" | "Y" | "Z")) => AxisRef::World { axis: a.into() },
-            Some(a @ ("x" | "y")) => AxisRef::SketchAxis { axis: a.into() },
-            Some(id) => AxisRef::SketchLine { curve: id.into() },
-            None => return Err(bad(cmd, "`axis` must be a sketch line id, x, y (sketch axes), X, Y, Z or {origin, dir}")),
-        }
-    };
+    let axis = axis_param(p, cmd)?;
     let angle = expr(p, "angle").unwrap_or_else(|| "360 deg".into());
     check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
     let profiles = match face_profile {
@@ -621,6 +610,22 @@ fn revolve(s: &mut Session, p: &Value) -> Result<Value> {
         to,
     };
     add_feature(s, p, kind)
+}
+
+/// A revolve axis from its parameter: a sketch line id, the sketch's x or y axis, a world axis,
+/// or {origin, dir}.
+pub(super) fn axis_param(p: &Value, cmd: &str) -> Result<AxisRef> {
+    if let Some(o) = p.get("axis").filter(|v| v.is_object()) {
+        let origin = o.get("origin").and_then(vec3).unwrap_or(Vec3::ZERO);
+        let dir = o.get("dir").and_then(vec3).ok_or_else(|| bad(cmd, "axis needs `dir`"))?;
+        return Ok(AxisRef::Line { origin, dir });
+    }
+    match str_(p, "axis") {
+        Some(a @ ("X" | "Y" | "Z")) => Ok(AxisRef::World { axis: a.into() }),
+        Some(a @ ("x" | "y")) => Ok(AxisRef::SketchAxis { axis: a.into() }),
+        Some(id) => Ok(AxisRef::SketchLine { curve: id.into() }),
+        None => Err(bad(cmd, "`axis` must be a sketch line id, x, y (sketch axes), X, Y, Z or {origin, dir}")),
+    }
 }
 
 fn radius_expr(s: &Session, p: &Value, cmd: &str) -> Result<String> {
@@ -1649,7 +1654,8 @@ fn scale(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn delete_face(s: &mut Session, p: &Value) -> Result<Value> {
     let faces = face_points(p, "face.delete")?;
-    add_feature(s, p, FeatureKind::DeleteFace { faces, body: str_(p, "body").map(str::to_string) })
+    let heal = bool_(p, "heal").unwrap_or(true);
+    add_feature(s, p, FeatureKind::DeleteFace { faces, body: str_(p, "body").map(str::to_string), heal })
 }
 
 fn offset_face(s: &mut Session, p: &Value) -> Result<Value> {
