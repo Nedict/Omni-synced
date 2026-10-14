@@ -816,3 +816,31 @@ observed 47.6 ms check; no local PNG was created and the active document remaine
 empty. The screenshot shows the transferred file's picture while built-in sample
 pictures are still loading. This is one functional visual check, not a first-frame
 benchmark. The separate counting-reader regression proves source-blob deferral.
+
+## Extrude drag preview delivery
+
+On macOS with Metal, editing a 15 mm radius cylinder's 10 mm extrusion and dragging its
+arrow upward by 150 screen points (120 input steps, Ctrl held) exposed preview starvation.
+A completed worker result was discarded whenever the pointer had already changed the
+requested distance. The arrow also drew the previous frame's distance.
+
+The preview now accepts successful intermediate distances from the same extrude or face-offset
+setup, including feature edits and partial join/cut tool previews. Selections, operation,
+extent mode, feature identity, revision and colours remain part of the setup identity. Errors
+still apply only to the exact requested inputs, and the final distance is computed normally.
+The arrow and value-box anchor use the current frame's pointer value.
+
+A release-build control-channel reproduction against upstream `01b1b705` and the fix sampled
+27 distinct distances in each run, ending at 19.585 mm:
+
+| Observation | Before | After |
+|---|---:|---:|
+| Preview updates before reaching the final distance | 0 | 24 |
+| Preview updates including final settling, excluding the initial scene | 1 | 26 |
+| Largest sampled UI frame work | 1.37 ms | 1.32 ms |
+
+These are sampled preview deliveries (`ui.inspect.preview.ms` changes), not every rendered
+frame. The UI timings exclude GPU presentation; the improvement is continued delivery of
+preview geometry during motion, not a claimed speedup of the geometry kernel. Regression tests
+cover intermediate geometry, exact final convergence, obsolete errors and setup changes, and
+the arrow's position on each held input frame.
