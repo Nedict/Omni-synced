@@ -230,6 +230,106 @@ fn sketch_menu_hides_and_moves_to_another_plane() {
 }
 
 #[test]
+fn browser_construction_plane_right_click_opens_its_menu() {
+    for timeline_left in [false, true] {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.preferences.timeline_left = timeline_left;
+        assert_eq!(
+            h.call("engine.execute", json!({"command": "solid.box", "params": {"length": 40, "width": 40, "height": 10, "body_name": "Block"}}))["ok"],
+            true
+        );
+        assert_eq!(
+            h.call("engine.execute", json!({"command": "construct.plane.offset", "params": {"base": "XY", "offset": 25, "name": "Cut"}}))["ok"],
+            true
+        );
+        h.settle();
+        let id = h.app.session.doc.find_feature("Cut").unwrap().id;
+        h.step(&json!({"click": {"browser": "Cut"}, "button": "right"})).unwrap();
+        let menu = context_menu::describe(&h.app);
+        assert_eq!(menu["open"], true, "construction plane menu, timeline_left={timeline_left}: {menu}");
+        assert_eq!(menu["target"], json!({"type": "construction_plane", "id": id}));
+        for label in ["Rename", "Delete", "Show/Hide"] {
+            assert!(find(&context_menu::items(&h.app, &h.app.menu.target), label).enabled);
+        }
+    }
+}
+
+#[test]
+fn construction_plane_menu_hides_renames_and_deletes_only_its_target() {
+    let mut app = SolveApp::new(Session::default(), Services::default());
+    app.run("solid.box", json!({"length": 40, "width": 40, "height": 10, "body_name": "Block"})).unwrap();
+    app.run("construct.plane.offset", json!({"base": "XY", "offset": 25, "name": "Cut"})).unwrap();
+    let id = app.session.doc.find_feature("Cut").unwrap().id;
+    let target = Target::ConstructionPlane { id };
+    app.run("select.set", json!({"items": [{"type": "body", "name": "Block"}]})).unwrap();
+    app.session.visibility.hidden_origin.push("XY".into());
+    assert!(context_menu::target_bodies(&app, &target).is_empty());
+
+    act(&mut app, &target, "Show/Hide");
+    assert!(app.session.visibility.hidden_origin.contains(&"Cut".into()));
+    assert!(app.session.visibility.hidden_bodies.is_empty());
+    act(&mut app, &target, "Show/Hide");
+    assert_eq!(app.session.visibility.hidden_origin, vec!["XY"]);
+
+    act(&mut app, &target, "Rename");
+    assert!(context_menu::finish_rename(&mut app, Some("Cancelled"), false));
+    assert_eq!(app.session.doc.feature(id).unwrap().name, "Cut");
+    act(&mut app, &target, "Rename");
+    assert!(context_menu::finish_rename(&mut app, Some("Cutting plane"), true));
+    assert_eq!(app.session.doc.feature(id).unwrap().name, "Cutting plane");
+    act(&mut app, &target, "Show/Hide");
+    assert!(app.session.visibility.hidden_origin.contains(&"Cutting plane".into()), "the menu follows the feature's current name");
+    act(&mut app, &target, "Show/Hide");
+    assert_eq!(app.session.visibility.hidden_origin, vec!["XY"]);
+
+    act(&mut app, &target, "Delete");
+    assert!(app.menu.confirm.is_none(), "an independent plane needs no dependency confirmation");
+    assert!(app.session.doc.feature(id).is_none());
+    assert!(app.session.world_state().body("Block").is_some(), "the selected body must not be deleted");
+    assert!(context_menu::items(&app, &target).is_empty(), "a deleted target has no actions");
+    app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(app.session.doc.feature(id).unwrap().name, "Cutting plane");
+}
+
+#[test]
+fn construction_plane_menu_confirms_when_deletion_breaks_a_sketch() {
+    let mut app = SolveApp::new(Session::default(), Services::default());
+    app.run("construct.plane.offset", json!({"base": "XY", "offset": 25, "name": "Cut"})).unwrap();
+    let id = app.session.doc.find_feature("Cut").unwrap().id;
+    let sketch = app.run("sketch.create", json!({"plane": "Cut"})).unwrap()["sketch"].as_u64().unwrap();
+    app.run("sketch.finish", json!({})).unwrap();
+    let target = Target::ConstructionPlane { id };
+    let saved = app.session.doc.to_json();
+    act(&mut app, &target, "Delete");
+    let confirmation = app.menu.confirm.as_ref().expect("deleting a plane with a dependent sketch must ask first");
+    assert_eq!(confirmation.report["deleted"], json!(["Cut"]));
+    assert_eq!(confirmation.report["would_fail"], json!([app.session.doc.feature(sketch).unwrap().name]));
+    assert_eq!(app.session.doc.to_json(), saved);
+    assert!(crate::delete::confirm(&mut app, false));
+    assert_eq!(app.session.doc.to_json(), saved, "cancelling must preserve the plane and sketch");
+    act(&mut app, &target, "Delete");
+    assert!(crate::delete::confirm(&mut app, true));
+    assert!(app.session.doc.feature(id).is_none());
+    assert!(app.session.doc.feature(sketch).is_some(), "the existing delete path keeps the sketch for repair");
+    assert!(app.session.model.result(sketch).unwrap().error.is_some());
+    app.run("edit.undo", json!({})).unwrap();
+    assert_eq!(app.session.doc.to_json(), saved, "undo restores both features together");
+    assert!(app.session.model.result(sketch).unwrap().error.is_none());
+}
+
+#[test]
+fn construction_plane_menu_rejects_missing_or_non_plane_features() {
+    let mut app = SolveApp::new(Session::default(), Services::default());
+    app.run("solid.box", json!({"length": 10, "width": 10, "height": 10})).unwrap();
+    let id = app.session.doc.features[0].id;
+    for target in [Target::ConstructionPlane { id }, Target::ConstructionPlane { id: u64::MAX }] {
+        assert!(context_menu::items(&app, &target).is_empty());
+        assert!(context_menu::target_bodies(&app, &target).is_empty());
+    }
+}
+
+#[test]
 fn sketch_entities_offer_the_constraints_that_fit() {
     let mut app = sample_app();
     app.run("sketch.create", json!({"plane": "XY"})).unwrap();

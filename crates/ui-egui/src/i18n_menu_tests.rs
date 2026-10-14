@@ -49,6 +49,7 @@ fn take(app: &SolveApp, out: &mut BTreeSet<String>) {
     }
     for id in &features {
         take_items(out, &context_menu::items(app, &Target::Sketch { id: *id }));
+        take_items(out, &context_menu::items(app, &Target::ConstructionPlane { id: *id }));
     }
     for id in &components {
         take_items(out, &context_menu::items(app, &Target::Component { id: *id }));
@@ -80,6 +81,7 @@ fn take_items(out: &mut BTreeSet<String>, items: &[Item]) {
 #[test]
 fn every_menu_label_is_in_the_english_catalog() {
     let mut app = sample_app();
+    app.run("construct.plane.offset", json!({"base": "XY", "offset": 25, "name": "Menu plane"})).expect("construction plane");
     let mut seen = BTreeSet::new();
     take(&app, &mut seen);
 

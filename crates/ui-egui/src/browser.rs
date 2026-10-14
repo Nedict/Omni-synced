@@ -1287,7 +1287,7 @@ fn entries(app: &SolveApp, comp: u64, folder: &str) -> Vec<Entry> {
                 color: None,
                 locked: false,
                 sel: Some(Sel::Plane { name: f.name.clone() }),
-                target: None,
+                target: Some(Target::ConstructionPlane { id: f.id }),
                 bodies: Vec::new(),
             })
             .collect(),

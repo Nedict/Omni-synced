@@ -1,0 +1,127 @@
+[
+ {
+  "note": "#1036: a construction plane's browser menu acts on that plane."
+ },
+ {
+  "call": "engine.execute",
+  "params": {
+   "command": "solid.box",
+   "params": {
+    "length": 40,
+    "width": 40,
+    "height": 10,
+    "body_name": "Block"
+   }
+  }
+ },
+ {
+  "call": "engine.execute",
+  "params": {
+   "command": "construct.plane.offset",
+   "params": {
+    "base": "XY",
+    "offset": 25,
+    "name": "Cut"
+   }
+  }
+ },
+ {
+  "click": {
+   "browser": "Cut"
+  },
+  "button": "right"
+ },
+ {
+  "call": "ui.menuPick",
+  "params": {
+   "item": "Show/Hide"
+  }
+ },
+ {
+  "click": {
+   "browser": "Cut"
+  },
+  "button": "right"
+ },
+ {
+  "call": "ui.menuPick",
+  "params": {
+   "item": "Show/Hide"
+  }
+ },
+ {
+  "click": {
+   "browser": "Cut"
+  },
+  "button": "right"
+ },
+ {
+  "call": "ui.menuPick",
+  "params": {
+   "item": "Rename"
+  }
+ },
+ {
+  "call": "ui.rename",
+  "params": {
+   "text": "Cutting plane",
+   "commit": true
+  }
+ },
+ {
+  "expect": {
+   "browser_has": [
+    "Cutting plane",
+    "Block"
+   ],
+   "browser_lacks": [
+    "Cut"
+   ],
+   "features": 2,
+   "errors": 0
+  }
+ },
+ {
+  "click": {
+   "browser": "Cutting plane"
+  },
+  "button": "right"
+ },
+ {
+  "call": "ui.menuPick",
+  "params": {
+   "item": "Delete"
+  }
+ },
+ {
+  "expect": {
+   "browser_has": [
+    "Block"
+   ],
+   "browser_lacks": [
+    "Cutting plane"
+   ],
+   "features": 1,
+   "bodies": 1,
+   "errors": 0
+  }
+ },
+ {
+  "call": "engine.execute",
+  "params": {
+   "command": "edit.undo",
+   "params": {}
+  }
+ },
+ {
+  "expect": {
+   "browser_has": [
+    "Cutting plane",
+    "Block"
+   ],
+   "features": 2,
+   "bodies": 1,
+   "errors": 0
+  }
+ }
+]
