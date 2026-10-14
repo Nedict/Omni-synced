@@ -89,6 +89,12 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 
 ## Render foundation
 
+- Definition-local visual mapping (#1214) provides a bounded numerical frame,
+  physical repeat coordinates and a deterministic one-time grain-axis suggestion.
+  It has no persistent appearance record, texture consumer or capability flag;
+  textured wood and native controls remain later #786 phases. See
+  [the mapping contract and limits](docs/render-visual-mapping.md).
+
 - Bounded PNG/JPEG texture admission (#900) validates in-memory sources and returns
   completed RGBA8 pixels with explicit color/data roles. It is an input utility only:
   ICC/16-bit normalization, local wood mapping, resource persistence and the renderer

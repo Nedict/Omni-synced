@@ -8,6 +8,7 @@ mod backend;
 mod camera;
 mod curve_display;
 pub mod lighting;
+pub mod mapping;
 mod raster;
 pub mod surface;
 pub mod texture_input;
