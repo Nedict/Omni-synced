@@ -18,6 +18,7 @@
 #[cfg(not(target_os = "macos"))]
 #[path = "../../../assets/icons/app/shared/source/app_icon.rs"]
 mod app_icon;
+mod assistant_http;
 mod control_server;
 #[cfg(target_os = "macos")]
 mod open_documents;
@@ -136,6 +137,7 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
         graphics_path: graphics_path().map(|p| p.to_string_lossy().to_string()),
         http_get: Some(std::sync::Arc::new(http_get)),
         http_download: Some(std::sync::Arc::new(http_download)),
+        assistant_http: Some(std::sync::Arc::new(assistant_http::stream)),
         show_in_folder: Some(Box::new(|path| {
             let folder = std::path::Path::new(path).parent().unwrap_or_else(|| std::path::Path::new("."));
             let mut command = std::process::Command::new(if cfg!(target_os = "windows") {

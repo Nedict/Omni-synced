@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod access;
+pub mod assistant_ui;
 pub mod agent_cursor;
 pub mod browser;
 pub mod canvas;
@@ -183,6 +184,8 @@ pub struct UiState {
     pub locked_bodies: Vec<String>,
     /// The agent cursor: shown, speed, follow camera (#35).
     pub agent_cursor: agent_cursor::Settings,
+    /// The assistant sidebar on the right.
+    pub show_assistant: bool,
 }
 
 impl Default for UiState {
@@ -206,6 +209,7 @@ impl Default for UiState {
             shown_dims: Vec::new(),
             locked_bodies: Vec::new(),
             agent_cursor: Default::default(),
+            show_assistant: false,
         }
     }
 }
@@ -222,6 +226,9 @@ pub struct Services {
     pub http_get: Option<update::HttpGet>,
     /// HTTPS download to a file, with progress, for one-click updates (`update::install`).
     pub http_download: Option<update::install::HttpDownload>,
+    /// Streaming HTTPS POST for the assistant sidebar; None: the assistant is unavailable
+    /// (browser, tests without a fake).
+    pub assistant_http: Option<solidcraft_assistant::net::HttpStream>,
 }
 
 pub struct SolveApp {
@@ -305,6 +312,8 @@ pub struct SolveApp {
     control_held: std::collections::VecDeque<ControlRequest>,
     /// The agent cursor acting out control requests.
     pub agent: agent_cursor::AgentCursor,
+    /// The assistant sidebar.
+    pub assistant: assistant_ui::State,
     pending_shots: Vec<(u64, Option<String>, std::sync::mpsc::Sender<Value>, f64)>,
     queued_shots: Vec<(u64, f64, u32)>,
     shot_token: u64,
@@ -371,6 +380,7 @@ impl SolveApp {
             control_rx: None,
             control_held: Default::default(),
             agent: Default::default(),
+            assistant: Default::default(),
             pending_shots: Vec::new(),
             queued_shots: Vec::new(),
             shot_token: 0,
@@ -1037,6 +1047,7 @@ impl SolveApp {
         }
         self.step_view_animation(ctx);
         self.drain_control(ctx);
+        assistant_ui::tick(self, ctx);
         self.follow_view_request(true);
         agent_cursor::step(self, ctx);
         if !self.synthetic.is_empty() {
@@ -1172,7 +1183,9 @@ impl SolveApp {
         /// Held requests beyond this are refused rather than kept.
         const MAX_HELD: usize = 256;
 
-        let Some(rx) = self.control_rx.take() else { return };
+        // Requests come from the control channel (when the app has one) and from the assistant
+        // sidebar, whose requests have passed the gate in `assistant_ui`.
+        let rx = self.control_rx.take();
         // While the agent cursor acts out a request, later ones wait their turn.
         for _ in 0..PER_FRAME {
             if self.agent.busy() {
@@ -1180,7 +1193,8 @@ impl SolveApp {
             }
             // Held requests go first, in order, once the file is in.
             let held = if self.file_load.busy() || self.file_picker.is_some() { None } else { self.control_held.pop_front() };
-            let Some(req) = held.or_else(|| rx.try_recv().ok()) else { break };
+            let next = held.or_else(|| rx.as_ref().and_then(|r| r.try_recv().ok())).or_else(|| assistant_ui::next_request(self));
+            let Some(req) = next else { break };
             // A file is loading: commands that change the design wait for it (the window,
             // inspection and screenshots still answer).
             if ((self.file_load.busy() || self.file_picker.is_some())
@@ -1217,7 +1231,7 @@ impl SolveApp {
             }
             ctx.request_repaint();
         }
-        self.control_rx = Some(rx);
+        self.control_rx = rx;
     }
 
     fn issue_screenshots(&mut self, ctx: &egui::Context) {

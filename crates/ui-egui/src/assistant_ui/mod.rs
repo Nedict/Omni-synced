@@ -1,0 +1,619 @@
+//! The assistant sidebar's logic: the conversation, the worker turn, and the gate every tool
+//! call of the assistant passes before it reaches the design.
+//!
+//! The assistant is another client of the control channel that lives in this process. Its tool
+//! loop (`solidcraft_assistant::tool_loop`) runs on a worker thread and sends control requests
+//! into an inlet; [`next_request`] hands them to `SolveApp::drain_control` on the UI thread, after
+//! the policy of `solidcraft_assistant::policy` has refused what an assistant may not do and
+//! held what needs the person's yes. The design is only ever touched on this thread.
+
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use serde_json::{Value, json};
+use solidcraft_assistant::context;
+use solidcraft_assistant::model::{Message, Usage};
+use solidcraft_assistant::net::Cancel;
+use solidcraft_assistant::policy::{Verdict, classify};
+use solidcraft_assistant::provider::Codec;
+use solidcraft_assistant::provider::anthropic::Anthropic;
+use solidcraft_assistant::provider::openai::OpenAi;
+use solidcraft_assistant::runtime::{self, Job, TurnHandle, WorkerMsg, agent_roots};
+use solidcraft_assistant::settings::{BackendKind, Settings};
+use solidcraft_assistant::slash::{self, Input, Situation};
+use solidcraft_assistant::tool_loop::{Event, Finish, MAX_STEPS, ToolHost, call_title};
+
+use crate::SolveApp;
+use crate::control::ControlRequest;
+
+#[cfg(test)]
+mod tests;
+
+/// Longest a tool call may take before the turn gives up on it (a batch may be much longer).
+const CALL_TIMEOUT: Duration = Duration::from_secs(600);
+const BATCH_TIMEOUT: Duration = Duration::from_secs(3600);
+
+/// Longest message a person may send.
+pub const MAX_MESSAGE: usize = 32 * 1024;
+
+/// Reply tokens asked of the model.
+const MAX_TOKENS: u32 = 16_384;
+
+/// Most items kept for display in one conversation.
+const MAX_ITEMS: usize = 2000;
+
+/// One line of the conversation as the person sees it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Item {
+    User { text: String, picture: bool },
+    Assistant { text: String, thinking: String },
+    Tool(ToolCard),
+    Notice { text: String, error: bool },
+    /// A turn that changed the design ends here; `checkpoint` goes back to before it.
+    TurnEnd { checkpoint: Option<u64>, revision: u64, changed: bool },
+}
+
+/// A tool call and what it returned.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolCard {
+    pub id: String,
+    pub name: String,
+    pub title: String,
+    pub input: Value,
+    pub result: Option<ToolOutcome>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolOutcome {
+    pub is_error: bool,
+    pub text: String,
+    pub images: usize,
+}
+
+/// A request held for the person's yes.
+pub struct Confirm {
+    pub lines: Vec<String>,
+    req: ControlRequest,
+}
+
+struct Active {
+    id: u64,
+    handle: TurnHandle,
+    checkpoint: u64,
+    revision: u64,
+    /// Which design tab the turn started in.
+    tab: (usize, usize),
+    started: Instant,
+}
+
+/// The sidebar's state.
+pub struct State {
+    pub settings: Settings,
+    settings_loaded: bool,
+    pub items: Vec<Item>,
+    history: Vec<Message>,
+    active: Option<Active>,
+    /// The turn the gate accepts requests for (0: none). Shared with whatever forwards requests.
+    current_turn: Arc<AtomicU64>,
+    next_turn: u64,
+    inlet_tx: Sender<ControlRequest>,
+    inlet_rx: Receiver<ControlRequest>,
+    approved: VecDeque<ControlRequest>,
+    pub confirms: Vec<Confirm>,
+    /// What the person is typing.
+    pub input: String,
+    /// Tokens used in this conversation.
+    pub usage: Usage,
+    /// Tokens of the turn in progress.
+    turn_usage: Usage,
+    /// A note for the model before the next message (the person undid its changes).
+    note: Option<String>,
+    /// The last design tab, so a turn does not carry over to another design.
+    pub settings_open: bool,
+    pub scroll_to_end: bool,
+    /// A picture of the viewport waiting to go with the next message (mime, base64).
+    pub picture: Option<(String, String)>,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        let (inlet_tx, inlet_rx) = channel();
+        State {
+            settings: Settings::default(),
+            settings_loaded: false,
+            items: Vec::new(),
+            history: Vec::new(),
+            active: None,
+            current_turn: Arc::new(AtomicU64::new(0)),
+            next_turn: 1,
+            inlet_tx,
+            inlet_rx,
+            approved: VecDeque::new(),
+            confirms: Vec::new(),
+            input: String::new(),
+            usage: Usage::default(),
+            turn_usage: Usage::default(),
+            note: None,
+            settings_open: false,
+            scroll_to_end: false,
+            picture: None,
+        }
+    }
+}
+
+impl State {
+    /// A turn is running.
+    pub fn busy(&self) -> bool {
+        self.active.is_some()
+    }
+
+    /// How long the running turn has been going.
+    pub fn elapsed(&self) -> Option<Duration> {
+        self.active.as_ref().map(|a| a.started.elapsed())
+    }
+
+    /// Read the settings file the first time the sidebar is used.
+    pub fn ensure_loaded(&mut self) {
+        if !self.settings_loaded {
+            self.settings = Settings::load();
+            self.settings_loaded = true;
+        }
+    }
+
+    /// Mark the settings as loaded (tests set them directly).
+    pub fn set_settings(&mut self, s: Settings) {
+        self.settings = s;
+        self.settings_loaded = true;
+    }
+
+    /// Save the settings, telling the person when it fails.
+    pub fn save_settings(&mut self) {
+        if let Err(e) = self.settings.save() {
+            self.notice(e, true);
+        }
+    }
+
+    fn notice(&mut self, text: impl Into<String>, error: bool) {
+        self.items.push(Item::Notice { text: text.into(), error });
+        self.scroll_to_end = true;
+    }
+
+    /// Start over: the conversation goes, the design stays.
+    pub fn new_chat(&mut self) {
+        self.stop();
+        self.items.clear();
+        self.history.clear();
+        self.usage = Usage::default();
+        self.note = None;
+        self.picture = None;
+    }
+
+    /// Stop the running turn: it ends after the step in progress, and everything waiting for a
+    /// yes is declined.
+    pub fn stop(&mut self) {
+        if let Some(a) = &self.active {
+            a.handle.cancel.cancel();
+        }
+        self.decline_all("cancelled by the user");
+    }
+
+    fn decline_all(&mut self, why: &str) {
+        for c in self.confirms.drain(..) {
+            let _ = c.req.reply.send(json!({"ok": false, "error": why}));
+        }
+        for r in self.approved.drain(..) {
+            let _ = r.reply.send(json!({"ok": false, "error": why}));
+        }
+    }
+
+    /// The person's answer to a held request.
+    pub fn answer(&mut self, index: usize, allow: bool) {
+        if index >= self.confirms.len() {
+            return;
+        }
+        let c = self.confirms.remove(index);
+        let live = self.active.as_ref().is_some_and(|a| !a.handle.cancel.is_cancelled());
+        if allow && live {
+            self.approved.push_back(c.req);
+        } else {
+            let why = if allow { "cancelled by the user" } else { "the user declined" };
+            let _ = c.req.reply.send(json!({"ok": false, "error": why}));
+        }
+    }
+
+    /// The most recent turn's checkpoint that is still good, with whether the design was
+    /// changed since.
+    pub fn undoable(&self, session: &solidcraft_engine::Session) -> Option<(usize, bool)> {
+        let (i, id, rev) = self.items.iter().enumerate().rev().find_map(|(i, it)| match it {
+            Item::TurnEnd { checkpoint: Some(id), revision, changed: true } => Some((i, *id, *revision)),
+            _ => None,
+        })?;
+        session.has_checkpoint(id).then_some((i, session.revision != rev))
+    }
+}
+
+/// What the person's message turned into.
+pub enum Sent {
+    Started,
+    /// A quick action that needed no model.
+    Handled,
+    Refused(String),
+}
+
+/// Send `text` (a message or a quick action). `ctx` is woken as the answer arrives.
+pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: &str) -> Sent {
+    app.assistant.ensure_loaded();
+    if app.assistant.busy() {
+        return Sent::Refused("the assistant is still answering; stop it first".into());
+    }
+    let text = text.trim();
+    if text.is_empty() {
+        return Sent::Refused("nothing to send".into());
+    }
+    if text.len() > MAX_MESSAGE {
+        return Sent::Refused(format!("the message is too long ({} of {MAX_MESSAGE} bytes)", text.len()));
+    }
+    let situation = situation(app);
+    let (shown, prompt) = match slash::parse(text, &situation) {
+        Input::Message(m) => (m.clone(), m),
+        Input::Prompt { shown, prompt } => (shown, prompt),
+        Input::NewChat => {
+            app.assistant.new_chat();
+            return Sent::Handled;
+        }
+        Input::Help => {
+            app.assistant.items.push(Item::User { text: text.to_string(), picture: false });
+            app.assistant.notice(slash::help_text(), false);
+            return Sent::Handled;
+        }
+        Input::Unknown(w) => return Sent::Refused(format!("unknown quick action `/{w}`; try /help")),
+    };
+    let s = app.assistant.settings.clone();
+    let api = s.api().clone();
+    if s.backend == BackendKind::Agent {
+        return Sent::Refused("external agents are not connected yet".into());
+    }
+    let key = api.resolved_key(s.backend);
+    if api.model.trim().is_empty() {
+        return Sent::Refused("choose a model in the assistant settings".into());
+    }
+    if s.backend == BackendKind::Anthropic && key.is_empty() {
+        return Sent::Refused("add your API key in the assistant settings (or set ANTHROPIC_API_KEY)".into());
+    }
+    let Some(http) = app.services.assistant_http.clone() else {
+        return Sent::Refused("the assistant needs the desktop app".into());
+    };
+    let design = app.session.execute("document.inspect", &json!({"measure": false})).ok();
+    let mut prompt = prompt;
+    if let Some(n) = app.assistant.note.take() {
+        prompt = format!("{n}\n\n{prompt}");
+    }
+    let picture = app.assistant.picture.take();
+    let had_picture = picture.is_some();
+    let user = context::user_message(&prompt, design.as_ref(), picture);
+    let checkpoint = app.session.checkpoint();
+    let revision = app.session.revision;
+    let id = app.assistant.next_turn;
+    app.assistant.next_turn += 1;
+    app.assistant.current_turn.store(id, Ordering::SeqCst);
+    let codec: Arc<dyn Codec> = if s.backend == BackendKind::OpenAi { Arc::new(OpenAi) } else { Arc::new(Anthropic) };
+    let host: Arc<dyn ToolHost> = Arc::new(UiHost { inlet: app.assistant.inlet_tx.clone(), ctx: ctx.clone(), turn: id });
+    let repaint_ctx = ctx.clone();
+    let vision = api.vision;
+    let job = Job {
+        codec,
+        http,
+        base_url: api.base_url.clone(),
+        allow_http: api.allow_http,
+        key,
+        model: api.model.trim().to_string(),
+        system: context::system_prompt(),
+        tools: solidcraft_assistant::tools::definitions(vision),
+        vision,
+        max_tokens: MAX_TOKENS,
+        max_steps: MAX_STEPS,
+        context_window: api.context_window,
+        folders: s.folders.iter().map(std::path::PathBuf::from).collect(),
+        history: std::mem::take(&mut app.assistant.history),
+        user,
+        host,
+        repaint: Arc::new(move || repaint_ctx.request_repaint()),
+    };
+    let cancel = Cancel::new();
+    match runtime::spawn_turn(job, cancel) {
+        Ok(handle) => {
+            app.assistant.items.push(Item::User { text: shown, picture: had_picture });
+            app.assistant.turn_usage = Usage::default();
+            app.assistant.active = Some(Active {
+                id,
+                handle,
+                checkpoint,
+                revision,
+                tab: (app.docs.active, app.docs.count()),
+                started: Instant::now(),
+            });
+            app.assistant.scroll_to_end = true;
+            ctx.request_repaint();
+            Sent::Started
+        }
+        Err(e) => {
+            app.session.drop_checkpoint(checkpoint);
+            app.assistant.current_turn.store(0, Ordering::SeqCst);
+            Sent::Refused(e)
+        }
+    }
+}
+
+/// What quick actions may refer to: failing features and the selection, in words.
+fn situation(app: &SolveApp) -> Situation {
+    let mut failing = Vec::new();
+    for f in &app.session.doc.features {
+        if let Some(r) = app.session.model.result(f.id) {
+            if let Some(e) = &r.error {
+                failing.push(format!("{}: {e}", f.name));
+            } else if let Some(w) = &r.warning {
+                failing.push(format!("{} (warning): {w}", f.name));
+            }
+        }
+    }
+    let selection = if app.session.selection.is_empty() { String::new() } else { format!("{} item(s); see `selection` in the design state", app.session.selection.len()) };
+    Situation { failing, selection }
+}
+
+/// Run once per frame: take what the worker reported, and end a turn that belongs to a design
+/// that is no longer shown.
+pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
+    let Some(a) = &app.assistant.active else { return };
+    if a.tab != (app.docs.active, app.docs.count()) && !a.handle.cancel.is_cancelled() {
+        a.handle.cancel.cancel();
+        app.assistant.decline_all("the design was switched");
+        app.assistant.notice("Stopped: another design was selected.", true);
+    }
+    let mut done = None;
+    let mut n = 0;
+    while n < 256 {
+        n += 1;
+        let Some(a) = &app.assistant.active else { break };
+        match a.handle.rx.try_recv() {
+            Ok(WorkerMsg::Event(e)) => apply(&mut app.assistant, e),
+            Ok(WorkerMsg::Done { outcome, history }) => {
+                done = Some((outcome, history));
+                break;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => break,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                done = Some((solidcraft_assistant::tool_loop::TurnOutcome { finish: Finish::Error("The assistant stopped unexpectedly.".into()), usage: Usage::default(), steps: 0, tool_calls: 0 }, Vec::new()));
+                break;
+            }
+        }
+    }
+    if let Some((outcome, history)) = done {
+        finish(app, outcome, history);
+    }
+    if app.assistant.active.is_some() {
+        ctx.request_repaint_after(Duration::from_millis(100));
+    }
+}
+
+fn apply(st: &mut State, e: Event) {
+    match e {
+        Event::Text(t) => {
+            if let Some(Item::Assistant { text, .. }) = st.items.last_mut() {
+                if text.len() < solidcraft_assistant::model::MAX_BLOCK {
+                    text.push_str(&t);
+                }
+            } else {
+                st.items.push(Item::Assistant { text: t, thinking: String::new() });
+            }
+        }
+        Event::Thinking(t) => {
+            if let Some(Item::Assistant { thinking, .. }) = st.items.last_mut() {
+                if thinking.len() < 64 * 1024 {
+                    thinking.push_str(&t);
+                }
+            } else {
+                st.items.push(Item::Assistant { text: String::new(), thinking: t });
+            }
+        }
+        Event::ToolStart { .. } => {}
+        Event::ToolCall { id, name, input } => {
+            let title = call_title(&name, &input);
+            st.items.push(Item::Tool(ToolCard { id, name, title, input, result: None }));
+        }
+        Event::ToolResult { id, is_error, text, images, .. } => {
+            for it in st.items.iter_mut().rev() {
+                if let Item::Tool(c) = it {
+                    if c.id == id {
+                        c.result = Some(ToolOutcome { is_error, text, images });
+                        break;
+                    }
+                }
+            }
+        }
+        Event::Usage(u) => st.turn_usage = u,
+        Event::Notice(t) => st.items.push(Item::Notice { text: t, error: false }),
+    }
+    if st.items.len() > MAX_ITEMS {
+        let drop = st.items.len() - MAX_ITEMS;
+        st.items.drain(..drop);
+    }
+    st.scroll_to_end = true;
+}
+
+fn finish(app: &mut SolveApp, outcome: solidcraft_assistant::tool_loop::TurnOutcome, history: Vec<Message>) {
+    let Some(a) = app.assistant.active.take() else { return };
+    app.assistant.current_turn.store(0, Ordering::SeqCst);
+    app.assistant.decline_all("the turn ended");
+    app.assistant.history = history;
+    app.assistant.usage.add(&outcome.usage);
+    match &outcome.finish {
+        Finish::Done => {}
+        Finish::Cancelled => app.assistant.notice("Stopped.", false),
+        Finish::StepLimit => app.assistant.notice(format!("Stopped after {} steps without a final answer. Ask it to continue if it should.", outcome.steps), true),
+        Finish::MaxTokens => app.assistant.notice("The reply was cut off at the length limit.", true),
+        Finish::Error(m) => app.assistant.notice(m.clone(), true),
+    }
+    let changed = app.session.revision != a.revision;
+    if changed {
+        app.assistant.items.push(Item::TurnEnd { checkpoint: Some(a.checkpoint), revision: app.session.revision, changed: true });
+    } else {
+        // Nothing changed: the checkpoint is not needed.
+        app.session.drop_checkpoint(a.checkpoint);
+    }
+    app.assistant.scroll_to_end = true;
+}
+
+/// Put the design back to before the last turn that changed it. `force` goes ahead although
+/// the design was edited since (those edits are lost).
+pub fn undo_turn(app: &mut SolveApp, force: bool) -> Result<(), String> {
+    let Some((index, edited)) = app.assistant.undoable(&app.session) else {
+        return Err("there is nothing to undo".into());
+    };
+    if edited && !force {
+        return Err("the design was edited after this turn; undoing it would lose those edits".into());
+    }
+    let Item::TurnEnd { checkpoint: Some(id), .. } = app.assistant.items[index].clone() else { return Err("there is nothing to undo".into()) };
+    app.session.restore_checkpoint(id).map_err(|e| e.to_string())?;
+    // Later checkpoints of this conversation went with it.
+    for it in app.assistant.items.iter_mut() {
+        if let Item::TurnEnd { checkpoint, .. } = it {
+            if checkpoint.is_some_and(|c| c >= id) {
+                *checkpoint = None;
+            }
+        }
+    }
+    app.assistant.note = Some("[The person undid your last changes: the design is back to how it was before their previous request. Do not assume those changes exist.]".into());
+    app.assistant.notice("Undid the last assistant changes.", false);
+    app.follow_view_request(false);
+    Ok(())
+}
+
+/// The next request for the UI thread to run: held ones the person allowed, then new ones from
+/// the worker after the gate. Refused ones are answered here.
+pub(crate) fn next_request(app: &mut SolveApp) -> Option<ControlRequest> {
+    let roots = agent_roots(&app.assistant.settings.folders);
+    while let Some(req) = app.assistant.approved.pop_front() {
+        if app.assistant.active.as_ref().is_some_and(|a| !a.handle.cancel.is_cancelled()) {
+            return Some(req);
+        }
+        let _ = req.reply.send(json!({"ok": false, "error": "cancelled by the user"}));
+    }
+    loop {
+        let req = app.assistant.inlet_rx.try_recv().ok()?;
+        if let Some(r) = gate(&mut app.assistant, req, &roots) {
+            return Some(r);
+        }
+    }
+}
+
+/// Decide one request from the assistant: `Some` runs now; `None` was answered or is held.
+fn gate(st: &mut State, mut req: ControlRequest, roots: &[String]) -> Option<ControlRequest> {
+    let refuse = |req: &ControlRequest, why: &str| {
+        let _ = req.reply.send(json!({"ok": false, "error": why}));
+    };
+    let turn = req.params.get("_turn").and_then(Value::as_u64);
+    let live = st.active.as_ref().is_some_and(|a| Some(a.id) == turn && !a.handle.cancel.is_cancelled());
+    if !live {
+        refuse(&req, "cancelled: that turn is no longer running");
+        return None;
+    }
+    if let Some(o) = req.params.as_object_mut() {
+        o.remove("_turn");
+        // The assistant's folders are the app's to choose, whatever the request says.
+        o.insert("allow_paths".into(), json!(roots));
+    } else {
+        refuse(&req, "the request parameters must be an object");
+        return None;
+    }
+    match classify(&req.method, &req.params) {
+        Verdict::Allow => Some(req),
+        Verdict::Refuse(why) => {
+            refuse(&req, &why);
+            None
+        }
+        Verdict::Confirm(lines) => {
+            if st.confirms.len() >= 16 {
+                refuse(&req, "too many requests are waiting for an answer");
+                return None;
+            }
+            st.confirms.push(Confirm { lines, req });
+            None
+        }
+    }
+}
+
+/// The worker's route to the design: control requests into the inlet, answers back.
+struct UiHost {
+    inlet: Sender<ControlRequest>,
+    ctx: egui::Context,
+    turn: u64,
+}
+
+impl ToolHost for UiHost {
+    fn call(&self, method: &str, params: Value, cancel: &Cancel) -> Result<Value, String> {
+        let mut p = match params {
+            Value::Object(o) => o,
+            Value::Null => serde_json::Map::new(),
+            _ => return Err("the request parameters must be an object".into()),
+        };
+        p.insert("_turn".into(), json!(self.turn));
+        let (req, rx) = ControlRequest::new(method.to_string(), Value::Object(p));
+        self.inlet.send(req).map_err(|_| "the app is closing".to_string())?;
+        self.ctx.request_repaint();
+        let limit = if method == "engine.batch" { BATCH_TIMEOUT } else { CALL_TIMEOUT };
+        let start = Instant::now();
+        loop {
+            match rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(v) => {
+                    return if v.get("ok").and_then(Value::as_bool) == Some(true) {
+                        Ok(v.get("result").cloned().unwrap_or(Value::Null))
+                    } else {
+                        Err(v.get("error").and_then(Value::as_str).unwrap_or("the app refused the request").to_string())
+                    };
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if cancel.is_cancelled() {
+                        return Err("cancelled by the user".into());
+                    }
+                    if start.elapsed() > limit {
+                        // Whatever is still queued for this turn must not run later.
+                        cancel.cancel();
+                        return Err("the app did not answer in time".into());
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Err("the app dropped the request".into()),
+            }
+        }
+    }
+}
+
+/// A summary of the sidebar for `ui.assistant {action: "state"}`: no secrets.
+pub fn summary(app: &SolveApp) -> Value {
+    let st = &app.assistant;
+    let s = &st.settings;
+    json!({
+        "open": app.ui.show_assistant,
+        "busy": st.busy(),
+        "elapsed_s": st.elapsed().map(|d| d.as_secs_f64()),
+        "backend": s.backend.id(),
+        "model": s.api().model,
+        "has_key": !s.api().api_key.is_empty(),
+        "items": st.items.iter().map(item_json).collect::<Vec<_>>(),
+        "confirms": st.confirms.iter().map(|c| json!(c.lines)).collect::<Vec<_>>(),
+        "usage": {"input": st.usage.input, "output": st.usage.output, "cache_read": st.usage.cache_read},
+        "undoable": st.undoable(&app.session).map(|(_, edited)| json!({"edited_since": edited})),
+    })
+}
+
+fn item_json(it: &Item) -> Value {
+    match it {
+        Item::User { text, picture } => json!({"kind": "user", "text": text, "picture": picture}),
+        Item::Assistant { text, .. } => json!({"kind": "assistant", "text": text}),
+        Item::Tool(c) => json!({"kind": "tool", "name": c.name, "title": c.title, "result": c.result.as_ref().map(|r| json!({"is_error": r.is_error, "text": r.text, "images": r.images}))}),
+        Item::Notice { text, error } => json!({"kind": "notice", "text": text, "error": error}),
+        Item::TurnEnd { changed, .. } => json!({"kind": "turn_end", "changed": changed}),
+    }
+}
