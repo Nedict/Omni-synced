@@ -254,6 +254,77 @@ mod tests {
         assert!((volume(&mut s) - 2.0 * one).abs() < 1e-6, "both blocks are rounded: {m}");
     }
 
+    /// One body's measures (bounding box, volume).
+    fn measures(s: &mut Session, body: &str) -> serde_json::Value {
+        run(s, "inspect.measure", json!({"bodies": [body]}))["bodies"][0].clone()
+    }
+
+    /// Pasting with a translate moves an extrude's `to` and `from` picks with it: the pasted posts
+    /// run to the pasted roof and from the pasted shelf, not to and from the originals.
+    #[test]
+    fn a_pasted_extrude_runs_to_and_from_the_pasted_faces() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 40, "width": 40, "height": 2, "corner": [0, 0, 20], "name": "Roof", "body_name": "Roof"}));
+        run(&mut s, "solid.box", json!({"length": 40, "width": 40, "height": 2, "corner": [0, 0, 10], "name": "Shelf", "body_name": "Shelf"}));
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [5, 5], "p1": [10, 10]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"sketch": "S", "distance": 5, "to": [7, 7, 20], "operation": "new", "name": "Up", "body_name": "Up"}));
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "T"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [25, 25], "p1": [30, 30]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(
+            &mut s,
+            "solid.extrude",
+            json!({"sketch": "T", "distance": 5, "from": [27, 27, 12], "operation": "new", "name": "On", "body_name": "On"}),
+        );
+        run(&mut s, "timeline.copy", json!({"features": ["Roof", "Shelf", "S", "Up", "T", "On"]}));
+        let r = run(&mut s, "timeline.paste", json!({"translate": [100, 0, 10]}));
+        assert_eq!(r["errors"].as_array().map(Vec::len), Some(0), "{r}");
+        let up = measures(&mut s, "Up (copy)");
+        assert!((up["bbox"]["min"][2].as_f64().unwrap_or(0.0) - 10.0).abs() < 1e-6, "{up}");
+        assert!((up["bbox"]["max"][2].as_f64().unwrap_or(0.0) - 30.0).abs() < 1e-6, "it ends on the pasted roof: {up}");
+        let on = measures(&mut s, "On (copy)");
+        assert!((on["bbox"]["min"][2].as_f64().unwrap_or(0.0) - 22.0).abs() < 1e-6, "it starts on the pasted shelf: {on}");
+        assert!((on["bbox"]["max"][2].as_f64().unwrap_or(0.0) - 27.0).abs() < 1e-6, "{on}");
+    }
+
+    /// Pasting with a translate moves a hole's `to` pick with it: the pasted through hole still goes
+    /// through, rather than stopping at the original's depth.
+    #[test]
+    fn a_pasted_hole_drills_to_the_moved_point() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 40, "width": 40, "height": 10, "name": "Block", "body_name": "Block"}));
+        run(&mut s, "solid.hole", json!({"position": [20, 20, 10], "direction": [0, 0, -1], "diameter": 10, "to": [30, 30, -2], "name": "Drill"}));
+        run(&mut s, "timeline.copy", json!({"features": ["Block", "Drill"]}));
+        let r = run(&mut s, "timeline.paste", json!({"translate": [60, 0, -6]}));
+        assert_eq!(r["errors"].as_array().map(Vec::len), Some(0), "{r}");
+        let (block, copy) = (measures(&mut s, "Block"), measures(&mut s, "Block (copy)"));
+        let v = |m: &serde_json::Value| m["volume_mm3"].as_f64().unwrap_or(f64::NAN);
+        assert!((v(&block) - (16000.0 - std::f64::consts::PI * 25.0 * 10.0)).abs() < 1.0, "a through hole: {block}");
+        assert!((v(&copy) - v(&block)).abs() < 1e-6, "the pasted hole goes through too: {copy}");
+    }
+
+    /// Pasting with a translate moves a revolve's `to` pick with it: the pasted turn ends at the same
+    /// angle about its moved axis.
+    #[test]
+    fn a_pasted_revolve_turns_to_the_moved_point() {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XZ", "name": "S"}));
+        run(&mut s, "sketch.line", json!({"points": [[10, 0], [15, 0], [15, 5], [10, 5]], "closed": true}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.revolve", json!({"sketch": "S", "axis": "y", "to": [0, 12, 2], "name": "Turn", "body_name": "Arc"}));
+        run(&mut s, "timeline.copy", json!({"features": ["S", "Turn"]}));
+        let r = run(&mut s, "timeline.paste", json!({"translate": [50, 0, 0]}));
+        assert_eq!(r["errors"].as_array().map(Vec::len), Some(0), "{r}");
+        let (arc, copy) = (measures(&mut s, "Arc"), measures(&mut s, "Arc (copy)"));
+        let v = |m: &serde_json::Value| m["volume_mm3"].as_f64().unwrap_or(f64::NAN);
+        // A quarter turn of a 5 × 5 section whose centre is 12.5 from the axis.
+        let quarter = 25.0 * std::f64::consts::FRAC_PI_2 * 12.5;
+        assert!((v(&arc) - quarter).abs() < quarter * 1e-3, "{arc}");
+        assert!((v(&copy) - v(&arc)).abs() < 1e-6, "the pasted arc turns a quarter too: {copy}");
+    }
+
     /// A pasted coil that joins a body made by an earlier copy joins that copy, not the original.
     #[test]
     fn a_pasted_coil_joins_the_pasted_body() {

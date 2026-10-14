@@ -385,32 +385,6 @@ impl FeatureKind {
         self.walk_exprs(&mut |_, e, _, _| v.push(e.as_str()));
         v
     }
-
-    /// A primitive's placement point (length expressions). Its coordinates are not inputs:
-    /// they get no parameter names and keep bare numbers in mm whatever the design's units, as
-    /// every other position does; renames and users still find them.
-    pub fn point_expr_mut(&mut self) -> Option<&mut crate::PointExpr> {
-        match self {
-            FeatureKind::Box { corner: p, .. }
-            | FeatureKind::Cylinder { base: p, .. }
-            | FeatureKind::Sphere { center: p, .. }
-            | FeatureKind::Torus { center: p, .. }
-            | FeatureKind::Coil { base: p, .. } => Some(p),
-            _ => None,
-        }
-    }
-
-    /// Read-only view of [`FeatureKind::point_expr_mut`].
-    pub fn point_expr(&self) -> Option<&crate::PointExpr> {
-        match self {
-            FeatureKind::Box { corner: p, .. }
-            | FeatureKind::Cylinder { base: p, .. }
-            | FeatureKind::Sphere { center: p, .. }
-            | FeatureKind::Torus { center: p, .. }
-            | FeatureKind::Coil { base: p, .. } => Some(p),
-            _ => None,
-        }
-    }
 }
 
 /// One row of the parameters table.
