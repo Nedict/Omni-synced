@@ -466,7 +466,7 @@ impl Tree<'_> {
 /// on at most: larger ones are only checked.
 const MAX_LOOP_VALUES: usize = 64;
 const MAX_LOOPS: usize = 100;
-/// Residual evaluations one group's solve may spend.
+/// Residual evaluations one solve may spend on all its loops.
 const MAX_LOOP_WORK: usize = 200_000;
 
 /// Held joint values by (joint, value index): the value each moves from.
@@ -550,9 +550,10 @@ fn close_loops(tree: &Tree, closing: &[u64], asm: &Assembly, held: &Held, vals: 
         });
         groups.push((members, around, touches));
     }
+    let spent = std::cell::Cell::new(0usize);
     for (group, around, touches) in &groups {
         let moves = held_moves(asm, held, touches, vals);
-        match close_group(tree, group, around, &moves, asm, held, &linked, vals) {
+        match close_group(tree, group, around, &moves, asm, held, &linked, &spent, vals) {
             Some(m) => moved.extend(m),
             None if !moves.is_empty() => stuck.extend(group.iter().copied()),
             None => {}
@@ -577,6 +578,7 @@ fn close_group(
     asm: &Assembly,
     held: &Held,
     linked: &BTreeSet<(u64, usize)>,
+    spent: &std::cell::Cell<usize>,
     vals: &mut Values,
 ) -> Option<Values> {
     let starts = link_chains(asm, tree, around, linked).1;
@@ -644,7 +646,6 @@ fn close_group(
         }
     }
     let mut work = vals.clone();
-    let spent = std::cell::Cell::new(0usize);
     // How far each closing joint is from meeting with the held values `t` of the way along:
     // three points of B's joint frame, where the joint wants them against where the tree puts them.
     let mut gaps = |x: &[f64], t: f64| -> Option<Vec<f64>> {
