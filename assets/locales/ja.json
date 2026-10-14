@@ -1,4 +1,9 @@
 {
+  "Send your report on GitHub": "GitHubでレポートを送信",
+  "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. 下のボタンでGitHubの下書きを開き、クリップボードにコピーされたレポートを貼り付けます。",
+  "1. Open GitHub draft below. Your title and report will be filled in.": "1. 下のボタンでGitHubの下書きを開きます。タイトルとレポートは入力済みです。",
+  "2. Attach your screenshot: copy and paste it, or save and upload the PNG.": "2. スクリーンショットを添付します。コピーして貼り付けるか、PNGを保存してアップロードします。",
+  "3. Click Submit new issue on GitHub to send your report.": "3. GitHubでSubmit new issueをクリックしてレポートを送信します。",
   "browser.body_name": "ボディ{number}",
   "browser.component_name": "コンポーネント{number}",
   "browser.parameters": "パラメータ ({count})",

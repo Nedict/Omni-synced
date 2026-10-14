@@ -150,6 +150,9 @@
 //!   Associative, editable sketch patterns (`patterns` in a sketch) and their point/radius
 //!   relations are also first saved in 20. Old sketch copies stay independent: migration cannot
 //!   infer which curves formed a pattern.
+//!   The saved visibility can also list hidden assembly joints (`visibility.hidden_joints`,
+//!   joint ids): their glyphs aren't drawn, but they still constrain and drive the parts. A
+//!   design without it shows every joint, as it always did; 0.10.0 would show them all.
 
 use serde_json::Value;
 
