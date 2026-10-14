@@ -364,3 +364,73 @@ fn edit_feature_on_a_moved_component_refills_in_the_world() {
     assert_eq!(body, "Body2");
     assert!(point.dist(Vec3::new(40.0, 0.0, 25.0)) < 1e-6, "{point:?}");
 }
+
+/// A crank-rocker four-bar (crank 20, coupler 50, rocker 40, ground pivots 45 apart), built as
+/// it stands with the crank at 90°: joints Crank, Crank pin, Rocker pin, Rocker.
+fn four_bar() -> SolveApp {
+    let mut s = Session::default();
+    let (p0, o4) = ([0.0, 20.0], [45.0, 0.0]);
+    // The rocker pin: where the coupler (50 from the crank pin) meets the rocker (40 from O4).
+    let (dx, dy) = (o4[0] - p0[0], o4[1] - p0[1]);
+    let l = f64::hypot(dx, dy);
+    let a = (2500.0 - 1600.0 + l * l) / (2.0 * l);
+    let h = (2500.0 - a * a).sqrt();
+    let q0 = [p0[0] + dx * a / l - dy * h / l, p0[1] + dy * a / l + dx * h / l];
+    for (name, at) in [("Ground", [0.0, 0.0]), ("Crank", p0), ("Coupler", q0), ("Rocker", o4)] {
+        s.execute("component.activate", &json!({"component": "root"})).unwrap();
+        s.execute("component.create", &json!({ "name": name })).unwrap();
+        s.execute("solid.box", &json!({"length": 2, "width": 2, "height": 2, "corner": [at[0], at[1], -5]})).unwrap();
+    }
+    s.execute("component.activate", &json!({"component": "root"})).unwrap();
+    s.execute("occurrence.ground", &json!({"occurrence": "Ground:1", "grounded": true})).unwrap();
+    for (name, a, b, p) in [
+        ("Crank", "Ground", "Crank", [0.0, 0.0]),
+        ("Crank pin", "Crank", "Coupler", p0),
+        ("Rocker pin", "Coupler", "Rocker", q0),
+        ("Rocker", "Ground", "Rocker", o4),
+    ] {
+        let at = |o: &str| json!({"occurrence": o, "point": [p[0], p[1], 0], "z": [0, 0, 1]});
+        s.execute("joint.create", &json!({"type": "revolute", "a": at(a), "b": at(b), "flip": true, "name": name})).unwrap();
+    }
+    SolveApp::new(s, Services::default())
+}
+
+/// Drive Joints says where a drive stopped short and why: the preview names the loop that can't
+/// close further, OK says it on the status line, and a drive within reach says nothing.
+#[test]
+fn drive_says_where_a_loop_stopped_it() {
+    let mut app = four_bar();
+    let colors = crate::preview::Colors { body: [1, 1, 1, 255], added: [2, 2, 2, 255], removed: [3, 3, 3, 100], edge: [0, 0, 0, 255] };
+    let rocker = app.session.doc.assembly.joints.iter().position(|j| j.name == "Rocker").unwrap();
+    let mut d = drive_joint(&app, app.session.doc.assembly.joints[rocker].id).unwrap();
+    let ask = |d: &mut Dialog, v: &str| {
+        if let Kind::Assembly(Asm::Drive { values, .. }) = &mut d.kind {
+            values[0] = v.into();
+        }
+    };
+    // Within its swing: no stop.
+    ask(&mut d, "20 deg");
+    let b = world_preview(&app.session, &apply_commands(&app, &d).unwrap(), colors).unwrap().unwrap();
+    assert!(b.stopped.is_none());
+    // Past its toggle position (about +50.4° from where it stands).
+    ask(&mut d, "100 deg");
+    let b = world_preview(&app.session, &apply_commands(&app, &d).unwrap(), colors).unwrap().unwrap();
+    let why = b.stopped.as_ref().and_then(|r| drive_stop(&app.session, r)).unwrap();
+    assert!(why.starts_with("Stopped at 50.") && why.contains("can't close any further"), "{why}");
+    // OK drives it there and says so.
+    crate::dialogs::run_dialog(&mut app, &d).unwrap();
+    let (status, _, error) = app.status.clone().unwrap();
+    assert!(status == why && !error, "{status}");
+}
+
+/// A contact set stops a drive too: the message names the parts that would pass through each other.
+#[test]
+fn drive_says_which_parts_a_contact_set_stopped() {
+    let mut app = two_boxes();
+    let at = |o: &str| json!({"occurrence": o, "point": [30, 10, 5], "z": [1, 0, 0]});
+    app.run("joint.create", json!({"type": "slider", "a": at("A"), "b": at("B"), "flip": true, "name": "Rail"})).unwrap();
+    app.run("contact.create", json!({"occurrences": ["A:1", "B:1"]})).unwrap();
+    let r = app.run("joint.drive", json!({"joint": "Rail", "value": -20})).unwrap();
+    let why = drive_stop(&app.session, &r).unwrap();
+    assert!(why.starts_with("Stopped at -1") && why.contains("A:1") && why.contains("B:1") && why.contains("would pass through"), "{why}");
+}

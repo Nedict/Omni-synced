@@ -3125,19 +3125,29 @@ fn sels(d: &Dialog, i: usize) -> &[Sel] {
     d.inputs.get(i).map(|x| x.items.as_slice()).unwrap_or(&[])
 }
 
-fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
+pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
     let commands = apply_commands(app, d)?;
     if let Some((_, marker)) = d.editing {
         // Record the actual pre-edit timeline state in the command's undo snapshot.
         roll_marker(app, marker)?;
     }
     for (cmd, params) in commands {
-        if let Err(error) = app.run(&cmd, params) {
-            if let Some((id, _)) = d.editing {
-                let position = app.session.doc.feature_index(id);
-                let _ = roll_marker(app, position);
+        match app.run(&cmd, params) {
+            Ok(reply) => {
+                // A drive that stopped short says where, and why.
+                if cmd == "joint.drive"
+                    && let Some(why) = crate::dialogs_assembly::drive_stop(&app.session, &reply)
+                {
+                    app.set_status(why, false);
+                }
             }
-            return Err(error);
+            Err(error) => {
+                if let Some((id, _)) = d.editing {
+                    let position = app.session.doc.feature_index(id);
+                    let _ = roll_marker(app, position);
+                }
+                return Err(error);
+            }
         }
     }
     Ok(())

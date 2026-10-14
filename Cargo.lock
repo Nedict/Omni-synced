@@ -3466,6 +3466,7 @@ dependencies = [
  "solidcraft-engine",
  "solidcraft-ui-egui",
  "ureq",
+ "windows-sys 0.61.2",
  "winit",
 ]
 
@@ -3488,6 +3489,7 @@ dependencies = [
  "sha2",
  "solidcraft-geom",
  "solidcraft-kernel",
+ "solidcraft-render",
  "solidcraft-sketch",
  "thiserror 2.0.21",
  "web-time",
