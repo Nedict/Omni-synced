@@ -91,7 +91,7 @@ fn far_drift(made: &Body, sheet: &Body, far_mid: Vec3) -> f64 {
 /// finished surface (never from the construction).
 fn seam_at(body: &Body, t: f64) -> (Vec3, Vec3, Vec3, Vec3) {
     let face = body.solid.face_iter().next().unwrap();
-    let ranges = super::ranges(&face).unwrap();
+    let ranges = super::ranges(face).unwrap();
     super::seam_shape(&face.surface(), &ranges, Side::V0, t).unwrap()
 }
 

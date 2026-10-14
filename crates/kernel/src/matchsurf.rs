@@ -180,10 +180,8 @@ pub fn seam_continuity(made: &Body, target: &Body, target_pick: &[Vec3]) -> Resu
                 return Err(KernelError::Failed("match: the target has no frames".into()));
             };
             let (_, t_made, bend_made, change_made) = seam_shape(&surf, &ranges, near, t)?;
-            if let Some((n_made, _)) = normal_near(&face, p) {
-                if let Some((n_target, _)) = normal_near(target_face, p) {
-                    deg = deg.max(angle_deg(n_made, n_target));
-                }
+            if let (Some((n_made, _)), Some((n_target, _))) = (normal_near(&face, p), normal_near(target_face, p)) {
+                deg = deg.max(angle_deg(n_made, n_target));
             }
             let scale = frame.bend.len().max(bend_made.len()).max(1.0 / size);
             curv = curv.max((bend_made - frame.bend).len() / scale);
@@ -420,8 +418,7 @@ fn side_edges(face: &mt::Face, side: Side, tol: f64) -> Result<Vec<mt::Edge>> {
         Some(e) => e.back().clone(),
         None => return Err(KernelError::Failed("match: chain".into())),
     };
-    loop {
-        let Some(k) = pool.iter().position(|e| e.front().id() == end.id() || e.back().id() == end.id()) else { break };
+    while let Some(k) = pool.iter().position(|e| e.front().id() == end.id() || e.back().id() == end.id()) {
         let e = pool.remove(k);
         let e = if e.front().id() == end.id() { e } else { e.inverse() };
         end = e.back().clone();
@@ -431,8 +428,7 @@ fn side_edges(face: &mt::Face, side: Side, tol: f64) -> Result<Vec<mt::Edge>> {
         Some(e) => e.front().clone(),
         None => return Err(KernelError::Failed("match: chain".into())),
     };
-    loop {
-        let Some(k) = pool.iter().position(|e| e.front().id() == start.id() || e.back().id() == start.id()) else { break };
+    while let Some(k) = pool.iter().position(|e| e.front().id() == start.id() || e.back().id() == start.id()) {
         let e = pool.remove(k);
         let e = if e.back().id() == start.id() { e } else { e.inverse() };
         start = e.front().clone();
