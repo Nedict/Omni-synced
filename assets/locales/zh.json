@@ -327,6 +327,8 @@
   "ui.chamfer_type": "倒角类型",
   "ui.change_workspace": "更改工作区",
   "ui.chord_length": "弦长",
+  "ui.curvature_g2": "曲率连续 (G2)",
+  "ui.equivalent_radius": "等效半径",
   "ui.circle": "圆",
   "ui.circular_pattern": "圆形阵列",
   "ui.clear": "清除",
@@ -954,5 +956,6 @@
   "Path": "路径",
   "sketch_text.on_path": "文字沿路径排列：由曲线放置",
   "ui.analysis": "分析",
-  "ui.edit_section_analysis": "编辑截面分析"
+  "ui.edit_section_analysis": "编辑截面分析",
+  "cmd.material_properties_validate":"验证物理材料数据"
 }

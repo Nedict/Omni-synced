@@ -328,6 +328,8 @@
   "ui.chamfer_type": "面取りタイプ",
   "ui.change_workspace": "ワークスペースの変更",
   "ui.chord_length": "弦長",
+  "ui.curvature_g2": "曲率連続 (G2)",
+  "ui.equivalent_radius": "等価半径",
   "ui.circle": "円",
   "ui.circular_pattern": "円形パターン",
   "ui.clear": "クリア",
@@ -954,5 +956,6 @@
   "Letter Spacing": "文字間隔",
   "Line Spacing": "行間",
   "Path": "パス",
-  "sketch_text.on_path": "文字はパスに沿います: 位置は曲線で決まります"
+  "sketch_text.on_path": "文字はパスに沿います: 位置は曲線で決まります",
+  "cmd.material_properties_validate":"物理材料データを検証"
 }

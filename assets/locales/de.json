@@ -56,6 +56,8 @@
   "ui.chamfer_type": "Fasentyp",
   "ui.change_workspace": "Arbeitsbereich wechseln",
   "ui.chord_length": "Sehnenlänge",
+  "ui.curvature_g2": "Krümmungsstetig (G2)",
+  "ui.equivalent_radius": "Äquivalenter Radius",
   "ui.circle": "Kreis",
   "ui.circular_pattern": "Radiales Muster",
   "ui.clear_recent": "Zuletzt verwendet leeren",

@@ -2,6 +2,7 @@
 //! type, whether the command starts from a shortcut, the toolbar or a menu.
 
 use serde_json::json;
+use solidcraft_engine::doc::expr::Kind as ValueKind;
 use solidcraft_engine::geom::Vec3;
 use solidcraft_engine::{Sel, Session};
 
@@ -559,6 +560,34 @@ fn a_hole_is_mirrored_as_a_feature() {
     d.inputs[1].items = vec![Sel::Plane { name: "YZ".into() }];
     let cmds = apply_commands(&app, &d).unwrap();
     assert_eq!(cmds[0].1["features"], json!(["Hole1"]));
+}
+
+/// The canvas names the G2 size correctly and edits the same value when the feature is reopened.
+#[test]
+fn curvature_canvas_value_uses_equivalent_radius_when_created_and_reopened() {
+    for style in ["curvature", "g2"] {
+        let mut app = boxed();
+        let e = edge(&app, Vec3::new(20.0, 0.0, 20.0));
+        let mut d = start(&mut app, vec![e], "solid.fillet");
+        d.extra.insert("type".into(), json!(style));
+        let (label, kind, value) = d.primary().unwrap();
+        assert_eq!((label, kind), ("Equivalent Radius", ValueKind::Length));
+        *value = "3 mm".into();
+        let (command, params) = apply_commands(&app, &d).unwrap().remove(0);
+        assert_eq!(params["radius"], json!("3 mm"), "the canvas edits the actual command value");
+        app.session.execute(&command, &params).unwrap();
+        let feature = app.session.doc.features.last().unwrap().id;
+        let mut reopened = crate::dialogs::for_feature(&app, feature, None).unwrap();
+        let (label, kind, value) = reopened.primary().unwrap();
+        assert_eq!((label, kind), ("Equivalent Radius", ValueKind::Length));
+        assert_eq!(value.as_str(), "3 mm");
+    }
+    for (command, label) in [("solid.fillet", "Radius"), ("solid.chamfer", "Distance")] {
+        let mut app = boxed();
+        let e = edge(&app, Vec3::new(20.0, 0.0, 20.0));
+        let mut d = start(&mut app, vec![e], command);
+        assert_eq!(d.primary().unwrap().0, label);
+    }
 }
 
 /// The radius arrow points into the body: dragging toward the material grows the round.
