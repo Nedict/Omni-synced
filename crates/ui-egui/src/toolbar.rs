@@ -405,6 +405,11 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     close = true;
                 }
                 ui.separator();
+                if item_if(ui, &format!("{}…", app.tr_label("Design Properties")), "", shown) {
+                    app.start("document.metadata");
+                    close = true;
+                }
+                ui.separator();
                 if item(ui, &format!("{}…", app.tr("ui.preferences")), "") {
                     app.prefs_window.open = true;
                     close = true;

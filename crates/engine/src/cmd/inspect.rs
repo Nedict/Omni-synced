@@ -252,7 +252,7 @@ fn inspect(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|ss| json!({"id": ss.feature, "name": ss.name, "dof": ss.report.dof, "status": ss.report.status, "curves": ss.sketch.curves.len(), "profiles": ss.profiles.len(), "visible": crate::view::sketch_shown(s, ss.feature)}))
         .collect();
     Ok(json!({
-        "name": s.doc.name, "units": s.doc.units, "path": s.path, "dirty": s.is_dirty(), "revision": s.revision,
+        "name": s.doc.name, "units": s.doc.units, "metadata": s.doc.metadata, "path": s.path, "dirty": s.is_dirty(), "revision": s.revision,
         "active_sketch": s.active_sketch, "marker": marker,
         "params": params, "timeline": timeline, "bodies": bodies, "sketches": sketches,
         "selection": s.selection, "undo": s.undo.len(), "redo": s.redo.len(), "hidden_origin": s.visibility.hidden_origin,
