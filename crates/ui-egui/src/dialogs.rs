@@ -310,6 +310,8 @@ pub struct Applying {
     pub(crate) done: std::sync::mpsc::Receiver<()>,
     /// When OK was pressed (ms).
     pub(crate) started: f64,
+    /// The commands being computed.
+    pub(crate) cmds: Vec<(String, Value)>,
 }
 
 impl Applying {
@@ -336,15 +338,16 @@ fn begin_applying(app: &SolveApp, d: &Dialog) -> Option<Applying> {
     let cmds = apply_commands(app, d).ok()?;
     let scratch = app.session.scratch();
     let (tx, rx) = std::sync::mpsc::channel();
+    let computed = cmds.clone();
     std::thread::Builder::new()
         .name("apply".into())
         .spawn(move || {
-            let _ = scratch.preview(&cmds);
+            let _ = scratch.preview(&computed);
             let _ = tx.send(());
         })
         .ok()?;
     match rx.recv_timeout(wait) {
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Some(Applying { done: rx, started: crate::now_ms() }),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Some(Applying { done: rx, started: crate::now_ms(), cmds }),
         _ => None,
     }
 }
@@ -2714,15 +2717,22 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             None => {}
         }
     }
-    // OK's evaluation is in: run it, the feature taken from the cache.
+    // OK's evaluation is in: run it, the feature taken from the cache. Inputs changed meanwhile
+    // (nothing should change them) are computed in turn, off the window thread too: run here,
+    // they would hold the window for the whole boolean.
     if app.applying.as_ref().is_some_and(Applying::finished) && !cancel {
-        app.applying = None;
-        match run_dialog(app, &d) {
-            Ok(()) => {
-                cancel = true;
-                applied = true;
-            }
-            Err(e) => d.refuse(app, e),
+        let computed = app.applying.take().map(|job| job.cmds);
+        let current = apply_commands(app, &d).ok();
+        let again = if current.is_some() && current != computed { begin_applying(app, &d) } else { None };
+        match again {
+            Some(job) => app.applying = Some(job),
+            None => match run_dialog(app, &d) {
+                Ok(()) => {
+                    cancel = true;
+                    applied = true;
+                }
+                Err(e) => d.refuse(app, e),
+            },
         }
     }
     // Cancel while computing: the result goes (its worker runs on to its end).

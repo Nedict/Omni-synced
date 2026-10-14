@@ -76,7 +76,8 @@ fn the_dialog_holds_its_inputs_while_ok_computes() {
     let picked = h.app.dialog.as_ref().map(|d| d.inputs[0].items.clone()).unwrap();
     // OK computing, until the test lets it finish.
     let (finish, done) = std::sync::mpsc::channel();
-    h.app.applying = Some(crate::dialogs::Applying { done, started: crate::now_ms() });
+    let cmds = h.app.dialog.as_ref().and_then(|d| crate::dialogs::apply_commands(&h.app, d).ok()).unwrap();
+    h.app.applying = Some(crate::dialogs::Applying { done, started: crate::now_ms(), cmds });
     // A click on the square picked would take it out of the profiles.
     h.step(&json!({"click": {"world": [10, 10, 10]}})).unwrap();
     h.frames(2);
@@ -84,5 +85,26 @@ fn the_dialog_holds_its_inputs_while_ok_computes() {
     finish.send(()).unwrap();
     until_applied(&mut h);
     assert!(h.app.dialog.is_none());
+    h.step(&json!({"expect": {"bodies": 1, "volume": 13000}})).unwrap();
+}
+
+/// Inputs that changed while OK computed (nothing should change them) are computed in turn, off
+/// the window thread too, then applied: run as OK finished, they would hold the window for the
+/// whole boolean.
+#[test]
+fn inputs_changed_while_ok_computes_are_computed_off_the_thread_too() {
+    let mut h = square_on_a_block();
+    h.app.apply_off_thread = Some(Duration::ZERO);
+    let features = h.app.session.doc.features.len();
+    // OK computing other commands than the dialog's, until the test lets it finish.
+    let (finish, done) = std::sync::mpsc::channel();
+    h.app.applying = Some(crate::dialogs::Applying { done, started: crate::now_ms(), cmds: Vec::new() });
+    finish.send(()).unwrap();
+    h.frames(1);
+    assert!(h.app.applying.is_some(), "the dialog's own commands are computing");
+    assert_eq!(h.app.session.doc.features.len(), features, "nothing applied on the window thread");
+    until_applied(&mut h);
+    assert!(h.app.dialog.is_none());
+    assert_eq!(h.app.session.doc.features.len(), features + 1);
     h.step(&json!({"expect": {"bodies": 1, "volume": 13000}})).unwrap();
 }
