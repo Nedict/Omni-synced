@@ -32,7 +32,9 @@ mechanism stays in the assembly mode it started in (an open four-bar does not fl
 crossed one). If the motion would take a loop past the point where it can still close, for
 example driving a rocker beyond its swing, the motion stops at the last position where the loop
 closes, and the drive reports `stopped_by_loop`. A loop that cannot close at all is listed
-under `conflicts` and nothing in it moves.
+under `conflicts` and nothing in it moves. `joint.list` reports how many degrees of freedom each part
+still has with its loops closed: the moving parts of a four-bar have one between them, and a
+loop locked by a rigid joint has none.
 
 **Insert Design** (`component.insert_design {path, translate?}`) adds a component linked to
 another saved design, so each part can live in its own document. The part's solid bodies come

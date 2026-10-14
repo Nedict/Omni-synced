@@ -467,10 +467,9 @@ fn values_left_out_of_a_drive_follow_the_loop() {
     assert!(near(place(&s, "Plate", Vec3::ZERO), Vec3::new(10.0, 10.0, 0.0)), "{:?}", place(&s, "Plate", Vec3::ZERO));
 }
 
-/// A slider-crank: crank 15 about the origin, rod 40, a piston sliding along X. The piston
-/// sits at a·cos θ + √(b² − (a·sin θ)²).
-#[test]
-fn slider_crank_moves_the_piston() {
+/// A slider-crank: crank 15 about the origin, rod 40, a piston sliding along X. Returns the crank
+/// pin and the wrist pin.
+fn slider_crank() -> (Session, Vec3, Vec3) {
     let mut s = Session::default();
     let (o, p0) = (Vec3::ZERO, Vec3::new(0.0, 15.0, 0.0));
     let s0 = Vec3::new((40.0f64 * 40.0 - 15.0 * 15.0).sqrt(), 0.0, 0.0);
@@ -483,6 +482,13 @@ fn slider_crank_moves_the_piston() {
     pin(&mut s, "revolute", "Crank pin", "Crank", "Rod", p0, Vec3::Z);
     pin(&mut s, "revolute", "Wrist pin", "Rod", "Piston", s0, Vec3::Z);
     pin(&mut s, "slider", "Bore", "Ground", "Piston", s0, Vec3::X);
+    (s, p0, s0)
+}
+
+/// The piston sits at a·cos θ + √(b² − (a·sin θ)²).
+#[test]
+fn slider_crank_moves_the_piston() {
+    let (mut s, p0, s0) = slider_crank();
     for v in [40.0, 135.0, 270.0] {
         let r = run(&mut s, "joint.drive", json!({"joint": "Crank", "value": v}));
         assert_eq!(r["conflicts"].as_array().map(Vec::len), Some(0), "{v}°: {r}");
@@ -719,4 +725,56 @@ fn a_clamped_link_is_followed_step_by_step() {
     let r = run(&mut s, "joint.drive", json!({"joint": "Dial", "value": 360}));
     assert!(r["stopped_by_loop"].is_object(), "{r}");
     assert_eq!(r["conflicts"].as_array().map(Vec::len), Some(0), "{r}");
+}
+
+/// Each occurrence's degrees of freedom as `joint.list` reports them.
+fn dof_of(s: &mut Session, component: &str) -> u64 {
+    let o = occ(s, component);
+    let l = run(s, "joint.list", json!({}));
+    l["dof"].as_array().into_iter().flatten().find(|d| d["occurrence"] == o).and_then(|d| d["dof"].as_u64()).unwrap_or(99)
+}
+
+/// Loops take degrees of freedom away: a four-bar's moving parts have one between them (its
+/// mobility), a part hinged to the coupler one more, a slider-crank one, a parallelogram one, and a
+/// four-bar locked rigid none.
+#[test]
+fn loops_report_their_mobility() {
+    let (mut s, p0, q0) = four_bar();
+    for (part, want) in [("Ground", 0), ("Crank", 1), ("Coupler", 1), ("Rocker", 1)] {
+        assert_eq!(dof_of(&mut s, part), want, "four-bar {part}");
+    }
+    // Still one after a drive moved it.
+    run(&mut s, "joint.drive", json!({"joint": "Crank", "value": 70}));
+    assert_eq!(dof_of(&mut s, "Coupler"), 1);
+    // A flag hinged to the coupler half-way along: one more.
+    let mid = (p0 + q0) * 0.5;
+    part(&mut s, "Flag", [mid.x, mid.y, 5.0]);
+    run(&mut s, "joint.as_built", json!({"type": "revolute", "a": "Coupler", "b": "Flag", "name": "Flag hinge"}));
+    assert_eq!(dof_of(&mut s, "Flag"), 2);
+    // Locked: nothing moves.
+    let (mut s, _, _) = four_bar();
+    run(&mut s, "joint.as_built", json!({"type": "rigid", "a": "Ground", "b": "Rocker", "name": "Lock"}));
+    for part in ["Crank", "Coupler", "Rocker"] {
+        assert_eq!(dof_of(&mut s, part), 0, "locked {part}");
+    }
+    let (mut s, _, _) = slider_crank();
+    for part in ["Crank", "Rod", "Piston"] {
+        assert_eq!(dof_of(&mut s, part), 1, "slider-crank {part}");
+    }
+    // A parallelogram (crank and rocker 20, ground and coupler 45), away from its folded poses.
+    let mut s = Session::default();
+    let (o2, o4) = (Vec3::ZERO, Vec3::new(45.0, 0.0, 0.0));
+    let (p, q) = (Vec3::new(12.0, 16.0, 0.0), Vec3::new(57.0, 16.0, 0.0));
+    for (name, c) in [("Ground", o2), ("Crank", p), ("Coupler", (p + q) * 0.5), ("Rocker", q)] {
+        part(&mut s, name, [c.x, c.y, -5.0]);
+    }
+    let g = occ(&s, "Ground");
+    run(&mut s, "occurrence.ground", json!({"occurrence": g, "grounded": true}));
+    pin(&mut s, "revolute", "Crank", "Ground", "Crank", o2, Vec3::Z);
+    pin(&mut s, "revolute", "Crank pin", "Crank", "Coupler", p, Vec3::Z);
+    pin(&mut s, "revolute", "Rocker pin", "Coupler", "Rocker", q, Vec3::Z);
+    pin(&mut s, "revolute", "Rocker", "Ground", "Rocker", o4, Vec3::Z);
+    for part in ["Crank", "Coupler", "Rocker"] {
+        assert_eq!(dof_of(&mut s, part), 1, "parallelogram {part}");
+    }
 }
