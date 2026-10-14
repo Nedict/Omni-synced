@@ -957,5 +957,6 @@
   "Line Spacing": "Line Spacing",
   "Path": "Path",
   "sketch_text.on_path": "The text follows its path: the curve places it",
-  "cmd.material_properties_validate":"Validate Physical Material Data"
+  "cmd.material_properties_validate":"Validate Physical Material Data",
+  "cmd.material_properties_directional":"Directional Elastic Modulus"
 }
