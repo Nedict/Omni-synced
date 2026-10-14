@@ -348,7 +348,17 @@ def main():
                 if n.endswith(".timeline.json"):
                     files.append(os.path.join(dp, n))
         if not files:
-            sys.exit("no .timeline.json files under {}".format(root))
+            sys.exit(
+                "no .timeline.json files under {}\n\n"
+                "{}\n"
+                "Run the ExtractTimeline script inside Fusion first:\n"
+                "  Utilities > ADD-INS > Scripts and Add-Ins > ExtractTimeline > Run\n"
+                "It writes one .timeline.json per design to ~/cad/fusion-timeline.".format(
+                    root,
+                    "That folder does not exist yet." if not os.path.isdir(root)
+                    else "That folder exists but is empty.",
+                )
+            )
         files.sort()
 
         reports = []
