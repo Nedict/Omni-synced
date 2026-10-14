@@ -59,6 +59,16 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 | M14 | Configurations: a table of rows (parameter expressions and feature suppressions per row) switched with config.activate (undoable, all or nothing), kept through parameter renames and feature deletes (config.configure, config.table, config.column/row/activate). Per-row body materials and appearances (library looks, custom colour/opacity and clearing overrides), undoable activation and save/reopen: done. Ordered typed configuration rules, atomic validation and structured rule editing: done. Component appearance and certified semantic face style columns, atomic preview/apply and independent-copy remapping: done. Exact constructed sketch-side and immutable imported-face lineage now preserve legacy names and reject retargeting. Left: ambiguous shifted/two-sided caps | in progress | 4 |
 | M13 | Never lose work: atomic saves (temporary file, flush, rename; a crash at any moment leaves the old file or the new one) with the replaced version kept as `<file>.bak`; autosave of unsaved changes to the recovery folder every 5 minutes (preference) and after big operations, only when something changed; "Recover unsaved design?" on the next launch (`doc.recovery_list`, `doc.recover`, `doc.recovery_discard`); a kill-mid-save test (process killed while saving a 0.5 MB design 25 times). File format: `"format": "solidcraft/12"`, older formats upgraded step by step (`doc::format`), newer ones refused with a message, out-of-range numbers and broken placements refused; a corpus of designs saved by M0, components-era, joints-era and current builds (apps/solidcraft-cli/tests/corpus) that must open and evaluate as saved; damaged and hostile variants (truncation, bit flips, hostile values, removed keys, repeated features, deep nesting) never panic | done | 6 |
 
+## Library foundations (#785, #786, #787)
+
+- Proposed phases cover offline bundled/project/user packs, physical materials and
+  appearances, editable wood mapping, and parameterized component/assembly families.
+  Stable identity/revision, copied design definitions, provenance and resource limits
+  apply from the first implementation. Existing material, appearance and standard-part
+  commands remain the application paths. See [the proposal](docs/book/src/dev/libraries.md)
+  for source/license review and acceptance gates. This is planning only: pack loading,
+  texture rendering and expanded component families are not implemented by this entry.
+
 ## Render foundation
 
 - A bounded cooperative Radiance RGBE input utility is available in L1 render;
@@ -214,7 +224,14 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   edges between any two smooth sides (a branch pipe on a main pipe), by a rolling ball (the
   blend a rational B-spline through exact arcs), closed or ending at planar faces square to the
   edges, where straight or curved cap edges are trimmed to the contacts (the straight edge
-  between two overlapping extruded arcs).
+  between two overlapping extruded arcs); knife edges, where the two faces have opposite
+  normals (a wall that runs out tangent into a face: the ball that fits there); an edge that
+  runs out along an end face tangent to one side (the arc top edge of that wall), cut where the
+  blend meets it; rounds that end in an earlier round on curved faces, in any order (the rounds
+  of two edges at a vertex meet in a crease, as on a box), picked together or one after the
+  other, except a round after a round of the edge between the wall and a flat face that it
+  would run over; the three edges at a vertex of any smooth faces, of one radius, end in a
+  piece of sphere.
 - Booleans: prisms along one direction (plates with holes, slots, patterns of them, equal
   sections stacked end to end) are combined exactly in 2D. Qualified axial cuts preserve
   annular holes with overrun cutters, including inward Press Pull after a joined extrusion;

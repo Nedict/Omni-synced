@@ -51,7 +51,7 @@ pub static COMMANDS: &[CommandSpec] = &[
 
 fn new_doc(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_(p, "name").unwrap_or("Untitled");
-    *s = Session::new(Document::new(name));
+    s.replace_design(Session::new(Document::new(name)));
     Ok(json!({"name": name}))
 }
 
@@ -130,7 +130,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         let mut fresh = Session::new(Document::new(&stem));
         let r = if solidcraft_io::is_step_path(path) { add_step(&mut fresh, path, None)? } else { add_mesh(&mut fresh, path, None)? };
         fresh.undo.clear();
-        *s = fresh;
+        s.replace_design(fresh);
         let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
         return Ok(json!({"path": path, "features": s.doc.features.len(), "errors": errors, "bodies": r["bodies"], "warnings": r["warnings"]}));
     }
@@ -138,7 +138,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(stem) = default_name_for(&doc.name, path) {
         doc.name = stem;
     }
-    *s = Session::new(doc);
+    s.replace_design(Session::new(doc));
     s.path = Some(path.to_string());
     let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
     Ok(json!({"path": path, "features": s.doc.features.len(), "errors": errors, "name": s.doc.name}))
@@ -421,7 +421,7 @@ fn recover(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(stem) = entry.path.as_deref().and_then(|path| default_name_for(&doc.name, path)) {
         doc.name = stem;
     }
-    *s = Session::new(doc);
+    s.replace_design(Session::new(doc));
     s.path = entry.path.clone();
     s.mark_unsaved();
     if bool_(p, "discard").unwrap_or(false) {
