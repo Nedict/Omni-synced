@@ -497,11 +497,11 @@ fn link_chains(asm: &Assembly, tree: &Tree, around: &BTreeSet<u64>, linked: &BTr
 }
 
 /// The held values of the `touches` joints that move: (joint, index, from, to), `from` within
-/// the joint's limits.
-fn held_moves(tree: &Tree, held: &Held, touches: &BTreeSet<u64>, vals: &Values) -> Vec<(u64, usize, f64, f64)> {
+/// the joint's limits. A suppressed joint still sets values through its motion links.
+fn held_moves(asm: &Assembly, held: &Held, touches: &BTreeSet<u64>, vals: &Values) -> Vec<(u64, usize, f64, f64)> {
     let mut moves = Vec::new();
     for ((id, i), from) in held.iter().filter(|((id, _), _)| touches.contains(id)) {
-        let (Some(j), Some(to)) = (tree.joints.get(id), vals.get(id).and_then(|q| q.get(*i))) else { continue };
+        let (Some(j), Some(to)) = (asm.joints.iter().find(|j| j.id == *id), vals.get(id).and_then(|q| q.get(*i))) else { continue };
         let from = match j.limits.get(*i).copied().flatten() {
             Some((lo, hi)) => from.max(lo.min(hi)).min(hi.max(lo)),
             None => *from,
@@ -550,7 +550,7 @@ fn close_loops(tree: &Tree, closing: &[u64], asm: &Assembly, held: &Held, vals: 
         groups.push((members, around, touches));
     }
     for (group, around, touches) in &groups {
-        let moves = held_moves(tree, held, touches, vals);
+        let moves = held_moves(asm, held, touches, vals);
         match close_group(tree, group, around, &moves, asm, held, &linked, vals) {
             Some(m) => moved.extend(m),
             None if !moves.is_empty() => stuck.extend(group.iter().copied()),

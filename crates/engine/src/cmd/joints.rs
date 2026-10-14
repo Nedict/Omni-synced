@@ -366,7 +366,7 @@ fn drive(s: &mut Session, p: &Value) -> Result<Value> {
     // `values` are not driven: in a closed loop they follow.
     let given = match p.get("values") {
         Some(Value::Array(a)) => a.len(),
-        _ => q.len(),
+        _ => 1,
     };
     let r = super::motion::drive_joint(s, id, q, given)?;
     let sol = joints::solve(&s.doc, &s.model.state());

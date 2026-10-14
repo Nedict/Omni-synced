@@ -269,7 +269,8 @@ fn drive_with_contact(s: &mut Session, want: &[(u64, Vec<f64>)], given: &BTreeSe
         .filter_map(|&(id, i)| {
             let to = want.iter().find(|(w, _)| *w == id)?.1.get(i).copied()?;
             let from = start.iter().find(|(s, _)| *s == id).and_then(|(_, q)| q.get(i).copied());
-            Some(((id, i), from.unwrap_or(to)))
+            // A value the file leaves out is 0, as the solver reads it.
+            Some(((id, i), from.unwrap_or(0.0)))
         })
         .collect();
     let set = |s: &mut Session, t: f64| {
@@ -278,7 +279,7 @@ fn drive_with_contact(s: &mut Session, want: &[(u64, Vec<f64>)], given: &BTreeSe
         let doc = s.doc_mut();
         for ((id, a), (_, b)) in start.iter().zip(want) {
             if let Some(j) = doc.assembly.joints.iter_mut().find(|j| j.id == *id) {
-                let mut q: Vec<f64> = b.iter().enumerate().map(|(i, bv)| a.get(i).copied().unwrap_or(*bv) * (1.0 - t) + bv * t).collect();
+                let mut q: Vec<f64> = b.iter().enumerate().map(|(i, bv)| a.get(i).copied().unwrap_or(0.0) * (1.0 - t) + bv * t).collect();
                 joints::clamp(j, &mut q);
                 j.values = q;
             }

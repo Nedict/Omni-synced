@@ -559,3 +559,22 @@ fn a_geared_down_loop_value_is_followed_all_the_way() {
     assert!(r["stopped_by_loop"].is_object(), "{r}");
     assert_eq!(r["conflicts"].as_array().map(Vec::len), Some(0), "{r}");
 }
+
+/// A suppressed dial still turns the rocker through its motion link, and a rocker whose value
+/// the file leaves out starts from 0: both are followed all the way, so a full turn stops.
+#[test]
+fn a_full_turn_stops_from_a_suppressed_dial_or_a_missing_value() {
+    let (mut s, _, _) = four_bar();
+    part(&mut s, "Dial", [80.0, 0.0, -5.0]);
+    pin(&mut s, "revolute", "Dial", "Ground", "Dial", Vec3::new(80.0, 0.0, 0.0), Vec3::Z);
+    run(&mut s, "joint.motion_link", json!({"a": "Dial", "b": "Rocker", "ratio": 0.5}));
+    run(&mut s, "joint.edit", json!({"joint": "Dial", "suppressed": true}));
+    let r = run(&mut s, "joint.drive", json!({"joint": "Dial", "value": 720}));
+    assert!(r["stopped_by_loop"].is_object(), "{r}");
+    let (mut s, _, _) = four_bar();
+    if let Some(j) = s.doc_mut().assembly.joints.iter_mut().find(|j| j.name == "Rocker") {
+        j.values.clear();
+    }
+    let r = run(&mut s, "joint.drive", json!({"joint": "Rocker", "value": 360}));
+    assert!(r["stopped_by_loop"].is_object(), "{r}");
+}
