@@ -14,9 +14,13 @@ use serde::{Deserialize, Serialize};
 static DARK: AtomicBool = AtomicBool::new(true);
 
 thread_local! {
-    /// The colour vision mode, per thread: the window's thread draws in it (`SolveApp` keeps it in
-    /// step with the preference every frame); other threads (thumbnails, and tests running beside
-    /// each other) keep their own, Off unless they set it.
+    /// The colour vision mode, per thread, where the dark theme is one global (`DARK`). Each app
+    /// sets it from its own preferences at the start of every frame (`SolveApp::logic`), on the
+    /// thread that draws it. Tests run many apps side by side on their own threads in one process:
+    /// with one global, a test in a mode changed the colours under another one
+    /// (`hover_stays_off_during_spin_and_animated_views` failed that way). No worker thread reads
+    /// it: the preview thread is handed its colours (`preview::Colors`) and thumbnails are drawn by
+    /// the engine in the model's colours, so a new thread starts Off and stays Off.
     static VISION: Cell<ColorVision> = const { Cell::new(ColorVision::Off) };
 }
 

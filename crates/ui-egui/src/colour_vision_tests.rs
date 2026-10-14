@@ -296,6 +296,9 @@ fn groups(t: &Tokens) -> Vec<Group> {
         ),
         group("section", &[("section_cap", t.section_cap)], &[("body", t.body)]),
         group("interference", &[("interference", t.interference)], &[("body", t.body)]),
+        // The scale's three stops, unlit. Shaded (a stop at one angle to the light, the next at
+        // another), middle and tight merge for a red-green loss (3.3 protan, 5.2 deutan) and flat
+        // and middle for tritan (4.6). That is the scale's own fault, in Off too: #975.
         group(
             "curvature map",
             &[
@@ -690,14 +693,32 @@ fn the_shader_gets_the_modes_colours_and_its_stripes() {
 
 // ---- the preference ----
 
-/// Every message the Colour vision section shows by id (the mode names, their tooltips and the
-/// sample's names); the literal ids in `prefs.rs` are checked by `i18n`.
+/// Every message the Colour vision section shows (the heading, the mode names and their
+/// tooltips, the sample's names and the note) is in every catalogue, translated: in Japanese,
+/// Korean and Chinese none is the English text. (German keeps "Protan", "Deutan" and "Tritan".)
 #[test]
-fn the_sections_messages_are_in_the_english_catalog() {
-    let english: serde_json::Map<String, serde_json::Value> = serde_json::from_str(include_str!("../../../assets/locales/en.json")).unwrap();
-    let ids = ColorVision::ALL.into_iter().flat_map(|m| [m.label_id(), m.help_id()]).chain(crate::prefs::COLOUR_VISION_SAMPLE);
-    for id in ids {
-        assert!(english.contains_key(id), "missing English message: {id}");
+fn the_sections_messages_are_in_every_catalog() {
+    let load = |text: &str| -> serde_json::Map<String, serde_json::Value> { serde_json::from_str(text).unwrap() };
+    let english = load(include_str!("../../../assets/locales/en.json"));
+    let ids: Vec<&str> = ColorVision::ALL
+        .into_iter()
+        .flat_map(|m| [m.label_id(), m.help_id()])
+        .chain(crate::prefs::COLOUR_VISION_SAMPLE)
+        .chain(["ui.colour_vision", "ui.colour_vision_mode", "ui.colour_vision_sample", "ui.colour_vision_note"])
+        .collect();
+    for (lang, text) in [
+        ("de", include_str!("../../../assets/locales/de.json")),
+        ("ja", include_str!("../../../assets/locales/ja.json")),
+        ("ko", include_str!("../../../assets/locales/ko.json")),
+        ("zh", include_str!("../../../assets/locales/zh.json")),
+    ] {
+        let catalog = load(text);
+        for id in &ids {
+            let (Some(en), Some(here)) = (english.get(*id), catalog.get(*id)) else {
+                panic!("{lang}: missing message {id} (English: {})", english.contains_key(*id));
+            };
+            assert!(lang == "de" || here != en, "{lang}: {id} is the English text {en}");
+        }
     }
 }
 

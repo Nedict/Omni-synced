@@ -154,10 +154,11 @@ fn every_icon_draws_only_colours_a_mode_can_reach() {
     assert!(fixed.is_empty(), "icons that draw a colour of their own: {fixed:?}");
 }
 
-/// The colour literals each UI file may still hold, and why. None of them carries a meaning that
-/// a colour vision mode must change. A new literal anywhere fails here: make it a token in
+/// The most colour literals each UI file may hold, and why. None of them carries a meaning that a
+/// colour vision mode must change. A file with more fails here: make the new colour a token in
 /// `theme::Tokens` (and `assets/styles/ui/palettes.rs`) instead, or, if it carries no meaning,
-/// add it here with its reason. The icon sources hold none at all.
+/// raise the file's count here and give the reason. Fewer is always fine. The icon sources may
+/// hold none at all.
 const ALLOWED_LITERALS: &[(&str, usize, &str)] = &[
     ("navigation.rs", 1, "the navigation cube's face shading, made from a token"),
     ("canvas.rs", 3, "white rings around manipulator handles"),
@@ -224,8 +225,8 @@ fn colours_outside_the_theme_are_only_the_listed_neutral_ones() {
             let code = src.split("#[cfg(test)]").next().unwrap_or(&src);
             let n: usize = COLOUR_LITERALS.iter().map(|p| code.matches(p).count()).sum();
             let allowed = ALLOWED_LITERALS.iter().find(|(f, _, _)| *f == name).map_or(0, |(_, n, _)| *n);
-            if n != allowed {
-                found.push(format!("{name}: {n} colour literal(s), {allowed} allowed"));
+            if n > allowed {
+                found.push(format!("{name}: {n} colour literal(s), at most {allowed} allowed"));
             }
         }
     }
