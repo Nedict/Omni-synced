@@ -10,6 +10,7 @@
   "browser.precision": "Genauigkeit: {precision}",
   "browser.sketch_name": "Skizze {number}",
   "browser.units": "Einheiten: {units}",
+  "dialog.computing": "Wird berechnet… {seconds} s",
   "dialog.custom_axis": "↖ Eigene Achse",
   "dialog.edit_title": "{title} bearbeiten",
   "dialog.select": "↖ Auswählen",
@@ -774,6 +775,5 @@
   "update.dmg_opened": "Das Disk-Image ist geöffnet und geprüft: SolidCraft in „Programme“ ziehen, die alte Version ersetzen und SolidCraft neu starten.",
   "update.install_failed": "Das Update wurde nicht installiert: {error}. Es wurde nichts verändert; „Herunterladen“ holt das Paket.",
   "cmd.render_settings_get": "Rendereinstellungen",
-  "cmd.render_settings_set": "Rendereinstellungen speichern",
-  "dialog.computing": "Wird berechnet… {seconds} s"
+  "cmd.render_settings_set": "Rendereinstellungen speichern"
 }

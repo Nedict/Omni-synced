@@ -10,6 +10,7 @@
   "browser.precision": "정밀도: {precision}",
   "browser.sketch_name": "스케치{number}",
   "browser.units": "단위: {units}",
+  "dialog.computing": "계산 중… {seconds}초",
   "dialog.custom_axis": "↖ 사용자 정의 축",
   "dialog.edit_title": "{title} 편집",
   "dialog.select": "↖ 선택",
@@ -774,6 +775,5 @@
   "update.dmg_opened": "디스크 이미지를 확인하고 열었습니다: SolidCraft를 응용 프로그램 폴더로 끌어 기존 버전을 바꾼 뒤 SolidCraft를 다시 시작하세요.",
   "update.install_failed": "업데이트를 설치하지 못했습니다: {error}. 아무것도 변경되지 않았습니다. 다운로드로 패키지를 받을 수 있습니다.",
   "cmd.render_settings_get": "렌더링 설정",
-  "cmd.render_settings_set": "렌더링 설정 저장",
-  "dialog.computing": "계산 중… {seconds}초"
+  "cmd.render_settings_set": "렌더링 설정 저장"
 }

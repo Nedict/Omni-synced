@@ -45,10 +45,18 @@ fn ok_computes_off_the_window_thread_saying_so_then_applies() {
     h.app.apply_off_thread = Some(Duration::ZERO);
     h.step(&json!({"key": "Enter"})).unwrap();
     assert!(h.app.applying.is_some() && h.app.dialog.is_some(), "computing, the dialog open");
+    // The evaluation may be in by the next frame: it is held until the dialog has been seen
+    // saying so (the evaluation itself is in the cache all the same).
+    let (finish, done) = std::sync::mpsc::channel();
+    if let Some(job) = h.app.applying.as_mut() {
+        let _ = job.done.recv();
+        job.done = done;
+    }
     h.frames(1);
     assert!(h.widget("Computing… 0 s").is_some(), "the dialog says it computes");
     // Enter again does not start it twice.
     h.step(&json!({"key": "Enter"})).unwrap();
+    finish.send(()).unwrap();
     until_applied(&mut h);
     assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().and_then(|d| d.error.clone()));
     h.step(&json!({"expect": {"bodies": 1, "volume": 13000}})).unwrap();
