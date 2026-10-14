@@ -4,17 +4,14 @@ use serde_json::Value;
 
 use crate::model::{Part, ToolDef};
 
-/// Tools never offered to the in-app assistant: crash reports are for people.
-const HIDDEN: &[&str] = &["crash_reports"];
-
-/// The tools offered to the model. Without `vision` the screenshot tool is left out, as the
-/// model could not read its result.
+/// The tools offered to the model: all of MCP's. Without `vision` the screenshot tool is left
+/// out, as the model could not read its result.
 pub fn definitions(vision: bool) -> Vec<ToolDef> {
     solidcraft_mcp::tool_definitions()
         .into_iter()
         .filter_map(|t| {
             let name = t.get("name")?.as_str()?.to_string();
-            if HIDDEN.contains(&name.as_str()) || (!vision && name == "screenshot") {
+            if !vision && name == "screenshot" {
                 return None;
             }
             Some(ToolDef { name, description: t.get("description")?.as_str()?.to_string(), schema: t.get("inputSchema").cloned().unwrap_or(Value::Null) })
@@ -56,7 +53,7 @@ mod tests {
         for want in ["list_commands", "execute", "batch", "inspect_design", "measure", "screenshot", "undo"] {
             assert!(names.contains(&want), "{want} in {names:?}");
         }
-        assert!(!names.contains(&"crash_reports"));
+        assert!(names.contains(&"crash_reports"));
         assert!(all.iter().all(|t| t.schema.get("type").and_then(Value::as_str) == Some("object") && !t.description.is_empty()));
         assert!(!definitions(false).iter().any(|t| t.name == "screenshot"));
     }

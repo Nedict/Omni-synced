@@ -111,6 +111,7 @@ impl Fixture {
             vision: false,
             max_tokens: 1000,
             max_steps,
+            context_window: 200_000,
             folders: &[],
         };
         let mut events = Vec::new();
@@ -262,6 +263,7 @@ fn an_unencrypted_remote_address_is_refused_before_anything_is_sent() {
         vision: false,
         max_tokens: 10,
         max_steps: 3,
+        context_window: 200_000,
         folders: &[],
     };
     let mut history = Vec::new();

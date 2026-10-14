@@ -107,6 +107,8 @@ pub struct TurnConfig<'a> {
     pub vision: bool,
     pub max_tokens: u32,
     pub max_steps: usize,
+    /// Tokens the model can read; the history is trimmed to fit.
+    pub context_window: u32,
     /// Folders tool calls may read and write in (besides the app's own recovery and scratch
     /// folders).
     pub folders: &'a [PathBuf],
@@ -115,7 +117,8 @@ pub struct TurnConfig<'a> {
 /// Run one user message to completion. `history` gains the user message, every model reply and
 /// every tool result; a turn that fails on its first request leaves `history` as it was.
 pub fn run_turn(cfg: &TurnConfig, history: &mut Vec<Message>, user: Message, host: &dyn ToolHost, cancel: &Cancel, on_event: &mut dyn FnMut(Event)) -> TurnOutcome {
-    let base = history.len();
+    let mut base = history.len();
+    let fixed = crate::context::fixed_tokens(cfg.system, cfg.tools);
     let mut out = TurnOutcome { finish: Finish::Done, usage: Usage::default(), steps: 0, tool_calls: 0 };
     if let Err(e) = check_url(cfg.base_url, cfg.allow_http) {
         out.finish = Finish::Error(e);
@@ -133,6 +136,12 @@ pub fn run_turn(cfg: &TurnConfig, history: &mut Vec<Message>, user: Message, hos
         }
         out.steps += 1;
         strip_old_pictures(history);
+        crate::context::strip_old_context(history);
+        let dropped = crate::context::trim_history(history, cfg.context_window, fixed);
+        base = base.saturating_sub(dropped.messages);
+        if dropped.turns > 0 {
+            on_event(Event::Notice(format!("The conversation is long: the oldest {} turn(s) are no longer sent to the model.", dropped.turns)));
+        }
         let req = ChatRequest { model: cfg.model, system: cfg.system, messages: history, tools: cfg.tools, vision: cfg.vision, max_tokens: cfg.max_tokens };
         let http_req = match cfg.codec.request(&req, cfg.base_url, cfg.key) {
             Ok(r) => r,
