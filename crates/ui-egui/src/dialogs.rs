@@ -735,6 +735,12 @@ impl Dialog {
         matches!(self.kind, Kind::Params { .. }) || matches!(&self.kind, Kind::Motion(k) if k.wide())
     }
 
+    /// The id `show` opens the dialog's window with: one per title, so each command's dialog
+    /// keeps its own size. Layout checks find the window by it.
+    pub fn area_id(&self) -> egui::Id {
+        egui::Id::new(("sc_dialog", title(&self.kind)))
+    }
+
     pub fn wants_picks(&self) -> bool {
         !self.inputs.is_empty()
     }
