@@ -540,8 +540,8 @@ fn tapered_extrude_of_cubics_is_close_to_the_true_offset() {
 }
 
 /// An S-shaped cubic (one curve turning both ways) has no moved cubic close to its offset: it is
-/// cut into pieces until each piece's moved curve stays within 0.2 % of the offset of the true
-/// one, both ways.
+/// cut into pieces until each piece's moved curve stays within 2 % of the offset of the true
+/// one (or 10 µm), both ways.
 #[test]
 fn a_tapered_s_curve_is_cut_into_pieces_that_follow_its_offset() {
     let s_curve = Seg2::Cubic { p0: Vec2::new(0.0, 0.0), p1: Vec2::new(5.0, 10.0), p2: Vec2::new(10.0, -10.0), p3: Vec2::new(15.0, 0.0) };
@@ -561,7 +561,7 @@ fn a_tapered_s_curve_is_cut_into_pieces_that_follow_its_offset() {
     for p in pieces {
         for d in [d, -d] {
             let e = crate::build::offset_error(p, d).unwrap();
-            assert!(e <= 2e-3 * 0.5 + 1e-9, "{e}");
+            assert!(e <= crate::build::offset_tolerance(d) + 1e-9, "{e}");
         }
     }
 }
