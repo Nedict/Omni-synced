@@ -1013,4 +1013,6 @@
   "update.dmg_opened": "The disk image is open and verified: drag SolidCraft to Applications, replacing the old copy, then restart SolidCraft.",
   "update.install_failed": "The update didn't install: {error}. Nothing was changed; Download gets the package instead.",
   "dialog.computing": "Computing… {seconds} s"
+  "cmd.render_settings_get": "Render Settings",
+  "cmd.render_settings_set": "Save Render Settings"
 }

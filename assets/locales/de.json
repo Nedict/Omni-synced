@@ -754,4 +754,6 @@
   "update.dmg_opened": "Das Disk-Image ist geöffnet und geprüft: SolidCraft in „Programme“ ziehen, die alte Version ersetzen und SolidCraft neu starten.",
   "update.install_failed": "Das Update wurde nicht installiert: {error}. Es wurde nichts verändert; „Herunterladen“ holt das Paket.",
   "dialog.computing": "Wird berechnet… {seconds} s"
+  "cmd.render_settings_get": "Rendereinstellungen",
+  "cmd.render_settings_set": "Rendereinstellungen speichern"
 }

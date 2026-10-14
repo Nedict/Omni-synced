@@ -1614,6 +1614,9 @@ pub struct DesignLink {
 /// The document.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
+    /// Named, renderer-independent setups. Device/job state is never saved here.
+    #[serde(default, skip_serializing_if = "crate::render_settings::RenderSettings::is_empty")]
+    pub render: std::sync::Arc<crate::render_settings::RenderSettings>,
     #[serde(default = "default_format")]
     pub format: String,
     pub name: String,
@@ -1828,6 +1831,7 @@ impl Default for Document {
 impl Document {
     pub fn new(name: &str) -> Self {
         Document {
+            render: Default::default(),
             format: default_format(),
             name: name.into(),
             units: default_units(),
@@ -1857,6 +1861,18 @@ impl Document {
             named_views: Vec::new(),
             visibility: Visibility::default(),
         }
+    }
+
+    /// A complete structural proof: no non-render field is allowed to differ. Keeping this
+    /// comparison based on the whole Document also includes fields added in future versions.
+    /// The clone/comparison is only needed when render intent actually differs.
+    pub fn differs_only_in_render(&self, previous: &Document) -> bool {
+        if std::sync::Arc::ptr_eq(&self.render, &previous.render) || self.render == previous.render || self.render.validate().is_err() {
+            return false;
+        }
+        let mut normalized = previous.clone();
+        normalized.render = self.render.clone();
+        *self == normalized
     }
 
     /// The colour a body is shown and exported in (sRGB as 0–1 fractions): its appearance,
