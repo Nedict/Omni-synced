@@ -512,6 +512,7 @@ fn divided(body: &Body, faces: &[usize], other: &[(mt::Edge, Piece)], fr: &Frame
         face_sources: None,
         history: None,
         regularization_protected: true,
+        display_of: None,
     };
     Ok(Some(record::rebuilt_body(split, &[&body.solid], &rec)))
 }
