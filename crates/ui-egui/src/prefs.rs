@@ -629,7 +629,14 @@ pub fn show_mm_bare(app: &SolveApp, v: f64) -> String {
 /// change while it is open).
 fn save_graphics(app: &SolveApp) {
     if let Some(path) = &app.services.graphics_path {
-        let _ = std::fs::write(path, json!({ "msaa": app.preferences.msaa }).to_string());
+        // Other settings in the file (the graphics `backend`) stay as they are.
+        let mut graphics = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .filter(serde_json::Value::is_object)
+            .unwrap_or_else(|| json!({}));
+        graphics["msaa"] = json!(app.preferences.msaa);
+        let _ = std::fs::write(path, graphics.to_string());
     }
 }
 
@@ -1215,10 +1222,12 @@ mod tests {
         // WebGPU's guarantee for the surface format: 8x saved, the device can only do 1x and 4x.
         app.msaa_supported = vec![1, 4];
         app.preferences.msaa = 8;
+        std::fs::write(&path, r#"{"msaa":8,"backend":"vulkan"}"#).unwrap();
         check_msaa(&mut app, 8);
         assert_eq!(app.preferences.msaa, 4);
         let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap_or_default()).unwrap_or_default();
         assert_eq!(saved["msaa"], 4);
+        assert_eq!(saved["backend"], "vulkan", "the backend preference is kept");
         assert_eq!(app.settings_reset, [SettingReset::Msaa { requested: 8, reset: 4, supported: vec![1, 4] }]);
         assert_eq!(
             app.settings_reset[0].message(),

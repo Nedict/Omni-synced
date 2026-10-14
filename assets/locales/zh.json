@@ -1011,5 +1011,7 @@
   "update.restart_later": "稍后",
   "update.installer_started": "SolidCraft 关闭后将启动安装程序。",
   "update.dmg_opened": "磁盘映像已校验并打开:将 SolidCraft 拖到“应用程序”替换旧版本,然后重启 SolidCraft。",
-  "update.install_failed": "更新未安装:{error}。未做任何更改;可用“下载”获取安装包。"
+  "update.install_failed": "更新未安装:{error}。未做任何更改;可用“下载”获取安装包。",
+  "cmd.render_settings_get": "渲染设置",
+  "cmd.render_settings_set": "保存渲染设置"
 }
