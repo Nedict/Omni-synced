@@ -7,14 +7,12 @@ use solidcraft_kernel::Continuity;
 
 use super::CommandSpec;
 use super::features::{add_feature, axis_param, check_expr, extent_param, feature_sketch, operation, plane_param, profiles, sketch_id};
-use crate::params::{bad, bool_, expr, str_, string_list, vec3};
 use crate::{Result, Session};
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("surface.patch", "Patch", patch)
         .at("SURFACE", "CREATE")
         .icon("patch")
-        .params("sketch?: id|name and profiles? (planar patches of sketch regions) | edges: [[x,y,z]] (points on a closed loop of a body's edges: one face on them, planar when the loop is, else a smooth B-spline surface) and body?; crown?: number −0.9…3 (default 0: only a fitted patch, whose middle becomes fuller by this many times the loop's size — the bump vanishes on the loop, so the face still meets the picked edges; a loop that is planar is the exact plane whatever the crown); name?, body_name?"),
     CommandSpec::new("surface.stitch", "Stitch", stitch)
         .at("SURFACE", "MODIFY")
         .icon("stitch")
@@ -46,7 +44,6 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("surface.loft", "Surface Loft", surface_loft)
         .at("SURFACE", "CREATE")
         .icon("surface_loft")
-        .params("sections: [{sketch, curves?: [curve ids], profiles?}] (2…50 in order; each one chain: a profile without holes, or curves meeting end to end; all open or all closed); name?, body_name? (a surface body: ruled between two sections, smooth through three or more; no caps)"),
     CommandSpec::new("surface.offset", "Offset Surface", offset)
         .at("SURFACE", "CREATE")
         .icon("surface_offset")
@@ -54,11 +51,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("surface.ruled", "Ruled Surface", ruled)
         .at("SURFACE", "CREATE")
         .icon("ruled")
-        .params("body; edges: [[x,y,z]] (points on a chain of its edges, open or closed); distance: expr (how far the strip reaches); mode?: normal|tangent|angle|direction (default normal: along the normal of the face beside each edge; tangent: continuing it); angle?: expr (angle mode: from `direction`, else from the face's normal, turned away from the face; 90 deg from the normal is tangent); direction?: [x,y,z] (direction mode: the rulings; angle mode: the reference, e.g. a pull direction for a draft); face?: [x,y,z] (a point on the face the directions come from; default: the face beside the most picked edges); flip?: bool (the other side); corners?: mitre|round (sharp corners of the chain; inside corners are always cut back). Lines and arcs give exact planes, cylinders and cones, other edges a fitted ruled B-spline. A new surface body"),
-    planned!("surface.boundary", "Boundary Surface", "763")
-        .at("SURFACE", "CREATE")
-        .icon("boundary")
-        .params("planned: u: [curves], v?: [curves] (sketch curves, 3D sketch wires or {body, point} edges; 2–4 boundaries, more make a network); continuity?: [{curve, g: 0|1|2}] for edge boundaries; operation?: new|join"),
+        .params("planned: body; edges: [[x,y,z]] (points on an edge chain); distance: expr; mode?: normal|tangent|angle|direction; angle?: expr; direction?: [x,y,z]; flip?: bool; corners?: mitre|round"),
     CommandSpec::new("surface.blend", "Blend Surface", blend)
         .at("SURFACE", "CREATE")
         .icon("surface_blend")
@@ -75,6 +68,10 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SURFACE", "MODIFY")
         .icon("reverse_normal")
         .params("body (a surface); faces?: [[x,y,z]] (points on the faces to turn over; default: all of them)"),
+    CommandSpec::new("surface.fair", "Fair Surface", fair)
+        .at("SURFACE", "MODIFY")
+        .icon("spline_cv")
+        .params("body: surface name; faces?: [[x,y,z]] points on the faces to fair (default: every face); strength?: number (0..1 of the full fairing step, default 1); iterations?: number (1..1000 steps, default 1); keep_edges?: bool (default true: hold the boundary row and the row next to it, so a face keeps meeting its neighbours in position and in tangent); tolerance?: expr mm (how far a control vertex may move, default 0.001 of the body's size). Moves the interior control vertices of each B-spline face to flatten its curvature variation while the boundary stays put: the face keeps its edges and the body its shape within the tolerance, and the warning in the reply carries the energy before and after; name?"),
     planned!("surface.fillet", "Surface Fillet", "769")
         .at("SURFACE", "MODIFY")
         .icon("surface_fillet")
@@ -85,32 +82,10 @@ fn patch(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "surface.patch";
     let crown = crown_param(p, cmd)?;
     let edges: Vec<solidcraft_geom::Vec3> = p.get("edges").and_then(Value::as_array).map(|a| a.iter().filter_map(vec3).collect()).unwrap_or_default();
-    let mut v = if !edges.is_empty() {
         if edges.len() > 10_000 {
             return Err(bad(cmd, "too many edges"));
         }
         let body = str_(p, "body").map(str::to_string);
-        add_feature(s, p, FeatureKind::Patch { sketch: None, profiles: ProfileSel::All, body, edges, crown })?
-    } else {
-        let sketch = feature_sketch(s, p, cmd)?;
-        let profiles = profiles(p, cmd)?;
-        add_feature(s, p, FeatureKind::Patch { sketch: Some(sketch), profiles, body: None, edges: Vec::new(), crown })?
-    };
-    if let Some(o) = v.as_object_mut() {
-        o.insert("crown".into(), serde_json::json!(crown));
-    }
-    Ok(v)
-}
-
-/// The patch's `crown`: how full a fitted patch's middle is made, -0.9…3 (default 0). A hostile
-/// value (NaN, infinity, out of range, a string) is refused.
-fn crown_param(p: &Value, cmd: &str) -> Result<f64> {
-    match p.get("crown") {
-        None => Ok(0.0),
-        Some(v) => match v.as_f64().filter(|x| (solidcraft_geom::fill::MIN_CROWN..=solidcraft_geom::fill::MAX_CROWN).contains(x)) {
-            Some(x) => Ok(x),
-            None => Err(bad(cmd, "`crown` must be a number between -0.9 and 3")),
-        },
     }
 }
 
@@ -282,9 +257,7 @@ fn surface_loft(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad(cmd, "at most 1000 curves a section"));
         }
         let profiles = if sec.get("profiles").is_some() { Some(profiles(sec, cmd)?) } else { None };
-        sections.push(solidcraft_doc::SheetSection { sketch, profiles, curves });
     }
-    add_feature(s, p, FeatureKind::SurfaceLoft { sections })
 }
 
 fn offset(s: &mut Session, p: &Value) -> Result<Value> {
@@ -450,6 +423,32 @@ fn trim(s: &mut Session, p: &Value) -> Result<Value> {
         None => (plane_param(s, p.get("plane"), cmd)?, None),
     };
     add_feature(s, p, FeatureKind::SurfaceTrim { body, plane, tool, keep })
+}
+
+/// `surface.fair`: the B-spline faces of a body faired in place. The tolerance a caller leaves
+/// out is a thousandth of the body's own size, so a fairing run can never make a design jump by
+/// more than a hair of itself.
+fn fair(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "surface.fair";
+    let (body, faces) = body_faces(s, p, cmd)?;
+    let size = {
+        let state = s.model.state();
+        let Some(mb) = state.body(&body) else { return Err(bad(cmd, format!("no body `{body}`"))) };
+        mb.body.size()
+    };
+    let strength = num(p, "strength").unwrap_or(1.0);
+    if !(strength.is_finite() && strength > 0.0 && strength <= 1.0) {
+        return Err(bad(cmd, "`strength` must be greater than 0 and at most 1 (the whole fairing step)"));
+    }
+    let steps = num(p, "iterations").unwrap_or(1.0);
+    if !(steps.is_finite() && (1.0..=1000.0).contains(&steps)) {
+        return Err(bad(cmd, "`iterations` must be 1 to 1000"));
+    }
+    let keep_edges = bool_(p, "keep_edges").unwrap_or(true);
+    let tolerance = expr(p, "tolerance").unwrap_or_else(|| format!("{:.6}", (size * 1e-3).max(1e-6)));
+    check_expr(s, &tolerance, Kind::Length, cmd, "tolerance")?;
+    let kind = FeatureKind::SurfaceFair { body, faces, strength, iterations: steps as u32, keep_edges, tolerance };
+    add_feature(s, p, kind)
 }
 
 #[cfg(test)]
@@ -1072,7 +1071,6 @@ mod tests {
     /// as it was.
     #[test]
     fn planned_commands_refuse_and_leave_the_design_alone() {
-        let planned = ["surface.boundary", "surface.fillet", "inspect.continuity"];
         let mut s = Session::default();
         run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "B"}));
         let before = s.doc.features.len();
@@ -1329,4 +1327,78 @@ mod tests {
                 .is_err()
         );
     }
+
+    /// The energies the reply's warning carries: the fairness energy before and after.
+    fn energies(reply: &Value) -> (f64, f64) {
+        let warning = reply["warning"].as_str().unwrap_or_else(|| panic!("no warning in {reply}"));
+        let after = warning.split("energy ").nth(1).unwrap_or_else(|| panic!("no energies in `{warning}`"));
+        let numbers: Vec<f64> = after
+            .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == 'e' || c == '-' || c == '+'))
+            .filter_map(|w| w.parse::<f64>().ok())
+            .collect();
+        assert!(numbers.len() >= 2, "no energies in `{warning}`");
+        (numbers[0], numbers[1])
+    }
+
+    /// Surface Fair on the fitted B-spline face of an offset sphere: the face is smoothed in
+    /// place, its edges do not move at all, the reply carries the energy before and after, undo,
+    /// redo and a cold reopen keep it, and hostile inputs are refused.
+    #[test]
+    fn fairing_a_b_spline_face_keeps_its_edges_and_reports_its_energy() {
+        let mut s = Session::default();
+        run(&mut s, "solid.sphere", json!({"radius": 20, "body_name": "Ball"}));
+        // A sphere is neither a plane nor a cylinder, so its offset is a fitted B-spline face.
+        run(&mut s, "surface.offset", json!({"faces": [[0, 0, 20]], "body": "Ball", "distance": 2, "body_name": "Shell"}));
+        let st = s.world_state();
+        assert!(st.body("Shell").unwrap().body.is_surface(), "an offset sphere face is a sheet");
+        let before: Vec<solidcraft_geom::Vec3> = st.body("Shell").unwrap().body.edges(0.1).unwrap().iter().flat_map(|e| e.points.clone()).collect();
+        assert!(!before.is_empty());
+        let area_before = area(&s, "Shell");
+
+        // The fairing reports both energies, the second no larger than the first.
+        let reply = run(&mut s, "surface.fair", json!({"body": "Shell", "tolerance": 1.0, "iterations": 3}));
+        let (energy_before, energy_after) = energies(&reply);
+        let area_after = area(&s, "Shell");
+        eprintln!("surface.fair: {reply}\nenergies {energy_before:e} → {energy_after:e}, area {area_before} → {area_after}");
+        assert!(energy_before > 0.0 && energy_after <= energy_before, "{energy_before:e} → {energy_after:e}");
+        // The face moved (the fit is not the flattest surface on its own rim), but not its edges:
+        // every boundary point of the body is where it was, bit for bit.
+        assert!((area_after - area_before).abs() > 0.0 || energy_after < energy_before);
+        let st = s.world_state();
+        let after: Vec<solidcraft_geom::Vec3> = st.body("Shell").unwrap().body.edges(0.1).unwrap().iter().flat_map(|e| e.points.clone()).collect();
+        assert_eq!(after, before, "fairing must not move the face's edges");
+        assert_eq!(st.body("Shell").unwrap().body.face_count(), 1);
+
+        // Undo takes the fairing back, redo puts it back, and a cold reopen rebuilds the same.
+        run(&mut s, "edit.undo", json!({}));
+        assert!((area(&s, "Shell") - area_before).abs() < 1e-9, "undo did not take the fairing back");
+        run(&mut s, "edit.redo", json!({}));
+        assert!((area(&s, "Shell") - area_after).abs() < 1e-9, "redo did not put the fairing back");
+        let cold = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        assert!((area(&cold, "Shell") - area_after).abs() < 1e-9, "a cold reopen did not rebuild the same sheet");
+
+        // Refusals: an unknown body, a body whose faces are all planes, an out-of-range strength
+        // or step count, and a missing tolerance expression.
+        assert!(s.execute("surface.fair", &json!({"body": "Nope", "tolerance": 1.0})).is_err());
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Box"}));
+        assert!(s.execute("surface.fair", &json!({"body": "Box", "tolerance": 1.0})).is_err());
+        assert!(s.execute("surface.fair", &json!({"body": "Shell", "strength": 2, "tolerance": 1.0})).is_err());
+        assert!(s.execute("surface.fair", &json!({"body": "Shell", "iterations": 0, "tolerance": 1.0})).is_err());
+        assert!(s.execute("surface.fair", &json!({"body": "Shell", "tolerance": 0})).is_err());
+    }
+
+    /// A loft through three sections whose first and last are edge chains of two boxes, with
+    /// `continuity: ["g1","g1"]`: it leaves each box's top face tangentially (the run direction
+    /// lies in that face) and passes through the sketch between them.
+    #[test]
+    fn surface_loft_leaves_a_box_face_tangentially() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"corner": [0, 0, 0], "length": 20, "width": 20, "height": 10, "body_name": "Low"}));
+        run(&mut s, "solid.box", json!({"corner": [40, 0, 0], "length": 20, "width": 20, "height": 10, "body_name": "High"}));
+        run(&mut s, "construct.plane.offset", json!({"base": "YZ", "offset": 30, "name": "Mid"}));
+        run(&mut s, "sketch.create", json!({"plane": "Mid", "name": "Bump"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 14], [20, 14]], "ids": ["b"]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(
+            &mut s,
 }

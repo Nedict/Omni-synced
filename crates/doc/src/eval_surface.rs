@@ -8,7 +8,6 @@ use solidcraft_geom::Seg2;
 
 pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut ModelState, warning: &mut Option<String>) -> Result<()> {
     match &f.kind {
-        FeatureKind::Patch { sketch, profiles, body, edges, crown } => {
             let mut made = Vec::new();
             if let Some(sk) = sketch {
                 let ss = st.sketch(*sk).ok_or_else(|| DocError::Unknown(format!("sketch {sk} (it must come earlier in the timeline)")))?;
@@ -20,7 +19,6 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             if !edges.is_empty() {
                 let i = body_at(st, body, edges)?;
                 let b = st.bodies.get(i).ok_or_else(|| DocError::Invalid("body".into()))?;
-                made.push(kernel::patch_edges_crowned(&b.body, edges, *crown)?);
             }
             if made.is_empty() {
                 return Err(DocError::Invalid("a patch needs a sketch region or a loop of edges".into()));
@@ -125,6 +123,42 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
                 st.bodies.retain(|x| !gone.contains(&x.name));
             }
             st.bodies.push(ModelBody::new(name, made, f.id));
+        FeatureKind::SurfaceFair { body, faces, strength, iterations, keep_edges, tolerance } => {
+            let tol = val(vals, tolerance, Kind::Length)?;
+            let opts = kernel::FairOptions::new(*strength, *iterations as usize, *keep_edges, tol)?;
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            // Picked by a point on the face; without picks, every face of the body.
+            let mut picked: Vec<usize> = Vec::new();
+            if faces.is_empty() {
+                picked.extend(0..mb.body.face_count());
+            } else {
+                for p in faces {
+                    let fi =
+                        crate::appearance::face_index_at(&mb, *p).ok_or_else(|| DocError::Invalid(format!("Fair: no face of {body} at {p:?}")))?;
+                    if !picked.contains(&fi) {
+                        picked.push(fi);
+                    }
+                }
+            }
+            if picked.is_empty() {
+                return Err(DocError::Invalid("the body has no faces to fair".into()));
+            }
+            // The face keeps every edge it had: only the surface between them is faired. The
+            // energy before and after goes into the feature's warning, so the reply can say how
+            // much the face moved.
+            let (faired, report) = kernel::fair_faces(&mb.body, &picked, &opts)?;
+            *warning = Some(format!(
+                "faired {} face(s): energy {:.6} → {:.6} in {} step(s), control points moved up to {:.4} mm",
+                picked.len(),
+                report.energy_before,
+                report.energy_after,
+                report.steps,
+                report.movement
+            ));
+            if let Some(slot) = st.bodies.get_mut(i) {
+                *slot = ModelBody::new(mb.name, faired, mb.feature);
+            }
             Ok(())
         }
         FeatureKind::SurfaceExtrude { sketch, profiles, curves, extent } => {
@@ -223,7 +257,6 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             push_sheet(st, f, traced);
             Ok(())
         }
-        FeatureKind::SurfaceLoft { sections } => {
             let mut secs = Vec::with_capacity(sections.len());
             let mut sketches = Vec::with_capacity(sections.len());
             for sec in sections {

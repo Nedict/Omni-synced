@@ -1460,6 +1460,24 @@ pub enum FeatureKind {
         /// Sew the blend onto its two bodies where the boundaries meet.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         stitch: bool,
+    /// The B-spline faces at `faces` of `body` faired (`surface.fair`): each face's interior
+    /// control vertices move to flatten the thin-plate (curvature-variation) energy of the face,
+    /// `strength` of the full least-squares step at a time, for at most `iterations` steps.
+    /// `keep_edges` holds the row of control points next to each edge as well as the boundary row
+    /// itself, so the face keeps meeting its neighbours in position and in tangent. `tolerance`
+    /// is the farthest a control point may move, so the faired face stays within it of the one the
+    /// design asked for; an empty `faces` fairs every face of the body.
+    SurfaceFair {
+        body: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        faces: Vec<Vec3>,
+        #[serde(default = "fair_strength")]
+        strength: f64,
+        #[serde(default = "fair_iterations")]
+        iterations: u32,
+        #[serde(default = "fair_keep_edges")]
+        keep_edges: bool,
+        tolerance: String,
     },
     /// A surface body trimmed by a plane, or by a face of a body (`tool`), keeping the side of
     /// `keep`.
@@ -1850,6 +1868,75 @@ mod point_expr {
 }
 
 impl FeatureKind {
+    /// Sketches the feature is built from (profiles, paths, points): deleting one of them
+    /// deletes the feature. Every kind is listed, so a new one has to say what it uses.
+    pub fn input_sketches(&self) -> Vec<u64> {
+        use FeatureKind as K;
+        match self {
+            K::Extrude { sketch, .. }
+            | K::SurfaceExtrude { sketch, .. }
+            | K::SurfaceRevolve { sketch, .. }
+            | K::Revolve { sketch, .. }
+            | K::Emboss { sketch, .. }
+            | K::Rib { sketch, .. }
+            | K::SheetBase { sketch, .. }
+            | K::SheetContour { sketch, .. } => vec![*sketch],
+            K::Sweep { sketch, path_sketch, .. } | K::SurfaceSweep { sketch, path_sketch, .. } => vec![*sketch, *path_sketch],
+            K::Pipe { path_sketch, .. } | K::Pattern { pattern: PatternKind::Path { path_sketch, .. }, .. } => vec![*path_sketch],
+            K::Loft { sections, .. } => sections.iter().map(|s| s.sketch).collect(),
+            K::SheetFold { sketch, .. } | K::SplitFace { sketch, .. } | K::Patch { sketch, .. } => sketch.iter().copied().collect(),
+            K::Hole { points, .. } => points.iter().map(|p| p.sketch).collect(),
+            K::Sketch { .. }
+            | K::Pattern { .. }
+            | K::Fillet { .. }
+            | K::Chamfer { .. }
+            | K::Box { .. }
+            | K::Cylinder { .. }
+            | K::Sphere { .. }
+            | K::Torus { .. }
+            | K::Combine { .. }
+            | K::Mirror { .. }
+            | K::Thread { .. }
+            | K::Shell { .. }
+            | K::Draft { .. }
+            | K::ConstructionPlane { .. }
+            | K::Split { .. }
+            | K::ConstructionAxis { .. }
+            | K::ConstructionPoint { .. }
+            | K::Scale { .. }
+            | K::OffsetFace { .. }
+            | K::DeleteFace { .. }
+            | K::SurfaceOffset { .. }
+            | K::BoundingSolid { .. }
+            | K::ReplaceFace { .. }
+            | K::Align { .. }
+            | K::Coil { .. }
+            | K::SheetFlange { .. }
+            | K::SheetHem { .. }
+            | K::SheetUnfold { .. }
+            | K::SheetConvert { .. }
+            | K::Boss { .. }
+            | K::Lip { .. }
+            | K::SnapFit { .. }
+            | K::Rest { .. }
+            | K::BoundaryFill { .. }
+            | K::Remove { .. }
+            | K::Stitch { .. }
+            | K::Thicken { .. }
+            | K::SurfaceExtend { .. }
+            | K::SurfaceTrim { .. }
+            | K::SurfaceBlend { .. }
+            | K::SurfaceFair { .. }
+            | K::Unstitch { .. }
+            | K::ReverseNormal { .. }
+            | K::Move { .. }
+            | K::Import { .. }
+            | K::MeshImport { .. }
+            | K::MeshConvert { .. }
+            | K::BodyTransfer { .. } => Vec::new(),
+        }
+    }
+
     /// A sheet metal feature (its result depends on the sheet metal rules).
     pub fn is_plastic(&self) -> bool {
         matches!(self, FeatureKind::Boss { .. } | FeatureKind::Lip { .. } | FeatureKind::SnapFit { .. } | FeatureKind::Rest { .. })
@@ -1933,6 +2020,7 @@ impl FeatureKind {
             FeatureKind::SurfaceSweep { .. } => "SurfaceSweepFeature",
             FeatureKind::SurfaceLoft { .. } => "SurfaceLoftFeature",
             FeatureKind::SurfaceBlend { .. } => "BlendFeature",
+            FeatureKind::SurfaceFair { .. } => "FairFeature",
             FeatureKind::Stitch { .. } => "StitchFeature",
             FeatureKind::Thicken { .. } => "ThickenFeature",
             FeatureKind::SurfaceTrim { .. } => "TrimFeature",
@@ -2010,6 +2098,7 @@ impl FeatureKind {
             FeatureKind::SurfaceSweep { .. } => "SurfaceSweep",
             FeatureKind::SurfaceLoft { .. } => "SurfaceLoft",
             FeatureKind::SurfaceBlend { .. } => "Blend",
+            FeatureKind::SurfaceFair { .. } => "Fair",
             FeatureKind::Stitch { .. } => "Stitch",
             FeatureKind::Thicken { .. } => "Thicken",
             FeatureKind::SurfaceTrim { .. } => "Trim",
@@ -2022,6 +2111,76 @@ impl FeatureKind {
             FeatureKind::MeshImport { .. } => "Mesh",
             FeatureKind::MeshConvert { .. } => "ConvertMesh",
         }
+    }
+    /// Every expression the feature uses.
+    /// Points on faces the feature refers to (shell, draft, offset and replace faces, a hole's
+    /// placement), for persistent face names.
+    /// The feature's profile selections, each with its sketch.
+    pub fn profile_sels_mut(&mut self) -> Vec<(u64, &mut ProfileSel)> {
+        match self {
+            FeatureKind::Extrude { sketch, profiles, .. }
+            | FeatureKind::Revolve { sketch, profiles, .. }
+            | FeatureKind::Sweep { sketch, profiles, .. }
+            | FeatureKind::Emboss { sketch, profiles, .. }
+            | FeatureKind::SheetBase { sketch, profiles, .. } => vec![(*sketch, profiles)],
+            FeatureKind::Patch { sketch: Some(sk), profiles, .. }
+            | FeatureKind::SurfaceExtrude { sketch: sk, profiles: Some(profiles), .. }
+            | FeatureKind::SurfaceRevolve { sketch: sk, profiles: Some(profiles), .. }
+            | FeatureKind::SurfaceSweep { sketch: sk, profiles: Some(profiles), .. } => {
+                vec![(*sk, profiles)]
+            }
+            FeatureKind::Loft { sections, .. } => sections.iter_mut().filter(|s| s.point.is_none()).map(|s| (s.sketch, &mut s.profiles)).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Profile selections and their source sketches without cloning feature data.
+    pub fn profile_sels(&self) -> Vec<(u64, &ProfileSel)> {
+        match self {
+            FeatureKind::Extrude { sketch, profiles, .. }
+            | FeatureKind::Revolve { sketch, profiles, .. }
+            | FeatureKind::Sweep { sketch, profiles, .. }
+            | FeatureKind::Emboss { sketch, profiles, .. }
+            | FeatureKind::SheetBase { sketch, profiles, .. } => vec![(*sketch, profiles)],
+            FeatureKind::Patch { sketch: Some(sketch), profiles, .. }
+            | FeatureKind::SurfaceExtrude { sketch, profiles: Some(profiles), .. }
+            | FeatureKind::SurfaceRevolve { sketch, profiles: Some(profiles), .. }
+            | FeatureKind::SurfaceSweep { sketch, profiles: Some(profiles), .. } => {
+                vec![(*sketch, profiles)]
+            }
+            FeatureKind::Loft { sections, .. } => {
+                sections.iter().filter(|section| section.point.is_none()).map(|section| (section.sketch, &section.profiles)).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    pub fn face_points_mut(&mut self) -> Vec<&mut Vec3> {
+        match self {
+            FeatureKind::Shell { faces, .. }
+            | FeatureKind::Draft { faces, .. }
+            | FeatureKind::OffsetFace { faces, .. }
+            | FeatureKind::DeleteFace { faces, .. }
+            | FeatureKind::SurfaceOffset { faces, .. }
+            | FeatureKind::SurfaceFair { faces, .. }
+            | FeatureKind::SplitFace { faces, .. }
+            | FeatureKind::ReplaceFace { faces, .. } => faces.iter_mut().collect(),
+            FeatureKind::Hole { position, points: None, to, .. } => std::iter::once(position).chain(to.iter_mut()).collect(),
+            FeatureKind::Hole { to: Some(t), .. } => vec![t],
+            FeatureKind::Extrude { extent, .. } => extent.to.iter_mut().chain(extent.from.iter_mut()).collect(),
+            FeatureKind::Revolve { to: Some(p), .. } => vec![p],
+            FeatureKind::Thread { face, .. } => vec![face],
+            FeatureKind::Emboss { face: Some(face), .. } => vec![&mut face.at],
+            FeatureKind::Boss { position, .. } | FeatureKind::SnapFit { position, .. } | FeatureKind::Rest { position, .. } => vec![position],
+            // With bend edges the fixed face is found by name (a plate keeps its point).
+            FeatureKind::SheetConvert { face, bends, .. } if !bends.is_empty() => vec![face],
+            _ => Vec::new(),
+        }
+    }
+
+    pub fn face_points(&self) -> Vec<Vec3> {
+        let mut k = self.clone();
+        k.face_points_mut().into_iter().map(|p| *p).collect()
     }
 }
 
