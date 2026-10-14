@@ -111,9 +111,15 @@ fn flip_drills_holes_at_sketch_points_the_other_way() {
         }
         d.inputs = vec![crate::selection::SelInput::new("Points", crate::selection::POINTS, true)];
         d.inputs[0].items = vec![solidcraft_engine::Sel::SketchPoint { id: format!("{sketch}:q") }];
-        d.extra.insert("flip".into(), json!(true));
     }
     h.frames(2);
+    // The arrow shows the way the hole goes: down from the top, and up once Flip is on.
+    let (_, n) = arrow(&h);
+    assert!(n.dist(Vec3::new(0.0, 0.0, 1.0)) < 1e-9, "unflipped, the hole goes down: the arrow stands on +z ({n:?})");
+    h.app.dialog.as_mut().unwrap().extra.insert("flip".into(), json!(true));
+    h.frames(2);
+    let (_, n) = arrow(&h);
+    assert!(n.dist(Vec3::new(0.0, 0.0, -1.0)) < 1e-9, "flipped, it goes up: {n:?}");
     h.step(&json!({"key": "Enter"})).unwrap();
     assert!(h.app.dialog.is_none(), "OK closed the dialog: {:?}", h.app.dialog.as_ref().map(|d| &d.error));
     assert!(!solid_at(&h, Vec3::new(10.0, 10.0, 2.5)), "flipped: the hole comes up from the bottom");
