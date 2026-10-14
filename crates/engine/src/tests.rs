@@ -195,6 +195,63 @@ fn join_meeting_nothing_keeps_the_first_body() {
     assert!(rel(volume(&mut s), 1064.0) < 1e-6);
 }
 
+/// Two spheres of one size: the join's contact test tried every pair of their finely meshed
+/// triangles and refused the join as too much work (#232).
+#[test]
+fn join_of_two_overlapping_equal_spheres_is_not_refused() {
+    let mut s = Session::default();
+    run(&mut s, "solid.sphere", json!({"radius": 10, "center": [0, 0, 0], "body_name": "A"}));
+    run(&mut s, "solid.sphere", json!({"radius": 10, "center": [12, 0, 0], "body_name": "B"}));
+    run(&mut s, "solid.combine", json!({"target": "A", "tools": ["B"], "operation": "join"}));
+    assert_eq!(s.model.state().bodies.len(), 1);
+    // Two spheres less the lens they share: 2 * 4/3 pi r^3 - pi (4r + d) (2r - d)^2 / 12.
+    let (r, d) = (10.0, 12.0);
+    let want = 2.0 * 4.0 / 3.0 * PI * r * r * r - PI * (4.0 * r + d) * (2.0 * r - d) * (2.0 * r - d) / 12.0;
+    let got = volume(&mut s);
+    assert!(rel(got, want) < 1e-3, "{got} vs {want}");
+}
+
+/// Area two discs of radii `r1`, `r2` with centres `d` apart have in common.
+fn disc_overlap(r1: f64, r2: f64, d: f64) -> f64 {
+    if d >= r1 + r2 {
+        return 0.0;
+    }
+    if d <= (r1 - r2).abs() {
+        return PI * r1.min(r2) * r1.min(r2);
+    }
+    let a = ((d * d + r1 * r1 - r2 * r2) / (2.0 * d * r1)).acos();
+    let b = ((d * d + r2 * r2 - r1 * r1) / (2.0 * d * r2)).acos();
+    r1 * r1 * a + r2 * r2 * b - 0.5 * ((-d + r1 + r2) * (d + r1 - r2) * (d - r1 + r2) * (d + r1 + r2)).sqrt()
+}
+
+/// Two thick rings 11 mm apart: their walls cross, and the join was refused as too much work (#232).
+#[test]
+fn join_of_two_overlapping_rings_is_not_refused() {
+    let mut s = Session::default();
+    for (name, x) in [("RingA", 0.0), ("RingB", 11.0)] {
+        run(
+            &mut s,
+            "solid.cylinder",
+            json!({"diameter": 120, "height": 60, "base": [x, 0, 0], "operation": "new", "name": format!("{name}Outer"), "body_name": name}),
+        );
+        run(
+            &mut s,
+            "solid.cylinder",
+            json!({"diameter": 96, "height": 60, "base": [x, 0, 0], "operation": "cut", "targets": [name], "name": format!("{name}Bore")}),
+        );
+    }
+    run(&mut s, "solid.combine", json!({"target": "RingA", "tools": ["RingB"], "operation": "join"}));
+    assert_eq!(s.model.state().bodies.len(), 1);
+    // Union of the two rings' plan areas: both less what they share, which is the overlap of the
+    // two outer discs less the two bores (each inside the other's outer disc) plus the bores' own overlap.
+    let (outer, bore, d) = (60.0, 48.0, 11.0);
+    let ring = PI * (outer * outer - bore * bore);
+    let shared = disc_overlap(outer, outer, d) - 2.0 * disc_overlap(bore, outer, d) + disc_overlap(bore, bore, d);
+    let want = (2.0 * ring - shared) * 60.0;
+    let got = volume(&mut s);
+    assert!(rel(got, want) < 1e-3, "{got} vs {want}");
+}
+
 mod boolean_diagnostics;
 mod component_frames;
 mod mirror_planes;

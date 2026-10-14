@@ -464,6 +464,22 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
     }
     let rollback = a.get("rollback").and_then(Value::as_bool).unwrap_or(true);
     let verbose = a.get("verbose").and_then(Value::as_bool).unwrap_or(true);
+    // An app that runs batches itself answers the whole batch in one request, so one frame
+    // (#743). One too long for a control line goes step by step: the app would refuse it unrun.
+    // The margin covers the envelope and the `allow_paths` the backend adds.
+    let params = json!({"commands": steps, "rollback": rollback});
+    if params.to_string().len() + 64 * 1024 <= solidcraft_engine::MAX_LINE {
+        match b.call("engine.batch", params) {
+            Ok(r) => return batch_reply(&r, rollback, verbose),
+            // Older apps and the headless session, or the app wants the steps one by one.
+            Err(e) if e.starts_with("unknown method") || e.starts_with("engine.batch unavailable") => {}
+            // The app may have run it: sending the steps again would apply them twice.
+            Err(e) => {
+                let msg = format!("the app did not answer engine.batch ({e}); it may have run: inspect the design before sending it again");
+                return text_result(&Value::String(msg), true);
+            }
+        }
+    }
     let start = if rollback { Undo::begin(b) } else { Undo::None };
     let mut results = Vec::with_capacity(steps.len());
     for (i, step) in steps.iter().enumerate() {
@@ -492,6 +508,26 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
     }
     start.finish(b);
     text_result(&json!({"ok": true, "completed": results.len(), "results": results}), false)
+}
+
+/// The `batch` reply from the app's `engine.batch` answer, shaped as the per-step path shapes it.
+fn batch_reply(r: &Value, rollback: bool, verbose: bool) -> Value {
+    let results: Vec<Value> =
+        r["results"].as_array().cloned().unwrap_or_default().into_iter().map(|v| if verbose { v } else { compact(v) }).collect();
+    match r.get("failed").filter(|f| !f.is_null()) {
+        None => text_result(&json!({"ok": true, "completed": results.len(), "results": results}), false),
+        Some(failed) => text_result(
+            &json!({
+                "ok": false,
+                "completed": r["completed"],
+                "failed": failed,
+                "rolled_back": rollback,
+                "undone": r["undone"],
+                "results": results,
+            }),
+            true,
+        ),
+    }
 }
 
 /// A command's result without what the design already had (`execute` or `batch` with `verbose: false`): a
