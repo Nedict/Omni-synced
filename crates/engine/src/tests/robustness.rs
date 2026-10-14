@@ -101,6 +101,8 @@ fn hinge_barrel_joins_a_filleted_lid() {
     let added = total_volume(&s) - before;
     let want = 0.75 * PI * 5.0 * 5.0 * 14.0;
     assert!((added - want).abs() < want * 1e-3, "the barrel added {added} mm³, not {want}");
+}
+
 /// #871: the fillet from the report (its feature as saved) on a plate with a block on top and
 /// a window through both. Radius 1 on the window's edges and on the block's sides overlaps in
 /// the 1.26 mm wall between them; the result had openings in its end faces and was accepted.
