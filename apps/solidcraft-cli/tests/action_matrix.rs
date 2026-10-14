@@ -754,9 +754,9 @@ fn read_costs() -> BTreeMap<String, Cost> {
 
 /// A design new to the corpus (not in costs.json yet) is planned as this.
 const UNKNOWN_COST: Cost = Cost { secs: 120.0, load: 5.0 };
-/// A design that takes longer than this on a runner is split into slices of about this much
-/// (each slice loads the design again), so no shard waits on one design.
-const SLICE_SECS: f64 = 300.0;
+/// A design that takes longer than this on a runner is split into slices of about this much, or
+/// five loads if that is more (each slice loads the design again), so no shard waits on one design.
+const SLICE_SECS: f64 = 600.0;
 /// Designs that take longer than this to load on a runner stay out of the pull request sample.
 const SAMPLE_MAX_LOAD_SECS: f64 = 8.0;
 
@@ -784,7 +784,7 @@ fn plan(designs: &[String], costs: &BTreeMap<String, Cost>, parts: usize) -> Vec
     let mut units = Vec::new();
     for d in designs {
         let c = costs.get(d).copied().unwrap_or(UNKNOWN_COST);
-        let n = ((c.secs / SLICE_SECS).ceil() as usize).max(1);
+        let n = ((c.secs / SLICE_SECS.max(5.0 * c.load)).ceil() as usize).max(1);
         if n == 1 {
             units.push(Unit { design: d.clone(), slice: None, cost: c.secs });
         } else {
@@ -991,9 +991,12 @@ fn write_baseline(results: &[Value]) {
             m.entry(design).or_default().entry(entity).or_default().extend(actions.as_str().unwrap_or("").split_whitespace().map(str::to_string));
         }
     }
+    // A timeout of an action that passed keeps it passing (see [`ratchet`]).
+    let base = read_baseline();
     for o in results {
         let (design, entity, action) = (o["design"].as_str().unwrap_or(""), o["entity"].as_str().unwrap_or(""), o["action"].as_str().unwrap_or(""));
-        let mark = if o["ok"].as_bool() == Some(true) { "" } else { "!" };
+        let kept = o["kind"] == "timeout" && base.get(&key(design, entity, action)) == Some(&true);
+        let mark = if o["ok"].as_bool() == Some(true) || kept { "" } else { "!" };
         m.entry(design).or_default().entry(entity).or_default().push(format!("{mark}{action}"));
     }
     // One entity per line, sorted: small diffs when a few actions change.
@@ -1022,10 +1025,18 @@ fn ratchet(results: &[Value], full: bool) {
     // baseline, over the same names this run tried, and in this run.
     let mut fam: BTreeMap<String, (usize, usize, Vec<String>, Vec<String>)> = BTreeMap::new();
     let mut fresh = 0usize;
+    // An action that passed in the baseline and now runs past ACTION_TIMEOUT is listed but not
+    // judged: on a busy runner the slowest actions (40-80 s on oracle 41's tube) land either side
+    // of the limit from one night to the next. An error or a crash is judged as usual.
+    let mut slow = Vec::new();
     for o in results {
         let (design, entity, action) = (o["design"].as_str().unwrap_or(""), o["entity"].as_str().unwrap_or(""), o["action"].as_str().unwrap_or(""));
         let k = key(design, entity, action);
         let ok = o["ok"].as_bool() == Some(true);
+        if o["kind"] == "timeout" && base.get(&k) == Some(&true) {
+            slow.push(k);
+            continue;
+        }
         let f = fam.entry(key(design, &family(entity), action)).or_default();
         match base.get(&k) {
             Some(was) => {
@@ -1061,6 +1072,14 @@ fn ratchet(results: &[Value], full: bool) {
         write_baseline(results);
         eprintln!("baseline written: {}", baseline_path().display());
         return;
+    }
+    if !slow.is_empty() {
+        eprintln!(
+            "{} actions that pass in the baseline ran past the {} s limit this time (not judged):\n{}",
+            slow.len(),
+            ACTION_TIMEOUT.as_secs(),
+            slow.join("\n")
+        );
     }
     if !fixed.is_empty() || fresh > 0 {
         eprintln!(

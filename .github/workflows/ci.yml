@@ -207,7 +207,7 @@ jobs:
     # tests/action_matrix/baseline.json (docs/action-matrix.md). Every test run checks a sample;
     # the whole matrix runs nightly (or by hand) in shards of about equal cost, cut by
     # tests/action_matrix/costs.json. Keep SHARDS in step with the matrix below.
-    name: Action matrix (${{ matrix.shard }}/10)
+    name: Action matrix (${{ matrix.shard }}/16)
     needs: build-tests
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
@@ -215,7 +215,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
@@ -228,7 +228,7 @@ jobs:
         # A step limit below the job's, so the outcomes so far are still uploaded.
         timeout-minutes: 35
         env:
-          SHARDS: 10
+          SHARDS: 16
           SHARD: ${{ matrix.shard }}
           OUT: ${{ github.workspace }}/action-matrix
         run: |
