@@ -307,12 +307,12 @@ mod tests {
     }
 
     /// The edges of the first body of a continuity reply.
-    fn edges<'a>(v: &'a Value) -> &'a Vec<Value> {
+    fn edges(v: &Value) -> &Vec<Value> {
         v["bodies"][0]["edges"].as_array().unwrap_or_else(|| panic!("no edges in {v}"))
     }
 
     /// The seams that read as tangent (within 0.01° of the neighbouring face).
-    fn tangent<'a>(edges: &'a [Value]) -> Vec<&'a Value> {
+    fn tangent(edges: &[Value]) -> Vec<&Value> {
         edges.iter().filter(|e| e["normal_angle_deg"]["value"].as_f64().unwrap_or(f64::NAN) < 0.01).collect()
     }
 

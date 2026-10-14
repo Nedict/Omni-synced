@@ -896,7 +896,7 @@ mod blend_tests {
                 for j in 1..=order {
                     let mut v = n.get(j).copied().unwrap_or(Vec2::ZERO);
                     for i in 1..=j {
-                        v = v - x[j - i] * den.get(i).copied().unwrap_or(0.0);
+                        v -= x[j - i] * den.get(i).copied().unwrap_or(0.0);
                     }
                     x.push(v / den[0]);
                 }
