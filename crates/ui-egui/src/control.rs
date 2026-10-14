@@ -20,8 +20,8 @@
 //!   pointer input in screen points; `ui.scroll {x, y, delta}`: mouse-wheel input in
 //!   points (zooms); `ui.key {key, cmd?, shift?}`, `ui.text {text}`
 //! - `ui.screenshot {path?}`: PNG of the window; `ui.render {path, width?, height?}`: headless
-//!   CPU render of the model with the current camera and the section the viewport shows (no
-//!   window needed)
+//!   CPU render of the model with the current camera, in the window's theme, with the section
+//!   the viewport shows (no window needed)
 //! - `ui.menu {x?, y?, target?, close?}`: open a context menu at a point (the viewport's marking
 //!   menu, or a browser menu with `target: {type: body|sketch|component, …}`); without a point,
 //!   the open menu and its items. `ui.menuPick {item}` runs an item by id or label;
@@ -620,9 +620,15 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
         "ui.render" => {
             let w = f("width").unwrap_or(1280.0).clamp(16.0, 8192.0) as usize;
             let h = f("height").unwrap_or(800.0).clamp(16.0, 8192.0) as usize;
-            // Cut by the section the viewport shows (an open Section Analysis dialog's preview,
-            // a sketch's Slice), not only the committed one.
-            let scene = solidcraft_engine::view::scene_with_section(&app.session, &app.cam, crate::viewport::section_plane(app));
+            // In the window's theme, and cut by the section the viewport shows (an open Section
+            // Analysis dialog's preview, a sketch's Slice), not only the committed one.
+            let scene = solidcraft_engine::view::scene_with_palette(
+                &app.session,
+                &app.cam,
+                crate::viewport::section_plane(app),
+                solidcraft_engine::view::world_curve_parts,
+                &crate::viewport::scene_palette(app.ui.dark),
+            );
             let Some(png) = render_png(&scene, &app.cam, w, h) else { return err("render failed") };
             match s("path") {
                 Some(path) => match vfs::check(path).and_then(|()| std::fs::write(path, &png)) {
@@ -678,6 +684,32 @@ mod tests {
             Outcome::Screenshot { .. } => panic!("ui.render took a screenshot"),
         }
         std::fs::read(path).unwrap()
+    }
+
+    /// `ui.render` draws in the window's theme (#974): its background is the viewport's, light
+    /// or dark.
+    #[test]
+    fn model_render_is_in_the_windows_theme() {
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length": 40, "width": 30, "height": 20})).unwrap();
+        let mut app = SolveApp::new(s, Services::default());
+        let dir = std::env::temp_dir().join(format!("solidcraft-render-theme-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for dark in [false, true, false] {
+            app.ui.dark = dark;
+            let png = render(&mut app, &dir.join(format!("dark-{dark}.png")));
+            let img = image::load_from_memory(&png).unwrap().to_rgba8();
+            // The top row is the background's top: its most common colour.
+            let mut counts = std::collections::HashMap::new();
+            for x in 0..img.width() {
+                *counts.entry(img.get_pixel(x, 0).0).or_insert(0) += 1;
+            }
+            let top = counts.into_iter().max_by_key(|(_, n)| *n).map(|(c, _)| c).unwrap();
+            let want = if dark { crate::theme::Tokens::dark() } else { crate::theme::Tokens::light() }.viewport_top;
+            let near = top.iter().zip([want.r(), want.g(), want.b()]).all(|(a, b)| a.abs_diff(b) <= 2);
+            assert!(near, "dark {dark}: the render's top row is {top:?}, the window's background {want:?}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// A model render shows the section the window shows: the open Section Analysis dialog's
