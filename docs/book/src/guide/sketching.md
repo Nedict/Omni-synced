@@ -246,6 +246,17 @@ Proposed sketch geometry appears **green** before confirmation. Change the input
 update the preview, then press **OK**. **Cancel** discards the preview. A circular pattern centre
 can be an existing point or a position clicked in empty sketch space.
 
+Sketch patterns keep each instance related to the seed geometry: moving the seed updates the
+copies, and a copy cannot deform independently. Circle and ellipse radii follow the seed too.
+Choose a circle's centre point to keep a circular pattern centred on that circle. A centre
+placed in empty space becomes a sketch point that can be dimensioned or made coincident.
+Double-click the pattern badge (at the circular centre or beside the rectangular seed), or
+right-click a seed or copy and choose **Edit Sketch Pattern**, to change quantity, spacing,
+direction or total angle. Confirmed edits preserve surviving instance ids; Cancel discards
+the preview. Pattern settings survive save/reopen and undo/redo. Deleting a seed, copy or
+pattern relation breaks that association and leaves the remaining geometry independent.
+Patterns saved by older versions remain independent copies; recreate them to add associations.
+
 Offset distances are editable driving dimensions: double-click a dimension or change its model
 parameter to resize the offset without moving its source curves. The selected side, distance,
 and association survive save/reopen and undo/redo. Symmetric offsets share one driving distance;

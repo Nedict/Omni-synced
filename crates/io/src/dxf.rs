@@ -2,7 +2,8 @@
 //! LWPOLYLINE, POLYLINE/VERTEX, POINT, ELLIPSE, SPLINE, TEXT and MTEXT, scaled to millimetres by
 //! `$INSUNITS`. Block references (INSERT, with scale, rotation and arrays) are expanded,
 //! nested blocks too; paper-space entities are skipped. The writer emits an R12-style file of lines, circles,
-//! arcs and points (free-form curves as polylines).
+//! arcs and points (free-form curves as polylines); the flat pattern's drawing, with ELLIPSE and SPLINE, is
+//! [`crate::write_dxf_drawing`].
 
 use std::collections::HashMap;
 

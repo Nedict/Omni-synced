@@ -279,6 +279,7 @@ mod boolean_diagnostics;
 mod component_frames;
 mod large_step_import;
 mod loft_cut;
+mod loft_spacing;
 mod mirror_planes;
 mod path_scope;
 mod primitive_points;

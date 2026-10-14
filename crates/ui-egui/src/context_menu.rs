@@ -705,6 +705,13 @@ fn sketch_entity_items(app: &SolveApp) -> Vec<Item> {
         return v;
     }
     let ents: Vec<String> = curves.iter().chain(points.iter()).cloned().collect();
+    for pattern in &ss.sketch.patterns {
+        if ents.iter().any(|id| pattern.contains(id))
+            || app.session.selection.iter().filter_map(|sel| crate::sketch_modify_ui::point_id(&app.session, sel)).any(|id| pattern.contains(id))
+        {
+            v.push(act("ui.editSketchPattern", "Edit Sketch Pattern", "sketch_circ_pattern").with(json!({"pattern":pattern.id})));
+        }
+    }
     if crate::sketch_text::selected_entity(app).is_some() {
         v.push(cmd(app, "sketch.edit_text", "Edit Text"));
     }
@@ -791,6 +798,11 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         "ui.delete" if item.params.is_some() => crate::delete::request(app, p),
         "ui.delete" => delete(app),
         "ui.finishSketch" => app.finish_sketch(),
+        "ui.editSketchPattern" => {
+            if let Some(id) = p.get("pattern").and_then(Value::as_str) {
+                crate::sketch_modify_ui::edit_pattern(app, id);
+            }
+        }
         "ui.hide" => {
             for b in bodies {
                 if !app.session.visibility.hidden_bodies.contains(&b) {

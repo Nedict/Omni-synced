@@ -147,6 +147,9 @@
 //!   `pattern` and `body`): a perforation field stored on a sheet, for the flat pattern, the DXF
 //!   and the measure. It is also first saved in 20; 0.10.0 asks for an update instead of
 //!   meeting a feature it can't read.
+//!   Associative, editable sketch patterns (`patterns` in a sketch) and their point/radius
+//!   relations are also first saved in 20. Old sketch copies stay independent: migration cannot
+//!   infer which curves formed a pattern.
 
 use serde_json::Value;
 
@@ -476,6 +479,7 @@ pub fn read(s: &str) -> Result<Document> {
         if let crate::FeatureKind::Sketch { sketch, .. } = &feature.kind {
             sketch.validate_freeform_offsets().map_err(|e| DocError::Invalid(format!("damaged design: {e}")))?;
             sketch.validate_wires().map_err(|e| DocError::Invalid(format!("damaged design: {e}")))?;
+            sketch.validate_patterns().map_err(|e| DocError::Invalid(format!("damaged design: {e}")))?;
             sketch.validate_periodic_splines().map_err(|e| DocError::Invalid(format!("damaged design: {e}")))?;
         }
         if let crate::FeatureKind::BodyTransfer { from, to, .. } = &feature.kind
@@ -523,8 +527,33 @@ fn validate_sketch_sizes(value: &Value) -> Result<()> {
         if len("points") > solidcraft_sketch::MAX_POINTS
             || len("curves") > solidcraft_sketch::MAX_CURVES
             || len("constraints") > solidcraft_sketch::MAX_CONSTRAINTS
+            || len("patterns") > solidcraft_sketch::MAX_CONSTRAINTS
         {
             return Err(invalid());
+        }
+        if let Some(patterns) = sketch.get("patterns").and_then(Value::as_array) {
+            let mut points = 0usize;
+            let mut curves = 0usize;
+            let mut constraints = 0usize;
+            for pattern in patterns {
+                let Some(entities) = pattern.get("entities").and_then(Value::as_array) else { return Err(invalid()) };
+                let Some(instances) = pattern.get("instances").and_then(Value::as_array) else { return Err(invalid()) };
+                if entities.len() > solidcraft_sketch::MAX_CURVES + solidcraft_sketch::MAX_POINTS || instances.len() >= 500 {
+                    return Err(invalid());
+                }
+                for instance in instances {
+                    let size = |key| instance.get(key).and_then(Value::as_array).map_or(0, Vec::len);
+                    points = points.saturating_add(size("points"));
+                    curves = curves.saturating_add(size("curves"));
+                    constraints = constraints.saturating_add(size("constraints"));
+                    if points > solidcraft_sketch::MAX_POINTS
+                        || curves > solidcraft_sketch::MAX_CURVES
+                        || constraints > solidcraft_sketch::MAX_CONSTRAINTS
+                    {
+                        return Err(invalid());
+                    }
+                }
+            }
         }
     }
     Ok(())

@@ -60,7 +60,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         ),
     CommandSpec::new("sheet.export_dxf", "Export Flat Pattern as DXF", export_dxf)
         .noundo()
-        .params("body?, path? → DXF (mm): OUTLINE, BEND_UP and BEND_DOWN (centre lines) layers"),
+        .params("body?, path?, curves?: exact|arcs (default exact: an ellipse as ELLIPSE, splines, text outlines and other Béziers as SPLINE; arcs: tangent arcs and lines within 0.001 mm, for machines that read only those) → DXF (AutoCAD 2000, mm): OUTLINE, BEND_UP and BEND_DOWN (centre lines) layers"),
     CommandSpec::new("sheet.export_bend_table", "Export Bend Table", export_bend_table)
         .noundo()
         .params("body?, format?: csv|json (default csv), path? → bend table in mm and degrees, including rule and flat centre-line coordinates; a bend that cut-outs split has a row for each piece"),
@@ -491,8 +491,20 @@ fn flat_pattern(s: &mut Session, p: &Value) -> Result<Value> {
     flat_json(&sh)
 }
 
-/// A DXF (R12 entities, mm) of the flat pattern on named layers.
-pub fn flat_dxf(sh: &SheetBody) -> Result<String> {
+/// How the flat DXF writes the curves that are neither lines nor circular arcs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DxfCurves {
+    /// Exactly: an ellipse as ELLIPSE, Béziers (spline pieces, text outlines) and the other conics as SPLINE.
+    #[default]
+    Exact,
+    /// As tangent arcs and lines within 0.001 mm, for machines that read only those.
+    Arcs,
+}
+
+/// A DXF (AutoCAD 2000, mm) of the flat pattern on named layers: OUTLINE, BEND_UP and BEND_DOWN
+/// (centre lines), and one layer per pocket depth. Free-form curves as `curves` says.
+pub fn flat_dxf(sh: &SheetBody, curves: DxfCurves) -> Result<String> {
+    use solidcraft_io::{DxfEntity, DxfLayer, DxfShape};
     let regions = sh.flat_regions()?;
     let pockets = sh.machining()?;
     let pocket_layer = |p: &solidcraft_doc::sheet::SheetPocket| {
@@ -520,110 +532,63 @@ pub fn flat_dxf(sh: &SheetBody) -> Result<String> {
     if !perforation.is_empty() {
         layers.insert("PERFORATION".to_string());
     }
-    let mut out = String::new();
-    let mut w = |c: i32, v: &str| out.push_str(&format!("{c}\n{v}\n"));
-    w(0, "SECTION");
-    w(2, "HEADER");
-    w(9, "$INSUNITS");
-    w(70, "4");
-    w(0, "ENDSEC");
-    w(0, "SECTION");
-    w(2, "TABLES");
-    w(0, "TABLE");
-    w(2, "LAYER");
-    w(70, &layers.len().to_string());
-    for name in &layers {
-        let colour = match name.as_str() {
-            "OUTLINE" => "7",
-            "BEND_UP" => "1",
-            "BEND_DOWN" => "5",
-            _ => "3",
-        };
-        w(0, "LAYER");
-        w(2, name);
-        w(70, "0");
-        w(62, colour);
-        w(6, "CONTINUOUS");
-    }
-    w(0, "ENDTAB");
-    w(0, "ENDSEC");
-    w(0, "SECTION");
-    w(2, "ENTITIES");
-    let f = |x: f64| format!("{x:.6}");
-    let line = |w: &mut dyn FnMut(i32, &str), layer: &str, a: Vec2, b: Vec2| {
-        w(0, "LINE");
-        w(8, layer);
-        w(10, &f(a.x));
-        w(20, &f(a.y));
-        w(11, &f(b.x));
-        w(21, &f(b.y));
-    };
+    let layers: Vec<DxfLayer> = layers
+        .into_iter()
+        .map(|name| {
+            let color = match name.as_str() {
+                "OUTLINE" => 7,
+                "BEND_UP" => 1,
+                "BEND_DOWN" => 5,
+                _ => 3,
+            };
+            DxfLayer { name, color }
+        })
+        .collect();
     let mut loops: Vec<_> = regions.iter().flat_map(|r| std::iter::once(&r.outer).chain(&r.holes)).map(|lp| (lp, "OUTLINE".to_string())).collect();
     for p in &pockets {
         for lp in std::iter::once(&p.region.outer).chain(&p.region.holes) {
             loops.push((lp, pocket_layer(p)));
         }
     }
+    let mut entities = Vec::new();
     for (h, layer) in loops {
         // A circle is often represented by two semicircles. Keep the whole analytic
         // boundary as one CIRCLE rather than approximating outer boundaries with chords.
         if let Some((center, radius)) = loop_circle(h) {
-            w(0, "CIRCLE");
-            w(8, &layer);
-            w(10, &f(center.x));
-            w(20, &f(center.y));
-            w(40, &f(radius));
+            entities.push(DxfEntity { layer, shape: DxfShape::Circle { c: center, r: radius } });
             continue;
         }
-        for seg in &h.segs {
-            match *seg {
-                solidcraft_geom::Seg2::Arc { center, radius, start, sweep } => {
-                    if (sweep.abs() - std::f64::consts::TAU).abs() < 1e-9 {
-                        w(0, "CIRCLE");
-                        w(8, &layer);
-                        w(10, &f(center.x));
-                        w(20, &f(center.y));
-                        w(40, &f(radius));
-                        continue;
-                    }
-                    let (a0, a1) = if sweep >= 0.0 { (start, start + sweep) } else { (start + sweep, start) };
-                    w(0, "ARC");
-                    w(8, &layer);
-                    w(10, &f(center.x));
-                    w(20, &f(center.y));
-                    w(40, &f(radius));
-                    w(50, &f(a0.to_degrees().rem_euclid(360.0)));
-                    w(51, &f(a1.to_degrees().rem_euclid(360.0)));
-                }
-                other => {
-                    let pts = other.polyline(1e-3);
-                    for p in pts.windows(2) {
-                        line(&mut w, &layer, p[0], p[1]);
-                    }
-                }
+        let fitted;
+        let h = match curves {
+            DxfCurves::Arcs if !h.is_line_arc() => {
+                fitted = h
+                    .fit_arcs(solidcraft_kernel::PLANAR_FIT_TOL)
+                    .ok_or_else(|| EngineError::Other("a flat-pattern curve could not be written as arcs".into()))?;
+                &fitted
             }
-        }
+            _ => h,
+        };
+        // A whole ellipse is one ELLIPSE; every other segment is an entity of its own.
+        entities.extend(solidcraft_io::loop_shapes(h).into_iter().map(|shape| DxfEntity { layer: layer.clone(), shape }));
     }
     for b in sh.bends() {
-        line(&mut w, if b.up { "BEND_UP" } else { "BEND_DOWN" }, b.start, b.end);
+        entities.push(DxfEntity { layer: if b.up { "BEND_UP" } else { "BEND_DOWN" }.into(), shape: DxfShape::Line(b.start, b.end) });
     }
-    for (c, r) in &perforation {
-        w(0, "CIRCLE");
-        w(8, "PERFORATION");
-        w(10, &c.x.to_string());
-        w(20, &c.y.to_string());
-        w(30, "0");
-        w(40, &r.to_string());
+    for (c, r) in perforation {
+        entities.push(DxfEntity { layer: "PERFORATION".into(), shape: DxfShape::Circle { c, r } });
     }
-    w(0, "ENDSEC");
-    w(0, "EOF");
-    Ok(out)
+    Ok(solidcraft_io::write_dxf_drawing(&layers, &entities))
 }
 
 fn export_dxf(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sheet.export_dxf";
+    let curves = match str_(p, "curves").map(str::to_ascii_lowercase).as_deref() {
+        None | Some("exact") => DxfCurves::Exact,
+        Some("arcs") => DxfCurves::Arcs,
+        Some(_) => return Err(bad(cmd, "`curves` must be exact or arcs")),
+    };
     let sh = sheet_of(s, p, cmd)?;
-    let text = flat_dxf(&sh)?;
+    let text = flat_dxf(&sh, curves)?;
     if let Some(path) = str_(p, "path").filter(|x| !x.trim().is_empty()) {
         solidcraft_io::vfs::write(path, text.as_bytes()).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
         return Ok(json!({"path": path, "bends": sh.bends().len()}));
@@ -682,3 +647,7 @@ mod tests;
 #[cfg(test)]
 #[path = "sheet_convert_tests.rs"]
 mod convert_tests;
+
+#[cfg(test)]
+#[path = "sheet_dxf_tests.rs"]
+mod dxf_tests;
