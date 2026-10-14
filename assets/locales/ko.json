@@ -56,6 +56,8 @@
   "ui.chamfer_type": "모따기 유형",
   "ui.change_workspace": "작업 공간 변경",
   "ui.chord_length": "현 길이",
+  "ui.curvature_g2": "곡률 연속 (G2)",
+  "ui.equivalent_radius": "등가 반지름",
   "ui.circle": "원",
   "ui.circular_pattern": "원형 패턴",
   "ui.clear_recent": "최근 항목 지우기",

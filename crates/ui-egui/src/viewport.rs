@@ -853,8 +853,9 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     for ss in point_sketches.iter().filter_map(|sid| st.sketch(*sid)) {
         let sid = ss.feature;
         let shown = snapping.then(|| crate::dialogs::SnapPoints::of(&ss.sketch));
+        let visible = solidcraft_engine::view::SketchPointVisibility::new(&ss.sketch);
         for p in &ss.sketch.points {
-            if shown.as_ref().is_some_and(|f| !f.takes(p)) {
+            if !visible.takes(p) || shown.as_ref().is_some_and(|f| !f.takes(p)) {
                 continue;
             }
             if let Some(sp) = proj.to_screen(ss.plane.to_world(p.pos)) {
@@ -2586,10 +2587,11 @@ fn box_select(app: &mut SolveApp, proj: &Proj, bx: BoxSel, add: bool) {
                 out.push(Sel::SketchCurve { id: c.id.clone() });
             }
         }
+        let visible = solidcraft_engine::view::SketchPointVisibility::new(&ss.sketch);
         for (i, p) in ss.sketch.points.iter().enumerate().filter(|_| !off("sketch") && !off("sketch_points")) {
             if accepts.is_none_or(|a| a & crate::selection::SKETCH_POINTS != 0)
                 && i != 0
-                && solidcraft_engine::view::sketch_point_visible(&ss.sketch, i)
+                && visible.takes(p)
                 && bx.takes(&to2(&[ss.plane.to_world(p.pos)]))
             {
                 out.push(Sel::SketchPoint { id: p.id.clone() });
@@ -2763,8 +2765,9 @@ fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let sk = &ss.sketch;
     let locked = sk.locked_points();
     let virtual_corners: Vec<usize> = sk.virtual_corners().into_iter().map(|(i, _)| i).collect();
+    let visible = solidcraft_engine::view::SketchPointVisibility::new(sk);
     for (i, p) in sk.points.iter().enumerate() {
-        if !solidcraft_engine::view::sketch_point_visible(sk, i) {
+        if !visible.takes(p) {
             continue;
         }
         let hidden = (sk.view.hide_points && i != 0) || (sk.view.hide_projected && p.link.is_some());

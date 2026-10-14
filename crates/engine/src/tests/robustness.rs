@@ -549,3 +549,13 @@ fn blend_corners_where_edges_meet_on_a_curved_wall() {
     let removed = base - planned_volume(&s);
     assert!((removed - 67.05).abs() < 0.15, "three at the corner: removed {removed}, expected 67.05");
 }
+
+/// Seed 20 cuts a patterned cylinder's holes through a filleted plate. The lenient retry of a
+/// face's parameter boundary (#970) searched the whole cylinder for a point and found it across
+/// the seam, half a turn away; the face was divided wrongly and the cut failed. Such a boundary
+/// is refused now, and the cut builds as before #970.
+#[test]
+fn a_boundary_found_across_a_seam_is_not_used() {
+    let r = fuzz::run(20, 8);
+    assert_eq!(r.outcome.kind, "ok", "seed 20: {:?}\n{}", r.outcome, r.script());
+}

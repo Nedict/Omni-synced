@@ -689,7 +689,16 @@ impl Dialog {
             Kind::Extrude { to_offset, .. } if to_object_on(&self.inputs) => ("To Offset", ValueKind::Length, to_offset),
             Kind::Extrude { distance, .. } => ("Distance", ValueKind::Length, distance),
             Kind::Revolve { angle, .. } => ("Angle", ValueKind::Angle, angle),
-            Kind::Fillet { radius, chamfer, .. } => (if *chamfer { "Distance" } else { "Radius" }, ValueKind::Length, radius),
+            Kind::Fillet { radius, chamfer, .. } => {
+                let label = if *chamfer {
+                    "Distance"
+                } else if matches!(self.extra.get("type").and_then(Value::as_str), Some("curvature" | "g2")) {
+                    "Equivalent Radius"
+                } else {
+                    "Radius"
+                };
+                (label, ValueKind::Length, radius)
+            }
             Kind::Shell { thickness } => ("Thickness", ValueKind::Length, thickness),
             Kind::Draft { angle } => ("Angle", ValueKind::Angle, angle),
             Kind::Hole { diameter, .. } => ("Diameter", ValueKind::Length, diameter),
@@ -896,7 +905,7 @@ pub(crate) fn snaps_to_points(accept: Accept) -> bool {
 }
 
 /// Which of a sketch's points a face place snaps to (the Single hole's): the points of geometry
-/// the sketch shows. Not a text outline's points, which are never drawn or picked on their own
+/// the sketch shows. Not generated offset nodes or a text outline's points, which are never drawn or picked on their own
 /// (as `view::sketch_point_visible` has it), nor projected points while the sketch hides
 /// projected geometry (Show Projected off), whose curves aren't picked either. Hidden sketches
 /// offer no points at all. Show Points doesn't count: it only hides the markers of the sketch
@@ -904,35 +913,17 @@ pub(crate) fn snaps_to_points(accept: Accept) -> bool {
 pub(crate) struct SnapPoints<'a> {
     /// Show Projected is off: no linked point is taken.
     hide_linked: bool,
-    /// The text sources' link ids (looked up once, however many points and links there are).
-    text: std::collections::HashSet<&'a str>,
+    shown: solidcraft_engine::view::SketchPointVisibility<'a>,
 }
 
 impl<'a> SnapPoints<'a> {
-    pub(crate) fn of(sk: &'a solidcraft_engine::sketch::Sketch) -> SnapPoints<'a> {
-        let hide_linked = sk.view.hide_projected;
-        let text = if hide_linked {
-            Default::default()
-        } else {
-            // An id names its first link, as `Sketch::link` finds it.
-            let mut seen = std::collections::HashSet::new();
-            sk.links
-                .iter()
-                .filter(|l| seen.insert(l.id.as_str()))
-                .filter(|l| l.kind == solidcraft_engine::sketch::LinkKind::Text)
-                .map(|l| l.id.as_str())
-                .collect()
-        };
-        SnapPoints { hide_linked, text }
+    pub(crate) fn of(sk: &'a solidcraft_engine::sketch::Sketch) -> Self {
+        Self { hide_linked: sk.view.hide_projected, shown: solidcraft_engine::view::SketchPointVisibility::new(sk) }
     }
 
     /// Does a face place snap to point `p` of the sketch?
     pub(crate) fn takes(&self, p: &solidcraft_engine::sketch::SPoint) -> bool {
-        match p.link.as_deref() {
-            None => true,
-            Some(_) if self.hide_linked => false,
-            Some(l) => !self.text.contains(l),
-        }
+        self.shown.takes(p) && !(self.hide_linked && p.link.is_some())
     }
 }
 
@@ -2059,7 +2050,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 &mut d.extra,
                                 "fi_type",
                                 "type",
-                                &[("Constant", "constant"), ("Chord Length", "chord"), ("Variable", "variable"), ("Spline", "spline")],
+                                &[
+                                    ("Constant", "constant"),
+                                    ("Chord Length", "chord"),
+                                    ("Variable", "variable"),
+                                    ("Spline", "spline"),
+                                    ("Curvature (G2)", "curvature"),
+                                ],
                             );
                             ui.end_row();
                         }
@@ -2069,6 +2066,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                                 match rtype {
                                     1 => "Chord Length",
                                     2 | 3 => "Start Radius",
+                                    4 => "Equivalent Radius",
                                     _ => "Radius",
                                 }
                             } else if *ctype == 0 {
@@ -4027,6 +4025,9 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             if let FeatureKind::Fillet { style, .. } = &f.kind {
                 match style {
                     FilletStyle::Constant => {}
+                    FilletStyle::Curvature => {
+                        d.extra.insert("type".into(), json!("curvature"));
+                    }
                     FilletStyle::Chord => {
                         d.extra.insert("type".into(), json!("chord"));
                     }
@@ -4043,7 +4044,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                                 d.extra.insert("knots".into(), json!(knots));
                                 d.extra.insert("radii".into(), json!(radii));
                             }
-                            FilletStyle::Constant | FilletStyle::Chord => {}
+                            FilletStyle::Constant | FilletStyle::Chord | FilletStyle::Curvature => {}
                         }
                         // The start was the first edge's last point: ends swapped.
                         let first_end = edges.first().and_then(|p| edge_sel(s, *p)).and_then(|x| match x {
