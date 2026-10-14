@@ -5,11 +5,9 @@
 //! next one computes or when an input makes the feature fail (the error shows in the dialog).
 //! Nothing here touches the document or the undo history.
 //!
-//! A feature that adds or removes a tool body (join, cut, intersect) shows only its tool, which
-//! is quick to build, while its boolean can take seconds. So it is previewed in two lines: the
-//! tool, following the inputs as they change, and the check that the feature builds (its
-//! error), one at a time on the inputs shown once the previous check is done. The check also
-//! leaves the feature in the evaluation cache the session shares, for OK to take.
+//! A feature that adds or removes a tool body (join, cut, intersect) shows only its tool. That
+//! is all its preview builds: its boolean, which can take seconds (a text joined onto a part),
+//! runs once, on OK, and an error it finds shows then, the dialog staying open.
 
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -68,10 +66,8 @@ pub struct PreviewState {
     /// Key of the commands whose result (or error) is shown.
     shown_key: Option<u64>,
     running: Option<(u64, Receiver<Job>)>,
-    /// The check of a tool feature: whether it builds (its error), for the inputs of its key.
-    checking: Option<(u64, Receiver<Option<String>>)>,
-    /// The inputs whose check is done (its error, if any, in `error`).
-    checked: Option<u64>,
+    /// The running job builds a tool alone (for a join, cut or intersect).
+    running_tool: bool,
     /// Inputs of an in-flight joint preview, excluding only its driven values.
     running_motion_key: Option<u64>,
     /// Bodies the preview stands in for (hidden in the model scene).
@@ -100,8 +96,7 @@ pub struct PreviewState {
 impl PreviewState {
     fn clear(&mut self) {
         self.running = None;
-        self.checking = None;
-        self.checked = None;
+        self.running_tool = false;
         self.running_motion_key = None;
         self.shown_key = None;
         self.error = None;
@@ -163,41 +158,19 @@ impl PreviewState {
             };
             if let Some(job) = job {
                 self.running = None;
-                let intermediate = motion_key.is_some() && self.running_motion_key == motion_key && matches!(&job, Ok(b) if b.error.is_none());
+                let good = matches!(&job, Ok(b) if b.error.is_none());
+                let intermediate = good && (self.running_tool || motion_key.is_some() && self.running_motion_key == motion_key);
                 self.running_motion_key = None;
-                // A held slider or animation may advance faster than the worker. Show
-                // completed poses from the same joint setup, then compute the latest.
-                // Errors and results from different setups still require an exact key.
+                self.running_tool = false;
+                // A held slider, a dragged arrow or an animation may advance faster than the
+                // worker. Show completed poses from the same joint setup, and tools built for
+                // inputs since changed, then compute the latest. Errors still require an exact
+                // key.
                 if k == key || intermediate {
                     self.apply(k, job);
                 }
             }
         }
-    }
-}
-
-impl PreviewState {
-    /// Take a finished check: its error stands for the inputs shown, if they are still its own.
-    fn poll_check(&mut self, key: u64) {
-        let Some((k, rx)) = &self.checking else { return };
-        let k = *k;
-        match rx.try_recv() {
-            Ok(error) => {
-                self.checking = None;
-                if k == key && self.shown_key == Some(key) {
-                    self.error = error;
-                    self.checked = Some(k);
-                }
-            }
-            Err(TryRecvError::Empty) => {}
-            Err(TryRecvError::Disconnected) => self.checking = None,
-        }
-    }
-
-    /// Whether to start the check of `key`'s feature: its tool shows without an error, and no
-    /// check runs (one for older inputs runs on to its end, as it can't be stopped, and goes).
-    fn wants_check(&self, key: u64) -> bool {
-        self.shown_key == Some(key) && self.checked != Some(key) && self.checking.is_none() && self.error.is_none() && self.running.is_none()
     }
 }
 
@@ -250,19 +223,13 @@ pub fn update(app: &mut SolveApp, ctx: &egui::Context) {
     let tool = as_new_body(&cmds).is_some();
     let pv = &mut app.preview;
     pv.poll(key, motion_key);
-    pv.poll_check(key);
     if pv.running.is_none() && pv.shown_key != Some(key) {
         pv.started = crate::now_ms();
         pv.running_motion_key = motion_key;
         let scratch = app.session.scratch();
         spawn(&mut app.preview, key, scratch, cmds, colors, tool);
-    } else if tool && pv.wants_check(key) {
-        let scratch = app.session.scratch();
-        spawn_check(&mut app.preview, key, scratch, cmds);
     }
-    let pv = &app.preview;
-    // A tool feature is busy until its check is in.
-    app.preview.busy = pv.running.is_some() || (tool && pv.checked != Some(key) && pv.error.is_none());
+    app.preview.busy = app.preview.running.is_some();
     if app.preview.busy {
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
@@ -278,30 +245,6 @@ fn job_key(cmds: &[(String, Value)], revision: u64, colors: Colors) -> u64 {
     h.finish()
 }
 
-/// Before OK runs `cmds`: when the preview is still computing those very commands (their
-/// tool, or the check that their feature builds), wait for it rather than compute them a second
-/// time alongside it. What the check evaluated stays in the model's cache, which the session
-/// shares with the preview's scratch copy, so OK then takes the feature (its result or its
-/// error) from there instead of evaluating it again.
-pub fn settle(app: &mut SolveApp, cmds: &[(String, Value)]) {
-    let key = job_key(cmds, app.session.revision, Colors::from_tokens(&Tokens::get()));
-    let pv = &mut app.preview;
-    if let Some((k, rx)) = pv.running.take_if(|(k, _)| *k == key) {
-        pv.running_motion_key = None;
-        match rx.recv() {
-            Ok(job) => pv.apply(k, job),
-            Err(_) => pv.apply(k, Err("the preview failed".into())),
-        }
-    }
-    if let Some((k, rx)) = pv.checking.take_if(|(k, _)| *k == key)
-        && let Ok(error) = rx.recv()
-    {
-        pv.error = error;
-        pv.checked = Some(k);
-    }
-    pv.busy = false;
-}
-
 /// Start computing the preview of `cmds`: for a tool feature (`tool`), only its tool.
 #[cfg(not(target_arch = "wasm32"))]
 fn spawn(pv: &mut PreviewState, key: u64, scratch: Session, cmds: Vec<(String, Value)>, colors: Colors, tool: bool) {
@@ -310,38 +253,18 @@ fn spawn(pv: &mut PreviewState, key: u64, scratch: Session, cmds: Vec<(String, V
         let _ = tx.send(if tool { compute_tool(&scratch, &cmds, colors) } else { compute(&scratch, &cmds, colors) });
     });
     match spawned {
-        Ok(_) => pv.running = Some((key, rx)),
+        Ok(_) => {
+            pv.running = Some((key, rx));
+            pv.running_tool = tool;
+        }
         Err(e) => pv.apply(key, Err(e.to_string())),
     }
 }
 
-/// No threads on the web: compute right away, the check of a tool feature with it.
+/// No threads on the web: compute right away.
 #[cfg(target_arch = "wasm32")]
-fn spawn(pv: &mut PreviewState, key: u64, scratch: Session, cmds: Vec<(String, Value)>, colors: Colors, _tool: bool) {
-    pv.apply(key, compute(&scratch, &cmds, colors));
-    pv.checked = Some(key);
-}
-
-/// Start checking that the feature of `cmds` builds (its error, if any).
-#[cfg(not(target_arch = "wasm32"))]
-fn spawn_check(pv: &mut PreviewState, key: u64, scratch: Session, cmds: Vec<(String, Value)>) {
-    let (tx, rx) = std::sync::mpsc::channel();
-    let spawned = std::thread::Builder::new().name("preview check".into()).spawn(move || {
-        let _ = tx.send(scratch.preview(&cmds).err().map(|e| e.to_string()));
-    });
-    match spawned {
-        Ok(_) => pv.checking = Some((key, rx)),
-        Err(e) => {
-            pv.error = Some(e.to_string());
-            pv.checked = Some(key);
-        }
-    }
-}
-
-/// No threads on the web: `spawn` checked already.
-#[cfg(target_arch = "wasm32")]
-fn spawn_check(pv: &mut PreviewState, key: u64, _scratch: Session, _cmds: Vec<(String, Value)>) {
-    pv.checked = Some(key);
+fn spawn(pv: &mut PreviewState, key: u64, scratch: Session, cmds: Vec<(String, Value)>, colors: Colors, tool: bool) {
+    pv.apply(key, if tool { compute_tool(&scratch, &cmds, colors) } else { compute(&scratch, &cmds, colors) });
 }
 
 /// Evaluate the commands on the scratch session and build the preview scene.
@@ -390,8 +313,8 @@ pub fn compute(s: &Session, cmds: &[(String, Value)], colors: Colors) -> Job {
 }
 
 /// The tool body of a feature that adds or removes one, built on its own (as a new body): what
-/// its preview shows, without the boolean. When even the tool fails, the feature's own error.
-/// Other features: their whole preview ([`compute`]).
+/// its live preview shows, without the boolean. When even the tool fails, the feature's own
+/// error. Other features: their whole preview ([`compute`]).
 fn compute_tool(s: &Session, cmds: &[(String, Value)], colors: Colors) -> Job {
     let Some((alt, op)) = as_new_body(cmds) else { return compute(s, cmds, colors) };
     let tool = match s.preview(&alt) {
@@ -1017,8 +940,8 @@ mod tests {
         (s, vec![("solid.extrude".to_string(), json!({"distance": 2, "operation": "cut"}))])
     }
 
-    /// A tool feature's tool is built without its boolean: a cut into nothing shows its tool
-    /// with no error, while the whole preview (the check) has the cut's error.
+    /// A tool feature's live preview builds its tool without the boolean: a cut into nothing
+    /// shows its tool with no error (OK will report it), while the whole preview has the error.
     #[test]
     fn a_tool_preview_builds_the_tool_without_the_boolean() {
         let s = session_of(&[
@@ -1034,52 +957,25 @@ mod tests {
         assert_eq!(whole.scene.xray.len(), tool.scene.xray.len());
     }
 
-    /// A check's error stands only for the inputs shown; one for older inputs is dropped. A
-    /// check starts once their tool shows without error, none running.
+    /// While an arrow is dragged the inputs change faster than a tool is built: a tool built
+    /// for inputs since changed is shown anyway (then the latest computed), an error only for
+    /// the inputs it belongs to.
     #[test]
-    fn a_check_counts_for_the_inputs_it_checked() {
-        let mut pv = PreviewState { shown_key: Some(2), ..Default::default() };
-        assert!(pv.wants_check(2) && !pv.wants_check(1));
-        let (tx, rx) = std::sync::mpsc::channel();
-        pv.checking = Some((1, rx));
-        assert!(!pv.wants_check(2), "one check at a time");
-        tx.send(Some("old".to_string())).unwrap();
-        pv.poll_check(2);
-        assert!(pv.checking.is_none() && pv.error.is_none() && pv.checked.is_none(), "older inputs");
-        assert!(pv.wants_check(2));
-        let (tx, rx) = std::sync::mpsc::channel();
-        pv.checking = Some((2, rx));
-        tx.send(Some("the cut fails".to_string())).unwrap();
-        pv.poll_check(2);
-        assert_eq!((pv.error.as_deref(), pv.checked), (Some("the cut fails"), Some(2)));
-        assert!(!pv.wants_check(2));
-    }
-
-    /// OK while the preview still builds the tool, or checks the feature, of the commands it
-    /// runs waits for them instead of computing the feature beside them, then takes it from
-    /// the cache the check filled. Jobs for other commands are left alone.
-    #[test]
-    fn ok_takes_the_check_of_its_commands() {
+    fn a_tool_for_inputs_since_changed_still_shows() {
         let (s, cmds) = text_on_block();
-        let mut app = SolveApp::new(s, crate::Services::default());
-        let colors = Colors::from_tokens(&Tokens::get());
-        let other = vec![("solid.extrude".to_string(), json!({"distance": 3, "operation": "cut"}))];
-        spawn_check(&mut app.preview, job_key(&other, app.session.revision, colors), app.session.scratch(), other);
-        let key = job_key(&cmds, app.session.revision, colors);
-        spawn(&mut app.preview, key, app.session.scratch(), cmds.clone(), colors, true);
-        settle(&mut app, &cmds);
-        assert!(app.preview.running.is_none() && app.preview.shown_key == Some(key) && app.preview.active);
-        assert!(app.preview.checking.is_some(), "the other commands' check");
-        app.preview.checking = None;
-        spawn_check(&mut app.preview, key, app.session.scratch(), cmds.clone());
-        settle(&mut app, &cmds);
-        assert!(app.preview.checking.is_none() && app.preview.checked == Some(key) && app.preview.error.is_none(), "{:?}", app.preview.error);
-        let hits = |app: &SolveApp| app.session.model.cache.lock().map(|c| c.hits).unwrap_or(0);
-        let before = hits(&app);
-        let (id, params) = cmds[0].clone();
-        app.run(&id, params).unwrap();
-        let _ = app.session.world_state();
-        assert!(hits(&app) > before, "the cut came from the check's evaluation");
-        assert_eq!(app.session.world_state().bodies.len(), 1);
+        let tool = compute_tool(&s, &cmds, colors()).unwrap();
+        let mut pv = PreviewState::default();
+        let (tx, rx) = std::sync::mpsc::channel();
+        pv.running = Some((1, rx));
+        pv.running_tool = true;
+        tx.send(Ok(tool)).unwrap();
+        pv.poll(2, None);
+        assert!(pv.running.is_none() && pv.active && pv.shown_key == Some(1), "shown, and key 2 still to compute");
+        let (tx, rx) = std::sync::mpsc::channel();
+        pv.running = Some((3, rx));
+        pv.running_tool = true;
+        tx.send(Err("too far".into())).unwrap();
+        pv.poll(4, None);
+        assert!(pv.error.is_none() && pv.shown_key == Some(1), "an old error is dropped");
     }
 }
