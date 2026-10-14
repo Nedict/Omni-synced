@@ -277,6 +277,8 @@ pub struct SolveApp {
     pub crashes: crash_ui::CrashUi,
     /// The update check and its window (`update`).
     pub updater: update::Updater,
+    /// Safari's steps for installing the web app, while their window is open (`install`).
+    pub install_steps: Option<install::Steps>,
     /// Toolbar buttons the user pinned, removed or reordered.
     pub toolbar_custom: toolbar_custom::ToolbarCustom,
     pub sketch_choices: sketch_families::Choices,
@@ -378,6 +380,7 @@ impl SolveApp {
             issue_report: issue_report::ReportState::default(),
             crashes: crash_ui::CrashUi::default(),
             updater: update::Updater::default(),
+            install_steps: None,
             toolbar_custom: toolbar_custom::ToolbarCustom::default(),
             sketch_choices: sketch_families::Choices::default(),
             preferences: prefs::Prefs::default(),
@@ -1194,6 +1197,7 @@ impl SolveApp {
         file_load::show(self, ui.ctx());
         documents::prompt(self, ui.ctx());
         update::show(self, ui.ctx());
+        install::show(self, ui.ctx());
         if self.home.open {
             home::show(self, ui);
             if self.home.open {

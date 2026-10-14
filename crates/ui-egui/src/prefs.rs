@@ -252,6 +252,8 @@ pub struct Prefs {
     pub check_updates: bool,
     /// When the last update check ran, and the versions skipped or put off (`update::Memo`).
     pub update: crate::update::Memo,
+    /// Safari: no Install app button (`install`; Safari can't tell the page the app is installed).
+    pub install_steps_hidden: bool,
 }
 
 /// What a middle-button double-click in the view does.
@@ -313,6 +315,7 @@ impl Default for Prefs {
             color_vision: crate::theme::ColorVision::Off,
             check_updates: true,
             update: crate::update::Memo::default(),
+            install_steps_hidden: false,
         }
     }
 }
@@ -406,6 +409,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.length_decimals = d.length_decimals;
             p.angle_decimals = d.angle_decimals;
             p.check_updates = d.check_updates;
+            p.install_steps_hidden = d.install_steps_hidden;
             app.ui.dark = true;
             app.ui.agent_cursor = Default::default();
             app.autosave_minutes = 5.0;
@@ -924,6 +928,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.add_enabled(s.show, egui::Checkbox::new(&mut s.follow_camera, crate::i18n::tr_label("Follow the camera (Look At sketches)")));
             ui.end_row();
             crate::update::prefs_rows(app, ui, t);
+            crate::install::prefs_rows(app, ui);
         }
         1 => {
             ui.label(app.tr_label("Pan, zoom, orbit"));
