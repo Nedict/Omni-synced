@@ -139,12 +139,19 @@
 //!   is the equivalent circular setback). Fillets of the other styles save as before; 0.9.0
 //!   would refuse the unknown style.
 
+//! - 20: named render setups (`render.setups`) save renderer-independent intent. An absent
+//!   field defaults to no setups; older readers refuse rather than silently lose saved intent.
+//! - 21: looks can explicitly select opaque PBR parameters (`pbr`). Absent fields preserve
+//!   legacy scalar shading; older readers refuse instead of silently dropping the response.
+//! - 22: user materials retain validated engineering cards, independently of mass density
+//!   and optical looks. Absent cards remain unknown; older readers refuse richer files.
+
 use serde_json::Value;
 
 use crate::{DocError, Document, Result};
 
 /// The format this build writes.
-pub const FORMAT: u32 = 19;
+pub const FORMAT: u32 = 22;
 
 pub fn format_string(n: u32) -> String {
     format!("solidcraft/{n}")
@@ -161,7 +168,7 @@ pub fn version_of(s: &str) -> Option<u32> {
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
 type JsonStep = fn(&mut Value) -> Result<()>;
-const JSON_STEPS: [JsonStep; 18] = [
+const JSON_STEPS: [JsonStep; 21] = [
     |_| Ok(()),
     v2_to_v3,
     v3_to_v4,
@@ -175,6 +182,9 @@ const JSON_STEPS: [JsonStep; 18] = [
     |_| Ok(()),
     |_| Ok(()),
     v13_to_v14,
+    |_| Ok(()),
+    |_| Ok(()),
+    |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
@@ -378,7 +388,7 @@ pub fn read(s: &str) -> Result<Document> {
             "this design was saved by a newer SolidCraft (file format {version}; this version reads formats up to {FORMAT}): update SolidCraft to open it"
         )));
     }
-    check_numbers(&v, 0)?;
+    check_document_numbers(&v)?;
     crate::config::validate_rules_json(&v)?;
     crate::config::validate_styles_json(&v)?;
     crate::face_anchor::validate_face_anchors_json(&v)?;
@@ -804,7 +814,37 @@ fn validate_freeform_offsets(value: &Value) -> Result<()> {
 /// outside what the kernel's tolerances serve.
 const MAX_REAL: f64 = 1e9;
 
-/// Every non-integer number in the file is finite and within ±`MAX_REAL` (a damaged or hostile
+/// Engineering SI constants have their own bounded admission (e.g. E in Pa).
+/// Only the exact root user-material card field bypasses the coordinate bound.
+fn check_document_numbers(v: &Value) -> Result<()> {
+    let Some(root) = v.as_object() else { return check_numbers(v, 0) };
+    for (key, value) in root {
+        if key != "user_materials" {
+            check_numbers(value, 1)?;
+            continue;
+        }
+        let Some(materials) = value.as_array() else { return check_numbers(value, 1) };
+        if materials.len() > crate::MAX_USER_MATERIALS {
+            return Err(DocError::Invalid("document exceeds 1000 user materials".into()));
+        }
+        for material in materials {
+            let Some(fields) = material.as_object() else {
+                check_numbers(material, 2)?;
+                continue;
+            };
+            for (field, data) in fields {
+                if field == "physical_card" && !data.is_null() {
+                    crate::physical_material::validate_card(data)?;
+                } else {
+                    check_numbers(data, 3)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Every non-integer number outside separately validated engineering cards is finite and within ±`MAX_REAL` (a damaged or hostile
 /// file is refused instead of overflowing the geometry later).
 fn check_numbers(v: &Value, depth: usize) -> Result<()> {
     if depth > 64 {

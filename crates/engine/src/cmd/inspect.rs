@@ -26,7 +26,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("appearance.assign", "Appearance", appearance).at("SOLID", "MODIFY").icon("appearance").key("A").params(
         "bodies?: [names]; faces?: [[x,y,z] on faces] (body?: which body, default the nearest); components?: [names or ids, or occurrence names]; \
              appearance?: library name (appearance.library) | color: \"#rrggbb\" or [r, g, b] (0–255), opacity? (0–1, default 1); \
-             neither (or color: null): clear, so the face follows its body, the body its component, the component its material",
+             pbr?: {metallic:0..1, roughness:0.045..1, dielectric_ior:1..3} (requires color/appearance and opacity 1); omitted/null uses legacy scalar shading. Neither appearance nor color (or color: null): clear, so the face follows its body, the body its component, the component its material",
     ),
     CommandSpec::new("appearance.library", "Appearance Library", appearance_library)
         .noundo()
@@ -37,7 +37,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("material.list", "List Materials", material_list)
         .noundo()
         .doc_only()
-        .params("→ the built-in materials, then the design's own (user: true, with their look)"),
+        .params("→ built-in and design-owned materials (user: true, look, optional physical_card/physical_validation/density_comparison). Read-only; candidate engineering records do not certify sources or supply a solver"),
     CommandSpec::new("engine.commands", "List Commands", commands).noundo(),
 ];
 
@@ -324,7 +324,7 @@ pub(super) fn color_param(v: &Value) -> Option<[u8; 3]> {
 fn appearance(s: &mut Session, p: &Value) -> Result<Value> {
     use solidcraft_doc::appearance::{FaceLook, Look, library};
     let cmd = "appearance.assign";
-    let look: Option<Look> = match (str_(p, "appearance"), p.get("color")) {
+    let mut look: Option<Look> = match (str_(p, "appearance"), p.get("color")) {
         // A colour with a name: that colour, called that (a name not in the library is fine).
         (Some(n), Some(v)) if !v.is_null() => {
             let c = color_param(v).ok_or_else(|| bad(cmd, "`color` must be \"#rrggbb\" or [r, g, b] with values 0–255"))?;
@@ -350,6 +350,11 @@ fn appearance(s: &mut Session, p: &Value) -> Result<Value> {
             Some(Look::custom(c, o))
         }
     };
+    if let Some(l) = &mut look {
+        attach_pbr(cmd, p, l)?;
+    } else if p.get("pbr").is_some_and(|v| !v.is_null()) {
+        return Err(bad(cmd, "`pbr` requires a color or appearance"));
+    }
     let bodies = string_list(p, "bodies");
     let st = s.model.state();
     if bodies.iter().any(|b| st.body(b).is_none()) {
@@ -449,7 +454,7 @@ fn appearance(s: &mut Session, p: &Value) -> Result<Value> {
         "bodies": bodies,
         "faces": faces.iter().map(|(b, p)| json!({"body": b, "point": p})).collect::<Vec<_>>(),
         "components": comps,
-        "appearance": look.as_ref().map(|l| json!({"name": l.name, "color": l.hex(), "opacity": l.opacity})),
+        "appearance": look.as_ref().map(look_json),
     }))
 }
 
@@ -460,7 +465,40 @@ fn dist_to(b: &solidcraft_doc::ModelBody, p: solidcraft_geom::Vec3) -> f64 {
 }
 
 pub(super) fn look_json(l: &solidcraft_doc::appearance::Look) -> Value {
-    json!({"name": l.name, "color": l.hex(), "opacity": l.opacity})
+    let mut value = json!({"name": l.name, "color": l.hex(), "opacity": l.opacity});
+    if let Some(pbr) = l.pbr {
+        value["pbr"] = json!(pbr);
+    }
+    value
+}
+
+#[cfg(test)]
+#[path = "pbr_appearance_tests.rs"]
+mod pbr_tests;
+
+pub(super) fn attach_pbr(cmd: &str, params: &Value, look: &mut solidcraft_doc::appearance::Look) -> Result<()> {
+    let Some(value) = params.get("pbr") else { return Ok(()) };
+    if value.is_null() {
+        look.pbr = None;
+        return Ok(());
+    }
+    if let Some(opacity) = params.get("opacity")
+        && opacity.as_f64().filter(|v| v.is_finite() && *v == 1.0).is_none()
+    {
+        return Err(bad(cmd, "opaque PBR requires numeric opacity 1"));
+    }
+    let object = value
+        .as_object()
+        .filter(|o| o.len() == 3 && o.keys().all(|k| matches!(k.as_str(), "metallic" | "roughness" | "dielectric_ior")))
+        .ok_or_else(|| bad(cmd, "`pbr` requires exactly metallic, roughness and dielectric_ior"))?;
+    let number = |key: &str| object.get(key).and_then(Value::as_f64).ok_or_else(|| bad(cmd, format!("`pbr.{key}` must be a finite number")));
+    let response = solidcraft_doc::pbr_appearance::PbrParameters::new(number("metallic")?, number("roughness")?, number("dielectric_ior")?)
+        .map_err(|e| bad(cmd, e.to_string()))?;
+    if look.opacity != 1.0 {
+        return Err(bad(cmd, "opaque PBR requires opacity 1; refraction/transmission is not supported"));
+    }
+    look.pbr = Some(response);
+    Ok(())
 }
 
 fn appearance_library(_s: &mut Session, _p: &Value) -> Result<Value> {
@@ -507,7 +545,13 @@ fn appearance_list(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let in_design: Vec<Value> = used
         .iter()
-        .map(|(l, b, f, c)| json!({"name": l.name, "color": l.hex(), "opacity": l.opacity, "bodies": b, "faces": f, "components": c}))
+        .map(|(l, b, f, c)| {
+            let mut value = look_json(l);
+            value["bodies"] = json!(b);
+            value["faces"] = json!(f);
+            value["components"] = json!(c);
+            value
+        })
         .collect();
     let mut out = json!({
         "in_design": in_design,
@@ -530,8 +574,15 @@ fn appearance_list(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn material_list(s: &mut Session, _p: &Value) -> Result<Value> {
     let built_in = solidcraft_doc::MATERIALS.iter().map(|(n, d)| json!({"name": n, "density_g_cm3": d}));
-    let user = s.doc.user_materials.iter().map(
-        |m| json!({"name": m.name, "density_g_cm3": m.density, "appearance": s.doc.material_look(&m.name).as_ref().map(look_json), "user": true}),
-    );
+    let user = s
+        .doc
+        .user_materials
+        .iter()
+        .map(|m| {
+            let mut out = super::materials::material_json(m)?;
+            out["appearance"] = json!(s.doc.material_look(&m.name).as_ref().map(look_json));
+            Ok(out)
+        })
+        .collect::<Result<Vec<_>>>()?;
     Ok(json!({"materials": built_in.chain(user).collect::<Vec<_>>()}))
 }

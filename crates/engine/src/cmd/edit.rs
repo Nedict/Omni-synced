@@ -14,9 +14,11 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("edit.redo", "Redo", redo).icon("redo").key("Ctrl+Y").noundo().doc_only(),
     CommandSpec::new("edit.checkpoint", "Checkpoint", checkpoint)
         .noundo()
+        .doc_only()
         .params("→ {checkpoint: id}: remember the design, active sketch and undo history (restore with edit.restore_checkpoint)"),
     CommandSpec::new("edit.restore_checkpoint", "Restore Checkpoint", restore_checkpoint)
         .noundo()
+        .doc_only()
         .params("checkpoint: id; forget?: bool (true = drop it without going back). Goes back to it, undo history included"),
     CommandSpec::new("timeline.compute_all", "Compute All", compute_all).at("SOLID", "MODIFY").icon("compute").noundo(),
     CommandSpec::new("timeline.delete", "Delete", delete)

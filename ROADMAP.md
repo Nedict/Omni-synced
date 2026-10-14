@@ -61,10 +61,16 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 
 ## Physical material data
 
+- Design-owned engineering cards (#1048) can be validated and saved through existing
+  material create/edit/list commands, with source/condition records, atomic refusal,
+  undo/reopen and explicit density comparison. Format 22 retains cards independently
+  of assigned mass density and optical looks. Scalar catalog v1 refuses data loss;
+  rich catalog transport follows below; property-authoring UI remains separate.
+
 - Physical material card validation (#923/#922) provides typed SI mechanical and
   thermal data, per-property sources/conditions and isotropic/orthotropic stability
-  checks through read-only `material.properties.validate`. It does not assign or
-  persist properties, provide a solver or enable rendering; see
+  checks through read-only `material.properties.validate`. The validator alone does
+  not assign/persist properties; neither path provides a solver or enables rendering; see
   [the contract and staged follow-ups](docs/physical-material-cards.md).
 
 - Directional elasticity (#994) queries the validated card in material-local axes
@@ -72,6 +78,12 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   It does not assign body frames, predict structural behavior or enable a solver.
 
 ## Library foundations (#785, #786, #787)
+
+- Portable catalog v2 (#1062) retains opaque PBR and validated engineering cards
+  through existing library commands and Appearance application. V1 bytes/revisions
+  remain compatible; explicit v1 export refuses data loss. Rich definitions stay
+  design-owned after source removal and cold reopening. Texture/resource packs,
+  catalog update receipts and property-authoring UI remain later phases.
 
 - Proposed phases cover offline bundled/project/user packs, physical materials and
   appearances, editable wood mapping, and parameterized component/assembly families.
@@ -83,14 +95,52 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 
 ## Render foundation
 
+- Opt-in opaque PBR surfaces (#1004) connect existing saved looks and assignment
+  commands to the integrated GPU product viewport and CPU PNG jobs. Format 21 retains
+  optical parameters; legacy looks keep their scalar response. Fixed direct lighting,
+  explicit admission, unchanged mass/geometry and scoped GPU/CPU color parity are
+  covered. HDRI, transmission, textures and rich catalog export remain separate gates.
+  See [the consumer and limitations](docs/render-opaque-pbr.md).
+
+- The first local scalar library (#846) exports reusable assigned colour/opacity looks
+  and design-local physical materials, validates exact revisions and copies selected
+  definitions through existing commands. The desktop Appearance panel opens/applies
+  presets; browser library opening and rich texture/resource packs remain follow-ups.
+  See [the scalar catalog contract](docs/book/src/dev/local-libraries.md).
+
+- Combined integration is tracked in #842, with the first local scalar library in
+  #846. See [phase boundaries and validation gates](docs/render-integration.md).
+  Texture mapping and HDRI/PBR remain coordinated renderer follow-ups.
+
+- R4a adds bounded CPU product-image jobs, cancellation and atomic PNG export through
+  engine commands, the Render panel, CLI and persistent MCP. Immutable captures and
+  results stay outside persistence/undo; native workers and cooperative browser tasks
+  share the same work protocol. See [jobs, limits and export](docs/render-jobs.md).
+
+- R3 adds the integrated Render workspace, an overlay-free product scene with existing
+  world placements/appearances, runtime GPU viewport capabilities and named camera/background
+  controls. Raster transparency remains an approximation; HDRI/refraction and optional
+  engines are later phases. See [the workspace contract](docs/render-workspace.md).
+
+- R2 adds bounded named render setups, versioned persistence and `render.settings.get/set`.
+  Proven render-only changes preserve evaluated/stale geometry and prepared world data,
+  including undo/redo and checkpoint restore. No render workspace or new image output is
+  enabled; see [settings and refresh policy](docs/render-settings.md).
+
+- The initial opaque surface numerical contract for #1004 provides bounded linear
+  color/metallic/roughness/IOR admission and an original tested direct-light BRDF.
+  The numerical module alone advertises no capabilities; the installed consumer above
+  provides rendering. See
+  [the model, evidence and remaining consumer gates](docs/render-surface.md).
+
 - A bounded cooperative Radiance RGBE input utility is available in L1 render;
   it does not yet enable HDRI/PBR rendering or a document import command. See
   [the input contract](docs/render-hdr-input.md) and #813 for integration work.
 - R1 adds renderer-independent backend/profile metadata, strict request resolution and
   bounded image/scratch admission checks, exposed by the read-only `render.backends`
   command. It describes the current CPU raster snapshot path without evaluating the model.
-  Existing snapshot and viewport routes remain unchanged. The Render workspace, HDRI/PBR,
-  render jobs and optional engines remain future work; see [the contract](docs/render-backends.md)
+  The legacy Design snapshot route remains unchanged. Later slices above provide the
+  workspace/jobs and opaque PBR; HDRI and optional engines remain future work. See [the contract](docs/render-backends.md)
   and [the phased proposal (#620)](https://github.com/bherbruck/solidcraft/issues/620).
 
 ## Dimensioning and error reporting

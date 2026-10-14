@@ -9,6 +9,7 @@ pub mod appearance;
 mod assembly;
 mod body_transfer;
 mod body_transfer_sheet;
+pub mod pbr_appearance;
 pub use body_transfer::{valid_transfer_matrix, validate_body_transfer};
 pub mod canvas;
 mod clipboard;
@@ -38,6 +39,7 @@ pub use profile_refs::{capture_profile_selection, profile_selection_indices};
 pub mod plastic;
 pub mod project;
 mod project3d;
+pub mod render_settings;
 pub use project3d::iso_grid;
 pub mod sheet;
 

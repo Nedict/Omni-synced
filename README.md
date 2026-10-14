@@ -134,6 +134,17 @@ rebuild with no errors, replayed here at 2× speed.
   (manifold solid B-reps, or trimmed and bounded surfaces sewn into solids) as a base feature
   that later features build on — open a `.step`/`.stp`/`.igs`/`.iges` file, insert one into a
   design, or drop it on the window ([docs/step-import.md](docs/step-import.md)).
+- **Render:** opaque surfaces can use metal fraction, roughness and dielectric IOR in the
+  integrated product viewport and CPU preview PNGs. Existing simple colors remain supported.
+  Fixed direct lighting is a preview; HDRI, refraction and texture maps are not implemented.
+  See [opaque surfaces](docs/render-opaque-pbr.md).
+- **Materials:** design-owned engineering cards retain optional SI properties, sources
+  and measurement conditions separately from mass density and visual appearance.
+  Numerical validation does not certify design values or provide an analysis solver.
+  See [physical cards and command inspection](docs/physical-material-cards.md).
+- **Local libraries:** copy PBR appearances and engineering material cards between
+  designs using versioned offline catalogs. Existing scalar catalogs remain readable;
+  explicit legacy export refuses data it cannot preserve. See [local libraries](docs/book/src/dev/local-libraries.md).
 - **Desktop app** (egui + wgpu): toolbar with workspace tabs, browser, timeline, 3D viewport with
   axis view and navigation bar, sketch tools, feature dialogs, command palette, and a JSON-lines
   control channel so agents and tests can drive it.
@@ -151,6 +162,7 @@ cargo run --release -p solidcraft -- --sample          # desktop app with a samp
 cargo run --release -p solidcraft-cli -- commands      # the command registry
 cargo run --release -p solidcraft-cli -- run examples/bracket.json --out bracket.step
 cargo run --release -p solidcraft-cli -- snapshot examples/bracket.json --out bracket.png
+cargo run --release -p solidcraft-cli -- render examples/render-studio.json --out product.png
 cargo run --release -p solidcraft -- part.step          # open a STEP file as a new design
 cargo run --release -p solidcraft-cli -- eval part.step # measure an imported STEP file
 cargo xtask ci                                          # fmt, clippy, tests, assets, layers, wasm

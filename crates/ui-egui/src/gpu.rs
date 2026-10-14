@@ -11,6 +11,9 @@ use egui_wgpu::wgpu::util::DeviceExt;
 
 /// Triangle vertex: position (3 × f32), normal (3 × f32), sRGB colour (4 × u8).
 pub const TRI_SIZE: usize = 28;
+#[path = "pbr_gpu.rs"]
+mod pbr;
+pub const PBR_SIZE: usize = pbr::VERTEX_SIZE;
 /// Line instance: a, b (3 × f32 each), colour (4 × u8), width in pixels (f32).
 pub const LINE_SIZE: usize = 32;
 const UNIFORM_SIZE: u64 = 208;
@@ -29,6 +32,8 @@ pub struct PlannedBody {
 pub struct GpuScene {
     /// Opaque triangles. A zero normal draws the colour flat (unlit).
     pub tris: Vec<u8>,
+    /// Opaque product PBR vertices; linear base color and explicit optical parameters.
+    pub pbr: Vec<u8>,
     /// Translucent triangles (alpha from the colour), drawn after the opaque ones without
     /// writing depth.
     pub trans: Vec<u8>,
@@ -54,6 +59,13 @@ pub struct GpuScene {
 }
 
 impl GpuScene {
+    pub fn pbr_tri(&mut self, p: [f32; 3], n: [f32; 3], surface: solidcraft_engine::render::surface::OpaqueSurface) {
+        let base = surface.base_color().to_f32();
+        let parameters = [surface.metallic() as f32, surface.roughness() as f32, surface.dielectric_ior() as f32];
+        for value in p.into_iter().chain(n).chain(base).chain(parameters) {
+            self.pbr.extend_from_slice(&value.to_le_bytes());
+        }
+    }
     pub fn tri(&mut self, p: [f32; 3], n: [f32; 3], c: [u8; 4]) {
         for v in p.iter().chain(&n) {
             self.tris.extend_from_slice(&v.to_le_bytes());
@@ -131,6 +143,8 @@ const IMG_SIZE: usize = 24;
 
 /// Per-frame parameters.
 pub struct ViewportCallback {
+    /// Product preview uses its own batches, retaining the Design viewport's uploads.
+    pub product: bool,
     pub key: u64,
     pub slot: SceneSlot,
     pub sketch_key: u64,
@@ -198,6 +212,7 @@ struct PlannedDraw {
 struct Batches {
     key: Option<u64>,
     tris: Option<Batch>,
+    pbr: Option<Batch>,
     trans: Option<Batch>,
     glass: Option<Batch>,
     /// The glass triangles as built, and the view direction they were last sorted for.
@@ -228,6 +243,7 @@ impl Batches {
                 None => Vec::new(),
             };
             self.tris = upload(device, "sc_tris", &sc.tris, TRI_SIZE);
+            self.pbr = upload(device, "sc_pbr", &sc.pbr, PBR_SIZE);
             self.trans = upload(device, "sc_trans", &sc.trans, TRI_SIZE);
             self.glass = upload_with(device, "sc_glass", &sc.glass, TRI_SIZE, wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST);
             self.glass_cpu = sc.glass;
@@ -314,6 +330,7 @@ struct Resources {
     tri_cut: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     /// Highlight triangles over the model (depth test ≤, no depth write).
     tri_hl: wgpu::RenderPipeline,
+    pbr: wgpu::RenderPipeline,
     trans: wgpu::RenderPipeline,
     /// Glass: far sides (front faces culled), then near sides (back faces culled).
     glass_far: wgpu::RenderPipeline,
@@ -328,6 +345,8 @@ struct Resources {
     bind: wgpu::BindGroup,
     linear_out: bool,
     model: Batches,
+    product: Batches,
+    empty: Batches,
     sketch: Batches,
     highlight: Batches,
     preview: Batches,
@@ -384,6 +403,11 @@ fn tri_layout() -> wgpu::VertexBufferLayout<'static> {
 
 /// A planned body's vertices as the GPU evaluation writes them: the position, then the normal
 /// at [`solidcraft_gpu::NORMAL_OFFSET`] (each padded to four floats).
+fn pbr_layout() -> wgpu::VertexBufferLayout<'static> {
+    const A: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3, 3 => Float32x3];
+    wgpu::VertexBufferLayout { array_stride: PBR_SIZE as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &A }
+}
+
 fn planned_layout() -> wgpu::VertexBufferLayout<'static> {
     const A: [wgpu::VertexAttribute; 2] = [
         wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 0, shader_location: 0 },
@@ -415,8 +439,9 @@ pub struct GpuTarget {
 
 impl Resources {
     fn new(device: &wgpu::Device, t: GpuTarget, tess: Option<solidcraft_gpu::TessGpu>) -> Self {
+        let source = format!("{SHADER}\n{}", pbr::SOURCE);
         let module =
-            device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("sc_viewport"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
+            device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("sc_viewport"), source: wgpu::ShaderSource::Wgsl(source.into()) });
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("sc_viewport"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -643,6 +668,7 @@ impl Resources {
             access_bind,
             access_version: 0,
             tri_hl: pipeline("sc_tris_hl", "vs_tri", "fs_tri", tri_layout(), depth(wgpu::CompareFunction::LessEqual, false), alpha),
+            pbr: pipeline("sc_pbr", "vs_pbr", "fs_pbr", pbr_layout(), depth(wgpu::CompareFunction::Less, true), None),
             trans: pipeline("sc_trans", "vs_tri", "fs_tri", tri_layout(), depth(wgpu::CompareFunction::LessEqual, false), alpha),
             glass_far: glass("sc_glass_far", wgpu::Face::Front),
             glass_near: glass("sc_glass_near", wgpu::Face::Back),
@@ -655,6 +681,8 @@ impl Resources {
             bind,
             linear_out: t.format.is_srgb(),
             model: Batches::default(),
+            product: Batches::default(),
+            empty: Batches::default(),
             sketch: Batches::default(),
             highlight: Batches::default(),
             preview: Batches::default(),
@@ -742,6 +770,12 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
         resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         let Some(res) = resources.get_mut::<Resources>() else { return Vec::new() };
+        if self.product {
+            res.product.take(device, self.key, &self.slot, None);
+            res.product.sort_glass(queue, self.back);
+            queue.write_buffer(&res.uniform, 0, &uniform_bytes(self, self.size_px[0], self.size_px[1], res.linear_out));
+            return Vec::new();
+        }
         res.model.take(device, self.key, &self.slot, res.tess.as_ref().map(|t| (t, &mut *encoder)));
         res.sketch.take(device, self.sketch_key, &self.sketch_slot, None);
         res.highlight.take(device, self.hl_key, &self.hl_slot, None);
@@ -832,7 +866,8 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
                 }
             }
         };
-        let (m, sk, h, pv) = (&res.model, &res.sketch, &res.highlight, &res.preview);
+        let (m, sk, h, pv) =
+            if self.product { (&res.product, &res.empty, &res.empty, &res.empty) } else { (&res.model, &res.sketch, &res.highlight, &res.preview) };
         lines(pass, &res.overlay, &m.under);
         lines(pass, &res.overlay, &sk.under);
         pass.set_bind_group(1, &res.access_bind, &[]);
@@ -862,6 +897,7 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
                 planned(pass, &res.tri_planned);
             }
         }
+        tris(pass, &res.pbr, &m.pbr);
         tris(pass, &res.tri_hl, &h.tris);
         lines(pass, &res.line, &m.lines);
         lines(pass, &res.line, &sk.lines);
@@ -869,7 +905,7 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
         lines(pass, &res.line_hidden, &h.hidden);
         lines(pass, &res.line, &pv.lines);
         lines(pass, &res.line, &h.lines);
-        for (id, q) in &res.quads {
+        for (id, q) in res.quads.iter().filter(|_| !self.product) {
             if let Some((_, bind)) = res.textures.get(id) {
                 pass.set_pipeline(&res.image);
                 pass.set_bind_group(1, bind, &[]);
@@ -897,20 +933,48 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
 /// `size`. `None` without a GPU adapter. With `tess`, planned bodies are evaluated on the GPU.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn render_offscreen(scene: GpuScene, view_proj: [[f32; 4]; 4], back: [f32; 3], eye: [f32; 4], size: u32, tess: bool) -> Option<Vec<u8>> {
+    offscreen(scene, view_proj, back, eye, size, Offscreen { tess, product: false, srgb: false })
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn render_product_offscreen(
+    scene: GpuScene,
+    view_proj: [[f32; 4]; 4],
+    back: [f32; 3],
+    eye: [f32; 4],
+    size: u32,
+    srgb: bool,
+) -> Option<Vec<u8>> {
+    offscreen(scene, view_proj, back, eye, size, Offscreen { tess: false, product: true, srgb })
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+struct Offscreen {
+    tess: bool,
+    product: bool,
+    srgb: bool,
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn offscreen(scene: GpuScene, view_proj: [[f32; 4]; 4], back: [f32; 3], eye: [f32; 4], size: u32, options: Offscreen) -> Option<Vec<u8>> {
+    let Offscreen { tess, product, srgb } = options;
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
+    eprintln!("offscreen adapter: {:?}", adapter.get_info().backend);
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
         ..Default::default()
     }))
     .ok()?;
-    let (format, depth) = (wgpu::TextureFormat::Rgba8Unorm, wgpu::TextureFormat::Depth24PlusStencil8);
+    let format = if srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm };
+    let depth = wgpu::TextureFormat::Depth24PlusStencil8;
     let target = GpuTarget { format, depth: Some(depth), samples: 1, tess };
     let compute = tess.then(|| solidcraft_gpu::TessGpu::new(adapter.get_info().name, device.clone(), queue.clone()));
     let mut resources = egui_wgpu::CallbackResources::default();
     resources.insert(Resources::new(&device, target, compute));
     let none = || Arc::new(Mutex::new(None));
     let cb = ViewportCallback {
+        product,
         key: 1,
         slot: Arc::new(Mutex::new(Some(scene))),
         sketch_key: 0,

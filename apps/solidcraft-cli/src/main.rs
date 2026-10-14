@@ -21,6 +21,7 @@ mod crashes;
 mod fuzz;
 mod oracle;
 mod recipe;
+mod render;
 mod spatial;
 
 use std::process::ExitCode;
@@ -39,6 +40,7 @@ const USAGE: &str = "usage:
   solidcraft-cli eval <script.json|design.solidcraft|part.step>     (alias: inspect; or --in FILE)
   solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only]
   solidcraft-cli snapshot <script|design> --out shot.png [--width W] [--height H] [--view iso|front|back|top|bottom|left|right]
+  solidcraft-cli render <script|design> --out image.png [--setup NAME] [--width W] [--height H] [--transparent] [--overwrite] [--timeout SECONDS]
   solidcraft-cli exec <command> [json-params]
   solidcraft-cli commands
   solidcraft-cli recipe <recipe.json>
@@ -56,6 +58,7 @@ fn main() -> ExitCode {
         Some("run") => cmd_run(&args[1..]),
         Some("eval" | "inspect") => cmd_eval(&args[1..]),
         Some("snapshot") => cmd_snapshot(&args[1..]),
+        Some("render") => render::run(&args[1..]),
         Some("exec") => cmd_exec(&args[1..]),
         Some("commands") => {
             use std::io::Write as _;

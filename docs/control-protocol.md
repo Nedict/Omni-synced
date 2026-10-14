@@ -71,6 +71,10 @@ MCP server sends its folders this way on every request ([mcp.md](mcp.md)). Witho
 
 Commands never open dialogs when run this way. `solidcraft-cli commands` prints the same registry.
 
+Product images use `render.preflight/start/status/cancel/export` through `engine.execute`.
+Keep the returned session-scoped job ID for subsequent calls; status does not block or
+render. See [render jobs](render-jobs.md) for capture, cancellation and export semantics.
+
 Every `sketch.*` command that changes a sketch adds `created: {points, curves, constraints,
 dimensions}` to its result (and `wires` for 3D curves): the ids of what it added, in creation
 order, next to whatever else the command returns (`curves`, `sides`, `corners`…). Sketch ids are
@@ -129,6 +133,10 @@ unit regardless of the design, pass an expression with one: `"value": "50 mm"` o
 | `ui.agent_cursor` | `show` (bool), `speed`: a number from 1 to 5 (times the normal speed) or `"instant"` (no animation: the command runs at once and the pointer jumps to where it acted), `follow_camera` (bool); all optional | the settings. While the cursor is shown, `engine.execute` first glides to the command's toolbar button and to each pick, then runs and replies; later requests wait their turn. `"animate": false` on a call skips it |
 | `ui.resize` | `width`, `height` | |
 | `app.quit` | `force?` (quit without asking about unsaved designs) | `quitting` (the window closes), `asking` (a "save changes?" prompt is open) |
+
+`ui.workspace {workspace?: "design" | "render"}` reads or changes the active workspace.
+Entering Render requires finishing the current modelling operation; returning restores
+the Design camera. See [the integrated Render workspace](render-workspace.md).
 
 ## MCP
 
