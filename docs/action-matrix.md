@@ -18,6 +18,9 @@ The test is [`apps/solidcraft-cli/tests/action_matrix.rs`](../apps/solidcraft-cl
   `--results FILE` to keep every outcome with its message and the command that was sent.
   `ACTION_MATRIX_FILTER=oracle/23` runs only the designs whose name contains it;
   `ACTION_MATRIX_JOBS` sets how many designs run at once.
+  For a quick local look, `ACTION_MATRIX_ACTIONS=edge.fillet,edge.chamfer` tries only those actions (never
+  bless such a run) and `ACTION_MATRIX_VALIDITY=1` adds each passing action's body check (`Body::validity`)
+  to the results.
 
 Each design runs in its own process, so an action that hangs (90 s without a result) or aborts is
 recorded as `timeout` or `crash` and the rest of the design still runs. Loading a design, before
