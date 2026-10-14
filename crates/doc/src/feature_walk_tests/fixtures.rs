@@ -42,6 +42,7 @@ pub(super) fn fixtures() -> Vec<(&'static str, Value)> {
         ),
         ("fillet_constant", fillet(json!({"type": "constant"}))),
         ("fillet_chord", fillet(json!({"type": "chord"}))),
+        ("fillet_curvature", fillet(json!({"type": "curvature"}))),
         ("fillet_variable", fillet(json!({"type": "variable", "radius2": "fillet.radius2", "start": o, "mid": [[0.5, "fillet.mid"]]}))),
         ("fillet_spline", fillet(json!({"type": "spline", "start": o, "knots": [0.0, 1.0], "radii": ["fillet.r1", "fillet.r2", "fillet.r3"]}))),
         (
@@ -158,8 +159,9 @@ pub(super) fn with_refs(name: &str, mut v: Value) -> Value {
     let tool = json!({"body": "B", "point": o});
     let extra = match name {
         "extrude" | "revolve" | "sweep" | "pipe" | "coil" | "thicken" => json!({"targets": ["B"]}),
-        "fillet_constant" | "fillet_chord" | "fillet_variable" | "fillet_spline" | "chamfer" | "shell" | "draft" | "offset_face" | "delete_face"
-        | "replace_face" | "sheet_flange" | "sheet_hem" | "sheet_unfold" | "boss" | "lip" | "snap_fit" | "rest" | "surface_offset" => {
+        "fillet_constant" | "fillet_chord" | "fillet_curvature" | "fillet_variable" | "fillet_spline" | "chamfer" | "shell" | "draft"
+        | "offset_face" | "delete_face" | "replace_face" | "sheet_flange" | "sheet_hem" | "sheet_unfold" | "boss" | "lip" | "snap_fit" | "rest"
+        | "surface_offset" => {
             json!({"body": "B"})
         }
         "combine" => json!({"target": "B", "tools": ["B"]}),

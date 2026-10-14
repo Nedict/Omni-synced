@@ -104,6 +104,7 @@ macro_rules! feature_walk {
                 }
                 FeatureKind::Fillet { radius, style, .. } => match style {
                     crate::FilletStyle::Constant => f("Radius", radius, L, I),
+                    crate::FilletStyle::Curvature => f("Equivalent radius", radius, L, I),
                     crate::FilletStyle::Chord => f("Chord length", radius, L, I),
                     crate::FilletStyle::Variable { radius2, mid, .. } => {
                         f("Start radius", radius, L, I);

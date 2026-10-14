@@ -44,6 +44,7 @@ impl Tokens {
             body_edge: Color32::from_rgb(40, 44, 52),
             manipulator: Color32::from_rgb(40, 110, 220),
             preview_add: Color32::from_rgb(112, 160, 226),
+            preview_sketch: Color32::from_rgb(32, 190, 96),
             preview_cut: Color32::from_rgba_unmultiplied_const(232, 84, 44, 110),
             cube_face: Color32::from_rgb(236, 239, 244),
             cube_border: Color32::from_rgb(85, 94, 110),

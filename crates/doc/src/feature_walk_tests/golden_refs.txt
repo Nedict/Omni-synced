@@ -15,6 +15,8 @@ fillet_constant
   remap_bodies: body
 fillet_chord
   remap_bodies: body
+fillet_curvature
+  remap_bodies: body
 fillet_variable
   remap_bodies: body
 fillet_spline
