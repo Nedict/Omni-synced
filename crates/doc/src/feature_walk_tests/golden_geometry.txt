@@ -15,6 +15,8 @@ fillet_constant
   moves: edges[0][0], edges[0][1], edges[0][2]
 fillet_chord
   moves: edges[0][0], edges[0][1], edges[0][2]
+fillet_curvature
+  moves: edges[0][0], edges[0][1], edges[0][2]
 fillet_variable
   moves: edges[0][0], edges[0][1], edges[0][2], style.start[0], style.start[1], style.start[2]
 fillet_spline
