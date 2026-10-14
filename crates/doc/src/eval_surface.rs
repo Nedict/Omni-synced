@@ -123,6 +123,20 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
                 st.bodies.retain(|x| !gone.contains(&x.name));
             }
             st.bodies.push(ModelBody::new(name, made, f.id));
+            Ok(())
+        }
+        FeatureKind::SurfaceBoundary { sketch, curves, orders, crown, samples } => {
+            let ss = sketch_in_feature_frame(
+                doc,
+                st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?,
+                f.component,
+            )?;
+            let boundaries = boundary_frames(&ss, curves, orders, *samples)?;
+            let body = kernel::boundary_patch(&boundaries, *crown, *samples)?;
+            let name = new_name(st, f, 0);
+            st.bodies.push(ModelBody::new(name, body, f.id));
+            Ok(())
+        }
         FeatureKind::SurfaceMatch { body, faces, target, edges, order } => {
             let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };

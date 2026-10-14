@@ -1460,6 +1460,31 @@ pub enum FeatureKind {
         /// Sew the blend onto its two bodies where the boundaries meet.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         stitch: bool,
+    },
+    /// One surface patch through a network of two to four boundary curves of a sketch
+    /// (`surface.boundary`, issue #763): the patch runs through the curves in loop order and leaves
+    /// each boundary at its own `order` — a sketch curve's boundary is a plane, so G1 and up hold
+    /// exactly — with `crown` shaping the middle without touching a boundary.
+    SurfaceBoundary {
+        sketch: u64,
+        /// The curves in loop order: each one ends where the next begins, and the last where the
+        /// first does.
+        curves: Vec<String>,
+        /// How much of the surface across each boundary the patch repeats, one per curve (none: a
+        /// tangent plane, `g1`, on every side).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        orders: Vec<Continuity>,
+        /// How full the middle is: 0 the plain construction, up to 3 fuller, down to -0.9 flatter.
+        #[serde(default)]
+        crown: f64,
+        /// The stations every boundary carries.
+        #[serde(default = "boundary_samples")]
+        samples: usize,
+    },
+    /// One face of a surface body rebuilt against another body (`surface.match`): the rebuilt
+    /// boundary nearest the chain of `edges` on `target` takes that chain's place and repeats the
+    /// target's own shape along the seam up to `order`, while the boundary opposite it, and the
+    /// body's name, stay where they were. `faces` picks the face to rebuild (its first, when none).
     SurfaceMatch {
         body: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1901,6 +1926,7 @@ impl FeatureKind {
         use FeatureKind as K;
         match self {
             K::Extrude { sketch, .. }
+            | K::SurfaceBoundary { sketch, .. }
             | K::SurfaceExtrude { sketch, .. }
             | K::SurfaceRevolve { sketch, .. }
             | K::Revolve { sketch, .. }
@@ -2048,6 +2074,7 @@ impl FeatureKind {
             FeatureKind::SurfaceSweep { .. } => "SurfaceSweepFeature",
             FeatureKind::SurfaceLoft { .. } => "SurfaceLoftFeature",
             FeatureKind::SurfaceBlend { .. } => "BlendFeature",
+            FeatureKind::SurfaceBoundary { .. } => "BoundaryFeature",
             FeatureKind::SurfaceMatch { .. } => "MatchFeature",
             FeatureKind::SurfaceFair { .. } => "FairFeature",
             FeatureKind::Stitch { .. } => "StitchFeature",
@@ -2127,6 +2154,7 @@ impl FeatureKind {
             FeatureKind::SurfaceSweep { .. } => "SurfaceSweep",
             FeatureKind::SurfaceLoft { .. } => "SurfaceLoft",
             FeatureKind::SurfaceBlend { .. } => "Blend",
+            FeatureKind::SurfaceBoundary { .. } => "Boundary",
             FeatureKind::SurfaceMatch { .. } => "Match",
             FeatureKind::SurfaceFair { .. } => "Fair",
             FeatureKind::Stitch { .. } => "Stitch",
