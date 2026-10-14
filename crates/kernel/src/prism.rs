@@ -1933,10 +1933,16 @@ thread_local! {
 /// fitted by arcs within [`PLANAR_FIT_TOL`], so the result is exact to that, and the walls it
 /// keeps are those arcs. Only for bodies the caller knows are such sweeps.
 pub(crate) fn prism_boolean_free_form(a: &Body, b: &Body, op: BoolOp) -> Option<Result<Option<Body>>> {
+    /// Clears the flag however the boolean ends, a caught panic included.
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            FREE_FORM.with(|c| c.set(false));
+        }
+    }
     FREE_FORM.with(|c| c.set(true));
-    let r = prism_boolean(a, b, op);
-    FREE_FORM.with(|c| c.set(false));
-    r
+    let _reset = Reset;
+    prism_boolean(a, b, op)
 }
 
 /// Boolean of prisms along a common direction, in 2D (see the module notes); `None` when it
