@@ -1788,12 +1788,12 @@ fn hole_on_surface(st: &ModelState, p: Vec3, dir: Vec3) -> Vec3 {
     best.unwrap_or(p)
 }
 
-/// The faces of the model that pass through `p`: for each, the outward normal there (the
-/// surface's own normal for planes, cylinders, cones and spheres, turned the way the face looks
-/// out of its body; the mesh facet's otherwise) and how far `p` is from it. Only faces within
-/// `reach` of `p`, nearest first.
-fn faces_through(st: &ModelState, p: Vec3, reach: f64) -> Vec<(f64, Vec3)> {
-    let mut out: Vec<(f64, Vec3)> = Vec::new();
+/// The faces of the model near `p`: for each, how far `p` is from it, the outward normal there
+/// (the surface's own normal for planes, cylinders and spheres, turned the way the face looks out
+/// of its body; the nearest mesh facet's otherwise) and, for a plane, how far `p` is from the
+/// plane itself. Only faces within `reach` of `p`, nearest first.
+fn faces_through(st: &ModelState, p: Vec3, reach: f64) -> Vec<(f64, Vec3, Option<f64>)> {
+    let mut out: Vec<(f64, Vec3, Option<f64>)> = Vec::new();
     for b in st.bodies.iter().filter(|b| !b.body.is_mesh()) {
         let m = b.mesh();
         // The nearest facet of each face of this body.
@@ -1807,32 +1807,44 @@ fn faces_through(st: &ModelState, p: Vec3, reach: f64) -> Vec<(f64, Vec3)> {
             }
         }
         for (f, (d, facet)) in near {
-            let exact = match kernel::face_surface(&b.body, f as usize) {
-                Some(kernel::FaceSurface::Plane { normal, .. }) => Some(normal),
+            let (exact, off) = match kernel::face_surface(&b.body, f as usize) {
+                Some(kernel::FaceSurface::Plane { normal, point }) => (Some(normal), Some((p - point).dot(normal).abs())),
                 Some(kernel::FaceSurface::Cylinder { origin, axis, .. }) => {
                     let v = p - origin;
-                    (v - axis * v.dot(axis)).normalized()
+                    ((v - axis * v.dot(axis)).normalized(), None)
                 }
-                Some(kernel::FaceSurface::Sphere { center, .. }) => (p - center).normalized(),
-                _ => None,
+                Some(kernel::FaceSurface::Sphere { center, .. }) => ((p - center).normalized(), None),
+                _ => (None, None),
             };
             let n = match exact {
                 Some(n) if n.dot(facet) < 0.0 => -n,
                 Some(n) => n,
                 None => facet,
             };
-            out.push((d, n));
+            out.push((d, n, off));
         }
     }
     out.sort_by(|a, b| a.0.total_cmp(&b.0));
     out
 }
 
-/// The way a hole placed at `p` on a face drills: into the material, against the outward normal
-/// of the face nearest `p` (within its body's pick tolerance). None when no face is there.
+/// The way a hole placed at `p` drills: into the material, against the outward normal of the
+/// face `p` lies on. A point on no face (a planar face's centroid outside it, say) takes the
+/// nearest planar face whose plane it lies in, else the face nearest it within its body's pick
+/// tolerance. None when no face is near.
 pub fn hole_direction_at(st: &ModelState, p: Vec3) -> Option<Vec3> {
+    let size = st.bodies.iter().map(|b| b.body.size()).fold(1.0, f64::max);
+    let faces = faces_through(st, p, f64::INFINITY);
+    if let Some((d, n, _)) = faces.first()
+        && *d <= size * 1e-4
+    {
+        return Some(-*n);
+    }
+    if let Some((_, n, _)) = faces.iter().find(|(_, _, off)| off.is_some_and(|o| o <= size * 1e-4)) {
+        return Some(-*n);
+    }
     let reach = st.bodies.iter().map(crate::appearance::pick_tolerance).fold(0.0, f64::max);
-    faces_through(st, p, reach).first().map(|(_, n)| -*n)
+    faces.first().filter(|(d, _, _)| *d <= reach).map(|(_, n, _)| -*n)
 }
 
 /// A hole placed on a face drills into the material: when its direction leaves every face it
@@ -1843,10 +1855,10 @@ pub fn hole_direction_at(st: &ModelState, p: Vec3) -> Option<Vec3> {
 fn hole_dir_into_face(st: &ModelState, p: Vec3, dir: Vec3) -> Vec3 {
     let size = st.bodies.iter().map(|b| b.body.size()).fold(1.0, f64::max);
     let faces = faces_through(st, p, size * 1e-5);
-    if faces.is_empty() || faces.iter().any(|(_, n)| n.dot(dir) < -1e-9) {
+    if faces.is_empty() || faces.iter().any(|(_, n, _)| n.dot(dir) < -1e-9) {
         return dir;
     }
-    match faces.iter().map(|(_, n)| *n).max_by(|a, b| a.dot(dir).total_cmp(&b.dot(dir))) {
+    match faces.iter().map(|(_, n, _)| *n).max_by(|a, b| a.dot(dir).total_cmp(&b.dot(dir))) {
         Some(n) if n.dot(dir) > 1e-9 => (dir - n * (2.0 * n.dot(dir))).normalized().unwrap_or(dir),
         _ => dir,
     }
