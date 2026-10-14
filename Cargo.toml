@@ -61,6 +61,7 @@ web-time = "1"
 egui-wgpu = "0.36"
 # the wgpu egui-wgpu uses, for compute (crates/gpu); backends come from the apps' features
 wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }
+naga = { version = "30", default-features = false }
 pollster = "0.4"
 rfd = "0.17"
 
