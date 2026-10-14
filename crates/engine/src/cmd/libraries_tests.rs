@@ -10,7 +10,7 @@ impl File {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         Self(
-            std::env::temp_dir()
+            solidcraft_io::vfs::temp_dir()
                 .join(format!("solidcraft-catalog-{}-{}.json", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)))
                 .to_string_lossy()
                 .into_owned(),

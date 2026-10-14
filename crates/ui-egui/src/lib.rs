@@ -12,6 +12,10 @@ pub mod access;
 pub mod agent_cursor;
 pub mod browser;
 pub mod canvas;
+#[cfg(test)]
+mod colour_tokens_tests;
+#[cfg(test)]
+mod colour_vision_tests;
 pub mod context_menu;
 pub mod control;
 pub mod crash_ui;
@@ -54,6 +58,8 @@ pub mod keymap;
 mod menu_tests;
 #[cfg(test)]
 mod surface_clamp_tests;
+#[cfg(test)]
+mod timeline_marks_tests;
 #[cfg(test)]
 mod status_tests {
     #[test]
@@ -1027,8 +1033,9 @@ impl SolveApp {
         file_load::tick(self, ctx);
         self.esc_handled = false;
         prefs::apply(self, ctx);
-        if !self.styled || theme::is_dark() != self.ui.dark {
+        if !self.styled || theme::is_dark() != self.ui.dark || theme::vision() != self.preferences.color_vision {
             theme::set_dark(self.ui.dark);
+            theme::set_vision(self.preferences.color_vision);
             theme::apply(ctx);
             self.styled = true;
         }
