@@ -273,12 +273,13 @@ fn thread_groove(t: &ThreadInfo, radius: f64, open: (bool, bool)) -> Result<soli
         let (m, dia) = (&t.designation, 2.0 * radius);
         let cut = format!("it would cut {:.2} mm of the thread's {basic:.2} mm depth", depth.max(0.0));
         let alt = thread_for(dia, t.internal).map(|(n, q)| format_thread(n, q)).filter(|a| a != m);
+        let shown = show_mm(dia);
         return Err(DocError::Invalid(if t.internal {
             let alt = alt.map(|a| format!(", or thread this hole {a}")).unwrap_or_default();
-            format!("this {dia:.2} mm hole is too wide for a modelled {m} thread: {cut}; drill {} mm for {m}{alt}", show_mm(d - p))
+            format!("this {shown} mm hole is too wide for a modelled {m} thread: {cut}; drill {} mm for {m}{alt}", show_mm(d - p))
         } else {
             let alt = alt.map(|a| format!(", or thread this shaft {a}")).unwrap_or_default();
-            format!("this {dia:.2} mm shaft is too thin for a modelled {m} thread: {cut}; make the shaft {} mm for {m}{alt}", show_mm(d))
+            format!("this {shown} mm shaft is too thin for a modelled {m} thread: {cut}; make the shaft {} mm for {m}{alt}", show_mm(d))
         }));
     }
     // (radius, half width of the groove) at its two ends: a trapezoid in the axial plane.
