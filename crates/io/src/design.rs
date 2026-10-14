@@ -509,6 +509,7 @@ pub(super) fn read(bytes: &[u8]) -> Result<Document> {
 pub fn read_design_file(path: &str, notify: Option<impl FnOnce(DesignPreview)>) -> Result<Document> {
     #[cfg(not(target_arch = "wasm32"))]
     let mut source = {
+        crate::vfs::check(path).map_err(invalid)?;
         let metadata = std::fs::metadata(path).map_err(invalid)?;
         if !metadata.is_file() {
             return Err(invalid("not a regular file"));
