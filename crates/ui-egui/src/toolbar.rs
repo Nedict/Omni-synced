@@ -619,7 +619,9 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             let sketch_create = tab == "SKETCH" && *panel == "CREATE";
             let stride = if sketch_create { 68.0 } else { 40.0 };
             let enabled_panel = !cmds.is_empty() || *panel == "SELECT";
-            let popup_id = ui.id().with(("panel_menu", panel));
+            // Per tab: panels of the same name on other tabs (MODIFY, CREATE…) list other commands,
+            // and the drop-down's area remembers its size by this id (#874).
+            let popup_id = ui.id().with(("panel_menu", &tab, panel));
             // Dropped on the panel's free space (all of a collapsed panel): the button goes to
             // its end.
             let drawn = if collapsed { 0 } else { shown.len() };
@@ -831,8 +833,10 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                             }
                         }
                         // The rows scroll when the drop-down would run past the window's bottom.
+                        // `min_scrolled_height` lets the rows grow past the size the area kept from
+                        // an earlier, shorter list (#874); they still shrink to fit their content.
                         let room = (ui.ctx().content_rect().bottom() - ui.cursor().top() - 12.0).max(ROW_H * 3.0);
-                        egui::ScrollArea::vertical().id_salt("panel_menu_rows").max_height(room).show(ui, |ui| {
+                        egui::ScrollArea::vertical().id_salt("panel_menu_rows").max_height(room).min_scrolled_height(room).show(ui, |ui| {
                             for c in &cmds {
                                 let pinned = crate::toolbar_custom::pinned_on(app, &tab, c.id).is_some();
                                 match dropdown_row(app, ui, c, row_w, pinned) {
@@ -1522,6 +1526,33 @@ mod dropdown_tests {
         let [(_, at)] = hot.as_slice() else { panic!("one highlighted row: {hot:?}") };
         let menu = crate::scenario::rect_of("toolbar_dropdown").unwrap();
         assert!(menu.contains(*at), "the focused last row is out of view: {at:?} in {menu:?}");
+    }
+
+    /// Every row of a drop-down is shown when the window has room, even after a shorter list was
+    /// shown first: another tab's panel of the same name, or the same panel collapsed (#874).
+    #[test]
+    fn a_drop_down_shows_all_its_rows_after_a_shorter_one() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.call("ui.resize", json!({"width":1600,"height":1000}));
+        let open = |h: &mut crate::scenario::Harness, tab: &str| {
+            h.app.ui.tab = tab.into();
+            h.frames(4);
+            h.step(&json!({"click":{"handle":format!("panel:{tab}:MODIFY")}})).unwrap();
+            h.frames(6);
+            let menu = crate::scenario::rect_of("toolbar_dropdown").expect("the drop-down is open");
+            let rows = crate::scenario::handles("dropdown:");
+            h.step(&json!({"key":"Escape"})).unwrap();
+            h.frames(4);
+            (menu, rows)
+        };
+        let (short, short_rows) = open(&mut h, "MESH");
+        let (menu, rows) = open(&mut h, "PLASTIC");
+        assert!(rows.len() > short_rows.len(), "PLASTIC MODIFY lists more than MESH MODIFY: {rows:?} vs {short_rows:?}");
+        assert!(menu.height() > short.height(), "the longer list is taller: {menu:?} vs {short:?}");
+        for (id, at) in &rows {
+            assert!(menu.contains(*at), "{id} at {at:?} is cut off by the drop-down {menu:?}");
+        }
     }
 }
 
