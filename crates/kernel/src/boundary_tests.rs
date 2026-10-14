@@ -217,7 +217,7 @@ fn the_patch_refuses_what_it_cannot_hold() {
                 .into_iter()
                 .map(|t| Frame {
                     p: Vec3::new(20.0 * (1.0 - t), 20.0 * (1.0 - t), 0.0),
-                    leave: Vec3::new(-0.707_106_78, -0.707_106_78, 0.0),
+                    leave: Vec3::new(-std::f64::consts::FRAC_1_SQRT_2, -std::f64::consts::FRAC_1_SQRT_2, 0.0),
                     bend: Vec3::ZERO,
                     bend_change: Vec3::ZERO,
                 })
