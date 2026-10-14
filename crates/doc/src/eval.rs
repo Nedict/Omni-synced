@@ -1970,6 +1970,24 @@ pub fn edge_names_for(st: &ModelState, body: &Option<String>, pts: &[Vec3]) -> V
     }
 }
 
+/// The stored pick sits on the axis of a round, not on an edge. The nearest edge within a
+/// quarter of the body is that round's tangency seam, which is a different edge (#775).
+fn pick_lies_on_a_round_axis(body: &Body, p: Vec3) -> bool {
+    let Some(cyl) = kernel::cylinder_face_at(body, p) else { return false };
+    let Some(axis) = cyl.axis.normalized() else { return false };
+    let radial = p - cyl.axis_point;
+    let dist = (radial - axis * radial.dot(axis)).len();
+    if !(cyl.radius > 1e-6 && dist < cyl.radius * 0.35) {
+        return false;
+    }
+    let tight = (body.size() * 2e-3).max(1e-3);
+    // A pick on the wall itself is the seam. Only an axial pick is the vanished corner.
+    match body.nearest_edge(p, cyl.radius * 2.0) {
+        Ok(Some((_, d))) => d > tight,
+        _ => true,
+    }
+}
+
 /// Edge reference points re-found on the body: points on an edge stay; a point that moved off
 /// (an upstream edit) is carried with the body (its place in the body's bounding box then and
 /// now) to an edge running the same way; failing that it goes to the nearest edge with a
@@ -2533,6 +2551,35 @@ fn centered_extrude(plane: &Plane, region: &Region2, start: f64, end: f64, sketc
         .collect()
 }
 
+/// The regions a thin extrude's wall covers in its sketch.
+pub(crate) fn thin_regions(vals: &BTreeMap<String, Value>, ss: &SolvedSketch, thin: &crate::ThinWall) -> Result<Vec<Region2>> {
+    if thin.curves.is_empty() || thin.curves.len() > 1000 {
+        return Err(DocError::Invalid("a thin extrude needs 1…1000 sketch curves".into()));
+    }
+    let t = val(vals, &thin.thickness, Kind::Length)?;
+    let (inside, outside) = match thin.side {
+        crate::ThinSide::Center => (t / 2.0, t / 2.0),
+        crate::ThinSide::Inside => (t, 0.0),
+        crate::ThinSide::Outside => (0.0, t),
+        crate::ThinSide::TwoSides => {
+            let e = thin.thickness2.as_deref().ok_or_else(|| DocError::Invalid("a two-sided thin wall needs `thickness2`".into()))?;
+            (t, val(vals, e, Kind::Length)?)
+        }
+    };
+    if !(inside >= 0.0 && outside >= 0.0 && inside + outside > 0.0) {
+        return Err(DocError::Invalid("the wall thickness must be positive".into()));
+    }
+    let curves = thin
+        .curves
+        .iter()
+        .map(|id| {
+            let ci = ss.sketch.curve_index(id).ok_or_else(|| DocError::Unknown(format!("curve `{id}` of {}", ss.name)))?;
+            Ok(ss.sketch.exact_segs(ci).unwrap_or_else(|| ss.sketch.segs(ci)))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    solidcraft_sketch::thin_wall_regions(&curves, inside, outside).map_err(|e| DocError::Invalid(format!("thin wall: {e}")))
+}
+
 /// How far apart (mm) profiles must stay for their extruded tools to be cut as one.
 const APART_GAP: f64 = 1e-3;
 
@@ -2546,13 +2593,16 @@ fn feature_tools_with_constructor(
 ) -> Result<Vec<Traced>> {
     let unnamed = |bodies: Vec<Body>| -> Vec<Traced> { bodies.into_iter().map(Traced::unnamed).collect() };
     match &f.kind {
-        FeatureKind::Extrude { sketch, profiles, extent, operation, targets } => {
+        FeatureKind::Extrude { sketch, profiles, extent, operation, targets, thin } => {
             let ss = sketch_in_feature_frame(
                 doc,
                 st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?,
                 f.component,
             )?;
-            let regions = solidcraft_sketch::merge_regions(&select_profiles(&ss, profiles)?);
+            let regions = match thin {
+                Some(thin) => thin_regions(vals, &ss, thin)?,
+                None => solidcraft_sketch::merge_regions(&select_profiles(&ss, profiles)?),
+            };
             // From / To Object: where the face or point lies along the normal, measured over the
             // middle of the profiles. The points are in this feature's component frame, so the
             // model is seen from there: a target in another, moved component where it is shown.
@@ -3858,6 +3908,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         | FeatureKind::SheetContour { .. }
         | FeatureKind::SheetFlange { .. }
         | FeatureKind::SheetHem { .. }
+        | FeatureKind::SheetPerforate { .. }
         | FeatureKind::SheetFold { .. }
         | FeatureKind::SheetUnfold { .. }
         | FeatureKind::SheetConvert { .. } => more::sheet_eval(doc, vals, f, st, warning),
@@ -4245,23 +4296,28 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                         Some((_, Err(_))) | None => {
                             let mut w = None;
                             let refs: Vec<EdgeRef> = f.edge_refs.get(i).cloned().into_iter().collect();
-                            if let Ok(q) = resolve_edges(&mb.body, &[*p], &refs, &mut w) {
+                            let skipped =
+                                format!("edge `{}` no longer exists and was skipped", f.edge_names.get(i).map(String::as_str).unwrap_or("?"));
+                            // The name is gone. A pick on the axis of a round must not fall
+                            // through to the tangency seam (#775). A sharp edge that moved
+                            // still resolves from the point, which an edit relies on.
+                            if pick_lies_on_a_round_axis(&mb.body, *p) {
+                                notes.push(skipped);
+                            } else if let Ok(q) = resolve_edges(&mb.body, &[*p], &refs, &mut w) {
                                 out.extend(q);
                                 notes.push(match f.edge_names.get(i) {
                                     Some(n) if !n.is_empty() => format!("edge `{n}` no longer exists; using the edge at the picked point"),
                                     _ => "an edge reference without a name was found by its point".into(),
                                 });
                             } else {
-                                notes.push(format!(
-                                    "edge `{}` no longer exists and was skipped",
-                                    f.edge_names.get(i).map(String::as_str).unwrap_or("?")
-                                ));
+                                notes.push(skipped);
                             }
                         }
                     }
                 }
                 if out.is_empty() {
-                    return Err(DocError::Invalid("none of the selected edges exist any more".into()));
+                    let why = if notes.is_empty() { String::new() } else { format!(" ({})", notes.join("; ")) };
+                    return Err(DocError::Invalid(format!("none of the selected edges exist any more{why}")));
                 }
                 if !notes.is_empty() {
                     *warning = Some(notes.join("; "));

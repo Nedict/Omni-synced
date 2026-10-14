@@ -17,6 +17,30 @@ choices:
 **Preferences ▸ General ▸ Updates** has **Check for updates automatically** (on by default) and
 **Check now**, which checks right away and shows the window even for a version you skipped.
 
+## Updating in one click
+
+Where SolidCraft can replace itself safely, the window also has **Update now**:
+
+| Installed as | Update now does |
+|---|---|
+| AppImage | Downloads the new AppImage next to the old one, verifies it, renames it over the old file and offers **Restart now** |
+| Windows installer (`.msi`) | **Install (closes SolidCraft)**: downloads and verifies the `.msi`, closes SolidCraft (asking about unsaved designs first) and starts the installer |
+| Windows portable `.zip` or `.exe` | Downloads and verifies the package, swaps in the new `solidcraft.exe` (and `solidcraft-cli.exe`) and offers **Restart now**; the old file is removed at the next start |
+| macOS | **Download and open**: downloads and verifies the `.dmg` and opens it; drag SolidCraft to Applications to replace the old copy |
+| Flatpak, Snap, `.deb`, `.rpm`, `.tar.gz` | Nothing: your package manager updates these (the window shows the command), or you unpack the new archive |
+
+Every download is verified before anything changes: its SHA-256 must match the release's
+`SHA256SUMS.txt`, fetched over HTTPS from the same release, and, once the project signs its
+releases, that list must carry a valid signature by SolidCraft's release key that names the
+release (see [releasing](https://github.com/bherbruck/solidcraft/blob/main/docs/releasing.md#update-signing)).
+A download that doesn't verify is deleted and the installed copy is left as it was; **Download**
+still gets the package for a manual install. On macOS SolidCraft opens the disk image rather than
+replacing the app itself, because the app is ad-hoc signed and not notarized: replacing it in the
+background would install code macOS can't vouch for without you seeing it.
+
+Update now needs write access to the installed file: an AppImage in a folder you can't write to
+fails with a message, and **Download** is the way to update it.
+
 ## What is sent
 
 One HTTPS request, at start and at most once a day while SolidCraft runs:
@@ -28,7 +52,9 @@ Accept: application/vnd.github+json
 X-GitHub-Api-Version: 2022-11-28
 ```
 
-That's all: no version number, no machine or user identifier, no usage data, no cookies. GitHub
+**Update now** then downloads `SHA256SUMS.txt` (and its signature) and the one package from the
+release's own `github.com/bherbruck/solidcraft/releases/download/…` links, with the same
+User-Agent. That's all: no version number, no machine or user identifier, no usage data, no cookies. GitHub
 sees the request like any other visit to the API (your IP address, the time); see
 [GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement).
 SolidCraft compares the answer with its own version on your computer.

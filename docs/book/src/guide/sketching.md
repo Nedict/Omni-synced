@@ -57,6 +57,11 @@ geometry cannot identify one text: use **Select Other** to choose its outline in
 Change the text, font, baseline X/Y, height or angle, then confirm with **OK**; **Cancel**
 keeps the original text. Position and height use the document's units.
 
+A text can follow a curve of its sketch (its **Path**). That curve becomes construction: the
+letters stand on it and their descenders cross it, so as a normal curve it would cut them into
+pieces, and picking the text would pick those pieces. Taking the text off the curve leaves it
+construction; **Normal/Construction** turns it back.
+
 Drag a text outline to move all its letters together. Let go to finish in one undo step,
 or press **Esc** during the drag to restore the original text. The text stays editable.
 For an exact displacement, select an outline and choose **Move/Copy** from its context menu.

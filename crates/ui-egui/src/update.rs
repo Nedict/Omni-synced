@@ -488,6 +488,12 @@ pub struct Updater {
     last_manual: f64,
     /// A release given by `SOLIDCRAFT_UPDATE_FEED` (a file), for tests and screenshots.
     feed: Option<PathBuf>,
+    /// The one-click update in progress (`install`).
+    job: Option<(Receiver<Result<install::Outcome, String>>, Arc<install::Progress>)>,
+    /// The last one-click update's result.
+    pub installed: Option<Result<install::Outcome, String>>,
+    /// A program for the host to start as SolidCraft exits (restart, installer).
+    launch: Option<(PathBuf, Vec<String>)>,
 }
 
 impl Updater {
@@ -510,10 +516,16 @@ pub fn available(app: &mut SolveApp) -> bool {
 
 /// Per frame: the first frame starts a due automatic check; a finished check is collected.
 pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
+    poll_install(app);
+    // Quitting to restart or install was cancelled (a "save changes?" answered Cancel).
+    if app.updater.launch.is_some() && app.docs.quitting.is_none() && !app.quit_requested {
+        app.updater.launch = None;
+    }
     if !app.updater.started {
         app.updater.started = true;
         #[cfg(not(target_arch = "wasm32"))]
         {
+            install::clean_up_after_update(std::env::current_exe().ok().as_deref());
             if std::env::var("SOLIDCRAFT_UPDATE_CHECK").is_ok_and(|v| v == "0") {
                 return;
             }
@@ -605,6 +617,101 @@ fn poll(app: &mut SolveApp) {
     }
 }
 
+// ---- one-click updates ------------------------------------------------------------------------
+
+/// How this installation updates in place, when the host can download (None: Download only).
+pub fn install_method(app: &mut SolveApp) -> Option<install::Method> {
+    if app.services.http_get.is_none() || app.services.http_download.is_none() {
+        return None;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let exe = std::env::current_exe().ok();
+        install::method(app.updater.kind(), exe.as_deref())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        None
+    }
+}
+
+/// Download, verify and apply the release found (Update now).
+pub fn start_install(app: &mut SolveApp, ctx: &egui::Context) {
+    let (Some(release), Some(method), Some(get), Some(download)) =
+        (app.updater.release.clone(), install_method(app), app.services.http_get.clone(), app.services.http_download.clone())
+    else {
+        return;
+    };
+    if app.updater.job.is_some() {
+        return;
+    }
+    let kind = app.updater.kind().clone();
+    let progress = Arc::new(install::Progress::default());
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.updater.installed = None;
+    app.updater.job = Some((rx, progress.clone()));
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let ctx = ctx.clone();
+        let staging = std::env::temp_dir().join("solidcraft-update");
+        let net = install::Net { get, download };
+        let spawned = std::thread::Builder::new().name("update-install".into()).spawn(move || {
+            let result = install::run(&release, &kind, &method, std::env::consts::ARCH, &net, &staging, &progress);
+            let _ = tx.send(result);
+            ctx.request_repaint();
+        });
+        if let Err(e) = spawned {
+            app.updater.job = None;
+            app.updater.installed = Some(Err(e.to_string()));
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (ctx, tx, release, method, get, download, kind);
+        app.updater.job = None;
+    }
+}
+
+fn poll_install(app: &mut SolveApp) {
+    let Some((rx, _)) = &app.updater.job else { return };
+    let result = match rx.try_recv() {
+        Ok(r) => r,
+        Err(TryRecvError::Empty) => return,
+        Err(TryRecvError::Disconnected) => Err("the update stopped".into()),
+    };
+    app.updater.job = None;
+    match &result {
+        Ok(install::Outcome::Installer(program, args)) => {
+            // The installer replaces this program: start it once SolidCraft has closed.
+            app.updater.launch = Some((program.clone(), args.clone()));
+            crate::documents::request_quit(app);
+        }
+        Ok(install::Outcome::Opened(dmg)) => {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let _ = std::process::Command::new("open").arg(dmg).spawn();
+            }
+            let _ = dmg;
+        }
+        Ok(install::Outcome::Restart(_)) => {}
+        Err(e) => log::warn!("update: {e}"),
+    }
+    app.updater.installed = Some(result);
+}
+
+/// Restart now: close (asking about unsaved designs), then start the new version.
+pub fn restart(app: &mut SolveApp) {
+    if let Some(Ok(install::Outcome::Restart(program))) = &app.updater.installed {
+        app.updater.launch = Some((program.clone(), Vec::new()));
+        crate::documents::request_quit(app);
+    }
+}
+
+/// For the host, as SolidCraft exits: the program to start (the new version, an installer).
+pub fn take_launch(app: &mut SolveApp) -> Option<(PathBuf, Vec<String>)> {
+    app.updater.launch.take()
+}
+
 // ---- user interface ---------------------------------------------------------------------------
 
 /// The application bar's Update button, right of `right`; returns its rect (None: not shown).
@@ -652,6 +759,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         return;
     };
     let kind = app.updater.kind().clone();
+    let install = install_method(app);
     let arch = std::env::consts::ARCH;
     let t = Tokens::get();
     let mut open = true;
@@ -692,12 +800,67 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     }
                 });
                 ui.add_space(4.0);
-            } else if let Some(name) = &asset {
+            } else if let Some(name) = asset.as_ref().filter(|_| app.updater.installed.as_ref().is_none_or(|r| r.is_err())) {
                 ui.label(RichText::new(crate::i18n::format("update.file", &[("file", name)])).size(11.0).color(t.text_dim));
             }
+            if let Some((_, progress)) = &app.updater.job {
+                let done = progress.done.load(std::sync::atomic::Ordering::Relaxed);
+                let total = progress.total.load(std::sync::atomic::Ordering::Relaxed).max(1);
+                let mb = |b: u64| format!("{:.1}", b as f64 / 1_048_576.0);
+                ui.add(
+                    egui::ProgressBar::new((done as f32 / total as f32).clamp(0.0, 1.0))
+                        .text(crate::i18n::format("update.downloading", &[("done", &mb(done)), ("total", &mb(total))])),
+                );
+                if ui.button(crate::i18n::tr("ui.cancel")).clicked() {
+                    progress.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+                return;
+            }
+            match &app.updater.installed {
+                Some(Ok(install::Outcome::Restart(_))) => {
+                    ui.label(RichText::new(crate::i18n::format("update.installed", &[("version", release.version())])).strong());
+                    ui.horizontal(|ui| {
+                        let r = ui.add(egui::Button::new(RichText::new(crate::i18n::tr("update.restart")).strong()).fill(t.accent));
+                        crate::scenario::publish_rect("update:restart", r.rect);
+                        if r.clicked() {
+                            action = Some("restart");
+                        }
+                        if ui.button(crate::i18n::tr("update.restart_later")).clicked() {
+                            action = Some("close");
+                        }
+                    });
+                    return;
+                }
+                Some(Ok(install::Outcome::Installer(..))) => {
+                    ui.label(crate::i18n::tr("update.installer_started"));
+                    return;
+                }
+                Some(Ok(install::Outcome::Opened(_))) => {
+                    ui.add(egui::Label::new(crate::i18n::tr("update.dmg_opened")).wrap());
+                    return;
+                }
+                Some(Err(e)) => {
+                    ui.add(egui::Label::new(RichText::new(crate::i18n::format("update.install_failed", &[("error", e)])).color(t.error)).wrap());
+                }
+                None => {}
+            }
             ui.horizontal(|ui| {
+                let one_click = install.is_some() && !matches!(app.updater.installed, Some(Err(_)));
+                if let Some(m) = install.as_ref().filter(|_| one_click) {
+                    let label = match m {
+                        install::Method::Msi => crate::i18n::tr("update.install_msi"),
+                        install::Method::Dmg => crate::i18n::tr("update.download_open"),
+                        _ => crate::i18n::tr("update.update_now"),
+                    };
+                    let r = ui.add(egui::Button::new(RichText::new(label).strong()).fill(t.accent));
+                    crate::scenario::publish_rect("update:install", r.rect);
+                    if r.clicked() {
+                        action = Some("install");
+                    }
+                }
                 let download = if kind.system_managed() { crate::i18n::tr("update.release_page") } else { crate::i18n::tr("update.download") };
-                let r = ui.add(egui::Button::new(RichText::new(download).strong()).fill(t.accent));
+                let r = if one_click { ui.button(download) } else { ui.add(egui::Button::new(RichText::new(download).strong()).fill(t.accent)) };
                 crate::scenario::publish_rect("update:download", r.rect);
                 if r.clicked() {
                     action = Some("download");
@@ -728,6 +891,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             app.preferences.update.remind_later(now);
             app.updater.open = false;
         }
+        Some("install") => start_install(app, ctx),
+        Some("restart") => restart(app),
+        Some("close") => app.updater.open = false,
         _ if !open => app.updater.open = false,
         _ => {}
     }
@@ -955,5 +1121,9 @@ fn markdown(ui: &mut egui::Ui, src: &str, t: &Tokens) {
     }
 }
 
+pub mod install;
+
+#[cfg(test)]
+mod install_tests;
 #[cfg(test)]
 mod tests;

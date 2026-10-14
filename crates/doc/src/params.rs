@@ -81,7 +81,28 @@ macro_rules! feature_walk {
                         }
                     }
                 },
-                FeatureKind::Extrude { extent, .. } | FeatureKind::SurfaceExtrude { extent, .. } => {
+                FeatureKind::Extrude { extent, thin, .. } => {
+                    f("Distance", & $($m)? extent.distance, L, I);
+                    if let Some(d) = & $($m)? extent.distance2 {
+                        f("Distance 2", d, L, I);
+                    }
+                    if let Some(d) = & $($m)? extent.start_offset {
+                        f("Start offset", d, L, I);
+                    }
+                    if let Some(d) = & $($m)? extent.taper {
+                        f("Taper angle", d, A, I);
+                    }
+                    if let Some(d) = & $($m)? extent.to_offset {
+                        f("To offset", d, L, I);
+                    }
+                    if let Some(thin) = thin {
+                        f("Thickness", & $($m)? thin.thickness, L, I);
+                        if let Some(t) = & $($m)? thin.thickness2 {
+                            f("Thickness 2", t, L, I);
+                        }
+                    }
+                }
+                FeatureKind::SurfaceExtrude { extent, .. } => {
                     f("Distance", & $($m)? extent.distance, L, I);
                     if let Some(d) = & $($m)? extent.distance2 {
                         f("Distance 2", d, L, I);
@@ -302,6 +323,13 @@ macro_rules! feature_walk {
                         f("Gap", g, L, I);
                     }
                 }
+                FeatureKind::SheetPerforate { diameter, pitch, margin, .. } => {
+                    f("Diameter", diameter, L, I);
+                    f("Pitch", pitch, L, I);
+                    if let Some(m) = margin {
+                        f("Margin", m, L, I);
+                    }
+                }
                 FeatureKind::Coil { diameter, pitch, turns, section_size, start_angle, base, .. } => {
                     f("Diameter", diameter, L, I);
                     f("Pitch", pitch, L, I);
@@ -385,32 +413,6 @@ impl FeatureKind {
         let mut v = Vec::new();
         self.walk_exprs(&mut |_, e, _, _| v.push(e.as_str()));
         v
-    }
-
-    /// A primitive's placement point (length expressions). Its coordinates are not inputs:
-    /// they get no parameter names and keep bare numbers in mm whatever the design's units, as
-    /// every other position does; renames and users still find them.
-    pub fn point_expr_mut(&mut self) -> Option<&mut crate::PointExpr> {
-        match self {
-            FeatureKind::Box { corner: p, .. }
-            | FeatureKind::Cylinder { base: p, .. }
-            | FeatureKind::Sphere { center: p, .. }
-            | FeatureKind::Torus { center: p, .. }
-            | FeatureKind::Coil { base: p, .. } => Some(p),
-            _ => None,
-        }
-    }
-
-    /// Read-only view of [`FeatureKind::point_expr_mut`].
-    pub fn point_expr(&self) -> Option<&crate::PointExpr> {
-        match self {
-            FeatureKind::Box { corner: p, .. }
-            | FeatureKind::Cylinder { base: p, .. }
-            | FeatureKind::Sphere { center: p, .. }
-            | FeatureKind::Torus { center: p, .. }
-            | FeatureKind::Coil { base: p, .. } => Some(p),
-            _ => None,
-        }
     }
 }
 

@@ -274,6 +274,7 @@ fn join_of_a_lobed_disc_pattern_is_not_refused() {
     assert!(rel(got, want) < 1e-3, "{got} vs {want}");
 }
 
+mod blend_fit;
 mod boolean_diagnostics;
 mod component_frames;
 mod large_step_import;
@@ -602,7 +603,7 @@ fn script_runs_commands() {
     assert!(s.run_script(&json!([{"command": "Nope"}])).is_err());
 }
 
-fn hostile_values() -> Vec<Value> {
+pub(crate) fn hostile_values() -> Vec<Value> {
     vec![
         Value::Null,
         json!(true),

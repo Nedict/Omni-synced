@@ -23,6 +23,7 @@ pub mod delete;
 pub mod dialogs;
 pub mod dialogs_appearance;
 pub mod dialogs_assembly;
+pub mod dialogs_library;
 pub mod dialogs_motion;
 pub mod dialogs_move;
 pub mod dialogs_parts;
@@ -129,6 +130,8 @@ mod sketch_text_move;
 pub mod sketch_tools;
 pub mod stand_up;
 pub mod theme;
+#[cfg(test)]
+mod thin_extrude_tests;
 pub mod timeline;
 pub mod timeline_left;
 pub mod titlebar;
@@ -219,6 +222,8 @@ pub struct Services {
     pub graphics_path: Option<String>,
     /// HTTPS GET for the update check (`update`); None: never check (browser, tests).
     pub http_get: Option<update::HttpGet>,
+    /// HTTPS download to a file, with progress, for one-click updates (`update::install`).
+    pub http_download: Option<update::install::HttpDownload>,
 }
 
 pub struct SolveApp {

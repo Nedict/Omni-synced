@@ -372,6 +372,8 @@ const NO_MEANING: &[(&str, &str)] = &[
     ("subheading_bg", "chrome"),
     ("overlay", "a chip's ground over the view"),
     ("app_bar_text", "text"),
+    ("app_bar_hover", "a hovered tab, translucent white"),
+    ("app_bar_tab_edge", "an inactive tab's outline, translucent white"),
     ("timeline_marker", "the rollback marker, alone"),
     ("field", "a field's ground"),
     // Highlights: shades of the accent blue over what they mark, by design close to each other.
@@ -695,7 +697,8 @@ fn the_shader_gets_the_modes_colours_and_its_stripes() {
 
 /// Every message the Colour vision section shows (the heading, the mode names and their
 /// tooltips, the sample's names and the note) is in every catalogue, translated: in Japanese,
-/// Korean and Chinese none is the English text. (German keeps "Protan", "Deutan" and "Tritan".)
+/// Korean, Russian and Chinese none is the English text. (German keeps "Protan", "Deutan" and
+/// "Tritan".)
 #[test]
 fn the_sections_messages_are_in_every_catalog() {
     let load = |text: &str| -> serde_json::Map<String, serde_json::Value> { serde_json::from_str(text).unwrap() };
@@ -710,6 +713,7 @@ fn the_sections_messages_are_in_every_catalog() {
         ("de", include_str!("../../../assets/locales/de.json")),
         ("ja", include_str!("../../../assets/locales/ja.json")),
         ("ko", include_str!("../../../assets/locales/ko.json")),
+        ("ru", include_str!("../../../assets/locales/ru.json")),
         ("zh", include_str!("../../../assets/locales/zh.json")),
     ] {
         let catalog = load(text);

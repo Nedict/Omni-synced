@@ -138,13 +138,22 @@
 //!   Under the same version, a fillet's style can be `curvature` (a G2 quintic blend; `radius`
 //!   is the equivalent circular setback). Fillets of the other styles save as before; 0.9.0
 //!   would refuse the unknown style.
+//! - 20: an Extrude can be thin (`thin`: `curves`, `thickness`, optional `side` and
+//!   `thickness2`): a wall along sketch curves instead of its profiles. Version 19 designs need
+//!   no transformation, and an extrude without `thin` saves as before; the version stamp makes
+//!   0.10.0 (which reads up to 19) ask for an update instead of ignoring the wall and filling
+//!   the sketch's profiles.
+//!   A `sheet_perforate` feature (Perforate: `diameter`, `pitch`, optional `margin`,
+//!   `pattern` and `body`): a perforation field stored on a sheet, for the flat pattern, the DXF
+//!   and the measure. It is also first saved in 20; 0.10.0 asks for an update instead of
+//!   meeting a feature it can't read.
 
 use serde_json::Value;
 
 use crate::{DocError, Document, Result};
 
 /// The format this build writes.
-pub const FORMAT: u32 = 19;
+pub const FORMAT: u32 = 20;
 
 pub fn format_string(n: u32) -> String {
     format!("solidcraft/{n}")
@@ -161,7 +170,7 @@ pub fn version_of(s: &str) -> Option<u32> {
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
 type JsonStep = fn(&mut Value) -> Result<()>;
-const JSON_STEPS: [JsonStep; 18] = [
+const JSON_STEPS: [JsonStep; 19] = [
     |_| Ok(()),
     v2_to_v3,
     v3_to_v4,
@@ -175,6 +184,7 @@ const JSON_STEPS: [JsonStep; 18] = [
     |_| Ok(()),
     |_| Ok(()),
     v13_to_v14,
+    |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
@@ -1048,6 +1058,7 @@ mod tests {
         document
             .add_feature(
                 FeatureKind::Extrude {
+                    thin: None,
                     sketch,
                     profiles: ProfileSel::All,
                     extent: Extent {

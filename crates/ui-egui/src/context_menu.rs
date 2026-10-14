@@ -33,6 +33,10 @@ pub enum Target {
     Sketch {
         id: u64,
     },
+    /// A construction plane (its feature id).
+    Plane {
+        id: u64,
+    },
     Component {
         id: u64,
     },
@@ -254,6 +258,7 @@ pub fn target_bodies(app: &SolveApp, target: &Target) -> Vec<String> {
         Target::Occurrence { path } => app.session.occurrence_bodies(path, true).unwrap_or_default(),
         Target::Group { id } => crate::browser::group_bodies(app, *id),
         Target::Sketch { .. }
+        | Target::Plane { .. }
         | Target::Folder { .. }
         | Target::Canvas { .. }
         | Target::Origin
@@ -311,6 +316,7 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
         Target::Viewport => viewport_items(app),
         Target::Body { name } => body_items(app, std::slice::from_ref(name), true),
         Target::Sketch { id } => sketch_items(app, *id),
+        Target::Plane { id } => plane_items(app, *id),
         Target::Component { id } => component_items(app, *id),
         Target::Occurrence { path } => occurrence_items(app, path),
         Target::Group { id } => crate::browser::group_items(app, *id),
@@ -519,6 +525,22 @@ fn sketch_items(app: &SolveApp, id: u64) -> Vec<Item> {
         act("ui.sketchProfile", if profiles { "Hide Profile" } else { "Show Profile" }, "").with(json!({ "sketch": id })),
         act("ui.sketchDims", if dims { "Hide Dimension" } else { "Show Dimension" }, "dimension").with(json!({ "sketch": id })),
         act(if visible { "ui.hideSketch" } else { "ui.showSketch" }, "Show/Hide", "eye").key("V").with(json!({ "sketch": id })),
+        Item::sep(),
+        act("ui.findTimeline", "Find in Timeline", "").with(json!({ "feature": id })),
+    ]
+}
+
+/// A construction plane's row in the browser: edit, delete, rename, show or hide.
+fn plane_items(app: &SolveApp, id: u64) -> Vec<Item> {
+    let Some(f) = app.session.doc.feature(id) else { return Vec::new() };
+    let visible = !app.session.visibility.hidden_origin.contains(&f.name);
+    vec![
+        act("ui.editFeature", "Edit Feature", "plane").with(json!({ "feature": id })),
+        Item::sep(),
+        act("ui.delete", "Delete", "delete").key("Del").with(json!({ "items": [{"type": "feature", "id": id}] })),
+        act("ui.rename", "Rename", "").with(json!({ "feature": id })),
+        Item::sep(),
+        act("ui.originPart", "Show/Hide", "eye").key("V").with(json!({ "keys": [f.name], "show": !visible })),
         Item::sep(),
         act("ui.findTimeline", "Find in Timeline", "").with(json!({ "feature": id })),
     ]
