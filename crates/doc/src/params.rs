@@ -69,7 +69,7 @@ impl FeatureKind {
                     v.push(("To offset", d, L));
                 }
             }
-            FeatureKind::Revolve { angle, angle2, .. } => {
+            FeatureKind::Revolve { angle, angle2, .. } | FeatureKind::SurfaceRevolve { angle, angle2, .. } => {
                 v.push(("Angle", angle, A));
                 if let Some(a) = angle2 {
                     v.push(("Angle 2", a, A));
@@ -277,6 +277,7 @@ impl FeatureKind {
             FeatureKind::Thicken { thickness, .. } => v.push(("Thickness", thickness, L)),
             FeatureKind::SurfaceTrim { plane, .. } => plane_inputs_mut(plane, &mut v),
             FeatureKind::SurfaceExtend { distance, .. } => v.push(("Distance", distance, L)),
+            FeatureKind::Unstitch { .. } | FeatureKind::ReverseNormal { .. } => {}
             FeatureKind::Patch { .. } => {}
             FeatureKind::Combine { .. }
             | FeatureKind::SheetBase { .. }

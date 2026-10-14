@@ -263,7 +263,10 @@ pub fn place(app: &mut SolveApp, p: (Vec2, Option<String>)) {
     let Some(mut tool) = app.tool.take() else { return };
     if tool.kind == Kind::Ext {
         crate::sketch_tools::place_point(app, &mut tool, p);
-        app.tool = Some(tool);
+        // A placed text opens Edit Text, which ends the tool.
+        if !crate::sketch_text::editing(app) {
+            app.tool = Some(tool);
+        }
         return;
     }
     let Kind::Draw(n) = tool.kind else {

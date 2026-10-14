@@ -246,7 +246,7 @@ pub enum Kind {
     /// Insert Part from the standard parts library (`dialogs_parts`).
     Part(crate::dialogs_parts::Pt),
     /// Edit Text: a sketch text's content and placement (`sketch_text`).
-    Text(crate::sketch_text::Tx),
+    Text(Box<crate::sketch_text::Tx>),
     TextMove(crate::sketch_text_move::TextMove),
     /// Sketch-space modify tools: scale and offset, and later fillet, chamfer, the patterns,
     /// mirror and move (`sketch_modify_ui`).
@@ -544,8 +544,10 @@ impl Dialog {
             inp.label = objects_label(inp.accept);
         }
         // Pre-selection: what is selected now becomes the input (first input that takes it); a
-        // face or edge stands for its body where bodies are wanted.
-        for sel in &s.selection {
+        // face or edge stands for its body where bodies are wanted. (Edit Text's selection is the
+        // text it edits, not its path.)
+        let preselection: &[Sel] = if matches!(d.kind, Kind::Text(_)) { &[] } else { &s.selection };
+        for sel in preselection {
             let as_body = match sel {
                 Sel::Face { body, .. } | Sel::Edge { body, .. } | Sel::Vertex { body, .. } => Some(Sel::Body { name: body.clone() }),
                 _ => None,
@@ -804,7 +806,7 @@ impl Dialog {
         let sel = if measure { crate::viewport::measurement_selection(s, &sel) } else { sel };
         let chain = matches!(self.kind, Kind::Fillet { chain: true, .. });
         let mut picked =
-            if !measure && self.active_input().is_some_and(|i| i.multi) { crate::viewport::grouped_selection(s, &sel) } else { vec![sel.clone()] };
+            if !measure && self.active_input().is_some_and(|i| i.multi) { crate::viewport::picked_selection(s, &sel) } else { vec![sel.clone()] };
         // Tangent chain: an edge brings the edges that continue it smoothly.
         if chain
             && let Sel::Edge { body, index, .. } = &sel
@@ -1497,6 +1499,10 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui) {
 /// Selection input rows: label, "N selected" (or a hint) and a clear button; clicking a row
 /// makes it the active input.
 fn input_rows(d: &mut Dialog, ui: &mut egui::Ui) {
+    // Edit Text shows its Path input among its own rows.
+    if matches!(d.kind, Kind::Text(_)) {
+        return;
+    }
     let t = Tokens::get();
     let mut clear: Option<usize> = None;
     let mut activate: Option<usize> = None;
@@ -1719,6 +1725,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     {
         return;
     }
+    crate::sketch_text::sync_path(&mut d);
     let _language = crate::i18n::scope(&app.preferences.language);
     if let Kind::TextMove(k) = &d.kind
         && !crate::sketch_text_move::valid(app, k)
@@ -2458,7 +2465,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     Kind::Appearance(k) => enter |= crate::dialogs_appearance::rows(app, ui, k, &mut d.inputs),
                     Kind::Motion(k) => enter |= crate::dialogs_motion::rows(app, ui, k, &mut d.inputs),
                     Kind::Part(k) => enter |= crate::dialogs_parts::rows(app, ui, k, &d.inputs),
-                    Kind::Text(k) => enter |= crate::sketch_text::rows(ui, k),
+                    Kind::Text(k) => enter |= crate::sketch_text::rows(ui, k, &mut d.inputs, &mut d.active),
                     Kind::TextMove(k) => enter |= crate::sketch_text_move::rows(ui, k),
                     Kind::ConfirmDelete { with, fail, .. } => {
                         if !with.is_empty() {
@@ -2565,7 +2572,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         }
     }
     if ok {
-        match run_dialog(app, &d) {
+        // Edit Text applies its own way: its live changes and OK are one undo step.
+        let run = match &mut d.kind {
+            Kind::Text(k) => crate::sketch_text::apply(app, k),
+            _ => run_dialog(app, &d),
+        };
+        match run {
             Ok(()) => {
                 cancel = true;
                 applied = true;
@@ -2575,12 +2587,19 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
     if !keep || cancel {
         crate::dialogs_motion::closed(app, &mut d, applied);
+        if let Kind::Text(k) = &mut d.kind {
+            crate::sketch_text::closed(app, k, applied);
+        }
     }
     // The edited text's outlines are new curves: the old selection would name stale ids.
     if applied && matches!(d.kind, Kind::Text(_) | Kind::TextMove(_)) {
         let _ = app.session.execute("select.clear", &json!({}));
     }
     if keep && !cancel {
+        // The canvas follows Edit Text's fields.
+        if let Kind::Text(k) = &mut d.kind {
+            crate::sketch_text::preview(app, k);
+        }
         app.dialog = Some(d);
     } else if let Some((_, marker)) = d.editing {
         // Editing done: put the timeline marker back where it was.
@@ -2596,6 +2615,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 pub fn cancel(app: &mut SolveApp) {
     if let Some(mut d) = app.dialog.take() {
         crate::dialogs_motion::closed(app, &mut d, false);
+        if let Kind::Text(k) = &mut d.kind {
+            crate::sketch_text::closed(app, k, false);
+        }
         app.dialog = Some(d);
     }
     if let Some(d) = app.dialog.take()
@@ -4395,7 +4417,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         other => {
             let (kind, inputs, extra) = crate::dialogs_sheet::for_feature(app, other)
                 .or_else(|| crate::dialogs_plastic::for_feature(app, other))
-                .or_else(|| crate::dialogs_surface::for_feature(app, other))?;
+                .or_else(|| crate::dialogs_surface::for_feature(app, other, &feature_frame(s, f.component)))?;
             let mut d = Dialog::new(kind, inputs);
             d.extra = extra;
             d

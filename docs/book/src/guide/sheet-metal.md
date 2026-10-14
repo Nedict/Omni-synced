@@ -29,8 +29,13 @@ Where a cut-out has taken part of an edge away (a corner cut off the plate, a no
 middle of an edge), an edge flange picked on that edge runs along the stretch the cut-outs
 leave nearest the pick, and takes its setback off that stretch only. The base on the other
 side of a notch keeps its edge, and a pick there, in the same feature or a later one, makes
-a flange of its own. Where base is still left beside the bend's end at such a cut-out, it
+a flange of its own. Where the base is still left beside the bend's end at such a cut-out, it
 gets the bend relief as above. An edge that cut-outs have taken whole is refused.
+
+The setback is cut out of the base's outline as it was drawn: where the bend line crosses an
+arc of the outline (a plate with rounded corners, bent inside or in the middle), the arc stays
+an arc and ends there, in the flat pattern and the DXF. A free-form curve (an ellipse, a
+spline) in an outline that a setback cuts is followed by tangent arcs within 0.001 mm.
 
 Where two bends of one edge flange feature meet at a corner of the base, the rule's **corner
 relief shape** (`corner_relief_shape`; Corner Relief Shape in Sheet Metal Rules) says what is
@@ -43,7 +48,7 @@ gap where the flanges start; the bend table lists a torn bend between the middle
 ends. A tear whose cuts would cross in the flat pattern, or that would run one bend into the
 other folded (flanges at very different angles), is left out with a warning and the corner
 keeps its notch. `round`
-and `rectangular` cut a relief the rule's **corner relief** across, centred on the corner where
+and `rectangular` cut a relief the size of the rule's **corner relief** across, centred on the corner where
 the two bend lines meet: out of the base a round with half that size as its radius, or a square
 with half that size as its side, and both bends stop where it begins, cut straight across. The
 flange panels keep their ends. The relief is in the folded part, the flat pattern, the bend
@@ -173,6 +178,12 @@ exporting a partial outline.
 A Box cut, or a Cylinder cut whose axis is the sheet's normal, machines the sheet like the
 extrude of its footprint: through the sheet it is a cut-out (a cylinder a round one), and
 part way it is a pocket. A primitive cut at any other angle, or across a folded bend, is refused.
+
+Hole machines the sheet the same way from a flat face of any panel, the base or a flange, on
+either side, folded or unfolded: square to that panel, a through hole (plain or tapped) is a
+round cut-out of the flat pattern and a `CIRCLE` in the DXF, and a counterbore or a blind
+flat-bottomed hole is a round pocket. A hole slanted to its panel or drilled into the edge of
+the sheet, a countersink and a drill point are refused.
 
 Parallel, untapered extrude cuts also preserve shallow pockets through Unfold / Refold.
 The pocket floor and side walls remain solid geometry; overlapping cuts from opposite sides

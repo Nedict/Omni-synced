@@ -485,7 +485,7 @@ pub enum FeatureKind {
         depth: Option<String>,
         #[serde(default)]
         hole: HoleKind,
-        /// Drill at these sketch points instead (one hole each, perpendicular to the sketch);
+        /// Drill at these sketch points instead (one hole each, perpendicular to the sketch, into the material: against the sketch normal, or along it when only that side has material);
         /// the holes follow the points when the sketch changes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         points: Option<SketchPoints>,
@@ -607,6 +607,10 @@ pub enum FeatureKind {
         faces: Vec<Vec3>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
+        /// Close the gap by extending the neighbouring faces (the default); `false` leaves it
+        /// open, the faces left a surface body.
+        #[serde(default = "yes", skip_serializing_if = "is_yes")]
+        heal: bool,
     },
     /// A box around bodies, grown by a margin.
     BoundingSolid {
@@ -937,6 +941,36 @@ pub enum FeatureKind {
         curves: Vec<String>,
         extent: Extent,
     },
+    /// A body taken apart: each face at `faces` (every face when empty) its own surface body,
+    /// the faces left one surface body under the body's name. A solid comes apart into surfaces.
+    Unstitch {
+        body: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        faces: Vec<Vec3>,
+    },
+    /// A surface body with the faces at `faces` (every face when empty) turned over.
+    ReverseNormal {
+        body: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        faces: Vec<Vec3>,
+    },
+    /// A surface body turned about an axis from open curve chains and the boundaries of
+    /// profiles: walls only, no caps (a solid where a full turn closes them).
+    SurfaceRevolve {
+        sketch: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profiles: Option<ProfileSel>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        curves: Vec<String>,
+        axis: AxisRef,
+        angle: String,
+        /// Two Sides: the angle on the other side.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        angle2: Option<String>,
+        /// Symmetric: `angle` split evenly either side of the sketch.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        symmetric: bool,
+    },
     /// A planar surface body extended outward by `distance` past the edges through `edges`.
     SurfaceExtend {
         body: String,
@@ -1238,6 +1272,7 @@ impl FeatureKind {
         match self {
             K::Extrude { sketch, .. }
             | K::SurfaceExtrude { sketch, .. }
+            | K::SurfaceRevolve { sketch, .. }
             | K::Revolve { sketch, .. }
             | K::Emboss { sketch, .. }
             | K::Rib { sketch, .. }
@@ -1286,6 +1321,8 @@ impl FeatureKind {
             | K::Thicken { .. }
             | K::SurfaceExtend { .. }
             | K::SurfaceTrim { .. }
+            | K::Unstitch { .. }
+            | K::ReverseNormal { .. }
             | K::Move { .. }
             | K::Import { .. }
             | K::MeshImport { .. }
@@ -1370,10 +1407,13 @@ impl FeatureKind {
             FeatureKind::Remove { .. } => "RemoveFeature",
             FeatureKind::Patch { .. } => "PatchFeature",
             FeatureKind::SurfaceExtrude { .. } => "SurfaceExtrudeFeature",
+            FeatureKind::SurfaceRevolve { .. } => "SurfaceRevolveFeature",
             FeatureKind::Stitch { .. } => "StitchFeature",
             FeatureKind::Thicken { .. } => "ThickenFeature",
             FeatureKind::SurfaceTrim { .. } => "TrimFeature",
             FeatureKind::SurfaceExtend { .. } => "ExtendFeature",
+            FeatureKind::Unstitch { .. } => "UnstitchFeature",
+            FeatureKind::ReverseNormal { .. } => "ReverseNormalFeature",
             FeatureKind::Import { .. } => "BaseFeature",
             FeatureKind::MeshImport { .. } => "MeshFeature",
             FeatureKind::MeshConvert { .. } => "MeshConvertFeature",
@@ -1437,10 +1477,13 @@ impl FeatureKind {
             FeatureKind::Remove { .. } => "Remove",
             FeatureKind::Patch { .. } => "Patch",
             FeatureKind::SurfaceExtrude { .. } => "SurfaceExtrude",
+            FeatureKind::SurfaceRevolve { .. } => "SurfaceRevolve",
             FeatureKind::Stitch { .. } => "Stitch",
             FeatureKind::Thicken { .. } => "Thicken",
             FeatureKind::SurfaceTrim { .. } => "Trim",
             FeatureKind::SurfaceExtend { .. } => "Extend",
+            FeatureKind::Unstitch { .. } => "Unstitch",
+            FeatureKind::ReverseNormal { .. } => "ReverseNormal",
             FeatureKind::Import { .. } => "Import",
             FeatureKind::MeshImport { .. } => "Mesh",
             FeatureKind::MeshConvert { .. } => "ConvertMesh",
@@ -1457,7 +1500,9 @@ impl FeatureKind {
             | FeatureKind::Sweep { sketch, profiles, .. }
             | FeatureKind::Emboss { sketch, profiles, .. }
             | FeatureKind::SheetBase { sketch, profiles, .. } => vec![(*sketch, profiles)],
-            FeatureKind::Patch { sketch: Some(sk), profiles, .. } | FeatureKind::SurfaceExtrude { sketch: sk, profiles: Some(profiles), .. } => {
+            FeatureKind::Patch { sketch: Some(sk), profiles, .. }
+            | FeatureKind::SurfaceExtrude { sketch: sk, profiles: Some(profiles), .. }
+            | FeatureKind::SurfaceRevolve { sketch: sk, profiles: Some(profiles), .. } => {
                 vec![(*sk, profiles)]
             }
             FeatureKind::Loft { sections, .. } => sections.iter_mut().filter(|s| s.point.is_none()).map(|s| (s.sketch, &mut s.profiles)).collect(),
@@ -1473,7 +1518,9 @@ impl FeatureKind {
             | FeatureKind::Sweep { sketch, profiles, .. }
             | FeatureKind::Emboss { sketch, profiles, .. }
             | FeatureKind::SheetBase { sketch, profiles, .. } => vec![(*sketch, profiles)],
-            FeatureKind::Patch { sketch: Some(sketch), profiles, .. } | FeatureKind::SurfaceExtrude { sketch, profiles: Some(profiles), .. } => {
+            FeatureKind::Patch { sketch: Some(sketch), profiles, .. }
+            | FeatureKind::SurfaceExtrude { sketch, profiles: Some(profiles), .. }
+            | FeatureKind::SurfaceRevolve { sketch, profiles: Some(profiles), .. } => {
                 vec![(*sketch, profiles)]
             }
             FeatureKind::Loft { sections, .. } => {
@@ -1538,7 +1585,7 @@ impl FeatureKind {
                     v.push(d);
                 }
             }
-            FeatureKind::Revolve { angle, angle2, .. } => {
+            FeatureKind::Revolve { angle, angle2, .. } | FeatureKind::SurfaceRevolve { angle, angle2, .. } => {
                 v.push(angle);
                 v.extend(angle2.iter().map(String::as_str));
             }
@@ -1669,6 +1716,7 @@ impl FeatureKind {
             FeatureKind::Thicken { thickness, .. } => v.push(thickness),
             FeatureKind::SurfaceTrim { plane, .. } => plane_exprs(plane, &mut v),
             FeatureKind::SurfaceExtend { distance, .. } => v.push(distance),
+            FeatureKind::Unstitch { .. } | FeatureKind::ReverseNormal { .. } => {}
             FeatureKind::Patch { .. } => {}
             FeatureKind::Import { .. } | FeatureKind::MeshImport { .. } | FeatureKind::BodyTransfer { .. } => {}
         }
@@ -1723,6 +1771,14 @@ fn inside_str() -> String {
 
 fn all_profiles() -> ProfileSel {
     ProfileSel::All
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_yes(b: &bool) -> bool {
+    *b
 }
 
 fn zero_expr() -> String {

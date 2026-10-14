@@ -789,6 +789,7 @@ mod tests {
         let mut h = crate::scenario::Harness::new();
         h.app.home.open = false;
         h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        let start = h.app.session.undo.len();
         h.app.start("sketch.text");
         h.frames(3);
         h.step(&json!({"click":{"sketch":[0,0]}})).unwrap();
@@ -822,8 +823,11 @@ mod tests {
         assert_eq!(before, (h.app.session.doc.to_json(), h.app.session.undo.len(), h.app.session.redo.len(), h.app.session.revision));
         assert!(h.widget("Pending CAD text").is_some());
         h.step(&json!({"key":"Enter"})).unwrap();
-        assert_ne!(before.0, h.app.session.doc.to_json(), "closing the report must return control to the preserved CAD text");
-        assert_eq!(h.app.session.undo.len(), before.1 + 1);
+        assert!(!crate::sketch_text::editing(&h.app), "closing the report must return control to the preserved CAD text");
+        assert_eq!(h.app.session.undo.len(), start + 1, "placing and typing the text is one undo step");
+        let sid = h.app.session.active_sketch.unwrap();
+        let sk = h.app.session.doc.sketch(sid).unwrap();
+        assert!(sk.links.iter().any(|l| matches!(&l.source, solidcraft_engine::sketch::LinkSource::Text { text, .. } if text == "Pending CAD text")));
     }
 
     #[test]

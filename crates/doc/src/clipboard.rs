@@ -48,6 +48,7 @@ impl FeatureKind {
             }
             FeatureKind::Extrude { sketch, .. }
             | FeatureKind::SurfaceExtrude { sketch, .. }
+            | FeatureKind::SurfaceRevolve { sketch, .. }
             | FeatureKind::Revolve { sketch, .. }
             | FeatureKind::Emboss { sketch, .. }
             | FeatureKind::SheetBase { sketch, .. }
@@ -321,6 +322,8 @@ impl FeatureKind {
             | K::SheetConvert { body, .. }
             | K::SurfaceExtend { body, .. }
             | K::SurfaceTrim { body, .. }
+            | K::Unstitch { body, .. }
+            | K::ReverseNormal { body, .. }
             | K::MeshConvert { body, .. } => mapped_name(body, bodies),
             _ => {}
         }

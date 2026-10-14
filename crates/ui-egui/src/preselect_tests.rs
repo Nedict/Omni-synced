@@ -830,6 +830,59 @@ fn surface_extrude_dialog_takes_profiles_and_curves() {
 }
 
 #[test]
+fn unstitch_and_reverse_normal_dialogs_take_a_body_or_faces() {
+    // A whole box picked: Unstitch sends the body alone; two of its faces: their points.
+    let mut app = app_with(json!([{"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "body_name": "Box"}}]));
+    let mut d = start(&mut app, vec![], "surface.unstitch");
+    d.inputs[0].items = vec![Sel::Body { name: "Box".into() }];
+    let (id, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!((id.as_str(), &p["body"], &p["faces"]), ("surface.unstitch", &json!("Box"), &json!([])), "{p}");
+    let top = Vec3::new(5.0, 5.0, 10.0);
+    d.inputs[0].items = vec![Sel::Face { body: "Box".into(), index: 0, point: top }];
+    let (_, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!(p["faces"], json!([[5.0, 5.0, 10.0]]), "{p}");
+    app.session.execute("surface.unstitch", &p).unwrap();
+    assert_eq!(app.session.model.state().bodies.len(), 2);
+    let fid = app.session.doc.features.last().unwrap().id;
+    assert!(matches!(crate::dialogs::for_feature(&app, fid, None).unwrap().kind, Kind::Surface(_)));
+    app.dialog = None;
+    let sheet = app.session.model.state().bodies.last().unwrap().name.clone();
+    let mut d = start(&mut app, vec![], "surface.reverse_normal");
+    d.inputs[0].items = vec![Sel::Body { name: sheet.clone() }];
+    let (id, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!((id.as_str(), &p["body"]), ("surface.reverse_normal", &json!(sheet)), "{p}");
+    app.session.execute(&id, &p).unwrap();
+}
+
+#[test]
+fn surface_revolve_dialog_takes_curves_and_an_axis() {
+    // A line beside the sketch's y axis, turned a quarter round: a quarter cylinder. Edit
+    // Feature brings back the curve and the axis.
+    let mut app = app_with(json!([
+        {"command": "sketch.create", "params": {"plane": "XY"}},
+        {"command": "sketch.line", "params": {"points": [[3, 0], [3, 4]], "ids": ["side"]}},
+        {"command": "sketch.finish", "params": {}}
+    ]));
+    let mut d = start(&mut app, vec![], "surface.revolve");
+    d.inputs[0].items = vec![Sel::SketchCurve { id: "side".into() }];
+    assert!(apply_commands(&app, &d).is_err(), "no axis yet");
+    d.inputs[1].items = vec![Sel::Axis { name: "y".into() }];
+    if let Kind::Surface(crate::dialogs_surface::Surf::Revolve { angle, .. }) = &mut d.kind {
+        *angle = "90 deg".into();
+    }
+    let (id, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!((id.as_str(), &p["axis"], &p["curves"]), ("surface.revolve", &json!("y"), &json!(["side"])), "{p}");
+    app.session.execute(&id, &p).unwrap();
+    let area = app.session.model.state().bodies.last().unwrap().mesh().measure().area;
+    let want = std::f64::consts::FRAC_PI_2 * 3.0 * 4.0;
+    assert!((area - want).abs() < want * 2e-3, "{area} vs {want}");
+    let fid = app.session.doc.features.last().unwrap().id;
+    let back = crate::dialogs::for_feature(&app, fid, None).unwrap();
+    assert_eq!(back.inputs[0].items, vec![Sel::SketchCurve { id: "side".into() }]);
+    assert_eq!(back.inputs[1].items, vec![Sel::Axis { name: "y".into() }]);
+}
+
+#[test]
 fn patch_dialog_fills_a_loop_of_edges_that_is_not_planar() {
     // A box with its top cut away by a sideways cylinder: its rim is a closed loop of four
     // curved edges, not in a plane. Picking them in the Patch dialog fills it with one face.

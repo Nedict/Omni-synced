@@ -1,5 +1,5 @@
-//! Evaluation of the surface features: Patch, Stitch, Thicken, Trim, Extend and Surface Extrude
-//! (kernel `surfaces`).
+//! Evaluation of the surface features: Patch, Stitch, Thicken, Trim, Extend, Surface Extrude,
+//! Unstitch and Reverse Normal (kernel `surfaces`).
 
 use super::*;
 use solidcraft_geom::Seg2;
@@ -98,23 +98,81 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             let d = val(vals, &extent.distance, Kind::Length)?;
             let off = extent.start_offset.as_deref().map(|e| val(vals, e, Kind::Length)).transpose()?.unwrap_or(0.0);
             let (a, b) = extent_sides(vals, extent, d, extent.direction)?;
-            let mut chains: Vec<Vec<Seg2>> = Vec::new();
-            if let Some(sel) = profiles {
-                for r in solidcraft_sketch::merge_regions(&select_profiles(&ss, sel)?) {
-                    chains.extend(std::iter::once(r.outer).chain(r.holes).map(|lp| lp.segs));
-                }
-            }
-            chains.extend(curve_chains(&ss, curves)?);
-            if chains.is_empty() {
-                return Err(DocError::Invalid("pick the profiles or curves to extrude".into()));
-            }
-            let body = kernel::extrude_sheet(&ss.plane, &chains, a + off, b + off)?;
+            let body = kernel::extrude_sheet(&ss.plane, &sheet_chains(&ss, profiles.as_ref(), curves)?, a + off, b + off)?;
             let name = new_name(st, f, 0);
             st.bodies.push(ModelBody::new(name, body, f.id));
             Ok(())
         }
+        FeatureKind::SurfaceRevolve { sketch, profiles, curves, axis, angle, angle2, symmetric } => {
+            let ss = sketch_in_feature_frame(
+                doc,
+                st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?,
+                f.component,
+            )?;
+            let (o, d) = revolve_axis(&ss, axis)?;
+            let a = val(vals, angle, Kind::Angle)?;
+            let (start, sweep) = match (angle2, symmetric) {
+                (Some(a2), _) => {
+                    let a2 = val(vals, a2, Kind::Angle)?;
+                    (-a2, a + a2)
+                }
+                (None, true) => (-a / 2.0, a),
+                (None, false) => (0.0, a),
+            };
+            let body = kernel::revolve_sheet(&ss.plane, &sheet_chains(&ss, profiles.as_ref(), curves)?, o, d, start, sweep)?;
+            let name = new_name(st, f, 0);
+            st.bodies.push(ModelBody::new(name, body, f.id));
+            Ok(())
+        }
+        FeatureKind::Unstitch { body, faces } => {
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            let (pieces, rest) = kernel::unstitch(&mb.body, faces)?;
+            let source = mb.traced();
+            // The faces left keep the body's name; each face taken out is a new surface body.
+            match rest {
+                Some(rest) => {
+                    if let Some(slot) = st.bodies.get_mut(i) {
+                        *slot = ModelBody::traced_new(mb.name.clone(), source.then(rest), mb.feature);
+                    }
+                }
+                None => {
+                    st.bodies.remove(i);
+                }
+            }
+            for (k, piece) in pieces.into_iter().enumerate() {
+                let name = new_name(st, f, k);
+                st.bodies.push(ModelBody::traced_new(name, source.then(piece), f.id));
+            }
+            Ok(())
+        }
+        FeatureKind::ReverseNormal { body, faces } => {
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            let turned = mb.traced().then(kernel::reverse_faces(&mb.body, faces)?);
+            if let Some(slot) = st.bodies.get_mut(i) {
+                *slot = ModelBody::traced_new(mb.name, turned, mb.feature);
+            }
+            Ok(())
+        }
         _ => Err(DocError::Invalid("not a surface feature".into())),
     }
+}
+
+/// What a surface builder sweeps: the boundary loops of the picked profiles, then the picked
+/// curves chained end to end.
+fn sheet_chains(ss: &SolvedSketch, profiles: Option<&ProfileSel>, curves: &[String]) -> Result<Vec<Vec<Seg2>>> {
+    let mut chains: Vec<Vec<Seg2>> = Vec::new();
+    if let Some(sel) = profiles {
+        for r in solidcraft_sketch::merge_regions(&select_profiles(ss, sel)?) {
+            chains.extend(std::iter::once(r.outer).chain(r.holes).map(|lp| lp.segs));
+        }
+    }
+    chains.extend(curve_chains(ss, curves)?);
+    if chains.is_empty() {
+        return Err(DocError::Invalid("pick the profiles or curves".into()));
+    }
+    Ok(chains)
 }
 
 /// Most sketch curves one feature chains.

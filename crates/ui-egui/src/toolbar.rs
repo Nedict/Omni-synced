@@ -429,6 +429,10 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     export(app, "3mf");
                     close = true;
                 }
+                if item_if(ui, "Export 3MF with Face Tags…", "", shown) {
+                    export_as(app, "3mf", Some("3mf-tagged"));
+                    close = true;
+                }
                 if item_if(ui, "Export OBJ…", "", shown) {
                     export(app, "obj");
                     close = true;
@@ -489,10 +493,18 @@ fn save_as_with_extension(app: &mut SolveApp, extension: &str) {
 }
 
 fn export(app: &mut SolveApp, ext: &str) {
+    export_as(app, ext, None);
+}
+
+/// Export to a file with extension `ext`, in `format` when the extension alone doesn't name it.
+fn export_as(app: &mut SolveApp, ext: &str, format: Option<&str>) {
     let name = format!("{}.{ext}", app.session.doc.name);
-    if let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name, &[ext]))
-        && app.run("file.export", json!({"path": p})).is_ok()
-    {
+    let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name, &[ext])) else { return };
+    let params = match format {
+        Some(f) => json!({"path": p, "format": f}),
+        None => json!({"path": p}),
+    };
+    if app.run("file.export", params).is_ok() {
         app.set_status(format!("Exported {p}"), false);
     }
 }

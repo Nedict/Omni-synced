@@ -221,7 +221,8 @@ impl FeatureKind {
                     pt(&mut t.point);
                 }
             }
-            FeatureKind::Revolve { axis: AxisRef::Line { origin, dir: d }, .. } => {
+            FeatureKind::Revolve { axis: AxisRef::Line { origin, dir: d }, .. }
+            | FeatureKind::SurfaceRevolve { axis: AxisRef::Line { origin, dir: d }, .. } => {
                 pt(origin);
                 dir(d);
             }
@@ -322,6 +323,7 @@ impl FeatureKind {
             FeatureKind::Revolve { .. }
             | FeatureKind::Extrude { .. }
             | FeatureKind::SurfaceExtrude { .. }
+            | FeatureKind::SurfaceRevolve { .. }
             | FeatureKind::Combine { .. }
             | FeatureKind::Loft { .. }
             | FeatureKind::Sweep { .. }
@@ -337,6 +339,7 @@ impl FeatureKind {
             | FeatureKind::MeshConvert { .. }
             | FeatureKind::BodyTransfer { .. } => {}
             FeatureKind::Patch { edges, .. } | FeatureKind::SurfaceExtend { edges, .. } => edges.iter_mut().for_each(pt),
+            FeatureKind::Unstitch { faces, .. } | FeatureKind::ReverseNormal { faces, .. } => faces.iter_mut().for_each(pt),
             FeatureKind::SurfaceTrim { plane, tool, keep, .. } => {
                 map_plane_ref(m, plane);
                 if let Some(t) = tool {

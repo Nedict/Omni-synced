@@ -21,8 +21,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # Every push to main gets its full run; a new PR push replaces the old run.
+  # A new PR push replaces the old run. Only one run per group may wait, so a busy main would
+  # cancel the waiting nightly (or a Run workflow) before it starts: they get groups of their own.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -47,6 +48,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       native: ${{ steps.paths.outputs.native }}
+      kernel: ${{ steps.paths.outputs.kernel }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,12 +61,14 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           native=false
+          kernel=false
           if [ "$EVENT_NAME" != pull_request ]; then
             native=true
           else
             # Compare both old and new paths of renames; unknown paths run native checks.
             git diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/ci-paths"
             while IFS= read -r -d '' path; do
+              case "$path" in crates/kernel/*|vendor/truck-*) kernel=true ;; esac
               case "$path" in
                 .github/workflows/ci.yml) native=true ;;
                 *.rs|Cargo.toml|Cargo.lock|*/Cargo.toml|.cargo/*|rust-toolchain*) native=true ;;
@@ -74,6 +78,7 @@ jobs:
             done < "$RUNNER_TEMP/ci-paths"
           fi
           echo "native=$native" >> "$GITHUB_OUTPUT"
+          echo "kernel=$kernel" >> "$GITHUB_OUTPUT"
 
   checks:
     name: Format and repository checks
@@ -150,7 +155,7 @@ jobs:
 
   tests:
     name: Native Linux tests (${{ matrix.shard }}/4)
-    needs: build-tests
+    needs: [changes, build-tests]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -177,6 +182,16 @@ jobs:
           # the build job's path, which is the same checkout path here.
           cargo nextest run --archive-file tests.tar.zst --workspace-remap . --extract-to . --extract-overwrite \
             --profile ci --partition "slice:$SHARD/4" "${all[@]}"
+      - name: Robustness goldens sample (pull requests that touch the kernel)
+        # Every 8th seed of tests/robustness/goldens.json, a quarter per shard; pushes to main and
+        # the nightly run every seed in the step above.
+        if: github.event_name == 'pull_request' && needs.changes.outputs.kernel == 'true'
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          cargo nextest run --archive-file tests.tar.zst --workspace-remap . --extract-to . --extract-overwrite \
+            --profile ci --ignore-default-filter \
+            -E "package(solidcraft-engine) & test(=tests::robustness_goldens::sample_$((SHARD - 1)))"
       - name: Upload test timings
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

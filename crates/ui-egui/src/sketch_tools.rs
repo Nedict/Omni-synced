@@ -14,8 +14,6 @@ use crate::tools::{Kind, Tool};
 use crate::viewport::{Hit, Proj, pick, sketch_point_at};
 
 thread_local! {
-    /// A placed text waiting for its string (position, text so far).
-    static TEXT: RefCell<Option<(Vec2, String)>> = const { RefCell::new(None) };
     /// Shift held this frame.
     static SHIFT: Cell<bool> = const { Cell::new(false) };
     /// Glyphs drawn this frame (constraint id, screen centre) and the selected one.
@@ -337,8 +335,6 @@ enum Mode {
     Points(usize),
     /// Pick sketch entities; `n` run the command (0: until right-click).
     Entities(usize),
-    /// Pick entities until right-click, then one more pick or point (mirror line, centre).
-    EntitiesThen,
     /// Model faces / sketch curves in steps (see the command).
     Steps,
 }
@@ -361,7 +357,6 @@ fn mode(id: &str) -> Option<Mode> {
         "sketch.circle.three_tangent" => Mode::Entities(3),
         "sketch.constrainer" | "sketch.constraint.polygon" => Mode::Entities(0),
         "sketch.centerline" => Mode::Entities(1),
-        "sketch.pattern.circular" => Mode::EntitiesThen,
         "sketch.project_to_surface" | "sketch.intersection_curve" | "sketch.spun_profile" => Mode::Steps,
         _ => return None,
     })
@@ -419,7 +414,6 @@ pub fn hint(id: &str) -> Option<String> {
             "sketch.constrainer" => "Constrain: click one or two entities; right-click to apply",
             "sketch.constraint.polygon" => "Polygon: click the lines of a closed chain; right-click to apply",
             "sketch.centerline" => "Centerline: click lines",
-            "sketch.pattern.circular" => "Circular pattern: click entities, right-click, then click the centre",
             "sketch.project_to_surface" => "Project to surface: click curves of other sketches, right-click, then click the face",
             "sketch.intersection_curve" => "Intersection curve: click two faces",
             "sketch.spun_profile" => "Spun profile: click the body, then the axis line",
@@ -716,27 +710,6 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
                 tool.pts.clear();
             }
         }
-        Mode::EntitiesThen => {
-            // Stage 2 (after a right-click) is marked by a "|" pick.
-            if tool.picks.last().is_some_and(|x| x == "|") {
-                let ents: Vec<String> = tool.picks.iter().filter(|x| *x != "|").cloned().collect();
-                // `sketch.pattern.rectangular` left this flow for a tool window: its count was
-                // hard-coded to 3 here and the command's second count and spacing could not be
-                // reached at all. The circular pattern is the last command still on it.
-                if cmd == "sketch.pattern.circular"
-                    && let Some(p) = at
-                {
-                    let _ = app.run(cmd, json!({"entities": ents, "center": arg(&p), "count": 6}));
-                    tool.picks.clear();
-                }
-                return;
-            }
-            if let Some((id, _)) = sketch_entity(app, &hits)
-                && !tool.picks.contains(&id)
-            {
-                tool.picks.push(id);
-            }
-        }
         Mode::Steps => match cmd {
             "sketch.intersection_curve" => {
                 if let Some(r) = hits.iter().find_map(|h| model_ref(app, h)).filter(|r| r.get("face").is_some()) {
@@ -822,8 +795,7 @@ fn run_points(app: &mut SolveApp, t: &Tool) {
             _ => return,
         },
         ("sketch.text", [at]) => {
-            let at = at.0;
-            TEXT.with(|t| *t.borrow_mut() = Some((at, String::new())));
+            crate::sketch_text::place(app, at.0, round_nice(app.cam.half_height() * 0.1));
             return;
         }
         _ => return,
@@ -868,7 +840,7 @@ pub fn finish(app: &mut SolveApp, tool: &mut Tool) -> bool {
             tool.pts.clear();
             true
         }
-        Mode::EntitiesThen | Mode::Steps if !tool.picks.is_empty() && tool.picks.last().is_some_and(|x| x != "|") => {
+        Mode::Steps if !tool.picks.is_empty() && tool.picks.last().is_some_and(|x| x != "|") => {
             tool.picks.push("|".into());
             true
         }
@@ -1149,7 +1121,7 @@ fn snap_hint(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     painter.text(r.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(10.0), tk.text);
 }
 
-/// Per frame, after the viewport is drawn: constraint glyphs and the text-entry box.
+/// Per frame, after the viewport is drawn: constraint glyphs, snap hints and analysis marks.
 pub fn show(app: &mut SolveApp, ui: &egui::Ui, painter: &egui::Painter, proj: &Proj) {
     SHIFT.with(|c| c.set(ui.input(|i| i.modifiers.shift)));
     glyphs(app, painter, proj, ui.input(|i| i.pointer.hover_pos()).filter(|_| ui.rect_contains_pointer(proj.rect)));
@@ -1160,39 +1132,6 @@ pub fn show(app: &mut SolveApp, ui: &egui::Ui, painter: &egui::Painter, proj: &P
     }
     marks(app, painter, proj);
     iso_lines(app, painter, proj);
-    text_entry(app, ui.ctx());
-}
-
-/// The text-entry box for a placed text.
-fn text_entry(app: &mut SolveApp, ctx: &egui::Context) {
-    let Some((at, mut text)) = TEXT.with(|t| t.borrow_mut().take()) else { return };
-    let mut done = None;
-    crate::frame::window(ctx, crate::i18n::tr_label("Text"), crate::frame::Width::Normal)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-        .show(ctx, |ui| {
-            let r = ui.text_edit_singleline(&mut text);
-            r.request_focus();
-            ui.horizontal(|ui| {
-                if ui.button("OK").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    done = Some(true);
-                }
-                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    done = Some(false);
-                }
-            });
-        });
-    match done {
-        Some(true) => {
-            if !text.trim().is_empty() {
-                let h = round_nice(app.cam.half_height() * 0.1);
-                let _ = app.run("sketch.text", json!({"text": text, "at": xy(at), "height": h}));
-            }
-        }
-        Some(false) => {}
-        None => TEXT.with(|t| *t.borrow_mut() = Some((at, text))),
-    }
 }
 
 #[cfg(test)]

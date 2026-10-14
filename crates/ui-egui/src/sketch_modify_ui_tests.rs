@@ -519,3 +519,96 @@ fn the_spacing_gets_a_canvas_arrow_along_the_pattern_direction() {
     let (_, dir) = crate::canvas::anchor(&h.app, &d).expect("an anchor on the picked curve");
     assert_eq!(dir, Some(solidcraft_engine::geom::Vec3::Y));
 }
+
+/// A sketch holding one circle 30 mm out and a lone point at the origin, with the circular
+/// pattern window open on it and both inputs filled. The point is the centre the pattern turns
+/// around; the command has no default for it. Returns the centre's bare point id.
+fn open_circ() -> (crate::scenario::Harness, String) {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+    h.app.run("sketch.point", json!({"point": [0, 0]})).unwrap();
+    h.app.run("sketch.circle.center", json!({"center": [30, 0], "radius": 10})).unwrap();
+    h.settle();
+    let sid = h.app.session.active_sketch.unwrap();
+    let (curve, centre) = {
+        let st = h.app.session.model.state();
+        let sk = &st.sketch(sid).unwrap().sketch;
+        let curve = sk.curves[0].id.clone();
+        let centre = sk.points.iter().find(|p| p.pos.len() < 1e-9).unwrap().id.clone();
+        (curve, centre)
+    };
+    h.step(&json!({"start": "sketch.pattern.circular"})).unwrap();
+    let d = h.app.dialog.as_mut().unwrap();
+    d.inputs[0].items = vec![Sel::SketchCurve { id: curve }];
+    d.inputs[1].items = vec![Sel::SketchPoint { id: format!("{sid}:{centre}") }];
+    (h, centre)
+}
+
+fn circ(h: &mut crate::scenario::Harness, count: &str, angle: &str) {
+    let d = h.app.dialog.as_mut().expect("the window opened");
+    if let Kind::SketchModify(Mod::PatternCirc { count: c, angle: a }) = &mut d.kind {
+        *c = count.into();
+        *a = angle.into();
+    } else {
+        panic!("not the circular pattern window: {:?}", d.kind);
+    }
+}
+
+#[test]
+fn circular_pattern_window_opens_instead_of_a_click_tool() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
+    h.settle();
+    h.step(&json!({"start": "sketch.pattern.circular"})).unwrap();
+    assert!(h.app.tool.is_none(), "the click tool still takes the command");
+    let d = h.app.dialog.as_ref().expect("the window opened");
+    assert!(matches!(d.kind, Kind::SketchModify(Mod::PatternCirc { .. })), "{:?}", d.kind);
+    assert_eq!(d.inputs.iter().map(|i| i.label).collect::<Vec<_>>(), vec!["Entities", "Center"]);
+}
+
+#[test]
+fn the_typed_count_and_total_angle_reach_the_command() {
+    let (mut h, centre) = open_circ();
+    circ(&mut h, "4", "180");
+    let d = h.app.dialog.clone().unwrap();
+    let cmds = apply_commands(&h.app, &d).unwrap();
+    assert_eq!(cmds.len(), 1);
+    assert_eq!(cmds[0].0, "sketch.pattern.circular");
+    // The click flow could only ever send a count of 6, and never any angle.
+    assert_eq!(cmds[0].1["count"], json!(4));
+    assert_eq!(cmds[0].1["angle"], json!(180.0));
+    assert_eq!(cmds[0].1["center"], json!(centre), "the bare point id the command resolves");
+    circ(&mut h, "4", "90 deg");
+    let d = h.app.dialog.clone().unwrap();
+    assert_eq!(apply_commands(&h.app, &d).unwrap()[0].1["angle"], json!(90.0));
+}
+
+/// The same lesson as upstream #218: `num` reads a JSON number only, and `sketch.pattern.circular`
+/// falls back to a full turn when `angle` is anything else. An expression has to be evaluated
+/// here or it disappears in silence.
+#[test]
+fn an_angle_expression_is_evaluated_rather_than_sent_as_a_string() {
+    let (mut h, _) = open_circ();
+    h.app.run("parameters.add", json!({"name": "sweep", "expression": "120", "unit": "deg"})).unwrap();
+    circ(&mut h, "3", "sweep");
+    let d = h.app.dialog.clone().unwrap();
+    let angle = apply_commands(&h.app, &d).unwrap()[0].1["angle"].as_f64().expect("a number, not the text `sweep`");
+    assert!((angle - 120.0).abs() < 1e-9, "{angle}");
+}
+
+#[test]
+fn a_missing_centre_a_short_count_and_a_bad_angle_are_all_refused() {
+    let (mut h, _) = open_circ();
+    for bad in ["0", "400 deg", "wat"] {
+        circ(&mut h, "4", bad);
+        let d = h.app.dialog.clone().unwrap();
+        assert!(apply_commands(&h.app, &d).unwrap_err().contains("Total angle"), "angle {bad} was accepted");
+    }
+    circ(&mut h, "1", "360 deg");
+    let d = h.app.dialog.clone().unwrap();
+    assert!(apply_commands(&h.app, &d).unwrap_err().contains("Quantity"));
+    circ(&mut h, "4", "360 deg");
+    h.app.dialog.as_mut().unwrap().inputs[1].items.clear();
+    let d = h.app.dialog.clone().unwrap();
+    assert!(apply_commands(&h.app, &d).unwrap_err().contains("centre"));
+}

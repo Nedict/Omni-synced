@@ -467,6 +467,15 @@ fn span_of(solid: &Solid) -> f64 {
     if lo.x.is_finite() { (hi - lo).len() } else { 1.0 }
 }
 
+/// Equal shared values: the same allocation (a clone of the body), else equal contents.
+fn same_shared<T: PartialEq>(a: &Option<std::sync::Arc<T>>, b: &Option<std::sync::Arc<T>>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b) || a == b,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
 impl Body {
     /// The very same body (shared data), not just an equal-looking one. Its history (how an
     /// operation made it) is not part of it: an operation that leaves a body as it is (a cut by
@@ -479,9 +488,9 @@ impl Body {
                 _ => false,
             }
             && self.color == other.color
-            && self.paint == other.paint
-            && self.splits == other.splits
-            && self.face_sources == other.face_sources
+            && same_shared(&self.paint, &other.paint)
+            && same_shared(&self.splits, &other.splits)
+            && same_shared(&self.face_sources, &other.face_sources)
             && self.regularization_protected == other.regularization_protected
     }
 
@@ -939,7 +948,16 @@ impl Body {
         if let Some(m) = &self.mesh {
             return m.positions.len() * 24 + m.triangles.len() * 12;
         }
-        self.solid.face_iter().count() * 2048 + self.solid.edge_iter().count() * 512 + self.solid.vertex_iter().count() * 96
+        // Counted on the borrowed boundaries: `Solid::edge_iter` and `vertex_iter` clone every
+        // face's wires to walk them, which made this estimate (taken after every feature, over
+        // every body) cost more than evaluating most features. Each edge use is one edge and
+        // one vertex in those iterators, so the counts are the same.
+        let (mut faces, mut uses) = (0usize, 0usize);
+        for face in self.solid.face_iter() {
+            faces += 1;
+            uses += face.absolute_boundaries().iter().map(|w| w.len()).sum::<usize>();
+        }
+        faces * 2048 + uses * (512 + 96)
     }
 
     /// Distinct edges in a stable order (the order of `edges()` and `tessellate().edges`).
@@ -1093,9 +1111,21 @@ impl Body {
         has.iter().filter(|h| !**h).count()
     }
 
-    /// Display mesh: like [`Body::tessellate`], with seam edges flagged.
+    /// Display mesh: like [`Body::tessellate`], with seam edges flagged. Meshed from the
+    /// body's [`Body::display_plan`] (shared edge nodes, structured grids), or the way
+    /// [`Body::tessellate`] meshes when no plan can be made.
     pub fn display_mesh(&self, tol: f64) -> Result<Mesh> {
-        self.flagged(self.tessellate(tol)?)
+        if self.is_mesh() {
+            return self.flagged(self.tessellate(tol)?);
+        }
+        let m = match self.display_plan(tol) {
+            Ok(plan) => plan.evaluate(),
+            Err(e) => {
+                log::debug!("display mesh: {e}; meshing the reference way");
+                self.tessellate(tol)?
+            }
+        };
+        self.flagged(m)
     }
 
     /// Display mesh whose curved faces and edges look curved whatever the body's size: like
@@ -1104,6 +1134,30 @@ impl Body {
     /// sagitta of a small radius on a large body (a sheet-metal bend, a small hole), which the
     /// tolerance alone leaves as one flat facet.
     pub fn display_mesh_angular(&self, tol: f64, angle: f64) -> Result<Mesh> {
+        if self.is_mesh() {
+            return self.flagged(self.tessellate(tol)?);
+        }
+        match self.display_plan_angular(tol, angle) {
+            Ok(plan) => self.display_mesh_of(&plan),
+            Err(e) => {
+                log::debug!("display mesh: {e}; meshing the reference way");
+                self.reference_display_mesh_angular(tol, angle)
+            }
+        }
+    }
+
+    /// The display mesh of a plan made from this body ([`Body::display_plan`],
+    /// [`Body::display_plan_angular`]): evaluated on the CPU, with its edges flagged.
+    pub fn display_mesh_of(&self, plan: &solidcraft_geom::tess::TessPlan) -> Result<Mesh> {
+        self.flagged(plan.evaluate())
+    }
+
+    /// The reference mesher's angular display mesh: what [`Body::display_mesh_angular`] falls
+    /// back to when no plan can be made.
+    pub fn reference_display_mesh_angular(&self, tol: f64, angle: f64) -> Result<Mesh> {
+        if self.is_mesh() {
+            return self.flagged(self.tessellate(tol)?);
+        }
         self.flagged(self.tessellate_within(tol, angle, false)?)
     }
 

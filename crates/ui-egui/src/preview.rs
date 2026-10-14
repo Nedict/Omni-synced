@@ -55,6 +55,8 @@ pub struct PreviewState {
     /// Key of the commands whose result (or error) is shown.
     shown_key: Option<u64>,
     running: Option<(u64, Receiver<Job>)>,
+    /// Inputs of an in-flight joint preview, excluding only its driven values.
+    running_motion_key: Option<u64>,
     /// Bodies the preview stands in for (hidden in the model scene).
     pub replaced: Vec<String>,
     /// The preview scene for the GPU and its key (changes whenever the scene does).
@@ -80,6 +82,7 @@ pub struct PreviewState {
 impl PreviewState {
     fn clear(&mut self) {
         self.running = None;
+        self.running_motion_key = None;
         self.shown_key = None;
         self.error = None;
         self.applied = None;
@@ -123,7 +126,7 @@ impl PreviewState {
 
     /// Errors validate only the current inputs. Keep the last good geometry while
     /// computing new inputs, but never let an obsolete result block their Apply.
-    fn poll(&mut self, key: u64) {
+    fn poll(&mut self, key: u64, motion_key: Option<u64>) {
         if self.shown_key != Some(key) {
             self.error = None;
         }
@@ -136,12 +139,44 @@ impl PreviewState {
             };
             if let Some(job) = job {
                 self.running = None;
-                if k == key {
+                let intermediate = motion_key.is_some() && self.running_motion_key == motion_key && matches!(&job, Ok(b) if b.error.is_none());
+                self.running_motion_key = None;
+                // A held slider or animation may advance faster than the worker. Show
+                // completed poses from the same joint setup, then compute the latest.
+                // Errors and results from different setups still require an exact key.
+                if k == key || intermediate {
                     self.apply(k, job);
                 }
             }
         }
     }
+}
+
+/// Joint motion can stream successful intermediate poses while values change. Include
+/// every other input, the document revision and colours so a different joint, changed
+/// limits, feature dialog or document cannot reuse an obsolete pose.
+fn motion_key(cmds: &[(String, Value)], revision: u64, colors: Colors) -> Option<u64> {
+    if !cmds.iter().any(|(c, p)| c == "joint.drive" || c == "joint.create" && p.get("values").is_some())
+        || !cmds.iter().all(|(c, _)| matches!(c.as_str(), "joint.drive" | "joint.create" | "joint.as_built" | "joint.edit" | "joint.limits"))
+    {
+        return None;
+    }
+    let mut setup = cmds.to_vec();
+    for (command, params) in &mut setup {
+        if matches!(command.as_str(), "joint.drive" | "joint.create")
+            && let Some(p) = params.as_object_mut()
+        {
+            p.remove("values");
+            if command == "joint.drive" {
+                p.remove("value");
+            }
+        }
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(&setup).ok()?.hash(&mut h);
+    revision.hash(&mut h);
+    format!("{colors:?}").hash(&mut h);
+    Some(h.finish())
 }
 
 /// Keep the preview in step with the open dialog: start a computation when its inputs changed,
@@ -166,10 +201,12 @@ pub fn update(app: &mut SolveApp, ctx: &egui::Context) {
     app.session.revision.hash(&mut h);
     format!("{colors:?}").hash(&mut h);
     let key = h.finish();
+    let motion_key = motion_key(&cmds, app.session.revision, colors);
     let pv = &mut app.preview;
-    pv.poll(key);
+    pv.poll(key, motion_key);
     if pv.running.is_none() && pv.shown_key != Some(key) {
         pv.started = crate::now_ms();
+        pv.running_motion_key = motion_key;
         let scratch = app.session.scratch();
         spawn(&mut app.preview, key, scratch, cmds, colors);
     }
@@ -528,14 +565,14 @@ mod tests {
         };
         let (tx, rx) = std::sync::mpsc::channel();
         pv.running = Some((1, rx));
-        pv.poll(2);
+        pv.poll(2, None);
         assert!(pv.error.is_none(), "the corrected inputs can Apply while their preview computes");
         assert!(pv.running.is_some());
         assert!(pv.active);
         assert_eq!(pv.replaced, ["Turn"]);
         assert_eq!(pv.key, 9, "the last good geometry stays visible");
         tx.send(Err("unknown_angle".into())).unwrap();
-        pv.poll(2);
+        pv.poll(2, None);
         assert!(pv.error.is_none(), "a late obsolete result cannot disable Apply again");
         assert!(pv.running.is_none());
         assert_eq!(pv.shown_key, Some(1));
@@ -544,11 +581,97 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         pv.running = Some((2, rx));
         tx.send(Err("current invalid expression".into())).unwrap();
-        pv.poll(2);
+        pv.poll(2, None);
         assert_eq!(pv.error.as_deref(), Some("current invalid expression"));
         assert_eq!(pv.shown_key, Some(2));
-        pv.poll(2);
+        pv.poll(2, None);
         assert_eq!(pv.error.as_deref(), Some("current invalid expression"), "current errors still prevent invalid Apply");
+    }
+
+    fn pose() -> Built {
+        Built { scene: GpuScene::default(), replaced: vec!["Lid".into()], error: None, bounds: Aabb3::EMPTY, applied: None, tapered: Vec::new() }
+    }
+
+    /// The worker completes while the slider is still held or Play keeps advancing.
+    /// Intermediate successful poses must reach the viewport, and the final value
+    /// must still be computed rather than treating that intermediate pose as current.
+    #[test]
+    fn joint_motion_shows_completed_poses_while_inputs_keep_advancing() {
+        let mut pv = PreviewState::default();
+        for (running, wanted) in [(1, 2), (2, 3), (3, 4)] {
+            let (tx, rx) = std::sync::mpsc::channel();
+            pv.running = Some((running, rx));
+            pv.running_motion_key = Some(42);
+            pv.poll(wanted, Some(42));
+            assert!(pv.running.is_some());
+            tx.send(Ok(pose())).unwrap();
+            pv.poll(wanted, Some(42));
+            assert!(pv.active, "motion should be visible before input stops");
+            assert_eq!(pv.replaced, ["Lid"]);
+            assert_eq!(pv.key, running, "every completed pose reaches the scene");
+            assert_eq!(pv.shown_key, Some(running));
+            assert_ne!(pv.shown_key, Some(wanted), "the latest pose still needs a job");
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        pv.running = Some((4, rx));
+        pv.running_motion_key = Some(42);
+        tx.send(Ok(pose())).unwrap();
+        pv.poll(4, Some(42));
+        assert_eq!(pv.shown_key, Some(4), "release catches up to the exact final pose");
+        assert!(pv.running.is_none());
+    }
+
+    #[test]
+    fn intermediate_motion_rejects_other_setups_and_obsolete_errors() {
+        for (context, job) in [
+            (None, Ok(pose())),
+            (Some(43), Ok(pose())),
+            (Some(42), Err("old invalid value".into())),
+            (Some(42), Ok(Built { error: Some("old tool preview error".into()), ..pose() })),
+        ] {
+            let mut pv = PreviewState { running_motion_key: Some(42), ..PreviewState::default() };
+            let (tx, rx) = std::sync::mpsc::channel();
+            pv.running = Some((1, rx));
+            tx.send(job).unwrap();
+            pv.poll(2, context);
+            assert!(!pv.active);
+            assert!(pv.error.is_none(), "obsolete errors must not block Apply");
+            assert!(pv.running.is_none());
+        }
+    }
+
+    #[test]
+    fn motion_context_changes_only_when_the_joint_setup_changes() {
+        let commands = |angle| {
+            vec![
+                ("joint.edit".into(), json!({"joint": 1, "flip": true})),
+                ("joint.limits".into(), json!({"joint": 1, "min": "-135 deg", "max": "0 deg"})),
+                ("joint.drive".into(), json!({"joint": 1, "values": [angle]})),
+            ]
+        };
+        let key = motion_key(&commands("-30 deg"), 7, colors());
+        assert!(key.is_some());
+        assert_eq!(key, motion_key(&commands("-60 deg"), 7, colors()));
+        assert_ne!(key, motion_key(&commands("-60 deg"), 8, colors()));
+        let mut different = commands("-60 deg");
+        different[2].1["joint"] = json!(2);
+        assert_ne!(key, motion_key(&different, 7, colors()));
+        different = commands("-60 deg");
+        different[1].1["min"] = json!("-90 deg");
+        assert_ne!(key, motion_key(&different, 7, colors()));
+        different = commands("-60 deg");
+        different[0].1["flip"] = json!(false);
+        assert_ne!(key, motion_key(&different, 7, colors()));
+        let mut other_colors = colors();
+        other_colors.body = [9, 9, 9, 255];
+        assert_ne!(key, motion_key(&commands("-60 deg"), 7, other_colors));
+        assert!(motion_key(&[("solid.extrude".into(), json!({"distance": 10}))], 7, colors()).is_none());
+        for command in ["joint.create", "joint.drive"] {
+            assert_eq!(
+                motion_key(&[(command.into(), json!({"joint": 1, "values": [0]}))], 7, colors()),
+                motion_key(&[(command.into(), json!({"joint": 1, "values": [90]}))], 7, colors()),
+            );
+        }
     }
 
     /// Combine previews its result (cut, join or intersect between existing bodies) without an

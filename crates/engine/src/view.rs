@@ -107,7 +107,7 @@ pub fn sketch_lines_with_sampler(
 ) -> Vec<(Vec<Vec3>, Rgb, bool)> {
     let mut out = Vec::new();
     for (i, c) in sk.curves.iter().enumerate() {
-        if c.link.is_some() && sk.view.hide_projected && !sk.is_text_curve(i) {
+        if !sketch_curve_visible(sk, i) {
             continue;
         }
         let col = if c.link.is_some() && !sk.is_text_curve(i) {
@@ -149,6 +149,24 @@ pub fn sketch_lines_with_sampler(
         out.push((w.pts.clone(), col, false));
     }
     out
+}
+
+/// Should sketch curve `i` be drawn and picked? The Sketch Palette's two geometry toggles each
+/// hide one category, and a curve belongs to the category its colour already names in
+/// [`sketch_lines_with_sampler`]: a linked curve is projected reference geometry (Projected
+/// Geometries), anything else carrying the `construction` line type is construction geometry
+/// (Construction Geometries). Text outlines are linked curves that the Text feature draws, so
+/// they are never reference geometry and always show. Centerlines are their own line type and
+/// no toggle hides them.
+///
+/// Drawing and picking share this one answer so they cannot drift: geometry that is not on
+/// screen is never clickable, and geometry on screen always is.
+pub fn sketch_curve_visible(sk: &Sketch, i: usize) -> bool {
+    let Some(c) = sk.curves.get(i) else { return false };
+    if c.link.is_some() && !sk.is_text_curve(i) {
+        return !sk.view.hide_projected;
+    }
+    !(c.construction && sk.view.hide_construction)
 }
 
 /// Should sketch point `i` be drawn? Text outlines' points are not (they are not picked or
