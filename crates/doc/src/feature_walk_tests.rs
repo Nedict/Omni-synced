@@ -113,6 +113,10 @@ fn fixtures() -> Vec<(&'static str, Value)> {
         ),
         ("sheet_hem", json!({"type": "sheet_hem", "edges": [o], "length": "hem.length", "gap": "hem.gap"})),
         (
+            "sheet_perforate",
+            json!({"type": "sheet_perforate", "diameter": "perforate.diameter", "pitch": "perforate.pitch", "margin": "perforate.margin"}),
+        ),
+        (
             "sheet_fold",
             json!({"type": "sheet_fold", "a": o, "b": [1, 0, 0], "angle": "fold.angle", "radius": "fold.radius", "position": "centerline"}),
         ),
