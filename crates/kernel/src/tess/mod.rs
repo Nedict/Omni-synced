@@ -18,8 +18,10 @@
 
 pub(crate) mod cdt;
 pub(crate) mod coons;
+pub(crate) mod cutgrid;
 pub(crate) mod edges;
 pub(crate) mod grid;
+pub(crate) mod motorcycle;
 pub(crate) mod size;
 pub(crate) mod ssi;
 pub(crate) mod surface;
@@ -362,12 +364,29 @@ fn plan_face(
                 r
             }
             None => {
-                if planar {
-                    stats.planar += 1;
+                // A curved face neither box nor four-cornered: the iso-line grid cut along its
+                // motorcycle traces and trimmed by its boundary, else Delaunay. (A plane is
+                // shaded the same by any triangles, and its Delaunay needs no refinement.)
+                let trimmed = if planar {
+                    None
                 } else {
-                    stats.delaunay += 1;
+                    let traces = motorcycle::traces(&uvs, &ranges, speed, 0.25 * h);
+                    cutgrid::cut_grid(&uvs, &ranges, &us, &vs, &traces, speed)
+                };
+                match trimmed {
+                    Some(r) => {
+                        stats.structured += 1;
+                        r
+                    }
+                    None => {
+                        if planar {
+                            stats.planar += 1;
+                        } else {
+                            stats.delaunay += 1;
+                        }
+                        delaunay()?
+                    }
                 }
-                delaunay()?
             }
         }
     };

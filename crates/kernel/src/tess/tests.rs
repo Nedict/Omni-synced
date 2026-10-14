@@ -108,13 +108,14 @@ fn holes_and_trimmed_faces_are_watertight() {
     let bx = ok(crate::box_solid(Vec3::ZERO, Vec3::new(10.0, 10.0, 4.0)));
     let pin = ok(crate::cylinder(Vec3::new(5.0, 5.0, -1.0), Vec3::Z, 2.0, 6.0));
     check("box with a hole", &cut(&bx, &pin), tol, 400.0 - PI * 4.0 * 4.0);
-    // A cylinder with a cross hole: trimmed cylinder halves (Delaunay) and intersection-curve walls.
+    // A cylinder with a cross hole: trimmed cylinder halves (an iso-line grid cut by the hole)
+    // and intersection-curve walls; no face needs Delaunay.
     let cyl = ok(crate::cylinder(Vec3::new(5.0, 5.0, -1.0), Vec3::Z, 2.0, 6.0));
     let cross = ok(crate::cylinder(Vec3::new(5.0, -1.0, 2.0), Vec3::Y, 1.0, 12.0));
     let body = cut(&cyl, &cross);
     let (m, stats) = plan_body(&body, tol);
     assert_watertight(&m, "cross hole");
-    assert!(stats.delaunay > 0, "{stats:?}");
+    assert_eq!(stats.delaunay, 0, "{stats:?}");
     // Against the reference mesher's volume (no closed form for the two-cylinder intersection).
     let Ok(reference) = body.tessellate(tol * 0.2) else { panic!("reference mesh") };
     let (a, b) = (m.measure().volume, reference.measure().volume);
