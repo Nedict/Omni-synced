@@ -417,8 +417,17 @@ impl PolyBoundaryPiece {
                 poly_edge.into_iter().take(n)
             })
             .collect();
+        // SolidCraft: each point is searched from the one before it, but the first has no
+        // hint, and a search without one can miss a point that lies on the surface (a corner of
+        // a fillet strip on a surface extended past it, #882): the whole face was then left
+        // unmeshed. The walk starts at the first point found without a hint instead (its own
+        // parameters are the hint the walk starts from).
+        let start = bdry3d.iter().enumerate().find_map(|(k, pt)| sp(surface, *pt, None).map(|uv| (k, uv)));
+        if let Some((k, _)) = start {
+            bdry3d.rotate_left(k);
+        }
         bdry3d.push(bdry3d[0]);
-        let mut previous = None;
+        let mut previous = start.map(|(_, uv)| uv);
         let mut vec = bdry3d
             .into_iter()
             .flat_map(|pt| {

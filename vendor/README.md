@@ -59,6 +59,11 @@ Changes:
   This prevents huge arbitrary pole parameters from corrupting trimmed meshes (#796),
   while retaining genuine extrapolation for unbounded planes. Work is bounded to four
   endpoint evaluations per projected point; no search or tessellation tolerance is relaxed.
+- `tessellation/triangulation.rs`: a boundary loop is projected onto its surface starting from
+  the first point an unhinted search finds (each later point is searched from the one before).
+  An unhinted search can miss a point that lies on the surface, such as the corner of a fillet strip on
+  a surface extended past it, and the face was then left unmeshed, which also failed every
+  boolean with the body (#882). Loops whose first point is found are walked as before.
 - `tessellation/triangulation.rs`: the inside test of a face's boundary skips loops whose
   parameter box is clear of the point (it tested every segment of every loop, so a face with
   hundreds of holes meshed in quadratic time).

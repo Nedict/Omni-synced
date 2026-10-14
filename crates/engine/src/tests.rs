@@ -282,6 +282,7 @@ mod loft_cut;
 mod mirror_planes;
 mod path_scope;
 mod primitive_points;
+mod rim_cut;
 mod robustness;
 mod robustness_goldens;
 mod spiral_join;
