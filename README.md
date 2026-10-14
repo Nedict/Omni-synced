@@ -196,7 +196,8 @@ A script is a JSON list of commands, the same ones the UI runs:
 **File → Export Design as Script…** (`file.export` with `format: "script"`) turns an existing
 design into one: `doc.open` with everything but the timeline, then a `timeline.append` per
 feature. `solidcraft-cli eval` replays it into the same design, and deleting steps from the end
-cuts a bug report down to the feature that fails.
+cuts a bug report down to the feature that fails. **File → Open** opens a script as the
+unsaved design it builds, with no file access while it runs.
 
 ## AI agents (MCP)
 

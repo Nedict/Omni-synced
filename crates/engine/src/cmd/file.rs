@@ -17,7 +17,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solidcraft design, or a .step/.stp file (opens as a new design) | design: a design as its file holds it, in JSON (opens unsaved; the first step of a script from file.export format script)"),
+        .params("path: .solidcraft design, a command script (.json with `commands`: opens as the design it builds, unsaved, without file access), or a .step/.stp file (opens as a new design) | design: a design as its file holds it, in JSON (opens unsaved; the first step of a script from file.export format script)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -141,7 +141,26 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
         return Ok(json!({"path": path, "features": s.doc.features.len(), "errors": errors, "bodies": r["bodies"], "warnings": r["warnings"]}));
     }
-    let mut doc = solidcraft_io::read_design_file(path, s.open_preview.take()).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    let mut doc = match solidcraft_io::read_design_file(path, s.open_preview.take()) {
+        Ok(doc) => doc,
+        Err(e) => match super::script::run_file(path) {
+            // A command script opens as the design it builds, unsaved: saving must not write a
+            // design over the script.
+            Some(fresh) => {
+                let mut fresh = fresh.map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+                if let Some(stem) = default_name_for(&fresh.doc.name, path) {
+                    fresh.doc_mut().name = stem;
+                }
+                fresh.undo.clear();
+                fresh.redo.clear();
+                fresh.mark_unsaved();
+                s.replace_design(fresh);
+                let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
+                return Ok(json!({"path": path, "features": s.doc.features.len(), "errors": errors, "name": s.doc.name, "script": true}));
+            }
+            None => return Err(EngineError::Other(format!("{path}: {e}"))),
+        },
+    };
     if let Some(stem) = default_name_for(&doc.name, path) {
         doc.name = stem;
     }

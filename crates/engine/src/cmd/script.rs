@@ -1,7 +1,7 @@
 //! A design as a command script (#886). `file.export` with `format: script` writes `doc.open`
 //! of everything but the timeline, then one `timeline.append` per feature, so
 //! `solidcraft-cli eval` replays the design step by step and a repro is trimmed by deleting
-//! steps from the end.
+//! steps from the end. `doc.open` of a script file builds its design without file access.
 
 use std::sync::Arc;
 
@@ -63,6 +63,20 @@ fn script(s: &Session) -> (Value, Vec<&'static str>) {
     }
     let description = format!("{}: the design's timeline, one feature per step (solidcraft-cli eval replays it)", design.name);
     (json!({"description": description, "commands": commands}), left_out)
+}
+
+/// A command script file run on a new design (`doc.open` of a script), or `None` when `path`
+/// holds no script (a JSON object with `commands` and no `format`). The script runs with no
+/// file access, so opening someone's script can't read, write or delete files.
+pub fn run_file(path: &str) -> Option<Result<Session>> {
+    let text = solidcraft_io::vfs::read_to_string(path, solidcraft_io::MAX_DESIGN_BYTES).ok()?;
+    let script: Value = serde_json::from_str(&text).ok()?;
+    if script.get("format").is_some() || !script.get("commands").is_some_and(Value::is_array) {
+        return None;
+    }
+    let mut fresh = Session::default();
+    let ran = solidcraft_io::vfs::scoped(Some(solidcraft_io::vfs::PathScope::default()), || fresh.run_script(&script));
+    Some(ran.map(|_| fresh))
 }
 
 /// `file.export` with `format: script`.
@@ -194,6 +208,55 @@ mod tests {
         let e = r.execute("solid.box", &json!({"length": 1, "width": 1, "height": 1}));
         assert!(matches!(e, Err(crate::EngineError::Other(_))), "{e:?}");
         assert_eq!(r.doc, before);
+    }
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("solidcraft-script-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_script_file_opens_as_the_design_it_builds_unsaved() {
+        let mut s = design();
+        let dir = temp_dir("open");
+        let file = dir.join("part.json").to_string_lossy().to_string();
+        run(&mut s, "file.export", json!({"path": file, "format": "script"}));
+        let mut r = Session::default();
+        let out = run(&mut r, "doc.open", json!({"path": file}));
+        assert_eq!(out["script"], true, "{out}");
+        let mut want = (*s.doc).clone();
+        want.timeline_groups.clear();
+        want.name = "part".into(); // an unnamed design takes its file's name, as a design file's does
+        assert_eq!(*r.doc, want);
+        assert_eq!(r.path, None, "saving must not write a design over the script");
+        assert!(r.is_dirty());
+        assert!(r.undo.is_empty() && r.redo.is_empty());
+        // Not a script: the design reader's own error, as before.
+        let other = dir.join("other.json").to_string_lossy().to_string();
+        std::fs::write(&other, r#"{"x": 1}"#).unwrap();
+        assert!(r.execute("doc.open", &json!({"path": other})).is_err());
+        assert_eq!(*r.doc, want);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_opened_script_cannot_reach_files() {
+        let dir = temp_dir("sandbox");
+        let file = dir.join("evil.json").to_string_lossy().to_string();
+        let target = dir.join("written.stl");
+        let script = json!({"commands": [
+            {"command": "solid.box", "params": {"length": 1, "width": 1, "height": 1}},
+            {"command": "file.export", "params": {"path": target.to_string_lossy()}}
+        ]});
+        std::fs::write(&file, script.to_string()).unwrap();
+        let mut r = Session::default();
+        let before = r.doc.clone();
+        let e = r.execute("doc.open", &json!({"path": file}));
+        assert!(e.is_err(), "{e:?}");
+        assert!(!target.exists(), "the script wrote a file");
+        assert_eq!(r.doc, before, "a script that fails leaves the open design alone");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

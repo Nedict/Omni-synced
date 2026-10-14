@@ -44,6 +44,11 @@ same design. Deleting steps from the end gives the design as it was up to that f
 cuts a bug report down to the step that fails. Timeline folders are left out; they only organise
 the timeline.
 
+**File → Open** opens a command script too (a `.json` file with `commands`): the design it builds
+opens as a new, unsaved design, so saving asks for a file name instead of writing over the
+script. A script opened this way runs without file access: a step that would read, write or
+delete a file fails, and the design you had open stays as it was.
+
 **File → Export URDF…** (`file.export` with a `.urdf` path) writes the assembly for robot
 simulators and ROS: a link per component placement with its mesh, mass and inertia, and the
 assembly's joints, so the parts move in the simulator as they do in SolidCraft. The meshes are
