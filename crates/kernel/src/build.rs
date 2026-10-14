@@ -736,7 +736,7 @@ fn offset_segments(lp: &Loop2, d: f64) -> Result<Vec<Option<Seg2>>> {
 
 /// Where the end of `p` crosses the start of `q`, nearest the corner between them: the
 /// parameters on each and the point. On polylines of a few dozen points each, the point taken
-/// half way between the two crossing pieces.
+/// on a line where one is, else half way between the two crossing pieces.
 fn meet(p: &Seg2, q: &Seg2) -> Option<(f64, f64, Vec2)> {
     const SAMPLES: usize = 48;
     let samples = |s: &Seg2| -> Vec<(f64, Vec2)> {
@@ -768,7 +768,13 @@ fn meet(p: &Seg2, q: &Seg2) -> Option<(f64, f64, Vec2)> {
     if tp <= 1e-9 || tq >= 1.0 - 1e-9 {
         return None;
     }
-    Some((tp, tq, (p.point_at(tp) + q.point_at(tq)) * 0.5))
+    // On a line where one meets it, so a line stays on its line (its side stays flat).
+    let x = match (p, q) {
+        (Seg2::Line { .. }, _) => p.point_at(tp),
+        (_, Seg2::Line { .. }) => q.point_at(tq),
+        _ => (p.point_at(tp) + q.point_at(tq)) * 0.5,
+    };
+    Some((tp, tq, x))
 }
 
 /// `s` ending at `x` (its last control point moved there).
