@@ -48,6 +48,8 @@ pub mod keymap;
 #[cfg(test)]
 mod menu_tests;
 #[cfg(test)]
+mod surface_clamp_tests;
+#[cfg(test)]
 mod status_tests {
     #[test]
     fn the_status_bar_names_commands_by_label() {
@@ -1134,7 +1136,7 @@ impl SolveApp {
             let Some(req) = held.or_else(|| rx.try_recv().ok()) else { break };
             // A file is loading: commands that change the design wait for it (the window,
             // inspection and screenshots still answer).
-            if self.file_load.busy() && matches!(req.method.as_str(), "engine.execute" | "command" | "engine.script") {
+            if self.file_load.busy() && matches!(req.method.as_str(), "engine.execute" | "command" | "engine.script" | "engine.batch") {
                 if self.control_held.len() < MAX_HELD {
                     self.control_held.push_back(req);
                 } else {

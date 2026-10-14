@@ -485,7 +485,7 @@ pub enum FeatureKind {
         depth: Option<String>,
         #[serde(default)]
         hole: HoleKind,
-        /// Drill at these sketch points instead (one hole each, perpendicular to the sketch);
+        /// Drill at these sketch points instead (one hole each, perpendicular to the sketch, into the material: against the sketch normal, or along it when only that side has material);
         /// the holes follow the points when the sketch changes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         points: Option<SketchPoints>,
@@ -607,6 +607,10 @@ pub enum FeatureKind {
         faces: Vec<Vec3>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
+        /// Close the gap by extending the neighbouring faces (the default); `false` leaves it
+        /// open, the faces left a surface body.
+        #[serde(default = "yes", skip_serializing_if = "is_yes")]
+        heal: bool,
     },
     /// A box around bodies, grown by a margin.
     BoundingSolid {
@@ -950,6 +954,52 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         faces: Vec<Vec3>,
     },
+    /// A surface body turned about an axis from open curve chains and the boundaries of
+    /// profiles: walls only, no caps (a solid where a full turn closes them).
+    SurfaceRevolve {
+        sketch: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profiles: Option<ProfileSel>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        curves: Vec<String>,
+        axis: AxisRef,
+        angle: String,
+        /// Two Sides: the angle on the other side.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        angle2: Option<String>,
+        /// Symmetric: `angle` split evenly either side of the sketch.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        symmetric: bool,
+    },
+    /// A surface body swept along a chain of sketch curves from open curve chains and the
+    /// boundaries of profiles: walls only, no caps.
+    SurfaceSweep {
+        sketch: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profiles: Option<ProfileSel>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        curves: Vec<String>,
+        path_sketch: u64,
+        path: Vec<String>,
+    },
+    /// A surface body lofted through sections in order, each one open or closed chain of
+    /// sketch curves: walls only, no caps.
+    SurfaceLoft {
+        sections: Vec<SheetSection>,
+    },
+    /// The faces at `faces` copied out at a signed `distance` along their normals as a new
+    /// surface body (0 copies them); `chain` takes each pick's whole smooth chain of faces;
+    /// fitted faces within `tolerance`.
+    SurfaceOffset {
+        faces: Vec<Vec3>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        body: Option<String>,
+        distance: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        chain: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tolerance: Option<String>,
+    },
     /// A planar surface body extended outward by `distance` past the edges through `edges`.
     SurfaceExtend {
         body: String,
@@ -1104,6 +1154,17 @@ pub struct LoftSection {
     pub point: Option<String>,
 }
 
+/// A section of a surface loft: one chain from a sketch (one profile's boundary, or curves
+/// meeting end to end).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SheetSection {
+    pub sketch: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profiles: Option<ProfileSel>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub curves: Vec<String>,
+}
+
 /// Coil cross-sections.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1251,14 +1312,16 @@ impl FeatureKind {
         match self {
             K::Extrude { sketch, .. }
             | K::SurfaceExtrude { sketch, .. }
+            | K::SurfaceRevolve { sketch, .. }
             | K::Revolve { sketch, .. }
             | K::Emboss { sketch, .. }
             | K::Rib { sketch, .. }
             | K::SheetBase { sketch, .. }
             | K::SheetContour { sketch, .. } => vec![*sketch],
-            K::Sweep { sketch, path_sketch, .. } => vec![*sketch, *path_sketch],
+            K::Sweep { sketch, path_sketch, .. } | K::SurfaceSweep { sketch, path_sketch, .. } => vec![*sketch, *path_sketch],
             K::Pipe { path_sketch, .. } | K::Pattern { pattern: PatternKind::Path { path_sketch, .. }, .. } => vec![*path_sketch],
             K::Loft { sections, .. } => sections.iter().map(|s| s.sketch).collect(),
+            K::SurfaceLoft { sections } => sections.iter().map(|s| s.sketch).collect(),
             K::SheetFold { sketch, .. } | K::SplitFace { sketch, .. } | K::Patch { sketch, .. } => sketch.iter().copied().collect(),
             K::Hole { points, .. } => points.iter().map(|p| p.sketch).collect(),
             K::Sketch { .. }
@@ -1281,6 +1344,7 @@ impl FeatureKind {
             | K::Scale { .. }
             | K::OffsetFace { .. }
             | K::DeleteFace { .. }
+            | K::SurfaceOffset { .. }
             | K::BoundingSolid { .. }
             | K::ReplaceFace { .. }
             | K::Align { .. }
@@ -1360,6 +1424,7 @@ impl FeatureKind {
             FeatureKind::Scale { .. } => "ScaleFeature",
             FeatureKind::OffsetFace { .. } => "OffsetFacesFeature",
             FeatureKind::DeleteFace { .. } => "DeleteFaceFeature",
+            FeatureKind::SurfaceOffset { .. } => "OffsetSurfaceFeature",
             FeatureKind::BoundingSolid { .. } => "BoundingSolidFeature",
             FeatureKind::Pipe { .. } => "PipeFeature",
             FeatureKind::Emboss { .. } => "EmbossFeature",
@@ -1385,6 +1450,9 @@ impl FeatureKind {
             FeatureKind::Remove { .. } => "RemoveFeature",
             FeatureKind::Patch { .. } => "PatchFeature",
             FeatureKind::SurfaceExtrude { .. } => "SurfaceExtrudeFeature",
+            FeatureKind::SurfaceRevolve { .. } => "SurfaceRevolveFeature",
+            FeatureKind::SurfaceSweep { .. } => "SurfaceSweepFeature",
+            FeatureKind::SurfaceLoft { .. } => "SurfaceLoftFeature",
             FeatureKind::Stitch { .. } => "StitchFeature",
             FeatureKind::Thicken { .. } => "ThickenFeature",
             FeatureKind::SurfaceTrim { .. } => "TrimFeature",
@@ -1429,6 +1497,7 @@ impl FeatureKind {
             FeatureKind::Scale { .. } => "Scale",
             FeatureKind::OffsetFace { .. } => "OffsetFace",
             FeatureKind::DeleteFace { .. } => "DeleteFace",
+            FeatureKind::SurfaceOffset { .. } => "OffsetSurface",
             FeatureKind::BoundingSolid { .. } => "BoundingSolid",
             FeatureKind::Pipe { .. } => "Pipe",
             FeatureKind::Emboss { .. } => "Emboss",
@@ -1454,6 +1523,9 @@ impl FeatureKind {
             FeatureKind::Remove { .. } => "Remove",
             FeatureKind::Patch { .. } => "Patch",
             FeatureKind::SurfaceExtrude { .. } => "SurfaceExtrude",
+            FeatureKind::SurfaceRevolve { .. } => "SurfaceRevolve",
+            FeatureKind::SurfaceSweep { .. } => "SurfaceSweep",
+            FeatureKind::SurfaceLoft { .. } => "SurfaceLoft",
             FeatureKind::Stitch { .. } => "Stitch",
             FeatureKind::Thicken { .. } => "Thicken",
             FeatureKind::SurfaceTrim { .. } => "Trim",
@@ -1476,10 +1548,14 @@ impl FeatureKind {
             | FeatureKind::Sweep { sketch, profiles, .. }
             | FeatureKind::Emboss { sketch, profiles, .. }
             | FeatureKind::SheetBase { sketch, profiles, .. } => vec![(*sketch, profiles)],
-            FeatureKind::Patch { sketch: Some(sk), profiles, .. } | FeatureKind::SurfaceExtrude { sketch: sk, profiles: Some(profiles), .. } => {
+            FeatureKind::Patch { sketch: Some(sk), profiles, .. }
+            | FeatureKind::SurfaceExtrude { sketch: sk, profiles: Some(profiles), .. }
+            | FeatureKind::SurfaceRevolve { sketch: sk, profiles: Some(profiles), .. }
+            | FeatureKind::SurfaceSweep { sketch: sk, profiles: Some(profiles), .. } => {
                 vec![(*sk, profiles)]
             }
             FeatureKind::Loft { sections, .. } => sections.iter_mut().filter(|s| s.point.is_none()).map(|s| (s.sketch, &mut s.profiles)).collect(),
+            FeatureKind::SurfaceLoft { sections } => sections.iter_mut().filter_map(|s| Some((s.sketch, s.profiles.as_mut()?))).collect(),
             _ => Vec::new(),
         }
     }
@@ -1492,12 +1568,16 @@ impl FeatureKind {
             | FeatureKind::Sweep { sketch, profiles, .. }
             | FeatureKind::Emboss { sketch, profiles, .. }
             | FeatureKind::SheetBase { sketch, profiles, .. } => vec![(*sketch, profiles)],
-            FeatureKind::Patch { sketch: Some(sketch), profiles, .. } | FeatureKind::SurfaceExtrude { sketch, profiles: Some(profiles), .. } => {
+            FeatureKind::Patch { sketch: Some(sketch), profiles, .. }
+            | FeatureKind::SurfaceExtrude { sketch, profiles: Some(profiles), .. }
+            | FeatureKind::SurfaceRevolve { sketch, profiles: Some(profiles), .. }
+            | FeatureKind::SurfaceSweep { sketch, profiles: Some(profiles), .. } => {
                 vec![(*sketch, profiles)]
             }
             FeatureKind::Loft { sections, .. } => {
                 sections.iter().filter(|section| section.point.is_none()).map(|section| (section.sketch, &section.profiles)).collect()
             }
+            FeatureKind::SurfaceLoft { sections } => sections.iter().filter_map(|s| Some((s.sketch, s.profiles.as_ref()?))).collect(),
             _ => Vec::new(),
         }
     }
@@ -1508,6 +1588,7 @@ impl FeatureKind {
             | FeatureKind::Draft { faces, .. }
             | FeatureKind::OffsetFace { faces, .. }
             | FeatureKind::DeleteFace { faces, .. }
+            | FeatureKind::SurfaceOffset { faces, .. }
             | FeatureKind::SplitFace { faces, .. }
             | FeatureKind::ReplaceFace { faces, .. } => faces.iter_mut().collect(),
             FeatureKind::Hole { position, points: None, to, .. } => std::iter::once(position).chain(to.iter_mut()).collect(),
@@ -1557,7 +1638,7 @@ impl FeatureKind {
                     v.push(d);
                 }
             }
-            FeatureKind::Revolve { angle, angle2, .. } => {
+            FeatureKind::Revolve { angle, angle2, .. } | FeatureKind::SurfaceRevolve { angle, angle2, .. } => {
                 v.push(angle);
                 v.extend(angle2.iter().map(String::as_str));
             }
@@ -1605,7 +1686,7 @@ impl FeatureKind {
             },
             FeatureKind::Mirror { plane, .. } => plane_exprs(plane, &mut v),
             FeatureKind::Shell { thickness, .. } => v.push(thickness),
-            FeatureKind::Loft { .. } | FeatureKind::Sweep { .. } => {}
+            FeatureKind::Loft { .. } | FeatureKind::Sweep { .. } | FeatureKind::SurfaceSweep { .. } | FeatureKind::SurfaceLoft { .. } => {}
             FeatureKind::Draft { angle, neutral, .. } => {
                 v.push(angle);
                 plane_exprs(neutral, &mut v);
@@ -1683,6 +1764,12 @@ impl FeatureKind {
             }
             FeatureKind::ReplaceFace { target, .. } => plane_exprs(target, &mut v),
             FeatureKind::Align { .. } | FeatureKind::Remove { .. } | FeatureKind::BoundaryFill { .. } | FeatureKind::DeleteFace { .. } => {}
+            FeatureKind::SurfaceOffset { distance, tolerance, .. } => {
+                v.push(distance);
+                if let Some(t) = tolerance {
+                    v.push(t);
+                }
+            }
             FeatureKind::Stitch { tolerance, .. } => v.push(tolerance),
             FeatureKind::MeshConvert { tolerance, .. } => v.push(tolerance),
             FeatureKind::Thicken { thickness, .. } => v.push(thickness),
@@ -1743,6 +1830,14 @@ fn inside_str() -> String {
 
 fn all_profiles() -> ProfileSel {
     ProfileSel::All
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_yes(b: &bool) -> bool {
+    *b
 }
 
 fn zero_expr() -> String {
