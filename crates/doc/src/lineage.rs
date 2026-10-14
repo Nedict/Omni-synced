@@ -207,23 +207,30 @@ impl<'a> ProfileRoles<'a> {
         let segments: Vec<&solidcraft_geom::Seg2> =
             self.region.map(|r| std::iter::once(&r.outer).chain(&r.holes).flat_map(|l| &l.segs).collect()).unwrap_or_default();
         let curves = self.sketch.map(crate::config::ExactSketchCurves::new);
-        let curve = |segment: usize| -> Option<String> { curves.as_ref()?.find_along(segments.get(segment)?).map(|id| format!("side:{id}")) };
+        // Every curve the segment is drawn on (one, or several coincident or collinear ones).
+        let curve = |segment: usize| -> Vec<String> {
+            let (Some(curves), Some(segment)) = (curves.as_ref(), segments.get(segment)) else { return Vec::new() };
+            curves.find_all_along(segment).into_iter().map(|id| format!("side:{id}")).collect()
+        };
         let roles = history
             .faces
             .iter()
             .map(|face| {
                 let mut roles: Vec<String> = Vec::new();
                 for origin in &face.origins {
-                    let role = match *origin {
+                    let found = match *origin {
                         FaceOrigin::Profile { segment } => curve(segment),
-                        FaceOrigin::Cap { end } => self.caps.get(usize::from(end)).cloned().flatten(),
-                        _ => None,
+                        FaceOrigin::Cap { end } => self.caps.get(usize::from(end)).cloned().flatten().into_iter().collect(),
+                        _ => Vec::new(),
                     };
-                    match role {
-                        Some(role) if !roles.contains(&role) => roles.push(role),
-                        Some(_) => {}
-                        // One unknown origin leaves the face unknown: never a partial guess.
-                        None => return Vec::new(),
+                    // One unknown origin leaves the face unknown: never a partial guess.
+                    if found.is_empty() {
+                        return Vec::new();
+                    }
+                    for role in found {
+                        if !roles.contains(&role) {
+                            roles.push(role);
+                        }
                     }
                 }
                 roles
