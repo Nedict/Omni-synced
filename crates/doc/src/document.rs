@@ -8,6 +8,9 @@ use crate::{DocError, Result};
 
 pub const MAX_FEATURES: usize = 10_000;
 pub const MAX_PARAMS: usize = 10_000;
+/// Largest feature id a replayed feature may keep (`Document::insert_feature`): exact in JSON
+/// numbers, and far from overflowing the next id.
+pub const MAX_FEATURE_ID: u64 = 1 << 52;
 
 /// A named parameter. User parameters are created by the user; model parameters (`d1`, `d2`…)
 /// are created by dimensions and features.
@@ -2169,6 +2172,79 @@ impl Document {
             shell_piece_order: false,
             kind,
         };
+        self.place_feature(f);
+        Ok(id)
+    }
+
+    /// Insert a feature as given, keeping its id, name, parameter names and stored edge and
+    /// face names, at the marker (or the end), with the model parameters its sketch dimensions
+    /// use: a feature replayed from a script (`timeline.add`) is the feature the design had.
+    /// An id of 0 or an empty name gets a new one. Refused, changing nothing, when the id, the
+    /// name or a parameter name is already used, or the feature belongs to a component this
+    /// design does not have.
+    pub fn insert_feature(&mut self, mut f: Feature, params: Vec<Param>) -> Result<u64> {
+        if self.features.len() >= MAX_FEATURES {
+            return Err(DocError::Invalid("too many features".into()));
+        }
+        if f.id == 0 {
+            f.id = self.next_id.max(1);
+        } else if f.id > MAX_FEATURE_ID {
+            return Err(DocError::Invalid(format!("feature id {} is out of range", f.id)));
+        } else if self.feature(f.id).is_some() {
+            return Err(DocError::Invalid(format!("feature id {} is already used", f.id)));
+        }
+        f.name = f.name.trim().to_string();
+        if f.name.is_empty() {
+            f.name = self.unique_name(f.kind.base_name());
+        } else if self.features.iter().any(|x| x.name == f.name) {
+            return Err(DocError::Invalid(format!("a feature named `{}` already exists", f.name)));
+        }
+        if f.component != 0 && !self.components.iter().any(|c| c.id == f.component) {
+            return Err(DocError::Invalid(format!("feature `{}` belongs to an unknown component", f.name)));
+        }
+        if let FeatureKind::BodyTransfer { bodies, from, to, transform } = &f.kind {
+            crate::validate_body_transfer(self, bodies, *from, *to, transform)?;
+            if f.component != *to {
+                return Err(DocError::Invalid("a body transfer belongs to its destination component".into()));
+            }
+        }
+        let mut own = std::collections::BTreeSet::new();
+        for n in f.param_names.iter().filter(|n| !n.is_empty()) {
+            if let Some(why) = Self::param_name_problem(n) {
+                return Err(DocError::Invalid(why));
+            }
+            if self.name_taken(n) || !own.insert(n) {
+                return Err(DocError::Invalid(format!("parameter name `{n}` is already used")));
+            }
+        }
+        if self.params.len().saturating_add(params.len()) > MAX_PARAMS {
+            return Err(DocError::Invalid("too many parameters".into()));
+        }
+        for p in &params {
+            if let Some(why) = Self::param_name_problem(&p.name) {
+                return Err(DocError::Invalid(why));
+            }
+            if self.name_taken(&p.name) || !own.insert(&p.name) {
+                return Err(DocError::Invalid(format!("parameter name `{}` is already used", p.name)));
+            }
+            if p.expr.len() > 4096 || p.comment.len() > 4096 {
+                return Err(DocError::Expr(format!("parameter `{}`: expression or comment too long", p.name)));
+            }
+            if !p.unit.is_empty() && expr::unit_info(&p.unit).is_none() {
+                return Err(DocError::Invalid(format!("parameter `{}`: unknown unit `{}`", p.name, p.unit)));
+            }
+        }
+        let id = f.id;
+        self.next_id = self.next_id.max(id.saturating_add(1));
+        self.params.extend(params.into_iter().map(|p| Param { model: true, ..p }));
+        self.place_feature(f);
+        Ok(id)
+    }
+
+    /// Put a feature at the marker (or the end), in the timeline folder that spans that slot,
+    /// and name its inputs.
+    fn place_feature(&mut self, f: Feature) {
+        let id = f.id;
         let insertion_group = self.marker.and_then(|marker| self.timeline_group_at_insertion(marker));
         match self.marker {
             Some(m) if m < self.features.len() => {
@@ -2186,7 +2262,6 @@ impl Document {
             }
         }
         self.name_feature_inputs(id);
-        Ok(id)
     }
 
     /// Delete a feature (and, for a sketch, the features that use it).

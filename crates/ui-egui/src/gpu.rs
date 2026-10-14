@@ -642,7 +642,7 @@ impl Resources {
             access_bgl,
             access_bind,
             access_version: 0,
-            tri_hl: pipeline("sc_tris_hl", "vs_tri", "fs_tri", tri_layout(), depth(wgpu::CompareFunction::LessEqual, false), alpha),
+            tri_hl: pipeline("sc_tris_hl", "vs_tri", "fs_tri", tri_layout(), highlight_depth(t.depth), alpha),
             trans: pipeline("sc_trans", "vs_tri", "fs_tri", tri_layout(), depth(wgpu::CompareFunction::LessEqual, false), alpha),
             glass_far: glass("sc_glass_far", wgpu::Face::Front),
             glass_near: glass("sc_glass_near", wgpu::Face::Back),
@@ -661,6 +661,24 @@ impl Resources {
         }
     }
 }
+
+/// Depth state of faces lit over the model (hover, selection): tested, not written, and pulled a
+/// little toward the eye. They lie on the model's own faces, but the GPU evaluates a body's plan
+/// in f32 while the highlight's copy of the same triangles is evaluated on the CPU, so the two
+/// depths differ by rounding and an unbiased equal test lights the face in speckles and wedges.
+/// The bias is a few depth steps plus the face's own slope: far less than any real gap.
+fn highlight_depth(format: Option<wgpu::TextureFormat>) -> Option<wgpu::DepthStencilState> {
+    format.map(|format| wgpu::DepthStencilState {
+        format,
+        depth_write_enabled: Some(false),
+        depth_compare: Some(wgpu::CompareFunction::LessEqual),
+        stencil: Default::default(),
+        bias: HIGHLIGHT_BIAS,
+    })
+}
+
+/// See [`highlight_depth`]. Negative: toward the eye (depth grows away from it).
+const HIGHLIGHT_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState { constant: -8, slope_scale: -1.0, clamp: 0.0 };
 
 fn upload(device: &wgpu::Device, label: &str, bytes: &[u8], stride: usize) -> Option<Batch> {
     upload_with(device, label, bytes, stride, wgpu::BufferUsages::VERTEX)
@@ -895,8 +913,17 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
 /// Render `scene` offscreen on a device of its own, through the viewport's real resources and
 /// frame callback (`prepare`, then `paint`), and read the pixels back: straight RGBA, `size` ×
 /// `size`. `None` without a GPU adapter. With `tess`, planned bodies are evaluated on the GPU.
+/// `highlight` is drawn as the viewport's highlight scene (hover and selection).
 #[cfg(all(test, not(target_arch = "wasm32")))]
-pub(crate) fn render_offscreen(scene: GpuScene, view_proj: [[f32; 4]; 4], back: [f32; 3], eye: [f32; 4], size: u32, tess: bool) -> Option<Vec<u8>> {
+pub(crate) fn render_offscreen(
+    scene: GpuScene,
+    highlight: Option<GpuScene>,
+    view_proj: [[f32; 4]; 4],
+    back: [f32; 3],
+    eye: [f32; 4],
+    size: u32,
+    tess: bool,
+) -> Option<Vec<u8>> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -915,8 +942,8 @@ pub(crate) fn render_offscreen(scene: GpuScene, view_proj: [[f32; 4]; 4], back: 
         slot: Arc::new(Mutex::new(Some(scene))),
         sketch_key: 0,
         sketch_slot: none(),
-        hl_key: 0,
-        hl_slot: none(),
+        hl_key: u64::from(highlight.is_some()),
+        hl_slot: Arc::new(Mutex::new(highlight)),
         pv_key: 0,
         pv_slot: none(),
         view_proj,
