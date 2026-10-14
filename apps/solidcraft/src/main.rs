@@ -489,7 +489,12 @@ fn main() -> eframe::Result {
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
                 app = app.with_control(rx);
+                app.agent_chat.control_port = Some(port);
             }
+            // The agent chat's MCP bridge needs the control server: started on a free port the
+            // first time the chat connects, when the app wasn't launched with one.
+            let ctx = cc.egui_ctx.clone();
+            app.agent_chat.control_starter = Some(Box::new(move || control_server::listen(0, ctx.clone())));
             if sample {
                 if let Err(e) = app.session.run_script(&solidcraft_engine::sample::script()) {
                     app.set_status(format!("sample: {e}"), true);
