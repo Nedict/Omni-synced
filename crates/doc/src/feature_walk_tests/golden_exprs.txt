@@ -380,3 +380,10 @@ mesh_convert
     Tolerance = mesh_convert.tolerance (Length)
   expressions: mesh_convert.tolerance
 mesh_import
+surface_fair
+  inputs:
+    Tolerance = sfair.tolerance (Length)
+  expressions: sfair.tolerance
+surface_blend
+surface_match
+surface_boundary
