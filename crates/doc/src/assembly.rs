@@ -124,6 +124,10 @@ fn identity() -> Mat {
     IDENTITY
 }
 
+/// How deep and how many placements [`Document::placements`] walks.
+pub const MAX_PLACEMENT_DEPTH: usize = 64;
+pub const MAX_PLACEMENTS: usize = 100_000;
+
 fn map_plane(m: &Mat, p: &Plane) -> Plane {
     let (o, x, y) = (apply_point(m, p.origin), apply_vector(m, p.x), apply_vector(m, p.y));
     Plane::new(o, x, y).unwrap_or(*p)
@@ -371,12 +375,17 @@ impl Document {
     }
 
     /// Every placement of each component: (component, occurrence path ids, world transform).
+    /// A branch stops past [`MAX_PLACEMENT_DEPTH`] levels, the walk past [`MAX_PLACEMENTS`] placements.
     pub fn placements(&self) -> Vec<(u64, Vec<u64>, Mat)> {
         let mut out = vec![(0, Vec::new(), IDENTITY)];
         let mut stack: Vec<(u64, Vec<u64>, Mat)> = vec![(0, Vec::new(), IDENTITY)];
         while let Some((comp, path, m)) = stack.pop() {
-            if path.len() > 64 || out.len() > 100_000 {
+            if out.len() > MAX_PLACEMENTS {
                 break;
+            }
+            // Only this branch stops past the depth limit; the others are still walked.
+            if path.len() > MAX_PLACEMENT_DEPTH {
+                continue;
             }
             for o in self.occurrences.iter().filter(|o| o.parent == comp) {
                 let mut p = path.clone();

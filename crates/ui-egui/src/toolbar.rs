@@ -436,6 +436,10 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     export(app, "obj");
                     close = true;
                 }
+                if item_if(ui, "Export URDF…", "", shown) {
+                    export(app, "urdf");
+                    close = true;
+                }
                 if item(ui, "Export Design as JSON…", "") {
                     export(app, "json");
                     close = true;
@@ -1448,7 +1452,8 @@ mod home_tests {
             let name = if cmd { format!("Ctrl+{key}") } else { key.to_string() };
             actions.push((name, Box::new(move |h| drop(h.call("ui.key", json!({"key": key, "cmd": cmd}))))));
         }
-        for item in ["Insert STEP…", "Insert Mesh…", "Save", "Save As…", "Export STL…", "Export STEP…", "Export 3MF…", "Export OBJ…"] {
+        for item in ["Insert STEP…", "Insert Mesh…", "Save", "Save As…", "Export STL…", "Export STEP…", "Export 3MF…", "Export OBJ…", "Export URDF…"]
+        {
             actions.push((
                 format!("File › {item}"),
                 Box::new(move |h| {
@@ -1483,6 +1488,22 @@ mod home_tests {
         h.call("ui.click", json!({"x": at.x, "y": at.y}));
         h.settle();
         assert!(h.app.session.path.is_some() && !h.app.session.is_dirty(), "the design saves once Home is closed");
+    }
+
+    /// File › Export URDF… writes the robot description and its meshes next to the picked file.
+    #[test]
+    fn file_menu_exports_a_urdf() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10})).unwrap();
+        h.frames(2);
+        h.ctx.data_mut(|d| d.insert_temp(egui::Id::new("sc_file_menu"), false));
+        let at = crate::scenario::handle_at("appbar:folder").unwrap();
+        h.call("ui.click", json!({"x": at.x, "y": at.y}));
+        let _ = h.step(&json!({"widget": "Export URDF…"}));
+        h.settle();
+        let files: Vec<String> = std::fs::read_dir(&h.dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert!(files.iter().any(|f| f.ends_with(".urdf")) && files.iter().any(|f| f.ends_with("-base.stl")), "{files:?}");
     }
 
     /// The disabled buttons' tooltip is translated in every catalog (not English fallback).
