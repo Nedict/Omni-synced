@@ -650,20 +650,26 @@ fn close_group(
     let x0: Vec<f64> = vars.iter().map(|(id, i)| vals.get(id).and_then(|q| q.get(*i)).copied().unwrap_or(0.0)).collect();
     // Steps that move no value around the loops (links included) more than 5 degrees or a
     // twentieth of the loops' size.
-    let mut first = 1.0f64;
-    if !moves.is_empty() {
-        let (mut a, mut b) = (vals.clone(), vals.clone());
-        place(&mut a, &x0, 0.0);
-        place(&mut b, &x0, 1.0);
+    // How many such steps apart two sets of values are, over the loops' values.
+    let stride = |a: &Values, b: &Values| -> f64 {
+        let mut most = 0.0f64;
         for j in around.iter().filter_map(|id| tree.joints.get(id)) {
             for i in 0..j.kind.dofs().len() {
                 let (Some(p), Some(q)) = (a.get(&j.id).and_then(|v| v.get(i)), b.get(&j.id).and_then(|v| v.get(i))) else { continue };
                 let step = if j.kind.is_angle(i) { 5f64.to_radians() } else { 0.05 * scale };
-                if (q - p).abs() > 0.0 {
-                    first = first.min(step / (q - p).abs());
-                }
+                most = most.max((q - p).abs() / step);
             }
         }
+        most
+    };
+    let effective = |x: &[f64], t: f64| {
+        let mut v = vals.clone();
+        place(&mut v, x, t);
+        v
+    };
+    let mut first = 1.0f64;
+    if !moves.is_empty() {
+        first = first.min(1.0 / stride(&effective(&x0, 0.0), &effective(&x0, 1.0)));
     }
     let mut work = vals.clone();
     // How far each closing joint is from meeting with the held values `t` of the way along:
@@ -698,14 +704,22 @@ fn close_group(
         return None;
     }
     let (mut t, mut dt) = (if moves.is_empty() { 1.0 } else { 0.0 }, first);
+    let mut at = effective(&x, t);
     while t < 1.0 {
-        if dt < first * 1e-3 {
+        if dt < first * 1e-4 {
             return None;
         }
         let t1 = (t + dt).min(1.0);
         let mut trial = x.clone();
         if least_squares(&mut |x| gaps(x, t1), &mut trial, &bounds, tol) {
-            (x, t, dt) = (trial, t1, (dt * 2.0).min(first));
+            // A step that moved some loop value too far (through a link and a limit, or close to
+            // a dead point) is taken again in halves.
+            let next = effective(&trial, t1);
+            if stride(&at, &next) > 2.0 {
+                dt *= 0.5;
+                continue;
+            }
+            (x, t, dt, at) = (trial, t1, (dt * 2.0).min(first), next);
         } else if spent.get() > MAX_LOOP_WORK {
             return None;
         } else {

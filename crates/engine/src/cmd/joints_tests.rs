@@ -705,3 +705,18 @@ fn loops_moving_different_values_of_one_joint_keep_both() {
     assert!(near(place(&s, "CarA", Vec3::new(0.0, 50.0, 0.0)), Vec3::new(10.0, 50.0, 0.0)), "{:?}", place(&s, "CarA", Vec3::new(0.0, 50.0, 0.0)));
     assert!(near(place(&s, "CarB", Vec3::new(0.0, 100.0, 0.0)), Vec3::new(20.0, 100.0, 0.0)), "{:?}", place(&s, "CarB", Vec3::new(0.0, 100.0, 0.0)));
 }
+
+/// A clamped link can jump: a 100:1 link to a rocker limited to a full turn reaches its limit
+/// after the dial's first few degrees, back where it started. Each step is checked, so the drive
+/// still stops where the rocker can't go.
+#[test]
+fn a_clamped_link_is_followed_step_by_step() {
+    let (mut s, _, _) = four_bar();
+    part(&mut s, "Dial", [80.0, 0.0, -5.0]);
+    pin(&mut s, "revolute", "Dial", "Ground", "Dial", Vec3::new(80.0, 0.0, 0.0), Vec3::Z);
+    run(&mut s, "joint.limits", json!({"joint": "Rocker", "min": 0, "max": 360}));
+    run(&mut s, "joint.motion_link", json!({"a": "Dial", "b": "Rocker", "ratio": 100}));
+    let r = run(&mut s, "joint.drive", json!({"joint": "Dial", "value": 360}));
+    assert!(r["stopped_by_loop"].is_object(), "{r}");
+    assert_eq!(r["conflicts"].as_array().map(Vec::len), Some(0), "{r}");
+}
