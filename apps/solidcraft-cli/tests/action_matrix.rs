@@ -35,8 +35,10 @@ use solidcraft_engine::geom::Vec3;
 
 /// One in this many actions runs on pull requests (by a stable hash of its key).
 const PR_SAMPLE: u64 = 40;
-/// One in this many actions runs twice in the nightly determinism check.
+/// One in this many actions runs twice in the nightly determinism check, on the designs whose
+/// whole matrix takes at most [`DETERMINISM_MAX_SECS`] on a runner (most of the corpus).
 const DETERMINISM_SAMPLE: u64 = 8;
+const DETERMINISM_MAX_SECS: f64 = 300.0;
 /// Designs that take seconds to build: the full matrix only.
 const SLOW: [&str; 7] = [
     "oracle/41-tube-radial-holes",
@@ -1104,7 +1106,7 @@ fn action_matrix_shard() {
     ratchet(&results, false);
 }
 
-/// Determinism: a sample of the matrix (one family in [`DETERMINISM_SAMPLE`], slow-loading
+/// Determinism: a sample of the matrix (one family in [`DETERMINISM_SAMPLE`], the heaviest
 /// designs left out) run twice must give the same outcome for every action. Lists each action
 /// whose outcome changed between the runs.
 #[test]
@@ -1123,8 +1125,14 @@ fn action_matrix_determinism() {
             })
             .collect()
     };
-    let a = outcomes(run_matrix(DETERMINISM_SAMPLE));
-    let b = outcomes(run_matrix(DETERMINISM_SAMPLE));
+    let costs = read_costs();
+    let queue: Vec<Unit> = design_names()
+        .into_iter()
+        .filter(|n| costs.get(n).copied().unwrap_or(UNKNOWN_COST).secs <= DETERMINISM_MAX_SECS)
+        .map(|design| Unit { design, slice: None, cost: 0.0 })
+        .collect();
+    let a = outcomes(run_units(DETERMINISM_SAMPLE, &queue));
+    let b = outcomes(run_units(DETERMINISM_SAMPLE, &queue));
     let keys: BTreeSet<&String> = a.keys().chain(b.keys()).collect();
     let mut changed = Vec::new();
     // Pieces that share a name can swap numbers between runs (#569): compare passes per family

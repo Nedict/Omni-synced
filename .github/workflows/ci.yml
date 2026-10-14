@@ -207,7 +207,7 @@ jobs:
     # tests/action_matrix/baseline.json (docs/action-matrix.md). Every test run checks a sample;
     # the whole matrix runs nightly (or by hand) in shards of about equal cost, cut by
     # tests/action_matrix/costs.json. Keep SHARDS in step with the matrix below.
-    name: Action matrix (${{ matrix.shard }}/12)
+    name: Action matrix (${{ matrix.shard }}/10)
     needs: build-tests
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
@@ -215,7 +215,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
@@ -226,9 +226,9 @@ jobs:
           name: nextest-archive
       - name: Run one shard of the matrix
         # A step limit below the job's, so the outcomes so far are still uploaded.
-        timeout-minutes: 38
+        timeout-minutes: 35
         env:
-          SHARDS: 12
+          SHARDS: 10
           SHARD: ${{ matrix.shard }}
           OUT: ${{ github.workspace }}/action-matrix
         run: |
@@ -236,7 +236,7 @@ jobs:
           export ACTION_MATRIX_SHARD="$SHARD/$SHARDS" ACTION_MATRIX_RESULTS="$OUT/results-$SHARD.json" \
             ACTION_MATRIX_TIMINGS="$OUT/timings-$SHARD.jsonl" ACTION_MATRIX_WORKDIR="$OUT/raw-$SHARD"
           cargo nextest run --archive-file tests.tar.zst --workspace-remap . --extract-to . --extract-overwrite \
-            --profile ci --run-ignored only -E "binary(action_matrix) & test(=action_matrix_shard)"
+            --profile ci --success-output final --run-ignored only -E "binary(action_matrix) & test(=action_matrix_shard)"
       - name: Upload the outcomes and timings
         # `cargo xtask action-matrix --from DIR --bless` (with every shard's files in DIR)
         # records them in the baseline and costs.json.
@@ -265,7 +265,7 @@ jobs:
       - name: Run a sample twice
         run: |
           cargo nextest run --archive-file tests.tar.zst --workspace-remap . --extract-to . --extract-overwrite \
-            --profile ci --run-ignored only -E "binary(action_matrix) & test(=action_matrix_determinism)"
+            --profile ci --success-output final --run-ignored only -E "binary(action_matrix) & test(=action_matrix_determinism)"
 
   doc-tests:
     name: Doc tests
