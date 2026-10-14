@@ -538,10 +538,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             if let Some(image) = draft.image.as_ref() {
                 let texture =
                     draft.texture.get_or_insert_with(|| ctx.load_texture("issue-report-frame", image.clone(), egui::TextureOptions::LINEAR));
+                // Bounded by the screen, not by the window's own available width: the image would
+                // then be as wide as the window, the window sizes to its content plus the frame's
+                // margins, and the width climbs every frame — the report's "wider and wider
+                // without actually doing anything" (solidcraft#996). The screen is the same on
+                // every frame, so the layout settles.
+                let image_width = (screen.width() - 32.0).clamp(100.0, crate::frame::WINDOW_WIDE_MAX_W);
                 ui.add(
-                    egui::Image::new(&*texture)
-                        .max_size(vec2(ui.available_width(), (screen.height() * 0.25).clamp(60.0, 220.0)))
-                        .maintain_aspect_ratio(true),
+                    egui::Image::new(&*texture).max_size(vec2(image_width, (screen.height() * 0.25).clamp(60.0, 220.0))).maintain_aspect_ratio(true),
                 );
             }
             ui.horizontal_wrapped(|ui| {
@@ -625,6 +629,32 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
     use super::*;
+
+    /// The reviewed screenshot must not size the window to itself: its maximum was the window's
+    /// own available width, so the width climbed by the frame's margins every frame — the report's
+    /// "wider and wider without actually doing anything" (solidcraft#996).
+    #[test]
+    fn the_review_window_does_not_widen_itself() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.help.menu = true;
+        h.frames(2);
+        h.step(&json!({"click":{"handle":"menu:report"}})).unwrap();
+        h.frames(3);
+        let token = h.app.issue_report.pending.as_ref().expect("a pending capture").token;
+        // A screenshot-sized image: this is the content that made the window size itself.
+        receive(&mut h.app, token, Arc::new(ColorImage::new([1200, 800], vec![egui::Color32::from_rgb(40, 60, 120); 1200 * 800])));
+        h.frames(2);
+        let width = |h: &crate::scenario::Harness| h.ctx.memory(|m| m.area_rect(egui::Id::new("sc_issue_report")).map_or(0.0, |r| r.width()));
+        let first = width(&h);
+        assert!(first > 0.0, "the review window did not open");
+        h.frames(8);
+        let later = width(&h);
+        assert!((later - first).abs() < 1.0, "the review window widened itself: {first} then {later}");
+        // The image is bounded by the frame's maximum, so the window settles there rather than
+        // climbing to whatever the screen allows. The frame's margins come on top of the content.
+        assert!(later <= crate::frame::WINDOW_WIDE_MAX_W + 40.0, "{later} wide");
+    }
+
     use serde_json::json;
     use solidcraft_engine::{Sel, Session};
 
