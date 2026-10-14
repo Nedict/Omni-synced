@@ -8,7 +8,7 @@ use solidcraft_geom::Seg2;
 
 pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut ModelState, warning: &mut Option<String>) -> Result<()> {
     match &f.kind {
-        FeatureKind::Patch { sketch, profiles, body, edges } => {
+        FeatureKind::Patch { sketch, profiles, body, edges, crown } => {
             let mut made = Vec::new();
             if let Some(sk) = sketch {
                 let ss = st.sketch(*sk).ok_or_else(|| DocError::Unknown(format!("sketch {sk} (it must come earlier in the timeline)")))?;
@@ -20,7 +20,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             if !edges.is_empty() {
                 let i = body_at(st, body, edges)?;
                 let b = st.bodies.get(i).ok_or_else(|| DocError::Invalid("body".into()))?;
-                made.push(kernel::patch_edges(&b.body, edges)?);
+                made.push(kernel::patch_edges_crowned(&b.body, edges, *crown)?);
             }
             if made.is_empty() {
                 return Err(DocError::Invalid("a patch needs a sketch region or a loop of edges".into()));

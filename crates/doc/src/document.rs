@@ -1255,6 +1255,10 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         #[walk(pos)]
         edges: Vec<Vec3>,
+        /// How full a fitted patch's middle is (`crown`, -0.9…3, default 0; a planar loop is an
+        /// exact plane whatever this says).
+        #[serde(default, skip_serializing_if = "is_zero")]
+        crown: f64,
     },
     /// Surface bodies sewn along shared edges into the first one (a solid when they close).
     Stitch {
@@ -1715,6 +1719,11 @@ pub enum CoilSection {
 
 fn is_zero_i8(v: &i8) -> bool {
     *v == 0
+}
+
+/// A parameter that is left out when it is 0 (an optional shape knob).
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 /// Hole shapes.
