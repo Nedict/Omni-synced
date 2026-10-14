@@ -1439,16 +1439,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             let painter = ui.painter_at(r.expand(4.0));
             let font = FontId::proportional(13.0);
             // Centre: a ring with a pointer toward the hot direction.
-            painter.circle(c, 15.0, t.panel.gamma_multiply(0.92), Stroke::new(1.0, t.border));
-            if let (Some(k), Some(p)) = (hot, pointer) {
-                let d = (p - c).normalized();
-                painter.line_segment(
-                    [c + d * 6.0, c + d * 15.0],
-                    Stroke::new(3.0, if radial.get(k).is_some_and(|i| i.enabled) { t.accent } else { t.border }),
-                );
-            } else {
-                painter.circle_filled(c, 3.0, t.text_dim);
-            }
+            let direction = hot.zip(pointer).map(|(k, p)| ((p - c).normalized(), radial.get(k).is_some_and(|i| i.enabled)));
+            crate::icons::glyphs::radial_centre(&painter, c, direction, t);
             for (k, item) in radial.iter().enumerate() {
                 let display_label = crate::i18n::tr_label(&item.label);
                 let galley = painter.layout_no_wrap(display_label.to_string(), font.clone(), if item.enabled { t.text } else { t.text_dim });

@@ -10,6 +10,7 @@
 #[path = "occurrence_ui_tests.rs"]
 mod occurrence_ui_tests;
 
+use crate::icons::glyphs::badge;
 use std::collections::BTreeSet;
 
 use egui::{Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, pos2, vec2};
@@ -338,13 +339,8 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
     // Fold arrow.
     if let Some(open) = row.fold {
         let ar = Rect::from_center_size(pos2(x + 6.0, cy), vec2(12.0, 12.0));
-        let pts = if open {
-            vec![pos2(ar.left() + 2.0, ar.top() + 4.0), pos2(ar.right() - 2.0, ar.top() + 4.0), pos2(ar.center().x, ar.bottom() - 3.0)]
-        } else {
-            vec![pos2(ar.left() + 4.0, ar.top() + 2.0), pos2(ar.right() - 3.0, ar.center().y), pos2(ar.left() + 4.0, ar.bottom() - 2.0)]
-        };
         let ink = if hover_on == 1 { t.text } else { t.text_dim };
-        ui.painter().add(egui::Shape::convex_polygon(pts, ink, Stroke::NONE));
+        crate::icons::glyphs::disclosure(ui.painter(), ar, open, ink);
         out.fold = resp.clicked() && click_on == 1;
         crate::scenario::publish_handle(&format!("fold:{}", row.label), fold_r.center());
     }
@@ -405,35 +401,6 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
         out.secondary = resp.interact_pointer_pos().or(Some(r.left_bottom()));
     }
     out
-}
-
-/// Small glyphs after a row's label: a padlock, a pin (grounded).
-fn badge(p: &egui::Painter, r: Rect, name: &str, c: Color32) {
-    let s = Stroke::new(1.3, c);
-    match name {
-        "lock" => {
-            let body = Rect::from_min_max(pos2(r.left() + 1.5, r.center().y - 0.5), pos2(r.right() - 1.5, r.bottom() - 0.5));
-            p.rect_filled(body, 1.5, c);
-            let top = pos2(r.center().x, r.top() + 4.0);
-            p.add(egui::Shape::line(
-                (0..=8)
-                    .map(|k| {
-                        let a = std::f32::consts::PI * (k as f32 / 8.0);
-                        pos2(top.x - 3.2 * a.cos(), top.y - 3.2 * a.sin() + 1.0)
-                    })
-                    .chain([pos2(top.x + 3.2, body.top())])
-                    .collect(),
-                s,
-            ));
-            p.line_segment([pos2(top.x - 3.2, top.y + 1.0), pos2(top.x - 3.2, body.top())], s);
-        }
-        "pin" => {
-            let head = pos2(r.center().x + 2.0, r.top() + 4.0);
-            p.circle_filled(head, 3.2, c);
-            p.line_segment([head, pos2(r.left() + 1.5, r.bottom() - 1.0)], Stroke::new(1.6, c));
-        }
-        _ => {}
-    }
 }
 
 /// A Ctrl/Shift-aware click on a selectable row.
@@ -1860,9 +1827,7 @@ pub fn dims_overlay(app: &SolveApp, ctx: &egui::Context) {
             }
             for (tip, dir) in &lay.arrows {
                 if let (Some(t), Some(back)) = (to(*tip), to(*tip - *dir * px)) {
-                    let d = (t - back).normalized();
-                    let n = vec2(-d.y, d.x);
-                    painter.add(egui::Shape::convex_polygon(vec![t, t - d * 9.0 + n * 3.0, t - d * 9.0 - n * 3.0], col, Stroke::NONE));
+                    crate::icons::markers::dimension_arrow(&painter, t, back, col);
                 }
             }
             let Some(tc) = to(lay.text) else { continue };

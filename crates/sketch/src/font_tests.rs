@@ -1,5 +1,5 @@
 //! Font choice for sketch text. A small TrueType font is built here, so the outlines it must give are
-//! known by hand; the repository's second font (BIZ UDPGothic, `apps/solidcraft-web/fonts`) stands for
+//! known by hand; the repository's second font (BIZ UDPGothic, `assets/fonts/biz-udp-gothic`) stands for
 //! a real one.
 
 use std::path::PathBuf;
@@ -164,7 +164,7 @@ impl Drop for Folder {
 }
 
 fn web_fonts() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("apps").join("solidcraft-web").join("fonts")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts/biz-udp-gothic")
 }
 
 /// The corner points of the lines of `geometry`, as (min, max) over x and y.
@@ -321,7 +321,11 @@ fn installed_families_are_listed_by_name_once_without_the_built_in_one() {
     // A second copy of the tiny font, the built-in font and the repository's second font: each family once,
     // sorted; the built-in family is not among the installed ones, broken files and other files are skipped.
     std::fs::write(folder.0.join("copy.ttf"), tiny_font()).unwrap();
-    std::fs::copy(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fonts").join("LiberationSans-Regular.ttf"), folder.0.join("lib.ttf")).unwrap();
+    std::fs::copy(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts/liberation-sans/LiberationSans-Regular.ttf"),
+        folder.0.join("lib.ttf"),
+    )
+    .unwrap();
     std::fs::copy(web_fonts().join("BIZUDPGothic-Regular.ttf"), folder.0.join("biz.ttf")).unwrap();
     let families = crate::families_in(std::slice::from_ref(&folder.0));
     assert_eq!(families, ["BIZ UDPGothic", "Tiny Block"]);

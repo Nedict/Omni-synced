@@ -21,7 +21,7 @@ fn sample_app() -> SolveApp {
 
 /// Every English text `label()` can be asked to translate.
 fn english_texts() -> BTreeSet<String> {
-    const EN: &str = include_str!("locales/en.json");
+    const EN: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/en.json"));
     let messages: serde_json::Map<String, serde_json::Value> = serde_json::from_str(EN).expect("en.json is valid JSON");
     messages.values().filter_map(|v| v.as_str().map(str::to_string)).collect()
 }
