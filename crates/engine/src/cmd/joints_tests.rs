@@ -628,3 +628,21 @@ fn a_turn_carried_in_by_any_link_is_followed() {
     let r = run(&mut s, "joint.drive", json!({"joint": "A", "value": 720}));
     assert!(r["stopped_by_loop"].is_object(), "{r}");
 }
+
+/// Several links writing one value: every value a link chain starts from can move to close the
+/// loop, whichever of them the link order lets through (here dial A's, before dial B rewrites
+/// the gear).
+#[test]
+fn a_loop_value_moves_through_whichever_link_carries_it() {
+    let (mut s, _, q0) = four_bar();
+    for (name, x) in [("A", 80.0), ("G", 100.0), ("B", 120.0)] {
+        part(&mut s, name, [x, 0.0, -5.0]);
+        pin(&mut s, "revolute", name, "Ground", name, Vec3::new(x, 0.0, 0.0), Vec3::Z);
+    }
+    run(&mut s, "joint.motion_link", json!({"a": "A", "b": "G", "ratio": 1}));
+    run(&mut s, "joint.motion_link", json!({"a": "G", "b": "Rocker", "ratio": 1}));
+    run(&mut s, "joint.motion_link", json!({"a": "B", "b": "G", "ratio": 1}));
+    let r = run(&mut s, "joint.drive", json!({"joint": "Crank", "value": 60}));
+    assert!(r["stopped_by_loop"].is_null() && r["conflicts"].as_array().map(Vec::len) == Some(0), "{r}");
+    assert!(near(place(&s, "Rocker", q0), rocker_pin(0.0, 60.0, q0)), "{:?}", place(&s, "Rocker", q0));
+}

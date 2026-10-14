@@ -472,37 +472,29 @@ const MAX_LOOP_WORK: usize = 200_000;
 /// Held joint values by (joint, value index): the value each moves from.
 pub type Held = BTreeMap<(u64, usize), f64>;
 
-/// The values that set the linked values of the `around` joints, each followed back along its
-/// motion links to the start of its chain (at most `MAX_LINK_HOPS` links, as far as
-/// `apply_links` carries a value): the joints along the chains, and the values they start from.
+/// The values that set the `around` joints' values through motion links, followed back through
+/// every link to them (several links may write one value; `apply_links`' order decides which
+/// wins on the way) for as many links as `apply_links` passes: the joints they belong to, and
+/// those values that no link sets (the ones a solve can move).
 fn link_chains(asm: &Assembly, tree: &Tree, around: &BTreeSet<u64>, linked: &BTreeSet<(u64, usize)>) -> (BTreeSet<u64>, Vec<(u64, usize)>) {
     let (mut feeds, mut starts) = (BTreeSet::new(), Vec::new());
-    // Every joint a link reaches the loop from, within as many links as `apply_links` passes:
-    // with several links writing one value, any of them may carry a moving value in.
-    let mut frontier = around.clone();
+    let mut frontier: BTreeSet<(u64, usize)> =
+        around.iter().filter_map(|id| tree.joints.get(id)).flat_map(|j| (0..j.kind.dofs().len()).map(|i| (j.id, i))).collect();
+    let mut seen = frontier.clone();
     for _ in 0..MAX_LINK_HOPS {
-        let next: BTreeSet<u64> = asm.links.iter().filter(|l| frontier.contains(&l.b) && !feeds.contains(&l.a)).map(|l| l.a).collect();
+        let next: BTreeSet<(u64, usize)> =
+            asm.links.iter().filter(|l| frontier.contains(&(l.b, l.ib))).map(|l| (l.a, l.ia)).filter(|v| !seen.contains(v)).collect();
         if next.is_empty() {
             break;
         }
-        feeds.extend(next.iter().copied());
-        frontier = next;
-    }
-    for j in around.iter().filter_map(|id| tree.joints.get(id)) {
-        for i in 0..j.kind.dofs().len() {
-            let mut cur = (j.id, i);
-            for _ in 0..MAX_LINK_HOPS {
-                // The last link to a value wins, as in `apply_links`.
-                let Some(l) = asm.links.iter().rev().find(|l| (l.b, l.ib) == cur) else { break };
-                cur = (l.a, l.ia);
-                if !linked.contains(&cur) {
-                    if tree.joints.get(&l.a).is_some_and(|j| l.ia < j.kind.dofs().len()) && !starts.contains(&cur) {
-                        starts.push(cur);
-                    }
-                    break;
-                }
+        for &(id, i) in &next {
+            feeds.insert(id);
+            if !linked.contains(&(id, i)) && tree.joints.get(&id).is_some_and(|j| i < j.kind.dofs().len()) {
+                starts.push((id, i));
             }
         }
+        seen.extend(next.iter().copied());
+        frontier = next;
     }
     (feeds, starts)
 }
