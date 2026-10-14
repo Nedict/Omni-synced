@@ -68,6 +68,37 @@ fn modelled_internal_threads_m3_to_m20() {
     }
 }
 
+/// Issue 995: an M5 modelled thread in a 5 mm hole cut nothing (the groove lay in the hole, from
+/// the minor diameter out to the 5 mm major one) and only left the wall faceted. A modelled thread
+/// that would cut next to nothing is refused, with the drill to use and the size that fits;
+/// a cosmetic one is still only a note.
+#[test]
+fn a_modelled_thread_that_would_cut_nothing_is_refused() {
+    let mut s = Session::default();
+    for (id, p) in [
+        ("sketch.create", json!({"plane": "XY"})),
+        ("sketch.polygon.inscribed", json!({"center": [0, 0], "radius": 5, "sides": 6})),
+        ("sketch.finish", json!({})),
+        ("solid.extrude", json!({"distance": 4, "body_name": "Nut"})),
+        ("solid.hole", json!({"position": [0, 0, 4], "diameter": 5})),
+    ] {
+        run(&mut s, id, p);
+    }
+    let before = volume(&mut s, "Nut");
+    let e = s.execute("solid.thread", &json!({"face": [2.5, 0, 2], "designation": "M5", "modeled": true})).err().map(|e| e.to_string());
+    let e = e.unwrap_or_default();
+    assert!(e.contains("5.00 mm hole") && e.contains("drill 4.2 mm for M5") && e.contains("thread this hole M6"), "{e}");
+    assert!((volume(&mut s, "Nut") - before).abs() < 1e-9);
+    run(&mut s, "solid.thread", json!({"face": [2.5, 0, 2], "designation": "M5"}));
+
+    // A shaft no thicker than the thread's root (17.29 mm for M20) is refused the same way.
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius": 8.6, "height": 10, "body_name": "Shaft"}));
+    let e = s.execute("solid.thread", &json!({"face": [8.6, 0, 5], "designation": "M20", "modeled": true})).err().map(|e| e.to_string());
+    let e = e.unwrap_or_default();
+    assert!(e.contains("17.20 mm shaft") && e.contains("make the shaft 20 mm for M20") && e.contains("thread this shaft M18"), "{e}");
+}
+
 /// Issue 602: rounding the edges of a hex boss on a threaded shaft froze the app. The thread's
 /// thousands of facets were healed pair by pair, once per feature after it, and the fillet's
 /// preview then compared each of them with the whole old body.
