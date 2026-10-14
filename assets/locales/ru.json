@@ -957,5 +957,7 @@
   "Line Spacing": "Межстрочный интервал",
   "Path": "Траектория",
   "sketch_text.on_path": "Текст следует по траектории: кривая задаёт его положение",
-  "cmd.material_properties_validate": "Проверить данные физического материала"
+  "cmd.material_properties_validate": "Проверить данные физического материала",
+  "cmd.render_settings_get": "Настройки рендеринга",
+  "cmd.render_settings_set": "Сохранить настройки рендеринга"
 }

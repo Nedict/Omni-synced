@@ -10,6 +10,7 @@ mod curve_display;
 pub mod lighting;
 mod raster;
 pub mod surface;
+pub mod texture_input;
 
 pub use backend::{
     Availability, BackendDescriptor, BackendId, ExecutorDescriptor, ExecutorId, MAX_RENDER_ID_BYTES, RenderFeature, RenderFormat, RenderLimits,
