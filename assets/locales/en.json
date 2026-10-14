@@ -956,5 +956,13 @@
   "Letter Spacing": "Letter Spacing",
   "Line Spacing": "Line Spacing",
   "Path": "Path",
-  "sketch_text.on_path": "The text follows its path: the curve places it"
+  "sketch_text.on_path": "The text follows its path: the curve places it",
+  "Thin": "Thin",
+  "Thin Extrude": "Thin Extrude",
+  "Wall Location": "Wall Location",
+  "Wall Thickness": "Wall Thickness",
+  "Thickness Outside": "Thickness Outside",
+  "Inside": "Inside",
+  "Outside": "Outside",
+  "Profiles/Curves": "Profiles/Curves"
 }

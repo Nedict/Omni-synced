@@ -59,3 +59,26 @@ fn editing_a_thin_extrude_keeps_its_wall() {
     assert_eq!(after.param_names, before.param_names);
     assert!((volume(&h) - v).abs() < 1e-9);
 }
+
+#[test]
+fn the_thin_rows_are_translated() {
+    for (lang, thin, location, outside) in
+        [("ja", "薄肉押し出し", "壁の位置", "外側の厚さ"), ("de", "Dünnwandig extrudieren", "Wandlage", "Dicke außen")]
+    {
+        let mut h = Harness::new();
+        h.app.preferences.language = lang.into();
+        rectangle(&mut h);
+        h.app
+            .run(
+                "solid.extrude",
+                json!({"sketch":"Base","thin":true,"thickness":"3 mm","side":"two_sides","thickness2":"1 mm","distance":"5 mm","name":"Wall"}),
+            )
+            .unwrap();
+        h.step(&json!({"call":"ui.editFeature","params":{"feature":"Wall"}})).unwrap();
+        h.frames(8);
+        for word in [thin, location, outside] {
+            assert!(h.widget(word).is_some(), "{lang}: {word:?} must be on screen");
+        }
+        assert!(h.widget("Wall Location").is_none(), "{lang}: must not fall back to English");
+    }
+}
