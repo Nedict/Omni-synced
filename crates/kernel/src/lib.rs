@@ -27,7 +27,7 @@ mod bridge;
 mod build;
 mod clearance;
 mod coplanar;
-mod continuity;
+mod corner_g2;
 mod curveblend;
 mod delete_face;
 mod emboss;
@@ -117,7 +117,6 @@ mod tspline;
 mod untouched_faces_tests;
 pub mod watch;
 
-pub use blend::{ChamferSide, chamfer, chamfer_sides, fillet, fillet_each, fillet_g2, fillet_max, fillet_max_each};
 pub use blend_corner::fillet_radii;
 pub use blend_variable::{RadiusSpline, Taper, fillet_chord, fillet_tapered, fillet_variable, fillet_variable_points, fillet_variable_spline, taper};
 pub use body::{Body, CapSignature, DISPLAY_ANGLE, EdgeInfo, FaceInfo, FacePaint, FaceSource, Paint};
@@ -131,6 +130,7 @@ pub use build::{
 pub use continuity::{
     ContinuityReport, ContinuityTolerances, EdgePick, MAX_SAMPLES, MIN_SAMPLES, SeamReport, SeamVerdict, SeamWorst, pick_edges, seam_diagnostics,
 };
+pub use corner_g2::{corner_g2_patch, seam_error};
 pub use delete_face::delete_faces;
 pub use emboss::{cylinder_emboss_anchor, emboss_cylinder, emboss_cylinder_at, has_cylinder_emboss_wall, infer_cylinder_emboss};
 pub use fair::{

@@ -1575,35 +1575,21 @@ pub enum FeatureKind {
     },
 }
 
-/// How Extend continues a surface past its edges.
+/// What fills the corner where three blended edges meet.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ExtendMode {
-    /// The surface itself, continued.
+pub enum FilletCorner {
+    /// A piece of the rolling ball's sphere: tangent (G1) to each blend.
     #[default]
-    Natural,
-    /// A ruled run-off in the surface's tangent plane (G1).
-    Tangent,
-    /// A run-off that keeps the surface's curvature across the edge (G2).
-    Curvature,
+    Rolling,
+    /// A G2 patch repeating each blend's surface up to the second order (see `corner_g2`).
+    G2,
 }
 
-impl ExtendMode {
-    pub fn is_natural(&self) -> bool {
-        *self == ExtendMode::Natural
+impl FilletCorner {
+    pub fn is_rolling(&self) -> bool {
+        matches!(self, FilletCorner::Rolling)
     }
-}
-
-/// What Extend extends up to instead of a distance.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
-#[serde(rename_all = "snake_case")]
-pub enum ExtendTo {
-    /// A plane.
-    Plane(PlaneRef),
-    /// The surface of a body's face (extended).
-    Face(FaceAt),
-    /// The surface's own bounds (natural only): a trim undone.
-    Bounds,
 }
 
 /// How a fillet's size is given.
