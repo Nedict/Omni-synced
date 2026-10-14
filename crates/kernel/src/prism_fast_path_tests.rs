@@ -27,6 +27,24 @@ fn bodies_that_stay_apart_join_into_one_body_with_both_lumps() {
     assert_eq!(joined.lumps().expect("lumps").len(), 2);
 }
 
+/// A blind hole stops inside the plate. Its end plane must not cut the plate's vertical
+/// edges: those edges never meet the tool (#818). A through hole already leaves them whole.
+#[test]
+fn a_blind_hole_does_not_split_edges_it_does_not_touch() {
+    let plate = box_solid(Vec3::ZERO, Vec3::new(40.0, 30.0, 10.0)).expect("plate");
+    let tool = cylinder(Vec3::new(20.0, 15.0, 7.0), Vec3::Z, 1.5, 3.0).expect("tool");
+    let cut = boolean(&plate, &tool, BoolOp::Cut).expect("cut").expect("a hole leaves material");
+    let want = 40.0 * 30.0 * 10.0 - PI * 1.5 * 1.5 * 3.0;
+    let volume = measure(&cut).expect("measure").volume;
+    assert!((volume - want).abs() < want * 5e-3, "{volume} vs {want}");
+    assert!(cut.validity().is_empty(), "{:?}", cut.validity());
+    for v in cut.solid.vertex_iter() {
+        let p = v.point();
+        let corner = (p.x.abs() < 1e-4 || (p.x - 40.0).abs() < 1e-4) && (p.y.abs() < 1e-4 || (p.y - 30.0).abs() < 1e-4);
+        assert!(!(corner && (p.z - 7.0).abs() < 1e-4), "untouched edge split at ({}, {}, {})", p.x, p.y, p.z);
+    }
+}
+
 /// A tool wholly inside its target leaves a closed void, not a through cut.
 #[test]
 fn a_tool_wholly_inside_leaves_a_closed_void() {
