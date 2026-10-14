@@ -313,17 +313,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
     let t = Tokens::get();
     let home = Rect::from_min_size(pos2(x0, r.top() + 5.0), vec2(66.0, r.height() - 5.0));
     let response = ui.interact(home, ui.id().with("home_tab"), Sense::click());
-    ui.painter().rect_filled(
-        home,
-        egui::CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 },
-        if app.home.open {
-            t.toolbar
-        } else if response.hovered() {
-            t.hover
-        } else {
-            t.app_bar
-        },
-    );
+    tab_shape(ui.painter(), &t, home, app.home.open, response.hovered());
     let home_text = app.tr("ui.home");
     ui.painter().text(
         home.center(),
@@ -357,14 +347,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
                 crate::titlebar::toggle_maximize(ui.ctx());
             }
         }
-        let fill = if active {
-            t.toolbar
-        } else if resp.hovered() {
-            Color32::from_white_alpha(28)
-        } else {
-            t.app_bar
-        };
-        ui.painter().rect_filled(tr, egui::CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 }, fill);
+        tab_shape(ui.painter(), &t, tr, active, resp.hovered());
         let ink = if active { t.text } else { t.app_bar_text };
         let name_display = if name == "Untitled" { app.tr("ui.untitled") } else { name };
         let label = format!("{name_display}{}", if *dirty { " •" } else { "" });
@@ -444,6 +427,25 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
         (Some(i), _) => close(app, i, false),
         (None, Some(i)) => switch(app, i),
         (None, None) => {}
+    }
+}
+
+/// One tab of the strip: the active tab takes the toolbar's colour and runs into it; the others
+/// sit on the application bar with a faint outline (no bottom edge) so neighbours stay apart.
+fn tab_shape(painter: &egui::Painter, t: &Tokens, r: Rect, active: bool, hovered: bool) {
+    let corners = egui::CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 };
+    let fill = if active {
+        t.toolbar
+    } else if hovered {
+        t.app_bar_hover
+    } else {
+        t.app_bar
+    };
+    painter.rect_filled(r, corners, fill);
+    if !active {
+        // Drawn past the bottom and clipped, so only the top and the sides show.
+        let outline = Rect::from_min_max(r.min, pos2(r.max.x, r.max.y + 2.0));
+        painter.with_clip_rect(r).rect_stroke(outline, corners, Stroke::new(1.0, t.app_bar_tab_edge), egui::StrokeKind::Inside);
     }
 }
 
@@ -586,6 +588,49 @@ mod tests {
         assert!((first..first + shown).contains(&11), "the active tab stays visible");
         assert!(shown as f32 * w + 26.0 + 34.0 <= 600.0 + 0.5);
         assert_eq!(layout(12, 0, 600.0).0, 0);
+    }
+
+    /// The tabs sit on the dark application bar in both themes: a hovered tab (the Home tab
+    /// included) keeps the bar's light text readable, and an inactive tab is outlined so
+    /// neighbouring tabs stay apart.
+    #[test]
+    fn title_bar_tabs_are_outlined_and_keep_their_text_readable_on_hover() {
+        fn luminance(c: Color32) -> f32 {
+            let c = egui::Rgba::from(c);
+            0.2126 * c.r() + 0.7152 * c.g() + 0.0722 * c.b()
+        }
+        // egui blends premultiplied colours in gamma space.
+        fn over(top: Color32, bottom: Color32) -> Color32 {
+            let ch = |t: u8, b: u8| t.saturating_add(((u16::from(b) * u16::from(255 - top.a())) / 255) as u8);
+            Color32::from_rgb(ch(top.r(), bottom.r()), ch(top.g(), bottom.g()), ch(top.b(), bottom.b()))
+        }
+        for t in [Tokens::light(), Tokens::dark()] {
+            let r = Rect::from_min_size(pos2(10.0, 5.0), vec2(80.0, 30.0));
+            for (active, hovered) in [(false, false), (false, true), (true, false)] {
+                let ctx = egui::Context::default();
+                let mut out = ctx.run_ui(egui::RawInput::default(), |ui| tab_shape(ui.painter(), &t, r, active, hovered));
+                out.textures_delta.clear();
+                let rects: Vec<_> = out
+                    .shapes
+                    .iter()
+                    .filter_map(|s| match &s.shape {
+                        egui::Shape::Rect(rect) => Some((rect.clone(), s.clip_rect)),
+                        _ => None,
+                    })
+                    .collect();
+                let fill = rects.iter().find(|(rect, _)| rect.fill.a() > 0).map(|(rect, _)| rect.fill).unwrap_or_default();
+                if !active {
+                    let bg = over(fill, t.app_bar);
+                    let (hi, lo) = (luminance(t.app_bar_text).max(luminance(bg)), luminance(t.app_bar_text).min(luminance(bg)));
+                    assert!((hi + 0.05) / (lo + 0.05) >= 4.5, "text on a tab (hovered: {hovered}) must stay readable: {bg:?} {t:?}");
+                }
+                let outline = rects.iter().find(|(rect, _)| rect.stroke.width > 0.0);
+                assert_eq!(outline.is_some(), !active, "only inactive tabs are outlined (active: {active})");
+                if let Some((rect, clip)) = outline {
+                    assert!(rect.rect.bottom() > r.bottom() && clip.bottom() <= r.bottom(), "the outline has no bottom edge");
+                }
+            }
+        }
     }
 
     #[test]
