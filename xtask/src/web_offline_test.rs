@@ -113,7 +113,15 @@ pub fn run(root: &Path, site: Option<&str>, required: bool) -> Result<(), String
     let server = Server::start(v2.clone())?;
     let browser = Chrome::launch(&chrome, &work.0.join("profile"))?;
     let mut cdp = browser.connect()?;
-    let state_js = STATE_JS.replace("STARTED", started);
+    // Every file any build keeps, by name (the state counts a cache's entries among them).
+    let mut files = std::collections::BTreeSet::new();
+    for dir in [&v1, &v2, &v3, &v4, &v5, &v6] {
+        let path = dir.join("build.json");
+        let build: Value =
+            std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).ok_or_else(|| format!("{}: not readable", path.display()))?;
+        files.extend(build["files"].as_array().into_iter().flatten().filter_map(|f| f["file"].as_str().map(str::to_string)));
+    }
+    let state_js = STATE_JS.replace("STARTED", started).replace("BUILD_FILES", &json!(files.into_iter().collect::<Vec<_>>()).to_string());
     let count = std::cell::Cell::new(0);
     let launch_at = |cdp: &mut Cdp, at: &str, build: &str| -> Result<Duration, String> {
         let n = count.get() + 1;
@@ -287,13 +295,18 @@ const STATE_JS: &str = "(async () => {
   const scope = new URL('.', location.href).href;
   const prefix = 'solidcraft-app ' + new URL(scope).pathname + ' ';
   const caches_ = {}, kept = {}, retired = [], complete = [];
+  // Each cache is read with `caches.match`, never opened: opening a cache that a worker has just
+  // deleted makes it again (empty), and nothing would delete it after that.
+  const marks = ['build-complete', 'build-retired'];
   for (const k of await caches.keys()) {
     if (!k.startsWith(prefix)) continue;
-    const c = await caches.open(k);
-    caches_[k] = (await c.keys()).length;
-    if (await c.match(new URL('build-complete', location.href).href)) complete.push(k);
-    if (await c.match(new URL('build-retired', location.href).href)) retired.push(k);
-    else kept[k] = caches_[k];
+    const here = async (file) => Boolean(await caches.match(new URL(file, scope).href, { cacheName: k }));
+    let n = 0;
+    for (const file of BUILD_FILES.concat(marks)) if (await here(file)) n += 1;
+    caches_[k] = n;
+    if (await here('build-complete')) complete.push(k);
+    if (await here('build-retired')) retired.push(k);
+    else kept[k] = n;
   }
   const filling = (await navigator.locks.query()).held.map((l) => l.name).filter((n) => n.startsWith(prefix));
   return { search: location.search, ready: document.readyState, build: document.documentElement.dataset.build ?? null,
