@@ -651,23 +651,50 @@ fn loop_dof(tree: &Tree, closing: &[u64], asm: &Assembly, vals: &Values, dof: &m
     }
     let linked: BTreeSet<(u64, usize)> = asm.links.iter().map(|l| (l.b, l.ib)).collect();
     let groups = loop_groups(tree, closing, asm, &linked);
-    let (mut spent, mut counted) = (0usize, 0usize);
+    // The joints loops depend on: those around them, those whose values they read, and those a
+    // motion link carries any of these values into.
+    let mut relevant: BTreeSet<u64> = groups.iter().flat_map(|(_, a, t)| a.iter().copied().chain(t.iter().map(|(j, _)| *j))).collect();
+    for _ in 0..MAX_LINK_HOPS {
+        let more: Vec<u64> = asm.links.iter().filter(|l| relevant.contains(&l.a) && !relevant.contains(&l.b)).map(|l| l.b).collect();
+        if more.is_empty() {
+            break;
+        }
+        relevant.extend(more);
+    }
+    // The occurrences a loop may hold or move: placed by such a joint, or below one that is
+    // (worked out down the tree, parents first). The others keep the tree's count.
+    let mut candidates: BTreeSet<u64> = BTreeSet::new();
     for occ in &tree.order {
+        if let Some(&(from, joint, _)) = tree.parent.get(occ)
+            && (relevant.contains(&joint) || candidates.contains(&from))
+        {
+            candidates.insert(*occ);
+        }
+    }
+    let (mut spent, mut counted) = (0usize, 0usize);
+    for occ in tree.order.iter().filter(|o| candidates.contains(o)) {
         let path: Vec<u64> = tree.path(*occ).1.iter().map(|(k, _)| *k).collect();
-        let mut values: Vec<(u64, usize)> = Vec::new();
-        for j in path.iter().filter_map(|k| tree.joints.get(k)) {
-            for v in (0..j.kind.dofs().len()).map(|i| (j.id, i)) {
-                if !linked.contains(&v) && !values.contains(&v) {
-                    values.push(v);
-                }
+        let (mut values, mut have): (Vec<(u64, usize)>, BTreeSet<(u64, usize)>) = (Vec::new(), BTreeSet::new());
+        let mut add = |values: &mut Vec<(u64, usize)>, v: (u64, usize)| {
+            if have.insert(v) {
+                values.push(v);
             }
+        };
+        for j in path.iter().filter_map(|k| tree.joints.get(k)) {
+            for v in (0..j.kind.dofs().len()).map(|i| (j.id, i)).filter(|v| !linked.contains(v)) {
+                add(&mut values, v);
+            }
+            if values.len() > MAX_LOOP_VALUES {
+                break;
+            }
+        }
+        if values.len() > MAX_LOOP_VALUES {
+            continue;
         }
         // A value on the path a motion link sets moves with the values its link chain starts from.
         let on_path: BTreeSet<u64> = path.iter().copied().collect();
         for v in link_chains(asm, tree, &on_path, &linked).1 {
-            if !values.contains(&v) {
-                values.push(v);
-            }
+            add(&mut values, v);
         }
         // The loops on the path, and every loop whose values those reach (a linked source may be
         // held by a loop of its own), each once.
@@ -678,7 +705,7 @@ fn loop_dof(tree: &Tree, closing: &[u64], asm: &Assembly, vals: &Values, dof: &m
                 .iter()
                 .enumerate()
                 .filter(|(g, _)| !taken.contains(g))
-                .filter(|(_, (_, a, t))| path.iter().any(|k| a.contains(k)) || values.iter().any(|v| t.contains(v)))
+                .filter(|(_, (_, a, t))| path.iter().any(|k| a.contains(k)) || t.iter().any(|v| values.contains(v)))
                 .map(|(g, _)| g)
                 .collect();
             if more.is_empty() {
@@ -688,9 +715,7 @@ fn loop_dof(tree: &Tree, closing: &[u64], asm: &Assembly, vals: &Values, dof: &m
                 closers.extend(c.iter().copied());
                 around.extend(a.iter().copied());
                 for v in unknowns(tree, a, asm, &linked, &Held::new()) {
-                    if !values.contains(&v) {
-                        values.push(v);
-                    }
+                    add(&mut values, v);
                 }
             }
             taken.extend(more);
