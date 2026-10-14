@@ -307,9 +307,9 @@ pub struct Dialog {
 /// in, OK runs them for real and finds the feature there; meanwhile the window stays live and
 /// the dialog says it is computing.
 pub struct Applying {
-    done: std::sync::mpsc::Receiver<()>,
+    pub(crate) done: std::sync::mpsc::Receiver<()>,
     /// When OK was pressed (ms).
-    started: f64,
+    pub(crate) started: f64,
 }
 
 impl Applying {
@@ -1933,6 +1933,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         let footer_height = ui.spacing().interact_size.y.max(24.0) + 6.0 + ui.spacing().item_spacing.y;
         let fields_height = (vp.bottom() - anchor.y - 8.0 - vertical_frame - ui.min_rect().height() - footer_height).max(1.0);
         egui::ScrollArea::vertical().id_salt("feature_fields").min_scrolled_height(fields_height).max_height(fields_height).show(ui, |ui| {
+            // While OK computes, its inputs hold: what is applied is what was asked.
+            if app.applying.is_some() {
+                ui.disable();
+            }
             // Configuration tables own their column widths and scrolling; the two-column form
             // grid would squeeze their row names and action buttons into a label-sized cell.
             if let Kind::Motion(k @ crate::dialogs_motion::Mo::Configurations { .. }) = &mut d.kind {

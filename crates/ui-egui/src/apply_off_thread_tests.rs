@@ -67,3 +67,22 @@ fn cancel_while_computing_applies_nothing() {
     h.frames(5);
     assert_eq!(h.app.session.doc.features.len(), features);
 }
+
+#[test]
+fn the_dialog_holds_its_inputs_while_ok_computes() {
+    let mut h = square_on_a_block();
+    h.app.fit_view();
+    h.frames(2);
+    let picked = h.app.dialog.as_ref().map(|d| d.inputs[0].items.clone()).unwrap();
+    // OK computing, until the test lets it finish.
+    let (finish, done) = std::sync::mpsc::channel();
+    h.app.applying = Some(crate::dialogs::Applying { done, started: crate::now_ms() });
+    // A click on the square picked would take it out of the profiles.
+    h.step(&json!({"click": {"world": [10, 10, 10]}})).unwrap();
+    h.frames(2);
+    assert_eq!(h.app.dialog.as_ref().map(|d| d.inputs[0].items.clone()), Some(picked), "no pick while computing");
+    finish.send(()).unwrap();
+    until_applied(&mut h);
+    assert!(h.app.dialog.is_none());
+    h.step(&json!({"expect": {"bodies": 1, "volume": 13000}})).unwrap();
+}

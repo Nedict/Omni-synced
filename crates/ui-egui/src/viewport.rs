@@ -1286,6 +1286,10 @@ fn hit_candidate(app: &SolveApp, h: &Hit) -> Option<(Hit, Sel)> {
 
 /// A pick for the open dialog's active input (a click, or a Select Other row).
 pub(crate) fn dialog_pick(app: &mut SolveApp, hit: &Hit, sel: Sel) {
+    // While OK computes, the dialog's inputs hold.
+    if app.applying.is_some() {
+        return;
+    }
     let Some(mut d) = app.dialog.take() else { return };
     d.pick(&app.session, sel);
     if let crate::dialogs::Kind::PathPlane { sketch, .. } = &mut d.kind {
@@ -2550,6 +2554,10 @@ pub(crate) fn measurement_selection(s: &solidcraft_engine::Session, sel: &Sel) -
 /// active input takes (edges, faces or bodies), otherwise bodies.
 fn box_select(app: &mut SolveApp, proj: &Proj, bx: BoxSel, add: bool) {
     use crate::selection::{BODIES, EDGES, FACES, PROFILES};
+    // While OK computes, the dialog's inputs hold.
+    if app.applying.is_some() {
+        return;
+    }
     let st = app.session.world_state();
     let mut out: Vec<Sel> = Vec::new();
     let to2 = |pts: &[Vec3]| -> Vec<Pos2> { pts.iter().filter_map(|p| proj.to_screen(*p)).collect() };
