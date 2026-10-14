@@ -1,4 +1,9 @@
 {
+  "Send your report on GitHub": "GitHub에서 보고서 보내기",
+  "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. 아래에서 GitHub 초안을 열고 클립보드에 복사된 보고서를 붙여넣으세요.",
+  "1. Open GitHub draft below. Your title and report will be filled in.": "1. 아래에서 GitHub 초안을 여세요. 제목과 보고서가 자동으로 입력됩니다.",
+  "2. Attach your screenshot: copy and paste it, or save and upload the PNG.": "2. 스크린샷을 첨부하세요. 복사하여 붙여넣거나 PNG로 저장한 뒤 업로드하세요.",
+  "3. Click Submit new issue on GitHub to send your report.": "3. GitHub에서 Submit new issue를 클릭하여 보고서를 보내세요.",
   "browser.body_name": "바디{number}",
   "browser.component_name": "컴포넌트{number}",
   "browser.parameters": "매개변수 ({count})",
