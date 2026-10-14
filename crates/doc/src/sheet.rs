@@ -10,7 +10,7 @@
 //! together; the flat solid is the outline extruded through the thickness.
 
 use serde::{Deserialize, Serialize};
-use solidcraft_geom::{Loop2, Plane, Region2, Seg2, Vec2, Vec3};
+use solidcraft_geom::{LINEAR_TOL, Loop2, Plane, Region2, Seg2, Vec2, Vec3};
 use solidcraft_kernel::{self as kernel, Body, EdgeSpec, FaceSpec, SurfSpec};
 
 use crate::expr::{self, Kind, Value};
@@ -656,6 +656,35 @@ fn clip(poly: &[Vec2], o: Vec2, n: Vec2) -> Vec<Vec2> {
     out
 }
 
+/// [`clip`] to the half-plane (p − o)·n ≥ 0 (`n` a unit vector) at a trim line: a corner within
+/// the model's tolerance of the line lies on it (it stays, moved onto the line), and an edge
+/// crosses the line only between corners clear of it on either side, so no corner comes out
+/// twice. Also says whether a corner lay on the line: the polygon may then run along the line
+/// out and back (a ledge beside the edge that ends on the line, or a hair either side of it,
+/// all of it in the strip that goes), which is no material.
+fn clip_at_line(poly: &[Vec2], o: Vec2, n: Vec2) -> (Vec<Vec2>, bool) {
+    let side = |p: Vec2| {
+        let v = (p - o).dot(n);
+        if v.abs() <= LINEAR_TOL { 0.0 } else { v }
+    };
+    let (mut out, mut on) = (Vec::new(), false);
+    let m = poly.len();
+    for i in 0..m {
+        let (Some(&a), Some(&b)) = (poly.get(i), poly.get((i + 1) % m)) else { continue };
+        let (da, db) = (side(a), side(b));
+        if da > 0.0 {
+            out.push(a);
+        } else if da == 0.0 {
+            out.push(snap(a - n * (a - o).dot(n)));
+            on = true;
+        }
+        if da * db < 0.0 {
+            out.push(snap(a + (b - a) * (da / (da - db))));
+        }
+    }
+    (out, on)
+}
+
 /// The smallest gap closed corners are given: closer than this the flanges' ends would touch.
 const MIN_CORNER_GAP: f64 = 0.01;
 
@@ -1068,16 +1097,21 @@ impl SheetBody {
                     continue;
                 };
                 let d = b - a;
-                let l2 = d.len2();
+                let (l2, l) = (d.len2(), d.len());
+                // Not within the model's tolerance of an end or of each other: a corner that near
+                // an end is that end (sewing welds the two), and a piece that short is no edge. A
+                // short edge beside a bend's end (the side of a ledge a little taller than the
+                // setback) used to be cut where the bend's corner lies, under a nanometre from
+                // its own.
                 let mut ts: Vec<f64> = corners
                     .iter()
                     .filter_map(|p| {
                         let t = (*p - a).dot(d) / l2.max(1e-30);
-                        ((t > 1e-9 && t < 1.0 - 1e-9) && (a + d * t).dist(*p) < 1e-7).then_some(t)
+                        ((t * l > LINEAR_TOL && (1.0 - t) * l > LINEAR_TOL) && (a + d * t).dist(*p) < 1e-7).then_some(t)
                     })
                     .collect();
                 ts.sort_by(|x, y| x.total_cmp(y));
-                ts.dedup_by(|x, y| (*x - *y).abs() < 1e-12);
+                ts.dedup_by(|x, y| (*x - *y).abs() * l < LINEAR_TOL);
                 let mut prev = a;
                 for t in ts {
                     split_edges += 1;
@@ -1798,12 +1832,12 @@ impl SheetBody {
             None => {
                 let pts = self.base.outer.ccw().polyline(1e-3);
                 let o = a + inward * by;
-                let mut cut = clip(&pts, o, inward);
+                let (mut cut, on_line) = clip_at_line(&pts, o, inward);
                 // Only the material along this edge goes: other parts of the outline past the
                 // line (tabs side by side on one line) stay, and so does the base where it runs
                 // on past the edge's own line (beyond an inside corner at the edge's end).
                 let mut work = FlatWork::new();
-                let off = merge_loops(&[clip(&pts, o, inward * -1.0)], &mut work)?;
+                let off = merge_loops(&[clip_at_line(&pts, o, inward * -1.0).0], &mut work)?;
                 let mid = (a + b) * 0.5;
                 let touches = |p: &Vec<Vec2>| {
                     let m = p.len();
@@ -1825,10 +1859,13 @@ impl SheetBody {
                         keep.push(p.clone());
                     }
                 }
-                if !keep.is_empty() {
+                // Merged, a run along the trimmed line out and back cancels: the base ends on
+                // the line there, as it does beside a lower ledge.
+                if !keep.is_empty() || on_line {
                     keep.insert(0, cut);
                     cut = match merge_loops(&keep, &mut work)?.as_slice() {
                         [one] => one.clone(),
+                        [] => Vec::new(),
                         _ => return Err(DocError::Invalid("not supported yet: a flange setback that splits the sheet".into())),
                     };
                 }
@@ -5121,6 +5158,87 @@ mod tests {
         let f = &s.flanges[made[0]];
         assert!(f.p.dist(Vec2::new(17.0, 30.0)) < 1e-9 && (f.len - 30.0).abs() < 1e-9, "{f:?}");
         holds_the_flat_material(&s, "side");
+    }
+
+    /// A 100 x 60 plate with a ledge 3 wide and `h` tall beside its y = 0 edge, at its right end
+    /// or at both ends, turned `turn` about the origin.
+    fn ledged(h: f64, both: bool, turn: f64) -> SheetBody {
+        let mut pts = vec![(0.0, 0.0), (100.0, 0.0), (100.0, h), (97.0, h), (97.0, 60.0)];
+        pts.extend(if both { vec![(3.0, 60.0), (3.0, h), (0.0, h)] } else { vec![(0.0, 60.0)] });
+        let pts: Vec<Vec2> = pts.into_iter().map(|(x, y)| turned(x, y, turn)).collect();
+        base_flange("Body1", "AL2", &alu(), Plane::XY, Region2 { outer: Loop2::polygon(&pts).ccw(), holes: vec![] })
+    }
+
+    fn turned(x: f64, y: f64, turn: f64) -> Vec2 {
+        Vec2::new(x * turn.cos() - y * turn.sin(), x * turn.sin() + y * turn.cos())
+    }
+
+    #[test]
+    fn a_ledge_beside_an_edge_as_tall_as_the_setback_goes_with_the_strip() {
+        // A 100 x 60 plate with a ledge 3 wide beside its y = 0 edge, as tall as the setback of a
+        // 90° flange 15 high on that edge: (R + T)·tan 45° = 3 inside, half of it in the middle;
+        // BA = (π/2)·(R + K·T) = π, panel 15 − 3 = 12. The setback takes the strip under the edge
+        // and the ledge with it, as it takes a lower one: the base ends on the bend line, 97 wide
+        // (94 with a ledge at either end), and the bend and the flange run along it. The trim
+        // used to leave the bend line running out to the ledge's corner and back, and the part
+        // failed to sew ("a degenerate edge"); so did a ledge within the model's tolerance of the
+        // setback. Square to the axes and turned (a 5-12-13 slope) alike.
+        let (ba, panel, quarter) = (std::f64::consts::PI, 12.0, std::f64::consts::FRAC_PI_2);
+        for (position, line) in [("inside", 3.0), ("middle", 3.0 / 2.0)] {
+            for both in [false, true] {
+                for turn in [0.0, (5.0f64 / 13.0).asin()] {
+                    // Exact square to the axes; to within the crossings' 1e-9 grid when turned.
+                    let tol = if turn == 0.0 { 1e-9 } else { 1e-6 };
+                    for hair in [0.0, 1e-7, -1e-7] {
+                        let what = format!("{position}, ledge {line}{hair:+e}, both ends {both}, turned {turn:.4}");
+                        let mut s = ledged(line + hair, both, turn);
+                        let pick = turned(50.0, 0.0, turn);
+                        let (made, notes) = s
+                            .add_flanges_noted(&[Vec3::new(pick.x, pick.y, 2.0)], 15.0, quarter, 1.0, position, false)
+                            .unwrap_or_else(|e| panic!("{what}: {e}"));
+                        assert!(notes.is_empty(), "{what}: {notes:?}");
+                        let x0 = if both { 3.0 } else { 0.0 };
+                        let got = corners_of(&s.base);
+                        let want = [(x0, line), (97.0, line), (97.0, 60.0), (x0, 60.0)].map(|(x, y)| turned(x, y, turn));
+                        assert!(got.len() == 4 && want.iter().all(|p| got.iter().any(|q| q.dist(*p) < tol)), "{what}: {got:?}");
+                        let base = (97.0 - x0) * (60.0 - line);
+                        assert!((s.base.area() - base).abs() < tol, "{what}: {} vs {base}", s.base.area());
+                        let f = &s.flanges[made[0]];
+                        assert!(f.p.dist(turned(x0, line, turn)) < tol && (f.len - (97.0 - x0)).abs() < tol, "{what}: {f:?}");
+                        assert!((s.bends()[0].length - (97.0 - x0)).abs() < tol, "{what}: {:?}", s.bends());
+                        assert!((flat_area(&s) - (base + (97.0 - x0) * (ba + panel))).abs() < 1e-6, "{what}: {}", flat_area(&s));
+                        holds_the_flat_material(&s, &what);
+                    }
+                    // A ledge clearly shorter goes the same way. One clearly taller keeps a sliver
+                    // above the bend line, and the bend runs on under it, the edge's whole 100;
+                    // turned, its bend used to end a fraction of a nanometre along the sliver's
+                    // side, which split that side there and failed to sew in the middle.
+                    for hair in [1e-4, 0.05, -1e-4, -0.05] {
+                        let what = format!("{position}, ledge {line}{hair:+e}, both ends {both}, turned {turn:.4}");
+                        let mut s = ledged(line + hair, both, turn);
+                        let pick = turned(50.0, 0.0, turn);
+                        let (made, notes) = s
+                            .add_flanges_noted(&[Vec3::new(pick.x, pick.y, 2.0)], 15.0, quarter, 1.0, position, false)
+                            .unwrap_or_else(|e| panic!("{what}: {e}"));
+                        assert!(notes.is_empty(), "{what}: {notes:?}");
+                        let (x0, ends) = (if both { 3.0 } else { 0.0 }, if both { 2.0 } else { 1.0 });
+                        let (from, len, sliver) = if hair > 0.0 { (0.0, 100.0, ends * 3.0 * hair) } else { (x0, 97.0 - x0, 0.0) };
+                        let f = &s.flanges[made[0]];
+                        assert!(f.p.dist(turned(from, line, turn)) < tol && (f.len - len).abs() < tol, "{what}: {f:?}");
+                        let base = (97.0 - x0) * (60.0 - line) + sliver;
+                        assert!((s.base.area() - base).abs() < tol, "{what}: {} vs {base}", s.base.area());
+                        assert!((flat_area(&s) - (base + len * (ba + panel))).abs() < 1e-6, "{what}: {}", flat_area(&s));
+                        // (A sliver 0.0001 wide is below the flat pattern's shortest edge.)
+                        if hair < 0.0 || hair > 1e-3 {
+                            holds_the_flat_material(&s, &what);
+                        } else {
+                            let b = s.solid().unwrap_or_else(|e| panic!("{what}: no solid: {e}"));
+                            assert!(b.validity().is_empty() && b.shell_count() == 1, "{what}: {:?}", b.validity());
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

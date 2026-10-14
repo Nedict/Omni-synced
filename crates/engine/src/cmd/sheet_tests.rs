@@ -1154,6 +1154,64 @@ fn edge_flanges_on_either_side_of_a_notch_span_the_side_they_were_picked_on() {
 }
 
 #[test]
+fn an_edge_flange_beside_a_ledge_as_tall_as_its_setback_or_a_little_taller_folds() {
+    // A 100 x 60 plate (2 mm, K 0.5) with a ledge 3 wide beside the right end of its bottom edge,
+    // and a 90° flange 20 high on that edge, radius 1: setback 3 inside, half of it in the
+    // middle; BA π, panel 17. A ledge as tall as the setback goes with the strip the setback
+    // takes, and the bend runs along what the base keeps, x 0 … 97. One 0.05 taller keeps that
+    // sliver above the bend line, and the bend runs on under it, x 0 … 100. Both used to fail
+    // with "sew: a degenerate edge": the first square to the axes, the second turned off them
+    // (a 5-12-13 slope) in the middle.
+    for turn in [0.0, (5.0f64 / 13.0).asin()] {
+        let at = |x: f64, y: f64| [x * turn.cos() - y * turn.sin(), x * turn.sin() + y * turn.cos()];
+        for (position, setback) in [("inside", 3.0), ("middle", 3.0 / 2.0)] {
+            for (taller, len) in [(0.0, 97.0), (0.05, 100.0)] {
+                let what = format!("{position}, ledge {setback} + {taller}, turned {turn:.4}");
+                let ledge = setback + taller;
+                let mut s = Session::default();
+                run(
+                    &mut s,
+                    "sheet.manage_rules",
+                    json!({"name": "R", "thickness": "2 mm", "k_factor": "0.5", "bend_radius": "1 mm", "active": true}),
+                );
+                run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Outline"}));
+                let outline = [(0.0, 0.0), (100.0, 0.0), (100.0, ledge), (97.0, ledge), (97.0, 60.0), (0.0, 60.0)].map(|(x, y)| at(x, y));
+                run(&mut s, "sketch.line", json!({"points": outline, "closed": true}));
+                run(&mut s, "sketch.finish", json!({}));
+                run(&mut s, "sheet.flange", json!({"sketch": "Outline"}));
+                let [x, y] = at(50.0, 0.0);
+                run(&mut s, "sheet.flange", json!({"edges": [[x, y, 2]], "height": 20, "angle": 90, "radius": 1, "position": position}));
+                assert!(no_errors_or_warnings(&s), "{what}: {:?}", s.model.results);
+                let f = flat(&mut s);
+                let bends = f["bends"].as_array().cloned().unwrap_or_default();
+                assert!(bends.len() == 1 && (bends[0]["length"].as_f64().unwrap_or(0.0) - len).abs() < 1e-6, "{what}: {f}");
+                assert_eq!(f["outline"].as_array().map(Vec::len), Some(1), "{what}: {f}");
+                // The base 97 wide above the bend line (and the sliver), and len × (π + 17) of bend
+                // and flange.
+                let area = 97.0 * (60.0 - setback) + 3.0 * taller + len * (PI + 17.0);
+                assert!((flat_area(&f) - area).abs() < 1e-6, "{what}: {}", flat_area(&f));
+                assert!(rel(volume(&mut s), area * 2.0) < 1e-4, "{what}: {} vs {}", volume(&mut s), area * 2.0);
+                // The flange's outer face lies 3 − setback outside the edge (y setback − 3 … − 1);
+                // it stands over the ledge only where the bend runs on. The base stops at x = 97.
+                let here = |x: f64, y: f64, z: f64| {
+                    let [x, y] = at(x, y);
+                    contains(&s, [x, y, z])
+                };
+                assert!(here(50.0, setback - 2.0, 10.0) && here(95.0, 10.0, 1.0) && !here(98.5, 10.0, 1.0), "{what}");
+                assert_eq!(here(98.5, setback - 2.0, 10.0), taller > 0.0, "{what}");
+                let state = s.model.state();
+                let body = &state.bodies[0].body;
+                assert!(body.validity().is_empty() && body.shell_count() == 1, "{what}");
+                for command in ["sheet.unfold", "sheet.refold"] {
+                    run(&mut s, command, json!({}));
+                    assert!(rel(volume(&mut s), area * 2.0) < 1e-4, "{what}, {command}: {}", volume(&mut s));
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn an_edge_flange_on_a_flange_runs_along_what_a_flat_cut_left_of_its_far_edge() {
     // A 40 high wall on the plate's bottom edge (outside: BA π, panel 37), its far edge at
     // y = -(π + 37) in the flat. Unfolded, a cut takes x 0 … 60 of that edge, up to y = -30. A
