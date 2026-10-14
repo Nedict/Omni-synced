@@ -2,7 +2,9 @@
 //! go through the gate, and the design changes only as the policy allows.
 
 use std::collections::VecDeque;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 use solidcraft_assistant::net::{Cancel, HttpError, HttpRequest, HttpStream};
@@ -200,9 +202,9 @@ fn a_file_outside_the_assistants_folders_is_refused_even_when_allowed() {
 #[test]
 fn raw_control_methods_and_stale_turns_are_refused() {
     let mut h = Harness::new();
-    install(&mut h, vec![say("ok")]);
-    let (tx, rx) = (h.app.assistant.inlet_tx.clone(), ());
-    let _ = rx;
+    // The turn stays alive: the model's `new_design` waits for a yes.
+    install(&mut h, vec![calls(&[("c1", "new_design", json!({}))]), say("ok")]);
+    let tx = h.app.assistant.inlet_tx.clone();
     // No turn is running: everything is refused.
     let (req, reply) = ControlRequest::new("engine.execute", json!({"command": "solid.box", "_turn": 1}));
     tx.send(req).unwrap();
@@ -211,19 +213,35 @@ fn raw_control_methods_and_stale_turns_are_refused() {
     assert_eq!(bodies(&mut h), 0);
     // With a turn running: a method outside the allowlist is refused, and a forged `_turn` too.
     send_ok(&mut h, "hi");
-    let id = h.app.assistant.active.as_ref().map(|a| a.id).unwrap();
-    for (method, params) in [("app.quit", json!({"_turn": id})), ("ui.prefs", json!({"_turn": id})), ("engine.script", json!({"_turn": id, "commands": []})), ("document.inspect", json!({"_turn": id + 5}))] {
+    for _ in 0..4000 {
+        h.frame();
+        if !h.app.assistant.confirms.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let id = h.app.assistant.active.as_ref().map(|a| a.id).expect("the turn is waiting for a yes");
+    for (method, params) in [
+        ("app.quit", json!({"_turn": id})),
+        ("ui.prefs", json!({"_turn": id})),
+        ("engine.script", json!({"_turn": id, "commands": []})),
+        ("document.inspect", json!({"_turn": id + 5})),
+    ] {
         let (req, reply) = ControlRequest::new(method, params);
         tx.send(req).unwrap();
+        let mut answered = false;
         for _ in 0..200 {
             h.frame();
             if let Ok(v) = reply.try_recv() {
                 assert_eq!(v["ok"], false, "{method}: {v}");
+                answered = true;
                 break;
             }
         }
+        assert!(answered, "{method} was not answered");
     }
     assert!(!h.app.quit_requested);
+    h.call("ui.assistant", json!({"action": "stop"}));
     wait_idle(&mut h);
 }
 
@@ -345,4 +363,203 @@ fn a_picture_goes_to_a_vision_model() {
     let user = body["messages"].as_array().unwrap().iter().find(|m| m["role"] == "user").unwrap().to_string();
     assert!(user.contains("data:image/png;base64,"), "{}", &user[..200.min(user.len())]);
     assert!(h.app.assistant.picture.is_none());
+}
+
+// ---- external agents -----------------------------------------------------------------------
+
+use std::io::{BufRead, Write};
+use std::net::{TcpListener, TcpStream};
+
+/// A stand-in for the app's agent endpoint: a loopback listener that checks the token, tags each
+/// request with the running turn and forwards it into the inlet, as the desktop app does.
+fn test_endpoint() -> StartEndpoint {
+    Arc::new(|spec: EndpointSpec| {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
+        let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+        let token = "0123456789abcdef0123456789abcdef".to_string();
+        let expect = token.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let (inlet, turn, ctx, expect) = (spec.inlet.clone(), spec.turn.clone(), spec.ctx.clone(), expect.clone());
+                std::thread::spawn(move || {
+                    let Ok(read) = stream.try_clone() else { return };
+                    let mut out = stream;
+                    for line in std::io::BufReader::new(read).lines().map_while(Result::ok) {
+                        let Ok(msg) = serde_json::from_str::<Value>(&line) else { continue };
+                        if msg["token"] != expect.as_str() {
+                            let _ = writeln!(out, "{}", json!({"ok": false, "error": "unauthorized"}));
+                            return;
+                        }
+                        let mut params = msg["params"].clone();
+                        if let Some(o) = params.as_object_mut() {
+                            o.insert("_turn".into(), json!(turn.load(Ordering::SeqCst)));
+                        }
+                        let (req, rx) = ControlRequest::new(msg["method"].as_str().unwrap_or(""), params);
+                        if inlet.send(req).is_err() {
+                            return;
+                        }
+                        ctx.request_repaint();
+                        let mut reply = rx.recv_timeout(Duration::from_secs(60)).unwrap_or_else(|_| json!({"ok": false, "error": "timeout"}));
+                        reply["id"] = msg["id"].clone();
+                        if writeln!(out, "{reply}").is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        Ok(Endpoint::new(port, token, || {}))
+    })
+}
+
+/// The agent side of the test. The test binary starts itself with `SOLIDCRAFT_MOCK_ACP` set and
+/// this test selected: it speaks ACP on stdin and stdout and models through the endpoint
+/// named in the MCP server it is given, as SolidCraft's own MCP server would for a real agent.
+#[test]
+fn mock_acp_agent() {
+    if std::env::var("SOLIDCRAFT_MOCK_ACP").is_err() {
+        return;
+    }
+    let stdin = std::io::stdin();
+    let mut out = std::io::stdout();
+    // libtest has written "test … ... " without a line break: start a line of our own.
+    writeln!(out).unwrap();
+    let mut say = |v: Value| {
+        writeln!(out, "{v}").unwrap();
+        out.flush().unwrap();
+    };
+    let (mut port, mut token) = (0u16, String::new());
+    for line in stdin.lock().lines().map_while(Result::ok) {
+        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+        let id = v["id"].clone();
+        match v["method"].as_str().unwrap_or("") {
+            "initialize" => say(json!({"jsonrpc": "2.0", "id": id, "result": {"protocolVersion": 1, "agentCapabilities": {}, "authMethods": []}})),
+            "session/new" => {
+                let server = &v["params"]["mcpServers"][0];
+                token = server["env"][0]["value"].as_str().unwrap_or("").to_string();
+                port = server["args"][2].as_str().unwrap_or("").rsplit(':').next().unwrap_or("0").parse().unwrap_or(0);
+                say(json!({"jsonrpc": "2.0", "id": id, "result": {"sessionId": "mock"}}));
+            }
+            "session/prompt" => {
+                let mut conn = TcpStream::connect(("127.0.0.1", port)).unwrap();
+                let mut reader = std::io::BufReader::new(conn.try_clone().unwrap());
+                let mut n = 0;
+                let mut call = |method: &str, params: Value, token: &str| -> Value {
+                    n += 1;
+                    writeln!(conn, "{}", json!({"id": n, "method": method, "params": params, "token": token})).unwrap();
+                    let mut l = String::new();
+                    reader.read_line(&mut l).unwrap();
+                    serde_json::from_str(&l).unwrap()
+                };
+                say(json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "mock", "update": {"sessionUpdate": "tool_call", "toolCallId": "k1", "title": "solidcraft: execute", "kind": "other", "status": "pending", "rawInput": {"command": "solid.box"}}}}));
+                // A wrong token: refused, and the connection is closed on it (its own connection).
+                let bad = {
+                    let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+                    writeln!(c, "{}", json!({"id": 1, "method": "engine.execute", "params": {"command": "solid.box"}, "token": "wrong-token"})).unwrap();
+                    let mut l = String::new();
+                    std::io::BufReader::new(c).read_line(&mut l).unwrap();
+                    serde_json::from_str::<Value>(&l).unwrap_or(json!({"ok": false}))
+                };
+                let made = call("engine.execute", json!({"command": "solid.box", "params": {"length": 10, "width": 20, "height": 30}}), &token);
+                say(json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "mock", "update": {"sessionUpdate": "tool_call_update", "toolCallId": "k1", "status": "completed", "content": [{"type": "content", "content": {"type": "text", "text": "box made"}}]}}}));
+                let quit = call("app.quit", json!({}), &token);
+                let new = call("engine.execute", json!({"command": "file.new", "params": {}}), &token);
+                let text = format!("bad token: {}; box: {}; quit: {}; file.new: {}", bad["ok"], made["ok"], quit["ok"], new["error"].as_str().unwrap_or("ran"));
+                say(json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "mock", "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}}}));
+                say(json!({"jsonrpc": "2.0", "id": id, "result": {"stopReason": "end_turn"}}));
+            }
+            _ => {}
+        }
+    }
+}
+
+fn agent_profile() -> solidcraft_assistant::settings::AgentProfile {
+    let exe = std::env::current_exe().unwrap().to_string_lossy().into_owned();
+    solidcraft_assistant::settings::AgentProfile {
+        name: "Mock agent".into(),
+        command: exe,
+        args: vec!["--exact".into(), "assistant_ui::tests::mock_acp_agent".into(), "--nocapture".into(), "--test-threads=1".into()],
+        env: vec![("SOLIDCRAFT_MOCK_ACP".into(), solidcraft_assistant::settings::Secret::new("1"))],
+        mode: solidcraft_assistant::settings::AgentMode::Acp,
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn an_external_agent_models_through_the_gate() {
+    let mut h = Harness::new();
+    let mut s = Settings::default();
+    s.backend = BackendKind::Agent;
+    s.agents.push(agent_profile());
+    s.cli = "/usr/bin/solidcraft-cli".into();
+    h.app.assistant.set_settings(s);
+    h.app.assistant.data_root = Some(h.dir.join("assistant"));
+    h.app.services.start_agent_endpoint = Some(test_endpoint());
+    send_ok(&mut h, "make a box and then start over");
+    // The agent's file.new is held until the person answers; decline it.
+    let mut answered = false;
+    for _ in 0..8000 {
+        h.frame();
+        if !answered && !h.app.assistant.confirms.is_empty() {
+            let s = summary(&h.app);
+            assert_eq!(s["confirms"][0][0], "file.new");
+            let r = h.call("ui.assistant", json!({"action": "confirm", "index": 0, "allow": false}));
+            assert_eq!(r["ok"], true, "{r}");
+            answered = true;
+        }
+        if !h.app.assistant.busy() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(answered, "file.new never waited for the person: {}", summary(&h.app));
+    assert!(!h.app.assistant.busy(), "{}", summary(&h.app));
+    let s = summary(&h.app);
+    assert_eq!(bodies(&mut h), 1, "{s}");
+    assert!(!h.app.quit_requested);
+    let items = s["items"].as_array().unwrap();
+    let text = items.iter().filter(|i| i["kind"] == "assistant").map(|i| i["text"].as_str().unwrap().to_string()).collect::<String>();
+    assert!(text.contains("bad token: false") && text.contains("box: true") && text.contains("quit: false") && text.contains("file.new: the user declined"), "{text}");
+    assert!(items.iter().any(|i| i["kind"] == "tool" && i["title"] == "solidcraft: execute" && i["result"]["text"] == "box made"), "{s}");
+    // The turn changed the design, so it can be undone as one step.
+    assert!(s["undoable"].is_object(), "{s}");
+    let r = h.call("ui.assistant", json!({"action": "undo_turn"}));
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(bodies(&mut h), 0);
+}
+
+#[test]
+fn an_agent_that_is_not_installed_says_so() {
+    let mut h = Harness::new();
+    let mut s = Settings::default();
+    s.backend = BackendKind::Agent;
+    s.agents.push(solidcraft_assistant::settings::AgentProfile {
+        name: "Missing".into(),
+        command: "solidcraft-no-such-agent-xyz".into(),
+        args: vec![],
+        env: vec![],
+        mode: solidcraft_assistant::settings::AgentMode::Acp,
+    });
+    s.cli = "/usr/bin/solidcraft-cli".into();
+    h.app.assistant.set_settings(s);
+    h.app.assistant.data_root = Some(h.dir.join("assistant"));
+    h.app.services.start_agent_endpoint = Some(test_endpoint());
+    send_ok(&mut h, "hi");
+    wait_idle(&mut h);
+    let s = summary(&h.app);
+    let notice = s["items"].as_array().unwrap().iter().find(|i| i["kind"] == "notice").unwrap().clone();
+    assert!(notice["text"].as_str().unwrap().contains("was not found"), "{notice}");
+    assert_eq!(notice["error"], true);
+}
+
+#[test]
+fn agents_need_the_desktop_app() {
+    let mut h = Harness::new();
+    let mut s = Settings::default();
+    s.backend = BackendKind::Agent;
+    s.agents.push(agent_profile());
+    h.app.assistant.set_settings(s);
+    let r = h.call("ui.assistant", json!({"action": "send", "text": "hi"}));
+    assert_eq!(r["ok"], false);
+    assert!(r["error"].as_str().unwrap().contains("desktop app"), "{r}");
 }

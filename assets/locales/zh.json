@@ -1057,5 +1057,16 @@
   "assistant.close": "关闭助手",
   "assistant.history": "历史对话",
   "assistant.no_history": "没有关于此设计的历史对话",
-  "assistant.export": "导出为文本…"
+  "assistant.export": "导出为文本…",
+  "assistant.agent_none": "还没有代理。请从下面的列表中添加。",
+  "assistant.agent_add": "添加代理：",
+  "assistant.agent_remove": "移除",
+  "assistant.agent_command": "程序",
+  "assistant.agent_args": "参数（每行一个）",
+  "assistant.agent_mode_acp": "协议 (ACP)",
+  "assistant.agent_mode_print": "每条消息运行一次",
+  "assistant.agent_hint": "程序由 SolidCraft 启动，并通过受令牌保护的本地连接回连。预设只是起点：如果某个程序无法启动，请查阅其文档。",
+  "assistant.cli": "solidcraft-cli 程序（留空：应用旁边，然后是 PATH）",
+  "assistant.auto_allow": "允许代理无需询问即可使用 SolidCraft 的工具",
+  "assistant.ask_title": "代理询问："
 }

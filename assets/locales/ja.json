@@ -1057,5 +1057,16 @@
   "assistant.close": "アシスタントを閉じる",
   "assistant.history": "過去の会話",
   "assistant.no_history": "この設計についての過去の会話はありません",
-  "assistant.export": "テキストとして書き出し…"
+  "assistant.export": "テキストとして書き出し…",
+  "assistant.agent_none": "エージェントがまだありません。下の一覧から追加してください。",
+  "assistant.agent_add": "エージェントを追加:",
+  "assistant.agent_remove": "削除",
+  "assistant.agent_command": "プログラム",
+  "assistant.agent_args": "引数 (1 行に 1 つ)",
+  "assistant.agent_mode_acp": "プロトコル (ACP)",
+  "assistant.agent_mode_print": "メッセージごとに 1 回実行",
+  "assistant.agent_hint": "プログラムは SolidCraft が起動し、トークンで保護されたローカル接続で戻ってきます。プリセットは出発点です。起動しない場合はプログラムのドキュメントを確認してください。",
+  "assistant.cli": "solidcraft-cli プログラム (空欄: アプリの隣、次に PATH)",
+  "assistant.auto_allow": "エージェントが確認なしで SolidCraft のツールを使えるようにする",
+  "assistant.ask_title": "エージェントからの確認:"
 }

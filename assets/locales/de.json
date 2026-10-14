@@ -784,5 +784,10 @@
   "assistant.needs_desktop": "Der Assistent benötigt die Desktop-App.",
   "assistant.history": "Frühere Unterhaltungen",
   "assistant.no_history": "Keine früheren Unterhaltungen zu diesem Entwurf",
-  "assistant.export": "Als Text exportieren…"
+  "assistant.export": "Als Text exportieren…",
+  "assistant.agent_none": "Noch kein Agent. Füge unten einen hinzu.",
+  "assistant.agent_add": "Agent hinzufügen:",
+  "assistant.agent_remove": "Entfernen",
+  "assistant.agent_command": "Programm",
+  "assistant.ask_title": "Der Agent fragt:"
 }

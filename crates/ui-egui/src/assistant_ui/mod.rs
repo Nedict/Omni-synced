@@ -21,7 +21,8 @@ use solidcraft_assistant::policy::{Verdict, classify};
 use solidcraft_assistant::provider::Codec;
 use solidcraft_assistant::provider::anthropic::Anthropic;
 use solidcraft_assistant::provider::openai::OpenAi;
-use solidcraft_assistant::runtime::{self, Job, TurnHandle, WorkerMsg, agent_roots};
+use solidcraft_assistant::acp::session::{AgentSession, PermissionRequest};
+use solidcraft_assistant::runtime::{self, AgentJob, Bridge, Job, TurnHandle, WorkerMsg, agent_roots, merge_roots};
 use solidcraft_assistant::settings::{BackendKind, Settings};
 use solidcraft_assistant::slash::{self, Input, Situation};
 use solidcraft_assistant::tool_loop::{Event, Finish, MAX_STEPS, ToolHost, call_title};
@@ -46,6 +47,45 @@ const MAX_TOKENS: u32 = 16_384;
 
 /// Most items kept for display in one conversation.
 const MAX_ITEMS: usize = 2000;
+
+/// What the app needs to start the listener external agents' MCP servers connect to.
+pub struct EndpointSpec {
+    /// Where accepted requests go (the assistant's inlet, behind the gate).
+    pub inlet: Sender<ControlRequest>,
+    /// The turn requests are tagged with.
+    pub turn: Arc<AtomicU64>,
+    pub ctx: egui::Context,
+}
+
+/// A running agent endpoint: a loopback port with its own random token.
+pub struct Endpoint {
+    pub port: u16,
+    pub token: String,
+    stop: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl Endpoint {
+    pub fn new(port: u16, token: String, stop: impl FnOnce() + Send + 'static) -> Endpoint {
+        Endpoint { port, token, stop: Some(Box::new(stop)) }
+    }
+}
+
+impl Drop for Endpoint {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            stop();
+        }
+    }
+}
+
+/// Starts the agent endpoint (the desktop app provides it).
+pub type StartEndpoint = Arc<dyn Fn(EndpointSpec) -> Result<Endpoint, String> + Send + Sync>;
+
+/// A question from an external agent, waiting for the person.
+pub struct Ask {
+    pub request: PermissionRequest,
+    reply: Sender<Option<String>>,
+}
 
 /// One line of the conversation as the person sees it.
 #[derive(Clone, Debug, PartialEq)]
@@ -89,6 +129,8 @@ struct Active {
     /// Which design tab the turn started in.
     tab: (usize, usize),
     started: Instant,
+    /// The turn runs through an external agent.
+    agent: bool,
 }
 
 /// The sidebar's state.
@@ -126,6 +168,14 @@ pub struct State {
     design_tab: Option<(usize, usize)>,
     /// Where settings and conversations are kept instead of the data folder (tests).
     pub data_root: Option<std::path::PathBuf>,
+    /// The external agent from the last message, kept running for the next one.
+    agent: Option<AgentSession>,
+    /// Which agent profile `agent` was started from.
+    agent_key: String,
+    /// The listener agents' MCP servers connect to, started with the first agent message.
+    endpoint: Option<Endpoint>,
+    /// Questions from the agent waiting for the person.
+    pub asks: Vec<Ask>,
 }
 
 impl Default for State {
@@ -154,6 +204,10 @@ impl Default for State {
             conv_id: None,
             design_tab: None,
             data_root: None,
+            agent: None,
+            agent_key: String::new(),
+            endpoint: None,
+            asks: Vec::new(),
         }
     }
 }
@@ -216,6 +270,8 @@ impl State {
         self.note = None;
         self.picture = None;
         self.conv_id = None;
+        // A new conversation is a new agent: its own context goes with the old one.
+        self.agent = None;
     }
 
     /// Stop the running turn: it ends after the step in progress, and everything waiting for a
@@ -227,7 +283,18 @@ impl State {
         self.decline_all("cancelled by the user");
     }
 
+    /// Answer the agent's pending questions (`None`: no).
+    pub fn answer_ask(&mut self, index: usize, option: Option<String>) {
+        if index < self.asks.len() {
+            let a = self.asks.remove(index);
+            let _ = a.reply.send(option);
+        }
+    }
+
     fn decline_all(&mut self, why: &str) {
+        for a in self.asks.drain(..) {
+            let _ = a.reply.send(None);
+        }
         for c in self.confirms.drain(..) {
             let _ = c.req.reply.send(json!({"ok": false, "error": why}));
         }
@@ -299,20 +366,28 @@ pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: &str) -> Sent {
         Input::Unknown(w) => return Sent::Refused(format!("unknown quick action `/{w}`; try /help")),
     };
     let s = app.assistant.settings.clone();
+    let agent = s.backend == BackendKind::Agent;
     let api = s.api().clone();
-    if s.backend == BackendKind::Agent {
-        return Sent::Refused("external agents are not connected yet".into());
-    }
     let key = api.resolved_key(s.backend);
-    if api.model.trim().is_empty() {
-        return Sent::Refused("choose a model in the assistant settings".into());
+    let http = app.services.assistant_http.clone();
+    if agent {
+        if s.selected_agent().is_none() {
+            return Sent::Refused("add an agent in the assistant settings".into());
+        }
+        if app.services.start_agent_endpoint.is_none() {
+            return Sent::Refused("the assistant needs the desktop app".into());
+        }
+    } else {
+        if api.model.trim().is_empty() {
+            return Sent::Refused("choose a model in the assistant settings".into());
+        }
+        if s.backend == BackendKind::Anthropic && key.is_empty() {
+            return Sent::Refused("add your API key in the assistant settings (or set ANTHROPIC_API_KEY)".into());
+        }
+        if http.is_none() {
+            return Sent::Refused("the assistant needs the desktop app".into());
+        }
     }
-    if s.backend == BackendKind::Anthropic && key.is_empty() {
-        return Sent::Refused("add your API key in the assistant settings (or set ANTHROPIC_API_KEY)".into());
-    }
-    let Some(http) = app.services.assistant_http.clone() else {
-        return Sent::Refused("the assistant needs the desktop app".into());
-    };
     let design = app.session.execute("document.inspect", &json!({"measure": false})).ok();
     let mut prompt = prompt;
     if let Some(n) = app.assistant.note.take() {
@@ -320,48 +395,79 @@ pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: &str) -> Sent {
     }
     let picture = app.assistant.picture.take();
     let had_picture = picture.is_some();
-    let user = context::user_message(&prompt, design.as_ref(), picture);
+    // An agent started in this conversation needs the listener; start it before the checkpoint.
+    let bridge = if agent {
+        match agent_bridge(app, ctx, &s) {
+            Ok(b) => Some(b),
+            Err(e) => {
+                app.assistant.picture = picture;
+                return Sent::Refused(e);
+            }
+        }
+    } else {
+        None
+    };
     let checkpoint = app.session.checkpoint();
     let revision = app.session.revision;
     let id = app.assistant.next_turn;
     app.assistant.next_turn += 1;
     app.assistant.current_turn.store(id, Ordering::SeqCst);
-    let codec: Arc<dyn Codec> = if s.backend == BackendKind::OpenAi { Arc::new(OpenAi) } else { Arc::new(Anthropic) };
-    let host: Arc<dyn ToolHost> = Arc::new(UiHost { inlet: app.assistant.inlet_tx.clone(), ctx: ctx.clone(), turn: id });
     let repaint_ctx = ctx.clone();
-    let vision = api.vision;
-    let job = Job {
-        codec,
-        http,
-        base_url: api.base_url.clone(),
-        allow_http: api.allow_http,
-        key,
-        model: api.model.trim().to_string(),
-        system: context::system_prompt(),
-        tools: solidcraft_assistant::tools::definitions(vision),
-        vision,
-        max_tokens: MAX_TOKENS,
-        max_steps: MAX_STEPS,
-        context_window: api.context_window,
-        folders: s.folders.iter().map(std::path::PathBuf::from).collect(),
-        history: std::mem::take(&mut app.assistant.history),
-        user,
-        host,
-        repaint: Arc::new(move || repaint_ctx.request_repaint()),
-    };
+    let repaint: Arc<dyn Fn() + Send + Sync> = Arc::new(move || repaint_ctx.request_repaint());
     let cancel = Cancel::new();
-    match runtime::spawn_turn(job, cancel) {
+    let spawned = if let (true, Some(profile)) = (agent, s.selected_agent()) {
+        let text = match &design {
+            Some(d) => format!("{}\n\n{prompt}", context::context_block(d)),
+            None => prompt.clone(),
+        };
+        let key = format!("{}|{}|{}", profile.command, profile.args.join(" "), profile.env.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(","));
+        if app.assistant.agent_key != key {
+            app.assistant.agent = None;
+            app.assistant.agent_key = key;
+        }
+        let job = AgentJob {
+            profile: profile.clone(),
+            text,
+            picture: picture.clone(),
+            bridge,
+            cwd: agent_cwd(app),
+            auto_allow: s.auto_allow_tools,
+            session: app.assistant.agent.take(),
+            repaint,
+        };
+        runtime::spawn_agent_turn(job, cancel)
+    } else {
+        let user = context::user_message(&prompt, design.as_ref(), picture);
+        let codec: Arc<dyn Codec> = if s.backend == BackendKind::OpenAi { Arc::new(OpenAi) } else { Arc::new(Anthropic) };
+        let host: Arc<dyn ToolHost> = Arc::new(UiHost { inlet: app.assistant.inlet_tx.clone(), ctx: ctx.clone(), turn: id });
+        let vision = api.vision;
+        let Some(http) = http else { return Sent::Refused("the assistant needs the desktop app".into()) };
+        let job = Job {
+            codec,
+            http,
+            base_url: api.base_url.clone(),
+            allow_http: api.allow_http,
+            key,
+            model: api.model.trim().to_string(),
+            system: context::system_prompt(),
+            tools: solidcraft_assistant::tools::definitions(vision),
+            vision,
+            max_tokens: MAX_TOKENS,
+            max_steps: MAX_STEPS,
+            context_window: api.context_window,
+            folders: s.folders.iter().map(std::path::PathBuf::from).collect(),
+            history: std::mem::take(&mut app.assistant.history),
+            user,
+            host,
+            repaint,
+        };
+        runtime::spawn_turn(job, cancel)
+    };
+    match spawned {
         Ok(handle) => {
             app.assistant.items.push(Item::User { text: shown, picture: had_picture });
             app.assistant.turn_usage = Usage::default();
-            app.assistant.active = Some(Active {
-                id,
-                handle,
-                checkpoint,
-                revision,
-                tab: (app.docs.active, app.docs.count()),
-                started: Instant::now(),
-            });
+            app.assistant.active = Some(Active { id, handle, checkpoint, revision, tab: (app.docs.active, app.docs.count()), started: Instant::now(), agent });
             app.assistant.scroll_to_end = true;
             ctx.request_repaint();
             Sent::Started
@@ -372,6 +478,41 @@ pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: &str) -> Sent {
             Sent::Refused(e)
         }
     }
+}
+
+/// The program an external agent starts as its MCP server, and the endpoint it connects to.
+fn agent_bridge(app: &mut SolveApp, ctx: &egui::Context, s: &Settings) -> Result<Bridge, String> {
+    let cli = if s.cli.trim().is_empty() {
+        solidcraft_assistant::acp::process::find_program("solidcraft-cli")
+    } else {
+        Some(std::path::PathBuf::from(s.cli.trim()))
+    };
+    let cli = cli.ok_or("solidcraft-cli was not found next to the app or on PATH; set its path in the assistant settings")?;
+    if app.assistant.endpoint.is_none() {
+        let start = app.services.start_agent_endpoint.clone().ok_or("the assistant needs the desktop app")?;
+        let spec = EndpointSpec { inlet: app.assistant.inlet_tx.clone(), turn: app.assistant.current_turn.clone(), ctx: ctx.clone() };
+        app.assistant.endpoint = Some(start(spec).map_err(|e| format!("cannot start the assistant's connection: {e}"))?);
+    }
+    let ep = app.assistant.endpoint.as_ref().ok_or("the assistant's connection is not running")?;
+    Ok(Bridge { cli, port: ep.port, token: ep.token.clone() })
+}
+
+/// Where an agent program runs: the design's folder when that is a safe one, else a private
+/// folder of its own.
+fn agent_cwd(app: &SolveApp) -> std::path::PathBuf {
+    if let Some(dir) = app.session.path.as_deref().and_then(|p| std::path::Path::new(p).parent())
+        && solidcraft_engine::io::vfs::design_folder_refusal(dir).is_none()
+        && dir.is_dir()
+    {
+        return dir.to_path_buf();
+    }
+    let own = app.assistant.root().map(|r| r.join("workspace"));
+    if let Some(d) = own
+        && std::fs::create_dir_all(&d).is_ok()
+    {
+        return d;
+    }
+    std::env::temp_dir()
 }
 
 /// Features with an error or a warning, as `name: message`.
@@ -435,12 +576,24 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
         match a.handle.rx.try_recv() {
             Ok(WorkerMsg::Event(e)) => apply(&mut app.assistant, e),
             Ok(WorkerMsg::Done { outcome, history }) => {
-                done = Some((outcome, history));
+                done = Some((outcome, Some(history)));
                 break;
+            }
+            Ok(WorkerMsg::AgentDone { outcome, session }) => {
+                app.assistant.agent = session;
+                done = Some((outcome, None));
+                break;
+            }
+            Ok(WorkerMsg::Permission { request, reply }) => {
+                if app.assistant.asks.len() < 16 {
+                    app.assistant.asks.push(Ask { request, reply });
+                } else {
+                    let _ = reply.send(None);
+                }
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => break,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                done = Some((solidcraft_assistant::tool_loop::TurnOutcome { finish: Finish::Error("The assistant stopped unexpectedly.".into()), usage: Usage::default(), steps: 0, tool_calls: 0 }, Vec::new()));
+                done = Some((solidcraft_assistant::tool_loop::TurnOutcome { finish: Finish::Error("The assistant stopped unexpectedly.".into()), usage: Usage::default(), steps: 0, tool_calls: 0 }, None));
                 break;
             }
         }
@@ -516,11 +669,13 @@ fn apply(st: &mut State, e: Event) {
     st.scroll_to_end = true;
 }
 
-fn finish(app: &mut SolveApp, outcome: solidcraft_assistant::tool_loop::TurnOutcome, history: Vec<Message>) {
+fn finish(app: &mut SolveApp, outcome: solidcraft_assistant::tool_loop::TurnOutcome, history: Option<Vec<Message>>) {
     let Some(a) = app.assistant.active.take() else { return };
     app.assistant.current_turn.store(0, Ordering::SeqCst);
     app.assistant.decline_all("the turn ended");
-    app.assistant.history = history;
+    if let Some(h) = history {
+        app.assistant.history = h;
+    }
     app.assistant.usage.add(&outcome.usage);
     match &outcome.finish {
         Finish::Done => {}
@@ -568,7 +723,6 @@ pub fn undo_turn(app: &mut SolveApp, force: bool) -> Result<(), String> {
 /// The next request for the UI thread to run: held ones the person allowed, then new ones from
 /// the worker after the gate. Refused ones are answered here.
 pub(crate) fn next_request(app: &mut SolveApp) -> Option<ControlRequest> {
-    let roots = agent_roots(&app.assistant.settings.folders);
     while let Some(req) = app.assistant.approved.pop_front() {
         if app.assistant.active.as_ref().is_some_and(|a| !a.handle.cancel.is_cancelled()) {
             return Some(req);
@@ -577,6 +731,8 @@ pub(crate) fn next_request(app: &mut SolveApp) -> Option<ControlRequest> {
     }
     loop {
         let req = app.assistant.inlet_rx.try_recv().ok()?;
+        // Looked up when there is something to decide: it touches the file system.
+        let roots = agent_roots(&app.assistant.settings.folders);
         if let Some(r) = gate(&mut app.assistant, req, &roots) {
             return Some(r);
         }
@@ -596,8 +752,11 @@ fn gate(st: &mut State, mut req: ControlRequest, roots: &[String]) -> Option<Con
     }
     if let Some(o) = req.params.as_object_mut() {
         o.remove("_turn");
-        // The assistant's folders are the app's to choose, whatever the request says.
-        o.insert("allow_paths".into(), json!(roots));
+        // The assistant's folders are the app's to choose, whatever the request says. A request
+        // through the agent endpoint also names the MCP server's own scratch folder (where it
+        // renders pictures); nothing else it claims is taken.
+        let requested = o.remove("allow_paths");
+        o.insert("allow_paths".into(), json!(merge_roots(roots, requested.as_ref(), &solidcraft_engine::io::vfs::temp_dir())));
     } else {
         refuse(&req, "the request parameters must be an object");
         return None;
@@ -747,6 +906,8 @@ pub fn summary(app: &SolveApp) -> Value {
         "open": app.ui.show_assistant,
         "busy": st.busy(),
         "elapsed_s": st.elapsed().map(|d| d.as_secs_f64()),
+        "agent_turn": st.active.as_ref().map(|a| a.agent),
+        "asks": st.asks.iter().map(|a| json!({"title": a.request.title, "options": a.request.options.iter().map(|o| o.id.clone()).collect::<Vec<_>>()})).collect::<Vec<_>>(),
         "backend": s.backend.id(),
         "model": s.api().model,
         "has_key": !s.api().api_key.is_empty(),

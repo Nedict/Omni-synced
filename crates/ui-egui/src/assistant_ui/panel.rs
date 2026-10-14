@@ -115,7 +115,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     // The composer sits at the bottom; the transcript takes what is left.
     egui::Panel::bottom("sc_assistant_composer").frame(egui::Frame::NONE).show_separator_line(false).show(ui, |ui| composer(app, ui));
-    if !app.assistant.confirms.is_empty() {
+    if !app.assistant.confirms.is_empty() || !app.assistant.asks.is_empty() {
         egui::Panel::bottom("sc_assistant_confirms").frame(egui::Frame::NONE).show_separator_line(false).show(ui, |ui| confirms(app, ui));
     }
     let empty = app.assistant.items.is_empty();
@@ -359,6 +359,35 @@ pub fn feature_ref(text: &str) -> Option<u64> {
 
 fn confirms(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
+    // Questions from an external agent: its own options, as buttons.
+    let mut reply: Option<(usize, Option<String>)> = None;
+    for (i, a) in app.assistant.asks.iter().enumerate() {
+        egui::Frame::NONE.fill(t.warning.gamma_multiply(0.18)).stroke(Stroke::new(1.0, t.warning)).corner_radius(4.0).inner_margin(Margin::same(6)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(app.tr("assistant.ask_title")).size(12.0).strong().color(t.text));
+            let what = if a.request.title.is_empty() { a.request.kind.clone() } else { a.request.title.clone() };
+            ui.add(egui::Label::new(RichText::new(what).monospace().size(11.0).color(t.text)).wrap());
+            if !a.request.raw_input.is_null() {
+                let raw = solidcraft_assistant::model::truncate(&a.request.raw_input.to_string(), 600, "cut");
+                ui.add(egui::Label::new(RichText::new(raw).monospace().size(10.0).color(t.text_dim)).wrap());
+            }
+            ui.horizontal_wrapped(|ui| {
+                for o in &a.request.options {
+                    let b = ui.button(&o.name);
+                    if b.clicked() {
+                        reply = Some((i, Some(o.id.clone())));
+                    }
+                }
+                if ui.button(app.tr("assistant.deny")).clicked() {
+                    reply = Some((i, None));
+                }
+            });
+        });
+        ui.add_space(4.0);
+    }
+    if let Some((i, option)) = reply {
+        app.assistant.answer_ask(i, option);
+    }
     let mut answer: Option<(usize, bool)> = None;
     for (i, c) in app.assistant.confirms.iter().enumerate() {
         egui::Frame::NONE.fill(t.warning.gamma_multiply(0.18)).stroke(Stroke::new(1.0, t.warning)).corner_radius(4.0).inner_margin(Margin::same(6)).show(ui, |ui| {
@@ -484,9 +513,7 @@ fn settings(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     ui.add_space(8.0);
     match app.assistant.settings.backend {
-        BackendKind::Agent => {
-            ui.label(RichText::new(app.tr("assistant.agent_soon")).size(12.0).color(t.text_dim));
-        }
+        BackendKind::Agent => agent_settings(app, ui, &mut changed),
         kind => {
             let (model_label, url_label, key_label) = (app.tr("assistant.model").to_string(), app.tr("assistant.base_url").to_string(), app.tr("assistant.api_key").to_string());
             let resolved_from_env = {
@@ -541,6 +568,76 @@ fn settings(app: &mut SolveApp, ui: &mut egui::Ui) {
     if changed {
         app.assistant.save_settings();
     }
+}
+
+fn agent_settings(app: &mut SolveApp, ui: &mut egui::Ui, changed: &mut bool) {
+    use solidcraft_assistant::settings::AgentMode;
+    let t = Tokens::get();
+    let (none, add, remove, command, args, acp, print, hint, cli, auto) = (
+        app.tr("assistant.agent_none").to_string(),
+        app.tr("assistant.agent_add").to_string(),
+        app.tr("assistant.agent_remove").to_string(),
+        app.tr("assistant.agent_command").to_string(),
+        app.tr("assistant.agent_args").to_string(),
+        app.tr("assistant.agent_mode_acp").to_string(),
+        app.tr("assistant.agent_mode_print").to_string(),
+        app.tr("assistant.agent_hint").to_string(),
+        app.tr("assistant.cli").to_string(),
+        app.tr("assistant.auto_allow").to_string(),
+    );
+    let st = &mut app.assistant;
+    if st.settings.agents.is_empty() {
+        ui.label(RichText::new(none).size(12.0).color(t.text_dim));
+    }
+    let n = st.settings.agents.len();
+    for i in 0..n {
+        let name = st.settings.agents.get(i).map(|a| a.name.clone()).unwrap_or_default();
+        if ui.radio(st.settings.agent == i, name).clicked() {
+            st.settings.agent = i;
+            *changed = true;
+        }
+    }
+    let mut remove_at: Option<usize> = None;
+    if let Some(a) = st.settings.agents.get_mut(st.settings.agent) {
+        ui.add_space(4.0);
+        ui.label(RichText::new(command).size(12.0).color(t.text_dim));
+        *changed |= ui.add(egui::TextEdit::singleline(&mut a.command).desired_width(f32::INFINITY)).changed();
+        ui.label(RichText::new(args).size(12.0).color(t.text_dim));
+        let mut text = a.args.join("\n");
+        if ui.add(egui::TextEdit::multiline(&mut text).desired_rows(2).desired_width(f32::INFINITY)).changed() {
+            a.args = text.lines().map(str::to_string).filter(|l| !l.is_empty()).take(solidcraft_assistant::settings::MAX_ARGS).collect();
+            *changed = true;
+        }
+        ui.horizontal(|ui| {
+            *changed |= ui.radio_value(&mut a.mode, AgentMode::Acp, &acp).changed();
+            *changed |= ui.radio_value(&mut a.mode, AgentMode::Print, &print).changed();
+        });
+        if ui.button(remove).clicked() {
+            remove_at = Some(st.settings.agent);
+        }
+    }
+    if let Some(i) = remove_at {
+        st.settings.agents.remove(i);
+        st.settings.agent = 0;
+        *changed = true;
+    }
+    ui.add_space(6.0);
+    ui.label(RichText::new(add).size(12.0).color(t.text_dim));
+    ui.horizontal_wrapped(|ui| {
+        for p in solidcraft_assistant::acp::presets::presets() {
+            if st.settings.agents.len() < solidcraft_assistant::settings::MAX_AGENTS && ui.small_button(&p.name).clicked() {
+                st.settings.agents.push(p);
+                st.settings.agent = st.settings.agents.len() - 1;
+                *changed = true;
+            }
+        }
+    });
+    ui.add_space(6.0);
+    ui.label(RichText::new(cli).size(12.0).color(t.text_dim));
+    *changed |= ui.add(egui::TextEdit::singleline(&mut st.settings.cli).desired_width(f32::INFINITY)).changed();
+    *changed |= ui.checkbox(&mut st.settings.auto_allow_tools, auto).changed();
+    ui.add_space(4.0);
+    ui.label(RichText::new(hint).size(11.0).color(t.text_dim));
 }
 
 #[cfg(test)]

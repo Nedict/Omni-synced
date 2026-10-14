@@ -229,6 +229,9 @@ pub struct Services {
     /// Streaming HTTPS POST for the assistant sidebar; None: the assistant is unavailable
     /// (browser, tests without a fake).
     pub assistant_http: Option<solidcraft_assistant::net::HttpStream>,
+    /// Starts the loopback listener external agents' MCP servers connect to; None: external
+    /// agents are unavailable (browser, tests without a fake).
+    pub start_agent_endpoint: Option<assistant_ui::StartEndpoint>,
 }
 
 pub struct SolveApp {

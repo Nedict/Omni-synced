@@ -245,6 +245,9 @@ pub struct Settings {
     pub auto_allow_tools: bool,
     /// Folders an external agent may read and write in besides the design's own.
     pub folders: Vec<String>,
+    /// The `solidcraft-cli` program agents start as their MCP server (empty: next to the app,
+    /// then on `PATH`).
+    pub cli: String,
     /// The user has seen what is sent where.
     pub privacy_notice_seen: bool,
 }
@@ -259,6 +262,7 @@ impl Default for Settings {
             agent: 0,
             auto_allow_tools: true,
             folders: Vec::new(),
+            cli: String::new(),
             privacy_notice_seen: false,
         }
     }
@@ -287,6 +291,7 @@ impl Settings {
             "agent": self.agent,
             "auto_allow_tools": self.auto_allow_tools,
             "folders": self.folders,
+            "cli": self.cli,
             "privacy_notice_seen": self.privacy_notice_seen,
         })
     }
@@ -317,6 +322,9 @@ impl Settings {
         }
         if let Some(f) = v.get("folders").and_then(Value::as_array) {
             s.folders = f.iter().filter_map(Value::as_str).filter(|p| !p.is_empty() && p.len() <= MAX_FIELD).take(MAX_FOLDERS).map(str::to_string).collect();
+        }
+        if let Some(c) = text(v, "cli") {
+            s.cli = c;
         }
         if let Some(b) = v.get("privacy_notice_seen").and_then(Value::as_bool) {
             s.privacy_notice_seen = b;
@@ -390,6 +398,7 @@ mod tests {
         s.agents.push(AgentProfile { name: "Open".into(), command: "opencode".into(), args: vec!["acp".into()], env: vec![("A_B".into(), Secret::new("v"))], mode: AgentMode::Print });
         s.agent = 0;
         s.folders.push("/home/me/designs".into());
+        s.cli = "/opt/solidcraft/solidcraft-cli".into();
         s.privacy_notice_seen = true;
         assert_eq!(Settings::from_json(&s.to_json()), s);
     }

@@ -35,6 +35,47 @@ pub fn remove_token_file() {
     }
 }
 
+/// The loopback listener the assistant's external agents connect to (through their MCP server,
+/// `solidcraft-cli mcp --connect`). It is not the app's control port: a random port and token of
+/// its own, no token file, and every request is tagged with the running assistant turn and sent
+/// into the assistant's inlet, where the policy and the confirmations apply.
+pub fn start_agent_endpoint(spec: solidcraft_ui_egui::assistant_ui::EndpointSpec) -> Result<solidcraft_ui_egui::assistant_ui::Endpoint, String> {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    let token = new_token().ok_or("no random token available")?;
+    let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| format!("cannot listen on the loopback address: {e}"))?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+    let stop = Arc::new(AtomicBool::new(false));
+    let shared_token = Arc::new(token.clone());
+    let flag = stop.clone();
+    let open = Arc::new(AtomicUsize::new(0));
+    std::thread::Builder::new()
+        .name("assistant-endpoint".into())
+        .spawn(move || {
+            while !flag.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        let _ = stream.set_nonblocking(false);
+                        if open.fetch_add(1, Ordering::Relaxed) >= MAX_CONNECTIONS {
+                            open.fetch_sub(1, Ordering::Relaxed);
+                            continue;
+                        }
+                        let (tx, ctx, token, turn, open, flag) = (spec.inlet.clone(), spec.ctx.clone(), shared_token.clone(), spec.turn.clone(), open.clone(), flag.clone());
+                        std::thread::spawn(move || {
+                            serve(stream, &token, tx, ctx, Some((&turn, &flag)));
+                            open.fetch_sub(1, Ordering::Relaxed);
+                        });
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(100)),
+                    Err(_) => std::thread::sleep(Duration::from_millis(500)),
+                }
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(solidcraft_ui_egui::assistant_ui::Endpoint::new(port, token, move || stop.store(true, Ordering::Relaxed)))
+}
+
 pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
     let (tx, rx) = channel::<ControlRequest>();
     // Every connection must show the token before anything runs (docs/control-protocol.md).
@@ -78,7 +119,7 @@ pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
             let ctx = ctx.clone();
             let token = token.clone();
             std::thread::spawn(move || {
-                serve(stream, &token, tx, ctx);
+                serve(stream, &token, tx, ctx, None);
                 OPEN.fetch_sub(1, Ordering::Relaxed);
             });
         }
@@ -134,7 +175,9 @@ fn refuse(out: &mut TcpStream, reader: &mut BufReader<TcpStream>) {
     let _ = std::io::copy(&mut reader.by_ref().take(64 * 1024), &mut std::io::sink());
 }
 
-fn serve(stream: TcpStream, token: &str, tx: Sender<ControlRequest>, ctx: egui::Context) {
+/// Serve one connection. `agent`: the turn counter requests are tagged with and the flag that
+/// ends the endpoint (the assistant's agent endpoint); `None` for the app's own control port.
+fn serve(stream: TcpStream, token: &str, tx: Sender<ControlRequest>, ctx: egui::Context, agent: Option<(&std::sync::atomic::AtomicU64, &std::sync::atomic::AtomicBool)>) {
     let Ok(read) = stream.try_clone() else { return };
     let mut out = stream;
     let mut reader = BufReader::new(read);
@@ -166,9 +209,19 @@ fn serve(stream: TcpStream, token: &str, tx: Sender<ControlRequest>, ctx: egui::
                 }
                 let id = msg.get("id").cloned().unwrap_or(Value::Null);
                 let method = msg.get("method").and_then(Value::as_str).unwrap_or("").to_string();
-                let params = msg.get("params").cloned().unwrap_or(json!({}));
-                // A batch replaces many short requests: the whole of it may take long (#743).
-                let wait = Duration::from_secs(if method == "engine.batch" { 3600 } else { 60 });
+                let mut params = msg.get("params").cloned().unwrap_or(json!({}));
+                if let Some((turn, stopped)) = agent {
+                    if stopped.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    // The turn the request belongs to: the gate refuses it when none is running.
+                    if let Some(o) = params.as_object_mut() {
+                        o.insert("_turn".into(), json!(turn.load(Ordering::SeqCst)));
+                    }
+                }
+                // A batch replaces many short requests: the whole of it may take long (#743). An
+                // agent's request may also wait for the person to confirm it.
+                let wait = Duration::from_secs(if method == "engine.batch" || agent.is_some() { 3600 } else { 60 });
                 let (req, rrx) = ControlRequest::new(method, params);
                 if tx.send(req).is_err() {
                     break;
@@ -223,7 +276,7 @@ mod tests {
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 let tx = tx.clone();
-                std::thread::spawn(move || serve(stream, token, tx, egui::Context::default()));
+                std::thread::spawn(move || serve(stream, token, tx, egui::Context::default(), None));
             }
         });
         let session = |lines: &[String]| {

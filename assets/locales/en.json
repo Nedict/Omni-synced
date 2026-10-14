@@ -1057,5 +1057,16 @@
   "assistant.close": "Close the assistant",
   "assistant.history": "Earlier conversations",
   "assistant.no_history": "No earlier conversations about this design",
-  "assistant.export": "Export as text…"
+  "assistant.export": "Export as text…",
+  "assistant.agent_none": "No agent yet. Add one from the list below.",
+  "assistant.agent_add": "Add an agent:",
+  "assistant.agent_remove": "Remove",
+  "assistant.agent_command": "Program",
+  "assistant.agent_args": "Arguments (one per line)",
+  "assistant.agent_mode_acp": "Protocol (ACP)",
+  "assistant.agent_mode_print": "One prompt per message",
+  "assistant.agent_hint": "The program is started by SolidCraft and connects back through its own local, token-protected connection. Presets are starting points: check the program's documentation if one does not start.",
+  "assistant.cli": "solidcraft-cli program (empty: next to the app, then on PATH)",
+  "assistant.auto_allow": "Let agents use SolidCraft's tools without asking",
+  "assistant.ask_title": "The agent asks:"
 }
