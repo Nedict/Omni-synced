@@ -3470,6 +3470,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solidcraft-assistant"
+version = "0.11.0"
+dependencies = [
+ "serde_json",
+ "solidcraft-engine",
+ "solidcraft-mcp",
+]
+
+[[package]]
 name = "solidcraft-cli"
 version = "0.11.0"
 dependencies = [
