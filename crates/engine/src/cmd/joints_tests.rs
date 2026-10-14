@@ -720,3 +720,125 @@ fn a_clamped_link_is_followed_step_by_step() {
     assert!(r["stopped_by_loop"].is_object(), "{r}");
     assert_eq!(r["conflicts"].as_array().map(Vec::len), Some(0), "{r}");
 }
+
+/// A design file path in a fresh temporary folder (removed by the caller).
+fn temp_design(tag: &str, ext: &str) -> (std::path::PathBuf, String) {
+    let dir = std::env::temp_dir().join(format!("solidcraft-joint-visibility-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("design.{ext}")).to_string_lossy().to_string();
+    (dir, path)
+}
+
+/// Two hinge leaves joined by a revolute "Hinge" and a rigid "Glue" to a third part.
+fn hinged() -> Session {
+    let mut s = Session::default();
+    leaf(&mut s, "LeafA");
+    leaf(&mut s, "LeafB");
+    part(&mut s, "Tag", [60.0, 0.0, 0.0]);
+    let o = occ(&s, "LeafA");
+    run(&mut s, "occurrence.ground", json!({"occurrence": o, "grounded": true}));
+    run(
+        &mut s,
+        "joint.create",
+        json!({"type": "revolute", "a": {"occurrence": "LeafA", "circle": [1, 37, 4]}, "b": {"occurrence": "LeafB", "circle": [1, 37, 4]}, "flip": true, "name": "Hinge"}),
+    );
+    pin(&mut s, "rigid", "Glue", "LeafA", "Tag", Vec3::new(61.0, 1.0, 0.0), Vec3::new(0.0, 0.0, 1.0));
+    s
+}
+
+fn joint(s: &Session, name: &str) -> u64 {
+    s.doc.assembly.joints.iter().find(|j| j.name == name).map(|j| j.id).unwrap()
+}
+
+/// #1160: hiding a joint hides only its glyph. It is saved with the design (not an undo step,
+/// like other visibility), the hinge still drives its leaf while hidden, and the folder hides
+/// and shows every joint at once.
+#[test]
+fn hidden_joints_still_drive_and_are_saved_with_the_design() {
+    let (dir, path) = temp_design("saved", "json");
+    let mut s = hinged();
+    let (hinge, glue) = (joint(&s, "Hinge"), joint(&s, "Glue"));
+    run(&mut s, "file.save", json!({"path": path}));
+    let undo = s.undo.len();
+    let r = run(&mut s, "browser.visibility", json!({"joints": ["Hinge"], "visible": false}));
+    assert_eq!(r["changed"], 1, "{r}");
+    assert!(!s.joint_visible(hinge) && s.joint_visible(glue));
+    assert_eq!(s.undo.len(), undo, "hiding is not an undo step");
+    assert!(s.is_dirty(), "hiding leaves unsaved changes");
+    let l = run(&mut s, "joint.list", json!({}));
+    assert_eq!(l["joints"].as_array().unwrap().iter().map(|j| j["visible"].clone()).collect::<Vec<_>>(), [json!(false), json!(true)]);
+
+    // Hidden, the hinge still constrains and moves its leaf; undoing the drive keeps it hidden.
+    let p = Vec3::new(20.0, 0.0, 0.0);
+    run(&mut s, "joint.drive", json!({"joint": "Hinge", "value": 90}));
+    assert!(near(place(&s, "LeafB", p), Vec3::new(20.0, 29.0, 37.0)), "{:?}", place(&s, "LeafB", p));
+    run(&mut s, "edit.undo", json!({}));
+    assert!(near(place(&s, "LeafB", p), p));
+    assert!(!s.joint_visible(hinge), "undo keeps the hiding");
+    run(&mut s, "edit.redo", json!({}));
+    assert!(near(place(&s, "LeafB", p), Vec3::new(20.0, 29.0, 37.0)));
+
+    // Saved and opened again, the hinge stays hidden.
+    run(&mut s, "file.save", json!({}));
+    run(&mut s, "file.new", json!({}));
+    run(&mut s, "doc.open", json!({"path": path}));
+    let (hinge, glue) = (joint(&s, "Hinge"), joint(&s, "Glue"));
+    assert!(!s.joint_visible(hinge) && s.joint_visible(glue), "{:?}", s.visibility);
+    assert!(!s.is_dirty());
+    let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(saved["visibility"]["hidden_joints"], json!([hinge]));
+
+    // The folder: all hidden, then all shown (and saved without any hidden joints).
+    run(&mut s, "browser.visibility", json!({"folder": "joints", "visible": false}));
+    assert!(!s.joint_visible(hinge) && !s.joint_visible(glue));
+    run(&mut s, "browser.visibility", json!({"folder": "joints", "visible": true}));
+    assert!(s.joint_visible(hinge) && s.joint_visible(glue));
+    // By name among other items, too.
+    run(&mut s, "browser.visibility", json!({"items": ["Glue"], "visible": false}));
+    assert!(!s.joint_visible(glue));
+    run(&mut s, "browser.visibility", json!({"items": ["Glue"], "visible": true}));
+    run(&mut s, "file.save", json!({}));
+    let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert!(saved.get("visibility").is_none_or(|v| v.get("hidden_joints").is_none()), "{saved}");
+
+    // Bad requests change nothing.
+    let before = s.visibility.clone();
+    for p in [
+        json!({"joints": ["Nope"], "visible": false}),
+        json!({"joints": [], "visible": false}),
+        json!({"joints": "Hinge", "visible": false}),
+        json!({"joints": ["Hinge"], "folder": "joints", "visible": false}),
+        json!({"joints": ["Hinge"], "items": ["Glue"], "visible": false}),
+    ] {
+        assert!(s.execute("browser.visibility", &p).is_err(), "{p}");
+    }
+    assert_eq!(s.visibility, before);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #1160: a design saved before joints could be hidden (format 19, no `hidden_joints`) opens
+/// with every joint shown; and a new joint that takes a deleted hidden joint's id starts shown.
+#[test]
+fn older_designs_show_every_joint_and_new_joints_start_shown() {
+    let (dir, path) = temp_design("legacy", "json");
+    let mut s = hinged();
+    let mut legacy: Value = serde_json::from_slice(&solidcraft_io::write_design(&s.doc)).unwrap();
+    legacy["format"] = json!("solidcraft/19");
+    legacy["visibility"] =
+        json!({"hidden_bodies": [], "hidden_occurrences": [], "hidden_origin": ["XY"], "hidden_sketches": [], "shown_sketches": []});
+    std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    run(&mut s, "file.new", json!({}));
+    run(&mut s, "doc.open", json!({"path": path}));
+    assert_eq!(s.doc.assembly.joints.len(), 2);
+    assert!(s.doc.assembly.joints.iter().all(|j| s.joint_visible(j.id)));
+    assert_eq!(s.visibility.hidden_origin, ["XY"]);
+
+    let glue = joint(&s, "Glue");
+    run(&mut s, "browser.visibility", json!({"joints": [glue], "visible": false}));
+    run(&mut s, "joint.delete", json!({"joint": glue}));
+    pin(&mut s, "rigid", "Glue2", "LeafA", "Tag", Vec3::new(61.0, 1.0, 0.0), Vec3::new(0.0, 0.0, 1.0));
+    let again = joint(&s, "Glue2");
+    assert!(s.joint_visible(again), "id {again} reused from {glue}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

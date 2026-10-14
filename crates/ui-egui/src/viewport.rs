@@ -2557,6 +2557,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::preview::paint_sketches(app, &painter, &proj);
     crate::ref_images::show(app, ui, &painter, &proj);
     crate::dialogs_assembly::origins(app, &painter, &proj);
+    crate::dialogs_assembly::joint_glyphs(app, &painter, &proj);
     overlays(app, &painter, &proj);
     crate::dim_view::show(app, ui, &painter, &proj);
     crate::sketch_text_handles::show(app, ui, &painter, &proj, hover);
@@ -2610,6 +2611,10 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
 /// A click without a command: select the candidate (replacing the selection, or toggling it
 /// in with Shift/Ctrl); a click on nothing clears.
 pub(crate) fn select(app: &mut SolveApp, sel: Option<Sel>, add: bool) {
+    if !add {
+        // A joint picked in the browser (highlighted even when hidden) lets go.
+        app.tree.picked_joints.clear();
+    }
     match sel {
         Some(x) => {
             let items = picked_selection(&app.session, &x);

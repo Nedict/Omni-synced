@@ -1,4 +1,9 @@
 {
+  "Send your report on GitHub": "在 GitHub 上发送报告",
+  "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. 点击下方按钮打开 GitHub 草稿，然后粘贴已复制到剪贴板的报告。",
+  "1. Open GitHub draft below. Your title and report will be filled in.": "1. 点击下方按钮打开 GitHub 草稿。标题和报告将自动填入。",
+  "2. Attach your screenshot: copy and paste it, or save and upload the PNG.": "2. 附上截图：复制并粘贴，或保存为 PNG 后上传。",
+  "3. Click Submit new issue on GitHub to send your report.": "3. 在 GitHub 上点击 Submit new issue 发送报告。",
   "browser.body_name": "实体{number}",
   "browser.component_name": "组件{number}",
   "browser.parameters": "参数 ({count})",
