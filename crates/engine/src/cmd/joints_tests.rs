@@ -612,3 +612,19 @@ fn loops_sharing_only_a_rigid_joint_are_solved_apart() {
     assert!(names.len() == 1 && ["Wrong", "Other pivot"].contains(&names[0]), "{r}");
     assert!(near(place(&s, "Arm", Vec3::new(10.0, 0.0, 0.0)), Vec3::new(0.0, 10.0, 0.0)), "{:?}", place(&s, "Arm", Vec3::new(10.0, 0.0, 0.0)));
 }
+
+/// Two links writing one value: whichever carries a driven dial's turn into the loop, the turn
+/// is followed (here dial A turns gear B, which turns the rocker, before dial D rewrites B).
+#[test]
+fn a_turn_carried_in_by_any_link_is_followed() {
+    let (mut s, _, _) = four_bar();
+    for (name, x) in [("A", 80.0), ("B", 100.0), ("D", 120.0)] {
+        part(&mut s, name, [x, 0.0, -5.0]);
+        pin(&mut s, "revolute", name, "Ground", name, Vec3::new(x, 0.0, 0.0), Vec3::Z);
+    }
+    run(&mut s, "joint.motion_link", json!({"a": "A", "b": "B", "ratio": 1}));
+    run(&mut s, "joint.motion_link", json!({"a": "B", "b": "Rocker", "ratio": 0.5}));
+    run(&mut s, "joint.motion_link", json!({"a": "D", "b": "B", "ratio": 1}));
+    let r = run(&mut s, "joint.drive", json!({"joint": "A", "value": 720}));
+    assert!(r["stopped_by_loop"].is_object(), "{r}");
+}

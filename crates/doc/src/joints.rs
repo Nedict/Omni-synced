@@ -477,6 +477,17 @@ pub type Held = BTreeMap<(u64, usize), f64>;
 /// `apply_links` carries a value): the joints along the chains, and the values they start from.
 fn link_chains(asm: &Assembly, tree: &Tree, around: &BTreeSet<u64>, linked: &BTreeSet<(u64, usize)>) -> (BTreeSet<u64>, Vec<(u64, usize)>) {
     let (mut feeds, mut starts) = (BTreeSet::new(), Vec::new());
+    // Every joint a link reaches the loop from, within as many links as `apply_links` passes:
+    // with several links writing one value, any of them may carry a moving value in.
+    let mut frontier = around.clone();
+    for _ in 0..MAX_LINK_HOPS {
+        let next: BTreeSet<u64> = asm.links.iter().filter(|l| frontier.contains(&l.b) && !feeds.contains(&l.a)).map(|l| l.a).collect();
+        if next.is_empty() {
+            break;
+        }
+        feeds.extend(next.iter().copied());
+        frontier = next;
+    }
     for j in around.iter().filter_map(|id| tree.joints.get(id)) {
         for i in 0..j.kind.dofs().len() {
             let mut cur = (j.id, i);
@@ -484,7 +495,6 @@ fn link_chains(asm: &Assembly, tree: &Tree, around: &BTreeSet<u64>, linked: &BTr
                 // The last link to a value wins, as in `apply_links`.
                 let Some(l) = asm.links.iter().rev().find(|l| (l.b, l.ib) == cur) else { break };
                 cur = (l.a, l.ia);
-                feeds.insert(l.a);
                 if !linked.contains(&cur) {
                     if tree.joints.get(&l.a).is_some_and(|j| l.ia < j.kind.dofs().len()) && !starts.contains(&cur) {
                         starts.push(cur);
