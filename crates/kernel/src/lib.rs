@@ -28,6 +28,7 @@ mod coplanar;
 mod curveblend;
 mod delete_face;
 mod emboss;
+mod face_params;
 #[cfg(test)]
 mod face_source_tests;
 mod fill;
