@@ -329,6 +329,7 @@ macro_rules! feature_walk {
                 FeatureKind::SurfaceExtend { distance, .. } => f("Distance", distance, L, I),
                 FeatureKind::Unstitch { .. } | FeatureKind::ReverseNormal { .. } => {}
                 FeatureKind::SurfaceBlend { .. } => {}
+                FeatureKind::SurfaceMatch { .. } => {}
                 FeatureKind::SurfaceFair { tolerance, .. } => f("Tolerance", tolerance, L, I),
                 FeatureKind::SurfaceOffset { distance, tolerance, .. } => {
                     f("Distance", distance, L, I);

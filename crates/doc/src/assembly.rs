@@ -354,6 +354,10 @@ impl FeatureKind {
                     pt(b);
                 }
             }
+            FeatureKind::SurfaceMatch { faces, edges, .. } => {
+                faces.iter_mut().for_each(pt);
+                edges.iter_mut().for_each(pt);
+            }
             FeatureKind::Unstitch { faces, .. } | FeatureKind::ReverseNormal { faces, .. } | FeatureKind::SurfaceFair { faces, .. } => {
                 faces.iter_mut().for_each(pt)
             }

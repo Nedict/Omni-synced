@@ -1460,6 +1460,15 @@ pub enum FeatureKind {
         /// Sew the blend onto its two bodies where the boundaries meet.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         stitch: bool,
+    SurfaceMatch {
+        body: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        faces: Vec<Vec3>,
+        target: String,
+        edges: Vec<Vec3>,
+        #[serde(default = "match_order")]
+        order: Continuity,
+    },
     /// The B-spline faces at `faces` of `body` faired (`surface.fair`): each face's interior
     /// control vertices move to flatten the thin-plate (curvature-variation) energy of the face,
     /// `strength` of the full least-squares step at a time, for at most `iterations` steps.
@@ -1665,6 +1674,24 @@ pub struct BlendSide {
 /// The continuity a blend repeats by default: the tangent plane on both sides.
 fn blend_orders() -> [Continuity; 2] {
     [Continuity::G1, Continuity::G1]
+}
+
+/// The continuity a match holds by default: position, tangent plane and curvature.
+fn match_order() -> Continuity {
+    Continuity::G2
+}
+
+/// A fairing's defaults for a design that leaves them out: the whole least-squares step at a
+/// time, and the boundary held (the row next to each edge too, so the face still meets its
+/// neighbours in tangent).
+fn fair_strength() -> f64 {
+    1.0
+}
+fn fair_iterations() -> u32 {
+    1
+}
+fn fair_keep_edges() -> bool {
+    true
 }
 
 /// Triangles of one imported mesh body (millimetres).
@@ -1926,6 +1953,7 @@ impl FeatureKind {
             | K::SurfaceExtend { .. }
             | K::SurfaceTrim { .. }
             | K::SurfaceBlend { .. }
+            | K::SurfaceMatch { .. }
             | K::SurfaceFair { .. }
             | K::Unstitch { .. }
             | K::ReverseNormal { .. }
@@ -2020,6 +2048,7 @@ impl FeatureKind {
             FeatureKind::SurfaceSweep { .. } => "SurfaceSweepFeature",
             FeatureKind::SurfaceLoft { .. } => "SurfaceLoftFeature",
             FeatureKind::SurfaceBlend { .. } => "BlendFeature",
+            FeatureKind::SurfaceMatch { .. } => "MatchFeature",
             FeatureKind::SurfaceFair { .. } => "FairFeature",
             FeatureKind::Stitch { .. } => "StitchFeature",
             FeatureKind::Thicken { .. } => "ThickenFeature",
@@ -2098,6 +2127,7 @@ impl FeatureKind {
             FeatureKind::SurfaceSweep { .. } => "SurfaceSweep",
             FeatureKind::SurfaceLoft { .. } => "SurfaceLoft",
             FeatureKind::SurfaceBlend { .. } => "Blend",
+            FeatureKind::SurfaceMatch { .. } => "Match",
             FeatureKind::SurfaceFair { .. } => "Fair",
             FeatureKind::Stitch { .. } => "Stitch",
             FeatureKind::Thicken { .. } => "Thicken",

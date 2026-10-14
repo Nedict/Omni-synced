@@ -123,6 +123,28 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
                 st.bodies.retain(|x| !gone.contains(&x.name));
             }
             st.bodies.push(ModelBody::new(name, made, f.id));
+        FeatureKind::SurfaceMatch { body, faces, target, edges, order } => {
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            let tb = st.body(target).ok_or_else(|| DocError::Unknown(format!("body `{target}`")))?.body.clone();
+            if edges.is_empty() {
+                return Err(DocError::Invalid("a match needs a chain of the target's edges".into()));
+            }
+            // Picked by a point on the face; without picks, the body's first face.
+            let picked: Vec<solidcraft_geom::Vec3> = if faces.is_empty() {
+                let faces = mb.body.faces(mb.body.size() * 1e-2)?;
+                vec![faces.first().ok_or_else(|| DocError::Invalid(format!("`{body}` has no face to match")))?.centroid]
+            } else {
+                faces.clone()
+            };
+            let made = kernel::match_surface(&mb.body, &picked, &tb, edges, *order)?;
+            // A match rebuilds the face in place: the body keeps its name, and whatever meets it
+            // downstream still finds it.
+            if let Some(slot) = st.bodies.get_mut(i) {
+                *slot = ModelBody::new(mb.name, made, mb.feature);
+            }
+            Ok(())
+        }
         FeatureKind::SurfaceFair { body, faces, strength, iterations, keep_edges, tolerance } => {
             let tol = val(vals, tolerance, Kind::Length)?;
             let opts = kernel::FairOptions::new(*strength, *iterations as usize, *keep_edges, tol)?;
