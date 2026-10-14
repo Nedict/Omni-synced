@@ -15,7 +15,9 @@ pub mod fuzz;
 pub mod licences;
 pub mod occurrences;
 pub mod params;
+pub mod product_scene;
 pub mod recovery;
+pub mod render_jobs;
 pub mod sample;
 pub mod view;
 
@@ -228,6 +230,9 @@ pub struct Session {
     /// moves its viewport there and takes it; headless renders keep using it until a standard
     /// view is chosen.
     pub camera: Option<render::Camera>,
+    /// Host-owned viewport metadata, never saved or included in history.
+    render_viewport: Option<Arc<render::ExecutorDescriptor>>,
+    render_jobs: render_jobs::Jobs,
     /// The visibility the design file holds (what `is_dirty` compares with).
     saved_visibility: Visibility,
     /// States to go back to (`edit.checkpoint`, `edit.restore_checkpoint`): how batches of
@@ -324,6 +329,8 @@ impl Session {
             saved_visibility: visibility.clone(),
             visibility,
             camera: None,
+            render_viewport: None,
+            render_jobs: Default::default(),
             #[cfg(test)]
             evaluations: 0,
             crash_journal: false,
@@ -334,8 +341,12 @@ impl Session {
     /// are the user's rather than the design's: `auto_project` is a preference (#680).
     pub fn replace_design(&mut self, fresh: Session) {
         let auto_project = self.auto_project;
+        let render_viewport = self.render_viewport.clone();
+        let render_jobs = self.render_jobs.scratch();
         *self = fresh;
         self.auto_project = auto_project;
+        self.render_viewport = render_viewport;
+        self.render_jobs = render_jobs;
     }
 
     /// The design has changes not in its file: in the document, or in what is hidden.
@@ -345,6 +356,56 @@ impl Session {
     pub fn mark_saved(&mut self) {
         self.saved = self.doc.clone();
         self.saved_visibility = self.visibility.clone();
+    }
+
+    pub fn render_backend(&self) -> render::BackendDescriptor {
+        let mut backend = render::builtin_backend();
+        if let Some(viewport) = &self.render_viewport {
+            backend.executors.push((**viewport).clone());
+        }
+        if let Some(executor) = &self.render_jobs.descriptor {
+            let mut executor = executor.clone();
+            if self.render_jobs.host.as_ref().is_none_or(|host| !host.is_available()) {
+                executor.availability = render::Availability::Unavailable { reason: "CPU image host is unavailable".into() };
+            }
+            backend.executors.push(executor);
+        }
+        backend
+    }
+
+    pub fn render_viewport(&self) -> Option<&render::ExecutorDescriptor> {
+        self.render_viewport.as_deref()
+    }
+
+    /// Installed hosts supply pure metadata; document commands cannot invent a device.
+    pub fn set_render_viewport(&mut self, viewport: Option<render::ExecutorDescriptor>) -> Result<()> {
+        if self.render_viewport.as_deref() == viewport.as_ref() {
+            return Ok(());
+        }
+        if let Some(executor) = &viewport {
+            if executor.profiles.is_empty() || executor.profiles.iter().any(|p| p.operation != render::RenderOperation::Viewport) {
+                return Err(EngineError::Other("host viewport executor must contain only viewport profiles".into()));
+            }
+            let mut backend = render::builtin_backend();
+            if let Some(executor) = &self.render_jobs.descriptor {
+                backend.executors.push(executor.clone());
+            }
+            backend.executors.push(executor.clone());
+            // Resolution validates the whole registry, including duplicate executor IDs.
+            let request = render::RenderRequest {
+                backend: None,
+                mode: render::RenderMode::Preview,
+                operation: render::RenderOperation::Image,
+                width: 1,
+                height: 1,
+                format: Some(render::RenderFormat::Png),
+                features: Vec::new(),
+                policy: Default::default(),
+            };
+            render::resolve_request(&[backend], &request).map_err(|e| EngineError::Other(e.to_string()))?;
+        }
+        self.render_viewport = viewport.map(Arc::new);
+        Ok(())
     }
 
     /// The design as a file holds it: the document with what is hidden in it.
@@ -549,6 +610,8 @@ impl Session {
     /// the model up to date before anything reads it.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
+        let host_viewport = self.render_viewport.clone();
+        let host_jobs = self.render_jobs.host.clone();
         let live = spec.live.filter(|_| params.get("live").and_then(Value::as_bool) == Some(true));
         if live.is_none() && spec.reads_model && self.model.is_stale() {
             self.refresh();
@@ -584,6 +647,12 @@ impl Session {
                 Err(EngineError::Internal(spec.id.to_string(), msg))
             }
         };
+        // New/open/recover can replace the Session. Device ownership belongs to the host,
+        // so its capability metadata survives those document lifecycle commands.
+        self.render_viewport = host_viewport;
+        if self.render_jobs.host.is_none() && host_jobs.is_some() {
+            self.set_render_job_host(host_jobs)?;
+        }
         if outermost && crash::enabled() {
             // A failed command leaves the design as it was (restored below).
             let failed = r.as_ref().err().map(ToString::to_string);
@@ -724,6 +793,8 @@ impl Session {
             next_checkpoint: 1,
             visibility: self.visibility.clone(),
             camera: self.camera,
+            render_viewport: self.render_viewport.clone(),
+            render_jobs: self.render_jobs.scratch(),
             saved_visibility: self.saved_visibility.clone(),
             #[cfg(test)]
             evaluations: 0,

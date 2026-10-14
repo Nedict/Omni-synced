@@ -798,6 +798,11 @@ fn doc_settings(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
     if draw_row(ui, ui.id().with("params"), &Row { depth: depth + 1, icon: "params", label: &params, ..Default::default() }).clicked {
         app.start("parameters.change");
     }
+    if draw_row(ui, ui.id().with("design_properties"), &Row { depth: depth + 1, icon: "settings", label: "Design Properties", ..Default::default() })
+        .clicked
+    {
+        app.start("document.metadata");
+    }
 }
 
 fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {

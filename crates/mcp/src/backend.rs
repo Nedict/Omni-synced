@@ -172,7 +172,15 @@ impl Default for Headless {
 }
 
 impl Headless {
-    pub fn new(session: Session) -> Self {
+    pub fn new(mut session: Session) -> Self {
+        match solidcraft_engine::render::job::CpuHost::for_platform() {
+            Ok(host) => {
+                if let Err(e) = session.set_render_job_host(Some(host)) {
+                    session.log.push(format!("image host unavailable: {e}"));
+                }
+            }
+            Err(e) => session.log.push(format!("image host unavailable: {e}")),
+        }
         Headless { session, view: StandardView::Iso }
     }
 }

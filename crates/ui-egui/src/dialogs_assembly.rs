@@ -548,6 +548,13 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
                 );
                 ui.end_row();
             }
+            // The preview drove the joint: where it stopped short, and why (a closed loop or a
+            // contact set), so the values asked for are not taken for where it is.
+            if let Some(why) = app.preview.stopped.as_ref().and_then(|r| drive_stop(&app.session, r)) {
+                row_label(ui, "");
+                ui.label(RichText::new(why).color(t.warning));
+                ui.end_row();
+            }
         }
         Asm::MotionLink { a, b, ia, ib, ratio, offset } => {
             let s = &app.session;
@@ -834,6 +841,11 @@ pub fn world_preview(s: &Session, cmds: &[(String, Value)], colors: Colors) -> O
         Ok(preview) => preview,
         Err(error) => return Some(Err(error.to_string())),
     };
+    let stopped = cmds
+        .iter()
+        .zip(&preview.replies)
+        .find(|((c, _), r)| c == "joint.drive" && (r["stopped_by_loop"].is_object() || r["stopped_by_contact"].is_object()))
+        .map(|(_, r)| r.clone());
     let (before, after) = (preview.before, preview.after);
     // A moved component looks like itself (no new surface), with its old place as the ghost.
     let colors = Colors { added: colors.body, ..colors };
@@ -841,10 +853,34 @@ pub fn world_preview(s: &Session, cmds: &[(String, Value)], colors: Colors) -> O
     Some(match built {
         Ok(mut b) => {
             b.bounds = after.bodies.iter().fold(Aabb3::EMPTY, |acc, x| acc.union(&x.mesh().bounds()));
+            b.stopped = stopped;
             Ok(b)
         }
         Err(_) => Err("the preview failed".into()),
     })
+}
+
+/// What a drive that stopped short of the asked values says: where the joint got to and why
+/// (`None`: it went all the way). `reply` is `joint.drive`'s result.
+pub fn drive_stop(s: &Session, reply: &Value) -> Option<String> {
+    let id = reply.get("joint").and_then(Value::as_u64)?;
+    let j = s.doc.assembly.joints.iter().find(|j| j.id == id)?;
+    let at: Vec<String> = reply
+        .get("values")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(i, v)| v.as_f64().map(|v| (i, v)))
+        .map(|(i, v)| if j.kind.is_angle(i) { num((v.to_degrees() * 10.0).round() / 10.0, "deg") } else { num((v * 100.0).round() / 100.0, "mm") })
+        .collect();
+    let at = at.join(", ");
+    let name = |v: &Value| v.as_str().unwrap_or_default().to_string();
+    if let Some(l) = reply.get("stopped_by_loop").filter(|v| v.is_object()) {
+        return Some(crate::i18n::format("drive.stopped_by_loop", &[("value", &at), ("joint", &name(&l["joint"]))]));
+    }
+    let c = reply.get("stopped_by_contact").filter(|v| v.is_object())?;
+    Some(crate::i18n::format("drive.stopped_by_contact", &[("value", &at), ("a", &name(&c["a"])), ("b", &name(&c["b"]))]))
 }
 
 // ---- overlay ----
