@@ -2,7 +2,8 @@
 //! every fillet style, pattern, hole and construction definition): `inputs` (label, expression,
 //! kind, in order: the order names the `dN` parameters) and `expressions` (every expression,
 //! placement points included). Each expression field holds its own name, so a moved, missing or
-//! relabelled input shows in the diff.
+//! relabelled input shows in the diff. The records live in `feature_walk_tests/*.txt`; to record
+//! an intended change, run the tests with `FEATURE_WALK_BLESS=1`.
 
 use serde_json::{Value, json};
 
@@ -154,246 +155,48 @@ fn fixtures() -> Vec<(&'static str, Value)> {
     ]
 }
 
+/// Per fixture: its inputs, one per line (`label = expression (kind)`), then every expression.
 fn record() -> String {
     let mut out = String::new();
     for (name, v) in fixtures() {
         let kind: FeatureKind = serde_json::from_value(v).unwrap_or_else(|e| panic!("{name}: {e}"));
-        let inputs: Vec<String> = kind.inputs().into_iter().map(|(l, e, k)| format!("{l}={e}:{k:?}")).collect();
-        out += &format!("{name}\n  inputs: {}\n  expressions: {}\n", inputs.join(", "), kind.expressions().join(", "));
+        out += &format!("{name}\n");
+        let inputs = kind.inputs();
+        if !inputs.is_empty() {
+            out += "  inputs:\n";
+            for (label, e, k) in inputs {
+                out += &format!("    {label} = {e} ({k:?})\n");
+            }
+        }
+        let expressions = kind.expressions();
+        if !expressions.is_empty() {
+            out += &format!("  expressions: {}\n", expressions.join(", "));
+        }
     }
     out
 }
 
+/// Compares `got` with the golden file `name` in `feature_walk_tests/`, line by line. With
+/// `FEATURE_WALK_BLESS` set it rewrites the file instead, for an intended change (say why in the
+/// pull request).
+fn check_golden(name: &str, want: &str, got: &str) {
+    if std::env::var_os("FEATURE_WALK_BLESS").is_some() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/feature_walk_tests").join(name);
+        std::fs::write(&path, got).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        return;
+    }
+    for (line, (want, got)) in want.lines().zip(got.lines()).enumerate() {
+        assert_eq!(want, got, "{name} line {}; rerun with FEATURE_WALK_BLESS=1 if the change is intended", line + 1);
+    }
+    assert_eq!(want.lines().count(), got.lines().count(), "{name}: the record has a different number of lines");
+}
+
 /// Recorded from the hand-written `inputs_mut` and `expressions` the walk replaced.
-const GOLDEN: &str = "\
-body_transfer
-  inputs: 
-  expressions: 
-sketch
-  inputs: Angle=sketch.angle:Angle, Offset=sketch.offset:Length
-  expressions: sketch.angle, sketch.offset
-sketch_along_path
-  inputs: Distance (0 to 1)=sketch.t:Unitless
-  expressions: sketch.t
-extrude
-  inputs: Distance=extrude.distance:Length, Distance 2=extrude.distance2:Length, Start offset=extrude.start_offset:Length, Taper angle=extrude.taper:Angle, To offset=extrude.to_offset:Length
-  expressions: extrude.distance, extrude.distance2, extrude.start_offset, extrude.taper, extrude.to_offset
-revolve
-  inputs: Angle=revolve.angle:Angle, Angle 2=revolve.angle2:Angle
-  expressions: revolve.angle, revolve.angle2
-fillet_constant
-  inputs: Radius=fillet.radius:Length
-  expressions: fillet.radius
-fillet_chord
-  inputs: Chord length=fillet.radius:Length
-  expressions: fillet.radius
-fillet_variable
-  inputs: Start radius=fillet.radius:Length, End radius=fillet.radius2:Length, Mid radius=fillet.mid:Length
-  expressions: fillet.radius, fillet.radius2, fillet.mid
-fillet_spline
-  inputs: Start radius=fillet.radius:Length, Control radius=fillet.r1:Length, Control radius=fillet.r2:Length, End radius=fillet.r3:Length
-  expressions: fillet.radius, fillet.r1, fillet.r2, fillet.r3
-chamfer
-  inputs: Distance=chamfer.distance:Length, Distance 2=chamfer.distance2:Length, Angle=chamfer.angle:Angle
-  expressions: chamfer.distance, chamfer.distance2, chamfer.angle
-box
-  inputs: Length=box.length:Length, Width=box.width:Length, Height=box.height:Length
-  expressions: box.length, box.width, box.height, box.x, box.y, box.z
-cylinder
-  inputs: Radius=cyl.radius:Length, Height=cyl.height:Length
-  expressions: cyl.radius, cyl.height, cyl.x, cyl.y, cyl.z
-sphere
-  inputs: Radius=sph.radius:Length
-  expressions: sph.radius, sph.x, sph.y, sph.z
-torus
-  inputs: Major radius=tor.major:Length, Minor radius=tor.minor:Length
-  expressions: tor.major, tor.minor, tor.x, tor.y, tor.z
-combine
-  inputs: 
-  expressions: 
-pattern_rectangular
-  inputs: Quantity=rect.count1:Unitless, Spacing=rect.spacing1:Length, Quantity 2=rect.count2:Unitless, Spacing 2=rect.spacing2:Length
-  expressions: rect.count1, rect.spacing1, rect.count2, rect.spacing2
-pattern_circular
-  inputs: Quantity=circ.count:Unitless, Total angle=circ.angle:Angle
-  expressions: circ.count, circ.angle
-pattern_path
-  inputs: Quantity=path.count:Unitless, Distance=path.spacing:Length
-  expressions: path.count, path.spacing
-mirror
-  inputs: Angle=mirror.angle:Angle, Offset=mirror.offset:Length
-  expressions: mirror.angle, mirror.offset
-hole_simple
-  inputs: Diameter=hole.diameter:Length, Depth=hole.depth:Length
-  expressions: hole.diameter, hole.depth
-hole_drilled
-  inputs: Diameter=hole.diameter:Length, Depth=hole.depth:Length, Tip angle=hole.tip_angle:Angle
-  expressions: hole.diameter, hole.depth, hole.tip_angle
-hole_counterbore
-  inputs: Diameter=hole.diameter:Length, Depth=hole.depth:Length, Counterbore diameter=hole.cb_diameter:Length, Counterbore depth=hole.cb_depth:Length
-  expressions: hole.diameter, hole.depth, hole.cb_diameter, hole.cb_depth
-hole_countersink
-  inputs: Diameter=hole.diameter:Length, Depth=hole.depth:Length, Countersink diameter=hole.cs_diameter:Length, Countersink angle=hole.cs_angle:Angle
-  expressions: hole.diameter, hole.depth, hole.cs_diameter, hole.cs_angle
-thread
-  inputs: Length=thread.length:Length
-  expressions: thread.length
-loft
-  inputs: 
-  expressions: 
-sweep
-  inputs: 
-  expressions: 
-shell
-  inputs: Thickness=shell.thickness:Length
-  expressions: shell.thickness
-draft
-  inputs: Angle=draft.angle:Angle, Angle=draft_neutral.angle:Angle, Offset=draft_neutral.offset:Length
-  expressions: draft.angle, draft_neutral.angle, draft_neutral.offset
-construction_plane
-  inputs: Angle=cplane.angle:Angle, Offset=cplane.offset:Length
-  expressions: cplane.angle, cplane.offset
-split
-  inputs: Angle=split.angle:Angle, Offset=split.offset:Length
-  expressions: split.angle, split.offset
-construction_axis
-  inputs: Angle=axis_a.angle:Angle, Offset=axis_a.offset:Length, Angle=axis_b.angle:Angle, Offset=axis_b.offset:Length
-  expressions: axis_a.angle, axis_a.offset, axis_b.angle, axis_b.offset
-construction_point_planes
-  inputs: Angle=pt_a.angle:Angle, Offset=pt_a.offset:Length, Angle=pt_b.angle:Angle, Offset=pt_b.offset:Length, Angle=pt_c.angle:Angle, Offset=pt_c.offset:Length
-  expressions: pt_a.angle, pt_a.offset, pt_b.angle, pt_b.offset, pt_c.angle, pt_c.offset
-construction_point_along
-  inputs: Distance (0 to 1)=pt.t:Unitless
-  expressions: pt.t
-split_face
-  inputs: Angle=split_face.angle:Angle, Offset=split_face.offset:Length
-  expressions: split_face.angle, split_face.offset
-scale
-  inputs: Scale factor=scale.factor:Unitless, X scale=scale.x:Unitless, Y scale=scale.y:Unitless, Z scale=scale.z:Unitless
-  expressions: scale.factor, scale.x, scale.y, scale.z
-offset_face
-  inputs: Distance=offset_face.distance:Length
-  expressions: offset_face.distance
-delete_face
-  inputs: 
-  expressions: 
-bounding_solid
-  inputs: Margin=bounding.margin:Length
-  expressions: bounding.margin
-pipe
-  inputs: Diameter=pipe.diameter:Length, Wall=pipe.wall:Length
-  expressions: pipe.diameter, pipe.wall
-emboss
-  inputs: Depth=emboss.depth:Length
-  expressions: emboss.depth
-rib
-  inputs: Thickness=rib.thickness:Length, Depth=rib.depth:Length
-  expressions: rib.thickness, rib.depth
-replace_face
-  inputs: Angle=replace_face.angle:Angle, Offset=replace_face.offset:Length
-  expressions: replace_face.angle, replace_face.offset
-align
-  inputs: 
-  expressions: 
-coil
-  inputs: Diameter=coil.diameter:Length, Pitch=coil.pitch:Length, Revolutions=coil.turns:Unitless, Section size=coil.section_size:Length, Start angle=coil.start_angle:Angle
-  expressions: coil.diameter, coil.pitch, coil.turns, coil.section_size, coil.start_angle, coil.x, coil.y, coil.z
-sheet_base
-  inputs: 
-  expressions: 
-sheet_contour
-  inputs: Distance=contour.distance:Length
-  expressions: contour.distance
-sheet_flange
-  inputs: Height=flange.height:Length, Angle=flange.angle:Angle, Bend radius=flange.radius:Length, Edge angle=flange.e1_angle:Angle, Edge height=flange.e1_height:Length, Edge height=flange.e2_height:Length
-  expressions: flange.height, flange.angle, flange.radius, flange.e1_angle, flange.e1_height, flange.e2_height
-sheet_hem
-  inputs: Length=hem.length:Length, Gap=hem.gap:Length
-  expressions: hem.length, hem.gap
-sheet_fold
-  inputs: Angle=fold.angle:Angle, Bend radius=fold.radius:Length
-  expressions: fold.angle, fold.radius
-sheet_unfold
-  inputs: 
-  expressions: 
-sheet_convert
-  inputs: 
-  expressions: 
-boss
-  inputs: Diameter=boss.diameter:Length, Height=boss.height:Length, Hole diameter=boss.hole_diameter:Length, Hole depth=boss.hole_depth:Length, Draft angle=boss.draft:Angle, Root fillet=boss.fillet:Length, Ribs=boss.ribs:Unitless, Rib thickness=boss.rib_thickness:Length, Rib length=boss.rib_length:Length, Rib offset=boss.rib_offset:Length
-  expressions: boss.diameter, boss.height, boss.hole_diameter, boss.hole_depth, boss.draft, boss.fillet, boss.ribs, boss.rib_thickness, boss.rib_length, boss.rib_offset
-lip
-  inputs: Width=lip.width:Length, Height=lip.height:Length, Gap=lip.gap:Length
-  expressions: lip.width, lip.height, lip.gap
-snap_fit
-  inputs: Length=snap.length:Length, Thickness=snap.thickness:Length, Width=snap.width:Length, Catch depth=snap.catch_depth:Length, Catch length=snap.catch_length:Length
-  expressions: snap.length, snap.thickness, snap.width, snap.catch_depth, snap.catch_length
-rest
-  inputs: Width=rest.width:Length, Height=rest.height:Length, Length=rest.length:Length, Draft angle=rest.draft:Angle, Wall thickness=rest.thickness:Length
-  expressions: rest.width, rest.height, rest.length, rest.draft, rest.thickness
-boundary_fill
-  inputs: 
-  expressions: 
-remove
-  inputs: 
-  expressions: 
-patch
-  inputs: 
-  expressions: 
-stitch
-  inputs: Tolerance=stitch.tolerance:Length
-  expressions: stitch.tolerance
-thicken
-  inputs: Thickness=thicken.thickness:Length
-  expressions: thicken.thickness
-surface_extrude
-  inputs: Distance=surface_extrude.distance:Length, Distance 2=surface_extrude.distance2:Length, Start offset=surface_extrude.start_offset:Length, Taper angle=surface_extrude.taper:Angle, To offset=surface_extrude.to_offset:Length
-  expressions: surface_extrude.distance, surface_extrude.distance2, surface_extrude.start_offset, surface_extrude.taper, surface_extrude.to_offset
-surface_revolve
-  inputs: Angle=srev.angle:Angle, Angle 2=srev.angle2:Angle
-  expressions: srev.angle, srev.angle2
-surface_sweep
-  inputs: 
-  expressions: 
-surface_loft
-  inputs: 
-  expressions: 
-surface_offset
-  inputs: Distance=soff.distance:Length, Tolerance=soff.tolerance:Length
-  expressions: soff.distance, soff.tolerance
-unstitch
-  inputs: 
-  expressions: 
-reverse_normal
-  inputs: 
-  expressions: 
-surface_extend
-  inputs: Distance=extend.distance:Length
-  expressions: extend.distance
-surface_trim
-  inputs: Angle=trim.angle:Angle, Offset=trim.offset:Length
-  expressions: trim.angle, trim.offset
-move
-  inputs: X distance=move.x:Length, Y distance=move.y:Length, Z distance=move.z:Length, Angle=move.angle:Angle
-  expressions: move.x, move.y, move.z, move.angle
-import
-  inputs: 
-  expressions: 
-mesh_convert
-  inputs: Tolerance=mesh_convert.tolerance:Length
-  expressions: mesh_convert.tolerance
-mesh_import
-  inputs: 
-  expressions: 
-";
+const GOLDEN_EXPRS: &str = include_str!("feature_walk_tests/golden_exprs.txt");
 
 #[test]
 fn inputs_and_expressions_match_the_golden_record() {
-    let got = record();
-    for (line, (want, have)) in GOLDEN.lines().zip(got.lines()).enumerate() {
-        assert_eq!(want, have, "line {}", line + 1);
-    }
-    assert_eq!(GOLDEN.lines().count(), got.lines().count(), "{got}");
+    check_golden("golden_exprs.txt", GOLDEN_EXPRS, &record());
 }
 
 #[test]
