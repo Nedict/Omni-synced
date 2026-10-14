@@ -785,9 +785,31 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
         APART.with(|c| c.set(true));
         let c = b.solid.vertex_iter().fold(Vec3::ZERO, |acc, v| acc + from_p3(v.point())) * (1.0 / b.solid.vertex_iter().count().max(1) as f64);
         let translation = Vec3::new(0.61, -0.37, 0.71) * (size * 2e-6);
-        let (r, diagnostics) = capture_boolean_diagnostics(|| {
-            transform(b, translation, c, Vec3::new(0.27, 0.83, -0.49), 2e-6).and_then(|nb| Ok(boolean(a, &nb, op)?.map(|r| nudged(r, &nb, &counts))))
-        });
+        let nudge = |sign: f64| {
+            capture_boolean_diagnostics(|| {
+                transform(b, translation * sign, c, Vec3::new(0.27, 0.83, -0.49), 2e-6 * sign)
+                    .and_then(|nb| Ok(boolean(a, &nb, op)?.map(|r| nudged(r, &nb, &counts))))
+            })
+        };
+        let (mut r, mut diagnostics) = nudge(1.0);
+        // A nudge that pushes a face into a curved face it only touched (a cut whose end lies
+        // tangent to a round side) leaves a sliver of that face behind, a fraction of a
+        // millimetre wide, which later features (a shell, a fillet) can't work with. The
+        // opposite nudge parts them instead. Its result is taken when this one failed or when
+        // it is the simpler one (fewer faces); an empty result stays as it is.
+        if !matches!(r, Ok(None)) {
+            let faces = match &r {
+                Ok(Some(body)) if check(body).0 => body.face_count(),
+                _ => usize::MAX,
+            };
+            let (r2, diagnostics2) = nudge(-1.0);
+            if let Ok(Some(body)) = &r2
+                && body.face_count() < faces
+                && check(body).0
+            {
+                (r, diagnostics) = (r2, diagnostics2);
+            }
+        }
         APART.with(|c| c.set(false));
         match r {
             Ok(Some(body)) => {
