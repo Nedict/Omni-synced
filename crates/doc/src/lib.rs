@@ -30,6 +30,7 @@ pub mod motion;
 mod name_lookup;
 pub mod naming;
 mod params;
+pub mod physical_material;
 mod piece_names;
 mod profile_refs;
 pub mod progress;
@@ -70,6 +71,8 @@ pub enum DocError {
 
 pub type Result<T> = std::result::Result<T, DocError>;
 
+#[cfg(test)]
+mod feature_walk_tests;
 #[cfg(test)]
 mod named_projection_tests;
 #[cfg(test)]

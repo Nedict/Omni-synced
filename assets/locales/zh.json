@@ -259,9 +259,11 @@
   "cmd.surface_unstitch": "取消缝合",
   "cmd.surface_reverse_normal": "反转法向",
   "cmd.inspect_continuity": "连续性分析",
+  "cmd.timeline_add": "添加记录的特征",
   "cmd.timeline_compute_all": "全部重新計算",
   "cmd.timeline_copy": "复制特征",
   "cmd.timeline_dependents": "特征依存项",
+  "cmd.timeline_export_script": "导出命令脚本",
   "cmd.timeline_inspect": "检查特征",
   "cmd.timeline_paste": "粘贴特征",
   "cmd.timeline_redefine": "编辑特征",
@@ -957,5 +959,7 @@
   "sketch_text.on_path": "文字沿路径排列：由曲线放置",
   "ui.analysis": "分析",
   "ui.edit_section_analysis": "编辑截面分析",
+  "cmd.material_properties_validate":"验证物理材料数据",
+  "cmd.material_properties_directional":"方向弹性模量",
   "dialog.computing": "正在计算… {seconds} 秒"
 }

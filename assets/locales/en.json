@@ -259,9 +259,11 @@
   "cmd.surface_unstitch": "Unstitch",
   "cmd.surface_reverse_normal": "Reverse Normal",
   "cmd.inspect_continuity": "Continuity Analysis",
+  "cmd.timeline_add": "Add Recorded Feature",
   "cmd.timeline_compute_all": "Compute All",
   "cmd.timeline_copy": "Copy Features",
   "cmd.timeline_dependents": "Feature Dependents",
+  "cmd.timeline_export_script": "Export Command Script",
   "cmd.timeline_inspect": "Inspect Feature",
   "cmd.timeline_paste": "Paste Features",
   "cmd.timeline_redefine": "Edit Feature",
@@ -957,5 +959,7 @@
   "Line Spacing": "Line Spacing",
   "Path": "Path",
   "sketch_text.on_path": "The text follows its path: the curve places it",
+  "cmd.material_properties_validate":"Validate Physical Material Data",
+  "cmd.material_properties_directional":"Directional Elastic Modulus",
   "dialog.computing": "Computing… {seconds} s"
 }
