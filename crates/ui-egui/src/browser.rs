@@ -62,6 +62,9 @@ pub struct TreeState {
     pub timeline_anchor: Option<String>,
     /// The Edit Canvas / Calibrate panel.
     pub canvas_panel: Option<CanvasPanel>,
+    /// A Section Analysis hidden with its eye in the Analysis folder: its plane (origin,
+    /// normal), so the eye can bring it back (#822).
+    pub hidden_section: Option<(solidcraft_engine::geom::Vec3, solidcraft_engine::geom::Vec3)>,
     /// What waits for the Capture Position question: a command id, or [`SAVE`].
     pub capture_prompt: Option<String>,
     /// The last row clicked (for Shift ranges).
@@ -354,6 +357,7 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
             ui.painter().line_segment([er.left_bottom() + vec2(2.0, -2.0), er.right_top() + vec2(-2.0, 2.0)], Stroke::new(1.4, t.text_dim));
         }
         out.eye = resp.clicked() && click_on == 2;
+        crate::scenario::publish_handle(&format!("eye:{}", row.label), er.center());
     }
     x += 18.0;
     // Activation radio (components).
@@ -680,6 +684,7 @@ fn component_rows(app: &mut SolveApp, ui: &mut egui::Ui, id: u64, depth: usize, 
         named_view_rows(app, ui, d, acts);
         origin_rows(app, ui, d);
         canvas_rows(app, ui, d, acts);
+        analysis_rows(app, ui, d, acts);
     }
     let _ = t;
     for folder in ["bodies", "sketches", "construction"] {
@@ -949,6 +954,77 @@ pub fn view_items(app: &SolveApp, name: &str) -> Vec<Item> {
         Item::sep(),
         Item::action("ui.rename", "Rename", "").with(json!({ "view": name })).on_if(saved),
         Item::action("view.delete", "Delete", "delete").with(json!({ "view": name })).on_if(saved),
+    ]
+}
+
+/// The Analysis folder: the Section Analysis, while there is one (shown or hidden), with an eye
+/// to hide and show it, a double-click to edit it and a menu to delete it (#822).
+fn analysis_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &mut Actions) {
+    if app.session.section.is_some() {
+        // A section made (or remade) while an older one was hidden replaces it.
+        app.tree.hidden_section = None;
+    }
+    let visible = app.session.section.is_some();
+    if !visible && app.tree.hidden_section.is_none() {
+        return;
+    }
+    let key = "analysis";
+    let open = is_open(app, key, true);
+    let r = draw_row(
+        ui,
+        ui.id().with(key),
+        &Row { depth, fold: Some(open), eye: Some(visible), icon: "folder", label: "Analysis", ..Default::default() },
+    );
+    if r.fold || r.clicked {
+        toggle(app, key, true);
+    }
+    if r.eye {
+        set_section_visible(app, !visible);
+    }
+    if !open {
+        return;
+    }
+    let r = draw_row(
+        ui,
+        ui.id().with("section_analysis"),
+        &Row { depth: depth + 1, eye: Some(visible), icon: "section", label: "Section Analysis", dim: !visible, ..Default::default() },
+    );
+    if r.eye {
+        set_section_visible(app, !visible);
+    }
+    if r.double {
+        app.start("inspect.section");
+    }
+    if let Some(p) = r.secondary {
+        acts.menu = Some((p, Target::Section));
+    }
+}
+
+/// Hide the Section Analysis (keeping its plane to show it again) or show the hidden one.
+pub fn set_section_visible(app: &mut SolveApp, visible: bool) {
+    if visible {
+        if let Some((origin, normal)) = app.tree.hidden_section {
+            let plane = json!({"origin": [origin.x, origin.y, origin.z], "normal": [normal.x, normal.y, normal.z]});
+            if app.run("inspect.section", json!({ "plane": plane })).is_ok() {
+                app.tree.hidden_section = None;
+            }
+        }
+    } else if let Some(section) = app.session.section
+        && app.run("inspect.section", json!({"clear": true})).is_ok()
+    {
+        app.tree.hidden_section = Some(section);
+    }
+}
+
+/// The menu of the Section Analysis row.
+pub fn section_items(app: &SolveApp) -> Vec<Item> {
+    let visible = app.session.section.is_some();
+    vec![
+        Item::action("ui.editSection", "Edit Section Analysis", "section"),
+        Item::sep(),
+        Item::action("ui.unsection", "Delete", "delete"),
+        Item::sep(),
+        Item::action("ui.sectionVisible", "Show/Hide", "eye").key("V").with(json!({ "visible": !visible })),
     ]
 }
 
@@ -1883,3 +1959,7 @@ fn occurrence_origin(app: &SolveApp, occurrence: u64) -> Option<solidcraft_engin
     let own = app.session.pending_moves.get(&occurrence).copied().unwrap_or(o.transform);
     Some(solidcraft_engine::doc::apply_point(&solidcraft_engine::doc::mat_mul(&parent, &own), solidcraft_engine::geom::Vec3::ZERO))
 }
+
+#[cfg(test)]
+#[path = "section_browser_tests.rs"]
+mod section_browser_tests;
