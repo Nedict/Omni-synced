@@ -830,6 +830,14 @@ fn tessellation(adapter: &wgpu::Adapter, device: &wgpu::Device, queue: &wgpu::Qu
         return None;
     }
     let info = adapter.get_info();
+    // The AMD FirePro D300/D500/D700 (Mac Pro 2013, Tahiti) Metal driver hangs on the evaluation
+    // shader and macOS resets the GPU, freezing the whole desktop. `SOLIDCRAFT_CPU_TESS=1`
+    // forces CPU evaluation on any device.
+    let hangs = info.backend == wgpu::Backend::Metal && info.name.contains("FirePro");
+    if hangs || std::env::var_os("SOLIDCRAFT_CPU_TESS").is_some() {
+        log::warn!("bodies are built on the CPU on {} ({:?})", info.name, info.backend);
+        return None;
+    }
     match solidcraft_gpu::TessGpu::with_shader(info.name.clone(), device.clone(), queue.clone(), shader) {
         Ok(t) => Some(t),
         Err(e) => {
