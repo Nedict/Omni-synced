@@ -369,6 +369,8 @@ pub fn scoped<T>(scope: Option<PathScope>, f: impl FnOnce() -> T) -> T {
             SCOPE.with(|s| *s.borrow_mut() = prev);
         }
     }
+    // Sketch text reads the font files a design names, below this crate: it asks here first.
+    solidcraft_doc::sketch::set_font_file_check(|p| check(&p.to_string_lossy()).map_err(|e| e.to_string()));
     let _restore = Restore(SCOPE.with(|s| s.replace(scope)));
     f()
 }

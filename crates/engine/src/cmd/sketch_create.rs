@@ -186,11 +186,8 @@ fn text_source(p: &Value, cmd: &str, old: Option<(String, Vec2, f64, f64, Option
         Some(_) => return Err(bad(cmd, "`font` must be a font family name or a font file path")),
     };
     let style = text_style(p, cmd, s0)?;
-    // A font file an agent names must lie in its folders (installed families are found by name).
-    if let Some(path) = font.as_deref().and_then(solidcraft_sketch::font_file_path) {
-        solidcraft_io::vfs::check(&path.to_string_lossy()).map_err(|e| bad(cmd, e.to_string()))?;
-    }
-    // An unknown font, an unreadable file or a style the font lacks is an error now, not a lost link later.
+    // An unknown font, an unreadable file or a style the font lacks is an error now, not a lost
+    // link later; so is a font file outside an agent's folders (the font reader asks `vfs`).
     solidcraft_sketch::font_data_styled(font.as_deref(), style.bold, style.italic).map_err(|e| bad(cmd, e.to_string()))?;
     Ok(LinkSource::Text { text, at, height, angle, font, style })
 }

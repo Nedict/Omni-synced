@@ -55,7 +55,8 @@ a new file must go into a folder that exists. On Windows a path must be on a loc
 file name (alternate data streams), reserved device names with any extension (`NUL`, `CON`,
 `COM1.txt`, …) and short 8.3 names (`PROGRA~1`) are refused before any file system call, and the
 resolved path is checked again, so a link or junction that leads to a share is refused too. This
-includes a `sketch.text` font given as a file path; installed fonts named by family still work.
+includes a `sketch.text` font given as a file path and the font file a design's text names when
+the design is opened; installed fonts named by family still work.
 The server spells its own folders (scratch, recovery) with long names, so they work when the
 temporary folder's path has a short name (`…\NAME~1.XYZ\AppData\Local\Temp`, as Windows often
 gives when the user folder's name is long).
