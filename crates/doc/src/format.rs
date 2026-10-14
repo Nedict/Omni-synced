@@ -126,6 +126,12 @@
 //!   `chain` and `tolerance`) is also first saved in 18.
 //!   A `SurfaceUntrim` feature (Untrim: a `face` as `body` and `point`, optional `holes`
 //!   points, `outer` and `in_place`) is also first saved in 18.
+//!   Under the same version, a `SurfaceExtend` can say how it continues the surface (`mode`:
+//!   `tangent` or `curvature`; `natural` when absent), extend up to something instead of its
+//!   `distance` (`up_to`: a `plane`, a `face` as `body` and `point`, or `bounds`) and keep the
+//!   neighbouring edges as they are (`neighbours: false`). An Extend without them builds the
+//!   planar extension it always did and saves as before; 0.9.0 would drop them and extend a
+//!   plane by the distance.
 //!   Nothing new is saved for holes, but a hole on a face is now drilled into the material: a
 //!   saved `direction` that leaves the face the hole starts on (designs up to 17 could save one,
 //!   taken from another face whose plane passed near the point, such as the far side of a thin
