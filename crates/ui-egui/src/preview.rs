@@ -4,6 +4,12 @@
 //! tinted, removed material as a translucent ghost. The last good preview stays up while the
 //! next one computes or when an input makes the feature fail (the error shows in the dialog).
 //! Nothing here touches the document or the undo history.
+//!
+//! A feature that adds or removes a tool body (join, cut, intersect) shows only its tool, which
+//! is quick to build, while its boolean can take seconds. So it is previewed in two lines: the
+//! tool, following the inputs as they change, and the check that the feature builds (its
+//! error), one at a time on the inputs shown once the previous check is done. The check also
+//! leaves the feature in the evaluation cache the session shares, for OK to take.
 
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -57,18 +63,15 @@ pub struct Built {
 
 type Job = Result<Built, String>;
 
-/// What the preview worker sends: for a feature that adds or removes a tool body, the tool as
-/// soon as it is built (the boolean still running), then the finished preview.
-enum Msg {
-    Partial(Built),
-    Done(Job),
-}
-
 #[derive(Default)]
 pub struct PreviewState {
     /// Key of the commands whose result (or error) is shown.
     shown_key: Option<u64>,
-    running: Option<(u64, Receiver<Msg>)>,
+    running: Option<(u64, Receiver<Job>)>,
+    /// The check of a tool feature: whether it builds (its error), for the inputs of its key.
+    checking: Option<(u64, Receiver<Option<String>>)>,
+    /// The inputs whose check is done (its error, if any, in `error`).
+    checked: Option<u64>,
     /// Inputs of an in-flight joint preview, excluding only its driven values.
     running_motion_key: Option<u64>,
     /// Bodies the preview stands in for (hidden in the model scene).
@@ -97,6 +100,8 @@ pub struct PreviewState {
 impl PreviewState {
     fn clear(&mut self) {
         self.running = None;
+        self.checking = None;
+        self.checked = None;
         self.running_motion_key = None;
         self.shown_key = None;
         self.error = None;
@@ -149,22 +154,14 @@ impl PreviewState {
             self.sketches.clear();
             self.error = None;
         }
-        while let Some((k, rx)) = &self.running {
+        if let Some((k, rx)) = &self.running {
             let k = *k;
             let job = match rx.try_recv() {
-                // The tool, the boolean still running: shown, and the preview stays busy.
-                Ok(Msg::Partial(b)) => {
-                    if k == key {
-                        self.apply(k, Ok(b));
-                    }
-                    continue;
-                }
-                Ok(Msg::Done(job)) => Some(job),
+                Ok(job) => Some(job),
                 Err(TryRecvError::Empty) => None,
                 Err(TryRecvError::Disconnected) => Some(Err("the preview failed".into())),
             };
-            let Some(job) = job else { break };
-            {
+            if let Some(job) = job {
                 self.running = None;
                 let intermediate = motion_key.is_some() && self.running_motion_key == motion_key && matches!(&job, Ok(b) if b.error.is_none());
                 self.running_motion_key = None;
@@ -176,6 +173,31 @@ impl PreviewState {
                 }
             }
         }
+    }
+}
+
+impl PreviewState {
+    /// Take a finished check: its error stands for the inputs shown, if they are still its own.
+    fn poll_check(&mut self, key: u64) {
+        let Some((k, rx)) = &self.checking else { return };
+        let k = *k;
+        match rx.try_recv() {
+            Ok(error) => {
+                self.checking = None;
+                if k == key && self.shown_key == Some(key) {
+                    self.error = error;
+                    self.checked = Some(k);
+                }
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => self.checking = None,
+        }
+    }
+
+    /// Whether to start the check of `key`'s feature: its tool shows without an error, and no
+    /// check runs (one for older inputs runs on to its end, as it can't be stopped, and goes).
+    fn wants_check(&self, key: u64) -> bool {
+        self.shown_key == Some(key) && self.checked != Some(key) && self.checking.is_none() && self.error.is_none() && self.running.is_none()
     }
 }
 
@@ -225,15 +247,22 @@ pub fn update(app: &mut SolveApp, ctx: &egui::Context) {
     let colors = Colors::from_tokens(&Tokens::get());
     let key = job_key(&cmds, app.session.revision, colors);
     let motion_key = motion_key(&cmds, app.session.revision, colors);
+    let tool = as_new_body(&cmds).is_some();
     let pv = &mut app.preview;
     pv.poll(key, motion_key);
+    pv.poll_check(key);
     if pv.running.is_none() && pv.shown_key != Some(key) {
         pv.started = crate::now_ms();
         pv.running_motion_key = motion_key;
         let scratch = app.session.scratch();
-        spawn(&mut app.preview, key, scratch, cmds, colors);
+        spawn(&mut app.preview, key, scratch, cmds, colors, tool);
+    } else if tool && pv.wants_check(key) {
+        let scratch = app.session.scratch();
+        spawn_check(&mut app.preview, key, scratch, cmds);
     }
-    app.preview.busy = app.preview.running.is_some();
+    let pv = &app.preview;
+    // A tool feature is busy until its check is in.
+    app.preview.busy = pv.running.is_some() || (tool && pv.checked != Some(key) && pv.error.is_none());
     if app.preview.busy {
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
     }
@@ -249,35 +278,36 @@ fn job_key(cmds: &[(String, Value)], revision: u64, colors: Colors) -> u64 {
     h.finish()
 }
 
-/// Before OK runs `cmds`: when the preview is still computing those very commands, wait for it
-/// rather than compute them a second time alongside it. What it evaluated stays in the model's
-/// cache, which the session shares with the preview's scratch copy, so OK then takes it from
-/// there (the feature, its result or its error) instead of evaluating it again.
+/// Before OK runs `cmds`: when the preview is still computing those very commands (their
+/// tool, or the check that their feature builds), wait for it rather than compute them a second
+/// time alongside it. What the check evaluated stays in the model's cache, which the session
+/// shares with the preview's scratch copy, so OK then takes the feature (its result or its
+/// error) from there instead of evaluating it again.
 pub fn settle(app: &mut SolveApp, cmds: &[(String, Value)]) {
     let key = job_key(cmds, app.session.revision, Colors::from_tokens(&Tokens::get()));
-    let Some((k, rx)) = app.preview.running.take_if(|(k, _)| *k == key) else { return };
-    loop {
+    let pv = &mut app.preview;
+    if let Some((k, rx)) = pv.running.take_if(|(k, _)| *k == key) {
+        pv.running_motion_key = None;
         match rx.recv() {
-            Ok(Msg::Partial(b)) => app.preview.apply(k, Ok(b)),
-            Ok(Msg::Done(job)) => {
-                app.preview.apply(k, job);
-                break;
-            }
-            Err(_) => break,
+            Ok(job) => pv.apply(k, job),
+            Err(_) => pv.apply(k, Err("the preview failed".into())),
         }
     }
-    app.preview.running_motion_key = None;
-    app.preview.busy = false;
+    if let Some((k, rx)) = pv.checking.take_if(|(k, _)| *k == key)
+        && let Ok(error) = rx.recv()
+    {
+        pv.error = error;
+        pv.checked = Some(k);
+    }
+    pv.busy = false;
 }
 
+/// Start computing the preview of `cmds`: for a tool feature (`tool`), only its tool.
 #[cfg(not(target_arch = "wasm32"))]
-fn spawn(pv: &mut PreviewState, key: u64, scratch: Session, cmds: Vec<(String, Value)>, colors: Colors) {
+fn spawn(pv: &mut PreviewState, key: u64, scratch: Session, cmds: Vec<(String, Value)>, colors: Colors, tool: bool) {
     let (tx, rx) = std::sync::mpsc::channel();
     let spawned = std::thread::Builder::new().name("preview".into()).spawn(move || {
-        let job = compute_staged(&scratch, &cmds, colors, &mut |b| {
-            let _ = tx.send(Msg::Partial(b));
-        });
-        let _ = tx.send(Msg::Done(job));
+        let _ = tx.send(if tool { compute_tool(&scratch, &cmds, colors) } else { compute(&scratch, &cmds, colors) });
     });
     match spawned {
         Ok(_) => pv.running = Some((key, rx)),
@@ -285,10 +315,33 @@ fn spawn(pv: &mut PreviewState, key: u64, scratch: Session, cmds: Vec<(String, V
     }
 }
 
-/// No threads on the web: compute right away.
+/// No threads on the web: compute right away, the check of a tool feature with it.
 #[cfg(target_arch = "wasm32")]
-fn spawn(pv: &mut PreviewState, key: u64, scratch: Session, cmds: Vec<(String, Value)>, colors: Colors) {
+fn spawn(pv: &mut PreviewState, key: u64, scratch: Session, cmds: Vec<(String, Value)>, colors: Colors, _tool: bool) {
     pv.apply(key, compute(&scratch, &cmds, colors));
+    pv.checked = Some(key);
+}
+
+/// Start checking that the feature of `cmds` builds (its error, if any).
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn_check(pv: &mut PreviewState, key: u64, scratch: Session, cmds: Vec<(String, Value)>) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new().name("preview check".into()).spawn(move || {
+        let _ = tx.send(scratch.preview(&cmds).err().map(|e| e.to_string()));
+    });
+    match spawned {
+        Ok(_) => pv.checking = Some((key, rx)),
+        Err(e) => {
+            pv.error = Some(e.to_string());
+            pv.checked = Some(key);
+        }
+    }
+}
+
+/// No threads on the web: `spawn` checked already.
+#[cfg(target_arch = "wasm32")]
+fn spawn_check(pv: &mut PreviewState, key: u64, _scratch: Session, _cmds: Vec<(String, Value)>) {
+    pv.checked = Some(key);
 }
 
 /// Evaluate the commands on the scratch session and build the preview scene.
@@ -297,13 +350,6 @@ fn spawn(pv: &mut PreviewState, key: u64, scratch: Session, cmds: Vec<(String, V
 /// show their result in place of the bodies they change. When the feature fails (a boolean the
 /// kernel can't do yet), the tool body is still shown, with the error.
 pub fn compute(s: &Session, cmds: &[(String, Value)], colors: Colors) -> Job {
-    compute_staged(s, cmds, colors, &mut |_| {})
-}
-
-/// [`compute`], handing a tool body's scene to `partial` as soon as it is built: the feature
-/// itself (the boolean, which the preview runs for its error and OK finds in the cache) can
-/// take far longer.
-fn compute_staged(s: &Session, cmds: &[(String, Value)], colors: Colors, partial: &mut dyn FnMut(Built)) -> Job {
     if cmds.iter().any(|(command, params)| {
         matches!(command.as_str(), "sketch.redefine" | "sketch.mirror" | "sketch.pattern.rectangular" | "sketch.pattern.circular" | "sketch.offset")
             || command == "construct.plane.along_path"
@@ -321,29 +367,16 @@ fn compute_staged(s: &Session, cmds: &[(String, Value)], colors: Colors, partial
     if let Some(job) = crate::dialogs_assembly::world_preview(s, cmds, colors) {
         return job;
     }
-    let guard = |f: &dyn Fn() -> Built| std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|_| "the preview failed".to_string());
     match as_new_body(cmds) {
-        Some((alt, op)) => {
-            let tool = match s.preview(&alt) {
-                Ok(t) => t,
-                Err(e) => return Err(s.preview(cmds).err().map_or_else(|| e.to_string(), |r| r.to_string())),
-            };
-            let mut b = guard(&|| build_tool(&tool.before, &tool.after, colors, &op))?;
-            b.bounds = state_bounds(&tool.after);
-            partial(Built {
-                scene: b.scene.clone(),
-                sketches: Vec::new(),
-                replaced: b.replaced.clone(),
-                error: None,
-                bounds: b.bounds,
-                applied: None,
-                tapered: Vec::new(),
-            });
+        Some(_) => {
+            let mut b = compute_tool(s, cmds, colors)?;
             b.error = s.preview(cmds).err().map(|e| e.to_string());
             Ok(b)
         }
         None => {
             let p = s.preview(cmds).map_err(|e| e.to_string())?;
+            let guard =
+                |f: &dyn Fn() -> Built| std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|_| "the preview failed".to_string());
             let mut b = guard(&|| build(&p.before, &p.after, colors))?;
             b.bounds = state_bounds(&p.after);
             // The radius a previewed fillet used when it reduced the one asked for (a new
@@ -354,6 +387,21 @@ fn compute_staged(s: &Session, cmds: &[(String, Value)], colors: Colors, partial
             Ok(b)
         }
     }
+}
+
+/// The tool body of a feature that adds or removes one, built on its own (as a new body): what
+/// its preview shows, without the boolean. When even the tool fails, the feature's own error.
+/// Other features: their whole preview ([`compute`]).
+fn compute_tool(s: &Session, cmds: &[(String, Value)], colors: Colors) -> Job {
+    let Some((alt, op)) = as_new_body(cmds) else { return compute(s, cmds, colors) };
+    let tool = match s.preview(&alt) {
+        Ok(t) => t,
+        Err(e) => return Err(s.preview(cmds).err().map_or_else(|| e.to_string(), |r| r.to_string())),
+    };
+    let mut b = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| build_tool(&tool.before, &tool.after, colors, &op)))
+        .map_err(|_| "the preview failed".to_string())?;
+    b.bounds = state_bounds(&tool.after);
+    Ok(b)
 }
 
 fn state_bounds(st: &ModelState) -> Aabb3 {
@@ -693,7 +741,7 @@ mod tests {
         assert!(pv.active);
         assert_eq!(pv.replaced, ["Turn"]);
         assert_eq!(pv.key, 9, "the last good geometry stays visible");
-        tx.send(Msg::Done(Err("unknown_angle".into()))).unwrap();
+        tx.send(Err("unknown_angle".into())).unwrap();
         pv.poll(2, None);
         assert!(pv.error.is_none(), "a late obsolete result cannot disable Apply again");
         assert!(pv.running.is_none());
@@ -702,7 +750,7 @@ mod tests {
 
         let (tx, rx) = std::sync::mpsc::channel();
         pv.running = Some((2, rx));
-        tx.send(Msg::Done(Err("current invalid expression".into()))).unwrap();
+        tx.send(Err("current invalid expression".into())).unwrap();
         pv.poll(2, None);
         assert_eq!(pv.error.as_deref(), Some("current invalid expression"));
         assert_eq!(pv.shown_key, Some(2));
@@ -734,7 +782,7 @@ mod tests {
             pv.running_motion_key = Some(42);
             pv.poll(wanted, Some(42));
             assert!(pv.running.is_some());
-            tx.send(Msg::Done(Ok(pose()))).unwrap();
+            tx.send(Ok(pose())).unwrap();
             pv.poll(wanted, Some(42));
             assert!(pv.active, "motion should be visible before input stops");
             assert_eq!(pv.replaced, ["Lid"]);
@@ -745,7 +793,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         pv.running = Some((4, rx));
         pv.running_motion_key = Some(42);
-        tx.send(Msg::Done(Ok(pose()))).unwrap();
+        tx.send(Ok(pose())).unwrap();
         pv.poll(4, Some(42));
         assert_eq!(pv.shown_key, Some(4), "release catches up to the exact final pose");
         assert!(pv.running.is_none());
@@ -762,7 +810,7 @@ mod tests {
             let mut pv = PreviewState { running_motion_key: Some(42), ..PreviewState::default() };
             let (tx, rx) = std::sync::mpsc::channel();
             pv.running = Some((1, rx));
-            tx.send(Msg::Done(job)).unwrap();
+            tx.send(job).unwrap();
             pv.poll(2, context);
             assert!(!pv.active);
             assert!(pv.error.is_none(), "obsolete errors must not block Apply");
@@ -947,10 +995,17 @@ mod tests {
         assert!(s.model.state().bodies.is_empty());
     }
 
+    fn session_of(cmds: &[(&str, Value)]) -> Session {
+        let mut s = Session::default();
+        for (id, p) in cmds {
+            s.execute(id, p).unwrap();
+        }
+        s
+    }
+
     /// A block and a two-letter text to cut into it.
     fn text_on_block() -> (Session, Vec<(String, Value)>) {
-        let mut s = Session::default();
-        for (id, p) in [
+        let s = session_of(&[
             ("sketch.create", json!({"plane": "XY"})),
             ("sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [60, 20]})),
             ("sketch.finish", json!({})),
@@ -958,54 +1013,73 @@ mod tests {
             ("sketch.create", json!({"plane": "XY"})),
             ("sketch.text", json!({"text": "AB", "at": [5, 5], "height": 10})),
             ("sketch.finish", json!({})),
-        ] {
-            s.execute(id, &p).unwrap();
-        }
+        ]);
         (s, vec![("solid.extrude".to_string(), json!({"distance": 2, "operation": "cut"}))])
     }
 
-    /// A cut's tool is handed over as soon as it is built, before the cut itself has run; the
-    /// finished preview is the same tool, with the cut's error if any.
+    /// A tool feature's tool is built without its boolean: a cut into nothing shows its tool
+    /// with no error, while the whole preview (the check) has the cut's error.
     #[test]
-    fn a_cut_preview_shows_its_tool_before_the_boolean_runs() {
-        let (s, cmds) = text_on_block();
-        let mut partials = Vec::new();
-        let done = compute_staged(&s, &cmds, colors(), &mut |b| partials.push((b.scene.xray.len(), b.error.clone()))).unwrap();
-        assert_eq!(partials.len(), 1, "one early tool scene");
-        assert!(partials[0].0 > 0 && partials[0].1.is_none());
-        assert_eq!(done.scene.xray.len(), partials[0].0, "the cut tool, see-through");
-        assert!(done.error.is_none(), "{:?}", done.error);
-        // A feature with no tool body has nothing to show early.
-        let mut none = 0;
-        let fillet = vec![("solid.box".to_string(), json!({"length": 10, "width": 10, "height": 10}))];
-        compute_staged(&s, &fillet, colors(), &mut |_| none += 1).unwrap();
-        assert_eq!(none, 0);
+    fn a_tool_preview_builds_the_tool_without_the_boolean() {
+        let s = session_of(&[
+            ("sketch.create", json!({"plane": "XY"})),
+            ("sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [10, 10]})),
+            ("sketch.finish", json!({})),
+        ]);
+        let cmds = vec![("solid.extrude".to_string(), json!({"distance": 2, "operation": "cut"}))];
+        let tool = compute_tool(&s, &cmds, colors()).unwrap();
+        assert!(tool.error.is_none() && !tool.scene.xray.is_empty(), "{:?}", tool.error);
+        let whole = compute(&s, &cmds, colors()).unwrap();
+        assert!(whole.error.as_deref().is_some_and(|e| e.contains("no body to cut")), "{:?}", whole.error);
+        assert_eq!(whole.scene.xray.len(), tool.scene.xray.len());
     }
 
-    /// OK while the preview still computes the same commands waits for it instead of computing
-    /// them again beside it, and then takes the feature from the cache the preview filled.
+    /// A check's error stands only for the inputs shown; one for older inputs is dropped. A
+    /// check starts once their tool shows without error, none running.
     #[test]
-    fn ok_takes_the_result_of_the_preview_still_computing() {
+    fn a_check_counts_for_the_inputs_it_checked() {
+        let mut pv = PreviewState { shown_key: Some(2), ..Default::default() };
+        assert!(pv.wants_check(2) && !pv.wants_check(1));
+        let (tx, rx) = std::sync::mpsc::channel();
+        pv.checking = Some((1, rx));
+        assert!(!pv.wants_check(2), "one check at a time");
+        tx.send(Some("old".to_string())).unwrap();
+        pv.poll_check(2);
+        assert!(pv.checking.is_none() && pv.error.is_none() && pv.checked.is_none(), "older inputs");
+        assert!(pv.wants_check(2));
+        let (tx, rx) = std::sync::mpsc::channel();
+        pv.checking = Some((2, rx));
+        tx.send(Some("the cut fails".to_string())).unwrap();
+        pv.poll_check(2);
+        assert_eq!((pv.error.as_deref(), pv.checked), (Some("the cut fails"), Some(2)));
+        assert!(!pv.wants_check(2));
+    }
+
+    /// OK while the preview still builds the tool, or checks the feature, of the commands it
+    /// runs waits for them instead of computing the feature beside them, then takes it from
+    /// the cache the check filled. Jobs for other commands are left alone.
+    #[test]
+    fn ok_takes_the_check_of_its_commands() {
         let (s, cmds) = text_on_block();
         let mut app = SolveApp::new(s, crate::Services::default());
         let colors = Colors::from_tokens(&Tokens::get());
-        // A preview of other commands is left alone.
         let other = vec![("solid.extrude".to_string(), json!({"distance": 3, "operation": "cut"}))];
-        spawn(&mut app.preview, job_key(&other, app.session.revision, colors), app.session.scratch(), other.clone(), colors);
-        settle(&mut app, &cmds);
-        assert!(app.preview.running.is_some(), "not the commands OK runs");
+        spawn_check(&mut app.preview, job_key(&other, app.session.revision, colors), app.session.scratch(), other);
         let key = job_key(&cmds, app.session.revision, colors);
-        spawn(&mut app.preview, key, app.session.scratch(), cmds.clone(), colors);
+        spawn(&mut app.preview, key, app.session.scratch(), cmds.clone(), colors, true);
         settle(&mut app, &cmds);
-        assert!(app.preview.running.is_none() && !app.preview.busy);
-        assert_eq!(app.preview.shown_key, Some(key));
-        assert!(app.preview.active && app.preview.error.is_none(), "{:?}", app.preview.error);
+        assert!(app.preview.running.is_none() && app.preview.shown_key == Some(key) && app.preview.active);
+        assert!(app.preview.checking.is_some(), "the other commands' check");
+        app.preview.checking = None;
+        spawn_check(&mut app.preview, key, app.session.scratch(), cmds.clone());
+        settle(&mut app, &cmds);
+        assert!(app.preview.checking.is_none() && app.preview.checked == Some(key) && app.preview.error.is_none(), "{:?}", app.preview.error);
         let hits = |app: &SolveApp| app.session.model.cache.lock().map(|c| c.hits).unwrap_or(0);
         let before = hits(&app);
         let (id, params) = cmds[0].clone();
         app.run(&id, params).unwrap();
         let _ = app.session.world_state();
-        assert!(hits(&app) > before, "the cut came from the preview's evaluation");
+        assert!(hits(&app) > before, "the cut came from the check's evaluation");
         assert_eq!(app.session.world_state().bodies.len(), 1);
     }
 }
