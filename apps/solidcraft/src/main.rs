@@ -276,11 +276,19 @@ fn adopt_settings(
     Ok(())
 }
 
+/// `graphics.json`, read before the window opens.
+fn graphics() -> Option<serde_json::Value> {
+    graphics_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+}
+
+/// The graphics backend preference (`graphics.json`'s `backend`: `auto`, `dx12`, `vulkan`, `gl`).
+fn backend_preference() -> Option<String> {
+    graphics().and_then(|v| v.get("backend").and_then(serde_json::Value::as_str).map(str::to_string))
+}
+
 /// Anti-aliasing samples from Preferences (4 when unset).
 fn msaa() -> u16 {
-    graphics_path()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+    graphics()
         .and_then(|v| v.get("msaa").and_then(serde_json::Value::as_u64))
         .and_then(|m| u16::try_from(m).ok())
         .filter(|m| [1, 2, 4, 8].contains(m))
@@ -399,7 +407,7 @@ fn main() -> eframe::Result {
             settings.as_ref().map(|d| d.join("app.ron"))
         },
         persist_window: !safe_mode,
-        wgpu_options: wgpu_options(cpu_renderer),
+        wgpu_options: wgpu_options(cpu_renderer, if safe_mode { None } else { backend_preference() }.as_deref()),
         ..Default::default()
     };
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -504,11 +512,20 @@ fn main() -> eframe::Result {
     }
 }
 
-/// The renderer settings: with `cpu`, the software adapter (WARP, lavapipe, llvmpipe).
-fn wgpu_options(cpu: bool) -> eframe::egui_wgpu::WgpuConfiguration {
+/// The renderer settings: with `cpu`, the software adapter (WARP, lavapipe, llvmpipe). The
+/// backends come from `startup::choose_backends` (on Windows D3D12 first, and only the backend
+/// in use is started); `preference` is `graphics.json`'s `backend`.
+fn wgpu_options(cpu: bool, preference: Option<&str>) -> eframe::egui_wgpu::WgpuConfiguration {
     let mut options = eframe::egui_wgpu::WgpuConfiguration::default();
-    if cpu && let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_setup {
-        setup.native_adapter_selector = Some(std::sync::Arc::new(startup::pick_cpu_adapter));
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_setup {
+        let env_set = std::env::var(startup::WGPU_BACKEND_ENV).is_ok_and(|v| !v.trim().is_empty());
+        if let Some(backends) = startup::choose_backends(cfg!(target_os = "windows"), env_set, cpu, preference, startup::has_hardware_adapter) {
+            eprintln!("SolidCraft graphics: starting {backends:?}");
+            setup.instance_descriptor.backends = backends;
+        }
+        if cpu {
+            setup.native_adapter_selector = Some(std::sync::Arc::new(startup::pick_cpu_adapter));
+        }
     }
     options
 }

@@ -150,11 +150,19 @@
 //!   Associative, editable sketch patterns (`patterns` in a sketch) and their point/radius
 //!   relations are also first saved in 20. Old sketch copies stay independent: migration cannot
 //!   infer which curves formed a pattern.
-//!   Under the same version, a design can carry `metadata` (#1015): design properties
+//!   The saved visibility can also list hidden assembly joints (`visibility.hidden_joints`,
+//!   joint ids): their glyphs aren't drawn, but they still constrain and drive the parts. A
+//!   design without it shows every joint, as it always did; 0.10.0 would show them all.
+//! - 21: named render setups (`render: {setups: {name: setup}}`): renderer-independent render
+//!   intent (camera, resolution, exposure, environment). Version 20 designs need no
+//!   transformation (an absent field means no setups, and empty render state is not saved); the
+//!   version stamp makes 0.11.0 (which reads up to 20) ask for an update instead of silently
+//!   dropping saved setups.
+//!   Also first saved in 21, a design can carry `metadata` (#1015): design properties
 //!   (`project`, `part_number`, `revision`, `author`, `organization`, `description`, `license`,
 //!   each text) and other tools' data, each tool's under its own reverse-DNS key
 //!   (`com.example.tool`). Every key is kept as it is, and nothing in it is checked when the
-//!   design opens. A design without it saves as before. 0.10.0 refuses format 20, so no
+//!   design opens. A design without it saves as before. 0.11.x refuses format 21, so no
 //!   released build drops the properties when it saves.
 
 use serde_json::Value;
@@ -162,7 +170,7 @@ use serde_json::Value;
 use crate::{DocError, Document, Result};
 
 /// The format this build writes.
-pub const FORMAT: u32 = 20;
+pub const FORMAT: u32 = 21;
 
 pub fn format_string(n: u32) -> String {
     format!("solidcraft/{n}")
@@ -179,7 +187,7 @@ pub fn version_of(s: &str) -> Option<u32> {
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
 type JsonStep = fn(&mut Value) -> Result<()>;
-const JSON_STEPS: [JsonStep; 19] = [
+const JSON_STEPS: [JsonStep; 20] = [
     |_| Ok(()),
     v2_to_v3,
     v3_to_v4,
@@ -193,6 +201,7 @@ const JSON_STEPS: [JsonStep; 19] = [
     |_| Ok(()),
     |_| Ok(()),
     v13_to_v14,
+    |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),

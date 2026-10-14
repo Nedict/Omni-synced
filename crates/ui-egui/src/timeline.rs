@@ -242,6 +242,10 @@ pub fn timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
                     if *suppressed {
                         p.line_segment([br.left_bottom() + vec2(4.0, -4.0), br.right_top() + vec2(-4.0, 4.0)], Stroke::new(1.5, t.text_dim));
                     }
+                    // A failed feature has a mark of its own, not only its colour (#972).
+                    if err.is_some() {
+                        icons::paint(&p, Rect::from_min_size(br.right_top() - vec2(10.0, 0.0), vec2(10.0, 10.0)), "error", t.panel, t.error, t.error);
+                    }
                     if warn.is_some() && err.is_none() {
                         icons::paint(
                             &p,

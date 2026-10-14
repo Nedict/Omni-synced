@@ -1128,6 +1128,8 @@ mod tests {
         doc.units = "in".into();
         doc.named_views.push(solidcraft_doc::NamedView { name: "View".into(), ..Default::default() });
         doc.param_comments.insert("test".into(), "metadata".into());
+        let setup = solidcraft_doc::render_settings::RenderSetup { exposure_ev: 1.5, ..Default::default() };
+        std::sync::Arc::make_mut(&mut doc.render).setups.insert("Studio".into(), setup);
         // Design properties and other tools' data (#1015), kept as they are in both forms.
         doc.metadata = serde_json::from_value(json!({
             "author": 42,
