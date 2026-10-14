@@ -189,3 +189,19 @@ fn stepped_cuts_touching_along_a_line_keep_their_pieces() {
     assert_solid(&res, 8000. + 6000. - 50. * 15., 1e-9, 1, "diamond hole with a corner on a stepped side");
     assert!(!d.events.iter().any(|e| e.strategy == BooleanStrategy::ToolNudge), "{d:?}");
 }
+
+/// A row of holes each touching the next (a 5 mm pattern of Ø5 holes) through a stepped plate:
+/// the walls between them have no thickness, and the cut is exact.
+#[test]
+fn row_of_touching_holes_through_a_stepped_plate_cuts_exactly() {
+    let plate = prism(rect(0., 0., 30., 35.), 0., 7.5);
+    let notch = prism(rect(0., 30., 22.5, 50.), 2.5, 25.);
+    let mut body = boolean(&plate, &notch, BoolOp::Cut).unwrap().unwrap();
+    for x in [15.45, 20.45, 25.45] {
+        let hole = prism(disc(x, 15.7, 2.5), -5., 7.5);
+        let (res, d) = capture_boolean_diagnostics(|| boolean(&body, &hole, BoolOp::Cut));
+        body = res.unwrap().unwrap();
+        assert!(!d.events.iter().any(|e| e.strategy == BooleanStrategy::ToolNudge), "hole at {x}: {d:?}");
+    }
+    assert_solid(&body, 7312.5 - 3.0 * std::f64::consts::PI * 6.25 * 7.5, 1e-5, 1, "touching holes");
+}
