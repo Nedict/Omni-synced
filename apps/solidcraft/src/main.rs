@@ -292,6 +292,7 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             solidcraft_ui_egui::fonts::setup_fonts(&cc.egui_ctx);
             let mut app = SolveApp::new(Session::default(), services());
+            app.apply_off_thread = Some(solidcraft_ui_egui::dialogs::APPLY_AT_ONCE);
             app.custom_titlebar = CUSTOM_TITLEBAR;
             app.integrated_titlebar = cfg!(target_os = "macos");
             if let Some(p) = cc.storage.and_then(|s| solidcraft_ui_egui::prefs::stored(|k| s.get_string(k))) {

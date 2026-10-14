@@ -302,6 +302,58 @@ pub struct Dialog {
     pub then_start: Option<&'static str>,
 }
 
+/// OK computing off the window thread: the dialog's commands evaluated on a scratch copy of the
+/// session, which leaves the feature in the evaluation cache the session shares. Once that is
+/// in, OK runs them for real and finds the feature there; meanwhile the window stays live and
+/// the dialog says it is computing.
+pub struct Applying {
+    done: std::sync::mpsc::Receiver<()>,
+    /// When OK was pressed (ms).
+    started: f64,
+}
+
+impl Applying {
+    /// The evaluation is in (or its worker ended).
+    fn finished(&self) -> bool {
+        !matches!(self.done.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty))
+    }
+}
+
+/// How long the desktop app's OK waits for its evaluation before it lets the window go on and
+/// shows that it is computing ([`SolveApp::apply_off_thread`]): a feature quicker than this
+/// applies at once, as it always did.
+pub const APPLY_AT_ONCE: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Start OK's evaluation off the window thread, for a feature dialog. `None` when OK should
+/// just run: not a feature, not asked for ([`SolveApp::apply_off_thread`]), no threads (the
+/// web), or done within the wait.
+#[cfg(not(target_arch = "wasm32"))]
+fn begin_applying(app: &SolveApp, d: &Dialog) -> Option<Applying> {
+    let wait = app.apply_off_thread?;
+    if !d.previews() {
+        return None;
+    }
+    let cmds = apply_commands(app, d).ok()?;
+    let scratch = app.session.scratch();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("apply".into())
+        .spawn(move || {
+            let _ = scratch.preview(&cmds);
+            let _ = tx.send(());
+        })
+        .ok()?;
+    match rx.recv_timeout(wait) {
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Some(Applying { done: rx, started: crate::now_ms() }),
+        _ => None,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn begin_applying(_app: &SolveApp, _d: &Dialog) -> Option<Applying> {
+    None
+}
+
 /// The commands a dialog's inputs make (or why they make none), its picks, and the design's
 /// revision (a parameter the commands name can change without changing them).
 #[derive(Clone, Debug, PartialEq)]
@@ -2583,7 +2635,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             // the automatic ids of OK and Cancel, and a click pressed in one frame and
             // released in the next would be lost (an animating preview toggles it often).
             let (sr, sresp) = ui.allocate_exact_size(vec2(14.0, 14.0), egui::Sense::hover());
-            if app.preview.busy {
+            if let Some(job) = &app.applying {
+                egui::Spinner::new().size(14.0).paint_at(ui, sr);
+                let seconds = ((crate::now_ms() - job.started) / 1000.0).floor().max(0.0);
+                ui.label(RichText::new(crate::i18n::format("dialog.computing", &[("seconds", &format!("{seconds:.0}"))])).color(t.text_dim));
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            } else if app.preview.busy {
                 egui::Spinner::new().size(14.0).paint_at(ui, sr);
                 sresp.on_hover_text(tr("Updating the preview"));
             }
@@ -2603,7 +2660,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         .fill(if valid { t.accent } else { Color32::TRANSPARENT })
                         .wrap_mode(egui::TextWrapMode::Extend)
                         .min_size(vec2(ok_width, 24.0));
-                    let r = ui.add_enabled(valid, b);
+                    let r = ui.add_enabled(valid && app.applying.is_none(), b);
                     crate::scenario::publish_handle(&format!("dialog:{raw_label}"), r.rect.center());
                     if r.clicked() {
                         ok = true;
@@ -2628,7 +2685,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let enter_applies = !matches!(d.kind, Kind::Sketch | Kind::Params { .. } | Kind::Measure { .. } | Kind::ConfirmDelete { .. })
         && !matches!(&d.kind, Kind::Motion(k) if k.wide());
     let report_active = app.issue_report.draft.is_some();
-    if !report_active && enter_applies && (enter || canvas_enter || (enter_free && nothing_focused)) {
+    if !report_active && enter_applies && app.applying.is_none() && (enter || canvas_enter || (enter_free && nothing_focused)) {
         ok = true;
     }
     if !report_active && esc && !app.esc_handled {
@@ -2649,19 +2706,42 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             Err(error) => d.refuse(app, error),
         }
     }
-    if ok {
+    if ok && app.applying.is_none() {
         // Edit Text applies its own way: its live changes and OK are one undo step.
         let run = match &mut d.kind {
-            Kind::Text(k) => crate::sketch_text::apply(app, k),
-            _ => run_dialog(app, &d),
+            Kind::Text(k) => Some(crate::sketch_text::apply(app, k)),
+            _ => match begin_applying(app, &d) {
+                // Computing: the dialog stays, saying so, until it is in.
+                Some(job) => {
+                    app.applying = Some(job);
+                    None
+                }
+                None => Some(run_dialog(app, &d)),
+            },
         };
         match run {
+            Some(Ok(())) => {
+                cancel = true;
+                applied = true;
+            }
+            Some(Err(e)) => d.refuse(app, e),
+            None => {}
+        }
+    }
+    // OK's evaluation is in: run it, the feature taken from the cache.
+    if app.applying.as_ref().is_some_and(Applying::finished) && !cancel {
+        app.applying = None;
+        match run_dialog(app, &d) {
             Ok(()) => {
                 cancel = true;
                 applied = true;
             }
             Err(e) => d.refuse(app, e),
         }
+    }
+    // Cancel while computing: the result goes (its worker runs on to its end).
+    if cancel && !applied {
+        app.applying = None;
     }
     if !keep || cancel {
         crate::dialogs_motion::closed(app, &mut d, applied);
@@ -2691,6 +2771,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 
 /// Close the dialog without applying it (Esc, Cancel). An edit puts the timeline marker back.
 pub fn cancel(app: &mut SolveApp) {
+    app.applying = None;
     if let Some(mut d) = app.dialog.take() {
         crate::dialogs_motion::closed(app, &mut d, false);
         if let Kind::Text(k) = &mut d.kind {

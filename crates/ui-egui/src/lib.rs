@@ -70,6 +70,8 @@ mod status_tests {
         assert!(app.session.log.last().is_some_and(|l| l.starts_with("Redo: ") && !l.contains("edit.redo")), "{:?}", app.session.log.last());
     }
 }
+#[cfg(test)]
+mod apply_off_thread_tests;
 mod expression_complete;
 #[cfg(test)]
 mod extrude_edit_tests;
@@ -255,6 +257,11 @@ pub struct SolveApp {
     pub preferences: prefs::Prefs,
     pub prefs_window: prefs::PrefsWindow,
     pub preview: preview::PreviewState,
+    /// OK pressed on a feature that takes a while: its evaluation runs off the window thread.
+    pub applying: Option<dialogs::Applying>,
+    /// How long OK waits for a feature before computing it off the window thread, saying so;
+    /// `None`: it waits as long as it takes (headless use, tests). The desktop app sets it.
+    pub apply_off_thread: Option<std::time::Duration>,
     /// The last command started interactively (id, label), for Repeat.
     pub last_command: Option<(String, String)>,
     /// Esc was already acted on this frame (by the shortcuts), so later handlers skip it.
@@ -330,6 +337,8 @@ impl SolveApp {
             preferences: prefs::Prefs::default(),
             prefs_window: prefs::PrefsWindow::default(),
             preview: preview::PreviewState::default(),
+            applying: None,
+            apply_off_thread: None,
             last_command: None,
             esc_handled: false,
             status: None,
