@@ -3283,12 +3283,16 @@ dependencies = [
 name = "solidcraft"
 version = "0.10.0"
 dependencies = [
+ "block2 0.6.2",
  "eframe",
  "egui",
  "embed-resource",
  "getrandom 0.3.4",
  "hidapi",
  "log",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "quick-xml",
  "rfd",
  "serde_json",
