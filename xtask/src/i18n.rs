@@ -1,6 +1,6 @@
 //! `cargo xtask i18n`: the message catalogs' coverage report, and a way to repair it.
 //!
-//! The catalogs under `crates/ui-egui/src/locales` are plain JSON maps from a stable message id
+//! The catalogs under `assets/locales` are plain JSON maps from a stable message id
 //! to one translation. The English catalog is also the lookup table for `Locale::label()`, which
 //! translates source strings coming from the engine (command labels, toolbar tabs and panels) by
 //! matching their English text. A label the English catalog does not carry therefore stays English
@@ -20,7 +20,7 @@ use std::path::Path;
 use serde_json::{Map, Value};
 
 /// Where the catalogs live, and the file the English one must lead.
-const DIR: &str = "crates/ui-egui/src/locales";
+const DIR: &str = "assets/locales";
 
 /// Catalogs delivered complete: a missing message here fails `--check`. English is the source
 /// catalog and is checked implicitly; keep this in step with `COMPLETE` in `ui-egui::i18n`.

@@ -7,7 +7,7 @@ registry.
 
 ## Messages
 
-`crates/ui-egui/src/locales/en.json` defines stable message IDs and English fallback text.
+`assets/locales/en.json` defines stable message IDs and English fallback text.
 Keep IDs when changing wording. Other catalogs use the same IDs; missing messages fall back
 to English. Use `app.tr("ui.preferences")` for static messages and
 `Locale::format` for full sentences with named placeholders. Translate the entire sentence,

@@ -3,6 +3,7 @@
 //! Pure Rust (std, serde_json and sha2). External tools (`cargo`) are invoked through
 //! `std::process::Command`.
 
+mod app_icons;
 mod assets;
 mod book;
 mod features;
@@ -22,9 +23,10 @@ usage: cargo xtask <command>
 commands:
   layers          enforce the crate dependency layering (plan/architecture.md §3)
   assets          check that every non-code asset file is attributed in ATTRIBUTION.md
+  app-icons       regenerate shared app-icon exports for Linux, FreeBSD and Windows
   features        list SolidCraft's commands by area in docs/features.md (from the registry)
   i18n [--check | --add-missing]
-                  report how complete the message catalogs in crates/ui-egui/src/locales are:
+                  report how complete the message catalogs in assets/locales are:
                   which messages a locale has not translated and which command labels the English
                   catalog cannot translate (so they stay English everywhere). --check fails when
                   there is a gap, for CI; --add-missing writes the uncovered command labels into
@@ -64,6 +66,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("layers") => cmd_layers(),
         Some("assets") => assets::run(&root()),
+        Some("app-icons") => app_icons::run(&root()),
         Some("features") => features::run(&root()),
         Some("i18n") => i18n::run(&root(), &rest),
         Some("oracle") => cmd_oracle(rest.iter().position(|a| *a == "--cli").and_then(|i| rest.get(i + 1)).copied()),
