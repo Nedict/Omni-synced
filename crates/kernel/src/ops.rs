@@ -795,16 +795,18 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
         // A nudge that pushes a face into a curved face it only touched (a cut whose end lies
         // tangent to a round side) leaves a sliver of that face behind, a fraction of a
         // millimetre wide, which later features (a shell, a fillet) can't work with. The
-        // opposite nudge parts them instead. It is tried when this one failed or left slivers,
-        // and taken when it works with fewer; an empty result stays as it is.
+        // opposite nudge parts them instead. It is tried when this one failed or left more
+        // slivers than the operands brought (a thin wall or a small round is no reason to run
+        // another boolean), and taken when it works with fewer; an empty result stays as it is.
         let slivers = match &r {
-            Ok(Some(body)) if check(body).0 => Some(sliver_faces(body)),
+            Ok(Some(body)) if check(body).0 => Some(sliver_faces(body, size)),
             _ => None,
         };
-        if !matches!(r, Ok(None)) && slivers != Some(0) {
+        let made = slivers.is_none_or(|n| n > 0 && n > sliver_faces(a, size).saturating_add(sliver_faces(b, size)));
+        if !matches!(r, Ok(None)) && made {
             let (r2, diagnostics2) = nudge(-1.0);
             if let Ok(Some(body)) = &r2
-                && slivers.is_none_or(|n| sliver_faces(body) < n)
+                && slivers.is_none_or(|n| sliver_faces(body, size) < n)
                 && check(body).0
             {
                 (r, diagnostics) = (r2, diagnostics2);
@@ -851,11 +853,10 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
     }
 }
 
-/// Faces of `b` narrower than 1/200 of its size (twice their area over their boundary's
+/// Faces of `b` narrower than 1/200 of `size` (twice their area over their boundary's
 /// length): the slivers a nudged tool leaves where it was pushed into a face it touched.
-fn sliver_faces(b: &Body) -> usize {
+fn sliver_faces(b: &Body, size: f64) -> usize {
     use std::collections::HashMap;
-    let size = b.size();
     let Ok(m) = b.tessellate((size * 1e-3).max(1e-4)) else { return usize::MAX };
     let q = (size * 1e-7).max(1e-12);
     let key = |p: Vec3| ((p.x / q).round() as i64, (p.y / q).round() as i64, (p.z / q).round() as i64);
