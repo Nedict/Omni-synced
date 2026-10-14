@@ -28,6 +28,9 @@ serde_json = { workspace = true }
 log = { workspace = true }
 rfd = { workspace = true }
 getrandom = "0.3"
+# The update check (docs/updates.md): HTTPS with rustls, certificates from the operating system.
+ureq = { version = "3.4", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
 quick-xml = { workspace = true }

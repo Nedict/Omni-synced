@@ -131,6 +131,7 @@ pub mod titlebar;
 pub mod toolbar;
 pub mod toolbar_custom;
 pub mod tools;
+pub mod update;
 pub mod viewport;
 mod viewport_layout;
 pub mod workspace;
@@ -212,6 +213,8 @@ pub struct Services {
     pub show_in_folder: Option<Box<dyn Fn(&str)>>,
     /// Where the host reads the anti-aliasing preference at start (a small JSON file).
     pub graphics_path: Option<String>,
+    /// HTTPS GET for the update check (`update`); None: never check (browser, tests).
+    pub http_get: Option<update::HttpGet>,
 }
 
 pub struct SolveApp {
@@ -248,6 +251,8 @@ pub struct SolveApp {
     pub issue_report: issue_report::ReportState,
     /// The Crash Reports window.
     pub crashes: crash_ui::CrashUi,
+    /// The update check and its window (`update`).
+    pub updater: update::Updater,
     /// Toolbar buttons the user pinned, removed or reordered.
     pub toolbar_custom: toolbar_custom::ToolbarCustom,
     pub sketch_choices: sketch_families::Choices,
@@ -325,6 +330,7 @@ impl SolveApp {
             help: help::HelpState::default(),
             issue_report: issue_report::ReportState::default(),
             crashes: crash_ui::CrashUi::default(),
+            updater: update::Updater::default(),
             toolbar_custom: toolbar_custom::ToolbarCustom::default(),
             sketch_choices: sketch_families::Choices::default(),
             preferences: prefs::Prefs::default(),
@@ -1025,6 +1031,7 @@ impl SolveApp {
             toolbar::shortcuts(self, ctx);
         }
         recovery_ui::tick(self);
+        update::tick(self, ctx);
         if self.issue_report.draft.is_none() {
             for f in ctx.input(|i| i.raw.dropped_files.clone()) {
                 let p = f.path().to_string_lossy().to_string();
@@ -1084,6 +1091,7 @@ impl SolveApp {
         issue_report::CadInput::block(self, ui, report_input);
         file_load::show(self, ui.ctx());
         documents::prompt(self, ui.ctx());
+        update::show(self, ui.ctx());
         if self.home.open {
             home::show(self, ui);
             if self.home.open {

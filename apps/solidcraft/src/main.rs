@@ -113,6 +113,7 @@ fn services() -> Services {
             dialog.save_file().map(|p| p.to_string_lossy().to_string())
         })),
         graphics_path: graphics_path().map(|p| p.to_string_lossy().to_string()),
+        http_get: Some(std::sync::Arc::new(http_get)),
         show_in_folder: Some(Box::new(|path| {
             let folder = std::path::Path::new(path).parent().unwrap_or_else(|| std::path::Path::new("."));
             let mut command = std::process::Command::new(if cfg!(target_os = "windows") {
@@ -131,6 +132,45 @@ fn services() -> Services {
             let _ = command.spawn();
         })),
     }
+}
+
+/// HTTPS GET for the update check (docs/updates.md): certificates from the operating system, a
+/// 15 s limit, at most 1 MB, and no headers beyond what GitHub requires (a User-Agent without
+/// the version or anything about this machine, and the API's media type).
+fn http_get(url: &str) -> Result<Vec<u8>, solidcraft_ui_egui::update::FetchError> {
+    use solidcraft_ui_egui::update::FetchError;
+    use std::time::Duration;
+    let tls = ureq::tls::TlsConfig::builder()
+        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+        .unversioned_rustls_crypto_provider(std::sync::Arc::new(rustls::crypto::ring::default_provider()))
+        .build();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .tls_config(tls)
+        .https_only(true)
+        .http_status_as_error(false)
+        .timeout_global(Some(Duration::from_secs(15)))
+        .timeout_connect(Some(Duration::from_secs(5)))
+        .user_agent("SolidCraft-update-check")
+        .max_redirects(3)
+        .build()
+        .into();
+    let mut response = agent
+        .get(url)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .call()
+        .map_err(|e| FetchError::Failed(e.to_string()))?;
+    let status = response.status().as_u16();
+    let header = |k: &str| response.headers().get(k).and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok());
+    if status == 429 || (status == 403 && (header("x-ratelimit-remaining") == Some(0) || header("retry-after").is_some())) {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let retry_after_s = header("retry-after").or_else(|| header("x-ratelimit-reset").map(|reset| reset.saturating_sub(now))).unwrap_or(3600);
+        return Err(FetchError::RateLimited { retry_after_s });
+    }
+    if status != 200 {
+        return Err(FetchError::Failed(format!("GitHub answered HTTP {status}")));
+    }
+    response.body_mut().with_config().limit(1 << 20).read_to_vec().map_err(|e| FetchError::Failed(e.to_string()))
 }
 
 /// The per-user settings folder: eframe's storage (`app.ron`) and the anti-aliasing preference.
