@@ -19,9 +19,11 @@ choose **New Body** explicitly to keep an addition separate. Changing the defaul
 operations already saved in a design.
 
 A taper slopes the sides of any profile, sketch text included: lines, arcs and spline or conic
-curves move in or out together, and a flat tip shorter than the taper closes to a point. A
-taper steeper than the profile's details (a stroke, a curve or a gap narrower than it) is
-refused with that reason; a smaller taper or distance builds.
+curves move in or out together, and a flat tip shorter than the taper closes to a point. On
+spline and conic sides the slope is approximate: the moved outline is a curve of the same kind
+within 0.2 % of the taper's offset of the true one, a curve that turns too much for that being
+cut into pieces first. A taper steeper than the profile's details (a stroke, a curve or a gap
+narrower than it) is refused with that reason; a smaller taper or distance builds.
 
 Editing an extrusion retains its signed distances, From/To Object inputs, taper expressions
 and explicit body targets. Revolve edits retain world, sketch and explicit-line axes, both
