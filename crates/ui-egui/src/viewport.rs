@@ -2792,10 +2792,19 @@ fn hover_highlight(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     }
 }
 
+/// A replacement preview is not the geometry the analysis evaluated. Hide the
+/// diagnostics conservatively until that preview is accepted or cancelled.
+fn continuity_overlay_lines(app: &SolveApp) -> Vec<solidcraft_engine::render::SceneLine> {
+    if !app.preview.replaced.is_empty() {
+        return Vec::new();
+    }
+    solidcraft_engine::view::continuity_lines(&app.session)
+}
+
 /// Sketch points and the status of the active sketch (constraint glyphs: `sketch_tools`).
 fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let t = Tokens::get();
-    for line in solidcraft_engine::view::continuity_lines(&app.session) {
+    for line in continuity_overlay_lines(app) {
         let color = match line.color {
             Rgb(30, 170, 90) => t.sketch_locked,
             Rgb(220, 150, 20) => t.warning,
@@ -3402,6 +3411,18 @@ mod tests {
             checked += 1;
         }
         assert!(checked >= 3, "{checked} faces seen lit");
+    }
+
+    #[test]
+    fn continuity_overlays_do_not_describe_replacement_preview_geometry() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Box"})).unwrap();
+        h.app.run("inspect.continuity", json!({"body":"Box"})).unwrap();
+        assert_eq!(continuity_overlay_lines(&h.app).len(), 12);
+        h.app.preview.replaced.push("Box".into());
+        assert!(continuity_overlay_lines(&h.app).is_empty());
+        h.app.preview.replaced.clear();
+        assert_eq!(continuity_overlay_lines(&h.app).len(), 12);
     }
 
     #[test]

@@ -69,7 +69,9 @@ Colors: green = sampled G2, amber = sampled G1, red = sampled G0 or failure of
 G0, gray = incomplete evaluation. Boundaries without a two-face evaluation are
 reported in JSON but are not drawn as diagnostic polylines. Existing diagnostics
 are suppressed when their body's geometry/placement changes or it is hidden;
-run the analysis again to inspect the new geometry. The toolbar command toggles
+run the analysis again to inspect the new geometry. Desktop overlays are also
+hidden during body-replacement previews, rather than describing the old body
+while the viewport shows different geometry. The toolbar command toggles
 the analysis; scripts can clear it with `{"clear": true}`.
 
 All results are published only after the complete request succeeds. Invalid
