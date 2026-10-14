@@ -3341,7 +3341,17 @@ fn orbit_drag(app: &mut SolveApp, rect: Rect, dx: f64, dy: f64, press: Option<Po
                 target.pitch = previous.target.pitch;
             }
         }
-        let pivot = app.viewport.orbit_pivot.filter(|_| around_cursor).and_then(|p| {
+        // The cursor and origin pivots stay still while a snap eases in; the axis gizmo has no
+        // pivot (it orbits about the view centre, see `axis_view`).
+        let pivot = if around_cursor {
+            match app.preferences.orbit_around {
+                crate::prefs::OrbitAround::Origin => Some(Vec3::ZERO),
+                _ => app.viewport.orbit_pivot,
+            }
+        } else {
+            None
+        }
+        .and_then(|p| {
             app.cam = displayed;
             projection(app, rect).to_screen(p).map(|at| (p, at))
         });
@@ -5495,10 +5505,34 @@ mod tests {
         }
     }
 
+    /// The default (origin) pivot holds through a Shift drag that snaps to an axis: the spring
+    /// eases the view round without letting the origin slide on screen.
+    #[test]
+    fn snapping_keeps_the_origin_still() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("solid.box", json!({"length":40,"width":40,"height":40})).unwrap();
+        h.app.fit_view();
+        let rect = h.app.viewport.rect.unwrap();
+        let at = rect.center() + vec2(50.0, -20.0);
+        orbit_drag(&mut h.app, rect, 0.0, 0.0, Some(at), true, true);
+        assert_eq!(
+            h.app.viewport.orbit_snap.as_ref().and_then(|s| s.pivot).map(|(p, _)| p),
+            Some(Vec3::ZERO),
+            "the origin is the pivot while snapping"
+        );
+        let before = projection(&h.app, rect).to_screen(Vec3::ZERO).unwrap();
+        for _ in 0..30 {
+            orbit_drag(&mut h.app, rect, 4.0, 2.0, Some(at), true, true);
+            step_orbit_snap(&mut h.app, rect, 1.0 / 60.0);
+            let after = projection(&h.app, rect).to_screen(Vec3::ZERO).unwrap();
+            assert!(after.distance(before) < 2.0, "{before:?} -> {after:?}");
+        }
+    }
+
     #[test]
     fn shift_orbit_keeps_cursor_pivot_and_default_middle_pan() {
         let mut h = crate::scenario::Harness::new();
-        h.app.preferences.orbit_cursor = true;
+        h.app.preferences.orbit_around = crate::prefs::OrbitAround::Cursor;
         h.app.run("solid.box", json!({"length":40,"width":40,"height":40})).unwrap();
         h.app.fit_view();
         let rect = h.app.viewport.rect.unwrap();
