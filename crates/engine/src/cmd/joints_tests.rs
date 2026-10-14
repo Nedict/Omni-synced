@@ -756,12 +756,30 @@ fn loops_report_their_mobility() {
     pin(&mut s, "revolute", "Rotor", "Ground", "Rotor", Vec3::new(100.0, 0.0, 0.0), Vec3::Z);
     run(&mut s, "joint.motion_link", json!({"a": "Rotor", "b": "Flag hinge", "ratio": 1}));
     assert_eq!(dof_of(&mut s, "Flag"), 2);
+    // A rotor locked by a loop of its own leaves the flag only the mechanism's one.
+    run(&mut s, "joint.as_built", json!({"type": "rigid", "a": "Ground", "b": "Rotor", "name": "Rotor lock"}));
+    assert_eq!(dof_of(&mut s, "Flag"), 1);
     // Locked: nothing moves.
     let (mut s, _, _) = four_bar();
     run(&mut s, "joint.as_built", json!({"type": "rigid", "a": "Ground", "b": "Rocker", "name": "Lock"}));
     for part in ["Crank", "Coupler", "Rocker"] {
         assert_eq!(dof_of(&mut s, part), 0, "locked {part}");
     }
+    // A chain of five links stored in order, from a free dial to the flag's hinge.
+    let (mut s, p0, q0) = four_bar();
+    let mid = (p0 + q0) * 0.5;
+    part(&mut s, "Flag", [mid.x, mid.y, 5.0]);
+    run(&mut s, "joint.as_built", json!({"type": "revolute", "a": "Coupler", "b": "Flag", "name": "Flag hinge"}));
+    for k in 0..5 {
+        let x = 100.0 + 10.0 * f64::from(k);
+        part(&mut s, &format!("R{k}"), [x, 0.0, -5.0]);
+        pin(&mut s, "revolute", &format!("R{k}"), "Ground", &format!("R{k}"), Vec3::new(x, 0.0, 0.0), Vec3::Z);
+    }
+    for k in 0..5 {
+        let b = if k == 4 { "Flag hinge".to_string() } else { format!("R{}", k + 1) };
+        run(&mut s, "joint.motion_link", json!({"a": format!("R{k}"), "b": b, "ratio": 1}));
+    }
+    assert_eq!(dof_of(&mut s, "Flag"), 2);
     let (mut s, _, _) = slider_crank();
     for part in ["Crank", "Rod", "Piston"] {
         assert_eq!(dof_of(&mut s, part), 1, "slider-crank {part}");

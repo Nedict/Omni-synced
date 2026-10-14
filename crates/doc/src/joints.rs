@@ -351,6 +351,8 @@ fn mismatch(a: &Mat, b: &Mat) -> (f64, f64) {
 
 /// Passes over the motion links: a chain of this many links carries a value through in any order.
 const MAX_LINK_HOPS: usize = 4;
+/// Links followed back from a loop's values at most.
+const MAX_LINKS_FOLLOWED: usize = 1000;
 
 /// Motion links in order (a few passes for chains), then the linked values' limits.
 fn apply_links(asm: &Assembly, vals: &mut Values) {
@@ -481,7 +483,8 @@ fn link_chains(asm: &Assembly, tree: &Tree, around: &BTreeSet<u64>, linked: &BTr
     let mut frontier: BTreeSet<(u64, usize)> =
         around.iter().filter_map(|id| tree.joints.get(id)).flat_map(|j| (0..j.kind.dofs().len()).map(|i| (j.id, i))).collect();
     let mut seen = frontier.clone();
-    for _ in 0..MAX_LINK_HOPS {
+    // Every link at most once along a chain (a chain stored in order is carried in one pass).
+    for _ in 0..asm.links.len().min(MAX_LINKS_FOLLOWED) {
         let next: BTreeSet<(u64, usize)> =
             asm.links.iter().filter(|l| frontier.contains(&(l.b, l.ib))).map(|l| (l.a, l.ia)).filter(|v| !seen.contains(v)).collect();
         if next.is_empty() {
@@ -662,16 +665,7 @@ fn loop_dof(tree: &Tree, closing: &[u64], asm: &Assembly, vals: &Values, dof: &m
         if counted > MAX_DOF_OCCURRENCES || spent > MAX_LOOP_WORK {
             return;
         }
-        let (mut closers, mut values, mut around) = (Vec::new(), Vec::new(), BTreeSet::new());
-        for (c, a, _) in &hit {
-            closers.extend(c.iter().copied());
-            around.extend(a.iter().copied());
-            for v in unknowns(tree, a, asm, &linked, &Held::new()) {
-                if !values.contains(&v) {
-                    values.push(v);
-                }
-            }
-        }
+        let mut values: Vec<(u64, usize)> = Vec::new();
         for j in path.iter().filter_map(|k| tree.joints.get(k)) {
             for v in (0..j.kind.dofs().len()).map(|i| (j.id, i)) {
                 if !linked.contains(&v) && !values.contains(&v) {
@@ -685,6 +679,32 @@ fn loop_dof(tree: &Tree, closing: &[u64], asm: &Assembly, vals: &Values, dof: &m
             if !values.contains(&v) {
                 values.push(v);
             }
+        }
+        // The loops on the path, and every loop whose values those reach (a linked source may be
+        // held by a loop of its own), each once.
+        let (mut closers, mut around) = (Vec::new(), BTreeSet::new());
+        let mut taken: BTreeSet<usize> = BTreeSet::new();
+        loop {
+            let more: Vec<usize> = groups
+                .iter()
+                .enumerate()
+                .filter(|(g, _)| !taken.contains(g))
+                .filter(|(_, (_, a, t))| path.iter().any(|k| a.contains(k)) || values.iter().any(|v| t.contains(v)))
+                .map(|(g, _)| g)
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            for (c, a, _) in more.iter().filter_map(|g| groups.get(*g)) {
+                closers.extend(c.iter().copied());
+                around.extend(a.iter().copied());
+                for v in unknowns(tree, a, asm, &linked, &Held::new()) {
+                    if !values.contains(&v) {
+                        values.push(v);
+                    }
+                }
+            }
+            taken.extend(more);
         }
         if values.len() > MAX_LOOP_VALUES {
             continue;
