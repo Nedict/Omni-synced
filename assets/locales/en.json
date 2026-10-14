@@ -1006,5 +1006,13 @@
   "update.restart_later": "Later",
   "update.installer_started": "The installer starts when SolidCraft closes.",
   "update.dmg_opened": "The disk image is open and verified: drag SolidCraft to Applications, replacing the old copy, then restart SolidCraft.",
-  "update.install_failed": "The update didn't install: {error}. Nothing was changed; Download gets the package instead."
+  "update.install_failed": "The update didn't install: {error}. Nothing was changed; Download gets the package instead.",
+  "UNTRIM": "UNTRIM",
+  "Face": "Face",
+  "Holes": "Holes",
+  "Holes (edges on them)": "Holes (edges on them)",
+  "In place (surfaces)": "In place (surfaces)",
+  "None": "None",
+  "Picked": "Picked",
+  "Restore outer boundary": "Restore outer boundary"
 }

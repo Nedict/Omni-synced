@@ -747,5 +747,13 @@
   "update.restart_later": "Später",
   "update.installer_started": "Das Installationsprogramm startet, wenn SolidCraft geschlossen wird.",
   "update.dmg_opened": "Das Disk-Image ist geöffnet und geprüft: SolidCraft in „Programme“ ziehen, die alte Version ersetzen und SolidCraft neu starten.",
-  "update.install_failed": "Das Update wurde nicht installiert: {error}. Es wurde nichts verändert; „Herunterladen“ holt das Paket."
+  "update.install_failed": "Das Update wurde nicht installiert: {error}. Es wurde nichts verändert; „Herunterladen“ holt das Paket.",
+  "UNTRIM": "TRIMMEN AUFHEBEN",
+  "Face": "Fläche",
+  "Holes": "Löcher",
+  "Holes (edges on them)": "Löcher (ihre Kanten)",
+  "In place (surfaces)": "An Ort und Stelle (Flächen)",
+  "None": "Keine",
+  "Picked": "Ausgewählte",
+  "Restore outer boundary": "Äußere Begrenzung wiederherstellen"
 }
