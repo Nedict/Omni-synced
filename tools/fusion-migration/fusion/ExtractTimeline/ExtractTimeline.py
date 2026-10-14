@@ -727,17 +727,18 @@ def run(context):
         if LIMIT and LIMIT > 0:
             designs = designs[:LIMIT]
 
-        if len(designs) != found_all:
-            ui.messageBox(
-                "Running on {} of {} designs (LIMIT = {}, ONLY = \"{}\").\n\n"
-                "Edit those settings at the top of the script to change the scope.".format(
-                    len(designs), found_all, LIMIT or "off", ONLY))
+        # Scope is reported in the progress dialog's title, never in a message box. This script
+        # exists to be started and left alone, and a modal here blocks the whole run until
+        # someone comes back and clicks it -- which is the one thing an unattended batch job
+        # must never do. Modal dialogs below are only ever at the very end.
+        scope = "{} of {} designs".format(len(designs), found_all) \
+            if len(designs) != found_all else "{} designs".format(found_all)
 
         os.makedirs(OUT_DIR, exist_ok=True)
         total = len(designs)
         progress = ui.createProgressDialog()
         progress.isCancelButtonShown = True
-        progress.show("Extracting timelines", "%v / %m   %p%", 0, total, 0)
+        progress.show("Extracting timelines - " + scope, "%v / %m   %p%", 0, total, 0)
 
         started = time.time()
         ok = skipped = failed = 0
