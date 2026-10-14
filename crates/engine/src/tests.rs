@@ -195,6 +195,35 @@ fn join_meeting_nothing_keeps_the_first_body() {
     assert!(rel(volume(&mut s), 1064.0) < 1e-6);
 }
 
+/// A 1 mm floor extruded into a through hole, from the sketch the plate was extruded from: the
+/// disc's wall lies on the hole's and its foot in the plate's bottom face. A wedge extruded
+/// sideways on top keeps the plate from being a prism along Z (the 2D route would take it
+/// otherwise), and the join failed with "boolean Union: the operation failed: no result".
+#[test]
+fn join_a_floor_into_a_through_hole() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Plate"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [100, 60]}));
+    run(&mut s, "sketch.circle.center", json!({"center": [60, 30], "radius": 20}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Plate", "profiles": [{"point": [5, 5]}], "distance": 10}));
+    run(&mut s, "sketch.create", json!({"plane": "XZ", "name": "Wedge"}));
+    run(&mut s, "sketch.line", json!({"points": [[5, -10], [25, -10], [5, -16]], "closed": true}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Wedge", "distance": 40, "operation": "join"}));
+    let before = volume(&mut s);
+    run(&mut s, "solid.extrude", json!({"sketch": "Plate", "profiles": [{"point": [60, 30]}], "distance": 1, "operation": "join"}));
+    let st = s.model.state();
+    assert_eq!(st.bodies.len(), 1);
+    assert_eq!(st.bodies[0].body.lumps().unwrap().len(), 1);
+    assert!(st.bodies[0].body.validity().is_empty(), "{:?}", st.bodies[0].body.validity());
+    // Exact: the disc isn't moved to get the bodies to intersect, so the feature has no warning.
+    let warning = s.model.results.last().and_then(|r| r.warning.clone());
+    assert!(warning.is_none(), "{warning:?}");
+    let added = volume(&mut s) - before;
+    assert!(rel(added, PI * 400.0) < 1e-3, "{added}");
+}
+
 /// Two spheres of one size: the join's contact test tried every pair of their finely meshed
 /// triangles and refused the join as too much work (#232).
 #[test]
