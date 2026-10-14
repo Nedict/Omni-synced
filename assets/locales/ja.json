@@ -1006,5 +1006,9 @@
   "update.restart_later": "後で",
   "update.installer_started": "SolidCraft の終了後にインストーラーが起動します。",
   "update.dmg_opened": "ディスクイメージを検証して開きました: SolidCraft をアプリケーションフォルダにドラッグして古いものを置き換え、SolidCraft を再起動してください。",
-  "update.install_failed": "アップデートをインストールできませんでした: {error}。何も変更されていません。「ダウンロード」でパッケージを入手できます。"
+  "update.install_failed": "アップデートをインストールできませんでした: {error}。何も変更されていません。「ダウンロード」でパッケージを入手できます。",
+  "RULED SURFACE": "ルールドサーフェス",
+  "Mitre": "留め継ぎ",
+  "Reference face": "参照面",
+  "Round": "丸め"
 }
