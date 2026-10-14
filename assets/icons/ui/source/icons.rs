@@ -1368,6 +1368,13 @@ pub fn paint(p: &Painter, r: Rect, name: &str, ink: Color32, fill: Color32, acce
             pen.line(&[(12.0, 9.0), (12.0, 14.0)], ink);
             pen.dot(12.0, 17.0, ink);
         }
+        // A failed feature: a disc with a cross, a different shape from the warning's triangle, so
+        // it reads without colour (#972). Drawn in the caller's colours only.
+        "error" => {
+            pen.circle(12.0, 12.0, 10.0, pen.fill, ink);
+            pen.line(&[(8.0, 8.0), (16.0, 16.0)], ink);
+            pen.line(&[(16.0, 8.0), (8.0, 16.0)], ink);
+        }
         _ => {
             pen.poly(&[(5.0, 5.0), (19.0, 5.0), (19.0, 19.0), (5.0, 19.0)], pen.fill, ink);
         }
