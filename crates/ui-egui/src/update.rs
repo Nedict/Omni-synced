@@ -714,10 +714,10 @@ pub fn take_launch(app: &mut SolveApp) -> Option<(PathBuf, Vec<String>)> {
 
 // ---- user interface ---------------------------------------------------------------------------
 
-/// The application bar's Update button, right of `right`; returns its rect (None: not shown).
-pub fn button(app: &mut SolveApp, ui: &mut egui::Ui, right: f32, top: f32, labeled: bool) -> Option<egui::Rect> {
+/// The application bar's Update button, at the right of `span`; returns its rect (None: not shown).
+pub fn button(app: &mut SolveApp, ui: &mut egui::Ui, span: egui::Rect, labeled: bool) -> Option<egui::Rect> {
     offered(app)?;
-    let (rect, response) = crate::toolbar::offer_button(ui, right, top, labeled, crate::i18n::tr("update.button"), "update", "titlebar:update");
+    let (rect, response) = crate::toolbar::offer_button(ui, span, labeled, crate::i18n::tr("update.button"), "update", "titlebar:update")?;
     let version = app.updater.release.as_ref().map(|r| r.version().to_string()).unwrap_or_default();
     if response.on_hover_text(crate::i18n::format("update.button_tip", &[("version", &version)])).clicked() {
         app.updater.open = !app.updater.open;

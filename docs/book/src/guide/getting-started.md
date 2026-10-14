@@ -73,8 +73,9 @@ doesn't update automatically.
 ## Web
 
 The same app runs in the browser: [open SolidCraft on the web](../app/) (`?sample` opens the sample
-part, `?webgl` forces WebGL2 where WebGPU is missing). Designs are saved in the browser's private
-file storage, which needs HTTPS or localhost.
+part, `?webgl` forces WebGL2 where WebGPU is missing or misbehaves; the browser remembers it until
+`?webgpu`, and an app installed from Chrome or Edge starts with it too). Designs are saved in the
+browser's private file storage, which needs HTTPS or localhost.
 
 After the first visit the web app works offline: the browser keeps a copy of it. Online, each
 launch gets the latest published build (the browser downloads it once when it changes); offline,

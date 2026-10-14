@@ -153,19 +153,23 @@ fn report_rect(bar: Rect, captions: f32, tabs_start: f32) -> (Rect, bool) {
     (Rect::from_min_size(pos2(right - width, bar.top() + 4.0), vec2(width, 26.0)), labeled)
 }
 
-/// An application-bar button for something on offer (Update, Install), right of `right`: an
-/// accent-framed `icon`, labeled with `text` when there is room. `handle` names it for scenarios.
-pub(crate) fn offer_button(ui: &mut egui::Ui, right: f32, top: f32, labeled: bool, text: &str, icon: &str, handle: &str) -> (Rect, egui::Response) {
+/// An application-bar button for something on offer (Update, Install) at the right of `span` (the
+/// bar's free space): an accent-framed `icon`, labeled with `text` when `labeled` and it fits.
+/// None when even the icon alone doesn't fit: it never covers the bar's other buttons. `handle`
+/// names it for scenarios.
+pub(crate) fn offer_button(ui: &mut egui::Ui, span: Rect, labeled: bool, text: &str, icon: &str, handle: &str) -> Option<(Rect, egui::Response)> {
     let t = Tokens::get();
-    let width = if labeled {
-        30.0 + ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), FontId::proportional(13.0), Color32::WHITE).size().x) + 10.0
-    } else {
-        28.0
-    };
-    let rect = Rect::from_min_size(pos2(right - width, top), vec2(width, 26.0));
+    let full = 30.0 + ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), FontId::proportional(13.0), Color32::WHITE).size().x) + 10.0;
+    let labeled = labeled && full <= span.width();
+    let width = if labeled { full } else { 28.0 };
+    if width > span.width() {
+        return None;
+    }
+    let rect = Rect::from_min_size(pos2(span.right() - width, span.top()), vec2(width, 26.0));
     let response = ui.interact(rect, ui.id().with(("sc_offer_button", handle)), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), text));
     crate::scenario::publish_handle(handle, rect.center());
+    crate::scenario::publish_rect(handle, rect);
     let fill = if response.hovered() || response.has_focus() { t.hover } else { t.app_bar };
     ui.painter().rect_filled(rect, 4.0, fill);
     ui.painter().rect_stroke(rect, 4.0, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
@@ -174,7 +178,7 @@ pub(crate) fn offer_button(ui: &mut egui::Ui, right: f32, top: f32, labeled: boo
     if labeled {
         ui.painter().text(pos2(rect.left() + 29.0, rect.center().y), Align2::LEFT_CENTER, text, FontId::proportional(13.0), t.app_bar_text);
     }
-    (rect, response)
+    Some((rect, response))
 }
 
 /// The application bar's height: the window's title bar on desktop builds.
@@ -268,11 +272,14 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let captions = if app.custom_titlebar { crate::titlebar::WIDTH } else { 0.0 };
         let tabs_start = x + 16.0;
         let (report, report_label) = report_rect(r, captions, tabs_start);
+        // Buttons for something on offer go leftwards from Report a bug, in the space up to the
+        // bar's own buttons (which end before `x`).
+        let span = |right: f32| Rect::from_min_max(pos2(x, report.top()), pos2(right, report.bottom()));
         // A newer release: its Update button, left of Report a bug (`update`).
-        let update = crate::update::button(app, ui, report.left() - 6.0, report.top(), report_label);
+        let update = crate::update::button(app, ui, span(report.left() - 6.0), report_label);
         let left = update.map_or(report.left(), |u| u.left());
         // The browser can install SolidCraft as an app: Install, left of those (`install`).
-        let install = crate::install::button(app, ui, left - 6.0, report.top(), report_label);
+        let install = crate::install::button(app, ui, span(left - 6.0), report_label);
         let tabs_end = install.map_or(left, |i| i.left()) - 8.0;
         // Narrow title bars can fit only part of the tab strip. Its hit regions must not
         // extend into the persistent report and window controls.

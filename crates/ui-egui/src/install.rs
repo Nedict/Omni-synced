@@ -76,11 +76,10 @@ fn offered(app: &SolveApp) -> Option<Offer> {
     (offer == Offer::Prompt || !app.preferences.install_steps_hidden).then_some(offer)
 }
 
-/// The application bar's Install button, right of `right`; returns its rect (None: not shown).
-pub fn button(app: &mut SolveApp, ui: &mut egui::Ui, right: f32, top: f32, labeled: bool) -> Option<egui::Rect> {
+/// The application bar's Install button, at the right of `span`; returns its rect (None: not shown).
+pub fn button(app: &mut SolveApp, ui: &mut egui::Ui, span: egui::Rect, labeled: bool) -> Option<egui::Rect> {
     let offer = offered(app)?;
-    let (rect, response) =
-        crate::toolbar::offer_button(ui, right, top, labeled, crate::i18n::tr("install.button"), "install_app", "titlebar:install");
+    let (rect, response) = crate::toolbar::offer_button(ui, span, labeled, crate::i18n::tr("install.button"), "install_app", "titlebar:install")?;
     if response.on_hover_text(crate::i18n::tr("install.button_tip")).clicked() {
         match offer {
             Offer::Prompt => {
@@ -240,6 +239,27 @@ mod tests {
         host(&mut h, Rc::new(Cell::new(Some(Offer::Prompt))), Rc::new(Cell::new(0)));
         h.call("ui.prefs", json!({ "open": "General" }));
         assert!(h.widget(crate::i18n::tr("install.prefs_show")).is_none());
+    }
+
+    #[test]
+    fn install_never_covers_the_bars_other_buttons() {
+        let mut h = Harness::new();
+        host(&mut h, Rc::new(Cell::new(Some(Offer::Prompt))), Rc::new(Cell::new(0)));
+        for width in [320.0, 340.0, 360.0, 400.0, 639.0, 640.0, 900.0, 1600.0] {
+            h.call("ui.resize", json!({ "width": width, "height": 700 }));
+            h.frames(2);
+            // The bar's buttons are at most 26 px wide, around their handles.
+            let help = handle_at("appbar:help").map_or(f32::INFINITY, |p| p.x + 13.0);
+            let report = handle_at("titlebar:report").map_or(0.0, |p| p.x - 14.0);
+            match crate::scenario::rect_of(HANDLE) {
+                Some(r) => {
+                    assert!(r.left() >= help, "{width} px: Install ({r:?}) covers Help (ends at {help})");
+                    assert!(r.right() <= report, "{width} px: Install ({r:?}) covers Report a bug (starts at {report})");
+                }
+                // Only a bar too narrow for even the icon leaves it out; phones are 360 px or wider.
+                None => assert!(width < 360.0, "{width} px: room for Install, but it isn't shown"),
+            }
+        }
     }
 
     #[test]
