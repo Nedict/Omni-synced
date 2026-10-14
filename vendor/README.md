@@ -17,6 +17,10 @@ Changes:
 - `transversal/integrate/mod.rs`: the result's shells and faces keep the order of the shell
   they come from (truck's connected components followed hash order of face addresses, so a
   boolean's faces came out in a different order on every run).
+- `transversal/loops_store/mod.rs`: a point at an end of a boundary curve (within the point
+  tolerance) is that end, whatever its parameter: a polyline's parameter counts segments, so
+  an intersection curve ending 2e-7 mm from another's end could read as inside it, cut it
+  into a sliver with a vertex of its own, and leave the result's shell open (#391).
 - `lib.rs`: `tr!` reports where an operation gives up when `SHAPEOPS_TRACE` is set; compiler
   warnings no longer fail the build.
 - Face and edge history (`transversal/history.rs`, new): `and_with_history` / `or_with_history`
