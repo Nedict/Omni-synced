@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod access;
+pub mod agent_chat;
 pub mod agent_cursor;
 pub mod browser;
 pub mod canvas;
@@ -347,6 +348,8 @@ pub struct SolveApp {
     control_held: std::collections::VecDeque<ControlRequest>,
     /// The agent cursor acting out control requests.
     pub agent: agent_cursor::AgentCursor,
+    /// The agent chat panel (docs/design/in-app-agent-chat.md).
+    pub agent_chat: agent_chat::AgentChat,
     pending_shots: Vec<(u64, Option<String>, std::sync::mpsc::Sender<Value>, f64)>,
     queued_shots: Vec<(u64, f64, u32)>,
     shot_token: u64,
@@ -428,6 +431,7 @@ impl SolveApp {
             synthetic: Vec::new(),
             synthetic_mods: egui::Modifiers::default(),
             control_rx: None,
+            agent_chat: Default::default(),
             control_held: Default::default(),
             agent: Default::default(),
             pending_shots: Vec::new(),
@@ -569,6 +573,14 @@ impl SolveApp {
     pub fn with_control(mut self, rx: Receiver<ControlRequest>) -> Self {
         self.control_rx = Some(rx);
         self
+    }
+
+    /// Serve a control channel started after launch (the agent chat's MCP bridge), unless one is
+    /// served already.
+    pub fn add_control(&mut self, rx: Receiver<ControlRequest>) {
+        if self.control_rx.is_none() {
+            self.control_rx = Some(rx);
+        }
     }
 
     /// Run a command programmatically (JSON parameters, no dialogs).
@@ -1295,6 +1307,7 @@ impl SolveApp {
         if render_workspace::active(self) {
             render_workspace::panel(self, ui);
         }
+        agent_chat::show(self, ui);
         preview::update(self, ui.ctx());
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
             if render_workspace::active(self) {

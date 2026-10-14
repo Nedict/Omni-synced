@@ -36,19 +36,26 @@ pub fn remove_token_file() {
 }
 
 pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
+    listen(port, ctx).map_or_else(|| channel::<ControlRequest>().1, |(_, rx)| rx)
+}
+
+/// Start the control server on `port` (0: a free port the system picks); the port it listens
+/// on and its requests. The agent chat starts one this way for its agent's MCP bridge.
+pub fn listen(port: u16, ctx: egui::Context) -> Option<(u16, Receiver<ControlRequest>)> {
     let (tx, rx) = channel::<ControlRequest>();
     // Every connection must show the token before anything runs (docs/control-protocol.md).
     let Some(token) = control_auth::env_token().or_else(new_token) else {
         eprintln!("solidcraft: control server not started: no random token available");
-        return rx;
+        return None;
     };
     let listener = match TcpListener::bind(("127.0.0.1", port)) {
         Ok(l) => l,
         Err(e) => {
             eprintln!("solidcraft: control server failed to bind 127.0.0.1:{port}: {e}");
-            return rx;
+            return None;
         }
     };
+    let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     match control_auth::token_path(port) {
         Some(path) => match control_auth::write_token_file(&path, &token) {
             Ok(()) => {
@@ -83,7 +90,7 @@ pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
             });
         }
     });
-    rx
+    Some((port, rx))
 }
 
 /// One line without its newline, or `None` at the end of the stream. A client that sends
