@@ -34,7 +34,7 @@
   "30": {"area":853.525389,"bodies":1,"edges":23,"error":null,"faces":10,"outcome":"ok","rejected":0,"shells":1,"steps":["revolved section","chamfer"],"unsupported":0,"volume":1337.14821},
   "31": {"area":10195.46137,"bodies":3,"edges":69,"error":null,"faces":30,"outcome":"ok","rejected":1,"shells":3,"steps":["box","cut box","fillet","join box","circular pattern","cut box","circular pattern","hole"],"unsupported":1,"volume":56416.127527},
   "32": {"area":3220.802769,"bodies":1,"edges":51,"error":null,"faces":19,"outcome":"ok","rejected":0,"shells":1,"steps":["revolved section","cut sphere","cut box","cut box","join box"],"unsupported":0,"volume":7565.955897},
-  "33": {"area":5285.817318,"bodies":2,"edges":59,"error":null,"faces":27,"outcome":"ok","rejected":0,"shells":3,"steps":["revolved section","fillet","join box","cut cylinder","chamfer","join box","chamfer","fillet"],"unsupported":2,"volume":13859.24945},
+  "33": {"area":5286.736353,"bodies":2,"edges":59,"error":null,"faces":27,"outcome":"ok","rejected":0,"shells":3,"steps":["revolved section","fillet","join box","cut cylinder","chamfer","join box","chamfer","fillet"],"unsupported":2,"volume":13858.467983},
   "34": {"area":1086.303472,"bodies":1,"edges":30,"error":null,"faces":14,"outcome":"ok","rejected":0,"shells":1,"steps":["revolved section","cut sphere","hole"],"unsupported":0,"volume":2134.365275},
   "35": {"area":4605.630216,"bodies":1,"edges":26,"error":null,"faces":11,"outcome":"ok","rejected":0,"shells":1,"steps":["box","fillet","join box"],"unsupported":0,"volume":13965.526982},
   "36": {"area":10408.825748,"bodies":1,"edges":60,"error":null,"faces":26,"outcome":"ok","rejected":0,"shells":2,"steps":["revolved section","cut cylinder","join box","fillet","join cylinder"],"unsupported":0,"volume":55729.313103},
@@ -82,7 +82,7 @@
   "78": {"area":2510.733756,"bodies":1,"edges":36,"error":"offset: a corner whose faces don't meet the same way after t","faces":14,"outcome":"failed","rejected":0,"shells":1,"steps":["revolved section","cut cylinder","cut box","shell"],"unsupported":0,"volume":3707.416641},
   "79": {"area":13585.252616,"bodies":1,"edges":27,"error":null,"faces":12,"outcome":"ok","rejected":0,"shells":1,"steps":["box","cut cylinder","join cylinder"],"unsupported":0,"volume":104810.763072},
   "80": {"area":8652.533342,"bodies":1,"edges":20,"error":null,"faces":9,"outcome":"ok","rejected":0,"shells":1,"steps":["box","fillet","fillet"],"unsupported":0,"volume":37387.449469},
-  "81": {"area":4001.811796,"bodies":2,"edges":75,"error":null,"faces":29,"outcome":"ok","rejected":1,"shells":2,"steps":["revolved section","cut sphere","circular pattern","rectangular pattern","hole","join cylinder","join box","cut sphere"],"unsupported":2,"volume":13139.562065},
+  "81": {"area":4001.847983,"bodies":2,"edges":75,"error":null,"faces":29,"outcome":"ok","rejected":1,"shells":2,"steps":["revolved section","cut sphere","circular pattern","rectangular pattern","hole","join cylinder","join box","cut sphere"],"unsupported":2,"volume":13139.658749},
   "82": {"area":3195.487113,"bodies":1,"edges":36,"error":null,"faces":13,"outcome":"ok","rejected":0,"shells":1,"steps":["box","hole","circular pattern","cut box"],"unsupported":0,"volume":5902.162954},
   "83": {"area":5125.0,"bodies":1,"edges":28,"error":"offset: a corner whose faces don't meet the same way after t","faces":12,"outcome":"failed","rejected":0,"shells":1,"steps":["box","join box","rectangular pattern","shell"],"unsupported":0,"volume":19250.0},
   "84": {"area":4906.192237,"bodies":1,"edges":67,"error":null,"faces":25,"outcome":"ok","rejected":2,"shells":1,"steps":["extruded profile","fillet","hole","hole","cut cylinder","cut box","fillet"],"unsupported":0,"volume":14219.865875},
@@ -111,6 +111,8 @@
   {"reason":"a hole placed on a face without a direction drills into that face (it took the direction from any face whose plane passed through the point, the last one found, such as a side of a patterned box standing on the point's plane): the holes on these seeds now go straight in (#950)","seeds":[7,21,85]},
   {"reason":"the last-resort tool nudge is tried the other way when it fails or leaves sliver faces the operands didn't have: seed 43's join builds and the design runs to the end, 31 and 78 come out with fewer faces (#827, #897)","seeds":[31,43,78]},
   {"reason":"main's fillet changes since the last record (#926, #949) move seeds 33 and 91: a fillet step builds differently or is picked differently","seeds":[33,91]},
-  {"reason":"hole tangent inside a stepped boss: touching sews split zero-thickness curved walls, so a pattern of holes spaced by their diameter (touching) in a stepped body cuts exactly instead of by a tool nudge: 42 builds more faces (the walls split where the holes touch), 51 picks other edges afterwards","seeds":[42,51]}
+  {"reason":"hole tangent inside a stepped boss: touching sews split zero-thickness curved walls, so a pattern of holes spaced by their diameter (touching) in a stepped body cuts exactly instead of by a tool nudge: 42 builds more faces (the walls split where the holes touch), 51 picks other edges afterwards","seeds":[42,51]},
+  {"reason":"corner blends on curved faces (#854): seed 33's last fillet (its second body) is built differently; its display-plan and measured volumes now agree (4442.73 mm³; on main they read 4439.42 and 4443.51)","seeds":[33]},
+  {"reason":"#952: a hole placed on a face drills into the material; seed 81's hole moves its volume by 0.1 mm\u00b3 (area by 0.04 mm\u00b2)","seeds":[81]}
  ]
 }

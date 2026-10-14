@@ -1032,8 +1032,9 @@ pub enum FeatureKind {
     Import {
         /// Source file name (display only).
         file: String,
-        /// The STEP (ISO 10303-21) text.
-        step: String,
+        /// The STEP (ISO 10303-21) text, shared by every copy of the design (undo states,
+        /// previews, scratch sessions): a large file is held once, not once per edit.
+        step: std::sync::Arc<str>,
         /// The file's product/assembly tree, kept for components.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         components: Vec<solidcraft_kernel::StepNode>,

@@ -905,7 +905,7 @@ pub(crate) fn snaps_to_points(accept: Accept) -> bool {
 }
 
 /// Which of a sketch's points a face place snaps to (the Single hole's): the points of geometry
-/// the sketch shows. Not a text outline's points, which are never drawn or picked on their own
+/// the sketch shows. Not generated offset nodes or a text outline's points, which are never drawn or picked on their own
 /// (as `view::sketch_point_visible` has it), nor projected points while the sketch hides
 /// projected geometry (Show Projected off), whose curves aren't picked either. Hidden sketches
 /// offer no points at all. Show Points doesn't count: it only hides the markers of the sketch
@@ -913,35 +913,17 @@ pub(crate) fn snaps_to_points(accept: Accept) -> bool {
 pub(crate) struct SnapPoints<'a> {
     /// Show Projected is off: no linked point is taken.
     hide_linked: bool,
-    /// The text sources' link ids (looked up once, however many points and links there are).
-    text: std::collections::HashSet<&'a str>,
+    shown: solidcraft_engine::view::SketchPointVisibility<'a>,
 }
 
 impl<'a> SnapPoints<'a> {
-    pub(crate) fn of(sk: &'a solidcraft_engine::sketch::Sketch) -> SnapPoints<'a> {
-        let hide_linked = sk.view.hide_projected;
-        let text = if hide_linked {
-            Default::default()
-        } else {
-            // An id names its first link, as `Sketch::link` finds it.
-            let mut seen = std::collections::HashSet::new();
-            sk.links
-                .iter()
-                .filter(|l| seen.insert(l.id.as_str()))
-                .filter(|l| l.kind == solidcraft_engine::sketch::LinkKind::Text)
-                .map(|l| l.id.as_str())
-                .collect()
-        };
-        SnapPoints { hide_linked, text }
+    pub(crate) fn of(sk: &'a solidcraft_engine::sketch::Sketch) -> Self {
+        Self { hide_linked: sk.view.hide_projected, shown: solidcraft_engine::view::SketchPointVisibility::new(sk) }
     }
 
     /// Does a face place snap to point `p` of the sketch?
     pub(crate) fn takes(&self, p: &solidcraft_engine::sketch::SPoint) -> bool {
-        match p.link.as_deref() {
-            None => true,
-            Some(_) if self.hide_linked => false,
-            Some(l) => !self.text.contains(l),
-        }
+        self.shown.takes(p) && !(self.hide_linked && p.link.is_some())
     }
 }
 
