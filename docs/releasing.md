@@ -107,17 +107,7 @@ it at the draft's target commit.
 
 Items to carry into the next release's notes (step 3 below), then remove from here:
 
-- **Security (agents and the control channel, [#205](https://github.com/bherbruck/solidcraft/issues/205)).**
-  Upgrading is recommended for anyone who drives SolidCraft from an AI agent or runs it with
-  `--control` on a shared machine. MCP tool calls now reach files only in the open design's
-  folder (inside home, without its hidden files), SolidCraft's recovery folder and folders
-  given with `--allow-path`; `..`, symlinks that lead out and Windows UNC, device, stream and
-  short-name paths are refused ([#578](https://github.com/bherbruck/solidcraft/pull/578), thanks
-  @kravens). `doc.recovery_discard` deletes only real recovery entries. The control port now
-  needs a per-launch token from a file only the user can read, so other local users can't drive
-  the app; `solidcraft-cli mcp --connect` finds it by itself, other clients must send it (see
-  docs/control-protocol.md). MCP tool annotations no longer understate side effects. Reported by
-  @CalvinEthos.
+- None yet.
 
 ## Verify and publish
 
