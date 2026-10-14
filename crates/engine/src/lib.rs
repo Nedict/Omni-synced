@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod cmd;
+pub mod control_auth;
 pub mod crash;
 pub mod frames;
 pub mod fuzz;
@@ -810,6 +811,8 @@ mod display_mesh_tests;
 mod extent_tests;
 #[cfg(test)]
 mod hole_face_tests;
+#[cfg(test)]
+mod large_assembly_tests;
 #[cfg(test)]
 mod naming_history_tests;
 #[cfg(test)]
