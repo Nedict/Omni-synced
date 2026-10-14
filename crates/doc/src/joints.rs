@@ -521,9 +521,9 @@ fn held_moves(asm: &Assembly, held: &Held, touches: &BTreeSet<(u64, usize)>, val
 /// the groups whose held values moved but which can't stay closed on the way (nothing in those
 /// moves; a group that can't close without moving is left to the conflict check).
 fn close_loops(tree: &Tree, closing: &[u64], asm: &Assembly, held: &Held, vals: &mut Values) -> (Values, BTreeSet<u64>) {
-    let (mut moved, mut stuck) = (Values::new(), BTreeSet::new());
+    let (mut changed, mut stuck) = (BTreeMap::new(), BTreeSet::new());
     if closing.len() > MAX_LOOPS {
-        return (moved, stuck);
+        return (Values::new(), stuck);
     }
     let linked: BTreeSet<(u64, usize)> = asm.links.iter().map(|l| (l.b, l.ib)).collect();
     // Each loop: its closing joint and the joints on the tree paths between its sides; loops that
@@ -559,9 +559,23 @@ fn close_loops(tree: &Tree, closing: &[u64], asm: &Assembly, held: &Held, vals: 
     for (group, around, touches) in &groups {
         let moves = held_moves(asm, held, touches, vals);
         match close_group(tree, group, around, &moves, asm, held, &linked, &spent, vals) {
-            Some(m) => moved.extend(m),
+            Some(m) => changed.extend(m),
             None if !moves.is_empty() => stuck.extend(group.iter().copied()),
             None => {}
+        }
+    }
+    // The stored values with what each group moved (groups may move different values of one
+    // joint).
+    let mut moved = Values::new();
+    for ((id, i), v) in changed {
+        let Some(j) = tree.joints.get(&id) else { continue };
+        let q = moved.entry(id).or_insert_with(|| {
+            let mut q = j.values.clone();
+            q.resize(j.kind.dofs().len(), 0.0);
+            q
+        });
+        if let Some(slot) = q.get_mut(i) {
+            *slot = v;
         }
     }
     (moved, stuck)
@@ -572,9 +586,10 @@ fn close_loops(tree: &Tree, closing: &[u64], asm: &Assembly, held: &Held, vals: 
 /// through the start of its link chain) until every loop-closing joint meets. A loop open at the
 /// start is closed first, from where it is. Then the held values `moves` go from the values they
 /// are held from to their current ones in small steps, each solved from the last, so the mechanism
-/// stays on its branch (an open four-bar does not flip crossed). Returns the moved joints' new
-/// stored values and updates `vals` (empty when there is nothing to do or the group is too big
-/// to solve), or `None` when the loops can't close, or can't stay closed on the way.
+/// stays on its branch (an open four-bar does not flip crossed). Returns the values that changed
+/// from what is stored, by (joint, index), and updates `vals` (empty when there is nothing to do
+/// or the group is too big to solve), or `None` when the loops can't close, or can't stay closed
+/// on the way.
 fn close_group(
     tree: &Tree,
     closing: &[u64],
@@ -585,7 +600,7 @@ fn close_group(
     linked: &BTreeSet<(u64, usize)>,
     spent: &std::cell::Cell<usize>,
     vals: &mut Values,
-) -> Option<Values> {
+) -> Option<BTreeMap<(u64, usize), f64>> {
     let starts = link_chains(asm, tree, around, linked).1;
     let mut vars: Vec<(u64, usize)> = Vec::new();
     for j in around.iter().filter_map(|id| tree.joints.get(id)) {
@@ -597,7 +612,7 @@ fn close_group(
         }
     }
     if vars.len() > MAX_LOOP_VALUES {
-        return Some(Values::new());
+        return Some(BTreeMap::new());
     }
     let bounds: Vec<(f64, f64)> = vars
         .iter()
@@ -675,7 +690,7 @@ fn close_group(
     // Already closed, with no held value moving. (A moving one is followed all the way: a
     // rocker driven a full turn ends where it started, but can't get there.)
     if moves.is_empty() && gaps(&x0, 1.0).is_some_and(|r| largest(&r) <= tol) {
-        return Some(Values::new());
+        return Some(BTreeMap::new());
     }
     // A loop open at the start closes first.
     let mut x = x0;
@@ -700,21 +715,13 @@ fn close_group(
     if largest(&gaps(&x, 1.0)?) > tol {
         return None;
     }
-    let mut moved = Values::new();
-    for ((id, i), v) in vars.iter().zip(&x) {
-        let Some(j) = tree.joints.get(id) else { continue };
-        let q = moved.entry(*id).or_insert_with(|| {
-            let mut q = j.values.clone();
-            q.resize(j.kind.dofs().len(), 0.0);
-            q
-        });
-        if let Some(slot) = q.get_mut(*i) {
-            *slot = *v;
-        }
-    }
-    moved.retain(|id, q| {
-        tree.joints.get(id).is_some_and(|j| j.values.len() != q.len() || j.values.iter().zip(q.iter()).any(|(a, b)| (a - b).abs() > 1e-12))
-    });
+    // The values that changed from what is stored.
+    let moved = vars
+        .iter()
+        .zip(&x)
+        .filter(|((id, i), v)| tree.joints.get(id).is_some_and(|j| j.values.get(*i).is_none_or(|s| (s - *v).abs() > 1e-12)))
+        .map(|(var, v)| (*var, *v))
+        .collect();
     *vals = work;
     Some(moved)
 }
