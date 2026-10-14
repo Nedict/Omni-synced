@@ -69,6 +69,36 @@ pub fn visible_bounds(s: &Session, sketches: bool) -> Aabb3 {
     b
 }
 
+/// Diagnostic polylines for unchanged visible geometry. Colors denote sampled
+/// G2 (green), G1 (amber), G0/failure (red), or incomplete evaluation (gray).
+/// These are deliberately on-top inspection overlays, not ordinary model edges.
+pub fn continuity_lines(s: &Session) -> Vec<SceneLine> {
+    let Some(analysis) = &s.continuity else { return Vec::new() };
+    let world = s.world_state();
+    let mut lines = Vec::new();
+    for body in &analysis.bodies {
+        if !s.body_visible(&body.name) || !world.body(&body.name).is_some_and(|b| b.body.same(&body.body)) {
+            continue;
+        }
+        for edge in &body.edges {
+            if edge.points.len() < 2 {
+                continue;
+            }
+            let color = if edge.status != "complete" {
+                Rgb(130, 130, 140)
+            } else {
+                match edge.sampled_continuity {
+                    Some(2) => Rgb(30, 170, 90),
+                    Some(1) => Rgb(220, 150, 20),
+                    _ => Rgb(220, 55, 55),
+                }
+            };
+            lines.push(SceneLine { points: edge.points.clone(), color, width: 3., on_top: true });
+        }
+    }
+    lines
+}
+
 /// Grid spacing (minor, major) for a view of the given half height.
 pub fn grid_step(half_height: f64) -> (f64, f64) {
     let raw = (half_height / 10.0).max(1e-3);
@@ -305,6 +335,7 @@ pub fn scene_with_section_and_sketch_sampler(
             }
         }
     }
+    sc.lines.extend(continuity_lines(s));
     for ss in &st.sketches {
         let active = s.active_sketch == Some(ss.feature);
         if !sketch_shown(s, ss.feature) {

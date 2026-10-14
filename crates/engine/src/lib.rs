@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod cmd;
+pub mod continuity;
 pub mod control_auth;
 pub mod crash;
 pub mod frames;
@@ -219,6 +220,8 @@ pub struct Session {
     pub section: Option<(Vec3, Vec3)>,
     /// Surface analysis shading the model (zebra, draft, curvature map).
     pub analysis: Option<SurfaceAnalysis>,
+    /// Model-space seam diagnostics; stale geometry is never displayed.
+    pub continuity: Option<continuity::ContinuityAnalysis>,
     /// What is hidden or shown in the view (`browser.visibility`): saved with the design, not an
     /// undo step. A design brings its saved visibility when it opens (`Session::new`).
     pub visibility: Visibility,
@@ -317,6 +320,7 @@ impl Session {
             clipboard: Vec::new(),
             section: None,
             analysis: None,
+            continuity: None,
             checkpoints: Vec::new(),
             next_checkpoint: 1,
             saved_visibility: visibility.clone(),
@@ -681,6 +685,7 @@ impl Session {
             clipboard: self.clipboard.clone(),
             section: None,
             analysis: None,
+            continuity: None,
             checkpoints: Vec::new(),
             next_checkpoint: 1,
             visibility: self.visibility.clone(),

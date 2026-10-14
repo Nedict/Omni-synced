@@ -643,7 +643,7 @@ mod tests {
     /// as it was.
     #[test]
     fn planned_commands_refuse_and_leave_the_design_alone() {
-        let planned = ["surface.ruled", "surface.boundary", "surface.blend", "surface.untrim", "surface.fillet", "inspect.continuity"];
+        let planned = ["surface.ruled", "surface.boundary", "surface.blend", "surface.untrim", "surface.fillet"];
         let mut s = Session::default();
         run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "B"}));
         let before = s.doc.features.len();

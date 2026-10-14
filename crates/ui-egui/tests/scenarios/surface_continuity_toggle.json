@@ -1,0 +1,10 @@
+[
+  {"call": "engine.execute", "params": {"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "body_name": "Box"}}},
+  {"start": "inspect.continuity"},
+  {"expect": {"tool": null, "dialog": null, "errors": 0}},
+  {"start": "inspect.continuity"},
+  {"expect": {"tool": null, "dialog": null, "errors": 0}},
+  {"call": "engine.execute", "params": {"command": "inspect.continuity", "params": {"body": "Box", "edges": [{"index": 0}], "samples": 5}}},
+  {"call": "engine.execute", "params": {"command": "inspect.continuity", "params": {"clear": true}}},
+  {"expect": {"errors": 0}}
+]

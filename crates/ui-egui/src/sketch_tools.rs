@@ -131,6 +131,21 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
         app.dialog = Some(dialog);
         return false;
     }
+    if id == "inspect.continuity" {
+        let on = app.session.continuity.is_some();
+        let params = if on { json!({"clear": true}) } else { json!({}) };
+        if app.run(id, params).is_ok() {
+            app.set_status(
+                if on {
+                    "Continuity analysis off"
+                } else {
+                    "Sampled continuity: green G2, amber G1, red G0/failure, gray incomplete (click again to turn off)"
+                },
+                false,
+            );
+        }
+        return false;
+    }
     // Surface analyses toggle: a second click turns the same one off.
     use solidcraft_engine::SurfaceAnalysis as A;
     let same = match (id, app.session.analysis) {

@@ -23,6 +23,7 @@ mod boolean_record;
 mod bore_guard;
 mod build;
 mod clearance;
+mod continuity;
 mod coplanar;
 mod curveblend;
 mod delete_face;
@@ -101,6 +102,7 @@ pub use blend_variable::{RadiusSpline, Taper, fillet_chord, fillet_tapered, fill
 pub use body::{Body, CapSignature, DISPLAY_ANGLE, EdgeInfo, FaceInfo, FacePaint, FaceSource, Paint};
 pub use boolean_diagnostics::{BooleanDiagnostics, BooleanFallback, BooleanStrategy, capture_boolean_diagnostics};
 pub use build::{PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, loft, revolve, sphere, sweep, torus};
+pub use continuity::{ContinuityMaximum, ContinuityOptions, EdgeContinuity, edge_continuity};
 pub use delete_face::delete_faces;
 pub use emboss::{cylinder_emboss_anchor, emboss_cylinder, emboss_cylinder_at, has_cylinder_emboss_wall, infer_cylinder_emboss};
 pub use helix::{loft_to_point, sweep_helix, sweep_helix_mesh};

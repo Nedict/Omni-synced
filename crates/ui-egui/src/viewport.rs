@@ -2795,6 +2795,19 @@ fn hover_highlight(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
 /// Sketch points and the status of the active sketch (constraint glyphs: `sketch_tools`).
 fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let t = Tokens::get();
+    for line in solidcraft_engine::view::continuity_lines(&app.session) {
+        let color = match line.color {
+            Rgb(30, 170, 90) => t.sketch_locked,
+            Rgb(220, 150, 20) => t.warning,
+            Rgb(220, 55, 55) => t.error,
+            _ => t.text_dim,
+        };
+        for pair in line.points.windows(2) {
+            if let (Some(a), Some(b)) = (pair.first().and_then(|p| proj.to_screen(*p)), pair.get(1).and_then(|p| proj.to_screen(*p))) {
+                painter.line_segment([a, b], Stroke::new(3., color));
+            }
+        }
+    }
     let st = app.session.world_state();
     for item in &app.session.selection {
         if let Sel::ExternalSketchPoint { sketch, id } = item
