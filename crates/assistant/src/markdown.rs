@@ -206,46 +206,46 @@ pub fn spans(s: &str) -> Vec<Span> {
         // Bold.
         if (rest.starts_with(&['*', '*']) || rest.starts_with(&['_', '_'])) && rest.len() > 4 {
             let d = c[i];
-            if let Some(end) = find_pair(&c, i + 2, d) {
-                if end > i + 2 {
-                    flush(&mut out, &mut text);
-                    out.push(Span::Bold(c[i + 2..end].iter().collect()));
-                    i = end + 2;
-                    continue;
-                }
+            if let Some(end) = find_pair(&c, i + 2, d)
+                && end > i + 2
+            {
+                flush(&mut out, &mut text);
+                out.push(Span::Bold(c[i + 2..end].iter().collect()));
+                i = end + 2;
+                continue;
             }
         }
         // Italic (not inside words for `_`, so snake_case stays text).
         if (c[i] == '*' || (c[i] == '_' && (i == 0 || !c[i - 1].is_alphanumeric()))) && rest.len() > 2 && !rest[1].is_whitespace() {
             let d = c[i];
-            if let Some(end) = (i + 1..c.len()).find(|&j| c[j] == d && !c[j - 1].is_whitespace() && (d == '*' || c.get(j + 1).is_none_or(|n| !n.is_alphanumeric()))) {
-                if end > i + 1 {
-                    flush(&mut out, &mut text);
-                    out.push(Span::Italic(c[i + 1..end].iter().collect()));
-                    i = end + 1;
-                    continue;
-                }
+            let closes = |j: &usize| c[*j] == d && !c[*j - 1].is_whitespace() && (d == '*' || c.get(*j + 1).is_none_or(|n| !n.is_alphanumeric()));
+            if let Some(end) = (i + 1..c.len()).find(closes)
+                && end > i + 1
+            {
+                flush(&mut out, &mut text);
+                out.push(Span::Italic(c[i + 1..end].iter().collect()));
+                i = end + 1;
+                continue;
             }
         }
         // Link.
-        if c[i] == '[' {
-            if let Some(close) = c[i + 1..].iter().position(|x| *x == ']').map(|p| p + i + 1) {
-                if c.get(close + 1) == Some(&'(') {
-                    if let Some(end) = c[close + 2..].iter().position(|x| *x == ')').map(|p| p + close + 2) {
-                        let label: String = c[i + 1..close].iter().collect();
-                        let url: String = c[close + 2..end].iter().collect::<String>().trim().to_string();
-                        flush(&mut out, &mut text);
-                        let lower = url.to_ascii_lowercase();
-                        if (lower.starts_with("https://") || lower.starts_with("http://")) && url.len() <= MAX_URL && !url.chars().any(|ch| ch.is_whitespace() || ch.is_control()) {
-                            out.push(Span::Link { label, url });
-                        } else {
-                            out.push(Span::Text(label));
-                        }
-                        i = end + 1;
-                        continue;
-                    }
-                }
+        if c[i] == '['
+            && let Some(close) = c[i + 1..].iter().position(|x| *x == ']').map(|p| p + i + 1)
+            && c.get(close + 1) == Some(&'(')
+            && let Some(end) = c[close + 2..].iter().position(|x| *x == ')').map(|p| p + close + 2)
+        {
+            let label: String = c[i + 1..close].iter().collect();
+            let url: String = c[close + 2..end].iter().collect::<String>().trim().to_string();
+            flush(&mut out, &mut text);
+            let lower = url.to_ascii_lowercase();
+            let web = lower.starts_with("https://") || lower.starts_with("http://");
+            if web && url.len() <= MAX_URL && !url.chars().any(|ch| ch.is_whitespace() || ch.is_control()) {
+                out.push(Span::Link { label, url });
+            } else {
+                out.push(Span::Text(label));
             }
+            i = end + 1;
+            continue;
         }
         // A backslash escapes the next marker.
         if c[i] == '\\' && c.get(i + 1).is_some_and(|n| "\\`*_[]()#-".contains(*n)) {

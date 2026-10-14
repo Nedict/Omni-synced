@@ -185,7 +185,7 @@ fn empty_state(app: &mut SolveApp, ui: &mut egui::Ui) {
         ui.label(RichText::new(app.tr("assistant.empty_body")).size(12.0).color(t.text_dim));
     });
     ui.add_space(14.0);
-    let has_bodies = app.session.model.state().bodies.len() > 0;
+    let has_bodies = !app.session.model.state().bodies.is_empty();
     let failing = !super::situation_failing(app).is_empty();
     for s in slash::suggestions(has_bodies, failing) {
         if ui.add_sized([ui.available_width(), 26.0], egui::Button::new(RichText::new(s).size(12.0))).clicked() {

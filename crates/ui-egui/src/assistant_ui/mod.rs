@@ -8,10 +8,10 @@
 //! held what needs the person's yes. The design is only ever touched on this thread.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 use solidcraft_assistant::context;
@@ -26,6 +26,8 @@ use solidcraft_assistant::runtime::{self, AgentJob, Bridge, Job, TurnHandle, Wor
 use solidcraft_assistant::settings::{BackendKind, Settings};
 use solidcraft_assistant::slash::{self, Input, Situation};
 use solidcraft_assistant::tool_loop::{Event, Finish, MAX_STEPS, ToolHost, call_title};
+
+use web_time::Instant;
 
 use crate::SolveApp;
 use crate::control::ControlRequest;
@@ -131,7 +133,15 @@ struct Active {
     started: Instant,
     /// The turn runs through an external agent.
     agent: bool,
+    /// The conversation before this turn, for a turn that has to be given up on.
+    before: Vec<Message>,
+    /// When the turn was told to stop.
+    stopping_since: Option<Instant>,
 }
+
+/// How long a stopped turn may take to wind down before the sidebar lets go of it. A server that
+/// stops sending would otherwise keep the window in its "working" state until a timeout.
+const STOP_GRACE: Duration = Duration::from_secs(4);
 
 /// The sidebar's state.
 pub struct State {
@@ -277,8 +287,9 @@ impl State {
     /// Stop the running turn: it ends after the step in progress, and everything waiting for a
     /// yes is declined.
     pub fn stop(&mut self) {
-        if let Some(a) = &self.active {
+        if let Some(a) = &mut self.active {
             a.handle.cancel.cancel();
+            a.stopping_since.get_or_insert_with(Instant::now);
         }
         self.decline_all("cancelled by the user");
     }
@@ -412,6 +423,7 @@ pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: &str) -> Sent {
     let id = app.assistant.next_turn;
     app.assistant.next_turn += 1;
     app.assistant.current_turn.store(id, Ordering::SeqCst);
+    let history_before = app.assistant.history.clone();
     let repaint_ctx = ctx.clone();
     let repaint: Arc<dyn Fn() + Send + Sync> = Arc::new(move || repaint_ctx.request_repaint());
     let cancel = Cancel::new();
@@ -467,7 +479,7 @@ pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: &str) -> Sent {
         Ok(handle) => {
             app.assistant.items.push(Item::User { text: shown, picture: had_picture });
             app.assistant.turn_usage = Usage::default();
-            app.assistant.active = Some(Active { id, handle, checkpoint, revision, tab: (app.docs.active, app.docs.count()), started: Instant::now(), agent });
+            app.assistant.active = Some(Active { id, handle, checkpoint, revision, tab: (app.docs.active, app.docs.count()), started: Instant::now(), agent, before: history_before, stopping_since: None });
             app.assistant.scroll_to_end = true;
             ctx.request_repaint();
             Sent::Started
@@ -564,9 +576,25 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
     follow_design(app);
     let Some(a) = &app.assistant.active else { return };
     if a.tab != (app.docs.active, app.docs.count()) && !a.handle.cancel.is_cancelled() {
-        a.handle.cancel.cancel();
-        app.assistant.decline_all("the design was switched");
+        app.assistant.stop();
         app.assistant.notice("Stopped: another design was selected.", true);
+    }
+    // A turn that was told to stop and still has not ended: let go of it.
+    if app.assistant.active.as_ref().and_then(|a| a.stopping_since).is_some_and(|t| t.elapsed() > STOP_GRACE) {
+        if let Some(a) = app.assistant.active.take() {
+            app.assistant.history = a.before;
+            app.assistant.current_turn.store(0, Ordering::SeqCst);
+            app.assistant.decline_all("cancelled by the user");
+            app.assistant.agent = None;
+            app.assistant.notice("Stopped.", false);
+            let changed = app.session.revision != a.revision;
+            if changed {
+                app.assistant.items.push(Item::TurnEnd { checkpoint: Some(a.checkpoint), revision: app.session.revision, changed: true });
+            } else {
+                app.session.drop_checkpoint(a.checkpoint);
+            }
+        }
+        return;
     }
     let mut done = None;
     let mut n = 0;
@@ -651,11 +679,11 @@ fn apply(st: &mut State, e: Event) {
         }
         Event::ToolResult { id, is_error, text, images, .. } => {
             for it in st.items.iter_mut().rev() {
-                if let Item::Tool(c) = it {
-                    if c.id == id {
-                        c.result = Some(ToolOutcome { is_error, text, images });
-                        break;
-                    }
+                if let Item::Tool(c) = it
+                    && c.id == id
+                {
+                    c.result = Some(ToolOutcome { is_error, text, images });
+                    break;
                 }
             }
         }
@@ -708,10 +736,10 @@ pub fn undo_turn(app: &mut SolveApp, force: bool) -> Result<(), String> {
     app.session.restore_checkpoint(id).map_err(|e| e.to_string())?;
     // Later checkpoints of this conversation went with it.
     for it in app.assistant.items.iter_mut() {
-        if let Item::TurnEnd { checkpoint, .. } = it {
-            if checkpoint.is_some_and(|c| c >= id) {
-                *checkpoint = None;
-            }
+        if let Item::TurnEnd { checkpoint, .. } = it
+            && checkpoint.is_some_and(|c| c >= id)
+        {
+            *checkpoint = None;
         }
     }
     app.assistant.note = Some("[The person undid your last changes: the design is back to how it was before their previous request. Do not assume those changes exist.]".into());
@@ -878,11 +906,11 @@ fn items_from_history(history: &[Message]) -> Vec<Item> {
                 (_, Block::ToolResult { id, parts, is_error }) => {
                     let text = parts.iter().filter_map(|p| if let Part::Text(t) = p { Some(t.as_str()) } else { None }).collect::<Vec<_>>().join("\n");
                     for it in items.iter_mut().rev() {
-                        if let Item::Tool(c) = it {
-                            if &c.id == id {
-                                c.result = Some(ToolOutcome { is_error: *is_error, text, images: 0 });
-                                break;
-                            }
+                        if let Item::Tool(c) = it
+                            && &c.id == id
+                        {
+                            c.result = Some(ToolOutcome { is_error: *is_error, text, images: 0 });
+                            break;
                         }
                     }
                 }

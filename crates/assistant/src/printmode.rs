@@ -4,7 +4,8 @@
 
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use serde_json::json;
 
@@ -113,13 +114,18 @@ fn run_inner(profile: &AgentProfile, prompt: &str, config: Option<&str>, cwd: &s
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Finish::Error(format!("`{}` was not found. Install it, or give its full path in the assistant settings.", profile.command)),
         Err(e) => return Finish::Error(format!("cannot start `{}`: {e}", profile.command)),
     };
+    // The prompt goes to the program's input unless an argument carries it; closing the input
+    // tells the program it has everything.
     if let Some(mut stdin) = child.stdin.take()
         && !in_args
     {
         let _ = stdin.write_all(prompt.as_bytes());
     }
+    let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        let _ = child.kill();
+        return Finish::Error("the program has no output".into());
+    };
     let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
-    let Some(mut stdout) = child.stdout.take() else { return Finish::Error("the program has no output".into()) };
     std::thread::spawn(move || {
         let mut buf = vec![0u8; 4096];
         while let Ok(n) = stdout.read(&mut buf) {
@@ -128,66 +134,62 @@ fn run_inner(profile: &AgentProfile, prompt: &str, config: Option<&str>, cwd: &s
             }
         }
     });
-    let mut err_text = String::new();
-    if let Some(mut e) = child.stderr.take() {
-        let (etx, erx) = std::sync::mpsc::channel::<String>();
-        std::thread::spawn(move || {
-            let mut s = String::new();
-            let _ = e.by_ref().take(16 * 1024).read_to_string(&mut s);
-            let _ = etx.send(s);
-        });
-        // Collected after the run.
-        let started = Instant::now();
-        let mut total = 0usize;
-        let mut pending: Vec<u8> = Vec::new();
-        let finish = loop {
-            if cancel.is_cancelled() {
-                let _ = child.kill();
-                let _ = child.wait();
-                break Finish::Cancelled;
-            }
-            if started.elapsed() > TIMEOUT {
-                let _ = child.kill();
-                let _ = child.wait();
-                break Finish::Error("The program took too long and was stopped.".into());
-            }
-            match rx.recv_timeout(Duration::from_millis(100)) {
-                Ok(bytes) => {
-                    total += bytes.len();
-                    if total > MAX_OUTPUT {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        break Finish::Error("The program wrote too much.".into());
-                    }
-                    pending.extend_from_slice(&bytes);
-                    // Only whole characters go out.
-                    let valid = match std::str::from_utf8(&pending) {
-                        Ok(s) => s.len(),
-                        Err(e) => e.valid_up_to(),
-                    };
-                    let text = String::from_utf8_lossy(pending.get(..valid).unwrap_or_default()).into_owned();
-                    pending.drain(..valid);
-                    let clean = strip_ansi(&text);
-                    if !clean.is_empty() {
-                        on_event(Event::Text(clean));
-                    }
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    let status = child.wait();
-                    err_text = erx.recv_timeout(Duration::from_secs(1)).unwrap_or_default();
-                    break match status {
-                        Ok(s) if s.success() => Finish::Done,
-                        Ok(s) => Finish::Error(format!("The program ended with {s}.{}", if err_text.trim().is_empty() { String::new() } else { format!("\n{}", strip_ansi(err_text.trim())) })),
-                        Err(e) => Finish::Error(e.to_string()),
-                    };
-                }
-            }
+    let (etx, erx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stderr.by_ref().take(16 * 1024).read_to_string(&mut text);
+        let _ = etx.send(text);
+    });
+    let started = Instant::now();
+    let mut total = 0usize;
+    let mut pending: Vec<u8> = Vec::new();
+    loop {
+        let stop = if cancel.is_cancelled() {
+            Some(Finish::Cancelled)
+        } else if started.elapsed() > TIMEOUT {
+            Some(Finish::Error("The program took too long and was stopped.".into()))
+        } else {
+            None
         };
-        return finish;
+        if let Some(finish) = stop {
+            let _ = child.kill();
+            let _ = child.wait();
+            return finish;
+        }
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(bytes) => {
+                total += bytes.len();
+                if total > MAX_OUTPUT {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Finish::Error("The program wrote too much.".into());
+                }
+                pending.extend_from_slice(&bytes);
+                // Only whole characters go out.
+                let valid = match std::str::from_utf8(&pending) {
+                    Ok(s) => s.len(),
+                    Err(e) => e.valid_up_to(),
+                };
+                let text = String::from_utf8_lossy(pending.get(..valid).unwrap_or_default()).into_owned();
+                pending.drain(..valid);
+                let clean = strip_ansi(&text);
+                if !clean.is_empty() {
+                    on_event(Event::Text(clean));
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                let status = child.wait();
+                let err_text = erx.recv_timeout(Duration::from_secs(1)).unwrap_or_default();
+                return match status {
+                    Ok(s) if s.success() => Finish::Done,
+                    Ok(s) if err_text.trim().is_empty() => Finish::Error(format!("The program ended with {s}.")),
+                    Ok(s) => Finish::Error(format!("The program ended with {s}.\n{}", strip_ansi(err_text.trim()))),
+                    Err(e) => Finish::Error(e.to_string()),
+                };
+            }
+        }
     }
-    let _ = err_text;
-    Finish::Error("the program has no error output".into())
 }
 
 #[cfg(test)]

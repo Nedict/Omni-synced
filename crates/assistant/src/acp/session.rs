@@ -3,7 +3,8 @@
 
 use std::collections::HashMap;
 use std::sync::mpsc::RecvTimeoutError;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use serde_json::{Value, json};
 

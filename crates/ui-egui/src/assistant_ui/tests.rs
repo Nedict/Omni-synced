@@ -563,3 +563,48 @@ fn agents_need_the_desktop_app() {
     assert_eq!(r["ok"], false);
     assert!(r["error"].as_str().unwrap().contains("desktop app"), "{r}");
 }
+
+#[test]
+fn a_stuck_service_does_not_keep_the_sidebar_busy_after_stop() {
+    let mut h = Harness::new();
+    // A service that never answers and ignores the stop, as a stalled connection would.
+    let http: HttpStream = Arc::new(|_r: &HttpRequest, _c: &Cancel, _s: &mut dyn FnMut(&[u8]) -> bool| {
+        std::thread::sleep(Duration::from_secs(8));
+        Err(HttpError::Transport("stalled".into()))
+    });
+    let mut s = Settings::default();
+    s.backend = BackendKind::OpenAi;
+    s.openai.base_url = "http://127.0.0.1:9/v1".into();
+    s.openai.model = "m".into();
+    h.app.assistant.set_settings(s);
+    h.app.assistant.data_root = Some(h.dir.join("assistant"));
+    h.app.services.assistant_http = Some(http);
+    send_ok(&mut h, "hi");
+    assert!(h.app.assistant.busy());
+    h.call("ui.assistant", json!({"action": "stop"}));
+    let began = std::time::Instant::now();
+    wait_idle(&mut h);
+    assert!(began.elapsed() < Duration::from_secs(7), "{:?}", began.elapsed());
+    assert!(h.app.assistant.history.is_empty());
+    assert!(summary(&h.app)["items"].as_array().unwrap().iter().any(|i| i["kind"] == "notice" && i["text"] == "Stopped."));
+    // The conversation is usable again.
+    assert!(!h.app.assistant.busy());
+}
+
+#[test]
+fn the_sidebar_takes_space_from_the_viewport() {
+    let mut h = Harness::new();
+    h.frames(2);
+    let before = h.app.viewport.rect.expect("the viewport was laid out");
+    h.call("ui.assistant", json!({"action": "open"}));
+    h.frames(3);
+    let panel = crate::scenario::rect_of("assistant:panel").expect("the panel was drawn");
+    let after = h.app.viewport.rect.expect("the viewport was laid out");
+    assert!(after.right() <= panel.left() + 0.5, "the viewport {after:?} reaches under the panel {panel:?}");
+    assert!(after.width() < before.width());
+    assert!(panel.width() >= super::panel::MIN_WIDTH - 1.0 && panel.width() <= super::panel::MAX_WIDTH + 1.0);
+    // Closing gives the space back.
+    h.call("ui.assistant", json!({"action": "close"}));
+    h.frames(3);
+    assert!((h.app.viewport.rect.map_or(0.0, |r| r.width()) - before.width()).abs() < 1.0);
+}
