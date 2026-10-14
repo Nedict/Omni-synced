@@ -22,6 +22,38 @@ pub fn needs_cjk_font(language: &str) -> bool {
     CJK_LANGUAGES.contains(&language)
 }
 
+/// Whether `text` has characters only the CJK fallback draws: kana, CJK ideographs and their
+/// punctuation, and full-width forms. Hangul is left out: the web app's font has none.
+pub fn has_cjk(text: &str) -> bool {
+    text.chars().any(|c| {
+        matches!(u32::from(c),
+            0x3000..=0x30FF // CJK punctuation, Hiragana, Katakana
+            | 0x31F0..=0x31FF // Katakana phonetic extensions
+            | 0x3400..=0x4DBF // CJK Extension A
+            | 0x4E00..=0x9FFF // CJK Unified Ideographs
+            | 0xF900..=0xFAFF // CJK Compatibility Ideographs
+            | 0xFF00..=0xFFEF // Half-width and full-width forms
+        )
+    })
+}
+
+/// Whether any text painted so far this frame has CJK characters (see [`has_cjk`]). The web app
+/// calls it after drawing the UI, until its CJK font is loaded, so a Japanese design name, file
+/// name or typed text fetches the font whatever the UI language (#720).
+pub fn painted_cjk(ctx: &egui::Context) -> bool {
+    let mut layers: Vec<egui::LayerId> = ctx.memory(|m| m.layer_ids().collect());
+    layers.push(egui::LayerId::background());
+    ctx.graphics(|g| layers.iter().filter_map(|l| g.get(*l)).any(|list| list.all_entries().any(|c| shape_has_cjk(&c.shape))))
+}
+
+fn shape_has_cjk(shape: &egui::Shape) -> bool {
+    match shape {
+        egui::Shape::Text(t) => has_cjk(&t.galley.job.text),
+        egui::Shape::Vec(shapes) => shapes.iter().any(shape_has_cjk),
+        _ => false,
+    }
+}
+
 /// `fonts` with `bytes` appended as the last fallback of the Proportional and Monospace
 /// families, after the Latin UI font. `None` when the bytes are not a font.
 pub fn with_cjk_fallback(fonts: egui::FontDefinitions, bytes: Vec<u8>) -> Option<egui::FontDefinitions> {
@@ -126,6 +158,22 @@ impl CjkFontLoader {
             }
             CjkFontStatus::Loading | CjkFontStatus::Installed => false,
         }
+    }
+
+    /// CJK text is on screen (whatever the UI language). Returns true when the font fetch should
+    /// start now: once, and never again after a failed load (the UI language stays as it is).
+    pub fn text_needs_font(&mut self) -> bool {
+        if self.status == CjkFontStatus::Unloaded {
+            self.status = CjkFontStatus::Loading;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Whether the session still watches painted text for CJK characters.
+    pub fn watching_text(&self) -> bool {
+        self.status == CjkFontStatus::Unloaded
     }
 
     /// Record the outcome of the fetch and install.
@@ -421,6 +469,58 @@ mod tests {
         loader.finished(true, &mut language);
         assert_eq!(loader.status(), CjkFontStatus::Installed);
         assert_eq!(language, "ja");
+    }
+
+    #[test]
+    fn cjk_text_is_recognised() {
+        for cjk in ["テスト", "ひらがな", "部品", "ﾃｽﾄ", "Bracket（改）", "Plate 板"] {
+            assert!(has_cjk(cjk), "{cjk} has CJK characters");
+        }
+        for other in ["", "Bracket", "Ø12 × 3 mm", "Größe", "Привет", "한국어", "émoji ✓"] {
+            assert!(!has_cjk(other), "{other} has no CJK characters the fallback draws");
+        }
+    }
+
+    /// An English UI fetches the font once CJK text is painted (#720), and a failed fetch leaves
+    /// the language alone.
+    #[test]
+    fn cjk_text_fetches_the_font_with_an_english_ui() {
+        let mut loader = CjkFontLoader::default();
+        let mut language = "en".to_owned();
+        assert!(!loader.tick(&mut language));
+        assert!(loader.watching_text());
+        assert!(loader.text_needs_font(), "CJK text starts the fetch");
+        assert!(!loader.text_needs_font(), "the fetch starts once");
+        assert!(!loader.tick(&mut language), "no second fetch from the language");
+        assert!(!loader.watching_text());
+        loader.finished(false, &mut language);
+        assert_eq!(loader.status(), CjkFontStatus::Failed);
+        assert_eq!(language, "en");
+        assert!(!loader.text_needs_font(), "no retry loop after a failure");
+
+        let mut loader = CjkFontLoader::default();
+        assert!(loader.text_needs_font());
+        loader.finished(true, &mut language);
+        assert_eq!(loader.status(), CjkFontStatus::Installed);
+        // Switching to Japanese afterwards needs no second fetch.
+        let mut ja = "ja".to_owned();
+        assert!(!loader.tick(&mut ja));
+    }
+
+    /// The painted-text check finds CJK in the frame's labels and nothing else.
+    #[test]
+    fn painted_cjk_sees_labels_in_the_frame() {
+        let ctx = egui::Context::default();
+        let run = |text: &'static str| {
+            let mut seen = false;
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                ui.label(text);
+                seen = painted_cjk(ui.ctx());
+            });
+            seen
+        };
+        assert!(!run("Untitled"));
+        assert!(run("テスト"));
     }
 
     #[test]

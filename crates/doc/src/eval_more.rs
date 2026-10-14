@@ -300,6 +300,17 @@ fn replace_sheet_body(mb: &mut ModelBody, body: Body) {
     *mb = next;
 }
 
+/// Put a converted sheet in the place of the body it was made from.
+fn put_sheet(st: &mut ModelState, sh: sheet::SheetBody) -> Result<()> {
+    let solid = sh.solid()?;
+    if let Some(b) = st.bodies.iter_mut().find(|b| b.name == sh.body) {
+        replace_sheet_body(b, solid);
+    }
+    st.sheets.retain(|s| s.body != sh.body);
+    st.sheets.push(sh);
+    Ok(())
+}
+
 fn rebuild_sheet(st: &mut ModelState, idx: usize) -> Result<()> {
     let sheet = st.sheets.get(idx).cloned().ok_or_else(|| DocError::Invalid("sheet".into()))?;
     let solid = sheet.solid()?;
@@ -340,20 +351,17 @@ fn on_sheet_material(st: &ModelState, i: usize, p: Vec3) -> bool {
     offsets.iter().any(|&dx| offsets.iter().any(|&dy| offsets.iter().any(|&dz| mesh.contains(p + Vec3::new(dx, dy, dz)))))
 }
 
-/// A region mirrored in the sketch x axis (y → −y); curves other than lines and arcs as polylines.
+/// A region mirrored in the sketch x axis (y → −y), exactly: free-form curves through their
+/// control points.
 fn mirror_y(r: &Region2) -> Region2 {
     let f = |p: Vec2| Vec2::new(p.x, -p.y);
     let m = |l: &Loop2| {
         let segs: Vec<Seg2> = l
             .segs
             .iter()
-            .flat_map(|s| match *s {
-                Seg2::Line { a, b } => vec![Seg2::Line { a: f(a), b: f(b) }],
-                Seg2::Arc { center, radius, start, sweep } => vec![Seg2::Arc { center: f(center), radius, start: -start, sweep: -sweep }],
-                other => {
-                    let pts: Vec<Vec2> = (0..=16).map(|k| f(other.point_at(k as f64 / 16.0))).collect();
-                    pts.windows(2).map(|w| Seg2::Line { a: w[0], b: w[1] }).collect()
-                }
+            .map(|s| match *s {
+                Seg2::Arc { center, radius, start, sweep } => Seg2::Arc { center: f(center), radius, start: -start, sweep: -sweep },
+                other => sheet::map_controls(&other, f),
             })
             .collect();
         Loop2 { segs }.ccw()
@@ -549,7 +557,34 @@ pub(super) fn sheet_eval(
             }
             rebuild_sheet(st, i)
         }
-        FeatureKind::SheetConvert { body, face, rule } => {
+        // With bend edges: a solid or shelled body whose faces become the sheet.
+        FeatureKind::SheetConvert { body, face, rule, bends } if !bends.is_empty() => {
+            let mb = st.body(body).cloned().ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let r = doc.sheet_rule(rule.as_deref());
+            let rv = doc.rule_values(vals, &r)?;
+            // The bend edges by name first; a name that is gone keeps its point, with a warning.
+            let mut picks = Vec::with_capacity(bends.len());
+            for (i, p) in bends.iter().enumerate() {
+                let name = f.edge_names.get(i).filter(|n| !n.is_empty());
+                picks.push(match name.map(|n| (n, crate::naming::locate_edge(&mb, n, *p))) {
+                    Some((n, Ok(hit))) => {
+                        if let Some(note) = hit.note(n) {
+                            append_warning(warning, note);
+                        }
+                        hit.point
+                    }
+                    Some((n, Err(_))) => {
+                        append_warning(warning, format!("edge `{n}` no longer exists; using the edge at the picked point"));
+                        *p
+                    }
+                    None => *p,
+                });
+            }
+            let mut sh = sheet::convert_body(&mb, &r.name, &rv, *face, &picks)?;
+            tag_flanges(&mut sh, 0, f.id);
+            put_sheet(st, sh)
+        }
+        FeatureKind::SheetConvert { body, face, rule, .. } => {
             let mb = st.body(body).cloned().ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let n = planar_normal_at(&mb.body, *face).ok_or_else(|| DocError::Invalid("pick a planar face of the plate".into()))?;
             let tol = (mb.body.size() * 1e-3).max(1e-3);
@@ -568,20 +603,16 @@ pub(super) fn sheet_eval(
             let area = region.area().abs();
             let vol = kernel::measure(&mb.body)?.volume;
             if (area * t - vol).abs() > 1e-3 * vol.max(1.0) {
-                return Err(DocError::Invalid("not supported yet: converting bodies that are not a plate of even thickness".into()));
+                return Err(DocError::Invalid(
+                    "not supported yet: converting bodies that are not a plate of even thickness without bend edges (`bends`)".into(),
+                ));
             }
             let r = doc.sheet_rule(rule.as_deref());
             let mut rv = doc.rule_values(vals, &r)?;
             rv.thickness = t;
             let mut sh = sheet::base_flange(body, &r.name, &rv, plane, Region2 { outer: region.outer.clone(), holes: Vec::new() });
             sh.holes = region.holes.iter().map(|h| Region2 { outer: h.ccw(), holes: Vec::new() }).collect();
-            let solid = sh.solid()?;
-            if let Some(b) = st.bodies.iter_mut().find(|b| &b.name == body) {
-                replace_sheet_body(b, solid);
-            }
-            st.sheets.retain(|s| &s.body != body);
-            st.sheets.push(sh);
-            Ok(())
+            put_sheet(st, sh)
         }
         _ => Err(DocError::Invalid(format!("{} is not a sheet metal feature", f.name))),
     }
@@ -695,9 +726,17 @@ fn any_eligible_sheet(f: &Feature, st: &ModelState, targets: &[String]) -> bool 
 
 /// A Box or Cylinder cut (or intersect) whose tool is a straight prism along the normal of
 /// the sheet it meets: machined like the equivalent extrude of its footprint, so the sheet
-/// keeps it as a flat cut-out or pocket. Returns the sheet bodies it handled; none when the
+/// keeps it as a flat cut-out or pocket. A hole's drill (`drill`) may also be square to a
+/// folded panel of the sheet, a flange's. Returns the sheet bodies it handled; none when the
 /// primitive is not such a prism (the generic preflight then refuses real 3D machining).
-pub(super) fn sheet_primitive_cut(f: &Feature, st: &mut ModelState, tool: &Body, prism: PrimitivePrism, operation: Operation) -> Result<Vec<String>> {
+pub(super) fn sheet_primitive_cut(
+    f: &Feature,
+    st: &mut ModelState,
+    tool: &Body,
+    prism: PrimitivePrism,
+    operation: Operation,
+    drill: bool,
+) -> Result<Vec<String>> {
     if !matches!(operation, Operation::Cut | Operation::Intersect) || !any_eligible_sheet(f, st, &[]) {
         return Ok(Vec::new());
     }
@@ -707,7 +746,14 @@ pub(super) fn sheet_primitive_cut(f: &Feature, st: &mut ModelState, tool: &Body,
         if let Some(mb) = st.body(&sh.body)
             && kernel::boolean(&mb.body, tool, kernel::BoolOp::Intersect)?.is_some()
         {
-            normal = Some(sh.frame.normal());
+            normal = Some(match prism {
+                PrimitivePrism::Cylinder { axis, .. }
+                    if drill && !sh.flat && Plane::from_normal(Vec3::ZERO, axis).is_some_and(|p| !sh.parallel_panels(&p).is_empty()) =>
+                {
+                    axis
+                }
+                _ => sh.frame.normal(),
+            });
             break;
         }
     }
@@ -1208,8 +1254,32 @@ pub(super) fn plastic_eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &F
             let mut loops = face_loops(&mesh, &plane, *face, n, 0.0, tol);
             loops.sort_by(|a, b| poly_area(b).abs().total_cmp(&poly_area(a).abs()));
             let ccw = |l: &[Vec2]| if poly_area(l) < 0.0 { l.iter().rev().copied().collect::<Vec<_>>() } else { l.to_vec() };
-            let (Some(outer), Some(inner)) = (loops.first().map(|l| ccw(l)), loops.get(1).map(|l| ccw(l))) else {
-                return Err(DocError::Invalid("pick the rim face of a shelled body (a face with an inner and an outer edge)".into()));
+            // The inner edge is an opening (the cavity under a rim): not the foot of a boss or a
+            // wall standing on the face, whose side the band would run against.
+            let opening = |l: &[Vec2]| {
+                let eps = (tol * 4.0).max(1e-3);
+                l.iter().zip(l.iter().cycle().skip(1)).filter_map(|(a, b)| Some(((*a + *b) * 0.5, (*b - *a).normalized()?))).take(3).any(|(m, t)| {
+                    // Just over the face, inside the loop (to the left of a ccw loop's edges).
+                    let q = plane.to_world(m + Vec2::new(-t.y, t.x) * eps) + n * eps;
+                    !mesh.contains(q)
+                })
+            };
+            let outer = loops.first().map(|l| ccw(l));
+            let openings: Vec<Vec<Vec2>> = loops.iter().skip(1).map(|l| ccw(l)).filter(|l| opening(l)).collect();
+            // A rim runs round one opening, the cavity; smaller ones (a screw hole) may sit in it.
+            // Openings alike in size (a plate's holes) leave no edge that is the rim's.
+            let alike = match openings.as_slice() {
+                [a, b, ..] => poly_area(b).abs() > 0.5 * poly_area(a).abs(),
+                _ => false,
+            };
+            let (Some(outer), Some(inner), false) = (outer, openings.first().cloned(), alike) else {
+                let what = match (loops.len(), openings.len()) {
+                    (0 | 1, _) => "pick the rim face of a shelled body (a face with an inner and an outer edge)".to_string(),
+                    (_, 0) => "pick the rim face of a shelled body: this face's inner edges are where other features stand on it, not an opening"
+                        .to_string(),
+                    (_, k) => format!("pick the rim face of a shelled body (round one opening): this face has {k} openings alike in size"),
+                };
+                return Err(DocError::Invalid(what));
             };
             let bw = if *groove { w + g } else { w };
             // A lip: the band raised from the rim's own faces (its walls continue the walls

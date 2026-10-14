@@ -370,11 +370,9 @@ fn compute(mut session: Session, command: &str, params: &Value, thumbnail: bool,
     let placement_ms = view_began.elapsed().as_secs_f64() * 1000.0;
     let mesh_began = std::time::Instant::now();
     // Fit, picking and the first viewport frame must not trigger cold tessellation on the UI.
-    for b in &world.bodies {
-        if progress.is_cancelled() {
-            return cancelled();
-        }
-        let _ = b.mesh();
+    world.warm_meshes(|| !progress.is_cancelled());
+    if progress.is_cancelled() {
+        return cancelled();
     }
     let tessellation_ms = mesh_began.elapsed().as_secs_f64() * 1000.0;
     phase.store(2, Ordering::Relaxed);
@@ -532,7 +530,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             if let Some(preview) = r.preview.as_ref().filter(|_| !cancelled) {
                 let w = ui.available_width().min(320.0);
                 ui.image((preview.id(), egui::vec2(w, w * 200.0 / 320.0)));
-                ui.label(egui::RichText::new("Saved preview. Geometry is being checked before editing.").small().weak());
+                ui.label(egui::RichText::new(crate::i18n::tr_label("Saved preview. Geometry is being checked before editing.")).small().weak());
             }
             ui.add_space(4.0);
             ui.horizontal(|ui| {

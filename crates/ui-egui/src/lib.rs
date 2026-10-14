@@ -4,7 +4,7 @@
 //! commands ([`SolveApp::run`]). Nothing here owns design data. The layout follows the familiar
 //! parametric-CAD desktop: application bar, a toolbar of workspace tabs and panels, the browser
 //! on the left, the 3D viewport with an axis view and navigation bar, the command dialog on the
-//! right of the viewport, the command palette and the timeline at the bottom.
+//! right of the viewport, the command palette and a bottom or left-sidebar feature timeline.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
@@ -35,6 +35,8 @@ pub mod frame;
 pub mod gizmo;
 pub mod gpu;
 pub mod help;
+#[cfg(test)]
+mod hole_placement_ui_tests;
 pub mod home;
 pub mod i18n;
 #[cfg(test)]
@@ -45,6 +47,8 @@ pub mod issue_report;
 pub mod keymap;
 #[cfg(test)]
 mod menu_tests;
+#[cfg(test)]
+mod surface_clamp_tests;
 #[cfg(test)]
 mod status_tests {
     #[test]
@@ -68,12 +72,16 @@ mod extrude_edit_tests;
 mod file_load;
 #[cfg(test)]
 mod file_load_ui_tests;
+#[cfg(test)]
+mod fillet_spline_handle_tests;
 pub mod palette;
 pub mod params_dialog;
 pub mod prefs;
 #[cfg(test)]
 mod preselect_tests;
 pub mod preview;
+#[cfg(test)]
+mod primitive_units_tests;
 pub mod recovery_ui;
 pub mod ref_images;
 #[cfg(test)]
@@ -101,12 +109,18 @@ mod sketch_drag_ui_tests;
 #[cfg(test)]
 mod sketch_edit_tests;
 mod sketch_families;
+pub mod sketch_modify_ui;
+#[cfg(test)]
+mod sketch_modify_ui_tests;
 pub mod sketch_palette;
 pub(crate) mod sketch_text;
+mod sketch_text_handles;
+mod sketch_text_move;
 pub mod sketch_tools;
 pub mod stand_up;
 pub mod theme;
 pub mod timeline;
+pub mod timeline_left;
 pub mod titlebar;
 pub mod toolbar;
 pub mod toolbar_custom;
@@ -525,8 +539,19 @@ impl SolveApp {
         if self.file_load.busy() {
             return;
         }
+        // A disabled command starts nothing, however it was reached. The toolbar greys its
+        // button, but a shortcut, the command palette and the control channel all land here.
+        // Its reason goes to the status line, so the refusal is never silent.
+        if let Some(info) = solidcraft_engine::find_command(id).map(|c| c.info(&self.session))
+            && let Some(why) = info.disabled_reason
+        {
+            let label = self.tr_label(info.label).to_string();
+            self.set_status(format!("{label}: {why}"), true);
+            return;
+        }
         // Another command ends Edit Text (its dialog is not a feature edit to keep).
-        if sketch_text::editing(self) {
+        sketch_text_move::cancel_drag(self);
+        if sketch_text::editing(self) || self.dialog.as_ref().is_some_and(|d| matches!(d.kind, dialogs::Kind::TextMove(_))) {
             dialogs::cancel(self);
         }
         // A component moved without Capture Position: ask first (Capture, Revert or Cancel).
@@ -712,7 +737,8 @@ impl SolveApp {
     /// Finish the active sketch: stop editing, restore the history marker Edit Sketch moved and
     /// return to the view from before the sketch.
     pub fn finish_sketch(&mut self) {
-        if sketch_text::editing(self) {
+        sketch_text_move::cancel_drag(self);
+        if sketch_text::editing(self) || self.dialog.as_ref().is_some_and(|d| matches!(d.kind, dialogs::Kind::TextMove(_))) {
             dialogs::cancel(self);
         }
         dim_view::cancel();
@@ -737,6 +763,7 @@ impl SolveApp {
             v.extend(d.items());
         }
         v.extend(sketch_text::highlighted(self));
+        v.extend(sketch_text_move::highlighted(self));
         v
     }
 
@@ -1054,12 +1081,19 @@ impl SolveApp {
             }
         }
         toolbar::toolbar(self, ui);
-        if self.ui.show_timeline {
+        let left_timeline = self.ui.show_timeline && self.preferences.timeline_left;
+        if self.ui.show_timeline && !left_timeline {
             timeline::timeline(self, ui);
         }
         palette::palette_bar(self, ui);
         if self.ui.show_browser {
-            browser::browser(self, ui);
+            if left_timeline {
+                browser::browser_below_timeline(self, ui);
+            } else {
+                browser::browser(self, ui);
+            }
+        } else if left_timeline {
+            timeline_left::left_panel(self, ui);
         }
         preview::update(self, ui.ctx());
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
@@ -1102,7 +1136,7 @@ impl SolveApp {
             let Some(req) = held.or_else(|| rx.try_recv().ok()) else { break };
             // A file is loading: commands that change the design wait for it (the window,
             // inspection and screenshots still answer).
-            if self.file_load.busy() && matches!(req.method.as_str(), "engine.execute" | "command" | "engine.script") {
+            if self.file_load.busy() && matches!(req.method.as_str(), "engine.execute" | "command" | "engine.script" | "engine.batch") {
                 if self.control_held.len() < MAX_HELD {
                     self.control_held.push_back(req);
                 } else {

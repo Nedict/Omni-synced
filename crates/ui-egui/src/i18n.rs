@@ -222,6 +222,13 @@ mod tests {
         assert_eq!(ja.text("ui.preferences"), "環境設定");
         assert_eq!(ja.label("Extrude"), "押し出し");
         assert_eq!(ja.label("CREATE SKETCH"), "スケッチを作成");
+        assert_eq!(ja.label("New Component"), "新規コンポーネント");
+        assert_eq!(ja.label("UTILITIES"), "ユーティリティ");
+        assert_eq!(ja.label("CONFIGURE"), "構成");
+        assert_eq!(ja.label("Drive Joints"), "ジョイントを駆動");
+        assert_eq!(ja.label("Axis Through Cylinder/Cone/Torus"), "円柱/円錐/トーラスを通る軸");
+        assert_eq!(ja.label("Filter commands or keys"), "コマンドまたはキーを検索");
+        assert_eq!(ja.label("Context menu"), "コンテキスト メニュー");
         assert_eq!(ja.label("NonExistentKey"), "NonExistentKey");
         assert_eq!(Locale::for_language("unknown").text("ui.preferences"), "Preferences");
         static PARTIAL: Catalog = Catalog::new("test", "Test", r#"{"ui.preferences":"Prefs"}"#);
@@ -249,6 +256,20 @@ mod tests {
         // entire reason these two rows pass an id instead of their English text.
         assert_eq!(Locale::for_language("de").label("Profile"), Locale::for_language("de").text("ui.profile"));
         assert_eq!(Locale::for_language("de").label("Points"), Locale::for_language("de").text("ui.points"));
+    }
+
+    /// The Construction Geometries row passes its English text, like the other seven text
+    /// rows. "Construction" on its own is already the line-type entry `ui.construction`, so
+    /// the row's two-word text must reach its own entry rather than that one.
+    #[test]
+    fn the_construction_geometries_row_reaches_its_own_entry_not_the_line_type() {
+        let rows = [("de", "Konstruktionsgeometrien"), ("ja", "構築ジオメトリ"), ("ko", "구성 형상")];
+        for (lang, want) in rows {
+            let locale = Locale::for_language(lang);
+            assert_eq!(locale.label("Construction Geometries"), want, "{lang}");
+            assert_ne!(locale.label("Construction Geometries"), locale.text("ui.construction"), "{lang}");
+        }
+        assert_eq!(Locale::for_language("en").label("Construction Geometries"), "Construction Geometries");
     }
 
     #[test]

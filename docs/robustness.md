@@ -36,6 +36,24 @@ rejected before any jobs or output directories are created. The maximum seed
 - `cargo test` runs a fixed set of seeds that must stay clean
   (`crates/engine/src/tests/robustness.rs`), next to the minimised cases fixed so far.
 
+## Seeded goldens
+
+`tests/robustness/goldens.json` records what each of seeds 0–95 builds (eight steps at most):
+its steps, how it ended (ok, or the kind and the start of the error it was refused with), and
+for the design it left the bodies' total volume and area (within a relative 1e-6) and their
+face, edge and shell counts (exact). `tests::robustness_goldens` fails on any change, better or
+worse, so a kernel change shows every seed it moves. Pull requests that touch `crates/kernel`
+run every 8th seed (`sample_0` … `sample_3`, about two minutes); pushes to `main` and the
+nightly run them all (`all_0` … `all_3`).
+
+To record an intended change, give the reason:
+
+```
+ROBUSTNESS_GOLDENS_BLESS="why it changed" cargo test --profile ci -p solidcraft-engine --lib robustness_goldens::all
+```
+
+The changed seeds and the reason are added to the file's `notes`; say why in the pull request too.
+
 ## Successful Boolean retries
 
 When an accepted Boolean result needs a numerical retry, the feature shows a
@@ -45,7 +63,11 @@ rotation, face offset and tessellation tolerance in millimetres/radians.
 
 A common shift of both operands is reversed on the result. Coincident-face
 separation and bore offsets describe temporary working geometry; they are not
-claims about the final model's error. A tool nudge changes the relative operand
+claims about the final model's error. A coincident face is separated only
+where the space it moves through holds what the Boolean leaves there anyway
+(nothing of the target for a cut's face, the target's material for a join's);
+a face with no such room stays, and the exact planar fallback is tried first.
+A tool nudge changes the relative operand
 placement and reports both its translation magnitude and rotation angle.
 Exact planar and piecewise fallbacks report zero displacement. The existing
 volume and spatial acceptance checks still apply to all results.
@@ -96,6 +118,14 @@ fixes below (sound face pushes, no panics in the boolean's final assembly).
 | not run (the design ran out of time) | 13.0 % | 18.0 % |
 
 ### Fixed
+
+- Back-to-back contact joins preserve intentional Split Face boundaries, including on
+  faces away from the contact. The glue pass retains their lines during healing and in
+  the resulting body for subsequent operations. Partial circular-contact regressions
+  cover offsets, rotation, operand order, volume, area and history; the seed-16 pattern
+  also runs in the ordinary engine suite with analytic volume and area checks.
+  Imprinting visits a shared analytic support only once: the two side faces of a
+  cylinder must not recut the same outline into redundant arcs.
 
 - **Shell corners where a curved face meets another at an angle** (the biggest cause, 215 of
   the 363 failed designs before). Moving a vertex took one linear step, exact only for planes;

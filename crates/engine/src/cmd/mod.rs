@@ -9,6 +9,17 @@ macro_rules! created_doc {
     };
 }
 
+/// A command that is designed and registered (id, toolbar place, icon, params doc) but not built
+/// yet. It is disabled with the reason, so the toolbar greys it and says why, and its `run`
+/// refuses too, however it is reached. `$issue` is the GitHub issue that tracks building it.
+macro_rules! planned {
+    ($id:literal, $label:literal, $issue:literal) => {
+        CommandSpec::new($id, $label, |_, _| Err(crate::EngineError::Other(concat!("not supported yet: ", $label, " (issue #", $issue, ")").into())))
+            .enabled(|_| Err(concat!("not supported yet (issue #", $issue, ")").into()))
+            .planned($issue)
+    };
+}
+
 mod browser;
 mod clipboard;
 mod component;
@@ -38,6 +49,7 @@ pub(crate) use measure_sel::measure_items;
 mod kernel_heal_tests;
 mod parameters;
 mod plastic;
+mod render;
 mod sheet;
 mod sketch;
 pub(crate) use sketch::author_path_for_rebind;
@@ -88,6 +100,8 @@ pub struct CommandSpec {
     /// Reads the evaluated model (the default). A command that reads only the document and the
     /// session's history runs on a model left stale by a live gesture without evaluating it first.
     pub reads_model: bool,
+    /// Registered but not built yet (see `planned!`): the GitHub issue number that tracks it.
+    pub planned: Option<&'static str>,
 }
 
 impl CommandSpec {
@@ -105,7 +119,13 @@ impl CommandSpec {
             undoable: true,
             live: None,
             reads_model: true,
+            planned: None,
         }
+    }
+    /// Not built yet; `issue` tracks building it.
+    pub const fn planned(mut self, issue: &'static str) -> Self {
+        self.planned = Some(issue);
+        self
     }
     /// Takes `live: true`, run by `run`.
     pub const fn live(mut self, run: LiveRun) -> Self {
@@ -160,6 +180,7 @@ impl CommandSpec {
             params: self.params,
             enabled: e.is_ok(),
             disabled_reason: e.err(),
+            planned: self.planned,
         }
     }
 }
@@ -175,6 +196,8 @@ pub struct CommandInfo {
     pub params: &'static str,
     pub enabled: bool,
     pub disabled_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub planned: Option<&'static str>,
 }
 
 pub fn always(_: &Session) -> std::result::Result<(), String> {
@@ -183,6 +206,12 @@ pub fn always(_: &Session) -> std::result::Result<(), String> {
 
 pub fn in_sketch(s: &Session) -> std::result::Result<(), String> {
     if s.active_sketch.is_some() { Ok(()) } else { Err("no sketch is being edited (Create Sketch or Edit Sketch first)".into()) }
+}
+
+/// The mirror of [`in_sketch`], for a command that acts on bodies and has nothing to offer the
+/// geometry under the cursor while a sketch is open.
+pub fn not_in_sketch(s: &Session) -> std::result::Result<(), String> {
+    if s.active_sketch.is_none() { Ok(()) } else { Err("a sketch is being edited (this works on bodies: Finish Sketch first)".into()) }
 }
 
 /// Every command, in toolbar order.
@@ -222,6 +251,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(section::COMMANDS.iter());
     v.extend(view_navigation::COMMANDS.iter());
     v.extend(diagnostics::COMMANDS.iter());
+    v.extend(render::COMMANDS.iter());
     v
 }
 

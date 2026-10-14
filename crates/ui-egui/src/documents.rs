@@ -80,6 +80,7 @@ fn put_view(app: &mut SolveApp, v: DocView) {
 /// Put `slot` into the app and return what was there.
 fn swap_in(app: &mut SolveApp, slot: DocSlot) -> DocSlot {
     // Whatever was going on in the design leaves with it.
+    crate::sketch_text_move::cancel_drag(app);
     crate::dialogs::cancel(app);
     crate::dim_view::cancel();
     app.tool = None;
@@ -196,6 +197,7 @@ pub fn close(app: &mut SolveApp, i: usize, force: bool) {
     app.docs.closing = None;
     if n <= 1 {
         // The last design: a blank one takes its place.
+        crate::sketch_text_move::cancel_drag(app);
         let rev = app.session.revision;
         crate::dialogs::cancel(app);
         app.tool = None;
@@ -394,7 +396,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
         }
         ui.painter().text(mr.center(), egui::Align2::CENTER_CENTER, format!("»{}", n - shown), FontId::proportional(12.0), t.app_bar_text);
         let id = egui::Id::new("sc_doc_more");
-        if mresp.clone().on_hover_text("All open designs").clicked() {
+        if mresp.clone().on_hover_text(crate::i18n::tr_label("All open designs")).clicked() {
             ui.ctx().data_mut(|d| d.insert_temp(id, !d.get_temp::<bool>(id).unwrap_or(false)));
         }
         if ui.ctx().data(|d| d.get_temp::<bool>(id).unwrap_or(false)) {

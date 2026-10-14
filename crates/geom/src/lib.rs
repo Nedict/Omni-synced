@@ -8,6 +8,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod arcfit;
 pub mod brep;
 pub mod bspline;
 pub mod env;
@@ -15,12 +16,14 @@ pub mod fill;
 mod mesh;
 mod plane;
 mod profile;
+pub mod tess;
 pub mod tspline;
 mod vec;
 
-pub use mesh::{Aabb3, InsideIndex, Mesh, MeshMeasure};
+pub use arcfit::MAX_FIT_PIECES;
+pub use mesh::{Aabb3, BoxedTriangle, InsideIndex, MassProperties, Mesh, MeshMeasure, find_close_pair};
 pub use plane::Plane;
-pub use profile::{Loop2, MAX_BEZIER_DEGREE, Region2, Seg2, bezier};
+pub use profile::{Loop2, MAX_BEZIER_DEGREE, Region2, Seg2, bezier, regions_apart};
 pub use vec::{Vec2, Vec3};
 
 /// Geometric tolerance for coincidence tests (mm).

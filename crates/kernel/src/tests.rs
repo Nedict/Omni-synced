@@ -835,6 +835,17 @@ fn sphere_booleans() {
 }
 
 #[test]
+fn similar_spheres_meet() {
+    // bherbruck/solidcraft#232: the contact test compared every pair of nearby triangles of the
+    // two fine sphere meshes and gave up past its work limit, so their join was refused.
+    let a = sphere(Vec3::ZERO, 10.0).unwrap();
+    for (x, meet) in [(12.0, true), (4.0, true), (20.0, true), (20.5, false)] {
+        let b = sphere(Vec3::new(x, 0.0, 0.0), 10.0).unwrap();
+        assert_eq!(a.meets(&b).unwrap(), meet, "centres {x} mm apart");
+    }
+}
+
+#[test]
 #[ignore]
 fn debug_convergence() {
     let b = extrude(&Plane::XY, &[Region2 { outer: Loop2::circle(Vec2::ZERO, 15.0), holes: vec![] }], 0.0, 50.0).unwrap().pop().unwrap();
@@ -2299,5 +2310,19 @@ fn shell_of_a_disc_rounded_smaller_than_the_wall() {
             let v = measure(&s).unwrap().volume;
             assert!(rel(v, want) < 1e-3, "round at z {edge_z}, t {t}: {v} vs {want}");
         }
+    }
+}
+
+/// The cache-budget estimate counts edge and vertex uses on the borrowed boundaries; it must
+/// equal what walking the cloned wires (`Solid::edge_iter`, `vertex_iter`) counts.
+#[test]
+fn retained_bytes_matches_the_iterator_counts() {
+    let block = box_solid(Vec3::ZERO, Vec3::new(40.0, 30.0, 10.0)).unwrap();
+    let hole = cylinder(Vec3::new(20.0, 15.0, -5.0), Vec3::Z, 5.0, 30.0).unwrap();
+    let drilled = boolean(&block, &hole, BoolOp::Cut).unwrap().unwrap();
+    for body in [&block, &hole, &drilled] {
+        let s = &body.solid;
+        let walked = s.face_iter().count() * 2048 + s.edge_iter().count() * 512 + s.vertex_iter().count() * 96;
+        assert_eq!(body.retained_bytes(), walked);
     }
 }

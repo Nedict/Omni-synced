@@ -120,10 +120,12 @@ fn merge_coplanar(shell: &mt::Shell, tol: f64, keep: &[Vec<Vec3>]) -> Option<(mt
             && na.dot(*nb) > 1.0 - 1e-9
             && (da - db).abs() < tol
         {
+            // The lesser root wins, so each group's root is its first face whatever order the
+            // edges (in hash order of their addresses) are met in (#707).
             let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
             if ra != rb {
-                if let Some(x) = parent.get_mut(ra) {
-                    *x = rb;
+                if let Some(x) = parent.get_mut(ra.max(rb)) {
+                    *x = ra.min(rb);
                 }
                 merged_any = true;
             }
@@ -232,11 +234,13 @@ fn merge_collinear(shell: &mt::Shell, trace: &mut Trace) -> Option<mt::Shell> {
         let (pa, pm, pb) = (from_p3(other(a).point()), from_p3(mid.point()), from_p3(other(b).point()));
         let (Some(u), Some(w)) = ((pm - pa).normalized(), (pb - pm).normalized()) else { continue };
         if u.dot(w) > 1.0 - 1e-10 {
+            // The lesser root wins: each run's root is its first edge whatever order the
+            // vertices are met in (#707).
             let (ra, rb) = (find(&mut parent, ia), find(&mut parent, ib));
             if ra != rb
-                && let Some(x) = parent.get_mut(ra)
+                && let Some(x) = parent.get_mut(ra.max(rb))
             {
-                *x = rb;
+                *x = ra.min(rb);
                 any = true;
             }
         }
@@ -244,7 +248,9 @@ fn merge_collinear(shell: &mt::Shell, trace: &mut Trace) -> Option<mt::Shell> {
     if !any {
         return None;
     }
-    let mut runs: HashMap<usize, Vec<usize>> = HashMap::new();
+    // Ordered by run (and each run's ends by first use below): which end a joined edge starts
+    // from must not follow hash order, or the same heal gives a different body from run to run.
+    let mut runs: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
     for i in 0..edges.len() {
         let r = find(&mut parent, i);
         runs.entry(r).or_default().push(i);
@@ -253,14 +259,17 @@ fn merge_collinear(shell: &mt::Shell, trace: &mut Trace) -> Option<mt::Shell> {
     let mut joined: Vec<(mt::Edge, HashMap<mt::VertexID, usize>)> = Vec::new();
     let mut run_of: HashMap<mt::EdgeID, usize> = HashMap::new();
     for members in runs.values().filter(|m| m.len() > 1) {
-        let mut ends: HashMap<mt::VertexID, (usize, mt::Vertex)> = HashMap::new();
+        let mut ends: Vec<(mt::VertexID, usize, mt::Vertex)> = Vec::new();
         for i in members {
             let Some(e) = edges.get(*i) else { continue };
             for v in [e.front(), e.back()] {
-                ends.entry(v.id()).or_insert((0, v.clone())).0 += 1;
+                match ends.iter_mut().find(|(id, ..)| *id == v.id()) {
+                    Some(end) => end.1 += 1,
+                    None => ends.push((v.id(), 1, v.clone())),
+                }
             }
         }
-        let mut ends = ends.into_values().filter(|(n, _)| *n == 1).map(|(_, v)| v);
+        let mut ends = ends.into_iter().filter(|(_, n, _)| *n == 1).map(|(.., v)| v);
         let (Some(first), Some(last), None) = (ends.next(), ends.next(), ends.next()) else { continue };
         // Walk the run from one end, collecting its vertices in order.
         let mut order = vec![first.id()];
@@ -476,7 +485,7 @@ fn planar_surfaces(shell: &mt::Shell, tol: f64) -> Option<mt::Shell> {
 /// Heal a solid; returns the input unchanged when nothing applies or healing fails.
 #[cfg(test)]
 pub fn heal(solid: Solid, size: f64) -> Solid {
-    healed(solid, size, &[], false).0
+    healed(solid, size, &[], false, false).0
 }
 
 /// What healing made each face and edge of its result from.
@@ -535,14 +544,21 @@ impl HealMap {
 /// along lines they were split along on purpose (`keep`), with what each face and edge of the
 /// result was made from (`None` when that could not be followed).
 pub(crate) fn heal_traced(solid: Solid, size: f64, keep: &[Vec<Vec3>]) -> (Solid, Option<HealMap>) {
-    healed(solid, size, keep, true)
+    healed(solid, size, keep, true, false)
+}
+
+/// [`heal_traced`] that only merges coplanar neighbouring faces, leaving every edge, curve and
+/// surface as it is: for results whose geometry is already exact (a prism boolean's), where
+/// joining edges would change more than the faces split in pieces.
+pub(crate) fn merge_faces_traced(solid: Solid, size: f64, keep: &[Vec<Vec3>]) -> (Solid, Option<HealMap>) {
+    healed(solid, size, keep, true, true)
 }
 
 /// The healed solid, and what it was made from when `traced`.
-fn healed(solid: Solid, size: f64, keep: &[Vec<Vec3>], traced: bool) -> (Solid, Option<HealMap>) {
+fn healed(solid: Solid, size: f64, keep: &[Vec<Vec3>], traced: bool, faces_only: bool) -> (Solid, Option<HealMap>) {
     // Edges a boolean made are intersection curves, which panic where they no longer
     // evaluate; the solid then stays as it is.
-    match crate::guard("heal", || Ok(heal_shells(&solid, size, keep, traced))) {
+    match crate::guard("heal", || Ok(heal_shells(&solid, size, keep, traced, faces_only))) {
         Ok(Some((healed, map))) => (healed, map),
         _ => {
             let map = if traced { crate::guard("heal map", || Ok(HealMap::identity(&solid))).ok() } else { None };
@@ -588,7 +604,7 @@ impl Trace {
     }
 }
 
-fn heal_shells(solid: &Solid, size: f64, keep: &[Vec<Vec3>], traced: bool) -> Option<(Solid, Option<HealMap>)> {
+fn heal_shells(solid: &Solid, size: f64, keep: &[Vec<Vec3>], traced: bool, faces_only: bool) -> Option<(Solid, Option<HealMap>)> {
     let tol = (size * 1e-7).max(1e-9);
     let mut shells = Vec::new();
     let mut changed = false;
@@ -603,11 +619,11 @@ fn heal_shells(solid: &Solid, size: f64, keep: &[Vec<Vec3>], traced: bool) -> Op
         let mut from: Vec<Vec<usize>> = (first..first + count).map(|i| vec![i]).collect();
         first += count;
         // Faces come out in place, one for one, except where coplanar ones merge.
-        if let Some(m) = planar_surfaces(&cur, (size * 1e-7).max(1e-9)) {
+        if !faces_only && let Some(m) = planar_surfaces(&cur, (size * 1e-7).max(1e-9)) {
             cur = m;
             changed = true;
         }
-        if let Some(m) = exact_edges(&cur, (size * 1e-5).max(1e-7), &mut trace) {
+        if !faces_only && let Some(m) = exact_edges(&cur, (size * 1e-5).max(1e-7), &mut trace) {
             cur = m;
             changed = true;
         }
@@ -616,7 +632,7 @@ fn heal_shells(solid: &Solid, size: f64, keep: &[Vec<Vec3>], traced: bool) -> Op
             from = groups.iter().map(|g| g.iter().filter_map(|i| from.get(*i)).flatten().copied().collect()).collect();
             changed = true;
         }
-        if let Some(m) = merge_collinear(&cur, &mut trace) {
+        if !faces_only && let Some(m) = merge_collinear(&cur, &mut trace) {
             cur = m;
             changed = true;
         }

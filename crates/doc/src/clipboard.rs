@@ -47,19 +47,22 @@ impl FeatureKind {
                 }
             }
             FeatureKind::Extrude { sketch, .. }
+            | FeatureKind::SurfaceExtrude { sketch, .. }
+            | FeatureKind::SurfaceRevolve { sketch, .. }
             | FeatureKind::Revolve { sketch, .. }
             | FeatureKind::Emboss { sketch, .. }
             | FeatureKind::SheetBase { sketch, .. }
             | FeatureKind::SheetContour { sketch, .. }
             | FeatureKind::Rib { sketch, .. } => sk(sketch),
             FeatureKind::Patch { sketch: Some(s), .. } => sk(s),
-            FeatureKind::Sweep { sketch, path_sketch, .. } => {
+            FeatureKind::Sweep { sketch, path_sketch, .. } | FeatureKind::SurfaceSweep { sketch, path_sketch, .. } => {
                 sk(sketch);
                 sk(path_sketch);
             }
             FeatureKind::Pipe { path_sketch, .. } => sk(path_sketch),
             FeatureKind::SheetFold { sketch: Some(s), .. } => sk(s),
             FeatureKind::Loft { sections, .. } => sections.iter_mut().for_each(|s| sk(&mut s.sketch)),
+            FeatureKind::SurfaceLoft { sections } => sections.iter_mut().for_each(|s| sk(&mut s.sketch)),
             FeatureKind::Hole { points: Some(p), .. } => sk(&mut p.sketch),
             FeatureKind::Pattern { features, pattern, .. } => {
                 feats(features);
@@ -302,6 +305,7 @@ impl FeatureKind {
             | K::SplitFace { body, .. }
             | K::OffsetFace { body, .. }
             | K::DeleteFace { body, .. }
+            | K::SurfaceOffset { body, .. }
             | K::ReplaceFace { body, .. }
             | K::SheetFlange { body, .. }
             | K::SheetHem { body, .. }
@@ -320,6 +324,8 @@ impl FeatureKind {
             | K::SheetConvert { body, .. }
             | K::SurfaceExtend { body, .. }
             | K::SurfaceTrim { body, .. }
+            | K::Unstitch { body, .. }
+            | K::ReverseNormal { body, .. }
             | K::MeshConvert { body, .. } => mapped_name(body, bodies),
             _ => {}
         }
@@ -392,7 +398,7 @@ impl crate::Feature {
                 }
                 for link in &mut sketch.links {
                     remap_link(&mut link.source, ids, names, bodies, 0);
-                    if let Some(n) = &mut link.face_name {
+                    for n in link.face_name.iter_mut().chain(&mut link.edge_name) {
                         *n = remap_topology(n, ids, bodies);
                     }
                 }

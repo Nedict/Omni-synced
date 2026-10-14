@@ -54,7 +54,7 @@ impl FeatureKind {
                     }
                 }
             },
-            FeatureKind::Extrude { extent, .. } => {
+            FeatureKind::Extrude { extent, .. } | FeatureKind::SurfaceExtrude { extent, .. } => {
                 v.push(("Distance", &mut extent.distance, L));
                 if let Some(d) = &mut extent.distance2 {
                     v.push(("Distance 2", d, L));
@@ -69,7 +69,7 @@ impl FeatureKind {
                     v.push(("To offset", d, L));
                 }
             }
-            FeatureKind::Revolve { angle, angle2, .. } => {
+            FeatureKind::Revolve { angle, angle2, .. } | FeatureKind::SurfaceRevolve { angle, angle2, .. } => {
                 v.push(("Angle", angle, A));
                 if let Some(a) = angle2 {
                     v.push(("Angle 2", a, A));
@@ -82,6 +82,11 @@ impl FeatureKind {
                     v.push(("Start radius", radius, L));
                     v.push(("End radius", radius2, L));
                     v.extend(mid.iter_mut().map(|(_, r)| ("Mid radius", r, L)));
+                }
+                crate::FilletStyle::Spline { radii, .. } => {
+                    v.push(("Start radius", radius, L));
+                    let n = radii.len();
+                    v.extend(radii.iter_mut().enumerate().map(|(i, r)| (if i + 1 == n { "End radius" } else { "Control radius" }, r, L)));
                 }
             },
             FeatureKind::Chamfer { distance, distance2, angle, .. } => {
@@ -272,6 +277,13 @@ impl FeatureKind {
             FeatureKind::Thicken { thickness, .. } => v.push(("Thickness", thickness, L)),
             FeatureKind::SurfaceTrim { plane, .. } => plane_inputs_mut(plane, &mut v),
             FeatureKind::SurfaceExtend { distance, .. } => v.push(("Distance", distance, L)),
+            FeatureKind::Unstitch { .. } | FeatureKind::ReverseNormal { .. } => {}
+            FeatureKind::SurfaceOffset { distance, tolerance, .. } => {
+                v.push(("Distance", distance, L));
+                if let Some(t) = tolerance {
+                    v.push(("Tolerance", t, L));
+                }
+            }
             FeatureKind::Patch { .. } => {}
             FeatureKind::Combine { .. }
             | FeatureKind::SheetBase { .. }
@@ -283,6 +295,8 @@ impl FeatureKind {
             | FeatureKind::BoundaryFill { .. }
             | FeatureKind::Loft { .. }
             | FeatureKind::Sweep { .. }
+            | FeatureKind::SurfaceSweep { .. }
+            | FeatureKind::SurfaceLoft { .. }
             | FeatureKind::Import { .. }
             | FeatureKind::MeshImport { .. }
             | FeatureKind::BodyTransfer { .. } => {}
@@ -466,7 +480,7 @@ impl Document {
     /// in (feature inputs are stored in mm otherwise). Anything else is returned unchanged.
     pub fn with_design_unit(&self, e: &str, kind: Kind) -> String {
         let u = self.units.trim();
-        let bare = expr::is_literal(e) && e.trim().trim_start_matches(['-', '+']).trim().parse::<f64>().is_ok();
+        let bare = expr::is_bare_number(e);
         if kind == Kind::Length && bare && !u.is_empty() && u != "mm" && expr::unit_info(u).is_some_and(|(k, _)| k == Kind::Length) {
             format!("{} {u}", e.trim())
         } else {

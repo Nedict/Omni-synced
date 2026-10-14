@@ -327,3 +327,61 @@ fn rolling_ball_past_the_end_seam_is_too_large_and_reduces() {
     }
     assert!(worst < 1e-3, "blend surface is {worst} mm off the analytic round at r {r}");
 }
+
+#[test]
+fn a_refused_edge_is_not_rolled_again_after_blends_far_from_it() {
+    // The crossing cylinders' seam refuses a round of 3 (too large). A bar joined to them has
+    // two straight edges at its far end that round on their own. Each blend there leaves the
+    // seam's surroundings as they were, so the seam is tried once, not once per blend, and the
+    // refusal is the same.
+    let (r1, r2, d, h) = (17.0, 9.5, 12.0, 10.0);
+    let body = boolean(&cylinder(Vec3::ZERO, Vec3::Z, r1, h).unwrap(), &cylinder(Vec3::new(d, 0.0, 0.0), Vec3::Z, r2, h).unwrap(), BoolOp::Union)
+        .unwrap()
+        .unwrap();
+    let bar = crate::box_solid(Vec3::new(-80.0, -5.0, 0.0), Vec3::new(-10.0, 5.0, h)).unwrap();
+    let body = boolean(&body, &bar, BoolOp::Union).unwrap().unwrap();
+    let along = (r1 * r1 - r2 * r2 + d * d) / (2.0 * d);
+    let seam = Vec3::new(along, (r1 * r1 - along * along).sqrt(), h / 2.0);
+    let ends = [Vec3::new(-80.0, -5.0, h / 2.0), Vec3::new(-80.0, 5.0, h / 2.0)];
+    crate::blend::ROLLS.with(|n| n.set(0));
+    let e = fillet(&body, &[seam, ends[0], ends[1]], 3.0).unwrap_err();
+    assert!(matches!(e, KernelError::TooLarge(_)), "{e}");
+    let rolls = crate::blend::ROLLS.with(|n| n.get());
+    assert_eq!(rolls, 1, "the seam was rolled {rolls} times");
+    // The far edges alone still round.
+    assert!(fillet(&body, &ends, 3.0).is_ok());
+}
+
+/// #896: the seams where rounds run into the faces beside them are picked to be rounded again.
+/// The faces meet tangentially there, so there is nothing to round: the refusal says so, rather
+/// than that blending such an edge isn't supported yet.
+#[test]
+fn a_smooth_seam_is_refused_as_having_no_corner() {
+    let b = crate::box_solid(Vec3::ZERO, Vec3::new(150.0, 200.0, 70.0)).unwrap();
+    let mut edges = Vec::new();
+    for (x, y) in [(0.0, 0.0), (150.0, 0.0), (0.0, 200.0), (150.0, 200.0)] {
+        edges.push(Vec3::new(x, y, 35.0));
+    }
+    for (a, z) in [(0.0, 0.0), (150.0, 0.0), (0.0, 70.0), (150.0, 70.0)] {
+        edges.push(Vec3::new(a, 100.0, z));
+    }
+    for (y, z) in [(0.0, 0.0), (200.0, 0.0), (0.0, 70.0), (200.0, 70.0)] {
+        edges.push(Vec3::new(75.0, y, z));
+    }
+    let rounded = fillet(&b, &edges, 10.0).unwrap();
+    // The seam on the top face beside the round of the edge along y at x = 0, and the seam
+    // with the end face x = 0 beside the round of the top edge along y.
+    for seam in [Vec3::new(10.0, 100.0, 70.0), Vec3::new(0.0, 100.0, 60.0)] {
+        for chamfer in [false, true] {
+            let r = if chamfer { crate::chamfer(&rounded, &[seam], 1.0) } else { fillet(&rounded, &[seam], 1.0) };
+            match r {
+                Err(KernelError::Invalid(m)) => assert!(m.contains("smooth") && m.contains("no corner"), "{m}"),
+                other => panic!("{seam:?}: {:?}", other.map(|_| "a body")),
+            }
+        }
+    }
+    // A sharp edge of a box with one round still takes a fillet beside the round's seams.
+    let one = fillet(&crate::box_solid(Vec3::ZERO, Vec3::new(40.0, 30.0, 20.0)).unwrap(), &[Vec3::new(40.0, 30.0, 10.0)], 5.0).unwrap();
+    assert!(fillet(&one, &[Vec3::new(20.0, 0.0, 20.0)], 1.0).is_ok());
+    assert!(matches!(fillet(&one, &[Vec3::new(35.0, 30.0, 10.0)], 1.0), Err(KernelError::Invalid(_))));
+}

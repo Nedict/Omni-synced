@@ -5,6 +5,35 @@ use serde_json::{Value, json};
 
 use crate::Session;
 
+/// Runs in PR CI as well as the heavier fixed-seed suite. Two pattern copies are
+/// disconnected, and one cylinder overlaps the block by half its volume.
+#[test]
+fn partial_face_contact_pattern_has_analytic_material() {
+    // Repeated construction exposes re-imprinting a cylinder through both of its
+    // side faces, which can create a redundant arc along the first imprint.
+    for _ in 0..8 {
+        check_partial_face_contact_pattern();
+    }
+}
+
+fn check_partial_face_contact_pattern() {
+    let s = replay(include_str!("../../../examples/regressions/partial_face_contact_pattern.json"));
+    let (mut volume, mut area, mut shells) = (0.0, 0.0, 0);
+    for b in &s.model.state().bodies {
+        assert!(b.body.validity().is_empty(), "{:?}", b.body.validity());
+        let m = b.body.tessellate(1e-5).unwrap().measure();
+        volume += m.volume;
+        area += m.area;
+        shells += b.body.shell_count();
+    }
+    let expected_volume = 25.0 * 47.5 * 37.5 + 3.5 * std::f64::consts::PI * 25.0 * 2.5;
+    let expected_area = 2.0 * (25.0 * 47.5 + 25.0 * 37.5 + 47.5 * 37.5) + 237.5 * std::f64::consts::PI - 25.0;
+    assert!((volume - expected_volume).abs() < 0.02, "{volume} expected {expected_volume}");
+    assert!((area - expected_area).abs() < 0.02, "{area} expected {expected_area}");
+    assert_eq!(shells, 3);
+    println!("#674 volume {volume:.6} / {expected_volume:.6} mm³; area {area:.6} / {expected_area:.6} mm²; {shells} shells");
+}
+
 fn replay(script: &str) -> Session {
     let mut s = Session::default();
     let script: Value = serde_json::from_str(script).unwrap();
@@ -152,4 +181,54 @@ fn ribs_flush_with_a_window_change_nothing_away_from_them() {
     }
     let bounds = s.model.state().body("Lid").unwrap().body.tessellate(0.01).unwrap().bounds();
     assert!((bounds.max.z - 14.1).abs() < 1e-9, "{}", bounds.max.z);
+}
+
+/// #679: one sketch of a 2 × 2 grid of 10 mm squares; three cells extruded up 10 mm (XO/XX) and
+/// three down 10 mm, joined (XX/OX). The two L's meet back to back over two whole cells, along
+/// an edge and at the centre: one solid of 6 cells × 10 mm × 100 mm².
+#[test]
+fn ls_extruded_up_and_down_from_one_grid_join() {
+    let mut s = Session::default();
+    let run = |s: &mut Session, id: &str, p: Value| s.execute(id, &p).unwrap_or_else(|e| panic!("{id}: {e}"));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Grid"}));
+    for (p0, p1) in [([-10, -10], [0, 0]), ([0, -10], [10, 0]), ([-10, 0], [0, 10]), ([0, 0], [10, 10])] {
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": p0, "p1": p1}));
+    }
+    run(&mut s, "sketch.finish", json!({}));
+    let cells = |pts: &[[f64; 2]]| Value::Array(pts.iter().map(|p| json!({"point": p})).collect());
+    run(
+        &mut s,
+        "solid.extrude",
+        json!({"sketch": "Grid", "profiles": cells(&[[-5., 5.], [-5., -5.], [5., -5.]]), "distance": 10, "body_name": "Logo"}),
+    );
+    let reply = run(
+        &mut s,
+        "solid.extrude",
+        json!({"sketch": "Grid", "profiles": cells(&[[-5., 5.], [5., 5.], [5., -5.]]), "distance": "10 mm", "direction": "negative", "operation": "join"}),
+    );
+    assert!(reply["warning"].as_str().is_none_or(|w| !w.contains("tool displacement")), "{reply}");
+    let st = s.model.state();
+    assert_eq!(st.bodies.len(), 1);
+    let body = &st.body("Logo").unwrap().body;
+    assert_eq!(body.shell_count(), 1);
+    assert!(body.validity().is_empty(), "{:?}", body.validity());
+    let v = volume(&s, "Logo");
+    assert!((v - 6000.0).abs() < 1e-6, "{v}");
+}
+
+/// Press/pull on the sensor enclosure's lid top: joining the pulled face's prism imprints the
+/// contact (#825), and boxing the lid's faces by dividing their curved edges down to the
+/// contact tolerance ran away (over 24 GB and many minutes). It finishes in seconds.
+#[test]
+fn press_pull_on_the_enclosure_lid_is_prompt() {
+    let mut s = Session::default();
+    let script: Value = serde_json::from_str(include_str!("../../../examples/acceptance/sensor_enclosure.json")).unwrap();
+    s.run_script(&script).unwrap();
+    let total = |s: &Session| -> f64 { s.model.state().bodies.iter().map(|b| solidcraft_kernel::measure(&b.body).unwrap().volume).sum() };
+    let before = total(&s);
+    let t = std::time::Instant::now();
+    s.execute("solid.press_pull", &json!({"face": [-12.0, 27.4, 23.0], "distance": 5.0})).unwrap();
+    // A few seconds here; the bound leaves room for a loaded CI runner.
+    assert!(t.elapsed().as_secs() < 60, "took {:?}", t.elapsed());
+    assert!(total(&s) > before, "{before} -> {}", total(&s));
 }

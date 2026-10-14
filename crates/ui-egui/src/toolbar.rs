@@ -21,6 +21,28 @@ fn panel_accent(t: Tokens, tab: &str, panel: &str) -> Color32 {
     }
 }
 
+/// The accent stroke colour a command's icon keeps on every surface that draws it, where the
+/// command's own meaning fixes it. Construction geometry carries one fixed meaning across the
+/// whole app. `sketch.construction` and `sketch.centerline` therefore draw their icon in the
+/// theme's construction orange on the ribbon, in a panel's drop-down and under the pointer while
+/// being dragged. The Sketch Palette's own line type buttons pass that same orange. `icons::paint`
+/// draws both of these icon names in the accent its caller hands it, never in a colour of its own.
+/// The caller is the only place the rule can live. Every other command has no fixed colour. It
+/// keeps the accent of whichever surface draws it.
+fn fixed_accent(t: Tokens, id: &str) -> Option<Color32> {
+    match id {
+        "sketch.construction" | "sketch.centerline" => Some(t.construction_geom),
+        _ => None,
+    }
+}
+
+/// The accent stroke colour for one command's icon on the ribbon. It covers the command's own
+/// button and a collapsed panel's single button. A command with a `fixed_accent` keeps that.
+/// Every other command takes its `panel_accent`.
+fn command_accent(t: Tokens, tab: &str, panel: &str, id: &str) -> Color32 {
+    fixed_accent(t, id).unwrap_or_else(|| panel_accent(t, tab, panel))
+}
+
 /// Panels shown on each tab (in order). Commands come from the registry by (tab, panel).
 pub fn panels(tab: &str) -> &'static [&'static str] {
     if let Some(p) = crate::workspace::panels(tab) {
@@ -289,7 +311,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 t.app_bar_text,
             );
         }
-        if response.on_hover_text("Report a bug — review a screenshot and open a GitHub draft").clicked() {
+        if response.on_hover_text(crate::i18n::tr_label("Report a bug — review a screenshot and open a GitHub draft")).clicked() {
             crate::help::run(app, &ui.ctx().clone(), "report");
         }
         // Preferences, at the top right like Fusion's profile menu (also Ctrl+,).
@@ -406,8 +428,16 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     export(app, "3mf");
                     close = true;
                 }
+                if item_if(ui, "Export 3MF with Face Tags…", "", shown) {
+                    export_as(app, "3mf", Some("3mf-tagged"));
+                    close = true;
+                }
                 if item_if(ui, "Export OBJ…", "", shown) {
                     export(app, "obj");
+                    close = true;
+                }
+                if item_if(ui, "Export URDF…", "", shown) {
+                    export(app, "urdf");
                     close = true;
                 }
                 if item(ui, "Export Design as JSON…", "") {
@@ -466,10 +496,18 @@ fn save_as_with_extension(app: &mut SolveApp, extension: &str) {
 }
 
 fn export(app: &mut SolveApp, ext: &str) {
+    export_as(app, ext, None);
+}
+
+/// Export to a file with extension `ext`, in `format` when the extension alone doesn't name it.
+fn export_as(app: &mut SolveApp, ext: &str, format: Option<&str>) {
     let name = format!("{}.{ext}", app.session.doc.name);
-    if let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name, &[ext]))
-        && app.run("file.export", json!({"path": p})).is_ok()
-    {
+    let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name, &[ext])) else { return };
+    let params = match format {
+        Some(f) => json!({"path": p, "format": f}),
+        None => json!({"path": p}),
+    };
+    if app.run("file.export", params).is_ok() {
         app.set_status(format!("Exported {p}"), false);
     }
 }
@@ -585,7 +623,9 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             let sketch_create = tab == "SKETCH" && *panel == "CREATE";
             let stride = if sketch_create { 68.0 } else { 40.0 };
             let enabled_panel = !cmds.is_empty() || *panel == "SELECT";
-            let popup_id = ui.id().with(("panel_menu", panel));
+            // Per tab: panels of the same name on other tabs (MODIFY, CREATE…) list other commands,
+            // and the drop-down's area remembers its size by this id (#874).
+            let popup_id = ui.id().with(("panel_menu", &tab, panel));
             // Dropped on the panel's free space (all of a collapsed panel): the button goes to
             // its end.
             let drawn = if collapsed { 0 } else { shown.len() };
@@ -605,7 +645,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                     painter.rect_filled(br, 4.0, t.hover);
                 }
                 if let Some(c) = shown.first().or(cmds.first()) {
-                    let acc = panel_accent(t, &tab, panel);
+                    let acc = command_accent(t, &tab, panel, c.id);
                     icons::paint(&painter, Rect::from_center_size(br.center() - vec2(0.0, 3.0), vec2(26.0, 26.0)), c.icon, t.icon, t.icon_fill, acc);
                 }
                 caret(&painter, pos2(br.center().x, br.bottom() - 3.0), t.text_dim);
@@ -655,8 +695,11 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 } else if resp.hovered() && info.enabled {
                     painter.rect_filled(br, 4.0, t.hover);
                 }
-                let (ink, fill, acc) =
-                    if info.enabled { (t.icon, t.icon_fill, panel_accent(t, &tab, panel)) } else { (t.border, t.panel_header, t.border) };
+                let (ink, fill, acc) = if info.enabled {
+                    (t.icon, t.icon_fill, command_accent(t, &tab, panel, selected.id))
+                } else {
+                    (t.border, t.panel_header, t.border)
+                };
                 let icon = match selected.id {
                     "sketch.finish" => "finish",
                     "config.table" => "configuration_table",
@@ -765,7 +808,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                         if *panel == "SELECT" {
                             selection_filter(app, ui);
                         } else if cmds.is_empty() {
-                            ui.label(egui::RichText::new("Not available yet").color(t.text_dim));
+                            ui.label(egui::RichText::new(crate::i18n::tr_label("Not available yet")).color(t.text_dim));
                         }
                         if sketch_create {
                             sketch_create_menu(app, ui, &cmds, &mut menu, &mut toggle);
@@ -794,8 +837,10 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                             }
                         }
                         // The rows scroll when the drop-down would run past the window's bottom.
+                        // `min_scrolled_height` lets the rows grow past the size the area kept from
+                        // an earlier, shorter list (#874); they still shrink to fit their content.
                         let room = (ui.ctx().content_rect().bottom() - ui.cursor().top() - 12.0).max(ROW_H * 3.0);
-                        egui::ScrollArea::vertical().id_salt("panel_menu_rows").max_height(room).show(ui, |ui| {
+                        egui::ScrollArea::vertical().id_salt("panel_menu_rows").max_height(room).min_scrolled_height(room).show(ui, |ui| {
                             for c in &cmds {
                                 let pinned = crate::toolbar_custom::pinned_on(app, &tab, c.id).is_some();
                                 match dropdown_row(app, ui, c, row_w, pinned) {
@@ -849,7 +894,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                 });
                 crate::scenario::publish_handle("toolbar:overflow", response.response.rect.center());
-                response.response.on_hover_text("More toolbar panels");
+                response.response.on_hover_text(crate::i18n::tr_label("More toolbar panels"));
             });
         }
         painter.line_segment([pos2(r.left(), r.bottom() - 0.5), pos2(r.right(), r.bottom() - 0.5)], Stroke::new(1.0, t.border));
@@ -941,10 +986,11 @@ fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solidcraft_engine
         p.rect_filled(rect, 3.0, t.hover);
         crate::scenario::publish_handle(&format!("dropdown_hot:{}", c.id), rect.center());
     }
-    // Every other row keeps the plain accent it always has; only a constraint command's row
-    // switches to the constraint red, to match its button on the ribbon.
+    // Every other row keeps the plain accent it always has. A constraint command's row switches
+    // to the constraint red, to match its button on the ribbon. A command with a `fixed_accent`
+    // keeps that colour ahead of either.
     let (ink, fill, acc, text) = if info.enabled {
-        let acc = if c.panel == "CONSTRAINTS" { t.glyph_text } else { t.accent };
+        let acc = fixed_accent(t, c.id).unwrap_or(if c.panel == "CONSTRAINTS" { t.glyph_text } else { t.accent });
         (t.icon, t.icon_fill, acc, t.text)
     } else {
         (t.border, t.panel_header, t.border, t.text_dim)
@@ -1078,7 +1124,7 @@ fn drag_ghost(ctx: &egui::Context, id: &str, at: egui::Pos2, removing: bool) {
     let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("sc_toolbar_drag")));
     let r = Rect::from_center_size(at + vec2(14.0, 16.0), vec2(30.0, 30.0));
     p.rect(r, 4.0, t.toolbar.gamma_multiply(0.92), Stroke::new(1.0, if removing { t.error } else { t.accent }), egui::StrokeKind::Inside);
-    icons::paint(&p, r.shrink(5.0), c.icon, t.icon, t.icon_fill, t.accent);
+    icons::paint(&p, r.shrink(5.0), c.icon, t.icon, t.icon_fill, fixed_accent(t, c.id).unwrap_or(t.accent));
     if removing {
         let s = Stroke::new(2.0, t.error);
         let x = Rect::from_center_size(r.right_top(), vec2(9.0, 9.0));
@@ -1110,8 +1156,8 @@ fn pin_icon(p: &egui::Painter, r: Rect, on: bool, col: Color32) {
 /// The SELECT panel: what a click in the view picks.
 fn selection_filter(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
-    ui.label(egui::RichText::new("Selection filter").color(t.text_dim).size(11.0));
-    ui.checkbox(&mut app.ui.pick_bodies, "Select bodies (a face picks its body)");
+    ui.label(egui::RichText::new(crate::i18n::tr_label("Selection filter")).color(t.text_dim).size(11.0));
+    ui.checkbox(&mut app.ui.pick_bodies, crate::i18n::tr_label("Select bodies (a face picks its body)"));
     for (k, label) in [
         ("faces", "Faces"),
         ("edges", "Edges"),
@@ -1123,7 +1169,7 @@ fn selection_filter(app: &mut SolveApp, ui: &mut egui::Ui) {
         ("constraints", "Sketch constraints"),
     ] {
         let mut on = !app.ui.pick_off.iter().any(|x| x == k);
-        if ui.checkbox(&mut on, label).changed() {
+        if ui.checkbox(&mut on, crate::i18n::tr_label(label)).changed() {
             app.ui.pick_off.retain(|x| x != k);
             if !on {
                 app.ui.pick_off.push(k.to_string());
@@ -1173,11 +1219,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                 Key::Z => drop(app.run("edit.undo", json!({}))),
                 Key::Y => drop(app.run("edit.redo", json!({}))),
                 Key::S => save(app),
-                _ => {
-                    if let Some(id) = crate::keymap::command_for(app, &crate::keymap::key_name(k, mods)) {
-                        app.start(id);
-                    }
-                }
+                _ => crate::keymap::press(app, &crate::keymap::key_name(k, mods)),
             }
             continue;
         }
@@ -1187,6 +1229,9 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
         match k {
             Key::Escape => {
                 app.esc_handled = true;
+                if crate::sketch_text_move::cancel_drag(app) {
+                    continue;
+                }
                 if crate::select_other::is_open(app) {
                     crate::select_other::close(app);
                 } else if app.tool.is_some() {
@@ -1210,12 +1255,12 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                 crate::context_menu::rename_selection(app, at);
             }
             Key::F6 => app.animate_view("fit"),
-            Key::Delete | Key::Backspace => crate::viewport::delete_selection(app),
-            _ => {
-                if let Some(id) = crate::keymap::command_for(app, &crate::keymap::key_name(k, mods)) {
-                    app.start(id);
+            Key::Delete | Key::Backspace => {
+                if !crate::timeline_left::delete_selected_folders(app) {
+                    crate::viewport::delete_selection(app);
                 }
             }
+            _ => crate::keymap::press(app, &crate::keymap::key_name(k, mods)),
         }
     }
 }
@@ -1411,7 +1456,8 @@ mod home_tests {
             let name = if cmd { format!("Ctrl+{key}") } else { key.to_string() };
             actions.push((name, Box::new(move |h| drop(h.call("ui.key", json!({"key": key, "cmd": cmd}))))));
         }
-        for item in ["Insert STEP…", "Insert Mesh…", "Save", "Save As…", "Export STL…", "Export STEP…", "Export 3MF…", "Export OBJ…"] {
+        for item in ["Insert STEP…", "Insert Mesh…", "Save", "Save As…", "Export STL…", "Export STEP…", "Export 3MF…", "Export OBJ…", "Export URDF…"]
+        {
             actions.push((
                 format!("File › {item}"),
                 Box::new(move |h| {
@@ -1446,6 +1492,22 @@ mod home_tests {
         h.call("ui.click", json!({"x": at.x, "y": at.y}));
         h.settle();
         assert!(h.app.session.path.is_some() && !h.app.session.is_dirty(), "the design saves once Home is closed");
+    }
+
+    /// File › Export URDF… writes the robot description and its meshes next to the picked file.
+    #[test]
+    fn file_menu_exports_a_urdf() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10})).unwrap();
+        h.frames(2);
+        h.ctx.data_mut(|d| d.insert_temp(egui::Id::new("sc_file_menu"), false));
+        let at = crate::scenario::handle_at("appbar:folder").unwrap();
+        h.call("ui.click", json!({"x": at.x, "y": at.y}));
+        let _ = h.step(&json!({"widget": "Export URDF…"}));
+        h.settle();
+        let files: Vec<String> = std::fs::read_dir(&h.dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert!(files.iter().any(|f| f.ends_with(".urdf")) && files.iter().any(|f| f.ends_with("-base.stl")), "{files:?}");
     }
 
     /// The disabled buttons' tooltip is translated in every catalog (not English fallback).
@@ -1485,6 +1547,33 @@ mod dropdown_tests {
         let [(_, at)] = hot.as_slice() else { panic!("one highlighted row: {hot:?}") };
         let menu = crate::scenario::rect_of("toolbar_dropdown").unwrap();
         assert!(menu.contains(*at), "the focused last row is out of view: {at:?} in {menu:?}");
+    }
+
+    /// Every row of a drop-down is shown when the window has room, even after a shorter list was
+    /// shown first: another tab's panel of the same name, or the same panel collapsed (#874).
+    #[test]
+    fn a_drop_down_shows_all_its_rows_after_a_shorter_one() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.call("ui.resize", json!({"width":1600,"height":1000}));
+        let open = |h: &mut crate::scenario::Harness, tab: &str| {
+            h.app.ui.tab = tab.into();
+            h.frames(4);
+            h.step(&json!({"click":{"handle":format!("panel:{tab}:MODIFY")}})).unwrap();
+            h.frames(6);
+            let menu = crate::scenario::rect_of("toolbar_dropdown").expect("the drop-down is open");
+            let rows = crate::scenario::handles("dropdown:");
+            h.step(&json!({"key":"Escape"})).unwrap();
+            h.frames(4);
+            (menu, rows)
+        };
+        let (short, short_rows) = open(&mut h, "MESH");
+        let (menu, rows) = open(&mut h, "PLASTIC");
+        assert!(rows.len() > short_rows.len(), "PLASTIC MODIFY lists more than MESH MODIFY: {rows:?} vs {short_rows:?}");
+        assert!(menu.height() > short.height(), "the longer list is taller: {menu:?} vs {short:?}");
+        for (id, at) in &rows {
+            assert!(menu.contains(*at), "{id} at {at:?} is cut off by the drop-down {menu:?}");
+        }
     }
 }
 
@@ -1526,5 +1615,68 @@ mod panel_drop_tests {
         h.step(&json!({"expect":{"handle_order":["button:solid.fillet","button:solid.chamfer","button:solid.scale","button:solid.extrude"],"tool":null,"dialog":null,"errors":0}})).unwrap();
         h.step(&json!({"restart":"close"})).unwrap();
         h.step(&json!({"expect":{"handle_order":["button:solid.scale","button:solid.extrude"]}})).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod icon_accent_tests {
+    use super::*;
+
+    /// `icons.rs` pins one half of the construction icon contract. `construction` and
+    /// `centerline` take their colour from whatever accent their caller hands over. That half
+    /// stays green when the caller hands over the wrong colour. That is exactly what the toolbar
+    /// did. This pins the other half: the colour the toolbar actually passes for those two
+    /// commands, on every surface the toolbar draws them on.
+    #[test]
+    fn the_toolbar_passes_construction_orange_for_both_line_type_commands() {
+        for t in [Tokens::light(), Tokens::dark()] {
+            // The regression itself: the SKETCH tab's accent is green. These two icons drew in
+            // it. Construction orange has to be a colour no panel accent can supply.
+            assert_ne!(t.construction_geom, t.sketch_accent, "construction orange must differ from the sketch accent");
+            assert_ne!(t.construction_geom, t.accent, "construction orange must differ from the plain accent");
+            assert_ne!(t.construction_geom, t.glyph_text, "construction orange must differ from the constraint red");
+            for id in ["sketch.construction", "sketch.centerline"] {
+                assert_eq!(fixed_accent(t, id), Some(t.construction_geom), "{id} must have a fixed accent");
+                // Its ribbon button, a collapsed panel's single button, and a drop-down row.
+                assert_eq!(command_accent(t, "SKETCH", "CREATE", id), t.construction_geom, "{id} on the SKETCH ribbon");
+                assert_eq!(command_accent(t, "SOLID", "CREATE", id), t.construction_geom, "{id} on the SOLID ribbon");
+                assert_eq!(fixed_accent(t, id).unwrap_or(t.accent), t.construction_geom, "{id} in a drop-down row");
+            }
+        }
+    }
+
+    /// Those two and no others. Every other command's icon keeps the accent of the panel it sits
+    /// on, so the constraint red and the sketch green both survive the exception above.
+    #[test]
+    fn no_other_command_overrides_the_accent_of_its_own_panel() {
+        let t = Tokens::light();
+        let specs = solidcraft_engine::command_specs();
+        let mut fixed: Vec<&str> = specs.iter().map(|c| c.id).filter(|id| fixed_accent(t, id).is_some()).collect();
+        fixed.sort_unstable();
+        assert_eq!(fixed, ["sketch.centerline", "sketch.construction"], "only the two line type commands fix their own accent");
+        for c in &specs {
+            if fixed.contains(&c.id) {
+                continue;
+            }
+            let want = panel_accent(t, c.tab, c.panel);
+            assert_eq!(command_accent(t, c.tab, c.panel, c.id), want, "{} must keep the accent of its own panel", c.id);
+        }
+        // The fix did not flatten every icon to one colour. A sketch tool is still green, a
+        // constraint still red, a solid tool still blue. A missing id fails this as well.
+        let accent_of = |id: &str| solidcraft_engine::find_command(id).map(|c| command_accent(t, c.tab, c.panel, c.id));
+        assert_eq!(accent_of("sketch.text"), Some(t.sketch_accent));
+        assert_eq!(accent_of("sketch.constraint.polygon"), Some(t.glyph_text));
+        assert_eq!(accent_of("solid.extrude"), Some(t.accent));
+    }
+
+    /// Both line type commands sit on the SKETCH tab's CREATE panel. The accent above is
+    /// therefore a colour a person can actually see. Their icons are the two `icons.rs` draws
+    /// from the caller's accent.
+    #[test]
+    fn both_line_type_commands_are_create_panel_commands_with_their_own_icons() {
+        for (id, icon) in [("sketch.construction", "construction"), ("sketch.centerline", "centerline")] {
+            let seen = solidcraft_engine::find_command(id).map(|c| (c.tab, c.panel, c.icon));
+            assert_eq!(seen, Some(("SKETCH", "CREATE", icon)), "{id} must be on the SKETCH CREATE panel");
+        }
     }
 }
