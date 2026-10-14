@@ -1970,6 +1970,24 @@ pub fn edge_names_for(st: &ModelState, body: &Option<String>, pts: &[Vec3]) -> V
     }
 }
 
+/// The stored pick sits on the axis of a round, not on an edge. The nearest edge within a
+/// quarter of the body is that round's tangency seam, which is a different edge (#775).
+fn pick_lies_on_a_round_axis(body: &Body, p: Vec3) -> bool {
+    let Some(cyl) = kernel::cylinder_face_at(body, p) else { return false };
+    let Some(axis) = cyl.axis.normalized() else { return false };
+    let radial = p - cyl.axis_point;
+    let dist = (radial - axis * radial.dot(axis)).len();
+    if !(cyl.radius > 1e-6 && dist < cyl.radius * 0.35) {
+        return false;
+    }
+    let tight = (body.size() * 2e-3).max(1e-3);
+    // A pick on the wall itself is the seam. Only an axial pick is the vanished corner.
+    match body.nearest_edge(p, cyl.radius * 2.0) {
+        Ok(Some((_, d))) => d > tight,
+        _ => true,
+    }
+}
+
 /// Edge reference points re-found on the body: points on an edge stay; a point that moved off
 /// (an upstream edit) is carried with the body (its place in the body's bounding box then and
 /// now) to an edge running the same way; failing that it goes to the nearest edge with a
@@ -4245,23 +4263,28 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                         Some((_, Err(_))) | None => {
                             let mut w = None;
                             let refs: Vec<EdgeRef> = f.edge_refs.get(i).cloned().into_iter().collect();
-                            if let Ok(q) = resolve_edges(&mb.body, &[*p], &refs, &mut w) {
+                            let skipped =
+                                format!("edge `{}` no longer exists and was skipped", f.edge_names.get(i).map(String::as_str).unwrap_or("?"));
+                            // The name is gone. A pick on the axis of a round must not fall
+                            // through to the tangency seam (#775). A sharp edge that moved
+                            // still resolves from the point, which an edit relies on.
+                            if pick_lies_on_a_round_axis(&mb.body, *p) {
+                                notes.push(skipped);
+                            } else if let Ok(q) = resolve_edges(&mb.body, &[*p], &refs, &mut w) {
                                 out.extend(q);
                                 notes.push(match f.edge_names.get(i) {
                                     Some(n) if !n.is_empty() => format!("edge `{n}` no longer exists; using the edge at the picked point"),
                                     _ => "an edge reference without a name was found by its point".into(),
                                 });
                             } else {
-                                notes.push(format!(
-                                    "edge `{}` no longer exists and was skipped",
-                                    f.edge_names.get(i).map(String::as_str).unwrap_or("?")
-                                ));
+                                notes.push(skipped);
                             }
                         }
                     }
                 }
                 if out.is_empty() {
-                    return Err(DocError::Invalid("none of the selected edges exist any more".into()));
+                    let why = if notes.is_empty() { String::new() } else { format!(" ({})", notes.join("; ")) };
+                    return Err(DocError::Invalid(format!("none of the selected edges exist any more{why}")));
                 }
                 if !notes.is_empty() {
                     *warning = Some(notes.join("; "));
