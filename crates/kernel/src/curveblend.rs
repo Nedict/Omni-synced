@@ -1703,9 +1703,12 @@ fn curve_blend_sized(solid: &Solid, ids: &[mt::EdgeID], size: f64, size_law: Siz
             for j in 0..samples - 1 {
                 for fraction in [0.25, 0.5, 0.75] {
                     let along = (j as f64 + fraction) / (samples - 1) as f64;
-                    // The run past the chain's ends is cut away: it need only give the fit its
-                    // context, not follow the law's sections to the fit's own tolerance.
-                    if fits.get(k).and_then(Option::as_ref).is_some_and(|f| along < f.span.0 || along > f.span.1) {
+                    // A size that varies along the edge reaches past its ends only for the fit's
+                    // context (the end face cuts that away), so it is not held to the tolerance
+                    // there. One radius keeps the check it always had, the whole strip.
+                    if !matches!(size_law, Size::Constant(_))
+                        && fits.get(k).and_then(Option::as_ref).is_some_and(|f| along < f.span.0 || along > f.span.1)
+                    {
                         continue;
                     }
                     let section = uniform_section(k, along)?;
