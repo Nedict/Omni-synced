@@ -19,6 +19,7 @@ mod document;
 mod eval;
 pub mod expr;
 pub mod face_anchor;
+mod feature_refs;
 pub use face_anchor::{FaceAnchor, FaceAttachmentStatus};
 pub mod format;
 mod format_offsets;
