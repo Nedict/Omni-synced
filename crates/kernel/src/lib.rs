@@ -59,6 +59,9 @@ mod par;
 pub use par::{for_each_on_threads, map_on_threads};
 #[cfg(test)]
 mod pinch_tests;
+mod planar_faces;
+#[cfg(test)]
+mod planar_faces_tests;
 mod plane_fit;
 mod polybool;
 mod polyhedron;
@@ -75,6 +78,7 @@ mod step;
 mod step_in;
 mod step_out;
 mod surface_kind;
+mod surface_offset;
 mod surfaces;
 mod sweep_path;
 mod tess;
@@ -113,8 +117,10 @@ pub use step::step_export;
 pub use step_in::{ImportedBody, StepImport, StepNode, step_import, step_import_shared, step_orientation_errors, step_validate};
 pub use step_out::{ExportBody, ExportProduct, StepHeader, step_export_bodies, step_export_products};
 pub use surface_kind::{FaceSurface, face_surface};
+pub use surface_offset::offset_surface;
 pub use surfaces::{
-    copy_faces, extend, extrude_sheet, patch_edges, patch_region, remove_faces, reverse_faces, revolve_sheet, stitch, thicken, trim, unstitch,
+    copy_faces, extend, extrude_sheet, loft_sheet, patch_edges, patch_region, remove_faces, reverse_faces, revolve_sheet, stitch, sweep_sheet,
+    sweep_sheet_points, thicken, trim, unstitch,
 };
 pub use sweep_path::sweep_path;
 pub use topo::{CylinderFace, cylinder_face_at};

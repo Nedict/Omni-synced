@@ -72,13 +72,14 @@ entirely on existing operating system fonts or craft-fonts.
 
 In the browser, `solidcraft-web` bundles a self-hosted Japanese font (`BIZUDPGothic-Regular.ttf`, licensed
 under SIL OFL 1.1) within the web distribution artifacts only. The font is loaded asynchronously from the same
-origin (`./fonts/BIZUDPGothic-Regular.ttf`) on-demand when the interface language is a CJK one, without
-contacting any external CDNs or third-party servers. For users with an English interface, no font download
-occurs. If font loading fails, the web interface shows English for that session only to prevent missing
-glyphs (tofu); the saved language preference is kept, so the next visit tries again. The bundled font
-specifically targets Japanese; it also renders the kanji Chinese shares with Japanese, while Korean
-(Hangul) and simplified-only Chinese characters are not covered, so a self-hosted SC/Korean font bundle
-remains follow-up work for full web coverage.
+origin (`./fonts/BIZUDPGothic-Regular.ttf`) on-demand when the interface language is a CJK one, or, with
+any other interface language, the first time Japanese text (kana, kanji or full-width forms in a design name,
+file name, body name or typed text) is drawn, without contacting any external CDNs or third-party servers.
+A session that never shows such text downloads no font. If font loading fails with a CJK interface, the web
+interface shows English for that session only to prevent missing glyphs (tofu); the saved language
+preference is kept, so the next visit tries again. The bundled font specifically targets Japanese; it also
+renders the kanji Chinese shares with Japanese, while Korean (Hangul) and simplified-only Chinese characters
+are not covered, so a self-hosted SC/Korean font bundle remains follow-up work for full web coverage.
 
 The current messages support named substitution, not locale-specific plural selection,
 number/date formatting, or right-to-left layout and shaping. Add those capabilities when

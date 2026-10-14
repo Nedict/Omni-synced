@@ -5,7 +5,7 @@ use serde_json::Value;
 use solidcraft_doc::{FaceAt, FeatureKind, PlaneRef, ProfileSel, expr::Kind};
 
 use super::CommandSpec;
-use super::features::{add_feature, axis_param, check_expr, extent_param, feature_sketch, operation, plane_param, profiles};
+use super::features::{add_feature, axis_param, check_expr, extent_param, feature_sketch, operation, plane_param, profiles, sketch_id};
 use crate::params::{bad, bool_, expr, str_, string_list, vec3};
 use crate::{Result, Session};
 
@@ -38,18 +38,18 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SURFACE", "CREATE")
         .icon("surface_revolve")
         .params("sketch?: id|name; curves?: [curve ids] and/or profiles? (as surface.extrude); axis: sketch line id|x|y|X|Y|Z|{origin, dir}; angle?: expr (default 360 deg); angle2?: expr (the other side); symmetric?: bool; name?, body_name? (a surface body, no caps; a solid where a full turn closes it)"),
-    planned!("surface.sweep", "Surface Sweep", "757")
+    CommandSpec::new("surface.sweep", "Surface Sweep", surface_sweep)
         .at("SURFACE", "CREATE")
         .icon("surface_sweep")
-        .params("planned: the parameters of solid.sweep, with an open profile chain as well as a closed one (no caps); caps?: bool"),
-    planned!("surface.loft", "Surface Loft", "757")
+        .params("sketch?: id|name; curves?: [curve ids] and/or profiles? (as surface.extrude); path_sketch: sketch; path: [curve ids in order] (a path with corners, or 3D curves, gives ruled walls mitred at the corners); name?, body_name? (a surface body, no caps)"),
+    CommandSpec::new("surface.loft", "Surface Loft", surface_loft)
         .at("SURFACE", "CREATE")
         .icon("surface_loft")
-        .params("planned: the parameters of solid.loft, with open sections as well as closed ones (no caps); caps?: bool"),
-    planned!("surface.offset", "Offset Surface", "758")
+        .params("sections: [{sketch, curves?: [curve ids], profiles?}] (2…50 in order; each one chain: a profile without holes, or curves meeting end to end; all open or all closed); name?, body_name? (a surface body: ruled between two sections, smooth through three or more; no caps)"),
+    CommandSpec::new("surface.offset", "Offset Surface", offset)
         .at("SURFACE", "CREATE")
         .icon("surface_offset")
-        .params("planned: faces: [{body, point}]; distance: expr (signed, along the normals; 0 copies the faces); chain?: bool (the whole tangent chain of each pick); tolerance?: expr (B-spline fit, default 0.01 mm)"),
+        .params("faces: [[x,y,z]] (points on the faces); body?; distance: expr (signed, along the faces' normals; 0 copies the faces); chain?: bool (each pick's whole smooth chain of faces); tolerance?: expr (how far a fitted face may stray, default 0.01 mm). Planes and cylinders move exactly; other faces are fitted. A new surface body (a solid where its faces close)"),
     planned!("surface.ruled", "Ruled Surface", "762")
         .at("SURFACE", "CREATE")
         .icon("ruled")
@@ -153,6 +153,59 @@ fn surface_revolve(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let symmetric = bool_(p, "symmetric").unwrap_or(false) || str_(p, "direction").is_some_and(|d| d.eq_ignore_ascii_case("symmetric"));
     add_feature(s, p, FeatureKind::SurfaceRevolve { sketch, profiles, curves, axis, angle, angle2, symmetric })
+}
+
+fn surface_sweep(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "surface.sweep";
+    let sketch = feature_sketch(s, p, cmd)?;
+    let (profiles, curves) = sheet_inputs(p, cmd)?;
+    let path_sketch = sketch_id(s, p.get("path_sketch"), cmd, "path_sketch")?;
+    let path = string_list(p, "path");
+    if path.is_empty() || path.len() > 1000 {
+        return Err(bad(cmd, "`path` must list 1…1000 curve ids"));
+    }
+    add_feature(s, p, FeatureKind::SurfaceSweep { sketch, profiles, curves, path_sketch, path })
+}
+
+fn surface_loft(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "surface.loft";
+    let given = p.get("sections").and_then(Value::as_array).ok_or_else(|| bad(cmd, "`sections` must list the sections in order"))?;
+    if !(2..=50).contains(&given.len()) {
+        return Err(bad(cmd, "a loft needs 2…50 sections"));
+    }
+    let mut sections = Vec::with_capacity(given.len());
+    for sec in given {
+        let sketch = sketch_id(s, sec.get("sketch"), cmd, "sections.sketch")?;
+        let curves = string_list(sec, "curves");
+        if curves.len() > 1000 {
+            return Err(bad(cmd, "at most 1000 curves a section"));
+        }
+        let profiles = if sec.get("profiles").is_some() { Some(profiles(sec, cmd)?) } else { None };
+        sections.push(solidcraft_doc::SheetSection { sketch, profiles, curves });
+    }
+    add_feature(s, p, FeatureKind::SurfaceLoft { sections })
+}
+
+fn offset(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "surface.offset";
+    let faces: Vec<solidcraft_geom::Vec3> = p.get("faces").and_then(Value::as_array).map(|a| a.iter().filter_map(vec3).collect()).unwrap_or_default();
+    if faces.is_empty() || faces.len() > 10_000 {
+        return Err(bad(cmd, "`faces` must list points on the faces to offset"));
+    }
+    let distance = expr(p, "distance").ok_or_else(|| bad(cmd, "`distance` is required"))?;
+    check_expr(s, &distance, Kind::Length, cmd, "distance")?;
+    let tolerance = expr(p, "tolerance");
+    if let Some(t) = &tolerance {
+        check_expr(s, t, Kind::Length, cmd, "tolerance")?;
+    }
+    let kind = FeatureKind::SurfaceOffset {
+        faces,
+        body: str_(p, "body").map(str::to_string),
+        distance,
+        chain: bool_(p, "chain").unwrap_or(false),
+        tolerance,
+    };
+    add_feature(s, p, kind)
 }
 
 fn bodies_param(s: &Session, p: &Value, cmd: &str) -> Result<Vec<String>> {
@@ -432,22 +485,165 @@ mod tests {
         assert!(s.execute("surface.revolve", &json!({"sketch": "S", "curves": ["side"], "axis": "y", "angle": "400 deg"})).is_err());
     }
 
+    /// Surface Sweep: a line along y carried up a path in the XZ plane, straight then round a
+    /// quarter turn (every point of it 5 from the arc's axis: 10 × (5 + 5π/2)), or round a
+    /// corner (10 × both legs); a rectangle's walls up the straight leg; undo, redo, reopening.
+    #[test]
+    fn surface_sweep_curves_and_profiles() {
+        use std::f64::consts::FRAC_PI_2;
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [0, 10]], "ids": ["l"]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "sketch.create", json!({"plane": "XZ", "name": "P"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [0, 5]], "ids": ["up"]}));
+        let arc = run(
+            &mut s,
+            "sketch.arc.three_point",
+            json!({"start": [0, 5], "end": [5, 10], "through": [5.0 - 5.0 / 2f64.sqrt(), 5.0 + 5.0 / 2f64.sqrt()]}),
+        )["created"]["curves"][0]
+            .as_str()
+            .unwrap()
+            .to_string();
+        run(&mut s, "sketch.line", json!({"points": [[0, 5], [5, 5]], "ids": ["over"]}));
+        run(&mut s, "sketch.finish", json!({}));
+        let close = |a: f64, want: f64| assert!((a - want).abs() < want * 2e-3, "{a} vs {want}"); // (measured on meshes)
+        run(&mut s, "surface.sweep", json!({"sketch": "S", "curves": ["l"], "path_sketch": "P", "path": ["up", arc], "body_name": "Bend"}));
+        assert!(s.world_state().body("Bend").unwrap().body.is_surface());
+        close(area(&s, "Bend"), 10.0 * (5.0 + 5.0 * FRAC_PI_2));
+        run(&mut s, "surface.sweep", json!({"sketch": "S", "curves": ["l"], "path_sketch": "P", "path": ["up", "over"], "body_name": "Corner"}));
+        close(area(&s, "Corner"), 100.0);
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "R"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-1, -1], "p1": [1, 2]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "surface.sweep", json!({"sketch": "R", "path_sketch": "P", "path": ["up"], "body_name": "Walls"}));
+        let st = s.world_state();
+        assert!(st.body("Walls").unwrap().body.is_surface() && st.body("Walls").unwrap().body.face_count() == 4);
+        close(area(&s, "Walls"), 10.0 * 5.0);
+        run(&mut s, "edit.undo", json!({}));
+        assert!(s.world_state().body("Walls").is_none());
+        run(&mut s, "edit.redo", json!({}));
+        let cold = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        assert!((area(&cold, "Bend") - area(&s, "Bend")).abs() < 1e-9);
+        // Refused: no path, and a path curve that is not there.
+        assert!(s.execute("surface.sweep", &json!({"sketch": "S", "curves": ["l"], "path_sketch": "P"})).is_err());
+        assert!(s.execute("surface.sweep", &json!({"sketch": "S", "curves": ["l"], "path_sketch": "P", "path": ["nope"]})).is_err());
+    }
+
+    /// Surface Loft between sketches 5 apart: two lines give a 10 × 5 strip, two rectangles
+    /// their four walls; undo, redo and reopening; a mix of open and closed sections, one
+    /// section, and a section of two separate curves are refused.
+    #[test]
+    fn surface_loft_open_and_closed_sections() {
+        let mut s = Session::default();
+        run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 5, "name": "Mid"}));
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "A"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [10, 0]], "ids": ["a"]}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 3], [10, 3]], "ids": ["apart"]}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [20, 0], "p1": [30, 6]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "sketch.create", json!({"plane": "Mid", "name": "B"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [10, 0]], "ids": ["b"]}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [20, 0], "p1": [30, 6]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "surface.loft", json!({"sections": [{"sketch": "A", "curves": ["a"]}, {"sketch": "B", "curves": ["b"]}], "body_name": "Strip"}));
+        assert!(s.world_state().body("Strip").unwrap().body.is_surface());
+        assert!((area(&s, "Strip") - 50.0).abs() < 1e-6, "{}", area(&s, "Strip"));
+        run(&mut s, "surface.loft", json!({"sections": [{"sketch": "A", "profiles": [0]}, {"sketch": "B", "profiles": [0]}], "body_name": "Walls"}));
+        let st = s.world_state();
+        let walls = &st.body("Walls").unwrap().body;
+        assert!(walls.is_surface() && walls.face_count() == 4);
+        assert!((area(&s, "Walls") - 160.0).abs() < 1e-6, "{}", area(&s, "Walls"));
+        run(&mut s, "edit.undo", json!({}));
+        assert!(s.world_state().body("Walls").is_none());
+        run(&mut s, "edit.redo", json!({}));
+        let cold = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        assert!((area(&cold, "Walls") - area(&s, "Walls")).abs() < 1e-9);
+        assert!(s.execute("surface.loft", &json!({"sections": [{"sketch": "A", "curves": ["a"]}, {"sketch": "B", "profiles": [0]}]})).is_err());
+        assert!(s.execute("surface.loft", &json!({"sections": [{"sketch": "A", "curves": ["a"]}]})).is_err());
+        assert!(
+            s.execute("surface.loft", &json!({"sections": [{"sketch": "A", "curves": ["a", "apart"]}, {"sketch": "B", "curves": ["b"]}]})).is_err()
+        );
+    }
+
+    /// Each wall of a surface built from sketch curves is named after the curve it comes from,
+    /// exactly (not from geometry): extrude, revolve, sweep and loft.
+    #[test]
+    fn surface_walls_are_named_after_their_curves() {
+        let mut s = Session::default();
+        run(&mut s, "construct.plane.offset", json!({"base": "XY", "offset": 5, "name": "Mid"}));
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
+        run(&mut s, "sketch.line", json!({"points": [[3, 0], [3, 4]], "ids": ["l1"]}));
+        run(&mut s, "sketch.line", json!({"points": [[3, 4], [6, 4]], "ids": ["l2"]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "sketch.create", json!({"plane": "XZ", "name": "P"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [0, 5]], "ids": ["up"]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "sketch.create", json!({"plane": "Mid", "name": "T"}));
+        run(&mut s, "sketch.line", json!({"points": [[3, 0], [3, 4]], "ids": ["m1"]}));
+        run(&mut s, "sketch.line", json!({"points": [[3, 4], [6, 4]], "ids": ["m2"]}));
+        run(&mut s, "sketch.finish", json!({}));
+        let made = [
+            ("surface.extrude", json!({"sketch": "S", "curves": ["l1", "l2"], "distance": 3, "body_name": "E"})),
+            ("surface.revolve", json!({"sketch": "S", "curves": ["l1", "l2"], "axis": "y", "angle": "90 deg", "body_name": "R"})),
+            ("surface.sweep", json!({"sketch": "S", "curves": ["l1", "l2"], "path_sketch": "P", "path": ["up"], "body_name": "W"})),
+            (
+                "surface.loft",
+                json!({"sections": [{"sketch": "S", "curves": ["l1", "l2"]}, {"sketch": "T", "curves": ["m1", "m2"]}], "body_name": "L"}),
+            ),
+        ];
+        for (cmd, p) in made {
+            let body = p["body_name"].as_str().unwrap().to_string();
+            run(&mut s, cmd, p);
+            let fid = s.doc.features.last().unwrap().id;
+            let st = s.model.state();
+            let b = st.body(&body).unwrap();
+            let names = solidcraft_doc::naming::face_names(b);
+            for curve in ["l1", "l2"] {
+                let want = format!("F{fid}:side:{curve}");
+                let i = names.iter().position(|n| n.starts_with(&want)).unwrap_or_else(|| panic!("{cmd}: no face named {want}: {names:?}"));
+                assert!(solidcraft_doc::naming::face_name_exact(b, i), "{cmd}: {want} is named from geometry");
+            }
+        }
+    }
+
+    /// Offset Surface: a cylinder's side picked once with its chain (both halves) moved out to
+    /// radius 12; a box top moved up exactly; a zero distance copies; past the axis refused, the
+    /// design left as it was; undo, redo and reopening.
+    #[test]
+    fn offset_surface_of_a_cylinder_and_a_box_top() {
+        let mut s = Session::default();
+        run(&mut s, "solid.cylinder", json!({"radius": 10, "height": 20, "body_name": "Can"}));
+        run(&mut s, "surface.offset", json!({"faces": [[10, 0, 10]], "chain": true, "distance": 2, "body": "Can", "body_name": "Sleeve"}));
+        let st = s.world_state();
+        let sleeve = &st.body("Sleeve").unwrap().body;
+        assert!(sleeve.is_surface() && sleeve.face_count() == 2);
+        let want = 2.0 * std::f64::consts::PI * 12.0 * 20.0;
+        assert!((area(&s, "Sleeve") - want).abs() < want * 1e-3, "{} vs {want}", area(&s, "Sleeve")); // (measured on meshes)
+        assert!(st.body("Can").is_some(), "the source body stays");
+        run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [30, 0, 0], "body_name": "Box"}));
+        run(&mut s, "surface.offset", json!({"faces": [[35, 5, 10]], "distance": "5 mm", "body_name": "Lid"}));
+        let bb = solidcraft_kernel::measure(&s.world_state().body("Lid").unwrap().body).unwrap().bbox;
+        assert!((bb.min.z - 15.0).abs() < 1e-9 && (area(&s, "Lid") - 100.0).abs() < 1e-9);
+        run(&mut s, "surface.offset", json!({"faces": [[35, 5, 10]], "distance": 0, "body_name": "Copy"}));
+        assert!((area(&s, "Copy") - 100.0).abs() < 1e-9);
+        let before = s.doc.features.len();
+        assert!(s.execute("surface.offset", &json!({"faces": [[10, 0, 10]], "chain": true, "distance": -11, "body": "Can"})).is_err());
+        assert_eq!(s.doc.features.len(), before);
+        run(&mut s, "edit.undo", json!({}));
+        assert!(s.world_state().body("Copy").is_none());
+        run(&mut s, "edit.redo", json!({}));
+        let cold = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        assert!((area(&cold, "Sleeve") - area(&s, "Sleeve")).abs() < 1e-9);
+        assert!(s.execute("surface.offset", &json!({"distance": 1})).is_err());
+    }
+
     /// The planned surface commands are registered but refuse to run: disabled with the
     /// issue that tracks them, an error (never a panic) from every caller, and the design left
     /// as it was.
     #[test]
     fn planned_commands_refuse_and_leave_the_design_alone() {
-        let planned = [
-            "surface.sweep",
-            "surface.loft",
-            "surface.offset",
-            "surface.ruled",
-            "surface.boundary",
-            "surface.blend",
-            "surface.untrim",
-            "surface.fillet",
-            "inspect.continuity",
-        ];
+        let planned = ["surface.ruled", "surface.boundary", "surface.blend", "surface.untrim", "surface.fillet", "inspect.continuity"];
         let mut s = Session::default();
         run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "B"}));
         let before = s.doc.features.len();

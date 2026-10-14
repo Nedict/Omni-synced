@@ -8,6 +8,7 @@
 | IGES 5.3 | manifold solids, or trimmed surfaces sewn into solids | manifold solids with names and colours |
 | 3MF, STL, OBJ | mesh bodies | yes |
 | 3MF with face tags | as 3MF | each triangle tagged with its B-rep face, exact coordinates |
+| URDF | | the assembly as a robot: links with meshes, mass and inertia, joints from the assembly's joints |
 | DXF, SVG | into a sketch | sketches and flat patterns as DXF |
 | PNG, JPEG | canvases and decals | |
 
@@ -34,6 +35,11 @@ ordinary 3MF in which every triangle also names the B-rep face it lies on and ev
 is the tessellation's own double-precision value. Meshing and analysis tools can use the tags to
 keep a model's faces (for loads, boundary conditions or feature edges); other 3MF readers ignore
 them. The format is specified in [`docs/formats/3mf-face-tags.md`](https://github.com/bherbruck/solidcraft/blob/main/docs/formats/3mf-face-tags.md).
+
+**File → Export URDF…** (`file.export` with a `.urdf` path) writes the assembly for robot
+simulators and ROS: a link per component placement with its mesh, mass and inertia, and the
+assembly's joints, so the parts move in the simulator as they do in SolidCraft. The meshes are
+written as STL files next to the `.urdf`. See [`docs/urdf.md`](https://github.com/bherbruck/solidcraft/blob/main/docs/urdf.md).
 
 Saves are atomic: a crash at any moment leaves either the old file or the new one, and the
 replaced version is kept as `<file>.bak`. A save keeps the file's permissions, and a design

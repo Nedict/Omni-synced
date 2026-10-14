@@ -103,6 +103,24 @@ fn handshake_and_tools_list() {
     assert_eq!(call(&mut s, 8, "nope/nope", json!({}))["error"]["code"], -32601);
 }
 
+/// A URDF goes through `export` with its own options (#719).
+#[test]
+fn export_tool_writes_a_urdf_package() {
+    let mut s = server();
+    tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10}}));
+    let dir = std::env::temp_dir().join(format!("solidcraft-mcp-urdf-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let urdf = dir.join("robot.urdf");
+    let r = tool(&mut s, "export", json!({"path": urdf.to_string_lossy(), "mesh_prefix": "package://robot/meshes/"}));
+    assert_eq!(r["format"], "Urdf", "{r}");
+    assert!(std::fs::read_to_string(&urdf).unwrap().contains(r#"filename="package://robot/meshes/robot-base.stl""#));
+    assert!(dir.join("robot-base.stl").exists());
+    // effort and velocity reach file.export, which refuses a bad one.
+    let r = raw_tool(&mut s, "export", json!({"path": urdf.to_string_lossy(), "effort": -1}));
+    assert_eq!(r["result"]["isError"], json!(true), "{r}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Box → fillet → hole in one batch, then verify with measure / inspect_design and look at it.
 #[test]
 fn agent_builds_box_fillet_hole() {

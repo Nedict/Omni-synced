@@ -190,12 +190,17 @@ pub fn tool_definitions() -> Vec<Value> {
             "export",
             "Export",
             "Export bodies to STEP (.step/.stp), 3MF (.3mf), binary STL (.stl), ASCII STL (format stla) or OBJ. The format \
-             comes from the extension unless given.",
+             comes from the extension unless given. URDF (.urdf) exports the whole assembly for robot simulators: a link per \
+             component placement with mass and inertia, joints from the assembly's joints, and STL meshes in metres written \
+             next to it (docs/urdf.md); RViz needs mesh_prefix such as package://robot/meshes/.",
             obj(
                 json!({
                     "path": string("Output file"),
-                    "format": {"type": "string", "enum": ["step", "3mf", "3mf-tagged", "stl", "stla", "obj"]},
-                    "bodies": {"type": "array", "items": {"type": "string"}, "description": "Body names (default: all)"},
+                    "format": {"type": "string", "enum": ["step", "3mf", "3mf-tagged", "stl", "stla", "obj", "urdf"]},
+                    "bodies": {"type": "array", "items": {"type": "string"}, "description": "Body names (default: all; not with urdf)"},
+                    "mesh_prefix": string("urdf: put before each mesh file name (default: none, so relative to the .urdf)"),
+                    "effort": {"type": "number", "description": "urdf: joint effort limit, N or N m (default 1000)"},
+                    "velocity": {"type": "number", "description": "urdf: joint velocity limit, m/s or rad/s (default 10)"},
                 }),
                 &["path"],
             ),
@@ -387,7 +392,7 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<V
             p["expression"] = a.get("value").cloned().unwrap_or(Value::Null);
             exec(b, "parameters.change", p)
         }
-        "export" => exec(b, "file.export", pick(a, &["path", "format", "bodies"])),
+        "export" => exec(b, "file.export", pick(a, &["path", "format", "bodies", "mesh_prefix", "effort", "velocity"])),
         "crash_reports" => match a.get("id") {
             Some(_) => exec(b, "diagnostics.crash_report", pick(a, &["id"])),
             None => exec(b, "diagnostics.crash_reports", pick(a, &["limit"])),
