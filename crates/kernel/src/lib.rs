@@ -26,6 +26,7 @@ mod boundary;
 mod bridge;
 mod build;
 mod clearance;
+mod continuity;
 mod coplanar;
 mod corner_g2;
 mod curveblend;
