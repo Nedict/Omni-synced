@@ -188,11 +188,12 @@ mod tests {
     }
 
     /// Catalogs delivered complete. English is the source catalog; Japanese was completed
-    /// upstream and Chinese and Russian land complete here. German and Korean are still
-    /// partial (they predate the coverage guards), so their gaps are reported by
-    /// `cargo xtask i18n` without failing the build, while nothing in the complete
-    /// catalogs may regress.
-    const COMPLETE: &[&str] = &["ja", "ru", "zh"];
+    /// upstream and Chinese lands complete here. German, Korean and Russian are partial
+    /// (German and Korean predate the coverage guards; Russian is kept partial so a new label
+    /// doesn't need a sixth translation), so their gaps fall back to English and are reported by
+    /// `cargo xtask i18n` without failing the build, while nothing in the complete catalogs may
+    /// regress.
+    const COMPLETE: &[&str] = &["ja", "zh"];
 
     /// `text()` falls back to English silently, so a message a complete locale never received is
     /// shown in English inside an otherwise translated UI, with nothing in the build to say so.
@@ -333,7 +334,9 @@ mod tests {
     /// non-empty string" would not catch that.
     #[test]
     fn id_labels_resolve_to_their_own_translation_not_an_english_fallback() {
-        for (lang, profile, points) in [("de", "Profil", "Punkte"), ("ja", "プロファイル", "点"), ("ko", "프로파일", "점"), ("ru", "Профиль", "Точки")] {
+        for (lang, profile, points) in
+            [("de", "Profil", "Punkte"), ("ja", "プロファイル", "点"), ("ko", "프로파일", "점"), ("ru", "Профиль", "Точки")]
+        {
             let locale = Locale::for_language(lang);
             assert_eq!(locale.label("ui.palette_profile"), profile, "{lang}");
             assert_eq!(locale.label("ui.palette_points"), points, "{lang}");
