@@ -511,7 +511,21 @@ fn number_pieces(names: &mut [String], pts: &[Vec<Vec3>], mark: char) {
             }
         };
         let mut order = cs.clone();
-        order.sort_by(|a, b| key(a.1).partial_cmp(&key(b.1)).unwrap_or(std::cmp::Ordering::Equal));
+        // Pieces lying almost level along the sort axis differ only in the last bits of their centre:
+        // the centre is the mean of a tessellated boundary, and that depends on where the loop's
+        // polyline starts, which can differ between processes. Comparing the keys with a tolerance
+        // makes those pieces equal, so the stable sort keeps the order they arrived in and a name
+        // keeps its number across runs (solidcraft#569). total_cmp keeps a NaN deterministic.
+        let tol = ext.x.max(ext.y).max(ext.z).max(1.0) * 1e-9;
+        order.sort_by(|a, b| {
+            let (ka, kb) = (key(a.1), key(b.1));
+            for (x, y) in [(ka.0, kb.0), (ka.1, kb.1), (ka.2, kb.2)] {
+                if (x - y).abs() > tol {
+                    return x.total_cmp(&y);
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
         for (k, (j, _)) in order.iter().enumerate() {
             if let Some(slot) = names.get_mut(*j) {
                 *slot = format!("{n}{mark}{}", k + 1);
@@ -760,6 +774,21 @@ pub fn face_on_body(body: &ModelBody, name: &str, p: Vec3) -> Option<(usize, Vec
 
 #[cfg(test)]
 mod tests {
+    /// Pieces lying almost level along the sort axis must keep the order they arrived in, whatever
+    /// the low bits of their centres do. The centre is the mean of a tessellated boundary, so those
+    /// bits depend on where the loop's polyline starts and can differ between processes — which is
+    /// how a name's number used to swap between runs (solidcraft#569).
+    #[test]
+    fn level_pieces_keep_their_input_order() {
+        let piece = |dx: f64| vec![Vec3::new(10.0 + dx, 0.0, 0.0), Vec3::new(10.0 + dx, 0.0, 5.0)];
+        for (first, second) in [(0.0, 1e-12), (1e-12, 0.0)] {
+            let mut names = vec!["f".to_string(), "f".to_string()];
+            let pts = vec![piece(first), piece(second)];
+            number_pieces(&mut names, &pts, '#');
+            assert_eq!(names, vec!["f#1".to_string(), "f#2".to_string()], "input order not kept for {first} then {second}");
+        }
+    }
+
     use super::*;
 
     /// A cone's tip repeats its apex vertex, so a triangle can have a zero-length edge. The nearest
