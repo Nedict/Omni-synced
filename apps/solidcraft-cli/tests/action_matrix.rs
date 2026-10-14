@@ -617,8 +617,6 @@ fn action_matrix_worker() {
     let (Ok(design), Ok(out)) = (std::env::var("ACTION_MATRIX_DESIGN"), std::env::var("ACTION_MATRIX_OUT")) else { return };
     let from: usize = std::env::var("ACTION_MATRIX_FROM").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     let sample: u64 = std::env::var("ACTION_MATRIX_SAMPLE").ok().and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
-    // Only these actions (`face.hole`, comma separated), for rechecking one group by hand.
-    let only: Option<Vec<String>> = std::env::var("ACTION_MATRIX_ONLY").ok().map(|v| v.split(',').map(|a| a.trim().to_string()).collect());
     let mut out = std::fs::OpenOptions::new().create(true).append(true).open(out).unwrap();
     let mut emit = |v: Value| {
         writeln!(out, "{v}").unwrap();
@@ -641,10 +639,17 @@ fn action_matrix_worker() {
     }
     let list = actions(&s);
     let edit = driving_parameter(&s);
+    // Local runs only: `ACTION_MATRIX_ACTIONS=edge.fillet,edge.chamfer` tries just those actions
+    // (don't bless such a run), `ACTION_MATRIX_VALIDITY=1` adds each passing action's body check.
+    let only: Option<Vec<String>> = std::env::var("ACTION_MATRIX_ACTIONS").ok().map(|v| v.split(',').map(str::to_string).collect());
+    let validity = std::env::var_os("ACTION_MATRIX_VALIDITY").is_some();
     for (i, a) in list.iter().enumerate().skip(from) {
+        if only.as_ref().is_some_and(|o| !o.iter().any(|x| x == a.action)) {
+            continue;
+        }
         // Whole families of pieces are sampled together (see [`family`]).
         let k = key(&design, &family(&a.entity), a.action);
-        if !stable_hash(&k).is_multiple_of(sample) || only.as_ref().is_some_and(|o| !o.iter().any(|x| x == a.action)) {
+        if !stable_hash(&k).is_multiple_of(sample) {
             continue;
         }
         emit(json!({"start": i}));
@@ -652,6 +657,11 @@ fn action_matrix_worker() {
         let mut scratch = s.scratch();
         let r = perform(&mut scratch, &a.act, &before);
         let mut line = outcome(&design, &a.entity, a.action, &r, t.elapsed().as_millis());
+        if validity && r.is_ok() {
+            let st = scratch.model.state();
+            let bad: Vec<String> = st.bodies.iter().flat_map(|b| b.body.validity().into_iter().map(|v| format!("{}: {v}", b.name))).collect();
+            line["validity"] = json!(bad);
+        }
         // What was sent, for reproducing a failure (kept in the results, not the baseline).
         line["command"] = match &a.act {
             Act::Run(id, p) => json!({"command": id, "params": p}),

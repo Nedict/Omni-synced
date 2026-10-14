@@ -3649,3 +3649,36 @@ fn a_rim_hole_that_would_run_into_a_bend_is_refused_and_changes_nothing() {
     assert!(rel(volume(&mut s), before) < 1e-9);
     assert!(flat(&mut s).get("bores").is_none());
 }
+
+/// #732: a perforated panel. A 400 x 470 x 0.8 sheet with Ø1 holes on a 1.5 mm 60° staggered grid (DIN 24041
+/// Rv 1.0-1.5), cut in two sketches of 500 holes; 0.8.0 refuses the second cut ("sheet metal flat geometry exceeds
+/// the bounded processing budget"). A real mesh panel needs ~94 000 such holes; 1000 is the first step.
+#[test]
+fn perforated_sheet_takes_a_thousand_round_holes() {
+    let mut s = Session::default();
+    outline_blank(&mut s, json!([[0, 0], [400, 0], [400, 470], [0, 470]]));
+    let flat = volume(&mut s);
+    let (p, dy) = (1.5_f64, 1.5_f64 * 3f64.sqrt() / 2.0);
+    let mut holes = Vec::new();
+    'grid: for r in 0..(450.0 / dy) as usize {
+        for k in 0..(380.0 / p) as usize {
+            let x = 10.0 + k as f64 * p + if r % 2 == 1 { p / 2.0 } else { 0.0 };
+            holes.push([x, 10.0 + r as f64 * dy]);
+            if holes.len() == 1000 {
+                break 'grid;
+            }
+        }
+    }
+    for (g, chunk) in holes.chunks(500).enumerate() {
+        let name = format!("Perforation {g}");
+        run(&mut s, "sketch.create", json!({"plane": {"origin": [0, 0, 2], "x_dir": [1, 0, 0], "y_dir": [0, 1, 0]}, "name": name}));
+        for c in chunk {
+            run(&mut s, "sketch.circle.center", json!({"center": c, "radius": 0.5}));
+        }
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"sketch": name, "distance": "4", "direction": "negative", "operation": "cut"}));
+    }
+    let removed = flat - volume(&mut s);
+    let expected = 1000.0 * std::f64::consts::PI * 0.5 * 0.5 * 0.8;
+    assert!((removed - expected).abs() / expected < 0.05, "removed {removed:.1} mm³, 1000 holes are {expected:.1} mm³");
+}
