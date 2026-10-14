@@ -576,18 +576,7 @@ fn revolve(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => (feature_sketch(s, p, cmd)?, None),
     };
-    let axis = if let Some(o) = p.get("axis").filter(|v| v.is_object()) {
-        let origin = o.get("origin").and_then(vec3).unwrap_or(Vec3::ZERO);
-        let dir = o.get("dir").and_then(vec3).ok_or_else(|| bad(cmd, "axis needs `dir`"))?;
-        AxisRef::Line { origin, dir }
-    } else {
-        match str_(p, "axis") {
-            Some(a @ ("X" | "Y" | "Z")) => AxisRef::World { axis: a.into() },
-            Some(a @ ("x" | "y")) => AxisRef::SketchAxis { axis: a.into() },
-            Some(id) => AxisRef::SketchLine { curve: id.into() },
-            None => return Err(bad(cmd, "`axis` must be a sketch line id, x, y (sketch axes), X, Y, Z or {origin, dir}")),
-        }
-    };
+    let axis = axis_param(p, cmd)?;
     let angle = expr(p, "angle").unwrap_or_else(|| "360 deg".into());
     check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
     let profiles = match face_profile {
@@ -621,6 +610,22 @@ fn revolve(s: &mut Session, p: &Value) -> Result<Value> {
         to,
     };
     add_feature(s, p, kind)
+}
+
+/// A revolve axis from its parameter: a sketch line id, the sketch's x or y axis, a world axis,
+/// or {origin, dir}.
+pub(super) fn axis_param(p: &Value, cmd: &str) -> Result<AxisRef> {
+    if let Some(o) = p.get("axis").filter(|v| v.is_object()) {
+        let origin = o.get("origin").and_then(vec3).unwrap_or(Vec3::ZERO);
+        let dir = o.get("dir").and_then(vec3).ok_or_else(|| bad(cmd, "axis needs `dir`"))?;
+        return Ok(AxisRef::Line { origin, dir });
+    }
+    match str_(p, "axis") {
+        Some(a @ ("X" | "Y" | "Z")) => Ok(AxisRef::World { axis: a.into() }),
+        Some(a @ ("x" | "y")) => Ok(AxisRef::SketchAxis { axis: a.into() }),
+        Some(id) => Ok(AxisRef::SketchLine { curve: id.into() }),
+        None => Err(bad(cmd, "`axis` must be a sketch line id, x, y (sketch axes), X, Y, Z or {origin, dir}")),
+    }
 }
 
 fn radius_expr(s: &Session, p: &Value, cmd: &str) -> Result<String> {

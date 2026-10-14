@@ -3,12 +3,12 @@
 //! planar sketch region), Stitch (surfaces sharing edges sewn
 //! into one body, a solid when they close), Trim (a surface cut by a tool, one side kept),
 //! Thicken (a surface offset along its normals into a solid), copying faces out of a body, and
-//! sheets swept from sketch curves (surface extrude).
+//! sheets swept from sketch curves (surface extrude, revolve and sweep).
 
 use std::collections::HashMap;
 
 use mt::{BoundedCurve, InnerSpace, MetricSpace, ParametricCurve, ParametricSurface3D, SearchNearestParameter};
-use solidcraft_geom::{Plane, Region2, Seg2, Vec3};
+use solidcraft_geom::{Plane, Region2, Seg2, Vec2, Vec3};
 use truck_modeling as mt;
 
 use crate::body::{Body, from_p3, p3};
@@ -98,6 +98,182 @@ pub fn extrude_sheet(plane: &Plane, chains: &[Vec<Seg2>], start: f64, end: f64) 
         }
     }
     Ok(rebuilt_body(surface_body(faces), &[], &rec))
+}
+
+/// A surface revolved from chains of sketch segments on `plane` about the sketch line through
+/// `axis_origin` along `axis_dir`: each chain turned from `start` through `sweep` radians (a
+/// full turn at most), positive angles carrying it toward the sketch normal. A chain end on the
+/// axis stays put there (a cone's apex, a sphere's pole). The walls form one surface body with
+/// no caps, or a solid where they close (a full turn of a closed curve, or of a curve from the
+/// axis back to it); its history has no operands: every face is new.
+pub fn revolve_sheet(plane: &Plane, chains: &[Vec<Seg2>], axis_origin: Vec2, axis_dir: Vec2, start: f64, sweep: f64) -> Result<Body> {
+    use std::f64::consts::TAU;
+    if !crate::build::frame_ok(plane) || !axis_origin.is_finite() || !axis_dir.is_finite() {
+        return Err(KernelError::Invalid("revolve frame is not finite and orthonormal".into()));
+    }
+    if !(start.is_finite() && sweep.is_finite() && start.abs() <= TAU && sweep.abs() <= TAU + 1e-9) {
+        return Err(KernelError::Invalid("revolve angles must be finite, a full turn at most".into()));
+    }
+    if sweep.abs() < 1e-6 {
+        return Err(KernelError::Invalid("revolve angle is zero".into()));
+    }
+    if chains.is_empty() || chains.len() > MAX_CHAINS {
+        return Err(KernelError::Invalid("pick the curves or profiles to revolve".into()));
+    }
+    let d = axis_dir.normalized().ok_or_else(|| KernelError::Invalid("revolve axis has no direction".into()))?;
+    let side = |p: Vec2| d.cross(p - axis_origin);
+    let on_axis = |p: Vec2| side(p).abs() < 1e-7;
+    let (origin, n) = (plane.to_world(axis_origin), plane.normal());
+    let axis = plane.dir_to_world(d).normalized().ok_or_else(|| KernelError::Invalid("revolve frame has no axis".into()))?;
+    let mut rec = Rebuild::default();
+    let mut faces = Vec::new();
+    for chain in chains {
+        // On one side of the axis; the point farthest from it fixes the turning sense.
+        let pts: Vec<Vec2> = chain.iter().flat_map(|s| s.polyline(1e-3)).collect();
+        if pts.iter().any(|p| side(*p) < -1e-7) && pts.iter().any(|p| side(*p) > 1e-7) {
+            return Err(KernelError::Invalid("the curves cross the revolve axis".into()));
+        }
+        let far = pts.iter().copied().max_by(|a, b| side(*a).abs().total_cmp(&side(*b).abs())).filter(|p| !on_axis(*p));
+        let Some(far) = far else { return Err(KernelError::Invalid("the curves lie on the revolve axis".into())) };
+        let radial = plane.to_world(far) - origin;
+        let a = if axis.cross(radial).dot(n) < 0.0 { -axis } else { axis };
+        let (first, last) = match (chain.first(), chain.last()) {
+            (Some(f), Some(l)) => (f.start(), l.end()),
+            _ => return Err(KernelError::Invalid("an empty curve chain".into())),
+        };
+        let closed = first.dist(last) <= 1e-6;
+        if closed && pts.iter().any(|p| on_axis(*p)) {
+            return Err(KernelError::Invalid("not supported yet: a closed curve touching the revolve axis".into()));
+        }
+        let wire = crate::build::chain_wire(plane, chain)?;
+        let walls: mt::Shell = guard("surface revolve", || {
+            let wire = mt::builder::rotated(&wire, p3(origin), crate::body::v3(a), mt::Rad(start));
+            Ok(match (on_axis(first), on_axis(last)) {
+                (true, _) => mt::builder::cone(&wire, crate::body::v3(a), mt::Rad(sweep)),
+                (false, true) => mt::builder::cone(&wire.inverse(), crate::body::v3(a), mt::Rad(sweep)),
+                (false, false) => mt::builder::rsweep(&wire, p3(origin), crate::body::v3(a), mt::Rad(sweep)),
+            })
+        })?;
+        for f in walls.face_iter() {
+            rec.made(f, Vec::new());
+            faces.push(f.clone());
+        }
+    }
+    body_of(faces, &[], &rec)
+}
+
+/// A surface swept from chains of sketch segments on `plane` along a path that starts near
+/// them. Along a path whose direction runs on across every joint, lines slide the chains and
+/// arcs turn them, exactly; any other path (curves followed as polylines) goes through
+/// [`sweep_sheet_points`]. The walls form one surface body with no caps (a solid where they
+/// close); its history has no operands: every face is new.
+pub fn sweep_sheet(plane: &Plane, chains: &[Vec<Seg2>], path: &[crate::PathSeg]) -> Result<Body> {
+    use crate::PathSeg;
+    if !crate::build::frame_ok(plane) {
+        return Err(KernelError::Invalid("sweep frame is not finite and orthonormal".into()));
+    }
+    if chains.is_empty() || chains.len() > MAX_CHAINS {
+        return Err(KernelError::Invalid("pick the curves or profiles to sweep".into()));
+    }
+    if path.is_empty() || path.len() > 1000 {
+        return Err(KernelError::Invalid("the path needs 1…1000 segments".into()));
+    }
+    let ends: Vec<(Vec3, Vec3)> =
+        path.iter().map(PathSeg::tangents).collect::<Option<_>>().ok_or_else(|| KernelError::Invalid("a path segment has no direction".into()))?;
+    let first = match path.first() {
+        Some(PathSeg::Line { a, .. } | PathSeg::Arc { a, .. }) => *a,
+        None => return Err(KernelError::Invalid("the path needs 1…1000 segments".into())),
+    };
+    if ends.windows(2).any(|w| w[0].1.dot(w[1].0) < (1e-3f64).cos()) {
+        let mut pts = vec![first];
+        for seg in path {
+            pts.extend(seg.points_after_start(1e-2));
+        }
+        return sweep_sheet_points(plane, chains, &pts);
+    }
+    let mut rec = Rebuild::default();
+    let mut faces = Vec::new();
+    for chain in chains {
+        let mut cur = crate::build::chain_wire(plane, chain)?;
+        for seg in path {
+            let (part, map): (mt::Shell, Box<dyn Fn(Vec3) -> Vec3>) = match *seg {
+                PathSeg::Line { a, b } => {
+                    (guard("surface sweep", || Ok(mt::builder::tsweep(&cur, crate::body::v3(b - a))))?, Box::new(move |p| p + (b - a)))
+                }
+                PathSeg::Arc { center, axis, angle, .. } => {
+                    let k = axis.normalized().ok_or_else(|| KernelError::Invalid("a path arc has no axis".into()))?;
+                    let part = guard("surface sweep", || Ok(mt::builder::rsweep(&cur, p3(center), crate::body::v3(k), mt::Rad(angle))))?;
+                    (part, Box::new(move |p| crate::build::rotate_about(p, center, k, angle)))
+                }
+            };
+            let next = far_wire(&part, &cur, map.as_ref())?;
+            for f in part.face_iter() {
+                rec.made(f, Vec::new());
+                faces.push(f.clone());
+            }
+            cur = next;
+        }
+    }
+    body_of(faces, &[], &rec)
+}
+
+/// A surface swept from chains of sketch segments on `plane` along a 3D polyline path: one smooth
+/// B-spline wall per segment where the path has no corners, else ruled walls between the path's
+/// points, mitred at the corners (see [`sweep_sheet`]).
+pub fn sweep_sheet_points(plane: &Plane, chains: &[Vec<Seg2>], path: &[Vec3]) -> Result<Body> {
+    if !crate::build::frame_ok(plane) {
+        return Err(KernelError::Invalid("sweep frame is not finite and orthonormal".into()));
+    }
+    if chains.is_empty() || chains.len() > MAX_CHAINS {
+        return Err(KernelError::Invalid("pick the curves or profiles to sweep".into()));
+    }
+    let sheet = |faces: Vec<mt::Face>| {
+        let mut rec = Rebuild::default();
+        for f in &faces {
+            rec.made(f, Vec::new());
+        }
+        body_of(faces, &[], &rec)
+    };
+    let ruled = sheet(crate::sweep_path::ruled_sheet(plane, chains, path)?)?;
+    // Smooth walls where the path has no corners, kept when their area agrees with the ruled
+    // walls' (a fit that went wrong falls back to those).
+    if let Ok(Some(faces)) = crate::sweep_path::smooth_sheet(plane, chains, path)
+        && let Ok(smooth) = sheet(faces)
+        && let (Ok(a), Ok(b)) = (crate::measure(&smooth), crate::measure(&ruled))
+        && (a.area - b.area).abs() <= 0.02 * b.area.abs()
+    {
+        return Ok(smooth);
+    }
+    Ok(ruled)
+}
+
+/// The far side of a sweep of the wire `start`: for each of its edges, in order and the same
+/// way round, the edge of `swept` that `map` carries it onto (matched by its ends and middle).
+fn far_wire(swept: &mt::Shell, start: &mt::Wire, map: &dyn Fn(Vec3) -> Vec3) -> Result<mt::Wire> {
+    let near = |p: Vec3, q: Vec3| p.dist(q) <= 1e-6 * (1.0 + p.len().max(q.len()));
+    let mid = |e: &mt::Edge| {
+        let c = e.oriented_curve();
+        let (t0, t1) = c.range_tuple();
+        from_p3(c.subs((t0 + t1) / 2.0))
+    };
+    let mut out = Vec::new();
+    for e in start.edge_iter() {
+        let (a, b, m) = (map(from_p3(e.front().point())), map(from_p3(e.back().point())), map(mid(e)));
+        let found = swept.edge_iter().find_map(|f| {
+            let (fa, fb) = (from_p3(f.front().point()), from_p3(f.back().point()));
+            if !near(mid(&f), m) {
+                None
+            } else if near(fa, a) && near(fb, b) {
+                Some(f)
+            } else if near(fa, b) && near(fb, a) {
+                Some(f.inverse())
+            } else {
+                None
+            }
+        });
+        out.push(found.ok_or_else(|| KernelError::Failed("sweep: lost the curves along the path".into()))?);
+    }
+    Ok(out.into())
 }
 
 /// The edge of a body nearest a point (by samples along each edge).
@@ -771,6 +947,110 @@ mod tests {
         let closed = stitch(&[&walls, &bottom, &top], 1e-6).unwrap();
         assert!(!closed.is_surface());
         assert!(rel(measure(&closed).unwrap().volume, 400.0) < 1e-9);
+    }
+
+    /// Sheets revolved about the sketch's y axis, against their analytic areas: a cylinder (and a
+    /// quarter of one, started a quarter turn round), cones with the apex at either end, a sphere
+    /// from a half circle, and a square's ring (Pappus: 2π × centroid distance × length).
+    #[test]
+    fn revolve_sheet_areas() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        let sheet = |chain: Vec<Seg2>, start: f64, sweep: f64| {
+            revolve_sheet(&Plane::XY, &[chain], Vec2::new(0.0, 0.0), Vec2::new(0.0, 1.0), start, sweep).unwrap()
+        };
+        let rev = |chain: Vec<Seg2>, start: f64, sweep: f64| measure(&sheet(chain, start, sweep)).unwrap().area;
+        let line = |a: (f64, f64), b: (f64, f64)| Seg2::Line { a: Vec2::new(a.0, a.1), b: Vec2::new(b.0, b.1) };
+        let close = |a: f64, want: f64| assert!(rel(a, want) < 2e-3, "{a} vs {want}"); // (measured on meshes)
+        close(rev(vec![line((3.0, 0.0), (3.0, 4.0))], 0.0, 2.0 * PI), 2.0 * PI * 3.0 * 4.0);
+        close(rev(vec![line((3.0, 0.0), (3.0, 4.0))], FRAC_PI_2, FRAC_PI_2), FRAC_PI_2 * 3.0 * 4.0);
+        close(rev(vec![line((0.0, 0.0), (3.0, 4.0))], 0.0, 2.0 * PI), PI * 3.0 * 5.0);
+        close(rev(vec![line((3.0, 4.0), (0.0, 0.0))], 0.0, 2.0 * PI), PI * 3.0 * 5.0);
+        assert!(sheet(vec![line((3.0, 0.0), (3.0, 4.0))], 0.0, 1.0).is_surface());
+        // Closing shells are solids, outward: a sphere from a half circle, a square's ring.
+        let half = Seg2::Arc { center: Vec2::new(0.0, 0.0), radius: 2.0, start: -FRAC_PI_2, sweep: PI };
+        let ball = measure(&sheet(vec![half], 0.0, 2.0 * PI)).unwrap();
+        close(ball.area, 4.0 * PI * 4.0);
+        close(ball.volume, 4.0 / 3.0 * PI * 8.0);
+        assert!(sheet(vec![half], 0.0, PI).is_surface());
+        let sq = Loop2::polygon(&[Vec2::new(2.0, 0.0), Vec2::new(3.0, 0.0), Vec2::new(3.0, 1.0), Vec2::new(2.0, 1.0)]);
+        let ring = measure(&sheet(sq.segs.clone(), 0.0, 2.0 * PI)).unwrap();
+        close(ring.area, 2.0 * PI * (2.0 + 3.0 + 2.5 + 2.5));
+        close(ring.volume, 2.0 * PI * 2.5);
+    }
+
+    #[test]
+    fn revolve_sheet_refuses_bad_input() {
+        let rev = |chain: Vec<Seg2>, sweep: f64| revolve_sheet(&Plane::XY, &[chain], Vec2::new(0.0, 0.0), Vec2::new(0.0, 1.0), 0.0, sweep);
+        let line = |a: (f64, f64), b: (f64, f64)| Seg2::Line { a: Vec2::new(a.0, a.1), b: Vec2::new(b.0, b.1) };
+        assert!(rev(vec![line((-1.0, 0.0), (1.0, 1.0))], 1.0).is_err(), "crosses the axis");
+        assert!(rev(vec![line((0.0, 0.0), (0.0, 1.0))], 1.0).is_err(), "on the axis");
+        assert!(rev(vec![line((1.0, 0.0), (1.0, 1.0))], 0.0).is_err(), "zero angle");
+        assert!(rev(vec![line((1.0, 0.0), (1.0, 1.0))], 7.0).is_err(), "more than a turn");
+        assert!(rev(vec![line((1.0, 0.0), (1.0, 1.0))], f64::NAN).is_err());
+        let touching = Loop2::polygon(&[Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(0.0, 1.0)]);
+        assert!(rev(touching.segs, 1.0).is_err(), "a closed curve touching the axis");
+        assert!(revolve_sheet(&Plane::XY, &[], Vec2::new(0.0, 0.0), Vec2::new(0.0, 1.0), 0.0, 1.0).is_err());
+        assert!(revolve_sheet(&Plane::XY, &[vec![line((1.0, 0.0), (1.0, 1.0))]], Vec2::new(0.0, 0.0), Vec2::new(0.0, 0.0), 0.0, 1.0).is_err());
+    }
+
+    /// A line along x swept up z: straight (length × height), then on round a quarter turn
+    /// (a quarter cylinder of radius 5 about an axis along x: 10 × 5π/2, the arc taking up the
+    /// line's far edge), and along a path with a corner (mitred ruled walls, 10 × both legs); a
+    /// closed square's four walls; a 3D point path.
+    #[test]
+    fn sweep_sheet_areas() {
+        use crate::PathSeg;
+        use std::f64::consts::FRAC_PI_2;
+        let line = vec![Seg2::Line { a: Vec2::new(0.0, 0.0), b: Vec2::new(10.0, 0.0) }];
+        let up = PathSeg::Line { a: Vec3::ZERO, b: Vec3::new(0.0, 0.0, 5.0) };
+        let area = |b: &Body| measure(b).unwrap().area;
+        let straight = sweep_sheet(&Plane::XY, std::slice::from_ref(&line), &[up]).unwrap();
+        assert!(straight.is_surface() && rel(area(&straight), 50.0) < 1e-9);
+        let bend = PathSeg::Arc { a: Vec3::new(0.0, 0.0, 5.0), center: Vec3::new(0.0, 5.0, 5.0), axis: -Vec3::X, angle: FRAC_PI_2 };
+        let smooth = sweep_sheet(&Plane::XY, std::slice::from_ref(&line), &[up, bend]).unwrap();
+        assert!(smooth.is_surface());
+        let want = 50.0 + 10.0 * 5.0 * FRAC_PI_2;
+        assert!(rel(area(&smooth), want) < 2e-3, "{} vs {want}", area(&smooth)); // (measured on meshes)
+        let over = PathSeg::Line { a: Vec3::new(0.0, 0.0, 5.0), b: Vec3::new(0.0, 5.0, 5.0) };
+        let cornered = sweep_sheet(&Plane::XY, std::slice::from_ref(&line), &[up, over]).unwrap();
+        assert!(cornered.is_surface() && rel(area(&cornered), 100.0) < 1e-9, "{}", area(&cornered));
+        let sq = Loop2::polygon(&[Vec2::new(0.0, 0.0), Vec2::new(4.0, 0.0), Vec2::new(4.0, 4.0), Vec2::new(0.0, 4.0)]);
+        let walls = sweep_sheet(&Plane::XY, std::slice::from_ref(&sq.segs), &[up]).unwrap();
+        assert!(walls.is_surface() && walls.face_count() == 4 && rel(area(&walls), 80.0) < 1e-9);
+        let pts: Vec<Vec3> = (0..=10).map(|i| Vec3::new(0.0, 0.0, i as f64)).collect();
+        assert!(rel(area(&sweep_sheet_points(&Plane::XY, std::slice::from_ref(&line), &pts).unwrap()), 100.0) < 1e-6);
+        // A smooth point path: a quarter circle of radius 30 in the YZ plane. One smooth wall (not
+        // forty ruled strips), a piece of cylinder: 10 × 15π.
+        let arc: Vec<Vec3> = (0..=40)
+            .map(|i| {
+                let t = i as f64 / 40.0 * FRAC_PI_2;
+                Vec3::new(0.0, 30.0 * (1.0 - t.cos()), 30.0 * t.sin())
+            })
+            .collect();
+        let curved = sweep_sheet_points(&Plane::XY, std::slice::from_ref(&line), &arc).unwrap();
+        assert_eq!(curved.face_count(), 1, "smooth wall");
+        let want = 10.0 * 30.0 * FRAC_PI_2;
+        assert!(rel(area(&curved), want) < 2e-3, "{} vs {want}", area(&curved)); // (measured on meshes)
+        // A bent chain along the same path: two smooth walls joined by one shared seam edge.
+        let bent = vec![line[0], Seg2::Line { a: Vec2::new(10.0, 0.0), b: Vec2::new(10.0, 5.0) }];
+        let two = sweep_sheet_points(&Plane::XY, &[bent], &arc).unwrap();
+        assert_eq!(two.face_count(), 2);
+        let edges: std::collections::HashSet<_> = two.solid.edge_iter().map(|e| e.id()).collect();
+        assert_eq!(edges.len(), 7, "the walls share their seam");
+    }
+
+    #[test]
+    fn sweep_sheet_refuses_bad_input() {
+        use crate::PathSeg;
+        let line = vec![Seg2::Line { a: Vec2::new(0.0, 0.0), b: Vec2::new(10.0, 0.0) }];
+        let up = PathSeg::Line { a: Vec3::ZERO, b: Vec3::new(0.0, 0.0, 5.0) };
+        assert!(sweep_sheet(&Plane::XY, std::slice::from_ref(&line), &[]).is_err());
+        assert!(sweep_sheet(&Plane::XY, &[], &[up]).is_err());
+        assert!(sweep_sheet(&Plane::XY, std::slice::from_ref(&line), &[PathSeg::Line { a: Vec3::ZERO, b: Vec3::ZERO }]).is_err());
+        let no_axis = PathSeg::Arc { a: Vec3::ZERO, center: Vec3::new(0.0, 5.0, 0.0), axis: Vec3::ZERO, angle: 1.0 };
+        assert!(sweep_sheet(&Plane::XY, std::slice::from_ref(&line), &[no_axis]).is_err());
+        assert!(sweep_sheet_points(&Plane::XY, std::slice::from_ref(&line), &[Vec3::ZERO]).is_err());
+        assert!(sweep_sheet_points(&Plane::XY, std::slice::from_ref(&line), &[Vec3::ZERO, Vec3::new(f64::NAN, 0.0, 0.0)]).is_err());
     }
 
     #[test]

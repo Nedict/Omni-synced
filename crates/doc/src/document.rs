@@ -954,6 +954,34 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         faces: Vec<Vec3>,
     },
+    /// A surface body turned about an axis from open curve chains and the boundaries of
+    /// profiles: walls only, no caps (a solid where a full turn closes them).
+    SurfaceRevolve {
+        sketch: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profiles: Option<ProfileSel>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        curves: Vec<String>,
+        axis: AxisRef,
+        angle: String,
+        /// Two Sides: the angle on the other side.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        angle2: Option<String>,
+        /// Symmetric: `angle` split evenly either side of the sketch.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        symmetric: bool,
+    },
+    /// A surface body swept along a chain of sketch curves from open curve chains and the
+    /// boundaries of profiles: walls only, no caps.
+    SurfaceSweep {
+        sketch: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profiles: Option<ProfileSel>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        curves: Vec<String>,
+        path_sketch: u64,
+        path: Vec<String>,
+    },
     /// A planar surface body extended outward by `distance` past the edges through `edges`.
     SurfaceExtend {
         body: String,
@@ -1255,12 +1283,13 @@ impl FeatureKind {
         match self {
             K::Extrude { sketch, .. }
             | K::SurfaceExtrude { sketch, .. }
+            | K::SurfaceRevolve { sketch, .. }
             | K::Revolve { sketch, .. }
             | K::Emboss { sketch, .. }
             | K::Rib { sketch, .. }
             | K::SheetBase { sketch, .. }
             | K::SheetContour { sketch, .. } => vec![*sketch],
-            K::Sweep { sketch, path_sketch, .. } => vec![*sketch, *path_sketch],
+            K::Sweep { sketch, path_sketch, .. } | K::SurfaceSweep { sketch, path_sketch, .. } => vec![*sketch, *path_sketch],
             K::Pipe { path_sketch, .. } | K::Pattern { pattern: PatternKind::Path { path_sketch, .. }, .. } => vec![*path_sketch],
             K::Loft { sections, .. } => sections.iter().map(|s| s.sketch).collect(),
             K::SheetFold { sketch, .. } | K::SplitFace { sketch, .. } | K::Patch { sketch, .. } => sketch.iter().copied().collect(),
@@ -1389,6 +1418,8 @@ impl FeatureKind {
             FeatureKind::Remove { .. } => "RemoveFeature",
             FeatureKind::Patch { .. } => "PatchFeature",
             FeatureKind::SurfaceExtrude { .. } => "SurfaceExtrudeFeature",
+            FeatureKind::SurfaceRevolve { .. } => "SurfaceRevolveFeature",
+            FeatureKind::SurfaceSweep { .. } => "SurfaceSweepFeature",
             FeatureKind::Stitch { .. } => "StitchFeature",
             FeatureKind::Thicken { .. } => "ThickenFeature",
             FeatureKind::SurfaceTrim { .. } => "TrimFeature",
@@ -1458,6 +1489,8 @@ impl FeatureKind {
             FeatureKind::Remove { .. } => "Remove",
             FeatureKind::Patch { .. } => "Patch",
             FeatureKind::SurfaceExtrude { .. } => "SurfaceExtrude",
+            FeatureKind::SurfaceRevolve { .. } => "SurfaceRevolve",
+            FeatureKind::SurfaceSweep { .. } => "SurfaceSweep",
             FeatureKind::Stitch { .. } => "Stitch",
             FeatureKind::Thicken { .. } => "Thicken",
             FeatureKind::SurfaceTrim { .. } => "Trim",
@@ -1480,7 +1513,10 @@ impl FeatureKind {
             | FeatureKind::Sweep { sketch, profiles, .. }
             | FeatureKind::Emboss { sketch, profiles, .. }
             | FeatureKind::SheetBase { sketch, profiles, .. } => vec![(*sketch, profiles)],
-            FeatureKind::Patch { sketch: Some(sk), profiles, .. } | FeatureKind::SurfaceExtrude { sketch: sk, profiles: Some(profiles), .. } => {
+            FeatureKind::Patch { sketch: Some(sk), profiles, .. }
+            | FeatureKind::SurfaceExtrude { sketch: sk, profiles: Some(profiles), .. }
+            | FeatureKind::SurfaceRevolve { sketch: sk, profiles: Some(profiles), .. }
+            | FeatureKind::SurfaceSweep { sketch: sk, profiles: Some(profiles), .. } => {
                 vec![(*sk, profiles)]
             }
             FeatureKind::Loft { sections, .. } => sections.iter_mut().filter(|s| s.point.is_none()).map(|s| (s.sketch, &mut s.profiles)).collect(),
@@ -1496,7 +1532,10 @@ impl FeatureKind {
             | FeatureKind::Sweep { sketch, profiles, .. }
             | FeatureKind::Emboss { sketch, profiles, .. }
             | FeatureKind::SheetBase { sketch, profiles, .. } => vec![(*sketch, profiles)],
-            FeatureKind::Patch { sketch: Some(sketch), profiles, .. } | FeatureKind::SurfaceExtrude { sketch, profiles: Some(profiles), .. } => {
+            FeatureKind::Patch { sketch: Some(sketch), profiles, .. }
+            | FeatureKind::SurfaceExtrude { sketch, profiles: Some(profiles), .. }
+            | FeatureKind::SurfaceRevolve { sketch, profiles: Some(profiles), .. }
+            | FeatureKind::SurfaceSweep { sketch, profiles: Some(profiles), .. } => {
                 vec![(*sketch, profiles)]
             }
             FeatureKind::Loft { sections, .. } => {
@@ -1561,7 +1600,7 @@ impl FeatureKind {
                     v.push(d);
                 }
             }
-            FeatureKind::Revolve { angle, angle2, .. } => {
+            FeatureKind::Revolve { angle, angle2, .. } | FeatureKind::SurfaceRevolve { angle, angle2, .. } => {
                 v.push(angle);
                 v.extend(angle2.iter().map(String::as_str));
             }
@@ -1609,7 +1648,7 @@ impl FeatureKind {
             },
             FeatureKind::Mirror { plane, .. } => plane_exprs(plane, &mut v),
             FeatureKind::Shell { thickness, .. } => v.push(thickness),
-            FeatureKind::Loft { .. } | FeatureKind::Sweep { .. } => {}
+            FeatureKind::Loft { .. } | FeatureKind::Sweep { .. } | FeatureKind::SurfaceSweep { .. } => {}
             FeatureKind::Draft { angle, neutral, .. } => {
                 v.push(angle);
                 plane_exprs(neutral, &mut v);
