@@ -330,12 +330,16 @@ fn drive_with_contact(s: &mut Session, want: &[(u64, Vec<f64>)], given: &BTreeSe
         sol = set(s, 1.0);
     }
     let mut stopped_by_loop = None;
-    if let Some(name) = opened(&sol) {
-        // The furthest the loops still close, short of where contact stopped.
+    if let Some(mut name) = opened(&sol) {
+        // The furthest the loops still close, short of where contact stopped; the joint named is
+        // the one whose loop opens first.
         let (mut lo, mut hi) = (0.0, stopped.as_ref().and_then(|v| v["fraction"].as_f64()).unwrap_or(1.0));
         for _ in 0..14 {
             let mid = (lo + hi) / 2.0;
-            if opened(&set(s, mid)).is_none() { lo = mid } else { hi = mid }
+            match opened(&set(s, mid)) {
+                None => lo = mid,
+                Some(n) => (hi, name) = (mid, n),
+            }
         }
         sol = set(s, lo);
         stopped = None;
