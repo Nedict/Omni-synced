@@ -405,6 +405,15 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
 
 /// A Ctrl/Shift-aware click on a selectable row.
 fn click_select(app: &mut SolveApp, ui: &egui::Ui, key: String, sel: Option<Sel>) {
+    if let Some(x) = &sel
+        && let Some(mut d) = app.dialog.take()
+    {
+        let picked = d.pick_shell_body(&app.session, x);
+        app.dialog = Some(d);
+        if picked {
+            return;
+        }
+    }
     let mods = ui.input(|i| i.modifiers);
     if mods.shift
         && let Some(a) = app.tree.anchor.clone()

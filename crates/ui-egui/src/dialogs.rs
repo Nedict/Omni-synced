@@ -386,7 +386,10 @@ impl Dialog {
             "solid.fillet" => Dialog::new(fillet_kind("2 mm", false), vec![SelInput::new("Edges", EDGES | FACES, true)]),
             "solid.chamfer" => Dialog::new(fillet_kind("1 mm", true), vec![SelInput::new("Edges", EDGES | FACES, true)]),
             "solid.shell" => {
-                let mut d = Dialog::new(Kind::Shell { thickness: "2 mm".into() }, vec![SelInput::new("Faces/Body", FACES, true)]);
+                let mut d = Dialog::new(
+                    Kind::Shell { thickness: "2 mm".into() },
+                    vec![SelInput::new("Faces to remove", FACES, true), SelInput::new("Body (optional)", BODIES, false)],
+                );
                 // Fusion opens faces joined smoothly to the picked ones too.
                 d.extra.insert("tangent_chain".into(), json!(true));
                 d
@@ -554,6 +557,7 @@ impl Dialog {
                 _ => None,
             };
             if let Some(b) = as_body
+                && !matches!(d.kind, Kind::Shell { .. })
                 && let Some(inp) = d.inputs.iter_mut().find(|i| i.accept == BODIES && (i.multi || i.items.is_empty()))
             {
                 if !inp.items.contains(&b) {
@@ -633,6 +637,11 @@ impl Dialog {
 
     /// Make the first single input still empty (after the filled ones) active.
     fn advance(&mut self) {
+        // Shell's target is optional; keep adding removal faces after preselection.
+        if matches!(self.kind, Kind::Shell { .. }) {
+            self.active = 0;
+            return;
+        }
         if let Some(i) = self.inputs.iter().position(|i| i.items.is_empty()) {
             self.active = i;
         } else {
@@ -807,6 +816,17 @@ impl Dialog {
         inp.accepts(h, |body, face| snap.and_then(|f| f.planar(body, face)).unwrap_or_else(|| planar_face(s, body, face).is_some()))
     }
 
+    /// The browser can name a Shell target without inventing a face to remove.
+    pub(crate) fn pick_shell_body(&mut self, s: &Session, sel: &Sel) -> bool {
+        if !matches!(self.kind, Kind::Shell { .. }) || !matches!(sel, Sel::Body { .. }) {
+            return false;
+        }
+        self.active = 1;
+        self.pick(s, sel.clone());
+        self.active = 0;
+        true
+    }
+
     /// A pick in the viewport (already accepted by the active input).
     pub fn pick(&mut self, s: &Session, sel: Sel) {
         if let Kind::PathPlane { sketch, .. } = &mut self.kind {
@@ -815,6 +835,12 @@ impl Dialog {
         }
         if self.active == 0 && matches!(self.kind, Kind::Extrude { .. } | Kind::Revolve { .. } | Kind::Emboss { .. }) {
             self.profile_selection_changed = true;
+        }
+        if matches!(self.kind, Kind::Shell { .. })
+            && let Sel::Body { name } = &sel
+            && let Some(faces) = self.inputs.first_mut()
+        {
+            faces.items.retain(|x| matches!(x, Sel::Face { body, .. } if body == name));
         }
         let measure = matches!(self.kind, Kind::Measure { .. });
         let sel = if measure { crate::viewport::measurement_selection(s, &sel) } else { sel };
@@ -2181,6 +2207,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         ui.end_row();
                     }
                     Kind::Shell { thickness } => {
+                        row_label(ui, "");
+                        ui.add(egui::Label::new("Pick faces to remove in the viewport. Optionally select their body in the browser. Closed shells are not supported yet.").wrap());
+                        ui.end_row();
                         row_label(ui, "Tangent Chain");
                         extra_check(ui, &mut d.extra, "tangent_chain");
                         ui.end_row();
@@ -3219,8 +3248,20 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             }
         }
         Kind::Shell { thickness } => {
-            need(0, "faces to remove")?;
-            ("solid.shell", json!({"faces": face_points(0), "thickness": thickness}))
+            if sels(d, 0).is_empty() {
+                return Err("Select faces to remove in the viewport; selecting a body alone cannot create a closed shell yet".into());
+            }
+            let target = body_names(1).into_iter().next();
+            let mut owner = target.as_deref();
+            for item in sels(d, 0) {
+                if let Sel::Face { body, .. } = item {
+                    if owner.is_some_and(|name| name != body) {
+                        return Err("Select faces to remove from the same target body".into());
+                    }
+                    owner = Some(body);
+                }
+            }
+            ("solid.shell", json!({"faces": face_points(0), "thickness": thickness, "body": owner}))
         }
         Kind::Draft { angle } => {
             need(0, "faces")?;
@@ -4063,9 +4104,12 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             d
         }
-        FeatureKind::Shell { faces, thickness, direction, tangent_chain, .. } => {
+        FeatureKind::Shell { faces, thickness, body, direction, tangent_chain } => {
             let mut d = start("solid.shell")?;
             d.kind = Kind::Shell { thickness: thickness.clone() };
+            if let Some(inp) = d.inputs.get_mut(1) {
+                inp.items = body.iter().map(|name| Sel::Body { name: name.clone() }).collect();
+            }
             d.extra.insert("tangent_chain".into(), json!(tangent_chain));
             if !direction.is_empty() && direction != "inside" {
                 d.extra.insert("direction".into(), json!(direction));

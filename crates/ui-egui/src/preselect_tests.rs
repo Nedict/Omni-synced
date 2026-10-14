@@ -1123,3 +1123,71 @@ fn a_primitive_without_a_pick_or_with_its_position_cleared_stays_at_the_origin()
     let (p, _) = primitive_on(&mut app, vec![v], "solid.sphere", |_| {});
     assert_eq!(p["center"], json!([40.0, 30.0, 20.0]), "{p}");
 }
+
+#[test]
+fn shell_body_preselection_requires_faces_and_keeps_the_target_on_edit() {
+    let mut app = boxed();
+    let body = Sel::Body { name: "Body1".into() };
+    let top = face(&app, Vec3::new(20.0, 15.0, 20.0));
+    let mut d = start(&mut app, vec![body.clone()], "solid.shell");
+    assert_eq!(d.inputs[1].items, vec![body]);
+    assert!(apply_commands(&app, &d).unwrap_err().contains("faces to remove"));
+    d.pick(&app.session, top.clone());
+    let commands = apply_commands(&app, &d).unwrap();
+    assert_eq!(commands[0].1["body"], "Body1");
+    assert_eq!(commands[0].1["faces"], json!([[20.0, 15.0, 20.0]]));
+    let id = apply(&mut app, &d);
+    // Open top: outer box minus the 36 x 26 x 18 mm cavity.
+    let volume = app.session.model.state().body("Body1").unwrap().mesh().measure().volume;
+    assert!((volume - (40.0 * 30.0 * 20.0 - 36.0 * 26.0 * 18.0)).abs() < 1e-6, "{volume}");
+    app.edit_feature(id);
+    let e = app.dialog.as_ref().unwrap();
+    assert_eq!(e.inputs[1].items, d.inputs[1].items);
+    assert_eq!(e.inputs[0].items.len(), 1);
+    crate::dialogs::cancel(&mut app);
+    app.run("edit.undo", json!({})).unwrap();
+    assert!(!app.session.doc.features.iter().any(|f| f.id == id));
+    app.run("edit.redo", json!({})).unwrap();
+    assert!(app.session.doc.features.iter().any(|f| f.id == id));
+
+    // Face preselection must still reach the face row, not just its body's row.
+    let mut app = boxed();
+    let top = face(&app, Vec3::new(20.0, 15.0, 20.0));
+    let d = start(&mut app, vec![top.clone(), Sel::Body { name: "Body1".into() }], "solid.shell");
+    assert_eq!(d.inputs[0].items, vec![top]);
+    assert_eq!(d.active, 0);
+    assert_eq!(apply_commands(&app, &d).unwrap()[0].1["body"], "Body1");
+}
+
+#[test]
+fn shell_browser_body_click_fills_dialog_and_switching_clears_old_faces() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("solid.box", json!({"length":40,"width":30,"height":20,"body_name":"First"})).unwrap();
+    h.app.run("solid.box", json!({"corner":[60,0,0],"length":40,"width":30,"height":20,"body_name":"Second"})).unwrap();
+    h.app.start("solid.shell");
+    h.frames(3);
+    h.step(&json!({"click":{"browser":"First"}})).unwrap();
+    let d = h.app.dialog.as_ref().unwrap();
+    assert_eq!(d.inputs[1].items, vec![Sel::Body { name: "First".into() }]);
+    assert_eq!(d.active, 0);
+    assert!(apply_commands(&h.app, d).unwrap_err().contains("closed shell"));
+    let top = crate::dialogs::face_sel(&h.app.session, Vec3::new(20.0, 15.0, 20.0)).unwrap();
+    h.app.dialog.as_mut().unwrap().pick(&h.app.session, top.clone());
+    assert_eq!(apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap()[0].1["body"], "First");
+    h.frames(2);
+    h.step(&json!({"click":{"browser":"Second"}})).unwrap();
+    let d = h.app.dialog.as_ref().unwrap();
+    assert_eq!(d.inputs[1].items, vec![Sel::Body { name: "Second".into() }]);
+    assert!(d.inputs[0].items.is_empty());
+    let mut wrong = d.clone();
+    wrong.pick(&h.app.session, top);
+    assert!(apply_commands(&h.app, &wrong).unwrap_err().contains("same target body"));
+    let top = crate::dialogs::face_sel(&h.app.session, Vec3::new(80.0, 15.0, 20.0)).unwrap();
+    h.app.dialog.as_mut().unwrap().pick(&h.app.session, top);
+    let cmds = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap();
+    assert_eq!(cmds[0].1["body"], "Second");
+    let features = h.app.session.doc.features.len();
+    h.step(&json!({"key":"Escape"})).unwrap();
+    assert!(h.app.dialog.is_none());
+    assert_eq!(h.app.session.doc.features.len(), features);
+}
