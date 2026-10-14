@@ -20,7 +20,8 @@ also attached without the version in their names, for example `solidcraft-window
 `solidcraft-linux-x86_64.AppImage`, and listed in `SHA256SUMS.txt`. The README's Download section
 links to `https://github.com/bherbruck/solidcraft/releases/latest/download/<name>`, which follows
 the release marked latest; nightlies never are. Keep these names stable: renaming one breaks the
-README links.
+README links and the in-app update check, which picks them by name (`crates/ui-egui/src/update.rs`;
+[updates and privacy](book/src/guide/updates.md)).
 
 Project Pages publishes the documentation, browser app and published-release Flatpak
 repository under `/solidcraft/`. Do not add a separate owner-site publisher or permanent

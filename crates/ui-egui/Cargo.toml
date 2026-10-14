@@ -19,6 +19,7 @@ log = { workspace = true }
 web-time = { workspace = true }
 image = { workspace = true, features = ["jpeg"] }
 ttf-parser = { workspace = true }
+semver = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # The offscreen viewport render test opens a device without a window.
