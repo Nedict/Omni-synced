@@ -214,3 +214,40 @@ fn text_style_parameters_are_checked() {
     let LinkSource::Text { style, .. } = &s.doc.sketch(1).unwrap().link(&link).unwrap().source else { panic!() };
     assert!(style.italic && style.letter_spacing == 1.5);
 }
+
+/// A text set on a spline stands on it, its descenders below it: the spline becomes
+/// construction, so it doesn't cut the letters into pieces. Every profile is then the text's
+/// alone (picking the text picks letters, not pieces of letters and curve), and one undo puts
+/// the text and the curve back as they were.
+#[test]
+fn a_text_on_a_spline_turns_its_path_into_a_guide() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane":"XY"}));
+    let spline = run(&mut s, "sketch.spline.fit_point", json!({"points":[[0,0],[30,15],[60,0],[90,10]]}))["created"]["curves"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let construction = |s: &Session| {
+        let sk = s.doc.sketch(s.active_sketch.unwrap()).unwrap();
+        sk.curves.iter().find(|c| c.id == spline).unwrap().construction
+    };
+    let t = run(&mut s, "sketch.text", json!({"text":"Phago","at":[0,0],"height":10,"path":spline}));
+    assert_eq!(t["guide"], json!(spline));
+    assert!(construction(&s));
+    let state = s.world_state();
+    let ss = state.sketch(s.active_sketch.unwrap()).unwrap();
+    for (i, p) in ss.profiles.iter().enumerate() {
+        let alone = p.curve_ids().iter().all(|id| ss.sketch.curves.iter().any(|c| &c.id == id && c.link.is_some()));
+        assert!(alone, "profile {i} is bounded by the spline too");
+    }
+    // Taken off the curve, the text leaves it a guide; set on it again, nothing changes.
+    let link = t["link"].as_str().unwrap().to_string();
+    run(&mut s, "sketch.edit_text", json!({"link":link,"path":""}));
+    assert!(construction(&s));
+    assert_eq!(run(&mut s, "sketch.edit_text", json!({"link":link,"path":spline}))["guide"], json!(null));
+    // One undo for each step, back to the text's first state, then to before it.
+    for _ in 0..3 {
+        run(&mut s, "edit.undo", json!({}));
+    }
+    assert!(!construction(&s), "undoing the text gives the curve back");
+}
