@@ -81,7 +81,28 @@ macro_rules! feature_walk {
                         }
                     }
                 },
-                FeatureKind::Extrude { extent, .. } | FeatureKind::SurfaceExtrude { extent, .. } => {
+                FeatureKind::Extrude { extent, thin, .. } => {
+                    f("Distance", & $($m)? extent.distance, L, I);
+                    if let Some(d) = & $($m)? extent.distance2 {
+                        f("Distance 2", d, L, I);
+                    }
+                    if let Some(d) = & $($m)? extent.start_offset {
+                        f("Start offset", d, L, I);
+                    }
+                    if let Some(d) = & $($m)? extent.taper {
+                        f("Taper angle", d, A, I);
+                    }
+                    if let Some(d) = & $($m)? extent.to_offset {
+                        f("To offset", d, L, I);
+                    }
+                    if let Some(thin) = thin {
+                        f("Thickness", & $($m)? thin.thickness, L, I);
+                        if let Some(t) = & $($m)? thin.thickness2 {
+                            f("Thickness 2", t, L, I);
+                        }
+                    }
+                }
+                FeatureKind::SurfaceExtrude { extent, .. } => {
                     f("Distance", & $($m)? extent.distance, L, I);
                     if let Some(d) = & $($m)? extent.distance2 {
                         f("Distance 2", d, L, I);
@@ -466,7 +487,7 @@ impl Document {
         v
     }
 
-    fn name_taken(&self, n: &str) -> bool {
+    pub(crate) fn name_taken(&self, n: &str) -> bool {
         self.param(n).is_some() || self.features.iter().any(|f| f.param_names.iter().any(|x| x == n))
     }
 

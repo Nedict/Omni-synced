@@ -16,6 +16,16 @@ extrude
     Taper angle = extrude.taper (Angle)
     To offset = extrude.to_offset (Length)
   expressions: extrude.distance, extrude.distance2, extrude.start_offset, extrude.taper, extrude.to_offset
+extrude_thin
+  inputs:
+    Distance = thin.distance (Length)
+    Distance 2 = thin.distance2 (Length)
+    Start offset = thin.start_offset (Length)
+    Taper angle = thin.taper (Angle)
+    To offset = thin.to_offset (Length)
+    Thickness = thin.thickness (Length)
+    Thickness 2 = thin.thickness2 (Length)
+  expressions: thin.distance, thin.distance2, thin.start_offset, thin.taper, thin.to_offset, thin.thickness, thin.thickness2
 revolve
   inputs:
     Angle = revolve.angle (Angle)

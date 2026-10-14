@@ -33,6 +33,7 @@ mod profiles;
 mod shape;
 mod solver;
 mod text;
+mod thin;
 mod union_find;
 mod wire;
 
@@ -61,6 +62,7 @@ pub use solver::{
     solve_after_edit, solve_after_value_edit, solve_holding, solve_with,
 };
 pub use text::{MAX_TEXT_CHARS, TextAlign, TextStyle, text_geometry, text_geometry_in, text_geometry_styled};
+pub use thin::{MAX_THIN_SEGMENTS, thin_wall_regions};
 pub use wire::{MAX_FIT_POINTS, MAX_WIRE_POINTS, Wire, WireSpace, fit_polyline};
 
 #[cfg(test)]
@@ -73,6 +75,8 @@ mod continuation_tests;
 mod font_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod thin_tests;
 
 #[cfg(test)]
 mod virtual_corner_tests;
