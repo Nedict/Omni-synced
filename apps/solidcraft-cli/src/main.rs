@@ -9,7 +9,7 @@
 //! solidcraft-cli commands                                     the command registry as JSON
 //! solidcraft-cli recipe <recipe.json>                         translate an oracle recipe to a script
 //! solidcraft-cli oracle <case-dir>...                         replay recipes and compare with expected.json
-//! solidcraft-cli mcp [--in design|script] [--connect HOST:PORT] [--allow-path DIR]... [--allow-any-path]
+//! solidcraft-cli mcp [--in design|script] [--connect HOST:PORT [--token T]] [--allow-path DIR]... [--allow-any-path]
 //!                                                             MCP server on stdio (docs/mcp.md)
 //! solidcraft-cli licences                                     SolidCraft's licence and the third-party licences
 //! solidcraft-cli icon --out F.png|F.ico [--size N]             the app icon (packaging; drawn, not a file)
@@ -26,7 +26,7 @@ mod spatial;
 use std::process::ExitCode;
 
 use serde_json::{Value, json};
-#[path = "../../app_icon.rs"]
+#[path = "../../../assets/icons/app/shared/source/app_icon.rs"]
 mod app_icon;
 
 use solidcraft_engine::Session;
@@ -44,7 +44,7 @@ const USAGE: &str = "usage:
   solidcraft-cli recipe <recipe.json>
   solidcraft-cli oracle <case-dir>... [--json]
   solidcraft-cli fuzz [--from N] [--count N] [--jobs J] [--timeout S] [--steps N] [--minimise] [--out DIR] [--report FILE]
-  solidcraft-cli mcp [--in design.solidcraft|script.json] [--connect 127.0.0.1:PORT] [--allow-path DIR]... [--allow-any-path]
+  solidcraft-cli mcp [--in design.solidcraft|script.json] [--connect 127.0.0.1:PORT [--token T]] [--allow-path DIR]... [--allow-any-path]
   solidcraft-cli crashes [list [--json] | show <id> | replay <id> | dir | clear [<id>]]
   solidcraft-cli licences
   solidcraft-cli icon --out icon.png [--size 256] | --out icon.ico
@@ -333,7 +333,7 @@ fn cmd_mcp(args: &[String]) -> Result<(), String> {
     }
     let backend: Box<dyn solidcraft_mcp::Backend> = match (flag(args, "--connect"), flag(args, "--in")) {
         (Some(_), Some(_)) => return Err("mcp: use either --connect or --in, not both".into()),
-        (Some(addr), None) => Box::new(solidcraft_mcp::Remote::connect(addr).map_err(|e| {
+        (Some(addr), None) => Box::new(solidcraft_mcp::Remote::connect_with_token(addr, flag(args, "--token")).map_err(|e| {
             let port = addr.rsplit(':').next().filter(|p| p.parse::<u16>().is_ok()).unwrap_or("PORT");
             format!(
                 "cannot connect to {addr}: {e}\nno SolidCraft app is listening there; start it with \
@@ -410,10 +410,13 @@ fn cmd_bench_open(args: &[String]) -> Result<(), String> {
     let read_ms = t.elapsed().as_secs_f64() * 1000.0;
     println!("{}", json!({"step": "read", "ms": read_ms, "bytes": bytes.len()}));
     let t = std::time::Instant::now();
+    // The file as read, held until the timeline has evaluated it (as the import command does).
+    let mut read = None;
     let doc = if step {
         let imported = solidcraft_engine::io::step_import_feature(&bytes, path).map_err(|e| e.to_string())?;
         let mut doc = solidcraft_engine::doc::Document::new(&imported.name);
         doc.add_feature(imported.kind, Some(&imported.name)).map_err(|e| e.to_string())?;
+        read = Some(imported.import);
         doc
     } else {
         solidcraft_engine::io::read_design(&bytes).map_err(|e| e.to_string())?
@@ -425,12 +428,15 @@ fn cmd_bench_open(args: &[String]) -> Result<(), String> {
     }
     let t = std::time::Instant::now();
     let s = Session::new(doc);
+    drop(read);
     println!("{}", json!({"step": "evaluate", "ms": t.elapsed().as_secs_f64() * 1000.0}));
     for r in &s.model.results {
         println!("{}", json!({"step": "feature", "id": r.id, "name": r.name, "ms": r.ms, "error": r.error}));
     }
     let t = std::time::Instant::now();
     let st = s.world_state();
+    // As the desktop app prepares a design it opened.
+    st.warm_meshes(|| true);
     let triangles: usize = st.bodies.iter().map(|b| b.mesh().triangles.len()).sum();
     println!("{}", json!({"step": "mesh", "ms": t.elapsed().as_secs_f64() * 1000.0, "bodies": st.bodies.len(), "triangles": triangles}));
     Ok(())

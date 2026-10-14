@@ -125,7 +125,8 @@ rebuild with no errors, replayed here at 2× speed.
   provisional picture from warm geometry caches while rebuilding before editing; caches never
   replace the parametric design. Export to STEP (AP242 with body names, colours and
   components as assemblies; revolved faces as native planes, cylinders, cones, spheres and tori),
-  IGES 5.3 (manifold solid B-reps with names and colours), 3MF, STL (binary/ASCII) and OBJ;
+  IGES 5.3 (manifold solid B-reps with names and colours), 3MF, STL (binary/ASCII) and OBJ, and
+  assemblies with joints as URDF for robot simulators (docs/urdf.md);
   3MF, STL and OBJ import as mesh bodies (they render, measure, move and export; solid features
   need B-rep bodies). Convert Mesh reconstructs supported closed constant-section parts
   as parametric solids with planar and circular cylindrical faces;
