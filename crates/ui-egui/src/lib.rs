@@ -215,6 +215,8 @@ pub struct Services {
     pub graphics_path: Option<String>,
     /// HTTPS GET for the update check (`update`); None: never check (browser, tests).
     pub http_get: Option<update::HttpGet>,
+    /// HTTPS download to a file, with progress, for one-click updates (`update::install`).
+    pub http_download: Option<update::install::HttpDownload>,
 }
 
 pub struct SolveApp {

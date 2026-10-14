@@ -206,6 +206,47 @@ Renew the credentials before `--expires` by repeating steps 2 and 3. The snap us
 confinement and only plugs that connect automatically, apart from `removable-media`, which users
 connect with `sudo snap connect solidcraft:removable-media` (getting-started.md).
 
+## Update signing
+
+The app's **Update now** (docs/book/src/guide/updates.md) only installs a package whose SHA-256
+matches the release's `SHA256SUMS.txt`, fetched over HTTPS. That protects against corrupted and
+tampered downloads in transit, but not against someone who can upload release assets. Signing
+the checksum list closes that gap: once `PUBLIC_KEY` in `crates/ui-egui/src/update/install.rs`
+is set, the app also requires `SHA256SUMS.txt.minisig`, a [minisign](https://jedisct1.github.io/minisign/)
+signature by that key whose trusted comment names the release (`SolidCraft v<version>`), and
+refuses to update in place otherwise. The release workflow signs the list when the
+`UPDATE_SIGNING_KEY` secret exists, and fails when the app expects signatures but the secret is
+missing.
+
+To turn it on once (owner):
+
+1. On a trusted machine with minisign (`sudo apt install minisign`, `brew install minisign` or
+   `winget install minisign`), make a key pair without a password (the workflow can't type one):
+
+   ```sh
+   minisign -G -W -p solidcraft-update.pub -s solidcraft-update.key
+   ```
+
+2. Store the secret key as the repository secret and keep an offline backup of it (a lost key
+   means a new key and an app release that carries it; a leaked key means the same, quickly):
+
+   ```sh
+   gh secret set UPDATE_SIGNING_KEY -R bherbruck/solidcraft < solidcraft-update.key
+   ```
+
+3. Put the public key (the second line of `solidcraft-update.pub`, starting with `RW`) into
+   `crates/ui-egui/src/update/install.rs`:
+
+   ```rust
+   pub const PUBLIC_KEY: Option<&str> = Some("RW…");
+   ```
+
+   and land that through a PR. Builds from then on refuse unsigned updates; releases built
+   from then on carry `SHA256SUMS.txt.minisig`.
+4. Delete `solidcraft-update.key` from the machine once the backup is safe.
+
+Older builds without the key keep updating with the SHA-256 check alone.
+
 ## Repository setup
 
 The `release` branch is advanced only for intentional release batches. Restrict its writers to

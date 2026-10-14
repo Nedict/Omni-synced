@@ -984,5 +984,15 @@
   "update.prefs_note": "当前为 SolidCraft {version}({kind})。检查时只向 GitHub 查询最新版本,不发送其他任何数据。",
   "update.prefs_dev": "这是开发版本({version}),不检查更新。",
   "update.show": "显示 {version} 更新",
-  "update.prefs_flatpak": "此副本({version})由 Flatpak 更新:运行 {command} 或使用软件中心。SolidCraft 不会自行检查。"
+  "update.prefs_flatpak": "此副本({version})由 Flatpak 更新:运行 {command} 或使用软件中心。SolidCraft 不会自行检查。",
+  "update.update_now": "立即更新",
+  "update.install_msi": "安装(将关闭 SolidCraft)",
+  "update.download_open": "下载并打开",
+  "update.downloading": "正在下载并校验… {done} / {total} MB",
+  "update.installed": "SolidCraft {version} 已安装。重新启动后生效。",
+  "update.restart": "立即重启",
+  "update.restart_later": "稍后",
+  "update.installer_started": "SolidCraft 关闭后将启动安装程序。",
+  "update.dmg_opened": "磁盘映像已校验并打开:将 SolidCraft 拖到“应用程序”替换旧版本,然后重启 SolidCraft。",
+  "update.install_failed": "更新未安装:{error}。未做任何更改;可用“下载”获取安装包。"
 }

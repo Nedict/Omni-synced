@@ -725,5 +725,15 @@
   "update.prefs_note": "Dies ist SolidCraft {version} ({kind}). Die Suche fragt GitHub nach dem neuesten Release und sendet sonst nichts.",
   "update.prefs_dev": "Dies ist ein Entwicklungs-Build ({version}): er sucht nicht nach Updates.",
   "update.show": "Update auf {version} anzeigen",
-  "update.prefs_flatpak": "Flatpak aktualisiert diese Installation ({version}): {command} ausführen oder die Softwareverwaltung nutzen. SolidCraft sucht nicht selbst."
+  "update.prefs_flatpak": "Flatpak aktualisiert diese Installation ({version}): {command} ausführen oder die Softwareverwaltung nutzen. SolidCraft sucht nicht selbst.",
+  "update.update_now": "Jetzt aktualisieren",
+  "update.install_msi": "Installieren (schließt SolidCraft)",
+  "update.download_open": "Herunterladen und öffnen",
+  "update.downloading": "Herunterladen und prüfen… {done} von {total} MB",
+  "update.installed": "SolidCraft {version} ist installiert. Zum Verwenden neu starten.",
+  "update.restart": "Jetzt neu starten",
+  "update.restart_later": "Später",
+  "update.installer_started": "Das Installationsprogramm startet, wenn SolidCraft geschlossen wird.",
+  "update.dmg_opened": "Das Disk-Image ist geöffnet und geprüft: SolidCraft in „Programme“ ziehen, die alte Version ersetzen und SolidCraft neu starten.",
+  "update.install_failed": "Das Update wurde nicht installiert: {error}. Es wurde nichts verändert; „Herunterladen“ holt das Paket."
 }

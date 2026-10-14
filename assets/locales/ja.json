@@ -984,5 +984,15 @@
   "update.prefs_note": "これは SolidCraft {version} ({kind}) です。確認では GitHub に最新リリースを問い合わせるだけで、ほかには何も送信しません。",
   "update.prefs_dev": "これは開発ビルド ({version}) のため、アップデートを確認しません。",
   "update.show": "{version} へのアップデートを表示",
-  "update.prefs_flatpak": "このコピー ({version}) は Flatpak が更新します: {command} を実行するか、ソフトウェアセンターを使ってください。SolidCraft 自身は確認しません。"
+  "update.prefs_flatpak": "このコピー ({version}) は Flatpak が更新します: {command} を実行するか、ソフトウェアセンターを使ってください。SolidCraft 自身は確認しません。",
+  "update.update_now": "今すぐ更新",
+  "update.install_msi": "インストール (SolidCraft を終了)",
+  "update.download_open": "ダウンロードして開く",
+  "update.downloading": "ダウンロードと検証中… {done} / {total} MB",
+  "update.installed": "SolidCraft {version} をインストールしました。再起動すると使えます。",
+  "update.restart": "今すぐ再起動",
+  "update.restart_later": "後で",
+  "update.installer_started": "SolidCraft の終了後にインストーラーが起動します。",
+  "update.dmg_opened": "ディスクイメージを検証して開きました: SolidCraft をアプリケーションフォルダにドラッグして古いものを置き換え、SolidCraft を再起動してください。",
+  "update.install_failed": "アップデートをインストールできませんでした: {error}。何も変更されていません。「ダウンロード」でパッケージを入手できます。"
 }
