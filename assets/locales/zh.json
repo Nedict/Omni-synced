@@ -1014,6 +1014,8 @@
   "cmd.material_properties_directional": "方向弹性模量",
   "update.button": "更新",
   "update.button_tip": "SolidCraft {version} 已发布",
+  "install.button": "安装应用",
+  "install.button_tip": "将 SolidCraft 安装为应用：在独立窗口中打开，离线也能使用",
   "update.title": "有可用更新",
   "update.available": "SolidCraft {version} 已发布",
   "update.you_have": "当前版本为 {version}。",

@@ -53,6 +53,7 @@ mod i18n_menu_tests;
 mod i18n_ui_tests;
 pub mod icons;
 pub mod inference;
+pub mod install;
 pub mod issue_report;
 pub mod keymap;
 #[cfg(test)]
@@ -232,6 +233,8 @@ pub struct Services {
     pub http_get: Option<update::HttpGet>,
     /// HTTPS download to a file, with progress, for one-click updates (`update::install`).
     pub http_download: Option<update::install::HttpDownload>,
+    /// The browser's offer to install the web app (`install`); None: no Install button (desktop).
+    pub install_app: Option<install::InstallApp>,
 }
 
 pub struct SolveApp {

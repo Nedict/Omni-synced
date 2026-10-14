@@ -8,6 +8,8 @@
 
 #[cfg(target_arch = "wasm32")]
 mod files;
+#[cfg(target_arch = "wasm32")]
+mod install;
 
 #[cfg(target_arch = "wasm32")]
 mod web {
@@ -447,6 +449,7 @@ mod web {
                                 let design = exts.contains(&solidcraft_engine::io::DESIGN_EXT);
                                 Box::pin(std::future::ready(Some(format!("{}{name}", if design { files::OPFS } else { files::DOWNLOADS }))))
                             })),
+                            install_app: Some(crate::install::service(&cc.egui_ctx)),
                             ..Default::default()
                         };
                         let mut app = SolveApp::new(Session::default(), services);

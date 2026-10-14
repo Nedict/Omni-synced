@@ -153,6 +153,30 @@ fn report_rect(bar: Rect, captions: f32, tabs_start: f32) -> (Rect, bool) {
     (Rect::from_min_size(pos2(right - width, bar.top() + 4.0), vec2(width, 26.0)), labeled)
 }
 
+/// An application-bar button for something on offer (Update, Install), right of `right`: an
+/// accent-framed `icon`, labeled with `text` when there is room. `handle` names it for scenarios.
+pub(crate) fn offer_button(ui: &mut egui::Ui, right: f32, top: f32, labeled: bool, text: &str, icon: &str, handle: &str) -> (Rect, egui::Response) {
+    let t = Tokens::get();
+    let width = if labeled {
+        30.0 + ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), FontId::proportional(13.0), Color32::WHITE).size().x) + 10.0
+    } else {
+        28.0
+    };
+    let rect = Rect::from_min_size(pos2(right - width, top), vec2(width, 26.0));
+    let response = ui.interact(rect, ui.id().with(("sc_offer_button", handle)), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), text));
+    crate::scenario::publish_handle(handle, rect.center());
+    let fill = if response.hovered() || response.has_focus() { t.hover } else { t.app_bar };
+    ui.painter().rect_filled(rect, 4.0, fill);
+    ui.painter().rect_stroke(rect, 4.0, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+    let glyph = Rect::from_center_size(pos2(rect.left() + 14.0, rect.center().y), vec2(18.0, 18.0));
+    icons::paint(ui.painter(), glyph, icon, t.accent, t.accent, t.app_bar);
+    if labeled {
+        ui.painter().text(pos2(rect.left() + 29.0, rect.center().y), Align2::LEFT_CENTER, text, FontId::proportional(13.0), t.app_bar_text);
+    }
+    (rect, response)
+}
+
 /// The application bar's height: the window's title bar on desktop builds.
 pub const APP_BAR_HEIGHT: f32 = 34.0;
 
@@ -246,7 +270,10 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let (report, report_label) = report_rect(r, captions, tabs_start);
         // A newer release: its Update button, left of Report a bug (`update`).
         let update = crate::update::button(app, ui, report.left() - 6.0, report.top(), report_label);
-        let tabs_end = update.map_or(report.left(), |u| u.left()) - 8.0;
+        let left = update.map_or(report.left(), |u| u.left());
+        // The browser can install SolidCraft as an app: Install, left of those (`install`).
+        let install = crate::install::button(app, ui, left - 6.0, report.top(), report_label);
+        let tabs_end = install.map_or(left, |i| i.left()) - 8.0;
         // Narrow title bars can fit only part of the tab strip. Its hit regions must not
         // extend into the persistent report and window controls.
         let tabs_rect = Rect::from_min_max(pos2(tabs_start.min(tabs_end), r.top()), pos2(tabs_end, r.bottom()));

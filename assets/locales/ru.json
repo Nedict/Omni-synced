@@ -944,6 +944,8 @@
   "ui.removeFromToolbar": "Убрать с панели",
   "ui.repeat": "Повторить",
   "ui.report_a_bug": "Сообщить об ошибке",
+  "install.button": "Установить приложение",
+  "install.button_tip": "Установить SolidCraft как приложение: отдельное окно и работа без сети",
   "ui.restore": "Восстановить",
   "ui.heading_setup": "НАСТРОЙКА",
   "ui.selectOther": "Выбрать другое…",

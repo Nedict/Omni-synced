@@ -79,8 +79,14 @@ file storage, which needs HTTPS or localhost.
 After the first visit the web app works offline: the browser keeps a copy of it. Online, each
 launch gets the latest published build (the browser downloads it once when it changes); offline,
 when the network doesn't answer within a few seconds, or when a new build can't be downloaded
-whole, the kept copy starts (and the download carries on for the next launch). To build it
-yourself:
+whole, the kept copy starts (and the download carries on for the next launch).
+
+Browsers that can install web apps (Chrome, Edge and other Chromium browsers) show an **Install
+app** button in the application bar, beside Report a bug: it installs SolidCraft as an app with its
+own window and launcher icon, working offline like the page. Once installed, the button is gone.
+In Safari, use Share ▸ Add to Home Screen (iPhone, iPad) or File ▸ Add to Dock (Mac).
+
+To build it yourself:
 
 ```sh
 rustup target add wasm32-unknown-unknown

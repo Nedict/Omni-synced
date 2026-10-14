@@ -1014,6 +1014,8 @@
   "cmd.material_properties_directional": "方向別弾性率",
   "update.button": "アップデート",
   "update.button_tip": "SolidCraft {version} が利用できます",
+  "install.button": "アプリをインストール",
+  "install.button_tip": "SolidCraft をアプリとしてインストールします。専用のウィンドウで開き、オフラインでも使えます",
   "update.title": "アップデートがあります",
   "update.available": "SolidCraft {version} が利用できます",
   "update.you_have": "現在のバージョンは {version} です。",
