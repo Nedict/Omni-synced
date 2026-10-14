@@ -11,5 +11,11 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod model;
 pub mod net;
+pub mod policy;
+pub mod provider;
 pub mod settings;
+pub mod sse;
+pub mod tool_loop;
+pub mod tools;
