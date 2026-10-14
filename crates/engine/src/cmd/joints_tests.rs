@@ -582,3 +582,33 @@ fn a_full_turn_stops_from_a_suppressed_dial_or_a_missing_value() {
     let r = run(&mut s, "joint.drive", json!({"joint": "Rocker", "value": 360}));
     assert!(r["stopped_by_loop"].is_object(), "{r}");
 }
+
+/// Loops that only share a rigid joint are independent: an arm whose lock can't close does not
+/// stop another arm, beside it on the same rigidly mounted base, from closing its own loop.
+#[test]
+fn loops_sharing_only_a_rigid_joint_are_solved_apart() {
+    let mut s = Session::default();
+    for (name, x) in [("Ground", -1.0), ("Base", -1.0), ("Arm", 0.0), ("Other", 100.0)] {
+        part(&mut s, name, [x, -1.0, 0.0]);
+    }
+    let g = occ(&s, "Ground");
+    run(&mut s, "occurrence.ground", json!({"occurrence": g, "grounded": true}));
+    run(&mut s, "joint.as_built", json!({"type": "rigid", "a": "Ground", "b": "Base", "name": "Mount"}));
+    pin(&mut s, "revolute", "Pivot", "Base", "Arm", Vec3::ZERO, Vec3::Z);
+    pin(&mut s, "revolute", "Other pivot", "Base", "Other", Vec3::new(100.0, 0.0, 0.0), Vec3::Z);
+    run(
+        &mut s,
+        "joint.create",
+        json!({"type": "rigid", "a": {"occurrence": "Ground", "point": [100, 0, 0]}, "b": {"occurrence": "Other", "point": [110, 0, 0]}, "flip": true, "name": "Wrong"}),
+    );
+    let r = run(
+        &mut s,
+        "joint.create",
+        json!({"type": "rigid", "a": framed("Ground", [0.0; 3], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]),
+            "b": framed("Arm", [0.0; 3], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]), "flip": true, "name": "Lock"}),
+    );
+    // The broken loop is reported (on whichever of its joints closes it), the arm's is not.
+    let names: Vec<&str> = r["conflicts"].as_array().into_iter().flatten().filter_map(|c| c["name"].as_str()).collect();
+    assert!(names.len() == 1 && ["Wrong", "Other pivot"].contains(&names[0]), "{r}");
+    assert!(near(place(&s, "Arm", Vec3::new(10.0, 0.0, 0.0)), Vec3::new(0.0, 10.0, 0.0)), "{:?}", place(&s, "Arm", Vec3::new(10.0, 0.0, 0.0)));
+}

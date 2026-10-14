@@ -538,6 +538,8 @@ fn close_loops(tree: &Tree, closing: &[u64], asm: &Assembly, held: &Held, vals: 
         around.insert(*id);
         let mut touches: BTreeSet<u64> = link_chains(asm, tree, &around, &linked).0;
         touches.extend(around.iter().copied());
+        // Only joints with values tie loops together: a rigid joint on both paths moves neither.
+        touches.retain(|id| tree.joints.get(id).is_some_and(|j| !j.kind.dofs().is_empty()));
         let mut members = vec![*id];
         groups.retain(|(c, a, t)| {
             if t.is_disjoint(&touches) {
