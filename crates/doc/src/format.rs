@@ -108,6 +108,14 @@
 //!   bodies) and `ReverseNormal` (a surface body's faces turned over), each a `body` and
 //!   optional `faces` points. Version 17 designs need no transformation; the version stamp makes
 //!   0.9.0 (which reads up to 17) ask for an update instead of meeting a feature it can't read.
+//!   Under the same version, a sketch text's link source can carry a `style`: `bold` and
+//!   `italic` (the font's bold or italic face), `align` (`left`, `center` or `right`),
+//!   `letter_spacing` (mm), `line_spacing` (times the font's line distance), `path` (the id of a
+//!   curve of the same sketch the baseline follows) and `reverse`. A text without `style` is set
+//!   as it always was; 0.9.0 would drop the style and set the text plain, off its curve.
+//!   Under the same version, Delete Face can leave the gap open (`heal: false` on the feature:
+//!   the faces left are a surface body); a Delete Face without it heals, as it always did, and
+//!   saves as before. 0.9.0 would heal a gap the design leaves open.
 
 use serde_json::Value;
 

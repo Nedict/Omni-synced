@@ -485,7 +485,7 @@ pub enum FeatureKind {
         depth: Option<String>,
         #[serde(default)]
         hole: HoleKind,
-        /// Drill at these sketch points instead (one hole each, perpendicular to the sketch);
+        /// Drill at these sketch points instead (one hole each, perpendicular to the sketch, into the material: against the sketch normal, or along it when only that side has material);
         /// the holes follow the points when the sketch changes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         points: Option<SketchPoints>,
@@ -607,6 +607,10 @@ pub enum FeatureKind {
         faces: Vec<Vec3>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
+        /// Close the gap by extending the neighbouring faces (the default); `false` leaves it
+        /// open, the faces left a surface body.
+        #[serde(default = "yes", skip_serializing_if = "is_yes")]
+        heal: bool,
     },
     /// A box around bodies, grown by a margin.
     BoundingSolid {
@@ -1743,6 +1747,14 @@ fn inside_str() -> String {
 
 fn all_profiles() -> ProfileSel {
     ProfileSel::All
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_yes(b: &bool) -> bool {
+    *b
 }
 
 fn zero_expr() -> String {
