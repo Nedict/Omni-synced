@@ -965,5 +965,6 @@
   "Thickness Outside": "外側の厚さ",
   "Inside": "内側",
   "Outside": "外側",
-  "Profiles/Curves": "プロファイル/曲線"
+  "Profiles/Curves": "プロファイル/曲線",
+  "cmd.material_properties_directional":"方向別弾性率"
 }

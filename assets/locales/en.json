@@ -965,5 +965,6 @@
   "Thickness Outside": "Thickness Outside",
   "Inside": "Inside",
   "Outside": "Outside",
-  "Profiles/Curves": "Profiles/Curves"
+  "Profiles/Curves": "Profiles/Curves",
+  "cmd.material_properties_directional":"Directional Elastic Modulus"
 }

@@ -965,5 +965,6 @@
   "Thickness Outside": "外侧厚度",
   "Inside": "内侧",
   "Outside": "外侧",
-  "Profiles/Curves": "轮廓/曲线"
+  "Profiles/Curves": "轮廓/曲线",
+  "cmd.material_properties_directional":"方向弹性模量"
 }
