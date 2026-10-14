@@ -51,7 +51,10 @@
   to its top.
 
 Preferences (File › Preferences) hold the theme, the units of new designs, the mouse preset, the
-visual style and autosave. Help › Keyboard Shortcuts lists every key, and File › Keyboard
+visual style and autosave. Graphics › Colour vision gives the colours that carry a meaning (sketch
+states, axes, bends, analyses, icons) values for a weak red, green or blue sense: Protan, Deutan or
+Tritan. In a mode, the faces Draft and Accessibility Analysis mark as failing are striped too.
+Help › Keyboard Shortcuts lists every key, and File › Keyboard
 Shortcuts changes them.
 
 Navigation › **Smooth wheel zoom** is on by default. Turn it off to apply each wheel or

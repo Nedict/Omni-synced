@@ -19,9 +19,12 @@ choose **New Body** explicitly to keep an addition separate. Changing the defaul
 operations already saved in a design.
 
 A taper slopes the sides of any profile, sketch text included: lines, arcs and spline or conic
-curves move in or out together, and a flat tip shorter than the taper closes to a point. A
-taper steeper than the profile's details (a stroke, a curve or a gap narrower than it) is
-refused with that reason; a smaller taper or distance builds.
+curves move in or out together, and a flat tip shorter than the taper closes to a point. On
+spline and conic sides the slope is approximate: the moved outline is a curve of the same kind
+within 2 % of the taper's offset (or 10 µm) of the true one, a curve that turns too much for
+that being cut into pieces first; where a curve bends tighter than the offset, the offset folds
+and is smoothed over. A taper steeper than the profile's details (a stroke, a curve or a gap
+narrower than it) is refused with that reason; a smaller taper or distance builds.
 
 **Thin Extrude** (`thin: true` on `solid.extrude`, the Thin Extrude box in its dialog) builds a
 wall of constant thickness along sketch curves instead of filling profiles: open chains (a single

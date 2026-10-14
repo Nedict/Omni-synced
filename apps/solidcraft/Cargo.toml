@@ -7,8 +7,9 @@ license.workspace = true
 publish = false
 default-run = "solidcraft"
 
-# The workspace lints, except unsafe_code: denied, not forbidden, so that src/open_documents.rs can
-# allow it (macOS file-open events have no safe API). Keep the rest in sync with [workspace.lints].
+# The workspace lints, except unsafe_code: denied, not forbidden, so that src/open_documents.rs
+# (macOS file-open events) and src/native_crash.rs (Windows exception filter) can allow it: neither
+# has a safe API. Keep the rest in sync with [workspace.lints].
 [lints.rust]
 unsafe_code = "deny"
 
@@ -41,6 +42,18 @@ quick-xml = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }
+# Native crash capture (src/native_crash.rs): the exception filter, the faulting module, a minidump.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_IO",
+    "Win32_System_Kernel",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Files opened from Finder and the Dock (src/open_documents.rs); all already come with eframe and rfd.
