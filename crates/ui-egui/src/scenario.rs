@@ -731,7 +731,8 @@ pub fn check(h: &mut Harness, e: &Value) -> Result<(), String> {
             }
             "dialog_docked" => {
                 // The command dialog: docked at the viewport's right, its width in [min, max].
-                let r = h.ctx.memory(|m| m.area_rect(egui::Id::new("sc_dialog"))).ok_or("no command dialog")?;
+                let id = h.app.dialog.as_ref().map(|d| crate::dialogs::dialog_area_id(&d.kind));
+                let r = h.ctx.memory(|m| id.and_then(|id| m.area_rect(id))).ok_or("no command dialog")?;
                 let vp = h.app.viewport.rect.unwrap_or(egui::Rect::NOTHING);
                 let (lo, hi) = (v["min"].as_f64().unwrap_or(260.0) as f32, v["max"].as_f64().unwrap_or(380.0) as f32);
                 if r.width() < lo - 0.5 || r.width() > hi + 0.5 {

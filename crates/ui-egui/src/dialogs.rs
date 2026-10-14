@@ -1244,6 +1244,13 @@ fn publish_row(r: &egui::Response) {
     ROW.with(|row| crate::scenario::publish_handle(&format!("dialog:{}", row.borrow()), r.rect.center()));
 }
 
+/// The egui area id of a command dialog. Per-kind: the id carries the dialog's title, so a
+/// lookup by the bare `"sc_dialog"` finds nothing — which is how every layout check that used
+/// one silently stopped seeing dialogs (solidcraft#1005).
+pub fn dialog_area_id(k: &Kind) -> egui::Id {
+    egui::Id::new(("sc_dialog", title(k)))
+}
+
 fn title(k: &Kind) -> &'static str {
     match k {
         Kind::Sketch => "CREATE SKETCH",
@@ -1810,7 +1817,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let wkey = egui::Id::new(("sc_dialog_w", wide));
     let response = crate::frame::docked_on(
         RichText::new(heading.clone()).strong().size(13.0),
-        egui::Id::new(("sc_dialog", title(&d.kind))),
+        dialog_area_id(&d.kind),
         anchor,
         vp.bottom() - anchor.y - 8.0,
         width,
