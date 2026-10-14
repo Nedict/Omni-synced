@@ -1,5 +1,31 @@
 # Design loading
 
+## STEP assemblies: a repeated part is meshed once (2026-10-14)
+
+The reader already converts each B-rep item once and keeps it for the instances that list it
+again. Every instance still became a body of its own geometry (it has to: features cut and join
+it where it is), and each of those bodies made its own display mesh: tessellation, seam and
+tangent flags, the most expensive step of opening a large assembly. A board with 60 of each
+resistor meshed the same resistor 60 times.
+
+A later instance of an item now shows its first instance's display mesh, placed by the
+difference of the two placements: the same triangles, faces and edge flags, moved. The mesh is
+made once, by whichever instance is drawn first. Only a rotation and translation is shared
+this way (anything else meshes itself), and anything that changes what a body shows (split
+lines; any operation, which makes a new body) drops the link. Measurements, booleans and export
+read the instance's own geometry as before, so `solidcraft-cli eval` of an assembly is unchanged.
+
+Two generated assemblies (SolidCraft designs with placed copies of components, exported as STEP
+AP214 assemblies), `solidcraft-cli bench-open`, release build, shared 16-core Linux box:
+
+| file | bodies | mesh phase before | after | CPU before | after | peak RSS before | after |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 4 parts, 500 instances (bolts with a torus ring, brackets) | 901 | 2,215 ms | 139 ms | 28.4 s | 4.1 s | 918 MB | 749 MB |
+| 10 filleted parts with 8 pins, 600 instances | 5,401 | 1,028 ms | 85 ms | 16.7 s | 6.0 s | 1,095 MB | 783 MB |
+
+Both import to the same triangle counts (4,404,412 and 4,316,412). Each instance's display plan
+(the GPU viewport draws bodies from plans) is still made per instance; sharing those the same
+way is the next step.
 ## Designs built by agents: work per command that grew with the design (2026-10-14)
 
 A design an agent builds over MCP is made of many small commands: a cylinder per spoke, a box
