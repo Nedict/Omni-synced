@@ -522,6 +522,9 @@ mod tests {
         assert_eq!(def["definition"]["targets"], json!(["Plate (copy)"]), "{def}");
         let st = s.world_state();
         let v = |name: &str| solidcraft_kernel::measure(&st.body(name).unwrap().body).unwrap().volume;
-        assert!((v("Plate") - v("Plate (copy)")).abs() < 1e-6, "each plate carries one spring: {} vs {}", v("Plate"), v("Plate (copy)"));
+        // A spring on the wrong plate is hundreds of mm³ off. The two plates are measured apart
+        // (one moved 50 mm), which the boolean and the measure each round in their own way:
+        // a few 1e-6 mm³ on 5000.
+        assert!((v("Plate") - v("Plate (copy)")).abs() < 1e-8 * v("Plate"), "each plate carries one spring: {} vs {}", v("Plate"), v("Plate (copy)"));
     }
 }
