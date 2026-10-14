@@ -1374,9 +1374,15 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
     let prefix = path.map(occurrence_key).unwrap_or_else(|| format!("c{comp}"));
     if let Some(path) = path {
         let Ok(placement) = app.session.occurrence_placement(path) else { return };
+        // Each row's placed body by its definition's name (a search per row was quadratic in a
+        // component's bodies, every frame).
+        let mut placed: std::collections::HashMap<&str, &_> = std::collections::HashMap::with_capacity(placement.bodies.len());
+        for b in &placement.bodies {
+            placed.entry(b.source.as_str()).or_insert(b);
+        }
         for e in &mut all {
             if folder == "bodies" {
-                let Some(body) = placement.bodies.iter().find(|b| b.source == e.key) else { continue };
+                let Some(body) = placed.get(e.key.as_str()) else { continue };
                 e.sel = Some(Sel::Body { name: body.world.clone() });
                 e.target = Some(Target::Body { name: body.world.clone() });
                 e.bodies = vec![body.world.clone()];

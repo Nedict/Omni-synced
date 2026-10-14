@@ -75,6 +75,8 @@ mod expression_complete;
 #[cfg(test)]
 mod extrude_edit_tests;
 mod file_load;
+mod file_picker;
+pub use file_picker::FilePickerFuture;
 #[cfg(test)]
 mod file_load_ui_tests;
 #[cfg(test)]
@@ -211,8 +213,8 @@ impl Default for UiState {
 /// Host services (file pickers) injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
-    pub pick_open: Option<Box<dyn Fn() -> Option<String>>>,
-    pub pick_save: Option<Box<dyn Fn(&str, &[&str]) -> Option<String>>>,
+    pub pick_open: Option<Box<dyn Fn() -> FilePickerFuture>>,
+    pub pick_save: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
     pub show_in_folder: Option<Box<dyn Fn(&str)>>,
     /// Where the host reads the anti-aliasing preference at start (a small JSON file).
     pub graphics_path: Option<String>,
@@ -236,6 +238,7 @@ pub struct SolveApp {
     /// restores it.
     pub pre_sketch_marker: Option<Option<usize>>,
     pub services: Services,
+    file_picker: Option<file_picker::Pending>,
     pub viewport: viewport::ViewportState,
     pub tool: Option<tools::Tool>,
     pub dialog: Option<dialogs::Dialog>,
@@ -329,6 +332,7 @@ impl SolveApp {
             pre_sketch_cam: None,
             pre_sketch_marker: None,
             services,
+            file_picker: None,
             viewport: viewport::ViewportState::default(),
             tool: None,
             dialog: None,
@@ -497,7 +501,7 @@ impl SolveApp {
 
     /// Run a command programmatically (JSON parameters, no dialogs).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
-        if self.file_load.busy() {
+        if self.file_load.busy() || self.file_picker.is_some() {
             return Err("a file operation is in progress".into());
         }
         let t0 = now_ms();
@@ -567,7 +571,7 @@ impl SolveApp {
     /// that have them, otherwise run it with defaults.
     pub fn start(&mut self, id: &str) {
         // A file is loading: the design waits for it.
-        if self.file_load.busy() {
+        if self.file_load.busy() || self.file_picker.is_some() {
             return;
         }
         // A disabled command starts nothing, however it was reached. The toolbar greys its
@@ -600,15 +604,15 @@ impl SolveApp {
         self.tool = None;
         self.home.open = false;
         if matches!(id, "sketch.insert_dxf" | "sketch.insert_svg") {
-            if let Some(path) = self.services.pick_open.as_ref().and_then(|f| f()) {
-                let _ = self.run(id, json!({"path": path}));
-            }
+            self.pick_open_command(id, json!({}));
             return;
         }
         if matches!(id, "file.insert_step" | "file.insert_mesh") {
-            if let Some(p) = self.services.pick_open.as_ref().and_then(|f| f()) {
-                self.insert_path_async(&p);
-            }
+            self.pick_open(|app, path| {
+                if let Some(path) = path {
+                    app.insert_path_async(&path);
+                }
+            });
             return;
         }
         if !sketch_tools::start_hook(self, id) {
@@ -1014,6 +1018,7 @@ impl SolveApp {
 
     /// Per-frame logic before layout.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        file_picker::tick(self, ctx);
         file_load::tick(self, ctx);
         self.esc_handled = false;
         prefs::apply(self, ctx);
@@ -1040,12 +1045,12 @@ impl SolveApp {
         issue_report::tick(self, ctx);
         self.collect_screenshots(ctx);
         self.issue_screenshots(ctx);
-        if self.issue_report.draft.is_none() {
+        if self.issue_report.draft.is_none() && self.file_picker.is_none() {
             toolbar::shortcuts(self, ctx);
         }
         recovery_ui::tick(self);
         update::tick(self, ctx);
-        if self.issue_report.draft.is_none() {
+        if self.issue_report.draft.is_none() && self.file_picker.is_none() {
             for f in ctx.input(|i| i.raw.dropped_files.clone()) {
                 let p = f.path().to_string_lossy().to_string();
                 if !p.is_empty() {
@@ -1095,9 +1100,14 @@ impl SolveApp {
         issue_report::CadInput::block(self, ui, &mut report_input);
         self.cad_ui(ui, &mut report_input);
         drop(report_input);
-        issue_report::show(self, ui.ctx());
+        if self.file_picker.is_none() {
+            issue_report::show(self, ui.ctx());
+        }
         if !self.home.open {
             agent_cursor::paint(self, ui.ctx());
+        }
+        if self.file_picker_busy() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
         }
         self.frame_ms = now_ms() - t0;
     }
@@ -1169,11 +1179,14 @@ impl SolveApp {
                 break;
             }
             // Held requests go first, in order, once the file is in.
-            let held = if self.file_load.busy() { None } else { self.control_held.pop_front() };
+            let held = if self.file_load.busy() || self.file_picker.is_some() { None } else { self.control_held.pop_front() };
             let Some(req) = held.or_else(|| rx.try_recv().ok()) else { break };
             // A file is loading: commands that change the design wait for it (the window,
             // inspection and screenshots still answer).
-            if self.file_load.busy() && matches!(req.method.as_str(), "engine.execute" | "command" | "engine.script" | "engine.batch") {
+            if ((self.file_load.busy() || self.file_picker.is_some())
+                && matches!(req.method.as_str(), "engine.execute" | "command" | "engine.script" | "engine.batch"))
+                || (self.file_picker_busy() && matches!(req.method.as_str(), "ui.file" | "ui.home"))
+            {
                 if self.control_held.len() < MAX_HELD {
                     self.control_held.push_back(req);
                 } else {

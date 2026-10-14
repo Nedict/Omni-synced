@@ -4,6 +4,9 @@ use solidcraft_sketch::{ConstraintKind, CurveKind};
 
 use crate::Session;
 
+#[path = "sketch_pattern_tests.rs"]
+mod pattern_tests;
+
 fn run(s: &mut Session, id: &str, p: Value) -> Value {
     match s.execute(id, &p) {
         Ok(v) => v,

@@ -184,7 +184,7 @@ fn inputs_and_expressions_match_the_golden_record() {
 
 #[test]
 fn the_record_covers_every_variant() {
-    let src = include_str!("document.rs");
+    let src = include_str!("document.rs").replace("\r\n", "\n");
     let body = src.split("pub enum FeatureKind {").nth(1).and_then(|s| s.split("\n}\n").next()).unwrap();
     let names: Vec<String> = fixtures().into_iter().map(|(_, v)| v["type"].as_str().unwrap().replace('_', "")).collect();
     for line in body.lines().filter(|l| l.starts_with("    ") && !l.starts_with("     ")) {

@@ -1,4 +1,9 @@
 {
+  "Send your report on GitHub": "Send your report on GitHub",
+  "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. Open GitHub draft below, then paste the report copied to your clipboard.",
+  "1. Open GitHub draft below. Your title and report will be filled in.": "1. Open GitHub draft below. Your title and report will be filled in.",
+  "2. Attach your screenshot: copy and paste it, or save and upload the PNG.": "2. Attach your screenshot: copy and paste it, or save and upload the PNG.",
+  "3. Click Submit new issue on GitHub to send your report.": "3. Click Submit new issue on GitHub to send your report.",
   "browser.body_name": "Body{number}",
   "browser.component_name": "Component{number}",
   "browser.parameters": "Parameters ({count})",
