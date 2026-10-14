@@ -83,6 +83,11 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 
 ## Render foundation
 
+- The initial opaque surface numerical contract for #1004 provides bounded linear
+  color/metallic/roughness/IOR admission and an original tested direct-light BRDF.
+  It does not enable PBR rendering or change stored appearances. See
+  [the model, evidence and remaining consumer gates](docs/render-surface.md).
+
 - A bounded cooperative Radiance RGBE input utility is available in L1 render;
   it does not yet enable HDRI/PBR rendering or a document import command. See
   [the input contract](docs/render-hdr-input.md) and #813 for integration work.
