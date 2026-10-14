@@ -31,11 +31,11 @@ impl Catalog {
     }
 }
 
-static ENGLISH: Catalog = Catalog::new("en", "English", include_str!("locales/en.json"));
-static JAPANESE: Catalog = Catalog::new("ja", "日本語", include_str!("locales/ja.json"));
-static GERMAN: Catalog = Catalog::new("de", "Deutsch", include_str!("locales/de.json"));
-static KOREAN: Catalog = Catalog::new("ko", "한국어", include_str!("locales/ko.json"));
-static CHINESE: Catalog = Catalog::new("zh", "中文", include_str!("locales/zh.json"));
+static ENGLISH: Catalog = Catalog::new("en", "English", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/en.json")));
+static JAPANESE: Catalog = Catalog::new("ja", "日本語", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ja.json")));
+static GERMAN: Catalog = Catalog::new("de", "Deutsch", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/de.json")));
+static KOREAN: Catalog = Catalog::new("ko", "한국어", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ko.json")));
+static CHINESE: Catalog = Catalog::new("zh", "中文", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/zh.json")));
 pub const LOCALES: &[&Catalog] = &[&ENGLISH, &JAPANESE, &GERMAN, &KOREAN, &CHINESE];
 
 pub fn is_supported(id: &str) -> bool {
