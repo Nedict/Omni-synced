@@ -579,7 +579,7 @@ fn script_runs_commands() {
     assert!(s.run_script(&json!([{"command": "Nope"}])).is_err());
 }
 
-fn hostile_values() -> Vec<Value> {
+pub(crate) fn hostile_values() -> Vec<Value> {
     vec![
         Value::Null,
         json!(true),

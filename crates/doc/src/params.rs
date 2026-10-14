@@ -26,6 +26,22 @@ fn plane_inputs_mut<'a>(p: &'a mut PlaneRef, v: &mut Vec<(&'static str, &'a mut 
     }
 }
 
+fn extent_inputs_mut<'a>(extent: &'a mut crate::Extent, v: &mut Vec<(&'static str, &'a mut String, Kind)>) {
+    v.push(("Distance", &mut extent.distance, Kind::Length));
+    if let Some(d) = &mut extent.distance2 {
+        v.push(("Distance 2", d, Kind::Length));
+    }
+    if let Some(d) = &mut extent.start_offset {
+        v.push(("Start offset", d, Kind::Length));
+    }
+    if let Some(d) = &mut extent.taper {
+        v.push(("Taper angle", d, Kind::Angle));
+    }
+    if let Some(d) = &mut extent.to_offset {
+        v.push(("To offset", d, Kind::Length));
+    }
+}
+
 impl FeatureKind {
     /// The feature's numeric inputs: (label, expression, kind), in a fixed order.
     pub fn inputs_mut(&mut self) -> Vec<(&'static str, &mut String, Kind)> {
@@ -54,21 +70,16 @@ impl FeatureKind {
                     }
                 }
             },
-            FeatureKind::Extrude { extent, .. } | FeatureKind::SurfaceExtrude { extent, .. } => {
-                v.push(("Distance", &mut extent.distance, L));
-                if let Some(d) = &mut extent.distance2 {
-                    v.push(("Distance 2", d, L));
-                }
-                if let Some(d) = &mut extent.start_offset {
-                    v.push(("Start offset", d, L));
-                }
-                if let Some(d) = &mut extent.taper {
-                    v.push(("Taper angle", d, A));
-                }
-                if let Some(d) = &mut extent.to_offset {
-                    v.push(("To offset", d, L));
+            FeatureKind::Extrude { extent, thin, .. } => {
+                extent_inputs_mut(extent, &mut v);
+                if let Some(thin) = thin {
+                    v.push(("Thickness", &mut thin.thickness, L));
+                    if let Some(t) = &mut thin.thickness2 {
+                        v.push(("Thickness 2", t, L));
+                    }
                 }
             }
+            FeatureKind::SurfaceExtrude { extent, .. } => extent_inputs_mut(extent, &mut v),
             FeatureKind::Revolve { angle, angle2, .. } | FeatureKind::SurfaceRevolve { angle, angle2, .. } => {
                 v.push(("Angle", angle, A));
                 if let Some(a) = angle2 {

@@ -135,6 +135,9 @@
 
 //! - 19: editable associative offset-distance dimensions. Older offsets retain their saved
 //!   fixed distances; migration does not invent dimensions or change geometry.
+//!   Under the same version, an Extrude can be thin (`thin`: `curves`, `thickness`, optional
+//!   `side` and `thickness2`): a wall along sketch curves instead of its profiles. An extrude
+//!   without `thin` saves as before; 0.9.0 would ignore the wall and fill the sketch's profiles.
 
 use serde_json::Value;
 
@@ -1028,6 +1031,7 @@ mod tests {
         document
             .add_feature(
                 FeatureKind::Extrude {
+                    thin: None,
                     sketch,
                     profiles: ProfileSel::All,
                     extent: Extent {
