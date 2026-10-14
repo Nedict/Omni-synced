@@ -234,6 +234,8 @@ fn add_joint(s: &mut Session, j: Joint) -> Result<Value> {
     }
     let id = j.id;
     let name = j.name.clone();
+    // A new joint can take a deleted one's id; it starts shown.
+    s.visibility.hidden_joints.retain(|h| *h != id);
     s.doc_mut().assembly.joints.push(j);
     let sol = resolve(s);
     let mut out = sol_json(&sol);
@@ -519,7 +521,7 @@ fn list(s: &mut Session, _p: &Value) -> Result<Value> {
                 .collect();
             let world = |o: &JointOrigin| s.doc.origin_world(&st, o).ok().map(|m| json!({"origin": [m[3][0], m[3][1], m[3][2]], "z": [m[2][0], m[2][1], m[2][2]]}));
             json!({"id": j.id, "name": j.name, "type": j.kind, "a": j.a.occurrence, "b": j.b.occurrence, "values": named,
-                "flip": j.flip, "offset": j.offset, "suppressed": j.suppressed, "frame_a": world(&j.a), "frame_b": world(&j.b)})
+                "flip": j.flip, "offset": j.offset, "suppressed": j.suppressed, "visible": s.joint_visible(j.id), "frame_a": world(&j.a), "frame_b": world(&j.b)})
         })
         .collect();
     let links: Vec<Value> =

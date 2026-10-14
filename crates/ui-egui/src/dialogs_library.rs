@@ -22,7 +22,6 @@ fn display_order(mut catalog: Catalog) -> Catalog {
     catalog
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Runs `f` on the open Appearance dialog's state, once a file picker has answered.
 fn with_state(app: &mut SolveApp, f: impl FnOnce(&mut SolveApp, &mut Ap)) {
     let Some(mut dialog) = app.dialog.take() else { return };
@@ -50,6 +49,7 @@ fn export(app: &mut SolveApp, k: &mut Ap, path: String, overwrite: bool) {
     });
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn load(app: &mut SolveApp, library: &mut LocalLibrary) -> Result<String, String> {
     let result = app.run("library.inspect", json!({"path":library.path}))?;
     let catalog: Catalog = serde_json::from_value(result.get("catalog").cloned().ok_or("Library response is missing")?).map_err(|e| e.to_string())?;

@@ -71,6 +71,22 @@ once per command), but slowly. `solidcraft-cli eval` output for the design corpu
 the regression scripts, the generated bicycle and a 3,300-feature agent-built design is
 unchanged apart from the timings.
 
+The viewport rebuilt its whole model scene after every change and uploaded all of it again
+(every body's triangles and edges, 60 MB for the bicycle where bodies are built on the CPU). It
+now builds the scene in blocks of a few bodies, cut where a body's own key says so that adding
+or removing a body changes only its block, and keeps each block's bytes and GPU buffers while
+the block comes back unchanged. The bodies' boxes (fit, picking, the ground shadow) are kept per
+mesh the same way. Built command by command over the control channel (`engine.execute`, then
+`ui.inspect`) in the desktop app under Xvfb with software GL:
+
+| desktop, bicycle built over the control channel | main | with #1148 and this |
+|---|---:|---:|
+| UI work per change at ~1,000 bodies (`frame_ms`) | 1,374 ms | 18 ms |
+| model scene build at ~1,000 bodies (`build_ms`) | 41 ms | 1.4 ms |
+| whole build | 1,409 s | 210 s |
+
+Most of what is left there is software rendering of 770k triangles per frame.
+
 ## STEP import: shells and item solids without copies (2026-10-13)
 
 A file that lists one product definition many times (a bolt used 70 times, a panel in several

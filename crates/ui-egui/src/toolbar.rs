@@ -1190,6 +1190,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                 } else if app.dialog.is_some() {
                     crate::dialogs::cancel(app);
                 } else if !app.session.selection.is_empty() || app.session.active_sketch.is_none() {
+                    app.tree.picked_joints.clear();
                     let _ = app.run("select.clear", json!({}));
                 } else {
                     // Nothing left to cancel: Esc finishes the sketch.

@@ -1,4 +1,9 @@
 {
+  "Send your report on GitHub": "Bericht auf GitHub senden",
+  "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. Unten den GitHub-Entwurf öffnen und den kopierten Bericht aus der Zwischenablage einfügen.",
+  "1. Open GitHub draft below. Your title and report will be filled in.": "1. Unten den GitHub-Entwurf öffnen. Titel und Bericht werden vorausgefüllt.",
+  "2. Attach your screenshot: copy and paste it, or save and upload the PNG.": "2. Screenshot anhängen: kopieren und einfügen oder als PNG speichern und hochladen.",
+  "3. Click Submit new issue on GitHub to send your report.": "3. Auf GitHub auf Submit new issue klicken, um den Bericht zu senden.",
   "browser.body_name": "Körper {number}",
   "browser.component_name": "Komponente {number}",
   "browser.parameters": "Parameter ({count})",
@@ -747,5 +752,7 @@
   "update.restart_later": "Später",
   "update.installer_started": "Das Installationsprogramm startet, wenn SolidCraft geschlossen wird.",
   "update.dmg_opened": "Das Disk-Image ist geöffnet und geprüft: SolidCraft in „Programme“ ziehen, die alte Version ersetzen und SolidCraft neu starten.",
-  "update.install_failed": "Das Update wurde nicht installiert: {error}. Es wurde nichts verändert; „Herunterladen“ holt das Paket."
+  "update.install_failed": "Das Update wurde nicht installiert: {error}. Es wurde nichts verändert; „Herunterladen“ holt das Paket.",
+  "cmd.render_settings_get": "Rendereinstellungen",
+  "cmd.render_settings_set": "Rendereinstellungen speichern"
 }

@@ -62,6 +62,28 @@ saying what failed (earlier versions closed without a word). Things to try:
 - Run `solidcraft --crash-log` to list recent crash reports, and attach the newest one to an
   issue.
 
+## SolidCraft closes right away on Windows
+
+A graphics driver can crash the app while it starts, before SolidCraft can show anything (an
+old Intel Vulkan driver, `igvk64.dll`, did). Windows' Event Viewer names the driver under
+*Windows Logs › Application* ("Faulting module name").
+
+From 0.11.1, SolidCraft on Windows starts Direct3D 12 first and loads no other graphics API
+when Direct3D 12 has a graphics card; Vulkan and then OpenGL are tried only on a computer
+without one. Earlier versions started Vulkan, Direct3D 12 and OpenGL together and preferred
+Vulkan. To choose the graphics API yourself, in any version, open a Command Prompt and start
+SolidCraft from it:
+
+```
+set WGPU_BACKEND=dx12
+"C:\Program Files\SolidCraft\solidcraft.exe"
+```
+
+`vulkan` and `gl` are the other choices. `setx WGPU_BACKEND dx12` keeps it for apps started
+from the Start menu after you sign in again. From 0.11.1 the setting can also live in
+`graphics.json` in the settings folder, as `{"msaa": 4, "backend": "dx12"}` (`auto` is the
+order above). Safe mode ignores it and always uses the software renderer.
+
 ## A design saved by 0.10 won't open in an older version
 
 Designs saved by a newer SolidCraft use a newer file format. Older versions refuse them with

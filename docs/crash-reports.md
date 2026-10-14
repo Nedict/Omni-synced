@@ -6,6 +6,14 @@ and the exact commands that trigger it. Reports are never sent anywhere. To shar
 **Report…** in Help ▸ Crash Reports…, which opens a GitHub issue draft. Nothing is shared
 until you review and submit it, and the design is not part of the draft.
 
+To send a report:
+
+1. Review the title, report text and screenshot in SolidCraft, then click **Open GitHub draft**.
+   For long reports, SolidCraft copies the text to your clipboard; paste it into the GitHub draft.
+2. Attach the screenshot if you want to share it: use **Copy screenshot** and paste it into
+   GitHub, or use **Save screenshot…** and upload the PNG. Screenshots are not attached automatically.
+3. Click **Submit new issue** on GitHub to publish the report. Opening the draft alone does not send it.
+
 ## Where they are
 
 `<data dir>/solidcraft/crashes/`, next to the recovery folder:
