@@ -862,7 +862,7 @@ pub fn solve_holding(doc: &Document, st: &ModelState, held: &Held) -> Solution {
     sol.fixed = placed.keys().copied().collect();
     let mut tree =
         // Every joint's values are known, suppressed ones too (their motion links still set values).
-        Tree { joints: asm.joints.iter().take(MAX_JOINTS).map(|j| (j.id, j)).collect(), frames, fixed: placed.clone(), parent: BTreeMap::new(), order: Vec::new() };
+        Tree { joints: asm.joints.iter().map(|j| (j.id, j)).collect(), frames, fixed: placed.clone(), parent: BTreeMap::new(), order: Vec::new() };
     let mut used: BTreeSet<u64> = BTreeSet::new();
     let mut queue: VecDeque<u64> = placed.keys().copied().collect();
     while let Some(occ) = queue.pop_front() {
