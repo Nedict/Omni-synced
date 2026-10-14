@@ -345,9 +345,12 @@ fn on_sheet_material(st: &ModelState, i: usize, p: Vec3) -> bool {
     if mesh.triangles.is_empty() {
         return true;
     }
-    // Twice the display mesh's chord tolerance (see `ModelBody::mesh`).
+    // Twice the display mesh's chord tolerance (see `ModelBody::mesh`), and a quarter of the
+    // thickness: on a large thin sheet the first steps from a point on its face clean through
+    // it, so a point on the face would touch nothing (#685).
     let step = 2.0 * (mb.body.size() * 1e-3).max(1e-3);
-    let offsets = [-step, 0.0, step];
+    let thin = st.sheets.get(i).map_or(step, |sh| (sh.t * 0.25).min(step));
+    let offsets = [-step, -thin, 0.0, thin, step];
     offsets.iter().any(|&dx| offsets.iter().any(|&dy| offsets.iter().any(|&dz| mesh.contains(p + Vec3::new(dx, dy, dz)))))
 }
 
@@ -965,9 +968,13 @@ fn sheet_prism_cut(
                 }
                 modeled = true;
             } else if z1 > z0 {
+                // Each tool meets only the panel's cut-outs near it: arranging every one of a
+                // perforation's holes against every new hole would grow with their square (#732).
+                let near = sheet::NearHoles::new(&panel)?;
                 for flat in mapped {
+                    let local = near.around(&flat)?;
                     let clipped =
-                        sheet::material_boolean(std::slice::from_ref(&panel), std::slice::from_ref(&flat), kernel::BoolOp::Intersect, &mut work)?;
+                        sheet::material_boolean(std::slice::from_ref(&local), std::slice::from_ref(&flat), kernel::BoolOp::Intersect, &mut work)?;
                     if !clipped.is_empty() && !depth_resolved {
                         return Err(DocError::Invalid(
                             "sheet machining depth is below the supported 0.000001 mm extrusion resolution; increase the layer depth".into(),

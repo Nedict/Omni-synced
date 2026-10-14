@@ -328,6 +328,14 @@ impl Session {
         }
     }
 
+    /// Become `fresh` (another design opened, recovered or started), keeping the settings that
+    /// are the user's rather than the design's: `auto_project` is a preference (#680).
+    pub fn replace_design(&mut self, fresh: Session) {
+        let auto_project = self.auto_project;
+        *self = fresh;
+        self.auto_project = auto_project;
+    }
+
     /// The design has changes not in its file: in the document, or in what is hidden.
     pub fn is_dirty(&self) -> bool {
         (!Arc::ptr_eq(&self.doc, &self.saved) && *self.doc != *self.saved) || self.visibility != self.saved_visibility

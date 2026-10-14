@@ -166,6 +166,46 @@ fn regions_complexity<'a>(regions: impl Iterator<Item = &'a Region2>) -> Result<
     Ok((edges, points))
 }
 
+/// A flat region's cut-outs by their bounding boxes, to clip tools against only the ones near
+/// them (the result is the same: a cut-out clear of a tool's box can't change what it meets).
+pub(crate) struct NearHoles<'a> {
+    region: &'a Region2,
+    boxes: Vec<(Vec2, Vec2)>,
+}
+
+/// A loop's bounding box, a little larger than its chords so arcs stay inside.
+fn loop_box(lp: &Loop2) -> Result<(Vec2, Vec2)> {
+    let pts = flat_polyline(lp)?;
+    let (lo, hi) = pts.iter().fold((Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN)), |(lo, hi), p| {
+        (Vec2::new(lo.x.min(p.x), lo.y.min(p.y)), Vec2::new(hi.x.max(p.x), hi.y.max(p.y)))
+    });
+    let pad = 1e-3 + 1e-9 * (lo.x.abs() + lo.y.abs() + hi.x.abs() + hi.y.abs());
+    Ok((lo - Vec2::new(pad, pad), hi + Vec2::new(pad, pad)))
+}
+
+impl<'a> NearHoles<'a> {
+    pub(crate) fn new(region: &'a Region2) -> Result<Self> {
+        Ok(Self { region, boxes: region.holes.iter().map(loop_box).collect::<Result<_>>()? })
+    }
+
+    /// The region with only the cut-outs whose boxes meet `tool`'s.
+    pub(crate) fn around(&self, tool: &Region2) -> Result<Region2> {
+        if self.region.holes.is_empty() {
+            return Ok(self.region.clone());
+        }
+        let (lo, hi) = loop_box(&tool.outer)?;
+        let holes = self
+            .region
+            .holes
+            .iter()
+            .zip(&self.boxes)
+            .filter(|(_, (a, b))| a.x <= hi.x && b.x >= lo.x && a.y <= hi.y && b.y >= lo.y)
+            .map(|(h, _)| h.clone())
+            .collect();
+        Ok(Region2 { outer: self.region.outer.clone(), holes })
+    }
+}
+
 pub(crate) fn material_boolean(a: &[Region2], b: &[Region2], op: kernel::BoolOp, work: &mut FlatWork) -> Result<Vec<Region2>> {
     let (ae, ap) = region_complexity(a)?;
     let (be, bp) = region_complexity(b)?;
