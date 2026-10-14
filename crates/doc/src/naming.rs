@@ -517,15 +517,16 @@ fn number_pieces(names: &mut [String], pts: &[Vec<Vec3>], mark: char) {
         // makes those pieces equal, so the stable sort keeps the order they arrived in and a name
         // keeps its number across runs (solidcraft#569). total_cmp keeps a NaN deterministic.
         let tol = ext.x.max(ext.y).max(ext.z).max(1.0) * 1e-9;
-        order.sort_by(|a, b| {
-            let (ka, kb) = (key(a.1), key(b.1));
-            for (x, y) in [(ka.0, kb.0), (ka.1, kb.1), (ka.2, kb.2)] {
-                if (x - y).abs() > tol {
-                    return x.total_cmp(&y);
-                }
-            }
-            std::cmp::Ordering::Equal
-        });
+        let bucket = |c: Vec3| {
+            let k = key(c);
+            // Rounding onto the grid, rather than comparing with a tolerance, is what keeps this a
+            // total order: `a` and `b` in one bucket and `b` and `c` in the next must not leave `a`
+            // and `c` in different ones, or the sort has no order to work with. Since Rust 1.81
+            // `sort_by` may panic on a comparator that is not one. Two pieces can still flip when
+            // they straddle a bucket edge; that is the price of a key that ignores their low bits.
+            ((k.0 / tol).round() as i64, (k.1 / tol).round() as i64, (k.2 / tol).round() as i64)
+        };
+        order.sort_by_key(|a| bucket(a.1));
         for (k, (j, _)) in order.iter().enumerate() {
             if let Some(slot) = names.get_mut(*j) {
                 *slot = format!("{n}{mark}{}", k + 1);
@@ -786,6 +787,30 @@ mod tests {
             let pts = vec![piece(first), piece(second)];
             number_pieces(&mut names, &pts, '#');
             assert_eq!(names, vec!["f#1".to_string(), "f#2".to_string()], "input order not kept for {first} then {second}");
+        }
+    }
+
+    /// Three pieces spaced just under the tolerance apart: `a` and `b` in one bucket and `b` and `c`
+    /// in the next, so a tolerance comparison would call `a≈b` and `b≈c` while `a<c` — the
+    /// non-transitivity that leaves `sort_by` without a total order to work with. The key must order
+    /// them by bucket, and within a bucket by the order they arrived in.
+    #[test]
+    fn pieces_just_under_the_tolerance_apart_still_have_a_total_order() {
+        let piece = |dx: f64| vec![Vec3::new(10.0 + dx, 0.0, 0.0), Vec3::new(10.0 + dx, 0.0, 5.0)];
+        // The grid is the spread of the centres floored at 1e-9; these centres span under 1.0, so it
+        // is 1e-9 and the three offsets below sit in buckets 0, 0 and 1.
+        let grid = 1e-9;
+        let step = grid * 0.4;
+        for ((a, b, c), want) in [
+            ((0.0, step, 2.0 * step), ["f#1", "f#2", "f#3"]),
+            ((2.0 * step, step, 0.0), ["f#3", "f#1", "f#2"]),
+            ((0.0, 2.0 * step, step), ["f#1", "f#3", "f#2"]),
+            ((step, 0.0, 2.0 * step), ["f#1", "f#2", "f#3"]),
+        ] {
+            let mut names = vec!["f".to_string(); 3];
+            let pts = [a, b, c].iter().map(|d| piece(*d)).collect::<Vec<_>>();
+            number_pieces(&mut names, &pts, '#');
+            assert_eq!(names, want, "wrong order for offsets {a} {b} {c}");
         }
     }
 
