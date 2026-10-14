@@ -44,6 +44,9 @@ pub struct ModelBody {
     pub transferred: bool,
     /// The look it was imported with, carried through later features.
     pub imported: Option<Arc<crate::appearance::ImportedLook>>,
+    /// [`Body::retained_bytes`] of `body`, measured when a feature made or changed it (0: not
+    /// measured), so the evaluation cache's budget does not walk every body after every feature.
+    bytes: usize,
 }
 
 impl ModelBody {
@@ -62,6 +65,7 @@ impl ModelBody {
             component: 0,
             transferred: false,
             imported: None,
+            bytes: 0,
         }
     }
     pub fn definition_name(&self) -> &str {
@@ -473,19 +477,28 @@ impl ModelState {
         if !f.shell_piece_order {
             crate::lineage::order_lumps(&mut self.bodies, &origin);
         }
+        // The bodies before the feature by name, in their order (names repeat only in damaged
+        // states): every lookup below is the first match of a linear search, without walking
+        // every earlier body for every body, after every feature.
+        let mut by_name: std::collections::HashMap<&str, Vec<&ModelBody>> = std::collections::HashMap::with_capacity(before.bodies.len());
+        for old in &before.bodies {
+            by_name.entry(old.name.as_str()).or_default().push(old);
+        }
         for b in &mut self.bodies {
+            let olds: &[&ModelBody] = by_name.get(b.name.as_str()).map(Vec::as_slice).unwrap_or_default();
             if !matches!(f.kind, FeatureKind::BodyTransfer { .. })
-                && let Some(old) = before.bodies.iter().find(|old| old.name == b.name && old.transferred)
+                && let Some(old) = olds.iter().find(|old| old.transferred)
             {
                 b.transferred = true;
                 b.component = old.component;
                 b.source_transform = old.source_transform;
             }
-            let kept = before.bodies.iter().find(|x| x.name == b.name && x.body.same(&b.body));
+            let kept = olds.iter().find(|x| x.body.same(&b.body));
             match kept {
                 Some(x) => {
                     b.key = x.key;
                     b.names = x.names.clone();
+                    b.bytes = if x.bytes > 0 { x.bytes } else { b.body.retained_bytes() };
                 }
                 None => {
                     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -496,17 +509,18 @@ impl ModelState {
                     }
                     // Faces split on purpose stay split through later features (for export).
                     if b.body.split_lines().is_none()
-                        && let Some(lines) = before.bodies.iter().find(|x| x.name == b.name).and_then(|x| x.body.split_lines())
+                        && let Some(lines) = olds.first().and_then(|x| x.body.split_lines())
                     {
                         b.body = b.body.clone().with_split_lines(Some(lines.clone()));
                     }
                     // An imported look outlives the operations on the body.
                     if b.body.paint().is_none()
                         && b.body.color().is_none()
-                        && let Some(old) = before.bodies.iter().find(|x| x.name == b.name)
+                        && let Some(old) = olds.first()
                     {
                         b.imported = crate::appearance::ImportedLook::of(old);
                     }
+                    b.bytes = b.body.retained_bytes();
                 }
             }
         }
@@ -597,13 +611,24 @@ impl ModelState {
     /// topology is what makes a kept timeline snapshot expensive, so it dominates; sketches
     /// and the rest are counted from their entity counts.
     pub fn retained_bytes(&self) -> usize {
-        let bodies: usize = self.bodies.iter().map(|b| b.body.retained_bytes()).sum();
+        let bodies: usize = self.bodies.iter().map(|b| if b.bytes > 0 { b.bytes } else { b.body.retained_bytes() }).sum();
         let sketches: usize = self.sketches.iter().map(|s| s.retained_bytes()).sum();
         bodies + sketches + self.sheets.len() * 4096 + self.threads.len() * 192 + self.construct.len() * 192
     }
 
     pub fn body(&self, name: &str) -> Option<&ModelBody> {
         self.bodies.iter().find(|b| b.name == name)
+    }
+
+    /// Make every body's display mesh now, on all cores (bodies are meshed independently and
+    /// each keeps its own mesh, so the meshes are those `ModelBody::mesh` makes one by one).
+    /// Stops starting bodies once `go_on` says no.
+    pub fn warm_meshes(&self, go_on: impl Fn() -> bool + Sync) {
+        kernel::for_each_on_threads(&self.bodies, 16, |b| {
+            if go_on() {
+                let _ = b.mesh();
+            }
+        });
     }
     pub fn sketch(&self, feature: u64) -> Option<&SolvedSketch> {
         self.sketches.iter().find(|s| s.feature == feature).map(|s| &**s)
@@ -995,6 +1020,12 @@ impl Model {
         let mut restored = 0;
         let marker = doc.marker.unwrap_or(usize::MAX);
         let ctx = context_digest(doc, &vals);
+        // Each feature's component, for `Document::legacy_body_component` on every body after
+        // every feature without searching the timeline for each (the first feature with an id).
+        let mut feature_component: std::collections::HashMap<u64, u64> = std::collections::HashMap::with_capacity(doc.features.len());
+        for f in &doc.features {
+            feature_component.entry(f.id).or_insert(f.component);
+        }
         let watched = crate::progress::begin(doc.features.len());
         for (i, f) in doc.features.iter().enumerate() {
             let rolled_back = i >= marker;
@@ -1137,7 +1168,10 @@ impl Model {
                     next.stamp(&state, f, key, mats);
                     for b in &mut next.bodies {
                         if !b.transferred {
-                            b.component = doc.legacy_body_component(&b.name, b.feature);
+                            b.component = match doc.body_components.get(&b.name) {
+                                Some(c) => *c,
+                                None => feature_component.get(&b.feature).copied().unwrap_or(0),
+                            };
                         }
                     }
                     state = Arc::new(next);
@@ -1922,6 +1956,39 @@ pub(crate) fn revolve_axis(ss: &SolvedSketch, axis: &AxisRef) -> Result<(Vec2, V
     }
 }
 
+/// Whether a drill from `p` along `d` reaches material: it starts into a body (`touches`), or,
+/// when `ahead` is set, a body lies further along `d`. A spot exactly on a surface counts only
+/// when the drill enters there, not when it leaves.
+fn hole_reaches(st: &ModelState, p: Vec3, d: Vec3, ahead: bool) -> bool {
+    let size = st.bodies.iter().map(|b| b.body.size()).fold(1.0, f64::max);
+    let eps = size * 1e-6;
+    let q = p + d * eps;
+    st.bodies.iter().any(|b| {
+        let m = b.mesh();
+        m.contains(q) || (ahead && m.raycast(q, d).is_some())
+    })
+}
+
+/// The side hole centres on a sketch drill to: into the material, whichever way the sketch plane
+/// faces. Material that touches a spot (the drill starts in it) wins over material further away,
+/// so a sketch on a plate's face drills that plate rather than one across an air gap: `-n` (away
+/// from the plane's normal) if any spot touches material that way, else `+n` if any spot touches
+/// material that way. With no touching on either side it goes by the nearest body ahead: `-n` if
+/// any spot has a body ahead that way, else `+n` if any has, else `-n`.
+fn sketch_hole_dir(st: &ModelState, spots: &[Vec3], n: Vec3) -> Vec3 {
+    let down = -n;
+    let any = |d: Vec3, ahead: bool| spots.iter().any(|p| hole_reaches(st, *p, d, ahead));
+    if any(down, false) {
+        down
+    } else if any(n, false) {
+        n
+    } else if any(down, true) || !any(n, true) {
+        down
+    } else {
+        n
+    }
+}
+
 /// Where a hole feature drills (each on the surface) and in which direction: at its sketch
 /// points perpendicular to the sketch (into the material), else at its position.
 fn hole_spots(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
@@ -1934,7 +2001,8 @@ fn hole_spots(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
                 let p = ss.sketch.points.iter().find(|p| &p.id == id).ok_or_else(|| DocError::Unknown(format!("sketch point `{id}`")))?;
                 v.push(ss.plane.to_world(p.pos));
             }
-            (v, -ss.plane.normal())
+            let dir = sketch_hole_dir(st, &v, ss.plane.normal());
+            (v, dir)
         }
         None => (vec![*position], direction.normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?),
     };
@@ -1974,7 +2042,8 @@ fn hole_spots_raw(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
             let ss = st.sketch(sp.sketch).ok_or_else(|| DocError::Unknown(format!("sketch {}", sp.sketch)))?;
             let v: Vec<Vec3> =
                 sp.ids.iter().filter_map(|id| ss.sketch.points.iter().find(|p| &p.id == id)).map(|p| ss.plane.to_world(p.pos)).take(10_000).collect();
-            Ok((v, -ss.plane.normal()))
+            let dir = sketch_hole_dir(st, &v, ss.plane.normal());
+            Ok((v, dir))
         }
         None => Ok((vec![*position], direction.normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?)),
     }
@@ -4100,7 +4169,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             }
             Ok(())
         }
-        FeatureKind::DeleteFace { faces, body } => {
+        FeatureKind::DeleteFace { faces, body, heal } => {
             let i = body_at(st, body, faces)?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
             let mut picked: Vec<usize> = Vec::new();
@@ -4112,7 +4181,8 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 }
             }
             let all = kernel::with_same_surface(&mb.body, &picked);
-            let nb = Traced::step(kernel::delete_faces(&mb.body, &all)?, &[&mb.traced()]);
+            let left = if *heal { kernel::delete_faces(&mb.body, &all)? } else { kernel::remove_faces(&mb.body, &all)? };
+            let nb = Traced::step(left, &[&mb.traced()]);
             if let Some(slot) = st.bodies.get_mut(i) {
                 *slot = ModelBody::traced_new(mb.name, nb, mb.feature);
             }

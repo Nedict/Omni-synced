@@ -25,6 +25,12 @@ pub trait Backend {
 /// Longest reply line accepted from the app.
 const MAX_REPLY: u64 = 64 << 20;
 
+/// How long a reply may take: kernel operations (booleans, fillets) on big parts can take a while.
+const READ_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// How long the app may take to run an `engine.batch` (its control server waits as long).
+const BATCH_TIMEOUT: Duration = Duration::from_secs(3600);
+
 /// A running SolidCraft app reached through its loopback control port
 /// (`solidcraft --control PORT`).
 pub struct Remote {
@@ -58,8 +64,7 @@ impl Remote {
             match TcpStream::connect_timeout(&sa, Duration::from_millis(800)) {
                 Ok(s) => {
                     s.set_nodelay(true).ok();
-                    // Kernel operations (booleans, fillets) on big parts can take a while.
-                    s.set_read_timeout(Some(Duration::from_secs(300))).ok();
+                    s.set_read_timeout(Some(READ_TIMEOUT)).ok();
                     let read = s.try_clone()?;
                     self.conn = Some((BufReader::new(read), s));
                     return Ok(());
@@ -75,7 +80,8 @@ impl Remote {
             self.reconnect()?;
         }
         let Some((reader, writer)) = self.conn.as_mut() else { return Err(std::io::Error::other("not connected")) };
-        let sent = writer.write_all(line.as_bytes()).and_then(|()| writer.write_all(b"\n")).and_then(|()| writer.flush());
+        // One write: a request that loses its newline still reaches the app as a request.
+        let sent = writer.write_all(format!("{line}\n").as_bytes()).and_then(|()| writer.flush());
         if let Err(e) = sent {
             self.conn = None;
             return Err(e);
@@ -95,6 +101,23 @@ impl Remote {
         }
         Ok(reply)
     }
+
+    fn set_read_timeout(&self, t: Duration) {
+        if let Some((_, writer)) = &self.conn {
+            writer.set_read_timeout(Some(t)).ok();
+        }
+    }
+
+    /// `engine.batch` is never sent twice (#743): it goes on a fresh connection (an idle one may
+    /// have been closed by an app restart; connecting again sends nothing), and once it is being
+    /// written any error is final, as the app may have run it.
+    fn send_batch(&mut self, line: &str) -> std::io::Result<String> {
+        self.reconnect().or_else(|_| self.reconnect())?;
+        self.set_read_timeout(BATCH_TIMEOUT);
+        let r = self.roundtrip(line);
+        self.set_read_timeout(READ_TIMEOUT);
+        r
+    }
 }
 
 impl Backend for Remote {
@@ -111,10 +134,14 @@ impl Backend for Remote {
             msg["token"] = json!(t);
         }
         let line = msg.to_string();
-        let reply = match self.roundtrip(&line) {
-            Ok(r) => r,
-            // One retry on a fresh connection (the app may have restarted).
-            Err(_) => self.roundtrip(&line).map_err(|e| format!("SolidCraft at {}: {e}", self.addr))?,
+        let reply = if method == "engine.batch" {
+            self.send_batch(&line).map_err(|e| format!("SolidCraft at {}: {e}", self.addr))?
+        } else {
+            match self.roundtrip(&line) {
+                Ok(r) => r,
+                // One retry on a fresh connection (the app may have restarted).
+                Err(_) => self.roundtrip(&line).map_err(|e| format!("SolidCraft at {}: {e}", self.addr))?,
+            }
         };
         let v: Value = serde_json::from_str(&reply).map_err(|e| format!("bad reply from the app: {e}"))?;
         if v.get("ok").and_then(Value::as_bool) == Some(true) {
