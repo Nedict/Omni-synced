@@ -418,7 +418,7 @@ fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) ->
         } else if pts.is_empty() {
             Vec::new()
         } else {
-            solidcraft_doc::naming::face_names_at(&s.model.state(), &pts)
+            solidcraft_doc::face_point_names(&s.doc, &s.model.state(), &kind, s.active_component)
         }
     };
     // Primitives have no `targets` of their own: their `targets` are the bodies taking part (#259).
