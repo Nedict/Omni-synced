@@ -100,9 +100,10 @@ the assembly.
 5. A joint whose snap points no longer resolve (for example, the face it was on is gone) is
    left out, with a warning naming it.
 
-When a component is placed several times, what is nested in it appears in each placement. The
-first placement is the one joints move; the others are copies fixed in their parent at their
-current pose, with a warning when the copied part has a joint. The export stops copying past
+When a component is placed several times, what is nested in it appears in each placement. In
+the URDF the first placement is the one its joints move; the others are copies fixed in their
+parent at their current pose, with a warning when the copied part has a joint. (In SolidCraft
+the copies move together, which a URDF could only express with `<mimic>`.) The export stops copying past
 64 levels or 100 000 placements, with a warning.
 
 ## Not covered

@@ -487,7 +487,7 @@ impl<'a> Tree<'a> {
             if jointed.contains(&occ)
                 && let Some(l) = self.model.links.get(i)
             {
-                self.warnings.push(format!("`{}` is a copy of a jointed occurrence: fixed where it is (joints move the first placement)", l.name));
+                self.warnings.push(format!("`{}` is a copy of a jointed occurrence: fixed where it is (the URDF moves only the first placement; copies would need <mimic>)", l.name));
             }
         }
     }

@@ -48,13 +48,14 @@ impl FeatureKind {
             }
             FeatureKind::Extrude { sketch, .. }
             | FeatureKind::SurfaceExtrude { sketch, .. }
+            | FeatureKind::SurfaceRevolve { sketch, .. }
             | FeatureKind::Revolve { sketch, .. }
             | FeatureKind::Emboss { sketch, .. }
             | FeatureKind::SheetBase { sketch, .. }
             | FeatureKind::SheetContour { sketch, .. }
             | FeatureKind::Rib { sketch, .. } => sk(sketch),
             FeatureKind::Patch { sketch: Some(s), .. } => sk(s),
-            FeatureKind::Sweep { sketch, path_sketch, .. } => {
+            FeatureKind::Sweep { sketch, path_sketch, .. } | FeatureKind::SurfaceSweep { sketch, path_sketch, .. } => {
                 sk(sketch);
                 sk(path_sketch);
             }

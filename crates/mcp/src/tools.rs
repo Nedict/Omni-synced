@@ -23,13 +23,33 @@ fn obj(props: Value, required: &[&str]) -> Value {
     o
 }
 
-fn tool(name: &str, title: &str, desc: &str, schema: Value, read_only: bool, destructive: bool) -> Value {
+/// What a tool may do, for the client's approval prompts (MCP tool annotations). Clients that
+/// auto-approve on these hints must not be told less than the truth (#205).
+#[derive(Clone, Copy)]
+enum Effect {
+    /// Only looks.
+    ReadOnly,
+    /// Changes the design in memory, undoably.
+    Edits,
+    /// Replaces the design in memory (unsaved changes are lost).
+    Replaces,
+    /// May read, write, overwrite or delete files on disk (any command, a file path).
+    Files,
+}
+
+fn tool(name: &str, title: &str, desc: &str, schema: Value, effect: Effect) -> Value {
+    let (read_only, destructive, open_world) = match effect {
+        Effect::ReadOnly => (true, false, false),
+        Effect::Edits => (false, false, false),
+        Effect::Replaces => (false, true, false),
+        Effect::Files => (false, true, true),
+    };
     json!({
         "name": name,
         "title": title,
         "description": desc,
         "inputSchema": schema,
-        "annotations": {"title": title, "readOnlyHint": read_only, "destructiveHint": destructive, "idempotentHint": read_only, "openWorldHint": false},
+        "annotations": {"title": title, "readOnlyHint": read_only, "destructiveHint": destructive, "idempotentHint": read_only, "openWorldHint": open_world},
     })
 }
 
@@ -49,8 +69,7 @@ pub fn tool_definitions() -> Vec<Value> {
              substring `filter` over id, label, tab and panel (not the parameter docs, so a command id \
              finds that command rather than every command whose docs mention it).",
             obj(json!({"filter": string("Substring to match, e.g. \"sketch\", \"fillet\", \"pattern\"")}), &[]),
-            true,
-            false,
+            Effect::ReadOnly,
         ),
         tool(
             "execute",
@@ -73,8 +92,7 @@ pub fn tool_definitions() -> Vec<Value> {
                 }),
                 &["command"],
             ),
-            false,
-            false,
+            Effect::Files,
         ),
         tool(
             "batch",
@@ -95,8 +113,7 @@ pub fn tool_definitions() -> Vec<Value> {
                 }),
                 &["commands"],
             ),
-            false,
-            false,
+            Effect::Files,
         ),
         tool(
             "inspect_design",
@@ -112,8 +129,7 @@ pub fn tool_definitions() -> Vec<Value> {
                 }),
                 &[],
             ),
-            true,
-            false,
+            Effect::ReadOnly,
         ),
         tool(
             "measure",
@@ -121,8 +137,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "Volume (mm³), surface area (mm²), centre of mass, bounding box and face/edge/vertex counts of one body or all \
              bodies, with totals.",
             obj(json!({"body": string("Body name (default: all bodies)")}), &[]),
-            true,
-            false,
+            Effect::ReadOnly,
         ),
         tool(
             "body_topology",
@@ -130,8 +145,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "The edges (index, midpoint, length, endpoints) and faces (index, area, centroid, plane normal) of a body. Use \
              an edge midpoint as the [x,y,z] point that picks the edge for fillet and chamfer.",
             obj(json!({"body": string("Body name, e.g. \"Body1\"")}), &["body"]),
-            true,
-            false,
+            Effect::ReadOnly,
         ),
         tool(
             "set_parameter",
@@ -148,8 +162,7 @@ pub fn tool_definitions() -> Vec<Value> {
                 }),
                 &["name", "value"],
             ),
-            false,
-            false,
+            Effect::Edits,
         ),
         tool(
             "screenshot",
@@ -171,8 +184,7 @@ pub fn tool_definitions() -> Vec<Value> {
                 }),
                 &[],
             ),
-            true,
-            false,
+            Effect::Files,
         ),
         tool(
             "export",
@@ -192,8 +204,7 @@ pub fn tool_definitions() -> Vec<Value> {
                 }),
                 &["path"],
             ),
-            false,
-            false,
+            Effect::Files,
         ),
         tool(
             "crash_reports",
@@ -210,18 +221,16 @@ pub fn tool_definitions() -> Vec<Value> {
                 }),
                 &[],
             ),
-            true,
-            false,
+            Effect::ReadOnly,
         ),
-        tool("undo", "Undo", "Undo the last change to the design.", obj(json!({}), &[]), false, false),
-        tool("redo", "Redo", "Redo the last undone change.", obj(json!({}), &[]), false, false),
+        tool("undo", "Undo", "Undo the last change to the design.", obj(json!({}), &[]), Effect::Edits),
+        tool("redo", "Redo", "Redo the last undone change.", obj(json!({}), &[]), Effect::Edits),
         tool(
             "new_design",
             "New design",
             "Start a new, empty design (unsaved changes to the current one are discarded).",
             obj(json!({"name": string("Design name (default Untitled)")}), &[]),
-            false,
-            true,
+            Effect::Replaces,
         ),
         tool(
             "open",
@@ -230,8 +239,7 @@ pub fn tool_definitions() -> Vec<Value> {
              Import base feature) or a 3MF/STL mesh (.3mf/.stl: mesh bodies). Replaces the current design; insert into it \
              instead with the file.insert_step (STEP) or file.insert_mesh (3MF/STL) commands.",
             obj(json!({"path": string("Path to a .solidcraft, .step/.stp, .3mf or .stl file")}), &["path"]),
-            false,
-            true,
+            Effect::Files,
         ),
         tool(
             "save",
@@ -241,8 +249,7 @@ pub fn tool_definitions() -> Vec<Value> {
                 json!({"path": string("Path to save to (default: the current file)"), "format": {"type": "string", "enum": ["container", "json"], "description": "Design encoding (default: JSON for .json, container otherwise)"}}),
                 &[],
             ),
-            false,
-            false,
+            Effect::Files,
         ),
     ]
 }
@@ -462,6 +469,22 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
     }
     let rollback = a.get("rollback").and_then(Value::as_bool).unwrap_or(true);
     let verbose = a.get("verbose").and_then(Value::as_bool).unwrap_or(true);
+    // An app that runs batches itself answers the whole batch in one request, so one frame
+    // (#743). One too long for a control line goes step by step: the app would refuse it unrun.
+    // The margin covers the envelope and the `allow_paths` the backend adds.
+    let params = json!({"commands": steps, "rollback": rollback});
+    if params.to_string().len() + 64 * 1024 <= solidcraft_engine::MAX_LINE {
+        match b.call("engine.batch", params) {
+            Ok(r) => return batch_reply(&r, rollback, verbose),
+            // Older apps and the headless session, or the app wants the steps one by one.
+            Err(e) if e.starts_with("unknown method") || e.starts_with("engine.batch unavailable") => {}
+            // The app may have run it: sending the steps again would apply them twice.
+            Err(e) => {
+                let msg = format!("the app did not answer engine.batch ({e}); it may have run: inspect the design before sending it again");
+                return text_result(&Value::String(msg), true);
+            }
+        }
+    }
     let start = if rollback { Undo::begin(b) } else { Undo::None };
     let mut results = Vec::with_capacity(steps.len());
     for (i, step) in steps.iter().enumerate() {
@@ -490,6 +513,26 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
     }
     start.finish(b);
     text_result(&json!({"ok": true, "completed": results.len(), "results": results}), false)
+}
+
+/// The `batch` reply from the app's `engine.batch` answer, shaped as the per-step path shapes it.
+fn batch_reply(r: &Value, rollback: bool, verbose: bool) -> Value {
+    let results: Vec<Value> =
+        r["results"].as_array().cloned().unwrap_or_default().into_iter().map(|v| if verbose { v } else { compact(v) }).collect();
+    match r.get("failed").filter(|f| !f.is_null()) {
+        None => text_result(&json!({"ok": true, "completed": results.len(), "results": results}), false),
+        Some(failed) => text_result(
+            &json!({
+                "ok": false,
+                "completed": r["completed"],
+                "failed": failed,
+                "rolled_back": rollback,
+                "undone": r["undone"],
+                "results": results,
+            }),
+            true,
+        ),
+    }
 }
 
 /// A command's result without what the design already had (`execute` or `batch` with `verbose: false`): a

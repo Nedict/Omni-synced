@@ -225,7 +225,8 @@ impl FeatureKind {
                     pt(&mut t.point);
                 }
             }
-            FeatureKind::Revolve { axis: AxisRef::Line { origin, dir: d }, .. } => {
+            FeatureKind::Revolve { axis: AxisRef::Line { origin, dir: d }, .. }
+            | FeatureKind::SurfaceRevolve { axis: AxisRef::Line { origin, dir: d }, .. } => {
                 pt(origin);
                 dir(d);
             }
@@ -326,6 +327,8 @@ impl FeatureKind {
             FeatureKind::Revolve { .. }
             | FeatureKind::Extrude { .. }
             | FeatureKind::SurfaceExtrude { .. }
+            | FeatureKind::SurfaceRevolve { .. }
+            | FeatureKind::SurfaceSweep { .. }
             | FeatureKind::Combine { .. }
             | FeatureKind::Loft { .. }
             | FeatureKind::Sweep { .. }

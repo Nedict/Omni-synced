@@ -19,6 +19,11 @@ solidcraft --control 7878 &
 solidcraft-cli mcp --connect 127.0.0.1:7878
 ```
 
+Bridged, the server finds the app's control token in the token file the app wrote for that port
+([control-protocol.md](control-protocol.md#token)); `--token T` or `SOLIDCRAFT_CONTROL_TOKEN` give
+it explicitly when the app runs in a sandbox whose data folder the server can't see (prefer the
+variable: command-line arguments are visible to other users in the process list).
+
 stdout carries only protocol messages; errors go to stderr. Bridged screenshots are written to a
 temporary file by the app and read back by the server, so both must run on the same machine.
 
@@ -67,6 +72,15 @@ folder of the design open in it, under the same rules, so give absolute paths: a
 resolves against the app's working folder, not the server's. The app's own
 file dialogs are never limited.
 
+### Tool annotations
+
+Each tool says what it may do, for clients that ask before running tools (or auto-approve on
+these hints). `list_commands`, `inspect_design`, `measure`, `body_topology` and `crash_reports`
+are read-only. `set_parameter`, `undo` and `redo` change the design undoably. `new_design`
+replaces it (destructive). `execute`, `batch`, `open`, `save`, `export` and `screenshot` (whose
+`path` writes a file) can read, write, overwrite or delete files: they are not read-only,
+`destructiveHint` and `openWorldHint` are true.
+
 ### Client configuration
 
 Claude Code (project `.mcp.json`, or `claude mcp add solidcraft -- solidcraft-cli mcp`; a setup
@@ -104,7 +118,7 @@ They cover the workflow, the command shapes, how to verify with `measure`, and t
 |---|---|---|
 | `list_commands` | `filter?` | The command catalog: id, label, tab/panel, shortcut, parameter docs, enabled now. `filter` matches id, label, tab and panel. |
 | `execute` | `command`, `params?`, `verbose?` (default true) | Run any command with JSON parameters (`list_commands` shows them). Failures leave the design unchanged. A feature command replies with the feature (`feature`, `name`), every body (`bodies`) and the bodies it created, changed and removed (`created_bodies`, `changed_bodies`, `removed_bodies`). `verbose: false` uses the same compact reply as `batch`. |
-| `batch` | `commands: [{command, params}]`, `rollback?` (default true), `verbose?` (default true) | Run steps in order, stop at the first error and undo the completed steps. The reply names the failing step (`failed.index`, `failed.command`, `failed.error`) and every result before it. `verbose: false` keeps the reply small in large designs: feature steps leave out the full body list (`created_bodies`, `changed_bodies`, `removed_bodies` stay) and sketch steps the ids they repeat outside `created`. |
+| `batch` | `commands: [{command, params}]`, `rollback?` (default true), `verbose?` (default true) | Run steps in order, stop at the first error and undo the completed steps. The reply names the failing step (`failed.index`, `failed.command`, `failed.error`) and every result before it. `verbose: false` keeps the reply small in large designs: feature steps leave out the full body list (`created_bodies`, `changed_bodies`, `removed_bodies` stay) and sketch steps the ids they repeat outside `created`. Bridged to an app that has `engine.batch`, the whole batch is one control request (one frame of the app). Older apps, and apps showing the agent cursor, get the steps one by one. |
 | `inspect_design` | `measure?` (default true), `sketches?` (default true) | Parameters, timeline (type, suppressed, rolled back, error, warning, timing), bodies (volume, area, centre of mass, bbox, face/edge/vertex counts, visible), sketches (curves, points, constraints, profiles, DOF, solve status, visible), selection, undo depth. Hide helper sketches, bodies or construction planes with `execute` `browser.visibility` (`{items, visible}` or `{folder, visible}`). |
 | `measure` | `body?` | Volume (mm³), area (mm²), centre of mass, bbox and topology counts per body, with totals. |
 | `body_topology` | `body` | Edges (index, midpoint, length, ends) and faces (index, area, centroid, normal). An edge midpoint is the `[x,y,z]` that picks that edge for fillet and chamfer. |
