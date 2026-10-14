@@ -679,6 +679,13 @@ fn loop_dof(tree: &Tree, closing: &[u64], asm: &Assembly, vals: &Values, dof: &m
                 }
             }
         }
+        // A value on the path a motion link sets moves with the values its link chain starts from.
+        let on_path: BTreeSet<u64> = path.iter().copied().collect();
+        for v in link_chains(asm, tree, &on_path, &linked).1 {
+            if !values.contains(&v) {
+                values.push(v);
+            }
+        }
         if values.len() > MAX_LOOP_VALUES {
             continue;
         }

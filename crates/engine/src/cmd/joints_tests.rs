@@ -751,6 +751,11 @@ fn loops_report_their_mobility() {
     part(&mut s, "Flag", [mid.x, mid.y, 5.0]);
     run(&mut s, "joint.as_built", json!({"type": "revolute", "a": "Coupler", "b": "Flag", "name": "Flag hinge"}));
     assert_eq!(dof_of(&mut s, "Flag"), 2);
+    // Still two when a rotor elsewhere turns the flag's hinge through a motion link.
+    part(&mut s, "Rotor", [100.0, 0.0, -5.0]);
+    pin(&mut s, "revolute", "Rotor", "Ground", "Rotor", Vec3::new(100.0, 0.0, 0.0), Vec3::Z);
+    run(&mut s, "joint.motion_link", json!({"a": "Rotor", "b": "Flag hinge", "ratio": 1}));
+    assert_eq!(dof_of(&mut s, "Flag"), 2);
     // Locked: nothing moves.
     let (mut s, _, _) = four_bar();
     run(&mut s, "joint.as_built", json!({"type": "rigid", "a": "Ground", "b": "Rocker", "name": "Lock"}));
