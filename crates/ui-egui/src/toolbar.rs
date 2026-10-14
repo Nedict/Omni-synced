@@ -187,14 +187,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 ui.painter().rect_filled(br, 4.0, Color32::from_white_alpha(30));
             }
             let dim = |c: Color32| if enabled { c } else { c.gamma_multiply(0.35) };
-            icons::paint(
-                ui.painter(),
-                br.shrink(5.0),
-                icon,
-                dim(Color32::from_rgb(225, 230, 238)),
-                dim(Color32::from_rgb(120, 140, 170)),
-                dim(Color32::from_rgb(120, 190, 255)),
-            );
+            icons::paint(ui.painter(), br.shrink(5.0), icon, dim(t.app_bar_icon[0]), dim(t.app_bar_icon[1]), dim(t.app_bar_icon[2]));
             let clicked = resp.on_hover_text(tip).clicked();
             enabled && clicked
         };

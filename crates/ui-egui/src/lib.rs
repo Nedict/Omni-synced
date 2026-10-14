@@ -12,6 +12,8 @@ pub mod access;
 pub mod agent_cursor;
 pub mod browser;
 pub mod canvas;
+#[cfg(test)]
+mod colour_tokens_tests;
 pub mod context_menu;
 pub mod control;
 pub mod crash_ui;

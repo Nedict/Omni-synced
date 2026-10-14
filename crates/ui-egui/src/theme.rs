@@ -15,7 +15,57 @@ pub fn is_dark() -> bool {
     DARK.load(Ordering::Relaxed)
 }
 
-#[derive(Clone, Copy, Debug)]
+/// Surface analysis colours, straight sRGB 0..1 as the shader takes them (exact, so they read
+/// the same as when they were literals in the WGSL).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AnalysisColors {
+    /// Draft Analysis: at least the draft angle, between, at most minus the angle.
+    pub draft: [[f32; 3]; 3],
+    /// Accessibility Analysis: reachable, blocked.
+    pub access: [[f32; 3]; 2],
+    /// Curvature Map: flat, the middle of the scale, at or below the analysis radius.
+    pub curvature: [[f32; 3]; 3],
+    /// Stripe the negative draft and blocked faces too, so colour is not the only cue.
+    pub hatch: bool,
+}
+
+/// The colours icons draw of their own (`icons::paint` takes ink, fill and accent from its
+/// caller). Every icon colour is a token so a colour vision mode can reach it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IconColors {
+    /// Surface sheets: a sheet, a second sheet beside it, a lighter sheet, iso lines and teeth.
+    pub sheet: Color32,
+    pub sheet_2: Color32,
+    pub sheet_light: Color32,
+    pub sheet_line: Color32,
+    /// Highlights (and the white ink of markers and the agent pointer), and the sphere's glint.
+    pub highlight: Color32,
+    pub glint: Color32,
+    pub folder: Color32,
+    pub plane: Color32,
+    pub fold: Color32,
+    /// Zebra stripes, and the environment map's sky and floor.
+    pub stripe: Color32,
+    pub sky: Color32,
+    pub floor: Color32,
+    /// Appearance: red, blue and yellow paint dabs.
+    pub paint: [Color32; 3],
+    /// Origin: X, Y and Z arrows.
+    pub axes: [Color32; 3],
+    /// Accessibility: reachable, blocked. Draft: positive, between. Curvature: flat, middle,
+    /// tight.
+    pub access: [Color32; 2],
+    pub draft: [Color32; 2],
+    pub curvature: [Color32; 3],
+    pub interference: Color32,
+    pub warning: Color32,
+    /// The pointer an AI agent moves.
+    pub agent: Color32,
+    /// The dark halo under viewport markers (snap points).
+    pub marker_halo: Color32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tokens {
     pub app_bar: Color32,
     pub toolbar: Color32,
@@ -131,6 +181,28 @@ pub struct Tokens {
     // ---- box selection ----
     pub box_window: Color32,
     pub box_crossing: Color32,
+    // ---- colours that came from the engine or were drawn in place ----
+    /// Sketch curves the engine tags (`view::colors`): projected, lost link, construction,
+    /// centerline.
+    pub sketch_projected: Color32,
+    pub sketch_lost: Color32,
+    pub sketch_construction: Color32,
+    pub sketch_centerline: Color32,
+    /// The view triad's X, Y and Z (and the CPU scene's origin axes).
+    pub triad: [Color32; 3],
+    /// The move gizmo's X, Y and Z.
+    pub gizmo: [Color32; 3],
+    /// Sheet metal flat pattern: bend up, bend down.
+    pub bend_up: Color32,
+    pub bend_down: Color32,
+    /// Interference: the clash fill, before its shading.
+    pub interference: Color32,
+    pub analysis: AnalysisColors,
+    pub icons: IconColors,
+    /// The application bar's buttons: ink, fill and accent of their icons.
+    pub app_bar_icon: [Color32; 3],
+    /// The SolidCraft mark on the application bar: light, mid and dark faces, and its edge.
+    pub logo: [Color32; 4],
 }
 
 impl Tokens {

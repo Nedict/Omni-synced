@@ -13,7 +13,9 @@ use egui_wgpu::wgpu::util::DeviceExt;
 pub const TRI_SIZE: usize = 28;
 /// Line instance: a, b (3 × f32 each), colour (4 × u8), width in pixels (f32).
 pub const LINE_SIZE: usize = 32;
-const UNIFORM_SIZE: u64 = 208;
+/// The shader's `U`: the view-projection matrix, 9 `vec4`s, the 8 analysis colours and their
+/// flags (`uniform_bytes`).
+const UNIFORM_SIZE: u64 = 352;
 
 /// A body drawn from its display plan, evaluated on the GPU: the plan, and a colour per face
 /// (the plan's face numbering; faces past the end take the last colour).
@@ -156,6 +158,8 @@ pub struct ViewportCallback {
     /// Surface analysis: (mode: 0 none, 1 zebra, 2 draft, 3 curvature, 4 environment,
     /// 5 accessibility; parameter; scale; size) and the pull / access direction.
     pub analysis: [f32; 8],
+    /// The analysis colours and the stripe flag ([`analysis_colors`]).
+    pub analysis_colors: [f32; 36],
     /// Accessibility: the depth map seen from the access direction.
     pub access: Option<AccessMap>,
     /// Draw silhouette outlines around the model (visual styles with edges).
@@ -899,6 +903,7 @@ pub(crate) fn render_offscreen(scene: GpuScene, view_proj: [[f32; 4]; 4], back: 
         cap: [0.0; 4],
         images: Vec::new(),
         analysis: [0.0; 8],
+        analysis_colors: analysis_colors(&crate::theme::Tokens::get().analysis),
         access: None,
         outline: false,
         eye,
@@ -983,7 +988,21 @@ pub fn uniform_bytes(cb: &ViewportCallback, w: f32, h: f32, linear: bool) -> Vec
         None => v.extend([0.0; 8]),
     }
     v.extend(cb.eye);
+    v.extend(cb.analysis_colors);
     v.iter().flat_map(|x| x.to_le_bytes()).collect()
+}
+
+/// The shader's analysis colours (`ana_c`: draft positive, between, negative; reachable,
+/// blocked; curvature flat, middle, tight; alpha 1) and flags (`ana_f.x`: 1 to stripe the bad
+/// faces).
+pub fn analysis_colors(c: &crate::theme::AnalysisColors) -> [f32; 36] {
+    let mut v = [0.0; 36];
+    let colors = c.draft.iter().chain(&c.access).chain(&c.curvature).flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 1.0]);
+    for (slot, x) in v.iter_mut().zip(colors) {
+        *slot = x;
+    }
+    v[32] = if c.hatch { 1.0 } else { 0.0 };
+    v
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 //! Original light and dark palette values. Compiled by the UI theme boundary.
-use crate::theme::Tokens;
+use crate::theme::{AnalysisColors, IconColors, Tokens};
 use egui::Color32;
 impl Tokens {
     pub const fn light() -> Tokens {
@@ -81,6 +81,48 @@ impl Tokens {
             field: Color32::WHITE,
             box_window: Color32::from_rgb(38, 120, 218),
             box_crossing: Color32::from_rgb(40, 160, 80),
+            // Equal to `view::colors` (the engine's tags), so mapping a tag to its token
+            // changes nothing.
+            sketch_projected: Color32::from_rgb(150, 60, 190),
+            sketch_lost: Color32::from_rgb(200, 60, 90),
+            sketch_construction: Color32::from_rgb(230, 130, 40),
+            sketch_centerline: Color32::from_rgb(200, 110, 60),
+            triad: [Color32::from_rgb(220, 60, 60), Color32::from_rgb(60, 170, 60), Color32::from_rgb(60, 100, 230)],
+            gizmo: [Color32::from_rgb(225, 70, 60), Color32::from_rgb(80, 190, 80), Color32::from_rgb(70, 130, 240)],
+            bend_up: Color32::from_rgb(30, 140, 50),
+            bend_down: Color32::from_rgb(200, 90, 20),
+            interference: Color32::from_rgb(235, 45, 40),
+            analysis: AnalysisColors {
+                draft: [[0.20, 0.75, 0.30], [0.95, 0.80, 0.15], [0.85, 0.22, 0.20]],
+                access: [[0.20, 0.75, 0.30], [0.85, 0.22, 0.20]],
+                curvature: [[0.15, 0.35, 0.95], [0.10, 0.80, 0.25], [0.90, 0.15, 0.10]],
+                hatch: false,
+            },
+            icons: IconColors {
+                sheet: Color32::from_rgb(170, 200, 240),
+                sheet_2: Color32::from_rgb(150, 185, 235),
+                sheet_light: Color32::from_rgb(214, 229, 248),
+                sheet_line: Color32::from_rgb(127, 166, 218),
+                highlight: Color32::WHITE,
+                glint: Color32::from_rgba_premultiplied(160, 160, 160, 160),
+                folder: Color32::from_rgb(236, 200, 110),
+                plane: Color32::from_rgb(244, 214, 150),
+                fold: Color32::from_rgb(130, 140, 160),
+                stripe: Color32::from_gray(30),
+                sky: Color32::from_rgb(190, 205, 230),
+                floor: Color32::from_rgb(60, 62, 70),
+                paint: [Color32::from_rgb(220, 70, 60), Color32::from_rgb(70, 150, 230), Color32::from_rgb(240, 200, 60)],
+                axes: [Color32::from_rgb(210, 60, 60), Color32::from_rgb(60, 160, 60), Color32::from_rgb(60, 100, 220)],
+                access: [Color32::from_rgb(70, 180, 90), Color32::from_rgb(220, 70, 60)],
+                draft: [Color32::from_rgb(70, 180, 90), Color32::from_rgb(235, 200, 50)],
+                curvature: [Color32::from_rgb(60, 110, 230), Color32::from_rgb(70, 190, 90), Color32::from_rgb(225, 60, 45)],
+                interference: Color32::from_rgb(225, 70, 60),
+                warning: Color32::from_rgb(250, 200, 60),
+                agent: Color32::from_rgb(168, 85, 247),
+                marker_halo: Color32::from_black_alpha(150),
+            },
+            app_bar_icon: [Color32::from_rgb(225, 230, 238), Color32::from_rgb(120, 140, 170), Color32::from_rgb(120, 190, 255)],
+            logo: [Color32::from_rgb(96, 158, 236), Color32::from_rgb(58, 136, 238), Color32::from_rgb(55, 108, 197), Color32::WHITE],
         }
     }
     pub const fn dark() -> Tokens {
@@ -133,6 +175,8 @@ impl Tokens {
         t.field = Color32::from_rgb(30, 34, 41);
         t.box_window = Color32::from_rgb(70, 150, 255);
         t.box_crossing = Color32::from_rgb(80, 200, 120);
+        t.bend_up = Color32::from_rgb(110, 200, 120);
+        t.bend_down = Color32::from_rgb(240, 150, 80);
         t
     }
 }

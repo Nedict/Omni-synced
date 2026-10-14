@@ -292,7 +292,7 @@ pub(crate) fn display_scene_keys(app: &SolveApp, proj: &Proj) -> (u64, u64) {
     (scene_key(app), sketch_scene_key(app, proj))
 }
 
-/// A sketch curve colour from the engine, in the current theme.
+/// A sketch curve colour from the engine, in the current theme and colour vision mode.
 fn sketch_color(t: &Tokens, c: Rgb) -> [u8; 4] {
     if c == colors::SKETCH {
         c4(t.sketch)
@@ -300,6 +300,14 @@ fn sketch_color(t: &Tokens, c: Rgb) -> [u8; 4] {
         c4(t.sketch_fixed)
     } else if c == colors::SKETCH_LOCKED {
         c4(t.sketch_locked)
+    } else if c == colors::SKETCH_PROJECTED {
+        c4(t.sketch_projected)
+    } else if c == colors::SKETCH_LOST {
+        c4(t.sketch_lost)
+    } else if c == colors::SKETCH_CONSTRUCTION {
+        c4(t.sketch_construction)
+    } else if c == colors::SKETCH_CENTERLINE {
+        c4(t.sketch_centerline)
     } else {
         rgba(c)
     }
@@ -2104,6 +2112,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             size_px: [rect.width() * ppp, rect.height() * ppp],
             images: crate::ref_images::gpu_images(app),
             analysis: analysis_uniform(app),
+            analysis_colors: crate::gpu::analysis_colors(&t.analysis),
             access: crate::access::map(app),
             outline: matches!(app.ui.visual_style, 0 | 3),
             eye: {
