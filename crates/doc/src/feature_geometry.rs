@@ -288,6 +288,7 @@ macro_rules! geometry_walk {
                     }
                 }
                 FeatureKind::SheetContour { .. }
+                | FeatureKind::SheetPerforate { .. }
                 | FeatureKind::SheetUnfold { .. }
                 | FeatureKind::Combine { .. }
                 | FeatureKind::BoundingSolid { .. }

@@ -323,6 +323,13 @@ macro_rules! feature_walk {
                         f("Gap", g, L, I);
                     }
                 }
+                FeatureKind::SheetPerforate { diameter, pitch, margin, .. } => {
+                    f("Diameter", diameter, L, I);
+                    f("Pitch", pitch, L, I);
+                    if let Some(m) = margin {
+                        f("Margin", m, L, I);
+                    }
+                }
                 FeatureKind::Coil { diameter, pitch, turns, section_size, start_angle, base, .. } => {
                     f("Diameter", diameter, L, I);
                     f("Pitch", pitch, L, I);

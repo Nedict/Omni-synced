@@ -73,6 +73,12 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 
 ## Library foundations (#785, #786, #787)
 
+- Local scalar libraries (#846) inspect/export bounded portable catalogs and copy exact
+  selected appearance/material revisions into existing design definitions in one undo step.
+  Appearance offers local loading/search/export; physical materials use existing commands.
+  This slice is independent of the render stack and does not change the document format.
+  See [the contract and limits](docs/book/src/dev/local-libraries.md).
+
 - Proposed phases cover offline bundled/project/user packs, physical materials and
   appearances, editable wood mapping, and parameterized component/assembly families.
   Stable identity/revision, copied design definitions, provenance and resource limits

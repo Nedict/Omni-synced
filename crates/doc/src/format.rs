@@ -143,6 +143,10 @@
 //!   no transformation, and an extrude without `thin` saves as before; the version stamp makes
 //!   0.10.0 (which reads up to 19) ask for an update instead of ignoring the wall and filling
 //!   the sketch's profiles.
+//!   A `sheet_perforate` feature (Perforate: `diameter`, `pitch`, optional `margin`,
+//!   `pattern` and `body`): a perforation field stored on a sheet, for the flat pattern, the DXF
+//!   and the measure. It is also first saved in 20; 0.10.0 asks for an update instead of
+//!   meeting a feature it can't read.
 
 use serde_json::Value;
 
