@@ -21,41 +21,6 @@ fn oblique_boss() -> (Body, Vec3, Vec3) {
     (boolean(&plate, &rod, BoolOp::Union).unwrap().unwrap(), base, axis)
 }
 
-/// The ball of radius `r` tangent to the rod (radius 8 about `axis` through `base`) and the plate's
-/// top plane `z = 5` at the azimuth `phi` about the rod, from the rod's own axis and the plane
-/// alone: its centre, its contacts (rod first) and the width across the blend between them.
-fn boss_station(base: Vec3, axis: Vec3, phi: f64, r: f64) -> Option<(Vec3, Vec3, Vec3, f64)> {
-    let (radius, plane) = (8.0, 5.0);
-    let u = Vec3::new(axis.z, 0.0, -axis.x).normalized()?;
-    let v = axis.cross(u).normalized()?;
-    let (s, c) = phi.sin_cos();
-    let radial = u * c + v * s;
-    // The centre is `radius − r` in from the rod's surface, `r` down from the plate's top: its
-    // station along the rod's axis follows.
-    let step = (plane - r - base.z - (radius - r) * radial.z) / axis.z;
-    let centre = base + axis * step + radial * (radius - r);
-    let rod = base + axis * step + radial * radius;
-    let plate = Vec3::new(centre.x, centre.y, plane);
-    Some((centre, rod, plate, rod.dist(plate)))
-}
-
-/// The radius whose two contacts are `chord` apart at `phi` (the width rises with the radius).
-fn boss_radius(base: Vec3, axis: Vec3, phi: f64, chord: f64) -> Option<f64> {
-    let (mut lo, mut hi) = (1e-6, 7.0);
-    if boss_station(base, axis, phi, lo)?.3 >= chord || boss_station(base, axis, phi, hi)?.3 <= chord {
-        return None;
-    }
-    for _ in 0..200 {
-        let mid = 0.5 * (lo + hi);
-        if boss_station(base, axis, phi, mid)?.3 < chord {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    Some(0.5 * (lo + hi))
-}
-
 /// A 40 × 40 × 20 box whose front wall is an arc of radius 40 about a Z axis: `concave` cuts a
 /// cylinder away from the front (the wall curves into the part), otherwise the part is the box
 /// within the cylinder (the wall curves out). With the bottom arc's midpoint, the axis's base
@@ -102,21 +67,6 @@ fn blend_boundary(input: &Body, body: &Body) -> Vec<(mt::Edge, Vec3)> {
 /// The edges of a contact: the boundary of the blend face whose middle point `side` picks out.
 fn contact(input: &Body, body: &Body, side: &dyn Fn(Vec3) -> bool) -> Vec<mt::Edge> {
     blend_boundary(input, body).into_iter().filter(|(_, m)| side(*m)).map(|(e, _)| e).collect()
-}
-
-/// The point of `edge` nearest `q`.
-fn nearest_on(edge: &mt::Edge, q: Vec3) -> Option<Vec3> {
-    let c = edge.oriented_curve();
-    let (lo, hi) = c.range_tuple();
-    let hint =
-        (0..=128).map(|i| lo + (hi - lo) * i as f64 / 128.0).min_by(|x, y| from_p3(c.subs(*x)).dist(q).total_cmp(&from_p3(c.subs(*y)).dist(q)))?;
-    let t = c.search_nearest_parameter(p3(q), hint, 100)?;
-    Some(from_p3(c.subs(t)))
-}
-
-/// The point of the nearest of `edges` to `q`.
-fn nearest_over(edges: &[mt::Edge], q: Vec3) -> Option<Vec3> {
-    edges.iter().filter_map(|e| nearest_on(e, q).map(|p| (p.dist(q), p))).min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, p)| p)
 }
 
 /// The fraction of the way along `edge` (its absolute front to its back) of the point of it
@@ -202,7 +152,7 @@ fn at_azimuth(edges: &[mt::Edge], axis: Vec3, phi: f64) -> Option<Vec3> {
 #[test]
 fn a_chord_fillet_along_an_oblique_boss_edge_is_refused() {
     let (body, _, _) = oblique_boss();
-    let pick = Vec3::new(7.5 + 8.944271909999159, 0.0, 5.0);
+    let pick = Vec3::new(7.5 + 8.944_271_909_999_16, 0.0, 5.0);
     // A fixed radius rolls along the same chain: the edge itself is supported.
     assert!(fillet(&body, &[pick], 2.5).is_ok());
     let e = fillet_chord(&body, &[pick], 4.0).unwrap_err();
