@@ -355,6 +355,20 @@ pub fn paint(p: &Painter, r: Rect, name: &str, ink: Color32, fill: Color32, acce
                 }
             }
         }
+        "rect_rounded" => {
+            // Straight sides between quarter arcs of radius 3 at the corners.
+            pen.line(&[(7.0, 6.0), (17.0, 6.0)], a);
+            pen.line(&[(20.0, 9.0), (20.0, 15.0)], a);
+            pen.line(&[(17.0, 18.0), (7.0, 18.0)], a);
+            pen.line(&[(4.0, 15.0), (4.0, 9.0)], a);
+            let q = std::f32::consts::FRAC_PI_2;
+            pen.arc(17.0, 9.0, 3.0, 0.0, q, a);
+            pen.arc(7.0, 9.0, 3.0, q, 2.0 * q, a);
+            pen.arc(7.0, 15.0, 3.0, 2.0 * q, 3.0 * q, a);
+            pen.arc(17.0, 15.0, 3.0, 3.0 * q, 4.0 * q, a);
+            pen.dot(4.0, 18.0, ink);
+            pen.dot(20.0, 6.0, ink);
+        }
         "circle" | "circle2" | "circle3" => {
             pen.circle(12.0, 12.0, 8.0, Color32::TRANSPARENT, a);
             match name {

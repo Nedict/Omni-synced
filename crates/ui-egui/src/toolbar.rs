@@ -296,7 +296,8 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         tabs_ui.set_clip_rect(tabs_rect.intersect(ui.clip_rect()));
         crate::documents::tabs(app, &mut tabs_ui, r, tabs_start, tabs_end);
         let response = ui.interact(report, ui.id().with("sc_report_button"), Sense::click());
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Report a bug"));
+        let report_text = crate::i18n::tr("ui.report_a_bug");
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), report_text));
         crate::scenario::publish_handle("titlebar:report", report.center());
         ui.painter().rect_filled(report, 4.0, if response.hovered() || response.has_focus() { t.hover } else { t.app_bar });
         ui.painter().rect_stroke(report, 4.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
@@ -306,7 +307,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.painter().text(
                 pos2(report.left() + 29.0, report.center().y),
                 Align2::LEFT_CENTER,
-                "Report a bug",
+                report_text,
                 FontId::proportional(13.0),
                 t.app_bar_text,
             );

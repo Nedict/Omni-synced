@@ -100,6 +100,8 @@ jobs:
         run: cargo xtask licences --check
       - name: Dependency layers
         run: cargo xtask layers
+      - name: Web app offline use and updates (headless Chrome)
+        run: cargo xtask web-offline-test
 
   clippy:
     name: Native Linux Clippy
