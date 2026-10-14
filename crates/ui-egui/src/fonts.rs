@@ -10,12 +10,17 @@ use std::sync::Arc;
 /// Name of the CJK fallback entry in [`egui::FontDefinitions`].
 pub const CJK_FALLBACK: &str = "cjk_fallback";
 
-/// Name of the Hangul fallback entry in [`egui::FontDefinitions`], after [`CJK_FALLBACK`].
+/// Name of the Chinese fallback entry in [`egui::FontDefinitions`], after [`CJK_FALLBACK`].
+/// A Japanese-only CJK font (Meiryo, Hiragino Gothic) lacks simplified characters, so
+/// Chinese falls through to this one per glyph.
+pub const CHINESE_FALLBACK: &str = "chinese_fallback";
+
+/// Name of the Hangul fallback entry in [`egui::FontDefinitions`], last.
 pub const HANGUL_FALLBACK: &str = "hangul_fallback";
 
 /// UI languages whose text needs the CJK font. The web app's bundled font covers Japanese only;
 /// add Chinese or Korean here together with a font that covers them.
-pub const CJK_LANGUAGES: &[&str] = &["ja"];
+pub const CJK_LANGUAGES: &[&str] = &["ja", "zh", "ko"];
 
 /// Whether the UI language needs a CJK font (the web app fetches one only then).
 pub fn needs_cjk_font(language: &str) -> bool {
@@ -111,6 +116,34 @@ pub const CJK_FONT_KEYWORDS: &[&str] = &[
 pub fn is_cjk_font_name(file_name: &str) -> bool {
     let name = file_name.to_ascii_lowercase();
     CJK_FONT_KEYWORDS.iter().any(|k| name.contains(k))
+}
+
+/// Lower-case file-name fragments that identify fonts covering simplified Chinese. Deliberately
+/// separate from [`CJK_FONT_KEYWORDS`]: many Japanese fonts (Hiragino Gothic, Meiryo, Yu Gothic)
+/// match those but lack simplified characters, so a Chinese fallback searches these instead.
+pub const CHINESE_FONT_KEYWORDS: &[&str] = &[
+    "pingfang",
+    "hiragino sans gb",
+    "stheiti",
+    "songti",
+    "arial unicode",
+    "msyh",
+    "yahei",
+    "simhei",
+    "simsun",
+    "wqy",
+    "wenquanyi",
+    "notosanscjk",
+    "notosanssc",
+    "droidsansfallback",
+    "sourcehanss",
+    "siyuan",
+];
+
+/// Whether a font file name looks like a font covering simplified Chinese.
+pub fn is_chinese_font_name(file_name: &str) -> bool {
+    let name = file_name.to_ascii_lowercase();
+    CHINESE_FONT_KEYWORDS.iter().any(|k| name.contains(k))
 }
 
 /// Session state of the web app's on-demand CJK font. Pure state so it can be tested off the web:
@@ -256,6 +289,30 @@ const HANGUL_FONT_CANDIDATES: &[&str] = &[
     "/usr/share/fonts/nanum/NanumGothic.ttf",
 ];
 
+/// Fonts covering simplified Chinese, appended after the CJK fallback so Chinese renders even
+/// when the CJK font found is a Japanese one without simplified characters (Hiragino Gothic,
+/// Meiryo, Yu Gothic).
+#[cfg(not(target_arch = "wasm32"))]
+const CHINESE_FONT_CANDIDATES: &[&str] = &[
+    // Windows: Microsoft YaHei
+    "C:\\Windows\\Fonts\\msyh.ttc",
+    "C:\\Windows\\Fonts\\msyh.ttf",
+    // macOS: PingFang SC, Hiragino Sans GB, Songti SC, STHeiti, Arial Unicode MS
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/STHeiti Light.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/System/Library/Fonts/Supplemental/Songti.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/Library/Fonts/Arial Unicode.ttf",
+    // Linux: Noto Sans CJK SC
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+];
+
 #[cfg(not(target_arch = "wasm32"))]
 fn try_read_font(path: &std::path::Path) -> Option<Vec<u8>> {
     if let Ok(bytes) = std::fs::read(path)
@@ -267,9 +324,9 @@ fn try_read_font(path: &std::path::Path) -> Option<Vec<u8>> {
     }
 }
 
-/// Recursively search for matching CJK font files up to a bounded depth.
+/// Recursively search for matching font files up to a bounded depth, testing names with `matches`.
 #[cfg(not(target_arch = "wasm32"))]
-fn scan_dir_for_font(dir: &std::path::Path, depth_remaining: usize) -> Option<Vec<u8>> {
+fn scan_dir_for_font(dir: &std::path::Path, depth_remaining: usize, matches: fn(&str) -> bool) -> Option<Vec<u8>> {
     if depth_remaining == 0 {
         return None;
     }
@@ -282,7 +339,7 @@ fn scan_dir_for_font(dir: &std::path::Path, depth_remaining: usize) -> Option<Ve
             let name = p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
             let is_font = name.ends_with(".ttc") || name.ends_with(".ttf") || name.ends_with(".otf");
             if is_font
-                && is_cjk_font_name(&name)
+                && matches(&name)
                 && let Some(bytes) = try_read_font(&p)
             {
                 return Some(bytes);
@@ -293,7 +350,7 @@ fn scan_dir_for_font(dir: &std::path::Path, depth_remaining: usize) -> Option<Ve
     }
 
     for sub in subdirs {
-        if let Some(bytes) = scan_dir_for_font(&sub, depth_remaining.saturating_sub(1)) {
+        if let Some(bytes) = scan_dir_for_font(&sub, depth_remaining.saturating_sub(1), matches) {
             return Some(bytes);
         }
     }
@@ -336,7 +393,7 @@ fn find_system_cjk_font() -> Option<Vec<u8>> {
         }
         if let Ok(local) = std::env::var("LOCALAPPDATA") {
             let user_fonts = std::path::PathBuf::from(local).join("Microsoft").join("Windows").join("Fonts");
-            if let Some(bytes) = scan_dir_for_font(&user_fonts, 2) {
+            if let Some(bytes) = scan_dir_for_font(&user_fonts, 2, is_cjk_font_name) {
                 return Some(bytes);
             }
         }
@@ -346,7 +403,7 @@ fn find_system_cjk_font() -> Option<Vec<u8>> {
     {
         let dirs = ["/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts"];
         for d in dirs {
-            if let Some(bytes) = scan_dir_for_font(std::path::Path::new(d), 2) {
+            if let Some(bytes) = scan_dir_for_font(std::path::Path::new(d), 2, is_cjk_font_name) {
                 return Some(bytes);
             }
         }
@@ -356,13 +413,13 @@ fn find_system_cjk_font() -> Option<Vec<u8>> {
     {
         let search_dirs = [std::path::PathBuf::from("/usr/share/fonts"), std::path::PathBuf::from("/usr/local/share/fonts")];
         for dir in &search_dirs {
-            if let Some(bytes) = scan_dir_for_font(dir, 3) {
+            if let Some(bytes) = scan_dir_for_font(dir, 3, is_cjk_font_name) {
                 return Some(bytes);
             }
         }
         if let Ok(home) = std::env::var("HOME") {
             let user_fonts = std::path::PathBuf::from(home).join(".local/share/fonts");
-            if let Some(bytes) = scan_dir_for_font(&user_fonts, 2) {
+            if let Some(bytes) = scan_dir_for_font(&user_fonts, 2, is_cjk_font_name) {
                 return Some(bytes);
             }
         }
@@ -371,13 +428,21 @@ fn find_system_cjk_font() -> Option<Vec<u8>> {
     None
 }
 
-/// Configure font definitions with system CJK and Hangul fallbacks where available.
+/// Configure font definitions with system CJK, Chinese and Hangul fallbacks where available.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn setup_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     let mut found = false;
-    if let Some(cjk) = find_system_cjk_font().and_then(|bytes| with_cjk_fallback(fonts.clone(), bytes)) {
-        fonts = cjk;
+    let cjk = find_system_cjk_font();
+    if let Some(bytes) = cjk.clone().and_then(|bytes| with_cjk_fallback(fonts.clone(), bytes)) {
+        fonts = bytes;
+        found = true;
+    }
+    // Chinese after the CJK fallback: a Japanese-only CJK font lacks simplified characters,
+    // so Chinese falls through to this one per glyph.
+    let chinese = find_system_chinese_font().filter(|bytes| cjk.as_ref() != Some(bytes));
+    if let Some(with_chinese) = chinese.and_then(|bytes| with_fallback(fonts.clone(), CHINESE_FALLBACK, bytes)) {
+        fonts = with_chinese;
         found = true;
     }
     let hangul = HANGUL_FONT_CANDIDATES.iter().find_map(|path| try_read_font(std::path::Path::new(path)));
@@ -388,6 +453,27 @@ pub fn setup_fonts(ctx: &egui::Context) {
     if found {
         ctx.set_fonts(fonts);
     }
+}
+
+/// Find a font covering simplified Chinese in the known candidate paths or by scanning the
+/// system font directories for [`CHINESE_FONT_KEYWORDS`] names.
+#[cfg(not(target_arch = "wasm32"))]
+fn find_system_chinese_font() -> Option<Vec<u8>> {
+    for path in CHINESE_FONT_CANDIDATES {
+        if let Some(bytes) = try_read_font(std::path::Path::new(path)) {
+            return Some(bytes);
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let dirs = ["/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts"];
+        for d in dirs {
+            if let Some(bytes) = scan_dir_for_font(std::path::Path::new(d), 2, is_chinese_font_name) {
+                return Some(bytes);
+            }
+        }
+    }
+    None
 }
 
 /// On web, setup_fonts does not perform synchronous disk reads.
