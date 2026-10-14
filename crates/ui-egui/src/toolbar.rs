@@ -1030,7 +1030,7 @@ fn sketch_create_menu(
     toggle: &mut Option<&'static str>,
 ) {
     let room = (ui.ctx().content_rect().bottom() - ui.cursor().top() - 12.0).max(ROW_H * 3.0);
-    egui::ScrollArea::vertical().id_salt("sketch_create_rows").max_height(room).min_scrolled_height(room).show(ui, |ui| {
+    egui::ScrollArea::vertical().id_salt("sketch_create_rows").max_height(room).show(ui, |ui| {
         for f in crate::sketch_families::FAMILIES {
             let variants: Vec<_> = f.commands.iter().filter_map(|id| cmds.iter().find(|c| c.id == *id).copied()).collect();
             if !variants.is_empty() {
