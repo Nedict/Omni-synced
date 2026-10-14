@@ -269,6 +269,8 @@
   "cmd.surface_loft": "サーフェスロフト",
   "cmd.surface_ruled": "ルールドサーフェス",
   "cmd.surface_boundary": "境界サーフェス",
+  "cmd.surface_fair": "サーフェスフェアリング",
+  "cmd.surface_match": "サーフェス一致",
   "cmd.surface_offset": "オフセットサーフェス",
   "cmd.surface_blend": "ブレンドサーフェス",
   "cmd.surface_fillet": "サーフェスフィレット",

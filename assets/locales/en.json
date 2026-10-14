@@ -269,6 +269,8 @@
   "cmd.surface_loft": "Surface Loft",
   "cmd.surface_ruled": "Ruled Surface",
   "cmd.surface_boundary": "Boundary Surface",
+  "cmd.surface_fair": "Fair Surface",
+  "cmd.surface_match": "Match Surface",
   "cmd.surface_offset": "Offset Surface",
   "cmd.surface_blend": "Blend Surface",
   "cmd.surface_fillet": "Surface Fillet",

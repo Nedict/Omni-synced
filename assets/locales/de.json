@@ -717,6 +717,8 @@
   "cmd.surface_loft": "Flächen-Loft",
   "cmd.surface_ruled": "Regelfläche",
   "cmd.surface_boundary": "Begrenzungsfläche",
+  "cmd.surface_fair": "Flächenbegradigung",
+  "cmd.surface_match": "Flächenanpassung",
   "cmd.surface_offset": "Offsetfläche",
   "cmd.surface_blend": "Verbindungsfläche",
   "cmd.surface_fillet": "Flächenverrundung",

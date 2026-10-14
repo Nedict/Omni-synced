@@ -269,6 +269,8 @@
   "cmd.surface_loft": "曲面放样",
   "cmd.surface_ruled": "直纹曲面",
   "cmd.surface_boundary": "边界曲面",
+  "cmd.surface_fair": "曲面光顺",
+  "cmd.surface_match": "曲面匹配",
   "cmd.surface_offset": "偏移曲面",
   "cmd.surface_blend": "混合曲面",
   "cmd.surface_fillet": "曲面圆角",
