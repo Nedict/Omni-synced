@@ -328,6 +328,8 @@
   "ui.chamfer_type": "Chamfer Type",
   "ui.change_workspace": "Change workspace",
   "ui.chord_length": "Chord Length",
+  "ui.curvature_g2": "Curvature (G2)",
+  "ui.equivalent_radius": "Equivalent Radius",
   "ui.circle": "Circle",
   "ui.circular_pattern": "Circular Pattern",
   "ui.clear": "Clear",

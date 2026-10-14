@@ -47,8 +47,8 @@ pub use assembly::{
 pub use document::*;
 pub use eval::{
     EdgeRef, FeatureResult, Model, ModelBody, ModelState, RevolveExtent, SolvedSketch, ThreadInfo, curve_pick_error, edge_names_for, edge_refs,
-    hole_direction_at, object_height, parse_metric_thread, pattern_matrices, revolve_extent, revolve_extent_with_convention, select_profiles,
-    sketch_hole_direction, state_in_frame, state_in_frame_at, through_all_distance, world_state,
+    face_point_names, face_point_state, hole_direction_at, object_height, parse_metric_thread, pattern_matrices, revolve_extent,
+    revolve_extent_with_convention, select_profiles, sketch_hole_direction, state_in_frame, state_in_frame_at, through_all_distance, world_state,
 };
 pub use params::{ParamRow, ParamUser, cycles};
 pub use solidcraft_kernel as kernel;

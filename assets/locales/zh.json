@@ -327,6 +327,8 @@
   "ui.chamfer_type": "倒角类型",
   "ui.change_workspace": "更改工作区",
   "ui.chord_length": "弦长",
+  "ui.curvature_g2": "曲率连续 (G2)",
+  "ui.equivalent_radius": "等效半径",
   "ui.circle": "圆",
   "ui.circular_pattern": "圆形阵列",
   "ui.clear": "清除",

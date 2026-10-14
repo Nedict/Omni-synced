@@ -328,6 +328,8 @@
   "ui.chamfer_type": "面取りタイプ",
   "ui.change_workspace": "ワークスペースの変更",
   "ui.chord_length": "弦長",
+  "ui.curvature_g2": "曲率連続 (G2)",
+  "ui.equivalent_radius": "等価半径",
   "ui.circle": "円",
   "ui.circular_pattern": "円形パターン",
   "ui.clear": "クリア",
