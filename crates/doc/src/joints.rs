@@ -474,9 +474,9 @@ pub type Held = BTreeMap<(u64, usize), f64>;
 
 /// The values that set the `around` joints' values through motion links, followed back through
 /// every link to them (several links may write one value; `apply_links`' order decides which
-/// wins on the way) for as many links as `apply_links` passes: the joints they belong to, and
-/// those values that no link sets (the ones a solve can move).
-fn link_chains(asm: &Assembly, tree: &Tree, around: &BTreeSet<u64>, linked: &BTreeSet<(u64, usize)>) -> (BTreeSet<u64>, Vec<(u64, usize)>) {
+/// wins on the way) for as many links as `apply_links` passes: all the values reached, and those
+/// that no link sets (the ones a solve can move).
+fn link_chains(asm: &Assembly, tree: &Tree, around: &BTreeSet<u64>, linked: &BTreeSet<(u64, usize)>) -> (BTreeSet<(u64, usize)>, Vec<(u64, usize)>) {
     let (mut feeds, mut starts) = (BTreeSet::new(), Vec::new());
     let mut frontier: BTreeSet<(u64, usize)> =
         around.iter().filter_map(|id| tree.joints.get(id)).flat_map(|j| (0..j.kind.dofs().len()).map(|i| (j.id, i))).collect();
@@ -488,7 +488,7 @@ fn link_chains(asm: &Assembly, tree: &Tree, around: &BTreeSet<u64>, linked: &BTr
             break;
         }
         for &(id, i) in &next {
-            feeds.insert(id);
+            feeds.insert((id, i));
             if !linked.contains(&(id, i)) && tree.joints.get(&id).is_some_and(|j| i < j.kind.dofs().len()) {
                 starts.push((id, i));
             }
@@ -499,11 +499,11 @@ fn link_chains(asm: &Assembly, tree: &Tree, around: &BTreeSet<u64>, linked: &BTr
     (feeds, starts)
 }
 
-/// The held values of the `touches` joints that move: (joint, index, from, to), `from` within
-/// the joint's limits. A suppressed joint still sets values through its motion links.
-fn held_moves(asm: &Assembly, held: &Held, touches: &BTreeSet<u64>, vals: &Values) -> Vec<(u64, usize, f64, f64)> {
+/// The held values among `touches` that move: (joint, index, from, to), `from` within the
+/// joint's limits. A suppressed joint still sets values through its motion links.
+fn held_moves(asm: &Assembly, held: &Held, touches: &BTreeSet<(u64, usize)>, vals: &Values) -> Vec<(u64, usize, f64, f64)> {
     let mut moves = Vec::new();
-    for ((id, i), from) in held.iter().filter(|((id, _), _)| touches.contains(id)) {
+    for ((id, i), from) in held.iter().filter(|(v, _)| touches.contains(v)) {
         let (Some(j), Some(to)) = (asm.joints.iter().find(|j| j.id == *id), vals.get(id).and_then(|q| q.get(*i))) else { continue };
         let from = match j.limits.get(*i).copied().flatten() {
             Some((lo, hi)) => from.max(lo.min(hi)).min(hi.max(lo)),
@@ -528,7 +528,7 @@ fn close_loops(tree: &Tree, closing: &[u64], asm: &Assembly, held: &Held, vals: 
     let linked: BTreeSet<(u64, usize)> = asm.links.iter().map(|l| (l.b, l.ib)).collect();
     // Each loop: its closing joint and the joints on the tree paths between its sides; loops that
     // share a joint (or a value feeding them through links) are solved together.
-    let mut groups: Vec<(Vec<u64>, BTreeSet<u64>, BTreeSet<u64>)> = Vec::new();
+    let mut groups: Vec<(Vec<u64>, BTreeSet<u64>, BTreeSet<(u64, usize)>)> = Vec::new();
     for id in closing {
         let Some(j) = tree.joints.get(id) else { continue };
         // A joint between an occurrence and itself (only a hand-edited file has one) is only checked.
@@ -538,10 +538,11 @@ fn close_loops(tree: &Tree, closing: &[u64], asm: &Assembly, held: &Held, vals: 
         let side = |occ: u64| -> BTreeSet<u64> { tree.path(occ).1.iter().map(|(k, _)| *k).collect() };
         let mut around: BTreeSet<u64> = side(j.a.occurrence).symmetric_difference(&side(j.b.occurrence)).copied().collect();
         around.insert(*id);
-        let mut touches: BTreeSet<u64> = link_chains(asm, tree, &around, &linked).0;
-        touches.extend(around.iter().copied());
-        // Only joints with values tie loops together: a rigid joint on both paths moves neither.
-        touches.retain(|id| tree.joints.get(id).is_some_and(|j| !j.kind.dofs().is_empty()));
+        // The values the loop depends on: its joints' and those its links read. Loops tie together
+        // through a shared value only (a rigid joint on both paths has none; two values of one
+        // joint can feed two independent loops).
+        let mut touches = link_chains(asm, tree, &around, &linked).0;
+        touches.extend(around.iter().filter_map(|id| tree.joints.get(id)).flat_map(|j| (0..j.kind.dofs().len()).map(|i| (j.id, i))));
         let mut members = vec![*id];
         groups.retain(|(c, a, t)| {
             if t.is_disjoint(&touches) {

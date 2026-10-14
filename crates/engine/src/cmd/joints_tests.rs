@@ -646,3 +646,32 @@ fn a_loop_value_moves_through_whichever_link_carries_it() {
     assert!(r["stopped_by_loop"].is_null() && r["conflicts"].as_array().map(Vec::len) == Some(0), "{r}");
     assert!(near(place(&s, "Rocker", q0), rocker_pin(0.0, 60.0, q0)), "{:?}", place(&s, "Rocker", q0));
 }
+
+/// Two values of one joint can feed two independent loops: a puck's x drives a pair of parallel
+/// slides, its y a slide whose rigid lock can't close. Driving x moves the healthy pair.
+#[test]
+fn values_of_one_joint_feed_independent_loops() {
+    let mut s = Session::default();
+    for (name, y) in [("Ground", -10.0), ("Puck", -20.0), ("Car", 50.0), ("Other", 100.0)] {
+        part(&mut s, name, [-1.0, y, 0.0]);
+    }
+    let g = occ(&s, "Ground");
+    run(&mut s, "occurrence.ground", json!({"occurrence": g, "grounded": true}));
+    let flat = |o: &str| framed(o, [0.0, -20.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+    run(&mut s, "joint.create", json!({"type": "planar", "a": flat("Ground"), "b": flat("Puck"), "flip": true, "name": "Table"}));
+    pin(&mut s, "slider", "Rail", "Ground", "Car", Vec3::new(0.0, 50.0, 0.0), Vec3::X);
+    pin(&mut s, "slider", "Guide", "Ground", "Car", Vec3::new(10.0, 50.0, 0.0), Vec3::X);
+    pin(&mut s, "slider", "Lift", "Ground", "Other", Vec3::new(0.0, 100.0, 0.0), Vec3::Y);
+    run(
+        &mut s,
+        "joint.create",
+        json!({"type": "rigid", "a": {"occurrence": "Ground", "point": [0, 100, 0]}, "b": {"occurrence": "Other", "point": [10, 100, 0]}, "flip": true, "name": "Wrong"}),
+    );
+    run(&mut s, "joint.motion_link", json!({"a": "Table", "ia": 0, "b": "Rail", "ratio": 1}));
+    run(&mut s, "joint.motion_link", json!({"a": "Table", "ia": 1, "b": "Lift", "ratio": 1}));
+    let r = run(&mut s, "joint.drive", json!({"joint": "Table", "values": [10]}));
+    assert!(r["stopped_by_loop"].is_null(), "{r}");
+    let names: Vec<&str> = r["conflicts"].as_array().into_iter().flatten().filter_map(|c| c["name"].as_str()).collect();
+    assert_eq!(names, ["Wrong"], "{r}");
+    assert!(near(place(&s, "Car", Vec3::new(0.0, 50.0, 0.0)), Vec3::new(10.0, 50.0, 0.0)), "{:?}", place(&s, "Car", Vec3::new(0.0, 50.0, 0.0)));
+}
