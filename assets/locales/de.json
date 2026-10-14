@@ -671,6 +671,8 @@
   "Drive Joint": "Gelenk antreiben",
   "Edit Profile Sketch": "Profile-Skizze bearbeiten",
   "Find in Browser": "Im Browser suchen",
+  "Copy Error Message": "Fehlermeldung kopieren",
+  "Copy Warning Message": "Warnmeldung kopieren",
   "Report a bug — review a screenshot and open a GitHub draft": "Fehler melden — Screenshot prüfen und einen GitHub-Entwurf öffnen",
   "Reset Toolbar": "Symbolleiste zurücksetzen",
   "Select bodies (a face picks its body)": "Körper auswählen (eine Fläche wählt ihren Körper)",

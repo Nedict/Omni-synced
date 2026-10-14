@@ -729,6 +729,8 @@
   "Files from many CAD programs have Y up, so they open lying on their back here (Z up).": "多くのCADではY軸を上向きとしているため、Z軸を上向きとするSolidCraftでは、読み込んだモデルが横倒しの向きで表示されることがあります。",
   "Filter": "フィルター",
   "Find in Browser": "ブラウザで検索",
+  "Copy Error Message": "エラーメッセージをコピー",
+  "Copy Warning Message": "警告メッセージをコピー",
   "Flat size": "展開サイズ",
   "Follow camera (Look At sketches)": "カメラ追従（スケッチを正面視）",
   "Font": "フォント",

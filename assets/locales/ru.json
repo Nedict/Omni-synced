@@ -721,6 +721,8 @@
   "Files from many CAD programs have Y up, so they open lying on their back here (Z up).": "Файлы многих CAD-программ ориентированы Y вверх, поэтому здесь они открываются лёжа на спине (Z вверх).",
   "Filter": "Фильтр",
   "Find in Browser": "Найти в браузере",
+  "Copy Error Message": "Скопировать сообщение об ошибке",
+  "Copy Warning Message": "Скопировать предупреждение",
   "Flat size": "Размер развёртки",
   "Follow camera (Look At sketches)": "Следовать за камерой (эскизы «Взгляд на»)",
   "Font": "Шрифт",

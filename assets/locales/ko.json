@@ -671,6 +671,8 @@
   "Drive Joint": "조인트 구동",
   "Edit Profile Sketch": "윤곽 스케치 편집",
   "Find in Browser": "브라우저에서 찾기",
+  "Copy Error Message": "오류 메시지 복사",
+  "Copy Warning Message": "경고 메시지 복사",
   "Report a bug — review a screenshot and open a GitHub draft": "버그 신고 — 스크린샷을 검토하고 GitHub 초안 열기",
   "Reset Toolbar": "도구 모음 재설정",
   "Select bodies (a face picks its body)": "바디 선택(면을 클릭하면 해당 바디 선택)",

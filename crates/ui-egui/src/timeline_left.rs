@@ -5,7 +5,7 @@ use serde_json::json;
 use solidcraft_engine::doc::FeatureKind;
 
 use crate::theme::Tokens;
-use crate::timeline::{clipboard_buttons, delete_feature, delete_features, icon_of, selected_feature_ids, transport_glyph};
+use crate::timeline::{clipboard_buttons, delete_feature, delete_features, icon_of, message_button, selected_feature_ids, transport_glyph};
 use crate::{SolveApp, icons};
 
 const FOLDER_INDENT: f32 = 14.0;
@@ -786,6 +786,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
             ui.separator();
             clipboard_buttons(app, ui, *id);
+            message_button(app, ui, *id);
             ui.separator();
             selection_actions(app, ui, &groups);
             ui.separator();
