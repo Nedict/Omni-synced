@@ -1622,6 +1622,9 @@ pub struct Document {
     pub name: String,
     #[serde(default = "default_units")]
     pub units: String,
+    /// Design properties (project, author…) and other tools' data, kept as they are (#1015).
+    #[serde(default, skip_serializing_if = "crate::Metadata::is_empty")]
+    pub metadata: crate::Metadata,
     pub params: Vec<Param>,
     pub features: Vec<Feature>,
     /// Timeline marker: features at or after this index are rolled back (not evaluated).
@@ -1835,6 +1838,7 @@ impl Document {
             format: default_format(),
             name: name.into(),
             units: default_units(),
+            metadata: Default::default(),
             params: Vec::new(),
             features: Vec::new(),
             marker: None,

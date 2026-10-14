@@ -453,6 +453,15 @@ editing. Construction planes and points resolve drawn 3D wires without applying 
 plane a second time. Curved paths use sampled segments; multi-curve chains, absolute distance
 and reference-object placement remain separate work, as do loft rails and centerlines.
 
+## Design properties (#1015)
+
+- Designs carry project, part number, revision, author, organization, description and licence
+  in an optional `metadata` object (File → Design Properties…, `document.metadata.*`,
+  `inspect_design`). STEP and IGES headers and 3MF model metadata take the fields their format
+  has a place for. Other tools keep their own data under a reverse-DNS key, kept as it is
+  through open, edit and save and never exported. See [design properties](docs/book/src/guide/files.md#design-properties).
+  Per-component properties (a part number per component) can follow with the same type.
+
 ## Document-opening performance
 
 - Desktop STEP import prepares consecutive independent solids in bounded batches with up

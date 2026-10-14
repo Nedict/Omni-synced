@@ -653,6 +653,9 @@ fn component_items(app: &SolveApp, id: u64) -> Vec<Item> {
             .on(id != 0 || !bodies.is_empty()),
     );
     v.push(act("ui.properties", "Properties", "measure").with(json!({ "component": id })));
+    if id == 0 {
+        v.push(act("ui.designProperties", "Design Properties", "settings"));
+    }
     v.push(Item::sep());
     v.push(act("ui.export", "Export…", "export").with(json!({ "bodies": names })).on(!bodies.is_empty()));
     v.push(act("ui.saveMesh", "Save As Mesh", "export").with(json!({ "bodies": names })).on(!bodies.is_empty()));
@@ -881,6 +884,7 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
                 Err(e) => app.set_status(e.to_string(), true),
             }
         }
+        "ui.designProperties" => app.start("document.metadata"),
         "ui.export" => {
             let name = bodies.first().cloned().unwrap_or_else(|| app.session.doc.name.clone());
             app.pick_save_command(&format!("{name}.step"), &["step", "stp", "igs", "stl", "3mf", "obj"], "file.export", json!({"bodies": bodies}));
