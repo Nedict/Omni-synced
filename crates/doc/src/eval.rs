@@ -1789,6 +1789,26 @@ fn extend_for_coplanar(st: &ModelState, plane: &Plane, r: &Region2, lo: f64, hi:
     (lo2, hi2)
 }
 
+/// How high (mm) a tapered tool's sides stand straight where it starts on a face it can't run
+/// on into.
+const TAPER_FOOT: f64 = 0.01;
+
+/// Whether a face of the targets (all bodies when none are named) lies in the plane at height
+/// `h` along `plane`'s normal.
+fn face_level_at(st: &ModelState, plane: &Plane, h: f64, targets: &[String]) -> bool {
+    let n = plane.normal();
+    st.bodies.iter().filter(|b| targets.is_empty() || targets.contains(&b.name)).any(|b| {
+        let m = b.mesh();
+        let tol = (b.body.size() * 1e-7).max(1e-9);
+        m.triangles.iter().any(|t| {
+            m.tri(t).is_some_and(|[a, b, c]| {
+                (b - a).cross(c - a).normalized().is_some_and(|normal| normal.dot(n).abs() > 1.0 - 1e-9)
+                    && ((a - plane.origin).dot(n) - h).abs() < tol
+            })
+        })
+    })
+}
+
 /// The body a face-based feature applies to: by name, or the one whose surface is nearest the
 /// first point.
 fn body_at(st: &ModelState, body: &Option<String>, points: &[Vec3]) -> Result<usize> {
@@ -1947,6 +1967,24 @@ pub fn edge_names_for(st: &ModelState, body: &Option<String>, pts: &[Vec3]) -> V
     match blend_target(st, body, pts).ok().and_then(|i| st.bodies.get(i)) {
         Some(b) => crate::naming::edge_names_at(b, pts),
         None => Vec::new(),
+    }
+}
+
+/// The stored pick sits on the axis of a round, not on an edge. The nearest edge within a
+/// quarter of the body is that round's tangency seam, which is a different edge (#775).
+fn pick_lies_on_a_round_axis(body: &Body, p: Vec3) -> bool {
+    let Some(cyl) = kernel::cylinder_face_at(body, p) else { return false };
+    let Some(axis) = cyl.axis.normalized() else { return false };
+    let radial = p - cyl.axis_point;
+    let dist = (radial - axis * radial.dot(axis)).len();
+    if !(cyl.radius > 1e-6 && dist < cyl.radius * 0.35) {
+        return false;
+    }
+    let tight = (body.size() * 2e-3).max(1e-3);
+    // A pick on the wall itself is the seam. Only an axial pick is the vanished corner.
+    match body.nearest_edge(p, cyl.radius * 2.0) {
+        Ok(Some((_, d))) => d > tight,
+        _ => true,
     }
 }
 
@@ -2582,13 +2620,51 @@ fn feature_tools_with_constructor(
                     Some(crate::lineage::extrude_cap_role(from)),
                     Some(crate::lineage::extrude_cap_role(if sign < 0.0 { from - len } else { from + len })),
                 ];
-                return regions
+                // How far a tool grows past its profile at either end, at most.
+                let mut growth: f64 = 0.0;
+                let tools: Vec<Traced> = regions
                     .iter()
                     .map(|r| {
-                        let body = kernel::extrude_tapered(&start_plane, r, len, sign, taper)?;
+                        // An end on a face of the target runs on into it, as a prism's does: tapered
+                        // sides standing on a face are curved where they meet it (along text, say),
+                        // and the boolean finds no result there. The sides keep their slope, so
+                        // the profile stays the section at the start.
+                        let (lo, hi) = if sign < 0.0 { (from - len, from) } else { (from, from + len) };
+                        let (l2, h2) = extend_for_coplanar(st, &ss.plane, r, lo, hi, *operation, targets);
+                        let (a, b) = if sign < 0.0 { (from - h2, from - l2) } else { (l2 - from, h2 - from) };
+                        // A start that can't run on (the profile hangs over the face's edge):
+                        // the sides stand straight for a hair first, so the boolean can push the
+                        // face the tool stands on into the body.
+                        let foot = if a >= 0.0 && matches!(operation, Operation::Join | Operation::Cut) && face_level_at(st, &ss.plane, from, targets)
+                        {
+                            TAPER_FOOT.min((b - a) * 0.01)
+                        } else {
+                            0.0
+                        };
+                        let body = kernel::extrude_tapered_between(&start_plane, r, a, b, foot, sign, taper)?;
+                        growth = growth.max(a.abs().max(b.abs()) * taper.tan().abs());
                         Ok(crate::lineage::ProfileRoles { sketch: Some(&ss), region: Some(r), caps: caps.clone() }.tool(body, None))
                     })
-                    .collect();
+                    .collect::<Result<_>>()?;
+                // Profiles apart by more than the tools grow (the letters of a text): the tools
+                // are apart too, and go into the body as one, in one boolean rather than one per
+                // profile, each on a body grown or cut by the ones before. (A join meeting several
+                // bodies keeps joining them tool by tool; sheet metal keeps cutting tool by tool.)
+                let sheet =
+                    if targets.is_empty() { !st.sheets.is_empty() } else { targets.iter().any(|t| st.sheets.iter().any(|sheet| &sheet.body == t)) };
+                let one_target = if targets.is_empty() { st.bodies.len() == 1 } else { targets.len() == 1 };
+                let at_once = match operation {
+                    Operation::Cut => !sheet,
+                    Operation::Join => one_target && !sheet,
+                    _ => false,
+                };
+                if at_once && tools.len() > 1 && regions_apart(&regions, APART_GAP + 2.0 * growth) {
+                    let bodies: Vec<Body> = tools.iter().map(|t| t.body.clone()).collect();
+                    if let Ok(Some(one)) = kernel::join_apart(&bodies) {
+                        return Ok(vec![Traced::step(one, &tools.iter().collect::<Vec<_>>())]);
+                    }
+                }
+                return Ok(tools);
             }
             let off = from
                 + match &extent.start_offset {
@@ -4187,23 +4263,28 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                         Some((_, Err(_))) | None => {
                             let mut w = None;
                             let refs: Vec<EdgeRef> = f.edge_refs.get(i).cloned().into_iter().collect();
-                            if let Ok(q) = resolve_edges(&mb.body, &[*p], &refs, &mut w) {
+                            let skipped =
+                                format!("edge `{}` no longer exists and was skipped", f.edge_names.get(i).map(String::as_str).unwrap_or("?"));
+                            // The name is gone. A pick on the axis of a round must not fall
+                            // through to the tangency seam (#775). A sharp edge that moved
+                            // still resolves from the point, which an edit relies on.
+                            if pick_lies_on_a_round_axis(&mb.body, *p) {
+                                notes.push(skipped);
+                            } else if let Ok(q) = resolve_edges(&mb.body, &[*p], &refs, &mut w) {
                                 out.extend(q);
                                 notes.push(match f.edge_names.get(i) {
                                     Some(n) if !n.is_empty() => format!("edge `{n}` no longer exists; using the edge at the picked point"),
                                     _ => "an edge reference without a name was found by its point".into(),
                                 });
                             } else {
-                                notes.push(format!(
-                                    "edge `{}` no longer exists and was skipped",
-                                    f.edge_names.get(i).map(String::as_str).unwrap_or("?")
-                                ));
+                                notes.push(skipped);
                             }
                         }
                     }
                 }
                 if out.is_empty() {
-                    return Err(DocError::Invalid("none of the selected edges exist any more".into()));
+                    let why = if notes.is_empty() { String::new() } else { format!(" ({})", notes.join("; ")) };
+                    return Err(DocError::Invalid(format!("none of the selected edges exist any more{why}")));
                 }
                 if !notes.is_empty() {
                     *warning = Some(notes.join("; "));

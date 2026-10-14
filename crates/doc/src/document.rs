@@ -1294,74 +1294,6 @@ mod point_expr {
 }
 
 impl FeatureKind {
-    /// Sketches the feature is built from (profiles, paths, points): deleting one of them
-    /// deletes the feature. Every kind is listed, so a new one has to say what it uses.
-    pub fn input_sketches(&self) -> Vec<u64> {
-        use FeatureKind as K;
-        match self {
-            K::Extrude { sketch, .. }
-            | K::SurfaceExtrude { sketch, .. }
-            | K::SurfaceRevolve { sketch, .. }
-            | K::Revolve { sketch, .. }
-            | K::Emboss { sketch, .. }
-            | K::Rib { sketch, .. }
-            | K::SheetBase { sketch, .. }
-            | K::SheetContour { sketch, .. } => vec![*sketch],
-            K::Sweep { sketch, path_sketch, .. } | K::SurfaceSweep { sketch, path_sketch, .. } => vec![*sketch, *path_sketch],
-            K::Pipe { path_sketch, .. } | K::Pattern { pattern: PatternKind::Path { path_sketch, .. }, .. } => vec![*path_sketch],
-            K::Loft { sections, .. } => sections.iter().map(|s| s.sketch).collect(),
-            K::SurfaceLoft { sections } => sections.iter().map(|s| s.sketch).collect(),
-            K::SheetFold { sketch, .. } | K::SplitFace { sketch, .. } | K::Patch { sketch, .. } => sketch.iter().copied().collect(),
-            K::Hole { points, .. } => points.iter().map(|p| p.sketch).collect(),
-            K::Sketch { .. }
-            | K::Pattern { .. }
-            | K::Fillet { .. }
-            | K::Chamfer { .. }
-            | K::Box { .. }
-            | K::Cylinder { .. }
-            | K::Sphere { .. }
-            | K::Torus { .. }
-            | K::Combine { .. }
-            | K::Mirror { .. }
-            | K::Thread { .. }
-            | K::Shell { .. }
-            | K::Draft { .. }
-            | K::ConstructionPlane { .. }
-            | K::Split { .. }
-            | K::ConstructionAxis { .. }
-            | K::ConstructionPoint { .. }
-            | K::Scale { .. }
-            | K::OffsetFace { .. }
-            | K::DeleteFace { .. }
-            | K::SurfaceOffset { .. }
-            | K::BoundingSolid { .. }
-            | K::ReplaceFace { .. }
-            | K::Align { .. }
-            | K::Coil { .. }
-            | K::SheetFlange { .. }
-            | K::SheetHem { .. }
-            | K::SheetUnfold { .. }
-            | K::SheetConvert { .. }
-            | K::Boss { .. }
-            | K::Lip { .. }
-            | K::SnapFit { .. }
-            | K::Rest { .. }
-            | K::BoundaryFill { .. }
-            | K::Remove { .. }
-            | K::Stitch { .. }
-            | K::Thicken { .. }
-            | K::SurfaceExtend { .. }
-            | K::SurfaceTrim { .. }
-            | K::Unstitch { .. }
-            | K::ReverseNormal { .. }
-            | K::Move { .. }
-            | K::Import { .. }
-            | K::MeshImport { .. }
-            | K::MeshConvert { .. }
-            | K::BodyTransfer { .. } => Vec::new(),
-        }
-    }
-
     /// A sheet metal feature (its result depends on the sheet metal rules).
     pub fn is_plastic(&self) -> bool {
         matches!(self, FeatureKind::Boss { .. } | FeatureKind::Lip { .. } | FeatureKind::SnapFit { .. } | FeatureKind::Rest { .. })
@@ -2041,7 +1973,7 @@ impl Document {
             return Err(DocError::Invalid("too many components".into()));
         }
         let id = self.next_id.max(1);
-        self.next_id = id + 1;
+        self.next_id = id.checked_add(1).ok_or_else(|| DocError::Invalid("too many items in the design".into()))?;
         let name = match name.map(str::trim) {
             Some(n) if !n.is_empty() => n.to_string(),
             _ => {
@@ -2153,7 +2085,7 @@ impl Document {
             0
         };
         let id = self.next_id.max(1);
-        self.next_id = id + 1;
+        self.next_id = id.checked_add(1).ok_or_else(|| DocError::Invalid("too many items in the design".into()))?;
         let name = match name {
             Some(n) if !n.trim().is_empty() => n.trim().to_string(),
             _ => self.unique_name(kind.base_name()),

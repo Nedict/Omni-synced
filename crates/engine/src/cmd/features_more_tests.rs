@@ -730,6 +730,41 @@ fn cutting_a_text_removes_each_letter_whether_its_letters_stand_apart_or_touch()
     }
 }
 
+/// A text joined onto a block with a taper: its letters are spline and conic outlines whose
+/// sides slope, standing on the block's face (run on into it) or hanging over its edge (a
+/// straight foot first). An outward taper adds a little more than the straight text; one
+/// steeper than the letters' strokes is refused, saying so.
+#[test]
+fn a_tapered_text_joins_a_block_on_its_face_or_hanging_over_its_edge() {
+    for (at, hanging) in [([5.0, 12.0], false), ([150.0, 12.0], true)] {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane":"XY"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[200,40]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance":-10}));
+        run(&mut s, "sketch.create", json!({"plane":"XY"}));
+        run(&mut s, "sketch.text", json!({"text":"tres long","at":at,"height":8}));
+        let state = s.world_state();
+        let ss = state.sketch(s.active_sketch.unwrap()).unwrap();
+        // The letters' area, counters left out (a letter's hole is its own profile too).
+        let sorted = |ids: &[String]| {
+            let mut ids = ids.to_vec();
+            ids.sort();
+            ids
+        };
+        let counter = |p: &solidcraft_sketch::Profile| ss.profiles.iter().any(|q| q.hole_curves.iter().any(|h| sorted(h) == sorted(&p.outer_curves)));
+        let area: f64 = ss.profiles.iter().filter(|p| !counter(p)).map(|p| p.area).sum();
+        run(&mut s, "sketch.finish", json!({}));
+        let steep = s.execute("solid.extrude", &json!({"distance":2,"operation":"join","taper":"15 deg"})).unwrap_err();
+        assert!(steep.to_string().contains("the taper closes the profile"), "{steep}");
+        run(&mut s, "solid.extrude", json!({"distance":2,"operation":"join","taper":"3 deg"}));
+        let volume = run(&mut s, "inspect.measure", json!({}))["total"]["volume_mm3"].as_f64().unwrap();
+        let (block, text) = (200.0 * 40.0 * 10.0, 2.0 * area);
+        assert!(volume > block + text && volume < block + 1.3 * text, "hanging {hanging}: {volume} for {text} mm³ of straight text");
+        assert_eq!(s.world_state().bodies.len(), 1);
+    }
+}
+
 /// A rounded part as drawn in the app: a rectangle and a quarter circle tangent to its top
 /// line, extruded together. The arc (about (62.17, -21), radius 21) ends square at the front
 /// face and in a knife-edge tip where it runs into the back face.

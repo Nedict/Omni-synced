@@ -391,4 +391,25 @@ mod tests {
         assert_eq!(m["body_count"], 2, "{m}");
         assert!((volume(&mut s) - 2.0 * one).abs() < 1e-6, "both blocks are rounded: {m}");
     }
+
+    /// A pasted coil that joins a body made by an earlier copy joins that copy, not the original.
+    #[test]
+    fn a_pasted_coil_joins_the_pasted_body() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 30, "width": 30, "height": 5, "name": "Base", "body_name": "Plate"}));
+        run(
+            &mut s,
+            "solid.coil",
+            json!({"diameter": 16, "pitch": 6, "revolutions": 3, "section_size": 2, "base": [15, 15, 5], "operation": "join", "targets": ["Plate"], "name": "Spring"}),
+        );
+        run(&mut s, "timeline.copy", json!({"features": ["Base", "Spring"]}));
+        let r = run(&mut s, "timeline.paste", json!({"translate": [50, 0, 0]}));
+        assert_eq!(r["errors"].as_array().map(Vec::len), Some(0), "{r}");
+        let spring = r["pasted"][1]["name"].as_str().unwrap_or_default().to_string();
+        let def = run(&mut s, "timeline.inspect", json!({"feature": spring}));
+        assert_eq!(def["definition"]["targets"], json!(["Plate (copy)"]), "{def}");
+        let st = s.world_state();
+        let v = |name: &str| solidcraft_kernel::measure(&st.body(name).unwrap().body).unwrap().volume;
+        assert!((v("Plate") - v("Plate (copy)")).abs() < 1e-6, "each plate carries one spring: {} vs {}", v("Plate"), v("Plate (copy)"));
+    }
 }
