@@ -168,6 +168,8 @@ struct Selection {
     planar: Vec<bool>,
     size: f64,
     chord: f64,
+    /// The body's volume and area from that mesh.
+    coarse: (f64, f64),
 }
 
 fn select(body: &Body, pts: &[Vec3]) -> Result<Selection> {
@@ -205,8 +207,10 @@ fn select_in(body: &Body, pts: &[Vec3]) -> Result<Selection> {
         };
         frames.push(frame);
     }
+    let m = mesh.measure();
+    let coarse = (m.volume, m.area);
     let tris = mesh.triangles.iter().zip(&mesh.tri_face).filter_map(|(t, f)| Some((mesh.tri(t)?, *f as usize))).collect();
-    Ok(Selection { frames, tris, planar, size, chord })
+    Ok(Selection { frames, tris, planar, size, chord, coarse })
 }
 
 fn frame(faces: &[&mt::Face], e: &mt::Edge) -> Option<Frame> {
@@ -311,11 +315,15 @@ fn misfit(body: &Body, edges: &[Vec3], size: Size) -> Result<Option<(Clash, Opti
     if body.is_mesh() || edges.is_empty() || !size.value().is_finite() || size.value() <= 0.0 {
         return Ok(None);
     }
-    let sel = select(body, edges)?;
-    if sel.frames.iter().all(Option::is_none) {
+    misfit_in(&select(body, edges)?, size)
+}
+
+/// [`misfit`] on the selection.
+fn misfit_in(sel: &Selection, size: Size) -> Result<Option<(Clash, Option<f64>)>> {
+    if sel.frames.iter().all(Option::is_none) || !size.value().is_finite() || size.value() <= 0.0 {
         return Ok(None);
     }
-    let Some(clash) = first_clash(&sel, size) else { return Ok(None) };
+    let Some(clash) = first_clash(sel, size) else { return Ok(None) };
     // Bisection on the size's steps: `hi` doesn't fit, `lo` does (or is 0).
     let asked = size.value();
     let q = step(asked);
@@ -325,7 +333,7 @@ fn misfit(body: &Body, edges: &[Vec3], size: Size) -> Result<Option<(Clash, Opti
             break;
         }
         let mid = lo + (hi - lo) / 2;
-        if first_clash(&sel, size.scaled(mid as f64 * q / asked)).is_none() {
+        if first_clash(sel, size.scaled(mid as f64 * q / asked)).is_none() {
             lo = mid;
         } else {
             hi = mid;
@@ -343,7 +351,15 @@ fn fits_note(size: Size, largest: Option<f64>) -> String {
 /// Refuse a blend of `edges` at `size` that runs into other faces of `body` or into another of
 /// the blends, with [`KernelError::TooLarge`] naming the largest size that fits.
 pub(crate) fn check(body: &Body, edges: &[Vec3], size: Size) -> Result<()> {
-    let Some((clash, largest)) = misfit(body, edges, size)? else { return Ok(()) };
+    if body.is_mesh() || edges.is_empty() {
+        return Ok(());
+    }
+    check_in(&select(body, edges)?, size)
+}
+
+/// [`check`] on the selection.
+fn check_in(sel: &Selection, size: Size) -> Result<()> {
+    let Some((clash, largest)) = misfit_in(sel, size)? else { return Ok(()) };
     let what = size.what();
     let into = match clash {
         Clash::Face => "it runs past the faces beside the edge into other geometry".to_string(),
@@ -368,18 +384,31 @@ pub(crate) fn explain(body: &Body, edges: &[Vec3], size: Size, e: KernelError) -
 /// A blend of `edges` at `size` that turned `input` into `out`, if it fits ([`check`]) and
 /// changes no more than it can ([`check_volume`]).
 pub(crate) fn accept(input: &Body, out: Body, edges: &[Vec3], size: Size) -> Result<Body> {
-    check(input, edges, size)?;
-    check_volume(input, out, edges, size)
+    if input.is_mesh() || out.is_mesh() || edges.is_empty() {
+        return Ok(out);
+    }
+    let sel = select(input, edges)?;
+    check_in(&sel, size)?;
+    volume_in(&sel, input, out, size)
 }
 
 /// After a blend of `edges` at `size` turned `input` into `out`: refused when the volume taken
 /// away (or added) is more than the blends' wedges hold, which only a result that ran into
 /// other geometry does (#871's shelled box lost 240 mm³ more than any round could take).
+#[cfg(test)]
 pub(crate) fn check_volume(input: &Body, out: Body, edges: &[Vec3], size: Size) -> Result<Body> {
     if input.is_mesh() || out.is_mesh() || edges.is_empty() {
         return Ok(out);
     }
     let Ok(sel) = select(input, edges) else { return Ok(out) };
+    volume_in(&sel, input, out, size)
+}
+
+/// [`check_volume`] on the selection.
+fn volume_in(sel: &Selection, input: &Body, out: Body, size: Size) -> Result<Body> {
+    if sel.frames.is_empty() {
+        return Ok(out);
+    }
     let mut bound = 0.0;
     for f in &sel.frames {
         // An edge the wedges can't describe: no bound.
@@ -390,7 +419,16 @@ pub(crate) fn check_volume(input: &Body, out: Body, edges: &[Vec3], size: Size) 
         let len = f.p0.dist(f.p1);
         bound += w.volume * (len + 2.0 * sa.max(sb)) / len.max(1e-12);
     }
-    // Measured finely: a coarse mesh of a cone or a blend is off by more than a small blend.
+    // Well within the bound on the meshes the check made anyway: accepted. Otherwise measured
+    // finely, as a coarse mesh of a cone or a blend is off by more than a small blend.
+    if let Ok(m) = out.tessellate(sel.chord).map(|m| m.measure()) {
+        let (va, aa) = sel.coarse;
+        // A chord's sag over every face bounds what the meshes miss.
+        let slack = (aa + m.area) * sel.chord;
+        if (va - m.volume).abs() + slack <= bound * 1.02 {
+            return Ok(out);
+        }
+    }
     let (Ok(ma), Ok(mb)) = (crate::measure(input), crate::measure(&out)) else { return Ok(out) };
     let slack = ma.volume.abs() * 1e-4 + (ma.area + mb.area) * sel.size * 1e-5;
     let changed = (ma.volume - mb.volume).abs();
