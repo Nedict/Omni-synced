@@ -72,6 +72,8 @@ pub enum DocError {
 pub type Result<T> = std::result::Result<T, DocError>;
 
 #[cfg(test)]
+mod feature_walk_tests;
+#[cfg(test)]
 mod named_projection_tests;
 #[cfg(test)]
 mod tests;
