@@ -2656,6 +2656,8 @@ fn feature_tools_with_constructor(
                 ];
                 // How far a tool grows past its profile at either end, at most.
                 let mut growth: f64 = 0.0;
+                // A face of the targets in the profile's plane (the same for every profile).
+                let on_face = matches!(operation, Operation::Join | Operation::Cut) && face_level_at(st, &ss.plane, from, targets);
                 let tools: Vec<Traced> = regions
                     .iter()
                     .map(|r| {
@@ -2669,12 +2671,7 @@ fn feature_tools_with_constructor(
                         // A start that can't run on (the profile hangs over the face's edge):
                         // the sides stand straight for a hair first, so the boolean can push the
                         // face the tool stands on into the body.
-                        let foot = if a >= 0.0 && matches!(operation, Operation::Join | Operation::Cut) && face_level_at(st, &ss.plane, from, targets)
-                        {
-                            TAPER_FOOT.min((b - a) * 0.01)
-                        } else {
-                            0.0
-                        };
+                        let foot = if a >= 0.0 && on_face { TAPER_FOOT.min((b - a) * 0.01) } else { 0.0 };
                         let body = kernel::extrude_tapered_between(&start_plane, r, a, b, foot, sign, taper)?;
                         growth = growth.max(a.abs().max(b.abs()) * taper.tan().abs());
                         Ok(crate::lineage::ProfileRoles { sketch: Some(&ss), region: Some(r), caps: caps.clone() }.tool(body, None))

@@ -19,6 +19,8 @@
 #[path = "../../../assets/icons/app/shared/source/app_icon.rs"]
 mod app_icon;
 mod control_server;
+#[cfg(target_os = "windows")]
+mod native_crash;
 #[cfg(target_os = "macos")]
 mod open_documents;
 #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -32,14 +34,24 @@ struct App {
     solve: SolveApp,
     /// The settings folder whose start marker the first frame clears (`startup::started`).
     starting: Option<std::path::PathBuf>,
+    /// Frames begun; the second one means the first was drawn (startup is over).
+    frames: u32,
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     space_mouse: space_mouse::SpaceMouse,
 }
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if let Some(dir) = self.starting.take() {
-            startup::started(&dir);
+        if self.frames < 2 {
+            self.frames += 1;
+            // A second frame right away, which means the first was presented: the app is up.
+            ctx.request_repaint();
+            if self.frames == 2 {
+                solidcraft_engine::crash::phase(solidcraft_engine::crash::RUNNING);
+                if let Some(dir) = self.starting.take() {
+                    startup::started(&dir);
+                }
+            }
         }
         // The design on screen is the one whose commands a crash report replays.
         self.solve.session.crash_journal = solidcraft_engine::crash::enabled();
@@ -392,6 +404,12 @@ fn main() -> eframe::Result {
             solidcraft_engine::crash::install(dir, build)
         })
         .unwrap_or_default();
+    // A crash in native code (a graphics driver) says where it happened: the exception and the
+    // module on Windows, and on every system the startup step the app was in.
+    #[cfg(target_os = "windows")]
+    native_crash::install();
+    eframe::egui_wgpu::set_startup_hook(startup_step);
+    solidcraft_engine::crash::phase("window");
     let options = eframe::NativeOptions {
         viewport: app_viewport()?,
         depth_buffer: DEPTH_BITS,
@@ -435,6 +453,7 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             created_in_app.store(true, std::sync::atomic::Ordering::SeqCst);
+            solidcraft_engine::crash::phase("app setup");
             solidcraft_ui_egui::fonts::setup_fonts(&cc.egui_ctx);
             let mut app = SolveApp::new(Session::default(), services(cc));
             app.custom_titlebar = CUSTOM_TITLEBAR;
@@ -445,7 +464,12 @@ fn main() -> eframe::Result {
             }
             if let Some(rs) = &cc.wgpu_render_state {
                 eprintln!("SolidCraft graphics: {:?}, MSAA {}x (requested {}x)", rs.adapter.get_info().backend, rs.msaa_samples, samples);
+                solidcraft_engine::crash::phase("viewport pipelines (shader compile)");
                 app.set_wgpu(rs, DEPTH_BITS, STENCIL_BITS, rs.msaa_samples);
+                // The graphics driver is loaded now; it may have put its own exception filter
+                // in front of ours.
+                #[cfg(target_os = "windows")]
+                native_crash::reinstall();
                 // A saved anti-aliasing the device can't do: back to the default, with a notice.
                 solidcraft_ui_egui::prefs::check_msaa(&mut app, u32::from(samples));
                 let info = rs.adapter.get_info();
@@ -497,9 +521,11 @@ fn main() -> eframe::Result {
             }
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             let space_mouse = space_mouse::SpaceMouse::start(&cc.egui_ctx);
+            solidcraft_engine::crash::phase("first frame");
             Ok(Box::new(App {
                 solve: app,
                 starting,
+                frames: 0,
                 #[cfg(any(target_os = "windows", target_os = "linux"))]
                 space_mouse,
             }))
@@ -510,6 +536,15 @@ fn main() -> eframe::Result {
         Err(e) if !created.load(std::sync::atomic::Ordering::SeqCst) => no_window(e, cpu_renderer, settings.as_deref()),
         r => r,
     }
+}
+
+/// egui-wgpu is about to start a step of getting the graphics device and the window's surface up:
+/// the crash journal keeps it, and the adapter once it is picked.
+fn startup_step(step: &'static str, detail: &str) {
+    if step == eframe::egui_wgpu::STEP_ADAPTER_CHOSEN {
+        solidcraft_engine::crash::set_environment(&format!("Renderer: {detail}"));
+    }
+    solidcraft_engine::crash::phase(step);
 }
 
 /// The renderer settings: with `cpu`, the software adapter (WARP, lavapipe, llvmpipe). The

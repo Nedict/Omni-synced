@@ -3466,6 +3466,7 @@ dependencies = [
  "solidcraft-engine",
  "solidcraft-ui-egui",
  "ureq",
+ "windows-sys 0.61.2",
  "winit",
 ]
 

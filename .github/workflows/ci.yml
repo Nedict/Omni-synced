@@ -328,7 +328,7 @@ jobs:
         with:
           key: windows-startup
       - name: Backend order and probing on Windows
-        run: cargo test -p solidcraft --profile ci --locked -- startup::tests
+        run: cargo test -p solidcraft --profile ci --locked -- startup::tests native_crash::tests
       - name: Build the app
         run: cargo build -p solidcraft --profile ci --locked
       - name: Start the app under different settings

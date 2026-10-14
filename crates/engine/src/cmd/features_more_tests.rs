@@ -996,3 +996,22 @@ fn a_line_of_text_cuts_into_a_block_at_any_depth() {
     assert!((deep - shallow).abs() < 1e-3 * shallow, "{shallow} mm² taken out at 1 mm, {deep} mm² at 3.5 mm");
     assert!(shallow > 0.85 * area && shallow < area, "{shallow} mm² taken out, the letters are {area} mm²");
 }
+
+/// A design saved before tapered sides were built through `taper_loop` (#1014), by the build
+/// before it: two tapered bosses apart from each other (now joined in one boolean), a fillet on
+/// a sloping side edge of one and on the top edge of the other, both saved by edge name. They
+/// still find their edges, and the part comes out the same.
+#[test]
+fn fillets_on_tapered_bosses_saved_before_still_find_their_edges() {
+    let text = include_str!("../../../../tests/taper/before-1014/two_tapered_bosses_filleted.json");
+    let mut s = Session::new(solidcraft_doc::Document::from_json(text).unwrap());
+    let volume = run(&mut s, "inspect.measure", json!({}))["total"]["volume_mm3"].as_f64().unwrap();
+    for name in ["Extrude2", "Fillet1", "Fillet2"] {
+        let id = s.doc.find_feature(name).unwrap().id;
+        let r = s.model.result(id).unwrap();
+        assert!(r.error.is_none() && r.warning.is_none(), "{name}: {:?} {:?}", r.error, r.warning);
+    }
+    // The build that saved it measured 69454.885209 mm³.
+    assert!((volume - 69454.8852092132).abs() < 1e-3, "{volume}");
+    assert_eq!(s.world_state().bodies.len(), 1);
+}
