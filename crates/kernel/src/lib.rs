@@ -22,6 +22,7 @@ mod boolean_diagnostics;
 mod boolean_guard;
 mod boolean_record;
 mod bore_guard;
+mod bridge;
 mod build;
 mod clearance;
 mod coplanar;
@@ -117,6 +118,7 @@ pub use blend_corner::fillet_radii;
 pub use blend_variable::{RadiusSpline, Taper, fillet_chord, fillet_tapered, fillet_variable, fillet_variable_points, fillet_variable_spline, taper};
 pub use body::{Body, CapSignature, DISPLAY_ANGLE, EdgeInfo, FaceInfo, FacePaint, FaceSource, Paint};
 pub use boolean_diagnostics::{BooleanDiagnostics, BooleanFallback, BooleanStrategy, capture_boolean_diagnostics};
+pub use bridge::{Continuity, Frame, blend_between, bridge, chain, chain_closes, frames, sample_grid};
 pub use build::{
     PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, extrude_tapered_between, loft, revolve, sphere, sweep,
     sweep_with, torus,
