@@ -14,6 +14,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
 use serde_json::{Value, json};
+use solidcraft_assistant::acp::session::{AgentSession, PermissionRequest};
 use solidcraft_assistant::context;
 use solidcraft_assistant::model::{Message, Usage};
 use solidcraft_assistant::net::Cancel;
@@ -21,7 +22,6 @@ use solidcraft_assistant::policy::{Verdict, classify};
 use solidcraft_assistant::provider::Codec;
 use solidcraft_assistant::provider::anthropic::Anthropic;
 use solidcraft_assistant::provider::openai::OpenAi;
-use solidcraft_assistant::acp::session::{AgentSession, PermissionRequest};
 use solidcraft_assistant::runtime::{self, AgentJob, Bridge, Job, TurnHandle, WorkerMsg, agent_roots, merge_roots};
 use solidcraft_assistant::settings::{BackendKind, Settings};
 use solidcraft_assistant::slash::{self, Input, Situation};
@@ -92,12 +92,25 @@ pub struct Ask {
 /// One line of the conversation as the person sees it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Item {
-    User { text: String, picture: bool },
-    Assistant { text: String, thinking: String },
+    User {
+        text: String,
+        picture: bool,
+    },
+    Assistant {
+        text: String,
+        thinking: String,
+    },
     Tool(ToolCard),
-    Notice { text: String, error: bool },
+    Notice {
+        text: String,
+        error: bool,
+    },
     /// A turn that changed the design ends here; `checkpoint` goes back to before it.
-    TurnEnd { checkpoint: Option<u64>, revision: u64, changed: bool },
+    TurnEnd {
+        checkpoint: Option<u64>,
+        revision: u64,
+        changed: bool,
+    },
 }
 
 /// A tool call and what it returned.
@@ -432,7 +445,8 @@ pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: &str) -> Sent {
             Some(d) => format!("{}\n\n{prompt}", context::context_block(d)),
             None => prompt.clone(),
         };
-        let key = format!("{}|{}|{}", profile.command, profile.args.join(" "), profile.env.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(","));
+        let key =
+            format!("{}|{}|{}", profile.command, profile.args.join(" "), profile.env.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(","));
         if app.assistant.agent_key != key {
             app.assistant.agent = None;
             app.assistant.agent_key = key;
@@ -479,7 +493,17 @@ pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: &str) -> Sent {
         Ok(handle) => {
             app.assistant.items.push(Item::User { text: shown, picture: had_picture });
             app.assistant.turn_usage = Usage::default();
-            app.assistant.active = Some(Active { id, handle, checkpoint, revision, tab: (app.docs.active, app.docs.count()), started: Instant::now(), agent, before: history_before, stopping_since: None });
+            app.assistant.active = Some(Active {
+                id,
+                handle,
+                checkpoint,
+                revision,
+                tab: (app.docs.active, app.docs.count()),
+                started: Instant::now(),
+                agent,
+                before: history_before,
+                stopping_since: None,
+            });
             app.assistant.scroll_to_end = true;
             ctx.request_repaint();
             Sent::Started
@@ -545,7 +569,11 @@ pub(crate) fn situation_failing(app: &SolveApp) -> Vec<String> {
 /// What quick actions may refer to: failing features and the selection, in words.
 fn situation(app: &SolveApp) -> Situation {
     let failing = situation_failing(app);
-    let selection = if app.session.selection.is_empty() { String::new() } else { format!("{} item(s); see `selection` in the design state", app.session.selection.len()) };
+    let selection = if app.session.selection.is_empty() {
+        String::new()
+    } else {
+        format!("{} item(s); see `selection` in the design state", app.session.selection.len())
+    };
     Situation { failing, selection }
 }
 
@@ -621,7 +649,15 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => break,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                done = Some((solidcraft_assistant::tool_loop::TurnOutcome { finish: Finish::Error("The assistant stopped unexpectedly.".into()), usage: Usage::default(), steps: 0, tool_calls: 0 }, None));
+                done = Some((
+                    solidcraft_assistant::tool_loop::TurnOutcome {
+                        finish: Finish::Error("The assistant stopped unexpectedly.".into()),
+                        usage: Usage::default(),
+                        steps: 0,
+                        tool_calls: 0,
+                    },
+                    None,
+                ));
                 break;
             }
         }
@@ -708,7 +744,9 @@ fn finish(app: &mut SolveApp, outcome: solidcraft_assistant::tool_loop::TurnOutc
     match &outcome.finish {
         Finish::Done => {}
         Finish::Cancelled => app.assistant.notice("Stopped.", false),
-        Finish::StepLimit => app.assistant.notice(format!("Stopped after {} steps without a final answer. Ask it to continue if it should.", outcome.steps), true),
+        Finish::StepLimit => {
+            app.assistant.notice(format!("Stopped after {} steps without a final answer. Ask it to continue if it should.", outcome.steps), true)
+        }
         Finish::MaxTokens => app.assistant.notice("The reply was cut off at the length limit.", true),
         Finish::Error(m) => app.assistant.notice(m.clone(), true),
     }
@@ -742,7 +780,10 @@ pub fn undo_turn(app: &mut SolveApp, force: bool) -> Result<(), String> {
             *checkpoint = None;
         }
     }
-    app.assistant.note = Some("[The person undid your last changes: the design is back to how it was before their previous request. Do not assume those changes exist.]".into());
+    app.assistant.note = Some(
+        "[The person undid your last changes: the design is back to how it was before their previous request. Do not assume those changes exist.]"
+            .into(),
+    );
     app.assistant.notice("Undid the last assistant changes.", false);
     app.follow_view_request(false);
     Ok(())
@@ -864,7 +905,13 @@ fn save_conversation(app: &mut SolveApp) {
     }
     let Some(store) = app.assistant.store() else { return };
     let id = app.assistant.conv_id.get_or_insert_with(store::new_id).clone();
-    let saved = Saved { id, title: store::title_of(&app.assistant.history), updated: store::now(), messages: app.assistant.history.clone(), usage: app.assistant.usage };
+    let saved = Saved {
+        id,
+        title: store::title_of(&app.assistant.history),
+        updated: store::now(),
+        messages: app.assistant.history.clone(),
+        usage: app.assistant.usage,
+    };
     if let Err(e) = store.save(&conversation_key(app), &saved) {
         log::warn!("assistant: {e}");
     }
@@ -901,10 +948,17 @@ fn items_from_history(history: &[Message]) -> Vec<Item> {
                 (Role::User, Block::Text(t)) if !t.starts_with(context::CONTEXT_OPEN) => items.push(Item::User { text: t.clone(), picture: false }),
                 (Role::Assistant, Block::Text(t)) => items.push(Item::Assistant { text: t.clone(), thinking: String::new() }),
                 (Role::Assistant, Block::ToolUse { id, name, input, .. }) => {
-                    items.push(Item::Tool(ToolCard { id: id.clone(), name: name.clone(), title: call_title(name, input), input: input.clone(), result: None }));
+                    items.push(Item::Tool(ToolCard {
+                        id: id.clone(),
+                        name: name.clone(),
+                        title: call_title(name, input),
+                        input: input.clone(),
+                        result: None,
+                    }));
                 }
                 (_, Block::ToolResult { id, parts, is_error }) => {
-                    let text = parts.iter().filter_map(|p| if let Part::Text(t) = p { Some(t.as_str()) } else { None }).collect::<Vec<_>>().join("\n");
+                    let text =
+                        parts.iter().filter_map(|p| if let Part::Text(t) = p { Some(t.as_str()) } else { None }).collect::<Vec<_>>().join("\n");
                     for it in items.iter_mut().rev() {
                         if let Item::Tool(c) = it
                             && &c.id == id
@@ -950,7 +1004,9 @@ fn item_json(it: &Item) -> Value {
     match it {
         Item::User { text, picture } => json!({"kind": "user", "text": text, "picture": picture}),
         Item::Assistant { text, .. } => json!({"kind": "assistant", "text": text}),
-        Item::Tool(c) => json!({"kind": "tool", "name": c.name, "title": c.title, "result": c.result.as_ref().map(|r| json!({"is_error": r.is_error, "text": r.text, "images": r.images}))}),
+        Item::Tool(c) => {
+            json!({"kind": "tool", "name": c.name, "title": c.title, "result": c.result.as_ref().map(|r| json!({"is_error": r.is_error, "text": r.text, "images": r.images}))})
+        }
         Item::Notice { text, error } => json!({"kind": "notice", "text": text, "error": error}),
         Item::TurnEnd { changed, .. } => json!({"kind": "turn_end", "changed": changed}),
     }

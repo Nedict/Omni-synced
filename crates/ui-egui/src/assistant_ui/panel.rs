@@ -106,7 +106,14 @@ fn header(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
             });
             let hr = history.response.rect;
-            crate::icons::paint(ui.painter(), hr.shrink2(vec2((hr.width() - 16.0).max(0.0) / 2.0, (hr.height() - 16.0).max(0.0) / 2.0)), "history", t.text, t.panel_header, t.accent);
+            crate::icons::paint(
+                ui.painter(),
+                hr.shrink2(vec2((hr.width() - 16.0).max(0.0) / 2.0, (hr.height() - 16.0).max(0.0) / 2.0)),
+                "history",
+                t.text,
+                t.panel_header,
+                t.accent,
+            );
             history.response.on_hover_text(app.tr("assistant.history"));
             if let Some(id) = chosen {
                 super::load_conversation(app, &id);
@@ -254,7 +261,9 @@ fn job(ui: &egui::Ui, spans: &[Span], base: &FontId, color: Color32) -> LayoutJo
         let plain = TextFormat { font_id: base.clone(), color, ..Default::default() };
         match s {
             Span::Text(x) => j.append(x, 0.0, plain),
-            Span::Bold(x) => j.append(x, 0.0, TextFormat { font_id: FontId::proportional(base.size), color: t.text, underline: Stroke::NONE, ..plain }),
+            Span::Bold(x) => {
+                j.append(x, 0.0, TextFormat { font_id: FontId::proportional(base.size), color: t.text, underline: Stroke::NONE, ..plain })
+            }
             Span::Italic(x) => j.append(x, 0.0, TextFormat { italics: true, ..plain }),
             Span::Code(x) => j.append(x, 0.0, TextFormat { font_id: FontId::monospace(base.size - 1.0), background: t.field, ..plain }),
             Span::Link { label, .. } => j.append(label, 0.0, TextFormat { color: t.accent, underline: Stroke::new(1.0, t.accent), ..plain }),
@@ -264,7 +273,8 @@ fn job(ui: &egui::Ui, spans: &[Span], base: &FontId, color: Color32) -> LayoutJo
 }
 
 fn links(ui: &mut egui::Ui, spans: &[Span]) {
-    let found: Vec<(&str, &str)> = spans.iter().filter_map(|s| if let Span::Link { label, url } = s { Some((label.as_str(), url.as_str())) } else { None }).collect();
+    let found: Vec<(&str, &str)> =
+        spans.iter().filter_map(|s| if let Span::Link { label, url } = s { Some((label.as_str(), url.as_str())) } else { None }).collect();
     if found.is_empty() {
         return;
     }
@@ -348,18 +358,31 @@ fn tool_card(app: &mut SolveApp, ui: &mut egui::Ui, card: &ToolCard) -> Option<u
     egui::Frame::NONE.fill(t.panel_header).corner_radius(4.0).inner_margin(Margin::symmetric(6, 3)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         let title = RichText::new(format!("{}  ·  {state}", card.title)).size(12.0).color(color);
-        egui::CollapsingHeader::new(title).id_salt(("tool", &card.id)).default_open(card.result.as_ref().is_some_and(|r| r.is_error)).show(ui, |ui| {
-            let input = serde_json::to_string_pretty(&card.input).unwrap_or_default();
-            ui.add(egui::Label::new(RichText::new(solidcraft_assistant::model::truncate(&input, CARD_TEXT, "cut")).monospace().size(11.0).color(t.text_dim)).wrap());
-            if let Some(r) = &card.result {
-                ui.separator();
-                let c = if r.is_error { t.error } else { t.text };
-                ui.add(egui::Label::new(RichText::new(solidcraft_assistant::model::truncate(&r.text, CARD_TEXT, "cut")).monospace().size(11.0).color(c)).wrap());
-                if r.images > 0 {
-                    ui.label(RichText::new(format!("({})", app.tr("assistant.picture"))).size(11.0).color(t.text_dim));
+        egui::CollapsingHeader::new(title).id_salt(("tool", &card.id)).default_open(card.result.as_ref().is_some_and(|r| r.is_error)).show(
+            ui,
+            |ui| {
+                let input = serde_json::to_string_pretty(&card.input).unwrap_or_default();
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(solidcraft_assistant::model::truncate(&input, CARD_TEXT, "cut")).monospace().size(11.0).color(t.text_dim),
+                    )
+                    .wrap(),
+                );
+                if let Some(r) = &card.result {
+                    ui.separator();
+                    let c = if r.is_error { t.error } else { t.text };
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(solidcraft_assistant::model::truncate(&r.text, CARD_TEXT, "cut")).monospace().size(11.0).color(c),
+                        )
+                        .wrap(),
+                    );
+                    if r.images > 0 {
+                        ui.label(RichText::new(format!("({})", app.tr("assistant.picture"))).size(11.0).color(t.text_dim));
+                    }
                 }
-            }
-        });
+            },
+        );
         if let Some(r) = &card.result
             && !r.is_error
             && let Some(id) = feature_ref(&r.text)
@@ -383,27 +406,32 @@ fn confirms(app: &mut SolveApp, ui: &mut egui::Ui) {
     // Questions from an external agent: its own options, as buttons.
     let mut reply: Option<(usize, Option<String>)> = None;
     for (i, a) in app.assistant.asks.iter().enumerate() {
-        egui::Frame::NONE.fill(t.warning.gamma_multiply(0.18)).stroke(Stroke::new(1.0, t.warning)).corner_radius(4.0).inner_margin(Margin::same(6)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(RichText::new(app.tr("assistant.ask_title")).size(12.0).strong().color(t.text));
-            let what = if a.request.title.is_empty() { a.request.kind.clone() } else { a.request.title.clone() };
-            ui.add(egui::Label::new(RichText::new(what).monospace().size(11.0).color(t.text)).wrap());
-            if !a.request.raw_input.is_null() {
-                let raw = solidcraft_assistant::model::truncate(&a.request.raw_input.to_string(), 600, "cut");
-                ui.add(egui::Label::new(RichText::new(raw).monospace().size(10.0).color(t.text_dim)).wrap());
-            }
-            ui.horizontal_wrapped(|ui| {
-                for o in &a.request.options {
-                    let b = ui.button(&o.name);
-                    if b.clicked() {
-                        reply = Some((i, Some(o.id.clone())));
+        egui::Frame::NONE
+            .fill(t.warning.gamma_multiply(0.18))
+            .stroke(Stroke::new(1.0, t.warning))
+            .corner_radius(4.0)
+            .inner_margin(Margin::same(6))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(RichText::new(app.tr("assistant.ask_title")).size(12.0).strong().color(t.text));
+                let what = if a.request.title.is_empty() { a.request.kind.clone() } else { a.request.title.clone() };
+                ui.add(egui::Label::new(RichText::new(what).monospace().size(11.0).color(t.text)).wrap());
+                if !a.request.raw_input.is_null() {
+                    let raw = solidcraft_assistant::model::truncate(&a.request.raw_input.to_string(), 600, "cut");
+                    ui.add(egui::Label::new(RichText::new(raw).monospace().size(10.0).color(t.text_dim)).wrap());
+                }
+                ui.horizontal_wrapped(|ui| {
+                    for o in &a.request.options {
+                        let b = ui.button(&o.name);
+                        if b.clicked() {
+                            reply = Some((i, Some(o.id.clone())));
+                        }
                     }
-                }
-                if ui.button(app.tr("assistant.deny")).clicked() {
-                    reply = Some((i, None));
-                }
+                    if ui.button(app.tr("assistant.deny")).clicked() {
+                        reply = Some((i, None));
+                    }
+                });
             });
-        });
         ui.add_space(4.0);
     }
     if let Some((i, option)) = reply {
@@ -411,23 +439,28 @@ fn confirms(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     let mut answer: Option<(usize, bool)> = None;
     for (i, c) in app.assistant.confirms.iter().enumerate() {
-        egui::Frame::NONE.fill(t.warning.gamma_multiply(0.18)).stroke(Stroke::new(1.0, t.warning)).corner_radius(4.0).inner_margin(Margin::same(6)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(RichText::new(app.tr("assistant.confirm_title")).size(12.0).strong().color(t.text));
-            for l in &c.lines {
-                ui.add(egui::Label::new(RichText::new(l).monospace().size(11.0).color(t.text)).wrap());
-            }
-            ui.horizontal(|ui| {
-                let allow = ui.button(app.tr("assistant.allow"));
-                crate::scenario::publish_handle(&format!("assistant:allow:{i}"), allow.rect.center());
-                if allow.clicked() {
-                    answer = Some((i, true));
+        egui::Frame::NONE
+            .fill(t.warning.gamma_multiply(0.18))
+            .stroke(Stroke::new(1.0, t.warning))
+            .corner_radius(4.0)
+            .inner_margin(Margin::same(6))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(RichText::new(app.tr("assistant.confirm_title")).size(12.0).strong().color(t.text));
+                for l in &c.lines {
+                    ui.add(egui::Label::new(RichText::new(l).monospace().size(11.0).color(t.text)).wrap());
                 }
-                if ui.button(app.tr("assistant.deny")).clicked() {
-                    answer = Some((i, false));
-                }
+                ui.horizontal(|ui| {
+                    let allow = ui.button(app.tr("assistant.allow"));
+                    crate::scenario::publish_handle(&format!("assistant:allow:{i}"), allow.rect.center());
+                    if allow.clicked() {
+                        answer = Some((i, true));
+                    }
+                    if ui.button(app.tr("assistant.deny")).clicked() {
+                        answer = Some((i, false));
+                    }
+                });
             });
-        });
         ui.add_space(4.0);
     }
     if let Some((i, allow)) = answer {
@@ -469,7 +502,9 @@ fn composer(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         if app.assistant.picture.is_some() {
             ui.label(RichText::new(app.tr("assistant.attached")).size(11.0).color(t.text_dim));
-        } else if app.services.assistant_http.is_some() && icon_button(ui, "view_attach", false).on_hover_text(app.tr("assistant.attach_view")).clicked() {
+        } else if app.services.assistant_http.is_some()
+            && icon_button(ui, "view_attach", false).on_hover_text(app.tr("assistant.attach_view")).clicked()
+        {
             super::attach_view(app);
         }
         ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
@@ -536,7 +571,8 @@ fn settings(app: &mut SolveApp, ui: &mut egui::Ui) {
     match app.assistant.settings.backend {
         BackendKind::Agent => agent_settings(app, ui, &mut changed),
         kind => {
-            let (model_label, url_label, key_label) = (app.tr("assistant.model").to_string(), app.tr("assistant.base_url").to_string(), app.tr("assistant.api_key").to_string());
+            let (model_label, url_label, key_label) =
+                (app.tr("assistant.model").to_string(), app.tr("assistant.base_url").to_string(), app.tr("assistant.api_key").to_string());
             let resolved_from_env = {
                 let api = app.assistant.settings.api();
                 api.api_key.is_empty() && !api.resolved_key(kind).is_empty()

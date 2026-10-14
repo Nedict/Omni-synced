@@ -91,7 +91,9 @@ pub fn suggestions(has_bodies: bool, failing: bool) -> Vec<&'static str> {
     match (has_bodies, failing) {
         (_, true) => vec!["/fix", "/explain", "/check"],
         (true, false) => vec!["/explain", "/check", "/params", "Add a 3 mm fillet to the outer edges"],
-        (false, false) => vec!["Make a 40 x 30 x 20 mm box with a 10 mm hole through the centre", "Make an L-bracket with two mounting holes", "What can you do?"],
+        (false, false) => {
+            vec!["Make a 40 x 30 x 20 mm box with a 10 mm hole through the centre", "Make an L-bracket with two mounting holes", "What can you do?"]
+        }
     }
 }
 

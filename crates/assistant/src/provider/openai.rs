@@ -15,7 +15,8 @@ pub struct OpenAi;
 
 impl Codec for OpenAi {
     fn request(&self, req: &ChatRequest, base_url: &str, key: &Secret) -> Result<HttpRequest, String> {
-        let mut headers = vec![("content-type".to_string(), Secret::new("application/json")), ("accept".to_string(), Secret::new("text/event-stream"))];
+        let mut headers =
+            vec![("content-type".to_string(), Secret::new("application/json")), ("accept".to_string(), Secret::new("text/event-stream"))];
         if !key.is_empty() {
             headers.push(("authorization".into(), Secret::new(format!("Bearer {}", key.expose()))));
         }
@@ -60,7 +61,9 @@ fn push_message(out: &mut Vec<Value>, m: &Message, vision: bool) {
                 .blocks
                 .iter()
                 .filter_map(|b| match b {
-                    Block::ToolUse { id, name, input, .. } => Some(json!({"id": id, "type": "function", "function": {"name": name, "arguments": input.to_string()}})),
+                    Block::ToolUse { id, name, input, .. } => {
+                        Some(json!({"id": id, "type": "function", "function": {"name": name, "arguments": input.to_string()}}))
+                    }
                     _ => None,
                 })
                 .collect();
@@ -92,12 +95,18 @@ fn push_message(out: &mut Vec<Value>, m: &Message, vision: bool) {
                         }
                         let n_images = rp.iter().filter(|p| matches!(p, Part::Image { .. })).count();
                         if n_images > 0 {
-                            text.push(if vision { "(the image follows in the next message)".to_string() } else { "(an image was produced; this model cannot see images)".to_string() });
+                            text.push(if vision {
+                                "(the image follows in the next message)".to_string()
+                            } else {
+                                "(an image was produced; this model cannot see images)".to_string()
+                            });
                         }
                         let text = if text.is_empty() { "(no output)".to_string() } else { text.join("\n") };
                         out.push(json!({"role": "tool", "tool_call_id": id, "content": text}));
                         if vision {
-                            pictures.extend(rp.iter().filter_map(|p| if let Part::Image { mime, data } = p { Some(image_url(mime, data)) } else { None }));
+                            pictures.extend(
+                                rp.iter().filter_map(|p| if let Part::Image { mime, data } = p { Some(image_url(mime, data)) } else { None }),
+                            );
                         }
                     }
                     _ => {}
@@ -264,7 +273,11 @@ mod tests {
 
     #[test]
     fn servers_without_ids_or_with_stop_after_calls() {
-        let (turn, _) = run(&[r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"undo","arguments":"{}"}}]},"finish_reason":"stop"}]}"#, "[DONE]"]).unwrap();
+        let (turn, _) = run(&[
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"undo","arguments":"{}"}}]},"finish_reason":"stop"}]}"#,
+            "[DONE]",
+        ])
+        .unwrap();
         assert_eq!(turn.stop, Stop::ToolUse);
         assert!(matches!(&turn.blocks[0], Block::ToolUse { id, .. } if id == "call_0"));
     }
@@ -313,7 +326,14 @@ mod tests {
         let messages = vec![
             Message::user_text("hi"),
             Message::assistant(vec![Block::ToolUse { id: "c1".into(), name: "a".into(), input: json!({"x": 1}), error: None }]),
-            Message { role: Role::User, blocks: vec![Block::ToolResult { id: "c1".into(), parts: vec![Part::Text("ok".into()), Part::Image { mime: "image/png".into(), data: "AA".into() }], is_error: false }] },
+            Message {
+                role: Role::User,
+                blocks: vec![Block::ToolResult {
+                    id: "c1".into(),
+                    parts: vec![Part::Text("ok".into()), Part::Image { mime: "image/png".into(), data: "AA".into() }],
+                    is_error: false,
+                }],
+            },
         ];
         let req = ChatRequest { model: "m", system: "sys", messages: &messages, tools: &tools, vision: true, max_tokens: 10 };
         let b = body(&req);

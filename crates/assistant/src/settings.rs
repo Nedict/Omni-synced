@@ -216,11 +216,21 @@ impl AgentProfile {
         if name.trim().is_empty() || command.trim().is_empty() {
             return None;
         }
-        let args = v.get("args").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).filter(|s| s.len() <= MAX_FIELD).take(MAX_ARGS).map(str::to_string).collect()).unwrap_or_default();
+        let args = v
+            .get("args")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_str).filter(|s| s.len() <= MAX_FIELD).take(MAX_ARGS).map(str::to_string).collect())
+            .unwrap_or_default();
         let env = v
             .get("env")
             .and_then(Value::as_object)
-            .map(|o| o.iter().filter_map(|(k, v)| Some((k.clone(), Secret::new(v.as_str()?)))).filter(|(k, v)| valid_env_name(k) && v.expose().len() <= MAX_FIELD).take(MAX_ENV).collect())
+            .map(|o| {
+                o.iter()
+                    .filter_map(|(k, v)| Some((k.clone(), Secret::new(v.as_str()?))))
+                    .filter(|(k, v)| valid_env_name(k) && v.expose().len() <= MAX_FIELD)
+                    .take(MAX_ENV)
+                    .collect()
+            })
             .unwrap_or_default();
         let mode = if v.get("mode").and_then(Value::as_str) == Some("print") { AgentMode::Print } else { AgentMode::Acp };
         Some(Self { name, command, args, env, mode })
@@ -229,7 +239,10 @@ impl AgentProfile {
 
 /// A name usable as an environment variable: letters, digits and `_`, not starting with a digit.
 pub fn valid_env_name(name: &str) -> bool {
-    !name.is_empty() && name.len() <= 128 && !name.starts_with(|c: char| c.is_ascii_digit()) && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    !name.is_empty()
+        && name.len() <= 128
+        && !name.starts_with(|c: char| c.is_ascii_digit())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Everything the assistant remembers between launches.
@@ -321,7 +334,8 @@ impl Settings {
             s.auto_allow_tools = b;
         }
         if let Some(f) = v.get("folders").and_then(Value::as_array) {
-            s.folders = f.iter().filter_map(Value::as_str).filter(|p| !p.is_empty() && p.len() <= MAX_FIELD).take(MAX_FOLDERS).map(str::to_string).collect();
+            s.folders =
+                f.iter().filter_map(Value::as_str).filter(|p| !p.is_empty() && p.len() <= MAX_FIELD).take(MAX_FOLDERS).map(str::to_string).collect();
         }
         if let Some(c) = text(v, "cli") {
             s.cli = c;
@@ -382,20 +396,31 @@ mod tests {
     #[test]
     fn secrets_never_print() {
         let p = ApiProfile { api_key: Secret::new("sk-live-abc"), ..ApiProfile::anthropic() };
-        let a = AgentProfile { name: "x".into(), command: "x".into(), args: vec![], env: vec![("KEY".into(), Secret::new("hunter2"))], mode: AgentMode::Acp };
+        let a = AgentProfile {
+            name: "x".into(),
+            command: "x".into(),
+            args: vec![],
+            env: vec![("KEY".into(), Secret::new("hunter2"))],
+            mode: AgentMode::Acp,
+        };
         let shown = format!("{p:?} {a:?} {:?}", Settings { anthropic: p.clone(), agents: vec![a.clone()], ..Settings::default() });
         assert!(!shown.contains("sk-live-abc") && !shown.contains("hunter2"), "{shown}");
     }
 
     #[test]
     fn settings_round_trip() {
-        let mut s = Settings::default();
-        s.backend = BackendKind::Agent;
+        let mut s = Settings { backend: BackendKind::Agent, ..Settings::default() };
         s.openai.base_url = "http://localhost:11434/v1".into();
         s.openai.model = "qwen3".into();
         s.openai.api_key = Secret::new("k");
         s.openai.context_window = 32_000;
-        s.agents.push(AgentProfile { name: "Open".into(), command: "opencode".into(), args: vec!["acp".into()], env: vec![("A_B".into(), Secret::new("v"))], mode: AgentMode::Print });
+        s.agents.push(AgentProfile {
+            name: "Open".into(),
+            command: "opencode".into(),
+            args: vec!["acp".into()],
+            env: vec![("A_B".into(), Secret::new("v"))],
+            mode: AgentMode::Print,
+        });
         s.agent = 0;
         s.folders.push("/home/me/designs".into());
         s.cli = "/opt/solidcraft/solidcraft-cli".into();

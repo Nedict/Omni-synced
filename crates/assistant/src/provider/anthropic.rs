@@ -99,7 +99,11 @@ fn message(m: &Message, vision: bool) -> Option<Value> {
 
 enum Slot {
     Text(String),
-    Tool { id: String, name: String, json: String },
+    Tool {
+        id: String,
+        name: String,
+        json: String,
+    },
     /// Thinking and other blocks that are not kept.
     Skip,
 }
@@ -278,10 +282,23 @@ mod tests {
             turn.blocks,
             vec![
                 Block::Text("Making a box.".into()),
-                Block::ToolUse { id: "toolu_1".into(), name: "execute".into(), input: json!({"command": "solid.box", "params": {"length": 10}}), error: None },
+                Block::ToolUse {
+                    id: "toolu_1".into(),
+                    name: "execute".into(),
+                    input: json!({"command": "solid.box", "params": {"length": 10}}),
+                    error: None
+                },
             ]
         );
-        assert_eq!(deltas, vec![Delta::Thinking("hmm".into()), Delta::Text("Making a ".into()), Delta::Text("box.".into()), Delta::ToolStart { name: "execute".into() }]);
+        assert_eq!(
+            deltas,
+            vec![
+                Delta::Thinking("hmm".into()),
+                Delta::Text("Making a ".into()),
+                Delta::Text("box.".into()),
+                Delta::ToolStart { name: "execute".into() }
+            ]
+        );
     }
 
     #[test]
@@ -332,7 +349,14 @@ mod tests {
     #[test]
     fn an_oversized_reply_is_cut_off() {
         let mut d = AnthropicDecoder::default();
-        d.event(&SseEvent { name: None, data: json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}).to_string() }, &mut |_| {}).unwrap();
+        d.event(
+            &SseEvent {
+                name: None,
+                data: json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}).to_string(),
+            },
+            &mut |_| {},
+        )
+        .unwrap();
         let chunk = "a".repeat(300_000);
         let mut failed = false;
         for _ in 0..6 {
@@ -353,8 +377,18 @@ mod tests {
         ];
         let messages = vec![
             Message::user_text("make a box"),
-            Message::assistant(vec![Block::Text("ok".into()), Block::ToolUse { id: "t1".into(), name: "a".into(), input: json!({"x": 1}), error: None }]),
-            Message { role: Role::User, blocks: vec![Block::ToolResult { id: "t1".into(), parts: vec![Part::Text("done".into()), Part::Image { mime: "image/png".into(), data: "AAAA".into() }], is_error: true }] },
+            Message::assistant(vec![
+                Block::Text("ok".into()),
+                Block::ToolUse { id: "t1".into(), name: "a".into(), input: json!({"x": 1}), error: None },
+            ]),
+            Message {
+                role: Role::User,
+                blocks: vec![Block::ToolResult {
+                    id: "t1".into(),
+                    parts: vec![Part::Text("done".into()), Part::Image { mime: "image/png".into(), data: "AAAA".into() }],
+                    is_error: true,
+                }],
+            },
         ];
         let req = ChatRequest { model: "m", system: "sys", messages: &messages, tools: &tools, vision: true, max_tokens: 100 };
         let b = body(&req);

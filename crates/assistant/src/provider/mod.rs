@@ -112,7 +112,13 @@ fn server_message(body: &str) -> String {
 
 /// Send `req` and decode the stream; `sink` sees text as it arrives. Retries once, after a short
 /// wait, when the failure is transient and nothing has been delivered yet.
-pub fn stream_turn(codec: &dyn Codec, http: &HttpStream, req: &HttpRequest, cancel: &Cancel, sink: &mut dyn FnMut(Delta)) -> Result<AssistantTurn, StreamError> {
+pub fn stream_turn(
+    codec: &dyn Codec,
+    http: &HttpStream,
+    req: &HttpRequest,
+    cancel: &Cancel,
+    sink: &mut dyn FnMut(Delta),
+) -> Result<AssistantTurn, StreamError> {
     let mut attempt = 0;
     loop {
         let mut delivered = false;
@@ -135,7 +141,13 @@ pub fn stream_turn(codec: &dyn Codec, http: &HttpStream, req: &HttpRequest, canc
     }
 }
 
-fn stream_once(codec: &dyn Codec, http: &HttpStream, req: &HttpRequest, cancel: &Cancel, sink: &mut dyn FnMut(Delta)) -> Result<AssistantTurn, StreamError> {
+fn stream_once(
+    codec: &dyn Codec,
+    http: &HttpStream,
+    req: &HttpRequest,
+    cancel: &Cancel,
+    sink: &mut dyn FnMut(Delta),
+) -> Result<AssistantTurn, StreamError> {
     let mut decoder = codec.decoder();
     let mut sse = SseDecoder::new();
     let mut failure: Option<String> = None;

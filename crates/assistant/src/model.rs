@@ -14,7 +14,10 @@ pub const MAX_BLOCKS: usize = 256;
 pub enum Part {
     Text(String),
     /// Base64 image data.
-    Image { mime: String, data: String },
+    Image {
+        mime: String,
+        data: String,
+    },
 }
 
 /// One block of a message.
@@ -118,7 +121,9 @@ pub enum Delta {
     Text(String),
     Thinking(String),
     /// The model began a tool call (its arguments are still streaming).
-    ToolStart { name: String },
+    ToolStart {
+        name: String,
+    },
 }
 
 /// Cut `s` to at most `max` bytes at a character boundary, marking the cut.

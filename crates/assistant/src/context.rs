@@ -297,7 +297,9 @@ mod tests {
         // Every `tool_name` the guides call with backticks and a plausible tool shape must exist.
         let tools = crate::tools::definitions(true);
         let names = tool_names(&tools);
-        for known in ["batch", "execute", "measure", "inspect_design", "screenshot", "set_parameter", "list_commands", "body_topology", "new_design", "undo"] {
+        for known in
+            ["batch", "execute", "measure", "inspect_design", "screenshot", "set_parameter", "list_commands", "body_topology", "new_design", "undo"]
+        {
             assert!(names.contains(&known), "{known}");
         }
         // The editing guide sends the model to crash reports; the tool is there.
@@ -333,7 +335,8 @@ mod tests {
         assert_eq!(c["undo_steps"], 3);
         assert_eq!(c["timeline"][0], json!({"id": 0, "name": "Feature 0", "type": "extrude"}));
         assert!(c["timeline"][0].get("ms").is_none());
-        let flagged = compact_inspect(&json!({"timeline": [{"id": 1, "name": "F", "type": "fillet", "error": "radius too large", "suppressed": true}]}));
+        let flagged =
+            compact_inspect(&json!({"timeline": [{"id": 1, "name": "F", "type": "fillet", "error": "radius too large", "suppressed": true}]}));
         assert_eq!(flagged["timeline"][0]["error"], "radius too large");
         assert_eq!(flagged["timeline"][0]["suppressed"], true);
     }
@@ -356,7 +359,8 @@ mod tests {
     #[test]
     fn only_the_latest_design_picture_stays() {
         let d = json!({"name": "A"});
-        let mut h = vec![user_message("one", Some(&d), None), Message::assistant(vec![Block::Text("ok".into())]), user_message("two", Some(&d), None)];
+        let mut h =
+            vec![user_message("one", Some(&d), None), Message::assistant(vec![Block::Text("ok".into())]), user_message("two", Some(&d), None)];
         strip_old_context(&mut h);
         assert_eq!(h[0].blocks.len(), 1);
         assert_eq!(h[2].blocks.len(), 2);
@@ -366,14 +370,22 @@ mod tests {
         vec![
             Message::user_text(format!("question {i}")),
             Message::assistant(vec![Block::ToolUse { id: format!("t{i}"), name: "measure".into(), input: json!({}), error: None }]),
-            Message { role: Role::User, blocks: vec![Block::ToolResult { id: format!("t{i}"), parts: vec![Part::Text("r".repeat(size))], is_error: false }] },
+            Message {
+                role: Role::User,
+                blocks: vec![Block::ToolResult { id: format!("t{i}"), parts: vec![Part::Text("r".repeat(size))], is_error: false }],
+            },
             Message::assistant(vec![Block::Text(format!("answer {i}"))]),
         ]
     }
 
     fn ids(h: &[Message]) -> (Vec<String>, Vec<String>) {
-        let uses = h.iter().flat_map(|m| m.blocks.iter()).filter_map(|b| if let Block::ToolUse { id, .. } = b { Some(id.clone()) } else { None }).collect();
-        let results = h.iter().flat_map(|m| m.blocks.iter()).filter_map(|b| if let Block::ToolResult { id, .. } = b { Some(id.clone()) } else { None }).collect();
+        let uses =
+            h.iter().flat_map(|m| m.blocks.iter()).filter_map(|b| if let Block::ToolUse { id, .. } = b { Some(id.clone()) } else { None }).collect();
+        let results = h
+            .iter()
+            .flat_map(|m| m.blocks.iter())
+            .filter_map(|b| if let Block::ToolResult { id, .. } = b { Some(id.clone()) } else { None })
+            .collect();
         (uses, results)
     }
 

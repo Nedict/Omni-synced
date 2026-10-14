@@ -39,11 +39,20 @@ pub struct Job {
 pub enum WorkerMsg {
     Event(Event),
     /// The turn is over; `history` is the conversation as the model has it now.
-    Done { outcome: TurnOutcome, history: Vec<Message> },
+    Done {
+        outcome: TurnOutcome,
+        history: Vec<Message>,
+    },
     /// An agent turn is over; `session` is kept for the next message while it is usable.
-    AgentDone { outcome: TurnOutcome, session: Option<AgentSession> },
+    AgentDone {
+        outcome: TurnOutcome,
+        session: Option<AgentSession>,
+    },
     /// The agent asks whether it may do something; answer on `reply` (`None` declines).
-    Permission { request: PermissionRequest, reply: Sender<Option<String>> },
+    Permission {
+        request: PermissionRequest,
+        reply: Sender<Option<String>>,
+    },
 }
 
 /// A running turn.
@@ -71,7 +80,25 @@ pub fn spawn_turn(_job: Job, _cancel: Cancel) -> Result<TurnHandle, String> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn work(job: Job, cancel: Cancel, tx: Sender<WorkerMsg>) {
-    let Job { codec, http, base_url, allow_http, key, model, system, tools, vision, max_tokens, max_steps, context_window, folders, mut history, user, host, repaint } = job;
+    let Job {
+        codec,
+        http,
+        base_url,
+        allow_http,
+        key,
+        model,
+        system,
+        tools,
+        vision,
+        max_tokens,
+        max_steps,
+        context_window,
+        folders,
+        mut history,
+        user,
+        host,
+        repaint,
+    } = job;
     let send = |m: WorkerMsg| {
         let _ = tx.send(m);
         repaint();
@@ -95,7 +122,12 @@ fn work(job: Job, cancel: Cancel, tx: Sender<WorkerMsg>) {
         };
         run_turn(&cfg, &mut history, user, host.as_ref(), &cancel, &mut |e| send(WorkerMsg::Event(e)))
     }))
-    .unwrap_or_else(|_| TurnOutcome { finish: Finish::Error("The assistant hit an internal error and stopped.".into()), usage: Usage::default(), steps: 0, tool_calls: 0 });
+    .unwrap_or_else(|_| TurnOutcome {
+        finish: Finish::Error("The assistant hit an internal error and stopped.".into()),
+        usage: Usage::default(),
+        steps: 0,
+        tool_calls: 0,
+    });
     send(WorkerMsg::Done { outcome, history });
 }
 
@@ -169,14 +201,25 @@ fn work_agent(mut job: AgentJob, cancel: Cancel, tx: Sender<WorkerMsg>) {
     match result {
         Ok((outcome, session)) => send(WorkerMsg::AgentDone { outcome, session }),
         Err(_) => send(WorkerMsg::AgentDone {
-            outcome: TurnOutcome { finish: Finish::Error("The assistant hit an internal error and stopped.".into()), usage: Usage::default(), steps: 0, tool_calls: 0 },
+            outcome: TurnOutcome {
+                finish: Finish::Error("The assistant hit an internal error and stopped.".into()),
+                usage: Usage::default(),
+                steps: 0,
+                tool_calls: 0,
+            },
             session: None,
         }),
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn agent_turn(job: &AgentJob, running: Option<AgentSession>, cancel: &Cancel, tx: &Sender<WorkerMsg>, send: &dyn Fn(WorkerMsg)) -> (TurnOutcome, Option<AgentSession>) {
+fn agent_turn(
+    job: &AgentJob,
+    running: Option<AgentSession>,
+    cancel: &Cancel,
+    tx: &Sender<WorkerMsg>,
+    send: &dyn Fn(WorkerMsg),
+) -> (TurnOutcome, Option<AgentSession>) {
     let err = |m: String| TurnOutcome { finish: Finish::Error(m), usage: Usage::default(), steps: 0, tool_calls: 0 };
     let mcp = job.bridge.as_ref().map(Bridge::mcp_server);
     let mut on_event = |e: Event| send(WorkerMsg::Event(e));
@@ -254,7 +297,16 @@ mod tests {
     fn only_the_mcp_servers_own_scratch_folder_is_taken_from_a_request() {
         let temp = std::path::Path::new("/tmp");
         let own = vec!["/home/me/recovery".to_string()];
-        let req = json!(["/tmp/solidcraft-mcp-4242-1a2b", "/", "/home/me/.ssh", "/tmp/solidcraft-mcp-x-1", "/tmp/solidcraft-mcp-12-zz", "/tmp/other/solidcraft-mcp-1-2", "/tmp/solidcraft-mcp-1-2-3", 5]);
+        let req = json!([
+            "/tmp/solidcraft-mcp-4242-1a2b",
+            "/",
+            "/home/me/.ssh",
+            "/tmp/solidcraft-mcp-x-1",
+            "/tmp/solidcraft-mcp-12-zz",
+            "/tmp/other/solidcraft-mcp-1-2",
+            "/tmp/solidcraft-mcp-1-2-3",
+            5
+        ]);
         let roots = merge_roots(&own, Some(&req), temp);
         assert_eq!(roots, ["/home/me/recovery", "/tmp/solidcraft-mcp-4242-1a2b"]);
         assert_eq!(merge_roots(&own, None, temp), own);

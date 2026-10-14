@@ -42,12 +42,7 @@ pub fn stream(req: &HttpRequest, cancel: &Cancel, sink: &mut dyn FnMut(&[u8]) ->
     let code = response.status().as_u16();
     if !(200..300).contains(&code) {
         let retry_after = response.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok());
-        let body = response
-            .body_mut()
-            .with_config()
-            .limit(MAX_ERROR_BODY as u64)
-            .read_to_string()
-            .unwrap_or_default();
+        let body = response.body_mut().with_config().limit(MAX_ERROR_BODY as u64).read_to_string().unwrap_or_default();
         return Err(HttpError::Status { code, retry_after, body });
     }
     let mut reader = response.body_mut().with_config().limit(MAX_RESPONSE).reader();

@@ -14,7 +14,11 @@ pub fn definitions(vision: bool) -> Vec<ToolDef> {
             if !vision && name == "screenshot" {
                 return None;
             }
-            Some(ToolDef { name, description: t.get("description")?.as_str()?.to_string(), schema: t.get("inputSchema").cloned().unwrap_or(Value::Null) })
+            Some(ToolDef {
+                name,
+                description: t.get("description")?.as_str()?.to_string(),
+                schema: t.get("inputSchema").cloned().unwrap_or(Value::Null),
+            })
         })
         .collect()
 }
@@ -31,7 +35,10 @@ pub fn result_parts(v: &Value) -> (Vec<Part>, bool) {
                     Some("text") => p.get("text").and_then(Value::as_str).map(|t| Part::Text(t.to_string())),
                     Some("image") => {
                         let data = p.get("data").and_then(Value::as_str)?;
-                        Some(Part::Image { mime: p.get("mimeType").and_then(Value::as_str).unwrap_or("image/png").to_string(), data: data.to_string() })
+                        Some(Part::Image {
+                            mime: p.get("mimeType").and_then(Value::as_str).unwrap_or("image/png").to_string(),
+                            data: data.to_string(),
+                        })
                     }
                     _ => None,
                 })
@@ -60,7 +67,9 @@ mod tests {
 
     #[test]
     fn results_split_into_text_and_pictures() {
-        let (parts, err) = result_parts(&json!({"content": [{"type": "image", "data": "AAAA", "mimeType": "image/png"}, {"type": "text", "text": "hi"}, {"type": "resource"}, 5], "isError": true}));
+        let (parts, err) = result_parts(
+            &json!({"content": [{"type": "image", "data": "AAAA", "mimeType": "image/png"}, {"type": "text", "text": "hi"}, {"type": "resource"}, 5], "isError": true}),
+        );
         assert!(err);
         assert_eq!(parts, vec![Part::Image { mime: "image/png".into(), data: "AAAA".into() }, Part::Text("hi".into())]);
         assert_eq!(result_parts(&json!(null)), (vec![], false));

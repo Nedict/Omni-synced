@@ -9,8 +9,8 @@
 #![forbid(unsafe_code)]
 
 pub mod access;
-pub mod assistant_ui;
 pub mod agent_cursor;
+pub mod assistant_ui;
 pub mod browser;
 pub mod canvas;
 pub mod context_menu;

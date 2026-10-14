@@ -137,7 +137,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_program_runs_and_is_ended_with_the_guard() {
-        let mut s = spawn("sh", &["-c".into(), "echo hello; echo oops >&2; cat".into()], &[("X_TEST".into(), Secret::new("1"))], &std::env::temp_dir()).unwrap();
+        let mut s =
+            spawn("sh", &["-c".into(), "echo hello; echo oops >&2; cat".into()], &[("X_TEST".into(), Secret::new("1"))], &std::env::temp_dir())
+                .unwrap();
         let mut buf = [0u8; 6];
         s.stdout.read_exact(&mut buf).unwrap();
         assert_eq!(&buf, b"hello\n");

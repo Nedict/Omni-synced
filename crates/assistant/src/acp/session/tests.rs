@@ -50,7 +50,12 @@ fn update(u: Value) -> Value {
 }
 
 fn start(wire: Wire) -> AgentSession {
-    let mcp = McpServer { name: "solidcraft".into(), command: "/bin/solidcraft-cli".into(), args: vec!["mcp".into(), "--connect".into(), "127.0.0.1:5000".into()], env: vec![("SOLIDCRAFT_CONTROL_TOKEN".into(), "tok".into())] };
+    let mcp = McpServer {
+        name: "solidcraft".into(),
+        command: "/bin/solidcraft-cli".into(),
+        args: vec!["mcp".into(), "--connect".into(), "127.0.0.1:5000".into()],
+        env: vec![("SOLIDCRAFT_CONTROL_TOKEN".into(), "tok".into())],
+    };
     AgentSession::start(wire, None, Default::default(), "/work", Some(&mcp), &Cancel::new()).unwrap()
 }
 
@@ -90,13 +95,19 @@ fn a_turn_streams_text_tools_and_permissions() {
             Some("session/prompt") => vec![
                 update(json!({"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "thinking"}})),
                 update(json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "Making "}})),
-                update(json!({"sessionUpdate": "tool_call", "toolCallId": "t1", "title": "solidcraft: execute", "kind": "other", "status": "pending", "rawInput": {"command": "solid.box"}})),
+                update(
+                    json!({"sessionUpdate": "tool_call", "toolCallId": "t1", "title": "solidcraft: execute", "kind": "other", "status": "pending", "rawInput": {"command": "solid.box"}}),
+                ),
                 json!({"jsonrpc": "2.0", "id": 900, "method": "session/request_permission", "params": {"sessionId": "s1", "toolCall": {"toolCallId": "t1", "title": "solidcraft: execute", "kind": "other"},
                     "options": [{"optionId": "yes", "name": "Allow", "kind": "allow_once"}, {"optionId": "no", "name": "Reject", "kind": "reject_once"}]}}),
-                update(json!({"sessionUpdate": "tool_call_update", "toolCallId": "t1", "status": "completed", "content": [{"type": "content", "content": {"type": "text", "text": "created Body1"}}]})),
+                update(
+                    json!({"sessionUpdate": "tool_call_update", "toolCallId": "t1", "status": "completed", "content": [{"type": "content", "content": {"type": "text", "text": "created Body1"}}]}),
+                ),
                 json!({"jsonrpc": "2.0", "id": 901, "method": "fs/read_text_file", "params": {"path": "/etc/passwd"}}),
                 update(json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "a box."}})),
-                update(json!({"sessionUpdate": "plan", "entries": [{"content": "Make box", "status": "completed"}, {"content": "Fillet", "status": "pending"}]})),
+                update(
+                    json!({"sessionUpdate": "plan", "entries": [{"content": "Make box", "status": "completed"}, {"content": "Fillet", "status": "pending"}]}),
+                ),
                 update(json!({"sessionUpdate": "some_future_update", "x": 1})),
                 reply(v, json!({"stopReason": "end_turn"})),
             ],
@@ -106,14 +117,26 @@ fn a_turn_streams_text_tools_and_permissions() {
     let mut s = start(wire);
     let mut events = Vec::new();
     let mut asked = 0;
-    let out = s.prompt("make a box", None, &Cancel::new(), true, &mut |_| { asked += 1; None }, &mut |e| events.push(e));
+    let out = s.prompt(
+        "make a box",
+        None,
+        &Cancel::new(),
+        true,
+        &mut |_| {
+            asked += 1;
+            None
+        },
+        &mut |e| events.push(e),
+    );
     assert_eq!(out.finish, Finish::Done);
     assert_eq!(out.tool_calls, 1);
     assert_eq!(asked, 0, "SolidCraft's own tools are allowed without asking");
     assert!(events.contains(&Event::Thinking("thinking".into())));
     let text: String = events.iter().filter_map(|e| if let Event::Text(t) = e { Some(t.as_str()) } else { None }).collect();
     assert_eq!(text, "Making a box.");
-    assert!(events.iter().any(|e| matches!(e, Event::ToolCall { name, input, .. } if name == "solidcraft: execute" && input["command"] == "solid.box")));
+    assert!(
+        events.iter().any(|e| matches!(e, Event::ToolCall { name, input, .. } if name == "solidcraft: execute" && input["command"] == "solid.box"))
+    );
     assert!(events.iter().any(|e| matches!(e, Event::ToolResult { is_error: false, text, .. } if text == "created Body1")));
     assert!(events.iter().any(|e| matches!(e, Event::Notice(n) if n.contains("[x] Make box") && n.contains("[ ] Fillet"))));
     // The permission was answered with the first allow-once option, and the file read refused.
@@ -140,7 +163,17 @@ fn other_tools_ask_the_person_and_a_no_is_a_cancelled_outcome() {
     });
     let mut s = start(wire);
     let mut asked: Vec<PermissionRequest> = Vec::new();
-    let out = s.prompt("hi", None, &Cancel::new(), true, &mut |r| { asked.push(r.clone()); None }, &mut |_| {});
+    let out = s.prompt(
+        "hi",
+        None,
+        &Cancel::new(),
+        true,
+        &mut |r| {
+            asked.push(r.clone());
+            None
+        },
+        &mut |_| {},
+    );
     assert_eq!(out.finish, Finish::Done);
     assert_eq!(asked.len(), 1);
     assert_eq!(asked[0].title, "Run rm -rf");

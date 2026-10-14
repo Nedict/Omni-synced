@@ -59,11 +59,23 @@ pub enum Event {
     Text(String),
     Thinking(String),
     /// A tool call began streaming in.
-    ToolStart { name: String },
+    ToolStart {
+        name: String,
+    },
     /// A tool call is about to run.
-    ToolCall { id: String, name: String, input: Value },
+    ToolCall {
+        id: String,
+        name: String,
+        input: Value,
+    },
     /// A tool call finished; `text` is what the model was shown.
-    ToolResult { id: String, name: String, is_error: bool, text: String, images: usize },
+    ToolResult {
+        id: String,
+        name: String,
+        is_error: bool,
+        text: String,
+        images: usize,
+    },
     /// Token counts of the whole turn so far.
     Usage(Usage),
     /// Something the person should know (a retry, a limit).
@@ -116,7 +128,14 @@ pub struct TurnConfig<'a> {
 
 /// Run one user message to completion. `history` gains the user message, every model reply and
 /// every tool result; a turn that fails on its first request leaves `history` as it was.
-pub fn run_turn(cfg: &TurnConfig, history: &mut Vec<Message>, user: Message, host: &dyn ToolHost, cancel: &Cancel, on_event: &mut dyn FnMut(Event)) -> TurnOutcome {
+pub fn run_turn(
+    cfg: &TurnConfig,
+    history: &mut Vec<Message>,
+    user: Message,
+    host: &dyn ToolHost,
+    cancel: &Cancel,
+    on_event: &mut dyn FnMut(Event),
+) -> TurnOutcome {
     let mut base = history.len();
     let fixed = crate::context::fixed_tokens(cfg.system, cfg.tools);
     let mut out = TurnOutcome { finish: Finish::Done, usage: Usage::default(), steps: 0, tool_calls: 0 };
@@ -146,7 +165,8 @@ pub fn run_turn(cfg: &TurnConfig, history: &mut Vec<Message>, user: Message, hos
         if dropped.turns > 0 {
             on_event(Event::Notice(format!("The conversation is long: the oldest {} turn(s) are no longer sent to the model.", dropped.turns)));
         }
-        let req = ChatRequest { model: cfg.model, system: cfg.system, messages: history, tools: cfg.tools, vision: cfg.vision, max_tokens: cfg.max_tokens };
+        let req =
+            ChatRequest { model: cfg.model, system: cfg.system, messages: history, tools: cfg.tools, vision: cfg.vision, max_tokens: cfg.max_tokens };
         let http_req = match cfg.codec.request(&req, cfg.base_url, cfg.key) {
             Ok(r) => r,
             Err(e) => return fail(out, history, base, e),
@@ -280,8 +300,16 @@ pub fn call_title(name: &str, input: &Value) -> String {
         "execute" => input.get("command").and_then(Value::as_str).map(|c| format!("execute {c}")).unwrap_or_else(|| "execute".into()),
         "batch" => {
             let n = input.get("commands").and_then(Value::as_array).map(Vec::len).unwrap_or(0);
-            let first: Vec<&str> = input.get("commands").and_then(Value::as_array).map(|a| a.iter().filter_map(|c| c.get("command").and_then(Value::as_str)).take(3).collect()).unwrap_or_default();
-            if first.is_empty() { format!("batch ({n} steps)") } else { format!("batch ({n} steps: {}{})", first.join(", "), if n > first.len() { ", …" } else { "" }) }
+            let first: Vec<&str> = input
+                .get("commands")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(|c| c.get("command").and_then(Value::as_str)).take(3).collect())
+                .unwrap_or_default();
+            if first.is_empty() {
+                format!("batch ({n} steps)")
+            } else {
+                format!("batch ({n} steps: {}{})", first.join(", "), if n > first.len() { ", …" } else { "" })
+            }
         }
         other => other.to_string(),
     }

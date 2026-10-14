@@ -23,10 +23,20 @@ const QUEUE: usize = 4096;
 /// A message from the agent.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Incoming {
-    Notification { method: String, params: Value },
+    Notification {
+        method: String,
+        params: Value,
+    },
     /// The agent asks us for something; it waits for an answer with the same `id`.
-    Request { id: Value, method: String, params: Value },
-    Response { id: Value, result: Result<Value, String> },
+    Request {
+        id: Value,
+        method: String,
+        params: Value,
+    },
+    Response {
+        id: Value,
+        result: Result<Value, String>,
+    },
     /// The stream ended or broke.
     Closed(String),
 }
@@ -188,10 +198,22 @@ mod tests {
 
     #[test]
     fn messages_are_classified() {
-        assert_eq!(parse_message(r#"{"jsonrpc":"2.0","method":"session/update","params":{"a":1}}"#), Some(Incoming::Notification { method: "session/update".into(), params: json!({"a": 1}) }));
-        assert_eq!(parse_message(r#"{"jsonrpc":"2.0","id":7,"method":"x"}"#), Some(Incoming::Request { id: json!(7), method: "x".into(), params: Value::Null }));
-        assert_eq!(parse_message(r#"{"jsonrpc":"2.0","id":"a","result":{"ok":true}}"#), Some(Incoming::Response { id: json!("a"), result: Ok(json!({"ok": true})) }));
-        assert_eq!(parse_message(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"nope"}}"#), Some(Incoming::Response { id: json!(1), result: Err("nope".into()) }));
+        assert_eq!(
+            parse_message(r#"{"jsonrpc":"2.0","method":"session/update","params":{"a":1}}"#),
+            Some(Incoming::Notification { method: "session/update".into(), params: json!({"a": 1}) })
+        );
+        assert_eq!(
+            parse_message(r#"{"jsonrpc":"2.0","id":7,"method":"x"}"#),
+            Some(Incoming::Request { id: json!(7), method: "x".into(), params: Value::Null })
+        );
+        assert_eq!(
+            parse_message(r#"{"jsonrpc":"2.0","id":"a","result":{"ok":true}}"#),
+            Some(Incoming::Response { id: json!("a"), result: Ok(json!({"ok": true})) })
+        );
+        assert_eq!(
+            parse_message(r#"{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"nope"}}"#),
+            Some(Incoming::Response { id: json!(1), result: Err("nope".into()) })
+        );
         for junk in ["", "hello", "[1]", "{}", r#"{"jsonrpc":"1.0","method":"x"}"#, r#"{"id":[1],"result":1}"#, r#"{"id":1}"#, "null"] {
             assert_eq!(parse_message(junk), None, "{junk:?}");
         }

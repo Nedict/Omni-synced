@@ -77,7 +77,14 @@ pub struct AgentSession {
 
 impl AgentSession {
     /// Run the handshake on a started program: `initialize`, then `session/new` with `mcp`.
-    pub fn start(mut wire: Wire, guard: Option<ChildGuard>, stderr: StderrTail, cwd: &str, mcp: Option<&McpServer>, cancel: &Cancel) -> Result<AgentSession, String> {
+    pub fn start(
+        mut wire: Wire,
+        guard: Option<ChildGuard>,
+        stderr: StderrTail,
+        cwd: &str,
+        mcp: Option<&McpServer>,
+        cancel: &Cancel,
+    ) -> Result<AgentSession, String> {
         let init = wire.request(
             "initialize",
             json!({
@@ -172,7 +179,11 @@ impl AgentSession {
                 Incoming::Closed(why) => {
                     self.broken = true;
                     let err = stderr_text(&self.stderr);
-                    out.finish = Finish::Error(if err.is_empty() { format!("The agent program ended ({why}).") } else { format!("The agent program ended ({why}):\n{err}") });
+                    out.finish = Finish::Error(if err.is_empty() {
+                        format!("The agent program ended ({why}).")
+                    } else {
+                        format!("The agent program ended ({why}):\n{err}")
+                    });
                     return out;
                 }
                 Incoming::Response { id: rid, result } if rid == id => {
@@ -233,7 +244,11 @@ fn await_response(wire: &Wire, id: &Value, cancel: &Cancel, limit: Duration, std
             Err(RecvTimeoutError::Disconnected) => return Err("the agent connection was lost".into()),
             Ok(Incoming::Closed(why)) => {
                 let err = stderr_text(stderr);
-                return Err(if err.is_empty() { format!("the agent program ended ({why})") } else { format!("the agent program ended ({why}): {err}") });
+                return Err(if err.is_empty() {
+                    format!("the agent program ended ({why})")
+                } else {
+                    format!("the agent program ended ({why}): {err}")
+                });
             }
             Ok(Incoming::Response { id: rid, result }) if &rid == id => return result.map_err(|e| format!("the agent refused: {e}")),
             Ok(Incoming::Request { id: rid, .. }) => {
@@ -250,9 +265,20 @@ fn permission_request(params: &Value) -> PermissionRequest {
     let options = params
         .get("options")
         .and_then(Value::as_array)
-        .map(|a| a.iter().take(16).map(|o| PermissionOption { id: text(o, "optionId"), name: text(o, "name"), kind: text(o, "kind") }).filter(|o| !o.id.is_empty()).collect())
+        .map(|a| {
+            a.iter()
+                .take(16)
+                .map(|o| PermissionOption { id: text(o, "optionId"), name: text(o, "name"), kind: text(o, "kind") })
+                .filter(|o| !o.id.is_empty())
+                .collect()
+        })
         .unwrap_or_default();
-    PermissionRequest { title: text(call, "title"), kind: text(call, "kind"), raw_input: call.get("rawInput").cloned().unwrap_or(Value::Null), options }
+    PermissionRequest {
+        title: text(call, "title"),
+        kind: text(call, "kind"),
+        raw_input: call.get("rawInput").cloned().unwrap_or(Value::Null),
+        options,
+    }
 }
 
 fn content_text(v: &Value) -> String {
@@ -296,7 +322,15 @@ fn update(params: &Value, tools: &mut HashMap<String, String>, out: &mut TurnOut
         }
         "tool_call" => {
             let id = u.get("toolCallId").and_then(Value::as_str).unwrap_or("").to_string();
-            let title = u.get("title").and_then(Value::as_str).filter(|t| !t.is_empty()).or_else(|| u.get("kind").and_then(Value::as_str)).unwrap_or("tool").chars().take(200).collect::<String>();
+            let title = u
+                .get("title")
+                .and_then(Value::as_str)
+                .filter(|t| !t.is_empty())
+                .or_else(|| u.get("kind").and_then(Value::as_str))
+                .unwrap_or("tool")
+                .chars()
+                .take(200)
+                .collect::<String>();
             let input = u.get("rawInput").filter(|i| i.is_object()).cloned().unwrap_or_else(|| json!({}));
             out.tool_calls += 1;
             tools.insert(id.clone(), title.clone());
@@ -346,7 +380,13 @@ fn finish_tool(u: &Value, id: &str, title: &str, on_event: &mut dyn FnMut(Event)
             other => other.to_string(),
         };
     }
-    on_event(Event::ToolResult { id: id.to_string(), name: title.to_string(), is_error, text: crate::model::truncate(&text, MAX_TOOL_TEXT, "output truncated"), images: 0 });
+    on_event(Event::ToolResult {
+        id: id.to_string(),
+        name: title.to_string(),
+        is_error,
+        text: crate::model::truncate(&text, MAX_TOOL_TEXT, "output truncated"),
+        images: 0,
+    });
 }
 
 #[cfg(test)]

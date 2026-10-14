@@ -16,7 +16,8 @@ pub const ALLOWED_METHODS: &[&str] = &["engine.execute", "engine.batch", "engine
 const PATH_KEYS: &[&str] = &["path", "file", "filename", "output", "out", "dest", "destination", "dir", "folder"];
 
 /// Extensions that make a string value a file name even without a separator.
-const FILE_EXTENSIONS: &[&str] = &["solidcraft", "json", "csv", "step", "stp", "stl", "3mf", "obj", "dxf", "png", "jpg", "jpeg", "urdf", "txt", "svg", "py", "toml"];
+const FILE_EXTENSIONS: &[&str] =
+    &["solidcraft", "json", "csv", "step", "stp", "stl", "3mf", "obj", "dxf", "png", "jpg", "jpeg", "urdf", "txt", "svg", "py", "toml"];
 
 /// The decision for one request.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,7 +54,11 @@ fn confirm_lines<'a>(steps: impl Iterator<Item = (&'a str, &'a Value)>) -> Verdi
 /// `Some(description)` for a command that touches files or replaces the design.
 fn describe_if_risky(id: &str, params: &Value) -> Option<String> {
     let file = file_param(params);
-    let by_id = id.starts_with("file.") || id.starts_with("doc.") || id.starts_with("library.export") || id.ends_with(".export_script") || id == "view.save_file";
+    let by_id = id.starts_with("file.")
+        || id.starts_with("doc.")
+        || id.starts_with("library.export")
+        || id.ends_with(".export_script")
+        || id == "view.save_file";
     if !by_id && file.is_none() {
         return None;
     }
@@ -104,8 +109,14 @@ mod tests {
     #[test]
     fn modelling_commands_run_freely() {
         assert_eq!(classify("engine.execute", &json!({"command": "solid.extrude", "params": {"distance": 20}})), Verdict::Allow);
-        assert_eq!(classify("engine.execute", &json!({"command": "solid.sweep", "params": {"path": ["c1", "c2"], "path_sketch": "S"}})), Verdict::Allow);
-        assert_eq!(classify("engine.execute", &json!({"command": "construct.plane.along_path", "params": {"path": "edge-3", "t": 0.5}})), Verdict::Allow);
+        assert_eq!(
+            classify("engine.execute", &json!({"command": "solid.sweep", "params": {"path": ["c1", "c2"], "path_sketch": "S"}})),
+            Verdict::Allow
+        );
+        assert_eq!(
+            classify("engine.execute", &json!({"command": "construct.plane.along_path", "params": {"path": "edge-3", "t": 0.5}})),
+            Verdict::Allow
+        );
         assert_eq!(classify("engine.commands", &json!({})), Verdict::Allow);
         assert_eq!(classify("document.inspect", &json!({"measure": true})), Verdict::Allow);
         assert_eq!(classify("ui.render", &json!({"path": "/tmp/x.png", "width": 100})), Verdict::Allow);
@@ -158,7 +169,14 @@ mod tests {
 
     #[test]
     fn hostile_shapes_do_not_panic() {
-        for p in [json!(null), json!([]), json!("x"), json!({"command": 5, "params": 7}), json!({"commands": "x"}), json!({"commands": [1, null, {"command": []}]})] {
+        for p in [
+            json!(null),
+            json!([]),
+            json!("x"),
+            json!({"command": 5, "params": 7}),
+            json!({"commands": "x"}),
+            json!({"commands": [1, null, {"command": []}]}),
+        ] {
             let _ = classify("engine.execute", &p);
             let _ = classify("engine.batch", &p);
         }

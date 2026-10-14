@@ -46,7 +46,8 @@ impl Script {
         let me = self.clone();
         Arc::new(move |req: &HttpRequest, cancel: &Cancel, sink: &mut dyn FnMut(&[u8]) -> bool| {
             me.seen.lock().unwrap().push(serde_json::from_slice(&req.body).unwrap());
-            let reply = me.replies.lock().unwrap().pop_front().unwrap_or_else(|| Err(HttpError::Transport("the script ran out of replies".into())))?;
+            let reply =
+                me.replies.lock().unwrap().pop_front().unwrap_or_else(|| Err(HttpError::Transport("the script ran out of replies".into())))?;
             for (i, chunk) in reply.chunks(7).enumerate() {
                 if let Some(f) = me.on_reply.lock().unwrap().as_ref().filter(|_| i == 2) {
                     f();
@@ -97,7 +98,15 @@ impl Fixture {
         Self { tools: crate::tools::definitions(false), key: Secret::new("sk-test") }
     }
 
-    fn run(&self, script: &Arc<Script>, host: &dyn ToolHost, history: &mut Vec<Message>, text: &str, cancel: &Cancel, max_steps: usize) -> (TurnOutcome, Vec<Event>) {
+    fn run(
+        &self,
+        script: &Arc<Script>,
+        host: &dyn ToolHost,
+        history: &mut Vec<Message>,
+        text: &str,
+        cancel: &Cancel,
+        max_steps: usize,
+    ) -> (TurnOutcome, Vec<Event>) {
         let http = script.stream();
         let cfg = TurnConfig {
             codec: &Anthropic,
@@ -189,7 +198,11 @@ fn malformed_tool_arguments_are_answered_not_run() {
 #[test]
 fn a_first_request_that_fails_leaves_the_conversation_alone() {
     let host = HeadlessHost::new();
-    let script = Script::new(vec![Err(HttpError::Status { code: 401, retry_after: None, body: r#"{"error":{"message":"invalid x-api-key sk-test"}}"#.into() })]);
+    let script = Script::new(vec![Err(HttpError::Status {
+        code: 401,
+        retry_after: None,
+        body: r#"{"error":{"message":"invalid x-api-key sk-test"}}"#.into(),
+    })]);
     let mut history = vec![Message::user_text("earlier"), Message::assistant(vec![Block::Text("hello".into())])];
     let (out, _) = Fixture::new().run(&script, &host, &mut history, "go", &Cancel::new(), MAX_STEPS);
     match out.finish {
@@ -275,10 +288,18 @@ fn an_unencrypted_remote_address_is_refused_before_anything_is_sent() {
 
 #[test]
 fn old_pictures_are_not_sent_again() {
-    let result = |id: &str| Message { role: Role::User, blocks: vec![Block::ToolResult { id: id.into(), parts: vec![Part::Text("t".into()), Part::Image { mime: "image/png".into(), data: "AA".into() }], is_error: false }] };
+    let result = |id: &str| Message {
+        role: Role::User,
+        blocks: vec![Block::ToolResult {
+            id: id.into(),
+            parts: vec![Part::Text("t".into()), Part::Image { mime: "image/png".into(), data: "AA".into() }],
+            is_error: false,
+        }],
+    };
     let mut h = vec![Message::user_text("a"), result("1"), Message::assistant(vec![Block::Text("x".into())]), result("2")];
     strip_old_pictures(&mut h);
-    let has_image = |m: &Message| m.blocks.iter().any(|b| matches!(b, Block::ToolResult { parts, .. } if parts.iter().any(|p| matches!(p, Part::Image { .. }))));
+    let has_image =
+        |m: &Message| m.blocks.iter().any(|b| matches!(b, Block::ToolResult { parts, .. } if parts.iter().any(|p| matches!(p, Part::Image { .. }))));
     assert!(!has_image(&h[1]));
     assert!(has_image(&h[3]));
 }
@@ -293,7 +314,10 @@ fn big_results_are_cut() {
 #[test]
 fn titles_name_the_command() {
     assert_eq!(call_title("execute", &json!({"command": "solid.extrude"})), "execute solid.extrude");
-    assert_eq!(call_title("batch", &json!({"commands": [{"command": "a"}, {"command": "b"}, {"command": "c"}, {"command": "d"}]})), "batch (4 steps: a, b, c, …)");
+    assert_eq!(
+        call_title("batch", &json!({"commands": [{"command": "a"}, {"command": "b"}, {"command": "c"}, {"command": "d"}]})),
+        "batch (4 steps: a, b, c, …)"
+    );
     assert_eq!(call_title("measure", &json!({})), "measure");
     assert_eq!(call_title("execute", &json!(null)), "execute");
 }

@@ -133,7 +133,9 @@ pub fn is_loopback_host(host: &str) -> bool {
         return true;
     }
     let parts: Vec<&str> = h.split('.').collect();
-    parts.len() == 4 && parts[0] == "127" && parts.iter().all(|p| !p.is_empty() && p.len() <= 3 && p.bytes().all(|b| b.is_ascii_digit()) && p.parse::<u16>().is_ok_and(|n| n <= 255))
+    parts.len() == 4
+        && parts[0] == "127"
+        && parts.iter().all(|p| !p.is_empty() && p.len() <= 3 && p.bytes().all(|b| b.is_ascii_digit()) && p.parse::<u16>().is_ok_and(|n| n <= 255))
 }
 
 /// Whether the assistant may POST to `url`: always for `https`; for `http` only to a loopback
@@ -141,7 +143,10 @@ pub fn is_loopback_host(host: &str) -> bool {
 pub fn check_url(url: &str, allow_http: bool) -> Result<ParsedUrl, String> {
     let parsed = parse_url(url)?;
     if parsed.scheme == "http" && !allow_http && !is_loopback_host(&parsed.host) {
-        return Err(format!("`{}` would be reached without encryption; use https:// or allow unencrypted HTTP for this host in the settings", parsed.host));
+        return Err(format!(
+            "`{}` would be reached without encryption; use https:// or allow unencrypted HTTP for this host in the settings",
+            parsed.host
+        ));
     }
     Ok(parsed)
 }
@@ -167,7 +172,9 @@ mod tests {
         for u in ["http://localhost:11434/v1", "http://127.0.0.1:1234", "http://[::1]:8080/v1", "http://foo.localhost/v1", "http://127.255.0.9/"] {
             assert!(check_url(u, false).is_ok(), "{u}");
         }
-        for u in ["http://example.com/v1", "http://192.168.1.20:1234/v1", "http://127.0.0.1.evil.com/", "http://1270.0.0.1/", "http://localhost.evil.com/"] {
+        for u in
+            ["http://example.com/v1", "http://192.168.1.20:1234/v1", "http://127.0.0.1.evil.com/", "http://1270.0.0.1/", "http://localhost.evil.com/"]
+        {
             assert!(check_url(u, false).is_err(), "{u}");
             assert!(check_url(u, true).is_ok(), "{u} with opt-in");
         }

@@ -98,7 +98,13 @@ impl Store {
                 break t;
             }
             // Drop the oldest turn (up to the second user text).
-            let starts: Vec<usize> = conv.messages.iter().enumerate().filter(|(_, m)| m.role == Role::User && m.blocks.iter().any(|b| matches!(b, Block::Text(_)))).map(|(i, _)| i).collect();
+            let starts: Vec<usize> = conv
+                .messages
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.role == Role::User && m.blocks.iter().any(|b| matches!(b, Block::Text(_))))
+                .map(|(i, _)| i)
+                .collect();
             let Some(&second) = starts.get(1) else { return Err("the conversation is too large to save".into()) };
             conv.messages.drain(..second);
         };
@@ -132,7 +138,11 @@ impl Store {
                     return None;
                 }
                 let v = read_json(&p)?;
-                Some(Summary { id, title: v.get("title").and_then(Value::as_str).unwrap_or("").chars().take(120).collect(), updated: v.get("updated").and_then(Value::as_u64).unwrap_or(0) })
+                Some(Summary {
+                    id,
+                    title: v.get("title").and_then(Value::as_str).unwrap_or("").chars().take(120).collect(),
+                    updated: v.get("updated").and_then(Value::as_u64).unwrap_or(0),
+                })
             })
             .collect();
         out.sort_by_key(|s| std::cmp::Reverse(s.updated));
@@ -237,7 +247,11 @@ fn block_from(v: &Value) -> Option<Block> {
         "tool_result" => Some(Block::ToolResult {
             id: v.get("id")?.as_str()?.to_string(),
             is_error: v.get("is_error").and_then(Value::as_bool).unwrap_or(false),
-            parts: v.get("parts").and_then(Value::as_array).map(|a| a.iter().take(64).filter_map(|p| text_of(p).map(Part::Text)).collect()).unwrap_or_default(),
+            parts: v
+                .get("parts")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().take(64).filter_map(|p| text_of(p).map(Part::Text)).collect())
+                .unwrap_or_default(),
         }),
         _ => None,
     }
@@ -268,7 +282,12 @@ pub fn export_markdown(messages: &[Message]) -> String {
     for m in messages {
         match m.role {
             Role::User => {
-                let text: Vec<&str> = m.blocks.iter().filter_map(|b| if let Block::Text(t) = b { Some(t.as_str()) } else { None }).filter(|t| !t.starts_with(crate::context::CONTEXT_OPEN)).collect();
+                let text: Vec<&str> = m
+                    .blocks
+                    .iter()
+                    .filter_map(|b| if let Block::Text(t) = b { Some(t.as_str()) } else { None })
+                    .filter(|t| !t.starts_with(crate::context::CONTEXT_OPEN))
+                    .collect();
                 if !text.is_empty() {
                     out.push_str("## You\n\n");
                     out.push_str(&text.join("\n\n"));
@@ -310,8 +329,20 @@ mod tests {
         let mut messages = Vec::new();
         for i in 0..n {
             messages.push(Message::user_text(format!("question {i}")));
-            messages.push(Message::assistant(vec![Block::ToolUse { id: format!("t{i}"), name: "execute".into(), input: json!({"command": "solid.box"}), error: None }]));
-            messages.push(Message { role: Role::User, blocks: vec![Block::ToolResult { id: format!("t{i}"), parts: vec![Part::Text("ok".into()), Part::Image { mime: "image/png".into(), data: "AAAA".into() }], is_error: false }] });
+            messages.push(Message::assistant(vec![Block::ToolUse {
+                id: format!("t{i}"),
+                name: "execute".into(),
+                input: json!({"command": "solid.box"}),
+                error: None,
+            }]));
+            messages.push(Message {
+                role: Role::User,
+                blocks: vec![Block::ToolResult {
+                    id: format!("t{i}"),
+                    parts: vec![Part::Text("ok".into()), Part::Image { mime: "image/png".into(), data: "AAAA".into() }],
+                    is_error: false,
+                }],
+            });
             messages.push(Message::assistant(vec![Block::Text(format!("answer {i}"))]));
         }
         Saved { id: id.into(), title: title_of(&messages), updated, messages, usage: Usage { input: 5, output: 6, cache_read: 1, cache_write: 0 } }

@@ -18,15 +18,28 @@ pub enum Span {
     Italic(String),
     Code(String),
     /// A link with an `http` or `https` target; any other target is shown as its label only.
-    Link { label: String, url: String },
+    Link {
+        label: String,
+        url: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Block {
     Paragraph(Vec<Span>),
-    Heading { level: u8, spans: Vec<Span> },
-    Code { lang: String, text: String },
-    List { ordered: bool, start: u64, items: Vec<Vec<Span>> },
+    Heading {
+        level: u8,
+        spans: Vec<Span>,
+    },
+    Code {
+        lang: String,
+        text: String,
+    },
+    List {
+        ordered: bool,
+        start: u64,
+        items: Vec<Vec<Span>>,
+    },
     Quote(Vec<Span>),
     /// Preformatted text (tables).
     Pre(String),
@@ -305,7 +318,18 @@ mod tests {
         let md = "# Title\n\nSome *emphasis* and **bold** with `code`.\nSecond line.\n\n- one\n- two\n  wrapped\n\n1. a\n2. b\n\n> quoted\n\n---\n\n```rust\nlet x = 1;\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n";
         let b = parse(md);
         assert_eq!(b[0], Block::Heading { level: 1, spans: vec![t("Title")] });
-        assert_eq!(b[1], Block::Paragraph(vec![t("Some "), Span::Italic("emphasis".into()), t(" and "), Span::Bold("bold".into()), t(" with "), Span::Code("code".into()), t(". Second line.")]));
+        assert_eq!(
+            b[1],
+            Block::Paragraph(vec![
+                t("Some "),
+                Span::Italic("emphasis".into()),
+                t(" and "),
+                Span::Bold("bold".into()),
+                t(" with "),
+                Span::Code("code".into()),
+                t(". Second line.")
+            ])
+        );
         assert_eq!(b[2], Block::List { ordered: false, start: 1, items: vec![vec![t("one")], vec![t("two"), t(" "), t("wrapped")]] });
         assert_eq!(b[3], Block::List { ordered: true, start: 1, items: vec![vec![t("a")], vec![t("b")]] });
         assert_eq!(b[4], Block::Quote(vec![t("quoted")]));

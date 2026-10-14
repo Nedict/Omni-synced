@@ -34,7 +34,10 @@ fn calls(calls: &[(&str, &str, Value)]) -> String {
 }
 
 fn say(text: &str) -> String {
-    sse(&[json!({"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]}), json!({"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 4}})])
+    sse(&[
+        json!({"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]}),
+        json!({"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 4}}),
+    ])
 }
 
 fn install(h: &mut Harness, replies: Vec<String>) -> Arc<Service> {
@@ -51,8 +54,7 @@ fn install(h: &mut Harness, replies: Vec<String>) -> Arc<Service> {
         Ok(())
     });
     h.app.services.assistant_http = Some(http);
-    let mut s = Settings::default();
-    s.backend = BackendKind::OpenAi;
+    let mut s = Settings { backend: BackendKind::OpenAi, ..Settings::default() };
     s.openai.base_url = "http://127.0.0.1:9/v1".into();
     s.openai.model = "test-model".into();
     h.app.assistant.set_settings(s);
@@ -180,7 +182,11 @@ fn a_file_outside_the_assistants_folders_is_refused_even_when_allowed() {
     let _ = std::fs::remove_file(&outside);
     install(
         &mut h,
-        vec![calls(&[("c1", "execute", box_args())]), calls(&[("c2", "export", json!({"path": outside.to_string_lossy(), "format": "step"}))]), say("done")],
+        vec![
+            calls(&[("c1", "execute", box_args())]),
+            calls(&[("c2", "export", json!({"path": outside.to_string_lossy(), "format": "step"}))]),
+            say("done"),
+        ],
     );
     send_ok(&mut h, "export it");
     for _ in 0..4000 {
@@ -272,8 +278,7 @@ fn stopping_ends_the_turn_and_declines_what_waited() {
 #[test]
 fn missing_settings_say_what_to_do() {
     let mut h = Harness::new();
-    let mut s = Settings::default();
-    s.backend = BackendKind::Anthropic;
+    let mut s = Settings { backend: BackendKind::Anthropic, ..Settings::default() };
     s.anthropic.api_key = solidcraft_assistant::settings::Secret::default();
     h.app.assistant.set_settings(s);
     h.app.assistant.data_root = Some(h.dir.join("assistant"));
@@ -298,8 +303,7 @@ fn install_http_only(h: &mut Harness) {
 #[test]
 fn the_web_build_has_no_transport() {
     let mut h = Harness::new();
-    let mut s = Settings::default();
-    s.backend = BackendKind::OpenAi;
+    let mut s = Settings { backend: BackendKind::OpenAi, ..Settings::default() };
     s.openai.model = "m".into();
     h.app.assistant.set_settings(s);
     h.app.services.assistant_http = None;
@@ -451,21 +455,34 @@ fn mock_acp_agent() {
                     reader.read_line(&mut l).unwrap();
                     serde_json::from_str(&l).unwrap()
                 };
-                say(json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "mock", "update": {"sessionUpdate": "tool_call", "toolCallId": "k1", "title": "solidcraft: execute", "kind": "other", "status": "pending", "rawInput": {"command": "solid.box"}}}}));
+                say(
+                    json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "mock", "update": {"sessionUpdate": "tool_call", "toolCallId": "k1", "title": "solidcraft: execute", "kind": "other", "status": "pending", "rawInput": {"command": "solid.box"}}}}),
+                );
                 // A wrong token: refused, and the connection is closed on it (its own connection).
                 let bad = {
                     let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
-                    writeln!(c, "{}", json!({"id": 1, "method": "engine.execute", "params": {"command": "solid.box"}, "token": "wrong-token"})).unwrap();
+                    writeln!(c, "{}", json!({"id": 1, "method": "engine.execute", "params": {"command": "solid.box"}, "token": "wrong-token"}))
+                        .unwrap();
                     let mut l = String::new();
                     std::io::BufReader::new(c).read_line(&mut l).unwrap();
                     serde_json::from_str::<Value>(&l).unwrap_or(json!({"ok": false}))
                 };
                 let made = call("engine.execute", json!({"command": "solid.box", "params": {"length": 10, "width": 20, "height": 30}}), &token);
-                say(json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "mock", "update": {"sessionUpdate": "tool_call_update", "toolCallId": "k1", "status": "completed", "content": [{"type": "content", "content": {"type": "text", "text": "box made"}}]}}}));
+                say(
+                    json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "mock", "update": {"sessionUpdate": "tool_call_update", "toolCallId": "k1", "status": "completed", "content": [{"type": "content", "content": {"type": "text", "text": "box made"}}]}}}),
+                );
                 let quit = call("app.quit", json!({}), &token);
                 let new = call("engine.execute", json!({"command": "file.new", "params": {}}), &token);
-                let text = format!("bad token: {}; box: {}; quit: {}; file.new: {}", bad["ok"], made["ok"], quit["ok"], new["error"].as_str().unwrap_or("ran"));
-                say(json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "mock", "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}}}));
+                let text = format!(
+                    "bad token: {}; box: {}; quit: {}; file.new: {}",
+                    bad["ok"],
+                    made["ok"],
+                    quit["ok"],
+                    new["error"].as_str().unwrap_or("ran")
+                );
+                say(
+                    json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "mock", "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}}}),
+                );
                 say(json!({"jsonrpc": "2.0", "id": id, "result": {"stopReason": "end_turn"}}));
             }
             _ => {}
@@ -488,8 +505,7 @@ fn agent_profile() -> solidcraft_assistant::settings::AgentProfile {
 #[test]
 fn an_external_agent_models_through_the_gate() {
     let mut h = Harness::new();
-    let mut s = Settings::default();
-    s.backend = BackendKind::Agent;
+    let mut s = Settings { backend: BackendKind::Agent, ..Settings::default() };
     s.agents.push(agent_profile());
     s.cli = "/usr/bin/solidcraft-cli".into();
     h.app.assistant.set_settings(s);
@@ -519,7 +535,13 @@ fn an_external_agent_models_through_the_gate() {
     assert!(!h.app.quit_requested);
     let items = s["items"].as_array().unwrap();
     let text = items.iter().filter(|i| i["kind"] == "assistant").map(|i| i["text"].as_str().unwrap().to_string()).collect::<String>();
-    assert!(text.contains("bad token: false") && text.contains("box: true") && text.contains("quit: false") && text.contains("file.new: the user declined"), "{text}");
+    assert!(
+        text.contains("bad token: false")
+            && text.contains("box: true")
+            && text.contains("quit: false")
+            && text.contains("file.new: the user declined"),
+        "{text}"
+    );
     assert!(items.iter().any(|i| i["kind"] == "tool" && i["title"] == "solidcraft: execute" && i["result"]["text"] == "box made"), "{s}");
     // The turn changed the design, so it can be undone as one step.
     assert!(s["undoable"].is_object(), "{s}");
@@ -531,8 +553,7 @@ fn an_external_agent_models_through_the_gate() {
 #[test]
 fn an_agent_that_is_not_installed_says_so() {
     let mut h = Harness::new();
-    let mut s = Settings::default();
-    s.backend = BackendKind::Agent;
+    let mut s = Settings { backend: BackendKind::Agent, ..Settings::default() };
     s.agents.push(solidcraft_assistant::settings::AgentProfile {
         name: "Missing".into(),
         command: "solidcraft-no-such-agent-xyz".into(),
@@ -555,8 +576,7 @@ fn an_agent_that_is_not_installed_says_so() {
 #[test]
 fn agents_need_the_desktop_app() {
     let mut h = Harness::new();
-    let mut s = Settings::default();
-    s.backend = BackendKind::Agent;
+    let mut s = Settings { backend: BackendKind::Agent, ..Settings::default() };
     s.agents.push(agent_profile());
     h.app.assistant.set_settings(s);
     let r = h.call("ui.assistant", json!({"action": "send", "text": "hi"}));
@@ -572,8 +592,7 @@ fn a_stuck_service_does_not_keep_the_sidebar_busy_after_stop() {
         std::thread::sleep(Duration::from_secs(8));
         Err(HttpError::Transport("stalled".into()))
     });
-    let mut s = Settings::default();
-    s.backend = BackendKind::OpenAi;
+    let mut s = Settings { backend: BackendKind::OpenAi, ..Settings::default() };
     s.openai.base_url = "http://127.0.0.1:9/v1".into();
     s.openai.model = "m".into();
     h.app.assistant.set_settings(s);

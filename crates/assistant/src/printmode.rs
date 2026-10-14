@@ -79,7 +79,14 @@ pub fn mcp_config_json(m: &McpServer) -> serde_json::Value {
 }
 
 /// Run `profile` for one prompt in `cwd`.
-pub fn run(profile: &AgentProfile, prompt: &str, mcp: Option<&McpServer>, cwd: &std::path::Path, cancel: &Cancel, on_event: &mut dyn FnMut(Event)) -> TurnOutcome {
+pub fn run(
+    profile: &AgentProfile,
+    prompt: &str,
+    mcp: Option<&McpServer>,
+    cwd: &std::path::Path,
+    cancel: &Cancel,
+    on_event: &mut dyn FnMut(Event),
+) -> TurnOutcome {
     let mut out = TurnOutcome { finish: Finish::Done, usage: Usage::default(), steps: 1, tool_calls: 0 };
     let mut config_file: Option<std::path::PathBuf> = None;
     let wants_config = profile.args.iter().any(|a| a.contains("{mcp_config}"));
@@ -102,7 +109,14 @@ pub fn run(profile: &AgentProfile, prompt: &str, mcp: Option<&McpServer>, cwd: &
     out
 }
 
-fn run_inner(profile: &AgentProfile, prompt: &str, config: Option<&str>, cwd: &std::path::Path, cancel: &Cancel, on_event: &mut dyn FnMut(Event)) -> Finish {
+fn run_inner(
+    profile: &AgentProfile,
+    prompt: &str,
+    config: Option<&str>,
+    cwd: &std::path::Path,
+    cancel: &Cancel,
+    on_event: &mut dyn FnMut(Event),
+) -> Finish {
     let (args, in_args) = build_args(profile, prompt, config);
     let mut cmd = Command::new(&profile.command);
     cmd.args(&args).current_dir(cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -111,7 +125,9 @@ fn run_inner(profile: &AgentProfile, prompt: &str, config: Option<&str>, cwd: &s
     }
     let mut child = match cmd.spawn() {
         Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Finish::Error(format!("`{}` was not found. Install it, or give its full path in the assistant settings.", profile.command)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Finish::Error(format!("`{}` was not found. Install it, or give its full path in the assistant settings.", profile.command));
+        }
         Err(e) => return Finish::Error(format!("cannot start `{}`: {e}", profile.command)),
     };
     // The prompt goes to the program's input unless an argument carries it; closing the input
@@ -205,7 +221,13 @@ mod tests {
 
     #[test]
     fn placeholders_are_filled() {
-        let p = AgentProfile { name: "a".into(), command: "agy".into(), args: vec!["-p".into(), "{prompt}".into(), "--mcp-config".into(), "{mcp_config}".into()], env: vec![], mode: AgentMode::Print };
+        let p = AgentProfile {
+            name: "a".into(),
+            command: "agy".into(),
+            args: vec!["-p".into(), "{prompt}".into(), "--mcp-config".into(), "{mcp_config}".into()],
+            env: vec![],
+            mode: AgentMode::Print,
+        };
         let (args, in_args) = build_args(&p, "make a box", Some("/tmp/c.json"));
         assert_eq!(args, ["-p", "make a box", "--mcp-config", "/tmp/c.json"]);
         assert!(in_args);
@@ -244,7 +266,13 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_failing_program_and_a_stop() {
-        let p = AgentProfile { name: "f".into(), command: "sh".into(), args: vec!["-c".into(), "echo bad >&2; exit 3".into()], env: vec![], mode: AgentMode::Print };
+        let p = AgentProfile {
+            name: "f".into(),
+            command: "sh".into(),
+            args: vec!["-c".into(), "echo bad >&2; exit 3".into()],
+            env: vec![],
+            mode: AgentMode::Print,
+        };
         let out = run(&p, "x", None, &std::env::temp_dir(), &Cancel::new(), &mut |_| {});
         match out.finish {
             Finish::Error(m) => assert!(m.contains("bad"), "{m}"),

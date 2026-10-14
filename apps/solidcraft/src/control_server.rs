@@ -61,7 +61,8 @@ pub fn start_agent_endpoint(spec: solidcraft_ui_egui::assistant_ui::EndpointSpec
                             open.fetch_sub(1, Ordering::Relaxed);
                             continue;
                         }
-                        let (tx, ctx, token, turn, open, flag) = (spec.inlet.clone(), spec.ctx.clone(), shared_token.clone(), spec.turn.clone(), open.clone(), flag.clone());
+                        let (tx, ctx, token, turn, open, flag) =
+                            (spec.inlet.clone(), spec.ctx.clone(), shared_token.clone(), spec.turn.clone(), open.clone(), flag.clone());
                         std::thread::spawn(move || {
                             serve(stream, &token, tx, ctx, Some((&turn, &flag)));
                             open.fetch_sub(1, Ordering::Relaxed);
@@ -177,7 +178,13 @@ fn refuse(out: &mut TcpStream, reader: &mut BufReader<TcpStream>) {
 
 /// Serve one connection. `agent`: the turn counter requests are tagged with and the flag that
 /// ends the endpoint (the assistant's agent endpoint); `None` for the app's own control port.
-fn serve(stream: TcpStream, token: &str, tx: Sender<ControlRequest>, ctx: egui::Context, agent: Option<(&std::sync::atomic::AtomicU64, &std::sync::atomic::AtomicBool)>) {
+fn serve(
+    stream: TcpStream,
+    token: &str,
+    tx: Sender<ControlRequest>,
+    ctx: egui::Context,
+    agent: Option<(&std::sync::atomic::AtomicU64, &std::sync::atomic::AtomicBool)>,
+) {
     let Ok(read) = stream.try_clone() else { return };
     let mut out = stream;
     let mut reader = BufReader::new(read);
