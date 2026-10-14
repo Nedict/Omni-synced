@@ -968,9 +968,13 @@ fn sheet_prism_cut(
                 }
                 modeled = true;
             } else if z1 > z0 {
+                // Each tool meets only the panel's cut-outs near it: arranging every one of a
+                // perforation's holes against every new hole would grow with their square (#732).
+                let near = sheet::NearHoles::new(&panel)?;
                 for flat in mapped {
+                    let local = near.around(&flat)?;
                     let clipped =
-                        sheet::material_boolean(std::slice::from_ref(&panel), std::slice::from_ref(&flat), kernel::BoolOp::Intersect, &mut work)?;
+                        sheet::material_boolean(std::slice::from_ref(&local), std::slice::from_ref(&flat), kernel::BoolOp::Intersect, &mut work)?;
                     if !clipped.is_empty() && !depth_resolved {
                         return Err(DocError::Invalid(
                             "sheet machining depth is below the supported 0.000001 mm extrusion resolution; increase the layer depth".into(),
