@@ -33,6 +33,8 @@ const MAX_FLAT_WORK: usize = 500_000_000;
 
 /// Starts the warning a fold gives when its `fixed` point touches no material: a recompute keeps
 /// the side the point lies on, and the `sheet.fold` command refuses such a point (#263).
+/// Tabs folded on one line whose material beyond the bend joins again.
+const FOLD_TABS_REJOIN: &str = "not supported yet: folding tabs that join again beyond the bend";
 pub const FOLD_FIXED_OFF_SHEET: &str = "the fold's fixed point is not on the sheet";
 
 fn flat_budget_error() -> DocError {
@@ -164,6 +166,46 @@ fn regions_complexity<'a>(regions: impl Iterator<Item = &'a Region2>) -> Result<
         }
     }
     Ok((edges, points))
+}
+
+/// A flat region's cut-outs by their bounding boxes, to clip tools against only the ones near
+/// them (the result is the same: a cut-out clear of a tool's box can't change what it meets).
+pub(crate) struct NearHoles<'a> {
+    region: &'a Region2,
+    boxes: Vec<(Vec2, Vec2)>,
+}
+
+/// A loop's bounding box, a little larger than its chords so arcs stay inside.
+fn loop_box(lp: &Loop2) -> Result<(Vec2, Vec2)> {
+    let pts = flat_polyline(lp)?;
+    let (lo, hi) = pts.iter().fold((Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN)), |(lo, hi), p| {
+        (Vec2::new(lo.x.min(p.x), lo.y.min(p.y)), Vec2::new(hi.x.max(p.x), hi.y.max(p.y)))
+    });
+    let pad = 1e-3 + 1e-9 * (lo.x.abs() + lo.y.abs() + hi.x.abs() + hi.y.abs());
+    Ok((lo - Vec2::new(pad, pad), hi + Vec2::new(pad, pad)))
+}
+
+impl<'a> NearHoles<'a> {
+    pub(crate) fn new(region: &'a Region2) -> Result<Self> {
+        Ok(Self { region, boxes: region.holes.iter().map(loop_box).collect::<Result<_>>()? })
+    }
+
+    /// The region with only the cut-outs whose boxes meet `tool`'s.
+    pub(crate) fn around(&self, tool: &Region2) -> Result<Region2> {
+        if self.region.holes.is_empty() {
+            return Ok(self.region.clone());
+        }
+        let (lo, hi) = loop_box(&tool.outer)?;
+        let holes = self
+            .region
+            .holes
+            .iter()
+            .zip(&self.boxes)
+            .filter(|(_, (a, b))| a.x <= hi.x && b.x >= lo.x && a.y <= hi.y && b.y >= lo.y)
+            .map(|(h, _)| h.clone())
+            .collect();
+        Ok(Region2 { outer: self.region.outer.clone(), holes })
+    }
 }
 
 pub(crate) fn material_boolean(a: &[Region2], b: &[Region2], op: kernel::BoolOp, work: &mut FlatWork) -> Result<Vec<Region2>> {
@@ -1267,11 +1309,22 @@ impl SheetBody {
                 }
             }
             for (pi, panel) in &panels {
-                let clipped = material_boolean(panel, std::slice::from_ref(outline), kernel::BoolOp::Intersect, work)?;
-                if clipped.is_empty() {
+                if material_boolean(panel, std::slice::from_ref(outline), kernel::BoolOp::Intersect, work)?.is_empty() {
                     continue;
                 }
-                // What the tool takes over from a free-form cut-out of the panel follows its
+                // The tool spans the cut-outs inside it (a counterbore's hole, whichever was made
+                // first): a wall of its own along a cut-out's wall would only touch it, which the
+                // cut cannot resolve. An island of the pocket that holds material stays.
+                let whole: Vec<Region2> = panel.iter().map(|r| Region2 { outer: r.outer.clone(), holes: Vec::new() }).collect();
+                let mut spanning = Region2 { outer: outline.outer.clone(), holes: Vec::new() };
+                for island in &outline.holes {
+                    let inside = Region2 { outer: island.ccw(), holes: Vec::new() };
+                    if !material_boolean(panel, std::slice::from_ref(&inside), kernel::BoolOp::Intersect, work)?.is_empty() {
+                        spanning.holes.push(island.clone());
+                    }
+                }
+                let clipped = material_boolean(&whole, std::slice::from_ref(&spanning), kernel::BoolOp::Intersect, work)?;
+                // What the tool takes over from a free-form outline of the panel follows its
                 // fitted arcs: walls of planes and cylinders, which the prism booleans take.
                 let clipped = clipped.iter().map(fitted_region).collect::<Result<Vec<_>>>()?;
                 let w = if self.flat { self.frame_mat() } else { self.world(*pi) };
@@ -2586,6 +2639,30 @@ impl SheetBody {
         fixed: Option<Vec3>,
         warning: &mut Option<String>,
     ) -> Result<usize> {
+        match self.fold_side(a, b, angle, radius, position, flip, fixed, warning, false) {
+            // The tabs the line folds can't take the side beyond them along, since it joins
+            // the side that stays through other material (a tab on an inside edge of an L,
+            // the fixed point on the far leg): the tabs' own ends fold instead, and the
+            // fixed point's material still stays (#639).
+            Err(DocError::Invalid(m)) if m == FOLD_TABS_REJOIN => self.fold_side(a, b, angle, radius, position, flip, fixed, warning, true),
+            r => r,
+        }
+    }
+
+    /// [`Self::add_fold`]; `other_side` moves the side the fixed point would keep.
+    #[allow(clippy::too_many_arguments)]
+    fn fold_side(
+        &mut self,
+        a: Vec3,
+        b: Vec3,
+        angle: f64,
+        radius: f64,
+        position: &str,
+        flip: bool,
+        fixed: Option<Vec3>,
+        warning: &mut Option<String>,
+        other_side: bool,
+    ) -> Result<usize> {
         if !(angle > 1e-6 && angle <= std::f64::consts::PI - 1e-6) {
             return Err(DocError::Invalid("the fold angle must be between 0 and 180°".into()));
         }
@@ -2653,7 +2730,7 @@ impl SheetBody {
             }
             (None, None) => side_area(n) <= side_area(n * -1.0),
         };
-        if !moves_n {
+        if moves_n == other_side {
             n = n * -1.0;
         }
         let l = a2.dot(n);
@@ -2689,6 +2766,12 @@ impl SheetBody {
         // Separate tabs on one line (the zone falls apart into several pieces): fold the ones
         // the line's points span, each as its own bend.
         let strips = merge_loops(std::slice::from_ref(&strip), &mut FlatWork::new())?;
+        // A zone clipped across the root of a tab folded before on the same line keeps a sliver
+        // of no width there: one real piece is the zone (#638).
+        let strip = match strips.as_slice() {
+            [one] => one.clone(),
+            _ => strip,
+        };
         if strips.len() > 1 {
             let span = (a2.dot(d).min(b2.dot(d)), a2.dot(d).max(b2.dot(d)));
             let angle = if flip { -angle } else { angle };
@@ -2806,7 +2889,7 @@ impl SheetBody {
                         h.push(k);
                     }
                 }
-                _ => return Err(DocError::Invalid("not supported yet: folding tabs that join again beyond the bend".into())),
+                _ => return Err(DocError::Invalid(FOLD_TABS_REJOIN.into())),
             }
         }
         let chosen: Vec<usize> = (0..strips.len()).filter(|&i| strip_u.get(i).is_some_and(|&u| overlap(u, span) > EPS)).collect();

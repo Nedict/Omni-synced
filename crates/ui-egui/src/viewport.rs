@@ -2832,7 +2832,7 @@ fn axis_rect(app: &SolveApp, rect: Rect) -> Rect {
 }
 
 const AXIS_LENGTH: f64 = 38.0;
-const AXIS_RADIUS: f32 = 11.0;
+use crate::icons::navigation::AXIS_RADIUS;
 
 /// Six signed world axes, sorted back to front so overlapping tips have one owner.
 fn axis_tips(cam: &Camera, c: Pos2) -> Vec<(&'static str, Vec3, Pos2, f64)> {
@@ -2999,24 +2999,7 @@ fn signed_axis_view(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
         painter.circle_filled(c, 55.0, t.overlay);
     }
     for (i, (name, d, at, depth)) in tips.iter().enumerate() {
-        let col = if d.x != 0.0 {
-            colors::AXIS_X
-        } else if d.y != 0.0 {
-            colors::AXIS_Y
-        } else {
-            colors::AXIS_Z
-        };
-        let col = Color32::from_rgb(col.0, col.1, col.2);
-        let positive = !name.starts_with('-');
-        let ink = if *depth < -0.01 { col.gamma_multiply(0.55) } else { col };
-        painter.line_segment([c, *at], Stroke::new(if positive { 2.0 } else { 1.0 }, ink));
-        painter.circle_filled(*at, AXIS_RADIUS, if hovered == Some(i) { t.accent_soft } else { t.overlay });
-        painter.circle_stroke(
-            *at,
-            AXIS_RADIUS,
-            Stroke::new(if hovered == Some(i) { 2.0 } else { 1.0 }, if hovered == Some(i) { t.accent } else { ink }),
-        );
-        painter.text(*at, Align2::CENTER_CENTER, name.to_uppercase(), FontId::proportional(11.0), ink);
+        crate::icons::navigation::axis_tip(&painter, c, name, d, *at, *depth, hovered == Some(i), t);
         crate::scenario::publish_handle(&format!("axis_view:{name}"), *at);
     }
     crate::scenario::publish_count("axis_view_highlights", f64::from(u8::from(hovered.is_some())));

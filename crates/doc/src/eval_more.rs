@@ -345,9 +345,12 @@ fn on_sheet_material(st: &ModelState, i: usize, p: Vec3) -> bool {
     if mesh.triangles.is_empty() {
         return true;
     }
-    // Twice the display mesh's chord tolerance (see `ModelBody::mesh`).
+    // Twice the display mesh's chord tolerance (see `ModelBody::mesh`), and a quarter of the
+    // thickness: on a large thin sheet the first steps from a point on its face clean through
+    // it, so a point on the face would touch nothing (#685).
     let step = 2.0 * (mb.body.size() * 1e-3).max(1e-3);
-    let offsets = [-step, 0.0, step];
+    let thin = st.sheets.get(i).map_or(step, |sh| (sh.t * 0.25).min(step));
+    let offsets = [-step, -thin, 0.0, thin, step];
     offsets.iter().any(|&dx| offsets.iter().any(|&dy| offsets.iter().any(|&dz| mesh.contains(p + Vec3::new(dx, dy, dz)))))
 }
 
@@ -726,9 +729,17 @@ fn any_eligible_sheet(f: &Feature, st: &ModelState, targets: &[String]) -> bool 
 
 /// A Box or Cylinder cut (or intersect) whose tool is a straight prism along the normal of
 /// the sheet it meets: machined like the equivalent extrude of its footprint, so the sheet
-/// keeps it as a flat cut-out or pocket. Returns the sheet bodies it handled; none when the
+/// keeps it as a flat cut-out or pocket. A hole's drill (`drill`) may also be square to a
+/// folded panel of the sheet, a flange's. Returns the sheet bodies it handled; none when the
 /// primitive is not such a prism (the generic preflight then refuses real 3D machining).
-pub(super) fn sheet_primitive_cut(f: &Feature, st: &mut ModelState, tool: &Body, prism: PrimitivePrism, operation: Operation) -> Result<Vec<String>> {
+pub(super) fn sheet_primitive_cut(
+    f: &Feature,
+    st: &mut ModelState,
+    tool: &Body,
+    prism: PrimitivePrism,
+    operation: Operation,
+    drill: bool,
+) -> Result<Vec<String>> {
     if !matches!(operation, Operation::Cut | Operation::Intersect) || !any_eligible_sheet(f, st, &[]) {
         return Ok(Vec::new());
     }
@@ -738,7 +749,14 @@ pub(super) fn sheet_primitive_cut(f: &Feature, st: &mut ModelState, tool: &Body,
         if let Some(mb) = st.body(&sh.body)
             && kernel::boolean(&mb.body, tool, kernel::BoolOp::Intersect)?.is_some()
         {
-            normal = Some(sh.frame.normal());
+            normal = Some(match prism {
+                PrimitivePrism::Cylinder { axis, .. }
+                    if drill && !sh.flat && Plane::from_normal(Vec3::ZERO, axis).is_some_and(|p| !sh.parallel_panels(&p).is_empty()) =>
+                {
+                    axis
+                }
+                _ => sh.frame.normal(),
+            });
             break;
         }
     }
@@ -950,9 +968,13 @@ fn sheet_prism_cut(
                 }
                 modeled = true;
             } else if z1 > z0 {
+                // Each tool meets only the panel's cut-outs near it: arranging every one of a
+                // perforation's holes against every new hole would grow with their square (#732).
+                let near = sheet::NearHoles::new(&panel)?;
                 for flat in mapped {
+                    let local = near.around(&flat)?;
                     let clipped =
-                        sheet::material_boolean(std::slice::from_ref(&panel), std::slice::from_ref(&flat), kernel::BoolOp::Intersect, &mut work)?;
+                        sheet::material_boolean(std::slice::from_ref(&local), std::slice::from_ref(&flat), kernel::BoolOp::Intersect, &mut work)?;
                     if !clipped.is_empty() && !depth_resolved {
                         return Err(DocError::Invalid(
                             "sheet machining depth is below the supported 0.000001 mm extrusion resolution; increase the layer depth".into(),
@@ -1239,8 +1261,32 @@ pub(super) fn plastic_eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &F
             let mut loops = face_loops(&mesh, &plane, *face, n, 0.0, tol);
             loops.sort_by(|a, b| poly_area(b).abs().total_cmp(&poly_area(a).abs()));
             let ccw = |l: &[Vec2]| if poly_area(l) < 0.0 { l.iter().rev().copied().collect::<Vec<_>>() } else { l.to_vec() };
-            let (Some(outer), Some(inner)) = (loops.first().map(|l| ccw(l)), loops.get(1).map(|l| ccw(l))) else {
-                return Err(DocError::Invalid("pick the rim face of a shelled body (a face with an inner and an outer edge)".into()));
+            // The inner edge is an opening (the cavity under a rim): not the foot of a boss or a
+            // wall standing on the face, whose side the band would run against.
+            let opening = |l: &[Vec2]| {
+                let eps = (tol * 4.0).max(1e-3);
+                l.iter().zip(l.iter().cycle().skip(1)).filter_map(|(a, b)| Some(((*a + *b) * 0.5, (*b - *a).normalized()?))).take(3).any(|(m, t)| {
+                    // Just over the face, inside the loop (to the left of a ccw loop's edges).
+                    let q = plane.to_world(m + Vec2::new(-t.y, t.x) * eps) + n * eps;
+                    !mesh.contains(q)
+                })
+            };
+            let outer = loops.first().map(|l| ccw(l));
+            let openings: Vec<Vec<Vec2>> = loops.iter().skip(1).map(|l| ccw(l)).filter(|l| opening(l)).collect();
+            // A rim runs round one opening, the cavity; smaller ones (a screw hole) may sit in it.
+            // Openings alike in size (a plate's holes) leave no edge that is the rim's.
+            let alike = match openings.as_slice() {
+                [a, b, ..] => poly_area(b).abs() > 0.5 * poly_area(a).abs(),
+                _ => false,
+            };
+            let (Some(outer), Some(inner), false) = (outer, openings.first().cloned(), alike) else {
+                let what = match (loops.len(), openings.len()) {
+                    (0 | 1, _) => "pick the rim face of a shelled body (a face with an inner and an outer edge)".to_string(),
+                    (_, 0) => "pick the rim face of a shelled body: this face's inner edges are where other features stand on it, not an opening"
+                        .to_string(),
+                    (_, k) => format!("pick the rim face of a shelled body (round one opening): this face has {k} openings alike in size"),
+                };
+                return Err(DocError::Invalid(what));
             };
             let bw = if *groove { w + g } else { w };
             // A lip: the band raised from the rim's own faces (its walls continue the walls
