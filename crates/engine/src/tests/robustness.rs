@@ -54,6 +54,44 @@ fn shell_with_a_hole_through_a_curved_side() {
     ]));
 }
 
+/// #871: the fillet from the report (its feature as saved) on a plate with a block on top and
+/// a window through both. Radius 1 on the window's edges and on the block's sides overlaps in
+/// the 1.26 mm wall between them; the result had openings in its end faces and was accepted.
+/// It is refused now, and the part is left as it was.
+#[test]
+fn fillet_that_would_open_the_surface_is_refused() {
+    let (a, b) = (12.74437365538526, 22.69275963366936);
+    let mut s = script(json!([
+        {"command": "solid.box", "params": {"length": 14, "width": 21.5, "height": 10, "corner": [9.5, 8, 0]}},
+        {"command": "solid.box", "params": {"length": 14, "width": b - a, "height": 10, "corner": [9.5, a, 10], "operation": "join", "targets": ["Body1"]}},
+        {"command": "solid.box", "params": {"length": 14, "width": 5.2, "height": 7.1, "corner": [9.5, 14, 7], "operation": "cut", "targets": ["Body1"]}}
+    ]));
+    let feature = json!({
+        "type": "fillet",
+        "edges": [
+            [23.5, 12.74437365538526, 15.0], [23.5, 10.37218682769263, 10.0], [23.5, 8.0, 5.0], [23.5, 18.75, 0.0],
+            [23.5, 29.5, 5.0], [23.5, 26.09637981683468, 10.0], [23.5, 22.69275963366936, 15.0], [23.5, 17.71856664452731, 20.0],
+            [23.5, 16.6, 7.0], [23.5, 14.0, 10.55], [23.5, 16.6, 14.100000000000001], [23.5, 19.200000000000003, 10.55],
+            [9.5, 17.71856664452731, 20.0], [9.5, 22.69275963366936, 15.0], [9.5, 26.09637981683468, 10.0], [9.5, 29.5, 5.0],
+            [9.5, 18.75, 0.0], [9.5, 8.0, 5.0], [9.5, 10.37218682769263, 10.0], [9.5, 12.74437365538526, 15.0],
+            [9.5, 19.200000000000003, 10.55], [9.5, 16.6, 14.100000000000001], [9.5, 14.0, 10.55], [9.5, 16.6, 7.0]
+        ],
+        "radius": "1"
+    });
+    let before = total_volume(&s);
+    let result = s.execute("solid.fillet", &json!({"edges": feature["edges"], "radius": feature["radius"]}));
+    assert!(result.is_err(), "a fillet with openings in the model was accepted");
+    assert!((total_volume(&s) - before).abs() < 1e-9);
+    for body in &s.model.state().bodies {
+        assert!(body.body.validity().is_empty() && body.body.open_mesh_edges().unwrap() == 0);
+    }
+    // At half the radius the rounds fit.
+    run(&mut s, "solid.fillet", json!({"edges": feature["edges"], "radius": "0.5"}));
+    for body in &s.model.state().bodies {
+        assert!(body.body.validity().is_empty() && body.body.open_mesh_edges().unwrap() == 0);
+    }
+}
+
 /// Shell of a body in two pieces (a cylinder joined clear of a ring): each piece is shelled.
 #[test]
 fn shell_of_a_body_in_two_pieces() {

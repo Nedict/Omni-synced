@@ -1090,6 +1090,81 @@ impl Body {
         guard("tessellate", || crate::tess::plan(&self.solid, tol, turn).map(|(plan, _)| plan))
     }
 
+    /// Edges of the body's mesh not matched by as many triangles running the other way along
+    /// them, with no other such edge across them: openings in its surface. Faces are meshed
+    /// along shared edge polylines, so a sound body has none; a face whose boundary loops cross
+    /// each other (rounds that overlap where a wall is thinner than both) meshes past them and
+    /// leaves some. Every face is meshed, so this is for checking an operation's result before
+    /// it is taken, not for every body.
+    pub fn open_mesh_edges(&self) -> Result<usize> {
+        if self.is_mesh() {
+            return Ok(if self.is_closed_mesh() { 0 } else { 1 });
+        }
+        let size = self.size();
+        let m = self.tessellate((size * 2e-3).max(1e-3))?;
+        // Welded within a millionth of the size: faces' ends of a shared edge agree to about
+        // 1e-9 of it, not to the last bit.
+        let w = (size * 1e-6).max(1e-9);
+        let cell = |p: Vec3| ((p.x / w).floor() as i64, (p.y / w).floor() as i64, (p.z / w).floor() as i64);
+        let mut grid: std::collections::HashMap<(i64, i64, i64), Vec<(Vec3, usize)>> = std::collections::HashMap::new();
+        let mut ids: Vec<usize> = Vec::with_capacity(m.positions.len());
+        let mut next = 0usize;
+        for p in &m.positions {
+            let (cx, cy, cz) = cell(*p);
+            let mut found = None;
+            'search: for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for dz in -1..=1 {
+                        for (q, i) in grid.get(&(cx + dx, cy + dy, cz + dz)).into_iter().flatten() {
+                            if q.dist(*p) <= w {
+                                found = Some(*i);
+                                break 'search;
+                            }
+                        }
+                    }
+                }
+            }
+            let i = found.unwrap_or_else(|| {
+                next += 1;
+                grid.entry((cx, cy, cz)).or_default().push((*p, next - 1));
+                next - 1
+            });
+            ids.push(i);
+        }
+        let mut count: std::collections::HashMap<(usize, usize), (i32, Vec3, Vec3)> = std::collections::HashMap::new();
+        for t in &m.triangles {
+            let ([Some(a), Some(b), Some(c)], [Some(pa), Some(pb), Some(pc)]) =
+                (t.map(|k| ids.get(k as usize)), t.map(|k| m.positions.get(k as usize)))
+            else {
+                return Ok(usize::MAX);
+            };
+            for ((i, p), (j, r)) in [((a, pa), (b, pb)), ((b, pb), (c, pc)), ((c, pc), (a, pa))] {
+                if i != j {
+                    count.entry((i, j)).or_insert((0, p, r)).0 += 1;
+                }
+            }
+        }
+        let open: Vec<(Vec3, Vec3)> =
+            count.iter().filter(|&(&(i, j), &(n, _, _))| count.get(&(j, i)).map(|x| x.0) != Some(n)).map(|(_, &(_, p, r))| (p, r)).collect();
+        // A crack within the mesh's tolerance is not an opening: where faces meet along fitted
+        // curves (a corner patch, a round ending on a curved edge) their meshes may miss each
+        // other by a little, and each side's open edges then lie along the other's. An opening
+        // has open edges with nothing across them.
+        const MAX_OPEN: usize = 20_000;
+        if open.len() > MAX_OPEN {
+            return Ok(open.len());
+        }
+        let gap = (size * 2e-3).max(1e-3);
+        Ok(open
+            .iter()
+            .enumerate()
+            .filter(|(k, (p, r))| {
+                let mid = (*p + *r) * 0.5;
+                !open.iter().enumerate().any(|(l, (a, b))| l != *k && mid.dist_to_segment(*a, *b) <= gap && (*a + *b) * 0.5 != mid)
+            })
+            .count())
+    }
+
     /// Faces with no triangles in a coarse tessellation (the mesher failed or gave up).
     pub fn unmeshed_faces(&self) -> usize {
         if self.is_mesh() {
