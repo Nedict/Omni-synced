@@ -31,7 +31,7 @@ use solidcraft_engine::geom::{Vec2, Vec3};
 
 use crate::SolveApp;
 use crate::dialogs::{CHAMFER_TYPES, Dialog, Kind, check, field, icon_choice, row_label};
-use crate::selection::{AXES, CURVES, SKETCH_POINTS, SelInput};
+use crate::selection::{AXES, CURVES, PROFILES, SKETCH_POINTS, SelInput};
 use crate::viewport::{Hit, Proj};
 
 /// The three chamfer types, drawn as the cut each one makes, in `CHAMFER_TYPES` order.
@@ -92,7 +92,7 @@ pub enum Mod {
 
 impl Mod {
     pub fn previews(&self) -> bool {
-        matches!(self, Self::Mirror | Self::PatternRect { .. } | Self::PatternCirc { .. } | Self::Offset { .. })
+        matches!(self, Self::Mirror | Self::Move { .. } | Self::PatternRect { .. } | Self::PatternCirc { .. } | Self::Offset { .. })
     }
 
     pub fn title(&self) -> &'static str {
@@ -132,7 +132,7 @@ fn inputs(k: &Mod) -> Vec<SelInput> {
         Mod::Offset { .. } => vec![SelInput::new("Curves", CURVES, true)],
         // AXES is the mask that takes a straight sketch curve (`selection::SelInput::accepts`).
         Mod::Mirror => vec![SelInput::new("Entities", CURVES | SKETCH_POINTS, true), SelInput::new("Mirror line", AXES, false)],
-        Mod::Move { .. } => vec![SelInput::new("Entities", CURVES | SKETCH_POINTS, true), SelInput::new("Center", SKETCH_POINTS, false)],
+        Mod::Move { .. } => vec![SelInput::new("Entities", CURVES | SKETCH_POINTS | PROFILES, true), SelInput::new("Center", SKETCH_POINTS, false)],
         // The direction is optional: `sketch.pattern.rectangular` documents sketch x as its
         // default, the way the engine reads it.
         Mod::PatternRect { .. } => vec![SelInput::new("Entities", CURVES | SKETCH_POINTS, true), SelInput::new("Direction", AXES, false)],
@@ -408,15 +408,38 @@ pub(crate) fn point_id<'a>(session: &solidcraft_engine::Session, sel: &'a Sel) -
     }
 }
 
+/// A profile fill expands to the curves bounding that region (outer loop and any hole loops).
+pub(crate) fn expand_sketch_entity(session: &solidcraft_engine::Session, sel: &Sel) -> Vec<Sel> {
+    match sel {
+        Sel::Profile { sketch, index } => {
+            let Some(active) = session.active_sketch else { return vec![] };
+            if *sketch != active {
+                return vec![];
+            }
+            let Some(ss) = session.world_state().sketch(active) else { return vec![] };
+            let Some(profile) = ss.profiles.get(*index) else { return vec![] };
+            profile.curve_ids().into_iter().map(|id| Sel::SketchCurve { id }).collect()
+        }
+        other => vec![other.clone()],
+    }
+}
+
 /// The curves and lone points picked in input `i`, as the engine's `entities` list.
 fn entity_ids(session: &solidcraft_engine::Session, inputs: &[SelInput], i: usize) -> Vec<String> {
-    items(inputs, i)
-        .iter()
-        .filter_map(|x| match x {
-            Sel::SketchCurve { id } => Some(id.clone()),
-            _ => point_id(session, x).map(str::to_string),
-        })
-        .collect()
+    let mut out = Vec::new();
+    for sel in items(inputs, i).iter().flat_map(|s| expand_sketch_entity(session, s)) {
+        match &sel {
+            Sel::SketchCurve { id } if !out.contains(id) => out.push(id.clone()),
+            _ => {
+                if let Some(id) = point_id(session, &sel)
+                    && !out.iter().any(|x| x == id)
+                {
+                    out.push(id.to_string());
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Sketch curve ids picked in input `i`.
@@ -534,11 +557,7 @@ fn snap_degrees(v: f64) -> f64 {
         return v;
     }
     let near = (v * 1_000_000.0).round() / 1_000_000.0;
-    if (v - near).abs() < 1e-6 {
-        near
-    } else {
-        v
-    }
+    if (v - near).abs() < 1e-6 { near } else { v }
 }
 
 fn total_angle(app: &SolveApp, label: &str, text: &str) -> Result<f64, String> {
@@ -620,11 +639,7 @@ pub fn commands(app: &SolveApp, k: &Mod, inputs: &[SelInput], extra: &Map<String
             } else {
                 (value(app, x, ValueKind::Length, "X Distance")?, value(app, y, ValueKind::Length, "Y Distance")?)
             };
-            let deg = if *mode == crate::sketch_move_ui::TRANSLATE {
-                0.0
-            } else {
-                value(app, angle, ValueKind::Angle, "Angle")?.to_degrees()
-            };
+            let deg = if *mode == crate::sketch_move_ui::TRANSLATE { 0.0 } else { value(app, angle, ValueKind::Angle, "Angle")?.to_degrees() };
             if dx.abs() < 1e-9 && dy.abs() < 1e-9 && deg.abs() < 1e-9 {
                 return Err("Type a distance or an angle to move by".into());
             }

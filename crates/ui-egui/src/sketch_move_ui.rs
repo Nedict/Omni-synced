@@ -61,8 +61,8 @@ fn center_world(app: &SolveApp, d: &Dialog) -> Option<Vec3> {
     let world = app.session.world_state();
     let ss = world.sketch(sid)?;
     let mut bb: Option<(Vec2, Vec2)> = None;
-    for sel in d.inputs.first()?.items.iter() {
-        let p = match sel {
+    for sel in d.inputs.first()?.items.iter().flat_map(|s| crate::sketch_modify_ui::expand_sketch_entity(&app.session, s)) {
+        let p = match &sel {
             Sel::SketchCurve { id } => {
                 let idx = ss.sketch.curve_index(id)?;
                 let pts = ss.sketch.polyline(idx);

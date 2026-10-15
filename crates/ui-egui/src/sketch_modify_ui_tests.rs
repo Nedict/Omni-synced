@@ -425,21 +425,20 @@ fn escape_leaves_the_sketch_exactly_as_it_was() {
 }
 
 #[test]
-fn the_x_distance_gets_a_drag_arrow_along_the_sketch_x_axis() {
+fn a_profile_fill_expands_to_its_boundary_curves_for_move() {
     let mut h = rectangle();
+    let sid = h.app.session.active_sketch.unwrap();
     h.step(&json!({"start": "sketch.move"})).unwrap();
-    // Read the ids before the dialog is borrowed mutably: `curve_ids` borrows the harness.
-    let picks: Vec<Sel> = curve_ids(&h).iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect();
     {
         let d = h.app.dialog.as_mut().unwrap();
-        d.inputs[0].items = picks;
+        d.inputs[0].items = vec![Sel::Profile { sketch: sid, index: 0 }];
+        d.kind = Kind::SketchModify(Mod::Move { mode: 0, x: "5 mm".into(), y: "0 mm".into(), angle: "0 deg".into(), copy: false });
     }
-    let sid = h.app.session.active_sketch.unwrap();
-    let x = h.app.session.world_state().sketch(sid).unwrap().plane.x;
-    let d = h.app.dialog.as_ref().unwrap();
-    let (_, dir) = crate::canvas::anchor(&h.app, d).expect("a picked sketch curve anchors the manipulator");
-    let dir = dir.expect("a sketch move's X Distance has a direction to drag along");
-    assert!((dir - x).len() < 1e-9, "{dir:?} is not the sketch x axis {x:?}");
+    h.frames(2);
+    let cmds = crate::dialogs::apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap();
+    assert_eq!(cmds[0].0, "sketch.move");
+    let entities: Vec<&str> = cmds[0].1["entities"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+    assert_eq!(entities.len(), 4, "the profile fill moves all four rectangle edges: {entities:?}");
 }
 
 /// A sketch holding one circle, with the window for `cmd` open on it.
