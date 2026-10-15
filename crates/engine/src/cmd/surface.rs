@@ -3,6 +3,7 @@
 
 use serde_json::Value;
 use solidcraft_doc::{FaceAt, FeatureKind, PlaneRef, ProfileSel, expr::Kind};
+use solidcraft_doc::{FacePick, Position};
 
 use super::CommandSpec;
 use super::features::{add_feature, axis_param, check_expr, extent_param, feature_sketch, operation, plane_param, profiles, sketch_id};
@@ -88,7 +89,11 @@ fn patch(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad(cmd, "too many edges"));
         }
         let body = str_(p, "body").map(str::to_string);
-        return add_feature(s, p, FeatureKind::Patch { sketch: None, profiles: ProfileSel::All, body, edges });
+        return add_feature(
+            s,
+            p,
+            FeatureKind::Patch { sketch: None, profiles: ProfileSel::All, body, edges: edges.into_iter().map(Position).collect() },
+        );
     }
     let sketch = feature_sketch(s, p, cmd)?;
     let profiles = profiles(p, cmd)?;
@@ -121,12 +126,12 @@ fn body_faces(s: &Session, p: &Value, cmd: &str) -> Result<(String, Vec<solidcra
 
 fn unstitch(s: &mut Session, p: &Value) -> Result<Value> {
     let (body, faces) = body_faces(s, p, "surface.unstitch")?;
-    add_feature(s, p, FeatureKind::Unstitch { body, faces })
+    add_feature(s, p, FeatureKind::Unstitch { body, faces: faces.into_iter().map(Position).collect() })
 }
 
 fn reverse_normal(s: &mut Session, p: &Value) -> Result<Value> {
     let (body, faces) = body_faces(s, p, "surface.reverse_normal")?;
-    add_feature(s, p, FeatureKind::ReverseNormal { body, faces })
+    add_feature(s, p, FeatureKind::ReverseNormal { body, faces: faces.into_iter().map(Position).collect() })
 }
 
 fn untrim(s: &mut Session, p: &Value) -> Result<Value> {
@@ -153,7 +158,12 @@ fn untrim(s: &mut Session, p: &Value) -> Result<Value> {
     if !outer && holes.as_ref().is_some_and(Vec::is_empty) {
         return Err(bad(cmd, "nothing to untrim: pick holes to remove or restore the outer boundary"));
     }
-    let kind = FeatureKind::SurfaceUntrim { face: FaceAt { body, point }, holes, outer, in_place: bool_(p, "in_place").unwrap_or(false) };
+    let kind = FeatureKind::SurfaceUntrim {
+        face: FaceAt { body: BodyName(body), point: Position(point) },
+        holes: holes.map(|h| h.into_iter().map(Position).collect()),
+        outer,
+        in_place: bool_(p, "in_place").unwrap_or(false),
+    };
     add_feature(s, p, kind)
 }
 
@@ -227,7 +237,7 @@ fn offset(s: &mut Session, p: &Value) -> Result<Value> {
         check_expr(s, t, Kind::Length, cmd, "tolerance")?;
     }
     let kind = FeatureKind::SurfaceOffset {
-        faces,
+        faces: faces.into_iter().map(FacePick).collect(),
         body: str_(p, "body").map(str::to_string),
         distance,
         chain: bool_(p, "chain").unwrap_or(false),
@@ -283,7 +293,7 @@ fn extend(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let distance = expr(p, "distance").ok_or_else(|| bad(cmd, "`distance` is required"))?;
     check_expr(s, &distance, Kind::Length, cmd, "distance")?;
-    add_feature(s, p, FeatureKind::SurfaceExtend { body, edges, distance })
+    add_feature(s, p, FeatureKind::SurfaceExtend { body, edges: edges.into_iter().map(Position).collect(), distance })
 }
 
 fn trim(s: &mut Session, p: &Value) -> Result<Value> {
@@ -297,11 +307,11 @@ fn trim(s: &mut Session, p: &Value) -> Result<Value> {
         Some(t) => {
             let tb = t.get("body").and_then(Value::as_str).ok_or_else(|| bad(cmd, "`tool.body` must name a body"))?.to_string();
             let point = t.get("point").and_then(vec3).ok_or_else(|| bad(cmd, "`tool.point` must be [x, y, z] on the tool face"))?;
-            (PlaneRef::Origin { name: "XY".into() }, Some(FaceAt { body: tb, point }))
+            (PlaneRef::Origin { name: "XY".into() }, Some(FaceAt { body: tb, point: Position(point) }))
         }
         None => (plane_param(s, p.get("plane"), cmd)?, None),
     };
-    add_feature(s, p, FeatureKind::SurfaceTrim { body, plane, tool, keep })
+    add_feature(s, p, FeatureKind::SurfaceTrim { body, plane, tool, keep: Position(keep) })
 }
 
 #[cfg(test)]

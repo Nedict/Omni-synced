@@ -107,7 +107,7 @@ fn box_fillet_cut_timeline() {
     let (mut doc, _) = plate_doc();
     doc.add_feature(
         FeatureKind::Fillet {
-            edges: vec![Vec3::new(0.0, 0.0, 10.0)],
+            edges: vec![Position(Vec3::new(0.0, 0.0, 10.0))],
             radius: "3".into(),
             body: None,
             style: Default::default(),
@@ -176,7 +176,7 @@ fn errors_are_reported_not_fatal() {
     .unwrap();
     doc.add_feature(
         FeatureKind::Fillet {
-            edges: vec![Vec3::new(500.0, 0.0, 0.0)],
+            edges: vec![Position(Vec3::new(500.0, 0.0, 0.0))],
             radius: "1".into(),
             body: None,
             style: Default::default(),
@@ -242,7 +242,7 @@ fn primitives_and_combine() {
     doc.add_feature(
         FeatureKind::Cylinder {
             base: point_expr(Vec3::new(5.0, 5.0, 0.0)),
-            axis: Vec3::Z,
+            axis: Dir(Vec3::Z),
             radius: "2".into(),
             height: "20".into(),
             operation: Operation::NewBody,

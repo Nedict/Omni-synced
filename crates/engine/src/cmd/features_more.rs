@@ -3,6 +3,7 @@
 use serde_json::Value;
 use solidcraft_doc::FeatureKind;
 use solidcraft_doc::expr::Kind;
+use solidcraft_doc::{Dir, FacePick, Position};
 use solidcraft_geom::Vec3;
 
 use super::CommandSpec;
@@ -91,7 +92,7 @@ fn coil(s: &mut Session, p: &Value) -> Result<Value> {
         p,
         FeatureKind::Coil {
             base,
-            axis,
+            axis: Dir(axis),
             diameter,
             pitch,
             turns,
@@ -240,7 +241,7 @@ fn emboss_selection(s: &Session, selected: &solidcraft_doc::ModelBody, at: Vec3)
         return Err(bad(cmd, "cylinder placement is too deep"));
     }
     let inverse = solidcraft_doc::mat_inverse(&s.active_component_frame()).ok_or_else(|| bad(cmd, "invalid active frame"))?;
-    Ok(solidcraft_doc::EmbossFace { body: name.to_owned(), at: solidcraft_doc::apply_point(&inverse, at), path, author_path })
+    Ok(solidcraft_doc::EmbossFace { body: name.to_owned(), at: FacePick(solidcraft_doc::apply_point(&inverse, at)), path, author_path })
 }
 
 fn check_emboss_positions(s: &Session, sketch: u64, body: &solidcraft_doc::ModelBody, face: &solidcraft_doc::EmbossFace) -> Result<()> {
@@ -307,7 +308,7 @@ fn infer_emboss_selection(
             face.sketch_frame(&placed, s.active_component, sketch_owner, raw).map_err(|e| bad(cmd, e.to_string()))?;
             check_emboss_positions(s, sketch, selected, &face)?;
             let author_inverse = solidcraft_doc::mat_inverse(&s.active_component_frame()).ok_or_else(|| bad(cmd, "invalid author frame"))?;
-            face.at = solidcraft_doc::apply_point(&solidcraft_doc::mat_mul(&author_inverse, &body_frame), at);
+            face.at = FacePick(solidcraft_doc::apply_point(&solidcraft_doc::mat_mul(&author_inverse, &body_frame), at));
             if chosen.is_some() {
                 return Err(bad(cmd, "multiple tangent cylinders match the selected profiles; select a target face or body"));
             }
@@ -341,7 +342,7 @@ fn replace_face(s: &mut Session, p: &Value) -> Result<Value> {
         None => plane_param(s, p.get("target"), cmd)?,
     };
     let body = str_(p, "body").map(str::to_string);
-    add_feature(s, p, FeatureKind::ReplaceFace { faces, target, body })
+    add_feature(s, p, FeatureKind::ReplaceFace { faces: faces.into_iter().map(FacePick).collect(), target, body })
 }
 
 fn align(s: &mut Session, p: &Value) -> Result<Value> {
@@ -376,7 +377,11 @@ fn align(s: &mut Session, p: &Value) -> Result<Value> {
         _ => (None, None),
     };
     let flip = bool_(p, "flip").unwrap_or(false);
-    add_feature(s, p, FeatureKind::Align { bodies, from, to, from_normal, to_normal, flip })
+    add_feature(
+        s,
+        p,
+        FeatureKind::Align { bodies, from: Position(from), to: Position(to), from_normal: from_normal.map(Dir), to_normal: to_normal.map(Dir), flip },
+    )
 }
 
 fn remove(s: &mut Session, p: &Value) -> Result<Value> {
@@ -443,5 +448,14 @@ fn boundary_fill(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "`cells` must list 1…1000 points [x, y, z], one inside each cell"));
     }
     let operation = super::features::operation(p, cmd)?;
-    add_feature(s, p, FeatureKind::BoundaryFill { tools, cells, operation, remove_tools: bool_(p, "remove_tools").unwrap_or(false) })
+    add_feature(
+        s,
+        p,
+        FeatureKind::BoundaryFill {
+            tools,
+            cells: cells.into_iter().map(Position).collect(),
+            operation,
+            remove_tools: bool_(p, "remove_tools").unwrap_or(false),
+        },
+    )
 }

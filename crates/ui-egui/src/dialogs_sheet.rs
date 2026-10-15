@@ -675,7 +675,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
             // edge's selection carries).
             let (mut picked, mut own) = (Vec::new(), Vec::new());
             for e in edges {
-                let Some(sel) = edge_sel(s, e.point) else { continue };
+                let Some(sel) = edge_sel(s, e.point.0) else { continue };
                 if let (Sel::Edge { point, .. }, true) = (&sel, e.angle.is_some() || e.height.is_some()) {
                     own.push((
                         *point,
@@ -705,7 +705,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
             }
             (
                 Sm::Hem { length: length.to_string(), gap: gap.as_deref().map(str::to_string).unwrap_or_default(), flip: *flip },
-                edges.iter().filter_map(|p| edge_sel(s, *p)).collect(),
+                edges.iter().filter_map(|p| edge_sel(s, p.0)).collect(),
             )
         }
         FeatureKind::SheetFold { curve, a, b, angle, radius, position, flip, fixed, body, .. } => {
@@ -727,11 +727,11 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
                 }
                 // A fold given by two points keeps them.
                 None => {
-                    extra.insert("points".into(), json!([pt(*a), pt(*b)]));
+                    extra.insert("points".into(), json!([pt(a.0), pt(b.0)]));
                 }
             }
             if let Some(i) = ins.get_mut(1) {
-                i.items = fixed.and_then(|f| face_sel(s, f)).into_iter().collect();
+                i.items = fixed.and_then(|f| face_sel(s, f.0)).into_iter().collect();
             }
             return Some((Kind::Sheet(k), ins, extra));
         }
@@ -739,10 +739,10 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
         FeatureKind::SheetConvert { face, rule, bends, .. } => {
             let (_, mut ins) = start(app, "sheet.convert")?;
             if let Some(i) = ins.first_mut() {
-                i.items = face_sel(s, *face).into_iter().collect();
+                i.items = face_sel(s, face.0).into_iter().collect();
             }
             if let Some(i) = ins.get_mut(1) {
-                i.items = bends.iter().filter_map(|p| edge_sel(s, *p)).collect();
+                i.items = bends.iter().filter_map(|p| edge_sel(s, p.0)).collect();
             }
             return Some((Kind::Sheet(Sm::Convert { rule: rule_index(rule) }), ins, extra));
         }

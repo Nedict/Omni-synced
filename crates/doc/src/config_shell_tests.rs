@@ -17,7 +17,7 @@ fn shell_document() -> (Document, u64, u64) {
     let shell = doc
         .add_feature(
             FeatureKind::Shell {
-                faces: vec![Vec3::new(5., 6., 10.)],
+                faces: vec![crate::FacePick(Vec3::new(5., 6., 10.))],
                 thickness: "wall".into(),
                 body: Some("Case".into()),
                 direction: "inside".into(),
@@ -344,7 +344,7 @@ fn saved_curved_strip_projection_is_lost_after_exact_wall_coalescence() {
     let shell = doc
         .add_feature(
             FeatureKind::Shell {
-                faces: vec![Vec3::new(0., 0., 30.)],
+                faces: vec![crate::FacePick(Vec3::new(0., 0., 30.))],
                 thickness: "wall".into(),
                 body: Some("Case".into()),
                 direction: "inside".into(),

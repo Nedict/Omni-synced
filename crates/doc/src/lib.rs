@@ -37,6 +37,7 @@ pub mod naming;
 mod params;
 pub mod physical_material;
 mod piece_names;
+mod points;
 mod profile_refs;
 pub mod progress;
 pub use profile_refs::{capture_profile_selection, profile_selection_indices};
@@ -60,6 +61,7 @@ pub use eval::{
 };
 pub use expr::Expr;
 pub use params::{ParamRow, ParamUser, cycles};
+pub use points::{Dir, FacePick, Position, plain};
 pub use solidcraft_kernel as kernel;
 pub use solidcraft_sketch as sketch;
 

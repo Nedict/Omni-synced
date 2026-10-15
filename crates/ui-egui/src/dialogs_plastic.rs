@@ -434,7 +434,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
             rib_offset,
             body,
         } => {
-            extra.insert("direction".into(), pt(*direction));
+            extra.insert("direction".into(), pt(direction.0));
             if let Some(b) = body {
                 extra.insert("body".into(), json!(b));
             }
@@ -465,22 +465,22 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
                     }
                 }
             }
-            (b, "plastic.boss", *position)
+            (b, "plastic.boss", position.0)
         }
         FeatureKind::Lip { face, width, height, groove, gap, outside, body } => {
             if let Some(b) = body {
                 extra.insert("body".into(), json!(b));
             }
-            (Pl::Lip { groove: *groove, width: width.to_string(), height: height.to_string(), gap: s(gap), outside: *outside }, "plastic.lip", *face)
+            (Pl::Lip { groove: *groove, width: width.to_string(), height: height.to_string(), gap: s(gap), outside: *outside }, "plastic.lip", face.0)
         }
         FeatureKind::SnapFit { position, direction, hook, length, thickness, width, catch_depth, catch_length, body } => {
-            extra.insert("direction".into(), pt(*direction));
+            extra.insert("direction".into(), pt(direction.0));
             if let Some(b) = body {
                 extra.insert("body".into(), json!(b));
             }
-            let h = hook_dirs(*direction).iter().position(|(_, d)| d.dist(*hook) < 1e-6);
+            let h = hook_dirs(direction.0).iter().position(|(_, d)| d.dist(hook.0) < 1e-6);
             if h.is_none() {
-                extra.insert("hook".into(), pt(*hook));
+                extra.insert("hook".into(), pt(hook.0));
             }
             let f = Pl::SnapFit {
                 hook: h.unwrap_or(0),
@@ -490,12 +490,12 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
                 catch_depth: catch_depth.to_string(),
                 catch_length: catch_length.to_string(),
             };
-            (f, "plastic.snap_fit", *position)
+            (f, "plastic.snap_fit", position.0)
         }
         FeatureKind::Rest { position, direction, along, width, length, height, draft, thickness, body } => {
-            extra.insert("direction".into(), pt(*direction));
+            extra.insert("direction".into(), pt(direction.0));
             if let Some(a) = along {
-                extra.insert("along".into(), pt(*a));
+                extra.insert("along".into(), pt(a.0));
             }
             if let Some(b) = body {
                 extra.insert("body".into(), json!(b));
@@ -508,7 +508,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
                 draft: s(draft),
                 thickness: s(thickness),
             };
-            (r, "plastic.rest", *position)
+            (r, "plastic.rest", position.0)
         }
         _ => return None,
     };

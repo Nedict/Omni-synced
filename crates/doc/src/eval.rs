@@ -2108,10 +2108,10 @@ pub(crate) fn revolve_axis(ss: &SolvedSketch, axis: &AxisRef) -> Result<(Vec2, V
         AxisRef::Line { origin, dir } => {
             let pl = &ss.plane;
             let d = dir.normalized().ok_or_else(|| DocError::Invalid("revolve axis has no direction".into()))?;
-            if d.dot(pl.normal()).abs() > 1e-9 || pl.height(*origin).abs() > 1e-6 {
+            if d.dot(pl.normal()).abs() > 1e-9 || pl.height(origin.0).abs() > 1e-6 {
                 return Err(DocError::Invalid("the revolve axis does not lie in the sketch plane".into()));
             }
-            Ok((pl.to_local(*origin), Vec2::new(d.dot(pl.x), d.dot(pl.y))))
+            Ok((pl.to_local(origin.0), Vec2::new(d.dot(pl.x), d.dot(pl.y))))
         }
     }
 }
@@ -2177,7 +2177,7 @@ fn hole_spots(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
         }
         None => {
             let dir = direction.normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?;
-            let at = hole_on_surface(st, *position, dir);
+            let at = hole_on_surface(st, position.0, dir);
             let dir = hole_dir_into_face(st, at, dir);
             return Ok((vec![hole_on_surface(st, at, dir)], dir));
         }
@@ -2224,7 +2224,7 @@ fn hole_spots_raw(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
         }
         None => {
             let dir = direction.normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?;
-            Ok((vec![*position], hole_dir_into_face(st, hole_on_surface(st, *position, dir), dir)))
+            Ok((vec![position.0], hole_dir_into_face(st, hole_on_surface(st, position.0, dir), dir)))
         }
     }
 }
@@ -2239,7 +2239,7 @@ fn hole_feature_tools(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Featu
     }
     let mut tools = Vec::new();
     for at in spots {
-        let depth = hole_depth_to(st, &at, dir, to, depth)?;
+        let depth = hole_depth_to(st, &at, dir, &to.map(Vec3::from), depth)?;
         tools.extend(hole_tools_and_prisms(vals, st, &at, dir, diameter, &depth, hole)?);
     }
     Ok(tools)
@@ -2614,14 +2614,14 @@ fn feature_tools_with_constructor(
             // The face names follow `face_points`: To, then From.
             let name = |k: usize| f.face_names.get(k).map(String::as_str);
             let (to_name, from_name) = if extent.to.is_some() { (name(0), name(1)) } else { (None, name(0)) };
-            let to_face = extent.to.and_then(|p| object_face(&tst, to_name, p));
+            let to_face = extent.to.and_then(|p| object_face(&tst, to_name, p.0));
             let centre = {
                 let pts: Vec<Vec2> = regions.iter().flat_map(|r| r.outer.polyline(1e-2)).collect();
                 let c = pts.iter().fold(Vec2::default(), |a, p| a + *p) * (1.0 / pts.len().max(1) as f64);
                 ss.plane.to_world(c)
             };
             let from = match extent.from {
-                Some(p) => height_at(&tst, object_face(&tst, from_name, p), &ss.plane, centre, p),
+                Some(p) => height_at(&tst, object_face(&tst, from_name, p.0), &ss.plane, centre, p.0),
                 None => 0.0,
             };
             let d = match extent.to {
@@ -2630,7 +2630,7 @@ fn feature_tools_with_constructor(
                         Some(e) => val(vals, e, Kind::Length)?,
                         None => 0.0,
                     };
-                    let h = height_at(&tst, to_face, &ss.plane, centre, p);
+                    let h = height_at(&tst, to_face, &ss.plane, centre, p.0);
                     let start = from + extent.start_offset.as_deref().map(|e| val(vals, e, Kind::Length)).transpose()?.unwrap_or(0.0);
                     // Past the face by the offset, in the direction travelled.
                     let to = h + if h >= start { off } else { -off };
@@ -2835,7 +2835,7 @@ fn feature_tools_with_constructor(
                 (ss.plane.to_world(o), ss.plane.dir_to_world(d)),
                 angles,
                 *symmetric,
-                *to,
+                to.map(Vec3::from),
                 *convention,
             )?;
             let (start, ang) = (extent.start, extent.sweep);
@@ -2850,7 +2850,7 @@ fn feature_tools_with_constructor(
                             (ss.plane.to_world(o), ss.plane.dir_to_world(d)),
                             angles,
                             *symmetric,
-                            *to,
+                            to.map(Vec3::from),
                             *convention,
                         )
                     } else {
@@ -2885,7 +2885,7 @@ fn feature_tools_with_constructor(
                 .collect::<Result<Vec<_>>>()?;
             // To a curved face: turn past the whole target body, then cut back to its surface
             // (the piece that starts at the profile).
-            let curved = curved_face(&tst, to.and_then(|p| object_face(&tst, f.face_names.first().map(String::as_str), p)), None);
+            let curved = curved_face(&tst, to.and_then(|p| object_face(&tst, f.face_names.first().map(String::as_str), p.0)), None);
             let curved_body = curved.and_then(|bi| tst.bodies.get(bi));
             // Each region's body: its sides named by the sketch curves, its caps start and end.
             let tool = |r: &Region2, body: Body, built: Option<&Body>| crate::lineage::ProfileRoles::swept(Some(&ss), Some(r)).tool(body, built);
@@ -3069,7 +3069,7 @@ fn feature_tools_with_constructor(
         }
         FeatureKind::Cylinder { base, axis, radius, height, .. } => Ok(vec![crate::lineage::cylinder_tool(kernel::cylinder(
             point(vals, base)?,
-            *axis,
+            axis.0,
             val(vals, radius, Kind::Length)?,
             val(vals, height, Kind::Length)?,
         )?)]),
@@ -3425,7 +3425,7 @@ fn pattern_transforms(doc: &Document, vals: &BTreeMap<String, Value>, st: &Model
                 0.0
             };
             for i in 1..n {
-                out.push(rotation(*origin, *axis, step * i as f64));
+                out.push(rotation(origin.0, axis.0, step * i as f64));
             }
         }
     }
@@ -3522,7 +3522,7 @@ fn replay(
             let r = val(vals, radius, Kind::Length)?;
             // The edges the feature blended in this evaluation (found by name), falling back to
             // its picked points.
-            let found = st.blend_edges.get(&src.id).cloned().unwrap_or_else(|| edges.clone());
+            let found = st.blend_edges.get(&src.id).cloned().unwrap_or_else(|| crate::plain(edges));
             for m in mats {
                 let moved: Vec<Vec3> = found.iter().map(|p| crate::apply_point(m, *p)).collect();
                 let ti = blend_target(st, &None, &moved)?;
@@ -3557,7 +3557,7 @@ fn replay(
                 let d = crate::apply_vector(m, dir).normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?;
                 for p in &spots {
                     let at = hole_on_surface(st, crate::apply_point(m, *p), d);
-                    let to = to.map(|t| crate::apply_point(m, t));
+                    let to = to.map(|t| crate::apply_point(m, t.0));
                     let depth = hole_depth_to(st, &at, d, &to, depth)?;
                     // Each copy's faces are named as the hole's, with the instance.
                     copies.extend(
@@ -4017,14 +4017,14 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 Some(e) => Some(val(vals, e, Kind::Length)?),
                 None => None,
             };
-            let t = thread_on(st, f.id, *face, designation.as_deref(), l)?;
+            let t = thread_on(st, f.id, face.0, designation.as_deref(), l)?;
             if !*modeled {
                 st.threads.push(t);
                 return Ok(());
             }
             let i = st.bodies.iter().position(|b| b.name == t.body).ok_or_else(|| DocError::Invalid("threaded body".into()))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
-            let cyl = kernel::cylinder_face_at(&mb.body, *face).ok_or_else(|| DocError::Invalid("no cylindrical face there to thread".into()))?;
+            let cyl = kernel::cylinder_face_at(&mb.body, face.0).ok_or_else(|| DocError::Invalid("no cylindrical face there to thread".into()))?;
             let tol = t.pitch * 1e-3;
             let groove = thread_groove(&t, cyl.radius, ((t.start - cyl.start).abs() < tol, (t.end - cyl.end).abs() < tol))?;
             // The B-rep boolean can't take helical walls in reasonable time: the body is cut
@@ -4042,9 +4042,9 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         }
         FeatureKind::Shell { faces, thickness, body, direction, tangent_chain } => {
             let t = val(vals, thickness, Kind::Length)?;
-            let i = body_at(st, body, faces)?;
+            let i = body_at(st, body, &crate::plain(faces))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
-            let open = if *tangent_chain { smooth_chain(&mb, faces) } else { faces.clone() };
+            let open = if *tangent_chain { smooth_chain(&mb, &crate::plain(faces)) } else { crate::plain(faces) };
             let input = mb.traced();
             // The shell, and the operands of the operation that made it.
             let (nb, operands) = match direction.as_str() {
@@ -4081,9 +4081,9 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         FeatureKind::Draft { faces, angle, neutral, pull, body } => {
             let a = val(vals, angle, Kind::Angle)?;
             let pl = doc.resolve_plane_in(vals, neutral, 0, Some(st))?;
-            let i = body_at(st, body, faces)?;
+            let i = body_at(st, body, &crate::plain(faces))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
-            let nb = Traced::step(kernel::draft(&mb.body, faces, &pl, *pull, a)?, &[&mb.traced()]);
+            let nb = Traced::step(kernel::draft(&mb.body, &crate::plain(faces), &pl, pull.0, a)?, &[&mb.traced()]);
             if let Some(slot) = st.bodies.get_mut(i) {
                 *slot = ModelBody::traced_new(mb.name, nb, mb.feature);
             }
@@ -4127,7 +4127,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             let mut made = Vec::new();
             for p in cells {
                 // The cell: inside the tools that hold the point, outside the others.
-                let inside: Vec<bool> = tb.iter().map(|b| b.mesh().contains(*p)).collect();
+                let inside: Vec<bool> = tb.iter().map(|b| b.mesh().contains(p.0)).collect();
                 let mut acc: Option<Traced> = None;
                 for (b, _) in tb.iter().zip(&inside).filter(|(_, i)| **i) {
                     acc = match acc {
@@ -4150,11 +4150,11 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             apply_traced(st, f, made, *operation, &[])
         }
         FeatureKind::SplitFace { faces, body, plane, tool, sketch } => {
-            let i = body_at(st, body, faces)?;
+            let i = body_at(st, body, &crate::plain(faces))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
             let mut picked: Vec<usize> = Vec::new();
             for p in faces {
-                let fi = crate::appearance::face_index_at(&mb, *p)
+                let fi = crate::appearance::face_index_at(&mb, p.0)
                     .ok_or_else(|| DocError::Invalid(format!("Split Face: no face of {} at {p:?}", mb.name)))?;
                 if !picked.contains(&fi) {
                     picked.push(fi);
@@ -4163,7 +4163,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             let nb = match (tool, sketch) {
                 (Some(t), _) => {
                     let tb = st.body(&t.body).ok_or_else(|| DocError::Unknown(format!("body `{}`", t.body)))?;
-                    let face = crate::appearance::face_index_at(tb, t.point)
+                    let face = crate::appearance::face_index_at(tb, t.point.0)
                         .ok_or_else(|| DocError::Invalid(format!("no face of `{}` at the tool point", t.body)))?;
                     kernel::split_faces(&mb.body, &picked, &kernel::SplitTool::Face { body: &tb.body, face })?
                 }
@@ -4198,7 +4198,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 // A face of a body (its surface extended).
                 Some(t) => {
                     let tb = st.body(&t.body).ok_or_else(|| DocError::Unknown(format!("body `{}`", t.body)))?;
-                    let face = crate::appearance::face_index_at(tb, t.point)
+                    let face = crate::appearance::face_index_at(tb, t.point.0)
                         .ok_or_else(|| DocError::Invalid(format!("no face of `{}` at the tool point", t.body)))?;
                     kernel::split_body(&mb.body, &kernel::SplitTool::Face { body: &tb.body, face })?
                 }
@@ -4280,13 +4280,13 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         }
         FeatureKind::Fillet { edges, radius, body, .. } | FeatureKind::Chamfer { edges, distance: radius, body, .. } => {
             let r = val(vals, radius, Kind::Length)?;
-            let ti = blend_target(st, body, edges)?;
+            let ti = blend_target(st, body, &crate::plain(edges))?;
             let Some(mb) = st.bodies.get(ti) else { return Err(DocError::Invalid("body".into())) };
             let edges = if f.edge_names.iter().any(|n| !n.is_empty()) {
                 // By name first; a name that is gone falls back to the point, with a warning.
                 let (mut out, mut notes) = (Vec::new(), Vec::new());
                 for (i, p) in edges.iter().enumerate() {
-                    match f.edge_names.get(i).filter(|n| !n.is_empty()).map(|n| (n, crate::naming::locate_edge(mb, n, *p))) {
+                    match f.edge_names.get(i).filter(|n| !n.is_empty()).map(|n| (n, crate::naming::locate_edge(mb, n, p.0))) {
                         Some((n, Ok(hit))) => {
                             if let Some(note) = hit.note(n) {
                                 notes.push(note);
@@ -4301,9 +4301,9 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                             // The name is gone. A pick on the axis of a round must not fall
                             // through to the tangency seam (#775). A sharp edge that moved
                             // still resolves from the point, which an edit relies on.
-                            if pick_lies_on_a_round_axis(&mb.body, *p) {
+                            if pick_lies_on_a_round_axis(&mb.body, p.0) {
                                 notes.push(skipped);
-                            } else if let Ok(q) = resolve_edges(&mb.body, &[*p], &refs, &mut w) {
+                            } else if let Ok(q) = resolve_edges(&mb.body, &[p.0], &refs, &mut w) {
                                 out.extend(q);
                                 notes.push(match f.edge_names.get(i) {
                                     Some(n) if !n.is_empty() => format!("edge `{n}` no longer exists; using the edge at the picked point"),
@@ -4324,7 +4324,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 }
                 out
             } else {
-                resolve_edges(&mb.body, edges, &f.edge_refs, warning)?
+                resolve_edges(&mb.body, &crate::plain(edges), &f.edge_refs, warning)?
             };
             st.blend_edges.insert(f.id, edges.clone());
             let input = mb.traced();
@@ -4338,7 +4338,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                     for (t, e) in mid {
                         pts.push((*t, val(vals, e, Kind::Length)?));
                     }
-                    one_by_one(input, &edges, |b, p| kernel::fillet_variable_points(b, p, *start, &pts, *smooth))?
+                    one_by_one(input, &edges, |b, p| kernel::fillet_variable_points(b, p, start.0, &pts, *smooth))?
                 }
                 FeatureKind::Fillet { style: crate::FilletStyle::Spline { start, knots, radii }, .. } => {
                     let mut values = vec![r];
@@ -4346,7 +4346,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                         values.push(val(vals, e, Kind::Length)?);
                     }
                     let law = crate::FilletStyle::spline(knots, values);
-                    one_by_one(input, &edges, |b, p| kernel::fillet_variable_spline(b, p, *start, &law))?
+                    one_by_one(input, &edges, |b, p| kernel::fillet_variable_spline(b, p, start.0, &law))?
                 }
                 FeatureKind::Fillet { fit: crate::FilletFit::Taper, .. } => {
                     let (b, tapers) = kernel::fillet_tapered(&mb.body, &edges, r)?;
@@ -4393,9 +4393,9 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         }
         FeatureKind::Cylinder { base, axis, radius, height, operation } => {
             let (base, radius, height) = (point(vals, base)?, val(vals, radius, Kind::Length)?, val(vals, height, Kind::Length)?);
-            let b = kernel::cylinder(base, *axis, radius, height)?;
+            let b = kernel::cylinder(base, axis.0, radius, height)?;
             let b = if matches!(operation, Operation::NewBody | Operation::Join) { b.with_cylinder_certificate(f.id)? } else { b };
-            let prism = more::PrimitivePrism::Cylinder { base, axis: *axis, radius, height };
+            let prism = more::PrimitivePrism::Cylinder { base, axis: axis.0, radius, height };
             let handled = more::sheet_primitive_cut(f, st, &b, prism, *operation, false)?;
             let tools = vec![crate::lineage::cylinder_tool(b)];
             if !handled.is_empty() {
@@ -4459,20 +4459,20 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         }
         FeatureKind::OffsetFace { faces, distance, body } => {
             let d = val(vals, distance, Kind::Length)?;
-            let i = body_at(st, body, faces)?;
+            let i = body_at(st, body, &crate::plain(faces))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
-            let nb = Traced::step(kernel::offset_faces(&mb.body, faces, d)?, &[&mb.traced()]);
+            let nb = Traced::step(kernel::offset_faces(&mb.body, &crate::plain(faces), d)?, &[&mb.traced()]);
             if let Some(slot) = st.bodies.get_mut(i) {
                 *slot = ModelBody::traced_new(mb.name, nb, mb.feature);
             }
             Ok(())
         }
         FeatureKind::DeleteFace { faces, body, heal } => {
-            let i = body_at(st, body, faces)?;
+            let i = body_at(st, body, &crate::plain(faces))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
             let mut picked: Vec<usize> = Vec::new();
             for p in faces {
-                let fi = crate::appearance::face_index_at(&mb, *p)
+                let fi = crate::appearance::face_index_at(&mb, p.0)
                     .ok_or_else(|| DocError::Invalid(format!("Delete Face: no face of {} at {p:?}", mb.name)))?;
                 if !picked.contains(&fi) {
                     picked.push(fi);
@@ -4508,7 +4508,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 Some(a) => val(vals, a, Kind::Angle)?,
                 None => 0.0,
             };
-            let axis = rotate_axis.unwrap_or(Vec3::Z);
+            let axis = rotate_axis.map(Vec3::from).unwrap_or(Vec3::Z);
             // With `copy` set, the source body is kept in place and the transform lands on a new
             // body pushed beside it instead of replacing it.
             let mut output = 0;
@@ -4992,7 +4992,7 @@ mod chain_tests {
         .unwrap();
         doc.add_feature(
             FeatureKind::Fillet {
-                edges: vec![Vec3::new(20.0, 0.0, 20.0)],
+                edges: vec![crate::Position(Vec3::new(20.0, 0.0, 20.0))],
                 radius: "4".into(),
                 body: None,
                 style: crate::FilletStyle::Constant,

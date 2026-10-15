@@ -475,7 +475,7 @@ pub fn commands(app: &SolveApp, k: &Surf, inputs: &[SelInput], extra: &Map<Strin
 /// A tool as a selection again: a plane, else the face at the stored point.
 fn tool_sel(app: &SolveApp, plane: &PlaneRef, tool: Option<&FaceAt>) -> Option<Sel> {
     match tool {
-        Some(t) => crate::dialogs::face_sel(&app.session, t.point),
+        Some(t) => crate::dialogs::face_sel(&app.session, t.point.0),
         None => crate::dialogs::plane_sel(&app.session, plane),
     }
 }
@@ -484,7 +484,7 @@ fn tool_sel(app: &SolveApp, plane: &PlaneRef, tool: Option<&FaceAt>) -> Option<S
 /// `frame` maps the feature's component frame to the world, for an axis stored as a line.
 pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(Kind, Vec<SelInput>, Map<String, Value>)> {
     let s = &app.session;
-    let edge = |p: &Vec3| crate::dialogs::edge_sel(s, *p);
+    let edge = |p: &solidcraft_engine::doc::Position| crate::dialogs::edge_sel(s, p.0);
     let (k, fill): (Surf, Vec<Vec<Sel>>) = match kind {
         FeatureKind::SurfaceRevolve { sketch, profiles, curves, axis, angle, angle2, symmetric } => {
             let (pick, stored) = match axis {
@@ -494,8 +494,8 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(K
                 AxisRef::Line { origin, dir } => (
                     None,
                     Some(json!({
-                        "origin": pt(solidcraft_engine::doc::apply_point(frame, *origin)),
-                        "dir": pt(solidcraft_engine::doc::apply_vector(frame, *dir))
+                        "origin": pt(solidcraft_engine::doc::apply_point(frame, origin.0)),
+                        "dir": pt(solidcraft_engine::doc::apply_vector(frame, dir.0))
                     })),
                 ),
             };
@@ -538,13 +538,13 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(K
         }
         FeatureKind::SurfaceOffset { faces, distance, chain, .. } => (
             Surf::Offset { distance: distance.to_string(), chain: *chain },
-            vec![faces.iter().filter_map(|p| crate::dialogs::face_sel(s, *p)).collect()],
+            vec![faces.iter().filter_map(|p| crate::dialogs::face_sel(s, p.0)).collect()],
         ),
         FeatureKind::Unstitch { body, faces } | FeatureKind::ReverseNormal { body, faces } => {
             let sels: Vec<Sel> = if faces.is_empty() {
                 vec![Sel::Body { name: body.clone() }]
             } else {
-                faces.iter().filter_map(|p| crate::dialogs::face_sel(s, *p)).collect()
+                faces.iter().filter_map(|p| crate::dialogs::face_sel(s, p.0)).collect()
             };
             (if matches!(kind, FeatureKind::Unstitch { .. }) { Surf::Unstitch } else { Surf::ReverseNormal }, vec![sels])
         }
@@ -567,7 +567,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(K
             vec![
                 vec![Sel::Body { name: body.clone() }],
                 tool_sel(app, plane, tool.as_ref()).into_iter().collect(),
-                crate::dialogs::face_sel(s, *keep).into_iter().collect(),
+                crate::dialogs::face_sel(s, keep.0).into_iter().collect(),
             ],
         ),
         FeatureKind::SurfaceUntrim { face, holes, outer, in_place } => {
@@ -578,12 +578,12 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(K
             };
             (
                 Surf::Untrim { holes: index, outer: *outer, in_place: *in_place },
-                vec![crate::dialogs::face_sel(s, face.point).into_iter().collect(), picked],
+                vec![crate::dialogs::face_sel(s, face.point.0).into_iter().collect(), picked],
             )
         }
         FeatureKind::SplitFace { faces, plane, tool, .. } => (
             Surf::SplitFace,
-            vec![faces.iter().filter_map(|p| crate::dialogs::face_sel(s, *p)).collect(), tool_sel(app, plane, tool.as_ref()).into_iter().collect()],
+            vec![faces.iter().filter_map(|p| crate::dialogs::face_sel(s, p.0)).collect(), tool_sel(app, plane, tool.as_ref()).into_iter().collect()],
         ),
         _ => return None,
     };

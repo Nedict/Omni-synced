@@ -4,6 +4,7 @@
 use serde_json::{Value, json};
 use solidcraft_doc::expr::Kind;
 use solidcraft_doc::sheet::{self, SheetBody, SheetRule};
+use solidcraft_doc::{FacePick, Position};
 use solidcraft_doc::{FeatureKind, FlangeEdge};
 use solidcraft_geom::{Vec2, Vec3};
 
@@ -104,7 +105,7 @@ fn flange_edges(s: &Session, p: &Value, cmd: &str) -> Result<Vec<FlangeEdge>> {
             check_expr(s, &e, kind, cmd, &format!("edges[{i}].{k}"))?;
             Ok(Some(e))
         };
-        edges.push(FlangeEdge { point, angle: own("angle", Kind::Angle)?, height: own("height", Kind::Length)? });
+        edges.push(FlangeEdge { point: Position(point), angle: own("angle", Kind::Angle)?, height: own("height", Kind::Length)? });
     }
     Ok(edges)
 }
@@ -218,7 +219,13 @@ fn hem(s: &mut Session, p: &Value) -> Result<Value> {
     add_feature(
         s,
         p,
-        FeatureKind::SheetHem { edges, length, gap, flip: bool_(p, "flip").unwrap_or(false), body: str_(p, "body").map(str::to_string) },
+        FeatureKind::SheetHem {
+            edges: edges.into_iter().map(Position).collect(),
+            length,
+            gap,
+            flip: bool_(p, "flip").unwrap_or(false),
+            body: str_(p, "body").map(str::to_string),
+        },
     )
 }
 
@@ -265,7 +272,18 @@ fn fold(s: &mut Session, p: &Value) -> Result<Value> {
     let r = add_feature(
         s,
         p,
-        FeatureKind::SheetFold { sketch, curve, a, b, angle, radius, position, flip: bool_(p, "flip").unwrap_or(false), fixed, body },
+        FeatureKind::SheetFold {
+            sketch,
+            curve,
+            a: Position(a),
+            b: Position(b),
+            angle,
+            radius,
+            position,
+            flip: bool_(p, "flip").unwrap_or(false),
+            fixed: fixed.map(Position),
+            body,
+        },
     )?;
     // A recompute keeps a stored fold whose fixed point no longer touches the sheet (with a
     // warning); a new fold refuses one, since it picks no side (#263).
@@ -309,7 +327,7 @@ fn convert(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, format!("`{key}` is not a sheet.convert parameter: the sheet metal rule sets it. Pass a rule's name as `rule`")));
     }
     let rule = rule_param(s, p, cmd)?;
-    add_feature(s, p, FeatureKind::SheetConvert { body, face, rule, bends })
+    add_feature(s, p, FeatureKind::SheetConvert { body, face: FacePick(face), rule, bends: bends.into_iter().map(Position).collect() })
 }
 
 fn rules(s: &mut Session, p: &Value) -> Result<Value> {

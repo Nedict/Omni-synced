@@ -4079,7 +4079,7 @@ fn emboss_face_sel(s: &Session, component: u64, face: &solidcraft_engine::doc::E
     let owner = s.doc.model_body_component(body);
     let world_name = s.doc.world_body_name(&source, &face.body, owner, &face.path);
     let author = solidcraft_engine::doc::EmbossFace::component_frame(&s.doc, component, &face.author_path).ok()?;
-    let point = solidcraft_engine::doc::apply_point(&author, face.at);
+    let point = solidcraft_engine::doc::apply_point(&author, face.at.0);
     s.world_state().body(&world_name)?;
     Some(Sel::Face { body: world_name, index, point })
 }
@@ -4157,7 +4157,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 if let Some(point) = point {
                     set_object(&mut d.inputs, &mut d.active, label, true);
                     if let Some(input) = d.inputs.iter_mut().find(|i| i.label == label) {
-                        input.items = vec![Sel::Vertex { body: String::new(), point: solidcraft_engine::doc::apply_point(&frame, point) }];
+                        input.items = vec![Sel::Vertex { body: String::new(), point: solidcraft_engine::doc::apply_point(&frame, point.0) }];
                     }
                 }
             }
@@ -4182,8 +4182,8 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let frame = feature_frame(s, f.component);
             let stored_axis = match axis {
                 AxisRef::Line { origin, dir } => Some(json!({
-                    "origin": pt(solidcraft_engine::doc::apply_point(&frame, *origin)),
-                    "dir": pt(solidcraft_engine::doc::apply_vector(&frame, *dir))
+                    "origin": pt(solidcraft_engine::doc::apply_point(&frame, origin.0)),
+                    "dir": pt(solidcraft_engine::doc::apply_vector(&frame, dir.0))
                 })),
                 _ => None,
             };
@@ -4198,7 +4198,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             if let Some(point) = to {
                 set_to_object(&mut d.inputs, &mut d.active, true);
                 if let Some(input) = d.inputs.iter_mut().find(|i| i.label == TO_OBJECT) {
-                    input.items = vec![Sel::Vertex { body: String::new(), point: solidcraft_engine::doc::apply_point(&frame, *point) }];
+                    input.items = vec![Sel::Vertex { body: String::new(), point: solidcraft_engine::doc::apply_point(&frame, point.0) }];
                 }
             }
             let items = st.sketch(*sketch).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
@@ -4275,19 +4275,19 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                             FilletStyle::Constant | FilletStyle::Chord | FilletStyle::Curvature => {}
                         }
                         // The start was the first edge's last point: ends swapped.
-                        let first_end = edges.first().and_then(|p| edge_sel(s, *p)).and_then(|x| match x {
+                        let first_end = edges.first().and_then(|p| edge_sel(s, p.0)).and_then(|x| match x {
                             Sel::Edge { body, index, .. } => {
                                 s.world_state().body(&body).and_then(|b| b.mesh().edges.get(index).and_then(|e| e.last().copied()))
                             }
                             _ => None,
                         });
-                        let swapped = first_end.is_some_and(|e| e.dist(*start) < 1e-6);
+                        let swapped = first_end.is_some_and(|e| e.dist(start.0) < 1e-6);
                         d.extra.insert("swap_ends".into(), json!(swapped));
                     }
                 }
             }
             if let Some(inp) = d.inputs.first_mut() {
-                inp.items = edges.iter().filter_map(|p| edge_sel(s, *p)).collect();
+                inp.items = edges.iter().filter_map(|p| edge_sel(s, p.0)).collect();
             }
             d
         }
@@ -4299,7 +4299,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 d.extra.insert("direction".into(), json!(direction));
             }
             if let Some(inp) = d.inputs.first_mut() {
-                inp.items = faces.iter().filter_map(|p| face_sel(s, *p)).collect();
+                inp.items = faces.iter().filter_map(|p| face_sel(s, p.0)).collect();
             }
             d
         }
@@ -4307,12 +4307,12 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let mut d = start("solid.draft")?;
             d.kind = Kind::Draft { angle: angle.to_string() };
             if let Some(inp) = d.inputs.get_mut(0) {
-                inp.items = faces.iter().filter_map(|p| face_sel(s, *p)).collect();
+                inp.items = faces.iter().filter_map(|p| face_sel(s, p.0)).collect();
             }
             if let Some(inp) = d.inputs.get_mut(1) {
                 inp.items = plane_sel(s, neutral).into_iter().collect();
             }
-            d.extra.insert("pull".into(), pt3(*pull));
+            d.extra.insert("pull".into(), pt3(pull.0));
             d
         }
         FeatureKind::Hole { position, direction, diameter, depth, hole, points, thread, to } => {
@@ -4360,16 +4360,16 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 }
                 None => {
                     if let Some(inp) = d.inputs.first_mut() {
-                        inp.items = vec![face_sel(s, *position).unwrap_or(Sel::Face { body: String::new(), index: 0, point: *position })];
+                        inp.items = vec![face_sel(s, position.0).unwrap_or(Sel::Face { body: String::new(), index: 0, point: position.0 })];
                     }
-                    d.extra.insert("direction".into(), pt3(*direction));
+                    d.extra.insert("direction".into(), pt3(direction.0));
                 }
             }
             if to.is_some() {
                 if let Kind::Hole { opts, .. } = &mut d.kind {
                     opts.all = false;
                 }
-                with_to_object(&mut d, s, *to);
+                with_to_object(&mut d, s, to.map(Vec3::from));
             }
             // A hole at every point of a sketch.
             if points.as_ref().is_some_and(|sp| sp.ids.is_empty()) {
@@ -4397,7 +4397,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 at: None,
             };
             d.extra.insert("base".into(), pt_expr(base));
-            d.extra.insert("axis".into(), pt3(*axis));
+            d.extra.insert("axis".into(), pt3(axis.0));
             d
         }
         FeatureKind::Sphere { center, radius, operation } => {
@@ -4424,7 +4424,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let before = s.model.state_before(f.id);
             let found = fill_cells(&before, tools);
             let filled: Vec<String> =
-                cells.iter().filter_map(|c| found.iter().min_by(|a, b| a.0.dist(*c).total_cmp(&b.0.dist(*c))).map(|x| x.1.clone())).collect();
+                cells.iter().filter_map(|c| found.iter().min_by(|a, b| a.0.dist(c.0).total_cmp(&b.0.dist(c.0))).map(|x| x.1.clone())).collect();
             let items: Vec<Sel> = tools.iter().map(|n| Sel::Body { name: n.clone() }).collect();
             d.kind = Kind::BoundaryFill {
                 operation: op_index(operation),
@@ -4490,14 +4490,14 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                     // Directions along the origin axes show as those axes; others are kept as is.
                     for (i, (key, dir)) in [("dir1", Some(*dir1)), ("dir2", *dir2)].into_iter().enumerate() {
                         let Some(dir) = dir else { continue };
-                        match world_axis(dir) {
+                        match world_axis(dir.0) {
                             Some(name) => {
                                 if let Some(inp) = d.inputs.get_mut(i + 1) {
                                     inp.items = vec![Sel::Axis { name }];
                                 }
                             }
                             None => {
-                                d.extra.insert(key.into(), pt3(dir));
+                                d.extra.insert(key.into(), pt3(dir.0));
                             }
                         }
                     }
@@ -4506,14 +4506,14 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 PatternKind::Circular { origin, axis, count, angle } => {
                     let mut d = start("solid.pattern.circular")?;
                     d.kind = Kind::PatternCirc { count: count.to_string(), angle: angle.to_string() };
-                    match world_axis(*axis).filter(|_| origin.len() < 1e-9) {
+                    match world_axis(axis.0).filter(|_| origin.len() < 1e-9) {
                         Some(name) => {
                             if let Some(inp) = d.inputs.get_mut(1) {
                                 inp.items = vec![Sel::Axis { name }];
                             }
                         }
                         None => {
-                            d.extra.insert("axis".into(), json!({"origin": pt3(*origin), "dir": pt3(*axis)}));
+                            d.extra.insert("axis".into(), json!({"origin": pt3(origin.0), "dir": pt3(axis.0)}));
                         }
                     }
                     d
@@ -4616,7 +4616,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             if let Some(inp) = d.inputs.get_mut(1) {
                 inp.items = match tool {
-                    Some(t) => face_sel(s, t.point).into_iter().collect(),
+                    Some(t) => face_sel(s, t.point.0).into_iter().collect(),
                     None => plane_sel(s, plane).into_iter().collect(),
                 };
             }
@@ -4628,7 +4628,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = bodies.iter().map(|n| Sel::Body { name: n.clone() }).collect();
             }
-            d.extra.insert("origin".into(), pt3(*origin));
+            d.extra.insert("origin".into(), pt3(origin.0));
             if let Some(f) = factors {
                 d.extra.insert("factors".into(), json!(f));
             }
@@ -4638,7 +4638,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let mut d = start("solid.offset_face")?;
             d.kind = Kind::OffsetFaces { distance: distance.to_string() };
             if let Some(inp) = d.inputs.first_mut() {
-                inp.items = faces.iter().filter_map(|p| face_sel(s, *p)).collect();
+                inp.items = faces.iter().filter_map(|p| face_sel(s, p.0)).collect();
             }
             if let Some(b) = body {
                 d.extra.insert("body".into(), json!(b));
@@ -4655,7 +4655,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 length: length.as_deref().map(str::to_string).unwrap_or_default(),
             };
             if let Some(inp) = d.inputs.first_mut() {
-                inp.items = face_sel(s, *face).into_iter().collect();
+                inp.items = face_sel(s, face.0).into_iter().collect();
             }
             d
         }
@@ -4712,7 +4712,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         FeatureKind::ReplaceFace { faces, target, body } => {
             let mut d = start("solid.replace_face")?;
             if let Some(inp) = d.inputs.first_mut() {
-                inp.items = faces.iter().filter_map(|p| face_sel(s, *p)).collect();
+                inp.items = faces.iter().filter_map(|p| face_sel(s, p.0)).collect();
             }
             if let Some(inp) = d.inputs.get_mut(1) {
                 inp.items = plane_sel(s, target).into_iter().collect();
@@ -4731,7 +4731,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         }
         FeatureKind::Move { bodies, translate, rotate_axis, angle, copy } => {
             let mut d = start("solid.move")?;
-            crate::dialogs_move::for_feature(&mut d, bodies, translate, *rotate_axis, angle.as_ref(), *copy);
+            crate::dialogs_move::for_feature(&mut d, bodies, translate, rotate_axis.map(Vec3::from), angle.as_ref(), *copy);
             d
         }
         other => {

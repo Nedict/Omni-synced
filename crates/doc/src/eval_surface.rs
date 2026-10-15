@@ -17,9 +17,9 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
                 }
             }
             if !edges.is_empty() {
-                let i = body_at(st, body, edges)?;
+                let i = body_at(st, body, &crate::plain(edges))?;
                 let b = st.bodies.get(i).ok_or_else(|| DocError::Invalid("body".into()))?;
-                made.push(kernel::patch_edges(&b.body, edges)?);
+                made.push(kernel::patch_edges(&b.body, &crate::plain(edges))?);
             }
             if made.is_empty() {
                 return Err(DocError::Invalid("a patch needs a sketch region or a loop of edges".into()));
@@ -66,11 +66,11 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             let trimmed = match tool {
                 Some(t) => {
                     let tb = st.body(&t.body).ok_or_else(|| DocError::Unknown(format!("body `{}`", t.body)))?;
-                    let face = crate::appearance::face_index_at(tb, t.point)
+                    let face = crate::appearance::face_index_at(tb, t.point.0)
                         .ok_or_else(|| DocError::Invalid(format!("no face of `{}` at the tool point", t.body)))?;
-                    kernel::trim(&mb.body, &kernel::SplitTool::Face { body: &tb.body, face }, *keep)?
+                    kernel::trim(&mb.body, &kernel::SplitTool::Face { body: &tb.body, face }, keep.0)?
                 }
-                None => kernel::trim(&mb.body, &kernel::SplitTool::Plane(doc.resolve_plane_in(vals, plane, 0, Some(st))?), *keep)?,
+                None => kernel::trim(&mb.body, &kernel::SplitTool::Plane(doc.resolve_plane_in(vals, plane, 0, Some(st))?), keep.0)?,
             };
             if let Some(slot) = st.bodies.get_mut(i) {
                 *slot = ModelBody::new(mb.name, trimmed, mb.feature);
@@ -81,7 +81,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             let d = val(vals, distance, Kind::Length)?;
             let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
-            let out = kernel::extend(&mb.body, edges, d)?;
+            let out = kernel::extend(&mb.body, &crate::plain(edges), d)?;
             if let Some(slot) = st.bodies.get_mut(i) {
                 *slot = ModelBody::new(mb.name, out, mb.feature);
             }
@@ -128,7 +128,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
         FeatureKind::Unstitch { body, faces } => {
             let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
-            let (pieces, rest) = kernel::unstitch(&mb.body, faces)?;
+            let (pieces, rest) = kernel::unstitch(&mb.body, &crate::plain(faces))?;
             let source = mb.traced();
             // The faces left keep the body's name; each face taken out is a new surface body.
             match rest {
@@ -150,7 +150,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
         FeatureKind::ReverseNormal { body, faces } => {
             let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
-            let turned = mb.traced().then(kernel::reverse_faces(&mb.body, faces)?);
+            let turned = mb.traced().then(kernel::reverse_faces(&mb.body, &crate::plain(faces))?);
             if let Some(slot) = st.bodies.get_mut(i) {
                 *slot = ModelBody::traced_new(mb.name, turned, mb.feature);
             }
@@ -218,9 +218,9 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
                 Some(t) => val(vals, t, Kind::Length)?,
                 None => 0.01,
             };
-            let i = body_at(st, body, faces)?;
+            let i = body_at(st, body, &crate::plain(faces))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
-            let picks = if *chain { smooth_chain(&mb, faces) } else { faces.clone() };
+            let picks = if *chain { smooth_chain(&mb, &crate::plain(faces)) } else { crate::plain(faces) };
             let mut picked: Vec<usize> = Vec::new();
             for p in &picks {
                 let fi =
@@ -237,11 +237,11 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
         FeatureKind::SurfaceUntrim { face, holes, outer, in_place } => {
             let i = st.bodies.iter().position(|b| b.name == face.body).ok_or_else(|| DocError::Unknown(format!("body `{}`", face.body)))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
-            let fi = crate::appearance::face_index_at(&mb, face.point)
+            let fi = crate::appearance::face_index_at(&mb, face.point.0)
                 .ok_or_else(|| DocError::Invalid(format!("Untrim: no face of {} at {:?}", mb.name, face.point)))?;
             let which = match holes {
                 None => kernel::UntrimHoles::All,
-                Some(points) => kernel::UntrimHoles::At(points),
+                Some(points) => kernel::UntrimHoles::At(&crate::plain(points)),
             };
             // A surface body's face is untrimmed where it is when asked; a solid's is copied out.
             let replace = *in_place && mb.body.is_surface();

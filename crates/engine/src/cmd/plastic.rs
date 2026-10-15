@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use solidcraft_doc::FeatureKind;
 use solidcraft_doc::expr::Kind;
 use solidcraft_doc::plastic::PlasticRule;
+use solidcraft_doc::{Dir, FacePick, Position};
 use solidcraft_geom::Vec3;
 
 use super::CommandSpec;
@@ -159,9 +160,9 @@ fn rest(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     let kind = FeatureKind::Rest {
-        position,
-        direction,
-        along,
+        position: FacePick(position),
+        direction: Dir(direction),
+        along: along.map(Dir),
         width: required(s, p, "width", Kind::Length, cmd)?,
         length: checked(s, p, "length", Kind::Length, cmd)?,
         height: required(s, p, "height", Kind::Length, cmd)?,
@@ -202,8 +203,8 @@ fn boss(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "plastic.boss";
     let (position, direction) = placed(s, p, cmd)?;
     let kind = FeatureKind::Boss {
-        position,
-        direction,
+        position: FacePick(position),
+        direction: Dir(direction),
         diameter: required(s, p, "diameter", Kind::Length, cmd)?,
         height: required(s, p, "height", Kind::Length, cmd)?,
         hole_diameter: checked(s, p, "hole_diameter", Kind::Length, cmd)?,
@@ -233,7 +234,7 @@ fn lip(s: &mut Session, p: &Value) -> Result<Value> {
         Some(o) => return Err(bad(cmd, format!("unknown side `{o}` (inside or outside)"))),
     };
     let kind = FeatureKind::Lip {
-        face,
+        face: Position(face),
         width: required(s, p, "width", Kind::Length, cmd)?,
         height: required(s, p, "height", Kind::Length, cmd)?,
         groove,
@@ -252,9 +253,9 @@ fn snap_fit(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "`hook` must point across the arm"));
     }
     let kind = FeatureKind::SnapFit {
-        position,
-        direction,
-        hook,
+        position: FacePick(position),
+        direction: Dir(direction),
+        hook: Dir(hook),
         length: required(s, p, "length", Kind::Length, cmd)?,
         thickness: required(s, p, "thickness", Kind::Length, cmd)?,
         width: required(s, p, "width", Kind::Length, cmd)?,

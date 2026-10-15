@@ -4,6 +4,7 @@ use solidcraft_sketch::Sketch;
 
 use crate::construct::{AxisDef, GeoRef, PointDef};
 use crate::expr::{self, Expr, Kind};
+use crate::points::{Dir, FacePick, Position};
 use crate::{DocError, Result};
 
 pub const MAX_FEATURES: usize = 10_000;
@@ -169,14 +170,14 @@ pub struct Extent {
     pub taper: Option<Expr>,
     /// To Object: end at the face (or vertex/point) at this point, instead of `distance`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub to: Option<Vec3>,
+    pub to: Option<FacePick>,
     /// Offset past the To Object face (expression; negative stops short).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to_offset: Option<Expr>,
     /// From Object: start at the face (or point) here instead of the sketch plane (plus
     /// `start_offset`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub from: Option<Vec3>,
+    pub from: Option<FacePick>,
 }
 
 /// Thin Extrude: a wall of constant thickness along sketch curves instead of the profiles.
@@ -235,14 +236,14 @@ pub enum AxisRef {
     /// World X / Y / Z axis through the origin.
     World { axis: String },
     /// Any line in the sketch plane, in world coordinates.
-    Line { origin: Vec3, dir: Vec3 },
+    Line { origin: Position, dir: Dir },
 }
 
 /// Persistent cylindrical Emboss selection, authored in the feature component frame.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EmbossFace {
     pub body: String,
-    pub at: Vec3,
+    pub at: FacePick,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub path: Vec<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -323,7 +324,7 @@ impl EmbossFace {
 /// values is `{"point": [x, y, z], "angle": "…", "height": "…"}`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FlangeEdge {
-    pub point: Vec3,
+    pub point: Position,
     pub angle: Option<Expr>,
     pub height: Option<Expr>,
 }
@@ -331,7 +332,7 @@ pub struct FlangeEdge {
 impl FlangeEdge {
     /// An edge that takes the feature's angle and height.
     pub fn at(point: Vec3) -> Self {
-        Self { point, angle: None, height: None }
+        Self { point: Position(point), angle: None, height: None }
     }
 }
 
@@ -377,7 +378,7 @@ impl<'de> Deserialize<'de> for FlangeEdge {
             }
             fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> std::result::Result<FlangeEdge, A::Error> {
                 let o = Own::deserialize(MapAccessDeserializer::new(map))?;
-                Ok(FlangeEdge { point: o.point, angle: o.angle, height: o.height })
+                Ok(FlangeEdge { point: Position(o.point), angle: o.angle, height: o.height })
             }
         }
         d.deserialize_any(Edge)
@@ -434,11 +435,11 @@ pub enum FeatureKind {
         convention: RevolveConvention,
         /// To Object: turn until the face, vertex or point here.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        to: Option<Vec3>,
+        to: Option<FacePick>,
     },
     Fillet {
         /// Reference points on the edges to round (each re-finds the nearest edge).
-        edges: Vec<Vec3>,
+        edges: Vec<Position>,
         radius: Expr,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
@@ -451,7 +452,7 @@ pub enum FeatureKind {
         fit: FilletFit,
     },
     Chamfer {
-        edges: Vec<Vec3>,
+        edges: Vec<Position>,
         distance: Expr,
         /// Unequal chamfers: the distance along the second face…
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -478,7 +479,7 @@ pub enum FeatureKind {
         #[serde(with = "point_expr")]
         base: PointExpr,
         #[serde(default = "z_axis")]
-        axis: Vec3,
+        axis: Dir,
         radius: Expr,
         height: Expr,
         #[serde(default)]
@@ -527,9 +528,9 @@ pub enum FeatureKind {
     },
     /// A drilled hole (simple, counterbore or countersink) at a point, into the material.
     Hole {
-        position: Vec3,
+        position: FacePick,
         /// Drilling direction (into the material).
-        direction: Vec3,
+        direction: Dir,
         diameter: Expr,
         /// Depth to the shoulder; `None` = through all.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -545,13 +546,13 @@ pub enum FeatureKind {
         thread: Option<String>,
         /// To Object: drill down to the face (or point) here instead of `depth`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        to: Option<Vec3>,
+        to: Option<FacePick>,
     },
     /// A thread on a cylindrical face. Cosmetic by default (no geometry change; drawn and
     /// exported as an annotation); `modeled` cuts the real helical ISO profile into the face.
     /// `designation` is an ISO metric size such as "M8" or "M8x1".
     Thread {
-        face: Vec3,
+        face: FacePick,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         designation: Option<String>,
         /// Thread length from the face's end nearest `face`; `None` = full length.
@@ -581,7 +582,7 @@ pub enum FeatureKind {
     },
     /// Hollow a body leaving walls of `thickness`, removing the faces at the given points.
     Shell {
-        faces: Vec<Vec3>,
+        faces: Vec<FacePick>,
         thickness: Expr,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
@@ -594,10 +595,10 @@ pub enum FeatureKind {
     },
     /// Tilt faces (at the given points) about a neutral plane, leaning toward `pull`.
     Draft {
-        faces: Vec<Vec3>,
+        faces: Vec<FacePick>,
         angle: Expr,
         neutral: PlaneRef,
-        pull: Vec3,
+        pull: Dir,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
     },
@@ -625,7 +626,7 @@ pub enum FeatureKind {
     /// a face of a body (`tool`, its surface extended) or a sketch's curves (`sketch`, swept
     /// along its normal). The pieces are named after the face (`#k`).
     SplitFace {
-        faces: Vec<Vec3>,
+        faces: Vec<FacePick>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
         plane: PlaneRef,
@@ -638,7 +639,7 @@ pub enum FeatureKind {
     Scale {
         bodies: Vec<String>,
         #[serde(default)]
-        origin: Vec3,
+        origin: Position,
         factor: Expr,
         /// Per-axis factors instead of `factor`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -646,7 +647,7 @@ pub enum FeatureKind {
     },
     /// Move planar faces (at the given points) along their normals; the body keeps its shape.
     OffsetFace {
-        faces: Vec<Vec3>,
+        faces: Vec<FacePick>,
         distance: Expr,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
@@ -655,7 +656,7 @@ pub enum FeatureKind {
     /// a fillet, chamfer, hole or boss is taken off. A picked face brings the rest of its surface
     /// (both halves of a hole's wall).
     DeleteFace {
-        faces: Vec<Vec3>,
+        faces: Vec<FacePick>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
         /// Close the gap by extending the neighbouring faces (the default); `false` leaves it
@@ -711,7 +712,7 @@ pub enum FeatureKind {
     },
     /// Move planar faces (at the given points) onto a target plane parallel to them.
     ReplaceFace {
-        faces: Vec<Vec3>,
+        faces: Vec<FacePick>,
         target: PlaneRef,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
@@ -719,12 +720,12 @@ pub enum FeatureKind {
     /// Move bodies so that `from` lands on `to` (and, with normals, the faces meet face to face).
     Align {
         bodies: Vec<String>,
-        from: Vec3,
-        to: Vec3,
+        from: Position,
+        to: Position,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        from_normal: Option<Vec3>,
+        from_normal: Option<Dir>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        to_normal: Option<Vec3>,
+        to_normal: Option<Dir>,
         /// Normals the same way instead of facing each other.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         flip: bool,
@@ -735,7 +736,7 @@ pub enum FeatureKind {
         #[serde(with = "point_expr")]
         base: PointExpr,
         #[serde(default = "z_axis")]
-        axis: Vec3,
+        axis: Dir,
         diameter: Expr,
         pitch: Expr,
         turns: Expr,
@@ -799,7 +800,7 @@ pub enum FeatureKind {
     },
     /// Flat hems on sheet edges.
     SheetHem {
-        edges: Vec<Vec3>,
+        edges: Vec<Position>,
         length: Expr,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         gap: Option<Expr>,
@@ -829,8 +830,8 @@ pub enum FeatureKind {
         sketch: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         curve: Option<String>,
-        a: Vec3,
-        b: Vec3,
+        a: Position,
+        b: Position,
         angle: Expr,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         radius: Option<Expr>,
@@ -840,7 +841,7 @@ pub enum FeatureKind {
         flip: bool,
         /// A point on the side that stays put (default: the larger side).
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        fixed: Option<Vec3>,
+        fixed: Option<Position>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
     },
@@ -856,19 +857,19 @@ pub enum FeatureKind {
     /// face across those edges become the sheet.
     SheetConvert {
         body: String,
-        face: Vec3,
+        face: FacePick,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rule: Option<String>,
         /// Points on the sharp edges that become bends.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        bends: Vec<Vec3>,
+        bends: Vec<Position>,
     },
     /// Plastic boss: a round post on a face (draft, root fillet, hole, ribs).
     Boss {
-        position: Vec3,
+        position: FacePick,
         /// Out of the face (the boss grows along it).
         #[serde(default = "z_axis")]
-        direction: Vec3,
+        direction: Dir,
         diameter: Expr,
         height: Expr,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -895,7 +896,7 @@ pub enum FeatureKind {
     },
     /// Plastic lip (raised band) or groove (recess) along the rim face picked at `face`.
     Lip {
-        face: Vec3,
+        face: Position,
         width: Expr,
         height: Expr,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -911,12 +912,12 @@ pub enum FeatureKind {
     },
     /// Plastic snap fit: a cantilever arm on a face with a hook (catch) at its tip.
     SnapFit {
-        position: Vec3,
+        position: FacePick,
         /// The arm grows along this (out of the face).
         #[serde(default = "z_axis")]
-        direction: Vec3,
+        direction: Dir,
         /// The catch sticks out this way.
-        hook: Vec3,
+        hook: Dir,
         length: Expr,
         thickness: Expr,
         width: Expr,
@@ -929,13 +930,13 @@ pub enum FeatureKind {
     /// Plastic rest: a raised pad on a face (round, or a rectangle), solid or a hollow wall,
     /// with draft.
     Rest {
-        position: Vec3,
+        position: FacePick,
         /// Out of the face (the pad grows along it).
         #[serde(default = "z_axis")]
-        direction: Vec3,
+        direction: Dir,
         /// The rectangle's length runs along this (default: any direction in the face).
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        along: Option<Vec3>,
+        along: Option<Dir>,
         /// Diameter of a round rest, or the rectangle's width.
         width: Expr,
         /// The rectangle's length (none: round).
@@ -954,7 +955,7 @@ pub enum FeatureKind {
     /// tools and outside the rest), each picked by a point inside it.
     BoundaryFill {
         tools: Vec<String>,
-        cells: Vec<Vec3>,
+        cells: Vec<Position>,
         #[serde(default)]
         operation: Operation,
         /// Remove the tool bodies afterwards.
@@ -975,7 +976,7 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        edges: Vec<Vec3>,
+        edges: Vec<Position>,
     },
     /// Surface bodies sewn along shared edges into the first one (a solid when they close).
     Stitch {
@@ -1011,13 +1012,13 @@ pub enum FeatureKind {
     Unstitch {
         body: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        faces: Vec<Vec3>,
+        faces: Vec<Position>,
     },
     /// A surface body with the faces at `faces` (every face when empty) turned over.
     ReverseNormal {
         body: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        faces: Vec<Vec3>,
+        faces: Vec<Position>,
     },
     /// The face at `face` restored towards its surface: the inner loops at the `holes` points
     /// taken away (every one when `None`; none when empty), and with `outer` its outer boundary
@@ -1026,7 +1027,7 @@ pub enum FeatureKind {
     SurfaceUntrim {
         face: FaceAt,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        holes: Option<Vec<Vec3>>,
+        holes: Option<Vec<Position>>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         outer: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -1069,7 +1070,7 @@ pub enum FeatureKind {
     /// surface body (0 copies them); `chain` takes each pick's whole smooth chain of faces;
     /// fitted faces within `tolerance`.
     SurfaceOffset {
-        faces: Vec<Vec3>,
+        faces: Vec<FacePick>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<String>,
         distance: Expr,
@@ -1081,7 +1082,7 @@ pub enum FeatureKind {
     /// A planar surface body extended outward by `distance` past the edges through `edges`.
     SurfaceExtend {
         body: String,
-        edges: Vec<Vec3>,
+        edges: Vec<Position>,
         distance: Expr,
     },
     /// A surface body trimmed by a plane, or by a face of a body (`tool`), keeping the side of
@@ -1091,13 +1092,13 @@ pub enum FeatureKind {
         plane: PlaneRef,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tool: Option<FaceAt>,
-        keep: Vec3,
+        keep: Position,
     },
     Move {
         bodies: Vec<String>,
         translate: [Expr; 3],
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        rotate_axis: Option<Vec3>,
+        rotate_axis: Option<Dir>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         angle: Option<Expr>,
         /// When set, the original bodies are kept and the transform is applied to a new copy
@@ -1145,7 +1146,7 @@ pub enum FilletStyle {
     /// positions between (0 to 1 from the start end); straight between them, or `smooth`.
     Variable {
         radius2: Expr,
-        start: Vec3,
+        start: Position,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         mid: Vec<(f64, Expr)>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -1154,7 +1155,7 @@ pub enum FilletStyle {
     /// The radius along each edge as a clamped B-spline of the position from the end nearest
     /// `start` (0) to the other (1): `radius` is its first control radius and `radii` the rest,
     /// its degree what `knots` leave (knots = control radii + degree + 1).
-    Spline { start: Vec3, knots: Vec<f64>, radii: Vec<Expr> },
+    Spline { start: Position, knots: Vec<f64>, radii: Vec<Expr> },
 }
 
 /// A fillet radius too large for the geometry around its edges: refused (`Exact`, the default),
@@ -1193,7 +1194,7 @@ impl FilletStyle {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FaceAt {
     pub body: String,
-    pub point: Vec3,
+    pub point: Position,
 }
 
 /// Triangles of one imported mesh body (millimetres).
@@ -1288,19 +1289,19 @@ pub enum HoleKind {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PatternKind {
     Rectangular {
-        dir1: Vec3,
+        dir1: Dir,
         count1: Expr,
         spacing1: Expr,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        dir2: Option<Vec3>,
+        dir2: Option<Dir>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         count2: Option<Expr>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         spacing2: Option<Expr>,
     },
     Circular {
-        origin: Vec3,
-        axis: Vec3,
+        origin: Position,
+        axis: Dir,
         count: Expr,
         /// Total angle (360 deg = evenly around).
         angle: Expr,
@@ -1325,8 +1326,8 @@ pub enum PatternKind {
     },
 }
 
-fn z_axis() -> Vec3 {
-    Vec3::Z
+fn z_axis() -> Dir {
+    Dir(Vec3::Z)
 }
 
 /// A point whose coordinates are length expressions (`["basin_width / 2", "10 mm", "0"]`), so
