@@ -120,10 +120,11 @@ Claude Desktop (`claude_desktop_config.json`), bridged to a running app:
 
 ### Agent skills
 
-[`skills/`](https://github.com/bherbruck/solidcraft/tree/main/skills) holds three [Agent Skills](https://agentskills.io) for agents that model through this server:
+[`skills/`](https://github.com/bherbruck/solidcraft/tree/main/skills) holds four [Agent Skills](https://agentskills.io) for agents that model through this server:
 - `solidcraft-modeling` covers building a new part.
 - `solidcraft-editing` covers changing an existing design.
 - `solidcraft-checking` adds checks for errors SolidCraft does not report, regression tests and porting, next to the other two.
+- `solidcraft-mechanisms` covers assemblies: joints placed by world coordinates, motion links, closed loops such as actuators, contact sets and motion studies, checked against analytic values.
 
 They cover the workflow, the command shapes, how to verify with `measure`, and the known traps. With them an agent builds a part in a few `batch` calls and reads far less output. To install them for Claude Code, copy the folders into `~/.claude/skills/`; [skills/README.md](https://github.com/bherbruck/solidcraft/blob/main/skills/README.md) has the details.
 

@@ -911,6 +911,58 @@ fn sketch_plane_axes_match_the_skill_reference() {
     }
 }
 
+/// The worked example in `skills/solidcraft-mechanisms/reference.md` is what agents copy: the
+/// actuator has to follow the hinge with the stroke the file computes, the mirrored panel its link,
+/// and the drive has to stop where the rod reaches its limit.
+#[test]
+fn mechanisms_skill_example_moves_as_documented() {
+    let doc = include_str!("../../../skills/solidcraft-mechanisms/reference.md");
+    let start = doc.find("{\"commands\":[").expect("the reference has a worked example");
+    let end = start + doc[start..].find("```").expect("the example's code block ends");
+    let example: Value = serde_json::from_str(&doc[start..end]).expect("the example is JSON");
+    let mut s = server();
+    tool(&mut s, "batch", example);
+    let exec = |s: &mut Server, command: &str, params: Value| tool(s, "execute", json!({"command": command, "params": params}));
+    let value = |list: &Value, joint: &str| {
+        let j = list["joints"].as_array().unwrap().iter().find(|j| j["name"] == joint).unwrap_or_else(|| panic!("no joint {joint}: {list}"));
+        j["values"][0]["value"].as_f64().unwrap()
+    };
+    let com = |s: &mut Server, occurrence: &str| -> Vec<f64> {
+        let p = exec(s, "occurrence.properties", json!({"occurrence": occurrence}));
+        p["total"]["center_of_mass"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect()
+    };
+    // Frame 0, the panels and the actuator one motion between them; nothing open.
+    let list = exec(&mut s, "joint.list", json!({}));
+    assert_eq!(list["conflicts"], json!([]), "{list}");
+    let mut dof: Vec<u64> = list["dof"].as_array().unwrap().iter().map(|d| d["dof"].as_u64().unwrap()).collect();
+    dof.sort_unstable();
+    assert_eq!(dof, [0, 0, 1, 1, 1, 1], "root, Frame, then Wing, Wing 2, barrel and rod: {list}");
+    let near = |got: &[f64], want: [f64; 3]| got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-3);
+    let wing = com(&mut s, "Wing:1");
+    assert!(near(&wing, [0.0, 20.0, 1.5]), "joined where it was modelled: {wing:?}");
+
+    // The tip at (0, 30 cos θ, 30 sin θ), the root at (0, 0, -40): L² = 2500 + 2400 sin θ.
+    let stroke = |deg: f64| (2500.0 + 2400.0 * deg.to_radians().sin()).sqrt() - 50.0;
+    assert!((stroke(20.0) - 7.6268).abs() < 5e-5, "the reference states {}", stroke(20.0));
+    exec(&mut s, "joint.drive", json!({"joint": "Hinge", "value": 20}));
+    let list = exec(&mut s, "joint.list", json!({}));
+    assert!((value(&list, "Stroke") - stroke(20.0)).abs() < 1e-6, "{list}");
+    assert!((value(&list, "Hinge 2") + 20.0).abs() < 1e-9, "{list}");
+    let (wing, wing2) = (com(&mut s, "Wing:1"), com(&mut s, "Wing 2:1"));
+    assert!(near(&wing, [0.0, 18.281, 8.250]), "{wing:?}");
+    assert!(near(&wing2, [0.0, -18.281, 8.250]), "{wing2:?}");
+
+    // The rod reaches +10 mm where L = 60: sin θ = 11/24.
+    let stop = (11.0f64 / 24.0).asin().to_degrees();
+    assert!((stop - 27.280).abs() < 5e-4, "the reference states {stop}");
+    let r = exec(&mut s, "joint.drive", json!({"joint": "Hinge", "value": 45}));
+    assert_eq!(r["stopped_by_loop"]["joint"], "Stroke", "{r}");
+    let list = exec(&mut s, "joint.list", json!({}));
+    let hinge = value(&list, "Hinge");
+    assert!((hinge - stop).abs() < 0.01, "stopped at {hinge}, the rod's limit is at {stop}");
+    assert!(value(&list, "Stroke") <= 10.0 + 1e-6 && (value(&list, "Stroke") - stroke(hinge)).abs() < 1e-6, "{list}");
+}
+
 /// Every tool and command the agent skills call exists, so a rename or removal can't leave the
 /// skills sending agents to names the server no longer has.
 #[test]
@@ -921,6 +973,8 @@ fn skills_name_only_real_tools_and_commands() {
         include_str!("../../../skills/solidcraft-editing/SKILL.md"),
         include_str!("../../../skills/solidcraft-checking/SKILL.md"),
         include_str!("../../../skills/solidcraft-checking/reference/porting.md"),
+        include_str!("../../../skills/solidcraft-mechanisms/SKILL.md"),
+        include_str!("../../../skills/solidcraft-mechanisms/reference.md"),
     ];
     let mut s = server();
     let tools: Vec<String> = tool_definitions().iter().filter_map(|t| t["name"].as_str()).map(str::to_owned).collect();
