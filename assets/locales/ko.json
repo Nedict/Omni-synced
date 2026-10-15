@@ -58,7 +58,7 @@
   "ui.display_quality_normal": "보통",
   "ui.display_quality_fine": "세밀",
   "ui.display_quality_ultra": "최고",
-  "settings.display_quality_note": "세밀할수록 곡면과 모서리가 더 매끄럽게 표시되지만 메시 생성 시간이 늘어납니다. 확대해서 보는 부품은 더 세밀하게 표시됩니다. 뷰포트만 바뀌며 설계나 내보내기는 바뀌지 않습니다.",
+  "settings.display_quality_note": "세밀할수록 곡면과 모서리가 더 매끄럽게 표시되지만 메시 생성 시간이 늘어납니다. 뷰포트만 바뀌며 설계나 내보내기는 바뀌지 않습니다.",
   "ui.apply": "적용",
   "ui.arc": "호",
   "ui.assemble": "조립",
@@ -906,5 +906,14 @@
   "Type": "유형",
   "joint.one_component": "이 부품들은 한 구성 요소의 바디입니다: {bodies}. 관절은 한 구성 요소를 다른 구성 요소에 대해 움직이므로 부품마다 자체 구성 요소가 필요합니다.",
   "joint.one_body": "두 선택이 모두 {body}에 있습니다. 두 번째는 다른 부품에서 선택하세요.",
-  "joint.from_bodies_hint": "선택한 각 바디가 제자리에 그대로 있으면서 자체의 새 구성 요소로 옮겨집니다."
+  "joint.from_bodies_hint": "선택한 각 바디가 제자리에 그대로 있으면서 자체의 새 구성 요소로 옮겨집니다.",
+  "Circumference": "원주",
+  "Arc length": "호 길이",
+  "Slot width": "슬롯 폭",
+  "Centre to centre": "중심 간",
+  "Overall length": "전체 길이",
+  "Min": "최소",
+  "Max": "최대",
+  "Length": "길이",
+  "Area": "면적"
 }

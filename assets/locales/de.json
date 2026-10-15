@@ -58,7 +58,7 @@
   "ui.display_quality_normal": "Normal",
   "ui.display_quality_fine": "Fein",
   "ui.display_quality_ultra": "Ultra",
-  "settings.display_quality_note": "Feinere Stufen zeigen gekrümmte Flächen und Kanten glatter und brauchen länger zum Vernetzen. Teile, die Sie nah heranzoomen, werden noch feiner gezeichnet. Nur die Ansicht ändert sich, nie das Design oder Exporte.",
+  "settings.display_quality_note": "Feinere Stufen zeigen gekrümmte Flächen und Kanten glatter und brauchen länger zum Vernetzen. Nur die Ansicht ändert sich, nie das Design oder Exporte.",
   "ui.apply": "Anwenden",
   "ui.arc": "Kreisbogen",
   "ui.assemble": "Zusammenbau",
@@ -906,5 +906,14 @@
   "Type": "Typ",
   "joint.one_component": "Diese Teile sind Körper einer Komponente: {bodies}. Ein Gelenk bewegt eine Komponente gegenüber einer anderen, daher braucht jedes Teil eine eigene Komponente.",
   "joint.one_body": "Beide Auswahlen liegen auf {body}. Wählen Sie die zweite auf einem anderen Teil.",
-  "joint.from_bodies_hint": "Jeder ausgewählte Körper kommt in eine eigene neue Komponente und bleibt, wo er ist."
+  "joint.from_bodies_hint": "Jeder ausgewählte Körper kommt in eine eigene neue Komponente und bleibt, wo er ist.",
+  "Circumference": "Umfang",
+  "Arc length": "Bogenlänge",
+  "Slot width": "Langlochbreite",
+  "Centre to centre": "Mitte zu Mitte",
+  "Overall length": "Gesamtlänge",
+  "Min": "Min",
+  "Max": "Max",
+  "Length": "Länge",
+  "Area": "Fläche"
 }
