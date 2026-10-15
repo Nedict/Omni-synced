@@ -17,7 +17,10 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("document.inspect", "Inspect Design", inspect).noundo().params("measure?: bool (include body measurements)"),
     CommandSpec::new("sketch.inspect", "Inspect Sketch", sketch_inspect).noundo().params("sketch?: id|name (default active)"),
     CommandSpec::new("model.edges", "List Edges", model_edges).noundo().params("body: name"),
-    CommandSpec::new("model.faces", "List Faces", model_faces).noundo().params("body: name"),
+    CommandSpec::new("model.faces", "List Faces", model_faces).noundo().params(
+        "body: name → per face: index, name (what face.delete, sheet.convert `face`, solid.shell … take in place of a point), exact, area, centroid (not always on the face), \
+         plane_normal, point (a point on the face that picks it), cylinder? ({origin, axis, radius} of a cylindrical face)",
+    ),
     CommandSpec::new("model.threads", "List Threads", model_threads).noundo(),
     CommandSpec::new("material.assign", "Physical Material", physical_material)
         .at("SOLID", "MODIFY")
@@ -283,13 +286,21 @@ fn model_faces(s: &mut Session, p: &Value) -> Result<Value> {
     let b = body_of(&st, p, "model.faces")?;
     let names = solidcraft_doc::naming::face_names(b);
     let tol = (b.body.size() * 2e-3).max(1e-3);
+    let spots = solidcraft_doc::naming::face_spots(b);
     let faces: Vec<Value> = b
         .body
         .faces(tol)?
         .iter()
         .map(|f| {
-            json!({"index": f.index, "name": names.get(f.index), "exact": solidcraft_doc::naming::face_name_exact(b, f.index),
-                   "area": f.area, "centroid": f.centroid, "plane_normal": f.plane_normal})
+            let spot = spots.get(f.index).copied().flatten();
+            let mut v = json!({"index": f.index, "name": names.get(f.index), "exact": solidcraft_doc::naming::face_name_exact(b, f.index),
+                   "area": f.area, "centroid": f.centroid, "plane_normal": f.plane_normal, "point": spot.map(|x| x.point)});
+            if let (Some(solidcraft_kernel::FaceSurface::Cylinder { origin, axis, radius }), Some(o)) =
+                (spot.and_then(|x| x.surface), v.as_object_mut())
+            {
+                o.insert("cylinder".into(), json!({"origin": origin, "axis": axis, "radius": radius}));
+            }
+            v
         })
         .collect();
     Ok(json!({"body": b.name, "faces": faces}))

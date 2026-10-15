@@ -240,17 +240,18 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
                             d.error = app.run("parameters.rename", json!({"name": old, "new_name": new})).err();
                         }
                         d.renaming = None;
-                    } else {
+                    } else if !resp.has_focus() {
+                        // Only take focus once: requesting it every frame resets the text box's
+                        // focus lock, so arrow keys would move focus away and end the rename.
                         resp.request_focus();
                     }
                 }
                 _ => {
                     let name = if r.source == "user" { RichText::new(&r.name) } else { RichText::new(&r.name).color(t.text_dim) };
-                    if ui
-                        .add(egui::Label::new(name).sense(egui::Sense::click()))
-                        .on_hover_text(crate::i18n::tr_label("Double-click to rename"))
-                        .double_clicked()
-                    {
+                    let resp =
+                        ui.add(egui::Label::new(name).sense(egui::Sense::click())).on_hover_text(crate::i18n::tr_label("Double-click to rename"));
+                    crate::scenario::publish_handle(&format!("param:name:{}", r.name), resp.rect.center());
+                    if resp.double_clicked() {
                         d.renaming = Some((r.name.clone(), r.name.clone()));
                     }
                 }

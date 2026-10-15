@@ -67,11 +67,11 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("face.delete", "Delete Face", delete_face)
         .at("SOLID", "MODIFY")
         .icon("delete")
-        .params("faces: [[x,y,z] points on the faces]; body?; heal?: bool (default true: the neighbouring planes close the gap, as when a rounded edge, hole or boss is taken off; false: the gap stays open and the faces left are a surface body)"),
+        .params("faces: [[x,y,z] points on the faces, or face names from model.faces]; body?; heal?: bool (default true: the neighbouring planes close the gap, as when a rounded edge, hole or boss is taken off; false: the gap stays open and the faces left are a surface body)"),
     CommandSpec::new("solid.offset_face", "Offset Face", offset_face)
         .at("SOLID", "MODIFY")
         .icon("offset_face")
-        .params("faces: [[x,y,z] points on planar faces]; distance: expr (positive: outward); body?"),
+        .params("faces: [[x,y,z] points on planar faces, or face names from model.faces]; distance: expr (positive: outward); body?"),
     CommandSpec::new("solid.thread", "Thread", thread)
         .at("SOLID", "CREATE")
         .icon("thread")
@@ -79,11 +79,11 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.shell", "Shell", shell)
         .at("SOLID", "MODIFY")
         .icon("shell")
-        .params("faces: [[x,y,z] points on the faces to remove]; thickness: expr; direction?: inside|outside|both; tangent_chain?: bool (also open faces joined smoothly to the picked ones); body?"),
+        .params("faces: [[x,y,z] points on the faces to remove, or face names from model.faces]; thickness: expr; direction?: inside|outside|both; tangent_chain?: bool (also open faces joined smoothly to the picked ones); body?"),
     CommandSpec::new("solid.draft", "Draft", draft)
         .at("SOLID", "MODIFY")
         .icon("draft")
-        .params("faces: [[x,y,z]]; angle: expr; neutral: XY|XZ|YZ|plane name|{origin, normal}; pull?: [x,y,z] (default: neutral plane normal); body?"),
+        .params("faces: [[x,y,z] points, or face names from model.faces]; angle: expr; neutral: XY|XZ|YZ|plane name|{origin, normal}; pull?: [x,y,z] (default: neutral plane normal); body?"),
     CommandSpec::new("construct.plane.offset", "Offset Plane", plane_offset)
         .at("SOLID", "CONSTRUCT")
         .icon("plane")
@@ -96,7 +96,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "MODIFY")
         .icon("split")
         .params(
-            "faces: [[x,y,z] points on the faces to split]; body?; and the splitting tool: plane: XY|XZ|YZ|plane name|{origin, normal} — or tool: {body, point} (a face of a body, its surface extended) — or sketch: id or name (its curves, along the sketch's normal)",
+            "faces: [[x,y,z] points on the faces to split, or face names from model.faces]; body?; and the splitting tool: plane: XY|XZ|YZ|plane name|{origin, normal} — or tool: {body, point} (a face of a body, its surface extended) — or sketch: id or name (its curves, along the sketch's normal)",
         ),
     CommandSpec::new("solid.split_body", "Split Body", split_body)
         .at("SOLID", "MODIFY")
@@ -1323,7 +1323,7 @@ fn plane_angle(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn split_face(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.split_face";
-    let faces = face_points(p, cmd)?;
+    let faces = face_points(s, p, cmd)?;
     let body = str_(p, "body").map(str::to_string);
     let xy = || solidcraft_doc::PlaneRef::Origin { name: "XY".into() };
     let kind = if let Some(t) = p.get("tool").filter(|t| !t.is_null()) {
@@ -1542,17 +1542,17 @@ fn sketch_hole_points(s: &Session, sketch: u64) -> Vec<String> {
     ss.sketch.points.iter().enumerate().filter(|(i, p)| p.id != "origin" && !ends.contains(i)).map(|(_, p)| p.id.clone()).collect()
 }
 
-fn face_points(p: &Value, cmd: &str) -> Result<Vec<Vec3>> {
-    let a = p.get("faces").and_then(Value::as_array).ok_or_else(|| bad(cmd, "`faces` must be a list of points"))?;
+fn face_points(s: &Session, p: &Value, cmd: &str) -> Result<Vec<Vec3>> {
+    let a = p.get("faces").and_then(Value::as_array).ok_or_else(|| bad(cmd, "`faces` must be a list of points or face names"))?;
     if a.is_empty() || a.len() > 1000 {
         return Err(bad(cmd, "select 1…1000 faces"));
     }
-    a.iter().map(|v| vec3(v).or_else(|| v.get("point").and_then(vec3)).ok_or_else(|| bad(cmd, "a face is a point [x, y, z] on it"))).collect()
+    a.iter().map(|v| super::face::face_ref(s, v, str_(p, "body"), cmd)).collect()
 }
 
 fn shell(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.shell";
-    let faces = face_points(p, cmd)?;
+    let faces = face_points(s, p, cmd)?;
     let thickness = req_expr(cmd, p, "thickness")?;
     check_expr(s, &thickness, Kind::Length, cmd, "thickness")?;
     let direction = str_(p, "direction").map(str::to_ascii_lowercase).unwrap_or_default();
@@ -1574,7 +1574,7 @@ fn shell(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn draft(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.draft";
-    let faces = face_points(p, cmd)?;
+    let faces = face_points(s, p, cmd)?;
     let angle = req_expr(cmd, p, "angle")?;
     check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
     let neutral = plane_param(s, p.get("neutral"), cmd)?;
@@ -1715,14 +1715,14 @@ fn scale(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn delete_face(s: &mut Session, p: &Value) -> Result<Value> {
-    let faces = face_points(p, "face.delete")?;
+    let faces = face_points(s, p, "face.delete")?;
     let heal = bool_(p, "heal").unwrap_or(true);
     add_feature(s, p, FeatureKind::DeleteFace { faces, body: str_(p, "body").map(str::to_string), heal })
 }
 
 fn offset_face(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.offset_face";
-    let faces = face_points(p, cmd)?;
+    let faces = face_points(s, p, cmd)?;
     let distance = req_expr(cmd, p, "distance")?;
     check_expr(s, &distance, Kind::Length, cmd, "distance")?;
     add_feature(s, p, FeatureKind::OffsetFace { faces, distance, body: str_(p, "body").map(str::to_string) })
