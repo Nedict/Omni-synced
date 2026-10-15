@@ -1831,6 +1831,22 @@ pub struct SheetSection {
     pub edges: Vec<Vec3>,
 }
 
+/// A loft's continuity where a design does not say: both ends G0, the loft of old, which only
+/// passes through its sections.
+fn loft_plain_continuity() -> [Continuity; 2] {
+    [Continuity::G0, Continuity::G0]
+}
+
+/// A loft's continuity is plain when it only passes through its sections: both ends G0.
+fn loft_continuity_is_plain(c: &[Continuity; 2]) -> bool {
+    *c == [Continuity::G0, Continuity::G0]
+}
+
+/// A loft's crown is plain when neither end is filled out.
+fn loft_crown_is_plain(c: &[f64; 2]) -> bool {
+    c.iter().all(|v| *v == 0.0)
+}
+
 /// Coil cross-sections.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
