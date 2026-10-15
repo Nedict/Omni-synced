@@ -1156,6 +1156,7 @@
   "coupling.internal": "Внутреннее зацепление",
   "coupling.pitch": "Шаг",
   "coupling.picked": "выбрано",
+  "coupling.not_round": "не круглая грань",
   "coupling.gear_1_pick": "Шестерня 1 (необязательно)",
   "coupling.gear_2_pick": "Шестерня 2 (необязательно)",
   "coupling.pinion_pick": "Шестерня (необязательно)",

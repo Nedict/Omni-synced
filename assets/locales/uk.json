@@ -1075,6 +1075,7 @@
   "coupling.internal": "Внутрішнє зачеплення",
   "coupling.pitch": "Крок",
   "coupling.picked": "вибрано",
+  "coupling.not_round": "не кругла грань",
   "coupling.gear_1_pick": "Шестерня 1 (необов'язково)",
   "coupling.gear_2_pick": "Шестерня 2 (необов'язково)",
   "coupling.pinion_pick": "Шестерня (необов'язково)",

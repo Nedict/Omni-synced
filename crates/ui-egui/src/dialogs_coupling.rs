@@ -90,11 +90,10 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Asm, Vec<SelInput>)> {
     Some((Asm::Coupling(Box::new(f)), inputs))
 }
 
-/// The occurrence a picked body belongs to (0: the root).
+/// The occurrence placing a picked body (0: the root), by the body's placement: each instance of
+/// a copied gear is an occurrence of its own.
 fn occurrence(s: &Session, body: &str) -> Option<u64> {
-    let st = s.world_state();
-    let comp = s.doc.model_body_component(st.body(body)?);
-    if comp == 0 { Some(0) } else { s.doc.occurrence_of(comp).map(|o| o.id) }
+    s.doc.body_frames(&s.model.state()).into_iter().find(|f| f.0 == body).map(|(_, _, path, _)| path.last().copied().unwrap_or(0))
 }
 
 fn pick(inputs: &[SelInput], i: usize) -> Option<(&str, solidcraft_engine::geom::Vec3)> {
@@ -159,11 +158,15 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, f: &mut CouplingForm, inputs:
     let mut enter = false;
     let size_row = |ui: &mut egui::Ui, label: &str, i: usize, text: &mut String, enter: &mut bool| {
         row_label(ui, label);
-        match picked_radius(s, inputs, i) {
-            Some(r) => {
+        match (pick(inputs, i), picked_radius(s, inputs, i)) {
+            (_, Some(r)) => {
                 ui.label(format!("{} mm  ({})", trim(r), crate::i18n::tr_label("picked")));
             }
-            None => *enter |= field(ui, text),
+            // A pick on a flat face or a straight edge has no radius: say so rather than fail on OK.
+            (Some(_), None) => {
+                ui.label(RichText::new(crate::i18n::tr_label("not a round face")).color(t.warning));
+            }
+            (None, None) => *enter |= field(ui, text),
         }
         ui.end_row();
     };

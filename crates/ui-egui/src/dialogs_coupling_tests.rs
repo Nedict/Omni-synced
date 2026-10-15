@@ -106,6 +106,49 @@ fn picked_gear_faces_choose_their_joints_and_radii() {
     assert!((l.ratio + 2.0).abs() < 1e-9, "{l:?}");
 }
 
+/// Two instances of one gear (a copied component) are two occurrences, each on its own joint:
+/// picks on each choose each one's joint, and the engine finds each pick on its own instance.
+#[test]
+fn instances_of_one_gear_are_coupled_as_two() {
+    let mut s = Session::default();
+    let mut run = |id: &str, p: Value| s.execute(id, &p).unwrap_or_else(|e| panic!("{id}: {e}"));
+    for (name, r) in [("Base", 2), ("Twin", 15)] {
+        run("component.activate", json!({"component": "root"}));
+        run("component.create", json!({ "name": name }));
+        run("solid.cylinder", json!({"base": [0, 0, if name == "Base" { -20 } else { 0 }], "axis": [0, 0, 1], "radius": r, "height": 5}));
+    }
+    run("component.activate", json!({"component": "root"}));
+    run("occurrence.copy", json!({"component": "Twin", "translate": [30, 0, 0]}));
+    run("occurrence.ground", json!({"occurrence": "Base:1", "grounded": true}));
+    for (name, x) in [("Twin:1", 0), ("Twin:2", 30)] {
+        let at = |o: &str| json!({"occurrence": o, "point": [x, 0, 0], "z": [0, 0, 1]});
+        run("joint.create", json!({"type": "revolute", "a": at("Base:1"), "b": at(name), "flip": true, "name": name}));
+    }
+    let mut app = SolveApp::new(s, Services::default());
+    let occ = |app: &SolveApp, name: &str| app.session.doc.occurrences.iter().find(|o| o.name == name).map(|o| o.id).unwrap_or(0);
+    app.start("joint.gear");
+    let mut d = app.dialog.take().unwrap();
+    for (i, p) in [Vec3::new(-15.0, 0.0, 2.5), Vec3::new(45.0, 0.0, 2.5)].into_iter().enumerate() {
+        d.active = i;
+        let pick = wall(&app, p);
+        d.pick(&app.session, pick);
+    }
+    app.dialog = Some(d);
+    let ctx = egui::Context::default();
+    for _ in 0..2 {
+        let input =
+            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))), ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| crate::dialogs::show(&mut app, ui.ctx()));
+        out.textures_delta.clear();
+    }
+    let c = apply_commands(&app, app.dialog.as_ref().unwrap()).unwrap();
+    let p = &c[0].1;
+    assert_eq!((p["a"].clone(), p["b"].clone()), (json!(joint(&app, "Twin:1")), json!(joint(&app, "Twin:2"))), "{p}");
+    assert_eq!((p["ra"]["occurrence"].clone(), p["rb"]["occurrence"].clone()), (json!(occ(&app, "Twin:1")), json!(occ(&app, "Twin:2"))), "{p}");
+    app.run(&c[0].0, p.clone()).unwrap();
+    assert!((app.session.doc.assembly.links[0].ratio + 1.0).abs() < 1e-9);
+}
+
 /// A cylindrical joint is a screw on its own: the dialog sends it as `joint` with the pitch.
 #[test]
 fn a_cylindrical_joint_is_a_screw_on_its_own() {
@@ -118,4 +161,20 @@ fn a_cylindrical_joint_is_a_screw_on_its_own() {
     app.run("joint.drive", json!({"joint": "Nut", "values": [360]})).unwrap();
     let nut = solidcraft_engine::doc::joints::joint_values(&app.session.doc.assembly).get(&joint(&app, "Nut")).cloned().unwrap_or_default();
     assert!((nut.get(1).copied().unwrap_or(f64::NAN) - 1.5).abs() < 1e-9, "{nut:?}");
+}
+
+/// The dialog's rows pass their English text, which the catalogs translate by its key.
+#[test]
+fn the_dialog_labels_translate() {
+    let de = crate::i18n::Locale::for_language("de");
+    for (english, german) in [
+        ("Gear 1", "Zahnrad 1"),
+        ("Radius 2", "Radius 2"),
+        ("Internal gear", "Innenzahnrad"),
+        ("Pitch", "Steigung"),
+        ("Rack and Pinion", "Zahnstange und Ritzel"),
+    ] {
+        assert_eq!(de.label(english), german);
+    }
+    assert_eq!(crate::i18n::Locale::for_language("ja").label("not a round face"), "円筒面ではありません");
 }

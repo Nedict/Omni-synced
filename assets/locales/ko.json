@@ -1136,6 +1136,7 @@
   "coupling.internal": "내접 기어",
   "coupling.pitch": "피치",
   "coupling.picked": "선택됨",
+  "coupling.not_round": "원통 면이 아님",
   "coupling.gear_1_pick": "기어 1 (선택 사항)",
   "coupling.gear_2_pick": "기어 2 (선택 사항)",
   "coupling.pinion_pick": "피니언 (선택 사항)",

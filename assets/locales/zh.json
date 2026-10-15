@@ -1391,6 +1391,7 @@
   "coupling.internal": "内齿轮",
   "coupling.pitch": "螺距",
   "coupling.picked": "已拾取",
+  "coupling.not_round": "不是圆柱面",
   "coupling.gear_1_pick": "齿轮 1（可选）",
   "coupling.gear_2_pick": "齿轮 2（可选）",
   "coupling.pinion_pick": "小齿轮（可选）",

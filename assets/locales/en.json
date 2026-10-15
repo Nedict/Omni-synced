@@ -1391,6 +1391,7 @@
   "coupling.internal": "Internal gear",
   "coupling.pitch": "Pitch",
   "coupling.picked": "picked",
+  "coupling.not_round": "not a round face",
   "coupling.gear_1_pick": "Gear 1 (optional)",
   "coupling.gear_2_pick": "Gear 2 (optional)",
   "coupling.pinion_pick": "Pinion (optional)",

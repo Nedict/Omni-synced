@@ -1136,6 +1136,7 @@
   "coupling.internal": "Innenzahnrad",
   "coupling.pitch": "Steigung",
   "coupling.picked": "gewählt",
+  "coupling.not_round": "keine runde Fläche",
   "coupling.gear_1_pick": "Zahnrad 1 (optional)",
   "coupling.gear_2_pick": "Zahnrad 2 (optional)",
   "coupling.pinion_pick": "Ritzel (optional)",

@@ -187,7 +187,19 @@ impl PreviewState {
 /// limits, feature dialog or document cannot reuse an obsolete pose.
 fn motion_key(cmds: &[(String, Value)], revision: u64, colors: Colors) -> Option<u64> {
     if !cmds.iter().any(|(c, p)| c == "joint.drive" || c == "joint.create" && p.get("values").is_some())
-        || !cmds.iter().all(|(c, _)| matches!(c.as_str(), "joint.drive" | "joint.create" | "joint.as_built" | "joint.edit" | "joint.limits"))
+        || !cmds.iter().all(|(c, _)| {
+            matches!(
+                c.as_str(),
+                "joint.drive"
+                    | "joint.create"
+                    | "joint.as_built"
+                    | "joint.edit"
+                    | "joint.limits"
+                    | "joint.gear"
+                    | "joint.rack_pinion"
+                    | "joint.screw"
+            )
+        })
     {
         return None;
     }
@@ -826,6 +838,15 @@ mod tests {
                 motion_key(&[(command.into(), json!({"joint": 1, "values": [90]}))], 7, colors()),
             );
         }
+        // A gear dialog playing its driving joint streams its poses too.
+        let gear = |angle: &str| {
+            vec![
+                ("joint.gear".to_string(), json!({"a": 1, "b": 2, "ra": 10, "rb": 20})),
+                ("joint.drive".to_string(), json!({"joint": 1, "values": [angle]})),
+            ]
+        };
+        assert!(motion_key(&gear("0 deg"), 7, colors()).is_some());
+        assert_eq!(motion_key(&gear("0 deg"), 7, colors()), motion_key(&gear("90 deg"), 7, colors()));
     }
 
     /// Combine previews its result (cut, join or intersect between existing bodies) without an

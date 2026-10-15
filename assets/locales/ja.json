@@ -1391,6 +1391,7 @@
   "coupling.internal": "内歯車",
   "coupling.pitch": "ピッチ",
   "coupling.picked": "選択済み",
+  "coupling.not_round": "円筒面ではありません",
   "coupling.gear_1_pick": "ギア 1 (オプション)",
   "coupling.gear_2_pick": "ギア 2 (オプション)",
   "coupling.pinion_pick": "ピニオン (オプション)",
