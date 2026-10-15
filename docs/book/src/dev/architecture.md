@@ -21,6 +21,9 @@ A few rules follow from the layering:
   server run the same engine without a window. Headless pictures (`solidcraft-cli snapshot`, MCP
   screenshots, `ui.render`, thumbnails) are drawn on the GPU with the viewport's own pipelines
   (`crates/gpu`, `capture`): the engine describes the scene (`view::scene`) and the host installs
-  the renderer (`engine::capture`). Without a display a software adapter (Mesa lavapipe or
-  llvmpipe, WARP) does; `SOLIDCRAFT_GPU` picks hardware or software and `solidcraft-cli gpu` lists
-  what the machine offers.
+  the renderer (`engine::capture`). The tiers, in order: a hardware GPU, a software adapter (Mesa
+  lavapipe or llvmpipe, WARP), and last `crates/render`'s CPU rasterizer, which draws no surface
+  analysis, highlights or legends. `SOLIDCRAFT_GPU=auto` walks all three, `hardware` and `software`
+  stay on their tier (an error without one), `cpu` forces the rasterizer; every picture's reply
+  names its `renderer` (`gpu`, `gpu-software`, `cpu`) and a CPU picture carries a warning.
+  `solidcraft-cli gpu` lists the adapters and the tier the policy lands on.

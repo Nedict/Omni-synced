@@ -19,7 +19,9 @@ static NEXT: AtomicUsize = AtomicUsize::new(0);
 fn gpu() -> bool {
     match solidcraft_gpu::capture::shared() {
         Ok(c) => {
-            solidcraft_engine::capture::install(std::sync::Arc::new(move |scene, cam, w, h| c.rgba(scene, cam, w, h).map_err(|e| e.to_string())));
+            solidcraft_engine::capture::install(std::sync::Arc::new(move |scene, cam, w, h| {
+                c.rgba(scene, cam, w, h).map(|rgba| solidcraft_engine::capture::Picture { rgba, renderer: c.renderer() }).map_err(|e| e.to_string())
+            }));
             true
         }
         Err(e @ solidcraft_gpu::GpuError::NoAdapter(_)) if std::env::var_os("SOLIDCRAFT_REQUIRE_GPU").is_none() => {
@@ -172,7 +174,7 @@ fn a_saved_view_is_its_camera_and_a_standard_view_is_unchanged() {
     let mut cam = solidcraft_engine::view::home_camera(&s);
     cam.set_view(solidcraft_engine::render::StandardView::Top);
     let scene = solidcraft_engine::view::scene(&s, &cam);
-    assert_same(&top, &solidcraft_engine::capture::png(&scene, &cam, SIZE.0, SIZE.1).unwrap(), "the home camera turned to the top");
+    assert_same(&top, &solidcraft_engine::capture::png(&scene, &cam, SIZE.0, SIZE.1).unwrap().bytes, "the home camera turned to the top");
     assert_same(&top, &dir.mcp(&script, "mcp-top.png", json!({"view": "top"})), "the MCP top view");
     assert_differs(&top, &saved, "top and the saved view");
     let iso = dir.snapshot(&script, "iso.png", &["--view", "iso"]);
@@ -302,6 +304,79 @@ fn a_snapshot_shows_the_part_where_the_camera_puts_it() {
             "{cam}: the part spans pixels {lo:?}..={hi:?}, its corners project to {elo:?}..{ehi:?}"
         );
     }
+}
+
+/// `snapshot` under a `SOLIDCRAFT_GPU` policy: its reply and stderr.
+fn snapshot_under(dir: &Scratch, script: &Path, out: &str, policy: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_solidcraft-cli"))
+        .env("SOLIDCRAFT_GPU", policy)
+        .arg("snapshot")
+        .arg(script)
+        .arg("--out")
+        .arg(dir.0.join(out))
+        .args(["--width", &SIZE.0.to_string(), "--height", &SIZE.1.to_string(), "--view", "top"])
+        .output()
+        .unwrap()
+}
+
+/// The last tier: `SOLIDCRAFT_GPU=cpu` draws with the CPU rasterizer whatever adapters there are,
+/// says so (`renderer: cpu` and a warning that overlays are not drawn), and the picture is the
+/// rasterizer's own.
+#[test]
+fn a_forced_cpu_snapshot_is_the_cpu_rasterizers_and_says_so() {
+    let dir = Scratch::new();
+    let script = dir.script("part.json", &[]);
+    let output = snapshot_under(&dir, &script, "cpu.png", "cpu");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reply["renderer"], "cpu", "{reply}");
+    assert!(reply["warning"].as_str().is_some_and(|w| w.contains("not drawn")), "{reply}");
+    assert!(stderr.contains("CPU rasterizer"), "{stderr}");
+    let mut s = Session::default();
+    s.run_script(&serde_json::from_slice(&std::fs::read(&script).unwrap()).unwrap()).unwrap();
+    let mut cam = solidcraft_engine::view::home_camera(&s);
+    cam.set_view(solidcraft_engine::render::StandardView::Top);
+    let scene = solidcraft_engine::view::scene(&s, &cam);
+    let cpu = solidcraft_engine::render::render_png(&scene, &cam, SIZE.0 as usize, SIZE.1 as usize).unwrap();
+    assert_eq!(std::fs::read(dir.0.join("cpu.png")).unwrap(), cpu);
+}
+
+/// `hardware` (and `software`) never fall to the CPU rasterizer: without such an adapter the
+/// snapshot fails, naming the policy, and writes nothing; with one it says it was drawn on the GPU.
+/// `auto` lands where `solidcraft-cli gpu` says it does.
+#[test]
+fn a_strict_policy_never_falls_to_the_cpu() {
+    let dir = Scratch::new();
+    let script = dir.script("part.json", &[]);
+    let survey = |policy: &str| {
+        let o = Command::new(env!("CARGO_BIN_EXE_solidcraft-cli")).args(["gpu", "--policy", policy]).output().unwrap();
+        (o.status.success(), serde_json::from_slice::<Value>(&o.stdout).unwrap_or(Value::Null))
+    };
+    for policy in ["hardware", "software"] {
+        let (found, report) = survey(policy);
+        let output = snapshot_under(&dir, &script, &format!("{policy}.png"), policy);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if found {
+            assert!(output.status.success(), "{policy}: {stderr}");
+            let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(reply["renderer"], report["renderer"], "{policy}: {reply}");
+            assert_ne!(reply["renderer"], "cpu");
+        } else {
+            assert_eq!(report["lands_on"], Value::Null, "{policy}: {report}");
+            assert_eq!(output.status.code(), Some(1), "{policy}: {stderr}");
+            assert!(stderr.contains(&format!("`{policy}` policy")) && stderr.contains("solidcraft-cli gpu"), "{policy}: {stderr}");
+            assert!(!dir.0.join(format!("{policy}.png")).exists());
+        }
+    }
+    let (found, report) = survey("auto");
+    assert!(found, "auto always lands somewhere: {report}");
+    let output = snapshot_under(&dir, &script, "auto.png", "auto");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reply["renderer"], report["renderer"], "{reply} vs {report}");
+    let (_, cpu) = survey("cpu");
+    assert_eq!((cpu["lands_on"].clone(), cpu["renderer"].clone()), (json!("cpu"), json!("cpu")), "{cpu}");
 }
 
 #[test]

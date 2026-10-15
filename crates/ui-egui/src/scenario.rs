@@ -445,9 +445,9 @@ impl Harness {
                     // Drawn on the GPU: the headless device, as the CLI draws.
                     #[cfg(not(target_arch = "wasm32"))]
                     if solidcraft_engine::capture::installed().is_none() {
-                        let capturer = solidcraft_gpu::capture::shared().map_err(|e| format!("shot {name}: {e}"))?;
-                        solidcraft_engine::capture::install(std::sync::Arc::new(move |scene, cam, w, h| {
-                            capturer.rgba(scene, cam, w, h).map_err(|e| e.to_string())
+                        solidcraft_engine::capture::install(std::sync::Arc::new(|scene, cam, w, h| {
+                            let (rgba, renderer) = solidcraft_gpu::capture::headless_rgba(scene, cam, w, h)?;
+                            Ok(solidcraft_engine::capture::Picture { rgba, renderer })
                         }));
                     }
                     let path = std::path::Path::new(&dir).join(format!("{name}.png"));

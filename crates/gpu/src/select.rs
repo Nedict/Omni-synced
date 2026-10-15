@@ -1,8 +1,11 @@
-//! Which adapter a headless GPU device opens: every adapter the platform's native backends offer
-//! is classified as hardware (a discrete, integrated or virtual GPU) or software (a CPU
-//! rasterizer such as llvmpipe, lavapipe or WARP), and a [`Policy`] picks one. macOS uses Metal
-//! only. `SOLIDCRAFT_GPU` (`auto`, `hardware`, `software`) sets the policy from the environment;
-//! `WGPU_BACKEND` still narrows the backends.
+//! What draws a headless picture: every adapter the platform's native backends offer is
+//! classified as hardware (a discrete, integrated or virtual GPU) or software (a GPU driver that
+//! runs on the CPU, such as llvmpipe, lavapipe or WARP), and a [`Policy`] picks one. The last
+//! tier, below any adapter, is SolidCraft's own CPU rasterizer (no surface analysis, highlights
+//! or legends): `auto` lands there only when no adapter qualifies, `cpu` forces it, `hardware`
+//! and `software` never use it. macOS uses Metal only, and has no software adapter. `SOLIDCRAFT_GPU`
+//! (`auto`, `hardware`, `software`, `cpu`) sets the policy from the environment; `WGPU_BACKEND`
+//! still narrows the backends.
 
 use serde::Serialize;
 
@@ -24,15 +27,47 @@ pub enum Policy {
     Hardware,
     /// A software adapter or nothing.
     Software,
+    /// The CPU rasterizer, whatever adapters there are.
+    Cpu,
+}
+
+/// Where a policy lands: an adapter of a tier, or the CPU rasterizer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Landing {
+    Hardware,
+    Software,
+    Cpu,
+}
+
+impl Landing {
+    /// What a picture's reply names as its renderer: `gpu`, `gpu-software` or `cpu`.
+    pub fn renderer(self) -> &'static str {
+        match self {
+            Landing::Hardware => "gpu",
+            Landing::Software => "gpu-software",
+            Landing::Cpu => "cpu",
+        }
+    }
+}
+
+impl From<Tier> for Landing {
+    fn from(t: Tier) -> Self {
+        match t {
+            Tier::Hardware => Landing::Hardware,
+            Tier::Software => Landing::Software,
+        }
+    }
 }
 
 impl Policy {
-    /// `auto`, `hardware` or `software` (case-insensitive).
+    /// `auto`, `hardware`, `software` or `cpu` (case-insensitive).
     pub fn parse(s: &str) -> Option<Policy> {
         match s.trim().to_ascii_lowercase().as_str() {
             "auto" => Some(Policy::Auto),
             "hardware" | "hw" | "gpu" => Some(Policy::Hardware),
-            "software" | "sw" | "cpu" => Some(Policy::Software),
+            "software" | "sw" => Some(Policy::Software),
+            "cpu" => Some(Policy::Cpu),
             _ => None,
         }
     }
@@ -41,17 +76,18 @@ impl Policy {
     /// it names none.
     pub fn from_env() -> Result<Policy, String> {
         match std::env::var("SOLIDCRAFT_GPU") {
-            Ok(v) => Policy::parse(&v).ok_or_else(|| format!("SOLIDCRAFT_GPU must be auto, hardware or software, not `{v}`")),
+            Ok(v) => Policy::parse(&v).ok_or_else(|| format!("SOLIDCRAFT_GPU must be auto, hardware, software or cpu, not `{v}`")),
             Err(_) => Ok(Policy::Auto),
         }
     }
 
-    /// `auto`, `hardware` or `software`.
+    /// `auto`, `hardware`, `software` or `cpu`.
     pub fn name(self) -> &'static str {
         match self {
             Policy::Auto => "auto",
             Policy::Hardware => "hardware",
             Policy::Software => "software",
+            Policy::Cpu => "cpu",
         }
     }
 
@@ -60,6 +96,19 @@ impl Policy {
             Policy::Auto => true,
             Policy::Hardware => tier == Tier::Hardware,
             Policy::Software => tier == Tier::Software,
+            Policy::Cpu => false,
+        }
+    }
+
+    /// Where the policy lands when the best qualifying adapter is of tier `adapter` (`None`: no
+    /// adapter qualifies): that adapter; else the CPU rasterizer under `auto` (and always under
+    /// `cpu`); else nowhere, and a picture is an error.
+    pub fn lands_on(self, adapter: Option<Tier>) -> Option<Landing> {
+        match (self, adapter) {
+            (Policy::Cpu, _) => Some(Landing::Cpu),
+            (_, Some(t)) => Some(t.into()),
+            (Policy::Auto, None) => Some(Landing::Cpu),
+            (Policy::Hardware | Policy::Software, None) => None,
         }
     }
 }
@@ -133,12 +182,14 @@ fn adapters(instance: &wgpu::Instance) -> Vec<wgpu::Adapter> {
     all
 }
 
-/// What a survey found and which adapter the policy picks (`chosen` indexes `adapters`).
+/// What a survey found, which adapter the policy picks (`chosen` indexes `adapters`) and where
+/// it lands (`None`: nowhere, a picture is an error).
 #[derive(Clone, Debug, Serialize)]
 pub struct Survey {
     pub backends: String,
     pub adapters: Vec<AdapterReport>,
     pub chosen: Option<usize>,
+    pub lands_on: Option<Landing>,
 }
 
 /// Every adapter the native backends offer, best first, and which one `policy` picks.
@@ -146,7 +197,8 @@ pub struct Survey {
 pub fn survey(policy: Policy) -> Survey {
     let found: Vec<AdapterReport> = adapters(&instance()).iter().map(|a| report(&a.get_info())).collect();
     let chosen = found.iter().position(|r| policy.admits(r.tier));
-    Survey { backends: format!("{:?}", native_backends()), adapters: found, chosen }
+    let lands_on = policy.lands_on(chosen.and_then(|i| found.get(i)).map(|r| r.tier));
+    Survey { backends: format!("{:?}", native_backends()), adapters: found, chosen, lands_on }
 }
 
 /// The adapter `policy` picks, with its report; `None` when no adapter qualifies.
@@ -170,9 +222,26 @@ mod tests {
         assert_eq!(Policy::parse(" Hardware "), Some(Policy::Hardware));
         assert_eq!(Policy::parse("sw"), Some(Policy::Software));
         assert_eq!(Policy::parse("metal"), None);
+        assert_eq!(Policy::parse("CPU"), Some(Policy::Cpu));
+        assert!(!Policy::Cpu.admits(Tier::Software) && !Policy::Cpu.admits(Tier::Hardware));
         assert!(Policy::Auto.admits(Tier::Software) && Policy::Auto.admits(Tier::Hardware));
         assert!(!Policy::Hardware.admits(Tier::Software));
         assert!(!Policy::Software.admits(Tier::Hardware));
+    }
+
+    /// Hardware GPU, then a software adapter, then the CPU rasterizer: `auto` walks all three,
+    /// `hardware` and `software` never fall to the CPU, and `cpu` always lands there.
+    #[test]
+    fn policies_land_on_their_tiers() {
+        use Landing as L;
+        let (hw, sw) = (Some(Tier::Hardware), Some(Tier::Software));
+        assert_eq!([hw, sw, None].map(|t| Policy::Auto.lands_on(t)), [Some(L::Hardware), Some(L::Software), Some(L::Cpu)]);
+        assert_eq!(Policy::Hardware.lands_on(hw), Some(L::Hardware));
+        assert_eq!(Policy::Hardware.lands_on(None), None);
+        assert_eq!(Policy::Software.lands_on(sw), Some(L::Software));
+        assert_eq!(Policy::Software.lands_on(None), None);
+        assert_eq!([hw, sw, None].map(|t| Policy::Cpu.lands_on(t)), [Some(L::Cpu); 3]);
+        assert_eq!([L::Hardware, L::Software, L::Cpu].map(L::renderer), ["gpu", "gpu-software", "cpu"]);
     }
 
     #[test]

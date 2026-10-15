@@ -675,6 +675,60 @@ mod tests {
         let a = scene(&s, &cam).analysis.unwrap();
         assert_eq!((a.mode, a.colors), (solidcraft_render::AnalysisMode::Curvature { radius: 5.0 }, Palette::DEFAULT.analysis));
     }
+
+    /// The CPU rasterizer (the last tier of headless pictures, `SOLIDCRAFT_GPU=cpu` or no adapter
+    /// under `auto`): curved surfaces get a dark silhouette line where they turn away.
+    #[test]
+    fn cpu_pictures_draw_silhouettes_on_curved_surfaces() {
+        let mut s = Session::default();
+        s.execute("solid.sphere", &json!({"diameter": 20})).unwrap();
+        let cam = home_camera(&s);
+        let img = solidcraft_render::render(&scene(&s, &cam), &cam, 400, 400);
+        let dark = img.rgba.chunks(4).filter(|p| p[0] < 70 && p[1] < 70 && p[2] < 75).count();
+        assert!(dark > 40, "silhouette pixels: {dark}");
+    }
+
+    /// The CPU rasterizer: a section shows; the cut part is gone and the cut face is drawn.
+    #[test]
+    fn cpu_pictures_show_the_section() {
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length": 40, "width": 30, "height": 20})).unwrap();
+        let cam = home_camera(&s);
+        let whole = solidcraft_render::render(&scene(&s, &cam), &cam, 200, 140).rgba;
+        s.execute("inspect.section", &json!({"plane": {"origin": [0, 15, 0], "normal": [0, -1, 0]}})).unwrap();
+        let sc = scene(&s, &cam);
+        assert!(sc.clip.is_some());
+        let cut = solidcraft_render::render(&sc, &cam, 200, 140).rgba;
+        let changed = whole.chunks(4).zip(cut.chunks(4)).filter(|(a, b)| a != b).count();
+        assert!(changed > 500, "{changed} pixels changed");
+    }
+
+    /// The section's cut face hides what lies inside the body behind it (it is drawn at the
+    /// plane's depth, not on the far wall like a pane of glass), shows in the cap colour, and
+    /// the cut's outline is drawn.
+    #[test]
+    fn cpu_picture_section_caps_hide_the_inside() {
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length": 40, "width": 30, "height": 20})).unwrap();
+        // Cut away the front half (y < 15), so the iso camera looks into the cut.
+        s.execute("inspect.section", &json!({"plane": {"origin": [0, 15, 0], "normal": [0, -1, 0]}})).unwrap();
+        for fov in [0.0, 0.6] {
+            let mut cam = home_camera(&s);
+            cam.fov = fov;
+            let mut sc = scene(&s, &cam);
+            assert!(!section_segments(&s.world_state().bodies[0].mesh(), Vec3::new(0.0, 15.0, 0.0), -Vec3::Y).is_empty());
+            // A marker inside the body, behind the cut face.
+            let red = Rgb(255, 0, 0);
+            sc.lines.push(SceneLine { points: vec![Vec3::new(5.0, 25.0, 10.0), Vec3::new(35.0, 25.0, 10.0)], color: red, width: 3.0, on_top: false });
+            let img = solidcraft_render::render(&sc, &cam, 300, 220);
+            let px = || img.rgba.chunks(4);
+            let marker = px().filter(|p| p[0] > 200 && p[1] < 60 && p[2] < 60).count();
+            assert_eq!(marker, 0, "fov {fov}: the inside shows through the cut face");
+            // The cap: warm (red over blue), unlike the grey-blue body and background.
+            let cap = px().filter(|p| p[0] as i32 - p[2] as i32 > 20).count();
+            assert!(cap > 500, "fov {fov}: cap pixels {cap}");
+        }
+    }
 }
 
 #[cfg(test)]

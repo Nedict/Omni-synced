@@ -607,7 +607,7 @@ fn saved_picture(preview: solidcraft_engine::io::DesignPreview) -> Option<egui::
 #[cfg(not(target_arch = "wasm32"))]
 fn preview_image(scene: &solidcraft_engine::render::Scene, camera: &solidcraft_engine::render::Camera) -> Option<egui::ColorImage> {
     match solidcraft_engine::capture::rgba(scene, camera, 320, 200) {
-        Ok(rgba) => Some(egui::ColorImage::from_rgba_unmultiplied([320, 200], &rgba)),
+        Ok(picture) => Some(egui::ColorImage::from_rgba_unmultiplied([320, 200], &picture.rgba)),
         Err(e) => {
             log::warn!("no preview picture: {e}");
             None

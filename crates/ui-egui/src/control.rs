@@ -194,7 +194,7 @@ fn window_guides(app: &SolveApp) -> solidcraft_engine::view::Guides {
 /// A picture of the view as the window shows it, RGBA, drawn on the GPU with the viewport's
 /// pipelines (the renderer the app installs).
 pub(crate) fn view_rgba(app: &SolveApp, w: u32, h: u32) -> Result<Vec<u8>, String> {
-    solidcraft_engine::capture::rgba(&view_scene(app, window_guides(app)), &app.cam, w, h)
+    solidcraft_engine::capture::rgba(&view_scene(app, window_guides(app)), &app.cam, w, h).map(|p| p.rgba)
 }
 
 /// [`view_rgba`] as PNG.
@@ -728,12 +728,14 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
                 Ok(png) => png,
                 Err(e) => return err(format!("render failed: {e}")),
             };
+            // What drew it (gpu, gpu-software or cpu), and the warning a CPU render carries.
+            let (renderer, warning) = (png.renderer, solidcraft_engine::capture::warning(png.renderer));
             match s("path") {
-                Some(path) => match vfs::check(path).and_then(|()| std::fs::write(path, &png)) {
-                    Ok(()) => ok(json!({"path": path, "bytes": png.len()})),
+                Some(path) => match vfs::check(path).and_then(|()| std::fs::write(path, &png.bytes)) {
+                    Ok(()) => ok(json!({"path": path, "bytes": png.bytes.len(), "renderer": renderer, "warning": warning})),
                     Err(e) => err(e),
                 },
-                None => ok(json!({"bytes": png.len()})),
+                None => ok(json!({"bytes": png.bytes.len(), "renderer": renderer, "warning": warning})),
             }
         }
         "app.quit" => {

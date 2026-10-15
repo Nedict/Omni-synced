@@ -2,8 +2,10 @@
 //! same shading, edges, silhouettes, section cap and surface analysis the viewport shows, read
 //! back as RGBA. `solidcraft-cli snapshot`, MCP screenshots, `ui.render` and thumbnails draw
 //! through it, on the application's device ([`Capturer::new`]) or on a headless one
-//! ([`Capturer::headless`], [`shared`]). Without a GPU adapter there is no picture: an error
-//! names the adapter policy, never a fallback to a CPU rasterizer.
+//! ([`Capturer::headless`], [`shared`]). Without a qualifying adapter, the `auto` policy falls
+//! to the last tier, the CPU rasterizer ([`headless_rgba`]), and says so: every picture names the
+//! renderer that drew it (`gpu`, `gpu-software` or `cpu`); `hardware` and `software` fail with an
+//! error that names the policy.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -34,6 +36,8 @@ pub struct Capturer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     adapter: String,
+    /// The adapter is a GPU driver running on the CPU (llvmpipe, lavapipe, WARP).
+    software: bool,
     samples: u32,
     max_side: u32,
     state: Mutex<State>,
@@ -59,6 +63,7 @@ impl Capturer {
         let max_side = device.limits().max_texture_dimension_2d.min(MAX_SIDE);
         Ok(Capturer {
             adapter: adapter.get_info().name,
+            software: adapter.get_info().device_type == wgpu::DeviceType::Cpu,
             samples,
             max_side,
             state: Mutex::new(State { renderer, background, key: 0, access_version: 0 }),
@@ -80,6 +85,12 @@ impl Capturer {
     /// The adapter's name.
     pub fn adapter_name(&self) -> &str {
         &self.adapter
+    }
+
+    /// What a picture's reply names as its renderer: `gpu`, or `gpu-software` on a software
+    /// adapter.
+    pub fn renderer(&self) -> &'static str {
+        if self.software { "gpu-software" } else { "gpu" }
     }
 
     /// Samples per pixel the pictures are drawn with.
@@ -215,6 +226,50 @@ impl Capturer {
 pub fn shared() -> std::result::Result<&'static Capturer, &'static GpuError> {
     static SHARED: std::sync::OnceLock<Result<Capturer>> = std::sync::OnceLock::new();
     SHARED.get_or_init(Capturer::headless).as_ref()
+}
+
+/// What draws this process's headless pictures (native only): the shared headless device, or the
+/// CPU rasterizer where the `SOLIDCRAFT_GPU` policy lands there (`cpu`, or `auto` with no
+/// qualifying adapter).
+#[cfg(not(target_arch = "wasm32"))]
+pub enum Headless {
+    Gpu(&'static Capturer),
+    Cpu,
+}
+
+/// [`Headless`] under the `SOLIDCRAFT_GPU` policy; an error when the policy is `hardware` or
+/// `software` and no adapter of that tier opens (or the variable names no policy).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn headless() -> std::result::Result<Headless, String> {
+    use crate::select::Policy;
+    let policy = Policy::from_env()?;
+    if policy == Policy::Cpu {
+        return Ok(Headless::Cpu);
+    }
+    match shared() {
+        Ok(c) => Ok(Headless::Gpu(c)),
+        Err(e) if policy == Policy::Auto => {
+            log::warn!("pictures are drawn by the CPU rasterizer: {e}");
+            Ok(Headless::Cpu)
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// `scene` drawn by [`headless`]: straight RGBA and the renderer that drew it (`gpu`,
+/// `gpu-software` or `cpu`). The CPU rasterizer draws no surface analysis, highlights or legends.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn headless_rgba(scene: &Scene, cam: &Camera, width: u32, height: u32) -> std::result::Result<(Vec<u8>, &'static str), String> {
+    match headless()? {
+        Headless::Gpu(c) => c.rgba(scene, cam, width, height).map(|rgba| (rgba, c.renderer())).map_err(|e| e.to_string()),
+        Headless::Cpu => {
+            if !(1..=MAX_SIDE).contains(&width) || !(1..=MAX_SIDE).contains(&height) {
+                return Err(format!("a picture is 1 to {MAX_SIDE} pixels a side, not {width} × {height}"));
+            }
+            let canvas = solidcraft_render::render(scene, cam, width as usize, height as usize);
+            Ok((canvas.rgba, "cpu"))
+        }
+    }
 }
 
 /// The frame parameters of a picture: the scene's own geometry as the model scene (key `key`),

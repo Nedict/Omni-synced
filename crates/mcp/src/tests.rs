@@ -16,7 +16,9 @@ fn server() -> Server {
 fn renders() -> bool {
     match solidcraft_gpu::capture::shared() {
         Ok(c) => {
-            solidcraft_engine::capture::install(std::sync::Arc::new(move |scene, cam, w, h| c.rgba(scene, cam, w, h).map_err(|e| e.to_string())));
+            solidcraft_engine::capture::install(std::sync::Arc::new(move |scene, cam, w, h| {
+                c.rgba(scene, cam, w, h).map(|rgba| solidcraft_engine::capture::Picture { rgba, renderer: c.renderer() }).map_err(|e| e.to_string())
+            }));
             true
         }
         Err(e @ solidcraft_gpu::GpuError::NoAdapter(_)) if std::env::var_os("SOLIDCRAFT_REQUIRE_GPU").is_none() => {

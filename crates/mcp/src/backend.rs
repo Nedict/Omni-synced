@@ -285,8 +285,15 @@ impl Backend for Headless {
                 let scene = solidcraft_engine::view::scene_with_guides(s, &cam, s.section, guides);
                 // Drawn on the GPU by the renderer the host installed (`solidcraft-cli mcp`).
                 let png = solidcraft_engine::capture::png(&scene, &cam, w, h)?;
-                solidcraft_engine::io::vfs::write(path, &png).map_err(|e| format!("{path}: {e}"))?;
-                Ok(json!({"path": path, "bytes": png.len(), "width": w, "height": h}))
+                solidcraft_engine::io::vfs::write(path, &png.bytes).map_err(|e| format!("{path}: {e}"))?;
+                Ok(json!({
+                    "path": path,
+                    "bytes": png.bytes.len(),
+                    "width": w,
+                    "height": h,
+                    "renderer": png.renderer,
+                    "warning": solidcraft_engine::capture::warning(png.renderer),
+                }))
             }
             "ui.screenshot" => Err("no window in headless mode; use ui.render".into()),
             other => Err(format!("unknown method `{other}`")),

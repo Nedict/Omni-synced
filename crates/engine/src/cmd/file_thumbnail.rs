@@ -8,7 +8,7 @@ pub(super) fn saved(s: &Session) -> Option<Vec<u8>> {
     let [width, height] = solidcraft_io::THUMBNAIL_SIZE;
     // Drawn by the renderer the host installed (the GPU); none installed, no thumbnail.
     let renderer = crate::capture::installed()?;
-    crate::capture::png_with(Some(&*renderer), &scene, &camera, u32::try_from(width).ok()?, u32::try_from(height).ok()?).ok()
+    crate::capture::png_with(Some(&*renderer), &scene, &camera, u32::try_from(width).ok()?, u32::try_from(height).ok()?).ok().map(|p| p.bytes)
 }
 
 /// What the thumbnail shows: the shown bodies' warm display meshes in their colours, iso, fitted.
@@ -62,7 +62,7 @@ mod tests {
             if let Some(first) = rgba.first_mut() {
                 *first = scene.meshes.len() as u8;
             }
-            Ok(rgba)
+            Ok(crate::capture::Picture { rgba, renderer: "gpu" })
         }));
     }
 

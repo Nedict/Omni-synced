@@ -70,8 +70,8 @@ pub fn thumbnail(s: &Session) -> Option<egui::ColorImage> {
     cam.distance *= 0.7;
     let scene = solidcraft_engine::view::scene(s, &cam);
     // Drawn on the GPU by the renderer the app installs; none (a browser): no picture.
-    let rgba = solidcraft_engine::capture::rgba(&scene, &cam, THUMB[0] as u32, THUMB[1] as u32).ok()?;
-    Some(egui::ColorImage::from_rgba_unmultiplied(THUMB, &rgba))
+    let picture = solidcraft_engine::capture::rgba(&scene, &cam, THUMB[0] as u32, THUMB[1] as u32).ok()?;
+    Some(egui::ColorImage::from_rgba_unmultiplied(THUMB, &picture.rgba))
 }
 
 /// File identity, not just its path: saving or replacing a design invalidates its picture.

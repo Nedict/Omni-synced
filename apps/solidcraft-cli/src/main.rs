@@ -62,9 +62,10 @@ const USAGE: &str = "usage:
   solidcraft-cli mcp [--in design.solidcraft|script.json] [--connect 127.0.0.1:PORT [--token T]] [--allow-path DIR]... [--allow-any-path]
   solidcraft-cli crashes [list [--json] | show <id> | replay <id> | dir | clear [<id>]]
   solidcraft-cli licences
-  solidcraft-cli gpu [--policy auto|hardware|software]
-      (the GPU adapters a headless render can open, best first, and the one the policy picks;
-       the policy defaults to SOLIDCRAFT_GPU, else auto; exits with an error when none qualifies)
+  solidcraft-cli gpu [--policy auto|hardware|software|cpu]
+      (the GPU adapters a headless render can open, best first, the one the policy picks and the tier it
+       lands on: gpu, gpu-software, or the CPU rasterizer (auto with no adapter, or cpu); the policy defaults
+       to SOLIDCRAFT_GPU, else auto; exits with an error when hardware or software finds no such adapter)
   solidcraft-cli icon --out icon.png [--size 256] | --out icon.ico
 ";
 
@@ -343,27 +344,43 @@ fn cmd_gpu(args: &[String]) -> Result<(), String> {
     use solidcraft_gpu::select::{Policy, survey};
     let policy = match args {
         [] => Policy::from_env()?,
-        [flag, v] if flag == "--policy" => Policy::parse(v).ok_or_else(|| format!("--policy must be auto, hardware or software, not `{v}`"))?,
-        _ => return Err("usage: solidcraft-cli gpu [--policy auto|hardware|software]".into()),
+        [flag, v] if flag == "--policy" => Policy::parse(v).ok_or_else(|| format!("--policy must be auto, hardware, software or cpu, not `{v}`"))?,
+        _ => return Err("usage: solidcraft-cli gpu [--policy auto|hardware|software|cpu]".into()),
     };
     let s = survey(policy);
     let chosen = s.chosen.and_then(|i| s.adapters.get(i)).cloned();
+    // The tier pictures land on: a hardware GPU, a software adapter, or the CPU rasterizer.
+    let renderer = s.lands_on.map(|l| l.renderer());
     println!(
         "{}",
-        pretty(&json!({"policy": format!("{policy:?}").to_lowercase(), "backends": s.backends, "adapters": s.adapters, "chosen": chosen}))
+        pretty(&json!({
+            "policy": policy.name(),
+            "backends": s.backends,
+            "adapters": s.adapters,
+            "chosen": chosen,
+            "lands_on": s.lands_on,
+            "renderer": renderer,
+        }))
     );
-    match chosen {
+    match s.lands_on {
+        Some(solidcraft_gpu::select::Landing::Cpu) => {
+            eprintln!("warning: {}", solidcraft_engine::capture::CPU_WARNING);
+            Ok(())
+        }
         Some(_) => Ok(()),
-        None => Err(format!("no adapter qualifies under the {} policy", format!("{policy:?}").to_lowercase())),
+        None => Err(format!("no adapter qualifies under the {} policy", policy.name())),
     }
 }
 
 /// Draw this process's pictures (snapshots, MCP screenshots, saved thumbnails) on the GPU with the
 /// viewport's pipelines: the headless device the `SOLIDCRAFT_GPU` policy picks, opened on the first
-/// picture. Without a qualifying adapter a picture fails with an error that names the policy.
+/// picture; under `auto` with no qualifying adapter (or `cpu`), the CPU rasterizer, and the
+/// picture says so. Under `hardware` or `software` with no such adapter a picture fails with an
+/// error that names the policy.
 fn install_renderer() {
     solidcraft_engine::capture::install(std::sync::Arc::new(|scene, cam, w, h| {
-        solidcraft_gpu::capture::shared().map_err(|e| e.to_string())?.rgba(scene, cam, w, h).map_err(|e| e.to_string())
+        let (rgba, renderer) = solidcraft_gpu::capture::headless_rgba(scene, cam, w, h)?;
+        Ok(solidcraft_engine::capture::Picture { rgba, renderer })
     }));
 }
 
@@ -399,8 +416,13 @@ fn cmd_snapshot(args: &[String]) -> Result<(), String> {
     let guides = Guides { grid: !args.iter().any(|a| a == "--no-grid"), axes: !args.iter().any(|a| a == "--no-axes") };
     let scene = solidcraft_engine::view::scene_with_guides(&s, &cam, s.section, guides);
     let png = solidcraft_engine::capture::png(&scene, &cam, w, h)?;
-    std::fs::write(out, &png).map_err(|e| format!("{out}: {e}"))?;
-    println!("{}", pretty(&json!({"path": out, "width": w, "height": h, "bytes": png.len()})));
+    std::fs::write(out, &png.bytes).map_err(|e| format!("{out}: {e}"))?;
+    let mut reply = json!({"path": out, "width": w, "height": h, "bytes": png.bytes.len(), "renderer": png.renderer});
+    if let Some(w) = solidcraft_engine::capture::warning(png.renderer) {
+        eprintln!("warning: {w}");
+        reply["warning"] = json!(w);
+    }
+    println!("{}", pretty(&reply));
     Ok(())
 }
 

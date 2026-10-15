@@ -28,17 +28,26 @@ pub fn install(rs: &egui_wgpu::RenderState, depth_bits: u8, stencil_bits: u8, sa
 
 /// Draw this process's headless pictures (`ui.render`, the agent's view image, thumbnails of
 /// designs and saves) on the app's own device, with the viewport's pipelines (native only: a
-/// browser cannot wait for the GPU to hand a picture back).
+/// browser cannot wait for the GPU to hand a picture back); where the device cannot, the CPU
+/// rasterizer draws them.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn install_picture_renderer(rs: &egui_wgpu::RenderState) {
     match solidcraft_gpu::capture::Capturer::new(&rs.adapter, rs.device.clone(), rs.queue.clone()) {
         Ok(capturer) => {
             let capturer = std::sync::Arc::new(capturer);
             solidcraft_engine::capture::install(std::sync::Arc::new(move |scene, cam, w, h| {
-                capturer.rgba(scene, cam, w, h).map_err(|e| e.to_string())
+                let rgba = capturer.rgba(scene, cam, w, h).map_err(|e| e.to_string())?;
+                Ok(solidcraft_engine::capture::Picture { rgba, renderer: capturer.renderer() })
             }));
         }
-        Err(e) => log::warn!("pictures of the model cannot be drawn on this device: {e}"),
+        // The last tier: the CPU rasterizer, and every picture says so.
+        Err(e) => {
+            log::warn!("pictures of the model are drawn by the CPU rasterizer: the GPU cannot draw them: {e}");
+            solidcraft_engine::capture::install(std::sync::Arc::new(|scene, cam, w, h| {
+                let canvas = solidcraft_engine::render::render(scene, cam, w as usize, h as usize);
+                Ok(solidcraft_engine::capture::Picture { rgba: canvas.rgba, renderer: "cpu" })
+            }));
+        }
     }
 }
 
@@ -50,7 +59,11 @@ mod test_support {
     pub(crate) fn test_picture_renderer() -> bool {
         match solidcraft_gpu::capture::shared() {
             Ok(c) => {
-                solidcraft_engine::capture::install(std::sync::Arc::new(move |scene, cam, w, h| c.rgba(scene, cam, w, h).map_err(|e| e.to_string())));
+                solidcraft_engine::capture::install(std::sync::Arc::new(move |scene, cam, w, h| {
+                    c.rgba(scene, cam, w, h)
+                        .map(|rgba| solidcraft_engine::capture::Picture { rgba, renderer: c.renderer() })
+                        .map_err(|e| e.to_string())
+                }));
                 true
             }
             Err(e @ solidcraft_gpu::GpuError::NoAdapter(_)) if std::env::var_os("SOLIDCRAFT_REQUIRE_GPU").is_none() => {
