@@ -34,6 +34,15 @@ Bridged, the server finds the app's control token in the token file the app wrot
 it explicitly when the app runs in a sandbox whose data folder the server can't see (prefer the
 variable: command-line arguments are visible to other users in the process list).
 
+A bridged server starts even when no app listens on that port yet, so an MCP client that
+launches it before the app (or after the app was closed) keeps its tools. The server's
+instructions then say the app was not running, and every tool call answers with an error that
+starts `no SolidCraft app is listening at HOST:PORT` and says how to start it
+(`solidcraft --control PORT`). The first call after the app starts connects to it, reading that
+launch's token. When the app quits or crashes mid-session, the next call says the same; a call
+that was running when it went away says the app did not answer and may have quit or crashed.
+A `batch` that could not be sent says the app is not running, so it is safe to send again.
+
 stdout carries only protocol messages; errors go to stderr. Bridged screenshots are written to a
 temporary file by the app and read back by the server, so both must run on the same machine.
 

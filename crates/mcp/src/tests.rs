@@ -1120,6 +1120,40 @@ fn remote_engine_batch_is_not_resent_after_a_lost_reply() {
     }
 }
 
+/// A bridge made before the app runs keeps its tools (#270): calls say the app is not running and
+/// how to start it (a batch was never sent, so it may not "have run"), and reach the app once it
+/// listens.
+#[test]
+fn a_bridge_made_before_the_app_runs_connects_once_it_does() {
+    use std::io::{BufRead, BufReader, Write};
+
+    use crate::backend::Backend;
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let addr = format!("127.0.0.1:{port}");
+    let mut remote = crate::Remote::new(&addr, Some("0123456789abcdef0123456789abcdef"));
+    // Still "connected to the SolidCraft app", which the skills read as bridged.
+    assert!(remote.describe().starts_with("connected to the SolidCraft app") && remote.describe().contains("not running"), "{}", remote.describe());
+    let e = remote.call("engine.execute", json!({"command": "inspect.measure"})).unwrap_err();
+    assert!(e.starts_with(crate::backend::NOT_RUNNING) && e.contains(&format!("solidcraft --control {port}")), "{e}");
+    let batch = crate::call_tool(&mut remote, "batch", &json!({"commands": [{"command": "solid.box"}]}));
+    let text = batch["content"][0]["text"].as_str().unwrap_or_default();
+    assert_eq!(batch["isError"], true);
+    assert!(text.starts_with(crate::backend::NOT_RUNNING) && !text.contains("may have run"), "{text}");
+
+    let listener = std::net::TcpListener::bind(&addr).unwrap();
+    let app = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut line = String::new();
+        BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
+        let req: Value = serde_json::from_str(&line).unwrap();
+        writeln!(&stream, "{}", json!({"id": req["id"], "ok": true, "result": {"answered": req["params"]["command"]}})).unwrap();
+    });
+    let got = remote.call("engine.execute", json!({"command": "inspect.measure"})).unwrap();
+    assert_eq!(got["answered"], "inspect.measure");
+    assert!(remote.describe().starts_with("connected") && !remote.describe().contains("not running"), "{}", remote.describe());
+    app.join().unwrap();
+}
+
 /// Tool annotations never understate what a tool may do (#205): `screenshot` writes a file when
 /// given a `path`, and `execute`, `batch`, `save`, `export` and `open` can overwrite or delete
 /// files, so none of them is read-only and all are destructive and reach the file system.

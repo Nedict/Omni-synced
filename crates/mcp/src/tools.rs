@@ -479,6 +479,8 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
             Ok(r) => return batch_reply(&r, rollback, verbose),
             // Older apps and the headless session, or the app wants the steps one by one.
             Err(e) if e.starts_with("unknown method") || e.starts_with("engine.batch unavailable") => {}
+            // Never sent: no app to send it to.
+            Err(e) if e.starts_with(crate::backend::NOT_RUNNING) => return text_result(&Value::String(e), true),
             // The app may have run it: sending the steps again would apply them twice.
             Err(e) => {
                 let msg = format!("the app did not answer engine.batch ({e}); it may have run: inspect the design before sending it again");

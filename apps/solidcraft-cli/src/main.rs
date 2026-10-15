@@ -394,13 +394,20 @@ fn cmd_mcp(args: &[String]) -> Result<(), String> {
     }
     let backend: Box<dyn solidcraft_mcp::Backend> = match (flag(args, "--connect"), flag(args, "--in")) {
         (Some(_), Some(_)) => return Err("mcp: use either --connect or --in, not both".into()),
-        (Some(addr), None) => Box::new(solidcraft_mcp::Remote::connect_with_token(addr, flag(args, "--token")).map_err(|e| {
-            let port = addr.rsplit(':').next().filter(|p| p.parse::<u16>().is_ok()).unwrap_or("PORT");
-            format!(
-                "cannot connect to {addr}: {e}\nno SolidCraft app is listening there; start it with \
-                 `solidcraft --control {port}` (or SOLIDCRAFT_CONTROL_PORT={port}) and retry"
-            )
-        })?),
+        (Some(addr), None) => {
+            let Some(port) = addr.rsplit_once(':').and_then(|(_, p)| p.parse::<u16>().ok()) else {
+                return Err(format!("mcp: --connect wants HOST:PORT, such as 127.0.0.1:7878, not `{addr}`"));
+            };
+            // Serve without the app too: the tools connect once it runs, and say it isn't until then.
+            let mut remote = solidcraft_mcp::Remote::new(addr, flag(args, "--token"));
+            if let Err(e) = remote.try_connect() {
+                eprintln!(
+                    "solidcraft mcp: no SolidCraft app at {addr} yet ({e}); start it with `solidcraft --control {port}` \
+                     (or SOLIDCRAFT_CONTROL_PORT={port}), tool calls connect once it runs"
+                );
+            }
+            Box::new(remote)
+        }
         (None, Some(path)) => Box::new(solidcraft_mcp::Headless::new(load(path)?)),
         (None, None) => Box::new(solidcraft_mcp::Headless::default()),
     };
