@@ -333,6 +333,12 @@
   "ui.save_as": "다른 이름으로 저장",
   "ui.save_as_ellipsis": "다른 이름으로 저장...",
   "ui.scale": "축척",
+  "ui.orientation": "배향",
+  "ui.twist": "비틀림",
+  "ui.end_scale": "끝 배율",
+  "ui.sweep_turn_with_path": "경로를 따라 회전",
+  "ui.sweep_keep_as_drawn": "그린 대로 유지",
+  "ui.sweep_follow_direction": "방향 따르기",
   "ui.section_analysis": "단면 분석",
   "ui.select": "선택",
   "ui.selection": "선택",
@@ -594,6 +600,7 @@
   "cmd.parameters_delete": "매개 변수 삭제",
   "cmd.parameters_export": "매개 변수 내보내기",
   "cmd.parameters_favorite": "즐겨찾는 매개 변수",
+  "cmd.parameters_move": "매개 변수 이동",
   "cmd.parameters_graph": "매개 변수 그래프",
   "cmd.parameters_import": "매개 변수 가져오기",
   "cmd.parameters_list": "매개 변수 목록",
@@ -908,5 +915,8 @@
   "Mitre": "연귀",
   "Reference face": "참조 면",
   "Round": "둥글게",
-  "Type": "유형"
+  "Type": "유형",
+  "joint.one_component": "이 부품들은 한 구성 요소의 바디입니다: {bodies}. 관절은 한 구성 요소를 다른 구성 요소에 대해 움직이므로 부품마다 자체 구성 요소가 필요합니다.",
+  "joint.one_body": "두 선택이 모두 {body}에 있습니다. 두 번째는 다른 부품에서 선택하세요.",
+  "joint.from_bodies_hint": "선택한 각 바디가 제자리에 그대로 있으면서 자체의 새 구성 요소로 옮겨집니다."
 }
