@@ -27,7 +27,7 @@ SKETCH_GEOMETRY = True   # curve-by-curve sketch contents (the bulk of the outpu
 
 # Bumped whenever the captured shape changes, so re-running upgrades older files in place
 # instead of skipping them -- a resumable run should not also mean a stale one.
-SCHEMA = 6
+SCHEMA = 7
 
 # A plain text file of design paths (one per line, as written under OUT_DIR, without the
 # ".timeline.json" suffix); only those are processed. Most hubs hold a lot of imported bodies
@@ -38,6 +38,10 @@ ONLY_LIST = os.path.join(OUT_DIR, "_reextract.txt")
 # be read with the model rolled back to that step. That costs a recompute per such feature, so
 # it is a switch: turn it off if a hub is large and you would rather have the rest sooner.
 ROLLBACK_FOR_EDGES = True
+
+# Record what an unmapped feature actually exposes, rather than guessing at it and paying a whole
+# run to learn the guess was wrong. Cheap: it reads property names, not geometry.
+PROBE_UNMAPPED = True
 
 # Try a few designs before committing to a whole hub. Each design has to be downloaded and
 # loaded to be read, so a smoke test on five beats discovering a problem on five hundred.
@@ -629,7 +633,57 @@ def describe_feature(ent, index=None):
     if kind == "Sketch":
         rec["sketch"] = describe_sketch(ent)
 
+    if PROBE_UNMAPPED and kind not in MAPPED_KINDS:
+        rec["probe"] = probe(ent)
+
     return rec
+
+
+
+# Feature kinds we already translate; anything else gets probed instead.
+MAPPED_KINDS = {
+    "Sketch", "ExtrudeFeature", "FilletFeature", "ChamferFeature", "ShellFeature",
+    "RevolveFeature", "OffsetFacesFeature", "Occurrence", "Snapshot", "Canvas",
+    "ConstructionPlane", "ConstructionAxis", "ConstructionPoint",
+}
+
+# Never call these: they recompute, mutate, or walk the whole model.
+PROBE_SKIP = ("delete", "save", "compute", "update", "parent", "nativeObject", "createForAssembly",
+              "timelineObject", "healthState", "errorOrWarningMessage", "attributes")
+
+
+def probe(ent):
+    """Name every readable property of a feature, and say what kind of thing it holds.
+
+    Values are deliberately not captured -- only shape -- so this stays cheap and cannot drag in
+    half the document. It is enough to answer "where does a draft keep its angle", which is the
+    question that has cost the most time here.
+    """
+    out = {}
+    for name in dir(ent):
+        if name.startswith("_") or any(k in name for k in PROBE_SKIP):
+            continue
+        try:
+            v = getattr(ent, name)
+        except Exception:
+            continue
+        if v is None or callable(v):
+            continue
+        try:
+            tname = type(v).__name__
+            if isinstance(v, (int, float, str, bool)):
+                out[name] = "{}={}".format(tname, str(v)[:40])
+            elif hasattr(v, "count"):
+                out[name] = "{}[{}]".format(tname, v.count)
+            elif hasattr(v, "expression"):
+                out[name] = "{} expr={}".format(tname, str(v.expression)[:30])
+            else:
+                out[name] = tname
+        except Exception:
+            continue
+        if len(out) >= 40:
+            break
+    return out
 
 
 def describe_design(design, data_file, parts):

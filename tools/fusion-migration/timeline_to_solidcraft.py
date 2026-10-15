@@ -61,6 +61,13 @@ EXTENT = {"0": "one_side", "1": "two_sides", "2": "symmetric"}
 
 ORIGIN_PLANES = {"XY", "XZ", "YZ"}
 
+# The origin planes expressed as frames, so a sketch's plane can be reasoned about uniformly.
+PLANE_FRAMES = {
+    "XY": {"origin": [0, 0, 0], "x_dir": [1, 0, 0], "y_dir": [0, 1, 0]},
+    "XZ": {"origin": [0, 0, 0], "x_dir": [1, 0, 0], "y_dir": [0, 0, 1]},
+    "YZ": {"origin": [0, 0, 0], "x_dir": [0, 1, 0], "y_dir": [0, 0, 1]},
+}
+
 # Fusion stores lengths in centimetres; everything written here is millimetres.
 CM_UNITS = {"cm"}
 UNITS = {"mm", "cm", "m", "in", "ft", "deg", "rad"}
@@ -216,6 +223,8 @@ def emit_sketch(step, out, ctx):
             ", ".join("{}x{}".format(v, k) for k, v in unsupported.items()) or "empty"))
 
     ctx["sketches"].add(sk.get("name"))
+    ctx.setdefault("frames", {})[sk.get("name")] = (
+        spec if isinstance(spec, dict) else PLANE_FRAMES.get(spec))
 
     extra = {}
     if ctx.get("constraints"):
@@ -429,11 +438,35 @@ def world_axis(axis):
     return None
 
 
+def axis_lies_in(frame, name):
+    """Is world axis `name` contained in this sketch plane?
+
+    A revolve turns a profile about an axis in its own plane; naming an axis that merely exists
+    in the world gets the right-sounding answer and the wrong solid, which the engine then
+    rejects with "the Y axis does not lie in the sketch plane".
+    """
+    if not frame:
+        return True  # unknown plane: let the engine judge it rather than refuse wrongly
+    i = "XYZ".index(name)
+    d = [1.0 if j == i else 0.0 for j in range(3)]
+    x, y, o = frame["x_dir"], frame["y_dir"], frame["origin"]
+    # Plane normal, then: the direction must be perpendicular to it and the origin must be on it.
+    n = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]]
+    if abs(sum(n[k] * d[k] for k in range(3))) > 1e-6:
+        return False
+    return abs(sum(n[k] * o[k] for k in range(3))) <= 1e-6
+
+
 def emit_revolve(step, out, ctx):
     name = world_axis(step.get("axis"))
     if not name:
         raise Skip("axis is not a world axis through the origin ({})".format(
             "no axis captured" if not step.get("axis") else "offset or oblique"))
+    for prof in step.get("profiles") or []:
+        frame = (ctx.get("frames") or {}).get(prof.get("sketch"))
+        if not axis_lies_in(frame, name):
+            raise Skip("the {} axis does not lie in sketch {}'s plane".format(
+                name, prof.get("sketch")))
     params = {"axis": name, "angle": expr(step.get("angle"), "360 deg"),
               "profiles": profiles_param(step, ctx), "operation": op_of(step)}
     a2 = expr(step.get("angle2"))
@@ -572,7 +605,11 @@ def verify(cli, script_path):
         return {"ok": False, "error": (err[0] if err else "no output")[:300]}
     d = json.loads(txt)
     t = d.get("total") or {}
-    return {"ok": bool(d.get("body_count")), "bodies": d.get("body_count"),
+    # Getting measurements back at all means every command ran: a failing step makes the CLI
+    # report the error instead. Zero bodies is a legitimate result -- plenty of real designs are
+    # sketch-only references with no solid in them -- so it is reported, not treated as failure.
+    return {"ok": True, "bodies": d.get("body_count") or 0,
+            "solids": bool(d.get("body_count")),
             "volume_mm3": t.get("volume_mm3"), "area_mm2": t.get("area_mm2"),
             "faces": t.get("faces")}
 
