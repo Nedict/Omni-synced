@@ -244,6 +244,10 @@ pub struct Services {
     pub http_get: Option<update::HttpGet>,
     /// HTTPS download to a file, with progress, for one-click updates (`update::install`).
     pub http_download: Option<update::install::HttpDownload>,
+    /// HTTP for the agent chat's API agents (OpenAI-compatible endpoints); None: no API agents.
+    pub agent_http: Option<agent_chat::backend::HttpFn>,
+    /// The system keychain, for API agents' keys; None: keys can't be stored.
+    pub secrets: Option<std::sync::Arc<dyn agent_chat::backend::Secrets>>,
 }
 
 pub struct SolveApp {

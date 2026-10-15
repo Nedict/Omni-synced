@@ -123,7 +123,6 @@ impl Drop for Mcp {
 fn main() {
     let session = "test-session-1";
     let mut mcp: Option<Mcp> = None;
-    let mut pending_permission: Option<u64> = None;
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
     while let Some(Ok(line)) = lines.next() {
@@ -166,17 +165,15 @@ fn main() {
                         "toolCall": {"toolCallId": "t1", "title": "batch: solid.box 40 × 30 × 20"},
                         "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"}, {"optionId": "reject", "name": "Reject", "kind": "reject_once"}],
                     }}));
-                    pending_permission = Some(900);
                     // Wait for the answer (other lines are not expected meanwhile).
                     let mut allowed = false;
                     for l in lines.by_ref().map_while(Result::ok) {
                         let Ok(a) = serde_json::from_str::<Value>(l.trim()) else { continue };
-                        if a.get("id").and_then(Value::as_u64) == pending_permission {
+                        if a.get("id").and_then(Value::as_u64) == Some(900) {
                             allowed = a.pointer("/result/outcome/optionId").and_then(Value::as_str) == Some("allow");
                             break;
                         }
                     }
-                    pending_permission = None;
                     if !allowed {
                         tool(session, "t1", "batch: solid.box 40 × 30 × 20", "edit", "failed", Some("rejected"));
                         say(session, "\nOK, I left the design as it was.");

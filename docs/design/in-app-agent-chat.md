@@ -1,6 +1,7 @@
 # In-app agent chat over ACP
 
-Status: shipped behind a preference (off by default), desktop only. The user guide is
+Status: desktop only, behind Settings → AI → *Show AI features* (on by default; off hides and
+stops everything). The user guide is
 [docs/agent-chat.md](../agent-chat.md). This note records what I found about the Agent Client
 Protocol and the agents that speak it, how the chat is built, and what's still open.
 
@@ -89,6 +90,9 @@ Code: `crates/ui-egui/src/agent_chat/`.
 |---|---|
 | `backend.rs` | The `ChatBackend` trait and its `Event`s: the only thing the panel talks to. |
 | `acp.rs`, `acp_client.rs` | The protocol messages, and `AcpBackend`, the first backend. |
+| `api_client.rs` | `ApiBackend`: an OpenAI-compatible endpoint, with SolidCraft running the tool loop. |
+| `agents.rs` | The agents (found and added), permission modes, "always allow" answers. |
+| `settings.rs` | Settings → AI and the Add agent dialog. |
 | `process.rs` | The agent as a child process in a process group of its own; stopping it ends the group. |
 | `discover.rs` | Which agents are installed, their versions, whether they look signed in. |
 | `gate.rs` | What the agent's tool requests may do: run, wait for Allow/Deny, or never. |
@@ -97,14 +101,23 @@ Code: `crates/ui-egui/src/agent_chat/`.
 
 ### A pluggable backend
 
-The panel doesn't know it's talking ACP. A backend implements `ChatBackend` (`poll` for events,
-`prompt`, `cancel`, `answer_permission`, `authenticate`, `shutdown`) and gets a `StartContext`
-with its working folder, the MCP bridge (for backends that start MCP servers) and `tools`, a
-sender for control requests (for backends that run their own tool loop in process). Requests
-arriving either way go through the same gate, count against the same per-turn limit and undo
-as one step. A backend that calls a model API directly with a key can slot in this way later,
-as an optional mode, without reshaping the panel; it would bring its own settings and key
-storage, and none of that touches the ACP path, which stays the default.
+The panel doesn't know which protocol it's talking. A backend implements `ChatBackend` (`poll`
+for events, `prompt`, `cancel`, `answer_permission`, `authenticate`, `set_mode`, `shutdown`) and
+gets a `StartContext` with its working folder, the MCP bridge and `tools` (a sender for control
+requests, for a backend that runs tools in process). Two backends exist:
+
+- `AcpBackend` drives a coding agent the user already has (the default, and the point of the
+  feature: the user's own account, no keys).
+- `ApiBackend` talks to an OpenAI-compatible chat completions endpoint (Ollama, LM Studio,
+  OpenAI, a custom URL) and runs the tool loop itself: it starts the same `solidcraft-cli mcp
+  --connect` server an ACP agent would get and is its MCP client (`tools/list` becomes the
+  function tools, `crash_reports` left out), so its calls pass the same gate, limits, questions
+  and undo as an ACP agent's. At most 24 model requests per message. The HTTP request is the
+  desktop host's (`Services::agent_http`, ureq with no redirects); the key comes from the system
+  keychain (`Services::secrets`, the keyring crate) for the connection only and is refused over
+  plain HTTP to another computer.
+
+Another kind of backend slots in the same way without reshaping the panel.
 
 ### Design tools and the gate
 
@@ -127,6 +140,12 @@ Requests from that endpoint don't go to the app directly. `pump_tools` passes ea
   turn's first change. The request waits (the endpoint is patient) until the user answers;
   Cancel/Stop declines everything waiting, and after four minutes it is declined (the MCP
   server stops waiting at five).
+- **Permission modes** (Settings → AI, global with a per-agent override): *Ask every time*
+  (default) turns every change into a question too; *Auto-allow model edits* is the list above;
+  *Allow everything* runs what would ask (never what is refused). "Always allow" on a card
+  remembers the command per agent. The agent's own ACP permission questions about SolidCraft's
+  tools are answered "allow once" by the client (the gate decides), and others follow the mode
+  and the remembered answers; every automatic answer leaves an *Auto-allowed* note.
 - **Per-turn limit:** 24 requests that run commands (a batch counts once; reads don't count),
   set in Preferences, and 400 requests of any kind. Past it the agent is told to stop and say
   what's left.
@@ -170,11 +189,13 @@ reported as *key set*, `CLAUDE_CONFIG_DIR` and `CODEX_HOME` respected, and OpenC
 
 ### Panel
 
-Docked left or right (dragging the header across the window, or Preferences), resizable, folded
+Opened from the **AI** button at the toolbar row's right end (the panels give it room and spill
+into » as usual; Settings → AI → *Show button in toolbar* hides it), Ctrl+Shift+A and the View
+settings menu. Docked left or right (dragging the header across the window, or Preferences), resizable, folded
 to a 30 px strip with Minimise (state dot and a count of open questions), closed with ×. Side,
-width, fold and the per-turn limit are preferences, not design data. It opens from the View
-settings menu, a small button left of Help (only once the chat is on) and Ctrl+Shift+A (reserved
-in the shortcut editor; it works from the chat's text box too).
+width, fold and the per-turn limit are preferences, not design data. Ctrl+Shift+A is reserved in the shortcut editor and works from the chat's text box too. The
+header has the agent switcher (per conversation) and, for agents with ACP `modes`, the agent's
+own mode picker (`session/set_mode`).
 
 ### Control channel
 
@@ -192,4 +213,4 @@ returns the whole state, for tests and screenshots.
 | Discovery | Read the ACP registry; keychain-aware login check on macOS |
 | Packaging | Make sure every desktop package ships `solidcraft-cli` next to `solidcraft` (Flatpak, AppImage, macOS bundle, Windows zip), or serve MCP from the app binary itself |
 | Windows | Job objects instead of `taskkill /T` once there's a safe API for them |
-| Backends | A direct-API backend as an optional mode, through `ChatBackend` |
+| API backend | Streaming answers; images in tool results |

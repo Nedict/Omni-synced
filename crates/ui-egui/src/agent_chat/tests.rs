@@ -50,7 +50,7 @@ fn a_plan_update_replaces_the_turns_plan() {
 fn a_permission_is_answered_once() {
     let mut c = chat();
     let opts = vec![PermissionOption { id: "allow".into(), name: "Allow".into(), kind: "allow_once".into() }];
-    c.on_event(Event::Permission { key: 5, title: "batch".into(), options: opts });
+    c.push(Item::Permission { key: 5, title: "batch".into(), options: opts, answer: None });
     assert_eq!(c.waiting(), 1);
     c.answer(0, Some("allow"));
     c.answer(0, None);
@@ -61,7 +61,7 @@ fn a_permission_is_answered_once() {
 /// An app with the chat's endpoint wired to a channel the test feeds, and a message in progress.
 fn app_in_a_turn() -> (SolveApp, Sender<ControlRequest>) {
     let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
-    app.preferences.agent_chat_enabled = true;
+    app.preferences.ai_permissions = agents::Mode::Edits;
     let (tx, rx) = channel();
     app.agent_chat.tools_rx = Some(rx);
     app.agent_chat.state = Some(State::Busy);
@@ -183,4 +183,118 @@ fn merging_finds_the_turns_start_when_the_history_was_trimmed() {
     let mut undo: Vec<_> = docs[1..6].iter().map(snap).collect();
     assert_eq!(merge_undo(&mut undo, &doc(9), 3, "Agent"), 0);
     assert_eq!(undo.len(), 5);
+}
+
+/// People who don't want AI never see it: with "Show AI features" off there is no button, the
+/// shortcut does nothing, no panel draws, nothing is looked for and nothing starts, even when
+/// asked over the control channel. Turned on, the button is there; discovery waits for the panel.
+#[test]
+fn with_ai_features_off_nothing_of_the_chat_shows_or_runs() {
+    use crate::scenario::{handle_at, rect_of};
+    let mut h = crate::scenario::Harness::new();
+    let shortcut = json!({"key": "A", "shift": true, "cmd": true});
+    h.app.preferences.ai_features = false;
+    h.frames(3);
+    assert!(handle_at("toolbar:ai").is_none(), "no toolbar button");
+    h.call("ui.key", shortcut.clone());
+    h.frames(3);
+    h.call("ui.agent_chat", json!({"open": true, "send": "hello", "connect": true}));
+    h.frames(3);
+    assert!(!h.app.agent_chat.open && rect_of("agent_chat:panel").is_none(), "no panel");
+    assert!(h.app.agent_chat.detection.is_none() && h.app.agent_chat.detecting.is_none(), "nothing looked for");
+    assert!(h.app.agent_chat.backend.is_none() && h.app.agent_chat.tools_port.is_none(), "nothing started");
+    // The View settings menu has no chat entry either.
+    if let Some(view) = handle_at("nav:view") {
+        h.call("ui.click", json!({"x": view.x, "y": view.y}));
+        h.frames(3);
+        assert!(handle_at("view:agent_chat").is_none(), "no menu entry");
+        h.call("ui.click", json!({"x": view.x, "y": view.y}));
+    }
+    // On (the default): the button shows; discovery waits until the panel opens.
+    h.app.preferences.ai_features = true;
+    h.frames(3);
+    assert!(handle_at("toolbar:ai").is_some(), "the toolbar button");
+    assert!(h.app.agent_chat.detection.is_none() && h.app.agent_chat.detecting.is_none(), "nothing looked for yet");
+    h.call("ui.key", shortcut.clone());
+    h.frames(3);
+    assert!(h.app.agent_chat.open && rect_of("agent_chat:panel").is_some(), "Ctrl+Shift+A opens the panel");
+    assert!(h.app.agent_chat.detection.is_some() || h.app.agent_chat.detecting.is_some(), "the panel looks for agents");
+    assert!(h.app.agent_chat.backend.is_none(), "but starts none until a chat begins");
+    // Without the toolbar button the shortcut still works.
+    h.app.preferences.ai_toolbar_button = false;
+    h.call("ui.key", shortcut);
+    h.frames(3);
+    assert!(handle_at("toolbar:ai").is_none() && !h.app.agent_chat.open);
+}
+
+#[test]
+fn ai_features_and_the_toolbar_button_are_on_by_default() {
+    let p = crate::prefs::Prefs::default();
+    assert!(p.ai_features && p.ai_toolbar_button);
+}
+
+/// "Ask every time": a modelling command waits for Allow; "Always allow" lets the same command
+/// through from then on for this agent. "Allow everything": even a save runs without a question.
+#[test]
+fn permission_modes_decide_what_asks() {
+    let (mut app, tx) = app_in_a_turn();
+    app.agent_chat.running_id = "claude".into();
+    app.preferences.ai_permissions = agents::Mode::Ask;
+    let first = ask(&tx, "engine.execute", boxed(0.0));
+    frame(&mut app);
+    assert_eq!(app.agent_chat.waiting(), 1, "a modelling command asks");
+    let id = app.agent_chat.held[0].id;
+    approve_always(&mut app, id);
+    frame(&mut app);
+    assert_eq!(first.recv_timeout(std::time::Duration::from_secs(30)).unwrap()["ok"], true);
+    assert!(agents::always_allowed(&app.preferences, "claude", "solid.box"));
+    let second = ask(&tx, "engine.execute", boxed(20.0));
+    frame(&mut app);
+    assert_eq!(app.agent_chat.waiting(), 0, "remembered");
+    assert_eq!(second.recv_timeout(std::time::Duration::from_secs(30)).unwrap()["ok"], true);
+    // Another agent keeps asking.
+    app.agent_chat.running_id = "codex".into();
+    let _third = ask(&tx, "engine.execute", boxed(40.0));
+    frame(&mut app);
+    assert_eq!(app.agent_chat.waiting(), 1);
+    decline_all(&mut app, "test");
+    // Allow everything, set for this agent only.
+    app.preferences.agent_permissions.insert("codex".into(), agents::Mode::All);
+    let dir = std::env::temp_dir().join(format!("sc-agent-chat-all-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("b.solidcraft");
+    let save = ask(&tx, "engine.execute", json!({"command": "file.save", "params": {"path": path.to_string_lossy()}, "allow_paths": [dir.to_string_lossy()]}));
+    frame(&mut app);
+    frame(&mut app);
+    assert_eq!(app.agent_chat.waiting(), 0);
+    assert_eq!(save.recv_timeout(std::time::Duration::from_secs(30)).unwrap()["ok"], true);
+    // Crash reports stay off limits whatever the mode.
+    let crash = ask(&tx, "engine.execute", json!({"command": "diagnostics.crash_reports"}));
+    frame(&mut app);
+    assert_eq!(crash.recv_timeout(std::time::Duration::from_secs(5)).unwrap()["ok"], false);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The agent's own questions: SolidCraft's tools are allowed (its gate checks them), an earlier
+/// "Always allow" answers by itself, and both leave a note; anything else is asked.
+#[test]
+fn the_agents_own_questions_are_answered_by_the_mode_or_asked() {
+    let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+    app.agent_chat.running_id = "claude".into();
+    let opts = || {
+        vec![
+            PermissionOption { id: "allow".into(), name: "Allow".into(), kind: "allow_once".into() },
+            PermissionOption { id: "always".into(), name: "Always".into(), kind: "allow_always".into() },
+            PermissionOption { id: "no".into(), name: "Reject".into(), kind: "reject_once".into() },
+        ]
+    };
+    on_permission(&mut app, 1, "mcp__solidcraft__batch".into(), opts());
+    assert!(matches!(app.agent_chat.items.last(), Some(Item::Notice { text, .. }) if text.contains("mcp__solidcraft__batch")));
+    on_permission(&mut app, 2, "Run ls".into(), opts());
+    assert!(matches!(app.agent_chat.items.last(), Some(Item::Permission { answer: None, .. })));
+    let n = app.agent_chat.items.len() - 1;
+    answer_permission(&mut app, n, Some("always"));
+    assert!(agents::always_allowed(&app.preferences, "claude", "Run ls"));
+    on_permission(&mut app, 3, "Run ls".into(), opts());
+    assert!(matches!(app.agent_chat.items.last(), Some(Item::Notice { .. })), "remembered");
 }

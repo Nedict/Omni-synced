@@ -50,14 +50,21 @@ pub fn tip() -> String {
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     poll(app, &ctx);
-    if !app.preferences.agent_chat_enabled {
+    // With AI features off nothing of the chat is drawn, and the shortcut does nothing.
+    if !shown(app) {
         return;
     }
+    super::settings::dialog(app, &ctx);
     if ctx.input_mut(|i| i.consume_shortcut(&SHORTCUT)) {
         toggle(app);
     }
     if !app.agent_chat.open {
         return;
+    }
+    // Look for installed agents the first time the panel opens (in the background).
+    #[cfg(not(target_arch = "wasm32"))]
+    if app.agent_chat.detection.is_none() && app.agent_chat.detecting.is_none() {
+        refresh(app, &ctx);
     }
     let t = Tokens::get();
     let left = app.preferences.agent_chat_side == "left";
@@ -236,6 +243,8 @@ fn dock_drag(app: &mut SolveApp, ui: &egui::Ui, drag: &egui::Response, left: boo
 
 fn body(app: &mut SolveApp, ui: &mut egui::Ui, left: bool) {
     header(app, ui, left);
+    #[cfg(not(target_arch = "wasm32"))]
+    switcher(app, ui);
     #[cfg(target_arch = "wasm32")]
     {
         ui.label(tr("ui.agent_chat_desktop_only"));
@@ -291,55 +300,125 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
     });
 }
 
-/// A found agent as one line: its command line (what the preference holds).
 #[cfg(not(target_arch = "wasm32"))]
-fn line(f: &discover::Found) -> String {
-    f.argv.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" ")
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn login_chip(ui: &mut egui::Ui, login: discover::Login) {
+pub(super) fn login_chip(ui: &mut egui::Ui, login: &str) {
     let t = Tokens::get();
     let (text, color) = match login {
-        discover::Login::LooksLoggedIn => (tr("ui.agent_chat_signed_in"), t.accent),
-        discover::Login::KeyInEnvironment => (tr("ui.agent_chat_key_in_env"), t.accent),
-        discover::Login::NotLoggedIn => (tr("ui.agent_chat_not_signed_in"), t.warning),
-        discover::Login::Unknown => return,
+        "signed_in" => (tr("ui.agent_chat_signed_in"), t.accent),
+        "key" => (tr("ui.agent_chat_key_in_env"), t.accent),
+        "signed_out" => (tr("ui.agent_chat_not_signed_in"), t.warning),
+        _ => return,
     };
     egui::Frame::NONE.stroke(Stroke::new(1.0, color)).corner_radius(8.0).inner_margin(egui::Margin::symmetric(6, 1)).show(ui, |ui| {
         ui.label(RichText::new(text).color(color).size(11.0));
     });
 }
 
-/// The agent picker: the agents found (version, whether they look signed in), a custom command,
-/// Refresh, and install hints for the ones missing. Folds to one line once an agent runs.
+/// A small mark for an agent's kind: a terminal prompt for a program, a cloud for an endpoint.
+pub(super) fn kind_icon(ui: &mut egui::Ui, kind: agents::Kind) {
+    let t = Tokens::get();
+    let (r, _) = ui.allocate_exact_size(vec2(16.0, 14.0), Sense::hover());
+    let p = ui.painter();
+    let s = Stroke::new(1.3, t.text_dim);
+    match kind {
+        agents::Kind::Acp => {
+            p.rect_stroke(r.shrink(1.0), 2.0, s, egui::StrokeKind::Inside);
+            p.line_segment([r.left_top() + vec2(4.0, 4.0), r.left_top() + vec2(7.0, 7.0)], s);
+            p.line_segment([r.left_top() + vec2(7.0, 7.0), r.left_top() + vec2(4.0, 10.0)], s);
+            p.line_segment([r.left_top() + vec2(8.5, 10.0), r.left_top() + vec2(12.0, 10.0)], s);
+        }
+        agents::Kind::Api => {
+            let c = r.center();
+            p.circle_stroke(c + vec2(-3.0, 1.5), 3.2, s);
+            p.circle_stroke(c + vec2(1.0, -1.0), 4.2, s);
+            p.circle_stroke(c + vec2(4.0, 2.0), 2.8, s);
+        }
+    }
+}
+
+/// The header's second row: the agent this conversation uses (a compact switcher), the agent's
+/// own mode when it has modes, and the state of its login.
+#[cfg(not(target_arch = "wasm32"))]
+fn switcher(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let t = Tokens::get();
+    let all = agents::entries(app);
+    let current = agents::current(app);
+    ui.horizontal(|ui| {
+        let label = current.as_ref().map_or_else(
+            || tr(if app.agent_chat.detecting.is_some() { "ui.agent_chat_detecting" } else { "ui.agent_chat_none_found_short" }).to_string(),
+            |e| e.name.clone(),
+        );
+        let w = (ui.available_width() - if app.agent_chat.modes.is_empty() { 4.0 } else { 120.0 }).clamp(120.0, 260.0);
+        let mut picked: Option<String> = None;
+        let mut add = false;
+        let combo = egui::ComboBox::from_id_salt("sc_agent_switch").width(w).selected_text(RichText::new(label).strong()).show_ui(ui, |ui| {
+            for e in &all {
+                let sel = current.as_ref().is_some_and(|c| c.id == e.id);
+                let r = ui.horizontal(|ui| {
+                    kind_icon(ui, e.kind);
+                    let r = ui.selectable_label(sel, &e.name);
+                    ui.label(RichText::new(e.detail()).color(t.text_dim).size(11.0));
+                    login_chip(ui, e.login);
+                    r
+                });
+                crate::scenario::publish_handle(&format!("agent_chat:agent:{}", e.id), r.inner.rect.center());
+                if r.inner.clicked() {
+                    picked = Some(e.id.clone());
+                }
+            }
+            ui.separator();
+            if ui.selectable_label(false, tr("ui.ai_add_agent")).clicked() {
+                add = true;
+            }
+            if ui.selectable_label(false, tr("ui.ai_settings")).clicked() {
+                crate::prefs::open_at(app, crate::prefs::PAGE_AI);
+            }
+        });
+        crate::scenario::publish_handle("agent_chat:switcher", combo.response.rect.center());
+        combo.response.on_hover_text(tr("ui.ai_switch_tip"));
+        if add {
+            super::settings::open_add(app);
+        }
+        if let Some(id) = picked
+            && current.as_ref().is_none_or(|c| c.id != id)
+        {
+            disconnect(app);
+            app.agent_chat.agent_id = Some(id);
+        }
+        // The agent's own modes (ACP `modes`): its own tools follow them.
+        if !app.agent_chat.modes.is_empty() {
+            let modes = app.agent_chat.modes.clone();
+            let cur = modes.iter().find(|(id, _)| *id == app.agent_chat.mode).map_or_else(|| app.agent_chat.mode.clone(), |(_, n)| n.clone());
+            let mut pick: Option<String> = None;
+            let r = egui::ComboBox::from_id_salt("sc_agent_mode").width(100.0).selected_text(cur).show_ui(ui, |ui| {
+                for (id, name) in &modes {
+                    if ui.selectable_label(*id == app.agent_chat.mode, name).clicked() {
+                        pick = Some(id.clone());
+                    }
+                }
+            });
+            crate::scenario::publish_handle("agent_chat:mode", r.response.rect.center());
+            r.response.on_hover_text(tr("ui.ai_agent_mode_tip"));
+            if let Some(m) = pick {
+                set_mode(app, &m);
+            }
+        }
+    });
+    if let Some(a) = &app.agent_chat.auth_status {
+        ui.label(RichText::new(a).color(t.text_dim).size(11.0));
+    }
+}
+
+/// Before the first connection: what's installed, how to install the rest, and Add agent.
 #[cfg(not(target_arch = "wasm32"))]
 fn picker(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
-    let current = app.preferences.agent_command.clone();
-    let found: Vec<discover::Found> = app.agent_chat.detection.as_ref().map(|d| d.found.clone()).unwrap_or_default();
-    // The agent the chat would start: the chosen one, else the first found.
-    let chosen = if current.trim().is_empty() { found.first().map(line).unwrap_or_default() } else { current.clone() };
-    let open = app.agent_chat.picking.unwrap_or(!app.agent_chat.state().running());
+    let open = app.agent_chat.picking.unwrap_or(!app.agent_chat.state().running() && app.agent_chat.items.is_empty());
     if !open {
-        ui.horizontal(|ui| {
-            let name = found.iter().find(|f| line(f) == chosen).map(|f| match &f.version {
-                Some(v) => format!("{} {v}", f.name),
-                None => f.name.to_string(),
-            });
-            let mut s = if app.agent_chat.agent.is_empty() { name.unwrap_or_else(|| short_command(&chosen)) } else { app.agent_chat.agent.clone() };
-            if let Some(a) = &app.agent_chat.auth_status {
-                s = format!("{s} · {a}");
-            }
-            ui.label(RichText::new(s).color(t.text_dim));
-            let b = ui.link(tr("ui.agent_chat_change"));
-            crate::scenario::publish_handle("agent_chat:change", b.rect.center());
-            if b.clicked() {
-                app.agent_chat.picking = Some(true);
-            }
-        });
         return;
     }
+    let all = agents::entries(app);
+    let current = agents::current(app);
     ui.horizontal(|ui| {
         ui.label(RichText::new(tr("ui.agent_chat_pick")).strong());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -347,59 +426,36 @@ fn picker(app: &mut SolveApp, ui: &mut egui::Ui) {
             if ui.add_enabled(!refreshing, egui::Button::new(tr("ui.agent_chat_refresh")).small()).clicked() {
                 refresh(app, ui.ctx());
             }
-            if app.agent_chat.state().running() && ui.small_button(tr("ui.agent_chat_done")).clicked() {
-                app.agent_chat.picking = Some(false);
+            if ui.small_button(tr("ui.ai_add_agent")).clicked() {
+                super::settings::open_add(app);
             }
         });
     });
     if app.agent_chat.detecting.is_some() {
         ui.label(RichText::new(tr("ui.agent_chat_detecting")).color(t.text_dim));
     }
-    for f in &found {
-        let l = line(f);
-        let selected = l == chosen && !app.agent_chat.custom;
+    for e in &all {
+        let selected = current.as_ref().is_some_and(|c| c.id == e.id);
         let fill = if selected { t.accent_soft } else { Color32::TRANSPARENT };
         let r = egui::Frame::NONE.fill(fill).corner_radius(5.0).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                let _ = ui.radio(selected, "");
-                ui.label(RichText::new(f.name).strong().color(t.text));
-                if let Some(v) = &f.version {
-                    ui.label(RichText::new(v).color(t.text_dim).size(11.0));
-                }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| login_chip(ui, f.login));
+                kind_icon(ui, e.kind);
+                ui.label(RichText::new(&e.name).strong().color(t.text));
+                ui.label(RichText::new(e.detail()).color(t.text_dim).size(11.0));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| login_chip(ui, e.login));
             });
         });
-        let resp = ui.interact(r.response.rect, Id::new(("sc_agent_pick", f.id)), Sense::click());
-        crate::scenario::publish_handle(&format!("agent_chat:pick:{}", f.id), resp.rect.center());
-        if resp.on_hover_text(&l).clicked() {
-            app.preferences.agent_command = l;
-            app.agent_chat.custom = false;
+        let resp = ui.interact(r.response.rect, Id::new(("sc_agent_pick", &e.id)), Sense::click());
+        crate::scenario::publish_handle(&format!("agent_chat:pick:{}", e.id), resp.rect.center());
+        if resp.clicked() {
+            app.agent_chat.agent_id = Some(e.id.clone());
         }
-    }
-    let custom_selected = app.agent_chat.custom || (!current.trim().is_empty() && !found.iter().any(|f| line(f) == current));
-    ui.horizontal(|ui| {
-        if ui.radio(custom_selected, tr("ui.agent_chat_add_custom")).clicked() {
-            app.agent_chat.custom = true;
-            if app.agent_chat.custom_text.is_empty() {
-                app.agent_chat.custom_text = current.clone();
-            }
-        }
-    });
-    if custom_selected {
-        if app.agent_chat.custom_text.is_empty() && !app.agent_chat.custom {
-            app.agent_chat.custom_text = current.clone();
-        }
-        let r = ui.add(egui::TextEdit::singleline(&mut app.agent_chat.custom_text).desired_width(f32::INFINITY).hint_text("my-agent --acp"));
-        if r.lost_focus() || r.changed() {
-            app.preferences.agent_command = app.agent_chat.custom_text.trim().to_string();
-        }
-        ui.label(RichText::new(tr("ui.agent_chat_custom_hint")).color(t.text_dim).size(11.0));
     }
     let missing: Vec<discover::Missing> = app.agent_chat.detection.as_ref().map(|d| d.missing.clone()).unwrap_or_default();
     if !missing.is_empty() {
-        let heading = if found.is_empty() { tr("ui.agent_chat_none_found") } else { tr("ui.agent_chat_not_installed") };
-        egui::CollapsingHeader::new(RichText::new(heading).color(t.text_dim)).id_salt("sc_agent_missing").default_open(found.is_empty()).show(ui, |ui| {
+        let heading = if all.is_empty() { tr("ui.agent_chat_none_found") } else { tr("ui.agent_chat_not_installed") };
+        egui::CollapsingHeader::new(RichText::new(heading).color(t.text_dim)).id_salt("sc_agent_missing").default_open(all.is_empty()).show(ui, |ui| {
             for m in missing {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(m.name).strong());
@@ -465,7 +521,8 @@ fn auth_box(app: &mut SolveApp, ui: &mut egui::Ui) {
 fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let mut answer: Option<(usize, Option<String>)> = None;
-    let mut approval: Option<(u64, bool)> = None;
+    // Allow (true), Deny (false), Always allow (None).
+    let mut approval: Option<(u64, Option<bool>)> = None;
     let mut undo: Option<usize> = None;
     let current_doc = app.session.doc.clone();
     for (n, item) in app.agent_chat.items.iter().enumerate() {
@@ -485,21 +542,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                 ui.add(egui::Label::new(rt).selectable(true).wrap());
             }
             Item::Tool { title, kind, status, output, .. } => {
-                let (color, filled) = match status {
-                    Some(ToolStatus::Completed) => (t.accent, true),
-                    Some(ToolStatus::Failed) => (t.error, true),
-                    Some(ToolStatus::InProgress) => (t.warning, true),
-                    _ => (t.text_dim, false),
-                };
-                let head = if kind.is_empty() || kind == "other" { title.clone() } else { format!("{title}  [{kind}]") };
-                ui.horizontal(|ui| {
-                    status_dot(ui, color, filled);
-                    egui::CollapsingHeader::new(RichText::new(head).color(t.text).monospace().size(11.5)).id_salt(("sc_agent_tool", n)).show(ui, |ui| {
-                        if let Some(o) = output {
-                            ui.add(egui::Label::new(RichText::new(o).monospace().size(11.0)).selectable(true).wrap());
-                        }
-                    });
-                });
+                tool_card(ui, n, title, kind, *status, output.as_deref());
             }
             Item::Plan(entries) => {
                 for (c, s) in entries {
@@ -538,7 +581,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                 });
             }
-            Item::Approval { id, title, answer: given } => {
+            Item::Approval { id, title, tool, answer: given } => {
                 egui::Frame::group(ui.style()).stroke(Stroke::new(1.5, t.warning)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.label(RichText::new(tr("ui.agent_chat_approval")).strong());
@@ -553,14 +596,19 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                         None => {
                             ui.horizontal(|ui| {
                                 let allow = ui.add(egui::Button::new(tr("ui.agent_chat_allow")).fill(t.accent_soft));
+                                let always = ui.button(tr("ui.ai_always_allow")).on_hover_text(trf("ui.ai_always_allow_tip", &[("tool", tool)]));
                                 let deny = ui.button(tr("ui.agent_chat_deny"));
                                 crate::scenario::publish_handle("agent_chat:allow", allow.rect.center());
+                                crate::scenario::publish_handle("agent_chat:always", always.rect.center());
                                 crate::scenario::publish_handle("agent_chat:deny", deny.rect.center());
                                 if allow.clicked() {
-                                    approval = Some((*id, true));
+                                    approval = Some((*id, Some(true)));
+                                }
+                                if always.clicked() {
+                                    approval = Some((*id, None));
                                 }
                                 if deny.clicked() {
-                                    approval = Some((*id, false));
+                                    approval = Some((*id, Some(false)));
                                 }
                             });
                         }
@@ -574,7 +622,7 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
                     if *undone {
                         ui.label(RichText::new(tr("ui.agent_chat_undone")).color(t.text_dim).size(11.5));
                     } else if Arc::ptr_eq(doc, &current_doc) {
-                        let b = ui.small_button(tr("ui.agent_chat_undo_changes"));
+                        let b = ui.button(tr("ui.agent_chat_undo_changes")).on_hover_text(tr("ui.ai_undo_tip"));
                         crate::scenario::publish_handle("agent_chat:undo", b.rect.center());
                         if b.clicked() {
                             undo = Some(n);
@@ -595,14 +643,59 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
         ui.label(RichText::new(tr("ui.agent_chat_privacy")).color(t.text_dim).size(11.0));
     }
     if let Some((n, o)) = answer {
-        app.agent_chat.answer(n, o.as_deref());
+        answer_permission(app, n, o.as_deref());
     }
-    if let Some((id, allow)) = approval {
-        approve(app, id, allow);
+    match approval {
+        Some((id, Some(allow))) => approve(app, id, allow),
+        Some((id, None)) => approve_always(app, id),
+        None => {}
     }
     if let Some(n) = undo {
         undo_changes(app, n);
     }
+}
+
+/// A tool call as a card: its state, name and kind on one line; a click unfolds what it returned.
+#[cfg(not(target_arch = "wasm32"))]
+fn tool_card(ui: &mut egui::Ui, n: usize, title: &str, kind: &str, status: Option<ToolStatus>, output: Option<&str>) {
+    let t = Tokens::get();
+    let (color, filled, state) = match status {
+        Some(ToolStatus::Completed) => (t.accent, true, "ui.ai_tool_done"),
+        Some(ToolStatus::Failed) => (t.error, true, "ui.ai_tool_failed"),
+        Some(ToolStatus::InProgress) => (t.warning, true, "ui.ai_tool_running"),
+        _ => (t.text_dim, false, "ui.ai_tool_waiting"),
+    };
+    egui::Frame::NONE.fill(t.toolbar).stroke(Stroke::new(1.0, t.border)).corner_radius(6.0).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        let id = ui.make_persistent_id(("sc_agent_tool", n));
+        let mut state_ = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false);
+        let head = ui.horizontal(|ui| {
+            status_dot(ui, color, filled);
+            ui.add(egui::Label::new(RichText::new(title).monospace().size(11.5).color(t.text)).truncate());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.label(RichText::new(tr(state)).size(10.5).color(color));
+                if !kind.is_empty() && kind != "other" {
+                    ui.label(RichText::new(kind).size(10.5).color(t.text_dim));
+                }
+            });
+        });
+        let click = ui.interact(head.response.rect, id.with("head"), Sense::click());
+        crate::scenario::publish_handle(&format!("agent_chat:tool:{n}"), head.response.rect.center());
+        if output.is_some() && click.clicked() {
+            state_.toggle(ui);
+        }
+        if output.is_some() {
+            click.on_hover_text(tr("ui.ai_tool_unfold"));
+        }
+        state_.show_body_unindented(ui, |ui| {
+            if let Some(o) = output {
+                ui.separator();
+                egui::ScrollArea::vertical().id_salt(("sc_agent_tool_out", n)).max_height(180.0).show(ui, |ui| {
+                    ui.add(egui::Label::new(RichText::new(o).monospace().size(11.0)).selectable(true).wrap());
+                });
+            }
+        });
+    });
 }
 
 /// A small status mark drawn as a shape (no glyph a system font might lack): filled when the
@@ -629,7 +722,7 @@ pub(super) fn short_command(line: &str) -> String {
 }
 
 /// Quote an argument for the command field when it holds spaces.
-fn quote(a: &str) -> String {
+pub(super) fn quote(a: &str) -> String {
     if a.is_empty() || a.contains(char::is_whitespace) || a.contains('"') { format!("\"{}\"", a.replace('"', "\\\"")) } else { a.to_string() }
 }
 

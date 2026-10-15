@@ -97,6 +97,24 @@ pub fn prompt_params(session: &str, parts: &[super::backend::PromptPart]) -> Val
     json!({"sessionId": session, "prompt": super::backend::content_blocks(parts)})
 }
 
+/// The agent's modes in a `session/new` reply: the current one and each `(id, name)`.
+pub fn modes(session: &Value) -> Option<(String, Vec<(String, String)>)> {
+    let m = session.get("modes")?;
+    let current = m.get("currentModeId").and_then(Value::as_str).unwrap_or("").to_string();
+    let available: Vec<(String, String)> = m
+        .get("availableModes")?
+        .as_array()?
+        .iter()
+        .take(16)
+        .filter_map(|x| {
+            let id = x.get("id")?.as_str()?.to_string();
+            let name = x.get("name").and_then(Value::as_str).unwrap_or(&id).to_string();
+            Some((id, name))
+        })
+        .collect();
+    (!available.is_empty()).then_some((current, available))
+}
+
 /// Whether the agent takes pictures in a message (`agentCapabilities.promptCapabilities.image`).
 pub fn takes_images(init: &Value) -> bool {
     init.pointer("/agentCapabilities/promptCapabilities/image").and_then(Value::as_bool).unwrap_or(false)
@@ -225,6 +243,8 @@ pub enum Incoming {
     Permission { rpc: Value, title: String, options: Vec<PermissionOption> },
     /// The agent says whether it is logged in (an extension both adapters send).
     AuthStatus(String),
+    /// The agent switched to another of its modes.
+    ModeChanged(String),
     /// A request we don't serve (file system, terminal, …): answer "method not found".
     Unsupported { rpc: Value, method: String },
     /// Anything else (mode and command lists, usage): nothing to show.
@@ -325,6 +345,10 @@ fn update(u: &Value) -> Incoming {
                 status: u.get("status").and_then(Value::as_str).and_then(ToolStatus::parse),
                 output: tool_output(u),
             },
+            None => Incoming::Ignored,
+        },
+        Some("current_mode_update") => match s("currentModeId").or_else(|| s("modeId")) {
+            Some(m) => Incoming::ModeChanged(m),
             None => Incoming::Ignored,
         },
         Some("plan") => Incoming::Plan(
@@ -459,6 +483,10 @@ mod tests {
         let err = r#"{"jsonrpc":"2.0","id":3,"error":{"code":-32000,"message":"Authentication required"}}"#;
         assert_eq!(parse(err), Some(Incoming::Reply { id: 3, result: Err((AUTH_REQUIRED, "Authentication required".into())) }));
         assert_eq!(parse("not json"), None);
+        let mode = r#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"current_mode_update","currentModeId":"plan"}}}"#;
+        assert_eq!(parse(mode), Some(Incoming::ModeChanged("plan".into())));
+        let new = json!({"sessionId": "s", "modes": {"currentModeId": "default", "availableModes": [{"id": "default", "name": "Default"}, {"id": "acceptEdits", "name": "Accept Edits"}]}});
+        assert_eq!(modes(&new), Some(("default".into(), vec![("default".into(), "Default".into()), ("acceptEdits".into(), "Accept Edits".into())])));
     }
 
     #[test]

@@ -19,6 +19,9 @@
 pub mod acp;
 #[cfg(not(target_arch = "wasm32"))]
 mod acp_client;
+pub mod agents;
+#[cfg(not(target_arch = "wasm32"))]
+mod api_client;
 pub mod backend;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod discover;
@@ -26,6 +29,7 @@ pub mod gate;
 mod panel;
 #[cfg(not(target_arch = "wasm32"))]
 mod process;
+pub mod settings;
 
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -92,8 +96,9 @@ pub enum Item {
     Plan(Vec<(String, String)>),
     /// The agent asks before running something of its own (its options, its words).
     Permission { key: u64, title: String, options: Vec<PermissionOption>, answer: Option<String> },
-    /// A request of the agent's that SolidCraft holds for the user (files, replacing the design).
-    Approval { id: u64, title: String, answer: Option<bool> },
+    /// A request of the agent's that SolidCraft holds for the user (files, replacing the design,
+    /// or any change while the mode is "ask"); `tool`: what "Always allow" remembers.
+    Approval { id: u64, title: String, tool: String, answer: Option<bool> },
     /// A message's changes, merged into one undo step; `doc`: the design right after it.
     Changes { steps: usize, doc: Arc<solidcraft_engine::doc::Document>, undone: bool },
     Notice { text: String, error: bool },
@@ -141,6 +146,13 @@ pub struct AgentChat {
     last: Option<(String, bool)>,
     /// The command the running agent was started with.
     argv: Vec<String>,
+    /// The agent picked for this conversation (the header's switcher); `None`: the default.
+    pub agent_id: Option<String>,
+    /// The agent the running backend is (for permissions and "always allow").
+    running_id: String,
+    /// The agent's own modes, and the current one.
+    modes: Vec<(String, String)>,
+    mode: String,
     backend: Option<Box<dyn ChatBackend>>,
     turn: Option<Turn>,
     held: Vec<Held>,
@@ -149,10 +161,10 @@ pub struct AgentChat {
     pub tools_port: Option<u16>,
     tools_rx: Option<Receiver<ControlRequest>>,
     tools_tx: Option<Sender<ControlRequest>>,
+    /// Settings → AI: the Add agent dialog and connection tests.
+    pub settings: settings::State,
     /// Desktop host hook: start the endpoint on demand.
     pub control_starter: Option<ControlStarter>,
-    custom: bool,
-    custom_text: String,
     /// The picker is unfolded (it folds to one line once an agent is connected).
     picking: Option<bool>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -226,7 +238,7 @@ impl AgentChat {
     }
 
     /// Take in what the backend reported.
-    fn on_event(&mut self, e: Event) -> Option<TurnEnd> {
+    fn on_event(&mut self, e: Event) -> Option<Outcome> {
         match e {
             Event::Ready { agent, images } => {
                 self.agent = agent;
@@ -271,7 +283,13 @@ impl AgentChat {
                     self.push(Item::Plan(entries));
                 }
             }
-            Event::Permission { key, title, options } => self.push(Item::Permission { key, title, options, answer: None }),
+            Event::Permission { key, title, options } => return Some(Outcome::Permission { key, title, options }),
+            Event::Modes { current, available } => {
+                if !available.is_empty() {
+                    self.modes = available;
+                }
+                self.mode = current;
+            }
             Event::AuthRequired { methods } => {
                 self.auth = methods;
                 self.state = Some(State::NeedsAuth);
@@ -289,7 +307,7 @@ impl AgentChat {
                 if !matches!(reason.as_str(), "" | "auth" | "error") {
                     self.notice(format!("({reason})"), false);
                 }
-                return Some(TurnEnd);
+                return Some(Outcome::TurnEnd);
             }
             Event::Error(e) => {
                 self.notice(e, true);
@@ -303,24 +321,35 @@ impl AgentChat {
                 let detail = if last.is_empty() { String::new() } else { format!("\n{}", last.join("\n")) };
                 self.notice(format!("{}{detail}", tr("ui.agent_chat_exited")), true);
                 self.stop_backend(false);
-                return Some(TurnEnd);
+                return Some(Outcome::TurnEnd);
             }
         }
         None
     }
 }
 
-/// A message was answered (or the agent stopped): the turn's bookkeeping ends.
-struct TurnEnd;
+/// What an event asks of the app.
+enum Outcome {
+    /// A message was answered (or the agent stopped): the turn's bookkeeping ends.
+    TurnEnd,
+    /// The agent asks before running something of its own: answered by the mode, or asked.
+    Permission { key: u64, title: String, options: Vec<PermissionOption> },
+}
 
-/// The command the chat starts: the preference, else the first agent found.
-#[cfg(not(target_arch = "wasm32"))]
-fn chosen_command(app: &SolveApp) -> Vec<String> {
-    let pref = acp::split_command(&app.preferences.agent_command);
-    if !pref.is_empty() {
-        return pref;
-    }
-    app.agent_chat.detection.as_ref().and_then(|d| d.found.first()).map(|f| f.argv.clone()).unwrap_or_default()
+/// The AI features are on (the master switch in Settings → AI) and this is the desktop app.
+pub fn shown(app: &SolveApp) -> bool {
+    app.preferences.ai_features && cfg!(not(target_arch = "wasm32"))
+}
+
+/// The AI button at the toolbar row's right end is shown.
+pub fn toolbar_button_shown(app: &SolveApp) -> bool {
+    shown(app) && app.preferences.ai_toolbar_button
+}
+
+/// Whether a permission question is about one of SolidCraft's own tools (which SolidCraft's own
+/// gate checks): the agents name MCP tools after their server.
+fn solidcraft_tool(title: &str) -> bool {
+    title.to_ascii_lowercase().contains("solidcraft")
 }
 
 /// `solidcraft-cli` next to this program, else on the search path.
@@ -350,11 +379,24 @@ fn working_dir() -> std::path::PathBuf {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn connect(app: &mut SolveApp, ctx: &egui::Context) {
     disconnect(app);
-    let argv = chosen_command(app);
-    if argv.is_empty() {
+    let Some(entry) = agents::current(app) else {
         app.agent_chat.notice(tr("ui.agent_chat_none_found"), true);
         return;
-    }
+    };
+    // An API agent's key comes from the keychain for this connection only.
+    let key = if entry.kind == agents::Kind::Api && entry.key {
+        match app.services.secrets.as_ref().map(|s| s.get(&entry.id)) {
+            Some(Ok(k)) => k,
+            Some(Err(e)) => {
+                app.agent_chat.notice(trf("ui.ai_keychain_error", &[("error", &e)]), true);
+                return;
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+    let http = app.services.agent_http.clone();
     let chat = &mut app.agent_chat;
     if chat.tools_port.is_none()
         && let Some(start) = chat.control_starter.as_mut()
@@ -375,10 +417,25 @@ pub fn connect(app: &mut SolveApp, ctx: &egui::Context) {
     let bridge = cli.zip(chat.tools_port).map(|(cli, port)| acp::McpBridge { cli, port });
     let wake = ctx.clone();
     let start = backend::StartContext { cwd: working_dir(), bridge, tools: chat.tools_tx.clone(), wake: Box::new(move || wake.request_repaint()) };
-    match acp_client::AcpBackend::start(&argv, start) {
+    let started: Result<Box<dyn ChatBackend>, String> = match entry.kind {
+        agents::Kind::Acp if entry.argv.is_empty() => Err(tr("ui.agent_chat_none_found").to_string()),
+        agents::Kind::Acp => acp_client::AcpBackend::start(&entry.argv, start).map(|b| Box::new(b) as Box<dyn ChatBackend>),
+        agents::Kind::Api => match http {
+            Some(http) => api_client::ApiBackend::start(
+                api_client::ApiConfig { name: entry.name.clone(), base_url: entry.base_url.clone(), model: entry.model.clone(), key, http },
+                start,
+            )
+            .map(|b| Box::new(b) as Box<dyn ChatBackend>),
+            None => Err(tr("ui.ai_no_http").to_string()),
+        },
+    };
+    match started {
         Ok(b) => {
-            chat.backend = Some(Box::new(b));
-            chat.argv = argv;
+            chat.backend = Some(b);
+            chat.argv = entry.argv.clone();
+            chat.running_id = entry.id.clone();
+            chat.modes.clear();
+            chat.mode.clear();
             chat.state = Some(State::Starting);
             chat.auth.clear();
             chat.auth_status = None;
@@ -476,6 +533,61 @@ pub fn approve(app: &mut SolveApp, id: u64, allow: bool) {
     approve_with(app, id, allow, "the user declined it");
 }
 
+/// Allow a held request and remember to allow its tool for this agent from now on.
+pub fn approve_always(app: &mut SolveApp, id: u64) {
+    let tool = app.agent_chat.items.iter().find_map(|i| match i {
+        Item::Approval { id: x, tool, .. } if *x == id => Some(tool.clone()),
+        _ => None,
+    });
+    if let Some(tool) = tool {
+        let agent = app.agent_chat.running_id.clone();
+        agents::remember(&mut app.preferences, &agent, &tool);
+    }
+    approve(app, id, true);
+}
+
+/// Answer the agent's own permission question at `index` with one of its options (`None`:
+/// cancelled); an "always allow" answer is remembered for this agent and tool.
+pub fn answer_permission(app: &mut SolveApp, index: usize, option: Option<&str>) {
+    if let (Some(o), Some(Item::Permission { title, options, answer: None, .. })) = (option, app.agent_chat.items.get(index))
+        && options.iter().any(|x| x.id == o && x.kind == "allow_always")
+    {
+        let (agent, title) = (app.agent_chat.running_id.clone(), title.clone());
+        agents::remember(&mut app.preferences, &agent, &title);
+    }
+    app.agent_chat.answer(index, option);
+}
+
+/// The agent asks before running something of its own. SolidCraft's own tools are checked by
+/// SolidCraft's gate, so they're allowed here (no double question); otherwise the mode or an
+/// earlier "always allow" may answer, and the chat says so; otherwise the user is asked.
+fn on_permission(app: &mut SolveApp, key: u64, title: String, options: Vec<PermissionOption>) {
+    let agent = app.agent_chat.running_id.clone();
+    let mode = agents::mode_for(&app.preferences, &agent);
+    let remembered = agents::always_allowed(&app.preferences, &agent, &title);
+    let why = if solidcraft_tool(&title) {
+        Some("ui.ai_auto_ours")
+    } else if remembered {
+        Some("ui.ai_auto_remembered")
+    } else if mode == agents::Mode::All {
+        Some("ui.ai_auto_mode")
+    } else {
+        None
+    };
+    let once = options.iter().find(|o| o.kind == "allow_once");
+    let always = options.iter().find(|o| o.kind == "allow_always");
+    let pick = if remembered { always.or(once) } else { once.or(always) }.map(|o| o.id.clone());
+    match (why, pick) {
+        (Some(why), Some(option)) => {
+            if let Some(b) = app.agent_chat.backend.as_mut() {
+                b.answer_permission(key, Some(&option));
+            }
+            app.agent_chat.push(Item::Notice { text: trf("ui.ai_auto_allowed", &[("title", &title), ("why", tr(why))]), error: false });
+        }
+        _ => app.agent_chat.push(Item::Permission { key, title, options, answer: None }),
+    }
+}
+
 fn approve_with(app: &mut SolveApp, id: u64, allow: bool, why: &str) {
     let chat = &mut app.agent_chat;
     let Some(i) = chat.held.iter().position(|h| h.id == id) else { return };
@@ -559,7 +671,16 @@ fn pump_tools(app: &mut SolveApp) {
             o.insert("allow_paths".into(), json!([working_dir().to_string_lossy()]));
         }
         let undo_left = undo_len.saturating_sub(turn.start_undo);
-        match gate::request(&req.method, &req.params, undo_left) {
+        // The permission mode (the agent's own, else the global one) and "always allow" answers.
+        let mode = agents::mode_for(&app.preferences, &app.agent_chat.running_id);
+        let tool = gate::tool_key(&req.method, &req.params);
+        let always = agents::always_allowed(&app.preferences, &app.agent_chat.running_id, &tool);
+        let verdict = match gate::request(&req.method, &req.params, undo_left) {
+            gate::Verdict::Ask(_) if mode == agents::Mode::All || always => gate::Verdict::Run { change: true },
+            gate::Verdict::Run { change: true } if mode == agents::Mode::Ask && !always => gate::Verdict::Ask(gate::describe(&req.method, &req.params)),
+            v => v,
+        };
+        match verdict {
             gate::Verdict::Run { change } => {
                 if change {
                     if turn.changes >= limit {
@@ -579,7 +700,7 @@ fn pump_tools(app: &mut SolveApp) {
                 let chat = &mut app.agent_chat;
                 chat.next_approval += 1;
                 let id = chat.next_approval;
-                chat.push(Item::Approval { id, title, answer: None });
+                chat.push(Item::Approval { id, title, tool, answer: None });
                 chat.held.push(Held { id, req, since: crate::now_ms() });
             }
             gate::Verdict::Refuse(e) => {
@@ -606,15 +727,21 @@ pub fn poll(app: &mut SolveApp, ctx: &egui::Context) {
         app.agent_chat.detection = Some(d);
         app.agent_chat.detecting = None;
     }
-    // Turned off in Preferences: nothing keeps running.
-    if !app.preferences.agent_chat_enabled && app.agent_chat.backend.is_some() {
-        disconnect(app);
+    // AI features turned off: nothing keeps running, nothing is looked for.
+    if !shown(app) {
+        if app.agent_chat.backend.is_some() || app.agent_chat.open {
+            disconnect(app);
+            app.agent_chat.open = false;
+        }
+        return;
     }
     let events = app.agent_chat.backend.as_mut().map(|b| b.poll()).unwrap_or_default();
     for e in events {
         let ready = matches!(e, Event::Ready { .. });
-        if app.agent_chat.on_event(e).is_some() {
-            end_turn(app);
+        match app.agent_chat.on_event(e) {
+            Some(Outcome::TurnEnd) => end_turn(app),
+            Some(Outcome::Permission { key, title, options }) => on_permission(app, key, title, options),
+            None => {}
         }
         if ready && let Some((text, image)) = app.agent_chat.queued.take() {
             start_turn(app, text, image);
@@ -641,16 +768,58 @@ pub fn refresh(app: &mut SolveApp, ctx: &egui::Context) {
     app.agent_chat.detecting = Some(rx);
 }
 
+/// Switch the agent to one of its own modes (the header's mode picker).
+pub fn set_mode(app: &mut SolveApp, mode: &str) {
+    if app.agent_chat.modes.iter().any(|(id, _)| id == mode)
+        && let Some(b) = app.agent_chat.backend.as_mut()
+    {
+        b.set_mode(mode);
+        app.agent_chat.mode = mode.to_string();
+    }
+}
+
 /// `ui.agent_chat` on the control channel (tests and screenshots): `enabled`, `command`, `open`,
 /// `side`, `minimized`, `width`, `refresh`, `connect`, `stop`, `send`, `attach_view`,
 /// `permission` (an option id, or `"cancel"`), `approve` (`true`/`false`, the oldest held
 /// request), `cancel`, `undo` (the newest message's changes); returns the panel's state.
 pub fn control(app: &mut SolveApp, ctx: &egui::Context, p: &Value) -> Result<Value, String> {
-    if let Some(e) = p.get("enabled").and_then(Value::as_bool) {
-        app.preferences.agent_chat_enabled = e;
+    if let Some(e) = p.get("features").and_then(Value::as_bool) {
+        app.preferences.ai_features = e;
     }
-    if let Some(c) = p.get("command").and_then(Value::as_str) {
-        app.preferences.agent_command = c.chars().take(4096).collect();
+    if let Some(b) = p.get("toolbar_button").and_then(Value::as_bool) {
+        app.preferences.ai_toolbar_button = b;
+    }
+    if let Some(m) = p.get("permissions") {
+        let Some(mode) = m.as_str().and_then(agents::Mode::parse) else { return Err("permissions must be ask, edits or all".into()) };
+        app.preferences.ai_permissions = mode;
+    }
+    // Add an agent (as the Add agent dialog does), for tests and screenshots: {id?, name, kind, command | base_url + model}.
+    if let Some(a) = p.get("add_agent") {
+        let mut c: agents::AgentConfig = serde_json::from_value(a.clone()).map_err(|e| format!("add_agent: {e}"))?;
+        if c.id.is_empty() {
+            c.id = agents::new_id(&app.preferences, if c.kind == agents::Kind::Api { "api" } else { "custom" });
+        }
+        c.key = false;
+        app.preferences.agents.retain(|x| x.id != c.id);
+        app.preferences.agents.push(c);
+    }
+    if let Some(id) = p.get("agent").and_then(Value::as_str) {
+        if !agents::entries(app).iter().any(|e| e.id == id) {
+            return Err(format!("no agent `{id}`"));
+        }
+        if app.agent_chat.agent_id.as_deref() != Some(id) {
+            disconnect(app);
+            app.agent_chat.agent_id = Some(id.to_string());
+        }
+    }
+    if let Some(id) = p.get("default_agent").and_then(Value::as_str) {
+        app.preferences.agent_default = id.to_string();
+    }
+    if let Some(m) = p.get("mode").and_then(Value::as_str) {
+        set_mode(app, m);
+    }
+    if !shown(app) {
+        return Ok(status(app));
     }
     if let Some(o) = p.get("open").and_then(Value::as_bool) {
         app.agent_chat.open = o;
@@ -683,27 +852,25 @@ pub fn control(app: &mut SolveApp, ctx: &egui::Context, p: &Value) -> Result<Val
             disconnect(app);
         }
         if p.get("connect").and_then(Value::as_bool) == Some(true) {
-            if !app.preferences.agent_chat_enabled {
-                return Err("agent chat is turned off in Preferences".into());
-            }
             connect(app, ctx);
         }
     }
     if let Some(text) = p.get("send").and_then(Value::as_str) {
-        if !app.preferences.agent_chat_enabled {
-            return Err("agent chat is turned off in Preferences".into());
-        }
         send(app, ctx, text.to_string());
     }
     if let Some(o) = p.get("permission").and_then(Value::as_str) {
         let Some(n) = app.agent_chat.items.iter().rposition(|i| matches!(i, Item::Permission { answer: None, .. })) else {
             return Err("no permission request is waiting".into());
         };
-        app.agent_chat.answer(n, (o != "cancel").then_some(o));
+        answer_permission(app, n, (o != "cancel").then_some(o));
     }
-    if let Some(allow) = p.get("approve").and_then(Value::as_bool) {
+    if let Some(a) = p.get("approve") {
         let Some(id) = app.agent_chat.held.first().map(|h| h.id) else { return Err("no request is waiting for approval".into()) };
-        approve(app, id, allow);
+        match (a.as_bool(), a.as_str()) {
+            (Some(allow), _) => approve(app, id, allow),
+            (_, Some("always")) => approve_always(app, id),
+            _ => return Err("approve must be true, false or \"always\"".into()),
+        }
     }
     if p.get("cancel").and_then(Value::as_bool) == Some(true) {
         cancel(app);
@@ -747,12 +914,17 @@ pub fn status(app: &SolveApp) -> Value {
     let detection: Option<Value> = None;
     let pid = c.backend.as_ref().and_then(|b| b.pid());
     json!({
-        "enabled": app.preferences.agent_chat_enabled,
+        "features": app.preferences.ai_features,
+        "toolbarButton": app.preferences.ai_toolbar_button,
+        "permissions": app.preferences.ai_permissions.id(),
+        "agents": agents::entries(app).iter().map(|e| json!({"id": e.id, "name": e.name, "kind": if e.kind == agents::Kind::Api { "api" } else { "acp" }, "found": e.found, "version": e.version, "login": e.login})).collect::<Vec<_>>(),
+        "currentAgent": agents::current(app).map(|e| e.id),
+        "modes": c.modes.iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),
+        "mode": c.mode,
         "open": c.open,
         "side": app.preferences.agent_chat_side,
         "minimized": app.preferences.agent_chat_minimized,
         "width": app.preferences.agent_chat_width,
-        "command": app.preferences.agent_command,
         "state": c.state().id(),
         "agent": c.agent,
         "images": c.images,

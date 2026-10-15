@@ -120,6 +120,28 @@ pub fn request(method: &str, params: &Value, undo_left: usize) -> Verdict {
     }
 }
 
+/// What "Always allow" remembers for a request: the command it runs (`batch` for a batch).
+pub fn tool_key(method: &str, params: &Value) -> String {
+    match method {
+        "engine.execute" => params.get("command").and_then(Value::as_str).unwrap_or("").chars().take(120).collect(),
+        "engine.batch" => "batch".into(),
+        m => m.into(),
+    }
+}
+
+/// A request as an approval card says it: the command, or a batch's commands.
+pub fn describe(method: &str, params: &Value) -> String {
+    match method {
+        "engine.batch" => {
+            let steps = params.get("commands").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
+            let ids: Vec<&str> = steps.iter().filter_map(|s| s.get("command").or_else(|| s.get("id")).and_then(Value::as_str)).take(6).collect();
+            let more = if steps.len() > ids.len() { format!(" (+{})", steps.len() - ids.len()) } else { String::new() };
+            format!("batch: {}{more}", ids.join(", "))
+        }
+        _ => tool_key(method, params),
+    }
+}
+
 /// The MCP server saves the pictures it hands back in its own scratch folder, inside its
 /// `allow_paths`; those need no question.
 fn is_scratch(params: &Value) -> bool {

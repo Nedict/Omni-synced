@@ -16,6 +16,7 @@ enum Pending {
     SessionNew,
     Prompt,
     Authenticate,
+    SetMode,
 }
 
 /// Variables the agent doesn't inherit: a control token set for the app's own `--control` port
@@ -86,6 +87,9 @@ impl AcpBackend {
                     (Pending::SessionNew, Ok(v)) => match v.get("sessionId").and_then(Value::as_str) {
                         Some(s) => {
                             self.session = Some(s.to_string());
+                            if let Some((current, available)) = acp::modes(&v) {
+                                out.push(Event::Modes { current, available });
+                            }
                             out.push(Event::Ready { agent: self.agent.clone(), images: self.images });
                         }
                         None => out.push(Event::Error("session/new: no sessionId".into())),
@@ -96,6 +100,7 @@ impl AcpBackend {
                     }
                     // Signed in: try the session again.
                     (Pending::Authenticate, Ok(_)) => self.new_session(),
+                    (Pending::SetMode, Ok(_)) => {}
                     (what, Err((code, message))) => {
                         let auth = code == acp::AUTH_REQUIRED || message.to_ascii_lowercase().contains("auth");
                         if auth {
@@ -122,6 +127,7 @@ impl AcpBackend {
                 out.push(Event::Permission { key: self.next_key, title, options });
             }
             Incoming::AuthStatus(s) => out.push(Event::AuthStatus(s)),
+            Incoming::ModeChanged(m) => out.push(Event::Modes { current: m, available: Vec::new() }),
             Incoming::Unsupported { rpc, method } => {
                 self.proc.send(&acp::reply_error(rpc, acp::METHOD_NOT_FOUND, &format!("SolidCraft does not serve `{method}`")));
             }
@@ -182,6 +188,12 @@ impl ChatBackend for AcpBackend {
         self.request(Pending::Authenticate, "authenticate", json!({"methodId": method}));
     }
 
+    fn set_mode(&mut self, mode: &str) {
+        if let Some(s) = self.session.clone() {
+            self.request(Pending::SetMode, "session/set_mode", json!({"sessionId": s, "modeId": mode}));
+        }
+    }
+
     fn pid(&self) -> Option<u32> {
         self.proc.pid()
     }
@@ -189,4 +201,44 @@ impl ChatBackend for AcpBackend {
     fn shutdown(&mut self, wait: bool) {
         self.proc.shutdown(wait);
     }
+}
+
+/// Test connection: start the agent, say hello, open a session without tools, end it. What it
+/// answered (its name and version), or what went wrong (it isn't signed in, it didn't answer).
+pub fn test_agent(argv: &[String], cwd: &std::path::Path) -> Result<String, String> {
+    let mut p = AgentProcess::spawn(argv, cwd, ENV_REMOVE, || {})?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let wait_for = |p: &AgentProcess, id: u64| -> Result<Value, String> {
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            match p.from_agent.recv_timeout(left) {
+                Ok(FromAgent::Line(l)) => {
+                    if let Some(Incoming::Reply { id: got, result }) = acp::parse(&l)
+                        && got == id
+                    {
+                        return result.map_err(|(code, m)| {
+                            if code == acp::AUTH_REQUIRED || m.to_ascii_lowercase().contains("auth") {
+                                crate::i18n::tr("ui.agent_chat_state_auth").to_string()
+                            } else {
+                                m
+                            }
+                        });
+                    }
+                }
+                Ok(FromAgent::Exited(tail)) => return Err(tail.last().cloned().unwrap_or_else(|| crate::i18n::tr("ui.agent_chat_exited").to_string())),
+                Err(_) => return Err(crate::i18n::tr("ui.ai_no_answer").to_string()),
+            }
+        }
+    };
+    p.send(&acp::request(1, "initialize", acp::initialize_params(env!("CARGO_PKG_VERSION"))));
+    let init = wait_for(&p, 1);
+    let result = init.and_then(|v| {
+        p.send(&acp::request(2, "session/new", acp::session_new_params(cwd, None)));
+        wait_for(&p, 2).map(|_| {
+            let who = acp::agent_info(&v);
+            crate::i18n::format("ui.ai_test_acp_ok", &[("agent", if who.is_empty() { "?" } else { &who })])
+        })
+    });
+    p.shutdown(true);
+    result
 }
