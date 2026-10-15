@@ -1377,5 +1377,11 @@
   "Centre to centre": "中心間",
   "Overall length": "全長",
   "Min": "最小",
-  "Max": "最大"
+  "Max": "最大",
+  "Boundary": "境界",
+  "Pass through": "通過点",
+  "Continuity": "連続性",
+  "Position (G0)": "位置 (G0)",
+  "Tangent (G1)": "接線 (G1)",
+  "Curvature (G2)": "曲率 (G2)"
 }

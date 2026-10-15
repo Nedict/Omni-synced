@@ -1122,5 +1122,11 @@
   "Min": "Min",
   "Max": "Max",
   "Length": "Länge",
-  "Area": "Fläche"
+  "Area": "Fläche",
+  "Boundary": "Begrenzung",
+  "Pass through": "Durch Punkte",
+  "Continuity": "Stetigkeit",
+  "Position (G0)": "Position (G0)",
+  "Tangent (G1)": "Tangente (G1)",
+  "Curvature (G2)": "Krümmung (G2)"
 }

@@ -1377,5 +1377,11 @@
   "Centre to centre": "Centre to centre",
   "Overall length": "Overall length",
   "Min": "Min",
-  "Max": "Max"
+  "Max": "Max",
+  "Boundary": "Boundary",
+  "Pass through": "Pass through",
+  "Continuity": "Continuity",
+  "Position (G0)": "Position (G0)",
+  "Tangent (G1)": "Tangent (G1)",
+  "Curvature (G2)": "Curvature (G2)"
 }

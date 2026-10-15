@@ -1122,5 +1122,11 @@
   "Min": "최소",
   "Max": "최대",
   "Length": "길이",
-  "Area": "면적"
+  "Area": "면적",
+  "Boundary": "경계",
+  "Pass through": "통과점",
+  "Continuity": "연속성",
+  "Position (G0)": "위치 (G0)",
+  "Tangent (G1)": "접선 (G1)",
+  "Curvature (G2)": "곡률 (G2)"
 }

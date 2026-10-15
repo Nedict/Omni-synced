@@ -1230,5 +1230,11 @@
   "RULED SURFACE": "SURFACE RÉGLÉE",
   "Mitre": "Onglet",
   "Reference face": "Face de référence",
-  "Round": "Arrondi"
+  "Round": "Arrondi",
+  "Boundary": "Contour",
+  "Pass through": "Passer par",
+  "Continuity": "Continuité",
+  "Position (G0)": "Position (G0)",
+  "Tangent (G1)": "Tangence (G1)",
+  "Curvature (G2)": "Courbure (G2)"
 }
