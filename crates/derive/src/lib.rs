@@ -23,7 +23,9 @@
 //! - `placement`: a primitive's placement point (its X, Y and Z expressions are not inputs);
 //! - `profiles_of = sketch_field`, optionally with `when = cond`: a profile selection;
 //! - `after = field`: visit this field right after `field` instead of in declaration order (where
-//!   the parameter names already given need it).
+//!   the parameter names already given need it);
+//! - `picks_faces`, on a nested value: its positions pick faces here (a `FaceAt` that names the
+//!   face it is on).
 //!
 //! Conditions and labels are worked out before the walk starts. The generated code names
 //! `crate::walk`, so the derive is for `solidcraft-doc`.
@@ -61,6 +63,8 @@ struct Roles {
     /// `Sketch`, `Feature` or `Body`.
     reference: Option<&'static str>,
     after: Option<Ident>,
+    /// The positions inside this (nested) value pick faces here.
+    picks_faces: bool,
 }
 
 impl Roles {
@@ -93,6 +97,7 @@ fn roles(field: &syn::Field) -> syn::Result<Roles> {
                 "feature" => r.reference = Some("Feature"),
                 "body" => r.reference = Some("Body"),
                 "after" => r.after = Some(meta.value()?.parse()?),
+                "picks_faces" => r.picks_faces = true,
                 _ => return Err(meta.error("unknown walk role")),
             }
             Ok(())
@@ -129,6 +134,11 @@ fn walk_field(b: &Ident, r: &Roles, which: Which, mutable: bool) -> Tokens {
             Which::Geometry => "walk_geometry",
         };
         let m = if mutable { format_ident!("{}_mut", m) } else { format_ident!("{}", m) };
+        if r.picks_faces && which == Which::Geometry {
+            return quote! {
+                #w::Walk::#m(#b, &mut |g| f(match g { #w::Geo::Pos(p) => #w::Geo::Pick(p), g => g }));
+            };
+        }
         return quote! { #w::Walk::#m(#b, f); };
     }
     match which {

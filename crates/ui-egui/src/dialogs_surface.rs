@@ -1,5 +1,5 @@
 //! Dialogs for the surface tools and face splitting (#19): Surface Extrude, Revolve, Sweep and
-//! Loft, Patch, Stitch, Thicken, Extend, Trim and Split Face. Each has a live preview and Edit Feature.
+//! Loft, Patch, Stitch, Thicken, Extend, Trim, Untrim and Split Face. Each has a live preview and Edit Feature.
 
 use serde_json::{Map, Value, json};
 use solidcraft_engine::Sel;
@@ -49,6 +49,12 @@ pub enum Surf {
         distance: String,
     },
     Trim,
+    /// `holes`: an index into [`UNTRIM_HOLES`].
+    Untrim {
+        holes: usize,
+        outer: bool,
+        in_place: bool,
+    },
     SplitFace,
 }
 
@@ -68,6 +74,7 @@ impl Surf {
             Surf::Thicken { .. } => "THICKEN",
             Surf::Extend { .. } => "EXTEND",
             Surf::Trim => "TRIM",
+            Surf::Untrim { .. } => "UNTRIM",
             Surf::SplitFace => "SPLIT FACE",
         }
     }
@@ -82,6 +89,9 @@ impl Surf {
         })
     }
 }
+
+/// Which holes Untrim takes away: every one, the picked ones, or none (the outer boundary only).
+const UNTRIM_HOLES: [&str; 3] = ["All", "Picked", "None"];
 
 /// The sides a surface extrude goes to (labels, and the `direction` parameter).
 const EXTRUDE_SIDES: [(&str, &str); 3] = [("One Side", "positive"), ("Symmetric", "symmetric"), ("Flipped", "negative")];
@@ -105,6 +115,7 @@ fn inputs(k: &Surf) -> Vec<SelInput> {
             SelInput::new("Trimming tool", PLANES | FACES, false),
             SelInput::new("Side to keep", FACES, false),
         ],
+        Surf::Untrim { .. } => vec![SelInput::new("Face", FACES, false), SelInput::new("Holes (edges on them)", EDGES, true)],
         Surf::SplitFace => vec![SelInput::new("Faces to split", FACES, true), SelInput::new("Splitting tool", PLANES | FACES, false)],
     }
 }
@@ -125,6 +136,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
         "surface.thicken" => Surf::Thicken { thickness: "2 mm".into(), symmetric: false, operation: 0 },
         "surface.extend" => Surf::Extend { distance: "10 mm".into() },
         "surface.trim" => Surf::Trim,
+        "surface.untrim" => Surf::Untrim { holes: 0, outer: false, in_place: false },
         "solid.split_face" => Surf::SplitFace,
         _ => return None,
     };
@@ -185,6 +197,17 @@ pub fn rows(ui: &mut egui::Ui, k: &mut Surf) -> bool {
             ui.end_row();
             row_label(ui, "Direction");
             combo(ui, "sx_dir", &EXTRUDE_SIDES.map(|(label, _)| label), direction);
+            ui.end_row();
+        }
+        Surf::Untrim { holes, outer, in_place } => {
+            row_label(ui, "Holes");
+            combo(ui, "ut_holes", &UNTRIM_HOLES, holes);
+            ui.end_row();
+            row_label(ui, "Restore outer boundary");
+            ui.checkbox(outer, "");
+            ui.end_row();
+            row_label(ui, "In place (surfaces)");
+            ui.checkbox(in_place, "");
             ui.end_row();
         }
         Surf::Patch | Surf::Trim | Surf::SplitFace | Surf::Unstitch | Surf::ReverseNormal | Surf::Sweep | Surf::Loft => {}
@@ -402,6 +425,33 @@ pub fn commands(app: &SolveApp, k: &Surf, inputs: &[SelInput], extra: &Map<Strin
             p[key] = t;
             ("surface.trim", p)
         }
+        Surf::Untrim { holes, outer, in_place } => {
+            need(0, "the face to untrim")?;
+            let (body, point) = items(inputs, 0)
+                .first()
+                .and_then(|x| if let Sel::Face { body, point, .. } = x { Some((body.clone(), pt(*point))) } else { None })
+                .ok_or("pick the face to untrim")?;
+            let mut p = json!({"face": {"body": body, "point": point}});
+            match holes {
+                0 => p["holes"] = json!("all"),
+                1 => {
+                    let picked: Vec<Value> =
+                        items(inputs, 1).iter().filter_map(|x| if let Sel::Edge { point, .. } = x { Some(pt(*point)) } else { None }).collect();
+                    if picked.is_empty() {
+                        return Err("pick edges of the holes to remove".into());
+                    }
+                    p["holes"] = json!(picked);
+                }
+                _ => p["holes"] = json!([]),
+            }
+            if *outer {
+                p["outer"] = json!(true);
+            }
+            if *in_place {
+                p["in_place"] = json!(true);
+            }
+            ("surface.untrim", p)
+        }
         Surf::SplitFace => {
             need(0, "the faces to split")?;
             need(1, "the splitting tool")?;
@@ -519,6 +569,17 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(K
                 crate::dialogs::face_sel(s, *keep).into_iter().collect(),
             ],
         ),
+        FeatureKind::SurfaceUntrim { face, holes, outer, in_place } => {
+            let (index, picked) = match holes {
+                None => (0, Vec::new()),
+                Some(points) if points.is_empty() => (2, Vec::new()),
+                Some(points) => (1, points.iter().filter_map(edge).collect()),
+            };
+            (
+                Surf::Untrim { holes: index, outer: *outer, in_place: *in_place },
+                vec![crate::dialogs::face_sel(s, face.point).into_iter().collect(), picked],
+            )
+        }
         FeatureKind::SplitFace { faces, plane, tool, .. } => (
             Surf::SplitFace,
             vec![faces.iter().filter_map(|p| crate::dialogs::face_sel(s, *p)).collect(), tool_sel(app, plane, tool.as_ref()).into_iter().collect()],

@@ -37,8 +37,9 @@ static GERMAN: Catalog = Catalog::new("de", "Deutsch", include_str!(concat!(env!
 static FRENCH: Catalog = Catalog::new("fr", "Français", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/fr.json")));
 static KOREAN: Catalog = Catalog::new("ko", "한국어", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ko.json")));
 static RUSSIAN: Catalog = Catalog::new("ru", "Русский", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ru.json")));
+static UKRAINIAN: Catalog = Catalog::new("uk", "Українська", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/uk.json")));
 static CHINESE: Catalog = Catalog::new("zh", "中文", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/zh.json")));
-pub const LOCALES: &[&Catalog] = &[&ENGLISH, &JAPANESE, &GERMAN, &FRENCH, &KOREAN, &RUSSIAN, &CHINESE];
+pub const LOCALES: &[&Catalog] = &[&ENGLISH, &JAPANESE, &GERMAN, &FRENCH, &KOREAN, &RUSSIAN, &UKRAINIAN, &CHINESE];
 
 pub fn is_supported(id: &str) -> bool {
     LOCALES.iter().any(|catalog| catalog.id == id)
@@ -189,11 +190,11 @@ mod tests {
     }
 
     /// Catalogs delivered complete. English is the source catalog; Japanese was completed
-    /// upstream and Chinese lands complete here. German, Korean, Russian and French are partial
-    /// (German and Korean predate the coverage guards; Russian and French are kept partial so a
-    /// new label doesn't need more translations), so their gaps fall back to English and are reported by
-    /// `cargo xtask i18n` without failing the build, while nothing in the complete catalogs may
-    /// regress.
+    /// upstream and Chinese lands complete here. German, Korean, Russian, French and Ukrainian
+    /// are partial (German and Korean predate the coverage guards; Russian, French and Ukrainian
+    /// are kept partial so a new label doesn't need more translations), so their gaps fall back
+    /// to English and are reported by `cargo xtask i18n` without failing the build, while
+    /// nothing in the complete catalogs may regress.
     const COMPLETE: &[&str] = &["ja", "zh"];
 
     /// `text()` falls back to English silently, so a message a complete locale never received is
@@ -262,6 +263,7 @@ mod tests {
             ("ko", "플랜지", "얼룩말줄무늬 분석", "운동 연구"),
             ("ru", "Фланец", "Зебра-анализ", "Исследование движения"),
             ("fr", "Bord tombé", "Analyse zébrée", "Étude de mouvement"),
+            ("uk", "Фланець", "Зебра-аналіз", "Дослідження руху"),
         ];
         for (lang, flange, zebra, motion) in cases {
             let locale = Locale::for_language(lang);
@@ -343,6 +345,7 @@ mod tests {
             ("ko", "프로파일", "점"),
             ("ru", "Профиль", "Точки"),
             ("fr", "Profil", "Points"),
+            ("uk", "Профіль", "Точки"),
         ] {
             let locale = Locale::for_language(lang);
             assert_eq!(locale.label("ui.palette_profile"), profile, "{lang}");
@@ -367,6 +370,7 @@ mod tests {
             ("ko", "구성 형상"),
             ("ru", "Вспомогательная геометрия"),
             ("fr", "Géométries de construction"),
+            ("uk", "Конструкційна геометрія"),
         ];
         for (lang, want) in rows {
             let locale = Locale::for_language(lang);
@@ -461,6 +465,27 @@ mod tests {
         assert_eq!(fr.dynamic("Parameters (5)"), "Paramètres (5)");
         assert_eq!(fr.dynamic("4 degrees of freedom"), "4 degrés de liberté");
         assert_eq!(fr.dynamic("Sketch of bracket"), "Sketch of bracket");
+    }
+
+    #[test]
+    fn ukrainian_catalog_translates_keys_labels_and_browser_patterns() {
+        let uk = Locale::for_language("uk");
+        assert_eq!(uk.name(), "Українська");
+        assert!(is_supported("uk"));
+        assert_eq!(uk.text("ui.preferences"), "Налаштування");
+        assert_eq!(uk.label("Extrude"), "Видавлювання");
+        assert_eq!(uk.label("CREATE SKETCH"), "СТВОРИТИ ЕСКІЗ");
+        assert_eq!(uk.label("NonExistentKey"), "NonExistentKey");
+        assert_eq!(uk.format("document.save_changes", &[("name", "My {design}")]), "Зберегти зміни в My {design}?");
+        assert_eq!(uk.format("dialog.selected_count", &[("count", "2")]), "↖ Вибрано: 2");
+        assert_eq!(uk.dynamic("Sketch1"), "Ескіз1");
+        assert_eq!(uk.dynamic("Body2"), "Тіло2");
+        assert_eq!(uk.dynamic("Component12"), "Компонент12");
+        assert_eq!(uk.dynamic("Units: mm"), "Одиниці: mm");
+        assert_eq!(uk.dynamic("Precision: 3"), "Точність: 3");
+        assert_eq!(uk.dynamic("Parameters (5)"), "Параметри (5)");
+        assert_eq!(uk.dynamic("4 degrees of freedom"), "4 ступенів вільності");
+        assert_eq!(uk.dynamic("Sketch of bracket"), "Sketch of bracket");
     }
 
     #[test]

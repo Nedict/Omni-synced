@@ -3589,6 +3589,7 @@ name = "solidcraft-render"
 version = "0.11.0"
 dependencies = [
  "image",
+ "png",
  "serde",
  "serde_json",
  "solidcraft-geom",

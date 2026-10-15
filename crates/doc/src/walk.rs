@@ -132,6 +132,19 @@ impl<T> Each<T> for Vec<T> {
     }
 }
 
+impl<T> Each<T> for Option<Vec<T>> {
+    fn each<'a>(&'a self, f: &mut dyn FnMut(&'a T)) {
+        for t in self.iter().flatten() {
+            f(t)
+        }
+    }
+    fn each_mut<'a>(&'a mut self, f: &mut dyn FnMut(&'a mut T)) {
+        for t in self.iter_mut().flatten() {
+            f(t)
+        }
+    }
+}
+
 /// The expressions of an expression field, each with its index and their count (for its label).
 pub(crate) trait ExprField {
     fn each<'a>(&'a self, f: &mut dyn FnMut(usize, usize, &'a String));

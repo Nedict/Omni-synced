@@ -57,6 +57,7 @@ pub fn panels(tab: &str) -> &'static [&'static str] {
         "MESH" => &["CREATE", "PREPARE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
         "SHEET METAL" => &["CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
         "PLASTIC" => &["CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
+        "RENDER" => &["SCENE"],
         _ => &["MAKE", "ADD-INS", "UTILITY", "INSPECT", "SELECT"],
     }
 }
@@ -505,7 +506,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         painter.text(
             pos2(ws.center().x - 5.0, ws.top() + 52.0),
             Align2::CENTER_CENTER,
-            app.tr_label(crate::toolbar_custom::WORKSPACE),
+            app.tr_label(if crate::render_workspace::active(app) { "RENDER" } else { crate::toolbar_custom::WORKSPACE }),
             FontId::proportional(12.0),
             t.text,
         );
@@ -521,7 +522,11 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         if sketching {
             tabs.push("SKETCH");
         }
-        tabs.extend(TABS.iter());
+        if crate::render_workspace::active(app) {
+            tabs.push("RENDER");
+        } else {
+            tabs.extend(TABS.iter());
+        }
         for tab in tabs {
             let display_tab = app.tr_label(tab);
             let text_width = painter.layout_no_wrap(display_tab.to_string(), FontId::proportional(12.0), t.text).size().x;

@@ -168,6 +168,8 @@ unstitch
   remap_bodies: body
 reverse_normal
   remap_bodies: body
+surface_untrim
+  remap_bodies: face.body
 surface_extend
   remap_bodies: body
 surface_trim
