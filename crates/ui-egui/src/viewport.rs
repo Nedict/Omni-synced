@@ -3459,6 +3459,8 @@ mod tests {
         assert_eq!(supersampled_size([3840.0, 2160.0], 2.0, 4096, 1), None);
         assert_eq!(supersampled_size([1920.0, 1080.0], 1.0, 16384, 1), None);
         assert_eq!(supersampled_size([0.0, 1080.0], 2.0, 16384, 1), None);
+        // Under 1: drawn smaller and filtered up (the product preview past its budget, #1464).
+        assert_eq!(supersampled_size([3840.0, 2160.0], 0.5, 4096, 4), Some([1920, 1080]));
         // 4× MSAA at 1440p: the memory budget caps it below 2×.
         let [w, h] = supersampled_size([2560.0, 1440.0], 2.0, 16384, 4).unwrap();
         assert!(w < 5120 && w as f32 >= 2560.0 * 1.25 && u64::from(w) * u64::from(h) * 32 <= 384 << 20, "{w} x {h}");

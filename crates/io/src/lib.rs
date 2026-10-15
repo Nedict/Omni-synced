@@ -31,6 +31,8 @@ pub use legacy_dir::{APP_ID, LEGACY_APP_ID, adopt_legacy_dir, legacy_flatpak_pat
 pub use safe_write::{backup_path, write_atomic};
 pub use sketch2d::{Geom2, MAX_DRAWING_BYTES};
 pub use svg::read_svg;
+mod gltf_in;
+pub use gltf_in::{GltfImport, Loader, MAX_GLTF_BYTES, MeshPlan, PlanPlace, glb_container, is_gltf_path, read_gltf};
 mod obj;
 pub use obj::read_obj;
 pub use threemf::{MAX_3MF_BYTES, MeshObject, model_xml, model_xml_with, read_3mf, weld, write_3mf, write_3mf_with};
@@ -188,12 +190,15 @@ pub fn step_import_feature_named(bytes: &[u8], file: &str, names: StepNames) -> 
     })
 }
 
-/// Is this a mesh file we import (`.3mf`, `.stl`, `.obj`, any case)?
+/// Is this a mesh file we import (`.3mf`, `.stl`, `.obj`, `.glb`, `.gltf`, any case)?
 pub fn is_mesh_path(path: &str) -> bool {
-    std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| ["3mf", "stl", "obj"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| ["3mf", "stl", "obj", "glb", "gltf"].iter().any(|x| e.eq_ignore_ascii_case(x)))
 }
 
-/// A 3MF, STL or OBJ file read as a mesh import feature.
+/// A 3MF, STL, OBJ or glTF file read as a mesh import feature.
 pub struct MeshFeature {
     /// Timeline name: the only mesh's name, else the file name.
     pub name: String,
@@ -202,8 +207,16 @@ pub struct MeshFeature {
     pub warnings: Vec<String>,
 }
 
-/// Read 3MF, STL or OBJ bytes (the format from `file`'s extension) into a MeshImport feature.
+/// Read 3MF, STL, OBJ or glTF bytes (the format from `file`'s extension) into a MeshImport
+/// feature. A glTF file's bodies are all built where they are (see [`read_gltf`] for its node
+/// tree), and it can't read buffers in other files.
 pub fn mesh_import_feature(bytes: &[u8], file: &str) -> Result<MeshFeature> {
+    if is_gltf_path(file) {
+        let mut no_files = |name: &str| Err(format!("`{name}` can't be read here"));
+        let mut g = read_gltf(bytes, file, &mut no_files)?;
+        g.flatten();
+        return Ok(g.feature);
+    }
     if bytes.len() > MAX_3MF_BYTES {
         return Err(IoError::Invalid(format!("mesh file too large ({} MB)", bytes.len() >> 20)));
     }

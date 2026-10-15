@@ -1532,6 +1532,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "gltf"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3ce1918195723ce6ac74e80542c5a96a40c2b26162c1957a5cd70799b8cacf7"
+dependencies = [
+ "byteorder",
+ "gltf-json",
+ "lazy_static",
+ "serde_json",
+]
+
+[[package]]
+name = "gltf-derive"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14070e711538afba5d6c807edb74bcb84e5dbb9211a3bf5dea0dfab5b24f4c51"
+dependencies = [
+ "inflections",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "gltf-json"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6176f9d60a7eab0a877e8e96548605dedbde9190a7ae1e80bbcc1c9af03ab14"
+dependencies = [
+ "gltf-derive",
+ "serde",
+ "serde_derive",
+ "serde_json",
+]
+
+[[package]]
 name = "glutin"
 version = "0.32.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1878,6 +1914,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "inflections"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a257582fdcde896fd96463bf2d40eefea0580021c0712a0e2b028b60b47a837a"
+
+[[package]]
 name = "inout"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2046,6 +2088,12 @@ dependencies = [
  "polycool",
  "smallvec",
 ]
+
+[[package]]
+name = "lazy_static"
+version = "1.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 
 [[package]]
 name = "libc"
@@ -3704,7 +3752,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "block2 0.6.2",
  "eframe",
@@ -3733,7 +3781,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-cli"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "serde_json",
  "solidcraft-engine",
@@ -3742,7 +3790,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-derive"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3751,7 +3799,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-doc"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "log",
  "serde",
@@ -3768,7 +3816,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-engine"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "log",
  "serde",
@@ -3784,7 +3832,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-geom"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3793,7 +3841,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-gpu"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "log",
  "naga",
@@ -3806,8 +3854,9 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-io"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
+ "gltf",
  "quick-xml",
  "serde",
  "serde_json",
@@ -3821,7 +3870,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-kernel"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "log",
  "rayon",
@@ -3839,7 +3888,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-mcp"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "serde_json",
  "solidcraft-engine",
@@ -3847,7 +3896,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-render"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "image",
  "moxcms",
@@ -3860,7 +3909,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-sketch"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3871,7 +3920,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-ui-egui"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "egui",
  "egui-wgpu",
@@ -3892,7 +3941,7 @@ dependencies = [
 
 [[package]]
 name = "solidcraft-web"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "eframe",
  "egui",
@@ -5381,7 +5430,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "serde_json",
  "sha2",
