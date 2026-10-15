@@ -1025,3 +1025,16 @@ fn as_built_takes_a_name_and_limits() {
     assert_eq!((&r["values"][0]["value"], &r["values"][0]["limits"]), (&json!(5.0), &json!([0.0, 5.0])), "{r}");
     assert!(near(place(&s, "B", Vec3::new(20.0, 0.0, 0.0)), Vec3::new(20.0, 0.0, 5.0)), "{:?}", place(&s, "B", Vec3::new(20.0, 0.0, 0.0)));
 }
+
+/// `value` drives a joint's first value only: the others keep theirs, as with a shorter `values`.
+#[test]
+fn a_single_value_keeps_the_joints_other_values() {
+    let mut s = two_cubes();
+    run(&mut s, "joint.as_built", json!({"type": "cylindrical", "a": "A", "b": "B", "name": "Spindle"}));
+    run(&mut s, "joint.drive", json!({"joint": "Spindle", "values": [30, 5]}));
+    let at = |r: &Value| [0, 1].map(|i| r["values"][i]["value"].as_f64().unwrap_or(f64::NAN));
+    let r = run(&mut s, "joint.drive", json!({"joint": "Spindle", "value": 45}));
+    assert!((at(&r)[0] - 45.0).abs() < 1e-9 && (at(&r)[1] - 5.0).abs() < 1e-9, "{r}");
+    let r = run(&mut s, "joint.drive", json!({"joint": "Spindle", "values": [60]}));
+    assert!((at(&r)[0] - 60.0).abs() < 1e-9 && (at(&r)[1] - 5.0).abs() < 1e-9, "{r}");
+}

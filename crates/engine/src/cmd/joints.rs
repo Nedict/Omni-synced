@@ -30,7 +30,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     ),
     CommandSpec::new("joint.rigid_group", "Rigid Group", rigid_group).at("SOLID", "ASSEMBLE").icon("rigid_group").params("occurrences: [ids or names] (move together, as they are)"),
     CommandSpec::new("joint.drive", "Drive Joints", drive).at("SOLID", "ASSEMBLE").icon("drive").params(
-        "joint: id|name; value | values: [angles in deg or expressions, distances] (clamped to the limits; the other joints of a \
+        "joint: id|name; value | values: [angles in deg or expressions, distances] (values not given keep theirs; clamped to the limits; the other joints of a \
          closed loop follow, and the motion stops where the loop can no longer close → stopped_by_loop); quiet?: bool (leave out dof \
          and fixed) → values: [{name, value, unit: deg|mm, limits}] as joint.list gives them; moved: whether any occurrence moved; \
          reason: why the joint can move nothing (suppressed, its origins lost, or its chain joined to nothing grounded → unconnected: \
@@ -446,19 +446,17 @@ fn drive(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let doc = s.doc_mut();
     let Some(j) = doc.assembly.joints.iter_mut().find(|j| j.id == id) else { return Err(bad(cmd, "joint")) };
-    // Values not given keep theirs.
-    if let Some(Value::Array(a)) = p.get("values") {
-        for (i, v) in q.iter_mut().enumerate().skip(a.len()) {
-            *v = j.values.get(i).copied().unwrap_or(*v);
-        }
-    }
-    joints::clamp(j, &mut q);
-    // Moved as far toward `q` as contact sets and closed loops allow. Values left out of
-    // `values` are not driven: in a closed loop they follow.
+    // Values not given (after `value`'s first, or past the end of `values`) keep theirs.
     let given = match p.get("values") {
         Some(Value::Array(a)) => a.len(),
         _ => 1,
     };
+    for (i, v) in q.iter_mut().enumerate().skip(given) {
+        *v = j.values.get(i).copied().unwrap_or(*v);
+    }
+    joints::clamp(j, &mut q);
+    // Moved as far toward `q` as contact sets and closed loops allow. Values left out of
+    // `values` are not driven: in a closed loop they follow.
     let before = super::motion::positions(s);
     let r = super::motion::drive_joint(s, id, q, given)?;
     let sol = joints::solve(&s.doc, &s.model.state());
