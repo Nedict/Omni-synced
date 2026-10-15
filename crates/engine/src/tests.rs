@@ -313,6 +313,7 @@ mod loft_cut;
 mod loft_ring;
 mod loft_spacing;
 mod mirror_planes;
+mod nudge_slivers;
 mod path_scope;
 mod primitive_points;
 mod rim_cut;
