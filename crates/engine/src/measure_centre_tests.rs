@@ -105,6 +105,39 @@ fn two_holes_measure_centre_to_centre_with_min_and_max() {
 }
 
 #[test]
+fn elevated_cylinder_rims_measure_between_the_picked_circles_centres() {
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius":4,"height":10,"body_name":"A"}));
+    run(&mut s, "solid.cylinder", json!({"base":[34,19,22],"radius":4,"height":10,"body_name":"B","operation":"new_body"}));
+    let items: Vec<_> = s
+        .model
+        .state()
+        .bodies
+        .iter()
+        .map(|b| {
+            let z = if b.name == "A" { 10.0 } else { 32.0 };
+            let m = b.mesh();
+            let index = m.edges.iter().position(|e| e.len() > 2 && e.iter().all(|p| (p.z - z).abs() < 1e-9)).unwrap();
+            let e = &m.edges[index];
+            json!({"type":"edge","body":b.name,"index":index,"point":e[e.len()/2]})
+        })
+        .collect();
+    assert_eq!(items.len(), 2);
+    for picks in [items.clone(), items.into_iter().rev().collect()] {
+        let r = measure(&mut s, picks);
+        assert!(close(&r["center_distance"], 2001_f64.sqrt(), 1e-9), "{r}");
+        for (endpoint, item) in [("center_from", 0), ("center_to", 1)] {
+            for axis in 0..3 {
+                assert!(close(&r[endpoint][axis], r["items"][item]["center"][axis].as_f64().unwrap(), 1e-9), "{r}");
+            }
+        }
+        assert!((r["center_delta"][2].as_f64().unwrap().abs() - 22.0).abs() < 1e-9, "{r}");
+        assert!(close(&r["min"], (1517_f64.sqrt() - 8.0).hypot(22.0), 1e-9), "{r}");
+        assert!(close(&r["max"], (1517_f64.sqrt() + 8.0).hypot(22.0), 1e-9), "{r}");
+    }
+}
+
+#[test]
 fn a_hole_to_the_plate_edge_and_side_measures_from_its_axis() {
     let mut s = Session::default();
     plate(&mut s);
