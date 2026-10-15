@@ -314,6 +314,7 @@ mod loft_ring;
 mod loft_spacing;
 mod mirror_planes;
 mod path_scope;
+mod pleat_join;
 mod primitive_points;
 mod rim_cut;
 mod robustness;
