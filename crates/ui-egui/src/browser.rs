@@ -1248,7 +1248,7 @@ fn entries(app: &SolveApp, comp: u64, folder: &str) -> Vec<Entry> {
             .state()
             .bodies
             .iter()
-            .filter(|b| doc.model_body_component(b) == comp)
+            .filter(|b| doc.model_body_component(b) == comp && !app.session.body_removed_later(&b.name))
             .map(|b| Entry {
                 key: b.name.clone(),
                 row_key: format!("b:{}", b.name),
@@ -1958,6 +1958,12 @@ fn occurrence_origin(app: &SolveApp, occurrence: u64) -> Option<solidcraft_engin
     let parent = app.session.doc.component_transform(o.parent);
     let own = app.session.pending_moves.get(&occurrence).copied().unwrap_or(o.transform);
     Some(solidcraft_engine::doc::apply_point(&solidcraft_engine::doc::mat_mul(&parent, &own), solidcraft_engine::geom::Vec3::ZERO))
+}
+
+/// The names the Bodies folder lists at the top level, for tests.
+#[cfg(test)]
+pub(crate) fn body_rows(app: &SolveApp) -> Vec<String> {
+    entries(app, 0, "bodies").into_iter().map(|e| e.key).collect()
 }
 
 #[cfg(test)]
