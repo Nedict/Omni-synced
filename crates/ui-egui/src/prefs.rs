@@ -1584,7 +1584,7 @@ mod tests {
         assert!(control(&mut app, &json!({"open": "Plugins"})).is_err());
         assert!(set(&mut app, &json!({"up_axis": "x"})).is_err());
         assert!(set(&mut app, &json!({"theme": "sepia"})).is_err());
-        assert!(set(&mut app, &json!({"language": "fr"})).is_err());
+        assert!(set(&mut app, &json!({"language": "xx"})).is_err());
     }
 
     #[test]

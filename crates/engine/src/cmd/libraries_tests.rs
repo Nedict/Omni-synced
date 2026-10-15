@@ -218,3 +218,35 @@ fn catalog_inspection_export_and_no_clobber_do_not_touch_design_or_history() {
         assert!(s.execute(command, &json!({"path":file.0,"unknown":true})).is_err());
     }
 }
+
+#[test]
+fn lossy_scalar_export_never_creates_or_replaces_a_file_or_changes_history() {
+    let mut s = session();
+    s.execute(
+        "appearance.assign",
+        &json!({"bodies":["Body1"],"color":[180,120,70],
+        "pbr":{"metallic":1.0,"roughness":0.3,"dielectric_ior":1.5}}),
+    )
+    .unwrap();
+    s.mark_saved();
+    let doc = s.doc.clone();
+    let history = (s.undo.len(), s.redo.len(), s.revision);
+    for existing in [false, true] {
+        let file = File::new();
+        if existing {
+            std::fs::write(&file.0, b"preserve existing library").unwrap();
+        }
+        for overwrite in [false, true] {
+            let error = s.execute("library.export", &json!({"path":file.0,"overwrite":overwrite})).unwrap_err();
+            assert!(error.to_string().contains("cannot preserve PBR"));
+            if existing {
+                assert_eq!(std::fs::read(&file.0).unwrap(), b"preserve existing library");
+            } else {
+                assert!(!std::path::Path::new(&file.0).exists());
+            }
+            assert!(Arc::ptr_eq(&doc, &s.doc));
+            assert_eq!((s.undo.len(), s.redo.len(), s.revision), history);
+            assert!(!s.is_dirty());
+        }
+    }
+}
