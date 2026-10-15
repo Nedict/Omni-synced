@@ -242,4 +242,3 @@ fn continuity_parses_its_words() {
     assert_eq!(Continuity::parse(""), None);
     assert_eq!([Continuity::G0, Continuity::G1, Continuity::G2, Continuity::G3].map(Continuity::conditions), [1, 2, 3, 4]);
 }
-
