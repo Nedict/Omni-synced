@@ -472,6 +472,9 @@ fn main() -> eframe::Result {
             #[cfg(target_os = "windows")]
             {
                 app.native_resize_border = CUSTOM_TITLEBAR && native_frame::install(cc);
+                if CUSTOM_TITLEBAR && !app.native_resize_border {
+                    eprintln!("SolidCraft window: no native resize border; egui edge zones instead");
+                }
             }
             app.integrated_titlebar = cfg!(target_os = "macos");
             app.cpu_meshing = safe_mode;

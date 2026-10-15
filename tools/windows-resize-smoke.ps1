@@ -28,6 +28,25 @@ public static class Win {
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern int GetSystemMetrics(int i);
     [DllImport("user32.dll")] public static extern int GetSystemMetricsForDpi(int i, uint dpi);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, System.Text.StringBuilder s, int n);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, System.Text.StringBuilder s, int n);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    public delegate bool EnumProc(IntPtr h, IntPtr l);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f, IntPtr l);
+    public static string Text(IntPtr h) { var s = new System.Text.StringBuilder(256); GetWindowTextW(h, s, 256); return s.ToString(); }
+    public static string Class(IntPtr h) { var s = new System.Text.StringBuilder(256); GetClassNameW(h, s, 256); return s.ToString(); }
+    // The process's visible top-level window titled SolidCraft (the app's main window; the
+    // process has other top-level windows, such as the IME's).
+    public static IntPtr MainWindow(uint pid) {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((h, l) => {
+            uint p; GetWindowThreadProcessId(h, out p);
+            if (p == pid && IsWindowVisible(h) && Text(h).StartsWith("SolidCraft")) { found = h; return false; }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
     public static int HitTest(IntPtr h, int x, int y) {
         long l = ((long)(ushort)(short)y << 16) | (long)(ushort)(short)x;
         return (int)SendMessageW(h, 0x0084 /* WM_NCHITTEST */, IntPtr.Zero, new IntPtr(l));
@@ -91,16 +110,15 @@ $stderr = $p.StandardError.ReadToEndAsync()
 $stdout = $p.StandardOutput.ReadToEndAsync()
 
 try {
-    # The window, as soon as it exists (eframe creates it hidden and shows it after a frame; the
-    # hit test doesn't care).
+    # The window as soon as it shows (eframe creates it hidden and shows it after the first frame).
     $h = [IntPtr]::Zero
     $deadline = (Get-Date).AddSeconds(180)
     while ($h -eq [IntPtr]::Zero -and (Get-Date) -lt $deadline -and -not $p.HasExited) {
-        $p.Refresh()
-        $h = $p.MainWindowHandle
+        $h = [Win]::MainWindow([uint32]$p.Id)
         if ($h -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 20 }
     }
     if ($h -eq [IntPtr]::Zero) { throw "no window (exited: $($p.HasExited))" }
+    Write-Host "window: '$([Win]::Text($h))' class '$([Win]::Class($h))'"
     CheckBorder $h 'first sight'
 
     $client = $null
