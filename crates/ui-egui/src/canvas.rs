@@ -224,10 +224,16 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj
     // every other dialog's value gets (`dir` is None below).
     if matches!(d.kind, Kind::Move { .. }) {
         let mut dragging = false;
+        let step = snap_step(app.cam.half_height());
         if let Some(t) = crate::dialogs_move::triad(app, &d)
-            && let Some(g) = crate::gizmo::show(ui, painter, proj, egui::Id::new("sc_move_triad"), &t, snap_step(app.cam.half_height()))
+            && let Some(g) = crate::gizmo::show(ui, painter, proj, egui::Id::new("sc_move_triad"), &t, step)
         {
             crate::dialogs_move::drag(app, &mut d, g);
+            dragging = true;
+        } else if let Some(line) = crate::dialogs_move::line_drag(app, &d)
+            && let Some(g) = crate::gizmo::line_show(ui, painter, proj, egui::Id::new("sc_move_line"), &line, step)
+        {
+            crate::dialogs_move::drag_line(&mut d, g);
             dragging = true;
         }
         // Read the triad again after the drag, so the box follows it in the same frame. Move

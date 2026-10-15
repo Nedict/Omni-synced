@@ -34,6 +34,11 @@ pub enum Change {
         axis: usize,
         angle: f64,
     },
+    /// About a picked axis through the centre, in radians.
+    RotateAbout {
+        axis: Vec3,
+        angle: f64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -52,6 +57,8 @@ pub struct Triad {
     pub center: Vec3,
     pub translate: bool,
     pub rotate: bool,
+    /// One ring about this axis instead of the three world rings.
+    pub ring_axis: Option<Vec3>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -64,6 +71,8 @@ struct State {
     /// Ring: last angle seen and the angle turned so far.
     last: f64,
     turned: f64,
+    /// Unit normal of the ring plane when it is not a world axis.
+    ring_n: Option<Vec3>,
 }
 
 const DIRS: [Vec3; 3] = [Vec3::X, Vec3::Y, Vec3::Z];
@@ -112,6 +121,17 @@ fn ring_basis(i: usize) -> (Vec3, Vec3) {
         1 => (Vec3::Z, Vec3::X),
         _ => (Vec3::X, Vec3::Y),
     }
+}
+
+fn ring_basis_axis(axis: Vec3) -> (Vec3, Vec3) {
+    let n = axis.normalized().unwrap_or(Vec3::Z);
+    let e1 = if n.cross(Vec3::Z).len() > 1e-6 {
+        n.cross(Vec3::Z).normalized().unwrap_or(Vec3::X)
+    } else {
+        Vec3::X
+    };
+    let e2 = n.cross(e1).normalized().unwrap_or(Vec3::Y);
+    (e1, e2)
 }
 
 /// Distance from `p` to the screen segment a–b.
@@ -193,14 +213,21 @@ fn shapes(proj: &Proj, t: &Triad, l: f64) -> Option<Shapes> {
         }
     }
     if t.rotate {
-        for i in 0..3 {
-            let (e1, e2) = ring_basis(i);
+        let mut add_ring = |i: usize, axis: Vec3| {
+            let (e1, e2) = if t.ring_axis.is_some() { ring_basis_axis(axis) } else { ring_basis(i) };
             let pts: Vec<Pos2> = (0..=64)
                 .map(|k| k as f64 / 64.0 * std::f64::consts::TAU)
                 .filter_map(|th| proj.to_screen(c + (e1 * th.cos() + e2 * th.sin()) * (RING * l)))
                 .collect();
             if pts.len() > 2 {
                 s.rings.push((i, pts));
+            }
+        };
+        if let Some(ax) = t.ring_axis {
+            add_ring(0, ax);
+        } else {
+            for i in 0..3 {
+                add_ring(i, DIRS[i]);
             }
         }
     }
@@ -274,8 +301,10 @@ pub fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::I
     let r = ui.interact(Rect::from_center_size(p, vec2(24.0, 24.0)), id.with("hit"), Sense::drag());
     let free = ui.input(|i| i.modifiers.alt || i.modifiers.ctrl || i.modifiers.command);
     let view = proj.ray(sh.ball).1;
+    let ring_normal = |i: usize| t.ring_axis.unwrap_or(DIRS[i]).normalized().unwrap_or(DIRS[i]);
     let plane_normal = |h: Handle| match h {
-        Handle::Plane(i) | Handle::Ring(i) => DIRS[i],
+        Handle::Plane(i) => DIRS[i],
+        Handle::Ring(i) => ring_normal(i),
         _ => view,
     };
     let mut started = false;
@@ -288,12 +317,14 @@ pub fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::I
             let h = hovered?;
             let from = ui.input(|i| i.pointer.press_origin()).unwrap_or(p);
             let c = t.center;
-            let mut s = State { handle: h, center: c, grab: c, t0: 0.0, last: 0.0, turned: 0.0 };
+            let mut s = State { handle: h, center: c, grab: c, t0: 0.0, last: 0.0, turned: 0.0, ring_n: None };
             match h {
                 Handle::Axis(i) => s.t0 = along(proj, from, c, DIRS[i])?,
                 Handle::Ring(i) => {
-                    let q = on_plane(proj, from, c, DIRS[i])? - c;
-                    let (e1, e2) = ring_basis(i);
+                    let n = ring_normal(i);
+                    s.ring_n = t.ring_axis.map(|_| n);
+                    let q = on_plane(proj, from, c, n)? - c;
+                    let (e1, e2) = if t.ring_axis.is_some() { ring_basis_axis(n) } else { ring_basis(i) };
                     s.last = q.dot(e2).atan2(q.dot(e1));
                 }
                 _ => s.grab = on_plane(proj, from, c, plane_normal(h))?,
@@ -308,8 +339,9 @@ pub fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::I
             Change::Translate(DIRS[i] * snap(v, step, free))
         }
         Handle::Ring(i) => {
-            if let Some(q) = on_plane(proj, p, st.center, DIRS[i]).map(|q| q - st.center) {
-                let (e1, e2) = ring_basis(i);
+            let n = st.ring_n.unwrap_or(DIRS[i]);
+            if let Some(q) = on_plane(proj, p, st.center, n).map(|q| q - st.center) {
+                let (e1, e2) = if st.ring_n.is_some() { ring_basis_axis(n) } else { ring_basis(i) };
                 let th = q.dot(e2).atan2(q.dot(e1));
                 let mut d = th - st.last;
                 while d > std::f64::consts::PI {
@@ -321,7 +353,12 @@ pub fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::I
                 st.turned += d;
                 st.last = th;
             }
-            Change::Rotate { axis: i, angle: snap(st.turned, 5f64.to_radians(), free) }
+            let angle = snap(st.turned, 5f64.to_radians(), free);
+            if st.ring_n.is_some() {
+                Change::RotateAbout { axis: n, angle }
+            } else {
+                Change::Rotate { axis: i, angle }
+            }
         }
         h => {
             let d = on_plane(proj, p, st.center, plane_normal(h)).map(|q| q - st.grab).unwrap_or(Vec3::ZERO);
@@ -335,6 +372,62 @@ pub fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::I
         ui.data_mut(|d| d.insert_temp(id, st));
     }
     Some(Drag { handle: st.handle, change, started, done })
+}
+
+/// One arrow from `start` along unit `dir` with the given span in millimetres.
+#[derive(Clone, Copy, Debug)]
+pub struct LineDrag {
+    pub start: Vec3,
+    pub dir: Vec3,
+    pub length: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LineState {
+    dir: Vec3,
+    start: Vec3,
+    t0: f64,
+}
+
+/// Drag along the arrow to change its length (reports translation along `dir`).
+pub fn line_show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::Id, line: &LineDrag, step: f64) -> Option<Drag> {
+    let dir = line.dir.normalized()?;
+    let end = line.start + dir * line.length.max(1e-9);
+    let tk = Tokens::get();
+    let Some(a) = proj.to_screen(line.start) else { return None };
+    let Some(b) = proj.to_screen(end) else { return None };
+    let active = ui.data(|d| d.get_temp::<LineState>(id)).is_some();
+    let pointer = ui.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos()));
+    let hot = pointer.is_some_and(|p| ui.rect_contains_pointer(proj.rect) && seg_dist(p, a, b) < 8.0);
+    arrow(painter, a, b, if hot || active { tk.accent } else { tk.gizmo[0] }, hot || active);
+    let p = pointer?;
+    if !active && (!ui.rect_contains_pointer(proj.rect) || seg_dist(p, a, b) >= 8.0) {
+        return None;
+    }
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    let r = ui.interact(Rect::from_center_size(p, vec2(24.0, 24.0)), id, Sense::drag());
+    let free = ui.input(|i| i.modifiers.alt || i.modifiers.ctrl || i.modifiers.command);
+    let mut started = false;
+    let mut st = match ui.data(|d| d.get_temp::<LineState>(id)) {
+        Some(s) => s,
+        None => {
+            if !r.drag_started() {
+                return None;
+            }
+            let from = ui.input(|i| i.pointer.press_origin()).unwrap_or(p);
+            started = true;
+            LineState { dir, start: line.start, t0: along(proj, from, line.start, dir)? }
+        }
+    };
+    let v = along(proj, p, st.start, st.dir).map(|v| v - st.t0).unwrap_or(0.0);
+    let change = Change::Translate(st.dir * snap(v, step, free));
+    let done = r.drag_stopped() || !r.dragged() && !started;
+    if done {
+        ui.data_mut(|d| d.remove::<LineState>(id));
+    } else {
+        ui.data_mut(|d| d.insert_temp(id, st));
+    }
+    Some(Drag { handle: Handle::Axis(0), change, started, done })
 }
 
 fn arrow(painter: &egui::Painter, a: Pos2, b: Pos2, col: Color32, hot: bool) {
@@ -413,7 +506,7 @@ mod tests {
     #[test]
     fn plane_squares_stay_within_the_triad() {
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
-        let t = Triad { center: Vec3::ZERO, translate: true, rotate: false };
+        let t = Triad { center: Vec3::ZERO, translate: true, rotate: false, ring_axis: None };
         // The squares reach 0.45 √2 of the arrow length from the centre, plus stroke and feathering.
         let limit = (0.45 * 2f64.sqrt() * LEN_PX) as f32 + 3.0;
         let mut worst = 0.0f32;

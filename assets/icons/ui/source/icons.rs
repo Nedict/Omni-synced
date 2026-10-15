@@ -308,6 +308,31 @@ pub(crate) fn paint_with(p: &Painter, r: Rect, name: &str, ink: Color32, fill: C
                 pen.arrow((12.0, 12.0), (12.0 + 9.0 * dx, 12.0 + 9.0 * dy), a);
             }
         }
+        "move_free" => {
+            for (dx, dy) in [(0.0, -1.0), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0)] {
+                pen.arrow((12.0, 12.0), (12.0 + 7.0 * dx, 12.0 + 7.0 * dy), a);
+            }
+            pen.arc(12.0, 12.0, 9.5, 0.0, 1.2, ink);
+        }
+        "move_translate" => {
+            pen.arrow((5.0, 12.0), (19.0, 12.0), a);
+            pen.line(&[(5.0, 9.0), (5.0, 15.0)], ink);
+        }
+        "move_rotate" => {
+            pen.arc(12.0, 12.0, 8.0, 0.35, 4.8, a);
+            pen.arrow((18.5, 10.0), (20.5, 8.0), a);
+        }
+        "move_ptp" => {
+            pen.circle(6.0, 18.0, 2.0, ink, a);
+            pen.circle(18.0, 6.0, 2.0, ink, a);
+            pen.arrow((8.0, 16.0), (16.0, 8.0), a);
+        }
+        "move_ptpos" => {
+            pen.circle(6.0, 18.0, 2.0, ink, a);
+            pen.line(&[(6.0, 18.0), (18.0, 6.0)], a);
+            pen.line(&[(14.0, 6.0), (18.0, 6.0)], a);
+            pen.line(&[(18.0, 6.0), (18.0, 10.0)], a);
+        }
         "configuration_table" => {
             pen.poly(&[(3.0, 4.0), (21.0, 4.0), (21.0, 20.0), (3.0, 20.0)], pen.fill, ink);
             pen.line(&[(3.0, 9.0), (21.0, 9.0)], a);

@@ -77,11 +77,13 @@ pub(super) fn run(s: &mut Session, p: &Value, circular: bool) -> Result<Value> {
             };
             let id = sk.points.get(center).ok_or_else(|| bad(cmd, "missing center point"))?.id.clone();
             let full = (total.abs() - 360.0).abs() < 1e-9;
-            let step = total / if full { n as f64 } else { (n.max(2) - 1) as f64 };
+            let denom = if full { n as f64 } else { (n.max(2) - 1) as f64 };
             (
                 SketchPatternKind::Circular { center: id, count: n, angle: total },
                 Some(center),
-                (1..n).map(|i| ([i, 0], (step * i as f64).to_radians(), Vec2::ZERO)).collect::<Vec<_>>(),
+                (1..n)
+                    .map(|i| ([i, 0], (total * i as f64 / denom).to_radians(), Vec2::ZERO))
+                    .collect::<Vec<_>>(),
             )
         } else {
             let spacing = num(&params, "spacing").ok_or_else(|| bad(cmd, "`spacing` must be finite"))?;

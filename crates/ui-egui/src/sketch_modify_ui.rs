@@ -188,7 +188,9 @@ pub fn edit_pattern(app: &mut SolveApp, id: &str) -> bool {
     let Some(sk) = state.sketch(sid).map(|s| &s.sketch) else { return false };
     let Some(pattern) = sk.patterns.iter().find(|p| p.id == id) else { return false };
     let kind = match &pattern.kind {
-        SketchPatternKind::Circular { count, angle, .. } => Mod::PatternCirc { count: count.to_string(), angle: format!("{angle} deg") },
+        SketchPatternKind::Circular { count, angle, .. } => {
+            Mod::PatternCirc { count: count.to_string(), angle: format!("{} deg", snap_degrees(*angle)) }
+        }
         SketchPatternKind::Rectangular { count, spacing, count2, spacing2, .. } => Mod::PatternRect {
             count: count.to_string(),
             spacing: format!("{spacing} mm"),
@@ -531,8 +533,20 @@ fn corner_ref(app: &SolveApp, point: &str, flip: bool) -> Result<Value, String> 
 /// A typed total angle as the command wants it, in degrees. A bare number means degrees, as a
 /// typed angle does everywhere else. `sketch.pattern.circular` takes the full turn as 360 and
 /// refuses anything outside that range.
+fn snap_degrees(v: f64) -> f64 {
+    if !v.is_finite() {
+        return v;
+    }
+    let near = (v * 1_000_000.0).round() / 1_000_000.0;
+    if (v - near).abs() < 1e-6 {
+        near
+    } else {
+        v
+    }
+}
+
 fn total_angle(app: &SolveApp, label: &str, text: &str) -> Result<f64, String> {
-    let v = app.session.doc.eval(text.trim(), ValueKind::Angle).map_err(|e| format!("{label}: {e}"))?.to_degrees();
+    let v = snap_degrees(app.session.doc.eval(text.trim(), ValueKind::Angle).map_err(|e| format!("{label}: {e}"))?.to_degrees());
     if !v.is_finite() || v.abs() <= 1e-9 || v.abs() > 360.0 {
         return Err(format!("{label} must be more than 0 and at most 360 degrees"));
     }
