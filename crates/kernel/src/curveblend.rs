@@ -668,7 +668,7 @@ fn solve_chord(
     chord: f64,
     sigma: f64,
     cusp: f64,
-    extra: Option<(usize, Vec3, Vec3)>,
+    extra: Option<Extra<'_>>,
     tol: f64,
 ) -> Option<(Section, f64)> {
     let normal = |fs: &[&mt::Face]| fs.iter().filter_map(|f| project(f, p, None)).min_by(|a, b| a.0.dist(p).total_cmp(&b.0.dist(p))).map(|x| x.1);
@@ -715,7 +715,7 @@ impl Sizer<'_> {
         s: f64,
         sigma: f64,
         cusp: f64,
-        extra: Option<(usize, Vec3, Vec3)>,
+        extra: Option<Extra<'_>>,
     ) -> Option<(Section, f64)> {
         match self.size {
             Size::Constant(r) => solve(f1, f2, p, t, r, sigma, cusp, extra, self.tol).map(|x| (x, r)),
@@ -1513,30 +1513,59 @@ fn curve_blend_sized(solid: &Solid, ids: &[mt::EdgeID], size: f64, size_law: Siz
         // then, as long as one of its sections still lies wholly past the end face.
         let ng_out = if ng.dot(out) < 0.0 { -ng } else { ng };
         let past = |sec: &Section| [sec.c, sec.q1, sec.q2].iter().all(|x| (*x - *p).dot(ng_out) > tol);
-        let mut fallback: Option<Vec<Section>> = None;
+        // A run shortened when its centres jump across the ring (a knuckle's cap circle, #1255)
+        // stands if no full-length run works; a size law's own end slope is read at each station's
+        // distance past the end.
+        let mut fallback: Option<Vec<(f64, Section)>> = None;
         for attempt in 0..TANGENT_RETRIES {
             list.clear();
             laws.clear();
+            let step = reach / EXTENSION as f64;
             let sections = (1..=EXTENSION).map(|j| {
-                let d = reach * j as f64 / EXTENSION as f64;
+                let d = step * j as f64;
                 let anchor = *p + out * d;
                 let s = law_s(d);
                 sizer.section(&e1, &e2, anchor, *t, s, sigma, cusp, None).map(|(section, _)| (s, section))
             });
-            if let Some(all) = sections.collect::<Option<Vec<_>>>() {
-                list = all.iter().map(|(_, section)| *section).collect();
-                laws = all.iter().map(|(s, _)| *s).collect();
-                break;
+            match sections.collect::<Option<Vec<_>>>() {
+                Some(all) => {
+                    let smooth = tangent.is_some()
+                        || std::iter::once(at.c).chain(all.iter().map(|(_, s)| s.c)).collect::<Vec<_>>().windows(2).all(|w| match w {
+                            [a, b] => a.dist(*b) <= MAX_STEP_STRETCH * step,
+                            _ => true,
+                        });
+                    if smooth {
+                        // A shortened run must still cross the end face; else the first,
+                        // full-length run stands.
+                        if fallback.is_none() || all.iter().any(|(_, s)| past(s)) {
+                            list = all.iter().map(|(_, s)| *s).collect();
+                            laws = all.iter().map(|(s, _)| *s).collect();
+                        }
+                        break;
+                    }
+                    fallback.get_or_insert(all);
+                }
+                None if tangent.is_none() || fallback.is_some() || attempt + 1 == TANGENT_RETRIES => break,
+                None => {}
             }
-            if attempt + 1 == TANGENT_RETRIES || tangent.is_none() {
+            reach *= if tangent.is_some() { 0.5 } else { 0.75 };
+        }
+        if list.is_empty() {
+            match fallback {
+                // The shortened run stands when the ring's step jumped, whatever its size.
+                Some(all) => {
+                    list = all.iter().map(|(_, s)| *s).collect();
+                    laws = all.iter().map(|(s, _)| *s).collect();
+                }
                 // A size asked for beyond what the faces around the end hold is refused as such;
                 // one radius past the end is the rolling ball's own failure to fit.
-                return Err(match size_law {
-                    Size::Constant(_) => unsupported("the ball doesn't fit past the end of the edge"),
-                    _ => too_large("the blend is larger than the neighbouring faces (site 1472)"),
-                });
+                None => {
+                    return Err(match size_law {
+                        Size::Constant(_) => unsupported("the ball doesn't fit past the end of the edge"),
+                        _ => too_large("the blend is larger than the neighbouring faces (site 1472)"),
+                    });
+                }
             }
-            reach *= 0.5;
         }
         if *k == 0 {
             list.reverse();

@@ -63,6 +63,7 @@ mod issue_871_tests;
 #[cfg(test)]
 mod join_between_caps_tests;
 mod lip;
+pub mod loft_blend;
 mod loopblend;
 mod matchsurf;
 mod measure;
@@ -144,6 +145,7 @@ pub use helix::{loft_to_point, sweep_helix, sweep_helix_mesh};
 pub use iges_in::{MAX_IGES_BYTES, iges_import, iges_to_step};
 pub use iges_out::iges_export_bodies;
 pub use lip::raise_band;
+pub use loft_blend::loft_blend;
 pub use matchsurf::{match_surface, seam_continuity};
 pub use measure::{BodyMeasure, measure};
 pub use mesh_convert::convert_prismatic_mesh;

@@ -48,6 +48,7 @@ impl Walk for solidcraft_kernel::StepNode {}
 impl Walk for crate::document::Operation {}
 impl Walk for crate::document::Direction {}
 impl Walk for crate::document::FilletFit {}
+impl Walk for crate::document::FilletCorner {}
 impl Walk for solidcraft_kernel::Continuity {}
 impl Walk for crate::document::MeshData {}
 impl Walk for crate::document::RevolveConvention {}

@@ -1846,6 +1846,13 @@ mod solid_move_copy_tests;
 #[path = "move_in_sketch_tests.rs"]
 mod move_in_sketch_tests;
 
+#[cfg(test)]
+#[path = "thin_extrude_tests.rs"]
+mod thin_extrude_tests;
+
+#[cfg(test)]
+#[path = "extrude_convention_tests.rs"]
+mod extrude_convention_tests;
 /// `solid.fillet corner?: rolling|g2`: the default keeps the rolling ball's sphere corner, `g2`
 /// is accepted and refuses (item 10's patch is built but not sewn in yet, see `corner_g2`), and an
 /// unknown word is refused.

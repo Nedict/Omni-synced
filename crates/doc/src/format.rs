@@ -195,18 +195,20 @@
 //!   `{direction: [x, y, z]}`; absent: perpendicular), `twist` (an angle expression) and `scale`
 //!   (the end scale, an expression). A sweep without them saves as before; 0.11.x refuses
 //!   format 21, so no released build sweeps a twisted or scaled profile straight.
-//!
-//!   The Class-A surface pass adds `SurfaceBoundary` (Boundary Surface: `sketch`, `curves`,
-//!   optional `orders`, `crown`, `samples`), `SurfaceMatch` (Match Surface: `body`, optional
-//!   `faces`, `target`, `edges`, optional `order`) and `SurfaceFair` (Fair Surface: `body`,
-//!   optional `faces`, `strength`, `iterations`, `keep_edges`, `tolerance`), first saved in 21, so
-//!   0.11.0 asks for an update instead of meeting a feature it can't read.
-//!
-//!   The Class-A surface pass adds `SurfaceBlend` (Blend Surface: `from`/`to` edge chains of two
-//!   bodies, optional `continuity`, `bulge`, `align`, `stitch`), first saved in 21, so 0.11.0 asks
-//!   for an update instead of meeting a feature it can't read. Under the same version, a `Patch`
-//!   can carry a `crown` (0 by default: a bump that vanishes on the loop, so the face still meets
-//!   the picked edges).
+
+//!   The Class-A surface pass adds five feature kinds, also first saved in 21, so 0.11.0 asks
+//!   for an update instead of meeting a feature it can't read: `SurfaceBlend` (Blend Surface:
+//!   `from`/`to` edge chains of two bodies, optional `continuity`, `bulge`, `align`, `stitch`),
+//!   `SurfaceMatch` (Match Surface: `body`, optional `faces`, `target`, `edges`, optional
+//!   `order`), `SurfaceBoundary` (Boundary Surface: `sketch`, `curves`, optional `orders`,
+//!   `crown`, `samples`), `SurfaceFair` (Fair Surface: `body`, optional `faces`, `strength`,
+//!   `iterations`, `keep_edges`, `tolerance`) and `BodyTransfer`'s companions' unchanged shapes.
+//!   Under the same version, a `Patch` can carry a `crown` (0 by default: a bump that vanishes
+//!   on the loop) and a `SurfaceLoft` can carry `continuity` and `crown` and body edge-chain
+//!   `sections`; both are optional and a design without them saves as before except that a
+//!   loft without `continuity` reads and writes as `[g0, g0]`, the plain loft it always was.
+//!   A `Fillet` can also carry `corner` (`rolling`, the default and what every older design
+//!   meant, or `g2`); 0.11.0 asks for an update instead of meeting a style it does not round.
 
 use serde_json::Value;
 

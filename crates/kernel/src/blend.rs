@@ -1876,15 +1876,11 @@ fn corners(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str, g2: bo
     if ids.len() != edges.len() {
         return Err(KernelError::Invalid("no edge near a selected point".into()));
     }
-    // Without `g2`, the corner blend as it always was, bit for bit.
-    let made = guard(what, || {
-        if g2 {
-            crate::curveblend::corner_blend_style(&solid, &ids, size, r, shape == Shape::Round, true)
-        } else {
-            crate::curveblend::corner_blend(&solid, &ids, size, r, shape == Shape::Round)
-        }
+    let (made, rec) = guard(what, || match g2 {
+        // The corner blend as it always was, bit for bit.
+        false => crate::curveblend::corner_blend(&solid, &ids, size, r, shape == Shape::Round),
+        true => crate::curveblend::corner_blend_style(&solid, &ids, size, r, shape == Shape::Round, true),
     })?;
-    let (made, rec) = made;
     Ok(record::after(record::rebuilt(made, &[&solid], &rec)?, &cur, &counts))
 }
 

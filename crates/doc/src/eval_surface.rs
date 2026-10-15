@@ -295,7 +295,13 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             push_sheet(st, f, traced);
             Ok(())
         }
-        FeatureKind::SurfaceLoft { sections } => {
+        FeatureKind::SurfaceLoft { sections, continuity, crown } => {
+            // A loft with edge chains for sections, or one that has to leave its ends a particular
+            // way, is built through `loft_blend` from the frames of every section; the plain one
+            // (sketch chains only, both ends G0) is the loft of old.
+            if *continuity != [kernel::Continuity::G0, kernel::Continuity::G0] || sections.iter().any(|s| s.body.is_some()) {
+                return loft_blend(st, f, sections, *continuity, *crown, doc);
+            }
             let mut secs = Vec::with_capacity(sections.len());
             let mut sketches = Vec::with_capacity(sections.len());
             for sec in sections {

@@ -5070,6 +5070,7 @@ mod chain_tests {
                 body: None,
                 style: crate::FilletStyle::Constant,
                 fit: Default::default(),
+                corner: Default::default(),
             },
             None,
         )

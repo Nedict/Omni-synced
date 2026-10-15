@@ -584,10 +584,17 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(K
             }
             return Some((Kind::Surface(k), ins, extra));
         }
-        FeatureKind::SurfaceSweep { sketch, profiles, curves, path, .. } => (
-            Surf::Sweep,
-            vec![sheet_sels(app, *sketch, profiles.as_ref(), curves), path.iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect()],
-        ),
+        FeatureKind::SurfaceSweep { sketch, profiles, curves, path, orientation, twist, scale, .. } => {
+            let (opts, direction) = crate::dialogs_sweep::SweepOpts::of(orientation, twist, scale, frame);
+            (
+                Surf::Sweep(opts),
+                vec![
+                    sheet_sels(app, *sketch, profiles.as_ref(), curves),
+                    path.iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect(),
+                    direction.into_iter().collect(),
+                ],
+            )
+        }
         FeatureKind::SurfaceLoft { sections, .. } => {
             (Surf::Loft, vec![sections.iter().flat_map(|sec| sheet_sels(app, sec.sketch, sec.profiles.as_ref(), &sec.curves)).collect()])
         }
