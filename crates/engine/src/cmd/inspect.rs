@@ -245,6 +245,10 @@ fn inspect(s: &mut Session, p: &Value) -> Result<Value> {
             let mut v = if with_measure { measure_json(b) } else { json!({"name": b.name, "feature": b.feature}) };
             if let Some(o) = v.as_object_mut() {
                 o.insert("visible".into(), json!(s.body_visible(&b.name)));
+                if s.body_removed_later(&b.name) {
+                    // Editing a sketch rolls the timeline back; this body is deleted further on.
+                    o.insert("removed_later".into(), json!(true));
+                }
             }
             v
         })

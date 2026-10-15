@@ -28,6 +28,13 @@ made. Contact sets stop motion where bodies would pass through each other,
 **Motion Study** keys joint values along a timeline, and **Interference** shows overlapping
 volumes in red.
 
+A joint moves one component against another, so its two picks must be on different components.
+A STEP file with several parts often comes in as bodies of one component, and picks on two of
+those bodies make no joint. The Joint and As-built Joint dialogs say so under the picks and offer
+**Create Components from Bodies**: each picked body gets a component of its own and stays where it
+is, the picks are kept, and the joint previews. `joint.create` refuses such origins with the same
+advice.
+
 Joints may close a loop, as in a four-bar linkage or a slider-crank. When one joint of the loop
 is driven, the other joints in the loop follow so that every joint still meets, and the
 mechanism stays in the assembly mode it started in (an open four-bar does not flip to the
@@ -39,7 +46,8 @@ part still has with its loops closed: the moving parts of a four-bar have one be
 loop locked by a rigid joint has none. The Drive Joints dialog says when a drive stops short and
 why. While it previews, a row under the values gives the value the joint reached and the reason
 (the loop that can't close further, or the two parts a contact set keeps apart), and after OK the
-status line repeats it. The value box keeps what you typed.
+status line repeats it. The value box keeps what you typed. The dialog opens on the joint
+picked in the browser, or on the first joint that moves when none is picked.
 
 The solver places what it reaches from the root and from grounded components. A chain of joints
 that is joined to nothing grounded is never placed, so driving one of its joints moves nothing.

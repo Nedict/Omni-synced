@@ -403,20 +403,12 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     close = true;
                 }
                 ui.separator();
-                if item_if(ui, "Export STL…", "", shown) {
-                    export(app, "stl");
+                if item_if(ui, "Save as mesh…", "", shown) {
+                    app.start("file.save_mesh");
                     close = true;
                 }
                 if item_if(ui, "Export STEP…", "", shown) {
                     export(app, "step");
-                    close = true;
-                }
-                if item_if(ui, "Export 3MF…", "", shown) {
-                    export(app, "3mf");
-                    close = true;
-                }
-                if item_if(ui, "Export 3MF with Face Tags…", "", shown) {
-                    export_as(app, "3mf", Some("3mf-tagged"));
                     close = true;
                 }
                 if item_if(ui, "Export OBJ…", "", shown) {
@@ -1172,7 +1164,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
     }
     // A dimension value that is taking the keyboard: letters belong to it (a parameter name
     // starting with L or D), even on the frame before its field holds the focus.
-    if ctx.egui_wants_keyboard_input() || crate::dim_view::editing() {
+    if ctx.egui_wants_keyboard_input() || crate::dim_view::editing() || crate::dialogs_save_mesh::popup_open(ctx) {
         return;
     }
     let (keys, mods) = ctx.input(|i| {
