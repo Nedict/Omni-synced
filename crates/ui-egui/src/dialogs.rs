@@ -108,6 +108,7 @@ pub enum Kind {
     /// Sweep a profile along a path of sketch curves.
     Sweep {
         operation: usize,
+        opts: crate::dialogs_sweep::SweepOpts,
     },
     /// A construction plane offset from a plane.
     OffsetPlane {
@@ -544,8 +545,8 @@ impl Dialog {
             ),
             "solid.loft" => Dialog::new(Kind::Loft { operation: usize::from(has_bodies) }, vec![SelInput::new("Profiles", PROFILES, true)]),
             "solid.sweep" => Dialog::new(
-                Kind::Sweep { operation: usize::from(has_bodies) },
-                vec![SelInput::new("Profile", PROFILES, true), SelInput::new("Path", CURVES, true)],
+                Kind::Sweep { operation: usize::from(has_bodies), opts: crate::dialogs_sweep::SweepOpts::default() },
+                vec![SelInput::new("Profile", PROFILES, true), SelInput::new("Path", CURVES, true), crate::dialogs_sweep::direction_input()],
             ),
             "solid.move" => Dialog::new(crate::dialogs_move::kind(0), crate::dialogs_move::inputs(0)),
             "solid.hole" => Dialog::new(hole_defaults(), vec![SelInput::new("Face", HOLE_FACES, true)]),
@@ -2537,7 +2538,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         combo(ui, "lf_op", &OP_LABELS, operation);
                         ui.end_row();
                     }
-                    Kind::Sweep { operation } => {
+                    Kind::Sweep { operation, opts } => {
+                        enter |= crate::dialogs_sweep::rows(ui, opts, "sw");
                         row_label(ui, "Operation");
                         combo(ui, "sw_op", &OP_LABELS, operation);
                         ui.end_row();
@@ -3548,16 +3550,15 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             let sections: Vec<Value> = sections.into_iter().map(|(sk, v)| json!({"sketch": sk, "profiles": v})).collect();
             ("solid.loft", json!({"sections": sections, "operation": OPS.get(*operation).copied().unwrap_or("new")}))
         }
-        Kind::Sweep { operation } => {
+        Kind::Sweep { operation, opts } => {
             need(0, "a profile")?;
             need(1, "the path")?;
             let (sketch, idx) = profiles();
             let path: Vec<String> = sels(d, 1).iter().filter_map(|x| if let Sel::SketchCurve { id } = x { Some(id.clone()) } else { None }).collect();
             let path_sketch = curves_sketch(app, &path, sketch.as_u64()).ok_or("the path curves must be in one sketch")?;
-            (
-                "solid.sweep",
-                json!({"sketch": sketch, "profiles": idx, "path_sketch": path_sketch, "path": path, "operation": OPS.get(*operation).copied().unwrap_or("new")}),
-            )
+            let mut p = json!({"sketch": sketch, "profiles": idx, "path_sketch": path_sketch, "path": path, "operation": OPS.get(*operation).copied().unwrap_or("new")});
+            crate::dialogs_sweep::params(app, opts, sels(d, 2).first(), &mut p)?;
+            ("solid.sweep", p)
         }
         Kind::OffsetPlane { offset } => {
             need(0, "a plane")?;
@@ -4614,9 +4615,13 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             d
         }
-        FeatureKind::Sweep { sketch, profiles, path, operation, targets, .. } => {
+        FeatureKind::Sweep { sketch, profiles, path, operation, targets, orientation, twist, scale, .. } => {
             let mut d = start("solid.sweep")?;
-            d.kind = Kind::Sweep { operation: op_index(operation) };
+            let (opts, direction) = crate::dialogs_sweep::SweepOpts::of(orientation, twist, scale, &feature_frame(s, f.component));
+            d.kind = Kind::Sweep { operation: op_index(operation), opts };
+            if let Some(inp) = d.inputs.get_mut(2) {
+                inp.items = direction.into_iter().collect();
+            }
             let items = st.sketch(*sketch).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
             if let Some(inp) = d.inputs.get_mut(0) {
                 inp.items = items.into_iter().map(|index| Sel::Profile { sketch: *sketch, index }).collect();

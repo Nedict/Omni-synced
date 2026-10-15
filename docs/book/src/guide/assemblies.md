@@ -28,6 +28,13 @@ made. Contact sets stop motion where bodies would pass through each other,
 **Motion Study** keys joint values along a timeline, and **Interference** shows overlapping
 volumes in red.
 
+A joint moves one component against another, so its two picks must be on different components.
+A STEP file with several parts often comes in as bodies of one component, and picks on two of
+those bodies make no joint. The Joint and As-built Joint dialogs say so under the picks and offer
+**Create Components from Bodies**: each picked body gets a component of its own and stays where it
+is, the picks are kept, and the joint previews. `joint.create` refuses such origins with the same
+advice.
+
 Joints may close a loop, as in a four-bar linkage or a slider-crank. When one joint of the loop
 is driven, the other joints in the loop follow so that every joint still meets, and the
 mechanism stays in the assembly mode it started in (an open four-bar does not flip to the
