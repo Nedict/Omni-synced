@@ -147,17 +147,12 @@ fn menu_commands(
 }
 
 /// What the right-hand group keeps clear between Report a bug and the window's caption buttons:
-/// the assistant, Help, Preferences and the version.
-const RIGHT_GROUP: f32 = 150.0;
+/// Help, Preferences and the version.
+const RIGHT_GROUP: f32 = 120.0;
 
 /// The centre of the Help (?) button: left of Preferences.
 fn help_x(bar: Rect, captions: f32) -> f32 {
     bar.right() - captions - 101.0
-}
-
-/// The centre of the assistant sidebar's button: left of Help.
-fn assistant_x(bar: Rect, captions: f32) -> f32 {
-    bar.right() - captions - 133.0
 }
 
 /// The Report a bug button: labelled when there is room for its text (`label_width`, measured in
@@ -253,6 +248,12 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let _ = app.run("edit.redo", json!({}));
             }
             x += step;
+            // The assistant sidebar (Ctrl+Shift+A also toggles it when the bar is this narrow).
+            let assistant_tip = crate::i18n::format("assistant.toggle_tip", &[("key", "Ctrl+Shift+A")]);
+            if click(ui, x, "assistant", &assistant_tip, idle) {
+                app.ui.show_assistant = !app.ui.show_assistant;
+            }
+            x += step;
         }
         if file {
             app.ui.palette_open = false;
@@ -273,11 +274,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let report_font = FontId::proportional(13.0);
         let label_width = ui.painter().layout_no_wrap(report_text.to_string(), report_font.clone(), t.app_bar_text).size().x;
         let (report, report_label) = report_rect(r, captions, tabs_start, label_width);
-        // The assistant sidebar and Help, on the right between Report a bug and Preferences.
-        let assistant_tip = crate::i18n::format("assistant.toggle_tip", &[("key", "Ctrl+Shift+A")]);
-        if click(ui, assistant_x(r, captions), "assistant", &assistant_tip, idle) {
-            app.ui.show_assistant = !app.ui.show_assistant;
-        }
+        // Help, on the right between Report a bug and Preferences.
         if click(ui, help_x(r, captions), "help", app.tr("ui.help"), true) {
             app.help.menu = !app.help.menu;
             let at = help_x(r, captions);
