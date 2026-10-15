@@ -8,7 +8,8 @@ the check sends nothing about you or your designs.
 When a newer stable release exists, a small accent-coloured pill reading **Update to 0.14.0**
 (the new version) appears in the title bar next to **Report a bug**. Nothing pops up by itself:
 clicking the pill opens a small window with the new version, its release notes and three
-choices. In a narrow window the pill shortens to **Update**, then to its icon alone.
+choices. In a narrower window the pill shortens to **Update** so the document tabs keep their
+room, then to its icon alone.
 
 - **Download** opens the file that fits your installation (see the table below) in your
   browser, or the release page when there isn't one.

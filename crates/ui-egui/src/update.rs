@@ -43,6 +43,8 @@ pub const RETRY_AFTER_FAILURE_S: f64 = 3600.0;
 /// Caps on what a release response may hold (it comes from the network).
 const MAX_NOTES: usize = 64 * 1024;
 const MAX_ASSETS: usize = 400;
+/// The room the Update pill's long label leaves for the document tabs.
+const TAB_ROOM: f32 = 300.0;
 /// The Update window's width, and its release notes' wrap width.
 const WINDOW_W: f32 = 460.0;
 const NOTES_W: f32 = WINDOW_W - 30.0;
@@ -731,10 +733,11 @@ pub fn take_launch(app: &mut SolveApp) -> Option<(PathBuf, Vec<String>)> {
 /// closes the Update window. Returns its rect (None: not shown).
 pub fn button(app: &mut SolveApp, ui: &mut egui::Ui, span: egui::Rect, labeled: bool) -> Option<egui::Rect> {
     let version = offered(app)?.version().to_string();
-    // "Update to 0.14.0"; a short "Update" when that doesn't fit; the icon alone in a narrow bar.
+    // "Update to 0.14.0" while the document tabs keep room; a short "Update" when they would be
+    // squeezed; the icon alone in a narrow bar.
     let full = crate::i18n::format("update.button_version", &[("version", &version)]);
     let labels = [full.as_str(), crate::i18n::tr("update.button")];
-    let (rect, response) = crate::toolbar::offer_pill(ui, span, labeled, &labels, "update", "titlebar:update")?;
+    let (rect, response) = crate::toolbar::offer_pill(ui, span, labeled, &labels, TAB_ROOM, "update", "titlebar:update")?;
     if response.on_hover_text(crate::i18n::format("update.button_tip", &[("version", &version)])).clicked() {
         app.updater.open = !app.updater.open;
     }

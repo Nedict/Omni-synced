@@ -171,16 +171,27 @@ pub(crate) const PILL_HEIGHT: f32 = 22.0;
 
 /// An application-bar pill for something on offer (Update) at the right of `span` (the bar's free
 /// space): accent-filled, with `icon` and the first of `labels` that fits (the icon alone when
-/// none does or `labeled` is false). None when even the icon doesn't fit: it never covers the
+/// none does or `labeled` is false). Every label but the last also leaves `keep` points of the
+/// span free (for the document tabs). None when even the icon doesn't fit: it never covers the
 /// bar's other buttons. `handle` names it for scenarios.
-pub(crate) fn offer_pill(ui: &mut egui::Ui, span: Rect, labeled: bool, labels: &[&str], icon: &str, handle: &str) -> Option<(Rect, egui::Response)> {
+pub(crate) fn offer_pill(
+    ui: &mut egui::Ui,
+    span: Rect,
+    labeled: bool,
+    labels: &[&str],
+    keep: f32,
+    icon: &str,
+    handle: &str,
+) -> Option<(Rect, egui::Response)> {
     let t = Tokens::get();
     let font = FontId::proportional(12.5);
     let (icon_x, text_x, right_pad) = (16.0, 29.0, 11.0);
-    let label = labels.iter().filter(|_| labeled).find_map(|text| {
+    let last = labels.len().saturating_sub(1);
+    let label = labels.iter().enumerate().filter(|_| labeled).find_map(|(i, text)| {
         let galley = ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), font.clone(), t.app_bar_text));
         let width = text_x + galley.size().x + right_pad;
-        (width <= span.width()).then_some((*text, width))
+        let room = if i < last { span.width() - keep } else { span.width() };
+        (width <= room).then_some((*text, width))
     });
     let width = label.map_or(PILL_HEIGHT + 4.0, |(_, w)| w);
     if width > span.width() {
