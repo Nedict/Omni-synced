@@ -58,7 +58,7 @@
   "ui.display_quality_normal": "보통",
   "ui.display_quality_fine": "세밀",
   "ui.display_quality_ultra": "최고",
-  "settings.display_quality_note": "세밀할수록 곡면과 모서리가 더 매끄럽게 표시되지만 메시 생성 시간이 늘어납니다. 뷰포트만 바뀌며 설계나 내보내기는 바뀌지 않습니다.",
+  "settings.display_quality_note": "세밀할수록 곡면과 모서리가 더 매끄럽게 표시되지만 메시 생성 시간이 늘어납니다. 확대해서 보는 부품은 더 세밀하게 표시됩니다. 뷰포트만 바뀌며 설계나 내보내기는 바뀌지 않습니다.",
   "ui.apply": "적용",
   "ui.arc": "호",
   "ui.assemble": "조립",

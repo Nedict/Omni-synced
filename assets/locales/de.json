@@ -58,7 +58,7 @@
   "ui.display_quality_normal": "Normal",
   "ui.display_quality_fine": "Fein",
   "ui.display_quality_ultra": "Ultra",
-  "settings.display_quality_note": "Feinere Stufen zeigen gekrümmte Flächen und Kanten glatter und brauchen länger zum Vernetzen. Nur die Ansicht ändert sich, nie das Design oder Exporte.",
+  "settings.display_quality_note": "Feinere Stufen zeigen gekrümmte Flächen und Kanten glatter und brauchen länger zum Vernetzen. Teile, die Sie nah heranzoomen, werden noch feiner gezeichnet. Nur die Ansicht ändert sich, nie das Design oder Exporte.",
   "ui.apply": "Anwenden",
   "ui.arc": "Kreisbogen",
   "ui.assemble": "Zusammenbau",
