@@ -109,9 +109,18 @@ struct Staged {
     command: &'static str,
     params: Value,
     reading: Option<solidcraft_engine::kernel::StepReading>,
+    /// The command's result once it has run; then the bodies' meshes are made, a few a frame,
+    /// so the first frame that draws the design doesn't make them all at once.
+    ran: Option<Value>,
+    /// Bodies meshed so far, and their triangles.
+    warmed: usize,
+    triangles: usize,
     /// The overlay has been drawn once (the first frame does no work, so it shows at once).
     shown: bool,
 }
+
+/// Designs up to this many triangles get a thumbnail (a picture of more takes a while).
+const STAGED_THUMBNAIL_TRIANGLES: usize = 1_000_000;
 
 /// How long a frame spends on a staged STEP import.
 const STAGED_FRAME_MS: f64 = 30.0;
@@ -405,7 +414,7 @@ fn start_staged(app: &mut SolveApp) {
         preview: None,
         partial_rx: None,
         built: None,
-        staged: Some(Staged { tx, session: Some(session), command, params, reading: None, shown: false }),
+        staged: Some(Staged { tx, session: Some(session), command, params, reading: None, ran: None, warmed: 0, triangles: 0, shown: false }),
         request,
     });
 }
@@ -435,6 +444,25 @@ fn step_staged(running: &mut Running) {
         return;
     }
     let began = web_time::Instant::now();
+    let in_budget = || began.elapsed().as_secs_f64() * 1000.0 < STAGED_FRAME_MS;
+    if staged.ran.is_some() {
+        let Some(session) = staged.session.as_ref() else { return };
+        let world = session.world_state();
+        while staged.warmed < world.bodies.len() && in_budget() {
+            if let Some(body) = world.bodies.get(staged.warmed) {
+                staged.triangles += body.mesh().triangles.len();
+            }
+            staged.warmed += 1;
+        }
+        if staged.warmed < world.bodies.len() {
+            return;
+        }
+        let (Some(session), Some(result)) = (staged.session.take(), staged.ran.take()) else { return };
+        let thumbnail = staged.command == "doc.open" && staged.triangles <= STAGED_THUMBNAIL_TRIANGLES;
+        let image = if thumbnail { crate::home::remember(&session) } else { None };
+        send(staged, Ok(Made { session, result, image }));
+        return;
+    }
     let Some(reading) = staged.reading.as_mut() else {
         // Parse and walk the file. The reading keeps the watch: its steps report progress and
         // stop on Cancel.
@@ -451,7 +479,7 @@ fn step_staged(running: &mut Running) {
         }
         return;
     };
-    while began.elapsed().as_secs_f64() * 1000.0 < STAGED_FRAME_MS {
+    while in_budget() {
         if !reading.step() {
             break;
         }
@@ -477,14 +505,15 @@ fn step_staged(running: &mut Running) {
         solidcraft_engine::doc::progress::watch(progress.clone(), || session.execute(command, &params))
     });
     drop(import);
-    let job = match result {
+    match result {
         Ok(result) => {
-            let image = if command == "doc.open" { crate::home::remember(&session) } else { None };
-            Ok(Made { session, result, image })
+            // Next frames: the meshes ("Preparing the view").
+            running.phase.store(1, Ordering::Relaxed);
+            staged.session = Some(session);
+            staged.ran = Some(result);
         }
-        Err(e) => Err(e.to_string()),
-    };
-    send(staged, job);
+        Err(e) => send(staged, Err(e.to_string())),
+    }
 }
 
 /// A small picture of the bodies built so far (their display meshes, made here and kept for
