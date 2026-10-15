@@ -31,6 +31,7 @@ pub mod dialogs_parts;
 pub mod dialogs_plastic;
 pub mod dialogs_sheet;
 pub mod dialogs_surface;
+pub mod dialogs_sweep;
 pub mod dim_view;
 #[cfg(test)]
 mod dimension_create_ui_tests;
@@ -137,6 +138,8 @@ mod sketch_text_handles;
 mod sketch_text_move;
 pub mod sketch_tools;
 pub mod stand_up;
+#[cfg(test)]
+mod sweep_dialog_tests;
 pub mod theme;
 #[cfg(test)]
 mod thin_extrude_tests;
