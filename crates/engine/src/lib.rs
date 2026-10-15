@@ -222,6 +222,8 @@ pub struct Session {
     removed_later_cache: std::sync::Mutex<Option<occurrences::RemovedLaterCache>>,
     /// Features copied with `timeline.copy` (pasted by `timeline.paste`).
     pub clipboard: Vec<solidcraft_doc::Feature>,
+    /// Sketch geometry copied with `sketch.copy` (pasted by `sketch.paste`).
+    pub sketch_clipboard: Option<cmd::sketch_clipboard::SketchClip>,
     /// Section Analysis: a view cut by a plane (origin, unit normal; the normal side is hidden).
     pub section: Option<(Vec3, Vec3)>,
     /// Surface analysis shading the model (zebra, draft, curvature map).
@@ -339,6 +341,7 @@ impl Session {
             occurrence_visibility_cache: Default::default(),
             removed_later_cache: Default::default(),
             clipboard: Vec::new(),
+            sketch_clipboard: None,
             section: None,
             analysis: None,
             continuity: Vec::new(),
@@ -806,6 +809,7 @@ impl Session {
             occurrence_visibility_cache: Default::default(),
             removed_later_cache: Default::default(),
             clipboard: self.clipboard.clone(),
+            sketch_clipboard: self.sketch_clipboard.clone(),
             section: None,
             analysis: None,
             continuity: Vec::new(),
