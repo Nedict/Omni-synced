@@ -172,6 +172,23 @@ pub fn request_scope(app: &SolveApp, params: &Value) -> Result<Option<vfs::PathS
     Ok(Some(vfs::PathScope::new(roots).with_design(app.session.path.as_deref())))
 }
 
+/// A model render of the view as the window shows it (theme, section, grid and axes), as PNG.
+pub fn view_png(app: &SolveApp, w: usize, h: usize) -> Option<Vec<u8>> {
+    let guides = solidcraft_engine::view::Guides {
+        grid: app.ui.show_grid && !crate::viewport::active_view(app).hide_grid,
+        axes: app.origin_visible(),
+    };
+    let scene = solidcraft_engine::view::scene_with_palette_and_guides(
+        &app.session,
+        &app.cam,
+        crate::viewport::section_plane(app),
+        solidcraft_engine::view::world_curve_parts,
+        &crate::viewport::scene_palette(app.ui.dark, app.preferences.color_vision),
+        guides,
+    );
+    render_png(&scene, &app.cam, w, h)
+}
+
 pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> Outcome {
     let scope = match request_scope(app, &req.params) {
         Ok(Some(scope)) => scope,

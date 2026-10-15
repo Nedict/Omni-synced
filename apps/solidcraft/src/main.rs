@@ -84,6 +84,8 @@ impl eframe::App for App {
         storage.set_string(solidcraft_ui_egui::prefs::STORAGE_KEY, self.solve.prefs());
     }
     fn on_exit(&mut self) {
+        // The agent chat's agent and everything it started end with the app.
+        solidcraft_ui_egui::agent_chat::shutdown(&mut self.solve);
         solidcraft_ui_egui::recovery_ui::close(&mut self.solve);
         solidcraft_engine::crash::end_session();
         // An update asked to restart into the new version or to run its installer.
@@ -489,12 +491,11 @@ fn main() -> eframe::Result {
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
                 app = app.with_control(rx);
-                app.agent_chat.control_port = Some(port);
             }
-            // The agent chat's MCP bridge needs the control server: started on a free port the
-            // first time the chat connects, when the app wasn't launched with one.
+            // The agent chat's MCP bridge reaches the app through an endpoint of its own, started
+            // on a free port the first time the chat connects (docs/agent-chat.md).
             let ctx = cc.egui_ctx.clone();
-            app.agent_chat.control_starter = Some(Box::new(move || control_server::listen(0, ctx.clone())));
+            app.agent_chat.control_starter = Some(Box::new(move |tx| control_server::listen_agent(tx, ctx.clone())));
             if sample {
                 if let Err(e) = app.session.run_script(&solidcraft_engine::sample::script()) {
                     app.set_status(format!("sample: {e}"), true);

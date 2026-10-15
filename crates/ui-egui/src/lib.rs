@@ -561,14 +561,6 @@ impl SolveApp {
         self
     }
 
-    /// Serve a control channel started after launch (the agent chat's MCP bridge), unless one is
-    /// served already.
-    pub fn add_control(&mut self, rx: Receiver<ControlRequest>) {
-        if self.control_rx.is_none() {
-            self.control_rx = Some(rx);
-        }
-    }
-
     /// Run a command programmatically (JSON parameters, no dialogs).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
         if self.file_load.busy() || self.file_picker.is_some() {
@@ -1308,7 +1300,12 @@ impl SolveApp {
         /// Held requests beyond this are refused rather than kept.
         const MAX_HELD: usize = 256;
 
-        let Some(rx) = self.control_rx.take() else { return };
+        // Held requests (and the agent chat's, which it hands over here) run even when the app
+        // has no control channel of its own.
+        if self.control_rx.is_none() && self.control_held.is_empty() {
+            return;
+        }
+        let rx = self.control_rx.take();
         // While the agent cursor acts out a request, later ones wait their turn.
         for _ in 0..PER_FRAME {
             if self.agent.busy() {
@@ -1316,7 +1313,7 @@ impl SolveApp {
             }
             // Held requests go first, in order, once the file is in.
             let held = if self.file_load.busy() || self.file_picker.is_some() { None } else { self.control_held.pop_front() };
-            let Some(req) = held.or_else(|| rx.try_recv().ok()) else { break };
+            let Some(req) = held.or_else(|| rx.as_ref().and_then(|rx| rx.try_recv().ok())) else { break };
             // A file is loading: commands that change the design wait for it (the window,
             // inspection and screenshots still answer).
             if ((self.file_load.busy() || self.file_picker.is_some())
@@ -1353,7 +1350,7 @@ impl SolveApp {
             }
             ctx.request_repaint();
         }
-        self.control_rx = Some(rx);
+        self.control_rx = rx;
     }
 
     fn issue_screenshots(&mut self, ctx: &egui::Context) {

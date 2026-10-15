@@ -325,10 +325,17 @@ pub struct Prefs {
     pub save_mesh_send: bool,
     pub save_mesh_slicer: String,
     pub custom_slicers: Vec<String>,
-    /// Show the agent chat panel (desktop; docs/design/in-app-agent-chat.md).
+    /// Agent chat (desktop; docs/agent-chat.md): off by default; when on, the View menu, a small
+    /// chat button and Ctrl+Shift+A open its panel.
     pub agent_chat_enabled: bool,
     /// The ACP agent the chat starts; empty: the first one found.
     pub agent_command: String,
+    /// The side the panel docks on (`left` or `right`), its width, and whether it is folded to a strip.
+    pub agent_chat_side: String,
+    pub agent_chat_width: f32,
+    pub agent_chat_minimized: bool,
+    /// Changes the agent may make for one message.
+    pub agent_chat_turn_limit: u32,
 }
 
 /// What a middle-button double-click in the view does.
@@ -400,6 +407,10 @@ impl Default for Prefs {
             custom_slicers: Vec::new(),
             agent_chat_enabled: false,
             agent_command: String::new(),
+            agent_chat_side: "right".into(),
+            agent_chat_width: 380.0,
+            agent_chat_minimized: false,
+            agent_chat_turn_limit: crate::agent_chat::gate::DEFAULT_TURN_LIMIT,
         }
     }
 }
@@ -497,6 +508,10 @@ fn defaults(app: &mut SolveApp, page: usize) {
             app.ui.agent_cursor = Default::default();
             p.agent_chat_enabled = d.agent_chat_enabled;
             p.agent_command = d.agent_command;
+            p.agent_chat_side = d.agent_chat_side;
+            p.agent_chat_width = d.agent_chat_width;
+            p.agent_chat_minimized = d.agent_chat_minimized;
+            p.agent_chat_turn_limit = d.agent_chat_turn_limit;
             app.autosave_minutes = 5.0;
             set_autosave(app);
         }
@@ -1046,6 +1061,23 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 );
                 ui.end_row();
                 note(ui, app.tr("ui.agent_chat_command_hint"));
+                ui.label(app.tr("ui.agent_chat_side"));
+                ui.add_enabled_ui(app.preferences.agent_chat_enabled, |ui| {
+                    ui.horizontal(|ui| {
+                        let side = &mut app.preferences.agent_chat_side;
+                        if ui.radio(side == "left", crate::i18n::tr("ui.agent_chat_left")).clicked() {
+                            *side = "left".into();
+                        }
+                        if ui.radio(side != "left", crate::i18n::tr("ui.agent_chat_right")).clicked() {
+                            *side = "right".into();
+                        }
+                    });
+                });
+                ui.end_row();
+                ui.label(app.tr("ui.agent_chat_turn_limit"));
+                ui.add_enabled(app.preferences.agent_chat_enabled, egui::DragValue::new(&mut app.preferences.agent_chat_turn_limit).range(1..=200));
+                ui.end_row();
+                note(ui, app.tr("ui.agent_chat_privacy_note"));
             } else {
                 note(ui, app.tr("ui.agent_chat_desktop_only"));
             }

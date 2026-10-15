@@ -17,8 +17,13 @@ pub struct Known {
     pub args: &'static [&'static str],
     /// Its one-line install hint.
     pub install: &'static str,
-    /// Its own credentials file, relative to the home folder (`None`: can't tell).
+    /// Its own credentials file, relative to the home folder (`None`: can't tell), and the
+    /// variable that moves its settings folder (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) with the file's
+    /// name inside it.
     pub credentials: Option<&'static str>,
+    pub config_dir_var: Option<(&'static str, &'static str)>,
+    /// Variables holding a key it uses instead of a login.
+    pub key_vars: &'static [&'static str],
 }
 
 /// The agents shown in the picker. The first one found is the default.
@@ -30,6 +35,8 @@ pub const KNOWN: &[Known] = &[
         args: &[],
         install: "npm install -g @agentclientprotocol/claude-agent-acp",
         credentials: Some(".claude/.credentials.json"),
+        config_dir_var: Some(("CLAUDE_CONFIG_DIR", ".credentials.json")),
+        key_vars: &["ANTHROPIC_API_KEY"],
     },
     Known {
         id: "codex",
@@ -38,6 +45,8 @@ pub const KNOWN: &[Known] = &[
         args: &[],
         install: "npm install -g @agentclientprotocol/codex-acp",
         credentials: Some(".codex/auth.json"),
+        config_dir_var: Some(("CODEX_HOME", "auth.json")),
+        key_vars: &["OPENAI_API_KEY", "CODEX_API_KEY"],
     },
     Known {
         id: "gemini",
@@ -46,6 +55,18 @@ pub const KNOWN: &[Known] = &[
         args: &["--acp"],
         install: "npm install -g @google/gemini-cli",
         credentials: Some(".gemini/oauth_creds.json"),
+        config_dir_var: None,
+        key_vars: &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+    },
+    Known {
+        id: "opencode",
+        name: "OpenCode",
+        programs: &["opencode"],
+        args: &["acp"],
+        install: "npm install -g opencode-ai",
+        credentials: Some(".local/share/opencode/auth.json"),
+        config_dir_var: None,
+        key_vars: &[],
     },
     Known {
         id: "copilot",
@@ -54,6 +75,8 @@ pub const KNOWN: &[Known] = &[
         args: &["--acp"],
         install: "npm install -g @github/copilot",
         credentials: None,
+        config_dir_var: None,
+        key_vars: &["GH_TOKEN", "GITHUB_TOKEN"],
     },
     Known {
         id: "qwen",
@@ -62,8 +85,9 @@ pub const KNOWN: &[Known] = &[
         args: &["--acp"],
         install: "npm install -g @qwen-code/qwen-code",
         credentials: Some(".qwen/oauth_creds.json"),
+        config_dir_var: None,
+        key_vars: &["DASHSCOPE_API_KEY"],
     },
-    Known { id: "opencode", name: "OpenCode", programs: &["opencode"], args: &["acp"], install: "npm install -g opencode-ai", credentials: None },
     Known {
         id: "goose",
         name: "goose",
@@ -71,6 +95,8 @@ pub const KNOWN: &[Known] = &[
         args: &["acp"],
         install: "see block.github.io/goose (installer script or Homebrew)",
         credentials: None,
+        config_dir_var: None,
+        key_vars: &[],
     },
 ];
 
@@ -78,10 +104,31 @@ pub const KNOWN: &[Known] = &[
 pub enum Login {
     /// Its credentials file is there.
     LooksLoggedIn,
+    /// No login file, but one of its key variables is set.
+    KeyInEnvironment,
     /// Its credentials file is missing (it may still use a key from the environment).
     NotLoggedIn,
     /// It keeps no file we can look at (system keychain, or unknown).
     Unknown,
+}
+
+impl Login {
+    pub fn id(self) -> &'static str {
+        match self {
+            Login::LooksLoggedIn => "signed_in",
+            Login::KeyInEnvironment => "key",
+            Login::NotLoggedIn => "signed_out",
+            Login::Unknown => "unknown",
+        }
+    }
+}
+
+/// A known agent that isn't installed, with its one-line install hint.
+#[derive(Clone, Debug)]
+pub struct Missing {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub install: &'static str,
 }
 
 #[derive(Clone, Debug)]
@@ -97,8 +144,8 @@ pub struct Found {
 #[derive(Clone, Debug, Default)]
 pub struct Detection {
     pub found: Vec<Found>,
-    /// Known agents not found: id, name, install hint.
-    pub missing: Vec<(&'static str, &'static str, &'static str)>,
+    /// Known agents not found.
+    pub missing: Vec<Missing>,
     pub took_ms: u64,
 }
 
@@ -179,6 +226,23 @@ fn version_of(line: &str) -> String {
     v.chars().take(40).collect()
 }
 
+/// Whether `k` looks signed in, from files and variables only: nothing is started or asked.
+fn login_of(k: &Known, home: Option<&Path>) -> Login {
+    let file = match k.config_dir_var.and_then(|(var, name)| std::env::var_os(var).filter(|v| !v.is_empty()).map(|d| PathBuf::from(d).join(name))) {
+        Some(p) => Some(p),
+        None => k.credentials.zip(home).map(|(rel, h)| h.join(rel)),
+    };
+    let key = || k.key_vars.iter().any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty()));
+    match file {
+        Some(f) if f.is_file() => Login::LooksLoggedIn,
+        _ if key() => Login::KeyInEnvironment,
+        // Claude Code keeps its login in the keychain on macOS: the file says nothing there.
+        _ if cfg!(target_os = "macos") && k.id == "claude" => Login::Unknown,
+        Some(_) => Login::NotLoggedIn,
+        None => Login::Unknown,
+    }
+}
+
 /// Look for every known agent. Blocking (each probe has a time limit): run it off the UI thread.
 pub fn detect() -> Detection {
     let t0 = Instant::now();
@@ -187,16 +251,10 @@ pub fn detect() -> Detection {
     let mut d = Detection::default();
     for k in KNOWN {
         let Some(path) = k.programs.iter().find_map(|p| find_in(p, &dirs)) else {
-            d.missing.push((k.id, k.name, k.install));
+            d.missing.push(Missing { id: k.id, name: k.name, install: k.install });
             continue;
         };
-        let login = match (k.credentials, &home) {
-            (Some(rel), Some(h)) if h.join(rel).is_file() => Login::LooksLoggedIn,
-            // Claude Code keeps its login in the keychain on macOS.
-            (Some(_), _) if cfg!(target_os = "macos") && k.id == "claude" => Login::Unknown,
-            (Some(_), Some(_)) => Login::NotLoggedIn,
-            _ => Login::Unknown,
-        };
+        let login = login_of(k, home.as_deref());
         let mut argv = vec![path.to_string_lossy().into_owned()];
         argv.extend(k.args.iter().map(|a| a.to_string()));
         d.found.push(Found { id: k.id, name: k.name, version: version(&path, Duration::from_secs(3)), argv, login });
@@ -227,6 +285,25 @@ mod tests {
         assert_eq!(version_of("2.1.295 (Claude Code)"), "2.1.295");
         assert_eq!(version_of("goose v1.9.0"), "v1.9.0");
         assert_eq!(version_of("dev build"), "dev build");
+    }
+
+    #[test]
+    fn signed_in_comes_from_the_agents_own_file_or_a_key_variable() {
+        let home = std::env::temp_dir().join(format!("sc-agent-login-{}", std::process::id()));
+        std::fs::create_dir_all(home.join(".gemini")).unwrap();
+        let gemini = KNOWN.iter().find(|k| k.id == "gemini").unwrap();
+        let qwen = KNOWN.iter().find(|k| k.id == "qwen").unwrap();
+        let goose = KNOWN.iter().find(|k| k.id == "goose").unwrap();
+        if std::env::var_os("GEMINI_API_KEY").is_none() && std::env::var_os("GOOGLE_API_KEY").is_none() {
+            assert_eq!(login_of(gemini, Some(&home)), Login::NotLoggedIn);
+        }
+        std::fs::write(home.join(".gemini/oauth_creds.json"), "{}").unwrap();
+        assert_eq!(login_of(gemini, Some(&home)), Login::LooksLoggedIn);
+        if std::env::var_os("DASHSCOPE_API_KEY").is_none() {
+            assert_eq!(login_of(qwen, Some(&home)), Login::NotLoggedIn);
+        }
+        assert_eq!(login_of(goose, Some(&home)), Login::Unknown, "keeps no file we know");
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]

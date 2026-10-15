@@ -1,8 +1,8 @@
-# In-app agent chat over ACP (prototype)
+# In-app agent chat over ACP
 
-Status: prototype behind a preference (off by default), desktop only. This note records what I
-found about the Agent Client Protocol and the agents that speak it, how the prototype works, and
-what a production version still needs.
+Status: shipped behind a preference (off by default), desktop only. The user guide is
+[docs/agent-chat.md](../agent-chat.md). This note records what I found about the Agent Client
+Protocol and the agents that speak it, how the chat is built, and what's still open.
 
 ## Goal
 
@@ -48,6 +48,7 @@ with SolidCraft, the user installs the agent.
 | Claude Code | `claude-agent-acp` adapter (renamed from `@zed-industries/claude-code-acp`, which is now deprecated) | `@agentclientprotocol/claude-agent-acp` 0.90.0, Apache-2.0. It depends on `@anthropic-ai/claude-agent-sdk`, which is under Anthropic's own terms ("SEE LICENSE IN README.md"): fine for the user to install, not something we would vendor. | `--version` prints `0.90.0` | Terminal method. Offered only when the client declares terminal login. On a desktop: "Claude Subscription" = `claude-agent-acp --cli auth login --claudeai`, "Anthropic Console" = `… --cli auth login --console`. Over SSH (no browser) it offers `claude-login` = `… --cli` (the TUI `/login`). The login is Claude Code's own: `~/.claude/.credentials.json` (Linux, Windows) or the macOS keychain. |
 | Codex | `codex-acp` adapter (`@zed-industries/codex-acp` 0.16 moved to `@agentclientprotocol/codex-acp`) | `@agentclientprotocol/codex-acp` 2.2.2, Apache-2.0 | `--version` (0.16 rejected the flag; 2.x prints it) | Agent method `chat-gpt` (the adapter opens the browser for the ChatGPT login when the client calls `authenticate`), and `api-key` for a key the user configures in Codex. 0.16 also listed `env_var` methods for `CODEX_API_KEY` / `OPENAI_API_KEY`. The login is Codex's own: `~/.codex/auth.json`. |
 | Gemini CLI | built in: `gemini --acp` (the ACP registry's current flag; older releases used `--experimental-acp`) | `@google/gemini-cli` 0.64, Apache-2.0 | `--version` | Its own Google login (`~/.gemini/oauth_creds.json`) or a key in the environment. |
+| OpenCode | built in: `opencode acp` | `opencode-ai` 1.19, MIT | `--version` | Its own providers' logins (`~/.local/share/opencode/auth.json`) or keys in the environment. |
 | Others in the ACP registry | `copilot --acp`, `qwen --acp`, `opencode acp`, `goose acp`, `cline --acp`, `kimi acp`, … | mixed; several are proprietary, one is GPL and one AGPL (we only start them as programs, never link them) | `--version` | each its own |
 
 The registry (`https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`) lists
@@ -73,127 +74,122 @@ the picker instead of the hard-coded table.
   prompt and offers the terminal login methods; Codex's returns it on `session/new` and offers
   `chat-gpt` and `api-key`. I stopped at that step.
 
-## How the prototype works
+## How it works
 
 ```
-SolidCraft window ──(child process, ACP over stdio)──> agent (claude-agent-acp, codex-acp, gemini --acp, …)
-      ▲                                                   │ starts, per session/new
-      │ control channel (loopback, token, #205)           ▼
-      └────────────────────────────────── solidcraft-cli mcp --connect 127.0.0.1:PORT
+SolidCraft window ──(child process, own process group, ACP over stdio)──> agent (claude-agent-acp, codex-acp, gemini --acp, opencode acp, …)
+      ▲                                                                     │ starts, per session/new
+      │ the chat's own endpoint (loopback, fresh token, gate)               ▼
+      └──────────────────────────────────────────────────── solidcraft-cli mcp --connect 127.0.0.1:PORT
 ```
 
-- **Panel** (`crates/ui-egui/src/agent_chat/`): a resizable right-hand side panel, toggled from
-  the application bar's chat button when *Preferences → General → Agent chat* is on. Header with
-  state and Connect/Stop; an agent picker; the conversation (streamed text, thoughts dimmed,
-  tool calls with status and output, the plan, permission prompts with the agent's own option
-  buttons, notices); a prompt box (Enter sends, Shift+Enter is a new line) and Cancel.
-- **Agent discovery** (`discover.rs`): looks for the known agents on `PATH` and in the usual
-  install folders a desktop app's PATH misses (npm prefix from `NPM_CONFIG_PREFIX`,
-  `~/.npm-global/bin`, every `~/.nvm/versions/node/*/bin`, `~/.local/bin`, `~/.volta/bin`,
-  `~/.bun/bin`, Homebrew, `%APPDATA%\npm` on Windows). Each one found is asked `--version` with a
-  3 s limit (stopped through its own handle if it overruns); whether it *looks* signed in comes
-  only from whether its own credentials file exists, never from starting it. The picker shows
-  name, version and signed-in state; *Add custom command…* takes any other ACP command; agents
-  not found are listed with their one-line install command. The result is cached; Refresh
-  looks again. The whole sweep runs on a background thread.
-- **Preferences:** `agent_chat_enabled` (default off: no panel, no button) and `agent_command`
-  (empty: the first agent found, the Claude Code adapter first). On the web build the
-  checkbox is disabled with a note.
-- **Design tools:** on Connect the app starts its control server on a free loopback port if it
-  wasn't launched with `--control` (`control_server::listen(0, …)`), and hands the agent
-  `solidcraft-cli mcp --connect 127.0.0.1:PORT`. Everything #205 added stays in force:
-  - the control port still needs the launch's token; the bridged MCP server reads it from the
-    per-user token file, so the token never travels through the agent's messages;
-  - the MCP server keeps its default folder limits (the design's folder when it is a safe one,
-    the recovery folder, its own scratch folder); `--allow-any-path` is never passed, and the
-    app checks every bridged request against the folders it carries;
-  - the tool annotations are unchanged, so an agent that asks before destructive tools asks.
-- **Permissions:** the agent's own permission requests appear in the conversation; nothing is
-  auto-approved. For the Claude adapter the session also sets
-  `_meta.claudeCode.options.allowDangerouslySkipPermissions: false`, so its "bypass
-  permissions" mode isn't offered. A short system note (`_meta.systemPrompt.append`) tells the
-  agent it is inside SolidCraft and which MCP tools to use.
-- **Control channel:** `ui.agent_chat` (docs/control-protocol.md) opens the panel, sets the
-  preference and command, connects, sends a prompt, answers a permission request and returns the
-  whole conversation, for tests and screenshots.
+Code: `crates/ui-egui/src/agent_chat/`.
 
-## What works (checked end to end)
+| File | What |
+|---|---|
+| `backend.rs` | The `ChatBackend` trait and its `Event`s: the only thing the panel talks to. |
+| `acp.rs`, `acp_client.rs` | The protocol messages, and `AcpBackend`, the first backend. |
+| `process.rs` | The agent as a child process in a process group of its own; stopping it ends the group. |
+| `discover.rs` | Which agents are installed, their versions, whether they look signed in. |
+| `gate.rs` | What the agent's tool requests may do: run, wait for Allow/Deny, or never. |
+| `mod.rs` | The conversation, turns (undo as one step, the per-turn limit), held requests. |
+| `panel.rs` | The panel: docking, minimising, picker, sign-in, conversation, input. |
 
-With a scripted ACP agent (a small test script that speaks ACP like the adapters and starts the
-MCP server it is given) against the release app under Xvfb:
+### A pluggable backend
 
-1. The picker found `claude-agent-acp 0.90.0` and `codex-acp 2.2.2` (installed into a user
-   prefix on PATH) and the `gemini`/`copilot`/… install hints for the rest.
-2. Connect started the control server on a free port and the agent; the agent's
-   `session/new` carried `solidcraft-cli mcp --connect 127.0.0.1:PORT`, and the MCP server
-   listed SolidCraft's tools.
-3. A prompt streamed text and a plan, showed a tool call, and asked permission; *Allow* ran
-   `batch [solid.box 40×30×20]` through the bridge, the box appeared in the window and the
-   browser, and `measure` reported its 40 × 30 × 20 mm bounding box.
-4. A `save` to `/etc/…` was refused by the #205 folder check and shown as a failed tool call.
-5. Against the real Claude and Codex adapters with no credentials, the panel reached
-   *Sign-in needed* and listed the adapters' own login methods.
+The panel doesn't know it's talking ACP. A backend implements `ChatBackend` (`poll` for events,
+`prompt`, `cancel`, `answer_permission`, `authenticate`, `shutdown`) and gets a `StartContext`
+with its working folder, the MCP bridge (for backends that start MCP servers) and `tools`, a
+sender for control requests (for backends that run their own tool loop in process). Requests
+arriving either way go through the same gate, count against the same per-turn limit and undo
+as one step. A backend that calls a model API directly with a key can slot in this way later,
+as an optional mode, without reshaping the panel; it would bring its own settings and key
+storage, and none of that touches the ACP path, which stays the default.
 
-## What's missing for production
+### Design tools and the gate
 
-| Area | Work | Estimate |
-|---|---|---|
-| Conversation | Markdown rendering (code blocks, lists), images, diffs from `tool_call` content, copy buttons, history kept per design | 3–4 days |
-| Session controls | Model and mode pickers from `configOptions` / `modes`, slash commands from `available_commands_update`, resume (`session/load`), several sessions | 2–3 days |
-| Auth | An embedded terminal or "open a terminal here" for terminal logins on each OS, status refresh after login, logout | 2 days |
-| Process handling | Windows `.cmd` shims tested, killing the agent's whole process tree (Job object / process group), restart on crash, stderr log view | 2 days |
-| Discovery | Read the ACP registry, `npm prefix -g` with a timeout, keychain-aware login check on macOS, per-agent args editor | 1–2 days |
-| Safety | Decide what the agent's *own* tools may do: Claude Code also has shell and file tools that act on `cwd`; options are to run in an empty working folder, disallow its shell/edit tools via `_meta.claudeCode.options.disallowedTools`, or show them with an extra warning. Per-tool "always allow" kept per design. | 2 days + a decision |
-| Packaging | Make sure every desktop package ships `solidcraft-cli` next to `solidcraft` (Flatpak, AppImage, macOS bundle, Windows zip), or serve MCP from the app binary itself | 1–2 days |
-| UX polish | Dock left/right, remember width, keyboard focus, agent cursor while the agent works, i18n review | 2 days |
-| Tests | UI scenario for the panel with the scripted agent in CI | 1 day |
+On the first Connect the app starts **an endpoint of the chat's own**
+(`control_server::listen_agent`): a free loopback port with a fresh random token, written to the
+per-user token file where `solidcraft-cli mcp --connect` finds it. The token never passes
+through the agent, `SOLIDCRAFT_CONTROL_TOKEN` is removed from the agent's environment, and
+`--allow-any-path` is never passed, so the MCP server keeps its #205 folder limits (a request
+that names no folders is confined to the chat's working folder).
 
-Roughly **3 weeks** for one person to a version I'd ship on by default, most of it in auth
-ergonomics, process handling across three OSes and the safety decision above.
+Requests from that endpoint don't go to the app directly. `pump_tools` passes each one through
+`gate::request`:
 
-## Russian strings
+- **Methods:** only `engine.commands`, `document.inspect`, `engine.execute`, `engine.batch`,
+  `ui.view`, `ui.render` and `ui.screenshot` (what the MCP server uses). No clicks, preferences,
+  quitting, scripts or the chat itself.
+- **Refused:** `diagnostics.*` (crash reports hold other designs and paths), `app.*`.
+- **Allow/Deny in the panel:** `file.*`, `doc.*`, render export, any command given a file or
+  folder, a picture saved outside the MCP server's scratch folder, and `edit.undo` past the
+  turn's first change. The request waits (the endpoint is patient) until the user answers;
+  Cancel/Stop declines everything waiting, and after four minutes it is declined (the MCP
+  server stops waiting at five).
+- **Per-turn limit:** 24 requests that run commands (a batch counts once; reads don't count),
+  set in Preferences, and 400 requests of any kind. Past it the agent is told to stop and say
+  what's left.
+- **Outside a turn:** refused.
 
-Russian is not registered on `main` yet (it is in its own pull request); these are the panel's
-messages for `assets/locales/ru.json` once it lands:
+What runs goes to the same queue as the control channel's held requests, so file loads, the
+agent cursor and the per-request folder scope all apply as for any other client.
 
-```json
-{
-  "ui.agent_chat": "Чат с агентом",
-  "ui.agent_chat_enable": "Показывать панель чата с агентом (использует ACP-агент, установленный на этом компьютере)",
-  "ui.agent_chat_command": "Команда агента",
-  "ui.agent_chat_command_hint": "Пусто: первый найденный агент (сначала адаптер Claude Code)",
-  "ui.agent_chat_desktop_only": "Чату с агентом нужно настольное приложение.",
-  "ui.agent_chat_connect": "Подключить",
-  "ui.agent_chat_stop": "Остановить",
-  "ui.agent_chat_send": "Отправить",
-  "ui.agent_chat_cancel": "Отмена",
-  "ui.agent_chat_refresh": "Обновить",
-  "ui.agent_chat_add_custom": "Добавить свою команду…",
-  "ui.agent_chat_custom": "Своя команда",
-  "ui.agent_chat_not_installed": "Не установлен",
-  "ui.agent_chat_none_found": "ACP-агент не найден. Установите один из них:",
-  "ui.agent_chat_detecting": "Поиск агентов…",
-  "ui.agent_chat_signed_in": "вход выполнен",
-  "ui.agent_chat_not_signed_in": "вход не выполнен",
-  "ui.agent_chat_state_off": "Не подключено",
-  "ui.agent_chat_state_starting": "Запуск…",
-  "ui.agent_chat_state_ready": "Готов",
-  "ui.agent_chat_state_busy": "Работает…",
-  "ui.agent_chat_state_auth": "Нужен вход",
-  "ui.agent_chat_state_exited": "Агент остановлен",
-  "ui.agent_chat_auth_needed": "Агент просит вас войти. SolidCraft не видит ваш пароль и ключи: агент сам хранит свой вход.",
-  "ui.agent_chat_auth_terminal": "Выполните это в терминале, затем подключитесь снова:",
-  "ui.agent_chat_auth_agent": "Войти через {name}",
-  "ui.agent_chat_auth_env": "Задайте {vars} в своём окружении и перезапустите SolidCraft.",
-  "ui.agent_chat_copy": "Копировать",
-  "ui.agent_chat_permission": "Агент просит разрешения выполнить: {title}",
-  "ui.agent_chat_answered": "Ответ: {option}",
-  "ui.agent_chat_placeholder": "Попросите агента изменить модель…",
-  "ui.agent_chat_no_cli": "solidcraft-cli не найден рядом с приложением, поэтому агент не может работать с моделью.",
-  "ui.agent_chat_no_control": "Канал управления не запустился, поэтому агент не может работать с моделью.",
-  "ui.agent_chat_tools": "Инструменты модели: MCP-сервер SolidCraft на порту {port}",
-  "ui.agent_chat_exited": "Агент остановлен.",
-  "ui.agent_chat_failed_start": "Не удалось запустить агента: {error}",
-  "ui.agent_chat_intro": "Общайтесь с агентом для программирования, которым вы уже пользуетесь. Он работает с открытой моделью через инструменты SolidCraft и спрашивает разрешения, прежде чем действовать."
-}
-```
+### One undo step per message
+
+When a message is sent the chat remembers the design (`Arc<Document>`) and the undo depth. When
+the turn ends, the undo snapshots made since are merged into the first one (which holds the
+design from before the turn), relabelled "Agent chat: <message>". If the history was trimmed in
+the meantime the start is found by the design it holds; if it's gone, nothing is merged. The
+conversation shows the merged step with an Undo button while it's still the latest thing done.
+
+### The agent's own tools
+
+ACP lets the client offer a file system and a terminal; the chat offers neither, and starts the
+agent in an empty working folder of SolidCraft's own (`<data>/agent-chat/work`), not the
+design's folder. The Claude Code adapter has shell, file and web tools of its own anyway: the
+session asks it to turn them off (`_meta.claudeCode.options.disallowedTools`) and not to offer
+"bypass permissions". Other agents' own permission requests appear in the panel with their
+options.
+
+### Processes
+
+The agent starts in a process group of its own (Unix; on Windows `taskkill /T` ends its tree).
+Stop, Close-and-Stop, turning the preference off, the agent chat being dropped and quitting all
+end it the same way: its stdin closes (ACP agents end at end of input), then after a grace period
+the group gets TERM, and KILL after another. Quitting waits for this (at most about three
+seconds). `process.rs`'s tests start a fake agent that leaves helpers behind, once polite and
+once ignoring both end of input and TERM, and check that none survive. If SolidCraft itself is
+killed, the agent sees its stdin close and ends with its helpers.
+
+### Discovery
+
+As before, plus key variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, …)
+reported as *key set*, `CLAUDE_CONFIG_DIR` and `CODEX_HOME` respected, and OpenCode's
+`~/.local/share/opencode/auth.json`. Nothing is started except `--version`.
+
+### Panel
+
+Docked left or right (dragging the header across the window, or Preferences), resizable, folded
+to a 30 px strip with Minimise (state dot and a count of open questions), closed with ×. Side,
+width, fold and the per-turn limit are preferences, not design data. It opens from the View
+settings menu, a small button left of Help (only once the chat is on) and Ctrl+Shift+A (reserved
+in the shortcut editor; it works from the chat's text box too).
+
+### Control channel
+
+`ui.agent_chat` (docs/control-protocol.md) sets the preferences, opens and docks the panel,
+connects, sends, answers permission and approval prompts, cancels, undoes the last message and
+returns the whole state, for tests and screenshots.
+
+## Still open
+
+| Area | Work |
+|---|---|
+| Conversation | Markdown rendering, diffs, history per design, resume (`session/load`) |
+| Session controls | Model and mode pickers from `configOptions` / `modes`, slash commands |
+| Auth | An embedded terminal or "open a terminal here" for terminal logins on each OS; logout |
+| Discovery | Read the ACP registry; keychain-aware login check on macOS |
+| Packaging | Make sure every desktop package ships `solidcraft-cli` next to `solidcraft` (Flatpak, AppImage, macOS bundle, Windows zip), or serve MCP from the app binary itself |
+| Windows | Job objects instead of `taskkill /T` once there's a safe API for them |
+| Backends | A direct-API backend as an optional mode, through `ChatBackend` |
