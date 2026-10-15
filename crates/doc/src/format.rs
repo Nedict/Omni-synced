@@ -195,6 +195,12 @@
 //!   `{direction: [x, y, z]}`; absent: perpendicular), `twist` (an angle expression) and `scale`
 //!   (the end scale, an expression). A sweep without them saves as before; 0.11.x refuses
 //!   format 21, so no released build sweeps a twisted or scaled profile straight.
+//!
+//!   The Class-A surface pass adds `SurfaceBlend` (Blend Surface: `from`/`to` edge chains of two
+//!   bodies, optional `continuity`, `bulge`, `align`, `stitch`), first saved in 21, so 0.11.0 asks
+//!   for an update instead of meeting a feature it can't read. Under the same version, a `Patch`
+//!   can carry a `crown` (0 by default: a bump that vanishes on the loop, so the face still meets
+//!   the picked edges).
 
 use serde_json::Value;
 
