@@ -50,6 +50,9 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .params("view: id|name (or none: back to the assembled placement) — shown only; the design keeps its placements"),
     CommandSpec::new("explode.list", "List Exploded Views", explode_list).noundo(),
+    CommandSpec::new("explode.frames", "Explode Frames", explode_frames)
+        .noundo()
+        .params("view: id|name; steps?: 2…24 (default 4). Positions from assembled to exploded"),
     CommandSpec::new("explode.delete", "Delete Exploded View", explode_delete).params("view"),
 ];
 
@@ -704,6 +707,24 @@ fn explode_show(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn explode_list(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(json!({"views": s.doc.assembly.exploded}))
+}
+
+fn explode_frames(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "explode.frames";
+    let i = view_index(s, p, cmd)?;
+    let steps = p.get("steps").and_then(Value::as_u64).unwrap_or(4).clamp(2, 24);
+    let v = s.doc.assembly.exploded.get(i).ok_or_else(|| bad(cmd, "view"))?;
+    let mut frames = Vec::new();
+    for k in 0..=steps {
+        let t = k as f64 / steps as f64;
+        let moves: Vec<Value> = v
+            .moves
+            .iter()
+            .map(|(o, d)| json!({"occurrence": o, "translate": [d.x * t, d.y * t, d.z * t]}))
+            .collect();
+        frames.push(json!({"t": t, "moves": moves}));
+    }
+    Ok(json!({"view": v.name, "frames": frames}))
 }
 
 fn explode_delete(s: &mut Session, p: &Value) -> Result<Value> {

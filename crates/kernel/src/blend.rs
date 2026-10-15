@@ -97,7 +97,7 @@ fn rebuild_face_dropping(f: &mt::Face, subst: &HashMap<mt::EdgeID, mt::Edge>, dr
 }
 
 /// Blend one edge of `solid`, with what was built from it (see [`Rebuild`]).
-fn blend_one(solid: &Solid, edge: &mt::Edge, size: f64, r: f64, shape: Shape) -> Result<(Solid, Rebuild)> {
+fn blend_one(solid: &Solid, edge: &mt::Edge, size: f64, r: f64, shape: Shape, rails: Option<(f64, f64)>) -> Result<(Solid, Rebuild)> {
     if !matches!(edge.curve(), mt::Curve::Line(_)) {
         return Err(unsupported("only straight edges can be blended"));
     }
@@ -133,7 +133,7 @@ fn blend_one(solid: &Solid, edge: &mt::Edge, size: f64, r: f64, shape: Shape) ->
     }
     // The blend's centre line is inside the material for a convex edge, outside for a concave one.
     let side = if convex { -1.0 } else { 1.0 };
-    blend_geometry(solid, si, &faces, (i1, i2), edge, (v0, v1), (p0, p1, d), (n1, t1, t2, phi, side), size, r, shape)
+    blend_geometry(solid, si, &faces, (i1, i2), edge, (v0, v1), (p0, p1, d), (n1, t1, t2, phi, side), size, r, shape, rails)
 }
 
 /// Distance along each face from the edge to the blend boundary.
@@ -211,8 +211,10 @@ fn blend_geometry(
     size: f64,
     r: f64,
     shape: Shape,
+    rails: Option<(f64, f64)>,
 ) -> Result<(Solid, Rebuild)> {
     let s = setback(r, phi, shape);
+    let (s1, s2) = rails.unwrap_or((s, s));
     let tol = (size * 1e-7).max(1e-9);
     // The arc centre is r from both faces (inside the material for a convex edge, outside for a
     // concave one), in the cross-section through `p`.
@@ -263,7 +265,7 @@ fn blend_geometry(
         let (na, nb) = (normal(ga)?, normal(gb)?);
         // Slide a point of the cross-section through `p` along d onto the end plane through p.
         let slide = |x: Vec3, n: Vec3| x - d * (n.dot(x - p) / n.dot(d));
-        let (a, b) = (slide(p + t1 * s, na), slide(p + t2 * s, nb));
+        let (a, b) = (slide(p + t1 * s1, na), slide(p + t2 * s2, nb));
         let (e1, e2) = (
             shared(i1, ga).ok_or_else(|| unsupported("unexpected corner topology"))?,
             shared(i2, gb).ok_or_else(|| unsupported("unexpected corner topology"))?,
@@ -391,7 +393,7 @@ fn blend_geometry(
     let mut corners: Vec<(mt::Vertex, mt::Vertex, Vec<mt::Edge>, Option<mt::Vertex>)> = Vec::new();
     for (end, p) in [(end0, p0), (end1, p1)] {
         let (va, vb) = (vertex(&end.ca, end.a), vertex(&end.cb, end.b));
-        let (sa, sb) = (p + t1 * s, p + t2 * s);
+        let (sa, sb) = (p + t1 * s1, p + t2 * s2);
         let (chain, vq) = match (&end.e3, &end.planes[..]) {
             (None, [plane]) => (vec![section(p, &va, &vb, sa, sb, *plane)?], None),
             (Some((_, q)), [pa, pb]) => {
@@ -513,6 +515,10 @@ fn blend_geometry(
 }
 
 fn blend(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str) -> Result<Body> {
+    blend_rails(body, edges, r, shape, what, None)
+}
+
+fn blend_rails(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str, rails: Option<(f64, f64)>) -> Result<Body> {
     if !(r.is_finite() && r > 1e-6 && r < 1e6) {
         return Err(KernelError::Invalid(format!("{what} size must be positive")));
     }
@@ -555,8 +561,8 @@ fn blend(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str) -> Resul
     {
         let _ = groups;
         let loop_pts: Vec<Vec3> = edges.iter().filter(|p| !rest.iter().any(|q| q.dist(**p) < 1e-12)).copied().collect();
-        cur = record::after(blend(&cur, &rest, r, shape, what)?, &cur, &counts);
-        return Ok(record::after(blend(&cur, &loop_pts, r, shape, what)?, &cur, &counts));
+        cur = record::after(blend_rails(&cur, &rest, r, shape, what, rails)?, &cur, &counts);
+        return Ok(record::after(blend_rails(&cur, &loop_pts, r, shape, what, rails)?, &cur, &counts));
     }
     if let Some(groups) = loop_groups(&cur, edges)? {
         for g in groups {
@@ -601,7 +607,7 @@ fn blend(body: &Body, edges: &[Vec3], r: f64, shape: Shape, what: &str) -> Resul
                 return Err(KernelError::Invalid(format!("no edge near {:?}", [p.x, p.y, p.z])));
             }
             let edge = Body::unique_edges(&solid).into_iter().nth(idx).ok_or_else(|| KernelError::Invalid("edge index".into()))?;
-            let attempt = match guard(what, || blend_one(&solid, &edge, size, r, shape)) {
+            let attempt = match guard(what, || blend_one(&solid, &edge, size, r, shape, rails)) {
                 Ok(o) => Ok((o, vec![j])),
                 // A curved edge, or one between curved faces: roll a ball along its smooth chain.
                 Err(e) if !curved_case(&solid, &edge) => Err(e),
@@ -955,9 +961,96 @@ pub fn fillet_max(body: &Body, edges: &[Vec3], radius: f64) -> Option<(f64, Body
     best.map(|b| (lo as f64 * q, b))
 }
 
+/// Which way an edge turns, in the same face order the local blend uses.
+struct EdgeClass {
+    concave: bool,
+    n1: Vec3,
+    n2: Vec3,
+    phi: f64,
+}
+
+fn edge_class(cur: &Body, p: Vec3) -> Result<EdgeClass> {
+    let size = cur.size();
+    let tol = (size * 2e-3).max(1e-3);
+    let Some((idx, dist)) = cur.nearest_edge(p, tol)? else { return Err(KernelError::Invalid("the body has no edges".into())) };
+    if dist > size * 0.05 + 1e-3 {
+        return Err(KernelError::Invalid(format!("no edge near {:?}", [p.x, p.y, p.z])));
+    }
+    let solid = &*cur.solid;
+    let edge = Body::unique_edges(solid).into_iter().nth(idx).ok_or_else(|| KernelError::Invalid("edge index".into()))?;
+    if !matches!(edge.curve(), mt::Curve::Line(_)) {
+        return Err(unsupported("only straight edges"));
+    }
+    let faces: Vec<&mt::Face> = solid.face_iter().filter(|f| f.edge_iter().any(|e| e.id() == edge.id())).collect();
+    let [f1, f2] = faces[..] else { return Err(unsupported("the edge is not between two faces")) };
+    let (Some(n1), Some(n2)) = (plane_normal(f1), plane_normal(f2)) else { return Err(unsupported("both faces next to the edge must be planar")) };
+    let into = |f: &mt::Face, n: Vec3| -> Option<Vec3> {
+        let e = f.boundary_iters().into_iter().flatten().find(|e| e.id() == edge.id())?;
+        let dir = (vtx(e.back()) - vtx(e.front())).normalized()?;
+        n.cross(dir).normalized()
+    };
+    let (Some(t1), Some(t2)) = (into(f1, n1), into(f2, n2)) else { return Err(KernelError::Failed("chamfer: edge direction".into())) };
+    let phi = t1.dot(t2).clamp(-1.0, 1.0).acos();
+    let convex = n1.dot(t2) < -1e-9 && n2.dot(t1) < -1e-9;
+    let concave = n1.dot(t2) > 1e-9 && n2.dot(t1) > 1e-9;
+    if !(phi > 1e-3 && phi < std::f64::consts::PI - 1e-3) || !(convex || concave) {
+        return Err(unsupported("the faces at the edge are tangent or the edge is ambiguous"));
+    }
+    Ok(EdgeClass { concave, n1, n2, phi })
+}
+
+fn face_setbacks(class: &EdgeClass, d1: f64, side: Option<ChamferSide>, flip: bool) -> Result<(f64, f64)> {
+    let d2 = match side {
+        None => d1,
+        Some(ChamferSide::Distance(d)) => d,
+        Some(ChamferSide::Angle(a)) => {
+            let den = (class.phi + a).sin();
+            if den <= 1e-9 {
+                return Err(KernelError::Invalid("that chamfer angle runs past the other face".into()));
+            }
+            d1 * a.sin() / den
+        }
+    };
+    if !(d2.is_finite() && d2 > 1e-6) {
+        return Err(KernelError::Invalid("chamfer size must be positive".into()));
+    }
+    let up = Vec3::new(1e-6, 1e-3, 1.0);
+    let first_on_n1 = (class.n1.dot(up) > class.n2.dot(up)) ^ flip;
+    Ok(if first_on_n1 { (d1, d2) } else { (d2, d1) })
+}
+
+/// Concave edges are filled (the bevel sits in the empty corner). Convex edges stay on the
+/// cutting prism. Used when the selection is not entirely convex, so a mitre of cutters does
+/// not apply.
+fn chamfer_mixed(body: &Body, edges: &[Vec3], d1: f64, side: Option<ChamferSide>, flip: bool) -> Result<Body> {
+    let counts = record::counts(&[body]);
+    let mut cur = crate::boolean_record::operand(body, 0, &counts);
+    for (k, p) in edges.iter().enumerate() {
+        let class = edge_class(&cur, *p)?;
+        let step = if class.concave {
+            let (s1, s2) = face_setbacks(&class, d1, side, flip)?;
+            blend_rails(&cur, &[*p], s1.max(s2), Shape::Flat, "chamfer", Some((s1, s2)))?
+        } else {
+            let t = chamfer_tool_sides(&cur, *p, d1, side.map(|s| (s, flip)), k)?;
+            cut_one(&cur, &t)?.ok_or_else(|| KernelError::Failed("the chamfer removed everything".into()))?
+        };
+        cur = record::after(step, &cur, &counts);
+    }
+    Ok(cur)
+}
+
+fn any_concave(body: &Body, edges: &[Vec3]) -> Result<bool> {
+    let mut any = false;
+    for p in edges {
+        any |= edge_class(body, *p)?.concave;
+    }
+    Ok(any)
+}
+
 /// Equal-distance chamfer of the edges nearest to the given points. Each edge is cut with a
 /// prism whose only face inside the body is the chamfer plane (so neighbouring chamfers meet in
-/// a mitre); the local operation is the fallback.
+/// a mitre); the local operation is the fallback. A concave edge is filled instead: the same
+/// flat blend sits in the empty corner and the body grows.
 pub fn chamfer(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
     body.require_brep("chamfer")?;
     if !(distance.is_finite() && distance > 1e-6 && distance < 1e6) {
@@ -965,6 +1058,9 @@ pub fn chamfer(body: &Body, edges: &[Vec3], distance: f64) -> Result<Body> {
     }
     if edges.is_empty() || edges.len() > 1000 {
         return Err(KernelError::Invalid("select 1…1000 edges".into()));
+    }
+    if any_concave(body, edges).unwrap_or(false) {
+        return chamfer_mixed(body, edges, distance, None, false);
     }
     // Each step's result carries its history over `[body]`.
     let counts = record::counts(&[body]);
@@ -1117,6 +1213,9 @@ pub fn chamfer_sides(body: &Body, edges: &[Vec3], d1: f64, side: ChamferSide, fl
     }
     if edges.is_empty() || edges.len() > 1000 {
         return Err(KernelError::Invalid("select 1…1000 edges".into()));
+    }
+    if any_concave(body, edges).unwrap_or(false) {
+        return chamfer_mixed(body, edges, d1, Some(side), flip);
     }
     let counts = record::counts(&[body]);
     let mut cur = crate::boolean_record::operand(body, 0, &counts);

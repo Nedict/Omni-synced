@@ -141,8 +141,9 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
     {
         {
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut app.keymap.filter).hint_text("Filter commands or keys").desired_width(300.0));
-                if !app.keymap.read_only && ui.button("Reset All").clicked() {
+                let hint = app.tr("keymap.filter_hint").to_string();
+                ui.add(egui::TextEdit::singleline(&mut app.keymap.filter).hint_text(hint).desired_width(300.0));
+                if !app.keymap.read_only && ui.button(app.tr("keymap.reset_all")).clicked() {
                     action = Some((String::new(), "reset_all"));
                 }
                 if ui.button("Export…").on_hover_text("Keys, S box favourites and the toolbar, as a file").clicked() {
@@ -157,10 +158,10 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
             if let Some((id, key, _)) = app.keymap.conflict.clone() {
                 ui.horizontal(|ui| {
-                    if ui.button(format!("Use {key} here anyway")).clicked() {
+                    if ui.button(crate::i18n::format("keymap.use_anyway", &[("key", &key)])).clicked() {
                         action = Some((format!("{id}\n{key}"), "replace"));
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(app.tr("keymap.cancel")).clicked() {
                         action = Some((String::new(), "cancel"));
                     }
                 });
@@ -178,15 +179,16 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
                 egui::Grid::new("sc_keymap_grid").num_columns(4).striped(true).spacing([10.0, 4.0]).show(ui, |ui| {
                     for c in command_specs() {
                         let key = effective(app, c.id).unwrap_or_default();
-                        if !q.is_empty() && ![c.label, c.id, key.as_str()].iter().any(|s| s.to_lowercase().contains(&q)) {
+                        let label = app.tr_label(c.label);
+                        if !q.is_empty() && ![label, c.id, key.as_str()].iter().any(|s| s.to_lowercase().contains(&q)) {
                             continue;
                         }
-                        ui.label(c.label);
+                        ui.label(label);
                         ui.label(RichText::new(c.id).size(10.5).color(t.text_dim));
                         let capturing = app.keymap.capturing.as_deref() == Some(c.id);
                         let changed = app.keymap.custom.contains_key(c.id);
                         let text = if capturing {
-                            "press a key…".to_string()
+                            app.tr("keymap.press_a_key").to_string()
                         } else if key.is_empty() {
                             "—".to_string()
                         } else {
@@ -296,5 +298,27 @@ mod tests {
         reset(&mut b, None);
         assert_eq!(effective(&b, "solid.move").as_deref(), Some("M"));
         assert_eq!(key_name(egui::Key::K, egui::Modifiers { ctrl: true, shift: true, ..Default::default() }), "Ctrl+Shift+K");
+    }
+
+    /// Feature: ux-ui-shell-improvements, Property 20: Keymap bindings round-trip, reset to defaults, and respect reserved keys and conflicts
+    #[test]
+    fn property_20_bindings_round_trip_reset_and_respect_reserved_keys() {
+        let mut cases = 0usize;
+        for n in 0..100 {
+            let mut a = app();
+            let key = format!("Alt+{n}");
+            assert!(bind(&mut a, "solid.extrude", "Escape", false).is_err());
+            bind(&mut a, "solid.extrude", &key, false).expect("bind");
+            let mut b = app();
+            b.keymap.load(&a.keymap.prefs());
+            assert_eq!(effective(&b, "solid.extrude").as_deref(), Some(key.as_str()));
+            reset(&mut b, None);
+            assert_eq!(effective(&b, "solid.extrude").as_deref(), Some("E"));
+            assert!(bind(&mut a, "solid.fillet", &key, false).is_err());
+            bind(&mut a, "solid.fillet", &key, true).expect("replace");
+            assert_eq!(commands_for(&a, &key), vec!["solid.fillet"]);
+            cases += 1;
+        }
+        assert!(cases >= 100, "property ran {cases} times");
     }
 }

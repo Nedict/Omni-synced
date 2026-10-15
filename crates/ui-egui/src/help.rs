@@ -54,6 +54,7 @@ pub fn run(app: &mut SolveApp, ctx: &egui::Context, item: &str) {
             app.keymap.read_only = true;
         }
         "crashes" => crate::crash_ui::open(app),
+        "coaching" => crate::coaching::toggle(app),
         "report" => {
             let dialog = app.dialog.clone();
             let error = dialog.as_ref().and_then(|d| d.error.clone()).or_else(|| app.preview.error.clone());
@@ -76,6 +77,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context, anchor: egui::Pos2) {
                         ("shortcuts", "Keyboard Shortcuts"),
                         ("report", "Report an Issue…"),
                         ("crashes", "Crash Reports…"),
+                        ("coaching", if app.session.coaching.enabled { "coaching.disable" } else { "coaching.enable" }),
                     ] {
                         if crate::context_menu::list_row(ui, &crate::context_menu::Item::action(id, label, "")).is_some() {
                             pick = Some(id);

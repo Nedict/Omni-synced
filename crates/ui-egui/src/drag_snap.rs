@@ -6,7 +6,7 @@
 
 use std::cell::{Cell, RefCell};
 
-use egui::{Align2, FontId, Shape, Stroke};
+use egui::{FontId, Shape, Stroke};
 use serde_json::{Value, json};
 use solidcraft_engine::geom::Vec2;
 use solidcraft_engine::sketch::{CurveKind, Sketch};
@@ -47,6 +47,32 @@ impl Snap {
             Target::On(_) => "On",
             Target::Align => "",
         }
+    }
+
+    pub fn type_key(&self) -> &'static str {
+        let label = self.label();
+        if label.is_empty() { "sketch.snap.align" } else { crate::sketch_tools::snap_key(label) }
+    }
+}
+
+/// A snap marker: where it is drawn and which catalog key names it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SnapMarker {
+    pub at: Vec2,
+    pub type_key: &'static str,
+}
+
+/// Markers for the current snap. Several guides each get one, and the first sits on `snap.at`.
+pub fn markers(snap: &Snap) -> Vec<SnapMarker> {
+    let type_key = snap.type_key();
+    if snap.guides.len() > 1 {
+        let mut out: Vec<SnapMarker> = snap.guides.iter().map(|(a, b)| SnapMarker { at: (*a + *b) * 0.5, type_key }).collect();
+        if let Some(first) = out.first_mut() {
+            first.at = snap.at;
+        }
+        out
+    } else {
+        vec![SnapMarker { at: snap.at, type_key }]
     }
 }
 
@@ -226,13 +252,24 @@ pub fn show(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     }
     let Some(sp) = to(s.at) else { return };
     painter.circle_stroke(sp, 6.0, Stroke::new(1.5, tk.accent));
-    let label = s.label();
-    if !label.is_empty() {
-        let r = egui::Rect::from_min_size(sp + egui::vec2(12.0, -24.0), egui::vec2(24.0, 14.0));
-        painter.rect_filled(r, 3.0, tk.accent_soft);
-        painter.text(r.center(), Align2::CENTER_CENTER, label, FontId::proportional(10.0), tk.text);
+    let marks = markers(&s);
+    for (i, mark) in marks.iter().enumerate() {
+        let Some(at) = to(mark.at) else { continue };
+        if i > 0 {
+            painter.circle_stroke(at, 5.0, Stroke::new(1.2, tk.accent));
+        }
+        if i == 0 {
+            let text = app.tr(mark.type_key);
+            if !text.is_empty() && mark.type_key != "sketch.snap.align" {
+                let galley = painter.layout_no_wrap(text.to_string(), FontId::proportional(10.0), tk.text);
+                let r = egui::Rect::from_min_size(at + egui::vec2(12.0, -24.0), galley.size() + egui::vec2(8.0, 4.0));
+                painter.rect_filled(r, 3.0, tk.accent_soft);
+                painter.galley(r.min + egui::vec2(4.0, 2.0), galley, tk.text);
+            }
+        }
     }
     crate::scenario::publish_count("drag_guides", s.guides.len() as f64);
+    crate::scenario::publish_count("snap_markers", marks.len() as f64);
 }
 
 #[cfg(test)]
@@ -278,5 +315,32 @@ mod tests {
         set_suppressed(true);
         assert!(drag(&s, &end, Vec2::new(10.1, 0.1)).is_none());
         set_suppressed(false);
+        assert!(current().is_none(), "leaving the target clears the snap");
+    }
+
+    /// Feature: ux-ui-shell-improvements, Property 4 and 5: markers sit on the snap and match the guides
+    #[test]
+    fn property_4_and_5_snap_markers_follow_the_target_and_each_guide() {
+        let mut cases = 0usize;
+        for i in 0..100 {
+            let at = Vec2::new(f64::from(i), 2.0);
+            let guides = vec![(Vec2::new(0.0, 2.0), Vec2::new(f64::from(i + 4), 2.0)), (Vec2::new(f64::from(i), 0.0), Vec2::new(f64::from(i), 6.0))];
+            let snap = Snap { point: format!("p{i}"), at, offset: Vec2::ZERO, target: Target::Align, guides: guides.clone() };
+            let marks = markers(&snap);
+            assert_eq!(marks.len(), guides.len());
+            assert_eq!(marks[0].at, snap.at);
+            assert_eq!(marks[0].type_key, "sketch.snap.align");
+            let point = Snap { target: Target::Point("q".into()), guides: Vec::new(), ..snap.clone() };
+            let one = markers(&point);
+            assert_eq!(one.len(), 1);
+            assert_eq!(one[0].at, point.at);
+            assert_eq!(one[0].type_key, "sketch.snap.point");
+            cases += 1;
+        }
+        let tk = crate::theme::Tokens::light();
+        let dark = crate::theme::Tokens::dark();
+        assert_ne!(tk.accent, tk.text);
+        assert_ne!(dark.accent, dark.overlay);
+        assert!(cases >= 100, "property ran {cases} times");
     }
 }

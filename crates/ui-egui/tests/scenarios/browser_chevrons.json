@@ -274,7 +274,7 @@
  {
   "expect": {
    "browser_has": [
-    "Sketch1"
+    "Sketch1 — Still movable"
    ]
   }
  },
@@ -286,7 +286,7 @@
  {
   "expect": {
    "browser_lacks": [
-    "Sketch1"
+    "Sketch1 — Still movable"
    ],
    "browser_selected": false
   }
@@ -299,7 +299,7 @@
  {
   "expect": {
    "browser_has": [
-    "Sketch1"
+    "Sketch1 — Still movable"
    ],
    "browser_selected": false
   }
@@ -483,7 +483,7 @@
  {
   "expect": {
    "browser_lacks": [
-    "Sketch1"
+    "Sketch1 — Still movable"
    ]
   }
  },
@@ -495,7 +495,7 @@
  {
   "expect": {
    "browser_has": [
-    "Sketch1"
+    "Sketch1 — Still movable"
    ]
   }
  },

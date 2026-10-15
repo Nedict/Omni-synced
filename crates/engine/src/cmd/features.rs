@@ -22,7 +22,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "CREATE")
         .icon("sweep")
         .params("sketch: profile sketch; profiles?; path_sketch: sketch; path: [curve ids in order]; operation?, targets?, name?, body_name?"),
-    CommandSpec::new("solid.loft", "Loft", loft).at("SOLID", "CREATE").icon("loft").params("sections: [{sketch, profiles?} | {sketch, point: id} (an apex)] (2 or more, in order); operation?, targets?, name?, body_name?"),
+    CommandSpec::new("solid.loft", "Loft", loft).at("SOLID", "CREATE").icon("loft").params("sections: [{sketch, profiles?} | {sketch, point: id} (an apex)] (2 or more, in order); rails?: {sketch, curves: [ids]} (a guide the two profiles scale out to meet); operation?, targets?, name?, body_name?"),
     CommandSpec::new("solid.box", "Box", prim_box).at("SOLID", "CREATE").icon("box").params("length, width, height: expr; corner?: [x,y,z] | center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
     CommandSpec::new("solid.cylinder", "Cylinder", prim_cylinder).at("SOLID", "CREATE").icon("cylinder").params("radius | diameter, height: expr; base?: [x,y,z] (centre of the bottom: numbers in mm or length expressions; default: the origin); axis?: X|Y|Z|[x,y,z] (default Z); operation?, targets?: [body], name?, body_name?"),
     CommandSpec::new("solid.sphere", "Sphere", prim_sphere).at("SOLID", "CREATE").icon("sphere").params("radius | diameter: expr; center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
@@ -46,12 +46,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "CREATE")
         .icon("pattern_rect")
         .params("features: [names] | bodies: [names]; path_sketch: sketch; path: [curve ids in order]; count; spacing (between instances) | distance (first to last); orientation?: identical|path; flip?: bool"),
-    CommandSpec::new("solid.mirror", "Mirror", mirror).at("SOLID", "CREATE").icon("mirror").params("features: [names] | bodies: [names] (combine?: join with the original); plane: XY|XZ|YZ|construction plane name or id|{origin, normal}|{origin, x_dir, y_dir} (a construction plane keeps the mirror following it)"),
+    CommandSpec::new("solid.mirror", "Mirror", mirror).at("SOLID", "CREATE").icon("mirror").params("features: [names] | bodies: [names] (combine?: join with the original) | faces: [[x,y,z]] (mirror those faces back onto the same body; body?); plane: XY|XZ|YZ|construction plane name or id|{origin, normal}|{origin, x_dir, y_dir} (a construction plane keeps the mirror following it)"),
     CommandSpec::new("solid.hole", "Hole", hole)
         .at("SOLID", "CREATE")
         .icon("hole")
         .key("H")
-        .params("position: [x,y,z] on a face | sketch + points: [sketch point ids] (one hole each, perpendicular to the sketch) | sketch alone (every sketch point: standalone points and circle centres); direction?: [x,y,z] (default: into the face); diameter | thread (a tapped hole: the tap drill, major − pitch) | clearance: \"M6\" with fit?: close|normal|loose (ISO 273); depth? (default through all) | to?: [x,y,z] (To Object: drill to that face or point); type?: simple|drilled|counterbore|countersink; tip_angle?; cb_diameter?, cb_depth?; cs_diameter?, cs_angle?; thread?: \"M6\" (cosmetic)"),
+        .params("position: [x,y,z] on a face | sketch + points: [sketch point ids] (one hole each, perpendicular to the sketch) | sketch alone (every sketch point: standalone points and circle centres); direction?: [x,y,z] (default: into the face); diameter | thread (a tapped hole: the tap drill, major − pitch) | clearance: \"M6\" with fit?: close|normal|loose (ISO 273); depth? (default through all) | to?: [x,y,z] (To Object: drill to that face or point); type?: simple|drilled|counterbore|countersink; tip_angle?; cb_diameter?, cb_depth?; cs_diameter?, cs_angle?; thread?: \"M6\" (cosmetic); thread_offset?, thread_length? (clear a chamfer, then a shorter thread)"),
     CommandSpec::new("solid.pipe", "Pipe", pipe)
         .at("SOLID", "CREATE")
         .icon("pipe")
@@ -75,7 +75,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.thread", "Thread", thread)
         .at("SOLID", "CREATE")
         .icon("thread")
-        .params("face: [x,y,z] on a cylindrical face; designation?: ISO metric (\"M8\", \"M8x1\"; default: the size that fits); length?: expr (default: the whole face). Cosmetic: the model is unchanged, model.threads lists it"),
+        .params("face: [x,y,z] on a cylindrical face; designation?: ISO metric (\"M8\", \"M8x1\"; default: the size that fits); offset?: expr (start past the end nearest the pick); length?: expr (default: the rest of the face). Cosmetic: the model is unchanged, model.threads lists it"),
     CommandSpec::new("solid.shell", "Shell", shell)
         .at("SOLID", "MODIFY")
         .icon("shell")
@@ -130,6 +130,19 @@ fn extrude_base(s: &Session, p: &Value) -> Option<(Vec3, Vec3)> {
         }
     };
     Some((ss.plane.to_world(q), ss.plane.normal()))
+}
+
+/// Put a new solid after every existing feature. A timeline rolled back to an earlier sketch
+/// would otherwise insert the solid where a later Join can merge it into Body1.
+/// An in-place edit suppresses the feature it is rewriting and must keep its place.
+fn append_new_solid(s: &mut Session) {
+    let Some(marker) = s.doc.marker else { return };
+    let editing = marker > 0 && s.doc.features.get(marker - 1).is_some_and(|feature| feature.suppressed);
+    if editing {
+        return;
+    }
+    s.doc_mut().marker = None;
+    s.refresh();
 }
 
 /// What `operation: "auto"` means for an extrude with these parameters: `cut` when it goes
@@ -478,6 +491,12 @@ fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) ->
 
 fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.extrude";
+    // A new solid is a later feature. Inserting it before an existing Join would let that
+    // Join absorb the new solid back into Body1 as soon as the timeline runs forward.
+    let requested = str_(p, "operation");
+    if requested.is_none_or(|name| name.eq_ignore_ascii_case("new")) {
+        append_new_solid(s);
+    }
     // A planar body face extrudes like a profile: its boundary is copied into a sketch on it.
     let (sketch, face_profile) = match p.get("face").and_then(vec3) {
         Some(fp) => {
@@ -826,6 +845,11 @@ fn chamfer(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn combine(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.combine";
+    // A rolled-back timeline has to be finished before Combine moves a body. Edit Feature
+    // places its scratch marker on purpose; rolling that forward would publish a second transfer.
+    if crate::frames::command_depth() <= 1 {
+        super::component::finish_rollback(s);
+    }
     let target = str_(p, "target").ok_or_else(|| bad(cmd, "`target` must be a body name"))?.to_string();
     let tools = string_list(p, "tools");
     if tools.is_empty() {
@@ -1010,10 +1034,15 @@ fn pattern_path(s: &mut Session, p: &Value) -> Result<Value> {
 fn mirror(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.mirror";
     let bodies = string_list(p, "bodies");
-    let features = if bodies.is_empty() { source_features(s, p, cmd)? } else { Vec::new() };
+    let faces: Vec<Vec3> = p.get("faces").and_then(Value::as_array).map(|a| a.iter().filter_map(vec3).collect()).unwrap_or_default();
+    let features = if bodies.is_empty() && faces.is_empty() { source_features(s, p, cmd)? } else { Vec::new() };
     let plane = plane_param(s, p.get("plane"), cmd)?;
     let combine = bool_(p, "combine").unwrap_or(false);
-    add_feature(s, p, FeatureKind::Mirror { features, plane, bodies, combine })
+    add_feature(
+        s,
+        p,
+        FeatureKind::Mirror { features, plane, bodies, combine, faces, face_body: str_(p, "body").map(str::to_string) },
+    )
 }
 
 /// The other name of an origin plane (`Top` for `XY`, `XY` for `Top`...), if `name` is one.
@@ -1304,7 +1333,30 @@ fn hole(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(vec3(v).ok_or_else(|| bad(cmd, "`to` must be a point [x, y, z] on the face to drill to"))?),
         None => None,
     };
-    add_feature(s, p, FeatureKind::Hole { position, direction, diameter, depth, hole: kind, points: points.map(|x| x.0), thread, to })
+    let thread_offset = expr(p, "thread_offset");
+    if let Some(o) = &thread_offset {
+        check_expr(s, o, Kind::Length, cmd, "thread_offset")?;
+    }
+    let thread_length = expr(p, "thread_length");
+    if let Some(o) = &thread_length {
+        check_expr(s, o, Kind::Length, cmd, "thread_length")?;
+    }
+    add_feature(
+        s,
+        p,
+        FeatureKind::Hole {
+            position,
+            direction,
+            diameter,
+            depth,
+            hole: kind,
+            points: points.map(|x| x.0),
+            thread,
+            thread_offset,
+            thread_length,
+            to,
+        },
+    )
 }
 
 /// The points of a sketch a hole drills at when only the sketch is given.
@@ -1420,7 +1472,18 @@ fn loft(s: &mut Session, p: &Value) -> Result<Value> {
         }
         sections.push(solidcraft_doc::LoftSection { sketch, profiles: profiles(sec, cmd)?, point: None });
     }
-    add_feature(s, p, FeatureKind::Loft { sections, operation: operation(p, cmd)?, targets: string_list(p, "targets") })
+    let rails = match p.get("rails") {
+        None => None,
+        Some(r) => {
+            let sketch = sketch_id(s, r.get("sketch"), cmd, "rails.sketch")?;
+            let curves = string_list(r, "curves");
+            if curves.is_empty() || curves.len() > 1000 {
+                return Err(bad(cmd, "rails.curves must list 1…1000 curve ids"));
+            }
+            Some(solidcraft_doc::LoftRail { sketch, curves })
+        }
+    };
+    add_feature(s, p, FeatureKind::Loft { sections, operation: operation(p, cmd)?, targets: string_list(p, "targets"), rails })
 }
 
 fn thread(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1439,8 +1502,12 @@ fn thread(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(l) = &length {
         check_expr(s, l, Kind::Length, cmd, "length")?;
     }
+    let offset = expr(p, "offset");
+    if let Some(o) = &offset {
+        check_expr(s, o, Kind::Length, cmd, "offset")?;
+    }
     let modeled = p.get("modeled").and_then(Value::as_bool).unwrap_or(false);
-    let v = add_feature(s, p, FeatureKind::Thread { face, designation, length, modeled })?;
+    let v = add_feature(s, p, FeatureKind::Thread { face, designation, length, offset, modeled })?;
     let st = s.model.state();
     let t = v.get("feature").and_then(Value::as_u64).and_then(|id| st.threads.iter().find(|t| t.feature == id).cloned());
     Ok(json!({"feature": v.get("feature"), "name": v.get("name"), "thread": t}))

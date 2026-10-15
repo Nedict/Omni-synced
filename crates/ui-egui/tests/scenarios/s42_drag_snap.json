@@ -11,6 +11,9 @@
   }
  },
  {
+  "key": "Escape"
+ },
+ {
   "call": "engine.execute",
   "params": {
    "command": "sketch.line",

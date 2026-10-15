@@ -618,6 +618,23 @@ pub fn extend(body: &Body, at: &[Vec3], distance: f64) -> Result<Body> {
     })
 }
 
+/// Faces that are not caps along `axis` (their plane is not square to it, or they are curved),
+/// copied out as a surface body.
+pub fn side_skin(body: &Body, axis: Vec3) -> Result<Body> {
+    let axis = axis.normalized().ok_or_else(|| KernelError::Invalid("the surface direction is zero".into()))?;
+    let tol = (body.size() * 2e-3).max(1e-3);
+    let faces = body.faces(tol)?;
+    let pts: Vec<Vec3> = faces
+        .iter()
+        .filter(|f| f.plane_normal.map(|n| n.dot(axis).abs() < 0.85).unwrap_or(true))
+        .map(|f| f.centroid)
+        .collect();
+    if pts.is_empty() {
+        return Err(KernelError::Invalid("that solid has no side faces to turn into a surface".into()));
+    }
+    copy_faces(body, &pts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

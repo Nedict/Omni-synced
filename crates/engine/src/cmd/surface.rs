@@ -30,6 +30,26 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SURFACE", "MODIFY")
         .icon("trim")
         .params("body: surface name; plane: XY|XZ|YZ|plane name|{origin, normal} or tool: {body, point} (a face, its surface extended); keep: [x,y,z] (a point on the side to keep)"),
+    CommandSpec::new("surface.extrude", "Extrude Surface", extrude_surface)
+        .at("SURFACE", "CREATE")
+        .icon("extrude")
+        .params("same as solid.extrude; the side walls are kept as a zero-thickness surface. axis?: [x,y,z] (default Z)"),
+    CommandSpec::new("surface.revolve", "Revolve Surface", revolve_surface)
+        .at("SURFACE", "CREATE")
+        .icon("revolve")
+        .params("same as solid.revolve; side faces become a surface. axis_dir?: [x,y,z] (default Z, used only to drop the caps)"),
+    CommandSpec::new("surface.sweep", "Sweep Surface", sweep_surface)
+        .at("SURFACE", "CREATE")
+        .icon("sweep")
+        .params("same as solid.sweep; side faces become a surface"),
+    CommandSpec::new("surface.loft", "Loft Surface", loft_surface)
+        .at("SURFACE", "CREATE")
+        .icon("loft")
+        .params("same as solid.loft; side faces become a surface"),
+    CommandSpec::new("surface.untrim", "Untrim", untrim)
+        .at("SURFACE", "MODIFY")
+        .icon("trim")
+        .params("body: surface name. Removes the latest trim of that body"),
 ];
 
 fn patch(s: &mut Session, p: &Value) -> Result<Value> {
@@ -115,6 +135,51 @@ fn trim(s: &mut Session, p: &Value) -> Result<Value> {
     add_feature(s, p, FeatureKind::SurfaceTrim { body, plane, tool, keep })
 }
 
+fn walls_after(s: &mut Session, p: &Value, command: &str, axis: solidcraft_geom::Vec3) -> Result<Value> {
+    let made = s.execute(command, p)?;
+    let id = made.get("feature").and_then(Value::as_u64).ok_or_else(|| bad(command, "the solid feature was not created"))?;
+    let body = s
+        .model
+        .state()
+        .bodies
+        .iter()
+        .find(|b| b.feature == id)
+        .map(|b| b.name.clone())
+        .ok_or_else(|| bad(command, "the solid feature made no body"))?;
+    let axis = p.get("axis").and_then(vec3).unwrap_or(axis);
+    add_feature(s, p, FeatureKind::SheetWalls { body, axis })
+}
+
+fn extrude_surface(s: &mut Session, p: &Value) -> Result<Value> {
+    walls_after(s, p, "solid.extrude", solidcraft_geom::Vec3::Z)
+}
+
+fn revolve_surface(s: &mut Session, p: &Value) -> Result<Value> {
+    walls_after(s, p, "solid.revolve", solidcraft_geom::Vec3::Z)
+}
+
+fn sweep_surface(s: &mut Session, p: &Value) -> Result<Value> {
+    walls_after(s, p, "solid.sweep", solidcraft_geom::Vec3::Z)
+}
+
+fn loft_surface(s: &mut Session, p: &Value) -> Result<Value> {
+    walls_after(s, p, "solid.loft", solidcraft_geom::Vec3::Z)
+}
+
+fn untrim(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "surface.untrim";
+    let body = str_(p, "body").ok_or_else(|| bad(cmd, "`body` is required"))?;
+    let id = s
+        .doc
+        .features
+        .iter()
+        .rev()
+        .find(|f| matches!(&f.kind, FeatureKind::SurfaceTrim { body: b, .. } if b == body))
+        .map(|f| f.id)
+        .ok_or_else(|| bad(cmd, format!("`{body}` has no trim to remove")))?;
+    s.execute("timeline.delete", &serde_json::json!({"features": [id.to_string()]}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,5 +234,19 @@ mod tests {
         assert!((area - want).abs() < want * 1e-2, "{area} vs {want}");
         assert!(s.execute("surface.thicken", &json!({"bodies": ["Nope"], "thickness": 1})).is_err());
         assert!(s.execute("surface.trim", &json!({"body": "Sheet"})).is_err());
+    }
+
+    #[test]
+    fn untrim_drops_the_latest_trim() {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [10, 10]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "surface.patch", json!({"sketch": "S", "body_name": "Sheet"}));
+        run(&mut s, "surface.trim", json!({"body": "Sheet", "plane": {"origin": [3, 0, 0], "normal": [1, 0, 0]}, "keep": [8, 5, 0]}));
+        assert!(s.doc.features.iter().any(|f| matches!(f.kind, FeatureKind::SurfaceTrim { .. })));
+        run(&mut s, "surface.untrim", json!({"body": "Sheet"}));
+        assert!(!s.doc.features.iter().any(|f| matches!(f.kind, FeatureKind::SurfaceTrim { .. })));
+        assert!(s.world_state().body("Sheet").unwrap().body.is_surface());
     }
 }

@@ -302,6 +302,12 @@ pub fn mapped() -> bool {
     MAPPED.with(std::cell::Cell::get)
 }
 
+/// How many commands are on the stack. One is a command the user ran; more means a command
+/// running inside that one.
+pub(crate) fn command_depth() -> u32 {
+    DEPTH.with(|d| d.get())
+}
+
 /// A command running inside another (its parameters are already in component frames).
 pub struct Nested;
 

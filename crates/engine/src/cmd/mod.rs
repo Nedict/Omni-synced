@@ -10,6 +10,9 @@ macro_rules! created_doc {
 }
 
 mod browser;
+mod cam;
+mod drawing;
+mod form;
 mod clipboard;
 mod component;
 mod component_clone;
@@ -51,6 +54,8 @@ mod sketch_modify;
 mod sketch_project;
 mod surface;
 mod surface_analysis;
+mod ui;
+mod view;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -142,6 +147,9 @@ impl CommandSpec {
     /// Run inside another command: when it is enabled, its `run` (the caller's command owns the
     /// undo step and the evaluation).
     pub(crate) fn run_nested(&self, s: &mut Session, p: &Value) -> Result<Value> {
+        // Count this as inside the caller so a constructor can tell Edit Feature's scratch
+        // marker from a timeline the user rolled back.
+        let _inside = (crate::frames::command_depth() > 0).then(|| crate::frames::Nested::enter(self.id).0);
         (self.enabled)(s).map_err(|why| crate::EngineError::Disabled(self.id.to_string(), why))?;
         (self.run)(s, p)
     }
@@ -199,6 +207,9 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(features::COMMANDS.iter());
     v.extend(features_more::COMMANDS.iter());
     v.extend(mesh::COMMANDS.iter());
+    v.extend(form::COMMANDS.iter());
+    v.extend(drawing::COMMANDS.iter());
+    v.extend(cam::COMMANDS.iter());
     v.extend(construct::COMMANDS.iter());
     v.extend(sheet::COMMANDS.iter());
     v.extend(plastic::COMMANDS.iter());
@@ -216,6 +227,8 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(inspect::COMMANDS.iter());
     v.extend(section::COMMANDS.iter());
     v.extend(diagnostics::COMMANDS.iter());
+    v.extend(ui::COMMANDS.iter());
+    v.extend(view::COMMANDS.iter());
     v
 }
 

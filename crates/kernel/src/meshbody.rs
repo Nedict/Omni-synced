@@ -208,3 +208,240 @@ impl Body {
         })
     }
 }
+
+/// Keep the part of a mesh on the same side of a plane as `keep`. Triangles that cross the
+/// plane are clipped. The result is a mesh body (open, if the cut removed a cap).
+pub fn mesh_plane_cut(body: &Body, origin: Vec3, normal: Vec3, keep: Vec3) -> Result<Body> {
+    let n = normal.normalized().ok_or_else(|| KernelError::Invalid("the cut plane needs a direction".into()))?;
+    let (positions, triangles) = body.triangle_mesh().ok_or_else(|| KernelError::Invalid("select a mesh body".into()))?;
+    let side = |p: Vec3| (p - origin).dot(n);
+    let keep_pos = side(keep) >= 0.0;
+    let mut out_pos = Vec::new();
+    let mut out_tri = Vec::new();
+    let push = |out_pos: &mut Vec<Vec3>, out_tri: &mut Vec<[u32; 3]>, poly: &[Vec3]| {
+        if poly.len() < 3 {
+            return;
+        }
+        let base = u32::try_from(out_pos.len()).unwrap_or(u32::MAX);
+        out_pos.extend(poly.iter().copied());
+        for k in 1..poly.len() - 1 {
+            out_tri.push([base, base.saturating_add(k as u32), base.saturating_add(k as u32 + 1)]);
+        }
+    };
+    for t in triangles {
+        let pts: Vec<Vec3> = t.iter().filter_map(|i| positions.get(*i as usize).copied()).collect();
+        let [a, b, c] = pts.as_slice() else { continue };
+        let tri = [*a, *b, *c];
+        let inside = |p: Vec3| (side(p) >= -1e-8) == keep_pos;
+        let inn: Vec<Vec3> = tri.into_iter().filter(|p| inside(*p)).collect();
+        if inn.len() == 3 {
+            push(&mut out_pos, &mut out_tri, &tri);
+            continue;
+        }
+        if inn.is_empty() {
+            continue;
+        }
+        // Walk the boundary and insert intersections.
+        let mut poly = Vec::new();
+        for i in 0..3 {
+            let (p, q) = (tri[i], tri[(i + 1) % 3]);
+            let (ip, iq) = (inside(p), inside(q));
+            if ip {
+                poly.push(p);
+            }
+            if ip != iq {
+                let (sp, sq) = (side(p), side(q));
+                let den = sp - sq;
+                if den.abs() > 1e-12 {
+                    let t = sp / den;
+                    if (0.0..=1.0).contains(&t) {
+                        poly.push(p + (q - p) * t);
+                    }
+                }
+            }
+        }
+        push(&mut out_pos, &mut out_tri, &poly);
+    }
+    if out_tri.is_empty() {
+        return Err(KernelError::Invalid("the plane cut removed the whole mesh".into()));
+    }
+    let mut cut = mesh_body(&out_pos, &out_tri)?;
+    cut.color = body.color();
+    Ok(cut)
+}
+
+/// Drop duplicate and degenerate triangles. A boundary of exactly three edges is filled, which
+/// closes a single triangular hole.
+pub fn mesh_repair(body: &Body) -> Result<Body> {
+    let (positions, triangles) = body.triangle_mesh().ok_or_else(|| KernelError::Invalid("select a mesh body".into()))?;
+    let mut tris: Vec<[u32; 3]> = triangles
+        .iter()
+        .copied()
+        .filter(|t| t[0] != t[1] && t[1] != t[2] && t[2] != t[0])
+        .map(|t| {
+            let mut s = t;
+            if s[0] > s[1] {
+                s.swap(0, 1);
+            }
+            if s[1] > s[2] {
+                s.swap(1, 2);
+            }
+            if s[0] > s[1] {
+                s.swap(0, 1);
+            }
+            s
+        })
+        .collect();
+    tris.sort();
+    tris.dedup();
+    let mut edges: std::collections::HashMap<(u32, u32), i32> = std::collections::HashMap::new();
+    for t in &tris {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            let k = (a.min(b), a.max(b));
+            *edges.entry(k).or_default() += 1;
+        }
+    }
+    let boundary: Vec<(u32, u32)> = edges.into_iter().filter(|(_, n)| *n == 1).map(|(k, _)| k).collect();
+    if boundary.len() == 3 {
+        let mut ids = Vec::new();
+        for (a, b) in &boundary {
+            if !ids.contains(a) {
+                ids.push(*a);
+            }
+            if !ids.contains(b) {
+                ids.push(*b);
+            }
+        }
+        if ids.len() == 3 {
+            tris.push([ids[0], ids[1], ids[2]]);
+        }
+    }
+    let mut fixed = mesh_body(positions, &tris)?;
+    fixed.color = body.color();
+    Ok(fixed)
+}
+
+/// Collapse nearby vertices so about `ratio` of the triangles remain (0…1).
+pub fn mesh_reduce(body: &Body, ratio: f64) -> Result<Body> {
+    if !(ratio.is_finite() && ratio > 0.0 && ratio <= 1.0) {
+        return Err(KernelError::Invalid("reduce ratio must be within 0…1".into()));
+    }
+    let (positions, triangles) = body.triangle_mesh().ok_or_else(|| KernelError::Invalid("select a mesh body".into()))?;
+    let cell = (body.size() * (1.0 - ratio).max(0.01)).max(1e-4);
+    let key = |p: Vec3| {
+        (
+            (p.x / cell).round() as i64,
+            (p.y / cell).round() as i64,
+            (p.z / cell).round() as i64,
+        )
+    };
+    let mut map: std::collections::HashMap<(i64, i64, i64), u32> = std::collections::HashMap::new();
+    let mut remap = vec![0u32; positions.len()];
+    let mut out_pos = Vec::new();
+    for (i, p) in positions.iter().enumerate() {
+        let k = key(*p);
+        let next = u32::try_from(out_pos.len()).unwrap_or(u32::MAX);
+        let id = *map.entry(k).or_insert_with(|| {
+            out_pos.push(*p);
+            next
+        });
+        if let Some(slot) = remap.get_mut(i) {
+            *slot = id;
+        }
+    }
+    let tris: Vec<[u32; 3]> = triangles
+        .iter()
+        .filter_map(|t| {
+            let (a, b, c) = (*remap.get(t[0] as usize)?, *remap.get(t[1] as usize)?, *remap.get(t[2] as usize)?);
+            (a != b && b != c && c != a).then_some([a, b, c])
+        })
+        .collect();
+    if tris.is_empty() {
+        return Err(KernelError::Invalid("reducing the mesh removed every triangle".into()));
+    }
+    let mut reduced = mesh_body(&out_pos, &tris)?;
+    reduced.color = body.color();
+    Ok(reduced)
+}
+
+/// Group triangles by which way their normal points (the six axis directions).
+pub fn mesh_face_groups(body: &Body) -> Result<Vec<(String, usize)>> {
+    let (positions, triangles) = body.triangle_mesh().ok_or_else(|| KernelError::Invalid("select a mesh body".into()))?;
+    let mut counts = [0usize; 6];
+    for t in triangles {
+        let (Some(a), Some(b), Some(c)) =
+            (positions.get(t[0] as usize), positions.get(t[1] as usize), positions.get(t[2] as usize))
+        else {
+            continue;
+        };
+        let n = (*b - *a).cross(*c - *a);
+        let (ax, i) = [n.x.abs(), n.y.abs(), n.z.abs()].into_iter().enumerate().max_by(|u, v| u.1.total_cmp(&v.1)).unwrap_or((2, 0.0));
+        let _ = i;
+        let sign = match ax {
+            0 => n.x >= 0.0,
+            1 => n.y >= 0.0,
+            _ => n.z >= 0.0,
+        };
+        let slot = ax * 2 + usize::from(!sign);
+        if let Some(c) = counts.get_mut(slot) {
+            *c += 1;
+        }
+    }
+    let names = ["+X", "-X", "+Y", "-Y", "+Z", "-Z"];
+    Ok(names.into_iter().zip(counts).filter(|(_, n)| *n > 0).map(|(n, c)| (n.to_string(), c)).collect())
+}
+
+/// One planar B-rep face per triangle. The mesh must be a closed triangle solid small enough to sew.
+pub fn mesh_faceted(body: &Body) -> Result<Body> {
+    let (positions, triangles) = body.triangle_mesh().ok_or_else(|| KernelError::Invalid("select a mesh body".into()))?;
+    if triangles.len() > 4000 {
+        return Err(KernelError::Invalid("a faceted conversion is limited to 4000 triangles".into()));
+    }
+    let mut faces = Vec::new();
+    for t in triangles {
+        let (Some(a), Some(b), Some(c)) =
+            (positions.get(t[0] as usize).copied(), positions.get(t[1] as usize).copied(), positions.get(t[2] as usize).copied())
+        else {
+            continue;
+        };
+        if (b - a).cross(c - a).len() < 1e-8 {
+            continue;
+        }
+        faces.push(crate::FaceSpec {
+            loops: vec![vec![
+                crate::EdgeSpec::Line { a, b },
+                crate::EdgeSpec::Line { a: b, b: c },
+                crate::EdgeSpec::Line { a: c, b: a },
+            ]],
+            surface: crate::SurfSpec::Plane,
+            probe: None,
+        });
+    }
+    if faces.is_empty() {
+        return Err(KernelError::Invalid("the mesh has no triangles to convert".into()));
+    }
+    let mut solid = crate::sew(&faces)?;
+    solid = solid.with_color(body.color());
+    Ok(solid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solidcraft_geom::Vec3;
+
+    #[test]
+    fn a_plane_cut_keeps_one_side_and_groups_point_along_axes() {
+        let box_mesh = crate::box_solid(Vec3::ZERO, Vec3::new(10.0, 10.0, 10.0)).unwrap().tessellate(0.05).unwrap();
+        let body = mesh_body(&box_mesh.positions, &box_mesh.triangles).unwrap();
+        let before = body.triangle_mesh().unwrap().1.len();
+        let cut = mesh_plane_cut(&body, Vec3::new(5.0, 0.0, 0.0), Vec3::X, Vec3::new(8.0, 5.0, 5.0)).unwrap();
+        let (pos, tris) = cut.triangle_mesh().unwrap();
+        assert!(!tris.is_empty() && pos.iter().all(|p| p.x >= 4.9), "kept the +X side, {} tris", tris.len());
+        let groups = mesh_face_groups(&body).unwrap();
+        assert!(groups.iter().any(|(n, c)| n == "+Z" && *c > 0));
+        assert!(mesh_repair(&body).is_ok());
+        let reduced = mesh_reduce(&body, 0.2).unwrap();
+        assert!(reduced.triangle_mesh().unwrap().1.len() <= before);
+    }
+}

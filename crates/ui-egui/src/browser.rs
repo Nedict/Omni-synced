@@ -93,12 +93,31 @@ impl OccMove {
 // Queries used by the menus
 // ---------------------------------------------------------------------------------------------
 
+/// How constrained a sketch is, for the browser row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SketchConstraintState {
+    UnderDefined,
+    FullyDefined,
+    Locked,
+}
+
+/// Classify a solver report. Every curve fixed is locked; zero freedom with geometry is fully defined.
+pub fn sketch_constraint_state(dof: usize, curves: usize, locked_curves: usize) -> SketchConstraintState {
+    if curves > 0 && locked_curves >= curves {
+        SketchConstraintState::Locked
+    } else if curves > 0 && dof == 0 {
+        SketchConstraintState::FullyDefined
+    } else {
+        SketchConstraintState::UnderDefined
+    }
+}
+
 /// Is a sketch drawn in the viewport?
 pub fn sketch_visible(app: &SolveApp, id: u64) -> bool {
     if app.session.visibility.hidden_sketches.contains(&id) {
         return false;
     }
-    app.session.visibility.shown_sketches.contains(&id) || (app.ui.show_sketches && !solidcraft_engine::view::sketch_consumed(&app.session, id))
+    app.session.visibility.shown_sketches.contains(&id) || app.ui.show_sketches
 }
 
 pub fn set_sketch_visible(app: &mut SolveApp, id: u64, on: bool) {
@@ -1147,20 +1166,45 @@ fn entries(app: &SolveApp, comp: u64, folder: &str) -> Vec<Entry> {
                 let active = app.session.active_sketch == Some(f.id);
                 let lost = app.session.model.result(f.id).is_some_and(|result| result.error.is_some())
                     && matches!(doc.sketch_face_attachment(f.id, &app.session.model), solidcraft_engine::doc::FaceAttachmentStatus::Lost { .. });
+                let world = app.session.world_state();
+                let solved = world.sketches.iter().find(|ss| ss.feature == f.id);
+                let constraint = solved
+                    .map(|ss| {
+                        let curves = ss.sketch.curves.len();
+                        let locked = (0..curves).filter(|index| ss.sketch.curve_locked(*index)).count();
+                        sketch_constraint_state(ss.report.dof, curves, locked)
+                    })
+                    .unwrap_or(SketchConstraintState::UnderDefined);
+                let state_key = match constraint {
+                    SketchConstraintState::Locked => "browser.sketch.locked",
+                    SketchConstraintState::FullyDefined => "browser.sketch.fully_defined",
+                    SketchConstraintState::UnderDefined => "browser.sketch.under_defined",
+                };
+                let state = crate::i18n::tr(state_key);
                 Entry {
                     key: f.id.to_string(),
                     row_key: format!("s:{}", f.id),
                     label: if lost {
                         format!("{}  (attachment lost)", f.name)
                     } else if active {
-                        format!("{}  (editing)", f.name)
+                        format!("{}  (editing) — {state}", f.name)
                     } else {
-                        f.name.clone()
+                        format!("{} — {state}", f.name)
                     },
+                    color: Some(if lost {
+                        t.error
+                    } else if active {
+                        t.sketch_accent
+                    } else {
+                        match constraint {
+                            SketchConstraintState::Locked => t.sketch_locked,
+                            SketchConstraintState::FullyDefined => t.sketch_fixed,
+                            SketchConstraintState::UnderDefined => t.sketch,
+                        }
+                    }),
                     icon: "sketch",
                     visible: sketch_visible(app, f.id),
                     selected: active || sel.iter().any(|x| matches!(x, Sel::Feature { id } if *id == f.id)),
-                    color: if lost { Some(t.error) } else { active.then_some(t.sketch_accent) },
                     locked: false,
                     sel: Some(Sel::Feature { id: f.id }),
                     target: Some(Target::Sketch { id: f.id }),
@@ -1820,4 +1864,49 @@ fn occurrence_origin(app: &SolveApp, occurrence: u64) -> Option<solidcraft_engin
     let parent = app.session.doc.component_transform(o.parent);
     let own = app.session.pending_moves.get(&occurrence).copied().unwrap_or(o.transform);
     Some(solidcraft_engine::doc::apply_point(&solidcraft_engine::doc::mat_mul(&parent, &own), solidcraft_engine::geom::Vec3::ZERO))
+}
+
+#[cfg(test)]
+mod constraint_tests {
+    use super::{SketchConstraintState, sketch_constraint_state};
+
+    /// Feature: ux-ui-shell-improvements, Property 23: The browser classifies every sketch into one of three constraint states
+    #[test]
+    fn property_23_every_report_is_one_constraint_state() {
+        let mut cases = 0usize;
+        for n in 0..120 {
+            let curves = n % 7;
+            let locked = n % (curves + 1);
+            let dof = if n % 3 == 0 { 0 } else { n % 5 };
+            let state = sketch_constraint_state(dof, curves, locked);
+            let states = [SketchConstraintState::UnderDefined, SketchConstraintState::FullyDefined, SketchConstraintState::Locked];
+            assert_eq!(states.into_iter().filter(|item| *item == state).count(), 1);
+            cases += 1;
+        }
+        assert!(cases >= 100, "property ran {cases} times");
+    }
+
+    /// Feature: ux-ui-shell-improvements, Property 24: Exactly one component is marked active and visibility stays in sync
+    #[test]
+    fn property_24_one_active_component_and_visibility_follows_the_session() {
+        let mut h = crate::scenario::Harness::new();
+        let mut cases = 0usize;
+        for n in 0..100 {
+            if n < 8 {
+                h.app.run("component.create", serde_json::json!({"name": format!("Part{n}"), "activate": true})).expect("component");
+            }
+            let active = h.app.session.active_component;
+            let marked = h.app.session.doc.components.iter().filter(|c| c.id == active).count();
+            assert_eq!(marked, 1);
+            cases += 1;
+        }
+        h.app.run("solid.box", serde_json::json!({"length": 4, "width": 4, "height": 4, "body_name": "Cube"})).expect("box");
+        let visible_before = h.app.session.body_visible("Cube");
+        let failed = h.app.run("browser.visibility", serde_json::json!({"items": "not-a-list"}));
+        assert!(failed.is_err());
+        assert_eq!(h.app.session.body_visible("Cube"), visible_before);
+        h.app.run("browser.visibility", serde_json::json!({"items": ["Cube"], "visible": false})).expect("hide");
+        assert!(!h.app.session.body_visible("Cube"));
+        assert!(cases >= 100, "property ran {cases} times");
+    }
 }

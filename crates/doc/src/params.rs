@@ -150,9 +150,12 @@ impl FeatureKind {
                     }
                 }
             }
-            FeatureKind::Thread { length, .. } => {
+            FeatureKind::Thread { length, offset, .. } => {
                 if let Some(l) = length {
                     v.push(("Length", l, L));
+                }
+                if let Some(o) = offset {
+                    v.push(("Offset", o, L));
                 }
             }
             FeatureKind::Scale { factor, factors, .. } => {
@@ -285,7 +288,16 @@ impl FeatureKind {
             | FeatureKind::Sweep { .. }
             | FeatureKind::Import { .. }
             | FeatureKind::MeshImport { .. }
-            | FeatureKind::BodyTransfer { .. } => {}
+            | FeatureKind::BodyTransfer { .. }
+            | FeatureKind::SheetWalls { .. }
+            | FeatureKind::MeshCut { .. }
+            | FeatureKind::MeshRepair { .. } => {}
+            FeatureKind::MeshReduce { ratio, .. } => v.push(("Ratio", ratio, U)),
+            FeatureKind::Form { length, width, thickness, .. } => {
+                v.push(("Length", length, L));
+                v.push(("Width", width, L));
+                v.push(("Thickness", thickness, L));
+            }
         }
         v
     }

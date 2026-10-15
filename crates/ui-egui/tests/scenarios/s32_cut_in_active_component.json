@@ -208,10 +208,10 @@
   "start": "solid.extrude"
  },
  {
-  "widget": "Join"
+  "widget": "New body"
  },
  {
-  "widget": "Cut"
+  "widget": "Cut from the selected body"
  },
  {
   "text": "10"

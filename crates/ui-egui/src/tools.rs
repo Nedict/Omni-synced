@@ -45,6 +45,8 @@ pub struct Tool {
     pub dim_history: Vec<crate::sketch_dims::DimBox>,
     pub dims_stage: usize,
     pub dims_focus: bool,
+    /// First point of an open line chain, so a later click can close it.
+    pub chain_start: Option<(Vec2, Option<String>)>,
 }
 
 impl Tool {
@@ -89,25 +91,172 @@ impl Tool {
             dim_history: Vec::new(),
             dims_stage: usize::MAX,
             dims_focus: false,
+            chain_start: None,
         })
+    }
+
+    /// The input this tool is waiting for.
+    pub fn step(&self) -> ToolStep {
+        let index = match self.kind {
+            Kind::Draw(_) => self.pts.len(),
+            Kind::Pick(_) | Kind::HorizontalVertical | Kind::Dimension => self.picks.len(),
+            Kind::Ext => self.pts.len().max(self.picks.len()),
+        };
+        let (prompt_key, confirm_key, exit_key) = prompt_keys(self.cmd, index);
+        ToolStep { cmd: self.cmd, index, prompt_key, confirm_key, exit_key }
     }
 }
 
-pub fn hint(id: &str) -> String {
-    match id {
-        "sketch.line" => "Line: click points; right-click or Esc to finish".into(),
-        "sketch.rectangle.two_point" => "Rectangle: click two opposite corners".into(),
-        "sketch.rectangle.center" => "Center rectangle: click the centre, then a corner".into(),
-        "sketch.rectangle.three_point" => "3-point rectangle: click two points of one edge, then the width".into(),
-        "sketch.circle.center" => "Circle: click the centre, then a point on the circle".into(),
-        "sketch.arc.three_point" => "Arc: click start, end, then a point on the arc".into(),
-        "sketch.arc.center_point" => "Arc: click centre and start, then click end or type a signed sweep".into(),
-        "sketch.dimension" => "Dimension: pick one or two entities, then click to place the value".into(),
-        "sketch.constraint.horizontal_vertical" => "Horizontal/Vertical: pick a line or two points to align".into(),
-        "sketch.slot.center_to_center" | "sketch.slot.overall" => "Slot: click both ends, then the width".into(),
-        _ if id.starts_with("sketch.constraint.") => "Constraint: pick the sketch entities".into(),
-        _ => crate::sketch_tools::hint(id).unwrap_or_else(|| "Click in the sketch".into()),
+/// What the active tool is asking for, as catalog keys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ToolStep {
+    pub cmd: &'static str,
+    pub index: usize,
+    pub prompt_key: &'static str,
+    pub confirm_key: &'static str,
+    pub exit_key: &'static str,
+}
+
+/// Name, expected input, confirm, and exit for the running tool. `None` when no tool is active.
+pub struct ToolFeedback {
+    pub name: String,
+    pub expects: String,
+    pub confirm: String,
+    pub exit: String,
+}
+
+pub fn tool_feedback(app: &SolveApp) -> Option<ToolFeedback> {
+    let step = app.tool.as_ref()?.step();
+    let spec = solidcraft_engine::find_command(step.cmd)?;
+    Some(ToolFeedback {
+        name: app.tr_label(spec.label).to_string(),
+        expects: app.tr(step.prompt_key).to_string(),
+        confirm: app.tr(step.confirm_key).to_string(),
+        exit: app.tr(step.exit_key).to_string(),
+    })
+}
+
+/// Put the current step's prompt on the status line.
+pub fn show_prompt(app: &mut SolveApp) {
+    if let Some(step) = app.tool.as_ref().map(Tool::step) {
+        app.set_status(app.tr(step.prompt_key), false);
     }
+}
+
+fn prompt_keys(cmd: &str, index: usize) -> (&'static str, &'static str, &'static str) {
+    let click = "sketch.confirm.click";
+    let enter = "sketch.confirm.enter";
+    let esc = "sketch.exit.esc";
+    let chain = "sketch.exit.chain";
+    let (prompt, confirm, exit) = match cmd {
+        "sketch.line" => (if index == 0 { "sketch.prompt.line.first" } else { "sketch.prompt.line.next" }, click, chain),
+        "sketch.rectangle.two_point" | "sketch.rectangle.center" => {
+            (if index == 0 { "sketch.prompt.rect.first" } else { "sketch.prompt.rect.second" }, click, esc)
+        }
+        "sketch.rectangle.three_point" => (
+            match index {
+                0 => "sketch.prompt.rect.first",
+                1 => "sketch.prompt.rect.second",
+                _ => "sketch.prompt.rect.third",
+            },
+            click,
+            esc,
+        ),
+        "sketch.circle.center" | "sketch.circle.two_point" => {
+            (if index == 0 { "sketch.prompt.circle.first" } else { "sketch.prompt.circle.second" }, click, esc)
+        }
+        "sketch.circle.three_point" | "sketch.arc.three_point" | "sketch.arc.center_point" => (
+            match index {
+                0 => "sketch.prompt.arc.first",
+                1 => "sketch.prompt.arc.second",
+                _ => "sketch.prompt.arc.third",
+            },
+            click,
+            esc,
+        ),
+        "sketch.polygon.inscribed" | "sketch.polygon.circumscribed" | "sketch.polygon.edge" => {
+            (if index == 0 { "sketch.prompt.polygon.first" } else { "sketch.prompt.polygon.second" }, click, esc)
+        }
+        "sketch.slot.center_to_center" | "sketch.slot.overall" => (
+            match index {
+                0 => "sketch.prompt.slot.first",
+                1 => "sketch.prompt.slot.second",
+                _ => "sketch.prompt.slot.third",
+            },
+            click,
+            esc,
+        ),
+        "sketch.point" => ("sketch.prompt.point", click, esc),
+        "sketch.dimension" => (if index == 0 { "sketch.prompt.dimension.pick" } else { "sketch.prompt.dimension.place" }, enter, esc),
+        "sketch.constraint.horizontal_vertical" => ("sketch.prompt.hv", click, esc),
+        other if other.starts_with("sketch.constraint.") => ("sketch.prompt.constraint", click, esc),
+        other => (crate::sketch_tools::prompt_key(other), click, esc),
+    };
+    (prompt, confirm, exit)
+}
+
+/// Catalog keys this shell shows. Tests check each one in every locale.
+pub fn catalog_keys() -> &'static [&'static str] {
+    &[
+        "sketch.confirm.click",
+        "sketch.confirm.enter",
+        "sketch.exit.esc",
+        "sketch.exit.chain",
+        "sketch.prompt.generic",
+        "sketch.prompt.line.first",
+        "sketch.prompt.line.next",
+        "sketch.prompt.rect.first",
+        "sketch.prompt.rect.second",
+        "sketch.prompt.rect.third",
+        "sketch.prompt.circle.first",
+        "sketch.prompt.circle.second",
+        "sketch.prompt.arc.first",
+        "sketch.prompt.arc.second",
+        "sketch.prompt.arc.third",
+        "sketch.prompt.polygon.first",
+        "sketch.prompt.polygon.second",
+        "sketch.prompt.slot.first",
+        "sketch.prompt.slot.second",
+        "sketch.prompt.slot.third",
+        "sketch.prompt.point",
+        "sketch.prompt.dimension.pick",
+        "sketch.prompt.dimension.place",
+        "sketch.prompt.constraint",
+        "sketch.prompt.hv",
+        "sketch.snap.point",
+        "sketch.snap.mid",
+        "sketch.snap.on",
+        "sketch.snap.align",
+        "sketch.snap.close",
+        "sketch.infer.parallel",
+        "sketch.infer.perpendicular",
+        "sketch.infer.extension",
+        "sketch.infer.tangent",
+        "sketch.infer.horizontal",
+        "sketch.infer.vertical",
+        "sketch.empty_state_cue",
+        "sketch.status.horizontal",
+        "sketch.status.vertical",
+        "sketch.status.profile_ready",
+        "sketch.status.choose_profile",
+        "sketch.status.extrude_operation",
+        "coaching.step_create_sketch",
+        "coaching.step_draw_line",
+        "coaching.step_close_profile",
+        "coaching.step_dimension",
+        "coaching.step_finish",
+        "coaching.step_extrude",
+        "coaching.next",
+        "coaching.dismiss",
+        "coaching.enable",
+        "coaching.disable",
+        "coaching.close",
+    ]
+}
+
+pub fn hint(id: &str) -> String {
+    let (prompt, _, _) = prompt_keys(id, 0);
+    crate::i18n::tr(prompt).to_string()
 }
 
 fn arg(p: &(Vec2, Option<String>)) -> Value {
@@ -241,34 +390,60 @@ pub fn place(app: &mut SolveApp, p: (Vec2, Option<String>)) {
         return;
     }
     tool.pts.push(p);
+    let mut announced = false;
     if tool.cmd == "sketch.line" {
         if tool.pts.len() >= 2 {
             let (a, b) = (tool.pts[tool.pts.len() - 2].clone(), tool.pts[tool.pts.len() - 1].clone());
             let angled = crate::sketch_dims::has_locked(&tool, "Angle");
             let dimensioned = tool.dims.iter().any(|dimension| dimension.locked);
-            if let Ok(v) = draw(app, &tool, json!({"points": [arg(&a), arg(&b)], "infer": !angled})) {
-                let curves: Vec<String> = v["curves"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(str::to_string)).collect();
-                // Chain: the next segment starts at this one's end point.
-                if let Some(id) = curves.first() {
-                    if angled {
-                        crate::inference::clear();
-                    } else {
-                        // Endpoint inference is part of this drawing. Preserve its original
-                        // undo history even when the history is already at the engine's cap.
-                        let history = dimensioned.then(|| std::mem::take(&mut app.session.undo));
-                        crate::inference::commit(app, id, b.0);
-                        if let Some(history) = history {
-                            app.session.undo = history;
+            match draw(app, &tool, json!({"points": [arg(&a), arg(&b)], "infer": !angled})) {
+                Ok(v) => {
+                    let curves: Vec<String> = v["curves"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(str::to_string)).collect();
+                    // Chain: the next segment starts at this one's end point.
+                    if let Some(id) = curves.first() {
+                        if tool.chain_start.is_none() {
+                            let start_id = a.1.clone().or_else(|| Some(format!("{id}.start")));
+                            tool.chain_start = Some((a.0, start_id));
+                        }
+                        if angled {
+                            crate::inference::clear();
+                        } else {
+                            // Endpoint inference is part of this drawing. Preserve its original
+                            // undo history even when the history is already at the engine's cap.
+                            let history = dimensioned.then(|| std::mem::take(&mut app.session.undo));
+                            crate::inference::commit(app, id, b.0);
+                            if let Some(history) = history {
+                                app.session.undo = history;
+                            }
+                        }
+                        let last = tool.pts.len() - 1;
+                        tool.pts[last].1 = Some(format!("{id}.end"));
+                        // The chain needs only its current endpoint, even after many segments.
+                        tool.pts = vec![tool.pts[last].clone()];
+                        let closed = tool.chain_start.as_ref().zip(b.1.as_ref()).is_some_and(|(start, id)| start.1.as_deref() == Some(id.as_str()));
+                        if closed {
+                            let profiles = app
+                                .session
+                                .active_sketch
+                                .and_then(|id| app.session.world_state().sketch(id).map(|ss| ss.profiles.len()))
+                                .unwrap_or(0);
+                            if profiles == 1 {
+                                app.set_status(app.tr("sketch.status.profile_ready"), false);
+                                announced = true;
+                            }
+                        } else if let Some(horizontal) = crate::sketch_dims::axis_aligned(a.0, b.0) {
+                            let key = if horizontal { "sketch.status.horizontal" } else { "sketch.status.vertical" };
+                            app.set_status(app.tr(key), false);
+                            announced = true;
                         }
                     }
-                    let last = tool.pts.len() - 1;
-                    tool.pts[last].1 = Some(format!("{id}.end"));
-                    // The chain needs only its current endpoint, even after many segments.
-                    tool.pts = vec![tool.pts[last].clone()];
+                    crate::sketch_dims::reset(&mut tool);
                 }
-                crate::sketch_dims::reset(&mut tool);
-            } else {
-                tool.pts.pop();
+                Err(error) => {
+                    app.set_status(error, true);
+                    tool.pts.pop();
+                    announced = true;
+                }
             }
         }
     } else if n > 0 && tool.pts.len() >= n {
@@ -280,10 +455,14 @@ pub fn place(app: &mut SolveApp, p: (Vec2, Option<String>)) {
             Err(error) => {
                 app.set_status(error, true);
                 tool.pts.pop();
+                announced = true;
             }
         }
     }
     app.tool = Some(tool);
+    if !announced {
+        show_prompt(app);
+    }
 }
 
 /// Geometry and typed constraints are committed atomically, as one undo step.
@@ -443,6 +622,7 @@ pub fn finish(app: &mut SolveApp) {
     {
         t.pts.clear();
         t.picks.clear();
+        t.chain_start = None;
         crate::sketch_dims::reset(t);
         return;
     }

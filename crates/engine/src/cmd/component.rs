@@ -15,6 +15,7 @@ use crate::{Result, Session};
 pub(super) mod properties;
 #[path = "component_transfer.rs"]
 mod transfer;
+pub(crate) use transfer::finish_rollback;
 
 #[cfg(test)]
 #[path = "occurrence_tests.rs"]
@@ -26,6 +27,10 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "ASSEMBLE")
         .icon("component")
         .params("name?, parent?: component id or name (default: the active one); parent_path?: exact parent placement; activate?: bool (default true)"),
+    CommandSpec::new("component.with_sketch", "Component and Sketch", with_sketch)
+        .at("SOLID", "ASSEMBLE")
+        .icon("component")
+        .params("name?, parent?. Creates a component and activates it. The toolbar then starts a sketch in that component; a programmatic run does not open a dialog"),
     CommandSpec::new("component.from_bodies", "Create Components from Bodies", from_bodies)
         .icon("component")
         .params("bodies: [names] → one new component per body, named after it"),
@@ -96,6 +101,10 @@ pub(super) fn valid_position(m: &Mat) -> bool {
         && x.cross(y).dot(z) > 0.0
         && [m[0][3], m[1][3], m[2][3]].iter().all(|x| x.abs() < 1e-9)
         && (m[3][3] - 1.0).abs() < 1e-9
+}
+
+fn with_sketch(s: &mut Session, p: &Value) -> Result<Value> {
+    new_component(s, p)
 }
 
 fn new_component(s: &mut Session, p: &Value) -> Result<Value> {

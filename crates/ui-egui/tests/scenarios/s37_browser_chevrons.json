@@ -74,6 +74,13 @@
   }
  },
  {
+  "call": "engine.execute",
+  "params": {
+   "command": "select.clear",
+   "params": {}
+  }
+ },
+ {
   "start": "component.create"
  },
  {
@@ -352,7 +359,7 @@
  {
   "expect": {
    "shown_handles": [
-    "row:Sketch2"
+    "row:Sketch2 — Still movable"
    ]
   }
  },
@@ -364,7 +371,7 @@
  {
   "expect": {
    "hidden_handles": [
-    "row:Sketch2"
+    "row:Sketch2 — Still movable"
    ]
   }
  },
@@ -376,7 +383,7 @@
  {
   "expect": {
    "shown_handles": [
-    "row:Sketch2"
+    "row:Sketch2 — Still movable"
    ]
   }
  },
@@ -414,7 +421,7 @@
  {
   "expect": {
    "shown_handles": [
-    "row:Sketch2"
+    "row:Sketch2 — Still movable"
    ]
   }
  },
@@ -426,7 +433,7 @@
  {
   "expect": {
    "hidden_handles": [
-    "row:Sketch2"
+    "row:Sketch2 — Still movable"
    ]
   }
  },
@@ -438,14 +445,14 @@
  {
   "expect": {
    "shown_handles": [
-    "row:Sketch2"
+    "row:Sketch2 — Still movable"
    ]
   }
  },
  {
   "expect": {
    "shown_handles": [
-    "row:Sketch1"
+    "row:Sketch1 — Still movable"
    ]
   }
  },
@@ -457,7 +464,7 @@
  {
   "expect": {
    "hidden_handles": [
-    "row:Sketch1"
+    "row:Sketch1 — Still movable"
    ]
   }
  },
@@ -469,7 +476,7 @@
  {
   "expect": {
    "shown_handles": [
-    "row:Sketch1"
+    "row:Sketch1 — Still movable"
    ]
   }
  },

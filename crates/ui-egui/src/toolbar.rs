@@ -6,7 +6,7 @@ use serde_json::json;
 use crate::theme::Tokens;
 use crate::{SolveApp, icons};
 
-pub const TABS: &[&str] = &["SOLID", "SURFACE", "MESH", "SHEET METAL", "PLASTIC", "UTILITIES"];
+pub const TABS: &[&str] = &["SOLID", "SURFACE", "FORM", "MESH", "SHEET METAL", "PLASTIC", "DRAWING", "UTILITIES"];
 
 /// The accent stroke colour for a panel's icons: constraint commands use the same red as the
 /// constraint glyphs they draw in the sketch (`glyph_text`), sketch tools otherwise keep
@@ -30,7 +30,9 @@ pub fn panels(tab: &str) -> &'static [&'static str] {
         "SOLID" => &["CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
         "SKETCH" => &["CREATE", "MODIFY", "CONSTRAINTS", "INSPECT", "INSERT", "SELECT", "FINISH SKETCH"],
         "SURFACE" => &["CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
+        "FORM" => &["CREATE", "MODIFY", "SELECT"],
         "MESH" => &["CREATE", "PREPARE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
+        "DRAWING" => &["CREATE", "MODIFY", "SELECT"],
         "SHEET METAL" => &["CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
         "PLASTIC" => &["CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
         _ => &["MAKE", "ADD-INS", "UTILITY", "INSPECT", "SELECT"],
@@ -529,6 +531,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 t.text_dim
             };
             painter.text(tr.center(), Align2::CENTER_CENTER, display_tab, FontId::proportional(12.0), col);
+            crate::scenario::publish_handle(&format!("toolbar:tab.{tab}"), tr.center());
             if resp.clicked() {
                 app.ui.tab = tab.to_string();
             }
@@ -651,7 +654,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled() && info.enabled, tr_label));
                 let tip = match &info.disabled_reason {
                     Some(why) => format!("{}\n{why}", tr_label),
-                    None => format!("{}{}", tr_label, c.shortcut.map(|k| format!("  ({k})")).unwrap_or_default()),
+                    None => format!("{}{}", tr_label, crate::keymap::effective(app, c.id).map(|k| format!("  ({k})")).unwrap_or_default()),
                 };
                 if resp.on_hover_text(tip).clicked() && info.enabled {
                     let id = c.id;
@@ -783,7 +786,10 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                             }
                             for c in cmds {
                                 let info = c.info(&app.session);
-                                let response = ui.add_enabled(info.enabled, egui::Button::new(c.label).shortcut_text(c.shortcut.unwrap_or("")));
+                                let response = ui.add_enabled(
+                                    info.enabled,
+                                    egui::Button::new(app.tr_label(c.label)).shortcut_text(crate::keymap::effective(app, c.id).unwrap_or_default()),
+                                );
                                 crate::scenario::publish_handle(&format!("toolbar:{}", c.id), response.rect.center());
                                 if response.clicked() {
                                     app.start(c.id);
@@ -850,7 +856,8 @@ fn dropdown_width(app: &SolveApp, ui: &egui::Ui, cmds: &[&'static solidcraft_eng
     cmds.iter()
         .map(|c| {
             let label = ui.painter().layout_no_wrap(app.tr_label(c.label).to_string(), font.clone(), t.text).size().x;
-            let key = c.shortcut.map(|k| ui.painter().layout_no_wrap(k.to_string(), font.clone(), t.text).size().x + 24.0).unwrap_or(0.0);
+            let key =
+                crate::keymap::effective(app, c.id).map(|k| ui.painter().layout_no_wrap(k, font.clone(), t.text).size().x + 24.0).unwrap_or(0.0);
             6.0 + 18.0 + 8.0 + label + key + 30.0
         })
         .fold(200.0, f32::max)
@@ -897,8 +904,8 @@ fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solidcraft_engine
     let ir = Rect::from_center_size(pos2(rect.left() + 6.0 + 9.0, rect.center().y), vec2(18.0, 18.0));
     icons::paint(p, ir, c.icon, ink, fill, acc);
     p.text(pos2(ir.right() + 8.0, rect.center().y), Align2::LEFT_CENTER, &label, FontId::proportional(13.0), text);
-    if let Some(k) = c.shortcut {
-        p.text(pos2(pr.left() - 4.0, rect.center().y), Align2::RIGHT_CENTER, k, FontId::proportional(13.0), t.text_dim);
+    if let Some(k) = crate::keymap::effective(app, c.id) {
+        p.text(pos2(pr.left() - 4.0, rect.center().y), Align2::RIGHT_CENTER, &k, FontId::proportional(13.0), t.text_dim);
     }
     if pointer_on || resp.has_focus() {
         if pin.hovered() {

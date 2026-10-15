@@ -170,6 +170,10 @@ impl Harness {
         WIDTHS.with(|m| m.borrow_mut().clear());
         h.install();
         h.ctx.enable_accesskit();
+        // Coaching is on for a first run of the app. Scenarios turn it off so the callout
+        // does not sit on top of the clicks they make; tests that cover coaching turn it on.
+        h.app.session.coaching.enabled = false;
+        h.app.coaching.enabled = false;
         h.frames(3);
         h
     }

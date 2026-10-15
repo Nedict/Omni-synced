@@ -5,6 +5,25 @@ fn run(s: &mut Session, command: &str, params: Value) -> Value {
 }
 
 #[test]
+fn from_bodies_finishes_a_rolled_back_timeline() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Body1"}));
+    run(&mut s, "solid.box", json!({"corner": [30, 0, 0], "length": 10, "width": 10, "height": 10, "operation": "new", "body_name": "Body2"}));
+    assert_eq!(s.model.state().bodies.len(), 2);
+    s.doc_mut().marker = Some(1);
+    s.refresh();
+    assert!(s.model.state().body("Body2").is_none(), "the rollback hides the later body");
+    let created = run(&mut s, "component.from_bodies", json!({"bodies": ["Body1"]}));
+    assert_eq!(created["rolled_forward"], json!(true));
+    assert!(s.doc.marker.is_none());
+    let component = created["components"][0]["component"].as_u64().unwrap();
+    let state = s.model.state();
+    assert_eq!(state.bodies.len(), 2);
+    assert_eq!(state.body("Body1").unwrap().component, component);
+    assert_eq!(state.body("Body2").unwrap().component, 0);
+}
+
+#[test]
 fn recorded_assignment_preserves_sample_joined_material_and_timeline() {
     let mut s = Session::default();
     s.run_script(&crate::sample::script()).unwrap();

@@ -383,7 +383,95 @@ pub fn tool_for(id: &str) -> Option<Tool> {
         dim_history: Vec::new(),
         dims_stage: usize::MAX,
         dims_focus: false,
+        chain_start: None,
     })
+}
+
+/// Catalog key for an extra tool's prompt. Unknown tools share the generic cue.
+pub fn prompt_key(id: &str) -> &'static str {
+    match id {
+        "sketch.project" => "sketch.prompt.project",
+        "sketch.intersect" => "sketch.prompt.intersect",
+        "sketch.include_3d" => "sketch.prompt.include_3d",
+        "sketch.fit_curves_to_section" => "sketch.prompt.fit_section",
+        "sketch.isoparametric_curve" => "sketch.prompt.isoparametric",
+        "inspect.curvature_comb" => "sketch.prompt.curvature_comb",
+        "inspect.minimum_radius" => "sketch.prompt.minimum_radius",
+        "inspect.center_of_mass" => "sketch.prompt.center_of_mass",
+        "inspect.isocurve" => "sketch.prompt.isocurve",
+        "canvas.insert" => "sketch.prompt.canvas",
+        "canvas.decal" => "sketch.prompt.decal",
+        "sketch.trim" => "sketch.prompt.trim",
+        "sketch.extend" => "sketch.prompt.extend",
+        "sketch.break" => "sketch.prompt.break",
+        "sketch.line.midpoint" => "sketch.prompt.midpoint_line",
+        "sketch.arc.tangent" => "sketch.prompt.tangent_arc",
+        "sketch.ellipse" => "sketch.prompt.ellipse",
+        "sketch.conic" => "sketch.prompt.conic",
+        "sketch.slot.center_point" => "sketch.prompt.slot_center",
+        "sketch.slot.arc_three_point" | "sketch.slot.arc_center" => "sketch.prompt.arc_slot",
+        "sketch.spline.fit_point" => "sketch.prompt.spline_fit",
+        "sketch.spline.control_point" | "sketch.spline.control_point_5" => "sketch.prompt.spline_control",
+        "sketch.text" => "sketch.prompt.text",
+        "sketch.edit_text" => "sketch.prompt.edit_text",
+        "sketch.blend_curve" => "sketch.prompt.blend",
+        "sketch.offset" => "sketch.prompt.offset",
+        "sketch.fillet" | "sketch.chamfer.equal_distance" | "sketch.chamfer.distance_angle" | "sketch.chamfer.two_distance" => "sketch.prompt.corner",
+        "sketch.constraint.curvature" => "sketch.prompt.curvature",
+        "sketch.circle.two_tangent" | "sketch.circle.three_tangent" => "sketch.prompt.tangent_circle",
+        "sketch.constrainer" => "sketch.prompt.constrainer",
+        "sketch.constraint.polygon" => "sketch.prompt.polygon_constraint",
+        "sketch.centerline" => "sketch.prompt.centerline",
+        "sketch.mirror" => "sketch.prompt.mirror",
+        "sketch.pattern.circular" | "sketch.pattern.rectangular" => "sketch.prompt.pattern",
+        "sketch.project_to_surface" => "sketch.prompt.project_surface",
+        "sketch.intersection_curve" => "sketch.prompt.intersection",
+        "sketch.spun_profile" => "sketch.prompt.spun",
+        _ => "sketch.prompt.generic",
+    }
+}
+
+/// Extra-tool prompt keys, for the catalog test.
+pub fn prompt_keys() -> &'static [&'static str] {
+    &[
+        "sketch.prompt.project",
+        "sketch.prompt.intersect",
+        "sketch.prompt.include_3d",
+        "sketch.prompt.fit_section",
+        "sketch.prompt.isoparametric",
+        "sketch.prompt.curvature_comb",
+        "sketch.prompt.minimum_radius",
+        "sketch.prompt.center_of_mass",
+        "sketch.prompt.isocurve",
+        "sketch.prompt.canvas",
+        "sketch.prompt.decal",
+        "sketch.prompt.trim",
+        "sketch.prompt.extend",
+        "sketch.prompt.break",
+        "sketch.prompt.midpoint_line",
+        "sketch.prompt.tangent_arc",
+        "sketch.prompt.ellipse",
+        "sketch.prompt.conic",
+        "sketch.prompt.slot_center",
+        "sketch.prompt.arc_slot",
+        "sketch.prompt.spline_fit",
+        "sketch.prompt.spline_control",
+        "sketch.prompt.text",
+        "sketch.prompt.edit_text",
+        "sketch.prompt.blend",
+        "sketch.prompt.offset",
+        "sketch.prompt.corner",
+        "sketch.prompt.curvature",
+        "sketch.prompt.tangent_circle",
+        "sketch.prompt.constrainer",
+        "sketch.prompt.polygon_constraint",
+        "sketch.prompt.centerline",
+        "sketch.prompt.mirror",
+        "sketch.prompt.pattern",
+        "sketch.prompt.project_surface",
+        "sketch.prompt.intersection",
+        "sketch.prompt.spun",
+    ]
 }
 
 pub fn hint(id: &str) -> Option<String> {
@@ -1194,6 +1282,28 @@ fn glyph_anchors(sk: &solidcraft_engine::sketch::Sketch, k: &solidcraft_engine::
     }
 }
 
+/// Remember a snap label for this frame (a short glyph such as "Pt" or "Close").
+pub fn note_snap(label: &'static str, at: Vec2) {
+    SNAP.with(|s| *s.borrow_mut() = Some((label, at)));
+}
+
+/// Catalog key for a snap or inference glyph.
+pub fn snap_key(label: &str) -> &'static str {
+    match label {
+        "Pt" => "sketch.snap.point",
+        "Mid" => "sketch.snap.mid",
+        "On" => "sketch.snap.on",
+        "H" => "sketch.infer.horizontal",
+        "V" => "sketch.infer.vertical",
+        "//" => "sketch.infer.parallel",
+        "\u{22a5}" => "sketch.infer.perpendicular",
+        "Ext" => "sketch.infer.extension",
+        "T" => "sketch.infer.tangent",
+        "Close" => "sketch.snap.close",
+        _ => "sketch.snap.align",
+    }
+}
+
 /// The inference label next to the snapped cursor (while a tool is active).
 fn snap_hint(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     if app.tool.is_none() {
@@ -1204,9 +1314,12 @@ fn snap_hint(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let Some(ss) = active_sketch(app).and_then(|s| st.sketch(s)) else { return };
     let Some(sp) = proj.to_screen(ss.plane.to_world(p)) else { return };
     let tk = crate::theme::Tokens::get();
-    let r = egui::Rect::from_min_size(sp + egui::vec2(12.0, -24.0), egui::vec2(24.0, 14.0));
+    let text = app.tr(snap_key(label));
+    let galley = painter.layout_no_wrap(text.to_string(), egui::FontId::proportional(10.0), tk.text);
+    let r = egui::Rect::from_min_size(sp + egui::vec2(12.0, -24.0), galley.size() + egui::vec2(8.0, 4.0));
     painter.rect_filled(r, 3.0, tk.accent_soft);
-    painter.text(r.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(10.0), tk.text);
+    painter.galley(r.min + egui::vec2(4.0, 2.0), galley, tk.text);
+    crate::scenario::publish_handle("snap_indicator", sp);
 }
 
 /// Per frame, after the viewport is drawn: constraint glyphs and the text-entry box.

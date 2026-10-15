@@ -565,7 +565,7 @@ fn edit_box(app: &mut SolveApp, ctx: &egui::Context) {
         Some(true) => {
             let result = if let Some(draft) = &e.draft {
                 if draft.valid(app) {
-                    draft.evaluate(app, &e.expr).and_then(|_| app.run("sketch.dimension", draft.params(&e.expr)))
+                    app.run("sketch.dimension.commit", draft.params(&e.expr))
                 } else {
                     Err("The sketch changed; place the dimension again".into())
                 }
@@ -578,7 +578,7 @@ fn edit_box(app: &mut SolveApp, ctx: &egui::Context) {
                     .map(|(k, _)| k)
                     .unwrap_or(solidcraft_engine::doc::expr::Kind::Unitless);
                 let expression = app.session.doc.with_design_unit(&e.expr, kind);
-                app.run("parameters.change", json!({"name": e.param, "expression": expression}))
+                app.run("sketch.dimension.commit", json!({"param": e.param, "value": expression}))
             };
             if let Err(err) = result {
                 app.set_status(err, true);
@@ -595,6 +595,22 @@ fn edit_box(app: &mut SolveApp, ctx: &egui::Context) {
 /// Is the inline editor open (it has the keyboard)?
 pub fn editing() -> bool {
     EDIT.with(|e| e.borrow().is_some())
+}
+
+/// The expression in the open editor, for tests.
+#[cfg(test)]
+pub fn editing_expr() -> Option<String> {
+    EDIT.with(|e| e.borrow().as_ref().map(|edit| edit.expr.clone()))
+}
+
+/// Replace the open editor's text without applying it, for tests.
+#[cfg(test)]
+pub fn set_editing_expr(expr: &str) {
+    EDIT.with(|e| {
+        if let Some(edit) = e.borrow_mut().as_mut() {
+            edit.expr = expr.to_string();
+        }
+    });
 }
 
 /// Dimensions drawn last frame: (id, text centre on screen), for tests and the control channel.

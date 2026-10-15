@@ -331,6 +331,11 @@ impl FeatureKind {
             | FeatureKind::Import { .. }
             | FeatureKind::MeshImport { .. }
             | FeatureKind::MeshConvert { .. }
+            | FeatureKind::SheetWalls { .. }
+            | FeatureKind::MeshCut { .. }
+            | FeatureKind::MeshRepair { .. }
+            | FeatureKind::MeshReduce { .. }
+            | FeatureKind::Form { .. }
             | FeatureKind::BodyTransfer { .. } => {}
             FeatureKind::Patch { edges, .. } | FeatureKind::SurfaceExtend { edges, .. } => edges.iter_mut().for_each(pt),
             FeatureKind::SurfaceTrim { plane, tool, keep, .. } => {

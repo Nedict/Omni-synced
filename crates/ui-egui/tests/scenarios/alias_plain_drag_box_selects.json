@@ -3,6 +3,7 @@
   {"call": "ui.prefs", "params": {"nav": "alias"}},
   {"start": "sketch.create"},
   {"click": {"plane": "XY"}},
+  {"key": "Escape"},
   {"call": "engine.execute", "params": {"command": "sketch.line", "params": {"points": [[10, 10], [30, 10]]}}},
   {"call": "ui.view", "params": {"view": "top"}},
   {"expect": {"camera": {"yaw_deg": 0, "pitch_deg": 90}}},

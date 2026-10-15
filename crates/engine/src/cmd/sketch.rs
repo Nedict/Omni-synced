@@ -108,6 +108,9 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("sketch.dimension", "Sketch Dimension", dimension).at("SKETCH", "CREATE").icon("dimension").key("D").enabled(in_sketch).params(
         "entities: [refs], type?: auto|distance|horizontal|vertical|length|radius|diameter|angle, value?: number or expression (default: current; a bare number is in the design's units, e.g. 2 means 2 in in an inch design; give a unit such as \"50 mm\" to override); text_at?: [x, y]. Two points or a line off the axes: with auto, text_at across from them is the distance between them, above or below them horizontal, beside them vertical. Two lines: the angle between them (acute, or 180° − it when the value is nearer that) unless text_at picks a sector. Returns measured in unit (mm or deg)",
     ),
+    CommandSpec::new("sketch.dimension.commit", "Commit Dimension", dimension_commit).enabled(in_sketch).params(
+        "entities?: [refs] (new dimension) | param?: existing parameter name (edit); value: number or expression (bare number in the design's units; \"50 mm\" to override); type?: auto|distance|horizontal|vertical|length|radius|diameter|angle; text_at?: [x,y]. Rejects a non-finite or out-of-range value and leaves the design unchanged",
+    ),
     CommandSpec::new("sketch.constraint.horizontal_vertical", "Horizontal/Vertical", c_horizontal_vertical)
         .at("SKETCH", "CONSTRAINTS")
         .icon("c_hv")
@@ -1593,6 +1596,65 @@ pub(super) fn line_pts(sk: &Sketch, l: usize) -> Option<(Vec2, Vec2)> {
     }
 }
 
+/// A dimension expression that evaluates to a finite in-range length or angle.
+pub(super) fn finite_dimension_text(doc: &solidcraft_doc::Document, cmd: &str, value: &Value) -> Result<String> {
+    let text = match value {
+        Value::Number(n) => {
+            let x = n.as_f64().filter(|x| x.is_finite() && x.abs() < 1e9).ok_or_else(|| bad(cmd, "`value` must be a finite number"))?;
+            format!("{x}")
+        }
+        Value::String(s) => {
+            let t = s.trim();
+            if t.is_empty() || t.len() > 4096 {
+                return Err(bad(cmd, "`value` must be a bounded number or expression"));
+            }
+            if let Ok(x) = t.parse::<f64>()
+                && (!x.is_finite() || x.abs() >= 1e9)
+            {
+                return Err(bad(cmd, "`value` must be a finite number"));
+            }
+            t.to_string()
+        }
+        _ => return Err(bad(cmd, "`value` must be a number or an expression")),
+    };
+    let ok = |kind: Kind| doc.eval(&text, kind).ok().filter(|v| v.is_finite() && v.abs() < 1e9).is_some();
+    if !ok(Kind::Length) && !ok(Kind::Angle) {
+        return Err(bad(cmd, "`value` must be a finite in-range number or expression"));
+    }
+    Ok(text)
+}
+
+fn dimension_commit(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "sketch.dimension.commit";
+    let value = p.get("value").ok_or_else(|| bad(cmd, "`value` is required"))?;
+    let expression = finite_dimension_text(&s.doc, cmd, value)?;
+    let param = str_(p, "param").map(str::trim).filter(|name| !name.is_empty());
+    let entities = string_list(p, "entities");
+    if param.is_some() && !entities.is_empty() {
+        return Err(bad(cmd, "give `entities` or `param`, not both"));
+    }
+    if let Some(name) = param {
+        let spec = super::find_command("parameters.change").ok_or_else(|| bad(cmd, "parameters.change is unavailable"))?;
+        spec.run_nested(s, &json!({"name": name, "expression": expression}))?;
+        let stored = s.doc.param(name).map(|param| param.expr.clone()).unwrap_or(expression);
+        return Ok(json!({"param": name, "expression": stored}));
+    }
+    if entities.is_empty() || entities.len() > 2 {
+        return Err(bad(cmd, "`entities` must list one or two sketch entities"));
+    }
+    let mut q = json!({"entities": entities, "value": expression});
+    if let Some(ty) = str_(p, "type") {
+        q["type"] = json!(ty);
+    }
+    if let Some(at) = p.get("text_at") {
+        if vec2(at).is_none() {
+            return Err(bad(cmd, "`text_at` must be a point [x, y]"));
+        }
+        q["text_at"] = at.clone();
+    }
+    dimension(s, &q)
+}
+
 fn dimension(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.dimension";
     let ents = string_list(p, "entities");
@@ -2150,6 +2212,9 @@ mod ux_tests;
 #[cfg(test)]
 #[path = "sketch_axis_ref_tests.rs"]
 mod axis_ref_tests;
+#[cfg(test)]
+#[path = "sketch_commit_tests.rs"]
+mod commit_tests;
 #[cfg(test)]
 #[path = "sketch_drag_live_tests.rs"]
 mod drag_live_tests;

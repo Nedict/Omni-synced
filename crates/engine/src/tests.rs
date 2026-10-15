@@ -2920,3 +2920,59 @@ fn a_pattern_of_a_reduced_fillet_rounds_each_copy_alike() {
     let expect = 60.0 * 20.0 * 2.0 + 3.0 * (840.0 - (4.0 - PI) * 9.0 * 10.0);
     assert!(rel(volume(&mut s), expect) < 2e-4, "{} vs {expect}", volume(&mut s));
 }
+
+/// A New Body that occupies the same space as an existing solid stays a second body.
+/// Join adds material to the named body. Cut only removes material from the named body.
+#[test]
+fn overlapping_new_body_keeps_the_original_and_join_or_cut_use_the_target() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 10, "operation": "new", "body_name": "Body1"}));
+    run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 10, "corner": [10, 0, 0], "operation": "new"}));
+    let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names, vec!["Body1".to_string(), "Body2".to_string()], "overlap must not delete Body1 or reuse its name");
+    let v1 = run(&mut s, "inspect.measure", json!({"bodies": ["Body1"]}))["total"]["volume_mm3"].as_f64().unwrap();
+    let v2 = run(&mut s, "inspect.measure", json!({"bodies": ["Body2"]}))["total"]["volume_mm3"].as_f64().unwrap();
+    assert!(rel(v1, 4000.0) < 1e-6, "Body1 volume {v1}");
+    assert!(rel(v2, 4000.0) < 1e-6, "Body2 volume {v2}");
+
+    let mut joined = Session::default();
+    run(&mut joined, "solid.box", json!({"length": 20, "width": 20, "height": 10, "operation": "new", "body_name": "Body1"}));
+    run(&mut joined, "solid.box", json!({"length": 20, "width": 20, "height": 10, "corner": [10, 0, 0], "operation": "join", "targets": ["Body1"]}));
+    let names: Vec<String> = joined.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names, vec!["Body1".to_string()]);
+    assert!(rel(volume(&mut joined), 6000.0) < 1e-6, "join keeps both volumes minus the overlap");
+
+    let mut cut = Session::default();
+    run(&mut cut, "solid.box", json!({"length": 20, "width": 20, "height": 10, "operation": "new", "body_name": "Body1"}));
+    run(&mut cut, "solid.box", json!({"length": 20, "width": 20, "height": 10, "corner": [10, 0, 0], "operation": "new", "body_name": "Body2"}));
+    run(&mut cut, "solid.box", json!({"length": 20, "width": 20, "height": 10, "corner": [10, 0, 0], "operation": "cut", "targets": ["Body1"]}));
+    let names: Vec<String> = cut.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert!(names.iter().any(|n| n == "Body1") && names.iter().any(|n| n == "Body2"));
+    let v1 = run(&mut cut, "inspect.measure", json!({"bodies": ["Body1"]}))["total"]["volume_mm3"].as_f64().unwrap();
+    let v2 = run(&mut cut, "inspect.measure", json!({"bodies": ["Body2"]}))["total"]["volume_mm3"].as_f64().unwrap();
+    assert!(rel(v1, 2000.0) < 1e-6, "cut removes only the overlap from Body1, volume {v1}");
+    assert!(rel(v2, 4000.0) < 1e-6, "Body2 is not a cut target, volume {v2}");
+}
+
+/// A new extrude started while the timeline is rolled back to the sketch must not be inserted
+/// where the existing Join can swallow it. Body1 stays, and the overlap is Body2.
+#[test]
+fn rolled_back_new_extrude_does_not_let_a_later_join_absorb_body1() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "First"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0.0, 0.0], "p1": [20.0, 20.0]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 10, "operation": "join", "body_name": "Body1"}));
+    run(&mut s, "timeline.roll_to", json!({"position": 1}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Second"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [10.0, 0.0], "p1": [30.0, 20.0]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 10, "operation": "new", "body_name": "Body1"}));
+    let names: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names, vec!["Body1".to_string(), "Body2".to_string()], "{names:?}");
+    let v1 = run(&mut s, "inspect.measure", json!({"bodies": ["Body1"]}))["total"]["volume_mm3"].as_f64().unwrap();
+    let v2 = run(&mut s, "inspect.measure", json!({"bodies": ["Body2"]}))["total"]["volume_mm3"].as_f64().unwrap();
+    assert!(rel(v1, 4000.0) < 1e-6, "Body1 volume {v1}");
+    assert!(rel(v2, 4000.0) < 1e-6, "Body2 volume {v2}");
+    assert!(s.doc.marker.is_none());
+}

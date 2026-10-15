@@ -212,6 +212,46 @@ fn fillets_on_several_edges_and_angles() {
     assert_eq!(f.lumps().unwrap().len(), 1);
 }
 
+fn step_body() -> Body {
+    let plate = box_solid(Vec3::ZERO, Vec3::new(40.0, 30.0, 20.0)).unwrap();
+    let post = box_solid(Vec3::new(10.0, 10.0, 15.0), Vec3::new(20.0, 20.0, 30.0)).unwrap();
+    boolean(&plate, &post, BoolOp::Union).unwrap().unwrap()
+}
+
+#[test]
+fn concave_fillet_and_chamfer_add_material() {
+    let u = step_body();
+    let v0 = measure(&u).unwrap().volume;
+    let edge = [Vec3::new(15.0, 10.0, 20.0)];
+    let filleted = fillet(&u, &edge, 1.0).unwrap();
+    let added = measure(&filleted).unwrap().volume - v0;
+    assert!(rel(added, (1.0 - PI / 4.0) * 10.0) < 1e-3, "fillet added {added}");
+    assert!(filleted.validity().is_empty());
+    // A pocket floor is a closed chain of inside edges, including the corners where they meet.
+    let slab = box_solid(Vec3::ZERO, Vec3::new(80.0, 60.0, 20.0)).unwrap();
+    let cutter = box_solid(Vec3::new(15.0, 15.0, 12.0), Vec3::new(65.0, 45.0, 25.0)).unwrap();
+    let pocket = boolean(&slab, &cutter, BoolOp::Cut).unwrap().unwrap();
+    let pv = measure(&pocket).unwrap().volume;
+    let floor = [Vec3::new(40.0, 15.0, 12.0), Vec3::new(65.0, 30.0, 12.0), Vec3::new(40.0, 45.0, 12.0), Vec3::new(15.0, 30.0, 12.0)];
+    let floored = fillet(&pocket, &floor, 2.0).unwrap();
+    assert!(measure(&floored).unwrap().volume > pv, "floor fillet should fill the inside corners");
+    assert!(floored.validity().is_empty(), "{:?}", floored.validity());
+    let chamfered = chamfer(&u, &edge, 1.0).unwrap();
+    let wedge = measure(&chamfered).unwrap().volume - v0;
+    assert!(rel(wedge, 0.5 * 10.0) < 1e-2, "equal chamfer added {wedge}");
+    assert!(chamfered.validity().is_empty(), "{:?}", chamfered.validity());
+    let two = chamfer_sides(&u, &edge, 1.0, ChamferSide::Distance(2.0), false).unwrap();
+    let area = measure(&two).unwrap().volume - v0;
+    assert!(rel(area, 0.5 * 1.0 * 2.0 * 10.0) < 2e-2, "two-distance chamfer added {area}");
+    let angled = chamfer_sides(&u, &edge, 1.0, ChamferSide::Angle(PI / 4.0), false).unwrap();
+    assert!(measure(&angled).unwrap().volume > v0);
+    assert!(angled.validity().is_empty(), "{:?}", angled.validity());
+    // An outside edge still loses material.
+    let box_v = measure(&box_solid(Vec3::ZERO, Vec3::new(40.0, 30.0, 20.0)).unwrap()).unwrap().volume;
+    let cut = chamfer(&box_solid(Vec3::ZERO, Vec3::new(40.0, 30.0, 20.0)).unwrap(), &[Vec3::new(20.0, 0.0, 20.0)], 1.0).unwrap();
+    assert!(measure(&cut).unwrap().volume < box_v);
+}
+
 #[test]
 fn fillet_ends_in_an_end_face_at_an_angle() {
     // #215: the round ends in the end face's plane along an ellipse (its section) when that face

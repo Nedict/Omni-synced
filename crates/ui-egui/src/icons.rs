@@ -1004,6 +1004,16 @@ pub fn paint(p: &Painter, r: Rect, name: &str, ink: Color32, fill: Color32, acce
             pen.circle(20.5, 11.0, 2.6, Color32::from_rgb(70, 150, 230), ink);
             pen.circle(19.0, 17.5, 2.6, Color32::from_rgb(240, 200, 60), ink);
         }
+        "coaching_next" => {
+            pen.arrow((5.0, 12.0), (18.0, 12.0), a);
+        }
+        "coaching_dismiss" => {
+            pen.line(&[(5.0, 12.0), (19.0, 12.0)], ink);
+        }
+        "coaching_close" => {
+            pen.line(&[(7.0, 7.0), (17.0, 17.0)], ink);
+            pen.line(&[(17.0, 7.0), (7.0, 17.0)], ink);
+        }
         "warning" => {
             pen.poly(&[(12.0, 3.0), (21.0, 20.0), (3.0, 20.0)], Color32::from_rgb(250, 200, 60), ink);
             pen.line(&[(12.0, 9.0), (12.0, 14.0)], ink);

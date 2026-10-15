@@ -101,8 +101,19 @@ fn finish(s: &mut Session, scratch: &mut Session, features: &[u64], cmd: &str) -
     Ok(())
 }
 
+/// A body transfer needs the whole timeline. A rolled-back marker is moved to the end first.
+pub(crate) fn finish_rollback(s: &mut Session) -> bool {
+    if s.doc.marker.is_none() {
+        return false;
+    }
+    s.doc_mut().marker = None;
+    s.refresh();
+    true
+}
+
 pub(super) fn from_bodies(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "component.from_bodies";
+    let rolled_forward = finish_rollback(s);
     let bodies = body_names(s, p, cmd, false)?;
     let mut scratch = s.scratch();
     let parent = s.active_component;
@@ -120,7 +131,7 @@ pub(super) fn from_bodies(s: &mut Session, p: &Value) -> Result<Value> {
         made.push(json!({"component":component,"body":name,"feature":feature}));
     }
     finish(s, &mut scratch, &features, cmd)?;
-    Ok(json!({"components":made}))
+    Ok(json!({"components":made,"rolled_forward":rolled_forward}))
 }
 
 pub(super) fn move_bodies(s: &mut Session, p: &Value) -> Result<Value> {
@@ -135,6 +146,9 @@ pub(super) fn move_result(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn move_at_boundary(s: &mut Session, p: &Value, allow_boundary: bool) -> Result<Value> {
     let cmd = "component.move_bodies";
+    if !allow_boundary {
+        finish_rollback(s);
+    }
     let to = super::component(s, p, "component", cmd)?;
     let bodies = body_names(s, p, cmd, allow_boundary)?;
     let mut scratch = s.scratch();

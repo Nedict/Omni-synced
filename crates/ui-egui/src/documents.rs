@@ -156,13 +156,20 @@ pub fn adopt(app: &mut SolveApp, session: Session) {
     }
 }
 
+/// A new design keeps the program's coaching progress.
+fn session_with_coaching(app: &SolveApp) -> Session {
+    let mut session = Session::default();
+    session.coaching = app.session.coaching.clone();
+    session
+}
+
 /// A new, empty design in its own tab.
 pub fn new_design(app: &mut SolveApp) {
     app.home.open = false;
     if active_is_blank(app) {
         return;
     }
-    if let Err(e) = open_tab(app, Session::default()) {
+    if let Err(e) = open_tab(app, session_with_coaching(app)) {
         app.set_status(e, true);
     }
     crate::prefs::apply_new_design(app);
@@ -171,7 +178,7 @@ pub fn new_design(app: &mut SolveApp) {
 /// Before opening a file: a fresh tab unless the active design is blank.
 pub fn prepare_open(app: &mut SolveApp) {
     if !active_is_blank(app)
-        && let Err(e) = open_tab(app, Session::default())
+        && let Err(e) = open_tab(app, session_with_coaching(app))
     {
         app.set_status(e, true);
     }
@@ -191,9 +198,12 @@ pub fn close(app: &mut SolveApp, i: usize, force: bool) {
     if n <= 1 {
         // The last design: a blank one takes its place.
         let rev = app.session.revision;
+        let coaching = app.session.coaching.clone();
         crate::dialogs::cancel(app);
         app.tool = None;
         app.session = Session::default();
+        app.session.coaching = coaching.clone();
+        app.coaching = coaching;
         app.session.revision = rev + 1;
         app.cam = Camera::default();
         app.fit_view();

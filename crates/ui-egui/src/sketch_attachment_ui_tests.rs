@@ -29,6 +29,10 @@ fn picked_sketch() -> (Harness, u64) {
     h.step(&json!({"text":"badge_diameter"})).unwrap();
     h.step(&json!({"key":"Enter"})).unwrap();
     h.app.finish_sketch();
+    // One closed profile offers Extrude. This scenario keeps working on the model.
+    if h.app.dialog.is_some() {
+        crate::dialogs::cancel(&mut h.app);
+    }
     h.app.run("browser.visibility", json!({"items":["ControlBox"],"visible":true})).unwrap();
     assert!(!h.app.session.doc.sketch(sketch).unwrap().constraints.is_empty());
     (h, sketch)

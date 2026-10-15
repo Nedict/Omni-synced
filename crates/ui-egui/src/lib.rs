@@ -12,10 +12,12 @@ pub mod access;
 pub mod agent_cursor;
 pub mod browser;
 pub mod canvas;
+pub mod coaching;
 pub mod context_menu;
 pub mod control;
 pub mod crash_ui;
 pub mod delete;
+pub mod dialog_frame;
 pub mod dialogs;
 pub mod dialogs_appearance;
 pub mod dialogs_assembly;
@@ -83,6 +85,8 @@ pub mod select_other;
 pub mod selection;
 #[cfg(test)]
 mod shell_face_sketch_ui_tests;
+#[cfg(test)]
+mod shell_ui_tests;
 pub mod shortcut_box;
 pub mod sketch3d;
 #[cfg(test)]
@@ -125,7 +129,7 @@ pub use control::{ControlRequest, ControlResponse};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
-    /// Toolbar tab: SOLID, SURFACE, MESH, SHEET METAL, PLASTIC, UTILITIES (SKETCH while sketching).
+    /// Toolbar tab: SOLID, SURFACE, FORM, MESH, SHEET METAL, PLASTIC, DRAWING, UTILITIES (SKETCH while sketching).
     pub tab: String,
     pub show_browser: bool,
     pub show_timeline: bool,
@@ -229,6 +233,8 @@ pub struct SolveApp {
     pub toolbar_custom: toolbar_custom::ToolbarCustom,
     /// Preferences kept between runs, and their window.
     pub preferences: prefs::Prefs,
+    /// Mirror of `session.coaching`, refreshed after each coaching command.
+    pub coaching: solidcraft_engine::CoachingPreference,
     pub prefs_window: prefs::PrefsWindow,
     pub preview: preview::PreviewState,
     /// The last command started interactively (id, label), for Repeat.
@@ -278,6 +284,7 @@ pub struct SolveApp {
 
 impl SolveApp {
     pub fn new(session: Session, services: Services) -> Self {
+        let coaching = session.coaching.clone();
         SolveApp {
             session,
             ui: UiState::default(),
@@ -301,6 +308,7 @@ impl SolveApp {
             crashes: crash_ui::CrashUi::default(),
             toolbar_custom: toolbar_custom::ToolbarCustom::default(),
             preferences: prefs::Prefs::default(),
+            coaching,
             prefs_window: prefs::PrefsWindow::default(),
             preview: preview::PreviewState::default(),
             last_command: None,
@@ -372,6 +380,7 @@ impl SolveApp {
             "ground_shadow": self.ui.ground_shadow,
             "agent_cursor": self.ui.agent_cursor,
             "preferences": self.preferences,
+            "coaching": self.session.coaching,
         })
         .to_string()
     }
@@ -440,6 +449,10 @@ impl SolveApp {
         }
         if let Some(a) = v.get("agent_cursor").and_then(|a| serde_json::from_value(a.clone()).ok()) {
             self.ui.agent_cursor = a;
+        }
+        if let Some(c) = v.get("coaching") {
+            self.session.coaching = solidcraft_engine::coaching::coaching_from_value(c);
+            self.coaching = self.session.coaching.clone();
         }
     }
 
@@ -535,6 +548,16 @@ impl SolveApp {
         }
         if id == "sketch.finish" {
             self.finish_sketch();
+            return;
+        }
+        if id == "component.with_sketch" {
+            match self.run("component.create", json!({"activate": true})) {
+                Ok(_) => {
+                    self.set_status(self.tr("component.status.sketch_in_component"), false);
+                    self.start("sketch.create");
+                }
+                Err(error) => self.set_status(error, true),
+            }
             return;
         }
         // Press Pull: edges get a fillet, faces and profiles an extrude.
@@ -691,12 +714,33 @@ impl SolveApp {
         }
         dim_view::cancel();
         self.tool = None;
-        let _ = self.run("sketch.finish", json!({}));
+        let finished = self.session.active_sketch;
+        let result = self.run("sketch.finish", json!({}));
         if let Some(marker) = self.pre_sketch_marker.take() {
             self.restore_marker(marker);
         }
         if let Some(c) = self.pre_sketch_cam.take() {
             self.animate_to(c);
+        }
+        let profiles = result.as_ref().ok().and_then(|v| v.get("profiles")).and_then(|v| v.as_u64()).unwrap_or(0);
+        let sketch = result.as_ref().ok().and_then(|v| v.get("sketch")).and_then(|v| v.as_u64()).or(finished);
+        if profiles == 1
+            && let Some(sketch) = sketch
+        {
+            let _ = self.run("select.set", json!({"items": [{"type": "profile", "sketch": sketch, "index": 0}]}));
+            self.start("solid.extrude");
+            if !self.session.world_state().bodies.is_empty()
+                && let Some(dialog) = self.dialog.as_mut()
+                && let dialogs::Kind::Extrude { auto_op, operation, .. } = &mut dialog.kind
+            {
+                // Automatic Join would merge this solid into the existing body. New Body keeps both;
+                // Join and Cut stay available in the dialog.
+                *auto_op = false;
+                *operation = 0;
+            }
+            self.set_status(self.tr("sketch.status.extrude_operation"), false);
+        } else if profiles > 1 {
+            self.set_status(self.tr("sketch.status.choose_profile"), false);
         }
     }
 
@@ -847,31 +891,73 @@ impl SolveApp {
     }
 
     /// Animated view changes for the axis view and navigation bar.
+    /// Named orientations and fit go through `view.standard.*` and `view.fit`.
     pub fn animate_view(&mut self, v: &str) {
         self.pending_fit = None;
-        let mut to = self.cam;
         match v {
-            // With something selected, Fit frames the selection.
-            "fit" => match viewport::selection_bounds(self) {
-                Some(b) => {
-                    self.pending_fit = Some((to, b, true));
-                    to = self.fitted_bounds(to, &b);
-                }
-                None => {
-                    self.pending_fit = Some((to, solidcraft_engine::view::bounds(&self.session), true));
-                    to = self.fitted(to);
-                }
-            },
+            "fit" => self.fit_through_command(self.cam, false),
             "home" => {
-                to.set_view(StandardView::Iso);
-                self.pending_fit = Some((to, solidcraft_engine::view::bounds(&self.session), true));
-                to = self.fitted(to);
+                if let Some(oriented) = self.standard_camera("home") {
+                    self.fit_through_command(oriented, true);
+                }
             }
-            v => match StandardView::parse(v) {
-                Some(sv) => to.set_view(sv),
-                None => return,
-            },
+            "top" | "front" | "right" | "isometric" => {
+                if let Some(to) = self.standard_camera(v) {
+                    self.animate_to(to);
+                }
+            }
+            "iso" => {
+                if let Some(to) = self.standard_camera("isometric") {
+                    self.animate_to(to);
+                }
+            }
+            other => {
+                let mut to = self.cam;
+                match StandardView::parse(other) {
+                    Some(sv) => to.set_view(sv),
+                    None => return,
+                }
+                self.animate_to(to);
+            }
         }
+    }
+
+    fn standard_camera(&mut self, which: &str) -> Option<Camera> {
+        let id = match which {
+            "home" => "view.standard.home",
+            "top" => "view.standard.top",
+            "front" => "view.standard.front",
+            "right" => "view.standard.right",
+            "isometric" => "view.standard.isometric",
+            _ => return None,
+        };
+        let cam = serde_json::to_value(self.cam).ok()?;
+        let out = self.run(id, json!({"camera": cam})).ok()?;
+        out.get("camera").and_then(|value| serde_json::from_value(value.clone()).ok())
+    }
+
+    fn fit_through_command(&mut self, from: Camera, adopt_orientation: bool) {
+        let selection = viewport::selection_bounds(self);
+        let aspect = self.viewport.rect.map(|rect| f64::from(rect.width()) / f64::from(rect.height().max(1.0))).unwrap_or(1.5);
+        let Ok(cam) = serde_json::to_value(from) else { return };
+        let out = match self.run("view.fit", json!({"camera": cam, "aspect": aspect, "selection": selection.is_some()})) {
+            Ok(value) => value,
+            Err(error) => {
+                self.set_status(error, true);
+                return;
+            }
+        };
+        let changed = out.get("changed").and_then(serde_json::Value::as_bool) == Some(true);
+        let commanded = out.get("camera").and_then(|value| serde_json::from_value::<Camera>(value.clone()).ok());
+        let Some(to) = commanded.filter(|_| changed).or_else(|| selection.as_ref().map(|bounds| self.fitted_bounds(from, bounds))) else {
+            if adopt_orientation {
+                self.animate_to(from);
+            }
+            self.set_status(self.tr("view.nothing_to_fit"), false);
+            return;
+        };
+        let bounds = selection.unwrap_or_else(|| solidcraft_engine::view::bounds(&self.session));
+        self.pending_fit = Some((to, bounds, true));
         let request = self.pending_fit.take();
         self.animate_to(to);
         self.pending_fit = request;

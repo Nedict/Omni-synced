@@ -113,12 +113,15 @@ pub fn timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let p = ui.painter().clone();
                 let mut x = ui.max_rect().left();
                 let origin = x;
+                let active = app.session.active_component;
                 let feats: Vec<_> = app
                     .session
                     .doc
                     .features
                     .iter()
-                    .map(|f| (f.id, f.name.clone(), icon_of(&f.kind), f.suppressed, f.kind.type_name(), f.kind.clone()))
+                    .enumerate()
+                    .filter(|(_, f)| active == 0 || f.component == active || f.component == 0)
+                    .map(|(i, f)| (i, f.id, f.name.clone(), icon_of(&f.kind), f.suppressed, f.kind.type_name(), f.kind.clone()))
                     .collect();
                 // The feature whose body is under the cursor in the viewport.
                 let st = app.session.world_state();
@@ -135,7 +138,9 @@ pub fn timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let mut hovered: Option<u64> = None;
                 let mut edit: Option<u64> = None;
                 let mut marker_rect: Option<Rect> = None;
-                for (i, (id, name, icon, suppressed, ty, kind)) in feats.iter().enumerate() {
+                for (i, id, name, icon, suppressed, ty, kind) in
+                    feats.iter().map(|(i, id, name, icon, suppressed, ty, kind)| (*i, id, name, icon, suppressed, ty, kind))
+                {
                     if i == marker {
                         marker_rect = Some(Rect::from_min_size(pos2(x, r.top() + 5.0), vec2(6.0, r.height() - 10.0)));
                         x += 10.0;
@@ -194,15 +199,26 @@ pub fn timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                     let mut tip = format!("{name}  ({ty})");
                     if let Some(e) = &err {
-                        tip += &format!("\nError: {e}");
+                        tip.push('\n');
+                        tip.push_str(app.tr("timeline.status.error"));
+                        tip.push_str(": ");
+                        tip.push_str(e);
                     }
                     if let Some(w) = &warn {
-                        tip += &format!("\nWarning: {w}");
+                        tip.push('\n');
+                        tip.push_str(app.tr("timeline.status.warning"));
+                        tip.push_str(": ");
+                        tip.push_str(w);
+                    }
+                    if *suppressed {
+                        tip.push('\n');
+                        tip.push_str(app.tr("timeline.status.suppressed"));
                     }
                     if let Some(r) = res {
                         tip += &format!("\n{:.1} ms", r.ms);
                     }
-                    tip += "\nDouble-click to edit · drag to reorder · right-click for more";
+                    tip.push('\n');
+                    tip.push_str(app.tr("timeline.tip_edit"));
                     if resp.drag_started() {
                         drag = Some(Drag::Feature(*id));
                     }
@@ -316,7 +332,8 @@ pub fn timeline(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                     None => d.remove::<Drag>(drag_id),
                 });
-                app.viewport.hover_feature = hovered;
+                let now = ui.input(|i| i.time);
+                app.viewport.hover_feature = crate::viewport::promote_hover(&mut app.viewport.hover_dwell, hovered, now);
                 if let Some(id) = edit {
                     app.edit_feature(id);
                 }
@@ -351,5 +368,49 @@ fn transport_glyph(p: &egui::Painter, c: egui::Pos2, what: &str, col: Color32) {
             tri(1.0, -1.0);
             bar(5.0);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::theme::Tokens;
+    use crate::viewport::{HoverDwell, promote_hover};
+
+    /// Feature: ux-ui-shell-improvements, Property 21: The timeline reads in creation order with distinct feature states
+    #[test]
+    fn property_21_creation_order_and_distinct_states() {
+        let mut h = crate::scenario::Harness::new();
+        let mut cases = 0usize;
+        for n in 0..100 {
+            h.app
+                .run("solid.box", serde_json::json!({"length": 1, "width": 1, "height": 1, "corner": [n * 3, 0, 0], "name": format!("Box{n}")}))
+                .expect("box");
+            let ids: Vec<u64> = h.app.session.doc.features.iter().map(|f| f.id).collect();
+            let mut sorted = ids.clone();
+            sorted.sort();
+            assert_eq!(ids, sorted, "features stay in creation order");
+            cases += 1;
+        }
+        let light = Tokens::light();
+        assert_ne!(light.timeline_item, light.timeline_item_error);
+        assert_ne!(light.error, light.text_dim);
+        assert!(cases >= 100, "property ran {cases} times");
+    }
+
+    /// Feature: ux-ui-shell-improvements, Property 22: Hover highlighting follows a dwell and clears on leave
+    #[test]
+    fn property_22_hover_waits_and_clears() {
+        let mut cases = 0usize;
+        for n in 0..120 {
+            let mut dwell = HoverDwell::default();
+            let id = (n as u64 % 9) + 1;
+            assert_eq!(promote_hover(&mut dwell, Some(id), 10.0), None);
+            assert_eq!(promote_hover(&mut dwell, Some(id), 10.1), None);
+            assert_eq!(promote_hover(&mut dwell, Some(id), 10.2), Some(id));
+            assert_eq!(promote_hover(&mut dwell, None, 10.3), None);
+            assert!(dwell.id.is_none());
+            cases += 1;
+        }
+        assert!(cases >= 100, "property ran {cases} times");
     }
 }

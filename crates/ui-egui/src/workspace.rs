@@ -8,6 +8,7 @@ use solidcraft_engine::CommandSpec;
 use solidcraft_engine::doc::FeatureKind;
 
 const ASSEMBLE: &[&str] = &[
+    "component.with_sketch",
     "component.create",
     "joint.create",
     "joint.as_built",
@@ -90,7 +91,7 @@ const PLASTIC_CREATE: &[&str] = &[
 /// Panels of a tab, when this module lays the tab out.
 pub fn panels(tab: &str) -> Option<&'static [&'static str]> {
     match tab {
-        "SOLID" => Some(&["CREATE", "MODIFY", "ASSEMBLE", "CONFIGURE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"]),
+        "SOLID" => Some(&["CREATE", "MODIFY", "ASSEMBLE", "POSITION", "CONFIGURE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"]),
         "PLASTIC" => Some(&["SETUP", "CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"]),
         _ => None,
     }
@@ -109,19 +110,23 @@ pub fn layout<'a>(tab: &str, panel: &str, specs: &[&'a CommandSpec]) -> Option<(
                 "sketch.circle.center",
                 "sketch.circle.two_point",
                 "sketch.point",
+                "sketch.trim",
+                "sketch.extend",
+                "sketch.break",
             ],
-            7,
+            8,
             tab,
         ),
         ("SOLID", "CONFIGURE") => (&["parameters.change", "config.table"], 2, tab),
-        ("SOLID" | "SHEET METAL" | "PLASTIC", "ASSEMBLE") => (ASSEMBLE, 3, tab),
+        ("SOLID" | "SHEET METAL" | "PLASTIC", "ASSEMBLE") => (ASSEMBLE, 4, tab),
         ("SHEET METAL", "CREATE") => (SHEET_CREATE, 3, tab),
         ("SHEET METAL", "MODIFY") => (SHEET_MODIFY, 2, tab),
         ("PLASTIC", "SETUP") => (PLASTIC_SETUP, 2, tab),
         ("PLASTIC", "CREATE") => (PLASTIC_CREATE, 5, tab),
         // The solid tab's panels.
         ("PLASTIC", "MODIFY") => (&[], 4, "SOLID"),
-        ("SHEET METAL" | "PLASTIC", "CONSTRUCT" | "INSPECT" | "INSERT") => (&[], 2, "SOLID"),
+        ("SURFACE" | "SHEET METAL" | "PLASTIC", "CONSTRUCT" | "INSPECT" | "INSERT") => (&[], 2, "SOLID"),
+        ("SURFACE", "ASSEMBLE") => (ASSEMBLE, 4, "SOLID"),
         _ => return None,
     };
     let mut out: Vec<&CommandSpec> = ids.iter().filter_map(|id| specs.iter().find(|c| c.id == *id).copied()).collect();
@@ -198,7 +203,8 @@ mod tests {
     fn tabs_share_commands_in_fusion_order() {
         for tab in ["SOLID", "SHEET METAL", "PLASTIC"] {
             let a = ids(tab, "ASSEMBLE");
-            assert_eq!(a.get(1).copied(), Some("joint.create"), "{tab}: {a:?}");
+            assert_eq!(a.first().copied(), Some("component.with_sketch"), "{tab}: {a:?}");
+            assert_eq!(a.get(2).copied(), Some("joint.create"), "{tab}: {a:?}");
             assert!(a.contains(&"joint.drive") && a.contains(&"component.create"));
         }
         let c = ids("SHEET METAL", "CREATE");
@@ -209,6 +215,9 @@ mod tests {
         let p = ids("PLASTIC", "CREATE");
         assert!(p.contains(&"plastic.boss") && p.contains(&"solid.rib") && p.contains(&"plastic.lip"));
         assert!(ids("PLASTIC", "MODIFY").contains(&"solid.shell"));
+        let sketch = layout("SKETCH", "CREATE", &solidcraft_engine::command_specs()).expect("sketch create");
+        let trim = sketch.0.iter().position(|c| c.id == "sketch.trim").expect("trim");
+        assert!(trim < sketch.1, "trim is a large button");
         assert!(panels("PLASTIC").is_some_and(|p| p.first() == Some(&"SETUP")));
     }
 }

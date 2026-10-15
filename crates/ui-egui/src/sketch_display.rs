@@ -11,6 +11,15 @@ use solidcraft_engine::sketch::Sketch;
 use crate::SolveApp;
 use crate::viewport::Proj;
 
+/// The empty cue shows only while the active sketch has no geometry and no tool is running.
+pub fn empty_state_visible(app: &SolveApp) -> bool {
+    let Some(sid) = app.session.active_sketch else { return false };
+    if app.tool.is_some() {
+        return false;
+    }
+    app.session.world_state().sketch(sid).is_some_and(|ss| ss.sketch.curves.is_empty() && ss.sketch.points.len() <= 1)
+}
+
 pub fn projection_key(proj: &Proj, ppp: f32) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     for n in proj.vp.0.iter().flatten() {

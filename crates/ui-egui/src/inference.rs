@@ -42,6 +42,22 @@ impl Inference {
             Kind::Tangent => "T",
         }
     }
+
+    pub fn type_key(&self) -> &'static str {
+        crate::sketch_tools::snap_key(self.label())
+    }
+}
+
+/// A marker drawn at an inference target.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InferenceMarker {
+    pub at: Vec2,
+    pub type_key: &'static str,
+}
+
+/// One marker at the inference point. Several guides would each get a marker.
+pub fn markers(inference: &Inference) -> Vec<InferenceMarker> {
+    vec![InferenceMarker { at: inference.at, type_key: inference.type_key() }]
 }
 
 thread_local! {
@@ -179,6 +195,14 @@ pub fn show(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     if let (Some(a), Some(b)) = (to(i.guide.0), to(i.guide.1)) {
         painter.add(Shape::dashed_line(&[a, b], Stroke::new(1.0, tk.rubber_band), 5.0, 4.0));
     }
+    if let Some(sp) = to(i.at) {
+        painter.circle_stroke(sp, 6.0, Stroke::new(1.5, tk.accent));
+        let text = app.tr(i.type_key());
+        let galley = painter.layout_no_wrap(text.to_string(), egui::FontId::proportional(10.0), tk.text);
+        let r = egui::Rect::from_min_size(sp + egui::vec2(12.0, -24.0), galley.size() + egui::vec2(8.0, 4.0));
+        painter.rect_filled(r, 3.0, tk.accent_soft);
+        painter.galley(r.min + egui::vec2(4.0, 2.0), galley, tk.text);
+    }
 }
 
 #[cfg(test)]
@@ -209,6 +233,21 @@ mod tests {
         let i = lines(&s, Vec2::new(30.0, 15.0), Vec2::new(20.1, 19.9), 0.5).expect("extension");
         assert_eq!(i.kind, Kind::Extension);
         assert!((i.at.x - i.at.y).abs() < 1e-9 && i.at.x > 10.0);
+    }
+
+    #[test]
+    fn a_marker_sits_on_the_inference_and_clears_when_nothing_is_near() {
+        let s = sk();
+        let hit = lines(&s, Vec2::new(0.0, 20.0), Vec2::new(10.2, 29.9), 0.5).expect("parallel");
+        let marks = markers(&hit);
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].at, hit.at);
+        assert_eq!(marks[0].type_key, "sketch.infer.parallel");
+        assert!(lines(&s, Vec2::new(0.0, 20.0), Vec2::new(10.0, 25.0), 0.5).is_none());
+        assert!(current().is_none());
+        let tk = crate::theme::Tokens::get();
+        assert_ne!(tk.accent, tk.rubber_band);
+        assert_ne!(tk.accent, egui::Color32::TRANSPARENT);
     }
 
     #[test]

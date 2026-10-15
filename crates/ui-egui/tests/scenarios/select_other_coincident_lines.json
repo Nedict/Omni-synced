@@ -2,6 +2,7 @@
   {"note": "Two lines drawn on top of each other: holding the button still lists both, and the one underneath can be picked."},
   {"start": "sketch.create"},
   {"click": {"plane": "XY"}},
+  {"key": "Escape"},
   {"call": "ui.set", "params": {"showOrigin": false}},
   {"call": "engine.execute", "params": {"command": "sketch.line", "params": {"points": [[0, 10], [20, 10]], "infer": false, "connect": false}}},
   {"call": "engine.execute", "params": {"command": "sketch.line", "params": {"points": [[0, 10], [20, 10]], "infer": false, "connect": false}}},

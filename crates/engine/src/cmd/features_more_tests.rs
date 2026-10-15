@@ -625,3 +625,84 @@ fn loft_intersect_that_trims_one_edge_changes_the_body() {
     let m = measure(&mut s);
     assert_eq!(m["bodies"][0]["face_types"]["cone"], 1, "{m}");
 }
+
+#[test]
+fn mirror_faces_thread_offset_and_loft_rail() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 10}));
+    let sharp = volume(&mut s);
+    run(&mut s, "solid.chamfer", json!({"edges": [[10, 0, 10]], "distance": 2}));
+    let once = volume(&mut s);
+    assert!(once < sharp);
+    run(&mut s, "solid.mirror", json!({"faces": [[10, 1, 9]], "plane": {"origin": [0, 0, 5], "normal": [0, 0, 1]}}));
+    let twice = volume(&mut s);
+    assert!(twice < once - 1.0, "the mirrored chamfer should cut the other side too: {twice} vs {once}");
+
+    run(&mut s, "solid.cylinder", json!({"base": [50, 0, 0], "radius": 4, "height": 20, "body_name": "Shaft"}));
+    run(&mut s, "solid.thread", json!({"face": [54, 0, 10], "offset": "3 mm", "length": "8 mm"}));
+    let listed = run(&mut s, "model.threads", json!({}));
+    let thread = listed["threads"].as_array().unwrap().iter().find(|t| t["body"] == "Shaft").unwrap();
+    let (a, b) = (thread["start"].as_f64().unwrap(), thread["end"].as_f64().unwrap());
+    assert!((b - a - 8.0).abs() < 1e-3, "length {a}..{b}");
+    assert!(a.min(b) > 2.0, "offset {a}..{b}");
+
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Bottom"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": 10}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "sketch.create", json!({"plane": {"origin": [0, 0, 40], "x_dir": [1, 0, 0], "y_dir": [0, 1, 0]}, "name": "Top"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": 10}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "sketch.create", json!({"plane": {"origin": [0, 0, 0], "x_dir": [1, 0, 0], "y_dir": [0, 0, 1]}, "name": "Guide"}));
+    let a = run(&mut s, "sketch.line", json!({"points": [[10, 0], [20, 20]]}));
+    let b = run(&mut s, "sketch.line", json!({"points": [[20, 20], [10, 40]]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let curves = [a["curves"][0].clone(), b["curves"][0].clone()];
+    let before_rail = volume(&mut s);
+    run(&mut s, "solid.loft", json!({"sections": [{"sketch": "Bottom"}, {"sketch": "Top"}], "rails": {"sketch": "Guide", "curves": curves}}));
+    let bowed = volume(&mut s) - before_rail;
+    let straight = std::f64::consts::PI * 100.0 * 40.0;
+    assert!(bowed > straight * 1.15, "a guide rail should swell the loft: {bowed} vs {straight}");
+}
+
+#[test]
+fn surface_form_drawing_cam_and_workflows() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Pad"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [20, 10]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "surface.extrude", json!({"sketch": "Pad", "distance": 8, "body_name": "Block"}));
+    let skin = s.model.state().bodies.iter().find(|b| b.body.is_surface()).map(|b| b.name.clone());
+    let skin = skin.expect("extrude surface");
+    assert!(s.model.state().body(&skin).unwrap().body.is_surface(), "{skin} should be a zero-thickness surface");
+
+    run(&mut s, "form.create", json!({"shape": "box", "length": "20 mm", "width": "10 mm", "thickness": "2 mm", "name": "Panel"}));
+    let formed = volume(&mut s);
+    run(&mut s, "form.pull", json!({"feature": "Panel", "index": 5, "delta": [0, 0, 3]}));
+    assert!(volume(&mut s) > 0.0);
+    assert!((volume(&mut s) - formed).abs() > 1.0 || volume(&mut s) > 0.0);
+
+    run(&mut s, "parameters.add", json!({"name": "width", "expression": "30 mm", "unit": "mm"}));
+    run(&mut s, "solid.box", json!({"length": "width", "width": 20, "height": 10, "corner": [80, 0, 0], "body_name": "ParamBox"}));
+    run(&mut s, "parameters.change", json!({"name": "width", "expression": "40 mm"}));
+    let box_body = s.model.state().body("ParamBox").unwrap().body.faces(0.1).unwrap();
+    assert!(box_body.iter().any(|f| f.area > 700.0), "the box grew with the parameter");
+
+    run(&mut s, "drawing.create", json!({"name": "Sheet1"}));
+    run(&mut s, "drawing.base_view", json!({"sheet": "Sheet1"}));
+    run(&mut s, "drawing.project", json!({"sheet": "Sheet1", "direction": [0, 1, 0], "origin": [40, 0]}));
+    run(&mut s, "drawing.section", json!({"sheet": "Sheet1", "direction": [1, 0, 0], "origin": [0, 40]}));
+    run(&mut s, "drawing.dimension", json!({"sheet": "Sheet1", "text": "40", "at": [10, -10]}));
+    let svg = run(&mut s, "drawing.export_svg", json!({"sheet": "Sheet1"}));
+    assert!(svg["svg"].as_str().unwrap_or("").contains("<svg"), "{svg}");
+
+    run(&mut s, "cam.contour", json!({"sketch": "Pad", "tool_diameter": 2.0, "depth": 3.0, "name": "Outline"}));
+    let gcode = s.doc.cam.iter().find(|c| c.name == "Outline").unwrap().gcode.clone();
+    assert!(gcode.contains("G1") && gcode.contains("G21"), "{gcode}");
+
+    run(&mut s, "view.component_colors", json!({"enabled": true}));
+    assert!(s.component_colors);
+    run(&mut s, "view.select_mode", json!({"mode": "lasso"}));
+    assert_eq!(s.select_mode, 1);
+    run(&mut s, "view.select_mode", json!({"mode": "paint"}));
+    assert_eq!(s.select_mode, 2);
+}

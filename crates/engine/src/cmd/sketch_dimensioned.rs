@@ -4,7 +4,7 @@ use solidcraft_doc::expr::Kind;
 
 use crate::{
     Result, Session,
-    params::{bad, expr, str_},
+    params::{bad, str_},
 };
 
 pub(super) fn draw(s: &mut Session, p: &Value) -> Result<Value> {
@@ -30,9 +30,7 @@ pub(super) fn draw(s: &mut Session, p: &Value) -> Result<Value> {
     let mut overall_length = None;
     let mut slot_width = None;
     for (role, value) in dimensions {
-        let e = expr(&json!({"value": value}), "value")
-            .filter(|e| e.len() <= 4096)
-            .ok_or_else(|| bad(cmd, "dimension values must be bounded expressions or finite numbers"))?;
+        let e = super::finite_dimension_text(&s.doc, cmd, value)?;
         let kind = if role == "angle" || role == "sweep" { Kind::Angle } else { Kind::Length };
         let evaluated = s.doc.eval(&e, kind)?;
         if role == "length" {

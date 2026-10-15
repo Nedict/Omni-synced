@@ -473,6 +473,11 @@ pub enum FeatureKind {
         /// Join each mirrored body with its original.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         combine: bool,
+        /// Mirror these faces of `face_body` (a cut is cut again on the other side, a boss is joined).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        faces: Vec<Vec3>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        face_body: Option<String>,
     },
     /// A drilled hole (simple, counterbore or countersink) at a point, into the material.
     Hole {
@@ -492,6 +497,12 @@ pub enum FeatureKind {
         /// A cosmetic thread in the holes (e.g. "M6x1").
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thread: Option<String>,
+        /// How far the thread starts from the end nearest the pick.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thread_offset: Option<String>,
+        /// Threaded length after `thread_offset`. `None` runs to the far end of the face.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thread_length: Option<String>,
         /// To Object: drill down to the face (or point) here instead of `depth`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to: Option<Vec3>,
@@ -506,6 +517,9 @@ pub enum FeatureKind {
         /// Thread length from the face's end nearest `face`; `None` = full length.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         length: Option<String>,
+        /// Shift the start further from that end, so the thread clears a chamfer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        offset: Option<String>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         modeled: bool,
     },
@@ -516,6 +530,9 @@ pub enum FeatureKind {
         operation: Operation,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         targets: Vec<String>,
+        /// A guide curve the sections scale out to meet.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rails: Option<LoftRail>,
     },
     /// Sweep profiles along a chain of sketch curves.
     Sweep {
@@ -958,6 +975,9 @@ pub enum FeatureKind {
     MeshConvert {
         body: String,
         tolerance: String,
+        /// `prismatic` merges coplanar facets. `faceted` keeps one face per triangle.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        mode: String,
     },
     /// Mesh bodies imported from a 3MF or STL file, embedded in the design.
     MeshImport {
@@ -965,6 +985,43 @@ pub enum FeatureKind {
         file: String,
         meshes: Vec<MeshData>,
     },
+    /// Side walls of a solid, kept as a zero-thickness surface.
+    SheetWalls {
+        body: String,
+        axis: Vec3,
+    },
+    /// Cut a mesh with a plane, keeping the side that contains `keep`.
+    MeshCut {
+        body: String,
+        origin: Vec3,
+        normal: Vec3,
+        keep: Vec3,
+    },
+    /// Drop degenerate triangles and fill a single triangular hole.
+    MeshRepair {
+        body: String,
+    },
+    /// Collapse nearby vertices. `ratio` is the fraction of detail to keep (0…1).
+    MeshReduce {
+        body: String,
+        ratio: String,
+    },
+    /// A pulled 4×4 form grid, thickened into a solid.
+    Form {
+        shape: String,
+        length: String,
+        width: String,
+        thickness: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pulls: Vec<FormPull>,
+    },
+}
+
+/// One control-point move on a form grid.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FormPull {
+    pub index: u32,
+    pub delta: Vec3,
 }
 
 /// How a fillet's size is given.
@@ -1044,6 +1101,13 @@ pub struct Component {
     /// Parent component (0 = the root).
     #[serde(default)]
     pub parent: u64,
+}
+
+/// A guide curve for a loft, from one sketch.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LoftRail {
+    pub sketch: u64,
+    pub curves: Vec<String>,
 }
 
 /// One loft section: profiles of a sketch.
@@ -1254,6 +1318,11 @@ impl FeatureKind {
             | K::Import { .. }
             | K::MeshImport { .. }
             | K::MeshConvert { .. }
+            | K::SheetWalls { .. }
+            | K::MeshCut { .. }
+            | K::MeshRepair { .. }
+            | K::MeshReduce { .. }
+            | K::Form { .. }
             | K::BodyTransfer { .. } => Vec::new(),
         }
     }
@@ -1340,6 +1409,11 @@ impl FeatureKind {
             FeatureKind::Import { .. } => "BaseFeature",
             FeatureKind::MeshImport { .. } => "MeshFeature",
             FeatureKind::MeshConvert { .. } => "MeshConvertFeature",
+            FeatureKind::SheetWalls { .. } => "SurfaceFeature",
+            FeatureKind::MeshCut { .. } => "MeshCutFeature",
+            FeatureKind::MeshRepair { .. } => "MeshRepairFeature",
+            FeatureKind::MeshReduce { .. } => "MeshReduceFeature",
+            FeatureKind::Form { .. } => "FormFeature",
         }
     }
     /// Default name prefix (`Extrude` → `Extrude1`).
@@ -1406,6 +1480,11 @@ impl FeatureKind {
             FeatureKind::Import { .. } => "Import",
             FeatureKind::MeshImport { .. } => "Mesh",
             FeatureKind::MeshConvert { .. } => "ConvertMesh",
+            FeatureKind::SheetWalls { .. } => "Surface",
+            FeatureKind::MeshCut { .. } => "MeshCut",
+            FeatureKind::MeshRepair { .. } => "MeshRepair",
+            FeatureKind::MeshReduce { .. } => "MeshReduce",
+            FeatureKind::Form { .. } => "Form",
         }
     }
     /// Every expression the feature uses.
@@ -1543,9 +1622,9 @@ impl FeatureKind {
                 v.push(angle);
                 plane_exprs(neutral, &mut v);
             }
-            FeatureKind::Hole { diameter, depth, hole, .. } => {
+            FeatureKind::Hole { diameter, depth, hole, thread_offset, thread_length, .. } => {
                 v.push(diameter);
-                v.extend(depth.iter().map(String::as_str));
+                v.extend(depth.iter().chain(thread_offset.iter()).chain(thread_length.iter()).map(String::as_str));
                 match hole {
                     HoleKind::Simple => {}
                     HoleKind::Drilled { tip_angle } => v.push(tip_angle),
@@ -1553,7 +1632,9 @@ impl FeatureKind {
                     HoleKind::Countersink { cs_diameter, cs_angle } => v.extend([cs_diameter.as_str(), cs_angle]),
                 }
             }
-            FeatureKind::Thread { length, .. } => v.extend(length.iter().map(String::as_str)),
+            FeatureKind::Thread { length, offset, .. } => {
+                v.extend(length.iter().chain(offset.iter()).map(String::as_str));
+            }
             FeatureKind::Scale { factor, factors, .. } => {
                 v.push(factor);
                 v.extend(factors.iter().flatten().map(String::as_str));
@@ -1623,6 +1704,9 @@ impl FeatureKind {
             FeatureKind::SurfaceExtend { distance, .. } => v.push(distance),
             FeatureKind::Patch { .. } => {}
             FeatureKind::Import { .. } | FeatureKind::MeshImport { .. } | FeatureKind::BodyTransfer { .. } => {}
+            FeatureKind::SheetWalls { .. } | FeatureKind::MeshCut { .. } | FeatureKind::MeshRepair { .. } => {}
+            FeatureKind::MeshReduce { ratio, .. } => v.push(ratio),
+            FeatureKind::Form { length, width, thickness, .. } => v.extend([length.as_str(), width.as_str(), thickness.as_str()]),
         }
         v
     }
@@ -1694,6 +1778,42 @@ pub struct StandardPart {
     pub length: Option<f64>,
 }
 
+/// A projected view on a drawing sheet.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DrawingView {
+    pub kind: String,
+    pub direction: Vec3,
+    pub origin: [f64; 2],
+}
+
+/// A note or dimension on a drawing sheet.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DrawingNote {
+    pub text: String,
+    pub at: [f64; 2],
+}
+
+/// One drawing sheet.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DrawingSheet {
+    pub name: String,
+    pub views: Vec<DrawingView>,
+    pub notes: Vec<DrawingNote>,
+    /// SVG of the views, filled when the sheet is exported.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub svg: String,
+}
+
+/// A 2D contour toolpath.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CamJob {
+    pub name: String,
+    pub sketch: String,
+    pub tool_diameter: f64,
+    pub depth: f64,
+    pub gcode: String,
+}
+
 /// The document.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
@@ -1736,6 +1856,12 @@ pub struct Document {
     /// Reference images on planes (Insert Canvas).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub canvases: Vec<crate::canvas::Canvas>,
+    /// 2D sheets projected from the model.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drawings: Vec<DrawingSheet>,
+    /// Toolpaths generated from sketches.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cam: Vec<CamJob>,
     /// Comments of feature-input parameters (by name).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub param_comments: std::collections::BTreeMap<String, String>,
@@ -1829,6 +1955,8 @@ impl Document {
             browser_groups: Vec::new(),
             browser_order: Default::default(),
             named_views: Vec::new(),
+            drawings: Vec::new(),
+            cam: Vec::new(),
         }
     }
 

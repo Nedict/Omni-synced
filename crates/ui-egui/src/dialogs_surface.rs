@@ -244,7 +244,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
             Surf::Stitch { tolerance: if tolerance.trim() == "0" { String::new() } else { tolerance.clone() } },
             vec![bodies.iter().map(|n| Sel::Body { name: n.clone() }).collect()],
         ),
-        FeatureKind::MeshConvert { body, tolerance } => {
+        FeatureKind::MeshConvert { body, tolerance, .. } => {
             (Surf::ConvertMesh { tolerance: tolerance.clone() }, vec![vec![Sel::Body { name: body.clone() }]])
         }
         FeatureKind::Thicken { bodies, thickness, symmetric, operation, .. } => (

@@ -164,7 +164,7 @@ fn format_thread(d: f64, p: f64) -> String {
 }
 
 /// A cosmetic thread on the cylindrical face at `p`.
-fn thread_on(st: &ModelState, feature: u64, p: Vec3, designation: Option<&str>, length: Option<f64>) -> Result<ThreadInfo> {
+fn thread_on(st: &ModelState, feature: u64, p: Vec3, designation: Option<&str>, length: Option<f64>, offset: Option<f64>) -> Result<ThreadInfo> {
     let (body, cyl) = st
         .bodies
         .iter()
@@ -191,18 +191,35 @@ fn thread_on(st: &ModelState, feature: u64, p: Vec3, designation: Option<&str>, 
             if cyl.internal { "hole" } else { "shaft" }
         )));
     }
-    // From the end of the face nearest the point.
+    // From the end of the face nearest the point, then shifted by `offset` so a chamfer can be cleared.
     let s = (p - cyl.axis_point).dot(cyl.axis);
-    let (mut a, mut b) = (cyl.start, cyl.end);
-    if let Some(l) = length {
-        if !(l > 0.0) {
-            return Err(DocError::Invalid("thread length must be positive".into()));
-        }
-        if (s - a).abs() <= (b - s).abs() {
-            b = (a + l).min(b);
-        } else {
-            a = (b - l).max(a);
-        }
+    let off = offset.unwrap_or(0.0);
+    if !(off.is_finite() && off >= 0.0) {
+        return Err(DocError::Invalid("thread offset must be zero or positive".into()));
+    }
+    if let Some(l) = length
+        && !(l.is_finite() && l > 0.0)
+    {
+        return Err(DocError::Invalid("thread length must be positive".into()));
+    }
+    let from_start = (s - cyl.start).abs() <= (cyl.end - s).abs();
+    let (a, b) = if from_start {
+        let a = cyl.start + off;
+        let b = match length {
+            Some(l) => (a + l).min(cyl.end),
+            None => cyl.end,
+        };
+        (a, b)
+    } else {
+        let b = cyl.end - off;
+        let a = match length {
+            Some(l) => (b - l).max(cyl.start),
+            None => cyl.start,
+        };
+        (a, b)
+    };
+    if !(b - a > 1e-6) {
+        return Err(DocError::Invalid("the thread offset leaves nothing on the face".into()));
     }
     Ok(ThreadInfo {
         feature,
@@ -2358,7 +2375,7 @@ fn feature_tools_with_constructor(
             let pitch = if *clockwise { -p } else { p };
             Ok(unnamed(vec![kernel::sweep_helix(&plane, &region, *base, axis, pitch, n)?]))
         }
-        FeatureKind::Loft { sections, .. } => {
+        FeatureKind::Loft { sections, rails, .. } => {
             let mut secs = Vec::new();
             for sec in sections {
                 let ss = st
@@ -2367,6 +2384,11 @@ fn feature_tools_with_constructor(
                 let regions = solidcraft_sketch::merge_regions(&select_profiles(ss, &sec.profiles)?);
                 let [r] = &regions[..] else { return Err(DocError::Invalid("each loft section must be one profile".into())) };
                 secs.push((ss.plane, r.outer.clone()));
+            }
+            if let Some(rail) = rails {
+                let ps = st.sketch(rail.sketch).ok_or_else(|| DocError::Unknown(format!("sketch {}", rail.sketch)))?;
+                let pts = rail_points(ps, &rail.curves)?;
+                secs = guide_sections(secs, &pts)?;
             }
             // Its caps are the first and last sections; which section's curve a side follows is
             // not recorded, so the sides are named from geometry.
@@ -2527,6 +2549,109 @@ fn path_in_frame<'a>(doc: &Document, sketch: &'a SolvedSketch, consumer: u64) ->
 /// A path that uses 3D sketch curves (wires), as one chain of world points from the end nearest
 /// `start` (no start: the first curve runs toward the second). `None` when the path is all
 /// planar curves.
+fn rail_points(ps: &SolvedSketch, ids: &[String]) -> Result<Vec<Vec3>> {
+    if ids.is_empty() || ids.len() > 1000 {
+        return Err(DocError::Invalid("a loft rail needs 1…1000 curves".into()));
+    }
+    let mut chain = Vec::new();
+    for id in ids {
+        let ci = ps.sketch.curve_index(id).ok_or_else(|| DocError::Unknown(format!("rail curve `{id}`")))?;
+        let mut pts: Vec<Vec3> = Vec::new();
+        for seg in ps.sketch.segs(ci) {
+            for q in seg.polyline(1e-2) {
+                let w = ps.plane.to_world(q);
+                if pts.last().is_none_or(|l| l.dist(w) > 1e-6) {
+                    pts.push(w);
+                }
+            }
+        }
+        if let Some(last) = chain.last().copied()
+            && pts.len() >= 2
+            && pts.last().is_some_and(|p| p.dist(last) + 1e-6 < pts[0].dist(last))
+        {
+            pts.reverse();
+        }
+        if chain.last().is_some_and(|last| pts.first().is_some_and(|p| p.dist(*last) < 1e-3)) {
+            pts.remove(0);
+        }
+        chain.extend(pts);
+    }
+    if chain.len() < 2 {
+        return Err(DocError::Invalid("the loft rail has no curves".into()));
+    }
+    Ok(chain)
+}
+
+/// Two profile sections scaled at stations so the boundary reaches a guide curve.
+fn guide_sections(secs: Vec<(Plane, solidcraft_geom::Loop2)>, rail: &[Vec3]) -> Result<Vec<(Plane, solidcraft_geom::Loop2)>> {
+    let [first, last] = secs.as_slice() else {
+        return Err(DocError::Invalid("a guide rail needs exactly two profile sections".into()));
+    };
+    if rail.len() < 2 {
+        return Err(DocError::Invalid("the loft rail is too short".into()));
+    }
+    let (p0, l0) = first;
+    let (p1, l1) = last;
+    let c0 = p0.to_world(l0.centroid());
+    let c1 = p1.to_world(l1.centroid());
+    let axis = (c1 - c0).normalized().ok_or_else(|| DocError::Invalid("the loft sections are in the same place".into()))?;
+    let span = c0.dist(c1);
+    let sample = |lp: &solidcraft_geom::Loop2, n: usize| -> Vec<Vec2> {
+        let poly = lp.polyline(0.05);
+        if poly.is_empty() {
+            return Vec::new();
+        }
+        (0..n)
+            .map(|i| {
+                let f = i as f64 / n as f64 * poly.len() as f64;
+                let i0 = (f.floor() as usize) % poly.len();
+                let i1 = (i0 + 1) % poly.len();
+                let (Some(a), Some(b)) = (poly.get(i0), poly.get(i1)) else { return Vec2::ZERO };
+                *a * (1.0 - (f - f.floor())) + *b * (f - f.floor())
+            })
+            .collect()
+    };
+    let (a0, a1) = (sample(l0, 24), sample(l1, 24));
+    if a0.len() != 24 || a1.len() != 24 {
+        return Err(DocError::Invalid("a loft section has no boundary".into()));
+    }
+    let mut out = vec![first.clone()];
+    for step in 1..4 {
+        let t = step as f64 / 4.0;
+        let station = c0 + axis * (span * t);
+        let rail_p = rail
+            .iter()
+            .min_by(|u, v| {
+                let du = ((**u - c0).dot(axis) - span * t).abs();
+                let dv = ((**v - c0).dot(axis) - span * t).abs();
+                du.total_cmp(&dv)
+            })
+            .copied()
+            .unwrap_or(station);
+        let plane = Plane::from_normal(station, axis).ok_or_else(|| DocError::Invalid("loft plane".into()))?;
+        let mut pts: Vec<Vec2> = (0..24)
+            .filter_map(|k| {
+                let (Some(q0), Some(q1)) = (a0.get(k), a1.get(k)) else { return None };
+                Some(plane.to_local(p0.to_world(*q0) * (1.0 - t) + p1.to_world(*q1) * t))
+            })
+            .collect();
+        let c = pts.iter().copied().fold(Vec2::ZERO, |a, q| a + q) / pts.len().max(1) as f64;
+        let aim = plane.to_local(rail_p) - c;
+        let want = aim.len();
+        let dir = aim.normalized().unwrap_or(Vec2::X);
+        let hit = pts.iter().map(|q| (*q - c).dot(dir)).fold(0.0_f64, f64::max);
+        if want > 1e-6 && hit > 1e-6 {
+            let scale = (want / hit).clamp(0.05, 20.0);
+            for q in &mut pts {
+                *q = c + (*q - c) * scale;
+            }
+        }
+        out.push((plane, solidcraft_geom::Loop2::polygon(&pts).ccw()));
+    }
+    out.push(last.clone());
+    Ok(out)
+}
+
 fn path_points(ps: &SolvedSketch, ids: &[String], start: Vec3) -> Result<Option<Vec<Vec3>>> {
     if !ids.iter().any(|id| ps.sketch.wire_index(id).is_some()) {
         return Ok(None);
@@ -2681,6 +2806,57 @@ fn rotation(o: Vec3, a: Vec3, ang: f64) -> Mat {
     );
     let tr = o - ro;
     [[r[0][0], r[0][1], r[0][2], 0.0], [r[1][0], r[1][1], r[1][2], 0.0], [r[2][0], r[2][1], r[2][2], 0.0], [tr.x, tr.y, tr.z, 1.0]]
+}
+
+/// Mirror selected faces across a plane and join the result back into the same body.
+/// A face whose removal grows the body was a cut (a chamfer): the missing wedge is mirrored
+/// and cut from the other side. A face whose removal shrinks the body was added material.
+fn mirror_faces(
+    doc: &Document,
+    vals: &BTreeMap<String, Value>,
+    st: &mut ModelState,
+    f: &Feature,
+    plane: &PlaneRef,
+    faces: &[Vec3],
+    face_body: &Option<String>,
+) -> Result<()> {
+    let pl = doc.resolve_plane_in(vals, plane, 0, Some(st))?;
+    let i = if let Some(n) = face_body {
+        st.bodies.iter().position(|b| &b.name == n).ok_or_else(|| DocError::Unknown(format!("body `{n}`")))?
+    } else {
+        st.bodies
+            .iter()
+            .position(|b| faces.iter().any(|p| crate::appearance::face_index_at(b, *p).is_some()))
+            .ok_or_else(|| DocError::Invalid("no face at the mirror pick".into()))?
+    };
+    let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+    let mut idxs = Vec::new();
+    for p in faces {
+        let idx = crate::appearance::face_index_at(&mb, *p).ok_or_else(|| DocError::Invalid("no face at the mirror pick".into()))?;
+        if !idxs.contains(&idx) {
+            idxs.push(idx);
+        }
+    }
+    if idxs.is_empty() {
+        return Err(DocError::Invalid("select the faces to mirror".into()));
+    }
+    let healed = kernel::delete_faces(&mb.body, &idxs)?;
+    let v0 = kernel::measure(&mb.body)?.volume;
+    let vh = kernel::measure(&healed)?.volume;
+    let mirrored_piece = if vh > v0 + 1e-4 {
+        kernel::boolean(&healed, &mb.body, BoolOp::Cut)?.ok_or_else(|| DocError::Invalid("the mirrored faces add no material to recover".into()))?
+    } else if v0 > vh + 1e-4 {
+        kernel::boolean(&mb.body, &healed, BoolOp::Cut)?.ok_or_else(|| DocError::Invalid("the mirrored faces remove no material to copy".into()))?
+    } else {
+        return Err(DocError::Invalid("those faces do not add or remove material, so there is nothing to mirror".into()));
+    };
+    let mirrored = kernel::transform_matrix(&mirrored_piece, mirror_matrix(&pl))?;
+    let op = if vh > v0 { BoolOp::Cut } else { BoolOp::Union };
+    let joined = kernel::boolean(&mb.body, &mirrored, op)?.ok_or_else(|| DocError::Invalid("the mirrored faces missed the body".into()))?;
+    if let Some(slot) = st.bodies.get_mut(i) {
+        *slot = ModelBody::new(mb.name, joined, f.id);
+    }
+    Ok(())
 }
 
 /// Reflection in a plane (column-major).
@@ -3333,27 +3509,39 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             }
             apply_traced(st, f, tools, *operation, targets)
         }
-        FeatureKind::Hole { thread, diameter, .. } => {
+        FeatureKind::Hole { thread, diameter, thread_offset, thread_length, .. } => {
             let (spots, dir) = hole_spots(st, f)?;
             let tools = feature_tools(doc, vals, f, st)?;
             apply_op(st, f, tools, Operation::Cut, &[])?;
             if let Some(d) = thread {
                 // A point on each hole's wall, a little below the entry.
                 let r = val(vals, diameter, Kind::Length)? / 2.0;
+                let off = match thread_offset {
+                    Some(e) => Some(val(vals, e, Kind::Length)?),
+                    None => None,
+                };
+                let len = match thread_length {
+                    Some(e) => Some(val(vals, e, Kind::Length)?),
+                    None => None,
+                };
                 for p in spots {
                     let wall = p + dir.any_perp() * r + dir * (r * 0.5);
-                    let t = thread_on(st, f.id, wall, Some(d), None)?;
+                    let t = thread_on(st, f.id, wall, Some(d), len, off)?;
                     st.threads.push(t);
                 }
             }
             Ok(())
         }
-        FeatureKind::Thread { face, designation, length, modeled } => {
+        FeatureKind::Thread { face, designation, length, offset, modeled } => {
             let l = match length {
                 Some(e) => Some(val(vals, e, Kind::Length)?),
                 None => None,
             };
-            let t = thread_on(st, f.id, *face, designation.as_deref(), l)?;
+            let off = match offset {
+                Some(e) => Some(val(vals, e, Kind::Length)?),
+                None => None,
+            };
+            let t = thread_on(st, f.id, *face, designation.as_deref(), l, off)?;
             if !*modeled {
                 st.threads.push(t);
                 return Ok(());
@@ -3575,7 +3763,10 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             }
             Ok(())
         }
-        FeatureKind::Mirror { features, plane, bodies, combine } => {
+        FeatureKind::Mirror { features, plane, bodies, combine, faces, face_body } => {
+            if !faces.is_empty() {
+                return mirror_faces(doc, vals, st, f, plane, faces, face_body);
+            }
             let pl = doc.resolve_plane_in(vals, plane, 0, Some(st))?;
             if bodies.is_empty() {
                 return replay(doc, vals, f, st, features, &[mirror_matrix(&pl)], warning);
@@ -3823,18 +4014,77 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             }
             Ok(())
         }
-        FeatureKind::MeshConvert { body, tolerance } => {
+        FeatureKind::MeshConvert { body, tolerance, mode } => {
             let tolerance = val(vals, tolerance, Kind::Length)?;
             let index = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let source = st.bodies.get(index).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             if doc.model_body_component(source) != f.component {
                 return Err(DocError::Invalid("activate the mesh body's component before converting it".into()));
             }
-            let converted = kernel::convert_prismatic_mesh(&source.body, tolerance)?;
+            let converted = if mode == "faceted" {
+                kernel::mesh_faceted(&source.body)?
+            } else {
+                kernel::convert_prismatic_mesh(&source.body, tolerance)?
+            };
             let converted = converted.with_color(source.body.color());
             let result = ModelBody::new(source.name.clone(), converted, f.id);
             let target = st.bodies.get_mut(index).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             *target = result;
+            Ok(())
+        }
+        FeatureKind::SheetWalls { body, axis } => {
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            let skin = kernel::side_skin(&mb.body, *axis)?;
+            let name = new_name(st, f, 0);
+            st.bodies.push(ModelBody::new(name, skin, f.id));
+            Ok(())
+        }
+        FeatureKind::MeshCut { body, origin, normal, keep } => {
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            let cut = kernel::mesh_plane_cut(&mb.body, *origin, *normal, *keep)?;
+            if let Some(slot) = st.bodies.get_mut(i) {
+                *slot = ModelBody::new(mb.name, cut, f.id);
+            }
+            Ok(())
+        }
+        FeatureKind::MeshRepair { body } => {
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            let fixed = kernel::mesh_repair(&mb.body)?;
+            if let Some(slot) = st.bodies.get_mut(i) {
+                *slot = ModelBody::new(mb.name, fixed, f.id);
+            }
+            Ok(())
+        }
+        FeatureKind::MeshReduce { body, ratio } => {
+            let ratio = val(vals, ratio, Kind::Unitless)?;
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            let reduced = kernel::mesh_reduce(&mb.body, ratio)?;
+            if let Some(slot) = st.bodies.get_mut(i) {
+                *slot = ModelBody::new(mb.name, reduced, f.id);
+            }
+            Ok(())
+        }
+        FeatureKind::Form { shape, length, width, thickness, pulls } => {
+            let (l, w, t) = (val(vals, length, Kind::Length)?, val(vals, width, Kind::Length)?, val(vals, thickness, Kind::Length)?);
+            let moves: Vec<(u32, Vec3)> = pulls.iter().map(|p| (p.index, p.delta)).collect();
+            let sheet = kernel::form_sheet(shape, l, w, &moves)?;
+            let solid = if t.abs() > 1e-6 {
+                match kernel::thicken(&sheet, t, false) {
+                    Ok(b) => b,
+                    Err(_) => {
+                        *warning = Some("the form stayed a surface: thickening needs a plane or a cylinder".into());
+                        sheet
+                    }
+                }
+            } else {
+                sheet
+            };
+            let name = new_name(st, f, 0);
+            st.bodies.push(ModelBody::new(name, solid, f.id));
             Ok(())
         }
         FeatureKind::MeshImport { meshes, .. } => {

@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod cmd;
+pub mod coaching;
 pub mod crash;
 pub mod frames;
 pub mod fuzz;
@@ -26,6 +27,7 @@ use solidcraft_doc::{Document, Model, ModelState};
 use solidcraft_geom::Vec3;
 
 pub use cmd::{CommandInfo, CommandSpec, auto_operation, command_specs, find_command};
+pub use coaching::CoachingPreference;
 pub use solidcraft_doc as doc;
 pub use solidcraft_geom as geom;
 pub use solidcraft_io as io;
@@ -203,8 +205,14 @@ pub struct Session {
     pub revision: u64,
     /// Project a face's edges into a sketch created on it (Fusion's default; `sketch.auto_project`).
     pub auto_project: bool,
+    /// Sketch coaching progress. Program settings, not part of the design.
+    pub coaching: CoachingPreference,
     /// The component new sketches and features go into (0 = the root).
     pub active_component: u64,
+    /// Paint each component its own colour.
+    pub component_colors: bool,
+    /// 0 window, 1 freeform lasso, 2 paint across what the pointer crosses.
+    pub select_mode: u8,
     /// The placement used when authoring shared component geometry.
     pub active_occurrence_path: Option<Vec<u64>>,
     /// Occurrence moves not captured yet (Capture Position keeps them, a recompute drops them).
@@ -314,7 +322,10 @@ impl Session {
             log: Vec::new(),
             revision: 1,
             auto_project: true,
+            coaching: CoachingPreference::default(),
             active_component: 0,
+            component_colors: false,
+            select_mode: 0,
             active_occurrence_path: None,
             pending_moves: Default::default(),
             world_cache: Default::default(),
@@ -656,7 +667,10 @@ impl Session {
             log: Vec::new(),
             revision: self.revision,
             auto_project: self.auto_project,
+            coaching: self.coaching.clone(),
             active_component: self.active_component,
+            component_colors: self.component_colors,
+            select_mode: self.select_mode,
             active_occurrence_path: self.active_occurrence_path.clone(),
             pending_moves: self.pending_moves.clone(),
             world_cache: std::sync::Mutex::new(self.world_cache.lock().ok().and_then(|cache| cache.clone())),
