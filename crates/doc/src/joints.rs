@@ -1054,9 +1054,18 @@ pub fn solve_holding(doc: &Document, st: &ModelState, held: &Held) -> Solution {
         Tree { joints: asm.joints.iter().map(|j| (j.id, j)).collect(), frames, fixed: placed.clone(), parent: BTreeMap::new(), order: Vec::new() };
     let mut used: BTreeSet<u64> = BTreeSet::new();
     let mut queue: VecDeque<u64> = placed.keys().copied().collect();
+    // The joints at each occurrence, in the joints' order (a large assembly is not walked joint by
+    // joint for every occurrence).
+    let mut at: BTreeMap<u64, Vec<&Joint>> = BTreeMap::new();
+    for j in joints.iter().copied() {
+        at.entry(j.a.occurrence).or_default().push(j);
+        if j.b.occurrence != j.a.occurrence {
+            at.entry(j.b.occurrence).or_default().push(j);
+        }
+    }
     while let Some(occ) = queue.pop_front() {
         let Some(t) = placed.get(&occ).copied() else { continue };
-        for j in &joints {
+        for j in at.get(&occ).map(Vec::as_slice).unwrap_or_default() {
             if used.contains(&j.id) || !tree.frames.contains_key(&j.id) {
                 continue;
             }
