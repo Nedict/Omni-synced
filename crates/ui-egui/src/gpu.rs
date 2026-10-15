@@ -11,9 +11,14 @@ use egui_wgpu::wgpu::util::DeviceExt;
 
 /// Triangle vertex: position (3 × f32), normal (3 × f32), sRGB colour (4 × u8).
 pub const TRI_SIZE: usize = 28;
+#[path = "pbr_gpu.rs"]
+mod pbr;
+pub const PBR_SIZE: usize = pbr::VERTEX_SIZE;
 /// Line instance: a, b (3 × f32 each), colour (4 × u8), width in pixels (f32).
 pub const LINE_SIZE: usize = 32;
-const UNIFORM_SIZE: u64 = 208;
+/// The shader's `U`: the view-projection matrix, 9 `vec4`s, the 8 analysis colours and their
+/// flags (`uniform_bytes`).
+const UNIFORM_SIZE: u64 = 352;
 
 /// A body drawn from its display plan, evaluated on the GPU: the plan, and a colour per face
 /// (the plan's face numbering; faces past the end take the last colour).
@@ -29,6 +34,8 @@ pub struct PlannedBody {
 pub struct GpuScene {
     /// Opaque triangles. A zero normal draws the colour flat (unlit).
     pub tris: Vec<u8>,
+    /// Opaque product PBR vertices; linear base color and explicit optical parameters.
+    pub pbr: Vec<u8>,
     /// Translucent triangles (alpha from the colour), drawn after the opaque ones without
     /// writing depth.
     pub trans: Vec<u8>,
@@ -49,6 +56,10 @@ pub struct GpuScene {
     /// Lines drawn first, under everything (the ground grid: the model hides it, it never
     /// hides the model).
     pub under: Vec<u8>,
+    /// Origin and construction planes (translucent, like `trans`) and their axes (lines, like
+    /// `lines`): reference geometry, never cut away by a section (#1229).
+    pub guide_trans: Vec<u8>,
+    pub guide_lines: Vec<u8>,
     /// Opaque bodies drawn from their plans on the GPU, like `tris`.
     pub planned: Vec<PlannedBody>,
     /// The model's bodies, a few at a time, drawn before the loose geometry above (`tris`,
@@ -97,6 +108,13 @@ pub struct BlockBytes {
 }
 
 impl GpuScene {
+    pub fn pbr_tri(&mut self, p: [f32; 3], n: [f32; 3], surface: solidcraft_engine::render::surface::OpaqueSurface) {
+        let base = surface.base_color().to_f32();
+        let parameters = [surface.metallic() as f32, surface.roughness() as f32, surface.dielectric_ior() as f32];
+        for value in p.into_iter().chain(n).chain(base).chain(parameters) {
+            self.pbr.extend_from_slice(&value.to_le_bytes());
+        }
+    }
     pub fn tri(&mut self, p: [f32; 3], n: [f32; 3], c: [u8; 4]) {
         for v in p.iter().chain(&n) {
             self.tris.extend_from_slice(&v.to_le_bytes());
@@ -143,6 +161,21 @@ impl GpuScene {
         self.under.extend_from_slice(&c);
         self.under.extend_from_slice(&width.to_le_bytes());
     }
+    /// A translucent triangle of a plane a section does not cut (see [`GpuScene::guide_trans`]).
+    pub fn guide_tri(&mut self, p: [f32; 3], c: [u8; 4]) {
+        for v in p.iter().chain(&[0.0; 3]) {
+            self.guide_trans.extend_from_slice(&v.to_le_bytes());
+        }
+        self.guide_trans.extend_from_slice(&c);
+    }
+    /// A depth-tested line a section does not cut (see [`GpuScene::guide_lines`]).
+    pub fn guide_line(&mut self, a: [f32; 3], b: [f32; 3], c: [u8; 4], width: f32) {
+        for v in a.iter().chain(&b) {
+            self.guide_lines.extend_from_slice(&v.to_le_bytes());
+        }
+        self.guide_lines.extend_from_slice(&c);
+        self.guide_lines.extend_from_slice(&width.to_le_bytes());
+    }
     pub fn line(&mut self, a: [f32; 3], b: [f32; 3], c: [u8; 4], width: f32, on_top: bool) {
         let out = if on_top { &mut self.overlay } else { &mut self.lines };
         for v in a.iter().chain(&b) {
@@ -174,6 +207,8 @@ const IMG_SIZE: usize = 24;
 
 /// Per-frame parameters.
 pub struct ViewportCallback {
+    /// Product preview uses its own batches, retaining the Design viewport's uploads.
+    pub product: bool,
     pub key: u64,
     pub slot: SceneSlot,
     pub sketch_key: u64,
@@ -199,6 +234,8 @@ pub struct ViewportCallback {
     /// Surface analysis: (mode: 0 none, 1 zebra, 2 draft, 3 curvature, 4 environment,
     /// 5 accessibility; parameter; scale; size) and the pull / access direction.
     pub analysis: [f32; 8],
+    /// The analysis colours and the stripe flag ([`analysis_colors`]).
+    pub analysis_colors: [f32; 36],
     /// Accessibility: the depth map seen from the access direction.
     pub access: Option<AccessMap>,
     /// Draw silhouette outlines around the model (visual styles with edges).
@@ -206,6 +243,9 @@ pub struct ViewportCallback {
     /// Eye position and 1 for a perspective camera (0: orthographic), for the section cap's depth
     /// and the depth bias.
     pub eye: [f32; 4],
+    /// Supersampling (#1288): draw the frame this many times the viewport's pixels in each
+    /// direction and filter it down (1: off).
+    pub ssaa: f32,
 }
 
 /// Heights of the model seen from a direction (an orthographic depth map): a point is reachable
@@ -261,6 +301,7 @@ struct Batches {
     blocks: std::collections::HashMap<u64, BlockGpu>,
     key: Option<u64>,
     tris: Option<Batch>,
+    pbr: Option<Batch>,
     trans: Option<Batch>,
     glass: Option<Batch>,
     /// The glass triangles as built, and the view direction they were last sorted for.
@@ -272,6 +313,8 @@ struct Batches {
     ghost: Option<Batch>,
     xray: Option<Batch>,
     under: Option<Batch>,
+    guide_trans: Option<Batch>,
+    guide_lines: Option<Batch>,
     planned: Vec<PlannedDraw>,
     /// Evaluated chunks by their plans' addresses, holding the plans so the addresses stay
     /// theirs: a chunk whose plans are unchanged is not evaluated again when the scene is rebuilt.
@@ -311,6 +354,7 @@ impl Batches {
                 }
             }
             self.tris = joined(blocks.iter().map(|b| &b.tris), upload(device, "sc_tris", &sc.tris, TRI_SIZE));
+            self.pbr = upload(device, "sc_pbr", &sc.pbr, PBR_SIZE);
             self.trans = joined(blocks.iter().map(|b| &b.trans), upload(device, "sc_trans", &sc.trans, TRI_SIZE));
             self.glass = upload_with(device, "sc_glass", &sc.glass, TRI_SIZE, wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST);
             self.glass_cpu = sc.glass;
@@ -321,6 +365,8 @@ impl Batches {
             self.ghost = upload(device, "sc_ghost", &sc.ghost, TRI_SIZE);
             self.xray = upload(device, "sc_xray", &sc.xray, TRI_SIZE);
             self.under = upload(device, "sc_under", &sc.under, LINE_SIZE);
+            self.guide_trans = upload(device, "sc_guide_trans", &sc.guide_trans, TRI_SIZE);
+            self.guide_lines = upload(device, "sc_guide_lines", &sc.guide_lines, LINE_SIZE);
             self.key = Some(key);
         }
     }
@@ -397,6 +443,7 @@ struct Resources {
     tri_cut: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     /// Highlight triangles over the model (depth test ≤, no depth write).
     tri_hl: wgpu::RenderPipeline,
+    pbr: wgpu::RenderPipeline,
     trans: wgpu::RenderPipeline,
     /// Glass: far sides (front faces culled), then near sides (back faces culled).
     glass_far: wgpu::RenderPipeline,
@@ -407,10 +454,15 @@ struct Resources {
     /// Lines behind the model (depth test >).
     line_hidden: wgpu::RenderPipeline,
     overlay: wgpu::RenderPipeline,
+    /// Reference planes and axes: as `trans` and `line`, but not cut by a section.
+    guide_trans: wgpu::RenderPipeline,
+    guide_line: wgpu::RenderPipeline,
     uniform: wgpu::Buffer,
     bind: wgpu::BindGroup,
     linear_out: bool,
     model: Batches,
+    product: Batches,
+    empty: Batches,
     sketch: Batches,
     highlight: Batches,
     preview: Batches,
@@ -425,7 +477,76 @@ struct Resources {
     /// The accessibility depth map (a 1 × 1 stand-in when there is none) and its version.
     access_bind: wgpu::BindGroup,
     access_version: u64,
+    /// The target the pipelines draw into (format, depth, samples): a supersampled frame is
+    /// drawn into textures of the same kind.
+    target: GpuTarget,
+    /// The device's largest 2D texture side (#869).
+    max_texture: u32,
+    /// Supersampling (#1288): the filter that draws the supersampled frame into the viewport.
+    ss_blit: wgpu::RenderPipeline,
+    ss_bgl: wgpu::BindGroupLayout,
+    /// The supersampled frame's textures, kept while its size stays.
+    ss: Option<Supersampled>,
+    /// This frame was drawn supersampled (in `prepare`): `paint` only filters it down.
+    ss_ready: bool,
 }
+
+/// A supersampled frame: the scene drawn at a multiple of the viewport's pixels.
+struct Supersampled {
+    size: [u32; 2],
+    /// Drawn into (multisampled with the viewport's MSAA).
+    color: wgpu::TextureView,
+    /// The resolved colour (when `color` is multisampled).
+    resolve: Option<wgpu::TextureView>,
+    depth: Option<wgpu::TextureView>,
+    /// The single-sampled colour, for the filter.
+    bind: wgpu::BindGroup,
+}
+
+/// Most memory (bytes) a supersampled frame's colour and depth may take.
+const SS_BUDGET: u64 = 384 << 20;
+
+/// The size (px) to draw a `size` viewport supersampled `factor` times in each direction:
+/// within the device's largest texture side (#869) and the memory budget (at `samples` per pixel,
+/// four bytes of colour and four of depth each). `None` when that leaves under 1.25×: the frame
+/// is drawn as usual.
+pub(crate) fn supersampled_size(size: [f32; 2], factor: f32, max_side: u32, samples: u32) -> Option<[u32; 2]> {
+    let [w, h] = size;
+    if !(w >= 1.0 && h >= 1.0 && factor.is_finite() && factor > 1.0) {
+        return None;
+    }
+    let side = max_side as f32;
+    let bytes_per_px = 8.0 * samples.max(1) as f32;
+    let by_memory = (SS_BUDGET as f32 / (w * h * bytes_per_px)).sqrt();
+    let f = factor.min(side / w).min(side / h).min(by_memory);
+    (f >= 1.25).then(|| [((w * f).floor() as u32).clamp(1, max_side), ((h * f).floor() as u32).clamp(1, max_side)])
+}
+
+/// The filter: each viewport pixel the mean of the supersampled pixels under it (four bilinear
+/// taps a quarter of its footprint from its centre: exactly the 2 × 2 box at 2×).
+const SS_SHADER: &str = r#"
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var smp: sampler;
+struct O { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
+@vertex
+fn vs(@builtin(vertex_index) i: u32) -> O {
+    let x = f32((i << 1u) & 2u);
+    let y = f32(i & 2u);
+    var o: O;
+    o.pos = vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
+    o.uv = vec2<f32>(x, y);
+    return o;
+}
+@fragment
+fn fs(i: O) -> @location(0) vec4<f32> {
+    let d = vec2<f32>(dpdx(i.uv.x), dpdy(i.uv.y)) * 0.25;
+    let a = textureSampleLevel(src, smp, i.uv + vec2<f32>(-d.x, -d.y), 0.0);
+    let b = textureSampleLevel(src, smp, i.uv + vec2<f32>(d.x, -d.y), 0.0);
+    let c = textureSampleLevel(src, smp, i.uv + vec2<f32>(-d.x, d.y), 0.0);
+    let e = textureSampleLevel(src, smp, i.uv + vec2<f32>(d.x, d.y), 0.0);
+    return (a + b + c + e) * 0.25;
+}
+"#;
 
 fn access_texture(device: &wgpu::Device, queue: Option<&wgpu::Queue>, bgl: &wgpu::BindGroupLayout, size: u32, depth: &[f32]) -> wgpu::BindGroup {
     let extent = wgpu::Extent3d { width: size.max(1), height: size.max(1), depth_or_array_layers: 1 };
@@ -467,6 +588,11 @@ fn tri_layout() -> wgpu::VertexBufferLayout<'static> {
 
 /// A planned body's vertices as the GPU evaluation writes them: the position, then the normal
 /// at [`solidcraft_gpu::NORMAL_OFFSET`] (each padded to four floats).
+fn pbr_layout() -> wgpu::VertexBufferLayout<'static> {
+    const A: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3, 3 => Float32x3];
+    wgpu::VertexBufferLayout { array_stride: PBR_SIZE as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &A }
+}
+
 fn planned_layout() -> wgpu::VertexBufferLayout<'static> {
     const A: [wgpu::VertexAttribute; 2] = [
         wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 0, shader_location: 0 },
@@ -498,8 +624,9 @@ pub struct GpuTarget {
 
 impl Resources {
     fn new(device: &wgpu::Device, t: GpuTarget, tess: Option<solidcraft_gpu::TessGpu>) -> Self {
+        let source = format!("{SHADER}\n{}", pbr::SOURCE);
         let module =
-            device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("sc_viewport"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
+            device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("sc_viewport"), source: wgpu::ShaderSource::Wgsl(source.into()) });
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("sc_viewport"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -711,7 +838,63 @@ impl Resources {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let ss_module =
+            device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("sc_ssaa"), source: wgpu::ShaderSource::Wgsl(SS_SHADER.into()) });
+        let ss_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("sc_ssaa"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let ss_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("sc_ssaa"),
+            bind_group_layouts: &[Some(&ss_bgl)],
+            immediate_size: 0,
+        });
+        // The frame is premultiplied (drawn over transparent black), so it goes over the
+        // viewport's background premultiplied; the viewport's depth is left as it is.
+        let ss_blit = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("sc_ssaa"),
+            layout: Some(&ss_layout),
+            vertex: wgpu::VertexState { module: &ss_module, entry_point: Some("vs"), buffers: &[], compilation_options: Default::default() },
+            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
+            depth_stencil: depth(wgpu::CompareFunction::Always, false),
+            multisample: wgpu::MultisampleState { count: t.samples.max(1), mask: !0, alpha_to_coverage_enabled: false },
+            fragment: Some(wgpu::FragmentState {
+                module: &ss_module,
+                entry_point: Some("fs"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: t.format,
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         Resources {
+            target: t,
+            max_texture: device.limits().max_texture_dimension_2d,
+            ss_blit,
+            ss_bgl,
+            ss: None,
+            ss_ready: false,
             image,
             image_bgl,
             sampler,
@@ -726,6 +909,7 @@ impl Resources {
             access_bind,
             access_version: 0,
             tri_hl: pipeline("sc_tris_hl", "vs_tri", "fs_tri", tri_layout(), highlight_depth(t.depth), alpha),
+            pbr: pipeline("sc_pbr", "vs_pbr", "fs_pbr", pbr_layout(), depth(wgpu::CompareFunction::Less, true), None),
             trans: pipeline("sc_trans", "vs_tri", "fs_tri", tri_layout(), depth(wgpu::CompareFunction::LessEqual, false), alpha),
             glass_far: glass("sc_glass_far", wgpu::Face::Front),
             glass_near: glass("sc_glass_near", wgpu::Face::Back),
@@ -734,10 +918,14 @@ impl Resources {
             line: pipeline("sc_lines", "vs_line", "fs_line", line_layout(), depth(wgpu::CompareFunction::LessEqual, false), alpha),
             line_hidden: pipeline("sc_lines_hidden", "vs_line", "fs_line", line_layout(), depth(wgpu::CompareFunction::Greater, false), alpha),
             overlay: pipeline("sc_overlay", "vs_line", "fs_line_all", line_layout(), depth(wgpu::CompareFunction::Always, false), alpha),
+            guide_trans: pipeline("sc_guide_trans", "vs_tri", "fs_tri_all", tri_layout(), depth(wgpu::CompareFunction::LessEqual, false), alpha),
+            guide_line: pipeline("sc_guide_lines", "vs_line", "fs_line_all", line_layout(), depth(wgpu::CompareFunction::LessEqual, false), alpha),
             uniform,
             bind,
             linear_out: t.format.is_srgb(),
             model: Batches::default(),
+            product: Batches::default(),
+            empty: Batches::default(),
             sketch: Batches::default(),
             highlight: Batches::default(),
             preview: Batches::default(),
@@ -830,6 +1018,10 @@ fn tessellation(adapter: &wgpu::Adapter, device: &wgpu::Device, queue: &wgpu::Qu
         return None;
     }
     let info = adapter.get_info();
+    if hangs_on_gpu_tessellation(info.backend, &info.name) || std::env::var_os("SOLIDCRAFT_CPU_TESS").is_some() {
+        log::warn!("bodies are built on the CPU on {} ({:?})", info.name, info.backend);
+        return None;
+    }
     match solidcraft_gpu::TessGpu::with_shader(info.name.clone(), device.clone(), queue.clone(), shader) {
         Ok(t) => Some(t),
         Err(e) => {
@@ -837,6 +1029,13 @@ fn tessellation(adapter: &wgpu::Adapter, device: &wgpu::Device, queue: &wgpu::Qu
             None
         }
     }
+}
+
+/// A device whose driver hangs on the evaluation shader, so bodies are built on the CPU there:
+/// the AMD FirePro D300/D500/D700 (Mac Pro 2013, Tahiti) under Metal, where macOS resets the GPU
+/// and the whole desktop freezes. `SOLIDCRAFT_CPU_TESS=1` forces CPU evaluation on any device.
+fn hangs_on_gpu_tessellation(backend: wgpu::Backend, name: &str) -> bool {
+    backend == wgpu::Backend::Metal && name.contains("FirePro")
 }
 
 /// Create the pipelines. Call once with the app's render state and its depth/stencil/MSAA
@@ -860,6 +1059,12 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
         resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         let Some(res) = resources.get_mut::<Resources>() else { return Vec::new() };
+        if self.product {
+            res.product.take(device, self.key, &self.slot, None);
+            res.product.sort_glass(queue, self.back);
+            queue.write_buffer(&res.uniform, 0, &uniform_bytes(self, self.size_px[0], self.size_px[1], res.linear_out));
+            return Vec::new();
+        }
         res.model.take(device, self.key, &self.slot, res.tess.as_ref().map(|t| (t, &mut *encoder)));
         res.sketch.take(device, self.sketch_key, &self.sketch_slot, None);
         res.highlight.take(device, self.hl_key, &self.hl_slot, None);
@@ -921,6 +1126,7 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
                 res.quads.push((img.id, b));
             }
         }
+        res.ss_ready = self.ssaa > 1.0 && res.supersample(device, encoder, self);
         Vec::new()
     }
 
@@ -931,6 +1137,23 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
             return;
         }
         pass.set_viewport(vp.left_px as f32, vp.top_px as f32, vp.width_px as f32, vp.height_px as f32, 0.0, 1.0);
+        // Drawn supersampled in `prepare`: filter it down into the viewport.
+        if res.ss_ready
+            && let Some(ss) = &res.ss
+        {
+            pass.set_pipeline(&res.ss_blit);
+            pass.set_bind_group(0, &ss.bind, &[]);
+            pass.draw(0..3, 0..1);
+            return;
+        }
+        res.draw(self, pass);
+    }
+}
+
+impl Resources {
+    /// Draw the frame's scenes into `pass` (its viewport already set).
+    fn draw(&self, cb: &ViewportCallback, pass: &mut wgpu::RenderPass<'static>) {
+        let res = self;
         pass.set_bind_group(0, &res.bind, &[]);
         let tris = |pass: &mut wgpu::RenderPass<'static>, p: &wgpu::RenderPipeline, b: &Option<Batch>| {
             if let Some(b) = b {
@@ -950,7 +1173,8 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
                 }
             }
         };
-        let (m, sk, h, pv) = (&res.model, &res.sketch, &res.highlight, &res.preview);
+        let (m, sk, h, pv) =
+            if cb.product { (&res.product, &res.empty, &res.empty, &res.empty) } else { (&res.model, &res.sketch, &res.highlight, &res.preview) };
         lines(pass, &res.overlay, &m.under);
         lines(pass, &res.overlay, &sk.under);
         pass.set_bind_group(1, &res.access_bind, &[]);
@@ -963,7 +1187,7 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
                 pass.draw_indexed(0..d.mesh.index_count, 0, 0..1);
             }
         };
-        let sectioned = self.clip[..3].iter().map(|c| c * c).sum::<f32>() > 0.25;
+        let sectioned = cb.clip[..3].iter().map(|c| c * c).sum::<f32>() > 0.25;
         match (res.tri_cut.as_ref().filter(|_| sectioned), res.tri_cut_planned.as_ref()) {
             (Some((mark, cap)), Some((mark_planned, cap_planned))) => {
                 pass.set_stencil_reference(1);
@@ -980,6 +1204,7 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
                 planned(pass, &res.tri_planned);
             }
         }
+        tris(pass, &res.pbr, &m.pbr);
         tris(pass, &res.tri_hl, &h.tris);
         lines(pass, &res.line, &m.lines);
         lines(pass, &res.line, &sk.lines);
@@ -987,7 +1212,8 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
         lines(pass, &res.line_hidden, &h.hidden);
         lines(pass, &res.line, &pv.lines);
         lines(pass, &res.line, &h.lines);
-        for (id, q) in &res.quads {
+        lines(pass, &res.guide_line, &h.guide_lines);
+        for (id, q) in res.quads.iter().filter(|_| !cb.product) {
             if let Some((_, bind)) = res.textures.get(id) {
                 pass.set_pipeline(&res.image);
                 pass.set_bind_group(1, bind, &[]);
@@ -1003,6 +1229,7 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
         tris(pass, &res.trans, &m.trans);
         tris(pass, &res.trans, &sk.trans);
         tris(pass, &res.trans, &h.trans);
+        tris(pass, &res.guide_trans, &h.guide_trans);
         tris(pass, &res.xray, &pv.xray);
         lines(pass, &res.overlay, &m.overlays);
         lines(pass, &res.overlay, &sk.overlays);
@@ -1010,11 +1237,84 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
     }
 }
 
-/// Render `scene` offscreen on a device of its own, through the viewport's real resources and
-/// frame callback (`prepare`, then `paint`), and read the pixels back: straight RGBA, `size` ×
-/// `size`. `None` without a GPU adapter. With `tess` (the tessellation shader), planned bodies
-/// are evaluated on the GPU where the device builds that pipeline, as [`install`] sets it up.
-/// `highlight` is drawn as the viewport's highlight scene (hover and selection).
+impl Resources {
+    /// Draw the frame supersampled (`cb.ssaa` times the viewport's pixels each way, within the
+    /// device's texture limit and the memory budget) into textures of the viewport's kind.
+    /// `false` when it cannot be (too small a gain, a zero-sized viewport): drawn as usual.
+    fn supersample(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, cb: &ViewportCallback) -> bool {
+        let Some(size) = supersampled_size(cb.size_px, cb.ssaa, self.max_texture, self.target.samples) else {
+            self.ss = None;
+            return false;
+        };
+        if self.ss.as_ref().is_none_or(|ss| ss.size != size) {
+            self.ss = Some(self.supersampled(device, size));
+        }
+        let Some(ss) = &self.ss else { return false };
+        let depth_format = self.target.depth;
+        let mut pass = encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("sc_ssaa"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &ss.color,
+                    depth_slice: None,
+                    resolve_target: ss.resolve.as_ref(),
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: ss.depth.as_ref().map(|view| wgpu::RenderPassDepthStencilAttachment {
+                    view,
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
+                    stencil_ops: depth_format
+                        .filter(|f| f.has_stencil_aspect())
+                        .map(|_| wgpu::Operations { load: wgpu::LoadOp::Clear(0), store: wgpu::StoreOp::Discard }),
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            })
+            .forget_lifetime();
+        pass.set_viewport(0.0, 0.0, size[0] as f32, size[1] as f32, 0.0, 1.0);
+        self.draw(cb, &mut pass);
+        true
+    }
+
+    /// Textures for a supersampled frame of `size` pixels.
+    fn supersampled(&self, device: &wgpu::Device, size: [u32; 2]) -> Supersampled {
+        let t = self.target;
+        let texture = |label: &str, format: wgpu::TextureFormat, samples: u32, usage: wgpu::TextureUsages| {
+            device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: samples,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default())
+        };
+        let samples = t.samples.max(1);
+        let sampled = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
+        let (color, resolve) = if samples > 1 {
+            (texture("sc_ssaa_ms", t.format, samples, wgpu::TextureUsages::RENDER_ATTACHMENT), Some(texture("sc_ssaa", t.format, 1, sampled)))
+        } else {
+            (texture("sc_ssaa", t.format, 1, sampled), None)
+        };
+        let depth = t.depth.map(|f| texture("sc_ssaa_depth", f, samples, wgpu::TextureUsages::RENDER_ATTACHMENT));
+        let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sc_ssaa"),
+            layout: &self.ss_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(resolve.as_ref().unwrap_or(&color)) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+            ],
+        });
+        Supersampled { size, color, resolve, depth, bind }
+    }
+}
+
+/// A device of its own for an offscreen render or check (`None` without a GPU adapter).
 #[cfg(all(test, not(target_arch = "wasm32")))]
 fn offscreen_device() -> Option<(wgpu::Adapter, wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
@@ -1035,7 +1335,15 @@ pub(crate) fn offscreen_tessellates(shader: &str) -> Option<bool> {
     Some(tessellation(&adapter, &device, &queue, shader).is_some())
 }
 
+/// Render `scene` offscreen on a device of its own, through the viewport's real resources and
+/// frame callback (`prepare`, then `paint`), and read the pixels back: straight RGBA, `size` ×
+/// `size`. `None` without a GPU adapter. With `tess` (the tessellation shader), planned bodies
+/// are evaluated on the GPU where the device builds that pipeline, as [`install`] sets it up.
+/// `highlight` is drawn as the viewport's highlight scene (hover and selection). `analysis` is the
+/// surface analysis uniform (`viewport::analysis_uniform`; zeros for none) and `colors` its
+/// colours (`analysis_colors`).
 #[cfg(all(test, not(target_arch = "wasm32")))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_offscreen(
     scene: GpuScene,
     highlight: Option<GpuScene>,
@@ -1044,15 +1352,93 @@ pub(crate) fn render_offscreen(
     eye: [f32; 4],
     size: u32,
     tess: Option<&str>,
+    analysis: [f32; 8],
+    colors: [f32; 36],
 ) -> Option<Vec<u8>> {
+    offscreen(
+        scene,
+        highlight,
+        view_proj,
+        back,
+        eye,
+        size,
+        Offscreen { tess, product: false, srgb: false, analysis, analysis_colors: colors, ssaa: 1.0 },
+    )
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn render_product_offscreen(
+    scene: GpuScene,
+    view_proj: [[f32; 4]; 4],
+    back: [f32; 3],
+    eye: [f32; 4],
+    size: u32,
+    srgb: bool,
+) -> Option<Vec<u8>> {
+    offscreen(
+        scene,
+        None,
+        view_proj,
+        back,
+        eye,
+        size,
+        Offscreen { tess: None, product: true, srgb, analysis: [0.0; 8], analysis_colors: [0.0; 36], ssaa: 1.0 },
+    )
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+struct Offscreen<'a> {
+    tess: Option<&'a str>,
+    product: bool,
+    srgb: bool,
+    analysis: [f32; 8],
+    analysis_colors: [f32; 36],
+    ssaa: f32,
+}
+
+/// [`render_offscreen`] of a scene supersampled `ssaa` times (1: off).
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn render_offscreen_ssaa(
+    scene: GpuScene,
+    view_proj: [[f32; 4]; 4],
+    back: [f32; 3],
+    eye: [f32; 4],
+    size: u32,
+    ssaa: f32,
+) -> Option<Vec<u8>> {
+    offscreen(
+        scene,
+        None,
+        view_proj,
+        back,
+        eye,
+        size,
+        Offscreen { tess: None, product: false, srgb: false, analysis: [0.0; 8], analysis_colors: [0.0; 36], ssaa },
+    )
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn offscreen(
+    scene: GpuScene,
+    highlight: Option<GpuScene>,
+    view_proj: [[f32; 4]; 4],
+    back: [f32; 3],
+    eye: [f32; 4],
+    size: u32,
+    options: Offscreen<'_>,
+) -> Option<Vec<u8>> {
+    let Offscreen { tess, product, srgb, analysis, analysis_colors, ssaa } = options;
     let (adapter, device, queue) = offscreen_device()?;
-    let (format, depth) = (wgpu::TextureFormat::Rgba8Unorm, wgpu::TextureFormat::Depth24PlusStencil8);
+    eprintln!("offscreen adapter: {:?}", adapter.get_info().backend);
+    let format = if srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm };
+    let depth = wgpu::TextureFormat::Depth24PlusStencil8;
     let compute = tess.and_then(|shader| tessellation(&adapter, &device, &queue, shader));
     let target = GpuTarget { format, depth: Some(depth), samples: 1, tess: compute.is_some() };
     let mut resources = egui_wgpu::CallbackResources::default();
     resources.insert(Resources::new(&device, target, compute));
     let none = || Arc::new(Mutex::new(None));
     let cb = ViewportCallback {
+        product,
         key: 1,
         slot: Arc::new(Mutex::new(Some(scene))),
         sketch_key: 0,
@@ -1067,10 +1453,12 @@ pub(crate) fn render_offscreen(
         clip: [0.0; 4],
         cap: [0.0; 4],
         images: Vec::new(),
-        analysis: [0.0; 8],
+        analysis,
+        analysis_colors,
         access: None,
         outline: false,
         eye,
+        ssaa,
     };
     let texture = |format, usage| {
         device.create_texture(&wgpu::TextureDescriptor {
@@ -1152,12 +1540,37 @@ pub fn uniform_bytes(cb: &ViewportCallback, w: f32, h: f32, linear: bool) -> Vec
         None => v.extend([0.0; 8]),
     }
     v.extend(cb.eye);
+    v.extend(cb.analysis_colors);
     v.iter().flat_map(|x| x.to_le_bytes()).collect()
+}
+
+/// The shader's analysis colours (`ana_c`: draft positive, between, negative; reachable,
+/// blocked; curvature flat, middle, tight; alpha 1) and flags (`ana_f.x`: 1 to stripe the bad
+/// faces).
+pub fn analysis_colors(c: &crate::theme::AnalysisColors) -> [f32; 36] {
+    let mut v = [0.0; 36];
+    let colors = c.draft.iter().chain(&c.access).chain(&c.curvature).flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 1.0]);
+    for (slot, x) in v.iter_mut().zip(colors) {
+        *slot = x;
+    }
+    v[32] = if c.hatch { 1.0 } else { 0.0 };
+    v
 }
 
 #[cfg(test)]
 mod tests {
-    use egui_wgpu::wgpu::naga;
+    use egui_wgpu::wgpu::{self, naga};
+
+    /// Only the FirePro under Metal skips GPU evaluation; the same card under another backend
+    /// and other Metal GPUs keep it.
+    #[test]
+    fn firepro_under_metal_builds_bodies_on_the_cpu() {
+        assert!(super::hangs_on_gpu_tessellation(wgpu::Backend::Metal, "AMD FirePro D500"));
+        assert!(super::hangs_on_gpu_tessellation(wgpu::Backend::Metal, "AMD FirePro D700"));
+        assert!(!super::hangs_on_gpu_tessellation(wgpu::Backend::Metal, "Apple M2"));
+        assert!(!super::hangs_on_gpu_tessellation(wgpu::Backend::Metal, "AMD Radeon Pro 560X"));
+        assert!(!super::hangs_on_gpu_tessellation(wgpu::Backend::Vulkan, "AMD FirePro W5100"));
+    }
 
     /// The viewport shader parses and validates (a bad shader would only fail at run time).
     #[test]

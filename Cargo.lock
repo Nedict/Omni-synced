@@ -3466,6 +3466,7 @@ dependencies = [
  "solidcraft-engine",
  "solidcraft-ui-egui",
  "ureq",
+ "windows-sys 0.61.2",
  "winit",
 ]
 
@@ -3479,6 +3480,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solidcraft-derive"
+version = "0.11.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "solidcraft-doc"
 version = "0.11.0"
 dependencies = [
@@ -3486,8 +3496,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "solidcraft-derive",
  "solidcraft-geom",
  "solidcraft-kernel",
+ "solidcraft-render",
  "solidcraft-sketch",
  "thiserror 2.0.21",
  "web-time",
@@ -3577,6 +3589,7 @@ name = "solidcraft-render"
 version = "0.11.0"
 dependencies = [
  "image",
+ "png",
  "serde",
  "serde_json",
  "solidcraft-geom",

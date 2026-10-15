@@ -39,20 +39,29 @@ pub struct Request {
     pub reply: Option<Sender<ControlResponse>>,
     /// The folders that caller's agent may use: the worker reads the file inside them.
     pub scope: Option<solidcraft_engine::io::vfs::PathScope>,
+    /// What that caller asked of a STEP import besides its path (`up`, `names`): the command
+    /// gets them as given.
+    pub options: serde_json::Map<String, Value>,
 }
 
 impl Request {
     pub fn new(path: &str, kind: Kind) -> Self {
-        Request { path: path.into(), kind, reply: None, scope: None }
+        Request { path: path.into(), kind, reply: None, scope: None, options: Default::default() }
     }
     fn insert(&self) -> bool {
         self.kind == Kind::Insert
     }
+    /// The command's parameters: the path and the caller's import options.
+    fn params(&self) -> Value {
+        let mut params = self.options.clone();
+        params.insert("path".into(), json!(self.path));
+        Value::Object(params)
+    }
     fn command(&self) -> (&'static str, Value) {
         match &self.kind {
-            Kind::Open => ("doc.open", json!({"path": self.path})),
+            Kind::Open => ("doc.open", self.params()),
             Kind::Insert if solidcraft_engine::io::is_mesh_path(&self.path) => ("file.insert_mesh", json!({"path": self.path})),
-            Kind::Insert => ("file.insert_step", json!({"path": self.path})),
+            Kind::Insert => ("file.insert_step", self.params()),
             Kind::Recover { id, dir } => ("doc.recover", json!({"id": id, "dir": dir})),
         }
     }
@@ -185,7 +194,8 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
         Some("file.insert_step" | "file.insert_mesh") => Kind::Insert,
         _ => return Some(req),
     };
-    let Some(path) = req.params.get("params").and_then(|p| p.get("path")).and_then(Value::as_str) else { return Some(req) };
+    let params = req.params.get("params");
+    let Some(path) = params.and_then(|p| p.get("path")).and_then(Value::as_str) else { return Some(req) };
     let scope = match crate::control::request_scope(app, &req.params) {
         Ok(scope) => scope,
         Err(e) => {
@@ -193,7 +203,8 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
             return None;
         }
     };
-    let _ = begin_request(app, Request { path: path.into(), kind, reply: Some(req.reply.clone()), scope });
+    let options = ["up", "names"].iter().filter_map(|k| Some((k.to_string(), params?.get(*k).filter(|v| !v.is_null())?.clone()))).collect();
+    let _ = begin_request(app, Request { path: path.into(), kind, reply: Some(req.reply.clone()), scope, options });
     None
 }
 
@@ -550,7 +561,8 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
                 }
                 app.home.open = false;
                 app.fit_view();
-                if request.kind == Kind::Open || request.insert() {
+                // A caller that said which way is up has been answered: no offer to stand the part up.
+                if (request.kind == Kind::Open || request.insert()) && !request.options.contains_key("up") {
                     crate::stand_up::offer(app, &request.path, &running.before);
                 }
                 let warnings = made.result.get("warnings").and_then(Value::as_array);

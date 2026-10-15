@@ -21,6 +21,8 @@ model through the built-in MCP server.
 - **Windows:** download and run the [installer][windows-msi].
   Also for [ARM64][windows-arm64-msi] and [32-bit][windows-x86-msi] PCs, or as a
   [portable zip][windows-portable] that runs without installing.
+  With [WinGet](https://learn.microsoft.com/windows/package-manager/winget/):
+  `winget install bherbruck.SolidCraft`.
 - **macOS:** open the [disk image][macos-dmg] and drag SolidCraft into Applications
   (Apple silicon and Intel).
 - **Linux:** download the [AppImage][linux-appimage], allow it to run as a program and open it.
@@ -128,12 +130,16 @@ rebuild with no errors, replayed here at 2× speed.
   IGES 5.3 (manifold solid B-reps with names and colours), 3MF, STL (binary/ASCII) and OBJ, and
   assemblies with joints as URDF for robot simulators (docs/urdf.md);
   3MF, STL and OBJ import as mesh bodies (they render, measure, move and export; solid features
-  need B-rep bodies). Convert Mesh reconstructs supported closed constant-section parts
+  need B-rep bodies). The `mesh.convert` command reconstructs supported closed constant-section parts
   as parametric solids with planar and circular cylindrical faces;
   STEP import (AP203/AP214/AP242 solids, assemblies, units, names, colours) and IGES import
   (manifold solid B-reps, or trimmed and bounded surfaces sewn into solids) as a base feature
   that later features build on — open a `.step`/`.stp`/`.igs`/`.iges` file, insert one into a
   design, or drop it on the window ([docs/step-import.md](docs/step-import.md)).
+- **Render:** opaque surfaces can use metal fraction, roughness and dielectric IOR in the
+  integrated product viewport and CPU preview PNGs. Existing simple colors remain supported.
+  Fixed direct lighting is a preview; HDRI, refraction and texture maps are not implemented.
+  See [opaque surfaces](docs/render-opaque-pbr.md).
 - **Display meshes** from our own tessellation planner: each face becomes a plan of (u, v)
   points and triangles that shares its edge nodes with its neighbours, so the mesh is watertight.
   Facets follow the chord tolerance, the facet angle and a longest side, with cells at most 2:1
@@ -161,6 +167,7 @@ cargo run --release -p solidcraft -- --sample          # desktop app with a samp
 cargo run --release -p solidcraft-cli -- commands      # the command registry
 cargo run --release -p solidcraft-cli -- run examples/bracket.json --out bracket.step
 cargo run --release -p solidcraft-cli -- snapshot examples/bracket.json --out bracket.png
+cargo run --release -p solidcraft-cli -- render examples/render-studio.json --out product.png
 cargo run --release -p solidcraft -- part.step          # open a STEP file as a new design
 cargo run --release -p solidcraft-cli -- eval part.step # measure an imported STEP file
 cargo xtask ci                                          # fmt, clippy, tests, assets, layers, wasm
