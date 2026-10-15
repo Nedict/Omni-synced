@@ -1307,6 +1307,8 @@
   "render.image_failed": "レンダリングに失敗しました",
   "render.image_unknown": "レンダリング状態を取得できません",
   "render.image_reduce": "画像を小さくするかシーンを簡略化してください。",
+  "render.image_too_large": "画像の上限を超えています：一辺 4096 ピクセル、合計 4,194,304 ピクセル。",
+  "render.image_use_largest": "この縦横比での最大サイズを使用：",
   "render.image_cancel": "レンダリングをキャンセル",
   "render.image_stale": "この画像は後続の変更前に取得したシーンを使用しています。",
   "render.image_start": "レンダリングを開始",

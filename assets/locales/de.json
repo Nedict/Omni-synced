@@ -1049,6 +1049,8 @@
   "render.image_failed": "Rendering fehlgeschlagen",
   "render.image_unknown": "Renderstatus nicht verfügbar",
   "render.image_reduce": "Kleineres Bild oder einfachere Szene versuchen.",
+  "render.image_too_large": "Über dem Bildlimit: 4096 Pixel pro Seite und 4.194.304 Pixel insgesamt.",
+  "render.image_use_largest": "Größte Größe mit diesem Seitenverhältnis verwenden:",
   "render.image_cancel": "Rendering abbrechen",
   "render.image_stale": "Dieses Bild verwendet die Szene vor den nachfolgenden Änderungen.",
   "render.image_start": "Rendering starten",

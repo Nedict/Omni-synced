@@ -1170,6 +1170,8 @@
   "render.image_failed": "Échec du rendu",
   "render.image_unknown": "État du rendu indisponible",
   "render.image_reduce": "Essayez une image plus petite ou une scène plus simple.",
+  "render.image_too_large": "Au-delà de la limite d'image : 4096 pixels par côté et 4 194 304 pixels au total.",
+  "render.image_use_largest": "Utiliser la plus grande taille à ce format :",
   "render.image_cancel": "Annuler le rendu",
   "render.image_stale": "Cette image utilise la scène capturée avant les dernières modifications.",
   "render.image_start": "Lancer le rendu",

@@ -1307,6 +1307,8 @@
   "render.image_failed": "渲染失败",
   "render.image_unknown": "渲染状态不可用",
   "render.image_reduce": "请尝试更小的图像或更简单的场景。",
+  "render.image_too_large": "超出图像限制：每边 4096 像素，总计 4,194,304 像素。",
+  "render.image_use_largest": "使用此宽高比下的最大尺寸：",
   "render.image_cancel": "取消渲染",
   "render.image_stale": "此图像使用后续更改之前捕获的场景。",
   "render.image_start": "开始渲染",

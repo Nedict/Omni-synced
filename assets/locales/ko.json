@@ -1049,6 +1049,8 @@
   "render.image_failed": "렌더링 실패",
   "render.image_unknown": "렌더 상태를 확인할 수 없습니다",
   "render.image_reduce": "더 작은 이미지나 더 단순한 장면을 사용해 보세요.",
+  "render.image_too_large": "이미지 한도를 초과했습니다: 한 변 4096픽셀, 전체 4,194,304픽셀.",
+  "render.image_use_largest": "이 비율에서 가장 큰 크기 사용:",
   "render.image_cancel": "렌더링 취소",
   "render.image_stale": "이 이미지는 후속 변경 전에 캡처한 장면을 사용합니다.",
   "render.image_start": "렌더링 시작",
