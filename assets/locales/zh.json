@@ -1304,5 +1304,10 @@
   "Round": "圆角",
   "joint.one_component": "这些零件是同一组件的实体：{bodies}。接头使一个组件相对另一个组件运动，因此每个零件都需要自己的组件。",
   "joint.one_body": "两次选择都在 {body} 上。请在另一个零件上选择第二个。",
-  "joint.from_bodies_hint": "每个所选实体移入各自的新组件，位置保持不变。"
+  "joint.from_bodies_hint": "每个所选实体移入各自的新组件，位置保持不变。",
+  "ui.agent_chat_history": "历史对话",
+  "ui.agent_chat_history_none": "没有关于此设计的历史对话",
+  "ui.agent_chat_history_new": "新对话",
+  "ui.agent_chat_history_export": "导出为 Markdown…",
+  "ui.agent_chat_history_loaded": "这是一段历史对话，仅供查看：代理不记得它。"
 }

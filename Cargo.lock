@@ -3733,6 +3733,11 @@ dependencies = [
 [[package]]
 name = "solidcraft-assistant"
 version = "0.11.0"
+dependencies = [
+ "serde_json",
+ "sha2",
+ "web-time",
+]
 
 [[package]]
 name = "solidcraft-cli"

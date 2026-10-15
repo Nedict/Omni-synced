@@ -8,3 +8,4 @@
 #![forbid(unsafe_code)]
 
 pub mod markdown;
+pub mod store;

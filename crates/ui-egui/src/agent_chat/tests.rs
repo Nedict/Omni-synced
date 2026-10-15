@@ -321,3 +321,89 @@ fn an_agents_markdown_is_drawn_as_blocks() {
     h.app.agent_chat.items.push(Item::Agent { thought: false, text: "*".repeat(50_000) + &"[".repeat(5_000) + &"`a".repeat(5_000) });
     h.frames(3);
 }
+
+fn history_app(name: &str) -> SolveApp {
+    let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+    app.agent_chat.history_root = Some(std::env::temp_dir().join(format!("sc-agent-chat-history-{name}-{}", std::process::id())));
+    let _ = std::fs::remove_dir_all(app.agent_chat.history_root.as_ref().unwrap());
+    app
+}
+
+/// A message's conversation is saved when it ends, comes back from the history menu as a
+/// transcript (without the moment's questions), and exports as Markdown.
+#[test]
+fn a_conversation_is_saved_per_design_and_comes_back() {
+    let mut app = history_app("roundtrip");
+    app.agent_chat.state = Some(State::Busy);
+    start_turn(&mut app, "make a box".into(), false);
+    app.agent_chat.push(Item::User { text: "make a box".into(), image: false });
+    app.agent_chat.on_event(Event::Text { thought: false, text: "Making **a box**.".into() });
+    app.agent_chat.on_event(Event::Tool {
+        id: "t".into(),
+        title: Some("batch".into()),
+        kind: Some("other".into()),
+        status: Some(ToolStatus::Completed),
+        output: Some("ok".into()),
+    });
+    app.agent_chat.push(Item::Approval { id: 1, title: "file.save".into(), tool: "file.save".into(), answer: Some(false) });
+    end_turn(&mut app);
+    // The message is over (the event that ends it also makes the agent ready again).
+    app.agent_chat.state = Some(State::Ready);
+    let saved = history::list(&app);
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].title, "make a box");
+    // A new conversation is empty; the saved one comes back without the approval card.
+    history::new_conversation(&mut app);
+    assert!(app.agent_chat.items.is_empty());
+    assert!(history::load(&mut app, &saved[0].id));
+    let kinds: Vec<&str> = app
+        .agent_chat
+        .items
+        .iter()
+        .map(|i| match i {
+            Item::User { .. } => "user",
+            Item::Agent { .. } => "agent",
+            Item::Tool { .. } => "tool",
+            Item::Notice { .. } => "notice",
+            _ => "other",
+        })
+        .collect();
+    assert_eq!(kinds, ["user", "agent", "tool", "notice"], "the last is the note that the agent does not remember it");
+    let md = history::export(&app);
+    assert!(md.contains("## You\n\nmake a box") && md.contains("Making **a box**.") && md.contains("> `batch` (completed)"), "{md}");
+    // Another design has its own list.
+    app.session.path = Some("/somewhere/else.solidcraft".into());
+    assert!(history::list(&app).is_empty());
+}
+
+/// With AI features off nothing is written or listed; a message in progress is not interrupted.
+#[test]
+fn history_is_not_kept_with_ai_features_off() {
+    let mut app = history_app("off");
+    app.preferences.ai_features = false;
+    app.agent_chat.push(Item::User { text: "hi".into(), image: false });
+    history::save(&mut app);
+    assert!(!app.agent_chat.history_root.as_ref().unwrap().exists());
+    app.preferences.ai_features = true;
+    history::save(&mut app);
+    assert_eq!(history::list(&app).len(), 1);
+    app.preferences.ai_features = false;
+    assert!(history::list(&app).is_empty());
+    // While the agent is answering, a saved conversation is not swapped in.
+    app.preferences.ai_features = true;
+    app.agent_chat.state = Some(State::Busy);
+    let id = history::list(&app)[0].id.clone();
+    assert!(!history::load(&mut app, &id));
+}
+
+/// What a saved file holds is read leniently: damaged items are skipped, not fatal.
+#[test]
+fn damaged_items_in_a_saved_file_are_skipped() {
+    assert!(history::item_from_json(&json!({"kind": "user"})).is_none());
+    assert!(history::item_from_json(&json!({"kind": "robot", "text": "x"})).is_none());
+    assert!(history::item_from_json(&json!("x")).is_none());
+    assert!(
+        matches!(history::item_from_json(&json!({"kind": "plan", "entries": [["a", "pending"], 5, ["b"]]})), Some(Item::Plan(p)) if p.len() == 1)
+    );
+    assert!(matches!(history::item_from_json(&json!({"kind": "tool", "title": "t", "status": "weird"})), Some(Item::Tool { status: None, .. })));
+}

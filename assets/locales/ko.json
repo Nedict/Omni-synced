@@ -1047,5 +1047,10 @@
   "Type": "유형",
   "joint.one_component": "이 부품들은 한 구성 요소의 바디입니다: {bodies}. 관절은 한 구성 요소를 다른 구성 요소에 대해 움직이므로 부품마다 자체 구성 요소가 필요합니다.",
   "joint.one_body": "두 선택이 모두 {body}에 있습니다. 두 번째는 다른 부품에서 선택하세요.",
-  "joint.from_bodies_hint": "선택한 각 바디가 제자리에 그대로 있으면서 자체의 새 구성 요소로 옮겨집니다."
+  "joint.from_bodies_hint": "선택한 각 바디가 제자리에 그대로 있으면서 자체의 새 구성 요소로 옮겨집니다.",
+  "ui.agent_chat_history": "이전 대화",
+  "ui.agent_chat_history_none": "이 설계에 대한 이전 대화가 없습니다",
+  "ui.agent_chat_history_new": "새 대화",
+  "ui.agent_chat_history_export": "Markdown으로 내보내기…",
+  "ui.agent_chat_history_loaded": "이전 대화를 읽기용으로 표시합니다. 에이전트는 이를 기억하지 못합니다."
 }

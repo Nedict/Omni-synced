@@ -1047,5 +1047,10 @@
   "Type": "Typ",
   "joint.one_component": "Diese Teile sind Körper einer Komponente: {bodies}. Ein Gelenk bewegt eine Komponente gegenüber einer anderen, daher braucht jedes Teil eine eigene Komponente.",
   "joint.one_body": "Beide Auswahlen liegen auf {body}. Wählen Sie die zweite auf einem anderen Teil.",
-  "joint.from_bodies_hint": "Jeder ausgewählte Körper kommt in eine eigene neue Komponente und bleibt, wo er ist."
+  "joint.from_bodies_hint": "Jeder ausgewählte Körper kommt in eine eigene neue Komponente und bleibt, wo er ist.",
+  "ui.agent_chat_history": "Frühere Unterhaltungen",
+  "ui.agent_chat_history_none": "Keine früheren Unterhaltungen zu diesem Entwurf",
+  "ui.agent_chat_history_new": "Neue Unterhaltung",
+  "ui.agent_chat_history_export": "Als Markdown exportieren…",
+  "ui.agent_chat_history_loaded": "Eine frühere Unterhaltung, zum Lesen angezeigt: Der Agent erinnert sich nicht daran."
 }

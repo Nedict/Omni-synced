@@ -26,6 +26,7 @@ pub mod backend;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod discover;
 pub mod gate;
+mod history;
 mod markdown_view;
 mod panel;
 #[cfg(not(target_arch = "wasm32"))]
@@ -162,6 +163,10 @@ pub struct AgentChat {
     /// The panel is shown (View menu, the application bar's chat button, Ctrl+Shift+A).
     pub open: bool,
     pub items: Vec<Item>,
+    /// The saved conversation these items are kept in (`None`: not saved yet).
+    conv: Option<String>,
+    /// Where saved conversations go instead of the data folder (tests).
+    pub history_root: Option<std::path::PathBuf>,
     pub input: String,
     state: Option<State>,
     agent: String,
@@ -642,6 +647,7 @@ fn end_turn(app: &mut SolveApp) {
         let doc = app.session.doc.clone();
         app.agent_chat.push(Item::Changes { steps, doc, undone: false });
     }
+    history::save(app);
 }
 
 /// Merge the undo steps made since `start_doc` (at depth `start_undo`) into one, labelled `label`;

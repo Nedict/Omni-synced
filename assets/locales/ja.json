@@ -1304,5 +1304,10 @@
   "Round": "丸め",
   "joint.one_component": "これらの部品は 1 つのコンポーネントのボディです: {bodies}。ジョイントはコンポーネント同士を動かすため、部品ごとに専用のコンポーネントが必要です。",
   "joint.one_body": "両方の選択が {body} 上にあります。2 つ目は別の部品で選択してください。",
-  "joint.from_bodies_hint": "選択した各ボディを、位置はそのままで専用の新しいコンポーネントに移動します。"
+  "joint.from_bodies_hint": "選択した各ボディを、位置はそのままで専用の新しいコンポーネントに移動します。",
+  "ui.agent_chat_history": "過去の会話",
+  "ui.agent_chat_history_none": "この設計についての過去の会話はありません",
+  "ui.agent_chat_history_new": "新しい会話",
+  "ui.agent_chat_history_export": "Markdown として書き出し…",
+  "ui.agent_chat_history_loaded": "過去の会話を閲覧用に表示しています。エージェントはこの内容を覚えていません。"
 }

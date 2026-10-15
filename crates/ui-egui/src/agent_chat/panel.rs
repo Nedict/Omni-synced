@@ -104,6 +104,12 @@ fn glyph_button(ui: &mut egui::Ui, kind: &str, tip: &str) -> egui::Response {
             ui.painter().line_segment([c + vec2(-4.5, -4.5), c + vec2(4.5, 4.5)], s);
             ui.painter().line_segment([c + vec2(-4.5, 4.5), c + vec2(4.5, -4.5)], s);
         }
+        // A clock: earlier conversations.
+        "history" => {
+            ui.painter().circle_stroke(c, 6.0, s);
+            ui.painter().line_segment([c, c + vec2(0.0, -3.5)], s);
+            ui.painter().line_segment([c, c + vec2(2.8, 1.6)], s);
+        }
         _ => {}
     }
     crate::scenario::publish_handle(&format!("agent_chat:{kind}"), r.center());
@@ -184,6 +190,9 @@ fn header(app: &mut SolveApp, ui: &mut egui::Ui, left: bool) {
             if glyph_button(ui, "minimize", tr("ui.agent_chat_minimize")).clicked() {
                 app.preferences.agent_chat_minimized = true;
             }
+            if app.preferences.ai_features {
+                history_menu(app, ui);
+            }
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let b = if state.running() {
@@ -202,6 +211,51 @@ fn header(app: &mut SolveApp, ui: &mut egui::Ui, left: bool) {
             }
         });
     });
+}
+
+/// The clock button and its menu: earlier conversations of the open design, a new one, and
+/// the export of this one as Markdown.
+fn history_menu(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let b = glyph_button(ui, "history", tr("ui.agent_chat_history"));
+    let busy = app.agent_chat.state() == State::Busy;
+    let saved = history::list(app);
+    let mut load: Option<String> = None;
+    let mut fresh = false;
+    let mut export = false;
+    egui::Popup::menu(&b).show(|ui| {
+        if saved.is_empty() {
+            ui.label(RichText::new(tr("ui.agent_chat_history_none")).color(Tokens::get().text_dim));
+        }
+        for c in saved.iter().take(20) {
+            let title = if c.title.is_empty() { "…" } else { c.title.as_str() };
+            if ui.add_enabled(!busy, egui::Button::new(title)).on_hover_text(&c.agent).clicked() {
+                load = Some(c.id.clone());
+            }
+        }
+        ui.separator();
+        if ui.add_enabled(!busy && !app.agent_chat.items.is_empty(), egui::Button::new(tr("ui.agent_chat_history_new"))).clicked() {
+            fresh = true;
+        }
+        if ui.add_enabled(!app.agent_chat.items.is_empty(), egui::Button::new(tr("ui.agent_chat_history_export"))).clicked() {
+            export = true;
+        }
+    });
+    if let Some(id) = load {
+        history::load(app, &id);
+    }
+    if fresh {
+        history::new_conversation(app);
+    }
+    if export {
+        let text = history::export(app);
+        app.pick_save("agent-chat.md", &["md"], move |_app, path| {
+            if let Some(path) = path
+                && let Err(e) = std::fs::write(&path, text)
+            {
+                log::warn!("agent chat export: {path}: {e}");
+            }
+        });
+    }
 }
 
 /// While the header is dragged: the cursor grabs and the side it would dock on lights up; on

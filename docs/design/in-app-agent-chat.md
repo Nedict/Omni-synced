@@ -208,7 +208,7 @@ returns the whole state, for tests and screenshots.
 
 | Area | Work |
 |---|---|
-| Conversation | Diffs, history per design, resume (`session/load`) |
+| Conversation | Diffs, resuming an agent's own session (`session/load`) |
 | Session controls | Model and mode pickers from `configOptions` / `modes`, slash commands |
 | Auth | An embedded terminal or "open a terminal here" for terminal logins on each OS; logout |
 | Discovery | Read the ACP registry; keychain-aware login check on macOS |

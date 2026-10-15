@@ -117,6 +117,21 @@ The agent reaches the open design only through SolidCraft's own tools (the
 - **Attach view:** tick it to send a picture of the current view with your message, for agents
   that take pictures.
 
+## History
+
+Every message's conversation is saved when the message ends, per design (a design without a file
+shares one list). The clock button in the panel's header lists the open design's earlier
+conversations; picking one shows it as a transcript to read. The agent does not remember it: it
+starts fresh, and the panel says so. **New conversation** starts an empty transcript, and
+**Export as Markdown…** writes the current one to a file you choose.
+
+Saved: what you wrote, the agent's answers, its tool calls and plan, and notices. Not saved:
+questions that were waiting, the undo steps, pictures. At most 50 conversations are kept per design
+(the oldest go) and a conversation is capped at 2 MB. They are plain JSON files in
+`<data folder>/agent-chat/conversations/` (private to your user on Linux and macOS; on Windows the
+per-user data folder's own permissions), never inside a design file. They are **not encrypted**, and
+they are not written at all when *Show AI features* is off.
+
 ## Permissions
 
 Preferences → AI → **Permissions** decides what the agent may do without asking, for every agent;
