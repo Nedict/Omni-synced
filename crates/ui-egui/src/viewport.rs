@@ -66,6 +66,8 @@ pub struct ViewportState {
     /// The preset's navigation for the left-button drag under way (Alias: Shift+Alt), taken
     /// when the button went down, so the drag neither selects nor moves sketch geometry.
     pub primary_nav: Option<NavMode>,
+    /// Button-free gesture and its last owned pointer position, kept through pauses.
+    modifier_nav: Option<(NavMode, Pos2)>,
     /// What a click would pick now (after the active command's filter).
     pub hover: Option<Hit>,
     pub mouse: Option<Pos2>,
@@ -1988,6 +1990,45 @@ fn zoom_anchor(app: &mut SolveApp, rect: egui::Rect, hover: Option<egui::Pos2>) 
     })
 }
 
+/// Modifier-only navigation never borrows pointer movement from another widget or gesture.
+fn modifier_motion(app: &mut SolveApp, ui: &egui::Ui, inside: bool, hover: Option<Pos2>, mods: egui::Modifiers) -> Option<(NavMode, egui::Vec2)> {
+    let owns = inside
+        && ui.input(|i| i.focused && !i.pointer.any_down() && !i.pointer.any_released() && !i.pointer.any_pressed())
+        && !ui.ctx().egui_wants_keyboard_input()
+        && !egui::Popup::is_any_open(ui.ctx())
+        && !crate::dim_view::editing()
+        && app.viewport.context_menu.is_none()
+        && app.viewport.axis_drag.is_none()
+        && app.viewport.point_drag.is_none()
+        && app.viewport.text_drag.is_none()
+        && app.viewport.boxsel.is_none()
+        && !hover.is_some_and(|p| app.viewport.rect.is_some_and(|rect| crate::canvas::owns_pointer(app, &projection(app, rect), p)))
+        && !hover.is_some_and(|p| app.viewport.layout.as_ref().is_some_and(|l| l.navigation.contains(p)));
+    let next =
+        hover.filter(|p| owns && p.is_finite()).and_then(|p| crate::prefs::nav_preset(&app.preferences.nav).motion_mode(mods).map(|mode| (mode, p)));
+    let previous = app.viewport.modifier_nav;
+    if previous.map(|(m, _)| m) != next.map(|(m, _)| m) {
+        app.viewport.orbit_pivot = None;
+        app.viewport.orbit_free = None;
+        app.viewport.orbit_snap = None;
+    }
+    app.viewport.modifier_nav = next;
+    next.map(|(mode, p)| {
+        let delta = previous.filter(|(m, _)| *m == mode).map_or(egui::Vec2::ZERO, |(_, last)| p - last);
+        let delta = if delta.is_finite() && delta.x.abs() <= 1e4 && delta.y.abs() <= 1e4 { delta } else { egui::Vec2::ZERO };
+        (mode, delta)
+    })
+}
+
+/// Continuous camera changes use the same JSON command as programmatic callers.
+fn camera_motion(app: &mut SolveApp, rect: Rect, mut params: serde_json::Value) {
+    let stored_fov = app.cam.fov;
+    params["camera"] = json!(projection(app, rect).cam);
+    params["viewport"] = json!([rect.width().max(1.0), rect.height().max(1.0)]);
+    let _ = app.run("view.navigate", params);
+    app.cam.fov = stored_fov;
+}
+
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let rect = ui.max_rect();
@@ -2022,7 +2063,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     middle_double_click(app, ui, inside);
 
     // ---- navigation ----
-    let trackpad_pan = app.preferences.trackpad_pan;
+    let trackpad_pan = app.preferences.trackpad_pans();
     if !app.preferences.smooth_wheel_zoom {
         app.viewport.wheel_zoom_raw_until_idle = true;
     } else if !ui.input(|i| i.is_scrolling()) {
@@ -2056,23 +2097,43 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         // Spread zooms in: the camera distance shrinks by the pinch factor.
         let f = f64::from(pinch).powf(-crate::prefs::zoom_sign(app));
         let anchor = zoom_anchor(app, rect, hover);
-        app.cancel_view_animation();
-        app.cam.zoom_at(f, anchor);
+        if app.preferences.nav == crate::prefs::TOUCHPAD_NAV {
+            let mut params = json!({"motion":"zoom", "factor":f.clamp(0.05,20.0)});
+            if let Some(anchor) = anchor {
+                params["anchor"] = json!(anchor);
+            }
+            camera_motion(app, rect, params);
+        } else {
+            app.cancel_view_animation();
+            app.cam.zoom_at(f, anchor);
+        }
     }
     if inside && scroll != 0.0 {
         app.viewport.orbit_snap = None;
         app.viewport.orbit_free = None;
         let f = (-scroll as f64 * 0.0015 * crate::prefs::zoom_sign(app)).exp();
         let anchor = zoom_anchor(app, rect, hover);
-        app.cancel_view_animation();
-        app.cam.zoom_at(f, anchor);
+        if app.preferences.nav == crate::prefs::TOUCHPAD_NAV {
+            let mut params = json!({"motion":"zoom", "factor":f.clamp(0.05,20.0)});
+            if let Some(anchor) = anchor {
+                params["anchor"] = json!(anchor);
+            }
+            camera_motion(app, rect, params);
+        } else {
+            app.cancel_view_animation();
+            app.cam.zoom_at(f, anchor);
+        }
     }
     // Two-finger scroll pans the model with the fingers.
     if inside && pan != egui::Vec2::ZERO {
         app.viewport.orbit_snap = None;
         app.viewport.orbit_free = None;
-        app.cancel_view_animation();
-        app.cam.pan(f64::from(pan.x), f64::from(pan.y), h);
+        if app.preferences.nav == crate::prefs::TOUCHPAD_NAV {
+            camera_motion(app, rect, json!({"motion":"pan","delta":[pan.x,pan.y]}));
+        } else {
+            app.cancel_view_animation();
+            app.cam.pan(f64::from(pan.x), f64::from(pan.y), h);
+        }
     }
     // A left press with the preset's keys (Alias: Shift+Alt) navigates until the button is let
     // go (kept through the release frame, so the end of the drag doesn't select either).
@@ -2108,16 +2169,35 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         None
     };
     let dragging = resp.dragged() || (inside && button.is_some());
-    let mode = if dragging && app.viewport.axis_drag.is_none() {
-        match button {
-            Some(b) => crate::prefs::nav_mode(app, b, mods),
-            None if primary_down => primary_nav,
-            None => None,
+    let motion = modifier_motion(app, ui, inside, hover, mods);
+    let mode = motion.map(|(m, _)| m).or_else(|| {
+        if dragging && app.viewport.axis_drag.is_none() {
+            match button {
+                Some(b) => crate::prefs::nav_mode(app, b, mods),
+                None if primary_down => primary_nav,
+                None => None,
+            }
+        } else {
+            None
         }
-    } else {
-        None
-    };
-    if mode == Some(NavMode::Orbit) {
+    });
+    if let Some((mode, delta)) = motion {
+        if delta != egui::Vec2::ZERO {
+            let mut params = json!({"motion":if mode == NavMode::Pan {"pan"} else {"orbit"},"delta":[delta.x,delta.y]});
+            if mode == NavMode::Orbit && app.preferences.orbit_cursor {
+                let pivot = match app.viewport.orbit_pivot {
+                    Some(pivot) => pivot,
+                    None => {
+                        let pivot = crate::prefs::pivot_under(app, &projection(app, rect), hover.unwrap_or(rect.center()) - delta);
+                        app.viewport.orbit_pivot = Some(pivot);
+                        pivot
+                    }
+                };
+                params["pivot"] = json!(pivot);
+            }
+            camera_motion(app, rect, params);
+        }
+    } else if mode == Some(NavMode::Orbit) {
         let press = ui.input(|i| i.pointer.press_origin());
         app.cancel_view_animation();
         // Shift can be required to enter orbit (Fusion/Inventor middle drag, Alias Shift+Alt),
@@ -2148,7 +2228,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
         }
     }
-    if !dragging {
+    if !dragging && motion.is_none() {
         app.viewport.orbit_pivot = None;
     }
     if app.viewport.spin {
@@ -2166,7 +2246,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 i.stable_dt,
             )
         });
-        if pressed || key || dragging {
+        if pressed || key || dragging || motion.is_some() {
             app.viewport.spin = false;
         } else {
             app.cam.orbit(f64::from(dt.min(0.1)) * 30.0, 0.0);
@@ -3354,15 +3434,17 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
     let items: [(&str, &str); 10] = [
         (
             "orbit",
-            if app.preferences.nav == crate::prefs::OPENSCAD_NAV {
+            if app.preferences.nav == crate::prefs::TOUCHPAD_NAV {
+                crate::i18n::tr("nav.touchpad.orbit")
+            } else if app.preferences.nav == crate::prefs::OPENSCAD_NAV {
                 "Orbit (left drag on empty space; Shift+left drag box-selects)"
             } else {
                 "Orbit (right drag; hold Shift to snap)"
             },
         ),
         ("spin", "Continuous orbit (stops at the next click or key)"),
-        ("pan", "Pan (drag; or middle drag)"),
-        ("zoom", "Zoom (drag; or wheel)"),
+        ("pan", if app.preferences.nav == crate::prefs::TOUCHPAD_NAV { crate::i18n::tr("nav.touchpad.pan") } else { "Pan (drag; or middle drag)" }),
+        ("zoom", if app.preferences.nav == crate::prefs::TOUCHPAD_NAV { crate::i18n::tr("nav.touchpad.zoom") } else { "Zoom (drag; or wheel)" }),
         ("fit", "Fit (F6)"),
         ("lookat", "Look At the selected face or plane (or the active sketch)"),
         ("home", "Home view"),
@@ -3384,6 +3466,7 @@ fn nav_bar(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect) {
         || ui.rect_contains_pointer(axis_rect(app, rect))
         || app.viewport.axis_drag.is_some()
         || app.viewport.nav.is_some()
+        || app.viewport.modifier_nav.is_some()
         || app.viewport.spin
         || menu_open;
     let mut painter = ui.painter_at(rect);
@@ -4075,6 +4158,220 @@ mod tests {
                 assert_eq!(app.cam.yaw, before.yaw);
             }
         }
+    }
+
+    #[test]
+    fn touchpad_modifier_motion_navigates_without_buttons_or_document_changes() {
+        for alt in [false, true] {
+            let ctx = egui::Context::default();
+            let mut app = hover_app(false);
+            app.preferences.nav = "touchpad".into();
+            let p = pos2(350.0, 300.0);
+            hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(p)]);
+            let before = app.cam;
+            let doc = app.session.doc.to_json();
+            let undo = app.session.undo.len();
+            let log = app.session.log.len();
+            let mods = egui::Modifiers { shift: !alt, alt, ..Default::default() };
+            hover_frame(&mut app, &ctx, vec![egui::Event::ModifiersChanged(mods)]);
+            hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(p + vec2(30.0, 20.0))]);
+            assert!(!ctx.input(|i| i.pointer.any_down()));
+            if alt {
+                assert!((app.cam.yaw - before.yaw - 0.24).abs() < 1e-6);
+                assert_eq!(app.cam.target, before.target);
+            } else {
+                assert_ne!(app.cam.target, before.target);
+                assert_eq!(app.cam.yaw, before.yaw);
+            }
+            assert_eq!(app.cam.distance, before.distance);
+            let after = app.cam;
+            for _ in 0..3 {
+                hover_frame(&mut app, &ctx, vec![]);
+                assert_eq!(app.cam, after, "no drift between pointer events");
+                assert!(app.viewport.hover.is_none());
+            }
+            hover_frame(&mut app, &ctx, vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE), egui::Event::PointerMoved(p)]);
+            assert_eq!(app.cam, after, "release ends modifier-only navigation");
+            assert_eq!(app.session.doc.to_json(), doc);
+            assert_eq!(app.session.undo.len(), undo);
+            assert_eq!(app.session.log.len(), log, "continuous motion must not flood the command log");
+            assert!(app.session.selection.is_empty());
+            assert!(app.viewport.boxsel.is_none() && app.viewport.point_drag.is_none());
+        }
+    }
+
+    #[test]
+    fn touchpad_motion_uses_the_effective_perspective_projection() {
+        let mut app = hover_app(false);
+        app.ui.perspective = true;
+        app.cam = Camera { yaw: 0.0, pitch: 0.0, distance: 100.0, ..Default::default() };
+        let rect = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+        let pivot = Vec3::new(15.0, -50.0, 0.0);
+        let before = projection(&app, rect).to_screen(pivot).unwrap();
+        camera_motion(&mut app, rect, json!({"motion":"orbit","delta":[20,10],"pivot":pivot}));
+        let after = projection(&app, rect).to_screen(pivot).unwrap();
+        assert!(before.distance(after) < 1e-3, "rendered pivot drifted from {before:?} to {after:?}");
+        assert_eq!(app.cam.fov, 0.0, "the projection toggle remains UI state, not a stored-camera mutation");
+    }
+
+    #[test]
+    fn touchpad_motion_does_not_move_the_camera_under_a_canvas_triad() {
+        let ctx = egui::Context::default();
+        let mut s = solidcraft_engine::Session::default();
+        s.execute("solid.box", &json!({"length":20,"width":20,"height":20})).unwrap();
+        s.selection = vec![Sel::Body { name: "Body1".into() }];
+        let mut app = SolveApp::new(s, crate::Services::default());
+        app.preferences.nav = "touchpad".into();
+        app.viewport.no_pixels = true;
+        app.start("solid.move");
+        app.dialog.as_mut().unwrap().focus = false;
+        let p = pos2(100.0, 100.0);
+        hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(p)]);
+        ctx.memory_mut(|m| {
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
+        let triad = crate::dialogs_move::triad(&app, app.dialog.as_ref().unwrap()).unwrap();
+        let handle = projection(&app, app.viewport.rect.unwrap()).to_screen(triad.center).unwrap();
+        let mods = egui::Modifiers { alt: true, ..Default::default() };
+        hover_frame(&mut app, &ctx, vec![egui::Event::ModifiersChanged(mods)]);
+        assert!(!ctx.egui_wants_keyboard_input());
+        let before = app.cam;
+        hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(handle)]);
+        assert_eq!(app.cam, before, "a triad handle owns its input before the camera changes");
+        hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(p)]);
+        assert_eq!(app.cam, before, "leaving the handle rearms without a jump");
+        hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(p + vec2(5.0, 0.0))]);
+        assert_ne!(app.cam.yaw, before.yaw, "the exposed viewport remains navigable with Move open");
+    }
+
+    #[test]
+    fn touchpad_motion_preserves_input_ownership_and_rearms_without_jumping() {
+        let ctx = egui::Context::default();
+        let mut app = hover_app(false);
+        app.preferences.nav = "touchpad".into();
+        app.preferences.orbit_cursor = true;
+        let p = pos2(350.0, 300.0);
+        let alt = egui::Modifiers { alt: true, ..Default::default() };
+        hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(p)]);
+        hover_frame(&mut app, &ctx, vec![egui::Event::ModifiersChanged(alt)]);
+        hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(p + vec2(10.0, 0.0))]);
+        let pivot = app.viewport.orbit_pivot;
+        assert!(pivot.is_some());
+        hover_frame(&mut app, &ctx, vec![]);
+        assert_eq!(app.viewport.orbit_pivot, pivot, "pauses keep the same orbit pivot");
+        let before = app.cam;
+        let bar = app.viewport.layout.as_ref().unwrap().navigation.center();
+        hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(bar)]);
+        assert_eq!(app.cam, before, "the navigation bar owns its input");
+        assert!(app.viewport.orbit_pivot.is_none());
+        hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(p)]);
+        assert_eq!(app.cam, before, "reentry must not apply the distance from an overlay");
+        hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(p + vec2(5.0, 0.0))]);
+        assert_ne!(app.cam.yaw, before.yaw);
+        let before = app.cam;
+        for mods in [
+            egui::Modifiers::NONE,
+            egui::Modifiers { shift: true, alt: true, ..Default::default() },
+            egui::Modifiers { shift: true, ctrl: true, ..Default::default() },
+            egui::Modifiers { alt: true, command: true, mac_cmd: true, ..Default::default() },
+        ] {
+            hover_frame(&mut app, &ctx, vec![egui::Event::ModifiersChanged(mods), egui::Event::PointerMoved(p)]);
+            assert_eq!(app.cam, before, "unbound combinations must not navigate");
+        }
+        let shift = egui::Modifiers { shift: true, ..Default::default() };
+        hover_frame(&mut app, &ctx, vec![egui::Event::ModifiersChanged(shift), egui::Event::PointerMoved(p)]);
+        hover_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: shift }],
+        );
+        hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(p + vec2(30.0, 20.0))]);
+        assert_eq!(app.cam, before, "Shift+left drag must still box-select, not pan");
+        assert!(app.viewport.boxsel.is_some());
+        hover_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerButton { pos: p + vec2(30.0, 20.0), button: egui::PointerButton::Primary, pressed: false, modifiers: shift }],
+        );
+        assert_eq!(app.cam, before, "the release frame still belongs to selection");
+    }
+
+    #[test]
+    fn touchpad_focus_and_preset_changes_discard_old_motion() {
+        let ctx = egui::Context::default();
+        let mut app = hover_app(false);
+        app.preferences.nav = "touchpad".into();
+        let alt = egui::Modifiers { alt: true, ..Default::default() };
+        let frame = |app: &mut SolveApp, focused: bool, p: Pos2| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                    focused,
+                    events: vec![egui::Event::ModifiersChanged(alt), egui::Event::PointerMoved(p)],
+                    ..Default::default()
+                },
+                |ui| show(app, ui),
+            );
+            out.textures_delta.clear();
+        };
+        frame(&mut app, true, pos2(300.0, 300.0));
+        frame(&mut app, true, pos2(310.0, 300.0));
+        let before = app.cam;
+        frame(&mut app, false, pos2(500.0, 400.0));
+        frame(&mut app, true, pos2(350.0, 300.0));
+        assert_eq!(app.cam, before, "focus loss and regain must not jump");
+        frame(&mut app, true, pos2(360.0, 300.0));
+        assert!((app.cam.yaw - before.yaw - 0.08).abs() < 1e-6);
+        app.preferences.nav = "fusion".into();
+        let before = app.cam;
+        frame(&mut app, true, pos2(450.0, 300.0));
+        assert_eq!(app.cam, before);
+        app.preferences.nav = "touchpad".into();
+        frame(&mut app, true, pos2(500.0, 300.0));
+        assert_eq!(app.cam, before, "changing presets must rearm before moving");
+        app.viewport.spin = true;
+        frame(&mut app, true, pos2(510.0, 300.0));
+        assert!(!app.viewport.spin, "pointer-only navigation stops continuous orbit");
+        assert!((app.cam.yaw - before.yaw - 0.08).abs() < 1e-6);
+    }
+
+    #[test]
+    fn touchpad_vertical_trackpad_scroll_zooms_without_overwriting_saved_pan() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.preferences.nav = "touchpad".into();
+        h.app.preferences.smooth_wheel_zoom = false;
+        h.app.preferences.zoom_to_cursor = false;
+        h.call("ui.move", json!({"x":800,"y":500}));
+        let before = h.app.cam;
+        for phase in [egui::TouchPhase::Start, egui::TouchPhase::Move, egui::TouchPhase::End] {
+            h.app.synthetic.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, 120.0),
+                modifiers: egui::Modifiers::NONE,
+                phase,
+            });
+            h.frame();
+        }
+        assert!((h.app.cam.distance - before.distance * (-0.18_f64).exp()).abs() < 1e-6);
+        assert_eq!(h.app.cam.target, before.target);
+        assert!(h.app.preferences.trackpad_pan);
+        let after = h.app.cam;
+        h.frames(60);
+        assert_eq!(h.app.cam, after);
+        h.app.preferences.nav = "fusion".into();
+        for phase in [egui::TouchPhase::Start, egui::TouchPhase::Move, egui::TouchPhase::End] {
+            h.app.synthetic.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, 120.0),
+                modifiers: egui::Modifiers::NONE,
+                phase,
+            });
+            h.frame();
+        }
+        assert_eq!(h.app.cam.distance, after.distance);
+        assert_ne!(h.app.cam.target, after.target);
     }
 
     #[test]

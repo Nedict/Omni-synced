@@ -661,8 +661,33 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(K
             Surf::Thicken { thickness: thickness.clone(), symmetric: *symmetric, operation: op_index(operation) },
             vec![bodies.iter().map(|n| Sel::Body { name: n.clone() }).collect()],
         ),
-        FeatureKind::SurfaceExtend { edges, distance, .. } => {
-            (Surf::Extend { distance: distance.clone() }, vec![edges.iter().filter_map(edge).collect()])
+        FeatureKind::SurfaceExtend { edges, distance, mode, up_to, neighbours, .. } => {
+            // The dialog edits the edges and the distance; the rest is kept as it was.
+            let mut extra = Map::new();
+            if !mode.is_natural() {
+                extra.insert("mode".into(), json!(mode));
+            }
+            if !*neighbours {
+                extra.insert("neighbours".into(), json!(false));
+            }
+            match up_to {
+                Some(solidcraft_engine::doc::ExtendTo::Bounds) => {
+                    extra.insert("up_to".into(), json!("bounds"));
+                }
+                Some(solidcraft_engine::doc::ExtendTo::Face(t)) => {
+                    extra.insert("up_to".into(), json!({"body": t.body, "point": pt(t.point)}));
+                }
+                Some(solidcraft_engine::doc::ExtendTo::Plane(PlaneRef::Origin { name } | PlaneRef::Construction { name })) => {
+                    extra.insert("up_to".into(), json!(name));
+                }
+                _ => {}
+            }
+            let k = Surf::Extend { distance: distance.clone() };
+            let mut ins = inputs(&k);
+            if let Some(inp) = ins.first_mut() {
+                inp.items = edges.iter().filter_map(edge).collect();
+            }
+            return Some((Kind::Surface(k), ins, extra));
         }
         FeatureKind::SurfaceTrim { body, plane, tool, keep } => (
             Surf::Trim,
