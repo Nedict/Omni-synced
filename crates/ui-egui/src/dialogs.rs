@@ -253,6 +253,7 @@ pub enum Kind {
     Sheet(crate::dialogs_sheet::Sm),
     /// Surface tools and Split Face (`dialogs_surface`).
     Surface(crate::dialogs_surface::Surf),
+    SaveMesh(crate::dialogs_save_mesh::SaveMesh),
     /// Plastic features (`dialogs_plastic`).
     Plastic(crate::dialogs_plastic::Pl),
     /// Appearance (`dialogs_appearance`).
@@ -602,6 +603,7 @@ impl Dialog {
                 let (kind, inputs) = crate::dialogs_assembly::start(app, id)
                     .or_else(|| crate::dialogs_sheet::start(app, id))
                     .or_else(|| crate::dialogs_surface::start(app, id))
+                    .or_else(|| crate::dialogs_save_mesh::start(app, id))
                     .or_else(|| crate::dialogs_plastic::start(app, id))
                     .or_else(|| crate::dialogs_appearance::start(app, id))
                     .or_else(|| crate::dialogs_motion::start(app, id))
@@ -1371,6 +1373,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::Assembly(k) => k.title(),
         Kind::Sheet(k) => k.title(),
         Kind::Surface(k) => k.title(),
+        Kind::SaveMesh(_) => "SAVE AS MESH",
         Kind::Plastic(k) => k.title(),
         Kind::Appearance(_) => "APPEARANCE",
         Kind::Motion(k) => k.title(),
@@ -1675,7 +1678,7 @@ fn input_rows(d: &mut Dialog, ui: &mut egui::Ui, s: &Session) {
 /// Width limits of a docked dialog: shrink-wrapped to its content within these.
 use crate::frame::{DIALOG_MAX_W, DIALOG_MIN_W, DIALOG_WIDE_MAX_W};
 /// Width of value fields and choice boxes in a dialog.
-const FIELD_W: f32 = 124.0;
+pub(crate) const FIELD_W: f32 = 124.0;
 
 /// Find the Boundary Fill cells again when the tool bodies changed (keeping the choices of
 /// cells that are still there).
@@ -1914,7 +1917,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let horizontal_frame = frame.inner_margin.leftf() + frame.inner_margin.rightf() + 2.0 * frame.stroke.width;
     // OK is offered once the inputs make a feature.
     let has_ok = !matches!(d.kind, Kind::Sketch | Kind::Params { .. } | Kind::Measure { .. });
-    let valid = !has_ok || !d.previews() || (built.unwrap_or_else(|| apply_commands(app, &d).is_ok()) && app.preview.error.is_none());
+    let valid = match &d.kind {
+        Kind::SaveMesh(_) => crate::dialogs_save_mesh::ready(&d.inputs),
+        _ => !has_ok || !d.previews() || (built.unwrap_or_else(|| apply_commands(app, &d).is_ok()) && app.preview.error.is_none()),
+    };
     let width = if wide { crate::frame::Width::Wide } else { crate::frame::Width::Normal };
     let wkey = egui::Id::new(("sc_dialog_w", wide));
     let response = crate::frame::docked_on(
@@ -2670,6 +2676,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     Kind::Sheet(k) => enter |= crate::dialogs_sheet::rows(app, ui, k, &mut d.inputs),
                     Kind::Surface(k) => enter |= crate::dialogs_surface::rows(ui, k),
                     Kind::SketchModify(k) => enter |= crate::sketch_modify_ui::rows(ui, k),
+                    Kind::SaveMesh(k) => enter |= crate::dialogs_save_mesh::rows(app, ui, k),
                     Kind::Plastic(k) => enter |= crate::dialogs_plastic::rows(app, ui, k, &d.inputs),
                     Kind::Appearance(k) => enter |= crate::dialogs_appearance::rows(app, ui, k, &mut d.inputs),
                     Kind::Motion(k) => enter |= crate::dialogs_motion::rows(app, ui, k, &mut d.inputs),
@@ -2729,7 +2736,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 egui::Spinner::new().size(14.0).paint_at(ui, sr);
                 sresp.on_hover_text(tr("Updating the preview"));
             }
-            let raw_label = if matches!(d.kind, Kind::ConfirmDelete { .. }) { "Delete" } else { "OK" };
+            let raw_label = match &d.kind {
+                Kind::ConfirmDelete { .. } => "Delete",
+                Kind::SaveMesh(k) => crate::dialogs_save_mesh::button(k),
+                _ => "OK",
+            };
             let label = tr(raw_label);
             let raw_close = if matches!(d.kind, Kind::Params { .. } | Kind::Measure { .. }) { "Close" } else { "Cancel" };
             let close = tr(raw_close);
@@ -3171,6 +3182,10 @@ fn sels(d: &Dialog, i: usize) -> &[Sel] {
 }
 
 pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
+    // Saving asks for a file name first; `Err("")` is the user backing out of that.
+    if let Kind::SaveMesh(k) = &d.kind {
+        return crate::dialogs_save_mesh::run(app, k, &d.inputs);
+    }
     let commands = apply_commands(app, d)?;
     if let Some((_, marker)) = d.editing {
         // Record the actual pre-edit timeline state in the command's undo snapshot.
@@ -3862,6 +3877,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::Sheet(k) => return crate::dialogs_sheet::commands(app, k, &d.inputs, &d.extra),
         Kind::Surface(k) => return crate::dialogs_surface::commands(app, k, &d.inputs, &d.extra),
         Kind::SketchModify(k) => return crate::sketch_modify_ui::commands(app, k, &d.inputs, &d.extra),
+        Kind::SaveMesh(k) => return crate::dialogs_save_mesh::commands(k, &d.inputs),
         Kind::Plastic(k) => return crate::dialogs_plastic::commands(app, k, &d.inputs, &d.extra),
         Kind::Appearance(k) => return Ok(crate::dialogs_appearance::commands(k, &d.inputs)),
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),

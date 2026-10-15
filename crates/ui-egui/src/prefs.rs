@@ -295,6 +295,12 @@ pub struct Prefs {
     pub check_updates: bool,
     /// When the last update check ran, and the versions skipped or put off (`update::Memo`).
     pub update: crate::update::Memo,
+    /// Save as mesh: the last format (`stl` or `3mf`), whether it was sent to a slicer, which one
+    /// (an installed slicer's id or a program path), and the programs the user added (newest first).
+    pub save_mesh_format: String,
+    pub save_mesh_send: bool,
+    pub save_mesh_slicer: String,
+    pub custom_slicers: Vec<String>,
 }
 
 /// What a middle-button double-click in the view does.
@@ -359,6 +365,10 @@ impl Default for Prefs {
             color_vision: crate::theme::ColorVision::Off,
             check_updates: true,
             update: crate::update::Memo::default(),
+            save_mesh_format: "stl".into(),
+            save_mesh_send: false,
+            save_mesh_slicer: String::new(),
+            custom_slicers: Vec::new(),
         }
     }
 }

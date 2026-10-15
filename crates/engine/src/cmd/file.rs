@@ -46,7 +46,14 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("export")
         .noundo()
         .params("path; format?: stl|stla|obj|step|3mf|3mf-tagged|urdf|json (default from extension; 3mf-tagged: 3MF whose triangles carry their B-rep face, at full precision, for meshing and analysis tools; docs/formats/3mf-face-tags.md; urdf: the whole assembly as a robot, with STL meshes written next to it; docs/urdf.md); bodies?: [names] (JSON and URDF export the complete design); urdf only: mesh_prefix? (before each mesh file name, e.g. package://robot/meshes/), effort? (default 1000), velocity? (default 10)"),
-    CommandSpec::new("file.save_mesh", "Save As Mesh", save_stl).icon("export").noundo().params("path; bodies?: [names]; ascii?: bool"),
+    CommandSpec::new("file.save_mesh", "Save As Mesh", save_mesh)
+        .at("MESH", "MODIFY")
+        .icon("export")
+        .noundo()
+        .params("path; format?: stl|3mf|3mf-tagged (default from the extension, else stl; 3mf-tagged: docs/formats/3mf-face-tags.md); bodies?: [names] (default: all); ascii?: bool (STL); slicer?: id, name or program path from file.slicers (open the saved file there)"),
+    CommandSpec::new("file.slicers", "Installed Slicers", slicers)
+        .noundo()
+        .params("→ the slicers found on this machine: [{id, name, icon?}]; pass an id or name as file.save_mesh's `slicer`"),
 ];
 
 fn new_doc(s: &mut Session, p: &Value) -> Result<Value> {
@@ -450,10 +457,43 @@ fn export_urdf(s: &Session, path: &str, p: &Value) -> Result<Value> {
     )
 }
 
-fn save_stl(s: &mut Session, p: &Value) -> Result<Value> {
-    let path = path_arg(p, "file.save_mesh")?;
-    let f = if bool_(p, "ascii").unwrap_or(false) { Format::StlAscii } else { Format::StlBinary };
-    export_to(s, path, f, &string_list(p, "bodies"))
+fn save_mesh(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "file.save_mesh";
+    let path = path_arg(p, cmd)?;
+    let format = match str_(p, "format").map(str::to_ascii_lowercase).as_deref() {
+        None => match std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).as_deref() {
+            Some("3mf") => Format::ThreeMf,
+            _ => Format::StlBinary,
+        },
+        Some("stl") if bool_(p, "ascii").unwrap_or(false) => Format::StlAscii,
+        Some("stl") => Format::StlBinary,
+        Some("3mf") => Format::ThreeMf,
+        Some("3mf-tagged") => Format::ThreeMfTagged,
+        Some(other) => return Err(bad(cmd, format!("unknown mesh format `{other}` (stl, 3mf, 3mf-tagged)"))),
+    };
+    let slicer = match str_(p, "slicer") {
+        None => None,
+        Some(spec) => Some(
+            crate::slicers::resolve(spec).ok_or_else(|| bad(cmd, format!("no slicer `{spec}` (see file.slicers, or give the path of a program)")))?,
+        ),
+    };
+    let mut out = export_to(s, path, format, &string_list(p, "bodies"))?;
+    if let (Some(slicer), Some(obj)) = (slicer, out.as_object_mut()) {
+        // The file is saved either way; a slicer that won't start is reported, not fatal.
+        match slicer.open(path) {
+            Ok(()) => obj.insert("slicer".into(), json!(slicer.name)),
+            Err(e) => obj.insert("slicer_error".into(), json!(e)),
+        };
+    }
+    Ok(out)
+}
+
+fn slicers(_: &mut Session, _: &Value) -> Result<Value> {
+    let list: Vec<Value> = crate::slicers::detect()
+        .iter()
+        .map(|d| json!({"id": d.id, "name": d.name, "icon": d.icon.as_ref().map(|i| i.path().to_string_lossy().into_owned())}))
+        .collect();
+    Ok(json!({ "slicers": list }))
 }
 
 fn recovery_dir(p: &Value, cmd: &str) -> Result<std::path::PathBuf> {
