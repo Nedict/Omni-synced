@@ -222,6 +222,11 @@
 //!   parameters); the source's `at`, `height` and `angle` then hold the numbers they last came
 //!   to. A text without `exprs` is set as it always was; 0.12.0 asks for an update instead of
 //!   dropping the expressions and keeping the text at its last numbers.
+//!   Also under 22, a `Patch` on edges can carry `continuity` (`all`: `g0`, `g1` or `g2`, and
+//!   `edges`: `[{edge: [x, y, z], g}]` for edges met otherwise; G0 everywhere when absent, and then
+//!   not saved) and `points` it passes through (none when absent). A patch without them fills as
+//!   it always did; a loop that is not a height field over its plane, which 0.12.0 refused, now
+//!   fills with one face. 0.12.0 asks for an update instead of dropping them.
 
 use serde_json::Value;
 

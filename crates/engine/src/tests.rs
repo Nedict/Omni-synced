@@ -773,6 +773,8 @@ fn hostile_params_never_panic() {
         "orientation",
         "twist",
         "scale",
+        "continuity",
+        "crown",
     ];
     // Commands are independent; worker threads take them one at a time (their costs vary a lot).
     let ids: Vec<&str> = command_specs()

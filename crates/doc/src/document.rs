@@ -1259,6 +1259,14 @@ pub enum FeatureKind {
         /// exact plane whatever this says).
         #[serde(default, skip_serializing_if = "is_zero")]
         crown: f64,
+        /// How a patch on edges meets the faces beside its loop (G0 everywhere by default, and
+        /// then not saved).
+        #[serde(default, skip_serializing_if = "PatchContinuity::is_g0")]
+        continuity: PatchContinuity,
+        /// Points a patch on edges passes through.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[walk(pos)]
+        points: Vec<Vec3>,
     },
     /// Surface bodies sewn along shared edges into the first one (a solid when they close).
     Stitch {
@@ -1647,6 +1655,45 @@ pub struct BlendSide {
     pub body: String,
     #[walk(pos)]
     pub edges: Vec<Vec3>,
+}
+
+/// How a patch on a loop of edges meets the faces beside the loop: every edge with `all`, but the
+/// edges picked in `edges` with their own.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
+pub struct PatchContinuity {
+    #[serde(default = "patch_g0", skip_serializing_if = "is_g0")]
+    pub all: Continuity,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edges: Vec<EdgeContinuity>,
+}
+
+/// One edge of a patch's loop (a point on it) and how the patch meets the face beside it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
+pub struct EdgeContinuity {
+    #[walk(pos)]
+    pub edge: Vec3,
+    pub g: Continuity,
+}
+
+impl Default for PatchContinuity {
+    fn default() -> PatchContinuity {
+        PatchContinuity { all: Continuity::G0, edges: Vec::new() }
+    }
+}
+
+impl PatchContinuity {
+    /// G0 everywhere: the patch only meets its edges.
+    pub fn is_g0(&self) -> bool {
+        self.all == Continuity::G0 && self.edges.iter().all(|e| e.g == Continuity::G0)
+    }
+}
+
+fn patch_g0() -> Continuity {
+    Continuity::G0
+}
+
+fn is_g0(g: &Continuity) -> bool {
+    *g == Continuity::G0
 }
 
 /// The continuity a blend repeats by default: the tangent plane on both sides.
