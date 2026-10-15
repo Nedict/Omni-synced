@@ -367,7 +367,8 @@ fn sawtooth_bar(teeth: usize, pattern: bool) -> (Session, Option<u64>) {
         run(&mut s, "sketch.line", json!({"points": pts, "closed": true}));
     }
     run(&mut s, "sketch.finish", json!({}));
-    run(&mut s, "solid.extrude", json!({"sketch": "Tooth", "distance": 8, "direction": "symmetric", "operation": "cut", "name": "Tooth cut"}));
+    // Total thickness 16 mm keeps the sawtooth cut spanning 8 mm on each side of YZ.
+    run(&mut s, "solid.extrude", json!({"sketch": "Tooth", "distance": 16, "direction": "symmetric", "operation": "cut", "name": "Tooth cut"}));
     let id = pattern.then(|| {
         let r = run(&mut s, "solid.pattern.rectangular", json!({"features": ["Tooth cut"], "dir1": [0, 1, 0], "count1": teeth, "spacing1": 4}));
         r["feature"].as_u64().unwrap()

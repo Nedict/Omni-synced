@@ -56,6 +56,10 @@ pub struct GpuScene {
     /// Lines drawn first, under everything (the ground grid: the model hides it, it never
     /// hides the model).
     pub under: Vec<u8>,
+    /// Origin and construction planes (translucent, like `trans`) and their axes (lines, like
+    /// `lines`): reference geometry, never cut away by a section (#1229).
+    pub guide_trans: Vec<u8>,
+    pub guide_lines: Vec<u8>,
     /// Opaque bodies drawn from their plans on the GPU, like `tris`.
     pub planned: Vec<PlannedBody>,
     /// The model's bodies, a few at a time, drawn before the loose geometry above (`tris`,
@@ -156,6 +160,21 @@ impl GpuScene {
         }
         self.under.extend_from_slice(&c);
         self.under.extend_from_slice(&width.to_le_bytes());
+    }
+    /// A translucent triangle of a plane a section does not cut (see [`GpuScene::guide_trans`]).
+    pub fn guide_tri(&mut self, p: [f32; 3], c: [u8; 4]) {
+        for v in p.iter().chain(&[0.0; 3]) {
+            self.guide_trans.extend_from_slice(&v.to_le_bytes());
+        }
+        self.guide_trans.extend_from_slice(&c);
+    }
+    /// A depth-tested line a section does not cut (see [`GpuScene::guide_lines`]).
+    pub fn guide_line(&mut self, a: [f32; 3], b: [f32; 3], c: [u8; 4], width: f32) {
+        for v in a.iter().chain(&b) {
+            self.guide_lines.extend_from_slice(&v.to_le_bytes());
+        }
+        self.guide_lines.extend_from_slice(&c);
+        self.guide_lines.extend_from_slice(&width.to_le_bytes());
     }
     pub fn line(&mut self, a: [f32; 3], b: [f32; 3], c: [u8; 4], width: f32, on_top: bool) {
         let out = if on_top { &mut self.overlay } else { &mut self.lines };
@@ -291,6 +310,8 @@ struct Batches {
     ghost: Option<Batch>,
     xray: Option<Batch>,
     under: Option<Batch>,
+    guide_trans: Option<Batch>,
+    guide_lines: Option<Batch>,
     planned: Vec<PlannedDraw>,
     /// Evaluated chunks by their plans' addresses, holding the plans so the addresses stay
     /// theirs: a chunk whose plans are unchanged is not evaluated again when the scene is rebuilt.
@@ -341,6 +362,8 @@ impl Batches {
             self.ghost = upload(device, "sc_ghost", &sc.ghost, TRI_SIZE);
             self.xray = upload(device, "sc_xray", &sc.xray, TRI_SIZE);
             self.under = upload(device, "sc_under", &sc.under, LINE_SIZE);
+            self.guide_trans = upload(device, "sc_guide_trans", &sc.guide_trans, TRI_SIZE);
+            self.guide_lines = upload(device, "sc_guide_lines", &sc.guide_lines, LINE_SIZE);
             self.key = Some(key);
         }
     }
@@ -428,6 +451,9 @@ struct Resources {
     /// Lines behind the model (depth test >).
     line_hidden: wgpu::RenderPipeline,
     overlay: wgpu::RenderPipeline,
+    /// Reference planes and axes: as `trans` and `line`, but not cut by a section.
+    guide_trans: wgpu::RenderPipeline,
+    guide_line: wgpu::RenderPipeline,
     uniform: wgpu::Buffer,
     bind: wgpu::BindGroup,
     linear_out: bool,
@@ -764,6 +790,8 @@ impl Resources {
             line: pipeline("sc_lines", "vs_line", "fs_line", line_layout(), depth(wgpu::CompareFunction::LessEqual, false), alpha),
             line_hidden: pipeline("sc_lines_hidden", "vs_line", "fs_line", line_layout(), depth(wgpu::CompareFunction::Greater, false), alpha),
             overlay: pipeline("sc_overlay", "vs_line", "fs_line_all", line_layout(), depth(wgpu::CompareFunction::Always, false), alpha),
+            guide_trans: pipeline("sc_guide_trans", "vs_tri", "fs_tri_all", tri_layout(), depth(wgpu::CompareFunction::LessEqual, false), alpha),
+            guide_line: pipeline("sc_guide_lines", "vs_line", "fs_line_all", line_layout(), depth(wgpu::CompareFunction::LessEqual, false), alpha),
             uniform,
             bind,
             linear_out: t.format.is_srgb(),
@@ -1038,6 +1066,7 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
         lines(pass, &res.line_hidden, &h.hidden);
         lines(pass, &res.line, &pv.lines);
         lines(pass, &res.line, &h.lines);
+        lines(pass, &res.guide_line, &h.guide_lines);
         for (id, q) in res.quads.iter().filter(|_| !self.product) {
             if let Some((_, bind)) = res.textures.get(id) {
                 pass.set_pipeline(&res.image);
@@ -1054,6 +1083,7 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
         tris(pass, &res.trans, &m.trans);
         tris(pass, &res.trans, &sk.trans);
         tris(pass, &res.trans, &h.trans);
+        tris(pass, &res.guide_trans, &h.guide_trans);
         tris(pass, &res.xray, &pv.xray);
         lines(pass, &res.overlay, &m.overlays);
         lines(pass, &res.overlay, &sk.overlays);

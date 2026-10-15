@@ -582,6 +582,10 @@ impl SolveApp {
                 if !(id == "view.navigate" && v.get("continuous").and_then(Value::as_bool) == Some(true)) {
                     self.session.echo(language.format("ui.command_done", &[("command", label)]));
                 }
+                if id == "file.new" {
+                    // `file.new` starts from millimetres. Units of new designs still apply (#1205).
+                    prefs::apply_new_design(self);
+                }
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
                     render_workspace::reset_document(self);
                     self.sketch_choices = sketch_families::Choices::default();
@@ -940,6 +944,15 @@ impl SolveApp {
         let bounds = viewport::view_bounds(self);
         self.pending_fit = Some((self.cam, bounds, false));
         self.cam = self.fitted(self.cam);
+    }
+
+    /// Frame `bounds` at once, keeping the view direction (programmatic use).
+    pub fn fit_bounds(&mut self, bounds: solidcraft_engine::geom::Aabb3) {
+        self.cancel_view_animation();
+        self.viewport.orbit_snap = None;
+        self.viewport.orbit_free = None;
+        self.pending_fit = Some((self.cam, bounds, false));
+        self.cam = self.fitted_bounds(self.cam, &bounds);
     }
 
     /// `cam` moved to frame the whole model.

@@ -306,6 +306,7 @@ fn join_of_a_lobed_disc_pattern_is_not_refused() {
 mod blend_fit;
 mod boolean_diagnostics;
 mod component_frames;
+mod curved_seam_round;
 mod large_step_import;
 mod loft_cut;
 mod loft_ring;
@@ -834,6 +835,20 @@ fn only_own_ids_name_commands() {
         let err = s.execute(old, &serde_json::json!({})).unwrap_err();
         assert!(matches!(err, crate::EngineError::UnknownCommand(_)), "{old}: {err}");
     }
+}
+
+/// An unknown command's error names the ids it was probably meant to be: a typo's, or the
+/// command that ends in the same word.
+#[test]
+fn unknown_commands_suggest_the_closest_ids() {
+    let mut s = Session::default();
+    let mut msg = |id: &str| s.execute(id, &serde_json::json!({})).unwrap_err().to_string();
+    assert_eq!(msg("file.open"), "unknown command `file.open` (did you mean `doc.open`?)");
+    assert!(msg("solid.extrud").starts_with("unknown command `solid.extrud` (did you mean `solid.extrude`"), "{}", msg("solid.extrud"));
+    assert!(msg("Extrude").contains("`solid.extrude`"), "{}", msg("Extrude"));
+    assert_eq!(msg("FusionFilletEdgesCommand"), "unknown command `FusionFilletEdgesCommand`");
+    let long = "x".repeat(10_000);
+    assert_eq!(msg(&long), format!("unknown command `{long}`"));
 }
 
 #[test]
