@@ -36,6 +36,7 @@
   "cmd.component_capture_position": "Capture Position",
   "cmd.component_create": "New Component",
   "cmd.component_delete": "Delete Component",
+  "cmd.component_unlock": "Unlock Contents",
   "cmd.component_from_bodies": "Create Components from Bodies",
   "cmd.component_insert_design": "Insert Design",
   "cmd.component_links": "List Links",

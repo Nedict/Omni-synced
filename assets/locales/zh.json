@@ -36,6 +36,7 @@
   "cmd.component_capture_position": "捕获位置",
   "cmd.component_create": "新建组件",
   "cmd.component_delete": "删除组件",
+  "cmd.component_unlock": "解锁内容",
   "cmd.component_from_bodies": "由实体创建组件",
   "cmd.component_insert_design": "插入设计",
   "cmd.component_links": "列出链接",

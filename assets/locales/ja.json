@@ -36,6 +36,7 @@
   "cmd.component_capture_position": "位置をキャプチャ",
   "cmd.component_create": "新規コンポーネント",
   "cmd.component_delete": "コンポーネントを削除",
+  "cmd.component_unlock": "内容のロックを解除",
   "cmd.component_from_bodies": "ボディからコンポーネントを作成",
   "cmd.component_insert_design": "デザインを挿入",
   "cmd.component_links": "リンクを一覧表示",

@@ -483,6 +483,7 @@
   "cmd.component_capture_position": "Position erfassen",
   "cmd.component_create": "Neue Komponente",
   "cmd.component_delete": "Komponente löschen",
+  "cmd.component_unlock": "Inhalt entsperren",
   "cmd.component_from_bodies": "Komponenten aus Körpern erstellen",
   "cmd.component_insert_design": "Konstruktion einfügen",
   "cmd.component_links": "Verknüpfungen auflisten",

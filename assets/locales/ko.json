@@ -483,6 +483,7 @@
   "cmd.component_capture_position": "위치 캡처",
   "cmd.component_create": "새 구성 요소",
   "cmd.component_delete": "구성 요소 삭제",
+  "cmd.component_unlock": "내용 잠금 해제",
   "cmd.component_from_bodies": "바디로 구성 요소 만들기",
   "cmd.component_insert_design": "설계 삽입",
   "cmd.component_links": "링크 목록",
