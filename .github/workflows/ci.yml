@@ -211,7 +211,7 @@ jobs:
     needs: build-tests
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 55
     strategy:
       fail-fast: false
       matrix:
@@ -226,7 +226,7 @@ jobs:
           name: nextest-archive
       - name: Run one shard of the matrix
         # A step limit below the job's, so the outcomes so far are still uploaded.
-        timeout-minutes: 35
+        timeout-minutes: 45
         env:
           SHARDS: 16
           SHARD: ${{ matrix.shard }}

@@ -629,7 +629,9 @@ fn action_matrix_worker() {
         out.flush().unwrap();
     };
     let Some((_, path)) = designs().into_iter().find(|(n, _)| *n == design) else { panic!("no design {design}") };
-    // A slice of a heavy design (`j/n`): the actions whose index is `j` modulo `n`; the first
+    // A slice of a heavy design (`j/n`): the actions whose name hashes to `j` modulo `n` (by
+    // index, slices would take whole kinds of action when n shares a factor with the number of
+    // actions per entity, and a slice of only fillets runs three times as long); the first
     // slice records the load.
     let slice: Option<(usize, usize)> = std::env::var("ACTION_MATRIX_SLICE").ok().and_then(|v| parse_part(&v));
     let first = slice.is_none_or(|(j, _)| j == 0);
@@ -659,7 +661,7 @@ fn action_matrix_worker() {
         if only.as_ref().is_some_and(|o| !o.iter().any(|x| x == a.action)) {
             continue;
         }
-        if slice.is_some_and(|(j, n)| i % n != j) {
+        if slice.is_some_and(|(j, n)| stable_hash(&format!("{} {}", a.entity, a.action)) % n as u64 != j as u64) {
             continue;
         }
         // Whole families of pieces are sampled together (see [`family`]).

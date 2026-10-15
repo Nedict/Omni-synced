@@ -14,7 +14,7 @@ The test is [`apps/solidcraft-cli/tests/action_matrix.rs`](../apps/solidcraft-cl
 - **Nightly** (and by hand, Run workflow), the "Action matrix" jobs run the whole matrix in 16
   shards (`action_matrix_shard` with `ACTION_MATRIX_SHARD=k/16`) of about equal cost, cut by
   [`tests/action_matrix/costs.json`](../tests/action_matrix/costs.json): what each design took on a
-  runner. A design that takes more than ten minutes is split into slices (every n-th action, each
+  runner. A design that takes more than ten minutes is split into slices (actions by a hash of their name, each
   slice loading the design again), and the pieces go largest first to the shard with the least
   work. A design not in costs.json yet counts as two minutes. Each shard uploads its outcomes and
   timings (artifact `action-matrix-k`); with all sixteen in one folder,
