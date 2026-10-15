@@ -711,7 +711,8 @@ fn camera(app: &mut SolveApp, p: &Value) -> Result<Value, String> {
         return Err(format!("unknown camera field `{k}` (it takes {})", FIELDS.join(", ")));
     }
     let mut cam = app.cam;
-    if o.keys().any(|k| k != "fit") {
+    let sets = o.keys().any(|k| k != "fit");
+    if sets {
         let mut v = serde_json::to_value(app.cam).map_err(|e| e.to_string())?;
         for (k, x) in o.iter().filter(|(k, _)| *k != "fit") {
             v[k] = x.clone();
@@ -733,6 +734,9 @@ fn camera(app: &mut SolveApp, p: &Value) -> Result<Value, String> {
     }
     let fit = match o.get("fit") {
         None | Some(Value::Bool(false)) => None,
+        Some(Value::Bool(true)) if !crate::render_workspace::active(app) && crate::viewport::view_bounds(app).is_empty() => {
+            return Err("nothing is shown to fit".into());
+        }
         Some(Value::Bool(true)) => Some(None),
         Some(Value::Array(list)) if !list.is_empty() && list.len() <= 10_000 => {
             let occs = list.iter().map(|v| occurrence(&app.session, v)).collect::<Result<Vec<u64>, String>>()?;
@@ -745,7 +749,7 @@ fn camera(app: &mut SolveApp, p: &Value) -> Result<Value, String> {
         Some(_) => return Err("`fit` must be true, false or a list of occurrences".into()),
     };
     // A read leaves a view change that is animating alone.
-    if cam == app.cam && fit.is_none() {
+    if !sets && fit.is_none() {
         return serde_json::to_value(app.cam).map_err(|e| e.to_string());
     }
     app.cancel_view_animation();
@@ -1183,17 +1187,20 @@ mod tests {
         h.frames(2);
         let before = h.app.cam;
         // Reading during an animated view change leaves it running (no frames run between).
-        let mut raw = |method: &str, params: Value| {
+        fn raw(h: &mut crate::scenario::Harness, method: &str, params: Value) -> Value {
             let (req, _rx) = ControlRequest::new(method, params);
             match handle(&mut h.app, &h.ctx, &req) {
                 Outcome::Done(v) => v,
                 Outcome::Screenshot { .. } => Value::Null,
             }
-        };
-        raw("ui.view", json!({"view": "top", "animate": true}));
-        let r = raw("ui.camera", Value::Null);
+        }
+        raw(&mut h, "ui.view", json!({"view": "top", "animate": true}));
+        let r = raw(&mut h, "ui.camera", Value::Null);
         assert!(r["ok"] == true && h.app.cam_anim.is_some(), "{r}");
-        h.app.cam_anim = None;
+        // Setting it, even to where it is now, ends the animation there.
+        let yaw = h.app.cam.yaw;
+        let r = raw(&mut h, "ui.camera", json!({ "yaw": yaw }));
+        assert!(r["ok"] == true && h.app.cam_anim.is_none(), "{r}");
         h.app.cam = before;
         let mut cam = |p: Value| {
             let r = h.call("ui.camera", p);
@@ -1228,6 +1235,7 @@ mod tests {
             json!({"up": "y"}),
             json!({"yaw": 1, "fit": ["Nope"]}),
             json!({"fit": []}),
+            json!({"fit": 1}),
             json!([1, 2]),
         ] {
             let before = h.app.cam;
@@ -1235,5 +1243,11 @@ mod tests {
             assert_eq!(r["ok"], false, "{bad}: {r}");
             assert_eq!(h.app.cam, before, "{bad}");
         }
+        // Nothing shown: nothing to fit.
+        let mut empty = crate::scenario::Harness::new();
+        empty.app.viewport.no_pixels = true;
+        let before = empty.app.cam;
+        let r = empty.call("ui.camera", json!({"yaw": 1, "fit": true}));
+        assert!(r["ok"] == false && empty.app.cam == before, "{r}");
     }
 }
