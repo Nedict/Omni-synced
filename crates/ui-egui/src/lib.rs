@@ -32,6 +32,7 @@ pub mod dialogs_plastic;
 pub mod dialogs_save_mesh;
 pub mod dialogs_sheet;
 pub mod dialogs_surface;
+pub mod dialogs_sweep;
 pub mod dim_view;
 #[cfg(test)]
 mod dimension_create_ui_tests;
@@ -141,6 +142,8 @@ pub mod smart_extrude;
 #[cfg(test)]
 mod smart_extrude_ui_tests;
 pub mod stand_up;
+#[cfg(test)]
+mod sweep_dialog_tests;
 pub mod theme;
 #[cfg(test)]
 mod thin_extrude_tests;
