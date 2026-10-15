@@ -63,6 +63,9 @@ const USAGE: &str = "usage:
   solidcraft-cli mcp [--in design.solidcraft|script.json] [--connect 127.0.0.1:PORT [--token T]] [--allow-path DIR]... [--allow-any-path]
   solidcraft-cli crashes [list [--json] | show <id> | replay <id> | dir | clear [<id>]]
   solidcraft-cli licences
+  solidcraft-cli gpu [--policy auto|hardware|software]
+      (the GPU adapters a headless render can open, best first, and the one the policy picks;
+       the policy defaults to SOLIDCRAFT_GPU, else auto; exits with an error when none qualifies)
   solidcraft-cli icon --out icon.png [--size 256] | --out icon.ico
 ";
 
@@ -75,6 +78,7 @@ fn main() -> ExitCode {
         Some("snapshot") => cmd_snapshot(&args[1..]),
         Some("render") => render::run(&args[1..]),
         Some("exec") => cmd_exec(&args[1..]),
+        Some("gpu") => cmd_gpu(&args[1..]),
         Some("commands") => {
             use std::io::Write as _;
             let mut s = Session::default();
@@ -332,6 +336,26 @@ fn cmd_script(args: &[String]) -> Result<(), String> {
         None => println!("{}", pretty(&r["script"])),
     }
     Ok(())
+}
+
+/// `gpu`: the headless adapter survey and the policy's pick.
+fn cmd_gpu(args: &[String]) -> Result<(), String> {
+    use solidcraft_gpu::select::{Policy, survey};
+    let policy = match args {
+        [] => Policy::from_env()?,
+        [flag, v] if flag == "--policy" => Policy::parse(v).ok_or_else(|| format!("--policy must be auto, hardware or software, not `{v}`"))?,
+        _ => return Err("usage: solidcraft-cli gpu [--policy auto|hardware|software]".into()),
+    };
+    let s = survey(policy);
+    let chosen = s.chosen.and_then(|i| s.adapters.get(i)).cloned();
+    println!(
+        "{}",
+        pretty(&json!({"policy": format!("{policy:?}").to_lowercase(), "backends": s.backends, "adapters": s.adapters, "chosen": chosen}))
+    );
+    match chosen {
+        Some(_) => Ok(()),
+        None => Err(format!("no adapter qualifies under the {} policy", format!("{policy:?}").to_lowercase())),
+    }
 }
 
 fn cmd_snapshot(args: &[String]) -> Result<(), String> {

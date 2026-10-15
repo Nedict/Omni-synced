@@ -17,6 +17,9 @@ use solidcraft_geom::Vec3;
 use solidcraft_geom::tess::{EvalCurve, EvalSurface, TessPlan};
 use wgpu::util::DeviceExt;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod select;
+
 /// The tessellation compute shader (WGSL).
 pub const SHADER: &str = include_str!("tess.wgsl");
 
@@ -30,15 +33,13 @@ fn popped(f: impl std::future::Future<Output = Option<wgpu::Error>>) -> Option<w
     }
 }
 
-/// An adapter and device without a window (native only). The environment may pick the backend
-/// and the D3D12 shader compiler (`WGPU_BACKEND`, `WGPU_DX12_COMPILER`).
+/// An adapter and device without a window (native only): the adapter [`select::pick`] chooses
+/// under the `SOLIDCRAFT_GPU` policy. The environment may narrow the backends and pick the D3D12
+/// shader compiler (`WGPU_BACKEND`, `WGPU_DX12_COMPILER`).
 #[cfg(not(target_arch = "wasm32"))]
 fn open_headless() -> Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-    let adapter = pollster::block_on(
-        instance.request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::HighPerformance, ..Default::default() }),
-    )
-    .map_err(|_| GpuError::NoAdapter)?;
+    let policy = select::Policy::from_env().map_err(GpuError::Policy)?;
+    let (adapter, _) = select::pick(policy).ok_or(GpuError::NoAdapter)?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("solidcraft compute"),
         required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
@@ -56,6 +57,8 @@ const WORKGROUP: u32 = 64;
 pub enum GpuError {
     #[error("no GPU adapter is available")]
     NoAdapter,
+    #[error("{0}")]
+    Policy(String),
     #[error("the GPU device could not be opened: {0}")]
     Device(String),
     #[error("the GPU evaluation failed: {0}")]
