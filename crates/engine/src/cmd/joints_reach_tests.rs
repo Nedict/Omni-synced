@@ -202,6 +202,13 @@ fn a_loop_geared_up_from_the_chain_holds_it() {
     let r = reach(&mut s, "Fore", tip, json!({"point": [0, 1e6, 0], "joints": ["Shoulder"]}));
     assert_eq!((&r["reached"], &r["stopped_by_loop"]), (&json!(false), &json!({"joint": "Lock"})), "{r}");
     assert!(value(&mut s, "Shoulder").abs() < 1e-6, "{r}");
+    // Geared up so far that even the small kick off a target straight across the pivot would turn
+    // the loop a whole turn: it holds too.
+    run(&mut s, "joint.delete", json!({"link": 0}));
+    run(&mut s, "joint.motion_link", json!({"a": "Shoulder", "b": "Lock", "ratio": 36000}));
+    let r = reach(&mut s, "Fore", tip, json!({"point": [-100, 0, 0], "joints": ["Shoulder"]}));
+    assert_eq!(r["reached"], false, "{r}");
+    assert!(value(&mut s, "Shoulder").abs() < 1e-6, "{r}");
 }
 
 /// A slider on its own (a chain with no size) still travels the whole way.

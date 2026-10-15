@@ -380,7 +380,10 @@ fn approach(
                 let full: Vec<f64> = x.iter().zip(&d).map(|(v, dv)| v + dv).collect();
                 let over = d.iter().zip(cap).map(|(d, c)| d.abs() / c).fold(1.0f64, f64::max).max(stride(x, &full));
                 let mut next: Vec<f64> = x.iter().zip(&d).zip(bounds).map(|((v, dv), (lo, hi))| (v + dv / over).max(*lo).min(*hi)).collect();
+                // Checked again once taken: a link held at a limit or the loops closed again may
+                // move it further than foreseen (joint.drive halves such steps too).
                 if (!loops || close(f, &mut next))
+                    && stride(x, &next) <= 2.0
                     && let Some(rn) = f(&next)
                     && miss(&rn) < miss(&r)
                 {
@@ -412,6 +415,7 @@ fn approach(
                     .map(|(k, (v, (c, (lo, hi))))| (v + sign * 1e-3 * c * if k % 2 == 0 { 1.0 } else { -1.0 }).max(*lo).min(*hi))
                     .collect();
                 if (!loops || close(f, &mut next))
+                    && stride(x, &next) <= 2.0
                     && let Some(rn) = f(&next)
                     && miss(&rn) < miss(&r)
                 {
