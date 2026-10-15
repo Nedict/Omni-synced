@@ -2,9 +2,11 @@
 
 ![The SolidCraft window](../generated/sample-plate.png)
 
-- **Title bar.** On Windows and Linux the application bar is the window's title bar: File, save,
-  undo and redo, the start page, the theme, Help, and one tab per open design (each with its own
-  undo history, selection and camera).
+- **Title bar.** On Windows and Linux the application bar is the window's title bar. On the left:
+  the File menu (New, Open, Save, Save As, Export…), undo and redo, the Home tab (the start page)
+  and one tab per open design (each with its own undo history, selection and camera; a dot marks
+  unsaved changes). On the right: Report a bug, Help (?), Preferences (which hold the theme) and the
+  window's buttons.
 - **Toolbar.** The workspace switcher (DESIGN) sits on the left. The tabs (SOLID, SURFACE,
   SHEET METAL, PLASTIC, UTILITIES, and SKETCH while you sketch) hold panels of commands. Click a
   panel's name for all its commands. Drag a command from the dropdown onto a panel's label
