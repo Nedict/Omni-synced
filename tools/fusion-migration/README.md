@@ -55,6 +55,33 @@ python3 tools/fusion-migration/golden/run_golden.py
   without it the rest still runs). Useful for deciding which parts deserve a rebuild at all.
 - **`golden/run_golden.py`** is the test suite, and it needs no Fusion.
 
+## Measured on a real hub
+
+270 designs, 2,797 timeline steps:
+
+| | |
+|---|---|
+| Designs with no modellable history | 106 — imported bodies and assemblies, where the STEP export is the right answer |
+| Designs with history | 164 |
+| Coverage, all timeline steps | 82% |
+| Coverage, modelling steps only | 91% |
+| Designs translated in full | 49 |
+| Of those, building without error | 20 |
+
+Both coverage numbers are shown because the difference is 259 steps that are not modelling
+operations at all — assembly placements, snapshots, canvases, and construction planes that
+sketches no longer need now they rebuild from their own frame. Quoting only the larger number
+would be moving work out of the denominator.
+
+Of 136 designs that do not build, **84 fail inside the kernel rather than in translation**:
+fillets on curved edges (`only straight edges can be blended`, `both faces next to the edge must
+be planar`), boolean fallbacks where bodies meet, contact limits, and shell cavity ownership.
+Those are reproducible failures on real geometry and belong in issues, not in workarounds here.
+
+Note the trade this represents. Before fillet edges could be recovered, more designs *built* —
+because their fillets were being silently skipped. A part that quietly omits its rounds is worse
+than one that fails loudly, so the number that matters is designs translated in full (49, from 15).
+
 ## What translates today
 
 | Fusion | SolidCraft | Notes |
