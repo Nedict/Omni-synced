@@ -28,6 +28,7 @@ pub(crate) const CACHE_BYTES: usize = 768 << 20;
 /// A body smaller than this on screen (its box's longer side, physical pixels) is not refined.
 pub(crate) const MIN_PX: f64 = 32.0;
 /// Refinements planned at once, off the UI thread.
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_JOBS: usize = 2;
 
 /// A refined plan and its CPU mesh (none: the body has no plan at that step).
@@ -145,6 +146,8 @@ pub(crate) struct Stats {
     /// Refinements planned so far, and the time they took (ms, off the UI thread).
     pub planned: usize,
     pub planning_ms: f64,
+    /// Time the last choice of steps took on the UI thread (ms).
+    pub choose_ms: f64,
 }
 
 /// The refinement state of a viewport.
@@ -155,6 +158,9 @@ pub(crate) struct Lod {
     cache: HashMap<(usize, DisplayQuality, u8), Entry>,
     #[cfg(not(target_arch = "wasm32"))]
     jobs: Vec<Job>,
+    /// The web plans one refinement per frame: more are waiting.
+    #[cfg(target_arch = "wasm32")]
+    more: bool,
     /// Bumped whenever a body's drawn step changes (part of the scene's key).
     pub generation: u64,
     clock: u64,
@@ -180,7 +186,8 @@ impl Lod {
     /// cache drops the others. Returns whether any body's drawn step changed.
     pub fn update(&mut self, q: DisplayQuality, candidates: Vec<Candidate<'_>>, live: &std::collections::HashSet<usize>) -> bool {
         self.clock += 1;
-        let mut changed = self.poll();
+        self.collect();
+        let mut changed = false;
         // The bodies that need it most first, within the triangle budget.
         let mut order: Vec<usize> = (0..candidates.len()).collect();
         order.sort_by(|&a, &b| candidates[b].err_px.total_cmp(&candidates[a].err_px));
@@ -253,7 +260,7 @@ impl Lod {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            false
+            self.more
         }
     }
 
@@ -262,9 +269,10 @@ impl Lod {
         self.cache.insert(key, Entry { _holder: holder, refined, bytes, used: self.clock });
     }
 
-    /// Collect finished refinements. They are swapped in by the next choice of steps.
+    /// Collect finished refinements; whether any finished. They are swapped in by the next
+    /// choice of steps ([`Lod::update`]).
     #[cfg(not(target_arch = "wasm32"))]
-    fn poll(&mut self) -> bool {
+    pub fn collect(&mut self) -> bool {
         let mut done = Vec::new();
         self.jobs.retain(|j| match j.rx.try_recv() {
             Ok(r) => {
@@ -281,14 +289,12 @@ impl Lod {
         for (key, holder, r) in done {
             self.insert(key, holder, r);
         }
-        // A finished job changes nothing drawn by itself; the caller's choice swaps it in.
-        let _ = any;
-        false
+        any
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn poll(&mut self) -> bool {
-        false
+    pub fn collect(&mut self) -> bool {
+        self.more
     }
 
     /// Plan the requested steps: off the UI thread, a few at a time, the most needed first (the
@@ -321,6 +327,10 @@ impl Lod {
                     break;
                 }
             }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.more = requests.len() > 1;
         }
         #[cfg(target_arch = "wasm32")]
         if let Some((i, k)) = requests.into_iter().next() {

@@ -452,10 +452,20 @@ fn update_refinement(app: &mut SolveApp, ctx: &egui::Context, proj: &Proj) {
     scene_key(app).hash(&mut h);
     crate::sketch_display::projection_key(proj, app.viewport.pixels_per_point()).hash(&mut h);
     let view = h.finish();
-    let busy = app.viewport.lod.lock().is_ok_and(|l| l.busy());
-    if view == app.viewport.lod_view && !busy {
-        return;
+    // While refinements are being planned, the view standing still: only collect finished ones.
+    if view == app.viewport.lod_view {
+        let (busy, finished) = app.viewport.lod.lock().map_or((false, false), |mut l| {
+            let finished = l.collect();
+            (l.busy(), finished)
+        });
+        if busy {
+            ctx.request_repaint_after(std::time::Duration::from_millis(30));
+        }
+        if !finished {
+            return;
+        }
     }
+    let t0 = crate::now_ms();
     app.viewport.lod_view = view;
     let st = app.session.world_state();
     let ppp = f64::from(app.viewport.pixels_per_point());
@@ -481,6 +491,7 @@ fn update_refinement(app: &mut SolveApp, ctx: &egui::Context, proj: &Proj) {
     let busy = match app.viewport.lod.lock() {
         Ok(mut lod) => {
             lod.update(q, candidates, &live);
+            lod.stats.choose_ms = crate::now_ms() - t0;
             lod.busy()
         }
         Err(_) => false,
