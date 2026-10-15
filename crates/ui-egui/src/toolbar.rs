@@ -159,7 +159,7 @@ fn report_rect(bar: Rect, captions: f32, tabs_start: f32) -> (Rect, bool) {
 /// names it for scenarios.
 pub(crate) fn offer_button(ui: &mut egui::Ui, span: Rect, labeled: bool, text: &str, icon: &str, handle: &str) -> Option<(Rect, egui::Response)> {
     let t = Tokens::get();
-    let full = 30.0 + ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), FontId::proportional(13.0), Color32::WHITE).size().x) + 10.0;
+    let full = 30.0 + ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), FontId::proportional(13.0), t.app_bar_text).size().x) + 10.0;
     let labeled = labeled && full <= span.width();
     let width = if labeled { full } else { 28.0 };
     if width > span.width() {
