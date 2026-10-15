@@ -19,6 +19,8 @@ pub mod product_scene;
 pub mod recovery;
 pub mod render_jobs;
 pub mod sample;
+mod slicer_icon;
+pub mod slicers;
 pub mod view;
 
 use std::sync::Arc;

@@ -96,6 +96,9 @@ pub struct ViewportState {
     /// Spring toward the chosen orientation, including after the drag ends.
     pub(crate) orbit_snap: Option<OrbitSnap>,
     pub build_ms: f64,
+    /// Adaptive supersampling (#1288): the view drawn last (its view-projection and pixels) and
+    /// since when it has held still (app time, s).
+    pub(crate) ss_view: (u64, f64),
     /// The right-click menu, open at this screen position.
     pub context_menu: Option<Pos2>,
     /// Select Other: its list, a press being held, and click cycling.
@@ -330,6 +333,37 @@ fn body_faded(app: &SolveApp, b: &solidcraft_engine::doc::ModelBody, active_bodi
         s.active_component != 0 && !s.doc.component_within(b.component, s.active_component)
     }
 }
+
+/// How many times the viewport's pixels to draw this frame each way (#1288; 1: off): the
+/// preference, and with adaptive supersampling only once the view has held still for a moment,
+/// so orbiting and zooming stay as quick as without it.
+fn supersampling(app: &mut SolveApp, ctx: &egui::Context, view_proj: [[f32; 4]; 4], size_px: [f32; 2]) -> f32 {
+    let factor = app.preferences.supersampling;
+    if !(factor > 1.0) {
+        return 1.0;
+    }
+    if !app.preferences.supersampling_adaptive {
+        return factor;
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    view_proj.iter().flatten().chain(&size_px).for_each(|x| x.to_bits().hash(&mut h));
+    let view = h.finish();
+    let now = ctx.input(|i| i.time);
+    if view != app.viewport.ss_view.0 {
+        app.viewport.ss_view = (view, now);
+    }
+    let still = now - app.viewport.ss_view.1;
+    if still >= SS_SETTLE {
+        factor
+    } else {
+        // Draw it supersampled once the view settles.
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(SS_SETTLE - still + 0.01));
+        1.0
+    }
+}
+
+/// How long the view holds still before adaptive supersampling draws it at full quality (s).
+const SS_SETTLE: f64 = 0.25;
 
 /// The display plan the model scene draws `b` from on the GPU, or `None` when its faces are built
 /// here from the reference mesh. Opaque shaded bodies (`opaque`: not faded, and no see-through
@@ -2423,7 +2457,10 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             app.viewport.hl_key = hk;
         }
         let ppp = ui.ctx().pixels_per_point();
+        let size_px = [rect.width() * ppp, rect.height() * ppp];
+        let ssaa = supersampling(app, ui.ctx(), proj.vp.to_f32(), size_px);
         let cb = ViewportCallback {
+            ssaa,
             product: false,
             key: app.viewport.key,
             slot: app.viewport.slot.clone(),
@@ -2437,7 +2474,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             cap: t.section_cap.to_normalized_gamma_f32(),
             view_proj: proj.vp.to_f32(),
             back: proj.cam.back().to_f32(),
-            size_px: [rect.width() * ppp, rect.height() * ppp],
+            size_px,
             images: crate::ref_images::gpu_images(app),
             analysis: analysis_uniform(app),
             analysis_colors: crate::gpu::analysis_colors(&t.analysis),
@@ -3737,6 +3774,60 @@ mod tests {
         let n = (SIZE * SIZE) as usize;
         let drawn = img.chunks(4).filter(|p| p[..3] != [255, 255, 255]).count();
         assert!(drawn > n / 20, "the model is drawn: {drawn} pixels");
+    }
+
+    /// Supersampling (#1288): the sample design drawn at 2× and filtered down shows the same
+    /// model (the same pixels covered, give or take its outline) with smoothed edges: pixels part
+    /// model, part background, which a single-sampled frame does not have. Skipped without a GPU
+    /// adapter.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn supersampling_draws_the_same_model_with_smooth_edges() {
+        let mut s = solidcraft_engine::Session::default();
+        s.run_script(&solidcraft_engine::sample::script()).unwrap();
+        let mut app = SolveApp::new(s, crate::Services::default());
+        app.viewport.no_pixels = true;
+        app.fit_view();
+        app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess: false });
+        const SIZE: u32 = 256;
+        let rect = Rect::from_min_size(Pos2::ZERO, vec2(SIZE as f32, SIZE as f32));
+        let proj = projection(&app, rect);
+        let e = proj.cam.eye().to_f32();
+        let eye = [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }];
+        let render =
+            |ssaa: f32| crate::gpu::render_offscreen_ssaa(build_scene(&app).merged(), proj.vp.to_f32(), proj.cam.back().to_f32(), eye, SIZE, ssaa);
+        let (Some(plain), Some(super2)) = (render(1.0), render(2.0)) else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        let covered = |img: &[u8]| img.chunks(4).filter(|p| p[..3] != [255, 255, 255]).count();
+        let (a, b) = (covered(&plain), covered(&super2));
+        assert!(a > 2000, "the model is drawn: {a} pixels");
+        assert!((a as f64 - b as f64).abs() < a as f64 * 0.1, "same model: {a} vs {b} pixels covered");
+        // Edge pixels against the white background: neither white nor any colour the plain frame
+        // has, so blended. A count well above the plain frame's own.
+        let palette: std::collections::HashSet<[u8; 3]> = plain.chunks(4).map(|p| [p[0], p[1], p[2]]).collect();
+        let new_colours = super2.chunks(4).filter(|p| !palette.contains(&[p[0], p[1], p[2]])).count();
+        assert!(new_colours > 100, "the supersampled frame blends its edges: {new_colours} new colours");
+    }
+
+    /// The supersampled frame stays within the device's largest texture (#869) and a memory
+    /// budget, and is not drawn at all when that leaves too little to gain.
+    #[test]
+    fn supersampling_keeps_within_the_device_texture_limit() {
+        use crate::gpu::supersampled_size;
+        assert_eq!(supersampled_size([1920.0, 1080.0], 2.0, 16384, 1), Some([3840, 2160]));
+        assert_eq!(supersampled_size([1920.0, 1080.0], 1.5, 16384, 1), Some([2880, 1620]));
+        // A 4096 texture limit: a 2560 px wide view gets 1.6×.
+        let [w, h] = supersampled_size([2560.0, 1440.0], 2.0, 4096, 1).unwrap();
+        assert!((4095..=4096).contains(&w) && (2303..=2304).contains(&h), "{w} x {h}");
+        // Under 1.25× is not worth it: drawn as usual.
+        assert_eq!(supersampled_size([3840.0, 2160.0], 2.0, 4096, 1), None);
+        assert_eq!(supersampled_size([1920.0, 1080.0], 1.0, 16384, 1), None);
+        assert_eq!(supersampled_size([0.0, 1080.0], 2.0, 16384, 1), None);
+        // 4× MSAA at 1440p: the memory budget caps it below 2×.
+        let [w, h] = supersampled_size([2560.0, 1440.0], 2.0, 16384, 4).unwrap();
+        assert!(w < 5120 && w as f32 >= 2560.0 * 1.25 && u64::from(w) * u64::from(h) * 32 <= 384 << 20, "{w} x {h}");
     }
 
     /// A hovered face lights solidly over a body drawn from its display plan on the GPU: the
