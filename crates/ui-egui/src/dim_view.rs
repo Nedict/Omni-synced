@@ -90,7 +90,8 @@ impl DimensionDraft {
             && app.session.pending_moves == self.pending
     }
     fn params(&self, expr: &str) -> serde_json::Value {
-        let mut params = json!({"entities": self.entities, "value": expr});
+        // The first dimension of a sketch scales it rather than distorting it (#1365).
+        let mut params = json!({"entities": self.entities, "value": expr, "scale_sketch": true});
         if let Some(at) = self.at {
             params["text_at"] = json!([at.x, at.y]);
         }

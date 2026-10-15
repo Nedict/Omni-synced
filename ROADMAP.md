@@ -66,6 +66,13 @@ pointer movement orbits without a mouse button, and vertical scrolling zooms. Ot
 retain their saved two-finger scroll preference; camera motion is available through
 `view.navigate` and modifier-aware `ui.move` automation.
 
+## Interactive modelling
+
+- New Body extrusion and face-offset previews show completed intermediate geometry while a
+  drag continues, then catch up to the exact final value. Changes to the selected geometry,
+  operation or feature still discard obsolete results. Distance arrows and their value boxes
+  follow the current frame's input.
+
 ## Physical material data
 
 - Physical material card validation (#923/#922) provides typed SI mechanical and
@@ -286,6 +293,8 @@ retain their saved two-finger scroll preference; camera motion is available thro
   basin rims within the rim width); convex fillets also meet sloped planar ends and reflex
   corners around pocket rims, with unequal wall slopes and extensions confined to the face;
   connected equal-distance chamfers also trim each other across unequal sloped rim walls;
+  curved chamfer chains with straight planar ends can terminate across two existing planar
+  bevel faces, splitting their shared seam; picks on the same tangent chain are applied once (#1303);
   whole smooth loops of a planar face, picked whole or by one edge (tangent
   chain), including circles and walls at any angle (boss bases and tops, bores, pocket floors,
   plate outlines), loops with sharp corners between straight edges (the blends meet in mitres), runs of

@@ -22,6 +22,7 @@ macro_rules! planned {
 
 mod browser;
 mod clipboard;
+mod compare;
 mod component;
 mod component_clone;
 mod component_clone_assembly;
@@ -256,6 +257,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(file::COMMANDS.iter());
     v.extend(metadata::COMMANDS.iter());
     v.extend(inspect::COMMANDS.iter());
+    v.extend(compare::COMMANDS.iter());
     v.extend(materials::COMMANDS.iter());
     v.extend(material_properties::COMMANDS.iter());
     v.extend(libraries::COMMANDS.iter());
