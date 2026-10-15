@@ -170,14 +170,20 @@ fn from_round(a: &Shape, b: &Shape) -> Option<Centre> {
     let Shape::Round { center: ca, axis: na, radius: ra, planar: pa, lo: loa, hi: hia, .. } = *a else { return None };
     let full_a = a.full();
     let c = match *b {
-        Shape::Round { center: cb, axis: nb, radius: rb, lo: lob, hi: hib, .. } => {
+        Shape::Round { center: cb, axis: nb, radius: rb, planar: pb, lo: lob, hi: hib, .. } => {
+            // A picked circle/arc has a fixed centre; only a cylindrical face has an
+            // infinite axis. Do not project a rim's centre onto an imaginary extension.
+            let (from, to) = match (pa, pb) {
+                (true, true) => (ca, cb),
+                (true, false) => (ca, cb + nb * (ca - cb).dot(nb)),
+                (false, true) => (ca + na * (cb - ca).dot(na), cb),
+                (false, false) => line_line(ca, na, cb, nb),
+            };
+            let (mut min, mut max) = (None, None);
             if parallel(na, nb) {
                 let w = cb - ca;
                 let along = w.dot(na);
-                // Drawn level with A's centre: on B's axis, the foot of A's centre.
-                let foot = cb - na * along;
                 let d = (w - na * along).len();
-                let (mut min, mut max) = (None, None);
                 if full_a && b.full() {
                     // B's extent along A's axis.
                     let s = if na.dot(nb) >= 0.0 { 1.0 } else { -1.0 };
@@ -189,11 +195,8 @@ fn from_round(a: &Shape, b: &Shape) -> Option<Centre> {
                     min = Some(near.hypot(gap));
                     max = Some(far.hypot(reach));
                 }
-                Centre { distance: d, from: ca, to: foot, min, max }
-            } else {
-                let (p, q) = line_line(ca, na, cb, nb);
-                Centre { distance: p.dist(q), from: p, to: q, min: None, max: None }
             }
+            Centre { distance: from.dist(to), from, to, min, max }
         }
         Shape::Plane { point, normal } => {
             let n = normal.normalized()?;
@@ -337,6 +340,50 @@ mod tests {
         assert!((c.distance - 50.0).abs() < 1e-12);
         assert!((c.min.unwrap() - 45.0).abs() < 1e-12);
         assert!((c.max.unwrap() - 55.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn circles_at_different_heights_keep_both_actual_centres() {
+        let (a, b) = (Vec3::new(0.0, 0.0, 10.0), Vec3::new(34.0, 19.0, 32.0));
+        let c = centre(&circle(a, 4.0), &circle(b, 4.0)).unwrap();
+        assert_eq!((c.from, c.to), (a, b));
+        assert!((c.distance - 2001_f64.sqrt()).abs() < 1e-12);
+        assert!((c.min.unwrap() - (1517_f64.sqrt() - 8.0).hypot(22.0)).abs() < 1e-12);
+        assert!((c.max.unwrap() - (1517_f64.sqrt() + 8.0).hypot(22.0)).abs() < 1e-12);
+        let swapped = centre(&circle(b, 4.0), &circle(a, 4.0)).unwrap();
+        assert_eq!((swapped.from, swapped.to, swapped.distance), (b, a, c.distance));
+    }
+
+    #[test]
+    fn arcs_on_different_planes_measure_between_their_centres() {
+        let a = Shape::Round { center: Vec3::ZERO, axis: Vec3::Z, radius: 2.0, angle: PI, planar: true, lo: 0.0, hi: 0.0 };
+        let b = Shape::Round { center: Vec3::new(3.0, 4.0, 12.0), axis: Vec3::X, radius: 4.0, angle: PI / 2.0, planar: true, lo: 0.0, hi: 0.0 };
+        let c = centre(&a, &b).unwrap();
+        assert_eq!((c.from, c.to, c.distance), (Vec3::ZERO, Vec3::new(3.0, 4.0, 12.0), 13.0));
+        assert!(c.min.is_none() && c.max.is_none());
+    }
+
+    #[test]
+    fn a_circle_to_a_cylinder_uses_its_fixed_centre_and_the_cylinders_axis() {
+        let a = circle(Vec3::new(0.0, 0.0, 10.0), 4.0);
+        for axis in [Vec3::Z, Vec3::X] {
+            let b = Shape::Round { center: Vec3::new(34.0, 19.0, 27.0), axis, radius: 4.0, angle: TAU, planar: false, lo: -5.0, hi: 5.0 };
+            let c = centre(&a, &b).unwrap();
+            let expected = if axis == Vec3::Z { Vec3::new(34.0, 19.0, 10.0) } else { Vec3::new(0.0, 19.0, 27.0) };
+            assert_eq!((c.from, c.to), (Vec3::new(0.0, 0.0, 10.0), expected));
+            assert!((c.distance - c.from.dist(expected)).abs() < 1e-12);
+            let swapped = centre(&b, &a).unwrap();
+            assert_eq!((swapped.from, swapped.to, swapped.distance), (c.to, c.from, c.distance));
+        }
+    }
+
+    #[test]
+    fn two_cylindrical_faces_still_measure_axis_pitch() {
+        let a = Shape::Round { center: Vec3::new(0.0, 0.0, 5.0), axis: Vec3::Z, radius: 4.0, angle: TAU, planar: false, lo: -5.0, hi: 5.0 };
+        let b = Shape::Round { center: Vec3::new(34.0, 19.0, 27.0), axis: Vec3::Z, radius: 4.0, angle: TAU, planar: false, lo: -5.0, hi: 5.0 };
+        let c = centre(&a, &b).unwrap();
+        assert_eq!((c.from, c.to), (Vec3::new(0.0, 0.0, 5.0), Vec3::new(34.0, 19.0, 5.0)));
+        assert!((c.distance - 1517_f64.sqrt()).abs() < 1e-12);
     }
 
     #[test]

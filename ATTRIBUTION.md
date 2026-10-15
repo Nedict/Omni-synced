@@ -139,6 +139,17 @@ work cooperative and adds checked run lengths, zero-run rejection, width validat
 header/input/radiance bounds and cancellation. Original licence texts are retained
 in THIRD-PARTY-LICENSES.txt; no images or artwork from that project are copied.
 
+## File-format crates
+
+| Crate | Used for | Licence |
+|---|---|---|
+| gltf 1.4.1, gltf-json 1.4.1, gltf-derive 1.4.1 (https://github.com/gltf-rs/gltf) | glTF 2.0 import (crates/io/src/gltf_in.rs): the JSON document model and its reference checks; the GLB container, buffers and accessors are read by SolidCraft's own code | MIT OR Apache-2.0 |
+| inflections 1.1.1 (build-time, through gltf-derive) | case conversion in gltf's derive macros | MIT |
+| lazy_static 1.5.1 (through gltf-json) | | MIT OR Apache-2.0 |
+
+The glTF test files are built by the tests themselves (crates/io/src/gltf_in_tests.rs,
+crates/engine/src/tests/gltf_import.rs); no third-party models are committed.
+
 ## Recovered contributions
 
 | SolidCraft file | Original contribution | Licence |

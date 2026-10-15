@@ -20,7 +20,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solidcraft design, or a .step/.stp/.igs/.3mf/.stl/.obj file (opens as a new design holding the file as a component named after it, as file.insert_step makes); up?: z|y and names?: solid|product|instance for a STEP or IGES file (see file.insert_step)"),
+        .params("path: .solidcraft design, or a .step/.stp/.igs/.3mf/.stl/.obj/.glb/.gltf file (opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make); up?: z|y for a STEP, IGES or glTF file (see file.insert_step and file.insert_mesh); names?: solid|product|instance for a STEP or IGES file (see file.insert_step)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -28,7 +28,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("file.insert_mesh", "Insert Mesh", insert_mesh)
         .at("SOLID", "INSERT")
         .icon("import")
-        .params("path: .3mf, .stl or .obj file (its meshes join the design as mesh bodies in a new component named after the file → component, component_name, occurrence); name?"),
+        .params("path: .3mf, .stl, .obj, .glb or .gltf file (its meshes join the design as mesh bodies in a new component named after the file → component, component_name, occurrence; a glTF file's node tree becomes nested components held as one rigid group until component.unlock, a mesh placed again another occurrence, its materials the bodies' appearances, and its metres millimetres); name?; up?: z|y for a glTF file (default y: glTF has Y up, so the import's component is turned a quarter turn about X, Y becoming Z → stand_up: its occurrence; z: the file's axes are kept)"),
     CommandSpec::new("file.save", "Save", save)
         .icon("save")
         .key("Ctrl+S")
@@ -113,19 +113,10 @@ fn add_step(s: &mut Session, path: &str, name: Option<&str>, options: &StepOptio
     let sf = read_step(path, options.names)?;
     let fname = name.filter(|n| !n.trim().is_empty()).unwrap_or(&sf.name).to_string();
     let cname = import::component_name(path, name);
-    let (id, placed) = import::add_in_component(s, sf.kind, &fname, sf.body_names, &cname, Some(&sf.import))?;
+    let (id, placed) = import::add_in_component(s, sf.kind, &fname, sf.body_names, &cname, import::Tree::Step(&sf.import))?;
     // Y up: the import's component is turned a quarter turn about X (Y becomes Z), so an
     // assembly's parts and instances turn together.
-    let turned = if options.y_up {
-        let occ = placed.occurrence.ok_or_else(|| EngineError::Other("the import has no placement to turn".into()))?;
-        if let Some(o) = s.doc_mut().occurrences.iter_mut().find(|o| o.id == occ) {
-            o.transform = solidcraft_doc::mat_mul(&quarter_turn_x(), &o.transform);
-        }
-        s.refresh();
-        Some(occ)
-    } else {
-        None
-    };
+    let turned = if options.y_up { turn_up(s, &placed)? } else { None };
     let created = created_bodies(s, id);
     let fname = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
     let mut out = json!({"path": path, "feature": id, "name": fname, "bodies": created, "created_bodies": created, "warnings": sf.warnings});
@@ -141,27 +132,83 @@ fn created_bodies(s: &Session, feature: u64) -> Vec<String> {
     s.model.state().bodies.iter().filter(|b| b.feature == feature).map(|b| b.name.clone()).collect()
 }
 
-/// Add a MeshImport feature for a 3MF, STL or OBJ file, in a new component named after the file.
-fn add_mesh(s: &mut Session, path: &str, name: Option<&str>) -> Result<Value> {
+/// Add a MeshImport feature for a 3MF, STL, OBJ or glTF file, in a new component named after the
+/// file. A glTF file's nodes become components in it, and its materials the bodies' looks; it is
+/// in metres with Y up, so unless `y_up` is false its component is turned to Z up (#1505).
+fn add_mesh(s: &mut Session, path: &str, name: Option<&str>, y_up: Option<bool>) -> Result<Value> {
+    let err = |e: solidcraft_io::IoError| EngineError::Other(format!("{path}: {e}"));
     let bytes = solidcraft_io::vfs::read(path, solidcraft_io::MAX_3MF_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-    let mf = solidcraft_io::mesh_import_feature(&bytes, path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    let gltf = solidcraft_io::is_gltf_path(path);
+    let (mf, plan, looks) = if gltf {
+        let dir = std::path::Path::new(path).parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+        let mut load =
+            |name: &str| solidcraft_io::vfs::read(&dir.join(name).to_string_lossy(), solidcraft_io::MAX_GLTF_BYTES).map_err(|e| e.to_string());
+        let mut g = solidcraft_io::read_gltf(&bytes, path, &mut load).map_err(err)?;
+        if !import::mesh_plan_fits(&g.plan) {
+            g.flatten();
+        }
+        (g.feature, Some(g.plan), g.looks)
+    } else {
+        (solidcraft_io::mesh_import_feature(&bytes, path).map_err(err)?, None, Vec::new())
+    };
     let fname = name.filter(|n| !n.trim().is_empty()).unwrap_or(&mf.name).to_string();
     let cname = import::component_name(path, name);
-    let (id, placed) = import::add_in_component(s, mf.kind, &fname, mf.body_names, &cname, None)?;
+    let tree = match &plan {
+        Some(p) if !p.places.is_empty() => import::Tree::Mesh(p),
+        _ => import::Tree::Flat,
+    };
+    let (id, placed) = import::add_in_component(s, mf.kind, &fname, mf.body_names, &cname, tree)?;
     let bodies = created_bodies(s, id);
+    // The materials' looks, body by body (the bodies are built in the file's order).
+    if looks.iter().any(Option::is_some) && bodies.len() == looks.len() {
+        for (body, look) in bodies.iter().zip(looks) {
+            if let Some(look) = look {
+                s.doc_mut().appearances.bodies.insert(body.clone(), look);
+            }
+        }
+        s.refresh();
+    }
+    let turned = if gltf && y_up.unwrap_or(true) { turn_up(s, &placed)? } else { None };
     let fname = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
     let mut out = json!({"path": path, "feature": id, "name": fname, "bodies": bodies, "created_bodies": bodies, "warnings": mf.warnings});
     placed.report(&mut out);
+    if let Some(turned) = turned {
+        out["stand_up"] = json!(turned);
+    }
     Ok(out)
+}
+
+/// Turn an import's component a quarter turn about X (the file's Y up becomes Z up), contents
+/// and all. Returns its occurrence.
+fn turn_up(s: &mut Session, placed: &import::Placed) -> Result<Option<u64>> {
+    let occ = placed.occurrence.ok_or_else(|| EngineError::Other("the import has no placement to turn".into()))?;
+    if let Some(o) = s.doc_mut().occurrences.iter_mut().find(|o| o.id == occ) {
+        o.transform = solidcraft_doc::mat_mul(&quarter_turn_x(), &o.transform);
+    }
+    s.refresh();
+    Ok(Some(occ))
+}
+
+/// `up` for a glTF file: `y` (the default: glTF is Y up) turns it to Z up, `z` keeps its axes.
+/// Other mesh files take no `up`.
+fn mesh_up(p: &Value, path: &str, cmd: &str) -> Result<Option<bool>> {
+    if p.get("up").is_none_or(Value::is_null) {
+        return Ok(None);
+    }
+    if !solidcraft_io::is_gltf_path(path) {
+        return Err(bad(cmd, "`up` applies to STEP, IGES and glTF files only"));
+    }
+    Ok(Some(step_options(p, cmd)?.y_up))
 }
 
 fn insert_mesh(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "file.insert_mesh";
     let path = path_arg(p, cmd)?;
     if !solidcraft_io::is_mesh_path(path) {
-        return Err(bad(cmd, "only 3MF and STL files (.3mf, .stl) can be inserted as meshes"));
+        return Err(bad(cmd, "only 3MF, STL, OBJ and glTF files (.3mf, .stl, .obj, .glb, .gltf) can be inserted as meshes"));
     }
-    add_mesh(s, path, str_(p, "name"))
+    let up = mesh_up(p, path, cmd)?;
+    add_mesh(s, path, str_(p, "name"), up)
 }
 
 fn insert_step(s: &mut Session, p: &Value) -> Result<Value> {
@@ -176,8 +223,11 @@ fn insert_step(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = path_arg(p, "doc.open")?;
-    if !solidcraft_io::is_step_path(path) && ["up", "names"].iter().any(|k| p.get(*k).is_some_and(|v| !v.is_null())) {
-        return Err(bad("doc.open", "`up` and `names` apply to STEP and IGES files only"));
+    if !solidcraft_io::is_step_path(path) && p.get("names").is_some_and(|v| !v.is_null()) {
+        return Err(bad("doc.open", "`names` applies to STEP and IGES files only"));
+    }
+    if !solidcraft_io::is_step_path(path) && !solidcraft_io::is_gltf_path(path) && p.get("up").is_some_and(|v| !v.is_null()) {
+        return Err(bad("doc.open", "`up` applies to STEP, IGES and glTF files only"));
     }
     if solidcraft_io::is_step_path(path) || solidcraft_io::is_mesh_path(path) {
         // A new, unsaved design holding the file's bodies.
@@ -186,7 +236,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         let r = if solidcraft_io::is_step_path(path) {
             add_step(&mut fresh, path, None, &step_options(p, "doc.open")?)?
         } else {
-            add_mesh(&mut fresh, path, None)?
+            add_mesh(&mut fresh, path, None, mesh_up(p, path, "doc.open")?)?
         };
         // The design is the file: its component is the one being worked in.
         if let Some(c) = r["component"].as_u64() {

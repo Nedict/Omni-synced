@@ -14,6 +14,7 @@ mod raster;
 pub mod studio;
 pub mod surface;
 pub mod texture_input;
+pub mod texture_interpolation;
 
 pub use backend::{
     Availability, BackendDescriptor, BackendId, ExecutorDescriptor, ExecutorId, MAX_RENDER_ID_BYTES, RenderFeature, RenderFormat, RenderLimits,
