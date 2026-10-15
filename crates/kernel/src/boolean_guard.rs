@@ -107,6 +107,19 @@ fn stray_point(from: &Mesh, onto: &Near, region: &Aabb3) -> Option<Vec3> {
     })
 }
 
+/// The smallest radius of a body's cylinders, spheres and tori (their tubes).
+fn smallest_radius(body: &Body) -> Option<f64> {
+    use crate::surface_kind::{FaceSurface, face_surface};
+    (0..body.face_count())
+        .filter_map(|i| match face_surface(body, i)? {
+            FaceSurface::Cylinder { radius, .. } | FaceSurface::Sphere { radius, .. } => Some(radius),
+            FaceSurface::Torus { minor, .. } => Some(minor),
+            _ => None,
+        })
+        .filter(|r| r.is_finite() && *r > 0.0)
+        .min_by(f64::total_cmp)
+}
+
 fn bad(op: BoolOp, what: String) -> KernelError {
     let verb = match op {
         BoolOp::Union => "join",
@@ -148,14 +161,34 @@ pub(crate) fn check_retry(a: &Body, b: &Body, op: BoolOp, result: Option<&Body>)
     let (Ok(ma), Ok(mb), Ok(mr)) = (a.tessellate_with(t, true), b.tessellate_with(t, true), r.tessellate_with(t, true)) else {
         return Err(bad(op, "the result could not be checked".into()));
     };
-    let (va, vb, vr) = (ma.measure().volume, mb.measure().volume, mr.measure().volume);
-    let slack = 2e-4 * (va.abs() + vb.abs()) + 1e-9;
-    let volume_ok = vr.is_finite()
-        && match op {
-            BoolOp::Union => vr >= va.max(vb) - slack && vr <= va + vb + slack,
-            BoolOp::Cut => vr <= va + slack && vr >= va - vb - slack,
-            BoolOp::Intersect => true,
-        };
+    // A mesh as coarse as `t` on a round smaller than it has no inside to speak of (a through
+    // hole 0.13 mm across in a 900 mm slab measured −30272 mm³, #1255): each body's volume is
+    // measured at a tenth of its smallest radius, where that is finer. `scale` refines it all.
+    let volume = |body: &Body, mesh: &Mesh, scale: f64| -> Result<f64> {
+        let fine = smallest_radius(body).map(|r| (r * 0.1).max(t * 1e-2)).filter(|fine| *fine < t).unwrap_or(t) * scale;
+        if fine == t {
+            return Ok(mesh.measure().volume);
+        }
+        body.tessellate_with(fine, true).map(|m| m.measure().volume).map_err(|_| bad(op, "the result could not be checked".into()))
+    };
+    let judge = |scale: f64| -> Result<(bool, f64, f64, f64)> {
+        let (va, vb, vr) = (volume(a, &ma, scale)?, volume(b, &mb, scale)?, volume(r, &mr, scale)?);
+        let slack = 2e-4 * (va.abs() + vb.abs()) + 1e-9;
+        let ok = vr.is_finite()
+            && match op {
+                BoolOp::Union => vr >= va.max(vb) - slack && vr <= va + vb + slack,
+                BoolOp::Cut => vr <= va + slack && vr >= va - vb - slack,
+                BoolOp::Intersect => true,
+            };
+        Ok((ok, va, vb, vr))
+    };
+    // A volume out of bounds is measured again ten times finer before it refuses the result:
+    // the coarse meshes of a part with many rounds can be off by more than the slack (a 0.8 mm
+    // hole through a plastic part's wall measured 6.8 mm³ more than the part, #1255).
+    let (mut volume_ok, mut va, mut vb, mut vr) = judge(1.0)?;
+    if !volume_ok {
+        (volume_ok, va, vb, vr) = judge(0.1)?;
+    }
     if !volume_ok {
         let what = match op {
             BoolOp::Union => format!("the joined body's volume would be {vr:.4} mm³ (the target is {va:.4} mm³, the tool {vb:.4} mm³)"),
