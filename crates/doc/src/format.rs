@@ -222,18 +222,19 @@
 //!   parameters); the source's `at`, `height` and `angle` then hold the numbers they last came
 //!   to. A text without `exprs` is set as it always was; 0.12.0 asks for an update instead of
 //!   dropping the expressions and keeping the text at its last numbers.
-//!   Also under 22, a `Patch` on edges can carry `continuity` (`all`: `g0`, `g1` or `g2`, and
-//!   `edges`: `[{edge: [x, y, z], g}]` for edges met otherwise; G0 everywhere when absent, and then
-//!   not saved) and `points` it passes through (none when absent). A patch without them fills as
-//!   it always did; a loop that is not a height field over its plane, which 0.12.0 refused, now
-//!   fills with one face. 0.12.0 asks for an update instead of dropping them.
+//! - 23: a `Patch` on edges can carry `continuity` (`all`: `g0`, `g1` or `g2`, and `edges`:
+//!   `[{edge: [x, y, z], g}]` for edges met otherwise; G0 everywhere when absent, and then not
+//!   saved) and `points` it passes through (none when absent). Version 22 designs need no
+//!   transformation: a patch without them fills as it always did; a loop that is not a height
+//!   field over its plane, which 0.13.0 refused, now fills with one face. 0.13.0 (which reads up
+//!   to 22) asks for an update instead of dropping them.
 
 use serde_json::Value;
 
 use crate::{DocError, Document, Result};
 
 /// The format this build writes.
-pub const FORMAT: u32 = 22;
+pub const FORMAT: u32 = 23;
 
 pub fn format_string(n: u32) -> String {
     format!("solidcraft/{n}")
@@ -250,7 +251,7 @@ pub fn version_of(s: &str) -> Option<u32> {
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
 type JsonStep = fn(&mut Value) -> Result<()>;
-const JSON_STEPS: [JsonStep; 21] = [
+const JSON_STEPS: [JsonStep; 22] = [
     |_| Ok(()),
     v2_to_v3,
     v3_to_v4,
@@ -264,6 +265,7 @@ const JSON_STEPS: [JsonStep; 21] = [
     |_| Ok(()),
     |_| Ok(()),
     v13_to_v14,
+    |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
