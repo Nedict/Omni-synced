@@ -96,9 +96,9 @@ fn read_step(path: &str, names: solidcraft_io::StepNames) -> Result<solidcraft_i
 /// same one the app's "Stand it up" offer adds, and report its id.
 fn stand_up(s: &mut Session, bodies: &[String]) -> Result<u64> {
     let kind = solidcraft_doc::FeatureKind::Move {
-        bodies: bodies.to_vec(),
+        bodies: bodies.iter().map(|b| b.as_str().into()).collect(),
         translate: ["0".into(), "0".into(), "0".into()],
-        rotate_axis: Some(solidcraft_geom::Vec3::X),
+        rotate_axis: Some(solidcraft_geom::Vec3::X.into()),
         angle: Some("90 deg".into()),
         copy: false,
     };
