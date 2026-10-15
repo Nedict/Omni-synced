@@ -65,39 +65,47 @@ python3 tools/fusion-migration/golden/run_golden.py
 | Designs with history | 164 |
 | Coverage, all timeline steps | 82% |
 | Coverage, modelling steps only | 91% |
-| Designs translated in full | 49 |
-| Of those, building without error | 20 |
+| Designs translated in full | 50 |
+| Of those, building without error | 21 |
 
 Both coverage numbers are shown because the difference is 259 steps that are not modelling
 operations at all — assembly placements, snapshots, canvases, and construction planes that
 sketches no longer need now they rebuild from their own frame. Quoting only the larger number
 would be moving work out of the denominator.
 
-Of 136 designs that do not build, **84 fail inside the kernel rather than in translation**:
+Of the 135 designs that do not build, most fail inside the kernel rather than in translation:
 fillets on curved edges (`only straight edges can be blended`, `both faces next to the edge must
 be planar`), boolean fallbacks where bodies meet, contact limits, and shell cavity ownership.
 Those are reproducible failures on real geometry and belong in issues, not in workarounds here.
 
 Note the trade this represents. Before fillet edges could be recovered, more designs *built* —
 because their fillets were being silently skipped. A part that quietly omits its rounds is worse
-than one that fails loudly, so the number that matters is designs translated in full (49, from 15).
+than one that fails loudly, so the number that matters is designs translated in full (50, from 15).
 
 ## What translates today
 
 | Fusion | SolidCraft | Notes |
 |---|---|---|
-| User parameters | `parameters.add` | expressions preserved |
-| Sketch on an origin plane | `sketch.create` + curves | lines, circles, arcs, splines |
-| `ExtrudeFeature` | `solid.extrude` | distance, taper, two-sided, symmetric, operation |
-| `FilletFeature` | `solid.fillet` | constant radius, by edge points |
-| `ChamferFeature` | `solid.chamfer` | equal distance |
+| User parameters | `parameters.add` | expressions kept, and sorted so a parameter is defined before whatever uses it |
+| Model parameters (`d4`) | — | not re-creatable as inputs, so their value is substituted into the expressions that use them |
+| Sketch, any plane | `sketch.create` + curves | origin planes by name; construction planes and faces from the sketch's own frame |
+| Sketch constraints and dimensions | `sketch.constraint.*`, `sketch.dimension` | `--constraints`; parameter-driven dimensions keep driving |
+| `ExtrudeFeature` | `solid.extrude` | distance, taper, two-sided, symmetric, operation, and to-object by a point on the target |
+| `FilletFeature` | `solid.fillet` | one command per edge set, so sets with different radii stay distinct |
+| `ChamferFeature` | `solid.chamfer` | equal distance, by edge points |
 | `ShellFeature` | `solid.shell` | by removed-face points |
-| `DraftFeature` | `solid.draft` | neutral plane assumed XY |
-| `RevolveFeature` | `solid.revolve` | axis guessed; check it |
+| `DraftFeature` | `solid.draft` | only where the angle is readable; neutral plane assumed XY |
+| `RevolveFeature` | `solid.revolve` | axis named from its geometry, and refused unless it is a world axis through the origin |
+| `OffsetFacesFeature` | `solid.offset_face` | by face points |
 
-Not yet mapped: lofts, sweeps, holes, patterns, mirrors, combines, sheet metal, sketches attached
-to faces or offset planes, and ellipses. These are reported per step, so coverage is a number you
-can read rather than a claim.
+Not yet mapped: lofts, sweeps, holes, patterns, mirrors, combines, moves, threads, embosses,
+sheet metal, ellipses, and assemblies (an `Occurrence` references another design, so those need
+cross-design resolution rather than a per-step translation). Every one is reported against the
+step it came from, so coverage is a number that can be read rather than a claim.
+
+The largest single gap is `DraftFeature`, at 86 steps: their faces and angles are not on the
+properties tried so far, including with the timeline rolled back, which points at the extractor
+rather than at the translator.
 
 ## Tests
 
