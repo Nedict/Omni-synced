@@ -1134,11 +1134,11 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             }
         }
         "ui.newGroup" | "ui.ungroup" | "ui.groupSelected" => crate::browser::group_action(app, &item.id, &p),
-        // A sketch on a plane's menu starts as the Create Sketch dialog starts one: facing it.
+        // A plane's Create Sketch is the toolbar's with that plane picked first: it replaces a
+        // dialog in progress, and the dialog starts the sketch at once, facing the plane.
         "sketch.create" if item.params.is_some() => {
-            let name = p.get("plane").and_then(Value::as_str).unwrap_or_default();
-            if let Err(e) = crate::dialogs::start_sketch(app, &Sel::Plane { name: name.into() }) {
-                app.set_status(e, true);
+            if app.run("select.set", json!({ "items": [{"type": "plane", "name": p.get("plane")}] })).is_ok() {
+                app.start("sketch.create");
             }
         }
         id if item.params.is_some() => {

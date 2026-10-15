@@ -748,14 +748,20 @@ fn right_click_on_a_plane_offers_a_sketch_on_it() {
     act(&mut h.app, &t, "Show/Hide");
     assert!(!h.app.session.visibility.hidden_origin.contains(&"XZ".to_string()));
     context_menu::close(&mut h.app);
+    // The toolbar's Create Sketch is already waiting for a plane: the menu's replaces it.
+    h.app.start("sketch.create");
+    assert!(h.app.dialog.is_some());
     act(&mut h.app, &t, "Create Sketch");
+    h.frames(3);
+    assert!(h.app.dialog.is_none(), "no Create Sketch dialog is left waiting for a plane");
     assert!(normal(&h).dot(Vec3::Y).abs() > 0.999);
 
-    let mut app = sample_app();
-    app.run("construct.plane.offset", json!({"base": "XY", "offset": 25, "name": "Cut"})).unwrap();
-    let id = app.session.doc.find_feature("Cut").map(|f| f.id).unwrap();
-    act(&mut app, &Target::Plane { id }, "Create Sketch");
-    let sketch = app.session.active_sketch.and_then(|s| app.session.world_state().sketch(s).map(|s| s.plane.origin.z));
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("construct.plane.offset", json!({"base": "XY", "offset": 25, "name": "Cut"})).unwrap();
+    let id = h.app.session.doc.find_feature("Cut").map(|f| f.id).unwrap();
+    act(&mut h.app, &Target::Plane { id }, "Create Sketch");
+    h.frames(3);
+    let sketch = h.app.session.active_sketch.and_then(|s| h.app.session.world_state().sketch(s).map(|s| s.plane.origin.z));
     assert_eq!(sketch, Some(25.0), "the sketch is on the construction plane");
 }
 
