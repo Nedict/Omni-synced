@@ -737,11 +737,13 @@ pub struct Model {
     pub no_cache: bool,
 }
 
-/// Parameters a feature uses directly (inputs and sketch dimensions), sorted.
+/// Parameters a feature uses directly (inputs, sketch dimensions and the expressions of a
+/// sketch's texts), sorted.
 fn param_names(f: &Feature) -> Vec<String> {
     let mut names: Vec<String> = f.kind.expressions().iter().flat_map(|e| expr::references(e)).collect();
     if let FeatureKind::Sketch { sketch, .. } = &f.kind {
         names.extend(sketch.constraints.iter().filter_map(|c| c.param.clone()));
+        names.extend(sketch.text_exprs().into_iter().flat_map(|(_, e)| expr::references(e)));
     }
     names.sort();
     names.dedup();
@@ -1307,7 +1309,7 @@ fn point(vals: &BTreeMap<String, Value>, p: &crate::PointExpr) -> Result<Vec3> {
     if [v.x, v.y, v.z].iter().all(|c| c.is_finite() && c.abs() < 1e9) { Ok(v) } else { Err(DocError::Invalid("the position is out of range".into())) }
 }
 
-fn val(vals: &BTreeMap<String, Value>, e: &str, k: Kind) -> Result<f64> {
+pub(crate) fn val(vals: &BTreeMap<String, Value>, e: &str, k: Kind) -> Result<f64> {
     let scale = vals.get(DESIGN_LEN).map(|x| x.v).unwrap_or(1.0);
     if k == Kind::Length && scale != 1.0 && !expr::is_literal(e) {
         let v = expr::eval_with(e, &|n| vals.get(n).copied().ok_or_else(|| DocError::Expr(format!("unknown parameter `{n}`"))))?;
@@ -4057,9 +4059,10 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         | FeatureKind::SurfaceRevolve { .. }
         | FeatureKind::SurfaceSweep { .. }
         | FeatureKind::SurfaceLoft { .. }
+        | FeatureKind::SurfaceBlend { .. }
         | FeatureKind::SurfaceOffset { .. }
         | FeatureKind::SurfaceRuled { .. }
-        | FeatureKind::SurfaceUntrim { .. } => surface::eval(doc, vals, f, st),
+        | FeatureKind::SurfaceUntrim { .. } => surface::eval(doc, vals, f, st, warning),
         FeatureKind::Emboss { .. }
         | FeatureKind::Rib { .. }
         | FeatureKind::ReplaceFace { .. }
@@ -4081,6 +4084,9 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                 (None, other) => (doc.resolve_plane_in(vals, other, 0, Some(&fst))?, None),
             };
             let mut sk = sketch.clone();
+            // A text's outlines are rebuilt from its numbers when the links are refreshed: the
+            // ones its expressions give come first.
+            doc.apply_text_values(vals, &mut sk)?;
             let mut warns = match anchor {
                 Some(anchor) => crate::project::refresh_face_anchor_links(doc, vals, &fst, &plane, &mut sk, anchor),
                 None => crate::project::refresh_links(doc, vals, &fst, &plane, &mut sk),

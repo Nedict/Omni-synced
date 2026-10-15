@@ -949,6 +949,54 @@ impl Sketch {
         Ok(())
     }
 
+    /// The sketch scaled by `factor` about its origin, for its first dimension (#1365): drawn
+    /// geometry has no size of its own until a dimension gives it one, so the first length
+    /// dimension scales the whole sketch to its value instead of distorting it. Only a sketch
+    /// with nothing that fixes a size: no other driving length dimension, nothing fixed,
+    /// projected or patterned, no offsets and no 3D curves. Every geometric constraint
+    /// (coincident, horizontal, parallel, tangent, equal, symmetric, …) and every angle holds
+    /// on the scaled sketch as it held before. `None` when the sketch does not qualify.
+    pub fn scaled_for_first_dimension(&self, factor: f64) -> Option<Sketch> {
+        if !(factor.is_finite() && (1e-6..=1e6).contains(&factor)) {
+            return None;
+        }
+        let sizes = self.constraints.iter().any(|c| match c.kind {
+            ConstraintKind::Fix { .. } | ConstraintKind::PatternPoint { .. } | ConstraintKind::PatternRadius { .. } => true,
+            ref k => k.is_dimension() && !k.is_angle() && !c.driven,
+        });
+        if sizes
+            || !self.links.is_empty()
+            || !self.patterns.is_empty()
+            || !self.offsets.is_empty()
+            || !self.freeform_offsets.is_empty()
+            || !self.wires.is_empty()
+            || self.curves.iter().any(|c| c.fixed || c.link.is_some())
+            || self.points.iter().enumerate().any(|(i, p)| (p.fixed || p.link.is_some()) && (i != 0 || p.pos != Vec2::ZERO))
+        {
+            return None;
+        }
+        let mut out = self.clone();
+        for p in out.points.iter_mut().filter(|p| !p.fixed) {
+            p.pos = p.pos * factor;
+            if !in_range(p.pos) {
+                return None;
+            }
+        }
+        for c in &mut out.curves {
+            if let CurveKind::Circle { r, .. } | CurveKind::Ellipse { r, .. } = &mut c.kind {
+                *r *= factor;
+                if !radius_in_range(*r) {
+                    return None;
+                }
+            }
+        }
+        // Dimension texts keep their places relative to what they measure.
+        for t in out.constraints.iter_mut().filter_map(|c| c.text.as_mut()) {
+            *t = *t * factor;
+        }
+        Some(out)
+    }
+
     /// Is point `i` held in place: fixed, projected (linked), fixed by a Fix constraint or a
     /// point of a fixed curve.
     pub fn point_locked(&self, i: usize) -> bool {

@@ -71,6 +71,13 @@ camera as a 2D millimetre drawing, with hidden edges omitted or dashed. Vector o
 partly hidden edges and includes curved silhouettes. Curves are approximated; drawing sheets,
 annotations and exact projected curves remain deferred. See [view DXF](docs/view-dxf.md).
 
+## Interactive modelling
+
+- New Body extrusion and face-offset previews show completed intermediate geometry while a
+  drag continues, then catch up to the exact final value. Changes to the selected geometry,
+  operation or feature still discard obsolete results. Distance arrows and their value boxes
+  follow the current frame's input.
+
 ## Physical material data
 
 - Physical material card validation (#923/#922) provides typed SI mechanical and
@@ -100,6 +107,12 @@ annotations and exact projected curves remain deferred. See [view DXF](docs/view
   texture rendering and expanded component families are not implemented by this entry.
 
 ## Render foundation
+
+- Explicit texture normalization (#1218) produces completed float RGBA with
+  role-aware linear color/data semantics, bounded matrix/TRC ICC conversion and
+  opt-in EXIF orientation. It retains high-precision raw samples and records lossy
+  gamut clipping only when explicitly requested. It is not a renderer/resource
+  consumer; see [the supported policy and limits](docs/render-texture-normalization.md).
 
 - Opt-in opaque PBR (#1046) connects persisted surface parameters to the integrated
   product viewport and CPU PNG, using a fixed direct-light studio. Geometry and mass
@@ -214,6 +227,13 @@ annotations and exact projected curves remain deferred. See [view DXF](docs/view
   Crash Reports…) with a reviewed issue draft; agents read them through
   `diagnostics.crash_reports`, the MCP `crash_reports` tool or the CLI. Nothing is sent
   anywhere. See [crash reports](docs/crash-reports.md).
+- Agent chat (off by default, desktop): a side panel that drives a coding agent the user
+  already has (Claude Code through its ACP adapter, Codex, Gemini CLI, OpenCode, …) over the
+  Agent Client Protocol, under the user's own login; SolidCraft stores no keys. The agent works
+  through SolidCraft's MCP tools on a gated endpoint of its own: file actions wait for Allow or
+  Deny, crash reports are off limits, 24 changes per message, one undo step per message, and
+  the agent's whole process group ends with the panel or the app. Docks left or right,
+  minimises to a strip. See [agent chat](docs/agent-chat.md).
 - Command scripts from designs (#886): `timeline.export_script` (CLI `solidcraft-cli script`)
   writes a design's history as a script that `eval` and `run` replay into the same design —
   user parameters, units, sheet metal and plastic rules and materials as their own commands,

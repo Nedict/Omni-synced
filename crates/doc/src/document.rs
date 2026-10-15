@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use solidcraft_geom::{Plane, Vec2, Vec3};
+use solidcraft_kernel::Continuity;
 use solidcraft_sketch::Sketch;
 
 use crate::construct::{AxisDef, GeoRef, PointDef};
@@ -1254,6 +1255,10 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         #[walk(pos)]
         edges: Vec<Vec3>,
+        /// How full a fitted patch's middle is (`crown`, -0.9…3, default 0; a planar loop is an
+        /// exact plane whatever this says).
+        #[serde(default, skip_serializing_if = "is_zero")]
+        crown: f64,
     },
     /// Surface bodies sewn along shared edges into the first one (a solid when they close).
     Stitch {
@@ -1437,6 +1442,25 @@ pub enum FeatureKind {
         #[serde(default = "yes", skip_serializing_if = "is_yes")]
         neighbours: bool,
     },
+    /// A blend surface bridging two picked edge chains of two bodies (`surface.blend`): each end
+    /// repeats the surface it leaves up to its requested continuity, with the fullness `bulge`.
+    SurfaceBlend {
+        from: BlendSide,
+        to: BlendSide,
+        /// How much of each support surface the blend repeats: [from, to].
+        #[serde(default = "blend_orders")]
+        continuity: [Continuity; 2],
+        /// How full each end leaves: [from, to]; 0 is the plain bridge.
+        #[serde(default)]
+        bulge: [f64; 2],
+        /// Points the blend leaves towards, when the faces at the picks do not say: [from, to].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[walk(pos)]
+        align: Option<[Vec3; 2]>,
+        /// Sew the blend onto its two bodies where the boundaries meet.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        stitch: bool,
+    },
     /// A surface body trimmed by a plane, or by a face of a body (`tool`), keeping the side of
     /// `keep`.
     SurfaceTrim {
@@ -1614,6 +1638,22 @@ pub struct FaceAt {
     pub point: Vec3,
 }
 
+/// One end of a blend: a body and the points that pick the edges of its boundary chain. With two
+/// picks on the same edge the chain is that one edge; more pick a chain that runs on from pick to
+/// pick (the order of the picks does not matter).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
+pub struct BlendSide {
+    #[walk(body)]
+    pub body: String,
+    #[walk(pos)]
+    pub edges: Vec<Vec3>,
+}
+
+/// The continuity a blend repeats by default: the tangent plane on both sides.
+fn blend_orders() -> [Continuity; 2] {
+    [Continuity::G1, Continuity::G1]
+}
+
 /// Triangles of one imported mesh body (millimetres).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MeshData {
@@ -1684,6 +1724,11 @@ pub enum CoilSection {
 
 fn is_zero_i8(v: &i8) -> bool {
     *v == 0
+}
+
+/// A parameter that is left out when it is 0 (an optional shape knob).
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 /// Hole shapes.
@@ -1892,6 +1937,7 @@ impl FeatureKind {
             FeatureKind::SurfaceRevolve { .. } => "SurfaceRevolveFeature",
             FeatureKind::SurfaceSweep { .. } => "SurfaceSweepFeature",
             FeatureKind::SurfaceLoft { .. } => "SurfaceLoftFeature",
+            FeatureKind::SurfaceBlend { .. } => "BlendFeature",
             FeatureKind::Stitch { .. } => "StitchFeature",
             FeatureKind::Thicken { .. } => "ThickenFeature",
             FeatureKind::SurfaceTrim { .. } => "TrimFeature",
@@ -1968,6 +2014,7 @@ impl FeatureKind {
             FeatureKind::SurfaceRevolve { .. } => "SurfaceRevolve",
             FeatureKind::SurfaceSweep { .. } => "SurfaceSweep",
             FeatureKind::SurfaceLoft { .. } => "SurfaceLoft",
+            FeatureKind::SurfaceBlend { .. } => "Blend",
             FeatureKind::Stitch { .. } => "Stitch",
             FeatureKind::Thicken { .. } => "Thicken",
             FeatureKind::SurfaceTrim { .. } => "Trim",
@@ -2745,6 +2792,7 @@ impl Document {
             }
             if let FeatureKind::Sketch { sketch, .. } = &f.kind {
                 used.extend(sketch.constraints.iter().filter_map(|c| c.param.clone()));
+                used.extend(sketch.text_exprs().into_iter().flat_map(|(_, e)| expr::references(e)));
             }
         }
         for p in &self.params {
@@ -2939,6 +2987,39 @@ impl Document {
         }
         for c in &sk.constraints {
             sk.validate(&c.kind)?;
+        }
+        Ok(())
+    }
+
+    /// Give the texts of a sketch the numbers their expressions come to (in place): a text's
+    /// height, place and angle that were typed as expressions. A text's outlines are rebuilt from
+    /// its numbers when the sketch's links are refreshed, so this comes before that. A number
+    /// typed as a number is left as it is.
+    pub fn apply_text_values(&self, vals: &std::collections::BTreeMap<String, expr::Value>, sk: &mut Sketch) -> Result<()> {
+        use crate::eval::val;
+        for link in &mut sk.links {
+            let solidcraft_sketch::LinkSource::Text { at, height, angle, exprs, .. } = &mut link.source else { continue };
+            let number = |e: &Option<String>, kind: Kind, what: &str| -> Result<Option<f64>> {
+                match e {
+                    None => Ok(None),
+                    Some(e) => val(vals, e, kind).map(Some).map_err(|error| DocError::Expr(format!("{what}: {error}"))),
+                }
+            };
+            if let Some(v) = number(&exprs.x, Kind::Length, "text X")? {
+                at.x = v;
+            }
+            if let Some(v) = number(&exprs.y, Kind::Length, "text Y")? {
+                at.y = v;
+            }
+            if let Some(v) = number(&exprs.height, Kind::Length, "text height")? {
+                *height = v;
+            }
+            if let Some(v) = number(&exprs.angle, Kind::Angle, "text angle")? {
+                *angle = v;
+            }
+            if exprs.height.is_some() && !(*height > 1e-6 && *height < 1e5) {
+                return Err(DocError::Invalid("a text's height must be positive".into()));
+            }
         }
         Ok(())
     }

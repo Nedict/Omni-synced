@@ -39,7 +39,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("joint.motion_link", "Motion Link", motion_link)
         .at("SOLID", "ASSEMBLE")
         .icon("motion_link")
-        .params("a, b: joints; ratio (b = ratio · a + offset); offset?; ia?, ib?: value indices (default 0)"),
+        .params("a, b: joints; ratio (b = ratio · a + offset): b's units per a's (mm per deg for an angle driving a distance); offset?: in b's units (deg for an angle, mm for a distance, or an expression); ia?, ib?: value indices (default 0)"),
     CommandSpec::new("joint.limits", "Joint Limits", limits).params("joint; index?: value index (default 0); min?, max? (omit both to clear)"),
     CommandSpec::new("joint.edit", "Edit Joint", edit).params("joint; type?, flip?, offset?, angle?, suppressed?, name?"),
     CommandSpec::new("joint.delete", "Delete Joint", delete).params("joint: id|name (or origin: name, link: index)"),
@@ -314,7 +314,7 @@ fn next_joint_id(s: &Session) -> u64 {
     s.doc.assembly.joints.iter().map(|j| j.id).max().unwrap_or(0) + 1
 }
 
-fn add_joint(s: &mut Session, j: Joint, p: &Value) -> Result<Value> {
+fn add_joint(s: &mut Session, mut j: Joint, p: &Value) -> Result<Value> {
     if s.doc.assembly.joints.len() >= 10_000 {
         return Err(EngineError::Other("too many joints".into()));
     }
@@ -327,6 +327,30 @@ fn add_joint(s: &mut Session, j: Joint, p: &Value) -> Result<Value> {
              (component.from_bodies)",
         ));
     }
+    // It starts at its values inside its limits. A value moved to a limit moves the part as it
+    // is joined, which the answer says.
+    let mut q = j.values.clone();
+    q.resize(j.kind.dofs().len(), 0.0);
+    joints::clamp(&j, &mut q);
+    let round = |v: &Value| v.as_f64().map(|x| (x * 1e6).round() / 1e6).unwrap_or(f64::NAN);
+    let warnings: Vec<String> = named_values(&j, &q)
+        .iter()
+        .zip(named_values(&j, &j.values))
+        .filter(|(now, was)| now["value"] != was["value"])
+        .map(|(now, was)| {
+            let unit = now["unit"].as_str().unwrap_or("");
+            format!(
+                "{} {} starts at {} {unit}, inside its limits [{}, {}], not at {} {unit}: the part moved there as it was joined",
+                j.name,
+                now["name"].as_str().unwrap_or(""),
+                round(&now["value"]),
+                round(&now["limits"][0]),
+                round(&now["limits"][1]),
+                round(&was["value"])
+            )
+        })
+        .collect();
+    j.values = q;
     let id = j.id;
     let name = j.name.clone();
     // A new joint can take a deleted one's id; it starts shown.
@@ -336,6 +360,9 @@ fn add_joint(s: &mut Session, j: Joint, p: &Value) -> Result<Value> {
     let mut out = sol_json(&sol, p);
     out["joint"] = json!(id);
     out["name"] = json!(name);
+    if !warnings.is_empty() {
+        out["warnings"] = json!(warnings);
+    }
     Ok(out)
 }
 
@@ -493,10 +520,26 @@ fn motion_link(s: &mut Session, p: &Value) -> Result<Value> {
     if ia >= dofs(a) || ib >= dofs(b) {
         return Err(bad(cmd, "the linked joints need moving values at those indices"));
     }
-    let offset = num(p, "offset").unwrap_or(0.0);
+    // In b's units, like its values and limits (stored in radians for an angle).
+    let offset = match p.get("offset") {
+        Some(v) => value(s, v, is_angle(s, b, ib), cmd)?,
+        None => 0.0,
+    };
+    let ratio = ratio * ratio_scale(s, a, ia, b, ib);
     s.doc_mut().assembly.links.push(MotionLink { a, ia, b, ib, ratio, offset });
     let sol = resolve(s);
     Ok(sol_json(&sol, p))
+}
+
+fn is_angle(s: &Session, joint: u64, i: usize) -> bool {
+    s.doc.assembly.joints.iter().find(|j| j.id == joint).is_some_and(|j| j.kind.is_angle(i))
+}
+
+/// A link's `ratio` is in b's units per a's (mm per degree, degrees per mm) and stored per
+/// radian: the given one times this is the stored one.
+fn ratio_scale(s: &Session, a: u64, ia: usize, b: u64, ib: usize) -> f64 {
+    let unit = |angle: bool| if angle { 1f64.to_radians() } else { 1.0 };
+    unit(is_angle(s, b, ib)) / unit(is_angle(s, a, ia))
 }
 
 fn limits(s: &mut Session, p: &Value) -> Result<Value> {
@@ -614,8 +657,18 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
                 "flip": j.flip, "offset": j.offset, "suppressed": j.suppressed, "visible": s.joint_visible(j.id), "frame_a": world(&j.a), "frame_b": world(&j.b)})
         })
         .collect();
-    let links: Vec<Value> =
-        s.doc.assembly.links.iter().map(|l| json!({"a": l.a, "ia": l.ia, "b": l.b, "ib": l.ib, "ratio": l.ratio, "offset": l.offset})).collect();
+    let links: Vec<Value> = s
+        .doc
+        .assembly
+        .links
+        .iter()
+        .map(|l| {
+            let angle = is_angle(s, l.b, l.ib);
+            let offset = if angle { l.offset.to_degrees() } else { l.offset };
+            let ratio = l.ratio / ratio_scale(s, l.a, l.ia, l.b, l.ib);
+            json!({"a": l.a, "ia": l.ia, "b": l.b, "ib": l.ib, "ratio": ratio, "offset": offset, "unit": if angle { "deg" } else { "mm" }})
+        })
+        .collect();
     let origins: Vec<Value> = s.doc.assembly.origins.iter().map(|o| json!({"name": o.name, "occurrence": o.origin.occurrence})).collect();
     let mut out = sol_json(&sol, p);
     out["joints"] = json!(js);
