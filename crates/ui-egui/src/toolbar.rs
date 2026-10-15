@@ -1000,7 +1000,7 @@ fn ai_button(app: &mut SolveApp, ui: &mut egui::Ui, at: Rect) {
     if waiting > 0 {
         let c = pos2(at.right() - 6.0, at.top() + 9.0);
         painter.circle_filled(c, 6.0, t.warning);
-        painter.text(c, Align2::CENTER_CENTER, waiting.min(9).to_string(), FontId::proportional(9.5), Color32::BLACK);
+        painter.text(c, Align2::CENTER_CENTER, waiting.min(9).to_string(), FontId::proportional(9.5), t.toolbar);
     }
     if resp.on_hover_text(crate::agent_chat::panel_tip()).clicked() {
         crate::agent_chat::toggle(app);

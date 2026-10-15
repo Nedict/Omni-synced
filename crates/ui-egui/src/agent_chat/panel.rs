@@ -137,7 +137,7 @@ fn strip(app: &mut SolveApp, ui: &mut egui::Ui) {
     if waiting > 0 {
         let at = button.right_top() + vec2(-3.0, 3.0);
         ui.painter().circle_filled(at, 6.5, t.warning);
-        ui.painter().text(at, Align2::CENTER_CENTER, waiting.min(9).to_string(), egui::FontId::proportional(9.5), Color32::BLACK);
+        ui.painter().text(at, Align2::CENTER_CENTER, waiting.min(9).to_string(), egui::FontId::proportional(9.5), t.panel);
     }
     ui.painter().line_segment(
         if app.preferences.agent_chat_side == "left" { [r.right_top(), r.right_bottom()] } else { [r.left_top(), r.left_bottom()] },
