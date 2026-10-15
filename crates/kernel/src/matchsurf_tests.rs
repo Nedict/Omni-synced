@@ -95,8 +95,6 @@ fn seam_at(body: &Body, t: f64) -> (Vec3, Vec3, Vec3, Vec3) {
     super::seam_shape(&face.surface(), &ranges, Side::V0, t).unwrap()
 }
 
-
-
 /// The stations a seam is measured at, as fractions of its length.
 fn stations() -> Vec<f64> {
     (0..9).map(|k| k as f64 / 8.0).collect()
@@ -225,4 +223,3 @@ fn a_target_that_jumps_in_curvature_supplies_only_g1() {
     let (target, plain_picks) = cylinder_and_picks();
     assert!(match_surface(&sheet, &pick, &target, &plain_picks, Continuity::G3).is_ok());
 }
-

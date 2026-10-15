@@ -22,6 +22,7 @@ mod boolean_diagnostics;
 mod boolean_guard;
 mod boolean_record;
 mod bore_guard;
+mod boundary;
 mod bridge;
 mod build;
 mod clearance;
@@ -32,6 +33,7 @@ mod emboss;
 mod face_params;
 #[cfg(test)]
 mod face_source_tests;
+mod fair;
 mod fill;
 mod freeform;
 pub mod fuzz;
@@ -131,6 +133,7 @@ pub use fair::{
     FairCurve, FairNet, FairOptions, FairReport, MAX_FAIR_ITERATIONS, MAX_FAIR_POINTS, fair_bspline_curve, fair_bspline_surface, fair_curve,
     fair_faces, fair_net, fair_nurbs_curve, fair_nurbs_surface, fair_surface,
 };
+pub use fill::patch_edges_crowned;
 pub use helix::{loft_to_point, sweep_helix, sweep_helix_mesh};
 pub use iges_in::{MAX_IGES_BYTES, iges_import, iges_to_step};
 pub use iges_out::iges_export_bodies;

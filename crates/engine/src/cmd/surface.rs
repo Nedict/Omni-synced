@@ -7,12 +7,14 @@ use solidcraft_kernel::Continuity;
 
 use super::CommandSpec;
 use super::features::{add_feature, axis_param, check_expr, extent_param, feature_sketch, operation, plane_param, profiles, sketch_id};
+use crate::params::{bad, bool_, expr, num, str_, string_list, vec3};
 use crate::{Result, Session};
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("surface.patch", "Patch", patch)
         .at("SURFACE", "CREATE")
         .icon("patch")
+        .params("sketch?: id|name and profiles? (planar patches of sketch regions) | edges: [[x,y,z]] (points on a closed loop of a body's edges: one face on them, planar when the loop is, else a smooth B-spline surface) and body?; crown?: number −0.9…3 (default 0: only a fitted patch, whose middle becomes fuller by this many times the loop's size — the bump vanishes on the loop, so the face still meets the picked edges; a loop that is planar is the exact plane whatever the crown); name?, body_name?"),
     CommandSpec::new("surface.stitch", "Stitch", stitch)
         .at("SURFACE", "MODIFY")
         .icon("stitch")
@@ -44,6 +46,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("surface.loft", "Surface Loft", surface_loft)
         .at("SURFACE", "CREATE")
         .icon("surface_loft")
+        .params("sections: [{sketch, curves?: [curve ids], profiles?}] (2…50 in order; each one chain: a profile without holes, or curves meeting end to end; all open or all closed); name?, body_name? (a surface body: ruled between two sections, smooth through three or more; no caps)"),
     CommandSpec::new("surface.offset", "Offset Surface", offset)
         .at("SURFACE", "CREATE")
         .icon("surface_offset")
@@ -51,7 +54,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("surface.ruled", "Ruled Surface", ruled)
         .at("SURFACE", "CREATE")
         .icon("ruled")
-        .params("planned: body; edges: [[x,y,z]] (points on an edge chain); distance: expr; mode?: normal|tangent|angle|direction; angle?: expr; direction?: [x,y,z]; flip?: bool; corners?: mitre|round"),
+        .params("body; edges: [[x,y,z]] (points on a chain of its edges, open or closed); distance: expr (how far the strip reaches); mode?: normal|tangent|angle|direction (default normal: along the normal of the face beside each edge; tangent: continuing it); angle?: expr (angle mode: from `direction`, else from the face's normal, turned away from the face; 90 deg from the normal is tangent); direction?: [x,y,z] (direction mode: the rulings; angle mode: the reference, e.g. a pull direction for a draft); face?: [x,y,z] (a point on the face the directions come from; default: the face beside the most picked edges); flip?: bool (the other side); corners?: mitre|round (sharp corners of the chain; inside corners are always cut back). Lines and arcs give exact planes, cylinders and cones, other edges a fitted ruled B-spline. A new surface body"),
     CommandSpec::new("surface.blend", "Blend Surface", blend)
         .at("SURFACE", "CREATE")
         .icon("surface_blend")
@@ -82,10 +85,32 @@ fn patch(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "surface.patch";
     let crown = crown_param(p, cmd)?;
     let edges: Vec<solidcraft_geom::Vec3> = p.get("edges").and_then(Value::as_array).map(|a| a.iter().filter_map(vec3).collect()).unwrap_or_default();
+    let mut v = if !edges.is_empty() {
         if edges.len() > 10_000 {
             return Err(bad(cmd, "too many edges"));
         }
         let body = str_(p, "body").map(str::to_string);
+        add_feature(s, p, FeatureKind::Patch { sketch: None, profiles: ProfileSel::All, body, edges, crown })?
+    } else {
+        let sketch = feature_sketch(s, p, cmd)?;
+        let profiles = profiles(p, cmd)?;
+        add_feature(s, p, FeatureKind::Patch { sketch: Some(sketch), profiles, body: None, edges: Vec::new(), crown })?
+    };
+    if let Some(o) = v.as_object_mut() {
+        o.insert("crown".into(), serde_json::json!(crown));
+    }
+    Ok(v)
+}
+
+/// The patch's `crown`: how full a fitted patch's middle is made, -0.9…3 (default 0). A hostile
+/// value (NaN, infinity, out of range, a string) is refused.
+fn crown_param(p: &Value, cmd: &str) -> Result<f64> {
+    match p.get("crown") {
+        None => Ok(0.0),
+        Some(v) => match v.as_f64().filter(|x| (solidcraft_geom::fill::MIN_CROWN..=solidcraft_geom::fill::MAX_CROWN).contains(x)) {
+            Some(x) => Ok(x),
+            None => Err(bad(cmd, "`crown` must be a number between -0.9 and 3")),
+        },
     }
 }
 
@@ -257,7 +282,9 @@ fn surface_loft(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad(cmd, "at most 1000 curves a section"));
         }
         let profiles = if sec.get("profiles").is_some() { Some(profiles(sec, cmd)?) } else { None };
+        sections.push(solidcraft_doc::SheetSection { sketch, profiles, curves });
     }
+    add_feature(s, p, FeatureKind::SurfaceLoft { sections })
 }
 
 fn offset(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1071,6 +1098,7 @@ mod tests {
     /// as it was.
     #[test]
     fn planned_commands_refuse_and_leave_the_design_alone() {
+        let planned = ["surface.fillet", "inspect.continuity"];
         let mut s = Session::default();
         run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "B"}));
         let before = s.doc.features.len();
@@ -1386,19 +1414,4 @@ mod tests {
         assert!(s.execute("surface.fair", &json!({"body": "Shell", "iterations": 0, "tolerance": 1.0})).is_err());
         assert!(s.execute("surface.fair", &json!({"body": "Shell", "tolerance": 0})).is_err());
     }
-
-    /// A loft through three sections whose first and last are edge chains of two boxes, with
-    /// `continuity: ["g1","g1"]`: it leaves each box's top face tangentially (the run direction
-    /// lies in that face) and passes through the sketch between them.
-    #[test]
-    fn surface_loft_leaves_a_box_face_tangentially() {
-        let mut s = Session::default();
-        run(&mut s, "solid.box", json!({"corner": [0, 0, 0], "length": 20, "width": 20, "height": 10, "body_name": "Low"}));
-        run(&mut s, "solid.box", json!({"corner": [40, 0, 0], "length": 20, "width": 20, "height": 10, "body_name": "High"}));
-        run(&mut s, "construct.plane.offset", json!({"base": "YZ", "offset": 30, "name": "Mid"}));
-        run(&mut s, "sketch.create", json!({"plane": "Mid", "name": "Bump"}));
-        run(&mut s, "sketch.line", json!({"points": [[0, 14], [20, 14]], "ids": ["b"]}));
-        run(&mut s, "sketch.finish", json!({}));
-        run(
-            &mut s,
 }

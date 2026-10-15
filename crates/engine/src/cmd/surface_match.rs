@@ -43,11 +43,7 @@ fn match_surface(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let order = match p.get("order") {
         None => Continuity::G2,
-        Some(v) => v
-            .as_str()
-            .and_then(Continuity::parse)
-            .filter(|o| *o != Continuity::G0)
-            .ok_or_else(|| bad(cmd, "`order` must be g1, g2 or g3"))?,
+        Some(v) => v.as_str().and_then(Continuity::parse).filter(|o| *o != Continuity::G0).ok_or_else(|| bad(cmd, "`order` must be g1, g2 or g3"))?,
     };
     add_feature(s, p, FeatureKind::SurfaceMatch { body, faces, target, edges, order })
 }
@@ -90,11 +86,8 @@ mod tests {
         let a = seam.y.atan2(seam.x);
         let at = |t: f64| json!([11.0 * t.cos(), 11.0 * t.sin()]);
         run(s, "sketch.create", json!({"plane": "XY", "name": "Skirt sketch"}));
-        let arc = run(
-            s,
-            "sketch.arc.three_point",
-            json!({"start": at(a), "end": at(a + 60f64.to_radians()), "through": at(a + 30f64.to_radians())}),
-        )["created"]["curves"][0]
+        let arc = run(s, "sketch.arc.three_point", json!({"start": at(a), "end": at(a + 60f64.to_radians()), "through": at(a + 30f64.to_radians())}))
+            ["created"]["curves"][0]
             .as_str()
             .unwrap()
             .to_string();

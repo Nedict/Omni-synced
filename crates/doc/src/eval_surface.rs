@@ -3,11 +3,12 @@
 //! `surface_offset`, `surface_ruled`, `surface_untrim`).
 
 use super::*;
-use crate::{RuledCorners, RuledMode};
+use crate::{RuledCorners, RuledMode, SheetSection};
 use solidcraft_geom::Seg2;
 
 pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut ModelState, warning: &mut Option<String>) -> Result<()> {
     match &f.kind {
+        FeatureKind::Patch { sketch, profiles, body, edges, crown } => {
             let mut made = Vec::new();
             if let Some(sk) = sketch {
                 let ss = st.sketch(*sk).ok_or_else(|| DocError::Unknown(format!("sketch {sk} (it must come earlier in the timeline)")))?;
@@ -19,6 +20,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             if !edges.is_empty() {
                 let i = body_at(st, body, edges)?;
                 let b = st.bodies.get(i).ok_or_else(|| DocError::Invalid("body".into()))?;
+                made.push(kernel::patch_edges_crowned(&b.body, edges, *crown)?);
             }
             if made.is_empty() {
                 return Err(DocError::Invalid("a patch needs a sketch region or a loop of edges".into()));
@@ -293,6 +295,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             push_sheet(st, f, traced);
             Ok(())
         }
+        FeatureKind::SurfaceLoft { sections } => {
             let mut secs = Vec::with_capacity(sections.len());
             let mut sketches = Vec::with_capacity(sections.len());
             for sec in sections {
@@ -398,6 +401,70 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
 fn push_sheet(st: &mut ModelState, f: &Feature, traced: crate::lineage::Traced) {
     let name = new_name(st, f, 0);
     st.bodies.push(ModelBody::traced_new(name, traced, f.id));
+}
+
+/// The boundaries `surface.boundary` builds its patch from: each picked curve's own stations in
+/// the sketch's frame, every one of them leaving the boundary square into the loop — the direction
+/// from the curve towards the middle of the loop, taken across its tangent — over the plane the
+/// curve lies in (so a chain of planar curves makes a flat patch, and a network that is not
+/// coplanar is followed as the plane through the curve's own tangent). `orders` sets how much of
+/// that plane each side repeats.
+fn boundary_frames(
+    ss: &SolvedSketch,
+    curves: &[String],
+    orders: &[solidcraft_kernel::Continuity],
+    samples: usize,
+) -> Result<Vec<solidcraft_kernel::Boundary>> {
+    use solidcraft_kernel::{Boundary, Frame};
+    // The stations along each curve, evenly in its own arclength, so every side carries the same
+    // number of frames and the patch's net is square.
+    let mut sides: Vec<Vec<solidcraft_geom::Vec3>> = Vec::with_capacity(curves.len());
+    for id in curves {
+        let ci = ss.sketch.curve_index(id).ok_or_else(|| DocError::Unknown(format!("sketch curve `{id}`")))?;
+        let pieces = ss.sketch.exact_pieces(ci);
+        if pieces.is_empty() {
+            return Err(DocError::Invalid(format!("curve `{id}` has no exact geometry to build on")));
+        }
+        let lengths: Vec<f64> = pieces.iter().map(Seg2::length).collect();
+        let total: f64 = lengths.iter().sum();
+        if !total.is_finite() || total <= 1e-9 {
+            return Err(DocError::Invalid(format!("curve `{id}` has no length")));
+        }
+        let mut pts = Vec::with_capacity(samples);
+        let (mut used, mut at) = (0.0, 0usize);
+        for k in 0..samples {
+            let want = total * k as f64 / (samples.saturating_sub(1)).max(1) as f64;
+            while at + 1 < pieces.len() && used + lengths[at] < want {
+                used += lengths[at];
+                at += 1;
+            }
+            let (Some(piece), Some(len)) = (pieces.get(at), lengths.get(at)) else { return Err(DocError::Invalid("boundary piece".into())) };
+            let t = ((want - used) / len.max(1e-12)).clamp(0.0, 1.0);
+            pts.push(ss.plane.to_world(piece.point_at(t)));
+        }
+        sides.push(pts);
+    }
+    // The middle of the loop, so every side leaves towards the inside of the patch.
+    let count = sides.iter().map(Vec::len).sum::<usize>().max(1) as f64;
+    let centre = sides.iter().flatten().fold(solidcraft_geom::Vec3::ZERO, |a, p| a + *p) * (1.0 / count);
+    let mut out = Vec::with_capacity(sides.len());
+    for (side, pts) in sides.iter().enumerate() {
+        let mut frames = Vec::with_capacity(pts.len());
+        for (i, p) in pts.iter().enumerate() {
+            // The tangent from the stations on either side, one-sided at the ends (where the side
+            // only has one neighbour).
+            let before = if i == 0 { *p } else { pts[i - 1] };
+            let after = if i + 1 == pts.len() { *p } else { pts[i + 1] };
+            let tangent = (after - before).normalized().ok_or_else(|| DocError::Invalid("a boundary curve has a stationary station".into()))?;
+            let across = centre - *p;
+            let leave = (across - tangent * across.dot(tangent))
+                .normalized()
+                .ok_or_else(|| DocError::Invalid("a boundary runs through the middle of the loop: no patch can leave it".into()))?;
+            frames.push(Frame { p: *p, leave, bend: Vec3::ZERO, bend_change: Vec3::ZERO });
+        }
+        out.push(Boundary { frames, order: orders.get(side).copied().unwrap_or(solidcraft_kernel::Continuity::G1) });
+    }
+    Ok(out)
 }
 
 /// What a surface builder sweeps: the boundary loops of the picked profiles, then the picked

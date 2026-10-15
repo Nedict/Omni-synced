@@ -1494,13 +1494,18 @@ mod tests {
         // solid of the same shape.
         let solid = crate::thicken(&body, 2.0, false).unwrap();
         assert!(!solid.is_surface());
-        let top = (0..solid.face_count()).find(|&i| matches!(solid.solid.face_iter().nth(i).map(|f| f.surface()), Some(mt::Surface::BSplineSurface(_))));
+        let top =
+            (0..solid.face_count()).find(|&i| matches!(solid.solid.face_iter().nth(i).map(|f| f.surface()), Some(mt::Surface::BSplineSurface(_))));
         let Some(top) = top else { panic!("the thickened sheet keeps its B-spline face") };
-        let edges: Vec<_> = solid.solid.face_iter().flat_map(|f| f.absolute_boundaries().iter()).flat_map(|w| w.edge_iter().map(|e| e.id())).collect();
+        let edges: Vec<_> =
+            solid.solid.face_iter().flat_map(|f| f.absolute_boundaries().iter()).flat_map(|w| w.edge_iter().map(|e| e.id())).collect();
         let (faired, report) = fair_faces(&solid, &[top], &FairOptions::new(1.0, 6, false, 0.5).unwrap()).unwrap();
         eprintln!("thickened solid: energy {:e} → {:e}, movement {:e} mm", report.energy_before, report.energy_after, report.movement);
         assert!(!faired.is_surface() && faired.face_count() == solid.face_count() && faired.shell_count() == solid.shell_count());
-        assert_eq!(faired.solid.face_iter().flat_map(|f| f.absolute_boundaries().iter()).flat_map(|w| w.edge_iter().map(|e| e.id())).collect::<Vec<_>>(), edges);
+        assert_eq!(
+            faired.solid.face_iter().flat_map(|f| f.absolute_boundaries().iter()).flat_map(|w| w.edge_iter().map(|e| e.id())).collect::<Vec<_>>(),
+            edges
+        );
         assert!(report.energy_after < report.energy_before);
         // A face with no control points to fair is refused, by name.
         let cube = crate::box_solid(Vec3::ZERO, Vec3::new(10.0, 10.0, 10.0)).unwrap();
