@@ -335,14 +335,21 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
         }
         "ui.start" => {
             let Some(id) = s("command") else { return err("missing `command`") };
+            // `params`: what the dialog opens on. Refused: nothing starts, or the dialog closes.
+            let params = p.get("params").filter(|v| !v.is_null());
+            if params.is_some() && id != "joint.drive" {
+                return err(format!("`{id}` takes no ui.start params yet (joint.drive takes joint, values)"));
+            }
             app.start(id);
-            // `params`: what the dialog opens on (refused: the dialog closes, nothing started).
-            if let Some(params) = p.get("params").filter(|v| !v.is_null()) {
-                let r = match app.dialog.as_mut().map(|d| &mut d.kind) {
-                    Some(crate::dialogs::Kind::Assembly(k)) if id == "joint.drive" => crate::dialogs_assembly::preset(&app.session, k, params),
-                    _ => Err(format!("`{id}` takes no ui.start params yet (joint.drive takes joint, values)")),
+            if let Some(params) = params {
+                if app.tree.capture_prompt.is_some() {
+                    return err("Drive Joints waits for the Capture Position question (ui.capture)");
+                }
+                let Some(crate::dialogs::Kind::Assembly(k)) = app.dialog.as_mut().map(|d| &mut d.kind) else {
+                    let why = app.status.as_ref().filter(|s| s.2).map(|s| s.0.clone());
+                    return err(why.unwrap_or_else(|| "Drive Joints did not open".into()));
                 };
-                if let Err(e) = r {
+                if let Err(e) = crate::dialogs_assembly::preset(&app.session, k, params) {
                     crate::dialogs::cancel(app);
                     return err(e);
                 }
@@ -1127,8 +1134,10 @@ mod tests {
             assert_eq!(r["ok"], false, "{bad}: {r}");
             assert!(h.app.dialog.is_none(), "{bad}");
         }
-        let r = h.call("ui.start", json!({"command": "solid.extrude", "params": {"distance": 5}}));
-        assert!(r["ok"] == false && r["error"].as_str().unwrap().contains("takes no ui.start params"), "{r}");
-        assert!(h.app.dialog.is_none());
+        for command in ["solid.extrude", "sketch.create", "inspect.zebra"] {
+            let r = h.call("ui.start", json!({"command": command, "params": {"distance": 5}}));
+            assert!(r["ok"] == false && r["error"].as_str().unwrap().contains("takes no ui.start params"), "{r}");
+            assert!(h.app.dialog.is_none() && h.app.tool.is_none() && h.app.session.analysis.is_none(), "{command} started nothing");
+        }
     }
 }
