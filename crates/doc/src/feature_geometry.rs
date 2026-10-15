@@ -96,10 +96,19 @@ macro_rules! geometry_walk {
                         f(Dir(dir));
                     }
                 }
-                FeatureKind::Sweep { sketch, profiles, .. } | FeatureKind::SheetBase { sketch, profiles, .. } => f(Profiles(*sketch, profiles)),
-                FeatureKind::SurfaceSweep { sketch, profiles, .. } => {
+                FeatureKind::SheetBase { sketch, profiles, .. } => f(Profiles(*sketch, profiles)),
+                FeatureKind::Sweep { sketch, profiles, orientation, .. } => {
+                    f(Profiles(*sketch, profiles));
+                    if let crate::SweepOrientation::Direction(d) = orientation {
+                        f(Dir(d));
+                    }
+                }
+                FeatureKind::SurfaceSweep { sketch, profiles, orientation, .. } => {
                     if let Some(s) = profiles {
                         f(Profiles(*sketch, s));
+                    }
+                    if let crate::SweepOrientation::Direction(d) = orientation {
+                        f(Dir(d));
                     }
                 }
                 FeatureKind::Emboss { sketch, profiles, face, .. } => {

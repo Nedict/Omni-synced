@@ -194,6 +194,26 @@ pub struct ThinWall {
     pub thickness2: Option<String>,
 }
 
+/// How a swept profile turns as it follows its path.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SweepOrientation {
+    /// Square to the path, turning with it (a rotation-minimising frame).
+    #[default]
+    Perpendicular,
+    /// As drawn: the profile moves along the path without turning.
+    Parallel,
+    /// Square to the path, its turn about the path fixed by this direction (in the feature's
+    /// frame): the direction's projection onto the profile stays where it was at the start.
+    Direction(Vec3),
+}
+
+impl SweepOrientation {
+    pub fn is_perpendicular(&self) -> bool {
+        *self == SweepOrientation::Perpendicular
+    }
+}
+
 /// Where a thin wall lies against its curves. A closed loop's inside is the area it encloses;
 /// an open chain's is the side it bends toward (a straight one's, the left of its first
 /// curve as drawn).
@@ -574,6 +594,15 @@ pub enum FeatureKind {
         profiles: ProfileSel,
         path_sketch: u64,
         path: Vec<String>,
+        /// How the profile turns along the path (default: perpendicular to it).
+        #[serde(default, skip_serializing_if = "SweepOrientation::is_perpendicular")]
+        orientation: SweepOrientation,
+        /// Angle the profile turns about the path over its length.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        twist: Option<String>,
+        /// The profile's scale at the end of the path (linear along its length).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale: Option<String>,
         #[serde(default)]
         operation: Operation,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1059,6 +1088,15 @@ pub enum FeatureKind {
         curves: Vec<String>,
         path_sketch: u64,
         path: Vec<String>,
+        /// How the profile turns along the path (default: perpendicular to it).
+        #[serde(default, skip_serializing_if = "SweepOrientation::is_perpendicular")]
+        orientation: SweepOrientation,
+        /// Angle the profile turns about the path over its length.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        twist: Option<String>,
+        /// The profile's scale at the end of the path (linear along its length).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scale: Option<String>,
     },
     /// A surface body lofted through sections in order, each one open or closed chain of
     /// sketch curves: walls only, no caps.

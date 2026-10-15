@@ -362,6 +362,14 @@ macro_rules! feature_walk {
                     }
                 }
                 FeatureKind::Patch { .. } => {}
+                FeatureKind::Sweep { twist, scale, .. } | FeatureKind::SurfaceSweep { twist, scale, .. } => {
+                    if let Some(t) = twist {
+                        f("Twist", t, A, I);
+                    }
+                    if let Some(k) = scale {
+                        f("Scale", k, U, I);
+                    }
+                }
                 FeatureKind::Combine { .. }
                 | FeatureKind::SheetBase { .. }
                 | FeatureKind::SheetUnfold { .. }
@@ -371,8 +379,6 @@ macro_rules! feature_walk {
                 | FeatureKind::DeleteFace { .. }
                 | FeatureKind::BoundaryFill { .. }
                 | FeatureKind::Loft { .. }
-                | FeatureKind::Sweep { .. }
-                | FeatureKind::SurfaceSweep { .. }
                 | FeatureKind::SurfaceLoft { .. }
                 | FeatureKind::Import { .. }
                 | FeatureKind::MeshImport { .. }
