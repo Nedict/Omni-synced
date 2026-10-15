@@ -903,5 +903,8 @@
   "Mitre": "Gehrung",
   "Reference face": "Referenzfläche",
   "Round": "Rund",
-  "Type": "Typ"
+  "Type": "Typ",
+  "joint.one_component": "Diese Teile sind Körper einer Komponente: {bodies}. Ein Gelenk bewegt eine Komponente gegenüber einer anderen, daher braucht jedes Teil eine eigene Komponente.",
+  "joint.one_body": "Beide Auswahlen liegen auf {body}. Wählen Sie die zweite auf einem anderen Teil.",
+  "joint.from_bodies_hint": "Jeder ausgewählte Körper kommt in eine eigene neue Komponente und bleibt, wo er ist."
 }

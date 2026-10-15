@@ -244,6 +244,10 @@ exactly (`cutout_shapes`): a round hole as `{"circle": {"center", "radius"}}`, a
 
 Cuts can leave separate material pieces, including the centre of a ring cut. These pieces
 remain one logical sheet group through Unfold / Refold and export as separate flat outlines.
+A cut that parts a piece from the base (a flange cut off along its bend, the part of a ring's
+inside on a flange's edge) keeps it too, folded or flat, and its warning says how many pieces
+are no longer joined to the base, their area and where they lie in the flat pattern. Islands
+inside other material (a ring's centre, a letter's counter) are not counted.
 Large profiles that exceed the geometry processing budget report an error instead of
 exporting a partial outline.
 

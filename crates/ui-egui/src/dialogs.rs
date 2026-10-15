@@ -3395,8 +3395,10 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                 out.push(("solid.extrude".to_string(), with(json!({"sketch": sketch, "profiles": idx}))));
             }
             // Each planar body face extrudes on its own.
-            for p in face_points(0) {
-                out.push(("solid.extrude".to_string(), with(json!({ "face": p }))));
+            for pick in sels(d, 0) {
+                if let Sel::Face { body, point, .. } = pick {
+                    out.push(("solid.extrude".to_string(), with(json!({"face": pt(*point), "face_body": body}))));
+                }
             }
             return Ok(out);
         }

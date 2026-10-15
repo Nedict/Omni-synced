@@ -195,6 +195,11 @@
 //!   `{direction: [x, y, z]}`; absent: perpendicular), `twist` (an angle expression) and `scale`
 //!   (the end scale, an expression). A sweep without them saves as before; 0.11.x refuses
 //!   format 21, so no released build sweeps a twisted or scaled profile straight.
+//!   Nothing new is saved for converted sheets' corners and bend ends, but a design converts as
+//!   the rule says when it is evaluated: corners between the walls take the rule's corner relief
+//!   and a bend ending beside more of the fixed face its bend relief (0.11.0 left every corner a
+//!   notch and cut no bend relief), and a wall on part of an edge bends only where it stands
+//!   (0.11.0 refused it).
 
 use serde_json::Value;
 

@@ -1036,5 +1036,8 @@
   "update.install_failed": "La mise à jour ne s'est pas installée : {error}. Rien n'a été modifié ; Télécharger récupère plutôt le paquet.",
   "cmd.render_settings_get": "Réglages de rendu",
   "cmd.render_settings_set": "Enregistrer les réglages de rendu",
-  "drive.unconnected": "Rien ne bouge : {part} n'est relié à rien de fixé"
+  "drive.unconnected": "Rien ne bouge : {part} n'est relié à rien de fixé",
+  "joint.one_component": "Ces pièces sont des corps d'un même composant : {bodies}. Une liaison déplace un composant par rapport à un autre, chaque pièce a donc besoin de son propre composant.",
+  "joint.one_body": "Les deux sélections sont sur {body}. Choisissez la seconde sur une autre pièce.",
+  "joint.from_bodies_hint": "Chaque corps sélectionné passe dans un nouveau composant à lui et reste où il est."
 }

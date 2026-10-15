@@ -94,7 +94,7 @@ use NavButton::{Left, Middle, Right};
 use NavMode::{Orbit, Pan, Zoom};
 
 /// The mouse mappings. The first is the default.
-pub const NAV_PRESETS: [NavPreset; 7] = [
+pub const NAV_PRESETS: [NavPreset; 8] = [
     NavPreset {
         id: "fusion",
         label: "Fusion",
@@ -139,6 +139,13 @@ pub const NAV_PRESETS: [NavPreset; 7] = [
             bind(Middle, NavKeys::NONE, Pan),
             bind(Right, NavKeys::NONE, Orbit),
         ],
+    },
+    NavPreset {
+        id: "blender",
+        label: "Blender",
+        help: "Middle drag orbits, Shift+middle pans, Ctrl+middle zooms; right drag leaves the camera alone",
+        reverse_zoom: false,
+        bindings: &[bind(Middle, NavKeys::SHIFT, Pan), bind(Middle, NavKeys::CTRL, Zoom), bind(Middle, NavKeys::NONE, Orbit)],
     },
     NavPreset {
         id: "tinkercad",
@@ -1660,6 +1667,29 @@ mod tests {
     }
 
     #[test]
+    fn blender_preset_moves_the_camera_with_the_middle_button_only() {
+        // #1090: orbit, pan and zoom all on the middle button; no left or right drag binding, so
+        // those stay selection and the context menu (Ctrl+left on empty space orbits in every
+        // preset, outside the bindings).
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        set(&mut app, &json!({"nav": "blender"})).unwrap();
+        let none = Modifiers::default();
+        let shift = Modifiers { shift: true, ..Default::default() };
+        let ctrl = Modifiers { ctrl: true, ..Default::default() };
+        assert_eq!(nav_mode(&app, NavButton::Middle, none), Some(NavMode::Orbit));
+        assert_eq!(nav_mode(&app, NavButton::Middle, shift), Some(NavMode::Pan));
+        assert_eq!(nav_mode(&app, NavButton::Middle, ctrl), Some(NavMode::Zoom));
+        for mods in [none, shift, ctrl] {
+            assert_eq!(nav_mode(&app, NavButton::Left, mods), None);
+            assert_eq!(nav_mode(&app, NavButton::Right, mods), None);
+        }
+        assert_eq!(zoom_sign(&app), 1.0, "the wheel turns the usual way");
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        other.load_prefs(&app.prefs());
+        assert_eq!(other.preferences.nav, "blender");
+    }
+
+    #[test]
     fn presets_map_the_mouse_and_prefs_round_trip() {
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         let shift = Modifiers { shift: true, ..Default::default() };
@@ -1684,7 +1714,7 @@ mod tests {
         assert_eq!(nav_mode(&app, NavButton::Left, none), None, "a plain left drag still selects");
         assert_eq!(nav_mode(&app, NavButton::Left, shift), None);
         assert_eq!(nav_mode(&app, NavButton::Right, none), Some(NavMode::Orbit));
-        assert!(set(&mut app, &json!({"nav": "blender"})).is_err());
+        assert!(set(&mut app, &json!({"nav": "no-such-preset"})).is_err());
         assert!(set(&mut app, &json!({"default_units": "furlong"})).is_err());
         assert!(set(&mut app, &json!({"nope": 1})).is_err());
         // Kept between runs.
