@@ -24,6 +24,7 @@ solidcraft-io = { path = "crates/io" }
 solidcraft-engine = { path = "crates/engine" }
 solidcraft-ui-egui = { path = "crates/ui-egui" }
 solidcraft-mcp = { path = "crates/mcp" }
+solidcraft-manufacture = { path = "crates/manufacture" }
 
 # foundation
 thiserror = "2"
@@ -116,3 +117,5 @@ matext4cgmath = { path = "vendor/matext4cgmath" }
 
 # Keep OpenGL pipelines, resolve textures and CAD callbacks at the same safe sample count.
 egui-wgpu = { path = "vendor/egui-wgpu" }
+cadmpeg-codec-f3d = { path = "vendor/cadmpeg-codec-f3d" }
+cadmpeg-core = { path = "vendor/cadmpeg-core" }

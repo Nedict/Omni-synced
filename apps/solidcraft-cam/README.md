@@ -77,6 +77,22 @@ Returns `202 Accepted` with `{ "job_id": "<uuid>", "status": "pending" }`.
 }
 ```
 
+## Geometric selection limitation
+
+`ManufactureSettings` (crates/manufacture) stores operation parameters (depth, feedrate, …)
+but not face/edge/hole identifiers from the STEP model geometry.
+
+| Operation | Status | Detail |
+|---|---|---|
+| `face` | ✓ Automatable | Auto-selects highest-Z face |
+| `profile` | ✗ PreflightError | Needs `edge_ids` in `ProfileOperation` |
+| `pocket` | ✗ PreflightError | Needs `face_ids` in `PocketOperation` |
+| `drill` | ✗ PreflightError | Needs `hole_face_ids` in `DrillOperation` |
+| `adaptive` | ✗ PreflightError | Needs `face_ids` in `AdaptiveOperation` |
+
+Preflight failures return HTTP 400 with a `"preflight_error"` adapter status
+and a message describing exactly which domain field must be extended.
+
 ## FreeCAD setup
 
 The companion calls `freecad_cam_adapter.py` through FreeCAD's Python
@@ -84,9 +100,10 @@ interpreter.  Install FreeCAD and ocp-freecad-cam in that interpreter:
 
 ```sh
 # Pinned versions (see src/config.rs)
-# FreeCAD: 1.1.4
-# ocp-freecad-cam: 0.1.0
-pip install ocp-freecad-cam==0.1.0   # inside FreeCAD's Python
+# FreeCAD: 1.1.1
+# ocp-freecad-cam: 2.0.2 (requires cadquery 2.4+)
+pip install ocp-freecad-cam==2.0.2   # inside FreeCAD's Python
+pip install cadquery                  # required by ocp-freecad-cam 2.x
 ```
 
 Point the companion at the right executable:

@@ -81,9 +81,7 @@ pub(super) fn run(s: &mut Session, p: &Value, circular: bool) -> Result<Value> {
             (
                 SketchPatternKind::Circular { center: id, count: n, angle: total },
                 Some(center),
-                (1..n)
-                    .map(|i| ([i, 0], (total * i as f64 / denom).to_radians(), Vec2::ZERO))
-                    .collect::<Vec<_>>(),
+                (1..n).map(|i| ([i, 0], (total * i as f64 / denom).to_radians(), Vec2::ZERO)).collect::<Vec<_>>(),
             )
         } else {
             let spacing = num(&params, "spacing").ok_or_else(|| bad(cmd, "`spacing` must be finite"))?;

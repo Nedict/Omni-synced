@@ -42,9 +42,24 @@ fn invalid(message: impl std::fmt::Display) -> IoError {
     IoError::Invalid(format!("design container: {message}"))
 }
 
-/// Detect the package signature independently of the file name.
+/// Detect a SolidCraft design package (ZIP with our `container.json` marker).
+///
+/// Fusion `.f3d` archives are ZIP files too; they must not be treated as design containers.
 pub fn is_design_container(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"PK\x03\x04")
+    if !bytes.starts_with(b"PK\x03\x04") {
+        return false;
+    }
+    let Ok(mut zip) = zip::ZipArchive::new(Cursor::new(bytes)) else {
+        return false;
+    };
+    let Ok(mut file) = zip.by_name("container.json") else {
+        return false;
+    };
+    let mut head = [0u8; 128];
+    let n = file.read(&mut head).unwrap_or(0);
+    let head = &head[..n];
+    head.windows(VERSION.len()).any(|w| w == VERSION.as_bytes())
+        || head.windows(LEGACY_VERSION.len()).any(|w| w == LEGACY_VERSION.as_bytes())
 }
 
 fn fields(pairs: impl IntoIterator<Item = (&'static str, Value)>) -> Map<String, Value> {
@@ -507,6 +522,9 @@ pub(super) fn read(bytes: &[u8]) -> Result<Document> {
 /// authoritative blob hydration. Desktop keeps one seekable file handle instead
 /// of buffering the complete archive. JSON continues through the normal migrations.
 pub fn read_design_file(path: &str, notify: Option<impl FnOnce(DesignPreview)>) -> Result<Document> {
+    if crate::is_f3d_path(path) {
+        return Err(crate::fusion_design_refusal());
+    }
     #[cfg(not(target_arch = "wasm32"))]
     let mut source = {
         crate::vfs::check(path).map_err(invalid)?;
@@ -535,6 +553,10 @@ pub fn read_design_file(path: &str, notify: Option<impl FnOnce(DesignPreview)>) 
         source.read_exact(&mut prefix).map_err(invalid)?;
     }
     source.seek(SeekFrom::Start(0)).map_err(invalid)?;
+    #[cfg(target_arch = "wasm32")]
+    if crate::looks_like_fusion_archive(source.get_ref()) {
+        return Err(crate::fusion_design_refusal());
+    }
     if is_design_container(&prefix) {
         let mut reader = DesignContainerReader::new(source)?;
         if let Some(notify) = notify

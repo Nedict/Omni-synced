@@ -79,8 +79,10 @@ fn center_world(app: &SolveApp, d: &Dialog) -> Option<Vec3> {
             Some((lo, hi)) => (Vec2::new(lo.x.min(p.x), lo.y.min(p.y)), Vec2::new(hi.x.max(p.x), hi.y.max(p.y))),
         });
     }
-    let (lo, hi) = bb?;
-    Some(ss.plane.to_world((lo + hi) * 0.5))
+    Some(match bb {
+        Some((lo, hi)) => ss.plane.to_world((lo + hi) * 0.5),
+        None => ss.plane.to_world(Vec2::ZERO),
+    })
 }
 
 fn len(app: &SolveApp, s: &str) -> Result<f64, String> {
@@ -105,9 +107,6 @@ fn deg(v: f64) -> String {
 
 pub fn triad(app: &SolveApp, d: &Dialog) -> Option<gizmo::Triad> {
     let Kind::SketchModify(Mod::Move { mode, x, y, .. }) = &d.kind else { return None };
-    if d.inputs.first().is_none_or(|i| i.items.is_empty()) {
-        return None;
-    }
     let (_, u, v) = plane_axes(app)?;
     let mut c = center_world(app, d)?;
     if matches!(*mode, FREE | TRANSLATE) {

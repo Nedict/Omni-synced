@@ -13,6 +13,7 @@ pub mod crash;
 pub mod frames;
 pub mod fuzz;
 pub mod licences;
+pub mod manufacture_jobs;
 pub mod occurrences;
 pub mod params;
 pub mod product_scene;
@@ -233,6 +234,7 @@ pub struct Session {
     /// Host-owned viewport metadata, never saved or included in history.
     render_viewport: Option<Arc<render::ExecutorDescriptor>>,
     render_jobs: render_jobs::Jobs,
+    pub(crate) manufacture_jobs: manufacture_jobs::Jobs,
     /// The visibility the design file holds (what `is_dirty` compares with).
     saved_visibility: Visibility,
     /// States to go back to (`edit.checkpoint`, `edit.restore_checkpoint`): how batches of
@@ -331,6 +333,7 @@ impl Session {
             camera: None,
             render_viewport: None,
             render_jobs: Default::default(),
+            manufacture_jobs: Default::default(),
             #[cfg(test)]
             evaluations: 0,
             crash_journal: false,
@@ -343,10 +346,12 @@ impl Session {
         let auto_project = self.auto_project;
         let render_viewport = self.render_viewport.clone();
         let render_jobs = self.render_jobs.scratch();
+        let manufacture_jobs = self.manufacture_jobs.scratch();
         *self = fresh;
         self.auto_project = auto_project;
         self.render_viewport = render_viewport;
         self.render_jobs = render_jobs;
+        self.manufacture_jobs = manufacture_jobs;
     }
 
     /// The design has changes not in its file: in the document, or in what is hidden.
@@ -795,6 +800,7 @@ impl Session {
             camera: self.camera,
             render_viewport: self.render_viewport.clone(),
             render_jobs: self.render_jobs.scratch(),
+            manufacture_jobs: self.manufacture_jobs.scratch(),
             saved_visibility: self.saved_visibility.clone(),
             #[cfg(test)]
             evaluations: 0,

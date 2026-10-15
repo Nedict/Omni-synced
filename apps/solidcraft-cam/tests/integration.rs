@@ -301,9 +301,7 @@ async fn cancel_unknown_job_returns_404() {
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-}
-
-// ── Status with invalid UUID ──────────────────────────────────────────────────
+} // ── Status with invalid UUID ──────────────────────────────────────────────────
 
 #[tokio::test]
 async fn status_malformed_uuid_returns_400() {
@@ -316,4 +314,36 @@ async fn status_malformed_uuid_returns_400() {
         .unwrap();
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+// ── Cancel already-terminal job returns 409 ───────────────────────────────────
+
+#[tokio::test]
+async fn cancel_terminal_job_returns_409() {
+    use solidcraft_cam::{jobs::JobResult, state::AppState};
+
+    let config = test_config(vec![]);
+    let state = AppState::new(config);
+    let jobs = std::sync::Arc::clone(&state.jobs);
+    let app = build_router(state);
+
+    // Manually plant a Done job in the store.
+    let id = uuid::Uuid::new_v4();
+    let (tx, _rx) = tokio::sync::oneshot::channel::<()>();
+    jobs.insert(id, tx).unwrap();
+    jobs.set_running(id);
+    jobs.finish(id, Ok(JobResult { segments: vec![], post_output: None }));
+    assert_eq!(jobs.status(id), Some("done"));
+
+    // DELETE should now return 409 Conflict, not 204.
+    let req = Request::builder()
+        .method(Method::DELETE)
+        .uri(format!("/cam/v1/jobs/{id}"))
+        .header(header::AUTHORIZATION, "Bearer test-token-aabbccdd")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    // Phase must NOT have been overwritten to Cancelled.
+    assert_eq!(jobs.status(id), Some("done"));
 }

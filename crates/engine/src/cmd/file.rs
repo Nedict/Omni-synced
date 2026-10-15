@@ -17,11 +17,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solidcraft design, or a .step/.stp file (opens as a new design)"),
+        .params("path: .solidcraft design, Fusion .f3d/.f3z, or .step/.stp (exchange files open as a new design)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
-        .params("path: .step/.stp file (its bodies join the design as an Import base feature); name?"),
+        .params("path: .step/.stp or Fusion .f3d/.f3z (bodies join as an Import base feature); name?"),
     CommandSpec::new("file.insert_mesh", "Insert Mesh", insert_mesh)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -65,9 +65,34 @@ fn read_step(path: &str) -> Result<solidcraft_io::StepFeature> {
     solidcraft_io::step_import_feature(&bytes, path).map_err(|e| EngineError::Other(format!("{path}: {e}")))
 }
 
+enum ExchangeOpen {
+    Solid(solidcraft_io::StepFeature),
+    Mesh(solidcraft_io::MeshFeature),
+}
+
+/// Read STEP or Fusion for Open / Insert (Fusion may yield solid or mesh bodies).
+fn read_exchange(path: &str) -> Result<ExchangeOpen> {
+    if solidcraft_io::is_f3d_path(path) {
+        let bytes = solidcraft_io::vfs::read(path, solidcraft_io::MAX_F3D_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+        return solidcraft_io::f3d_open_feature(&bytes, path)
+            .map(|f| match f {
+                solidcraft_io::F3dOpenFeature::Solid(sf) => ExchangeOpen::Solid(sf),
+                solidcraft_io::F3dOpenFeature::Mesh(mf) => ExchangeOpen::Mesh(mf),
+            })
+            .map_err(|e| EngineError::Other(e.to_string()));
+    }
+    read_step(path).map(ExchangeOpen::Solid)
+}
+
 /// Add an Import feature for a STEP file to the session's design.
 fn add_step(s: &mut Session, path: &str, name: Option<&str>) -> Result<Value> {
-    let sf = read_step(path)?;
+    match read_exchange(path)? {
+        ExchangeOpen::Solid(sf) => add_solid_exchange(s, path, name, sf),
+        ExchangeOpen::Mesh(mf) => add_mesh_feature(s, path, name, mf),
+    }
+}
+
+fn add_solid_exchange(s: &mut Session, path: &str, name: Option<&str>, sf: solidcraft_io::StepFeature) -> Result<Value> {
     let fname = name.filter(|n| !n.trim().is_empty()).unwrap_or(&sf.name).to_string();
     let id = s.doc_mut().add_feature(sf.kind, Some(&fname))?;
     if let Some(f) = s.doc_mut().feature_mut(id) {
@@ -82,6 +107,23 @@ fn add_step(s: &mut Session, path: &str, name: Option<&str>) -> Result<Value> {
     let bodies: Vec<&str> = st.bodies.iter().filter(|b| b.feature == id).map(|b| b.name.as_str()).collect();
     let fname = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
     Ok(json!({"path": path, "feature": id, "name": fname, "bodies": bodies, "created_bodies": bodies, "warnings": sf.warnings}))
+}
+
+fn add_mesh_feature(s: &mut Session, path: &str, name: Option<&str>, mf: solidcraft_io::MeshFeature) -> Result<Value> {
+    let fname = name.filter(|n| !n.trim().is_empty()).unwrap_or(&mf.name).to_string();
+    let id = s.doc_mut().add_feature(mf.kind, Some(&fname))?;
+    if let Some(f) = s.doc_mut().feature_mut(id) {
+        f.body_names = mf.body_names;
+    }
+    s.active_sketch = None;
+    s.refresh();
+    if let Some(e) = s.model.result(id).and_then(|r| r.error.clone()) {
+        return Err(EngineError::Other(e));
+    }
+    let st = s.model.state();
+    let bodies: Vec<&str> = st.bodies.iter().filter(|b| b.feature == id).map(|b| b.name.as_str()).collect();
+    let fname = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
+    Ok(json!({"path": path, "feature": id, "name": fname, "bodies": bodies, "created_bodies": bodies, "warnings": mf.warnings}))
 }
 
 /// Add a MeshImport feature for a 3MF or STL file.
@@ -116,20 +158,21 @@ fn insert_mesh(s: &mut Session, p: &Value) -> Result<Value> {
 fn insert_step(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "file.insert_step";
     let path = path_arg(p, cmd)?;
-    if !solidcraft_io::is_step_path(path) {
-        return Err(bad(cmd, "only STEP files (.step, .stp) can be inserted"));
+    if !solidcraft_io::is_step_path(path) && !solidcraft_io::is_f3d_path(path) {
+        return Err(bad(cmd, "only STEP (.step, .stp) or Fusion (.f3d, .f3z) files can be inserted"));
     }
     add_step(s, path, str_(p, "name"))
 }
 
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = path_arg(p, "doc.open")?;
-    if solidcraft_io::is_step_path(path) || solidcraft_io::is_mesh_path(path) {
+    if solidcraft_io::is_step_path(path) || solidcraft_io::is_f3d_path(path) || solidcraft_io::is_mesh_path(path) {
         // A new, unsaved design holding the file's bodies.
         let stem = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "Untitled".into());
         let mut fresh = Session::new(Document::new(&stem));
-        let r = if solidcraft_io::is_step_path(path) { add_step(&mut fresh, path, None)? } else { add_mesh(&mut fresh, path, None)? };
+        let r = if solidcraft_io::is_mesh_path(path) { add_mesh(&mut fresh, path, None)? } else { add_step(&mut fresh, path, None)? };
         fresh.undo.clear();
+        fresh.path = Some(path.to_string());
         s.replace_design(fresh);
         let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
         return Ok(json!({"path": path, "features": s.doc.features.len(), "errors": errors, "bodies": r["bodies"], "warnings": r["warnings"]}));

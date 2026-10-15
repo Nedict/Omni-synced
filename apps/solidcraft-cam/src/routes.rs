@@ -179,7 +179,7 @@ pub async fn job_result_handler(State(state): State<AppState>, Path(id_str): Pat
     match state.jobs.phase_and_result(id) {
         None => Err(CamError::NotFound),
         Some(("done", _, Some(result))) => Ok(Json(ResultResponse { job_id: id.to_string(), status: "done", result })),
-        Some(_) => Err(CamError::Conflict),
+        Some((status, _, _)) => Err(CamError::NotReady(status)),
     }
 }
 
@@ -189,7 +189,8 @@ pub async fn cancel_job_handler(State(state): State<AppState>, Path(id_str): Pat
     let id = Uuid::parse_str(&id_str).map_err(|_| CamError::BadRequest("job_id is not a valid UUID".into()))?;
 
     match state.jobs.cancel(id) {
-        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Ok(true) => Ok(StatusCode::NO_CONTENT), // cancel signal sent
+        Ok(false) => Err(CamError::Conflict),   // job already terminal
         Err(_) => Err(CamError::NotFound),
     }
 }

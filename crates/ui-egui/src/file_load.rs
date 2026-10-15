@@ -557,11 +557,12 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
                 if let Kind::Recover { .. } = request.kind {
                     recovered(app, request);
                 } else {
+                    let verb = if request.insert() { "Insert" } else { "Open" };
                     app.set_status(
                         if let Some(w) = warnings.filter(|w| !w.is_empty()) {
-                            format!("imported with {} warning(s): {}", w.len(), w.first().and_then(Value::as_str).unwrap_or(""))
+                            format!("{verb} finished with {} warning(s): {}", w.len(), w.first().and_then(Value::as_str).unwrap_or(""))
                         } else {
-                            format!("{} done", if request.insert() { "Insert" } else { "Open" })
+                            format!("{verb} done")
                         },
                         false,
                     );

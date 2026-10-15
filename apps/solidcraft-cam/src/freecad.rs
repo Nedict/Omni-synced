@@ -135,6 +135,7 @@ fn map_adapter_output(out: AdapterOutput) -> Result<JobResult, CamError> {
             Ok(JobResult { segments: out.segments, post_output: out.post_output })
         }
         "unavailable" => Err(CamError::BackendUnavailable(out.message.unwrap_or_else(|| "FreeCAD unavailable".into()))),
+        "preflight_error" => Err(CamError::PreflightFailed(out.message.unwrap_or_else(|| "operation cannot be configured from domain data".into()))),
         _ => Err(CamError::Internal(out.message.unwrap_or_else(|| "adapter error".into()))),
     }
 }

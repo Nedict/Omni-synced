@@ -18,3 +18,9 @@ quick-xml = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cadmpeg-codec-f3d = "0.6.1"
+cadmpeg-codec-step = "0.6.1"
+cadmpeg-core = "0.6.1"
+cadmpeg-ir = "0.6.1"

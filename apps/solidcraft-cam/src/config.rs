@@ -8,11 +8,12 @@ use crate::origin::ParsedOrigin;
 
 /// FreeCAD version this adapter is written and tested against.
 /// Run `freecadcmd --version` to verify the installed version matches.
-pub const FREECAD_VERSION_PIN: &str = "1.1.4";
+pub const FREECAD_VERSION_PIN: &str = "1.1.1";
 
 /// ocp-freecad-cam PyPI package version this adapter targets.
-/// Install: `pip install ocp-freecad-cam==0.1.0` in the FreeCAD Python environment.
-pub const OCP_FREECAD_CAM_VERSION_PIN: &str = "0.1.0";
+/// Install: `pip install ocp-freecad-cam==2.0.2` in the FreeCAD Python environment.
+/// Also requires: `cadquery` (2.4+) in the same environment.
+pub const OCP_FREECAD_CAM_VERSION_PIN: &str = "2.0.2";
 
 // ── API metadata ──────────────────────────────────────────────────────────────
 

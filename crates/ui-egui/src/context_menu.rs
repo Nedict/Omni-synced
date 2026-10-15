@@ -15,6 +15,7 @@ use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2}
 use serde::Serialize;
 use serde_json::{Value, json};
 use solidcraft_engine::Sel;
+use solidcraft_engine::doc::FeatureKind;
 
 use crate::theme::Tokens;
 
@@ -225,6 +226,7 @@ fn sel_bodies(app: &SolveApp) -> Vec<String> {
 fn sel_sketch(app: &SolveApp) -> Option<u64> {
     app.session.selection.iter().find_map(|s| match s {
         Sel::ExternalSketchCurve { sketch, .. } | Sel::ExternalSketchPoint { sketch, .. } => Some(*sketch),
+        Sel::Feature { id } => app.session.doc.feature(*id).and_then(|f| matches!(f.kind, FeatureKind::Sketch { .. }).then_some(*id)),
         _ => None,
     })
 }
@@ -443,6 +445,11 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
     } else if has(|s| matches!(s, Sel::Body { .. })) {
         v.extend(body_items(app, &sel_bodies(app), false));
     } else if has(|s| matches!(s, Sel::Profile { .. })) {
+        if let Some(sketch) = sel.iter().find_map(|s| if let Sel::Profile { sketch, .. } = s { Some(*sketch) } else { None }) {
+            let editing = app.session.active_sketch == Some(sketch);
+            v.push(act("ui.editSketch", "Edit Sketch", "sketch").with(json!({ "sketch": sketch })).on(!editing));
+            v.push(Item::sep());
+        }
         v.push(cmd(app, "solid.extrude", "Extrude"));
         v.push(cmd(app, "solid.revolve", "Revolve"));
     } else {

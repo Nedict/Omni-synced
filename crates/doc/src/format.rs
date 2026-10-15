@@ -173,13 +173,18 @@
 //!   A `SurfaceRuled` feature (Ruled Surface: `body`, `edges` points, `distance`, optional
 //!   `mode`, `angle`, `direction`, `flip`, `corners` and `face`) is also first saved in 21;
 //!   0.11.0 asks for an update instead of meeting a feature it can't read.
+//! - 22: CNC manufacture settings (`manufacture`: named setups containing stock, WCS, tools
+//!   and operations; machine and post profiles). Version 21 designs need no transformation
+//!   (an absent `manufacture` field defaults to empty, and empty manufacture state is not
+//!   saved); the version stamp makes 0.11.0 (which reads up to 21) ask for an update instead
+//!   of silently dropping saved manufacture data.
 
 use serde_json::Value;
 
 use crate::{DocError, Document, Result};
 
 /// The format this build writes.
-pub const FORMAT: u32 = 21;
+pub const FORMAT: u32 = 22;
 
 pub fn format_string(n: u32) -> String {
     format!("solidcraft/{n}")
@@ -196,7 +201,7 @@ pub fn version_of(s: &str) -> Option<u32> {
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
 type JsonStep = fn(&mut Value) -> Result<()>;
-const JSON_STEPS: [JsonStep; 20] = [
+const JSON_STEPS: [JsonStep; 21] = [
     |_| Ok(()),
     v2_to_v3,
     v3_to_v4,
@@ -216,6 +221,8 @@ const JSON_STEPS: [JsonStep; 20] = [
     |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
+    |_| Ok(()),
+    // 21 → 22: `manufacture` absent ⟹ empty default; no JSON-level transformation needed.
     |_| Ok(()),
 ];
 
@@ -1743,5 +1750,66 @@ mod tests {
         assert_eq!(back.components.len(), before);
         let json = edited(&d, |v| v["components"][1]["id"] = u64::MAX.into());
         assert!(read(&json).unwrap_err().to_string().contains("damaged design"));
+    }
+
+    /// Format 21 files have no `manufacture` key; migrating to 22 must produce the empty
+    /// default without any JSON-level transformation. A file that already carries `manufacture`
+    /// data must also round-trip through the format boundary.
+    #[test]
+    fn format_21_manufacture_absent_becomes_empty_default_on_migration() {
+        use solidcraft_manufacture::{FaceOperation, Feeds, ManufactureSettings, MfgSetup, Operation, Stock, Tool, ToolKind, WorkCoordinateSystem};
+        use std::collections::BTreeMap;
+
+        // A format-21 document without a `manufacture` key.
+        let base = Document::new("migrate mfg");
+        let mut json: Value = serde_json::from_str(&base.to_json()).unwrap();
+        json["format"] = Value::from("solidcraft/21");
+        // Ensure no `manufacture` key is present.
+        json.as_object_mut().unwrap().remove("manufacture");
+
+        let migrated = read(&json.to_string()).unwrap();
+        assert!(migrated.manufacture.is_empty(), "absent field becomes empty default");
+        assert_eq!(migrated.format, format_string(FORMAT));
+
+        // Older formats (17..21) all produce the same empty default.
+        for version in [17, 18, 19, 20, 21] {
+            json["format"] = Value::from(format_string(version));
+            let d = read(&json.to_string()).unwrap();
+            assert!(d.manufacture.is_empty(), "version {version} manufacture default");
+        }
+
+        // A document with manufacture data round-trips across the current format.
+        let mut setups = BTreeMap::new();
+        setups.insert(
+            "Setup1".into(),
+            MfgSetup {
+                stock: Stock::Box { width: 100.0, depth: 80.0, height: 20.0 },
+                wcs: WorkCoordinateSystem::default(),
+                tools: vec![Tool {
+                    number: 1,
+                    kind: ToolKind::FlatEndmill,
+                    diameter: 6.0,
+                    corner_radius: 0.0,
+                    length: 50.0,
+                    flute_length: 16.0,
+                    flutes: 4,
+                    description: String::new(),
+                }],
+                operations: vec![Operation::Face(FaceOperation { tool_number: 1, feeds: Feeds::default(), depth: 0.5, stepover: 0.75 })],
+                machine: None,
+                post: None,
+            },
+        );
+        let mut with_mfg = Document::new("mfg roundtrip");
+        with_mfg.manufacture = ManufactureSettings { setups, ..Default::default() };
+        assert!(!with_mfg.manufacture.is_empty());
+        let back = read(&with_mfg.to_json()).unwrap();
+        assert_eq!(back, with_mfg);
+        assert_eq!(back.format, format_string(FORMAT));
+
+        // Invalid manufacture data is refused at deserialization.
+        let mut corrupt = serde_json::to_value(&with_mfg).unwrap();
+        corrupt["manufacture"]["setups"]["Setup1"]["tools"][0]["diameter"] = Value::from(0.0);
+        assert!(read(&corrupt.to_string()).is_err(), "zero diameter rejected");
     }
 }

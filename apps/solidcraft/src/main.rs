@@ -103,11 +103,15 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
             let future = open_parent
                 .clone()
                 .add_filter(
-                    "Designs, STEP, IGES and meshes",
+                    "Designs, Fusion, STEP, IGES and meshes",
                     &[
                         io::DESIGN_EXT,
                         io::LEGACY_DESIGN_EXT,
                         "json",
+                        "f3d",
+                        "F3D",
+                        "f3z",
+                        "F3Z",
                         "step",
                         "stp",
                         "STEP",
@@ -123,6 +127,7 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
                     ],
                 )
                 .add_filter("SolidCraft design (container or JSON)", &[io::DESIGN_EXT, io::LEGACY_DESIGN_EXT, "json"])
+                .add_filter("Autodesk Fusion", &["f3d", "F3D", "f3z", "F3Z"])
                 .add_filter("STEP", &["step", "stp", "STEP", "STP"])
                 .add_filter("IGES", &["igs", "iges", "IGS", "IGES"])
                 .add_filter("Mesh (3MF, STL)", &["3mf", "3MF", "stl", "STL"])

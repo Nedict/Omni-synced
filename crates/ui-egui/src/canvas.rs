@@ -121,12 +121,8 @@ pub fn anchor(app: &SolveApp, d: &Dialog) -> Option<(Vec3, Option<Vec3>)> {
         Kind::Sheet(_) => (at, crate::dialogs_sheet::arrow(app, d).or(normal)),
         Kind::Plastic(_) => (at, normal),
         Kind::PatternRect { .. } => (at, d.inputs.get(1).and_then(|i| i.items.first()).and_then(|x| crate::dialogs::axis_of(app, x)).map(|a| a.1)),
-        // A sketch move's X Distance grows along the sketch's own x axis, so its drag arrow
-        // lies in the sketch plane. Scale has no arrow: a factor is not a length, and the
-        // square handle it wants is its own change.
-        Kind::SketchModify(crate::sketch_modify_ui::Mod::Move { .. }) => {
-            (at, app.session.active_sketch.and_then(|id| st.sketch(id)).and_then(|ss| ss.plane.x.normalized()))
-        }
+        // Sketch move uses the planar triad in `show`, not a single distance arrow here.
+        Kind::SketchModify(crate::sketch_modify_ui::Mod::Move { .. }) => (at, None),
         // The rectangular pattern's spacing grows along the direction it was given, which the
         // module works out per variant. Offset's arrow is already computed above, per picked
         // curve, and `arrow` returns None for it so that one stands.
@@ -274,7 +270,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj
         app.dialog = Some(d);
         return;
     }
-    if let Some((base, dir)) = anchor(app, &d)
+    if !matches!(d.kind, Kind::SketchModify(crate::sketch_modify_ui::Mod::Move { .. }))
+        && let Some((base, dir)) = anchor(app, &d)
         && let Some(bs) = proj.to_screen(base)
     {
         draw(app, ui, painter, proj, &mut d, base, bs, dir);
