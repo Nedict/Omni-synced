@@ -223,23 +223,28 @@ pub fn animate_joint(app: &SolveApp, id: u64) -> Option<Dialog> {
 pub fn find_joint(app: &mut SolveApp, id: u64) {
     let s = &app.session;
     let Some(j) = s.doc.assembly.joints.iter().find(|j| j.id == id) else { return };
-    let occs = [j.a.occurrence, j.b.occurrence];
-    let model = s.model.state();
-    let world = s.world_state();
-    let mut bb = Aabb3::default();
-    for (name, _, path, _) in s.doc.body_frames(&model) {
-        // The root (occurrence 0) holds the bodies outside every occurrence.
-        let on = occs.iter().any(|o| if *o == 0 { path.is_empty() } else { path.contains(o) });
-        if on && let Some(b) = world.body(&name) {
-            bb = bb.union(&b.mesh().bounds());
-        }
-    }
+    let bb = occurrence_bounds(s, &[j.a.occurrence, j.b.occurrence]);
     if bb.is_empty() {
         return;
     }
     let mut cam = app.cam;
     cam.fit(&bb);
     app.animate_to(cam);
+}
+
+/// The box around the bodies of occurrences (and of the occurrences inside them), where they
+/// are placed; occurrence 0 is the root, holding the bodies outside every occurrence.
+pub fn occurrence_bounds(s: &Session, occs: &[u64]) -> Aabb3 {
+    let model = s.model.state();
+    let world = s.world_state();
+    let mut bb = Aabb3::default();
+    for (name, _, path, _) in s.doc.body_frames(&model) {
+        let on = occs.iter().any(|o| if *o == 0 { path.is_empty() } else { path.contains(o) });
+        if on && let Some(b) = world.body(&name) {
+            bb = bb.union(&b.mesh().bounds());
+        }
+    }
+    bb
 }
 
 pub fn drive_joint(app: &SolveApp, id: u64) -> Option<Dialog> {
