@@ -2,7 +2,7 @@
 //! solids), and the planned surface toolset (`planned!`: registered, not built yet).
 
 use serde_json::Value;
-use solidcraft_doc::{FaceAt, FeatureKind, PlaneRef, ProfileSel, RuledCorners, RuledMode, expr::Kind};
+use solidcraft_doc::{ExtendMode, ExtendTo, FaceAt, FeatureKind, PlaneRef, ProfileSel, RuledCorners, RuledMode, expr::Kind};
 
 use super::CommandSpec;
 use super::features::{add_feature, axis_param, check_expr, extent_param, feature_sketch, operation, plane_param, profiles, sketch_id};
@@ -25,7 +25,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("surface.extend", "Extend", extend)
         .at("SURFACE", "MODIFY")
         .icon("extend")
-        .params("body: planar surface name; edges: [[x,y,z]] (points on straight edges to push out); distance: expr"),
+        .params("body: surface name; edges: [[x,y,z]] (points on boundary edges to push out); distance: expr (unless up_to); mode?: natural (the surface itself continued: exact for planes and surfaces of revolution, a B-spline's end spans continued; the default) | tangent (a ruled run-off face along each edge, G1) | curvature (a run-off face keeping the surface's curvature across the edge, G2); up_to?: plane (XY|XZ|YZ|plane name|{origin, normal}) | {body, point} (a face, its surface extended) | \"bounds\" (natural: back to the surface's own bounds, undoing a trim); neighbours?: bool (default true: the edges next to an extended edge are lengthened to meet it; false: the extension's sides run square to the edge)"),
     CommandSpec::new("surface.trim", "Trim", trim)
         .at("SURFACE", "MODIFY")
         .icon("trim")
@@ -329,9 +329,36 @@ fn extend(s: &mut Session, p: &Value) -> Result<Value> {
     if edges.is_empty() || edges.len() > 10_000 {
         return Err(bad(cmd, "`edges` must list points on the edges to extend"));
     }
-    let distance = expr(p, "distance").ok_or_else(|| bad(cmd, "`distance` is required"))?;
+    let mode = match str_(p, "mode").map(str::trim) {
+        None | Some("natural") => ExtendMode::Natural,
+        Some("tangent") => ExtendMode::Tangent,
+        Some("curvature") => ExtendMode::Curvature,
+        Some(m) => return Err(bad(cmd, format!("`mode` must be natural, tangent or curvature, not `{m}`"))),
+    };
+    let up_to = match p.get("up_to").filter(|v| !v.is_null()) {
+        None => None,
+        Some(Value::String(b)) if b.trim() == "bounds" => Some(ExtendTo::Bounds),
+        Some(t @ Value::Object(o)) if o.contains_key("body") => {
+            let tb = t.get("body").and_then(Value::as_str).ok_or_else(|| bad(cmd, "`up_to.body` must name a body"))?.to_string();
+            if s.model.state().body(&tb).is_none() {
+                return Err(bad(cmd, format!("no body `{tb}`")));
+            }
+            let point = t.get("point").and_then(vec3).ok_or_else(|| bad(cmd, "`up_to.point` must be [x, y, z] on the target face"))?;
+            Some(ExtendTo::Face(FaceAt { body: tb, point }))
+        }
+        Some(v) => Some(ExtendTo::Plane(plane_param(s, Some(v), cmd)?)),
+    };
+    if up_to == Some(ExtendTo::Bounds) && mode != ExtendMode::Natural {
+        return Err(bad(cmd, "only a natural extension goes back to the surface's bounds"));
+    }
+    let distance = match (expr(p, "distance"), &up_to) {
+        (Some(d), _) => d,
+        (None, Some(_)) => "0 mm".into(),
+        (None, None) => return Err(bad(cmd, "`distance` is required (or `up_to`)")),
+    };
     check_expr(s, &distance, Kind::Length, cmd, "distance")?;
-    add_feature(s, p, FeatureKind::SurfaceExtend { body, edges, distance })
+    let neighbours = bool_(p, "neighbours").unwrap_or(true);
+    add_feature(s, p, FeatureKind::SurfaceExtend { body, edges, distance, mode, up_to, neighbours })
 }
 
 fn trim(s: &mut Session, p: &Value) -> Result<Value> {
@@ -869,6 +896,102 @@ mod tests {
         run(&mut s, "surface.untrim", json!({"face": {"body": body, "point": [5, 5, 2]}, "holes": "all", "outer": true, "body_name": "Top"}));
         assert_eq!(edge_count(&s, "Top"), 4, "the rectangle alone");
         assert!((area(&s, "Top") - 800.0).abs() < 1e-9, "{}", area(&s, "Top"));
+    }
+
+    /// A quarter cylinder sheet (radius 10, heights 0…20) swept from a sketch arc.
+    fn quarter_cylinder(s: &mut Session, name: &str) {
+        run(s, "sketch.create", json!({"plane": "XY", "name": "Arc"}));
+        let r = 10.0 / 2f64.sqrt();
+        let arc = run(s, "sketch.arc.three_point", json!({"start": [10, 0], "end": [0, 10], "through": [r, r]}))["created"]["curves"][0]
+            .as_str()
+            .unwrap()
+            .to_string();
+        run(s, "sketch.finish", json!({}));
+        run(s, "surface.extrude", json!({"sketch": "Arc", "curves": [arc], "distance": 20, "body_name": name}));
+    }
+
+    /// Extend a cylinder strip: naturally 5 along its axis (10 · π/2 · 25, one face, still a
+    /// cylinder), up to the plane z = 30 (10 · π/2 · 30), and by tangent and curvature run-offs
+    /// (a second face along a straight edge, 20 long: the tangent one a flat 5 × 20, the
+    /// curvature one the parabola s ↦ s·R + ½κs²·n with the cylinder's κ = 1/10, its section
+    /// ∫₀⁵ √(1 + κ²s²) ds long). Undo, redo and reopening; the default saves nothing new.
+    #[test]
+    fn extend_a_cylinder_strip_every_way() {
+        let pi = std::f64::consts::PI;
+        let mut s = Session::default();
+        quarter_cylinder(&mut s, "Strip");
+        let top = [10.0 * (pi / 4.0).cos(), 10.0 * (pi / 4.0).sin(), 20.0];
+        run(&mut s, "surface.extend", json!({"body": "Strip", "edges": [top], "distance": "5 mm", "name": "Up"}));
+        let want = 10.0 * pi / 2.0 * 25.0;
+        assert!((area(&s, "Strip") - want).abs() < want * 1e-3, "{} vs {want}", area(&s, "Strip")); // (measured on meshes)
+        assert_eq!(s.world_state().body("Strip").unwrap().body.face_count(), 1);
+        let saved = s.doc.to_json();
+        assert!(!saved.contains("\"mode\"") && !saved.contains("\"up_to\"") && !saved.contains("\"neighbours\""), "the default saves as before");
+        run(&mut s, "edit.undo", json!({}));
+        assert!((area(&s, "Strip") - 200.0 * pi / 4.0 * 2.0).abs() < 1.0);
+        run(&mut s, "edit.redo", json!({}));
+        let cold = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        assert!((area(&cold, "Strip") - area(&s, "Strip")).abs() < 1e-9);
+        run(&mut s, "edit.undo", json!({}));
+
+        run(&mut s, "surface.extend", json!({"body": "Strip", "edges": [top], "up_to": {"origin": [0, 0, 30], "normal": [0, 0, 1]}}));
+        let want = 10.0 * pi / 2.0 * 30.0;
+        assert!((area(&s, "Strip") - want).abs() < want * 1e-3, "{} vs {want}", area(&s, "Strip")); // (measured on meshes)
+        run(&mut s, "edit.undo", json!({}));
+
+        let side = [0.0, 10.0, 10.0];
+        let k: f64 = 0.1;
+        let parabola = 2.5 * (1.0 + 25.0 * k * k).sqrt() + (5.0 * k).asinh() / (2.0 * k);
+        for (mode, run_off) in [("tangent", 5.0), ("curvature", parabola)] {
+            run(&mut s, "surface.extend", json!({"body": "Strip", "edges": [side], "distance": 5, "mode": mode}));
+            let st = s.world_state();
+            assert_eq!(st.body("Strip").unwrap().body.face_count(), 2, "{mode}");
+            let want = 10.0 * pi / 2.0 * 20.0 + run_off * 20.0;
+            assert!((area(&s, "Strip") - want).abs() < want * 1e-3, "{mode}: {} vs {want}", area(&s, "Strip")); // (measured on meshes)
+            let cold = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+            assert!((area(&cold, "Strip") - area(&s, "Strip")).abs() < 1e-9, "{mode}");
+            run(&mut s, "edit.undo", json!({}));
+        }
+    }
+
+    /// The half cylinder trimmed by a slanted plane goes back to its span (150π) when its top
+    /// edge is extended to the surface's bounds.
+    #[test]
+    fn extend_back_to_the_surfaces_bounds() {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
+        let arc = run(&mut s, "sketch.arc.three_point", json!({"start": [10, 0], "end": [-10, 0], "through": [0, 10]}))["created"]["curves"][0]
+            .as_str()
+            .unwrap()
+            .to_string();
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "surface.extrude", json!({"sketch": "S", "curves": [arc], "distance": 20, "body_name": "Half"}));
+        run(&mut s, "surface.trim", json!({"body": "Half", "plane": {"origin": [0, 0, 15], "normal": [0, 0.5, 1]}, "keep": [0, 10, 1]}));
+        run(&mut s, "surface.extend", json!({"body": "Half", "edges": [[0, 10, 10]], "up_to": "bounds"}));
+        let want = 150.0 * std::f64::consts::PI;
+        assert!((area(&s, "Half") - want).abs() < want * 1e-3, "{} vs {want}", area(&s, "Half")); // (measured on meshes)
+    }
+
+    /// Requests Extend can't take are refused and leave the design as it was.
+    #[test]
+    fn extend_refuses_bad_requests() {
+        let mut s = Session::default();
+        quarter_cylinder(&mut s, "Strip");
+        let before = s.doc.features.len();
+        let top = [10.0 * (std::f64::consts::PI / 4.0).cos(), 10.0 * (std::f64::consts::PI / 4.0).sin(), 20.0];
+        for p in [
+            json!({"body": "Strip", "edges": [top]}),
+            json!({"body": "Strip", "edges": [top], "distance": 5, "mode": "sideways"}),
+            json!({"body": "Strip", "edges": [top], "up_to": "bounds", "mode": "tangent"}),
+            json!({"body": "Strip", "edges": [top], "up_to": {"body": "Nope", "point": [0, 0, 0]}}),
+            json!({"body": "Strip", "edges": [top], "up_to": {"body": "Strip"}}),
+            json!({"body": "Strip", "edges": [top], "up_to": "No plane"}),
+            json!({"body": "Strip", "edges": [], "distance": 5}),
+            json!({"body": "Nope", "edges": [top], "distance": 5}),
+        ] {
+            assert!(s.execute("surface.extend", &p).is_err(), "{p}");
+        }
+        assert_eq!(s.doc.features.len(), before);
     }
 
     /// The planned surface commands are registered but refuse to run: disabled with the

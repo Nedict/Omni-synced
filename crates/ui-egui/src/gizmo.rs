@@ -238,6 +238,11 @@ pub(crate) fn cancel(ctx: &egui::Context, id: egui::Id) {
     ctx.data_mut(|d| d.remove::<State>(id));
 }
 
+/// Hit-test before registering the dynamic egui drag widget or changing the camera.
+pub(crate) fn contains_pointer(proj: &Proj, t: &Triad, p: Pos2) -> bool {
+    mm_per_px(proj, t.center).and_then(|scale| shapes(proj, t, scale * LEN_PX)).is_some_and(|sh| hit(&sh, p).is_some())
+}
+
 /// Draw the triad and run a drag on it. `step` is the distance snap step.
 pub fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::Id, t: &Triad, step: f64) -> Option<Drag> {
     let tk = Tokens::get();

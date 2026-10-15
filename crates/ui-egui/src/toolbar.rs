@@ -146,12 +146,19 @@ fn menu_commands(
     out
 }
 
-fn report_rect(bar: Rect, captions: f32, tabs_start: f32) -> (Rect, bool) {
+/// The Report a bug button: labelled when there is room for its text (`label_width`, measured in
+/// the current language), otherwise just the icon.
+fn report_rect(bar: Rect, captions: f32, tabs_start: f32, label_width: f32) -> (Rect, bool) {
     let right = bar.right() - captions - 90.0;
-    let labeled = right - tabs_start >= 340.0;
-    let width = if labeled { 124.0 } else { 28.0 };
+    // Icon, text and a margin; never narrower than the English button.
+    let full = (REPORT_TEXT_X + label_width + 10.0).max(124.0);
+    let labeled = right - tabs_start >= 216.0 + full;
+    let width = if labeled { full } else { 28.0 };
     (Rect::from_min_size(pos2(right - width, bar.top() + 4.0), vec2(width, 26.0)), labeled)
 }
+
+/// Where the Report a bug text starts, from the button's left edge.
+const REPORT_TEXT_X: f32 = 29.0;
 
 /// The application bar's height: the window's title bar on desktop builds.
 pub const APP_BAR_HEIGHT: f32 = 34.0;
@@ -243,7 +250,10 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         // Document tabs.
         let captions = if app.custom_titlebar { crate::titlebar::WIDTH } else { 0.0 };
         let tabs_start = x + 16.0;
-        let (report, report_label) = report_rect(r, captions, tabs_start);
+        let report_text = crate::i18n::tr("ui.report_a_bug");
+        let report_font = FontId::proportional(13.0);
+        let label_width = ui.painter().layout_no_wrap(report_text.to_string(), report_font.clone(), t.app_bar_text).size().x;
+        let (report, report_label) = report_rect(r, captions, tabs_start, label_width);
         // A newer release: its Update button, left of Report a bug (`update`).
         let update = crate::update::button(app, ui, report.left() - 6.0, report.top(), report_label);
         let tabs_end = update.map_or(report.left(), |u| u.left()) - 8.0;
@@ -254,7 +264,6 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         tabs_ui.set_clip_rect(tabs_rect.intersect(ui.clip_rect()));
         crate::documents::tabs(app, &mut tabs_ui, r, tabs_start, tabs_end);
         let response = ui.interact(report, ui.id().with("sc_report_button"), Sense::click());
-        let report_text = crate::i18n::tr("ui.report_a_bug");
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), report_text));
         crate::scenario::publish_handle("titlebar:report", report.center());
         ui.painter().rect_filled(report, 4.0, if response.hovered() || response.has_focus() { t.hover } else { t.app_bar });
@@ -262,13 +271,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let icon = Rect::from_center_size(pos2(report.left() + 14.0, report.center().y), vec2(18.0, 18.0));
         icons::paint(ui.painter(), icon, "bug_report", t.app_bar_text, t.app_bar_text, t.app_bar);
         if report_label {
-            ui.painter().text(
-                pos2(report.left() + 29.0, report.center().y),
-                Align2::LEFT_CENTER,
-                report_text,
-                FontId::proportional(13.0),
-                t.app_bar_text,
-            );
+            ui.painter().text(pos2(report.left() + REPORT_TEXT_X, report.center().y), Align2::LEFT_CENTER, report_text, report_font, t.app_bar_text);
         }
         if response.on_hover_text(crate::i18n::tr_label("Report a bug — review a screenshot and open a GitHub draft")).clicked() {
             crate::help::run(app, &ui.ctx().clone(), "report");
@@ -1280,15 +1283,41 @@ mod header_report_tests {
                 let width = physical_width / scale;
                 let bar = Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 34.0));
                 for captions in [0.0, crate::titlebar::WIDTH] {
-                    let (report, labeled) = report_rect(bar, captions, 354.0);
-                    assert!(bar.contains_rect(report));
-                    let prefs = Rect::from_center_size(pos2(width - captions - 70.0, 17.0), vec2(24.0, 24.0));
-                    assert!(!report.intersects(prefs));
-                    assert!(report.right() < width - captions - 82.0);
-                    assert_eq!(labeled, width - captions - 90.0 - 354.0 >= 340.0);
+                    // The English label, and a longer one (Russian is about 125 px).
+                    for label_width in [80.0, 125.0] {
+                        let (report, labeled) = report_rect(bar, captions, 354.0, label_width);
+                        assert!(bar.contains_rect(report));
+                        let prefs = Rect::from_center_size(pos2(width - captions - 70.0, 17.0), vec2(24.0, 24.0));
+                        assert!(!report.intersects(prefs));
+                        assert!(report.right() < width - captions - 82.0);
+                        let full = (REPORT_TEXT_X + label_width + 10.0).max(124.0);
+                        assert_eq!(labeled, width - captions - 90.0 - 354.0 >= 216.0 + full);
+                        if labeled {
+                            assert!(REPORT_TEXT_X + label_width < report.width(), "{label_width}: the text overruns its button");
+                        }
+                    }
                 }
             }
         }
+    }
+
+    #[test]
+    fn header_report_button_widens_for_a_longer_translation() {
+        let width_in = |language: &str| {
+            let mut h = crate::scenario::Harness::new();
+            h.app.home.open = false;
+            h.app.custom_titlebar = true;
+            h.app.preferences.language = language.into();
+            h.call("ui.resize", json!({"width":1400.0,"height":720}));
+            h.frames(3);
+            let center = crate::scenario::handle_at("titlebar:report").expect("the report button is drawn");
+            // The button's right edge is fixed; its width is twice the distance to its centre.
+            2.0 * (1400.0 - crate::titlebar::WIDTH - 90.0 - center.x)
+        };
+        let (en, ru) = (width_in("en"), width_in("ru"));
+        assert!((en - 124.0).abs() < 0.5, "{en}");
+        // "Сообщить об ошибке" needs more than the English button's 124 px.
+        assert!(ru > 124.0 + 10.0, "{ru}");
     }
 
     #[test]

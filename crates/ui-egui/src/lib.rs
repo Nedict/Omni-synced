@@ -557,7 +557,10 @@ impl SolveApp {
         if let Ok(v) = &r {
             if id == "view.navigate" {
                 let to: Camera = serde_json::from_value(v.get("camera").cloned().unwrap_or_default()).map_err(|e| e.to_string())?;
-                if v.get("fit").and_then(Value::as_bool).unwrap_or(false) {
+                if v.get("continuous").and_then(Value::as_bool).unwrap_or(false) {
+                    self.cancel_view_animation();
+                    self.cam = to;
+                } else if v.get("fit").and_then(Value::as_bool).unwrap_or(false) {
                     let bounds = solidcraft_engine::view::bounds(&self.session);
                     self.animate_to(self.fitted(to));
                     self.pending_fit = Some((to, bounds, true));
@@ -569,14 +572,16 @@ impl SolveApp {
             sketch_palette::apply_mode(self, id, v);
         }
         match &r {
-            Ok(_) => {
+            Ok(v) => {
                 // Programmatic callers (the control channel, scripts) run outside a render
                 // language scope, so resolve the echo from the saved preference instead of the
                 // thread-local scope. The command's own label is translated too, so the echo
                 // reads the same way the toolbar button it came from does.
                 let language = i18n::Locale::for_language(&self.preferences.language);
                 let label = language.label(command_label(id));
-                self.session.echo(language.format("ui.command_done", &[("command", label)]));
+                if !(id == "view.navigate" && v.get("continuous").and_then(Value::as_bool) == Some(true)) {
+                    self.session.echo(language.format("ui.command_done", &[("command", label)]));
+                }
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
                     render_workspace::reset_document(self);
                     self.sketch_choices = sketch_families::Choices::default();
@@ -1140,26 +1145,36 @@ impl SolveApp {
         if self.synthetic.is_empty() {
             return;
         }
-        let n = match self.synthetic.first() {
-            Some(egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. } | egui::Event::MouseWheel { .. }) => 1,
-            _ => self.synthetic.iter().position(|e| matches!(e, egui::Event::Key { pressed: false, .. })).map_or(self.synthetic.len(), |i| i + 1),
-        };
-        if let Some(egui::Event::PointerMoved(p) | egui::Event::PointerButton { pos: p, .. }) = self.synthetic.first() {
-            raw.events.push(egui::Event::PointerMoved(*p));
-        }
-        // egui keeps the modifier keys as input state, changed by their own event.
-        match self.synthetic.first() {
-            Some(egui::Event::PointerButton { modifiers, pressed, .. }) => {
-                // A drag keeps its press's modifiers until the release.
-                self.synthetic_mods = if *pressed { *modifiers } else { egui::Modifiers::default() };
-                raw.events.push(egui::Event::ModifiersChanged(*modifiers))
+        // Text and modifier prefixes may precede a pointer event. Never drain past that event.
+        let n = self
+            .synthetic
+            .iter()
+            .position(|e| {
+                matches!(
+                    e,
+                    egui::Event::PointerMoved(_)
+                        | egui::Event::PointerButton { .. }
+                        | egui::Event::PointerGone
+                        | egui::Event::MouseWheel { .. }
+                        | egui::Event::Key { pressed: false, .. }
+                )
+            })
+            .map_or(self.synthetic.len(), |i| i + 1);
+        for event in self.synthetic.drain(..n) {
+            match &event {
+                egui::Event::ModifiersChanged(modifiers) => self.synthetic_mods = *modifiers,
+                egui::Event::PointerButton { pos, modifiers, pressed, .. } => {
+                    raw.events.push(egui::Event::PointerMoved(*pos));
+                    raw.events.push(egui::Event::ModifiersChanged(*modifiers));
+                    // A drag keeps its press's modifiers until the release.
+                    self.synthetic_mods = if *pressed { *modifiers } else { egui::Modifiers::NONE };
+                }
+                egui::Event::Key { modifiers, .. } => raw.events.push(egui::Event::ModifiersChanged(*modifiers)),
+                egui::Event::PointerMoved(_) => raw.events.push(egui::Event::ModifiersChanged(self.synthetic_mods)),
+                _ => {}
             }
-            Some(egui::Event::Key { modifiers, .. }) => raw.events.push(egui::Event::ModifiersChanged(*modifiers)),
-            Some(egui::Event::PointerMoved(_)) => raw.events.push(egui::Event::ModifiersChanged(self.synthetic_mods)),
-            _ => {}
+            raw.events.push(event);
         }
-        let n = n.min(self.synthetic.len());
-        raw.events.extend(self.synthetic.drain(..n));
     }
 
     /// Lay out the whole window.

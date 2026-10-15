@@ -340,7 +340,16 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
         }
         "ui.move" | "ui.click" => {
             let (Some(x), Some(y)) = (f("x"), f("y")) else { return err("missing x/y") };
+            if x.abs() > 1e6 || y.abs() > 1e6 {
+                return err("x/y must be within ±1000000 screen points");
+            }
             let pos = egui::pos2(x as f32, y as f32);
+            let modifiers = if method == "ui.move" {
+                egui::Modifiers { shift: b("shift"), alt: b("alt"), ctrl: b("ctrl"), command: b("ctrl") || b("cmd"), mac_cmd: b("cmd") }
+            } else {
+                egui::Modifiers::NONE
+            };
+            app.synthetic.push(egui::Event::ModifiersChanged(modifiers));
             app.synthetic.push(egui::Event::PointerMoved(pos));
             if method == "ui.click" {
                 let button = match s("button") {
@@ -366,6 +375,8 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
             };
             let modifiers = egui::Modifiers { shift: b("shift"), ctrl: b("ctrl"), command: b("ctrl"), alt: b("alt"), ..Default::default() };
             let (a, z) = (egui::pos2(x0 as f32, y0 as f32), egui::pos2(x1 as f32, y1 as f32));
+            // Positioning precedes the press by a frame: it is not a modifier-only gesture.
+            app.synthetic.push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
             app.synthetic.push(egui::Event::PointerMoved(a));
             app.synthetic.push(egui::Event::PointerButton { pos: a, button, pressed: true, modifiers });
             // `hold`: frames to keep the button down before moving (press-and-hold).
@@ -704,6 +715,92 @@ mod tests {
 
     use super::*;
     use crate::Services;
+
+    #[test]
+    fn touchpad_automation_moves_with_modifiers_and_releases_without_buttons() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.preferences.nav = "touchpad".into();
+        h.call("ui.move", json!({"x":800,"y":500}));
+        let before = h.app.cam;
+        h.call("ui.move", json!({"x":800,"y":500,"shift":true}));
+        h.step(&json!({"move":[830,520],"shift":true})).unwrap();
+        assert_ne!(h.app.cam.target, before.target);
+        assert_eq!(h.app.cam.yaw, before.yaw);
+        assert!(!h.ctx.input(|i| i.pointer.any_down()));
+        h.call("ui.move", json!({"x":830,"y":520,"alt":true}));
+        h.step(&json!({"move":[850,530],"alt":true})).unwrap();
+        assert!((h.app.cam.yaw - before.yaw - 0.16).abs() < 1e-6);
+        let after = h.app.cam;
+        h.call("ui.move", json!({"x":800,"y":500}));
+        h.frames(3);
+        assert_eq!(h.app.cam, after);
+        assert!(h.ctx.input(|i| i.modifiers.is_none()));
+        assert!(h.app.session.selection.is_empty());
+        assert!(h.app.viewport.boxsel.is_none());
+    }
+
+    #[test]
+    fn touchpad_drag_positioning_releases_previous_motion_modifiers() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.preferences.nav = "touchpad".into();
+        h.call("ui.move", json!({"x":800,"y":500}));
+        for modifier in ["shift", "alt"] {
+            let mut params = json!({"x":800,"y":500});
+            params[modifier] = json!(true);
+            h.call("ui.move", params);
+            let before = h.app.cam;
+            h.call("ui.drag", json!({"x0":900,"y0":500,"x1":930,"y1":520,"shift":true,"steps":2}));
+            assert_eq!(h.app.cam, before, "positioning a selection drag must not inherit {modifier} motion");
+            assert!(!h.ctx.input(|i| i.pointer.any_down()));
+        }
+    }
+
+    #[test]
+    fn touchpad_text_prefix_does_not_collapse_queued_pointer_frames() {
+        let mut app = SolveApp::new(Session::default(), Services::default());
+        let ctx = egui::Context::default();
+        let (req, _) = ControlRequest::new("ui.text", json!({"text":"prefix"}));
+        assert!(matches!(handle(&mut app, &ctx, &req), Outcome::Done(_)));
+        for params in [json!({"x":10,"y":10,"shift":true}), json!({"x":20,"y":20,"alt":true}), json!({"x":30,"y":30})] {
+            let (req, _) = ControlRequest::new("ui.move", params);
+            assert!(matches!(handle(&mut app, &ctx, &req), Outcome::Done(_)));
+        }
+        for (p, shift, alt) in [(10.0, true, false), (20.0, false, true), (30.0, false, false)] {
+            let mut raw = egui::RawInput::default();
+            app.raw_input_hook(&mut raw);
+            let mut out = ctx.run_ui(raw, |ui| {
+                ui.input(|i| {
+                    assert_eq!(i.pointer.hover_pos(), Some(egui::pos2(p, p)));
+                    assert_eq!((i.modifiers.shift, i.modifiers.alt), (shift, alt));
+                });
+            });
+            out.textures_delta.clear();
+        }
+        assert!(app.synthetic.is_empty());
+    }
+
+    #[test]
+    fn touchpad_automation_preserves_each_queued_moves_modifiers() {
+        let mut app = SolveApp::new(Session::default(), Services::default());
+        let ctx = egui::Context::default();
+        for params in [json!({"x":10,"y":10,"shift":true}), json!({"x":20,"y":20,"alt":true}), json!({"x":30,"y":30})] {
+            let (req, _) = ControlRequest::new("ui.move", params);
+            assert!(matches!(handle(&mut app, &ctx, &req), Outcome::Done(_)));
+        }
+        for (p, shift, alt) in [(10.0, true, false), (20.0, false, true), (30.0, false, false)] {
+            let mut raw = egui::RawInput::default();
+            app.raw_input_hook(&mut raw);
+            let mut out = ctx.run_ui(raw, |ui| {
+                ui.input(|i| {
+                    assert_eq!(i.pointer.hover_pos(), Some(egui::pos2(p, p)));
+                    assert_eq!((i.modifiers.shift, i.modifiers.alt), (shift, alt));
+                    assert!(!i.pointer.any_down());
+                });
+            });
+            out.textures_delta.clear();
+        }
+        assert!(app.synthetic.is_empty());
+    }
 
     fn render(app: &mut SolveApp, path: &std::path::Path) -> Vec<u8> {
         let (req, _rx) = ControlRequest::new("ui.render", json!({"path": path.to_string_lossy(), "width": 200, "height": 140}));

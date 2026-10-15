@@ -353,7 +353,12 @@ macro_rules! feature_walk {
                 FeatureKind::MeshConvert { tolerance, .. } => f("Tolerance", tolerance, L, I),
                 FeatureKind::Thicken { thickness, .. } => f("Thickness", thickness, L, I),
                 FeatureKind::SurfaceTrim { plane, .. } => $plane(plane, f),
-                FeatureKind::SurfaceExtend { distance, .. } => f("Distance", distance, L, I),
+                FeatureKind::SurfaceExtend { distance, up_to, .. } => {
+                    f("Distance", distance, L, I);
+                    if let Some(crate::ExtendTo::Plane(plane)) = up_to {
+                        $plane(plane, f);
+                    }
+                }
                 FeatureKind::SurfaceRuled { distance, angle, .. } => {
                     f("Distance", distance, L, I);
                     if let Some(a) = angle {

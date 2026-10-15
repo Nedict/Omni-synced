@@ -139,9 +139,19 @@ macro_rules! geometry_walk {
                         f(Pos(start));
                     }
                 }
-                FeatureKind::Chamfer { edges, .. } | FeatureKind::SheetHem { edges, .. } | FeatureKind::SurfaceExtend { edges, .. } => {
+                FeatureKind::Chamfer { edges, .. } | FeatureKind::SheetHem { edges, .. } => {
                     for e in edges {
                         f(Pos(e));
+                    }
+                }
+                FeatureKind::SurfaceExtend { edges, up_to, .. } => {
+                    for e in edges {
+                        f(Pos(e));
+                    }
+                    match up_to {
+                        Some(crate::ExtendTo::Plane(plane)) => f(Plane(plane)),
+                        Some(crate::ExtendTo::Face(t)) => f(Pos(& $($m)? t.point)),
+                        Some(crate::ExtendTo::Bounds) | None => {}
                     }
                 }
                 FeatureKind::Shell { faces, .. }
