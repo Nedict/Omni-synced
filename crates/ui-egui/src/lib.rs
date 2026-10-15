@@ -96,6 +96,7 @@ pub(crate) mod display_lod;
 mod file_load_ui_tests;
 #[cfg(test)]
 mod fillet_spline_handle_tests;
+pub(crate) mod navigation;
 pub mod palette;
 pub mod params_dialog;
 pub mod prefs;
@@ -1056,6 +1057,11 @@ impl SolveApp {
 
     /// Frame everything shown, keeping the orientation (animated; the selection is ignored).
     pub fn animate_fit_all(&mut self) {
+        if render_workspace::active(self) {
+            // The Render preview frames its product scene (see `fit_view`).
+            self.fit_view();
+            return;
+        }
         self.pending_fit = None;
         let request = Some((self.cam, viewport::view_bounds(self), true));
         let to = self.fitted(self.cam);
