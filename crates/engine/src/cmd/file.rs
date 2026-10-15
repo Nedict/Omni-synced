@@ -738,6 +738,8 @@ mod tests {
 
     #[test]
     fn save_and_save_as_require_explicit_native_cache_opt_in() {
+        // Thumbnails are drawn by the renderer the host installs.
+        crate::capture::install_test_renderer();
         let mut session = Session::new(Document::new("Cache opt-in"));
         session.execute("solid.box", &json!({"length":10,"width":20,"height":30})).unwrap();
         let world = session.world_state();

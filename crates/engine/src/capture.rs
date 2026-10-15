@@ -78,6 +78,19 @@ pub fn png_with(renderer: Option<&Renderer>, scene: &Scene, cam: &Camera, width:
     Ok(Png { bytes, renderer })
 }
 
+/// For tests: a stand-in for the renderer the hosts install, a flat picture whose first byte
+/// counts the scene's meshes.
+#[cfg(test)]
+pub(crate) fn install_test_renderer() {
+    install(Arc::new(|scene: &Scene, _: &Camera, w: u32, h: u32| {
+        let mut rgba = vec![200; (w * h * 4) as usize];
+        if let Some(first) = rgba.first_mut() {
+            *first = scene.meshes.len() as u8;
+        }
+        Ok(Picture { rgba, renderer: "gpu" })
+    }));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

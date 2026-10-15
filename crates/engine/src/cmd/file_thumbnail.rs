@@ -54,21 +54,9 @@ fn scene(s: &Session) -> Option<(Scene, Camera)> {
 mod tests {
     use super::*;
 
-    /// A stand-in for the GPU renderer the hosts install: a flat picture whose first byte counts
-    /// the scene's meshes.
-    fn install_test_renderer() {
-        crate::capture::install(std::sync::Arc::new(|scene: &Scene, _: &Camera, w: u32, h: u32| {
-            let mut rgba = vec![200; (w * h * 4) as usize];
-            if let Some(first) = rgba.first_mut() {
-                *first = scene.meshes.len() as u8;
-            }
-            Ok(crate::capture::Picture { rgba, renderer: "gpu" })
-        }));
-    }
-
     #[test]
     fn portable_thumbnail_preserves_saved_visibility() {
-        install_test_renderer();
+        crate::capture::install_test_renderer();
         let mut session = Session::default();
         session.execute("solid.box", &serde_json::json!({"length":10,"width":20,"height":30,"body_name":"Visible"})).unwrap();
         session.execute("solid.box", &serde_json::json!({"length":100,"width":100,"height":100,"body_name":"Hidden"})).unwrap();
@@ -93,7 +81,7 @@ mod tests {
 
     #[test]
     fn portable_thumbnail_never_forces_cold_evaluation_or_meshing() {
-        install_test_renderer();
+        crate::capture::install_test_renderer();
         let mut session = Session::default();
         session.execute("solid.box", &serde_json::json!({"length":10,"width":20,"height":30})).unwrap();
         let world = session.world_state();
