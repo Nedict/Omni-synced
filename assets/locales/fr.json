@@ -36,6 +36,7 @@
   "cmd.component_capture_position": "Capturer la position",
   "cmd.component_create": "Nouveau composant",
   "cmd.component_delete": "Supprimer le composant",
+  "cmd.component_unlock": "Déverrouiller le contenu",
   "cmd.component_from_bodies": "Créer des composants à partir des corps",
   "cmd.component_insert_design": "Insérer une conception",
   "cmd.component_links": "Lister les liens",

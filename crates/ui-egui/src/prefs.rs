@@ -236,6 +236,19 @@ impl NavigatorStyle {
     }
 }
 
+/// What an orbit turns around (Preferences: "Orbit around").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrbitAround {
+    /// The world origin: the view turns about it and keeps it still on screen.
+    Origin,
+    /// The view's centre: what Pan moves and Fit frames (the default, as it always was).
+    #[default]
+    ViewCentre,
+    /// The model point under the cursor when the drag began.
+    Cursor,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
@@ -249,7 +262,11 @@ pub struct Prefs {
     pub radial_context_menu: bool,
     /// The wheel zooms out when turned forward.
     pub zoom_reverse: bool,
-    /// Orbit around the point under the cursor (else around the view's centre).
+    /// What an orbit turns around.
+    pub orbit_around: OrbitAround,
+    /// The cursor preference as releases before the origin option saved it (`true` = the point
+    /// under the cursor). [`migrate`] folds it into `orbit_around` when saved preferences are
+    /// read, so an existing choice survives the upgrade; this version only writes `false`.
     pub orbit_cursor: bool,
     /// Whether a connected 3D mouse moves the view.
     pub space_mouse_enabled: bool,
@@ -346,6 +363,7 @@ impl Default for Prefs {
             navigator_style: NavigatorStyle::default(),
             radial_context_menu: false,
             zoom_reverse: false,
+            orbit_around: OrbitAround::default(),
             orbit_cursor: false,
             space_mouse_enabled: true,
             space_mouse_speed: 1.0,
@@ -482,6 +500,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.zoom_to_cursor = d.zoom_to_cursor;
             p.smooth_wheel_zoom = d.smooth_wheel_zoom;
             p.trackpad_pan = d.trackpad_pan;
+            p.orbit_around = d.orbit_around;
             p.orbit_cursor = d.orbit_cursor;
             p.space_mouse_enabled = d.space_mouse_enabled;
             p.space_mouse_speed = d.space_mouse_speed;
@@ -585,25 +604,36 @@ pub fn zoom_sign(app: &SolveApp) -> f64 {
     if app.preferences.zoom_reverse { -1.0 } else { 1.0 }
 }
 
-/// Orbit by pixel deltas: around the view's centre, or, with "orbit around the cursor", around
-/// the model point that was under the cursor when the drag began (kept still on screen). A drag
-/// that begins over empty space turns around the centre of the visible geometry instead, so the
-/// model never swings around a far-off point. The pivot is chosen once, when the drag begins.
+/// Orbit by pixel deltas about the configured centre: the view's centre (default), the world
+/// origin, or the model point that was under the cursor when the drag began. The origin and the
+/// cursor pivot are kept still on screen; a cursor drag that begins over empty space turns around
+/// the centre of the visible geometry instead, so the model never swings around a far-off point.
+/// The cursor pivot is chosen once, when the drag begins.
 pub fn orbit(app: &mut SolveApp, rect: egui::Rect, dx: f64, dy: f64, press: Option<Pos2>) {
-    if !app.preferences.orbit_cursor {
+    let pivot = match app.preferences.orbit_around {
+        OrbitAround::ViewCentre => None,
+        OrbitAround::Origin => Some(Vec3::ZERO),
+        OrbitAround::Cursor => Some(match app.viewport.orbit_pivot {
+            Some(p) => p,
+            None => {
+                let proj = crate::viewport::projection(app, rect);
+                let at = press.unwrap_or(rect.center());
+                let p = pivot_under(app, &proj, at);
+                app.viewport.orbit_pivot = Some(p);
+                p
+            }
+        }),
+    };
+    let Some(pivot) = pivot else {
         app.cam.orbit(dx, dy);
         return;
-    }
-    let pivot = match app.viewport.orbit_pivot {
-        Some(p) => p,
-        None => {
-            let proj = crate::viewport::projection(app, rect);
-            let at = press.unwrap_or(rect.center());
-            let p = pivot_under(app, &proj, at);
-            app.viewport.orbit_pivot = Some(p);
-            p
-        }
     };
+    orbit_about(app, rect, dx, dy, pivot);
+}
+
+/// Orbit by pixel deltas, keeping `pivot` still on screen: the camera turns about it and a pan
+/// correction puts it back where it was.
+fn orbit_about(app: &mut SolveApp, rect: egui::Rect, dx: f64, dy: f64, pivot: Vec3) {
     let before = crate::viewport::projection(app, rect).to_screen(pivot);
     app.cam.orbit(dx, dy);
     let after = crate::viewport::projection(app, rect).to_screen(pivot);
@@ -651,6 +681,16 @@ pub fn length_precision(value: f64, units: &str, decimals: u8) -> usize {
 pub fn length_number(mm: f64, units: &str, decimals: u8) -> String {
     let value = mm * unit_scale(units).0;
     format!("{:.*}", length_precision(value, units, decimals), value)
+}
+
+/// A plain number typed into a field, with a decimal point or a decimal comma (#1347): "2.5"
+/// and "2,5" are both 2.5, as a numeric keypad types either depending on the locale. Spaces are
+/// ignored and "−" is a minus, as in egui's own parser. A comma beside a point ("1.234,5") or a
+/// second comma is not guessed at: the text is not a number.
+pub fn parse_number(text: &str) -> Option<f64> {
+    let t: String = text.chars().filter(|c| !c.is_whitespace()).map(|c| if c == '\u{2212}' { '-' } else { c }).collect();
+    let t = if !t.contains('.') && t.matches(',').count() == 1 { t.replacen(',', ".", 1) } else { t };
+    t.parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
 /// Edit a millimetre value through a control expressed in the current design units.
@@ -971,7 +1011,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             });
             ui.end_row();
             ui.label(app.tr("ui.autosave_every"));
-            if ui.add(egui::DragValue::new(&mut app.autosave_minutes).range(0.0..=120.0).speed(0.5).suffix(" min")).changed() {
+            if ui.add(egui::DragValue::new(&mut app.autosave_minutes).range(0.0..=120.0).speed(0.5).suffix(" min").custom_parser(parse_number)).changed() {
                 set_autosave(app);
             }
             ui.end_row();
@@ -1050,9 +1090,11 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             });
             ui.end_row();
             ui.label(crate::i18n::tr_label("Orbit around"));
-            ui.horizontal(|ui| {
-                ui.radio_value(&mut app.preferences.orbit_cursor, false, crate::i18n::tr_label("View centre"));
-                ui.radio_value(&mut app.preferences.orbit_cursor, true, crate::i18n::tr_label("Point under the cursor"));
+            // Wrapped: three choices, and German or Russian labels are long.
+            ui.horizontal_wrapped(|ui| {
+                ui.radio_value(&mut app.preferences.orbit_around, OrbitAround::Origin, crate::i18n::tr_label("Origin"));
+                ui.radio_value(&mut app.preferences.orbit_around, OrbitAround::ViewCentre, crate::i18n::tr_label("View centre"));
+                ui.radio_value(&mut app.preferences.orbit_around, OrbitAround::Cursor, crate::i18n::tr_label("Point under the cursor"));
             });
             ui.end_row();
             ui.label(crate::i18n::tr_label("Middle double-click"));
@@ -1312,12 +1354,22 @@ pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::
     Ok(out)
 }
 
+/// Fold a setting an older release kept in its own field into the one this version reads.
+/// `orbit_cursor` (`true` = the point under the cursor) became `orbit_around`.
+pub fn migrate(mut p: Prefs) -> Prefs {
+    if p.orbit_cursor {
+        p.orbit_around = OrbitAround::Cursor;
+        p.orbit_cursor = false;
+    }
+    p
+}
+
 /// Saved preferences, keeping every one that still reads. A value this version doesn't
 /// understand (a setting a newer or older release saved differently, a hand edit) falls back to
 /// its default on its own instead of discarding all of them.
 pub fn lenient(saved: &serde_json::Value) -> Prefs {
     if let Ok(p) = serde_json::from_value::<Prefs>(saved.clone()) {
-        return p;
+        return migrate(p);
     }
     let Ok(mut cur) = serde_json::to_value(Prefs::default()) else { return Prefs::default() };
     if let (Some(o), Some(src)) = (cur.as_object_mut(), saved.as_object()) {
@@ -1331,7 +1383,7 @@ pub fn lenient(saved: &serde_json::Value) -> Prefs {
             }
         }
     }
-    serde_json::from_value(cur).unwrap_or_default()
+    serde_json::from_value(cur).map(migrate).unwrap_or_default()
 }
 
 /// Set preferences from JSON (control channel); returns them all.
@@ -1351,7 +1403,7 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     {
         return Err("`color_vision` must be off, protan, deutan or tritan".into());
     }
-    let new: Prefs = serde_json::from_value(cur).map_err(|e| e.to_string())?;
+    let new: Prefs = migrate(serde_json::from_value(cur).map_err(|e| e.to_string())?);
     if !UNITS.contains(&new.default_units.as_str()) {
         return Err(format!("units must be one of {}", UNITS.join(", ")));
     }
@@ -1396,6 +1448,19 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn number_fields_take_a_decimal_point_or_a_decimal_comma() {
+        // #1347
+        assert_eq!(super::parse_number("2.5"), Some(2.5));
+        assert_eq!(super::parse_number("2,5"), Some(2.5));
+        assert_eq!(super::parse_number(" -0,25 "), Some(-0.25));
+        assert_eq!(super::parse_number("\u{2212}1,5"), Some(-1.5));
+        assert_eq!(super::parse_number("12"), Some(12.0));
+        for bad in ["1.234,5", "1,2,3", ",", "abc", "", "inf", "NaN"] {
+            assert_eq!(super::parse_number(bad), None, "{bad}");
+        }
+    }
+
     /// Display quality (#1287) is a preference like any other: set by name, checked, saved with
     /// the others, back to Normal with Restore Defaults.
     #[test]
@@ -1832,11 +1897,47 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Orbiting about the world origin keeps the origin where it was drawn, even when Pan has
+    /// moved it off to the side.
+    #[test]
+    fn orbiting_around_the_origin_keeps_it_still() {
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        app.run("solid.box", json!({"length": 40, "width": 40, "height": 40})).unwrap();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        app.fit_view();
+        assert_eq!(app.preferences.orbit_around, OrbitAround::ViewCentre, "the view centre stays the default");
+        app.preferences.orbit_around = OrbitAround::Origin;
+        app.cam.pan(60.0, -25.0, 600.0);
+        let was = (app.cam.yaw, app.cam.pitch);
+        let before = crate::viewport::projection(&app, rect).to_screen(Vec3::ZERO).unwrap();
+        orbit(&mut app, rect, 40.0, 25.0, None);
+        let after = crate::viewport::projection(&app, rect).to_screen(Vec3::ZERO).unwrap();
+        assert!(after.distance(before) < 2.0, "{before:?} -> {after:?}");
+        assert_ne!((app.cam.yaw, app.cam.pitch), was, "the view must turn");
+    }
+
+    /// Preferences saved before the origin option had `orbit_cursor`: that choice survives, and
+    /// the control channel still accepts the old key.
+    #[test]
+    fn saved_cursor_preference_migrates_to_the_origin_option() {
+        assert_eq!(lenient(&json!({"orbit_cursor": true})).orbit_around, OrbitAround::Cursor);
+        assert_eq!(lenient(&json!({"orbit_cursor": false})).orbit_around, OrbitAround::ViewCentre);
+        assert_eq!(lenient(&json!({})).orbit_around, OrbitAround::ViewCentre);
+        assert_eq!(lenient(&json!({"orbit_around": "origin"})).orbit_around, OrbitAround::Origin);
+
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        set(&mut app, &json!({"orbit_around": "origin"})).unwrap();
+        assert_eq!(app.preferences.orbit_around, OrbitAround::Origin);
+        set(&mut app, &json!({"orbit_cursor": true})).unwrap();
+        assert_eq!(app.preferences.orbit_around, OrbitAround::Cursor, "the old key still moves the choice");
+        assert!(!app.preferences.orbit_cursor, "and is folded away");
+    }
+
     #[test]
     fn orbiting_around_the_cursor_keeps_that_point_still() {
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         app.run("solid.box", json!({"length": 40, "width": 40, "height": 40})).unwrap();
-        app.preferences.orbit_cursor = true;
+        app.preferences.orbit_around = OrbitAround::Cursor;
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         app.fit_view();
         let at = egui::pos2(500.0, 250.0);
@@ -1852,7 +1953,7 @@ mod tests {
     fn orbiting_from_empty_space_turns_around_the_visible_geometry() {
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         app.run("solid.box", json!({"length": 40, "width": 40, "height": 40})).unwrap();
-        app.preferences.orbit_cursor = true;
+        app.preferences.orbit_around = OrbitAround::Cursor;
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         app.fit_view();
         let corner = egui::pos2(10.0, 10.0);
@@ -1865,7 +1966,7 @@ mod tests {
         assert_eq!(app.viewport.orbit_pivot, Some(centre));
 
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
-        app.preferences.orbit_cursor = true;
+        app.preferences.orbit_around = OrbitAround::Cursor;
         app.cam.target = solidcraft_engine::geom::Vec3::new(5.0, -3.0, 2.0);
         orbit(&mut app, rect, 40.0, 25.0, Some(corner));
         assert_eq!(app.viewport.orbit_pivot, Some(solidcraft_engine::geom::Vec3::new(5.0, -3.0, 2.0)));

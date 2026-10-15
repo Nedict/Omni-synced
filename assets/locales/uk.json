@@ -30,6 +30,7 @@
   "cmd.component_capture_position": "Зафіксувати положення",
   "cmd.component_create": "Новий компонент",
   "cmd.component_delete": "Видалити компонент",
+  "cmd.component_unlock": "Розблокувати вміст",
   "cmd.component_from_bodies": "Створити компоненти з тіл",
   "cmd.component_insert_design": "Вставити проєкт",
   "cmd.component_links": "Список зв'язків",
