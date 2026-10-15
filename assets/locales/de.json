@@ -778,6 +778,7 @@
   "cmd.joint_rack_pinion": "Zahnstange und Ritzel",
   "cmd.joint_screw": "Schraube",
   "cmd.joint_origin": "Gelenkursprung",
+  "cmd.joint_reach": "Punkt anfahren",
   "cmd.joint_rigid_group": "Starrgruppe",
   "cmd.joint_solve": "Gelenke lösen",
   "cmd.material_assign": "Physikalisches Material",

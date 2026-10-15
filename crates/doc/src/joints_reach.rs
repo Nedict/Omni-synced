@@ -1,0 +1,330 @@
+//! Inverse kinematics (`joint.reach`): move the values of the joints on an occurrence's chain so a
+//! point of it reaches a target (and an axis of it points a given way), every value within its
+//! limits, motion links followed, and the closed loops those values are in kept closed.
+
+use std::cell::Cell;
+use std::collections::BTreeSet;
+
+use solidcraft_geom::Vec3;
+use solidcraft_sketch::linalg;
+
+use super::{
+    Assembly, Held, MAX_LOOP_VALUES, MAX_LOOP_WORK, MAX_LOOPS, Solution, Tree, Values, apply_links, build, closure_gaps, jacobian, joint_values,
+    largest, least_squares, limit_bounds, link_chains, loop_groups, loop_scale, unknowns,
+};
+use crate::{Document, ModelState, apply_point, apply_vector};
+
+/// How close counts as reached: mm for the point, degrees for the axis.
+pub const REACH_TOL: f64 = 1e-4;
+
+/// What a reach asks.
+#[derive(Clone, Debug)]
+pub struct Reach {
+    /// The occurrence that reaches.
+    pub occurrence: u64,
+    /// Its point that goes to `to`, in its own (component) coordinates.
+    pub point: Vec3,
+    /// Where the point goes (world).
+    pub to: Vec3,
+    /// A unit axis of it (its own coordinates) and the unit world direction it turns to.
+    pub axis: Option<(Vec3, Vec3)>,
+    /// The joints whose values move toward the target (`None`: every joint on its chain). The
+    /// other joints of a closed loop they are in follow.
+    pub joints: Option<BTreeSet<u64>>,
+}
+
+/// How a reach ended.
+#[derive(Clone, Debug, Default)]
+pub struct Reached {
+    /// The new stored values of the joints that moved (joint id → values).
+    pub values: Values,
+    /// Short of the target: the values it ended on a limit of, with the target pulling past it
+    /// (joint, value index, the upper limit).
+    pub limits: Vec<(u64, usize, bool)>,
+    /// Short of the target: the closing joint of a loop that stopped it (the chain alone, the
+    /// loop left open, gets closer).
+    pub stopped_by_loop: Option<u64>,
+}
+
+/// How much a loop's gap (mm) outweighs a miss of the target (mm) in a step: enough to keep the
+/// step along the mechanism, so putting it back on the loops moves it little.
+const LOOP_WEIGHT: f64 = 1e3;
+/// Steps a reach takes at most, each moving no value more than 10° or a tenth of the chain's
+/// size (so it follows the mechanism's branch).
+const MAX_REACH_STEPS: usize = 200;
+const STEP_ANGLE: f64 = 10.0;
+const STEP_SHARE: f64 = 0.1;
+
+/// Move the values of the joints on `r.occurrence`'s chain (those in `r.joints`, when given) so
+/// its point gets to `r.to`, or as close as the limits and closed loops let it: the nearest pose,
+/// found from where it is (it stays on the mechanism's branch). Values a motion link sets move
+/// through the start of their link chain; the other values of the loops they are in follow. An
+/// error says why nothing can move.
+pub fn reach(doc: &Document, st: &ModelState, r: &Reach) -> Result<Reached, String> {
+    let asm = &doc.assembly;
+    let vals = joint_values(asm);
+    let built = build(doc, st, &vals, &mut Solution::default());
+    let tree = &built.tree;
+    if tree.fixed.contains_key(&r.occurrence) {
+        return Err("it is fixed in place (grounded, or the part its joints are placed from)".into());
+    }
+    if !tree.parent.contains_key(&r.occurrence) {
+        return Err("no joint places it: it is not connected to anything grounded (ground a part, or join it to a grounded part)".into());
+    }
+    let linked: BTreeSet<(u64, usize)> = asm.links.iter().map(|l| (l.b, l.ib)).collect();
+    let allowed = |id: &u64| r.joints.as_ref().is_none_or(|js| js.contains(id));
+    let path: BTreeSet<u64> = tree.path(r.occurrence).1.iter().map(|(k, _)| *k).collect();
+    // The values that move it: those of the joints on its chain, a linked one through the start
+    // of its link chain.
+    let mut drive: Vec<(u64, usize)> = Vec::new();
+    for j in path.iter().filter(|id| allowed(id)).filter_map(|id| tree.joints.get(id)) {
+        drive.extend((0..j.kind.dofs().len()).map(|i| (j.id, i)).filter(|v| !linked.contains(v)));
+    }
+    for v in link_chains(asm, tree, &path, &linked).1 {
+        if allowed(&v.0) && !drive.contains(&v) {
+            drive.push(v);
+        }
+    }
+    if drive.is_empty() {
+        return Err(if r.joints.is_some() {
+            "none of the joints given moves it"
+        } else {
+            "no joint on its chain moves (rigid, or set by motion links)"
+        }
+        .into());
+    }
+    // The loops those values are in, and the values of theirs that follow.
+    if built.closing.len() > MAX_LOOPS {
+        return Err(format!("the design has more than {MAX_LOOPS} closed loops"));
+    }
+    let groups = loop_groups(tree, &built.closing, asm, &linked);
+    let (mut vars, mut closers, mut around) = (drive.clone(), Vec::new(), path.clone());
+    let mut taken = BTreeSet::new();
+    while vars.len() <= MAX_LOOP_VALUES {
+        let more: Vec<usize> =
+            groups.iter().enumerate().filter(|(g, (_, _, t))| !taken.contains(g) && t.iter().any(|v| vars.contains(v))).map(|(g, _)| g).collect();
+        if more.is_empty() {
+            break;
+        }
+        for (c, a, _) in more.iter().filter_map(|g| groups.get(*g)) {
+            closers.extend(c.iter().copied());
+            around.extend(a.iter().copied());
+            for v in unknowns(tree, a, asm, &linked, &Held::new()) {
+                if !vars.contains(&v) {
+                    vars.push(v);
+                }
+            }
+        }
+        taken.extend(more);
+    }
+    if vars.len() > MAX_LOOP_VALUES {
+        return Err(format!("its chain and loops have more than {MAX_LOOP_VALUES} values"));
+    }
+    let scale = loop_scale(tree, &around, &vals);
+    let bounds = limit_bounds(tree, &vars);
+    let x0: Vec<f64> = vars.iter().map(|(id, i)| vals.get(id).and_then(|q| q.get(*i)).copied().unwrap_or(0.0)).collect();
+    let cap: Vec<f64> = vars
+        .iter()
+        .map(|(id, i)| if tree.joints.get(id).is_some_and(|j| j.kind.is_angle(*i)) { STEP_ANGLE.to_radians() } else { STEP_SHARE * scale })
+        .collect();
+    let tol = (1e-10 * scale).min(1e-7);
+    let mt = if r.axis.is_some() { 6 } else { 3 };
+    let spent = Cell::new(0usize);
+    let mut work = vals.clone();
+    let mut f = |x: &[f64]| misses(tree, asm, r, scale, &vars, &closers, x, &mut work, &spent);
+    let mut x = x0.clone();
+    let res = approach(&mut f, mt, &mut x, &bounds, &cap, tol)
+        .ok_or("a closed loop on its chain is open and can't close (joint.list shows its conflict)")?;
+    let mut out = Reached::default();
+    let miss = |res: &[f64]| res.iter().take(mt).map(|v| v * v).sum::<f64>().sqrt();
+    let point_miss = res.iter().take(3).map(|v| v * v).sum::<f64>().sqrt();
+    let turn_miss = (res.iter().skip(3).take(mt - 3).map(|v| v * v).sum::<f64>().sqrt() / scale).to_degrees();
+    if point_miss > REACH_TOL || turn_miss > REACH_TOL {
+        // The limits it rests on: the target pulls the value past them (−Jᵀr over the target's
+        // rows, ignoring pulls at right angles to the miss).
+        let n = x.len();
+        if let Some(jac) = jacobian(&mut f, &x, res.len()) {
+            let eps = 1e-6 * scale * miss(&res);
+            for (k, (((id, i), v), (lo, hi))) in vars.iter().zip(&x).zip(&bounds).enumerate() {
+                let pull: f64 = -(0..mt).map(|row| jac.get(row * n + k).copied().unwrap_or(0.0) * res.get(row).copied().unwrap_or(0.0)).sum::<f64>();
+                let at = |b: f64| (v - b).abs() <= 1e-9 * b.abs().max(1.0);
+                if at(*hi) && pull > eps {
+                    out.limits.push((*id, *i, true));
+                } else if at(*lo) && pull < -eps {
+                    out.limits.push((*id, *i, false));
+                }
+            }
+        }
+        // A loop stopped it when the chain alone gets closer.
+        // ponytail: names the first loop of several; trying each one open would name the one that binds.
+        if let Some(first) = closers.first() {
+            let k = drive.len();
+            let mut alone = vals.clone();
+            let mut g = |x: &[f64]| misses(tree, asm, r, scale, &drive, &[], x, &mut alone, &spent);
+            let (mut xo, bo, co) = (x0.get(..k).unwrap_or_default().to_vec(), bounds.get(..k).unwrap_or_default(), cap.get(..k).unwrap_or_default());
+            if let Some(ro) = approach(&mut g, mt, &mut xo, bo, co, tol)
+                && miss(&ro) < miss(&res) * (1.0 - 1e-3) - REACH_TOL
+            {
+                out.stopped_by_loop = Some(*first);
+            }
+        }
+    }
+    // The stored values that changed.
+    for ((id, i), v) in vars.iter().zip(&x) {
+        let Some(j) = tree.joints.get(id) else { continue };
+        if j.values.get(*i).is_some_and(|s| (s - v).abs() <= 1e-12) {
+            continue;
+        }
+        let q = out.values.entry(*id).or_insert_with(|| {
+            let mut q = j.values.clone();
+            q.resize(j.kind.dofs().len(), 0.0);
+            q
+        });
+        if let Some(slot) = q.get_mut(*i) {
+            *slot = *v;
+        }
+    }
+    Ok(out)
+}
+
+/// The target's misses with the values `vars` at `x`: the point's (mm), then the axis's (as mm
+/// across the chain's `scale`), then the gaps of the loops `closers`, weighted.
+fn misses(
+    tree: &Tree,
+    asm: &Assembly,
+    r: &Reach,
+    scale: f64,
+    vars: &[(u64, usize)],
+    closers: &[u64],
+    x: &[f64],
+    work: &mut Values,
+    spent: &Cell<usize>,
+) -> Option<Vec<f64>> {
+    spent.set(spent.get() + 1);
+    if spent.get() > MAX_LOOP_WORK {
+        return None;
+    }
+    for ((id, i), v) in vars.iter().zip(x) {
+        if let Some(slot) = work.get_mut(id).and_then(|q| q.get_mut(*i)) {
+            *slot = *v;
+        }
+    }
+    apply_links(asm, work);
+    let t = tree.world(r.occurrence, work)?;
+    let d = apply_point(&t, r.point) - r.to;
+    let mut out = vec![d.x, d.y, d.z];
+    if let Some((a, z)) = r.axis {
+        let w = (apply_vector(&t, a) - z) * scale;
+        out.extend([w.x, w.y, w.z]);
+    }
+    let n = out.len();
+    closure_gaps(tree, closers, work, scale, &mut out)?;
+    for v in out.iter_mut().skip(n) {
+        *v *= LOOP_WEIGHT;
+    }
+    out.iter().all(|v| v.is_finite()).then_some(out)
+}
+
+/// Levenberg-Marquardt that stays on the loops: move `x` (within `bounds`, at most `cap` per value
+/// a step) to bring the first `mt` values of `f` (the target's misses) toward zero, the rest (the
+/// loops' weighted gaps) at zero. Each step is solved over all the rows, values on a limit the
+/// step pushes past held, then put back on the loops (`least_squares` on their gaps) and taken
+/// when it gets closer. It ends at the target, or as close as the limits and loops let it get.
+/// Returns `f` there, or `None` when the loops don't close at the start.
+fn approach(
+    f: &mut dyn FnMut(&[f64]) -> Option<Vec<f64>>,
+    mt: usize,
+    x: &mut Vec<f64>,
+    bounds: &[(f64, f64)],
+    cap: &[f64],
+    tol: f64,
+) -> Option<Vec<f64>> {
+    let n = x.len();
+    let miss = |r: &[f64]| r.iter().take(mt).map(|v| v * v).sum::<f64>();
+    let close = |f: &mut dyn FnMut(&[f64]) -> Option<Vec<f64>>, x: &mut Vec<f64>| {
+        least_squares(&mut |y| f(y).map(|r| r.get(mt..).unwrap_or_default().to_vec()), x, bounds, tol * LOOP_WEIGHT)
+    };
+    let loops = f(x)?.len() > mt;
+    if loops && !close(f, x) {
+        return None;
+    }
+    let mut r = f(x)?;
+    let mut lambda = 1e-3;
+    for _ in 0..MAX_REACH_STEPS {
+        if largest(r.get(..mt).unwrap_or_default()) <= tol {
+            break;
+        }
+        let m = r.len();
+        let Some(jac) = jacobian(f, x, m) else { break };
+        // The normal equations JᵀJ δ = −Jᵀr, and the target rows' share of the diagonal (the
+        // damping scales with it, so the loops' weight doesn't slow the step along them).
+        let (mut jtj, mut g, mut diag) = (linalg::Mat::zeros(n, n), vec![0.0; n], vec![0.0; n]);
+        for (row, ri) in r.iter().enumerate() {
+            let a = jac.get(row * n..(row + 1) * n).unwrap_or_default();
+            for (p, ap) in a.iter().enumerate().filter(|(_, v)| **v != 0.0) {
+                if let Some(gp) = g.get_mut(p) {
+                    *gp -= ap * ri;
+                }
+                if row < mt
+                    && let Some(dp) = diag.get_mut(p)
+                {
+                    *dp += ap * ap;
+                }
+                for (q, aq) in a.iter().enumerate().skip(p) {
+                    jtj.add(p, q, ap * aq);
+                }
+            }
+        }
+        for p in 0..n {
+            for q in 0..p {
+                jtj.set(p, q, jtj.get(q, p));
+            }
+        }
+        let mut stepped = false;
+        while lambda < 1e12 && !stepped {
+            let mut held = vec![false; n];
+            // Solved, then again with the values held that it pushes past their limits.
+            for _ in 0..=n {
+                let mut a = jtj.clone();
+                let mut b = g.clone();
+                for p in 0..n {
+                    a.add(p, p, lambda * (1.0 + diag.get(p).copied().unwrap_or(0.0)));
+                    if held.get(p).copied().unwrap_or(false) {
+                        for q in 0..n {
+                            a.set(p, q, if p == q { 1.0 } else { 0.0 });
+                            a.set(q, p, if p == q { 1.0 } else { 0.0 });
+                        }
+                        if let Some(bp) = b.get_mut(p) {
+                            *bp = 0.0;
+                        }
+                    }
+                }
+                let Some(d) = linalg::solve(a, b) else { break };
+                let past: Vec<bool> =
+                    x.iter().zip(&d).zip(bounds).map(|((v, dv), (lo, hi))| (*dv > 0.0 && *v >= *hi) || (*dv < 0.0 && *v <= *lo)).collect();
+                if past.iter().zip(&held).any(|(p, h)| *p && !*h) {
+                    held = held.iter().zip(&past).map(|(h, p)| *h || *p).collect();
+                    continue;
+                }
+                let over = d.iter().zip(cap).map(|(d, c)| d.abs() / c).fold(1.0f64, f64::max);
+                let mut next: Vec<f64> = x.iter().zip(&d).zip(bounds).map(|((v, dv), (lo, hi))| (v + dv / over).max(*lo).min(*hi)).collect();
+                if (!loops || close(f, &mut next))
+                    && let Some(rn) = f(&next)
+                    && miss(&rn) < miss(&r)
+                {
+                    (*x, r) = (next, rn);
+                    lambda = (lambda / 3.0).max(1e-9);
+                    stepped = true;
+                }
+                break;
+            }
+            if !stepped {
+                lambda *= 4.0;
+            }
+        }
+        if !stepped {
+            break;
+        }
+    }
+    Some(r)
+}

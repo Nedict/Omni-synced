@@ -5,19 +5,19 @@ use solidcraft_geom::Vec3;
 
 use crate::Session;
 
-fn run(s: &mut Session, id: &str, p: Value) -> Value {
+pub(super) fn run(s: &mut Session, id: &str, p: Value) -> Value {
     match s.execute(id, &p) {
         Ok(v) => v,
         Err(e) => panic!("{id} {p}: {e}"),
     }
 }
 
-fn occ(s: &Session, component: &str) -> u64 {
+pub(super) fn occ(s: &Session, component: &str) -> u64 {
     let c = s.doc.find_component(component).unwrap_or(0);
     s.doc.occurrence_of(c).map(|o| o.id).unwrap_or(0)
 }
 
-fn place(s: &Session, component: &str, p: Vec3) -> Vec3 {
+pub(super) fn place(s: &Session, component: &str, p: Vec3) -> Vec3 {
     solidcraft_doc::apply_point(&solidcraft_doc::joints::occurrence_world(&s.doc, occ(s, component)), p)
 }
 
@@ -313,21 +313,21 @@ fn interference_box_sweep_matches_every_pair_check() {
 }
 
 /// A small block in a new component: a part of a linkage, where only its joints matter.
-fn part(s: &mut Session, name: &str, corner: [f64; 3]) {
+pub(super) fn part(s: &mut Session, name: &str, corner: [f64; 3]) {
     run(s, "component.activate", json!({"component": "root"}));
     run(s, "component.create", json!({"name": name}));
     run(s, "solid.box", json!({"length": 2, "width": 2, "height": 2, "corner": corner}));
 }
 
 /// A joint between two parts as they are, at a world point with its z along `z`.
-fn pin(s: &mut Session, kind: &str, name: &str, a: &str, b: &str, p: Vec3, z: Vec3) {
+pub(super) fn pin(s: &mut Session, kind: &str, name: &str, a: &str, b: &str, p: Vec3, z: Vec3) {
     let at = |o: &str| json!({"occurrence": o, "point": [p.x, p.y, p.z], "z": [z.x, z.y, z.z]});
     let r = run(s, "joint.create", json!({"type": kind, "a": at(a), "b": at(b), "flip": true, "name": name}));
     assert_eq!(r["conflicts"].as_array().map(Vec::len), Some(0), "{r}");
 }
 
 /// Where circles about `p` (radius `r`) and `q` (radius `s`) in the XY plane meet.
-fn meet(p: Vec3, r: f64, q: Vec3, s: f64) -> [Vec3; 2] {
+pub(super) fn meet(p: Vec3, r: f64, q: Vec3, s: f64) -> [Vec3; 2] {
     let d = q - p;
     let l = d.len();
     let a = (r * r - s * s + l * l) / (2.0 * l);
@@ -339,7 +339,7 @@ fn meet(p: Vec3, r: f64, q: Vec3, s: f64) -> [Vec3; 2] {
 /// A crank-rocker four-bar about +Z: ground pivots O2 = (0, 0) and O4 = (45, 0), crank 20,
 /// coupler 50, rocker 40, assembled with the crank at 90°. Returns the crank pin P0 and the
 /// rocker pin Q0 (the upper, open assembly).
-fn four_bar() -> (Session, Vec3, Vec3) {
+pub(super) fn four_bar() -> (Session, Vec3, Vec3) {
     let mut s = Session::default();
     let (o2, o4, p0) = (Vec3::ZERO, Vec3::new(45.0, 0.0, 0.0), Vec3::new(0.0, 20.0, 0.0));
     let [q0, _] = meet(p0, 50.0, o4, 40.0);

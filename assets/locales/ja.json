@@ -143,6 +143,7 @@
   "cmd.joint_rack_pinion": "ラック アンド ピニオン",
   "cmd.joint_screw": "ねじ",
   "cmd.joint_origin": "ジョイント原点",
+  "cmd.joint_reach": "点に到達",
   "cmd.joint_rigid_group": "リジッド グループ",
   "cmd.joint_solve": "ジョイントを解決",
   "cmd.material_assign": "物理マテリアル",

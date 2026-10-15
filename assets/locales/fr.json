@@ -131,6 +131,7 @@
   "cmd.joint_rack_pinion": "Pignon et crémaillère",
   "cmd.joint_screw": "Vis",
   "cmd.joint_origin": "Origine de liaison",
+  "cmd.joint_reach": "Atteindre un point",
   "cmd.joint_rigid_group": "Groupe rigide",
   "cmd.joint_solve": "Résoudre les liaisons",
   "cmd.material_assign": "Matériau physique",

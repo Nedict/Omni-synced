@@ -143,6 +143,7 @@
   "cmd.joint_rack_pinion": "Rack and Pinion",
   "cmd.joint_screw": "Screw",
   "cmd.joint_origin": "Joint Origin",
+  "cmd.joint_reach": "Reach Point",
   "cmd.joint_rigid_group": "Rigid Group",
   "cmd.joint_solve": "Solve Joints",
   "cmd.material_assign": "Physical Material",

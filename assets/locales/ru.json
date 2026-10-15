@@ -120,6 +120,7 @@
   "cmd.joint_rack_pinion": "Реечная передача",
   "cmd.joint_screw": "Винт",
   "cmd.joint_origin": "Точка сопряжения",
+  "cmd.joint_reach": "Достичь точки",
   "cmd.joint_rigid_group": "Жёсткая группа",
   "cmd.joint_solve": "Решить сопряжения",
   "cmd.material_assign": "Физический материал",
