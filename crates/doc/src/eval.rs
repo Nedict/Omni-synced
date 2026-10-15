@@ -1281,6 +1281,17 @@ fn val(vals: &BTreeMap<String, Value>, e: &str, k: Kind) -> Result<f64> {
     Document::eval_in(vals, e, k)
 }
 
+/// A loft builds each section from its outline alone, so a section with a hole (a ring) is
+/// refused rather than lofted as if it were filled.
+fn refuse_loft_holes(r: &Region2) -> Result<()> {
+    if r.holes.is_empty() {
+        return Ok(());
+    }
+    Err(DocError::Invalid(
+        "not supported yet: a loft section with a hole; loft the outline and the hole as two bodies and cut one from the other".into(),
+    ))
+}
+
 pub fn select_profiles(ss: &SolvedSketch, sel: &ProfileSel) -> Result<Vec<Region2>> {
     let ps = &ss.profiles;
     if ps.is_empty() {
@@ -2950,6 +2961,7 @@ fn feature_tools_with_constructor(
             let ss = st.sketch(prof.sketch).ok_or_else(|| DocError::Unknown(format!("sketch {}", prof.sketch)))?;
             let regions = solidcraft_sketch::merge_regions(&select_profiles(ss, &prof.profiles)?);
             let [r] = &regions[..] else { return Err(DocError::Invalid("each loft section must be one profile".into())) };
+            refuse_loft_holes(r)?;
             let ps = st.sketch(pt.sketch).ok_or_else(|| DocError::Unknown(format!("sketch {}", pt.sketch)))?;
             let id = pt.point.as_deref().unwrap_or_default();
             let q = ps.sketch.points.iter().find(|p| p.id == id).ok_or_else(|| DocError::Unknown(format!("point `{id}` in {}", ps.name)))?;
@@ -3005,6 +3017,7 @@ fn feature_tools_with_constructor(
                     .ok_or_else(|| DocError::Unknown(format!("sketch {} (it must come earlier in the timeline)", sec.sketch)))?;
                 let regions = solidcraft_sketch::merge_regions(&select_profiles(ss, &sec.profiles)?);
                 let [r] = &regions[..] else { return Err(DocError::Invalid("each loft section must be one profile".into())) };
+                refuse_loft_holes(r)?;
                 secs.push((ss.plane, r.outer.clone()));
                 sketches.push(ss);
             }

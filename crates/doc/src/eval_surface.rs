@@ -78,11 +78,30 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             }
             Ok(())
         }
-        FeatureKind::SurfaceExtend { body, edges, distance } => {
-            let d = val(vals, distance, Kind::Length)?;
+        FeatureKind::SurfaceExtend { body, edges, distance, mode, up_to, neighbours } => {
             let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
-            let out = kernel::extend(&mb.body, edges, d)?;
+            let mode = match mode {
+                crate::ExtendMode::Natural => kernel::ExtendMode::Natural,
+                crate::ExtendMode::Tangent => kernel::ExtendMode::Tangent,
+                crate::ExtendMode::Curvature => kernel::ExtendMode::Curvature,
+            };
+            let at = |limit| kernel::ExtendOptions { mode, limit, neighbours: *neighbours };
+            let out = match up_to {
+                None => kernel::extend_surface(&mb.body, edges, &at(kernel::ExtendLimit::Distance(val(vals, distance, Kind::Length)?)))?,
+                Some(crate::ExtendTo::Bounds) => kernel::extend_surface(&mb.body, edges, &at(kernel::ExtendLimit::Bounds))?,
+                Some(crate::ExtendTo::Plane(plane)) => {
+                    let tool = kernel::SplitTool::Plane(doc.resolve_plane_in(vals, plane, 0, Some(st))?);
+                    kernel::extend_surface(&mb.body, edges, &at(kernel::ExtendLimit::UpTo(&tool)))?
+                }
+                Some(crate::ExtendTo::Face(t)) => {
+                    let tb = st.body(&t.body).ok_or_else(|| DocError::Unknown(format!("body `{}`", t.body)))?;
+                    let face = crate::appearance::face_index_at(tb, t.point)
+                        .ok_or_else(|| DocError::Invalid(format!("no face of `{}` at the target point", t.body)))?;
+                    let tool = kernel::SplitTool::Face { body: &tb.body, face };
+                    kernel::extend_surface(&mb.body, edges, &at(kernel::ExtendLimit::UpTo(&tool)))?
+                }
+            };
             if let Some(slot) = st.bodies.get_mut(i) {
                 *slot = ModelBody::new(mb.name, out, mb.feature);
             }
