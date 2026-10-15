@@ -125,11 +125,15 @@ const STAGED_THUMBNAIL_TRIANGLES: usize = 1_000_000;
 /// How long a frame spends on a staged STEP import.
 const STAGED_FRAME_MS: f64 = 30.0;
 
-/// Files read in stages: STEP (not IGES, which is first restated as STEP) to insert or open.
+/// Files read in stages: STEP (not IGES, FreeCAD or Rhino, which are first restated as STEP) to
+/// insert or open.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn staged_kind(request: &Request) -> bool {
     let p = &request.path;
-    matches!(request.kind, Kind::Insert | Kind::Open) && solidcraft_engine::io::is_step_path(p) && !solidcraft_engine::io::is_iges_path(p)
+    matches!(request.kind, Kind::Insert | Kind::Open)
+        && solidcraft_engine::io::is_step_path(p)
+        && !solidcraft_engine::io::is_iges_path(p)
+        && !solidcraft_engine::io::is_native_cad_path(p)
 }
 
 impl Running {
