@@ -132,8 +132,9 @@ pub(crate) fn cannot_move(s: &Session, sol: &joints::Solution, id: u64) -> Optio
 /// occurrences and joints, by name.
 fn floating_chains(s: &Session, sol: &joints::Solution) -> Vec<Value> {
     let placed = |o: u64| o == 0 || sol.world.contains_key(&o);
+    let errors: BTreeSet<u64> = sol.errors.iter().map(|e| e.0).collect();
     let mut next: BTreeMap<u64, Vec<(u64, &Joint)>> = BTreeMap::new();
-    for j in s.doc.assembly.joints.iter().filter(|j| !j.suppressed && !sol.errors.iter().any(|e| e.0 == j.id)) {
+    for j in s.doc.assembly.joints.iter().filter(|j| !j.suppressed && !errors.contains(&j.id)) {
         if !placed(j.a.occurrence) && !placed(j.b.occurrence) {
             next.entry(j.a.occurrence).or_default().push((j.b.occurrence, j));
             next.entry(j.b.occurrence).or_default().push((j.a.occurrence, j));
