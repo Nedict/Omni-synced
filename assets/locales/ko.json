@@ -906,5 +906,14 @@
   "Type": "유형",
   "joint.one_component": "이 부품들은 한 구성 요소의 바디입니다: {bodies}. 관절은 한 구성 요소를 다른 구성 요소에 대해 움직이므로 부품마다 자체 구성 요소가 필요합니다.",
   "joint.one_body": "두 선택이 모두 {body}에 있습니다. 두 번째는 다른 부품에서 선택하세요.",
-  "joint.from_bodies_hint": "선택한 각 바디가 제자리에 그대로 있으면서 자체의 새 구성 요소로 옮겨집니다."
+  "joint.from_bodies_hint": "선택한 각 바디가 제자리에 그대로 있으면서 자체의 새 구성 요소로 옮겨집니다.",
+  "Circumference": "원주",
+  "Arc length": "호 길이",
+  "Slot width": "슬롯 폭",
+  "Centre to centre": "중심 간",
+  "Overall length": "전체 길이",
+  "Min": "최소",
+  "Max": "최대",
+  "Length": "길이",
+  "Area": "면적"
 }

@@ -1163,5 +1163,12 @@
   "Round": "Round",
   "joint.one_component": "These parts are bodies of one component: {bodies}. A joint moves one component against another, so each part needs a component of its own.",
   "joint.one_body": "Both picks are on {body}. Pick the second one on another part.",
-  "joint.from_bodies_hint": "Each picked body moves into a new component of its own and stays where it is."
+  "joint.from_bodies_hint": "Each picked body moves into a new component of its own and stays where it is.",
+  "Circumference": "Circumference",
+  "Arc length": "Arc length",
+  "Slot width": "Slot width",
+  "Centre to centre": "Centre to centre",
+  "Overall length": "Overall length",
+  "Min": "Min",
+  "Max": "Max"
 }

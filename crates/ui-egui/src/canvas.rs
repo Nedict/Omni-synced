@@ -249,8 +249,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj
         app.dialog = Some(d);
         return;
     }
-    if let Kind::Measure { result: Some(r), .. } = &d.kind {
-        measure_line(app, painter, proj, r);
+    if let Kind::Measure { result: Some(r), show, .. } = &d.kind {
+        measure_line(app, painter, proj, r, *show);
         app.dialog = Some(d);
         return;
     }
@@ -758,14 +758,11 @@ fn radius_spline_handles(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Pain
     true
 }
 
-/// The measured distance: a line between the closest points with its length.
-fn measure_line(app: &SolveApp, painter: &egui::Painter, proj: &Proj, r: &serde_json::Value) {
+/// The measured distance: a line between the ends of the shown measure (the centres for
+/// centre to centre, the closest or farthest points) with its length.
+fn measure_line(app: &SolveApp, painter: &egui::Painter, proj: &Proj, r: &serde_json::Value, show: Option<crate::dialogs::Shown>) {
     let t = Tokens::get();
-    let p = |k: &str| -> Option<Vec3> {
-        let a = r.get(k)?.as_array()?;
-        Some(Vec3::new(a.first()?.as_f64()?, a.get(1)?.as_f64()?, a.get(2)?.as_f64()?))
-    };
-    let (Some(a), Some(b), Some(d)) = (p("from"), p("to"), r.get("distance_mm").and_then(|v| v.as_f64())) else { return };
+    let Some((_, d, a, b)) = crate::dialogs::shown_distance(r, show) else { return };
     let (Some(sa), Some(sb)) = (proj.to_screen(a), proj.to_screen(b)) else { return };
     painter.line_segment([sa, sb], Stroke::new(2.0, t.manipulator));
     for s in [sa, sb] {

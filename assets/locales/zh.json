@@ -1163,5 +1163,12 @@
   "Round": "圆角",
   "joint.one_component": "这些零件是同一组件的实体：{bodies}。接头使一个组件相对另一个组件运动，因此每个零件都需要自己的组件。",
   "joint.one_body": "两次选择都在 {body} 上。请在另一个零件上选择第二个。",
-  "joint.from_bodies_hint": "每个所选实体移入各自的新组件，位置保持不变。"
+  "joint.from_bodies_hint": "每个所选实体移入各自的新组件，位置保持不变。",
+  "Circumference": "周长",
+  "Arc length": "弧长",
+  "Slot width": "槽宽",
+  "Centre to centre": "中心距",
+  "Overall length": "总长",
+  "Min": "最小",
+  "Max": "最大"
 }

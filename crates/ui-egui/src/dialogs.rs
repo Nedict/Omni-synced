@@ -193,6 +193,9 @@ pub enum Kind {
     Measure {
         result: Option<Value>,
         of: Vec<Sel>,
+        /// The measure chosen in the panel (centre, min or max); `None` follows the result's
+        /// own default (centre where a round item gives one).
+        show: Option<Shown>,
     },
     /// Move bodies by a distance along X, Y and Z.
     /// Move/Copy (see `dialogs_move`): the move type, X/Y/Z distances (Point to Position: the
@@ -528,9 +531,10 @@ impl Dialog {
             "inspect.section" => {
                 Dialog::new(Kind::Section { offset: "0 mm".into(), flip: false }, vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)])
             }
-            "inspect.measure" => {
-                Dialog::new(Kind::Measure { result: None, of: Vec::new() }, vec![SelInput::new("Items", FACES | EDGES | selection::VERTICES, true)])
-            }
+            "inspect.measure" => Dialog::new(
+                Kind::Measure { result: None, of: Vec::new(), show: None },
+                vec![SelInput::new("Items", FACES | EDGES | selection::VERTICES | selection::CURVES | PROFILES, true)],
+            ),
             "solid.pattern.rectangular" => Dialog::new(
                 Kind::PatternRect { count: "3".into(), spacing: "20 mm".into(), count2: "1".into(), spacing2: "20 mm".into() },
                 vec![
@@ -1745,7 +1749,7 @@ pub(crate) fn fill_cells(st: &solidcraft_engine::doc::ModelState, tools: &[Strin
 /// Measure again when the picked items changed.
 fn update_measure(app: &SolveApp, d: &mut Dialog) {
     let items: Vec<Sel> = sels(d, 0).to_vec();
-    if let Kind::Measure { result, of } = &mut d.kind
+    if let Kind::Measure { result, of, .. } = &mut d.kind
         && *of != items
     {
         *result = if items.is_empty() { None } else { Some(app.session.measure_items(&items)) };
@@ -1757,8 +1761,39 @@ fn fmt_mm(app: &SolveApp, v: &Value) -> String {
     v.as_f64().map(|x| crate::prefs::show_mm(app, x, 1)).unwrap_or_default()
 }
 
+/// Which distance of a pair the Measure panel shows (and the canvas draws).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shown {
+    /// Centre to centre, or from a round item's axis.
+    Centre,
+    /// Closest points.
+    Min,
+    /// Farthest points.
+    Max,
+}
+
+fn vec3_of(v: &Value) -> Option<Vec3> {
+    let a = v.as_array()?;
+    Some(Vec3::new(a.first()?.as_f64()?, a.get(1)?.as_f64()?, a.get(2)?.as_f64()?))
+}
+
+/// The distance shown for a measured pair: which one, its value and its two ends. The chosen
+/// one when the result has it, otherwise the result's default (centre, else the closest).
+pub(crate) fn shown_distance(r: &Value, show: Option<Shown>) -> Option<(Shown, f64, Vec3, Vec3)> {
+    let get = |which: Shown| -> Option<(Shown, f64, Vec3, Vec3)> {
+        let (d, from, to) = match which {
+            Shown::Centre => ("center_distance", "center_from", "center_to"),
+            Shown::Min => ("distance_mm", "from", "to"),
+            Shown::Max => ("max", "max_from", "max_to"),
+        };
+        Some((which, r.get(d)?.as_f64()?, vec3_of(r.get(from)?)?, vec3_of(r.get(to)?)?))
+    };
+    let default = if r.get("measure").and_then(Value::as_str) == Some("center") { Shown::Centre } else { Shown::Min };
+    show.and_then(get).or_else(|| get(default)).or_else(|| get(Shown::Min))
+}
+
 /// The measurement in the dialog.
-fn measure_rows(app: &SolveApp, ui: &mut egui::Ui, r: Option<&Value>) {
+fn measure_rows(app: &SolveApp, ui: &mut egui::Ui, r: Option<&Value>, show: &mut Option<Shown>) {
     let t = Tokens::get();
     let Some(r) = r else {
         ui.label("");
@@ -1772,33 +1807,74 @@ fn measure_rows(app: &SolveApp, ui: &mut egui::Ui, r: Option<&Value>) {
         ui.end_row();
         return;
     }
+    let mm = |v: &Value| fmt_mm(app, v);
     for (i, it) in r["items"].as_array().into_iter().flatten().enumerate() {
-        let what = match it["type"].as_str() {
-            Some("edge") => format!("Length  {}", fmt_mm(app, &it["length_mm"])),
-            Some("face") => format!("Area  {}", crate::prefs::show_mm(app, it["area_mm2"].as_f64().unwrap_or(0.0), 2)),
-            Some("vertex") => {
-                let p = &it["position"];
-                format!("At  {}, {}, {}", fmt_mm(app, &p[0]), fmt_mm(app, &p[1]), fmt_mm(app, &p[2]))
+        // Round items: Ø first, then R, then the length (circumference, or the arc's length
+        // and angle).
+        let mut lines: Vec<String> = Vec::new();
+        if it.get("diameter").is_some() {
+            lines.push(format!("Ø  {}", mm(&it["diameter"])));
+            lines.push(format!("R  {}", mm(&it["radius"])));
+            if it.get("circumference").is_some() {
+                lines.push(format!("{}  {}", tr("Circumference"), mm(&it["circumference"])));
+            } else if let Some(a) = it["angle_deg"].as_f64() {
+                lines.push(format!("{}  {}", tr("Arc length"), mm(&it["arc_length"])));
+                lines.push(format!("{}  {a:.2}°", crate::i18n::tr_label("Angle")));
             }
-            _ => String::new(),
-        };
-        ui.label(format!("Item {}", i + 1));
-        ui.label(what);
-        ui.end_row();
-    }
-    if r.get("distance_mm").is_some() {
-        ui.label(RichText::new(tr("Distance")).strong());
-        ui.label(RichText::new(fmt_mm(app, &r["distance_mm"])).strong());
-        ui.end_row();
-        let d = &r["delta"];
-        for (k, l) in ["ΔX", "ΔY", "ΔZ"].iter().enumerate() {
-            ui.label(*l);
-            ui.label(crate::prefs::show_mm(app, d[k].as_f64().unwrap_or(0.0).abs(), 1));
+        }
+        if let Some(sl) = it.get("slot") {
+            lines.push(format!("{}  {}", tr("Slot width"), mm(&sl["width"])));
+            lines.push(format!("{}  {}", tr("Centre to centre"), mm(&sl["center_distance"])));
+            lines.push(format!("{}  {}", tr("Overall length"), mm(&sl["overall_length"])));
+        }
+        let round = it.get("diameter").is_some();
+        match it["type"].as_str() {
+            Some("edge" | "sketch_curve") if !round => lines.push(format!("{}  {}", tr("Length"), mm(&it["length_mm"]))),
+            Some("face" | "profile") => {
+                lines.push(format!("{}  {}", tr("Area"), crate::prefs::show_mm(app, it["area_mm2"].as_f64().unwrap_or(0.0), 2)))
+            }
+            Some("vertex" | "sketch_point") => {
+                let p = &it["position"];
+                lines.push(format!("At  {}, {}, {}", mm(&p[0]), mm(&p[1]), mm(&p[2])));
+            }
+            _ => {}
+        }
+        for (k, line) in lines.into_iter().enumerate() {
+            ui.label(if k == 0 { format!("Item {}", i + 1) } else { String::new() });
+            ui.label(line);
             ui.end_row();
         }
     }
-    if let Some(a) = r["angle_deg"].as_f64() {
-        ui.label(RichText::new(tr("Angle")).strong());
+    if let Some((now, d, a, b)) = shown_distance(r, *show) {
+        if r.get("center_distance").is_some() {
+            // Centre, min and max all listed; the chosen one is drawn and broken into ΔX/Y/Z.
+            for (which, label, key) in
+                [(Shown::Centre, "Centre to centre", "center_distance"), (Shown::Min, "Min", "distance_mm"), (Shown::Max, "Max", "max")]
+            {
+                let Some(v) = r.get(key).filter(|v| v.is_number()) else { continue };
+                if ui.radio(now == which, tr(label)).clicked() {
+                    *show = Some(which);
+                }
+                let text = RichText::new(mm(v));
+                ui.label(if now == which { text.strong() } else { text });
+                ui.end_row();
+            }
+        } else {
+            ui.label(RichText::new(crate::i18n::tr_label("Distance")).strong());
+            ui.label(RichText::new(crate::prefs::show_mm(app, d, 1)).strong());
+            ui.end_row();
+        }
+        let delta = b - a;
+        for (l, v) in [("ΔX", delta.x), ("ΔY", delta.y), ("ΔZ", delta.z)] {
+            ui.label(l);
+            ui.label(crate::prefs::show_mm(app, v.abs(), 1));
+            ui.end_row();
+        }
+    }
+    if let Some(a) = r["angle_deg"].as_f64()
+        && r["items"].as_array().is_some_and(|v| v.len() == 2)
+    {
+        ui.label(RichText::new(crate::i18n::tr_label("Angle")).strong());
         ui.label(RichText::new(format!("{a:.3}°")).strong());
         ui.end_row();
     }
@@ -2373,7 +2449,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         d.extra.insert("combine".into(), json!(op == 1));
                         ui.end_row();
                     }
-                    Kind::Measure { result, .. } => measure_rows(app, ui, result.as_ref()),
+                    Kind::Measure { result, show, .. } => measure_rows(app, ui, result.as_ref(), show),
                     Kind::OffsetPlane { offset } => {
                         row_label(ui, "Distance");
                         enter |= field(ui, offset);

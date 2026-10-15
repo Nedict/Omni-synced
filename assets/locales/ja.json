@@ -1163,5 +1163,12 @@
   "Round": "丸め",
   "joint.one_component": "これらの部品は 1 つのコンポーネントのボディです: {bodies}。ジョイントはコンポーネント同士を動かすため、部品ごとに専用のコンポーネントが必要です。",
   "joint.one_body": "両方の選択が {body} 上にあります。2 つ目は別の部品で選択してください。",
-  "joint.from_bodies_hint": "選択した各ボディを、位置はそのままで専用の新しいコンポーネントに移動します。"
+  "joint.from_bodies_hint": "選択した各ボディを、位置はそのままで専用の新しいコンポーネントに移動します。",
+  "Circumference": "円周",
+  "Arc length": "円弧の長さ",
+  "Slot width": "長穴の幅",
+  "Centre to centre": "中心間",
+  "Overall length": "全長",
+  "Min": "最小",
+  "Max": "最大"
 }
