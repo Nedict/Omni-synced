@@ -259,11 +259,19 @@ pub fn commands(app: &SolveApp, f: &CouplingForm, inputs: &[SelInput]) -> Result
     Ok(vec![(f.command.to_string(), p)])
 }
 
-/// While animating, the preview turns the driving joint a full turn.
-pub fn animate(f: &CouplingForm, cmds: &mut Vec<(String, Value)>) {
-    if f.animate {
-        cmds.push(("joint.drive".into(), json!({"joint": f.a, "values": [format!("{} deg", f.phase * 360.0)]})));
-    }
+/// While animating, the preview turns the driving joint a full turn: its first value that turns
+/// (a planar joint's is its third), the values before it as they are.
+pub fn animate(s: &Session, f: &CouplingForm, cmds: &mut Vec<(String, Value)>) {
+    let Some(j) = s.doc.assembly.joints.iter().find(|j| j.id == f.a).filter(|_| f.animate) else { return };
+    let Some(turn) = (0..j.kind.dofs().len()).find(|i| j.kind.is_angle(*i)) else { return };
+    let values: Vec<String> = (0..=turn)
+        .map(|i| match j.values.get(i).copied().unwrap_or(0.0) {
+            _ if i == turn => format!("{} deg", f.phase * 360.0),
+            v if j.kind.is_angle(i) => format!("{} deg", v.to_degrees()),
+            v => format!("{v} mm"),
+        })
+        .collect();
+    cmds.push(("joint.drive".into(), json!({"joint": f.a, "values": values})));
 }
 
 #[cfg(test)]

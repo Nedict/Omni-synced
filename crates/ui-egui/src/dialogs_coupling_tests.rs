@@ -163,6 +163,24 @@ fn a_cylindrical_joint_is_a_screw_on_its_own() {
     assert!((nut.get(1).copied().unwrap_or(f64::NAN) - 1.5).abs() < 1e-9, "{nut:?}");
 }
 
+/// Play turns the pinion's angle, wherever it is among its joint's values: a planar joint's is
+/// the third, after its x and y, which keep theirs.
+#[test]
+fn play_turns_the_angle_of_a_planar_pinion() {
+    let mut app = discs();
+    let at = |o: &str| json!({"occurrence": o, "point": [0, 0, 0], "z": [0, 0, 1]});
+    app.run("joint.edit", json!({"joint": "G1", "type": "planar"})).unwrap();
+    app.run("joint.drive", json!({"joint": "G1", "values": [2, 0, 0]})).unwrap();
+    app.run("joint.create", json!({"type": "slider", "a": at("Base"), "b": at("G2"), "flip": true, "name": "Rail"})).unwrap();
+    app.start("joint.rack_pinion");
+    let mut d = app.dialog.take().unwrap();
+    if let Kind::Assembly(Asm::Coupling(f)) = &mut d.kind {
+        (f.a, f.animate, f.phase) = (joint(&app, "G1"), true, 0.5);
+    }
+    let cmds = preview_commands(&app, &d).unwrap();
+    assert_eq!(cmds.last().map(|c| c.1["values"].clone()), Some(json!(["2 mm", "0 mm", "180 deg"])), "{cmds:?}");
+}
+
 /// The dialog's rows pass their English text, which the catalogs translate by its key.
 #[test]
 fn the_dialog_labels_translate() {

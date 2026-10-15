@@ -911,7 +911,7 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
 /// The preview's commands: OK's, with the joint's values playing its motion while animating.
 pub fn animate(app: &SolveApp, k: &Asm, cmds: &mut Vec<(String, Value)>) {
     if let Asm::Coupling(f) = k {
-        crate::dialogs_coupling::animate(f, cmds);
+        crate::dialogs_coupling::animate(&app.session, f, cmds);
     }
     let Asm::Joint(f) = k else { return };
     if !f.animate {
