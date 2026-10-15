@@ -50,6 +50,8 @@ mod issue_674_tests;
 #[cfg(test)]
 mod issue_679_tests;
 #[cfg(test)]
+mod issue_788_tests;
+#[cfg(test)]
 mod issue_851_tests;
 #[cfg(test)]
 mod issue_871_tests;
@@ -64,6 +66,9 @@ mod native;
 mod numbered;
 mod offset;
 mod ops;
+mod outline;
+#[cfg(test)]
+mod outline_tests;
 mod par;
 pub use par::{for_each_on_threads, map_on_threads};
 #[cfg(test)]
@@ -92,6 +97,7 @@ mod surface_offset;
 mod surface_untrim;
 mod surfaces;
 mod sweep_path;
+mod tangent_cylinders;
 mod tess;
 #[cfg(test)]
 mod thread_tests;
@@ -125,7 +131,7 @@ pub use polybool::{faceted_boolean, planar_boolean};
 pub use polyhedron::{HalfSpace, convex_polyhedron, draft, offset_faces, shell};
 pub use prism::{PLANAR_FIT_TOL, extrude_planar_regions, planar_regions_boolean};
 pub use prism_measure::certified_prism_equivalent;
-pub use sew::{EdgeSpec, FaceSpec, SurfSpec, sew};
+pub use sew::{EdgeSpec, FaceSpec, SurfSpec, sew, sew_touching};
 pub use splitface::{SplitTool, split_body, split_faces, split_faces_with_map};
 pub use step::step_export;
 pub use step_in::{ImportedBody, StepImport, StepNode, step_cache_alive, step_import, step_import_shared, step_orientation_errors, step_validate};

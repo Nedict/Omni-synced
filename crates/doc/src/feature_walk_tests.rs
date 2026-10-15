@@ -141,7 +141,7 @@ const GOLDEN_REFS: &str = include_str!("feature_walk_tests/golden_refs.txt");
 
 #[test]
 fn input_sketches_lists_every_variant_with_a_sketch_field() {
-    let src = include_str!("document.rs");
+    let src = include_str!("document.rs").replace("\r\n", "\n");
     let body = src.split("pub enum FeatureKind {").nth(1).and_then(|s| s.split("\n}\n").next()).unwrap();
     let mut with_sketch = Vec::new();
     let mut variant = String::new();
@@ -184,7 +184,7 @@ fn inputs_and_expressions_match_the_golden_record() {
 
 #[test]
 fn the_record_covers_every_variant() {
-    let src = include_str!("document.rs");
+    let src = include_str!("document.rs").replace("\r\n", "\n");
     let body = src.split("pub enum FeatureKind {").nth(1).and_then(|s| s.split("\n}\n").next()).unwrap();
     let names: Vec<String> = fixtures().into_iter().map(|(_, v)| v["type"].as_str().unwrap().replace('_', "")).collect();
     for line in body.lines().filter(|l| l.starts_with("    ") && !l.starts_with("     ")) {

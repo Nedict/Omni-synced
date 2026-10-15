@@ -318,8 +318,9 @@ fn export_to(s: &Session, path: &str, format: Format, bodies: &[String]) -> Resu
     } else if format == Format::Step && bodies.is_empty() && !s.doc.occurrences.is_empty() {
         solidcraft_io::step_assembly(&s.doc, &s.doc.painted(&s.model.state()), &name)?
     } else {
-        // Bodies carry the colour they are shown in (appearance, material or imported).
-        solidcraft_io::export(&s.doc.painted(&s.world_state()), bodies, format, &name)?
+        // Bodies carry the colour they are shown in (appearance, material or imported), and the
+        // file the design's properties where the format has a place for them.
+        solidcraft_io::export_with_metadata(&s.doc.painted(&s.world_state()), bodies, format, &name, &s.doc.metadata)?
     };
     solidcraft_io::vfs::write(path, &bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     Ok(json!({"path": path, "bytes": bytes.len(), "format": format!("{format:?}")}))

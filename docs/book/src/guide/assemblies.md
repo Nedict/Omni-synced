@@ -22,9 +22,24 @@ records are reported. Unsupported destructive links refuse the entire copy. See
 circles and vertices: rigid, revolute, slider, cylindrical, pin-slot, planar and ball, with
 offsets, flip and limits. **As-built Joint** keeps the current position, **Rigid Group** locks
 components together, **Drive Joints** moves a joint through its values, and **Motion Link**
-couples two joints. Contact sets stop motion where bodies would pass through each other,
+couples two joints. Links can be chained (one joint drives a second, which drives a
+third), and a value is carried through a chain of up to 64 links in whatever order they were
+made. Contact sets stop motion where bodies would pass through each other,
 **Motion Study** keys joint values along a timeline, and **Interference** shows overlapping
 volumes in red.
+
+Joints may close a loop, as in a four-bar linkage or a slider-crank. When one joint of the loop
+is driven, the other joints in the loop follow so that every joint still meets, and the
+mechanism stays in the assembly mode it started in (an open four-bar does not flip to the
+crossed one). If the motion would take a loop past the point where it can still close, for
+example driving a rocker beyond its swing, the motion stops at the last position where the loop
+closes, and the drive reports `stopped_by_loop`. A loop that cannot close at all is listed
+under `conflicts` and nothing in it moves. `joint.list` reports how many degrees of freedom each
+part still has with its loops closed: the moving parts of a four-bar have one between them, and a
+loop locked by a rigid joint has none. The Drive Joints dialog says when a drive stops short and
+why. While it previews, a row under the values gives the value the joint reached and the reason
+(the loop that can't close further, or the two parts a contact set keeps apart), and after OK the
+status line repeats it. The value box keeps what you typed.
 
 **Insert Design** (`component.insert_design {path, translate?}`) adds a component linked to
 another saved design, so each part can live in its own document. The part's solid bodies come

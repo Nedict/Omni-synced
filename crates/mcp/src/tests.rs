@@ -242,6 +242,18 @@ fn parameters_drive_the_design() {
     assert!(d["params"].as_array().unwrap().iter().any(|p| p["name"] == "len" && p["value"] == 50.0), "{d}");
 }
 
+/// Design properties (#1015) are set through `execute` and come back in `inspect_design`.
+#[test]
+fn design_properties_show_in_inspect_design() {
+    let mut s = server();
+    let d = tool(&mut s, "inspect_design", json!({"measure": false, "sketches": false}));
+    assert_eq!(d["metadata"], json!({}), "{d}");
+    let params = json!({"values": {"author": "Agent", "com.example.agent": {"session": 7}}});
+    tool(&mut s, "execute", json!({"command": "document.metadata.set", "params": params}));
+    let d = tool(&mut s, "inspect_design", json!({"measure": false, "sketches": false}));
+    assert_eq!(d["metadata"], json!({"author": "Agent", "com.example.agent": {"session": 7}}), "{d}");
+}
+
 #[test]
 fn batch_stops_at_first_error_and_rolls_back() {
     let mut s = server();
@@ -524,7 +536,9 @@ fn tool_calls_stay_inside_the_agents_folders() {
     tool(&mut s, "export", json!({"path": at(&root, "part.step")}));
     tool(&mut s, "open", json!({"path": at(&root, "part.solidcraft")}));
     tool(&mut s, "screenshot", json!({"path": at(&root, "shot.png"), "width": 64, "height": 64}));
-    let mut escapes = vec![at(&out, "x.step"), at(&root, "../out/x.step")];
+    let escapes = vec![at(&out, "x.step"), at(&root, "../out/x.step")];
+    #[cfg(unix)]
+    let mut escapes = escapes;
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(&out, root.join("link")).unwrap();

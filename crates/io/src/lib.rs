@@ -10,6 +10,7 @@ pub mod catalog;
 mod design;
 mod design_metadata;
 mod dxf;
+mod dxf_out;
 pub use design::{
     DesignCompression, DesignContainerReader, DesignGeometry, DesignPreview, THUMBNAIL_SIZE, is_design_container, read_design_file,
     read_design_geometry, read_design_preview, read_design_thumbnail, read_design_thumbnail_file, write_design_container,
@@ -25,16 +26,17 @@ pub mod urdf;
 pub mod vfs;
 
 pub use dxf::{read_dxf, write_dxf};
+pub use dxf_out::{DxfEntity, DxfLayer, DxfShape, loop_shapes, seg_shape, write_dxf_drawing};
 pub use legacy_dir::{APP_ID, LEGACY_APP_ID, adopt_legacy_dir, legacy_flatpak_path};
 pub use safe_write::{backup_path, write_atomic};
 pub use sketch2d::{Geom2, MAX_DRAWING_BYTES};
 pub use svg::read_svg;
 mod obj;
 pub use obj::read_obj;
-pub use threemf::{MAX_3MF_BYTES, MeshObject, model_xml, read_3mf, weld, write_3mf};
+pub use threemf::{MAX_3MF_BYTES, MeshObject, model_xml, model_xml_with, read_3mf, weld, write_3mf, write_3mf_with};
 pub use urdf::{UrdfOptions, UrdfPackage, urdf};
 
-use solidcraft_doc::{Document, ModelState};
+use solidcraft_doc::{Document, Metadata, ModelState};
 use solidcraft_geom::{Mesh, Vec3};
 
 /// Design file extension.
@@ -308,6 +310,39 @@ pub fn obj(meshes: &[(String, Mesh)]) -> String {
 
 /// Export the given bodies of a model (all when `bodies` is empty) in a format.
 pub fn export(state: &ModelState, bodies: &[String], format: Format, name: &str) -> Result<Vec<u8>> {
+    export_with_metadata(state, bodies, format, name, &Metadata::default())
+}
+
+/// The STEP or IGES header of an export named `file_name`: the design's author, organization
+/// and description (#1015).
+fn step_header(file_name: String, meta: &Metadata) -> solidcraft_kernel::StepHeader {
+    solidcraft_kernel::StepHeader {
+        file_name,
+        author: header_line(meta.author()),
+        organization: header_line(meta.organization()),
+        description: header_line(meta.description()),
+        ..Default::default()
+    }
+}
+
+/// A header field is one line: each run of white space (line breaks too) becomes one space.
+fn header_line(text: Option<&str>) -> String {
+    text.map(|t| t.split_whitespace().collect::<Vec<_>>().join(" ")).unwrap_or_default()
+}
+
+/// 3MF model metadata from the design properties, by the names the 3MF core specification
+/// gives them. Other tools' keys are never exported.
+fn threemf_metadata(meta: &Metadata) -> Vec<(&'static str, &str)> {
+    [("Title", meta.project()), ("Designer", meta.author()), ("Description", meta.description()), ("LicenseTerms", meta.license())]
+        .into_iter()
+        .filter_map(|(name, text)| Some((name, text?)))
+        .collect()
+}
+
+/// [`export`], with the design properties `meta` in the formats that have a place for them:
+/// STEP and IGES headers (author, organization; STEP also the description) and 3MF model
+/// metadata (project as the title, author as the designer, description, licence).
+pub fn export_with_metadata(state: &ModelState, bodies: &[String], format: Format, name: &str, meta: &Metadata) -> Result<Vec<u8>> {
     let sel: Vec<&solidcraft_doc::ModelBody> = state.bodies.iter().filter(|b| bodies.is_empty() || bodies.contains(&b.name)).collect();
     if sel.is_empty() {
         return Err(IoError::Empty);
@@ -333,18 +368,16 @@ pub fn export(state: &ModelState, bodies: &[String], format: Format, name: &str)
         Format::Step => {
             let bs: Vec<solidcraft_kernel::ExportBody> =
                 sel.iter().map(|b| solidcraft_kernel::ExportBody { name: b.name.clone(), body: &b.body, color: b.body.color() }).collect();
-            let header = solidcraft_kernel::StepHeader { file_name: format!("{name}.step"), ..Default::default() };
-            solidcraft_kernel::step_export_bodies(&bs, &header)?.into_bytes()
+            solidcraft_kernel::step_export_bodies(&bs, &step_header(format!("{name}.step"), meta))?.into_bytes()
         }
         Format::Iges => {
             let bs: Vec<solidcraft_kernel::ExportBody> =
                 sel.iter().map(|b| solidcraft_kernel::ExportBody { name: b.name.clone(), body: &b.body, color: b.body.color() }).collect();
-            let header = solidcraft_kernel::StepHeader { file_name: format!("{name}.igs"), ..Default::default() };
-            solidcraft_kernel::iges_export_bodies(&bs, &header)?.into_bytes()
+            solidcraft_kernel::iges_export_bodies(&bs, &step_header(format!("{name}.igs"), meta))?.into_bytes()
         }
         Format::ThreeMf | Format::ThreeMfTagged => {
             let objs: Vec<MeshObject> = sel.iter().map(|b| mesh_object(b, format == Format::ThreeMfTagged)).collect::<Result<_>>()?;
-            write_3mf(&objs)?
+            write_3mf_with(&objs, &threemf_metadata(meta))?
         }
         Format::Design => return Err(IoError::Format("solidcraft (save the document instead)".into())),
         Format::Urdf => return Err(IoError::Format("urdf (an assembly package; use file.export)".into())),
@@ -406,8 +439,7 @@ pub fn step_assembly(doc: &Document, local: &ModelState, name: &str) -> Result<V
             p.children.push((child, o.transform, o.name.clone()));
         }
     }
-    let header = solidcraft_kernel::StepHeader { file_name: format!("{name}.step"), ..Default::default() };
-    Ok(solidcraft_kernel::step_export_products(&products, 0, &header)?.into_bytes())
+    Ok(solidcraft_kernel::step_export_products(&products, 0, &step_header(format!("{name}.step"), &doc.metadata))?.into_bytes())
 }
 
 /// Read a design file's bytes.
@@ -591,6 +623,48 @@ mod tests {
         assert_eq!(read_stl(&a).unwrap().len(), tris.len());
         let o = String::from_utf8(export(&m.state(), &[], Format::Obj, "t").unwrap()).unwrap();
         assert!(o.contains("o Body1") && o.contains("\nf "));
+    }
+
+    /// The design properties land in each format's own metadata (#1015): STEP and IGES headers,
+    /// 3MF model metadata. Other tools' keys never leave the design file.
+    #[test]
+    fn exports_write_design_properties() {
+        let (_, m) = model();
+        let meta: Metadata = serde_json::from_value(serde_json::json!({
+            "project": "ACME <enclosures>", "author": "Jane O'Brien", "organization": "ACME", "license": "CC-BY-4.0",
+            "description": "Vented Gehäuse\nfor a Pi", "revision": 7, "com.acme.secret": {"token": "SECRET-VALUE"},
+        }))
+        .unwrap();
+        let step = String::from_utf8(export_with_metadata(&m.state(), &[], Format::Step, "t", &meta).unwrap()).unwrap();
+        assert!(step.contains("FILE_DESCRIPTION(('Vented Geh\\X2\\00E4\\X0\\use for a Pi'),'2;1');"), "{}", &step[..300]);
+        assert!(step.contains("FILE_NAME('t.step','',('Jane O''Brien'),('ACME'),"), "{}", &step[..300]);
+        assert_eq!(step_import_feature(step.as_bytes(), "t.step").unwrap().body_names, ["Body1"], "still reads back");
+        let iges = String::from_utf8(export_with_metadata(&m.state(), &[], Format::Iges, "t", &meta).unwrap()).unwrap();
+        assert!(iges.contains("12HJane O'Brien") && iges.contains("4HACME"));
+        let model_xml = |bytes: Vec<u8>| {
+            use std::io::Read as _;
+            let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+            let mut x = String::new();
+            zip.by_name("3D/3dmodel.model").unwrap().read_to_string(&mut x).unwrap();
+            x
+        };
+        let x = model_xml(export_with_metadata(&m.state(), &[], Format::ThreeMf, "t", &meta).unwrap());
+        for want in [
+            "<metadata name=\"Application\">SolidCraft</metadata>\n <metadata name=\"Title\">ACME &lt;enclosures&gt;</metadata>",
+            "<metadata name=\"Designer\">Jane O&apos;Brien</metadata>",
+            "<metadata name=\"Description\">Vented Gehäuse\nfor a Pi</metadata>",
+            "<metadata name=\"LicenseTerms\">CC-BY-4.0</metadata>",
+        ] {
+            assert!(x.contains(want), "{want}\n{}", &x[..400]);
+        }
+        assert!(write_3mf_with(&[], &[("Title", "x")]).is_err(), "no objects is still an error");
+        for out in [step.as_str(), iges.as_str(), x.as_str()] {
+            assert!(!out.contains("SECRET-VALUE") && !out.contains("com.acme"));
+        }
+        // Without properties the files are as they always were.
+        let plain = String::from_utf8(export(&m.state(), &[], Format::Step, "t").unwrap()).unwrap();
+        assert!(plain.contains("FILE_DESCRIPTION(('SolidCraft model'),'2;1');\nFILE_NAME('t.step','',(''),(''),"));
+        assert!(!model_xml(export(&m.state(), &[], Format::ThreeMf, "t").unwrap()).contains("Title"));
     }
 
     #[test]

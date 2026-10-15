@@ -1081,7 +1081,17 @@ impl SheetBody {
                 if points > MAX_FLAT_POINTS || out.len() >= MAX_FLAT_PIECES {
                     return Err(flat_budget_error());
                 }
-                out.push(Cell { piece, outer: region.outer.segs, holes: region.holes.into_iter().map(|l| l.segs).collect() });
+                // A piece shorter than the model's tolerance is no edge: a cut-out's corner a hair
+                // beside a bend line comes out of the booleans as corners a hair apart, on the
+                // panel and on the bend, joined by such an edge or by a loop of them on its own.
+                // The sew welds the corners left on either side.
+                let hairless = |l: Loop2| -> Vec<Seg2> { l.segs.into_iter().filter(|e| e.length() >= LINEAR_TOL).collect() };
+                let outer = hairless(region.outer);
+                if outer.is_empty() {
+                    continue;
+                }
+                let holes = region.holes.into_iter().map(hairless).filter(|h| !h.is_empty()).collect();
+                out.push(Cell { piece, outer, holes });
             }
         }
         Ok(out)
@@ -1264,7 +1274,7 @@ impl SheetBody {
         // origin. Fitting planes after a distant component transfer loses precision.
         let mut local = self.clone();
         local.frame = Plane::XY;
-        let body = kernel::sew(&local.faces(&cells, 0.0, self.t, &mut work)?)?;
+        let body = kernel::sew_touching(&local.faces(&cells, 0.0, self.t, &mut work)?)?;
         let body = local.machine_pockets(body, &mut work)?;
         let body = local.machine_bores(body, &mut work)?;
         self.place_local_solid(body)
@@ -1434,7 +1444,7 @@ impl SheetBody {
                 })?;
                 kernel::extrude_planar_regions(&self.frame, &[region], 0.0, self.t)?
             } else {
-                kernel::sew(&self.faces(std::slice::from_ref(&cell), 0.0, self.t, &mut work)?)?
+                kernel::sew_touching(&self.faces(std::slice::from_ref(&cell), 0.0, self.t, &mut work)?)?
             };
             if kernel::boolean(&solid, &drill, kernel::BoolOp::Intersect)?.is_none() {
                 continue;
@@ -1538,7 +1548,7 @@ impl SheetBody {
                 Piece::Panel(pi) => apply_vector(&self.world(pi), Vec3::Z).cross(plane.normal()).len() > 1e-6,
             })
             .collect();
-        cells.iter().map(|c| Ok(kernel::sew(&self.faces(std::slice::from_ref(c), 0.0, self.t, &mut work)?)?)).collect()
+        cells.iter().map(|c| Ok(kernel::sew_touching(&self.faces(std::slice::from_ref(c), 0.0, self.t, &mut work)?)?)).collect()
     }
 
     fn through_pocket_regions(&self, work: &mut FlatWork) -> Result<Vec<Region2>> {
@@ -4746,6 +4756,42 @@ mod tests {
         s.flat_regions().unwrap().iter().map(Region2::area).sum()
     }
 
+    /// A plate (0, 0) (100, 0) (85, 20) (0, 20) with a 30 mm inside flange on its slanted edge
+    /// (2 mm sheet, R 2, K 0.5: the folded sheet holds its flat area times the thickness), and a
+    /// 4 mm² triangle cut out of the flat across the bend line, with a corner on the line or a
+    /// hair (0.01 to 0.1 µm) to either side of it, in the middle of the bend and near its ends.
+    /// The planar booleans leave such a corner as corners a hair apart on the base and on the
+    /// bend, and the refold joined them by an edge as short ("sew: a degenerate edge").
+    #[test]
+    fn a_cut_out_corner_a_hair_beside_a_bend_line_refolds() {
+        let rule = RuleValues { bend_radius: 2.0, ..alu() };
+        let outline = [Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0), Vec2::new(85.0, 20.0), Vec2::new(0.0, 20.0)];
+        for deg in [90.0f64, 120.0] {
+            let mut s = base_flange("Body1", "AL2", &rule, Plane::XY, Region2 { outer: Loop2::polygon(&outline).ccw(), holes: vec![] });
+            s.add_flange(Vec3::new(92.5, 10.0, 2.0), 30.0, deg.to_radians(), 2.0, "inside", false).unwrap();
+            let (a0, v0) = (flat_area(&s), vol(&s.solid().unwrap()));
+            if deg == 90.0 {
+                // The base less 4 mm along the edge's normal (5 mm along x): 1750; the bend
+                // 25 x 3π/2; the flange 25 x 26.
+                assert!((a0 - (2400.0 + 37.5 * std::f64::consts::PI)).abs() < 1e-9, "{a0}");
+            }
+            // The measure follows the bend by facets.
+            assert!((v0 / (a0 * 2.0) - 1.0).abs() < 1e-4, "{deg}°: {v0} vs {}", a0 * 2.0);
+            let f = s.flanges[0].clone();
+            for (along, off) in [(0.5, 0.0), (0.5, 1e-8), (0.5, 5e-8), (0.5, -5e-8), (0.5, 1e-7), (0.5, -1e-7), (0.16, 5e-8), (0.84, -5e-8)] {
+                let what = format!("{deg}°, corner {along} along the bend, {off} mm beside it");
+                let c = f.p + f.d * (f.len * along) + f.n * off;
+                let triangle = Loop2::polygon(&[c, c - f.n * 2.8 - f.d * 0.4, c + f.n * 0.4 - f.d * 2.8]).ccw();
+                let mut cut = s.clone();
+                cut.holes.push(Region2 { outer: triangle, holes: vec![] });
+                assert!((a0 - flat_area(&cut) - 4.0).abs() < 1e-6, "{what}: flat area {}", a0 - flat_area(&cut));
+                let body = cut.solid().unwrap_or_else(|e| panic!("{what}: {e}"));
+                assert!(body.validity().is_empty(), "{what}: {:?}", body.validity());
+                assert!((v0 - vol(&body) - 8.0).abs() < 0.01, "{what}: {} vs 8", v0 - vol(&body));
+            }
+        }
+    }
+
     /// Distance between two parallel 3D lines through a0→a1 and b0→b1 (None if not parallel).
     fn parallel_gap(a0: Vec3, a1: Vec3, b0: Vec3, b1: Vec3) -> Option<f64> {
         let (u, v) = ((a1 - a0).normalized()?, (b1 - b0).normalized()?);
@@ -6901,6 +6947,103 @@ mod tests {
             assert!(body.validity().is_empty() && body.shell_count() == 1, "{what}: {:?}", body.validity());
             let lost = vol(&whole.solid().unwrap()) - vol(&body);
             assert!((lost - want * 2.0).abs() < 0.05, "{what}: {lost} vs {}", want * 2.0);
+        }
+    }
+
+    /// The plate (0, 0) (100, 0) (85, 20) (0, 20) with a 30 mm inside flange on its slanted edge
+    /// (2 mm sheet, R 2, K 0.5: the folded sheet holds its flat area times the thickness), and a
+    /// triangle cut out of the flat with one corner on the bend line: where the line meets the
+    /// plate's edge, at either end, the triangle on the bend or on the base; in the line's middle,
+    /// from either side; and on the plate's straight edge, from inside. At the plate's edge the
+    /// sheet is pinched (two wedges of material meet along the thickness); in the middle the
+    /// triangle's tip touches the next piece. The refold ran the face through that corner twice
+    /// ("This wire is not simple").
+    #[test]
+    fn a_cut_out_with_a_corner_on_a_bend_line_or_the_sheets_edge_refolds() {
+        let rule = RuleValues { bend_radius: 2.0, ..alu() };
+        let outline = [Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0), Vec2::new(85.0, 20.0), Vec2::new(0.0, 20.0)];
+        for deg in [90.0f64, 120.0] {
+            let mut s = base_flange("Body1", "AL2", &rule, Plane::XY, Region2 { outer: Loop2::polygon(&outline).ccw(), holes: vec![] });
+            s.add_flange(Vec3::new(92.5, 10.0, 2.0), 30.0, deg.to_radians(), 2.0, "inside", false).unwrap();
+            let (a0, v0) = (flat_area(&s), vol(&s.solid().unwrap()));
+            let f = s.flanges[0].clone();
+            let (start, end, middle) = (f.p, f.p + f.d * f.len, f.p + f.d * (f.len / 2.0));
+            // The bend line runs from the plate's edge y = 0 to y = 20, the bend on its +n side,
+            // square across at its ends; the base's corner at either end is at least 53.13°
+            // wide, the edge running off at (0.6, -0.8) along and across the line. The triangles'
+            // other corners as steps along the line and across it.
+            let cases = [
+                ("on the bend at the line's start", start, [(2.0, 1.0), (0.4, 2.2)], 2.0),
+                ("on the bend at the line's end", end, [(-2.0, 1.0), (-0.4, 2.2)], 2.0),
+                ("on the base at the line's start", start, [(4.0, -1.0), (2.0, -2.0)], 3.0),
+                ("on the base at the line's middle", middle, [(-1.0, -2.0), (1.0, -2.0)], 2.0),
+                ("on the bend at the line's middle", middle, [(-1.0, 2.0), (1.0, 2.0)], 2.0),
+            ];
+            for (what, c, others, area) in cases {
+                let what = format!("{deg}°, {what}");
+                let corners: Vec<Vec2> = std::iter::once(c).chain(others.iter().map(|(u, v)| c + f.d * *u + f.n * *v)).collect();
+                let mut cut = s.clone();
+                cut.holes.push(Region2 { outer: Loop2::polygon(&corners).ccw(), holes: vec![] });
+                assert!((a0 - flat_area(&cut) - area).abs() < 1e-6, "{what}: flat area {}", a0 - flat_area(&cut));
+                let body = cut.solid().unwrap_or_else(|e| panic!("{what}: {e}"));
+                assert!(body.validity().is_empty() && body.shell_count() == 1, "{what}: {:?}", body.validity());
+                assert!((v0 - vol(&body) - area * 2.0).abs() < 0.01, "{what}: {} vs {}", v0 - vol(&body), area * 2.0);
+            }
+            // A 4 mm² triangle standing on the plate's edge y = 20 at x = 40.
+            let mut cut = s.clone();
+            cut.holes
+                .push(Region2 { outer: Loop2::polygon(&[Vec2::new(40.0, 20.0), Vec2::new(38.0, 18.0), Vec2::new(42.0, 18.0)]).ccw(), holes: vec![] });
+            assert!((a0 - flat_area(&cut) - 4.0).abs() < 1e-6, "{deg}°, on the edge: flat area {}", a0 - flat_area(&cut));
+            let body = cut.solid().unwrap_or_else(|e| panic!("{deg}°, on the edge: {e}"));
+            assert!(body.validity().is_empty() && body.shell_count() == 1, "{deg}°, on the edge: {:?}", body.validity());
+            assert!((v0 - vol(&body) - 8.0).abs() < 0.01, "{deg}°, on the edge: {} vs 8", v0 - vol(&body));
+        }
+    }
+
+    /// The plate (0, 0) (100, 0) (85, 20) (0, 20) with a 30 mm inside flange on its slanted edge
+    /// (2 mm sheet, R 2, K 0.5: the folded sheet holds its flat area times the thickness), and a
+    /// triangle cut out of the flat on one side of the bend line only, with a corner a hair (0.01
+    /// or 0.05 µm) from the line, short of it or across: on the base, in the line's middle and
+    /// near its ends; and at either end of the line, where it meets the plate's edge, on the base
+    /// and on the bend. The planar booleans leave such a corner as corners a hair apart, on the
+    /// base and on the bend; joined, they are a corner where the cut-out touches the bend line or
+    /// the plate's edge. So the refold needs both: without the joining it failed with "sew: a
+    /// degenerate edge", without the touching sew with "This wire is not simple".
+    #[test]
+    fn a_cut_out_on_one_side_of_a_bend_line_with_a_corner_a_hair_from_it_refolds() {
+        let rule = RuleValues { bend_radius: 2.0, ..alu() };
+        let outline = [Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0), Vec2::new(85.0, 20.0), Vec2::new(0.0, 20.0)];
+        for deg in [90.0f64, 120.0] {
+            let mut s = base_flange("Body1", "AL2", &rule, Plane::XY, Region2 { outer: Loop2::polygon(&outline).ccw(), holes: vec![] });
+            s.add_flange(Vec3::new(92.5, 10.0, 2.0), 30.0, deg.to_radians(), 2.0, "inside", false).unwrap();
+            let (a0, v0) = (flat_area(&s), vol(&s.solid().unwrap()));
+            let f = s.flanges[0].clone();
+            // The corner at a fraction of the line, the triangle's other corners as steps along the
+            // line and across it (the bend on its +n side; the base's corner at either end of the
+            // line is at least 53.13° wide), and the triangle's area.
+            let cases = [
+                ("on the base in the line's middle", 0.5, [(-1.0, -2.0), (1.0, -2.0)], 2.0),
+                ("on the base near the line's start", 0.16, [(-1.0, -2.0), (1.0, -2.0)], 2.0),
+                ("on the base near the line's end", 0.84, [(-1.0, -2.0), (1.0, -2.0)], 2.0),
+                ("on the base at the line's start", 0.0, [(3.0, -2.0), (2.0, -2.0)], 1.0),
+                ("on the base at the line's end", 1.0, [(-2.0, -2.0), (-3.0, -2.0)], 1.0),
+                ("on the bend at the line's start", 0.0, [(1.25, 2.0), (0.25, 2.0)], 1.0),
+                ("on the bend at the line's end", 1.0, [(-0.25, 2.0), (-1.25, 2.0)], 1.0),
+            ];
+            for (what, along, others, area) in cases {
+                // Across the line toward the bend.
+                for off in [-5e-8, -1e-8, 1e-8, 5e-8] {
+                    let what = format!("{deg}°, {what}, {off} mm across the line");
+                    let c = f.p + f.d * (f.len * along) + f.n * off;
+                    let corners: Vec<Vec2> = std::iter::once(c).chain(others.iter().map(|(u, v)| c + f.d * *u + f.n * *v)).collect();
+                    let mut cut = s.clone();
+                    cut.holes.push(Region2 { outer: Loop2::polygon(&corners).ccw(), holes: vec![] });
+                    assert!((a0 - flat_area(&cut) - area).abs() < 1e-5, "{what}: flat area {}", a0 - flat_area(&cut));
+                    let body = cut.solid().unwrap_or_else(|e| panic!("{what}: {e}"));
+                    assert!(body.validity().is_empty() && body.shell_count() == 1, "{what}: {:?}", body.validity());
+                    assert!((v0 - vol(&body) - area * 2.0).abs() < 0.01, "{what}: {} vs {}", v0 - vol(&body), area * 2.0);
+                }
+            }
         }
     }
 

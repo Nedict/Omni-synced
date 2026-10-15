@@ -300,7 +300,21 @@ thread_local! {
 /// The result carries its exact history ([`Body::history`]) over the operands `[a, b]`,
 /// whichever way it was made, or none where a step it took does not report one.
 pub fn boolean(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
-    let (mut r, mut diagnostics) = capture_boolean_diagnostics(|| boolean_whole(a, b, op));
+    let r = boolean_via(a, b, op, &boolean_whole);
+    if r.is_ok() || !crate::tangent_cylinders::needed(a, b) {
+        return r;
+    }
+    // Equal cylinders crossing each other touch at two points the boolean cannot take in the
+    // middle of a face (#788): once more with the faces split along them.
+    let split = |a: &Body, b: &Body, op| {
+        crate::tangent_cylinders::boolean(a, b, op, &boolean_whole).unwrap_or_else(|| Err(KernelError::Failed("no split of faces helps".into())))
+    };
+    boolean_via(a, b, op, &split).or(r)
+}
+
+/// [`boolean`], the boolean of the whole bodies taken by `whole`.
+fn boolean_via(a: &Body, b: &Body, op: BoolOp, whole: &dyn Fn(&Body, &Body, BoolOp) -> Result<Option<Body>>) -> Result<Option<Body>> {
+    let (mut r, mut diagnostics) = capture_boolean_diagnostics(|| whole(a, b, op));
     // Bodies in several pieces: when the whole failed (or came out empty), a piece at a time.
     let retry = match &r {
         Err(_) => true,
@@ -348,7 +362,7 @@ pub fn boolean(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
         && let Ok(result) = &r
         && let Err(e) = crate::boolean_guard::check_retry(a, b, op, result.as_ref())
     {
-        let tried = diagnostics.warning().unwrap_or_default();
+        let tried = diagnostics.summary().unwrap_or_default();
         r = Err(match e {
             KernelError::Failed(m) => KernelError::Failed(format!("{m} ({})", tried.trim_start_matches("Boolean retry: "))),
             other => other,
@@ -579,6 +593,18 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
             return Ok(Some(body));
         }
     }
+    // Bores on a common cylinder (a pad's bore around the hole it is joined over, a disc filling
+    // a hole). Asked before faces are pushed apart: that doesn't part walls on one cylinder, and
+    // its tries at the general boolean, all failing on those walls, cost seconds.
+    if op == BoolOp::Union && !BORES.with(|c| c.get()) && crate::coplanar::has_coincident_cylinders(a, b) {
+        BORES.with(|c| c.set(true));
+        let (r, diagnostics) = capture_boolean_diagnostics(|| crate::coplanar::bore_union(a, b, &|body| check(body).0));
+        BORES.with(|c| c.set(false));
+        if let Some(body) = r {
+            merge(diagnostics);
+            return Ok(Some(body));
+        }
+    }
     // Coincident planar faces: push them apart (exactly). Tried once, before the general
     // boolean; why it failed is reported if everything else fails too.
     let mut apart_failed = String::new();
@@ -632,20 +658,15 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
     {
         return Ok(Some(body));
     }
-    // Bores on a common cylinder (a pad's bore around the hole it is joined over).
-    if op == BoolOp::Union && !BORES.with(|c| c.get()) && crate::coplanar::has_coincident_cylinders(a, b) {
-        BORES.with(|c| c.set(true));
-        let (r, diagnostics) = capture_boolean_diagnostics(|| crate::coplanar::bore_union(a, b, &|body| check(body).0));
-        BORES.with(|c| c.set(false));
-        if let Some(body) = r {
-            merge(diagnostics);
-            return Ok(Some(body));
-        }
-    }
     // Faces back to back over part of their area: imprinted on each other and glued (exact; held
     // to the retry guard's checks all the same).
     if op == BoolOp::Union && crate::coplanar::faces_touch(a, b) {
         let accept = |body: &Body| check(body).0 && !unfused(body) && crate::boolean_guard::check_retry(a, b, op, Some(body)).is_ok();
+        // Imprinted along the contact's own outline (faces there bounded by lines and arcs), then
+        // along the sides' surfaces.
+        if let Some(body) = crate::outline::outline_union(a, b, &accept) {
+            return Ok(Some(body));
+        }
         if let Some(body) = crate::coplanar::imprint_union(a, b, &accept) {
             return Ok(Some(body));
         }

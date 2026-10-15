@@ -1669,11 +1669,17 @@ pub struct DesignLink {
 /// The document.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
+    /// Named, renderer-independent setups. Device/job state is never saved here.
+    #[serde(default, skip_serializing_if = "crate::render_settings::RenderSettings::is_empty")]
+    pub render: std::sync::Arc<crate::render_settings::RenderSettings>,
     #[serde(default = "default_format")]
     pub format: String,
     pub name: String,
     #[serde(default = "default_units")]
     pub units: String,
+    /// Design properties (project, author…) and other tools' data, kept as they are (#1015).
+    #[serde(default, skip_serializing_if = "crate::Metadata::is_empty")]
+    pub metadata: crate::Metadata,
     pub params: Vec<Param>,
     pub features: Vec<Feature>,
     /// Timeline marker: features at or after this index are rolled back (not evaluated).
@@ -1764,6 +1770,9 @@ pub struct Visibility {
     pub hidden_sketches: Vec<u64>,
     /// Finished sketches shown although a feature uses them.
     pub shown_sketches: Vec<u64>,
+    /// Assembly joints by id: their glyphs are not drawn (they still constrain and move).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden_joints: Vec<u64>,
 }
 
 impl Visibility {
@@ -1774,6 +1783,7 @@ impl Visibility {
             && self.hidden_origin.is_empty()
             && self.hidden_sketches.is_empty()
             && self.shown_sketches.is_empty()
+            && self.hidden_joints.is_empty()
     }
 }
 
@@ -1879,9 +1889,11 @@ impl Default for Document {
 impl Document {
     pub fn new(name: &str) -> Self {
         Document {
+            render: Default::default(),
             format: default_format(),
             name: name.into(),
             units: default_units(),
+            metadata: Default::default(),
             params: Vec::new(),
             features: Vec::new(),
             marker: None,
@@ -1908,6 +1920,18 @@ impl Document {
             named_views: Vec::new(),
             visibility: Visibility::default(),
         }
+    }
+
+    /// A complete structural proof: no non-render field is allowed to differ. Keeping this
+    /// comparison based on the whole Document also includes fields added in future versions.
+    /// The clone/comparison is only needed when render intent actually differs.
+    pub fn differs_only_in_render(&self, previous: &Document) -> bool {
+        if std::sync::Arc::ptr_eq(&self.render, &previous.render) || self.render == previous.render || self.render.validate().is_err() {
+            return false;
+        }
+        let mut normalized = previous.clone();
+        normalized.render = self.render.clone();
+        *self == normalized
     }
 
     /// The colour a body is shown and exported in (sRGB as 0–1 fractions): its appearance,
@@ -2413,8 +2437,14 @@ impl Document {
 
     /// Evaluate an expression against the document's parameters.
     pub fn eval(&self, e: &str, kind: Kind) -> Result<f64> {
-        let (vals, _) = self.param_values();
-        Self::eval_in(&vals, e, kind)
+        // The parameters are evaluated only when the expression names one: most expressions an
+        // agent sends are plain values, and evaluating every parameter of a large design for
+        // each of them made every new feature cost more than the last.
+        let vals: std::cell::OnceCell<std::collections::BTreeMap<String, expr::Value>> = std::cell::OnceCell::new();
+        expr::eval_with(e, &|n| {
+            vals.get_or_init(|| self.param_values().0).get(n).copied().ok_or_else(|| DocError::Expr(format!("unknown parameter `{n}`")))
+        })?
+        .to_kind(kind)
     }
 
     pub fn eval_in(vals: &std::collections::BTreeMap<String, expr::Value>, e: &str, kind: Kind) -> Result<f64> {
