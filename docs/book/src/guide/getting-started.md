@@ -27,6 +27,15 @@ Open the release `.dmg` and drag `SolidCraft.app` onto Applications.
 When updating from a build released under the previous product name, follow the
 [macOS upgrade notes](https://github.com/bherbruck/solidcraft/blob/main/docs/compatibility.md#macos) so you replace it rather than install a second copy.
 
+### Linux AppImage
+
+The first time you open the AppImage it adds a menu entry and icons under `~/.local/share`
+(`applications/ai.storyteller.solidcraft.desktop`, `icons/hicolor`), so the desktop shows the
+right name and icon. It adds nothing if [appimaged](https://github.com/probonopd/go-appimage)
+already made an entry for the file (and removes the entry SolidCraft added before). To
+turn it off for good, create an empty file `~/.local/share/solidcraft/no-desktop-integration`, or
+start the AppImage with `SOLIDCRAFT_NO_DESKTOP_INTEGRATION=1`.
+
 ### Linux Flatpak
 
 Install Flatpak using your distribution's package manager. For an installation that receives
