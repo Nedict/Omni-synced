@@ -42,6 +42,7 @@ mod libraries;
 mod material_properties;
 mod materials;
 mod measure_sel;
+mod measure_shape;
 mod mesh;
 mod metadata;
 pub(crate) mod motion;

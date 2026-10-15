@@ -25,6 +25,7 @@
   "cmd.component_capture_position": "Зафиксировать положение",
   "cmd.component_create": "Новый компонент",
   "cmd.component_delete": "Удалить компонент",
+  "cmd.component_unlock": "Разблокировать содержимое",
   "cmd.component_from_bodies": "Создать компоненты из тел",
   "cmd.component_insert_design": "Вставить дизайн",
   "cmd.component_links": "Список связей",
