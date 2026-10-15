@@ -6,7 +6,7 @@
 //! solidcraft-cli script <design.solidcraft> [--out script.json]     the design's history as a command script
 //! solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only] loading timings as JSON lines
 //! solidcraft-cli bench-agent [--scale F] [--save F] [--script-out F] a ~1,300-body design built command by command, timed
-//! solidcraft-cli snapshot <script|design> --out shot.png [--width W] [--height H] [--view iso|front|top|…]
+//! solidcraft-cli snapshot <script|design> [--in design|part.step] --out shot.png [--width W] [--height H] [--view iso|front|top|…]
 //! solidcraft-cli exec <command> [json-params]                 run one command on an empty design
 //! solidcraft-cli commands                                     the command registry as JSON
 //! solidcraft-cli recipe <recipe.json>                         translate an oracle recipe to a script
@@ -47,7 +47,9 @@ const USAGE: &str = "usage:
       (the design's history as a command script that eval and run replay)
   solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only]
   solidcraft-cli bench-agent [--scale F] [--save design.solidcraft] [--script-out script.json]
-  solidcraft-cli snapshot <script|design> --out shot.png [--width W] [--height H] [--view iso|front|back|top|bottom|left|right]
+  solidcraft-cli snapshot <script|design> [--in design.solidcraft|part.step] --out shot.png [--width W] [--height H] [--view iso|front|back|top|bottom|left|right]
+  solidcraft-cli snapshot --in <design.solidcraft|part.step> --out shot.png ...
+      (as with run, --in starts from a design and the script runs on top of it; an option snapshot doesn't take is an error)
   solidcraft-cli render <script|design> --out image.png [--setup NAME] [--width W] [--height H] [--transparent] [--overwrite] [--timeout SECONDS]
   solidcraft-cli exec <command> [json-params]
   solidcraft-cli commands
@@ -213,26 +215,17 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
     if path.is_none() && base.is_none() {
         return Err(USAGE.to_string());
     }
-    // `--in` starts from a design or STEP file; the positional script then runs on top of it.
-    let mut s = match base {
-        Some(b) => load(b)?,
-        None => Session::default(),
-    };
-    let results = if args.iter().any(|a| a == "--results") {
+    let (mut s, results) = if args.iter().any(|a| a == "--results") {
         // Collect every command's result (scripts only), then process requested files too.
+        let mut s = match base {
+            Some(b) => load(b)?,
+            None => Session::default(),
+        };
         let v = read_json(path.ok_or("--results needs a script")?)?;
         let r = s.run_script(&v).map_err(|e| e.to_string())?;
-        Some(Value::Array(r))
+        (s, Some(Value::Array(r)))
     } else {
-        match (base, path) {
-            (Some(_), Some(p)) => {
-                let v = read_json(p)?;
-                s.run_script(&v).map_err(|e| e.to_string())?;
-            }
-            (None, Some(p)) => s = load(p)?,
-            _ => {}
-        }
-        None
+        (open(base, path)?, None)
     };
     // A feature that fails leaves the bodies as they were before it (a parameter change can
     // break a feature without failing the command that made it): writing them would hand out
@@ -252,6 +245,40 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         // `--quiet` silences stdout; a file that was asked for is still written.
         let m = s.execute("inspect.measure", &json!({})).map_err(|e| e.to_string())?;
         print_json(&m, json_out)?;
+    }
+    Ok(())
+}
+
+/// The session `run` and `snapshot` start from: `--in` (a design or STEP file) with the
+/// positional script run on top of it, or either one alone.
+fn open(base: Option<&str>, path: Option<&String>) -> Result<Session, String> {
+    match (base, path) {
+        (Some(b), Some(p)) => {
+            let mut s = load(b)?;
+            s.run_script(&read_json(p)?).map_err(|e| e.to_string())?;
+            Ok(s)
+        }
+        (Some(b), None) => load(b),
+        (None, Some(p)) => load(p),
+        (None, None) => Err(USAGE.to_string()),
+    }
+}
+
+/// Refuses an option `cmd` doesn't take, and one missing its value: a typo, or another
+/// command's option, would otherwise be ignored without a word.
+fn known_flags(cmd: &str, args: &[String], valued: &[&str]) -> Result<(), String> {
+    let mut i = 0;
+    while let Some(a) = args.get(i) {
+        if valued.contains(&a.as_str()) {
+            match args.get(i + 1) {
+                Some(v) if !v.starts_with("--") => i += 2,
+                _ => return Err(format!("{cmd}: {a} needs a value")),
+            }
+        } else if a.starts_with("--") {
+            return Err(format!("{cmd} doesn't take {a} (it takes {})", valued.join(", ")));
+        } else {
+            i += 1;
+        }
     }
     Ok(())
 }
@@ -304,11 +331,14 @@ fn cmd_script(args: &[String]) -> Result<(), String> {
 }
 
 fn cmd_snapshot(args: &[String]) -> Result<(), String> {
-    let path = args.first().ok_or_else(|| USAGE.to_string())?;
+    known_flags("snapshot", args, &["--in", "--out", "--width", "--height", "--view"])?;
     let out = flag(args, "--out").ok_or("snapshot needs --out FILE.png")?;
-    let w = flag(args, "--width").and_then(|x| x.parse().ok()).unwrap_or(1280usize);
-    let h = flag(args, "--height").and_then(|x| x.parse().ok()).unwrap_or(800usize);
-    let s = load(path)?;
+    let size = |name: &str, default: usize| match flag(args, name) {
+        None => Ok(default),
+        Some(x) => x.parse().ok().filter(|n| (16..=8192).contains(n)).ok_or_else(|| format!("{name} must be 16 to 8192 pixels, not `{x}`")),
+    };
+    let (w, h) = (size("--width", 1280)?, size("--height", 800)?);
+    let s = open(flag(args, "--in"), positional(args))?;
     let mut cam = solidcraft_engine::view::home_camera(&s);
     if let Some(v) = flag(args, "--view") {
         cam.set_view(StandardView::parse(v).ok_or_else(|| format!("unknown view `{v}`"))?);
