@@ -603,7 +603,14 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(K
                 Direction::Symmetric => 1,
                 Direction::Negative => 2,
             };
-            (Surf::Extrude { distance: extent.distance.clone(), direction }, vec![sels])
+            let k = Surf::Extrude { distance: extent.distance.clone(), direction };
+            let mut ins = inputs(&k);
+            if let Some(input) = ins.first_mut() {
+                input.items = sels;
+            }
+            let mut extra = Map::new();
+            extra.insert("convention".into(), json!(extent.convention));
+            return Some((Kind::Surface(k), ins, extra));
         }
         FeatureKind::Patch { sketch, edges, .. } => {
             let mut sels: Vec<Sel> = edges.iter().filter_map(edge).collect();

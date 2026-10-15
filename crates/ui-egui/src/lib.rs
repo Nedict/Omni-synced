@@ -582,6 +582,10 @@ impl SolveApp {
                 if !(id == "view.navigate" && v.get("continuous").and_then(Value::as_bool) == Some(true)) {
                     self.session.echo(language.format("ui.command_done", &[("command", label)]));
                 }
+                if id == "file.new" {
+                    // `file.new` starts from millimetres. Units of new designs still apply (#1205).
+                    prefs::apply_new_design(self);
+                }
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
                     render_workspace::reset_document(self);
                     self.sketch_choices = sketch_families::Choices::default();

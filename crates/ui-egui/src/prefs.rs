@@ -516,6 +516,8 @@ pub fn apply(app: &mut SolveApp, ctx: &egui::Context) {
 }
 
 /// A new, empty design takes the preferred units (not an undo step, not a change to save).
+/// Callers: a launch with no file, New on a design that is already empty, `file.new`, and the
+/// blank design left when the last tab closes. A design that already has features is unchanged.
 pub fn apply_new_design(app: &mut SolveApp) {
     if app.session.doc.features.is_empty() && app.session.doc.units != app.preferences.default_units {
         let saved = !app.session.is_dirty();

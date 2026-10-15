@@ -3291,7 +3291,11 @@ pub(crate) fn extent_sides(vals: &BTreeMap<String, Value>, extent: &crate::Exten
         (Some(d2), _) => (-val(vals, d2, Kind::Length)?, d),
         (None, crate::Direction::Positive) => (0.0, d),
         (None, crate::Direction::Negative) => (-d, 0.0),
-        (None, crate::Direction::Symmetric) => (-d, d),
+        (None, crate::Direction::Symmetric) => {
+            // Through All is a reach computed from target bodies, not an entered total.
+            let half = if extent.through_all { d } else { extent.convention.symmetric_half_distance(d) };
+            (-half, half)
+        }
     })
 }
 

@@ -729,7 +729,11 @@ fn sheet_tool_span(body: &Body, source: &Plane) -> Option<(f64, f64, f64, Option
             }
             // Bound floating point projection separately from model geometry tolerance.
             let roundoff = 128.0 * f64::EPSILON * (plane.origin.len() + current.origin.len() + source.origin.len()).max(1.0);
-            if roundoff > 1e-7 || (current.origin - plane.origin).dot(n).abs() > roundoff {
+            // The cap's current point lies off the recorded plane by the noise of evaluating
+            // its edges, which its fitted tilt shows across the distance between the two points
+            // (8e-12 over 2.4 mm on a 45° flange's drill, #1255; none on axis-aligned caps).
+            let noise = current.normal().cross(n).len() * (current.origin - plane.origin).len();
+            if roundoff > 1e-7 || (current.origin - plane.origin).dot(n).abs() > roundoff + noise {
                 return None;
             }
             projection_roundoff = projection_roundoff.max(roundoff);

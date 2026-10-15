@@ -2087,6 +2087,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         combo(ui, "ex_dir", &["One Side", "Two Sides", "Symmetric"], &mut pos);
                         if pos != order.iter().position(|o| o == direction).unwrap_or(0) {
                             *direction = order.get(pos).copied().unwrap_or(0);
+                            // Selecting Symmetric applies the current total-distance semantics.
+                            d.extra.insert("convention".into(), json!(solidcraft_engine::doc::ExtrudeConvention::TotalDistance));
                             // An explicit direction ends the automatic choices (#1257).
                             smart.manual_dir = true;
                             *auto_op = false;
@@ -4194,6 +4196,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 wall_side: thin.as_ref().map_or(0, |t| WALL_SIDES.iter().position(|w| ThinSide::parse(w) == Some(t.side)).unwrap_or(0)),
                 wall2: thin.as_ref().and_then(|t| t.thickness2.clone()).unwrap_or_else(|| "1 mm".into()),
             };
+            d.extra.insert("convention".into(), json!(extent.convention));
             // Extent references belong to the extrude's authoring frame, including free
             // points. They are not body-local picks (a reference may be on another body).
             let frame = feature_frame(s, f.component);
