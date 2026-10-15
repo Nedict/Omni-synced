@@ -50,6 +50,12 @@ fn job(ui: &egui::Ui, spans: &[Span], size: f32, color: Color32) -> LayoutJob {
     j
 }
 
+/// The host of a web address: `example.com` for `https://example.com/a?b`.
+fn host(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    rest.split(['/', '?', '#']).next().unwrap_or(rest)
+}
+
 /// A paragraph's text, then its links as buttons (a laid-out text cannot be clicked in parts).
 fn spans(ui: &mut egui::Ui, spans: &[Span], size: f32, color: Color32) {
     ui.add(egui::Label::new(job(ui, spans, size, color)).selectable(true).wrap());
@@ -58,7 +64,9 @@ fn spans(ui: &mut egui::Ui, spans: &[Span], size: f32, color: Color32) {
     if !links.is_empty() {
         ui.horizontal_wrapped(|ui| {
             for (label, url) in links {
-                ui.hyperlink_to(RichText::new(label).size(size - 1.0), url).on_hover_text(url);
+                // The text above already shows the label; the button says where it goes.
+                let to = format!("↗ {}", host(url));
+                ui.hyperlink_to(RichText::new(to).size(size - 1.0), url).on_hover_text(format!("{label}: {url}"));
             }
         });
     }
@@ -116,5 +124,15 @@ pub fn show(ui: &mut egui::Ui, slot: usize, src: &str) {
             }
         }
         ui.add_space(3.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_link_button_names_the_host() {
+        assert_eq!(super::host("https://example.com/a?b#c"), "example.com");
+        assert_eq!(super::host("http://localhost:8080/x"), "localhost:8080");
+        assert_eq!(super::host("https://a.b"), "a.b");
     }
 }
