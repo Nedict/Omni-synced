@@ -229,6 +229,10 @@
 //!   transformation: a link without `coupling` is a plain motion link, as it always was; 0.13.0
 //!   (which reads up to 22) asks for an update instead of keeping a gear's ratio when its radius
 //!   changes.
+//!   Also under 23, an Import's `file` can name a FreeCAD `.FCStd` or Rhino `.3dm` file (#1435,
+//!   read through cadmpeg); its `step` is still the STEP text the file was restated as, so the
+//!   feature's fields are unchanged and version 22 designs need no transformation; 0.13.x asks
+//!   for an update before it meets these imports.
 //! - 24: an explicit plane (a mirror's, or any plane reference) can be `placed`: an `origin` of
 //!   three length expressions with `x_dir` and `y_dir`, so it follows the design's parameters
 //!   (#1492). A plane whose origin is plain numbers is still saved as `custom`. Version 22 designs

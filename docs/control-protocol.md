@@ -97,6 +97,17 @@ read in the design's units, exactly as if it were typed into the dimension box: 
 unit regardless of the design, pass an expression with one: `"value": "50 mm"` or
 `"value": "0.5 in"`. Angles are degrees unless the expression says otherwise.
 
+The viewport also shows an X/Y/Z-aligned dimension chain between the endpoints of the
+currently shown distance (centre, minimum or maximum), with each world-axis distance
+labelled separately as an absolute value (including zero).
+It uses the design's units and length precision, independently of the view or sketch plane.
+Preferences → Graphics → **Show X/Y/Z distances** controls these extra lines and
+labels (default on, saved between runs). Set `ui.prefs {"measure_axis_distances": false}`
+to hide them while keeping the total distance and the dialog's ΔX/ΔY/ΔZ values. These
+overlays remain visible until Measure closes.
+Overlay handles `measure:label:x`, `measure:label:y` and `measure:label:z` identify the extra
+labels; `prefs:measure_axis_distances` identifies the checkbox.
+
 ## UI
 
 | Method | Params | Notes |

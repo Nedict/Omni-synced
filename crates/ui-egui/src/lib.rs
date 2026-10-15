@@ -63,6 +63,8 @@ pub mod issue_report;
 pub mod keymap;
 mod material_card_review;
 #[cfg(test)]
+mod measurement_ui_tests;
+#[cfg(test)]
 mod menu_tests;
 #[cfg(test)]
 mod surface_clamp_tests;
@@ -642,7 +644,7 @@ impl SolveApp {
                     // applying cancellation hooks (such as restoring its timeline marker).
                     self.dialog = None;
                     self.tool = None;
-                    self.preview = preview::PreviewState::default();
+                    self.preview.reset();
                     self.cam = Camera::default();
                     self.fit_view();
                 }

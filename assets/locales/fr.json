@@ -1,4 +1,6 @@
 {
+  "settings.measure_axis_distances": "Afficher les cotes X/Y/Z",
+  "settings.measure_axis_distances_help": "Afficher les cotes suivant les axes du repère global en plus de la distance totale pendant la mesure.",
   "Send your report on GitHub": "Envoyer votre rapport sur GitHub",
   "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. Ouvrir le brouillon GitHub ci-dessous, puis coller le rapport copié dans le presse-papiers.",
   "1. Open GitHub draft below. Your title and report will be filled in.": "1. Ouvrir le brouillon GitHub ci-dessous. Votre titre et votre rapport y seront déjà remplis.",

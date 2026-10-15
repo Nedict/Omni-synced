@@ -1,4 +1,6 @@
 {
+  "settings.measure_axis_distances": "Відстані X/Y/Z",
+  "settings.measure_axis_distances_help": "Показувати розміри вздовж світових осей разом із загальною відстанню, поки відкрите вікно вимірювання.",
   "Send your report on GitHub": "Надіслати звіт на GitHub",
   "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. Відкрийте чернетку GitHub нижче, а потім вставте звіт, скопійований у буфер обміну.",
   "1. Open GitHub draft below. Your title and report will be filled in.": "1. Відкрийте чернетку GitHub нижче. Заголовок і звіт буде заповнено.",

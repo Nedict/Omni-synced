@@ -136,7 +136,9 @@ rebuild with no errors, replayed here at 2× speed.
   STEP import (AP203/AP214/AP242 solids, assemblies, units, names, colours) and IGES import
   (manifold solid B-reps, or trimmed and bounded surfaces sewn into solids) as a base feature
   that later features build on — open a `.step`/`.stp`/`.igs`/`.iges` file, insert one into a
-  design, or drop it on the window ([docs/step-import.md](docs/step-import.md)).
+  design, or drop it on the window ([docs/step-import.md](docs/step-import.md)); FreeCAD
+  `.FCStd` and Rhino `.3dm` solids import the same way through
+  [cadmpeg](https://github.com/cadmpeg/cadmpeg) in the desktop app and CLI.
 - **Render:** opaque surfaces can use metal fraction, roughness and dielectric IOR in the
   integrated product viewport and CPU preview PNGs. Existing simple colors remain supported.
   Fixed direct lighting is a preview; HDRI, refraction and texture maps are not implemented.

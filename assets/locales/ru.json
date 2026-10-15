@@ -1,4 +1,6 @@
 {
+  "settings.measure_axis_distances": "Расстояния X/Y/Z",
+  "settings.measure_axis_distances_help": "Показывать размеры вдоль мировых осей вместе с общим расстоянием, пока открыто окно измерения.",
   "browser.body_name": "Тело{number}",
   "browser.component_name": "Компонент{number}",
   "browser.parameters": "Параметры ({count})",

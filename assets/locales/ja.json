@@ -1,4 +1,6 @@
 {
+  "settings.measure_axis_distances": "計測のX・Y・Z距離を表示",
+  "settings.measure_axis_distances_help": "計測ダイアログを開いている間、2点間距離に加えてワールドX・Y・Z軸方向の寸法線と距離を表示します。",
   "Send your report on GitHub": "GitHubでレポートを送信",
   "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. 下のボタンでGitHubの下書きを開き、クリップボードにコピーされたレポートを貼り付けます。",
   "1. Open GitHub draft below. Your title and report will be filled in.": "1. 下のボタンでGitHubの下書きを開きます。タイトルとレポートは入力済みです。",

@@ -1,4 +1,6 @@
 {
+  "settings.measure_axis_distances": "Show X/Y/Z distances",
+  "settings.measure_axis_distances_help": "Show world-axis component dimensions alongside the total distance while Measure is open.",
   "Send your report on GitHub": "Send your report on GitHub",
   "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. Open GitHub draft below, then paste the report copied to your clipboard.",
   "1. Open GitHub draft below. Your title and report will be filled in.": "1. Open GitHub draft below. Your title and report will be filled in.",

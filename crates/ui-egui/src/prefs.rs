@@ -283,6 +283,8 @@ pub struct Prefs {
     pub supersampling: f32,
     /// Supersample only while the view holds still (full speed while orbiting).
     pub supersampling_adaptive: bool,
+    /// Show world X/Y/Z component dimensions beside the total distance in Measure.
+    pub measure_axis_distances: bool,
     /// Decimals shown for lengths and angles.
     pub length_decimals: u8,
     pub angle_decimals: u8,
@@ -396,6 +398,7 @@ impl Default for Prefs {
             display_quality: "normal".into(),
             supersampling: 1.0,
             supersampling_adaptive: true,
+            measure_axis_distances: true,
             length_decimals: 2,
             angle_decimals: 1,
             theme: "dark".into(),
@@ -618,6 +621,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.display_quality = d.display_quality;
             p.supersampling = d.supersampling;
             p.supersampling_adaptive = d.supersampling_adaptive;
+            p.measure_axis_distances = d.measure_axis_distances;
             p.color_vision = d.color_vision;
             app.ui.visual_style = 0;
             app.ui.show_grid = true;
@@ -1278,9 +1282,12 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 _ => "CPU (software)".to_string(),
             });
             ui.end_row();
-            // Colour vision (#778): its own section at the end of the page.
-            ui.label("");
+            ui.label(app.tr("settings.measure_axis_distances"));
+            let response = ui.checkbox(&mut app.preferences.measure_axis_distances, "");
+            crate::scenario::publish_rect("prefs:measure_axis_distances", response.rect);
+            response.on_hover_text(app.tr("settings.measure_axis_distances_help"));
             ui.end_row();
+            // Colour vision (#778): its own section at the end of the page.
             ui.label(RichText::new(app.tr("ui.colour_vision")).strong());
             ui.label("");
             ui.end_row();

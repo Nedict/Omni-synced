@@ -118,6 +118,15 @@ impl PreviewState {
         }
     }
 
+    /// Drop the preview of a design that leaves the window. Its scene goes too: the viewport
+    /// keeps drawing the last scene it took until the slot it reads hands it another, so a fresh
+    /// state (another slot, empty) would leave the old preview drawn over the next design.
+    pub fn reset(&mut self) {
+        let (slot, key) = (std::mem::take(&mut self.slot), self.key);
+        *self = PreviewState { slot, key, ..PreviewState::default() };
+        self.set_scene(GpuScene::default());
+    }
+
     fn set_scene(&mut self, sc: GpuScene) {
         if let Ok(mut slot) = self.slot.lock() {
             *slot = Some(sc);
@@ -1051,6 +1060,28 @@ mod tests {
         tx.send(Err("too far".into())).unwrap();
         pv.poll(4, None);
         assert!(pv.error.is_none() && pv.shown_key == Some(1), "an old error is dropped");
+    }
+
+    /// A design leaving the window (another tab) takes its preview off the viewport: an empty
+    /// scene in the slot the viewport reads, under a new key. A fresh slot left the fillet
+    /// preview of the old design drawn over the new tab's empty design.
+    #[test]
+    fn reset_hands_the_viewport_an_empty_scene() {
+        let mut pv = PreviewState::default();
+        let mut sc = GpuScene::default();
+        sc.xray_tri([0.0; 3], [0.0, 0.0, 1.0], [255; 4]);
+        pv.set_scene(sc);
+        pv.active = true;
+        pv.replaced = vec!["Body1".into()];
+        let slot = pv.slot.clone();
+        let key = pv.key;
+        // The viewport took the scene.
+        assert!(slot.lock().unwrap().take().is_some_and(|s| !s.xray.is_empty()));
+        pv.reset();
+        assert!(std::sync::Arc::ptr_eq(&slot, &pv.slot), "the slot the viewport reads");
+        assert_ne!(pv.key, key, "a new key: the viewport takes the slot again");
+        assert!(slot.lock().unwrap().as_ref().is_some_and(|s| s.xray.is_empty() && s.blocks.is_empty()));
+        assert!(!pv.active && pv.replaced.is_empty());
     }
 }
 
