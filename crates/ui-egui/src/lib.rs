@@ -55,6 +55,7 @@ mod i18n_menu_tests;
 mod i18n_ui_tests;
 pub mod icons;
 pub mod inference;
+pub mod install;
 pub mod issue_report;
 pub mod keymap;
 #[cfg(test)]
@@ -244,6 +245,8 @@ pub struct Services {
     pub http_get: Option<update::HttpGet>,
     /// HTTPS download to a file, with progress, for one-click updates (`update::install`).
     pub http_download: Option<update::install::HttpDownload>,
+    /// The browser's offer to install the web app (`install`); None: no Install button (desktop).
+    pub install_app: Option<install::InstallApp>,
 }
 
 pub struct SolveApp {
@@ -286,6 +289,8 @@ pub struct SolveApp {
     pub crashes: crash_ui::CrashUi,
     /// The update check and its window (`update`).
     pub updater: update::Updater,
+    /// Safari's steps for installing the web app, while their window is open (`install`).
+    pub install_steps: Option<install::Steps>,
     /// Toolbar buttons the user pinned, removed or reordered.
     pub toolbar_custom: toolbar_custom::ToolbarCustom,
     pub sketch_choices: sketch_families::Choices,
@@ -394,6 +399,7 @@ impl SolveApp {
             issue_report: issue_report::ReportState::default(),
             crashes: crash_ui::CrashUi::default(),
             updater: update::Updater::default(),
+            install_steps: None,
             toolbar_custom: toolbar_custom::ToolbarCustom::default(),
             sketch_choices: sketch_families::Choices::default(),
             preferences: prefs::Prefs::default(),
@@ -1261,6 +1267,7 @@ impl SolveApp {
         file_load::show(self, ui.ctx());
         documents::prompt(self, ui.ctx());
         update::show(self, ui.ctx());
+        install::show(self, ui.ctx());
         if self.home.open {
             home::show(self, ui);
             if self.home.open {

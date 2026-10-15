@@ -214,6 +214,10 @@
 //!   whose imports sit loose in a component are left as they are. The version stamp makes
 //!   0.12.0 (which reads up to 21) ask for an update instead of building those instances again
 //!   on top of their occurrences.
+//!   Also under 22, a number in an expression can be written with a decimal comma outside
+//!   parentheses (`2,5 mm` is `2.5 mm`, #1347; inside a function's parentheses the comma still
+//!   separates its arguments). Nothing new is saved, but an expression typed that way is saved as
+//!   typed; 0.12.0 asks for an update instead of failing to evaluate it.
 
 use serde_json::Value;
 
