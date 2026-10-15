@@ -158,6 +158,7 @@ pub(super) fn fixtures() -> Vec<(&'static str, Value)> {
                 "orientation": "parallel", "twist": "surface_sweep.twist", "scale": "surface_sweep.scale"}),
         ),
         ("surface_loft", json!({"type": "surface_loft", "sections": []})),
+        ("surface_blend", json!({"type": "surface_blend", "from": {"body": "B", "edges": [o]}, "to": {"body": "C", "edges": [o]}, "align": [o, o]})),
         ("surface_offset", json!({"type": "surface_offset", "faces": [o], "distance": "soff.distance", "tolerance": "soff.tolerance"})),
         ("unstitch", json!({"type": "unstitch", "body": "B"})),
         ("reverse_normal", json!({"type": "reverse_normal", "body": "B"})),
