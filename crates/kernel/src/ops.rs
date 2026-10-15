@@ -500,15 +500,11 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
         // A tool that misses its target, or covers it whole, leaves it as it is, and the
         // sampled shortcut below answers that by reusing the operand itself: the very same body.
         // The 2D route rebuilds it instead - the same shape on new faces - which would turn an
-        // untouched body in a timeline into a different solid. Those pairs go back to the path
-        // below, which decides them, and the identity they keep, exactly as it always has.
-        let unchanged = 1e-4 * (va0 + vb0);
-        let rebuilt_from_an_operand = match op {
-            BoolOp::Cut => v0 >= va0 - unchanged,
-            BoolOp::Intersect => (v0 - va0).abs() <= unchanged || (v0 - vb0).abs() <= unchanged,
-            BoolOp::Union => false,
-        };
-        if !rebuilt_from_an_operand && plausible(v0, op, va0, vb0, slack0) {
+        // untouched body in a timeline into a different solid. The route declines those pairs
+        // itself, from its exact sections (a volume measured off meshes could not tell an
+        // engraving of thin strokes from no change), and they take the path below, which
+        // decides them, and the identity they keep, exactly as it always has.
+        if plausible(v0, op, va0, vb0, slack0) {
             return Ok(Some(body.clone()));
         }
     }
@@ -733,6 +729,19 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
         None
     };
     for (attempt, j) in JITTER.iter().enumerate() {
+        // The operands as they lie failed. A planar tool beside the target's curved faces (a tooth
+        // or a pocket cut next to a round edge) is decided exactly in the slab it lies in, where
+        // the target is planar too, before the shifted tries: that is where they end anyway, as a
+        // retry, after costing several times as much (on every copy of a pattern, #1197).
+        if attempt == 1 && matches!(op, BoolOp::Cut | BoolOp::Intersect) {
+            let (sliced, diagnostics) = capture_boolean_diagnostics(|| crate::polybool::sliced_planar_boolean(a, b, op));
+            if let Some(Ok(Some(body))) = sliced
+                && check(&body).0
+            {
+                merge(diagnostics);
+                return Ok(Some(body));
+            }
+        }
         let shift = mt::Vector3::new(j[0], j[1], j[2]) * (size * 0.01);
         for k in [2e-3, 5e-4] {
             let tol = (size * k).max(1e-5);

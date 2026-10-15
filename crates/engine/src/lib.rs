@@ -833,6 +833,12 @@ impl Session {
         self.active_component = computed.active_component;
         self.active_occurrence_path = computed.active_occurrence_path;
         self.pending_moves = computed.pending_moves;
+        // Joints the computation hid (an import's rigid group) stay hidden.
+        for j in computed.visibility.hidden_joints {
+            if !self.visibility.hidden_joints.contains(&j) {
+                self.visibility.hidden_joints.push(j);
+            }
+        }
         for message in computed.log {
             self.echo(message);
         }
@@ -940,6 +946,8 @@ mod hole_face_tests;
 mod hole_matrix_tests;
 #[cfg(test)]
 mod large_assembly_tests;
+#[cfg(test)]
+mod measure_centre_tests;
 #[cfg(test)]
 mod naming_history_tests;
 #[cfg(test)]
