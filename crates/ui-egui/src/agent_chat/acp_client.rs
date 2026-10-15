@@ -43,7 +43,7 @@ impl AcpBackend {
     /// Start `argv` and say hello (`initialize`); the session follows when the agent answers.
     pub fn start(argv: &[String], ctx: StartContext) -> Result<AcpBackend, String> {
         let wake = ctx.wake;
-        let proc = AgentProcess::spawn(argv, &ctx.cwd, ENV_REMOVE, move || wake())?;
+        let proc = AgentProcess::spawn(argv, &ctx.cwd, ENV_REMOVE, wake)?;
         let mut b = AcpBackend {
             proc,
             cwd: ctx.cwd,
