@@ -164,13 +164,14 @@ fn copy(s: &mut Session, p: &Value) -> Result<Value> {
         clip.constraints.push(ClipConstraint { kind, param, driven: c.driven, text: c.text });
     }
     for t in &texts {
-        let Some(LinkSource::Text { text, at, height, angle, font, mut style }) = sk.link(t).map(|l| l.source.clone()) else { continue };
+        let Some(mut src) = sk.link(t).map(|l| l.source.clone()) else { continue };
+        let LinkSource::Text { style, .. } = &mut src else { continue };
         // A text on a path copied with its path follows the copy; otherwise it is set straight.
         let path = style.path.as_deref().and_then(|pid| sk.curve_index(pid)).and_then(|pc| cmap.get(&pc).copied());
         if path.is_none() {
             style.path = None;
         }
-        clip.texts.push((LinkSource::Text { text, at, height, angle, font, style }, path));
+        clip.texts.push((src, path));
     }
     // Bounds of everything copied, as drawn.
     let mut lo = Vec2::new(f64::INFINITY, f64::INFINITY);
@@ -291,9 +292,13 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let mut curve_ids: Vec<String> = made.iter().filter_map(|i| sk.curves.get(*i).map(|c| c.id.clone())).collect();
         for (src, path) in &clip.texts {
-            let LinkSource::Text { text, at, height, angle, font, mut style } = src.clone() else { continue };
+            let mut src = src.clone();
+            let LinkSource::Text { at, style, exprs, .. } = &mut src else { continue };
             style.path = path.and_then(|k| made.get(k)).and_then(|i| sk.curves.get(*i)).map(|c| c.id.clone());
-            let src = LinkSource::Text { text, at: at + t, height, angle, font, style };
+            *at += t;
+            // The copy sits where it was pasted: its place no longer follows the original's expressions.
+            exprs.x = None;
+            exprs.y = None;
             let geom = sk.text_source_geometry(&src)?;
             let link = sk.add_link(LinkKind::Text, src, &geom)?;
             curve_ids.extend(sk.link_curves(&link).into_iter().filter_map(|i| sk.curves.get(i).map(|c| c.id.clone())));
