@@ -180,7 +180,9 @@ pub fn seam_continuity(made: &Body, target: &Body, target_pick: &[Vec3]) -> Resu
                 return Err(KernelError::Failed("match: the target has no frames".into()));
             };
             let (_, t_made, bend_made, change_made) = seam_shape(&surf, &ranges, near, t)?;
-            if let (Some((n_made, _)), Some((n_target, _))) = (normal_near(&face, p), normal_near(target_face, p)) {
+            if let Some((n_made, _)) = normal_near(&face, p)
+                && let Some((n_target, _)) = normal_near(target_face, p)
+            {
                 deg = deg.max(angle_deg(n_made, n_target));
             }
             let scale = frame.bend.len().max(bend_made.len()).max(1.0 / size);
