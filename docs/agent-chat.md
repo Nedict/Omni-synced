@@ -136,6 +136,12 @@ using one of SolidCraft's tools, SolidCraft answers for you, since its own gate 
 and notes it in the chat as *Auto-allowed*. With **Allow everything**, or after **Always allow**,
 the agent's other questions are answered the same way and noted too.
 
+What counts as "a command given a file name": a parameter that holds a file or folder (`file`,
+`dir`, `output`, …), or `path` and `source` when the value reads like a file name (a separator, `~`,
+a leading dot or a known extension), or any value of those in a command that exports, imports,
+saves, opens or inserts. A sweep's or pattern's `path` (curve ids) and an occurrence's `path`
+(ids) are geometry and run without a question.
+
 ## What it can't do
 
 - **Files wait for you** unless you chose **Allow everything**. **Cancel** or **Stop** declines
