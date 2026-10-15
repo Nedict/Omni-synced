@@ -60,7 +60,7 @@ A slider's value grows as b moves along +z of its origin. Give its two origins t
 
 - `joint.as_built` takes occurrences, not origins. `at` is the joint's frame (default: b's component origin).
 - `joint.rigid_group` joins every occurrence to the first one with a rigid as-built joint.
-- `joint.motion_link`: b = ratio·a + offset, clamped to b's limits. `ia`/`ib` pick a value of a multi-value joint (default 0). `joint.delete {"link": n}` removes link n (its index in `joint.list` `links`).
+- `joint.motion_link`: b = ratio·a + offset, clamped to b's limits. `offset` is a plain number in radians for an angle and mm for a distance: 10 degrees is `0.17453`. `ia`/`ib` pick a value of a multi-value joint (default 0). `joint.delete {"link": n}` removes link n (its index in `joint.list` `links`).
 - `joint.drive`: `values` drives the values it lists, in order (`Spindle` above is cylindrical: 30 degrees, then 5 mm); values left out keep theirs, or follow in a closed loop. `value` drives the first value and **resets the others to 0**, so use `values` on a joint with several. Values are clamped to the limits.
 - `motion.study {"study":..., ...}` edits a study; `keys` given replace all keys.
 - `motion.play` sets the joints to the study's values at a step (fractions work) and changes the design. `motion.export` does not change it.
@@ -119,11 +119,12 @@ The same pattern moved the solar wings of the SELENE rover (`Rover-v7.solidcraft
 |---|---|
 | A part turns 180 degrees when joined; a loop reports "off by ... and 180 degrees" | `flip` left out. Pass `flip: true`, or `joint.edit {"joint":..., "flip":true}`. |
 | A part turns by some other angle when joined | The two origins have different forms or x axes. Use `point` + `z` on both sides, or `joint.as_built`. |
-| `joint.drive` or `motion.play` answers values and `conflicts: 0`, and nothing moves | The chain is joined to nothing grounded (`dof: 6` in `joint.list`). Ground it, join it, or `joint.rigid_group` it with the structure. |
+| `joint.drive` or `motion.play` answers values and no conflicts (`[]` from a drive, `0` from play), and nothing moves | The chain is joined to nothing grounded (`dof: 6` in `joint.list`). Ground it, join it, or `joint.rigid_group` it with the structure. |
 | `joint.drive` answers `values: [0.349]` after a drive to 20 | Its `values` are radians. `joint.list` answers degrees with `unit`. |
 | A drive stops short, `stopped_by_loop` | A loop reached a limit or can't close further; `joint` names the joint that stopped it. Check the limits against your stroke numbers. |
 | A part of a loop reports `dof: 0` at the pose it was modelled in, and moves once driven | `dof` is counted at the current pose. A part whose motion vanishes there (an actuator in line with the path of its tip pin, so it only extends) counts 0. Drive a little and list again. |
 | A cylindrical, pin-slot, planar or ball joint loses its other values after a drive | `joint.drive {"value":v}` resets every value but the first to 0. Drive with `values: [v]`, which keeps the ones it leaves out. |
+| A linked angle is off by far more than its `offset` | `joint.motion_link` reads `offset` in radians for angles: `"offset":10` adds 573 degrees. |
 | A linked joint stops following | Its value is clamped to its own limits. Hinge 2 in the example has `[[-60, 0]]`, so a drive of Hinge below 0 leaves it at 0. Give a mirrored joint the mirrored limits. |
 | A drive stops short, `stopped_by_contact` | Two bodies of a contact set touch. `fraction` is how far the move got. |
 | `occurrence.ground` says there is no occurrence `Frame` | It takes occurrence names only: `Frame:1`. |

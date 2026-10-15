@@ -13,7 +13,7 @@ Written against SolidCraft `main` after 0.11.1, which counts the degrees of free
 ## Before the first call
 1. Read `reference.md`.
 2. **Open:** if the design is not open yet, run `open {path}`. When the server is bridged to the app and the current design is `dirty`, ask before opening anything.
-3. **Map it:** run `inspect_design {"measure":false,"sketches":false}`, then `execute joint.list`. `joint.list` shows `fixed` (the grounded occurrences), `dof` per occurrence, `conflicts`, the joints, links and named origins, at about 0.5 KB per joint. `execute motion.list` lists the motion studies.
+3. **Map it:** run `inspect_design {"measure":false,"sketches":false}`, then `execute joint.list`. `joint.list` shows `fixed` (the grounded occurrences, always with the root, 0), `dof` per occurrence, `conflicts`, the joints, links and named origins, at about 0.5 KB per joint. `execute motion.list` lists the motion studies.
 4. **Existing design:** take `edit.checkpoint` in its own call before you move bodies into components. `edit.restore_checkpoint {checkpoint}` goes back exactly.
 5. **Write the plan:**
    - the components, and which one is grounded
@@ -37,10 +37,10 @@ Written against SolidCraft `main` after 0.11.1, which counts the degrees of free
 - **Pass `flip: true`** when both origins are the same world point and axis, which is the case when you join parts where they sit. Without it, b's z mates against a's and part b turns 180 degrees.
 - **Parts already in place:** `joint.as_built {"type":..., "a":..., "b":..., "at":{origin}, "name":..., "limits":[[min,max]]}` keeps them where they are.
 - **Values and limits** are degrees for angles and mm for distances. An angle turns right-handed about the joint's z. A drive past a joint's own limits is clamped to them, which is not a failure. On a joint with several values, drive with `values`: `value` resets all but the first to 0.
-- **Every chain must reach something grounded.** A part that is neither grounded nor joined to a grounded part is never placed. A drive on a joint in that chain answers with the new value and `conflicts: 0`, and nothing moves. `dof: 6` on an occurrence in `joint.list` is the sign. Fix it with `joint.rigid_group {"occurrences":["Frame:1", ...]}`, or with a joint to the grounded structure.
+- **Every chain must reach something grounded.** A part that is neither grounded nor joined to a grounded part is never placed. A drive on a joint in that chain answers with the new value and no conflicts, and nothing moves. `dof: 6` on an occurrence in `joint.list` is the sign. Fix it with `joint.rigid_group {"occurrences":["Frame:1", ...]}`, or with a joint to the grounded structure.
 
 ## Linked and closed motion
-- **Motion links:** `joint.motion_link {"a":..., "b":..., "ratio":r, "offset":o}` sets b = r·a + o, clamped to b's own limits. A mirrored part takes `ratio: -1`, and limits mirrored too. Chains (a drives b, b drives c) work in any order of creation. Drive only the head of a chain.
+- **Motion links:** `joint.motion_link {"a":..., "b":..., "ratio":r, "offset":o}` sets b = r·a + o, clamped to b's own limits. `offset` is in radians for an angle (mm for a distance), unlike every other joint value. A mirrored part takes `ratio: -1`, and limits mirrored too. Chains (a drives b, b drives c) work in any order of creation. Drive only the head of a chain.
 - **Closed loops:** an actuator between a frame and a hinged panel takes three joints besides the hinge:
   - a revolute root pin (frame and barrel)
   - a slider (barrel and rod), with z along the actuator from root to tip on both origins, both at the root pin, and the stroke as its limits
