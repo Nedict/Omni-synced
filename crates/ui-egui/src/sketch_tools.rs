@@ -106,7 +106,8 @@ fn continuity_legend(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     }
     let tk = crate::theme::Tokens::get();
     let [smooth, jump, sharp, gap] = tk.continuity;
-    let rows = [("G2 curvature", smooth), ("G1 tangent", jump), ("G0 crease", sharp), ("Gap", gap)];
+    let tr = crate::i18n::tr_label;
+    let rows = [(tr("G2 curvature"), smooth), (tr("G1 tangent"), jump), (tr("G0 crease"), sharp), (tr("Gap"), gap)];
     let font = egui::FontId::proportional(12.0);
     let (row, pad, swatch) = (18.0, 8.0, 22.0);
     let text_width = rows.iter().map(|(label, _)| painter.layout_no_wrap(label.to_string(), font.clone(), tk.text).size().x).fold(0.0, f32::max);
