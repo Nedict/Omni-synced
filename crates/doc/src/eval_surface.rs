@@ -3,7 +3,7 @@
 //! `surface_offset`, `surface_ruled`, `surface_untrim`).
 
 use super::*;
-use crate::{RuledCorners, RuledMode, SheetSection};
+use crate::{RuledCorners, RuledMode};
 use solidcraft_geom::Seg2;
 
 pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut ModelState, warning: &mut Option<String>) -> Result<()> {
