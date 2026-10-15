@@ -1981,7 +1981,7 @@ fn fillet_sharp_arc_and_arc_loop() {
 #[test]
 fn fillet_tabbed_plate_outer_loop_and_partial_selection_after_hole() {
     use solidcraft_geom::Seg2;
-    // Reconstruct #485's outer outline from its seven public pick coordinates:
+    // Reconstruct the outer outline from its seven public pick coordinates:
     // R25 plate, x=+/-4 tab sides, R2 corners and a 4 mm straight top.
     // The hole's dimensions come from the public reproduction, not an original design file.
     let theta = (4.0_f64 / 25.0).acos();

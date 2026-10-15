@@ -1770,7 +1770,7 @@ fn loop_split(cur: &Body, pts: &[Vec3]) -> Result<Option<(Vec<Vec<Vec3>>, Vec<Ve
     }
     // Fillets follow tangent chains in the original body. Include those edges before
     // recognising a whole loop, too: two picks across a sharp arc/line joint can cover
-    // the entire rim once each pick's smooth chain is included (#485).
+    // the entire rim once each pick's smooth chain is included.
     let ids = guard("loop tangent chains", || {
         let mut ids: std::collections::HashSet<mt::EdgeID> = per.iter().map(|x| x.1).collect();
         for (_, id) in &per {
