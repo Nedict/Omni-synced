@@ -497,7 +497,7 @@ fn path_row(ui: &mut egui::Ui, k: &mut Tx, inputs: &mut [SelInput], active: &mut
         };
         let stroke = if k.picking { egui::Stroke::new(1.5, t.accent) } else { egui::Stroke::new(1.0, t.dialog_border.gamma_multiply(1.6)) };
         let chip = egui::Button::new(text).fill(if on { t.chip } else { egui::Color32::TRANSPARENT }).stroke(stroke).min_size(egui::vec2(0.0, 22.0));
-        let chip = ui.add(chip).on_hover_text(crate::i18n::tr("sketch_text.path_hint"));
+        let chip = crate::frame::add_outlined(ui, chip, stroke.width).on_hover_text(crate::i18n::tr("sketch_text.path_hint"));
         crate::scenario::publish_handle("dialog:Path", chip.rect.center());
         if chip.clicked() {
             k.picking = true;

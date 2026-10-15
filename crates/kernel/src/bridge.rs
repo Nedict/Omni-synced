@@ -97,7 +97,7 @@ pub fn chain(body: &Body, at: &[Vec3]) -> Result<Vec<mt::Edge>> {
     }
     let mut pool: Vec<mt::Edge> = Vec::new();
     for p in at {
-        let e = crate::surfaces::edge_near(body, *p).ok_or_else(|| KernelError::Invalid(format!("no edge near {p:?}")))?;
+        let e = crate::surfaces::edge_near(body, *p).ok_or_else(|| KernelError::Invalid("no edge near a picked point".to_string()))?;
         if !pool.iter().any(|x| x.id() == e.id()) {
             pool.push(e);
         }
@@ -223,9 +223,9 @@ pub fn frames(face: &mt::Face, edges: &[mt::Edge], leave: Vec3, count: usize) ->
         let n = Vec3::new(normal.x, normal.y, normal.z)
             .normalized()
             .ok_or_else(|| KernelError::Failed("bridge: the support surface has no normal".into()))?;
-        let w = (leave - n * leave.dot(n)).normalized().ok_or_else(|| {
-            KernelError::Invalid(format!("the leave direction {leave:?} is normal to the support surface: it has no tangent plane there"))
-        })?;
+        let w = (leave - n * leave.dot(n))
+            .normalized()
+            .ok_or_else(|| KernelError::Invalid("the leave direction is normal to the support surface: it has no tangent plane there".to_string()))?;
         // Parameter-space direction that leaves in `w` at unit 3D speed: S_u·du + S_v·dv = w.
         let su = tangent(&surf, u, v, range_u, true);
         let sv = tangent(&surf, u, v, range_v, false);

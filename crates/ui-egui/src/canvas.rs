@@ -527,17 +527,12 @@ fn drag_arrow(
 ) -> Option<Pos2> {
     let t = Tokens::get();
     let min = 40.0 * 2.0 * half_height / f64::from(proj.rect.height().max(1.0));
-    let shown = if l.abs() < min { min * if l < 0.0 { -1.0 } else { 1.0 } } else { l };
-    let ts = proj.to_screen(base + n * shown)?;
-    crate::scenario::publish_handle(if id == egui::Id::new("sc_manipulator") { "arrow" } else { "arrow2" }, ts);
+    let tip = |length: f64| {
+        let shown = if length.abs() < min { min * if length < 0.0 { -1.0 } else { 1.0 } } else { length };
+        proj.to_screen(base + n * shown)
+    };
+    let mut ts = tip(l)?;
     let r = ui.interact(egui::Rect::from_center_size(ts, vec2(20.0, 20.0)), id, egui::Sense::drag());
-    let hot = r.hovered() || r.dragged();
-    let col = if hot { t.accent } else { t.manipulator };
-    arrow(painter, bs, ts, col);
-    if hot {
-        painter.circle_stroke(ts, 8.0, Stroke::new(1.5, col));
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-    }
     if r.dragged()
         && let Some(p) = r.interact_pointer_pos()
         && let Some(v) = along(proj, p, base, n)
@@ -549,6 +544,17 @@ fn drag_arrow(
             v = v.max(if free { 1e-3 } else { step });
         }
         *value = format_len(v);
+        ts = tip(v)?;
+    }
+    // Paint the value just read from this frame's pointer, including the value box anchor.
+    // Using the old distance here made both trail the drag by another frame.
+    crate::scenario::publish_handle(if id == egui::Id::new("sc_manipulator") { "arrow" } else { "arrow2" }, ts);
+    let hot = r.hovered() || r.dragged();
+    let col = if hot { t.accent } else { t.manipulator };
+    arrow(painter, bs, ts, col);
+    if hot {
+        painter.circle_stroke(ts, 8.0, Stroke::new(1.5, col));
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
     Some(ts)
 }

@@ -12,6 +12,7 @@ mod arcfit;
 pub mod blend;
 pub mod brep;
 pub mod bspline;
+pub mod compare;
 pub mod env;
 pub mod fill;
 mod mesh;

@@ -808,6 +808,32 @@ fn loops_report_their_mobility() {
     }
 }
 
+/// An actuator in line with the path of its tip pin, as modelled: a panel hinged at the origin,
+/// its tip pin at (30, 0) moving along Y, and a barrel and rod along Y from a root pin at
+/// (30, -40). There the rod only extends and the barrel's turn is zero to first order, but the
+/// barrel turns as soon as the panel does: it has one degree of freedom, at that pose too.
+#[test]
+fn a_part_at_a_dead_point_of_its_loop_keeps_its_mobility() {
+    let mut s = Session::default();
+    let (tip, root) = (Vec3::new(30.0, 0.0, 0.0), Vec3::new(30.0, -40.0, 0.0));
+    for (name, c) in [("Ground", Vec3::new(0.0, -40.0, 0.0)), ("Panel", tip), ("Barrel", root), ("Rod", (tip + root) * 0.5)] {
+        part(&mut s, name, [c.x, c.y, -5.0]);
+    }
+    let g = occ(&s, "Ground");
+    run(&mut s, "occurrence.ground", json!({"occurrence": g, "grounded": true}));
+    pin(&mut s, "revolute", "Hinge", "Ground", "Panel", Vec3::ZERO, Vec3::Z);
+    pin(&mut s, "revolute", "Root pin", "Ground", "Barrel", root, Vec3::Z);
+    pin(&mut s, "slider", "Stroke", "Barrel", "Rod", root, Vec3::Y);
+    pin(&mut s, "revolute", "Tip pin", "Rod", "Panel", tip, Vec3::Z);
+    for part in ["Panel", "Barrel", "Rod"] {
+        assert_eq!(dof_of(&mut s, part), 1, "dead point: {part}");
+    }
+    run(&mut s, "joint.drive", json!({"joint": "Hinge", "value": 5}));
+    for part in ["Panel", "Barrel", "Rod"] {
+        assert_eq!(dof_of(&mut s, part), 1, "driven: {part}");
+    }
+}
+
 /// A design file path in a fresh temporary folder (removed by the caller).
 fn temp_design(tag: &str, ext: &str) -> (std::path::PathBuf, String) {
     let dir = std::env::temp_dir().join(format!("solidcraft-joint-visibility-{tag}-{}", std::process::id()));
@@ -1053,4 +1079,102 @@ fn a_single_value_keeps_the_joints_other_values() {
     assert!((at(&r)[0] - 45.0).abs() < 1e-9 && (at(&r)[1] - 5.0).abs() < 1e-9, "{r}");
     let r = run(&mut s, "joint.drive", json!({"joint": "Spindle", "values": [60]}));
     assert!((at(&r)[0] - 60.0).abs() < 1e-9 && (at(&r)[1] - 5.0).abs() < 1e-9, "{r}");
+}
+
+/// A motion link's offset is in the linked value's units, like joint values and limits: degrees
+/// for an angle, mm for a distance, or an expression. `joint.list` answers it the same way, it is
+/// stored in radians as before, and a saved link opens with the offset it had.
+#[test]
+fn a_link_offset_is_in_the_linked_values_units() {
+    let mut s = Session::default();
+    for (name, x) in [("Ground", 0.0), ("Dial", 80.0), ("Gear", 100.0), ("Car", 120.0), ("Cart", 140.0)] {
+        part(&mut s, name, [x, 0.0, -5.0]);
+    }
+    let g = occ(&s, "Ground");
+    run(&mut s, "occurrence.ground", json!({"occurrence": g, "grounded": true}));
+    for (kind, name, x) in [("revolute", "Dial", 80.0), ("revolute", "Gear", 100.0), ("slider", "Car", 120.0), ("slider", "Cart", 140.0)] {
+        pin(&mut s, kind, name, "Ground", name, Vec3::new(x, 0.0, 0.0), Vec3::Z);
+    }
+    run(&mut s, "joint.motion_link", json!({"a": "Dial", "b": "Gear", "ratio": 1, "offset": 10}));
+    run(&mut s, "joint.motion_link", json!({"a": "Car", "b": "Cart", "ratio": 1, "offset": "5 mm"}));
+    run(&mut s, "joint.drive", json!({"joint": "Dial", "value": 20}));
+    run(&mut s, "joint.drive", json!({"joint": "Car", "value": 3}));
+    let value = |l: &Value, name: &str| {
+        l["joints"].as_array().into_iter().flatten().find(|j| j["name"] == name).and_then(|j| j["values"][0]["value"].as_f64()).unwrap_or(f64::NAN)
+    };
+    let l = run(&mut s, "joint.list", json!({}));
+    assert!((value(&l, "Gear") - 30.0).abs() < 1e-9 && (value(&l, "Cart") - 8.0).abs() < 1e-9, "{l}");
+    let links: Vec<(f64, &str)> =
+        l["links"].as_array().into_iter().flatten().map(|k| (k["offset"].as_f64().unwrap_or(f64::NAN), k["unit"].as_str().unwrap_or(""))).collect();
+    assert!(
+        links.len() == 2 && (links[0].0 - 10.0).abs() < 1e-9 && links[0].1 == "deg" && (links[1].0 - 5.0).abs() < 1e-9 && links[1].1 == "mm",
+        "{l}"
+    );
+    assert!((s.doc.assembly.links[0].offset - 10f64.to_radians()).abs() < 1e-12);
+    // A design saved before offsets took degrees stored 0.1 rad, and opens turning Gear 5.73° past Dial.
+    s.doc_mut().assembly.links[0].offset = 0.1;
+    let (dir, path) = temp_design("link-offset", "solidcraft");
+    run(&mut s, "file.save", json!({"path": path}));
+    run(&mut s, "file.new", json!({}));
+    run(&mut s, "doc.open", json!({"path": path}));
+    let l = run(&mut s, "joint.list", json!({}));
+    assert!((value(&l, "Gear") - value(&l, "Dial") - 0.1f64.to_degrees()).abs() < 1e-9, "{l}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A link between an angle and a distance takes its ratio in b's units per a's, like its offset:
+/// a pinion moves its rack 0.5 mm per degree, and a car turns its dial 2 degrees per mm.
+/// `joint.list` answers the ratios the same way; they are stored per radian, as before.
+#[test]
+fn a_link_ratio_between_an_angle_and_a_distance_is_per_degree() {
+    let mut s = Session::default();
+    for (name, x) in [("Ground", 0.0), ("Pinion", 80.0), ("Rack", 100.0), ("Car", 120.0), ("Dial", 140.0)] {
+        part(&mut s, name, [x, 0.0, -5.0]);
+    }
+    let g = occ(&s, "Ground");
+    run(&mut s, "occurrence.ground", json!({"occurrence": g, "grounded": true}));
+    for (kind, name, x) in [("revolute", "Pinion", 80.0), ("slider", "Rack", 100.0), ("slider", "Car", 120.0), ("revolute", "Dial", 140.0)] {
+        pin(&mut s, kind, name, "Ground", name, Vec3::new(x, 0.0, 0.0), Vec3::Z);
+    }
+    run(&mut s, "joint.motion_link", json!({"a": "Pinion", "b": "Rack", "ratio": 0.5}));
+    run(&mut s, "joint.motion_link", json!({"a": "Car", "b": "Dial", "ratio": 2}));
+    run(&mut s, "joint.drive", json!({"joint": "Pinion", "value": 20}));
+    run(&mut s, "joint.drive", json!({"joint": "Car", "value": 3}));
+    let l = run(&mut s, "joint.list", json!({}));
+    let value = |name: &str| {
+        l["joints"].as_array().into_iter().flatten().find(|j| j["name"] == name).and_then(|j| j["values"][0]["value"].as_f64()).unwrap_or(f64::NAN)
+    };
+    assert!((value("Rack") - 10.0).abs() < 1e-9 && (value("Dial") - 6.0).abs() < 1e-9, "{l}");
+    let ratios: Vec<f64> = l["links"].as_array().into_iter().flatten().map(|k| k["ratio"].as_f64().unwrap_or(f64::NAN)).collect();
+    assert!(ratios.len() == 2 && (ratios[0] - 0.5).abs() < 1e-9 && (ratios[1] - 2.0).abs() < 1e-9, "{l}");
+    let stored: Vec<f64> = s.doc.assembly.links.iter().map(|k| k.ratio).collect();
+    assert!((stored[0] - 0.5f64 / 1f64.to_radians()).abs() < 1e-9 && (stored[1] - 2f64.to_radians()).abs() < 1e-12, "{stored:?}");
+}
+
+/// A new joint starts at its values inside its limits. Limits that leave out 0 (or the values
+/// given) start it at the nearer limit, which it keeps, and the answer says the part moved there.
+#[test]
+fn a_new_joint_starts_inside_its_limits_and_says_so() {
+    let mut s = two_cubes();
+    let r = run(&mut s, "joint.as_built", json!({"type": "slider", "a": "A", "b": "B", "name": "Rail", "limits": [[2, 5]]}));
+    let w = r["warnings"].as_array().cloned().unwrap_or_default();
+    assert!(
+        w.len() == 1 && w[0].as_str().is_some_and(|w| w.starts_with("Rail distance starts at 2 mm, inside its limits [2, 5], not at 0 mm")),
+        "{r}"
+    );
+    assert!(near(place(&s, "B", Vec3::new(20.0, 0.0, 0.0)), Vec3::new(20.0, 0.0, 2.0)), "{:?}", place(&s, "B", Vec3::new(20.0, 0.0, 0.0)));
+    assert_eq!(s.doc.assembly.joints[0].values, [2.0]);
+    // Values given outside the limits start at the nearer one too; angles are answered in degrees.
+    let mut s = two_cubes();
+    let r = run(
+        &mut s,
+        "joint.create",
+        json!({"type": "revolute", "a": {"face": [5, 5, 10]}, "b": {"face": [25, 5, 0]}, "values": [90], "limits": [[0, 60]], "name": "Hinge"}),
+    );
+    let w = r["warnings"].as_array().cloned().unwrap_or_default();
+    assert!(w.len() == 1 && w[0].as_str().is_some_and(|w| w.contains("starts at 60 deg") && w.contains("not at 90 deg")), "{r}");
+    // Inside the limits, nothing to say.
+    let mut s = two_cubes();
+    let r = run(&mut s, "joint.as_built", json!({"type": "cylindrical", "a": "A", "b": "B", "name": "Spindle", "limits": [[-30, 30], [0, 5]]}));
+    assert!(r.get("warnings").is_none(), "{r}");
 }
