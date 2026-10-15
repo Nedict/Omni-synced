@@ -39,7 +39,8 @@ part still has with its loops closed: the moving parts of a four-bar have one be
 loop locked by a rigid joint has none. The Drive Joints dialog says when a drive stops short and
 why. While it previews, a row under the values gives the value the joint reached and the reason
 (the loop that can't close further, or the two parts a contact set keeps apart), and after OK the
-status line repeats it. The value box keeps what you typed.
+status line repeats it. The value box keeps what you typed. The dialog opens on the joint
+picked in the browser, or on the first joint that moves when none is picked.
 
 **Insert Design** (`component.insert_design {path, translate?}`) adds a component linked to
 another saved design, so each part can live in its own document. The part's solid bodies come

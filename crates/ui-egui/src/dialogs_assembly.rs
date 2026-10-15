@@ -152,7 +152,14 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
         "joint.origin" => (Asm::JointOrigin { name: String::new(), hover: None }, vec![SelInput::new("Snap", SNAPS, false)]),
         "joint.rigid_group" => (Asm::RigidGroup, vec![SelInput::new("Components", BODIES, true)]),
         "joint.drive" => {
-            let joint = movable(s).first().copied().unwrap_or(0);
+            // The joint picked in the browser, else the first that moves.
+            let list = movable(s);
+            let picked = app
+                .tree
+                .picked_joints
+                .iter()
+                .find_map(|id| list.iter().copied().find(|i| s.doc.assembly.joints.get(*i).is_some_and(|j| j.id == *id)));
+            let joint = picked.or(list.first().copied()).unwrap_or(0);
             (Asm::Drive { joint, values: current_values(s, joint), focus: true }, vec![])
         }
         "joint.motion_link" => {
@@ -165,6 +172,48 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
         _ => return None,
     };
     Some((Kind::Assembly(asm), inputs))
+}
+
+/// What an open dialog starts on when the control channel's `ui.start` passes `params`. Drive
+/// Joints takes `joint` (id or name) and `values` (numbers: degrees or millimetres; text: an
+/// expression), as `joint.drive` does. Nothing is driven until OK.
+pub fn preset(s: &Session, k: &mut Asm, p: &Value) -> Result<(), String> {
+    let Asm::Drive { joint, values, .. } = k else { return Err(format!("{} takes no params yet", k.title())) };
+    let o = p.as_object().ok_or("`params` must be an object")?;
+    if let Some(key) = o.keys().find(|k| !matches!(k.as_str(), "joint" | "values")) {
+        return Err(format!("unknown param `{key}` (Drive Joints takes joint, values)"));
+    }
+    if let Some(v) = o.get("joint") {
+        let key = match v {
+            Value::Number(n) => n.to_string(),
+            Value::String(x) => x.clone(),
+            _ => return Err("`joint` must be an id or a name".into()),
+        };
+        let i = s.doc.assembly.joints.iter().position(|j| j.id.to_string() == key || j.name == key).ok_or_else(|| format!("no joint `{key}`"))?;
+        if !movable(s).contains(&i) {
+            return Err(format!("joint `{key}` is rigid: it has nothing to drive"));
+        }
+        *joint = i;
+        *values = current_values(s, i);
+    }
+    if let Some(v) = o.get("values") {
+        let j = s.doc.assembly.joints.get(*joint).ok_or("no joint that moves yet")?;
+        let list = v.as_array().ok_or("`values` must be a list")?;
+        if list.len() > values.len() {
+            return Err(format!("`{}` takes {} value(s)", j.name, values.len()));
+        }
+        for (i, (slot, v)) in values.iter_mut().zip(list).enumerate() {
+            *slot = match v {
+                Value::Number(n) => {
+                    let x = n.as_f64().filter(|x| x.is_finite() && x.abs() < 1e9).ok_or("values must be finite numbers")?;
+                    num(x, if j.kind.is_angle(i) { "deg" } else { "mm" })
+                }
+                Value::String(t) if t.len() <= 1000 => t.clone(),
+                _ => return Err("values must be numbers or expressions".into()),
+            };
+        }
+    }
+    Ok(())
 }
 
 /// Indices (into the design's joints) of joints that move (not rigid).

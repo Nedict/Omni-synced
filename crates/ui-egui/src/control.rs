@@ -336,6 +336,17 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
         "ui.start" => {
             let Some(id) = s("command") else { return err("missing `command`") };
             app.start(id);
+            // `params`: what the dialog opens on (refused: the dialog closes, nothing started).
+            if let Some(params) = p.get("params").filter(|v| !v.is_null()) {
+                let r = match app.dialog.as_mut().map(|d| &mut d.kind) {
+                    Some(crate::dialogs::Kind::Assembly(k)) if id == "joint.drive" => crate::dialogs_assembly::preset(&app.session, k, params),
+                    _ => Err(format!("`{id}` takes no ui.start params yet (joint.drive takes joint, values)")),
+                };
+                if let Err(e) = r {
+                    crate::dialogs::cancel(app);
+                    return err(e);
+                }
+            }
             ok(json!({"tool": app.tool.as_ref().map(|t| t.cmd), "dialog": app.dialog.as_ref().map(|d| format!("{d:?}"))}))
         }
         "ui.move" | "ui.click" => {
@@ -1077,5 +1088,47 @@ mod tests {
         let bad = call("engine.execute", json!({"command": "file.new", "allow_paths": "/"}), false);
         assert!(bad["error"].as_str().is_some_and(|e| e.contains("allow_paths")), "{bad}");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// `ui.start` params set what a dialog opens on: Drive Joints on a joint (by name or id) at
+    /// the given values, driving nothing yet. A param it doesn't take is refused and closes it.
+    #[test]
+    fn ui_start_params_open_drive_joints_where_asked() {
+        let mut s = Session::default();
+        for (name, x) in [("A", 0), ("B", 30), ("C", 60)] {
+            s.execute("component.activate", &json!({"component": "root"})).unwrap();
+            s.execute("component.create", &json!({ "name": name })).unwrap();
+            s.execute("solid.box", &json!({"length": 20, "width": 20, "height": 10, "corner": [x, 0, 0]})).unwrap();
+        }
+        s.execute("component.activate", &json!({"component": "root"})).unwrap();
+        s.execute("occurrence.ground", &json!({"occurrence": "A:1", "grounded": true})).unwrap();
+        let at = |o: &str, x: i32| json!({"occurrence": o, "point": [x, 10, 5], "z": [1, 0, 0]});
+        s.execute("joint.create", &json!({"type": "revolute", "a": at("A", 25), "b": at("B", 25), "flip": true, "name": "Hinge"})).unwrap();
+        s.execute("joint.create", &json!({"type": "slider", "a": at("B", 55), "b": at("C", 55), "flip": true, "name": "Rail"})).unwrap();
+        let mut h = crate::scenario::Harness::new();
+        h.app = SolveApp::new(s, Services::default());
+        h.app.viewport.no_pixels = true;
+        let before = h.app.session.doc.clone();
+        let drive = |h: &crate::scenario::Harness| match h.app.dialog.as_ref().map(|d| &d.kind) {
+            Some(crate::dialogs::Kind::Assembly(crate::dialogs_assembly::Asm::Drive { joint, values, .. })) => {
+                (h.app.session.doc.assembly.joints[*joint].name.clone(), values.clone())
+            }
+            other => panic!("{other:?}"),
+        };
+        let r = h.call("ui.start", json!({"command": "joint.drive", "params": {"joint": "Rail", "values": [12.5]}}));
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(drive(&h), ("Rail".to_string(), vec!["12.5 mm".to_string()]));
+        let hinge = h.app.session.doc.assembly.joints[0].id;
+        h.call("ui.start", json!({"command": "joint.drive", "params": {"joint": hinge, "values": ["45 deg"]}}));
+        assert_eq!(drive(&h), ("Hinge".to_string(), vec!["45 deg".to_string()]));
+        assert_eq!(h.app.session.doc, before, "nothing is driven until OK");
+        for bad in [json!({"joint": "Nope"}), json!({"joint": "Rail", "value": 3}), json!({"values": [1, 2]}), json!({"values": [f64::MAX]})] {
+            let r = h.call("ui.start", json!({"command": "joint.drive", "params": bad}));
+            assert_eq!(r["ok"], false, "{bad}: {r}");
+            assert!(h.app.dialog.is_none(), "{bad}");
+        }
+        let r = h.call("ui.start", json!({"command": "solid.extrude", "params": {"distance": 5}}));
+        assert!(r["ok"] == false && r["error"].as_str().unwrap().contains("takes no ui.start params"), "{r}");
+        assert!(h.app.dialog.is_none());
     }
 }
