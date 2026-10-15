@@ -362,7 +362,12 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.add_space(16.0);
             ui.horizontal(|ui| {
                 let big = |ui: &mut egui::Ui, icon: &str, label: &str, primary: bool| -> bool {
-                    let (r, resp) = ui.allocate_exact_size(vec2(170.0, 64.0), Sense::click());
+                    // The label sets the width: a translation longer than the English one widens
+                    // the button instead of running past its edge.
+                    let ink_text = if primary { Color32::WHITE } else { t.text };
+                    let galley = ui.painter().layout_no_wrap(label.to_owned(), egui::FontId::proportional(15.0), ink_text);
+                    let width = (56.0 + galley.size().x + 20.0).max(170.0);
+                    let (r, resp) = ui.allocate_exact_size(vec2(width, 64.0), Sense::click());
                     let fill = if primary {
                         t.accent
                     } else if resp.hovered() {
@@ -380,13 +385,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                         t.icon_fill,
                         ink,
                     );
-                    ui.painter().text(
-                        r.left_center() + vec2(56.0, 0.0),
-                        egui::Align2::LEFT_CENTER,
-                        label,
-                        egui::FontId::proportional(15.0),
-                        if primary { Color32::WHITE } else { t.text },
-                    );
+                    ui.painter().galley(r.left_center() + vec2(56.0, -galley.size().y / 2.0), galley, ink_text);
                     resp.clicked()
                 };
                 if big(ui, "new", app.tr("ui.new_design"), true) {
