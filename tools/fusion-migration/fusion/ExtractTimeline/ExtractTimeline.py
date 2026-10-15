@@ -27,7 +27,7 @@ SKETCH_GEOMETRY = True   # curve-by-curve sketch contents (the bulk of the outpu
 
 # Bumped whenever the captured shape changes, so re-running upgrades older files in place
 # instead of skipping them -- a resumable run should not also mean a stale one.
-SCHEMA = 5
+SCHEMA = 6
 
 # A plain text file of design paths (one per line, as written under OUT_DIR, without the
 # ".timeline.json" suffix); only those are processed. Most hubs hold a lot of imported bodies
@@ -498,7 +498,7 @@ def describe_feature(ent, index=None):
         ("distance", ("distanceOne", "distance")),
         ("distance_two", ("distanceTwo",)),
         ("taper", ("taperAngleOne", "taperAngle")),
-        ("angle", ("angle",)),
+        ("angle", ("angle", "draftAngle", "angleOne")),
         ("radius", ("radius",)),
         ("thickness", ("insideThickness", "thickness")),
     ):
@@ -524,6 +524,21 @@ def describe_feature(ent, index=None):
         if d:
             rec.setdefault("distance", d)
         rec["extent_definition"] = type(ext).__name__
+        # "To object" extrudes have no distance at all -- they run until they reach something.
+        # A point on that target is enough to say the same thing elsewhere, and unlike a measured
+        # distance it keeps the intent: the extrude still lands on the face, not near where the
+        # face used to be.
+        target = get(ext, "entity", "toEntity", "target")
+        if target is not None:
+            q = point_on(target, "pointOnFace") or point_on(target, "pointOnEdge")
+            if q is None:
+                g = get(target, "geometry", "worldGeometry")
+                q = pt(g) if g is not None else None
+            if q:
+                rec["to_point"] = q
+        off = expr_of(ext, "offset")
+        if off:
+            rec["to_offset"] = off
 
     # What the feature was applied to. Fusion's internal edge and face ids mean nothing in
     # another tool, but a *point lying on* each edge or face is geometry, and geometry travels.
@@ -557,6 +572,14 @@ def describe_feature(ent, index=None):
         rec["face_count"] = len(pts) if pts else count_of(faces)
         if pts:
             rec["face_points"] = pts
+    if not rec.get("face_points") and ("Draft" in kind or "Shell" in kind):
+        # The feature reshaped these faces, so they are no longer themselves in the final body.
+        pts = rolled_back_to(index, lambda: picks(
+            get(ent, "faces", "inputFaces") or [], "pointOnFace"))
+        if pts:
+            rec["face_points"] = pts
+            rec["face_count"] = len(pts)
+            rec["faces_via_rollback"] = True
 
     prof = get(ent, "profile")
     if prof is not None:
@@ -596,6 +619,11 @@ def describe_feature(ent, index=None):
             info["length"] = d
         if info:
             rec["thread"] = info
+
+    if "Draft" in kind and not rec.get("angle"):
+        a = rolled_back_to(index, lambda: expr_of(ent, "angle", "draftAngle", "angleOne"))
+        if a:
+            rec["angle"] = a
 
     # Sketches carry their whole contents.
     if kind == "Sketch":

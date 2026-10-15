@@ -307,9 +307,21 @@ def profiles_param(step, ctx):
 
 def emit_extrude(step, out, ctx):
     d = expr(step.get("distance"))
-    if not d:
-        raise Skip("no distance expression (extent may be to-object or through-all)")
-    params = {"distance": d, "profiles": profiles_param(step, ctx), "operation": op_of(step)}
+    to = step.get("to_point")
+    if not d and not to:
+        raise Skip("no distance expression and no target ({})".format(
+            step.get("extent_definition") or "unknown extent"))
+
+    if d:
+        params = {"distance": d}
+    else:
+        # "To object": the extrude runs until it meets something. Saying where that something is
+        # keeps the intent -- it still lands on the face rather than near where the face was.
+        params = {"to": to}
+        off = expr(step.get("to_offset"))
+        if off and not str(off).startswith("0"):
+            params["to_offset"] = off
+    params.update({"profiles": profiles_param(step, ctx), "operation": op_of(step)})
     t = expr(step.get("taper"))
     if t and not str(t).startswith("0"):
         params["taper"] = t
