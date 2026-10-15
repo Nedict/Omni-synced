@@ -222,6 +222,27 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj
     // sits beside it and reads the move's main value, so a drag shows its number and typing
     // one sets it. The triad is the manipulator here, so the box comes without the drag arrow
     // every other dialog's value gets (`dir` is None below).
+    if matches!(d.kind, Kind::SketchModify(crate::sketch_modify_ui::Mod::Move { .. })) {
+        let mut dragging = false;
+        let step = snap_step(app.cam.half_height());
+        if let Some(t) = crate::sketch_move_ui::triad(app, &d)
+            && let Some(g) = crate::gizmo::show(ui, painter, proj, egui::Id::new("sc_sketch_move_triad"), &t, step)
+        {
+            crate::sketch_move_ui::drag(app, &mut d, g);
+            dragging = true;
+        }
+        let triad = crate::sketch_move_ui::triad(app, &d);
+        let at = triad.map(|t| t.center).or_else(|| anchor(app, &d).map(|(base, _)| base));
+        let focus = std::mem::take(&mut d.focus);
+        if let Some(bs) = at.and_then(|base| proj.to_screen(base))
+            && let Some((label, _, value)) = d.primary()
+        {
+            let off = if triad.is_some() { vec2(crate::gizmo::LEN_PX as f32 + 16.0, -12.0) } else { vec2(16.0, -30.0) };
+            value_box(ui, label, value, bs + off, focus || dragging);
+        }
+        app.dialog = Some(d);
+        return;
+    }
     if matches!(d.kind, Kind::Move { .. }) {
         let mut dragging = false;
         let step = snap_step(app.cam.half_height());

@@ -74,7 +74,7 @@ pub enum Mod {
     /// `sketch.move`: how far the picked entities move along the sketch's own axes, how far they
     /// turn about the centre, and whether the originals stay behind. The command already
     /// carries the copy flag, so the Create Copy row needs no engine change.
-    Move { x: String, y: String, angle: String, copy: bool },
+    Move { mode: usize, x: String, y: String, angle: String, copy: bool },
     /// `sketch.pattern.rectangular`: how many instances along the picked direction and how far
     /// apart, then the same along the perpendicular direction the command derives from it.
     PatternRect { count: String, spacing: String, count2: String, spacing2: String },
@@ -113,7 +113,10 @@ impl Mod {
         match self {
             Mod::Scale { factor } => Some(("Factor", ValueKind::Unitless, factor)),
             Mod::Offset { distance, .. } => Some(("Distance", ValueKind::Length, distance)),
-            Mod::Move { x, .. } => Some(("X Distance", ValueKind::Length, x)),
+            Mod::Move { mode, x, angle, .. } => match *mode {
+                crate::sketch_move_ui::ROTATE => Some(("Angle", ValueKind::Angle, angle)),
+                _ => Some(("X Distance", ValueKind::Length, x)),
+            },
             Mod::Mirror => None,
             Mod::PatternRect { spacing, .. } => Some(("Spacing", ValueKind::Length, spacing)),
             Mod::PatternCirc { angle, .. } => Some(("Angle", ValueKind::Angle, angle)),
@@ -156,7 +159,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
         "sketch.scale" => Mod::Scale { factor: "2".into() },
         "sketch.offset" => Mod::Offset { distance: "2 mm".into(), distance2: "2 mm".into(), mode: 0, chain: true, flip: false },
         "sketch.mirror" => Mod::Mirror,
-        "sketch.move" => Mod::Move { x: "0 mm".into(), y: "0 mm".into(), angle: "0 deg".into(), copy: false },
+        "sketch.move" => crate::sketch_move_ui::kind(crate::sketch_move_ui::FREE),
         "sketch.pattern.rectangular" => Mod::PatternRect { count: "3".into(), spacing: "20 mm".into(), count2: "1".into(), spacing2: "20 mm".into() },
         "sketch.pattern.circular" => Mod::PatternCirc { count: "6".into(), angle: "360 deg".into() },
         "sketch.fillet" => corner(false, 0),
@@ -243,7 +246,11 @@ pub fn pick_position(d: &mut Dialog, session: &solidcraft_engine::Session, point
 }
 
 /// The rows after the inputs; true when Enter was pressed in a field.
-pub fn rows(ui: &mut egui::Ui, k: &mut Mod) -> bool {
+pub fn rows(ui: &mut egui::Ui, d: &mut Dialog) -> bool {
+    if matches!(&d.kind, Kind::SketchModify(Mod::Move { .. })) {
+        crate::sketch_move_ui::type_row(d, ui);
+    }
+    let Kind::SketchModify(k) = &mut d.kind else { return false };
     let mut enter = false;
     match k {
         Mod::Scale { factor } => {
@@ -275,19 +282,8 @@ pub fn rows(ui: &mut egui::Ui, k: &mut Mod) -> bool {
         }
         // Mirror has no value of its own: its inputs are the whole window.
         Mod::Mirror => {}
-        Mod::Move { x, y, angle, copy } => {
-            row_label(ui, "X Distance");
-            enter |= field(ui, x);
-            ui.end_row();
-            row_label(ui, "Y Distance");
-            enter |= field(ui, y);
-            ui.end_row();
-            row_label(ui, "Angle");
-            enter |= field(ui, angle);
-            ui.end_row();
-            row_label(ui, "Create Copy");
-            check(ui, copy);
-            ui.end_row();
+        Mod::Move { mode, x, y, angle, copy } => {
+            enter |= crate::sketch_move_ui::value_rows(ui, *mode, x, y, angle, copy);
         }
         Mod::PatternRect { count, spacing, count2, spacing2 } => {
             for (label, value) in [("Quantity", count), ("Spacing", spacing), ("Quantity 2", count2), ("Spacing 2", spacing2)] {
@@ -614,14 +610,21 @@ pub fn commands(app: &SolveApp, k: &Mod, inputs: &[SelInput], extra: &Map<String
             }
             ("sketch.mirror", json!({"entities": entities, "line": line}))
         }
-        Mod::Move { x, y, angle, copy } => {
+        Mod::Move { mode, x, y, angle, copy } => {
             let entities = entity_ids(&app.session, inputs, 0);
             if entities.is_empty() {
                 return Err("Select the sketch curves or points to move first".into());
             }
-            let dx = value(app, x, ValueKind::Length, "X Distance")?;
-            let dy = value(app, y, ValueKind::Length, "Y Distance")?;
-            let deg = value(app, angle, ValueKind::Angle, "Angle")?.to_degrees();
+            let (dx, dy) = if *mode == crate::sketch_move_ui::ROTATE {
+                (0.0, 0.0)
+            } else {
+                (value(app, x, ValueKind::Length, "X Distance")?, value(app, y, ValueKind::Length, "Y Distance")?)
+            };
+            let deg = if *mode == crate::sketch_move_ui::TRANSLATE {
+                0.0
+            } else {
+                value(app, angle, ValueKind::Angle, "Angle")?.to_degrees()
+            };
             if dx.abs() < 1e-9 && dy.abs() < 1e-9 && deg.abs() < 1e-9 {
                 return Err("Type a distance or an angle to move by".into());
             }

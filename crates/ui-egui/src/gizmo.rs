@@ -59,6 +59,9 @@ pub struct Triad {
     pub rotate: bool,
     /// One ring about this axis instead of the three world rings.
     pub ring_axis: Option<Vec3>,
+    /// Sketch-plane (or other) translate axes instead of world X/Y/Z.
+    pub translate_u: Option<Vec3>,
+    pub translate_v: Option<Vec3>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -73,6 +76,8 @@ struct State {
     turned: f64,
     /// Unit normal of the ring plane when it is not a world axis.
     ring_n: Option<Vec3>,
+    /// Unit direction for a custom translate arrow.
+    axis_dir: Option<Vec3>,
 }
 
 const DIRS: [Vec3; 3] = [Vec3::X, Vec3::Y, Vec3::Z];
@@ -196,19 +201,27 @@ fn shapes(proj: &Proj, t: &Triad, l: f64) -> Option<Shapes> {
     let ball = proj.to_screen(c)?;
     let mut s = Shapes { arrows: Vec::new(), planes: Vec::new(), rings: Vec::new(), ball };
     if t.translate {
-        for (i, d) in DIRS.iter().enumerate() {
-            if let (Some(a), Some(b)) = (proj.to_screen(c + *d * (0.18 * l)), proj.to_screen(c + *d * l)) {
+        let planar = t.translate_u.zip(t.translate_v);
+        let dirs: Vec<(usize, Vec3)> = if let Some((u, v)) = planar {
+            vec![(0, u), (1, v)]
+        } else {
+            DIRS.iter().enumerate().map(|(i, d)| (i, *d)).collect()
+        };
+        for (i, d) in dirs {
+            if let (Some(a), Some(b)) = (proj.to_screen(c + d * (0.18 * l)), proj.to_screen(c + d * l)) {
                 s.arrows.push((i, a, b));
             }
         }
-        for i in 0..3 {
-            let (e1, e2) = ring_basis(i);
-            let q: Vec<Pos2> = [(0.25, 0.25), (0.45, 0.25), (0.45, 0.45), (0.25, 0.45)]
-                .iter()
-                .filter_map(|(a, b)| proj.to_screen(c + e1 * (a * l) + e2 * (b * l)))
-                .collect();
-            if q.len() == 4 {
-                s.planes.push((i, q));
+        if planar.is_none() {
+            for i in 0..3 {
+                let (e1, e2) = ring_basis(i);
+                let q: Vec<Pos2> = [(0.25, 0.25), (0.45, 0.25), (0.45, 0.45), (0.25, 0.45)]
+                    .iter()
+                    .filter_map(|(a, b)| proj.to_screen(c + e1 * (a * l) + e2 * (b * l)))
+                    .collect();
+                if q.len() == 4 {
+                    s.planes.push((i, q));
+                }
             }
         }
     }
@@ -301,6 +314,16 @@ pub fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::I
     let r = ui.interact(Rect::from_center_size(p, vec2(24.0, 24.0)), id.with("hit"), Sense::drag());
     let free = ui.input(|i| i.modifiers.alt || i.modifiers.ctrl || i.modifiers.command);
     let view = proj.ray(sh.ball).1;
+    let axis_dir = |i: usize| {
+        t.translate_u
+            .zip(t.translate_v)
+            .and_then(|(u, v)| match i {
+                0 => u.normalized(),
+                1 => v.normalized(),
+                _ => None,
+            })
+            .unwrap_or(DIRS[i.min(2)])
+    };
     let ring_normal = |i: usize| t.ring_axis.unwrap_or(DIRS[i]).normalized().unwrap_or(DIRS[i]);
     let plane_normal = |h: Handle| match h {
         Handle::Plane(i) => DIRS[i],
@@ -317,9 +340,13 @@ pub fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::I
             let h = hovered?;
             let from = ui.input(|i| i.pointer.press_origin()).unwrap_or(p);
             let c = t.center;
-            let mut s = State { handle: h, center: c, grab: c, t0: 0.0, last: 0.0, turned: 0.0, ring_n: None };
+            let mut s = State { handle: h, center: c, grab: c, t0: 0.0, last: 0.0, turned: 0.0, ring_n: None, axis_dir: None };
             match h {
-                Handle::Axis(i) => s.t0 = along(proj, from, c, DIRS[i])?,
+                Handle::Axis(i) => {
+                    let d = axis_dir(i);
+                    s.axis_dir = t.translate_u.zip(t.translate_v).map(|_| d);
+                    s.t0 = along(proj, from, c, d)?;
+                }
                 Handle::Ring(i) => {
                     let n = ring_normal(i);
                     s.ring_n = t.ring_axis.map(|_| n);
@@ -335,8 +362,9 @@ pub fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::I
     };
     let change = match st.handle {
         Handle::Axis(i) => {
-            let v = along(proj, p, st.center, DIRS[i]).map(|v| v - st.t0).unwrap_or(0.0);
-            Change::Translate(DIRS[i] * snap(v, step, free))
+            let d = st.axis_dir.unwrap_or(DIRS[i.min(2)]);
+            let v = along(proj, p, st.center, d).map(|v| v - st.t0).unwrap_or(0.0);
+            Change::Translate(d * snap(v, step, free))
         }
         Handle::Ring(i) => {
             let n = st.ring_n.unwrap_or(DIRS[i]);
@@ -506,7 +534,7 @@ mod tests {
     #[test]
     fn plane_squares_stay_within_the_triad() {
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
-        let t = Triad { center: Vec3::ZERO, translate: true, rotate: false, ring_axis: None };
+        let t = Triad { center: Vec3::ZERO, translate: true, rotate: false, ring_axis: None, translate_u: None, translate_v: None };
         // The squares reach 0.45 √2 of the arrow length from the centre, plus stroke and feathering.
         let limit = (0.45 * 2f64.sqrt() * LEN_PX) as f32 + 3.0;
         let mut worst = 0.0f32;
