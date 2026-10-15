@@ -126,9 +126,12 @@ pub fn reach(doc: &Document, st: &ModelState, r: &Reach) -> Result<Reached, Stri
     let scale = loop_scale(tree, &around, &vals);
     let bounds = limit_bounds(tree, &vars);
     let x0: Vec<f64> = vars.iter().map(|(id, i)| vals.get(id).and_then(|q| q.get(*i)).copied().unwrap_or(0.0)).collect();
+    // A distance steps by a share of the chain's size or of the way to the target, whichever is
+    // longer (one slider on its own has no size).
+    let span = tree.world(r.occurrence, &vals).map_or(scale, |t| scale.max(apply_point(&t, r.point).dist(r.to)).min(1e6));
     let cap: Vec<f64> = vars
         .iter()
-        .map(|(id, i)| if tree.joints.get(id).is_some_and(|j| j.kind.is_angle(*i)) { STEP_ANGLE.to_radians() } else { STEP_SHARE * scale })
+        .map(|(id, i)| if tree.joints.get(id).is_some_and(|j| j.kind.is_angle(*i)) { STEP_ANGLE.to_radians() } else { STEP_SHARE * span })
         .collect();
     let tol = (1e-10 * scale).min(1e-7);
     let mt = if r.axis.is_some() { 6 } else { 3 };
@@ -369,20 +372,25 @@ fn approach(
                 break;
             }
             kicked = true;
-            let mut next: Vec<f64> = x
-                .iter()
-                .zip(cap.iter().zip(bounds))
-                .enumerate()
-                .map(|(k, (v, (c, (lo, hi))))| (v + 1e-3 * c * if k % 2 == 0 { 1.0 } else { -1.0 }).max(*lo).min(*hi))
-                .collect();
-            if (!loops || close(f, &mut next))
-                && let Some(rn) = f(&next)
-                && miss(&rn) < miss(&r)
-            {
-                (*x, r, lambda) = (next, rn, 1e-3);
-                continue;
+            // Both ways: one may run into a limit.
+            for sign in [1.0, -1.0] {
+                let mut next: Vec<f64> = x
+                    .iter()
+                    .zip(cap.iter().zip(bounds))
+                    .enumerate()
+                    .map(|(k, (v, (c, (lo, hi))))| (v + sign * 1e-3 * c * if k % 2 == 0 { 1.0 } else { -1.0 }).max(*lo).min(*hi))
+                    .collect();
+                if (!loops || close(f, &mut next))
+                    && let Some(rn) = f(&next)
+                    && miss(&rn) < miss(&r)
+                {
+                    (*x, r, lambda, stepped) = (next, rn, 1e-3, true);
+                    break;
+                }
             }
-            break;
+            if !stepped {
+                break;
+            }
         }
     }
     Some(r)

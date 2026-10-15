@@ -167,14 +167,34 @@ fn a_linked_joint_follows_the_reach() {
 }
 
 /// A target straight across the pivot from the point (where the misses don't change to first
-/// order) is still reached: the arm turns half round.
+/// order) is still reached: the arm turns half round, the way its limits leave open.
 #[test]
 fn a_target_across_the_pivot_is_reached() {
     let tip = Vec3::new(100.0, 0.0, 0.0);
-    let mut s = arm(false, 0.0);
-    let r = reach(&mut s, "Fore", tip, json!({"point": [-100, 0, 0], "joints": ["Shoulder"]}));
+    for (limits, want) in [(None, None), (Some([-180, 0]), Some(-180.0)), (Some([0, 180]), Some(180.0))] {
+        let mut s = arm(false, 0.0);
+        if let Some([min, max]) = limits {
+            run(&mut s, "joint.limits", json!({"joint": "Shoulder", "min": min, "max": max}));
+        }
+        let r = reach(&mut s, "Fore", tip, json!({"point": [-100, 0, 0], "joints": ["Shoulder"]}));
+        assert_eq!(r["reached"], true, "{limits:?}: {r}");
+        let got = value(&mut s, "Shoulder");
+        assert!((got.abs() - 180.0).abs() < 1e-6 && want.is_none_or(|w| (got - w).abs() < 1e-6), "{limits:?}: {got}");
+    }
+}
+
+/// A slider on its own (a chain with no size) still travels the whole way.
+#[test]
+fn a_lone_slider_travels_all_the_way() {
+    let mut s = Session::default();
+    part(&mut s, "Base", [-1.0, -1.0, -1.0]);
+    part(&mut s, "Ram", [-1.0, -1.0, 2.0]);
+    let base = occ(&s, "Base");
+    run(&mut s, "occurrence.ground", json!({"occurrence": base, "grounded": true}));
+    pin(&mut s, "slider", "Rail", "Base", "Ram", Vec3::ZERO, Vec3::Z);
+    let r = reach(&mut s, "Ram", Vec3::ZERO, json!({"point": [0, 0, 100]}));
     assert_eq!(r["reached"], true, "{r}");
-    assert!((value(&mut s, "Shoulder").abs() - 180.0).abs() < 1e-6, "{r}");
+    assert!((value(&mut s, "Rail") - 100.0).abs() < 1e-6, "{r}");
 }
 
 /// The four-bar's rocker reaches a point on its swing, the crank and coupler following with the
