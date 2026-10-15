@@ -169,6 +169,8 @@ surface_sweep_options
 surface_loft
   sketches: [4, 5]
   remap_refs: sections[0].sketch, sections[1].sketch
+surface_blend
+  remap_bodies: from.body
 surface_offset
   remap_bodies: body
 unstitch

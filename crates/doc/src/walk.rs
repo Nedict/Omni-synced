@@ -44,6 +44,7 @@ impl Walk for ProfileSel {}
 impl Walk for solidcraft_sketch::Sketch {}
 impl Walk for solidcraft_kernel::StepNode {}
 impl Walk for crate::document::Operation {}
+impl Walk for solidcraft_kernel::Continuity {}
 impl Walk for crate::document::Direction {}
 impl Walk for crate::document::FilletFit {}
 impl Walk for crate::document::MeshData {}
@@ -132,6 +133,36 @@ impl<T> Each<T> for Vec<T> {
     fn each_mut<'a>(&'a mut self, f: &mut dyn FnMut(&'a mut T)) {
         for t in self {
             f(t)
+        }
+    }
+}
+
+impl<T, const N: usize> Each<T> for [T; N] {
+    fn each<'a>(&'a self, f: &mut dyn FnMut(&'a T)) {
+        for t in self {
+            f(t)
+        }
+    }
+    fn each_mut<'a>(&'a mut self, f: &mut dyn FnMut(&'a mut T)) {
+        for t in self {
+            f(t)
+        }
+    }
+}
+
+impl<T, const N: usize> Each<T> for Option<[T; N]> {
+    fn each<'a>(&'a self, f: &mut dyn FnMut(&'a T)) {
+        if let Some(a) = self {
+            for t in a {
+                f(t)
+            }
+        }
+    }
+    fn each_mut<'a>(&'a mut self, f: &mut dyn FnMut(&'a mut T)) {
+        if let Some(a) = self {
+            for t in a {
+                f(t)
+            }
         }
     }
 }
