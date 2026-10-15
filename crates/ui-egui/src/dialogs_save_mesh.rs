@@ -175,7 +175,7 @@ fn slicer_combo(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut SaveMesh) {
     let ctx = ui.ctx().clone();
     let current = entries.iter().find(|e| e.key == k.slicer);
     let pad = "\u{2003}\u{2003}";
-    let text = current.map_or_else(|| "No slicer found".to_string(), |e| format!("{pad}{}", e.slicer.name));
+    let text = current.map_or_else(|| crate::i18n::tr_label("No slicer found").to_string(), |e| format!("{pad}{}", e.slicer.name));
     let mut pick_custom = false;
     let mut delete: Option<String> = None;
     let mut chosen: Option<String> = None;
@@ -201,7 +201,7 @@ fn slicer_combo(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut SaveMesh) {
             );
             crate::scenario::publish_handle(&format!("dialog:Slicer:{}", e.slicer.name), rect.center());
             if e.user {
-                let hint = format!("{}\nPress Delete to remove it from the list", e.slicer.command.first().map_or("", String::as_str));
+                let hint = crate::i18n::format("ui.slicer_delete_tip", &[("program", e.slicer.command.first().map_or("", String::as_str))]);
                 resp.clone().on_hover_text(hint);
                 if resp.hovered() && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)) {
                     delete = Some(e.key.clone());
@@ -222,12 +222,12 @@ fn slicer_combo(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut SaveMesh) {
         ui.painter().text(
             rect.left_center() + vec2(ICON + 9.0, 0.0),
             egui::Align2::LEFT_CENTER,
-            "Custom…",
+            crate::i18n::tr_label("Custom…"),
             egui::FontId::proportional(13.0),
             Tokens::get().text,
         );
         crate::scenario::publish_handle("dialog:Slicer:Custom", rect.center());
-        if resp.on_hover_text("Choose a slicer program to add to the list").clicked() {
+        if resp.on_hover_text(crate::i18n::tr("ui.custom_program_tip")).clicked() {
             pick_custom = true;
             ui.close();
         }
@@ -257,7 +257,7 @@ fn slicer_combo(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut SaveMesh) {
 /// Put a program the user picked at the top of the list (and keep it).
 fn add_custom(app: &mut SolveApp, path: &str) -> Result<(), String> {
     if slicers::custom(path).is_none() {
-        return Err(format!("{path} is not a program that can be started"));
+        return Err(crate::i18n::format("ui.not_a_program", &[("path", path)]));
     }
     let list = &mut app.preferences.custom_slicers;
     list.retain(|p| p != path);
@@ -280,12 +280,12 @@ pub fn commands(k: &SaveMesh, inputs: &[SelInput]) -> Result<Vec<(String, Value)
     let mut p = json!({ "format": format });
     let names = bodies(inputs);
     if names.is_empty() {
-        return Err("Select the bodies to save".into());
+        return Err(crate::i18n::tr("ui.save_mesh_pick_bodies").into());
     }
     p["bodies"] = json!(names);
     if k.send {
         if k.slicer.is_empty() {
-            return Err("No slicer found: choose Custom… and pick your slicer program, or turn off Send to slicer".into());
+            return Err(crate::i18n::tr("ui.save_mesh_no_slicer").into());
         }
         p["slicer"] = json!(k.slicer);
     }
@@ -316,7 +316,8 @@ pub fn run(app: &mut SolveApp, k: &SaveMesh, inputs: &[SelInput]) -> Result<(), 
     }
     if k.send {
         let dir = std::env::temp_dir().join("solidcraft-slicer");
-        std::fs::create_dir_all(&dir).map_err(|e| format!("couldn't make {}: {e}", dir.display()))?;
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| crate::i18n::format("ui.save_mesh_temp_failed", &[("folder", &dir.display().to_string()), ("error", &e.to_string())]))?;
         let file: String = name.chars().map(|c| if c.is_alphanumeric() || "-_. ".contains(c) { c } else { '_' }).collect();
         save(app, params, &dir.join(format!("{file}.{ext}")).to_string_lossy());
     } else {
@@ -332,13 +333,15 @@ pub fn run(app: &mut SolveApp, k: &SaveMesh, inputs: &[SelInput]) -> Result<(), 
 
 /// Run `file.save_mesh` into `path` and report what happened.
 fn save(app: &mut SolveApp, mut params: Value, path: &str) {
+    // Runs from the file picker's answer, outside the frame's language scope.
+    let _language = crate::i18n::scope(&app.preferences.language);
     params["path"] = json!(path);
     let Ok(result) = app.run("file.save_mesh", params) else { return };
     match result.get("slicer_error").and_then(Value::as_str) {
         Some(e) => app.set_status(e.to_string(), true),
         None => match result.get("slicer").and_then(Value::as_str) {
-            Some(s) => app.set_status(format!("Sent to {s}"), false),
-            None => app.set_status(format!("Saved {path}"), false),
+            Some(s) => app.set_status(crate::i18n::format("ui.sent_to_slicer", &[("slicer", s)]), false),
+            None => app.set_status(crate::i18n::format("ui.saved_to", &[("path", path)]), false),
         },
     }
 }
