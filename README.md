@@ -82,6 +82,9 @@ rebuild with no errors, replayed here at 2× speed.
 
 ## What works
 
+- **Current-view DXF export** from File → Export Current View as DXF, with hidden edges
+  omitted or dashed, shown body placements and the current camera. See [view DXF](docs/view-dxf.md).
+
 - **Sketches** on origin planes, offset planes or planar faces: lines, rectangles, circles,
   arcs, polygons, slots, ellipses, fit/control splines, conics and text; construction geometry,
   projection, trimming, fillets and chamfers, including corners at the origin.
