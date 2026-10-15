@@ -1314,10 +1314,36 @@ impl Resources {
     }
 }
 
-/// A device of its own for an offscreen render or check (`None` without a GPU adapter).
+/// The backends the offscreen tests start, chosen once per test process as the app chooses them
+/// (`apps/solidcraft/src/startup.rs`, `choose_backends`): what `WGPU_BACKEND` names; on Windows one
+/// backend, the first of D3D12, Vulkan and OpenGL with a hardware adapter (else D3D12); elsewhere
+/// wgpu's default. wgpu's default on Windows starts Vulkan, D3D12 and OpenGL together, and tests
+/// starting them side by side hung or crashed the test process inside the Vulkan driver.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn offscreen_backends() -> wgpu::Backends {
+    static CHOSEN: std::sync::OnceLock<wgpu::Backends> = std::sync::OnceLock::new();
+    *CHOSEN.get_or_init(|| {
+        let default = wgpu::InstanceDescriptor::new_without_display_handle_from_env().backends;
+        if !cfg!(target_os = "windows") || std::env::var("WGPU_BACKEND").is_ok_and(|v| !v.trim().is_empty()) {
+            return default;
+        }
+        let hardware = |backends: wgpu::Backends| {
+            let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+            desc.backends = backends;
+            let adapters = pollster::block_on(wgpu::Instance::new(desc).enumerate_adapters(backends));
+            adapters.iter().any(|a| a.get_info().device_type != wgpu::DeviceType::Cpu)
+        };
+        [wgpu::Backends::DX12, wgpu::Backends::VULKAN, wgpu::Backends::GL].into_iter().find(|b| hardware(*b)).unwrap_or(wgpu::Backends::DX12)
+    })
+}
+
+/// A device of its own for an offscreen render or check (`None` without a GPU adapter), on
+/// [`offscreen_backends`].
 #[cfg(all(test, not(target_arch = "wasm32")))]
 fn offscreen_device() -> Option<(wgpu::Adapter, wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+    desc.backends = offscreen_backends();
+    let instance = wgpu::Instance::new(desc);
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
@@ -1570,6 +1596,27 @@ mod tests {
         assert!(!super::hangs_on_gpu_tessellation(wgpu::Backend::Metal, "Apple M2"));
         assert!(!super::hangs_on_gpu_tessellation(wgpu::Backend::Metal, "AMD Radeon Pro 560X"));
         assert!(!super::hangs_on_gpu_tessellation(wgpu::Backend::Vulkan, "AMD FirePro W5100"));
+    }
+
+    /// The offscreen tests start the backends the app would: on Windows without `WGPU_BACKEND`
+    /// exactly one, from the app's order (D3D12, Vulkan, OpenGL); otherwise wgpu's default.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn offscreen_tests_start_the_backend_the_app_would() {
+        use egui_wgpu::wgpu::Backends;
+        let chosen = super::offscreen_backends();
+        let env = std::env::var("WGPU_BACKEND").is_ok_and(|v| !v.trim().is_empty());
+        if cfg!(target_os = "windows") && !env {
+            assert!([Backends::DX12, Backends::VULKAN, Backends::GL].contains(&chosen), "one backend, not {chosen:?}");
+        } else {
+            assert_eq!(chosen, egui_wgpu::wgpu::InstanceDescriptor::new_without_display_handle_from_env().backends);
+        }
+        assert_eq!(super::offscreen_backends(), chosen, "chosen once per test process");
+        // And the offscreen device is made on them (skipped without a GPU adapter).
+        if let Some((adapter, _, _)) = super::offscreen_device() {
+            let used = Backends::from(adapter.get_info().backend);
+            assert!(chosen.contains(used), "the offscreen device runs on {used:?}, not on {chosen:?}");
+        }
     }
 
     /// The viewport shader parses and validates (a bad shader would only fail at run time).
