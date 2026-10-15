@@ -1015,3 +1015,32 @@ fn fillets_on_tapered_bosses_saved_before_still_find_their_edges() {
     assert!((volume - 69454.8852092132).abs() < 1e-3, "{volume}");
     assert_eq!(s.world_state().bodies.len(), 1);
 }
+
+/// A line of text cut into a face: the letters' curves (the font's quadratics) are read
+/// exactly, and the cut is decided in 2D in one boolean, at any depth and where the text runs
+/// off the face. The B-rep boolean failed on many letters at once ("no result" at 3.5 mm, and
+/// off the edge), else took one letter at a time on an ever larger body (tens of seconds).
+#[test]
+fn a_line_of_text_is_cut_in_one_exact_boolean() {
+    let cut = |at: [f64; 2], depth: f64| {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane":"XY"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[105,26]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance":40}));
+        let before = volume(&mut s);
+        run(&mut s, "sketch.create", json!({"plane":{"face":[50,13,40]}}));
+        run(&mut s, "sketch.text", json!({"text":"textvraiment tres long","at":at,"height":7.81}));
+        run(&mut s, "sketch.finish", json!({}));
+        let id = run(&mut s, "solid.extrude", json!({"distance":-depth,"operation":"cut"}))["feature"].as_u64().unwrap();
+        let r = s.model.result(id).unwrap();
+        assert!(r.error.is_none() && r.boolean_diagnostics.events.is_empty(), "{at:?} {depth}: {r:?}");
+        before - volume(&mut s)
+    };
+    // Straight walls: the material taken grows with the depth, the letters' area each mm.
+    let (one, deep) = (cut([3.0, 9.0], 1.0), cut([3.0, 9.0], 3.5));
+    assert!(rel(deep, 3.5 * one) < 1e-3, "{one} {deep}");
+    // Off the face's edge, the part of the text still over it.
+    let off = cut([-6.0, 20.0], 1.0);
+    assert!(off > 0.0 && off < one, "{off} {one}");
+}
