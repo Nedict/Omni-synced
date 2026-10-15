@@ -1981,34 +1981,48 @@ fn fillet_sharp_arc_and_arc_loop() {
 #[test]
 fn fillet_tabbed_plate_outer_loop_and_partial_selection_after_hole() {
     use solidcraft_geom::Seg2;
-    // Public-safe approximation of #485: a radius-25 plate, a rounded tab and a hole.
+    // Reconstruct #485's outer outline from its seven public pick coordinates:
+    // R25 plate, x=+/-4 tab sides, R2 corners and a 4 mm straight top.
+    // The hole's dimensions come from the public reproduction, not an original design file.
     let theta = (4.0_f64 / 25.0).acos();
     let y = (625.0_f64 - 16.0).sqrt();
-    let top = 29.1111;
+    let corner_y = 280.0 / 9.0;
+    let hole_y = 262.0 / 9.0;
     let outline = Loop2 {
         segs: vec![
             Seg2::Arc { center: Vec2::ZERO, radius: 25.0, start: PI - theta, sweep: PI + 2.0 * theta },
-            Seg2::Line { a: Vec2::new(4.0, y), b: Vec2::new(4.0, top) },
-            Seg2::Arc { center: Vec2::new(0.0, top), radius: 4.0, start: 0.0, sweep: PI },
-            Seg2::Line { a: Vec2::new(-4.0, top), b: Vec2::new(-4.0, y) },
+            Seg2::Line { a: Vec2::new(4.0, y), b: Vec2::new(4.0, corner_y) },
+            Seg2::Arc { center: Vec2::new(2.0, corner_y), radius: 2.0, start: 0.0, sweep: PI / 2.0 },
+            Seg2::Line { a: Vec2::new(2.0, corner_y + 2.0), b: Vec2::new(-2.0, corner_y + 2.0) },
+            Seg2::Arc { center: Vec2::new(-2.0, corner_y), radius: 2.0, start: PI / 2.0, sweep: PI / 2.0 },
+            Seg2::Line { a: Vec2::new(-4.0, corner_y), b: Vec2::new(-4.0, y) },
         ],
     };
     let body =
-        extrude(&Plane::XY, &[Region2 { outer: outline, holes: vec![Loop2::circle(Vec2::new(0.0, top), 1.5)] }], 0.0, 2.0).unwrap().pop().unwrap();
-    let inner = fillet(&body, &[Vec3::new(1.5, top, 2.0)], 0.5).unwrap();
+        extrude(&Plane::XY, &[Region2 { outer: outline, holes: vec![Loop2::circle(Vec2::new(0.0, hole_y), 1.5)] }], 0.0, 2.0).unwrap().pop().unwrap();
+    let inner = fillet(&body, &[Vec3::new(1.5, hole_y, 2.0)], 0.5).unwrap();
     let edges = [
-        Vec3::new(-25.0, 0.0, 2.0),
-        Vec3::new(25.0, 0.0, 2.0),
-        Vec3::new(4.0, (y + top) / 2.0, 2.0),
-        Vec3::new(0.0, top + 4.0, 2.0),
-        Vec3::new(-4.0, (y + top) / 2.0, 2.0),
+        Vec3::new(-24.91935125502191, -2.0064727829797544, 2.0),
+        Vec3::new(24.919351255429795, -2.006472777913911, 2.0),
+        Vec3::new(3.999999997492012, 27.894518234675537, 2.0),
+        Vec3::new(3.4142135598750105, 32.525324672801695, 2.0),
+        Vec3::new(-2.480541994032137e-9, 33.11111111046627, 2.0),
+        Vec3::new(-3.4142135648720653, 32.52532467287703, 2.0),
+        Vec3::new(-4.0000000025087745, 27.89451823429679, 2.0),
     ];
-    for picks in [&edges[..], &edges[2..], &edges[3..4]] {
-        let blended = fillet(&inner, picks, 0.5).unwrap();
+    // All 127 nonempty subsets: the whole rim, each individual edge, and every
+    // contiguous or disjoint partial selection of the issue's seven picks.
+    for mask in 1_u32..(1 << edges.len()) {
+        let picks: Vec<_> = edges.iter().enumerate().filter(|(i, _)| mask & (1 << i) != 0).map(|(_, p)| *p).collect();
+        let blended = fillet(&inner, &picks, 0.5).unwrap_or_else(|e| panic!("{picks:?}: {e}"));
         assert!(blended.validity().is_empty(), "{:?}", blended.validity());
         let mesh = blended.display_mesh(0.01).unwrap();
         for p in &mesh.positions {
-            let inside = p.x.hypot(p.y) <= 25.001 || (p.x.abs() <= 4.001 && p.y >= y - 0.001 && p.y <= top) || p.x.hypot(p.y - top) <= 4.001;
+            let inside = p.x.hypot(p.y) <= 25.001
+                || (p.x.abs() <= 4.001 && p.y >= y - 0.001 && p.y <= corner_y)
+                || (p.x.abs() <= 2.001 && p.y >= corner_y && p.y <= corner_y + 2.001)
+                || (p.x - 2.0).hypot(p.y - corner_y) <= 2.001
+                || (p.x + 2.0).hypot(p.y - corner_y) <= 2.001;
             assert!(inside && p.z >= -0.001 && p.z <= 2.001, "outside the plate: {p:?}");
         }
     }
