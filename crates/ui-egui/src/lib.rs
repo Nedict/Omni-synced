@@ -62,6 +62,8 @@ pub mod issue_report;
 pub mod keymap;
 mod material_card_review;
 #[cfg(test)]
+mod measurement_ui_tests;
+#[cfg(test)]
 mod menu_tests;
 #[cfg(test)]
 mod surface_clamp_tests;

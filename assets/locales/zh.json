@@ -1,4 +1,6 @@
 {
+  "settings.measure_axis_distances": "显示 X/Y/Z 距离",
+  "settings.measure_axis_distances_help": "测量对话框打开时，在总距离之外显示沿世界坐标轴方向的尺寸线和距离。",
   "Send your report on GitHub": "在 GitHub 上发送报告",
   "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. 点击下方按钮打开 GitHub 草稿，然后粘贴已复制到剪贴板的报告。",
   "1. Open GitHub draft below. Your title and report will be filled in.": "1. 点击下方按钮打开 GitHub 草稿。标题和报告将自动填入。",

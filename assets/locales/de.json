@@ -1,4 +1,6 @@
 {
+  "settings.measure_axis_distances": "X/Y/Z-Maße anzeigen",
+  "settings.measure_axis_distances_help": "Bei geöffneter Messung die Abstände entlang der Weltachsen zusätzlich zum Gesamtabstand anzeigen.",
   "Send your report on GitHub": "Bericht auf GitHub senden",
   "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. Unten den GitHub-Entwurf öffnen und den kopierten Bericht aus der Zwischenablage einfügen.",
   "1. Open GitHub draft below. Your title and report will be filled in.": "1. Unten den GitHub-Entwurf öffnen. Titel und Bericht werden vorausgefüllt.",
