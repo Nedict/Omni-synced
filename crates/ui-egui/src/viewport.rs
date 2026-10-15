@@ -1544,15 +1544,16 @@ pub(crate) fn profile_fill(sc: &mut GpuScene, app: &SolveApp, sketch: u64, index
     }
 }
 
+/// An origin or construction plane: reference geometry, which a section does not cut (#1229).
 fn quad(sc: &mut GpuScene, q: &[Vec3; 4], fill: Color32, edge: Color32) {
     let col = c4(fill);
     for i in [0, 1, 2, 0, 2, 3] {
         if let Some(p) = q.get(i) {
-            sc.trans_tri(p.to_f32(), [0.0; 3], col);
+            sc.guide_tri(p.to_f32(), col);
         }
     }
     for i in 0..4 {
-        sc.line(q[i].to_f32(), q[(i + 1) % 4].to_f32(), c4(edge), 1.2, false);
+        sc.guide_line(q[i].to_f32(), q[(i + 1) % 4].to_f32(), c4(edge), 1.2);
     }
 }
 
@@ -1628,11 +1629,11 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
         };
         let on = sel.iter().any(|x| matches!(x, Sel::Axis { name: n } if n == name)) || matches!(hover, Some(Hit::Axis { name: n }) if n == name);
         let w = if on { 4.0 } else { 2.0 };
-        sc.line([0.0; 3], (dir * size).to_f32(), c4(col), w, false);
+        sc.guide_line([0.0; 3], (dir * size).to_f32(), c4(col), w);
         let dash = size * 0.08;
         let mut a = size + dash;
         while a < size * AXIS_LEN {
-            sc.line((dir * a).to_f32(), (dir * (a + dash)).to_f32(), c4(col), w * 0.75, false);
+            sc.guide_line((dir * a).to_f32(), (dir * (a + dash)).to_f32(), c4(col), w * 0.75);
             a += dash * 2.0;
         }
     }
@@ -1647,7 +1648,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
         let mut s = 0.0;
         while s < len {
             let e = (s + dash).min(len);
-            sc.line(a.lerp(b, s / len).to_f32(), a.lerp(b, e / len).to_f32(), col, w, false);
+            sc.guide_line(a.lerp(b, s / len).to_f32(), a.lerp(b, e / len).to_f32(), col, w);
             s += dash * 1.6;
         }
     }
@@ -4588,6 +4589,25 @@ mod tests {
         assert_eq!(d.items().len(), 2, "a rim and a wall are two measurement targets");
         d.pick(&app.session, Sel::Face { body: b.name.clone(), index: faces[1] as usize, point: Vec3::new(-10.0, 0.0, 10.0) });
         assert_eq!(d.items().len(), 1, "the other half toggles the same wall");
+    }
+
+    #[test]
+    fn a_section_leaves_the_origin_planes_and_axes_whole() {
+        // #1229: the origin planes and axes are reference geometry; the section plane cuts the
+        // model, not them, so they go to the lists the GPU draws without the section clip.
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("solid.box", json!({"length":20,"width":20,"height":20,"corner":[-10,-10,-10]})).unwrap();
+        h.app.run("inspect.section", json!({"plane": "XZ", "offset": 0})).unwrap();
+        h.app.ui.show_origin = true;
+        h.frames(2);
+        assert!(section_plane(&h.app).is_some());
+        let sc = build_highlight(&h.app);
+        let planes = origin_planes(&h.app).len();
+        assert!(planes > 0);
+        assert_eq!(sc.guide_trans.len(), planes * 6 * crate::gpu::TRI_SIZE);
+        assert!(sc.trans.is_empty(), "no origin plane is drawn where the section clips");
+        // Each origin axis: a solid part and dashes beyond, plus each plane's four edges.
+        assert!(sc.guide_lines.len() >= (planes * 4 + 3) * crate::gpu::LINE_SIZE);
     }
 
     #[test]

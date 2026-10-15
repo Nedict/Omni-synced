@@ -55,6 +55,13 @@ hole identities also makes it lost. Older curve-span selections retain their exa
 multisets. If an older feature has already lost its profile after subdivision changed, edit
 the feature and reselect the intended current region to capture the new identity.
 
+New symmetric solid extrusions treat the entered distance as the total thickness and split it evenly
+around the start plane: 10 mm spans -5 to +5 mm on an XY sketch. Switching from One Side to
+Symmetric keeps the entered total thickness. Through All still reaches targets in both
+directions, and Two Sides retains its independent distances. Symmetric extrusions saved before
+this change keep their original per-side distances when reopened or edited. Selecting another direction
+in the feature editor uses the current total-distance convention.
+
 New symmetric revolves split the entered angle evenly around the sketch profile, regardless
 of which way the selected axis points. Two Sides measures the second angle backward and the
 first angle forward along the sketch-normal sweep direction. Profiles on opposite sides of

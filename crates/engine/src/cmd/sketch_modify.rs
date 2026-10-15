@@ -46,7 +46,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .enabled(in_sketch)
         .params(concat!(
             "curves: [ids], distance: number in mm or length expression (creates an editable dimension; positive = left of the chain, or toward `side`), side?: [x,y], chain?: bool (default true: the connected chain); ",
-            "direction?: one_side|symmetric (default one_side) or symmetric?: bool (the same distance each way, as for `solid.extrude`; no `side`, whose job it takes over), ",
+            "direction?: one_side|symmetric (default one_side) or symmetric?: bool (the same distance each way; no `side`, whose job it takes over), ",
             "distance2?: positive length expression (Two Sides: an independent distance the other way, as for `solid.extrude`). Each side is its own offset association, listed in `sides`; flip?: bool reverses the primary side; `param`/`param2` name the driving dimensions",
             created_doc!()
         )),
@@ -992,7 +992,7 @@ struct Side {
 }
 
 /// The signed distances an offset runs at. One side is the distance as given. `symmetric` is the
-/// same distance each way, as `direction: symmetric` means for `solid.extrude`. `distance2` is an
+/// same distance each way. `distance2` is an
 /// independent distance the other way, as `distance2` means for `solid.extrude`. The primary side
 /// comes first, so a one-sided caller reads the same first entry it always did.
 fn offset_runs(d: f64, symmetric: bool, distance2: Option<f64>) -> Vec<f64> {
@@ -1259,7 +1259,7 @@ fn offset(s: &mut Session, p: &Value) -> Result<Value> {
     let d0 = if bool_(p, "flip").unwrap_or(false) { -value } else { value };
     let side = p.get("side").and_then(vec2);
     let use_chain = bool_(p, "chain").unwrap_or(true);
-    // Both sides at once. The words keep the meaning `solid.extrude` gives them: `symmetric` is
+    // Both sides at once: `symmetric` is
     // one distance applied each way, `distance2` is an independent distance the other way.
     let symmetric = match str_(p, "direction").map(str::to_ascii_lowercase).as_deref() {
         None | Some("positive") | Some("one_side") => bool_(p, "symmetric").unwrap_or(false),
