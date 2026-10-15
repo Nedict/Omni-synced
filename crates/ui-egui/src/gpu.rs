@@ -26,6 +26,44 @@ pub fn install(rs: &egui_wgpu::RenderState, depth_bits: u8, stencil_bits: u8, sa
     t
 }
 
+/// Draw this process's headless pictures (`ui.render`, the agent's view image, thumbnails of
+/// designs and saves) on the app's own device, with the viewport's pipelines (native only: a
+/// browser cannot wait for the GPU to hand a picture back).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn install_picture_renderer(rs: &egui_wgpu::RenderState) {
+    match solidcraft_gpu::capture::Capturer::new(&rs.adapter, rs.device.clone(), rs.queue.clone()) {
+        Ok(capturer) => {
+            let capturer = std::sync::Arc::new(capturer);
+            solidcraft_engine::capture::install(std::sync::Arc::new(move |scene, cam, w, h| {
+                capturer.rgba(scene, cam, w, h).map_err(|e| e.to_string())
+            }));
+        }
+        Err(e) => log::warn!("pictures of the model cannot be drawn on this device: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod test_support {
+    /// For tests that look at pictures: install the headless GPU renderer (the CLI's). `false`, with
+    /// the reason printed, on a machine without a GPU adapter, and the test skips.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn test_picture_renderer() -> bool {
+        match solidcraft_gpu::capture::shared() {
+            Ok(c) => {
+                solidcraft_engine::capture::install(std::sync::Arc::new(move |scene, cam, w, h| c.rgba(scene, cam, w, h).map_err(|e| e.to_string())));
+                true
+            }
+            Err(e @ solidcraft_gpu::GpuError::NoAdapter(_)) if std::env::var_os("SOLIDCRAFT_REQUIRE_GPU").is_none() => {
+                eprintln!("skipping: {e}");
+                false
+            }
+            Err(e) => panic!("{e}"),
+        }
+    }
+}
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) use test_support::test_picture_renderer;
+
 impl egui_wgpu::CallbackTrait for ViewportCallback {
     fn prepare(
         &self,

@@ -34,7 +34,6 @@ use serde_json::{Value, json};
 mod app_icon;
 
 use solidcraft_engine::Session;
-use solidcraft_engine::render::render_png;
 use solidcraft_engine::view::Guides;
 
 const USAGE: &str = "usage:
@@ -217,6 +216,7 @@ fn print_json(v: &Value, file: Option<&str>) -> Result<(), String> {
 }
 
 fn cmd_run(args: &[String]) -> Result<(), String> {
+    install_renderer();
     let json_out = json_out(args)?;
     let base = flag(args, "--in");
     let path = positional(args);
@@ -358,13 +358,23 @@ fn cmd_gpu(args: &[String]) -> Result<(), String> {
     }
 }
 
+/// Draw this process's pictures (snapshots, MCP screenshots, saved thumbnails) on the GPU with the
+/// viewport's pipelines: the headless device the `SOLIDCRAFT_GPU` policy picks, opened on the first
+/// picture. Without a qualifying adapter a picture fails with an error that names the policy.
+fn install_renderer() {
+    solidcraft_engine::capture::install(std::sync::Arc::new(|scene, cam, w, h| {
+        solidcraft_gpu::capture::shared().map_err(|e| e.to_string())?.rgba(scene, cam, w, h).map_err(|e| e.to_string())
+    }));
+}
+
 fn cmd_snapshot(args: &[String]) -> Result<(), String> {
+    install_renderer();
     known_flags("snapshot", args, &["--in", "--out", "--width", "--height", "--view", "--camera"], &["--no-grid", "--no-axes"])?;
     if positional(args).is_none() && flag(args, "--in").is_none() {
         return Err(USAGE.to_string());
     }
     let out = flag(args, "--out").ok_or("snapshot needs --out FILE.png")?;
-    let size = |name: &str, default: usize| match flag(args, name) {
+    let size = |name: &str, default: u32| match flag(args, name) {
         None => Ok(default),
         Some(x) => x.parse().ok().filter(|n| (16..=8192).contains(n)).ok_or_else(|| format!("{name} must be 16 to 8192 pixels, not `{x}`")),
     };
@@ -388,7 +398,7 @@ fn cmd_snapshot(args: &[String]) -> Result<(), String> {
     let cam = s.camera.unwrap_or_else(|| solidcraft_engine::view::home_camera(&s));
     let guides = Guides { grid: !args.iter().any(|a| a == "--no-grid"), axes: !args.iter().any(|a| a == "--no-axes") };
     let scene = solidcraft_engine::view::scene_with_guides(&s, &cam, s.section, guides);
-    let png = render_png(&scene, &cam, w, h).ok_or("render failed")?;
+    let png = solidcraft_engine::capture::png(&scene, &cam, w, h)?;
     std::fs::write(out, &png).map_err(|e| format!("{out}: {e}"))?;
     println!("{}", pretty(&json!({"path": out, "width": w, "height": h, "bytes": png.len()})));
     Ok(())
@@ -436,6 +446,7 @@ fn ico(images: &[(usize, Vec<u8>)]) -> Result<Vec<u8>, String> {
 }
 
 fn cmd_exec(args: &[String]) -> Result<(), String> {
+    install_renderer();
     let id = args.first().ok_or_else(|| USAGE.to_string())?;
     let p: Value = match args.get(1) {
         Some(t) => serde_json::from_str(t).map_err(|e| format!("params: {e}"))?,
@@ -451,6 +462,7 @@ fn cmd_exec(args: &[String]) -> Result<(), String> {
 /// a running app's control port. stdout carries only protocol messages. Files the agent's tool
 /// calls reach are confined to `solidcraft_mcp::agent_scope` unless `--allow-any-path` is given.
 fn cmd_mcp(args: &[String]) -> Result<(), String> {
+    install_renderer();
     let scope = (!args.iter().any(|a| a == "--allow-any-path"))
         .then(|| solidcraft_mcp::agent_scope(flags(args, "--allow-path").into_iter().map(std::path::PathBuf::from)));
     if let Some(s) = &scope {

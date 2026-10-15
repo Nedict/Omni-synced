@@ -385,19 +385,12 @@ fn build_scene(
         let n = ((ext / minor) as i64).clamp(1, 400);
         for i in -n..=n {
             let t = i as f64 * minor;
-            let col = if (t / major).fract().abs() < 1e-9 { p.grid_major } else { p.grid };
-            sc.grid.push(SceneLine {
-                points: vec![w(c + Vec3::new(t, -ext, 0.0)), w(c + Vec3::new(t, ext, 0.0))],
-                color: col,
-                width: 0.6,
-                on_top: false,
-            });
-            sc.grid.push(SceneLine {
-                points: vec![w(c + Vec3::new(-ext, t, 0.0)), w(c + Vec3::new(ext, t, 0.0))],
-                color: col,
-                width: 0.6,
-                on_top: false,
-            });
+            let major_line = (t / major).fract().abs() < 1e-9;
+            let col = if major_line { p.grid_major } else { p.grid };
+            // The viewport's widths (pixels).
+            let width = if major_line { 1.0 } else { 0.7 };
+            sc.grid.push(SceneLine { points: vec![w(c + Vec3::new(t, -ext, 0.0)), w(c + Vec3::new(t, ext, 0.0))], color: col, width, on_top: false });
+            sc.grid.push(SceneLine { points: vec![w(c + Vec3::new(-ext, t, 0.0)), w(c + Vec3::new(ext, t, 0.0))], color: col, width, on_top: false });
         }
     }
     // The origin's axes, each unless hidden one by one (`browser.visibility`), as in the viewport.

@@ -69,9 +69,6 @@ pub struct ViewportState {
     pub(crate) display: std::sync::Mutex<crate::sketch_display::DisplayCache>,
     hl_slot: SceneSlot,
     hl_key: u64,
-    cpu: Option<(u64, egui::TextureHandle)>,
-    /// Nothing will look at the frame (the headless scenario harness): skip the software render.
-    pub no_pixels: bool,
     pub nav: Option<NavMode>,
     /// The preset's navigation for the left-button drag under way (Alias: Shift+Alt), taken
     /// when the button went down, so the drag neither selects nor moves sketch geometry.
@@ -2166,7 +2163,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     update_refinement(app, ui.ctx(), &proj);
     let key = scene_key(app);
     let t0 = crate::now_ms();
-    if let Some(_g) = app.viewport.gpu {
+    // Drawn on the GPU; without one (the headless harness, tests) the model is not drawn.
+    if app.viewport.gpu.is_some() {
         if key != app.viewport.key {
             let sc = build_scene(app);
             if let Ok(mut slot) = app.viewport.slot.lock() {
@@ -2221,8 +2219,6 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             },
         });
         painter.add(egui_wgpu::Callback::new_paint_callback(rect, cb));
-    } else {
-        cpu_render(app, ui.ctx(), &painter, rect, &proj);
     }
     analysis_legend(app, &painter, rect);
 
@@ -2925,44 +2921,9 @@ fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     }
 }
 
-fn cpu_render(app: &mut SolveApp, ctx: &egui::Context, painter: &egui::Painter, rect: Rect, proj: &Proj) {
-    if app.viewport.no_pixels {
-        return;
-    }
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    sketch_scene_key(app, proj).hash(&mut h);
-    for v in [proj.cam.yaw, proj.cam.pitch, proj.cam.roll, proj.cam.distance, proj.cam.target.x, proj.cam.target.y, proj.cam.target.z] {
-        v.to_bits().hash(&mut h);
-    }
-    (rect.width() as u32, rect.height() as u32).hash(&mut h);
-    app.ui.dark.hash(&mut h);
-    app.preferences.color_vision.hash(&mut h);
-    let key = h.finish();
-    if app.viewport.cpu.as_ref().is_none_or(|(k, _)| *k != key) {
-        let mut budget = solidcraft_engine::render::SamplingBudget::new(131_072, 1_048_576);
-        let palette = scene_palette(app.ui.dark, app.preferences.color_vision);
-        let scene = solidcraft_engine::view::scene_with_palette(
-            &app.session,
-            &proj.cam,
-            section_plane(app),
-            |sk, index, plane| crate::sketch_display::curve_with_budget(sk, index, plane, proj, app.viewport.pixels_per_point(), &mut budget).parts,
-            &palette,
-        );
-        let w = (rect.width() as usize).clamp(16, 4096);
-        let hh = (rect.height() as usize).clamp(16, 4096);
-        let c = solidcraft_engine::render::render(&scene, &proj.cam, w, hh);
-        let img = egui::ColorImage::from_rgba_unmultiplied([c.w, c.h], &c.rgba);
-        let tex = ctx.load_texture("sc_cpu_viewport", img, egui::TextureOptions::LINEAR);
-        app.viewport.cpu = Some((key, tex));
-    }
-    if let Some((_, tex)) = &app.viewport.cpu {
-        painter.image(tex.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-    }
-}
-
-/// The colours of a CPU picture of the model (`ui.render` and the CPU viewport) in the dark or
-/// the light theme and a colour vision mode, from the tokens the window draws with, so the picture
-/// matches the window. The light theme's tokens (Off) are the engine's own colours, so a light
+/// The colours of a headless picture of the model (`ui.render`, the agent's view image) in the
+/// dark or the light theme and a colour vision mode, from the tokens the window draws with, so the
+/// picture matches the window. The light theme's tokens (Off) are the engine's own colours, so a light
 /// render is unchanged.
 pub(crate) fn scene_palette(dark: bool, mode: crate::theme::ColorVision) -> solidcraft_engine::view::Palette {
     let t = Tokens::themed(dark, mode);
@@ -3311,7 +3272,6 @@ mod tests {
         let mut s = solidcraft_engine::Session::default();
         s.run_script(&solidcraft_engine::sample::script()).unwrap();
         let mut app = SolveApp::new(s, crate::Services::default());
-        app.viewport.no_pixels = true;
         app.fit_view();
         const SIZE: u32 = 256;
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(SIZE as f32, SIZE as f32));
@@ -3374,7 +3334,6 @@ mod tests {
         let mut s = solidcraft_engine::Session::default();
         s.run_script(&solidcraft_engine::sample::script()).unwrap();
         let mut app = SolveApp::new(s, crate::Services::default());
-        app.viewport.no_pixels = true;
         app.fit_view();
         app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess });
         const SIZE: u32 = 256;
@@ -3413,7 +3372,6 @@ mod tests {
         let mut s = solidcraft_engine::Session::default();
         s.run_script(&solidcraft_engine::sample::script()).unwrap();
         let mut app = SolveApp::new(s, crate::Services::default());
-        app.viewport.no_pixels = true;
         app.fit_view();
         app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess: false });
         const SIZE: u32 = 256;
@@ -3472,7 +3430,6 @@ mod tests {
         s.execute("solid.box", &json!({"length": 16, "width": 16, "height": 20, "corner": [12, 12, 20], "operation": "cut"})).unwrap();
         s.execute("solid.cylinder", &json!({"base": [33, 33, 40], "diameter": 10, "height": 10, "operation": "join"})).unwrap();
         let mut app = SolveApp::new(s, crate::Services::default());
-        app.viewport.no_pixels = true;
         app.fit_view();
         const SIZE: u32 = 256;
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(SIZE as f32, SIZE as f32));
@@ -3573,13 +3530,13 @@ mod tests {
         crate::sketch_palette::set_mode(&mut h.app, 0);
     }
 
-    /// The CPU pictures (`ui.render`, the CPU viewport) are drawn in the window's theme (#974)
-    /// and colour vision mode (#778). The light theme's tokens are the engine's own colours, so a
+    /// Headless pictures of the view (`ui.render`, the agent's view image) are drawn in the
+    /// window's theme (#974) and colour vision mode (#778). The light theme's tokens are the engine's own colours, so a
     /// light picture in Off is unchanged; otherwise each part takes the token the window draws it
     /// with. Sketch states follow what the window does with them (`sketch_color`) and the axes the
     /// mode's triad, so the two can't drift apart.
     #[test]
-    fn cpu_pictures_are_drawn_in_the_windows_theme() {
+    fn pictures_are_drawn_in_the_windows_theme() {
         use crate::theme::ColorVision;
         use solidcraft_engine::view::Palette;
         assert_eq!(scene_palette(false, ColorVision::Off), Palette::DEFAULT, "the light theme is the engine's colours");
@@ -3594,6 +3551,7 @@ mod tests {
         for (dark, mode) in [false, true].into_iter().flat_map(|d| ColorVision::ALL.map(|m| (d, m))) {
             let (p, t) = (scene_palette(dark, mode), Tokens::themed(dark, mode));
             assert_eq!(p.axes, t.triad.map(rgb), "dark {dark}, {mode:?}: the axes");
+            assert_eq!(p.analysis, t.analysis, "dark {dark}, {mode:?}: the surface analysis");
             for (tag, cpu) in [
                 (colors::SKETCH, p.sketch),
                 (colors::SKETCH_FIXED, p.sketch_fixed),
@@ -3610,65 +3568,43 @@ mod tests {
         }
     }
 
-    /// The CPU viewport follows a theme or colour vision mode change at once: both are part of its
-    /// picture's key.
+    /// The view's picture follows a theme change: its background is the window's.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn cpu_viewport_redraws_in_the_new_theme() {
+    fn the_view_picture_follows_the_theme() {
+        if !crate::gpu::test_picture_renderer() {
+            return;
+        }
         let mut h = crate::scenario::Harness::new();
         h.app.run("solid.box", json!({"length": 40, "width": 30, "height": 20})).unwrap();
-        let rect = Rect::from_min_size(Pos2::ZERO, vec2(160.0, 120.0));
-        let cam = solidcraft_engine::view::home_camera(&h.app.session);
-        let proj = Proj { cam, vp: cam.view_proj(4.0 / 3.0, 100.0), rect };
-        h.app.viewport.no_pixels = false;
-        // The new picture's top row, most common colour first (the background's top); None when
-        // nothing new was drawn.
-        let top_row = |h: &mut crate::scenario::Harness| {
-            let mut out = h.ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
-                cpu_render(&mut h.app, ui.ctx(), ui.painter(), rect, &proj);
-            });
-            let id = h.app.viewport.cpu.as_ref().map(|(_, tex)| tex.id());
-            let top = id.and_then(|id| out.textures_delta.set.get(&id)).and_then(|d| d.iter().find(|delta| delta.pos.is_none())).map(|upload| {
-                let egui::ImageData::Color(image) = &upload.image;
-                let mut counts = std::collections::HashMap::new();
-                for px in image.pixels.iter().take(image.size[0]) {
-                    *counts.entry(*px).or_insert(0) += 1;
-                }
-                counts.into_iter().max_by_key(|(_, n)| *n).map(|(c, _)| c).unwrap_or_default()
-            });
-            out.textures_delta.clear();
-            top
-        };
+        h.app.cam = solidcraft_engine::view::home_camera(&h.app.session);
         for dark in [false, true, false] {
             h.app.ui.dark = dark;
-            let Some(px) = top_row(&mut h) else { panic!("dark {dark}: the CPU viewport kept the old picture") };
+            let img = crate::control::view_rgba(&h.app, 160, 120).unwrap();
+            // The top row's most common colour: the background's top.
+            let mut counts = std::collections::HashMap::new();
+            for px in img.as_chunks::<4>().0.iter().take(160) {
+                *counts.entry([px[0], px[1], px[2]]).or_insert(0) += 1;
+            }
+            let px = counts.into_iter().max_by_key(|(_, n)| *n).map(|(c, _)| c).unwrap_or_default();
             let want = if dark { Tokens::dark() } else { Tokens::light() }.viewport_top;
-            let near = [px.r(), px.g(), px.b()].iter().zip([want.r(), want.g(), want.b()]).all(|(a, b)| a.abs_diff(b) <= 2);
+            let near = px.iter().zip([want.r(), want.g(), want.b()]).all(|(a, b)| a.abs_diff(b) <= 2);
             assert!(near, "dark {dark}: top row {px:?}, the window's background {want:?}");
         }
-        // And a colour vision mode change, on its own.
-        h.app.preferences.color_vision = crate::theme::ColorVision::Deutan;
-        assert!(top_row(&mut h).is_some(), "a new mode kept the old picture");
-        assert!(top_row(&mut h).is_none(), "no change, no new picture");
     }
 
+    /// The view's picture is cut by the section the viewport shows: an open Section Analysis
+    /// dialog's preview, a sketch's Slice.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn cpu_viewport_uses_section_preview_and_sketch_slice() {
-        fn pixels(h: &mut crate::scenario::Harness, cam: Camera) -> Vec<Color32> {
-            let rect = Rect::from_min_size(Pos2::ZERO, vec2(320.0, 240.0));
-            let proj = Proj { cam, vp: cam.view_proj(4.0 / 3.0, 100.0), rect };
-            h.app.viewport.no_pixels = false;
-            // Force a texture upload so this test reads the actual CPU rasterizer result.
-            h.app.viewport.cpu = None;
-            let mut out = h.ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
-                cpu_render(&mut h.app, ui.ctx(), ui.painter(), rect, &proj);
-            });
-            let id = h.app.viewport.cpu.as_ref().unwrap().1.id();
-            let upload = out.textures_delta.set.get(&id).unwrap().iter().find(|delta| delta.pos.is_none()).unwrap();
-            let egui::ImageData::Color(image) = &upload.image;
-            assert_eq!(image.size, [320, 240]);
-            let pixels = image.pixels.clone();
-            out.textures_delta.clear();
-            pixels
+    fn the_view_picture_uses_section_preview_and_sketch_slice() {
+        fn pixels(h: &mut crate::scenario::Harness, cam: Camera) -> Vec<[u8; 4]> {
+            h.app.cam = cam;
+            let img = crate::control::view_rgba(&h.app, 320, 240).unwrap();
+            img.as_chunks::<4>().0.to_vec()
+        }
+        if !crate::gpu::test_picture_renderer() {
+            return;
         }
         let mut h = crate::scenario::Harness::new();
         h.app.run("solid.box", json!({"length":40,"width":30,"height":20})).unwrap();
@@ -3682,12 +3618,12 @@ mod tests {
         *offset = "15 mm".into();
         assert!(h.app.session.section.is_none());
         let preview = pixels(&mut h, cam);
-        assert!(whole.iter().zip(&preview).filter(|(a, b)| a != b).count() > 100, "CPU viewport ignored uncommitted section preview");
+        assert!(whole.iter().zip(&preview).filter(|(a, b)| a != b).count() > 100, "the picture ignored the uncommitted section preview");
         assert!(std::sync::Arc::ptr_eq(&before, &h.app.session.doc));
         assert_eq!(h.app.session.undo.len(), undo);
         h.app.run("inspect.section", json!({"plane":"XZ","offset":15})).unwrap();
         h.app.dialog = None;
-        assert_eq!(preview, pixels(&mut h, cam), "preview and committed section must rasterize identically");
+        assert_eq!(preview, pixels(&mut h, cam), "preview and committed section must draw identically");
 
         h.app.session.section = None;
         h.app.run("sketch.create", json!({"plane":{"origin":[0,0,10],"x_dir":[1,0,0],"y_dir":[0,1,0]}})).unwrap();
@@ -3695,7 +3631,7 @@ mod tests {
         h.app.run("sketch.options", json!({"slice":true})).unwrap();
         assert!(h.app.session.section.is_none());
         let sliced = pixels(&mut h, cam);
-        assert!(whole.iter().zip(&sliced).filter(|(a, b)| a != b).count() > 100, "CPU viewport ignored active Sketch Slice");
+        assert!(whole.iter().zip(&sliced).filter(|(a, b)| a != b).count() > 100, "the picture ignored the active Sketch Slice");
         h.app.run("sketch.options", json!({"slice":false})).unwrap();
         assert_eq!(whole, pixels(&mut h, cam), "disabling Slice restores the whole-body pixels");
     }
@@ -3795,7 +3731,6 @@ mod tests {
         s.execute("sketch.create", &json!({"plane": "XY"})).unwrap();
         s.execute("sketch.point", &json!({"point": [0, 0]})).unwrap();
         let mut app = SolveApp::new(s, crate::Services::default());
-        app.viewport.no_pixels = true;
         if gpu {
             // The callback is queued by egui; no device is needed to inspect scene updates.
             app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess: false });
@@ -4025,7 +3960,6 @@ mod tests {
         s.selection = vec![Sel::Body { name: "Body1".into() }];
         let mut app = SolveApp::new(s, crate::Services::default());
         app.preferences.nav = "touchpad".into();
-        app.viewport.no_pixels = true;
         app.start("solid.move");
         app.dialog.as_mut().unwrap().focus = false;
         let p = pos2(100.0, 100.0);
@@ -4260,7 +4194,6 @@ mod tests {
         };
         for tess in [true, false] {
             let mut app = cylinder_app();
-            app.viewport.no_pixels = true;
             app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess });
             let body = app.session.world_state().bodies[0].clone();
             let before = build_scene(&app).merged();
@@ -4363,7 +4296,8 @@ mod tests {
                 if wireframe {
                     scene.meshes.clear();
                 }
-                let png = solidcraft_engine::render::render_png(&scene, &cam, 1200, 800).unwrap();
+                assert!(crate::gpu::test_picture_renderer(), "SMOOTH_SCREENSHOTS needs a GPU");
+                let png = solidcraft_engine::capture::png(&scene, &cam, 1200, 800).unwrap();
                 std::fs::write(std::path::Path::new(&directory).join(format!("smooth-ring-{name}.png")), png).unwrap();
             }
         }
@@ -4765,7 +4699,6 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
         assert!(app.preferences.trackpad_pan);
-        app.viewport.no_pixels = true;
         crate::help::run(&mut app, &ctx, "shortcuts");
         let mut time = 0.0;
         let pan =
@@ -4824,7 +4757,6 @@ mod tests {
             let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
             app.preferences.smooth_wheel_zoom = smooth;
             app.preferences.trackpad_pan = false;
-            app.viewport.no_pixels = true;
             crate::help::run(&mut app, &ctx, "shortcuts");
             let mut time = 0.0;
             let mut frame = |app: &mut SolveApp, pointer: Option<Pos2>, wheel: f32| {
@@ -5315,7 +5247,6 @@ mod tests {
         let mut s = solidcraft_engine::Session::default();
         s.run_script(&solidcraft_engine::sample::script()).unwrap();
         let mut app = SolveApp::new(s, crate::Services::default());
-        app.viewport.no_pixels = true;
         app.fit_view();
         app.run("inspect.draft", json!({"pull": [-1, -1, 0]})).unwrap();
         app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess: false });
@@ -5367,46 +5298,39 @@ mod tests {
         assert!(changed.iter().all(|&i| b[4 * i..4 * i + 3].iter().zip(&c[4 * i..4 * i + 3]).all(|(x, y)| x <= y)), "stripes are darker");
     }
 
-    /// The CPU viewport draws in the colour vision mode: a fixed sketch line in the light theme
+    /// The view's picture draws in the colour vision mode: a fixed sketch line in the light theme
     /// takes Deutan's value, and Off's is gone.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn cpu_viewport_draws_in_the_colour_vision_mode() {
+    fn the_view_picture_draws_in_the_colour_vision_mode() {
         use crate::theme::ColorVision;
+        if !crate::gpu::test_picture_renderer() {
+            return;
+        }
         let mut h = crate::scenario::Harness::new();
         h.app.ui.dark = false;
         h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
         let made = h.app.run("sketch.line", json!({"points": [[-30, -20], [30, 20]]})).unwrap();
         h.app.run("sketch.constraint.fix", json!({"entity": made["created"]["curves"][0]})).unwrap();
-        let rect = Rect::from_min_size(Pos2::ZERO, vec2(320.0, 240.0));
         let mut cam = solidcraft_engine::view::home_camera(&h.app.session);
         cam.set_view(solidcraft_engine::render::StandardView::Top);
-        let proj = Proj { cam, vp: cam.view_proj(4.0 / 3.0, 100.0), rect };
-        h.app.viewport.no_pixels = false;
-        let count = |h: &mut crate::scenario::Harness, c: Color32| {
-            h.app.viewport.cpu = None;
-            let mut out = h.ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
-                cpu_render(&mut h.app, ui.ctx(), ui.painter(), rect, &proj);
-            });
-            let id = h.app.viewport.cpu.as_ref().map(|(_, tex)| tex.id());
-            let n = id.and_then(|id| out.textures_delta.set.get(&id)).and_then(|d| d.iter().find(|delta| delta.pos.is_none())).map_or(0, |upload| {
-                let egui::ImageData::Color(image) = &upload.image;
-                image.pixels.iter().filter(|p| [p.r(), p.g(), p.b()].iter().zip([c.r(), c.g(), c.b()]).all(|(a, b)| a.abs_diff(b) <= 8)).count()
-            });
-            out.textures_delta.clear();
-            n
+        h.app.cam = cam;
+        let count = |h: &crate::scenario::Harness, c: Color32| {
+            let img = crate::control::view_rgba(&h.app, 320, 240).unwrap();
+            img.as_chunks::<4>().0.iter().filter(|p| p[..3].iter().zip([c.r(), c.g(), c.b()]).all(|(a, b)| a.abs_diff(b) <= 8)).count()
         };
         let (off, deutan) = (Tokens::light().sketch_locked, Tokens::themed(false, ColorVision::Deutan).sketch_locked);
-        let (a, b) = (count(&mut h, off), count(&mut h, deutan));
+        let (a, b) = (count(&h, off), count(&h, deutan));
         assert!(a > 20 && b == 0, "Off: {a} fixed-line pixels, {b} in Deutan's colour");
         h.app.preferences.color_vision = ColorVision::Deutan;
-        let (a, b) = (count(&mut h, off), count(&mut h, deutan));
+        let (a, b) = (count(&h, off), count(&h, deutan));
         assert!(a == 0 && b > 20, "Deutan: {a} fixed-line pixels in Off's colour, {b} in Deutan's");
     }
 
-    /// A mode's table reaches the CPU picture: the sketch states and axes it changes, and nothing
-    /// else (the light theme in Off is the engine's own colours).
+    /// A mode's table reaches the headless picture's palette: the sketch states and axes it
+    /// changes, and nothing else (the light theme in Off is the engine's own colours).
     #[test]
-    fn cpu_picture_follows_the_colour_vision_mode() {
+    fn picture_palette_follows_the_colour_vision_mode() {
         use crate::theme::ColorVision;
         let rgb = |c: Color32| Rgb(c.r(), c.g(), c.b());
         let off = scene_palette(false, ColorVision::Off);
