@@ -308,7 +308,6 @@ pub fn http_error(status: u16, body: &Value) -> String {
     )
 }
 
-/// The message for what the user typed (and the view, as a data URL).
 /// A tool call's arguments as an object: the JSON text a model sends (or an object, for servers
 /// that send one), or why they cannot be used. Missing or empty arguments are an empty object.
 fn tool_arguments(raw: Option<&Value>) -> Result<Value, String> {
@@ -328,6 +327,7 @@ fn tool_arguments(raw: Option<&Value>) -> Result<Value, String> {
     }
 }
 
+/// The message for what the user typed (and the view, as a data URL).
 fn user_message(parts: &[PromptPart]) -> Value {
     let images = parts.iter().any(|p| matches!(p, PromptPart::Image { .. }));
     if !images {
