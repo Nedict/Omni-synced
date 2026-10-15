@@ -16,6 +16,13 @@ Opening a STEP or IGES file creates a design with the file's bodies as a base fe
 inserting one adds them to the current design. Later features build on them. Mesh bodies render,
 measure, move and export, but solid features need B-rep bodies.
 
+Every imported file (STEP, IGES, 3MF, STL or OBJ) comes in as a new component named after the
+file, so its bodies never mix with yours. A STEP assembly keeps its structure: its parts and
+sub-assemblies become nested components, and a part used several times is one component with an
+occurrence for each place. The imported assembly is rigid: moving its component moves everything,
+and its parts don't move on their own. Right-click the component and choose **Unlock Contents** to
+joint the parts one by one. Undo removes a whole import in one step.
+
 **File → Save as mesh…** (also on the Mesh tab under Modify, and in the right-click menu of a
 body) saves the selected bodies as STL, 3MF or 3MF with face tags (below). With **Send to slicer** ticked, it writes the file to
 a temporary folder and opens it in the chosen slicer instead of asking for a file name. The slicer

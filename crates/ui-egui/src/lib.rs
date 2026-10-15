@@ -311,6 +311,8 @@ pub struct SolveApp {
     pub recoverable: Vec<solidcraft_engine::recovery::Entry>,
     /// The bodies of a just-opened Y-up file, offered to be stood up (`stand_up`).
     pub stand_up: Option<Vec<String>>,
+    /// The placement of the component that file came in as: the offer turns it.
+    pub stand_up_occurrence: Option<u64>,
     /// The anti-aliasing sample counts the graphics device supports (empty without a GPU).
     pub msaa_supported: Vec<u32>,
     /// Settings put back at start because they kept SolidCraft from starting, one line each,
@@ -406,6 +408,7 @@ impl SolveApp {
             autosave: None,
             recoverable: Vec::new(),
             stand_up: None,
+            stand_up_occurrence: None,
             msaa_supported: Vec::new(),
             settings_reset: Vec::new(),
             big_operation: false,
@@ -909,9 +912,9 @@ impl SolveApp {
     pub fn open_path(&mut self, path: &str) {
         self.home.open = false;
         documents::prepare_open(self);
-        if self.run("doc.open", json!({ "path": path })).is_ok() {
+        if let Ok(r) = self.run("doc.open", json!({ "path": path })) {
             self.fit_view();
-            stand_up::offer(self, path, &[]);
+            stand_up::offer(self, path, &[], Some(&r));
         }
     }
 
@@ -929,7 +932,7 @@ impl SolveApp {
         let before: Vec<String> = self.session.world_state().bodies.iter().map(|b| b.name.clone()).collect();
         if let Ok(r) = self.run(cmd, json!({ "path": path })) {
             self.fit_view();
-            stand_up::offer(self, path, &before);
+            stand_up::offer(self, path, &before, Some(&r));
             if let Some(w) = r["warnings"].as_array().filter(|w| !w.is_empty()) {
                 self.set_status(format!("imported with {} warning(s): {}", w.len(), w.first().and_then(Value::as_str).unwrap_or("")), false);
             }

@@ -740,7 +740,7 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
                 app.fit_view();
                 // A caller that said which way is up has been answered: no offer to stand the part up.
                 if (request.kind == Kind::Open || request.insert()) && !request.options.contains_key("up") {
-                    crate::stand_up::offer(app, &request.path, &running.before);
+                    crate::stand_up::offer(app, &request.path, &running.before, Some(&made.result));
                 }
                 let warnings = made.result.get("warnings").and_then(Value::as_array);
                 if let Kind::Recover { .. } = request.kind {

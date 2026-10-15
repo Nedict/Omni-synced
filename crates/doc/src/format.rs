@@ -200,6 +200,12 @@
 //!   and a bend ending beside more of the fixed face its bend relief (0.11.0 left every corner a
 //!   notch and cut no bend relief), and a wall on part of an edge bends only where it stands
 //!   (0.11.0 refused it).
+//!   Also under 21, an Import (STEP) feature can list `skip`: indices of the file's bodies it
+//!   does not build, because they are later instances of a part the file places more than once
+//!   and the other occurrences of that part's component show them (#1386: an imported file
+//!   becomes a component, an assembly in it nested components). An Import without it builds
+//!   every body, as it always did; designs whose imports sit loose in a component are left as
+//!   they are. 0.11.x refuses format 21, so no released build shows those instances twice.
 
 use serde_json::Value;
 
