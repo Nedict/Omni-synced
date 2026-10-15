@@ -977,3 +977,36 @@ fn fillets_on_tapered_bosses_saved_before_still_find_their_edges() {
     assert!((volume - 69454.8852092132).abs() < 1e-3, "{volume}");
     assert_eq!(s.world_state().bodies.len(), 1);
 }
+
+/// #1360: an annulus cut 3 mm into a chamfered disc, its inner circle on a hole's wall. The
+/// boolean can't intersect the two walls lying on each other; its last resort (the tool moved by
+/// a micron) left a face a hair wide that meshes as its whole plane at a fine step, and the part
+/// came back 21000 mm³ larger than before, a square plane across it. A cut may fail there, but it
+/// never gives back more than it was given.
+#[test]
+fn a_cut_flush_with_a_hole_never_grows_the_part() {
+    let mut s = Session::default();
+    for (c, p) in [
+        ("sketch.create", json!({"plane":"XY"})),
+        ("sketch.circle.center", json!({"center":[0,0],"radius":40})),
+        ("sketch.finish", json!({})),
+        ("solid.extrude", json!({"distance":10})),
+        ("solid.hole", json!({"position":[20,0,10],"diameter":6})),
+        ("solid.chamfer", json!({"edges":[[40,0,10]],"distance":1})),
+        ("sketch.create", json!({"plane":{"face":[0,0,10]}})),
+        ("sketch.circle.center", json!({"center":[20,0],"radius":3})),
+        ("sketch.circle.center", json!({"center":[20,0],"radius":6})),
+        ("sketch.finish", json!({})),
+    ] {
+        run(&mut s, c, p);
+    }
+    let before = volume(&mut s);
+    // Profile 2: the annulus between the hole's wall and the larger circle.
+    let r = s.execute("solid.extrude", &json!({"direction":"negative","distance":"3","operation":"cut","profiles":[2]}));
+    let after = volume(&mut s);
+    let ring = std::f64::consts::PI * (36.0 - 9.0) * 3.0;
+    match r {
+        Ok(_) => assert!(rel(before - after, ring) < 1e-2, "{before} -> {after}, want {ring} taken"),
+        Err(_) => assert!(rel(after, before) < 1e-9, "{before} -> {after} after a failed cut"),
+    }
+}
