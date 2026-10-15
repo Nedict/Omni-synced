@@ -2346,6 +2346,27 @@ fn booleans_stay_in_their_component() {
     assert!(s.execute("solid.extrude", &json!({"sketch": "Slot", "distance": 1, "operation": "cut", "participants": ["Nope"]})).is_err());
 }
 
+/// #1234: a cut sketched in the root, where there is no body, through a body in each of two
+/// components cuts both (the root has nothing of its own to cut). A cut in a component with a
+/// body of its own still stays there (`booleans_stay_in_their_component`).
+#[test]
+fn a_cut_from_a_component_without_bodies_cuts_the_parts_it_meets() {
+    let mut s = Session::default();
+    for (name, x) in [("A", 0), ("B", 30)] {
+        run(&mut s, "component.activate", json!({"component": "root"}));
+        run(&mut s, "component.create", json!({"name": name}));
+        run(&mut s, "solid.box", json!({"length": 20, "width": 10, "height": 10, "corner": [x, 0, 0], "body_name": format!("{name}Box")}));
+    }
+    run(&mut s, "component.activate", json!({"component": "root"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Slot"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [10, 2], "p1": [40, 8]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Slot", "distance": 10, "operation": "cut"}));
+    let vol = |s: &mut Session, b: &str| run(s, "inspect.measure", json!({"bodies": [b]}))["total"]["volume_mm3"].as_f64().unwrap_or(0.0);
+    assert!((vol(&mut s, "ABox") - (2000.0 - 10.0 * 6.0 * 10.0)).abs() < 1e-6, "{}", vol(&mut s, "ABox"));
+    assert!((vol(&mut s, "BBox") - (2000.0 - 10.0 * 6.0 * 10.0)).abs() < 1e-6, "{}", vol(&mut s, "BBox"));
+}
+
 /// A unit-less parameter used as a length means the design's units.
 #[test]
 fn unitless_parameters_used_as_lengths_take_the_design_units() {

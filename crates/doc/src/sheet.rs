@@ -31,6 +31,8 @@ const MAX_FLAT_POINTS: usize = 16_384;
 const MAX_FLAT_SAMPLES: usize = 65_536;
 const MAX_FLAT_PIECES: usize = 4096;
 const MAX_FLAT_WORK: usize = 500_000_000;
+/// Pieces of flat material sharing less area than this (mm²) only touch.
+const TOUCH_AREA: f64 = 1e-6;
 
 /// Starts the warning a fold gives when its `fixed` point touches no material: a recompute keeps
 /// the side the point lies on, and the `sheet.fold` command refuses such a point (#263).
@@ -1696,6 +1698,84 @@ impl SheetBody {
         let regions = if cuts.is_empty() { regions } else { material_boolean(&regions, &cuts, kernel::BoolOp::Cut, &mut work)? };
         Ok(regions)
     }
+
+    /// The pieces of flat material that a cut parted from the base: `after` is this sheet's
+    /// [`Self::flat_material`] after the cut, `before` the sheet before it. A piece is parted when
+    /// it holds none of the base panel, lies in a piece that held some before the cut, and no
+    /// other piece surrounds it: a flange cut off along its bend (with any flange on it), the
+    /// part of a ring's inside that lies on a flange's edge, the tip of a flange beyond a cut
+    /// through a closed corner. A ring's island and a letter's counter, inside other material,
+    /// are not counted; nor are pieces an earlier cut parted, nor anything once no piece holds
+    /// the base.
+    pub(crate) fn parted_from_base(&self, after: &[Region2], before: &SheetBody) -> Result<Vec<Region2>> {
+        if after.len() < 2 {
+            return Ok(Vec::new());
+        }
+        let mut work = FlatWork::new();
+        work.charge(after.len().saturating_mul(after.len()))?;
+        let base = [planar_region(&self.base)?];
+        let holds_base = |piece: &Region2, work: &mut FlatWork| -> Result<bool> {
+            let common = material_boolean(std::slice::from_ref(piece), &base, kernel::BoolOp::Intersect, work)?;
+            Ok(common.iter().map(Region2::area).sum::<f64>() > TOUCH_AREA)
+        };
+        // The cheap test first: a piece inside another's outline is an island, whatever it holds.
+        let outlines: Vec<(Vec<Vec2>, Vec2, Vec2)> = after
+            .iter()
+            .map(|r| {
+                let pts = r.outer.polyline(1e-3);
+                let lo = pts.iter().fold(Vec2::new(f64::MAX, f64::MAX), |a, p| Vec2::new(a.x.min(p.x), a.y.min(p.y)));
+                let hi = pts.iter().fold(Vec2::new(f64::MIN, f64::MIN), |a, p| Vec2::new(a.x.max(p.x), a.y.max(p.y)));
+                (pts, lo, hi)
+            })
+            .collect();
+        let (mut open, mut islands) = (Vec::new(), Vec::new());
+        for (i, piece) in after.iter().enumerate() {
+            let p = piece.interior_point();
+            let inside = |(pts, lo, hi): &(Vec<Vec2>, Vec2, Vec2)| (lo.x..=hi.x).contains(&p.x) && (lo.y..=hi.y).contains(&p.y) && point_in(pts, p);
+            if outlines.iter().enumerate().any(|(j, o)| j != i && inside(o)) {
+                islands.push(piece);
+            } else {
+                open.push(piece);
+            }
+        }
+        let (mut joined, mut loose) = (false, Vec::new());
+        for piece in open {
+            if holds_base(piece, &mut work)? {
+                joined = true;
+            } else {
+                loose.push(piece);
+            }
+        }
+        if loose.is_empty() {
+            return Ok(Vec::new());
+        }
+        // The base may be an island itself (a cut all round it).
+        for piece in islands {
+            if joined {
+                break;
+            }
+            joined = holds_base(piece, &mut work)?;
+        }
+        if !joined {
+            return Ok(Vec::new());
+        }
+        // A cut only takes material away: each piece lies in the piece it was part of.
+        let mut held = Vec::new();
+        for piece in before.flat_material()? {
+            if holds_base(&piece, &mut work)? {
+                held.push(piece);
+            }
+        }
+        Ok(loose
+            .into_iter()
+            .filter(|piece| {
+                let p = piece.interior_point();
+                held.iter().any(|h| h.contains(p))
+            })
+            .cloned()
+            .collect())
+    }
+
     /// Outline loops of the flat pattern (flat coordinates): the pieces' edges, shared ones left out.
     pub fn outline(&self) -> Result<Vec<Vec<Vec2>>> {
         if self.flanges.len().saturating_mul(2).saturating_add(1) > MAX_FLAT_PIECES {
@@ -2227,7 +2307,7 @@ impl SheetBody {
     /// such end left as it is.
     fn relieve_bend_ends(&mut self, i: usize, free: (bool, bool)) -> Vec<String> {
         let Some(f) = self.flanges.get(i).cloned() else { return Vec::new() };
-        if f.parent.is_some() || f.shape.is_some() {
+        if f.parent.is_some() {
             return Vec::new();
         }
         let (width, depth) = (self.bend_relief.0, self.bend_relief.1.max(0.0));
@@ -2636,32 +2716,42 @@ impl SheetBody {
     fn close_corners(&mut self, made: &[usize]) -> Vec<String> {
         let corners = self.corners(made);
         let mut notes = Vec::new();
-        let at = |s: &SheetBody, c: Vec2| {
-            let w = apply_point(&s.frame_mat(), v3(c));
-            format!("({:.3}, {:.3}, {:.3})", w.x, w.y, w.z)
-        };
         let mut closed = Vec::with_capacity(corners.len());
         for k in &corners {
             match self.close_corner(k) {
                 Ok(()) => closed.push(*k),
-                Err(why) => notes.push(format!("the flanges at {} are left open: {why}", at(self, k.c))),
+                Err(why) => notes.push(format!("the flanges at {} are left open: {why}", self.shown(k.c))),
             }
         }
+        notes.extend(self.relieve_corners(&corners, &closed));
+        notes
+    }
+
+    /// A point of the flat frame, in the part's coordinates, for a note.
+    fn shown(&self, c: Vec2) -> String {
+        let w = apply_point(&self.frame_mat(), v3(c));
+        format!("({:.3}, {:.3}, {:.3})", w.x, w.y, w.z)
+    }
+
+    /// Cut the rule's relief at each of `corners`, or tear those of them that are `closed`.
+    /// Returns a note for every corner without its relief or not torn.
+    fn relieve_corners(&mut self, corners: &[Corner], closed: &[Corner]) -> Vec<String> {
+        let mut notes = Vec::new();
         match self.relief {
             ReliefShape::Notch => {}
             // The reliefs come last: they move the bends' ends, which is how the corners were found.
             ReliefShape::Round | ReliefShape::Rectangular => {
-                for k in &corners {
-                    if let Err(why) = self.relieve_corner(k, &corners) {
-                        notes.push(format!("no corner relief at {}: {why}", at(self, k.c)));
+                for k in corners {
+                    if let Err(why) = self.relieve_corner(k, corners) {
+                        notes.push(format!("no corner relief at {}: {why}", self.shown(k.c)));
                     }
                 }
             }
             // A tear cuts to the flanges' closed ends, so a corner left open gets none.
             ReliefShape::Tear => {
-                for k in &closed {
+                for k in closed {
                     if let Err(why) = self.tear_corner(k) {
-                        notes.push(format!("the corner at {} keeps its notch: {why}", at(self, k.c)));
+                        notes.push(format!("the corner at {} keeps its notch: {why}", self.shown(k.c)));
                     }
                 }
             }
@@ -7378,5 +7468,50 @@ mod tests {
             assert_eq!((&s.base, &s.flanges), (&notch.base, &notch.flanges), "{what}");
             holds_the_flat_material(&s, &what);
         }
+    }
+
+    /// The 100 x 60 plate with a 20 mm flange on its y = 0 edge (2.5 mm, R 2.5, K 0.44): in the
+    /// flat the base starts at y = t + R = 5, the bend's zone is (π/2)·(R + K·t) long and the
+    /// flange's panel 20 − 5, so its far edge lies at y = 5 − (π/2)·3.6 − 15.
+    #[test]
+    fn a_cut_names_the_pieces_it_parts_from_the_base_and_no_others() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        let far = 5.0 - FRAC_PI_2 * (2.5 + 0.44 * 2.5) - 15.0;
+        let mut s = plate(100.0, 60.0);
+        s.add_flange(Vec3::new(50.0, 0.0, 2.5), 20.0, FRAC_PI_2, 2.5, "inside", false).unwrap();
+        let r = |x0: f64, y0: f64, x1: f64, y1: f64| rect(Vec2::new(x0, y0), Vec2::new(x1, y0), Vec2::new(x1, y1), Vec2::new(x0, y1));
+        let ring = |c: Vec2, ro: f64, ri: f64| Region2 { outer: Loop2::circle(c, ro), holes: vec![Loop2::circle(c, ri)] };
+        let parted = |before: &SheetBody, holes: &[Region2]| {
+            let mut after = before.clone();
+            after.holes.extend_from_slice(holes);
+            after.parted_from_base(&after.flat_material().unwrap(), before).unwrap()
+        };
+        // A slot across the flange beside its bend parts the rest of the flange: 100 × (−3 − far).
+        let slot = r(-5.0, -3.0, 105.0, -1.0);
+        let p = parted(&s, std::slice::from_ref(&slot));
+        assert!(p.len() == 1 && (p[0].area() - 100.0 * (-3.0 - far)).abs() < 1e-6, "{p:?}");
+        // So does a ring on the flange's far edge: the half of its inside on the flange, π·2²/2.
+        let p = parted(&s, &[ring(Vec2::new(50.0, far), 4.0, 2.0)]);
+        assert!(p.len() == 1 && (p[0].area() - 2.0 * PI).abs() < 1e-6, "{p:?}");
+        // A ring's island, on the base or on the flange, has material round it; a strip across the
+        // whole sheet leaves two halves that each keep their part of the base. None is named.
+        for holes in [ring(Vec2::new(50.0, 30.0), 10.0, 5.0), ring(Vec2::new(50.0, -9.0), 4.0, 2.0), r(45.0, -30.0, 55.0, 70.0)] {
+            assert!(parted(&s, std::slice::from_ref(&holes)).is_empty(), "{holes:?}");
+        }
+        // Pieces an earlier cut parted are not named again, nor when a later cut splits them.
+        let mut cut = s.clone();
+        cut.holes.push(slot);
+        for holes in [Region2 { outer: Loop2::circle(Vec2::new(30.0, 30.0), 4.0), holes: vec![] }, r(45.0, -30.0, 55.0, -2.0)] {
+            assert!(parted(&cut, std::slice::from_ref(&holes)).is_empty(), "{holes:?}");
+        }
+        // Nothing is named once no piece holds the base: a cut that takes the base and both bends
+        // of a sheet with flanges on two sides leaves the two flanges.
+        let mut two = plate(100.0, 60.0);
+        two.add_flanges(&[Vec3::new(50.0, 0.0, 2.5), Vec3::new(50.0, 60.0, 2.5)], 20.0, FRAC_PI_2, 2.5, "inside", false).unwrap();
+        let mut after = two.clone();
+        after.holes.push(r(-5.0, -3.0, 105.0, 63.0));
+        let material = after.flat_material().unwrap();
+        assert_eq!(material.len(), 2);
+        assert!(after.parted_from_base(&material, &two).unwrap().is_empty());
     }
 }
