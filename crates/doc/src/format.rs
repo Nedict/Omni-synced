@@ -170,6 +170,15 @@
 //!   A `SurfaceUntrim` feature (Untrim: a `face` as `body` and `point`, optional `holes`
 //!   points, `outer` and `in_place`) is also first saved in 21; 0.11.0 asks for an update
 //!   instead of meeting a feature it can't read.
+//!   A `SurfaceRuled` feature (Ruled Surface: `body`, `edges` points, `distance`, optional
+//!   `mode`, `angle`, `direction`, `flip`, `corners` and `face`) is also first saved in 21;
+//!   0.11.0 asks for an update instead of meeting a feature it can't read.
+//!   Under the same version, a `SurfaceExtend` can say how it continues the surface (`mode`:
+//!   `tangent` or `curvature`; `natural` when absent), extend up to something instead of its
+//!   `distance` (`up_to`: a `plane`, a `face` as `body` and `point`, or `bounds`) and keep the
+//!   neighbouring edges as they are (`neighbours: false`). An Extend without them builds the
+//!   planar extension it always did and saves as before; 0.11.0 asks for an update instead of
+//!   dropping them and extending a plane by the distance.
 //!   Also under 21, a Sweep and a Surface Sweep can carry `orientation` (`parallel`, or
 //!   `{direction: [x, y, z]}`; absent: perpendicular), `twist` (an angle expression) and `scale`
 //!   (the end scale, an expression). A sweep without them saves as before; 0.11.x refuses

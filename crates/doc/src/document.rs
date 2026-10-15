@@ -138,6 +138,44 @@ pub enum Direction {
     Symmetric,
 }
 
+/// The direction a ruled surface leaves its edges (`surface.ruled`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuledMode {
+    /// Along the normal of the face beside each edge.
+    #[default]
+    Normal,
+    /// Continuing the face beside each edge.
+    Tangent,
+    /// At an angle from a reference direction (the face's normal unless one is given).
+    Angle,
+    /// Along a fixed direction.
+    Direction,
+}
+
+impl RuledMode {
+    fn is_normal(&self) -> bool {
+        *self == RuledMode::Normal
+    }
+}
+
+/// How a ruled surface's strips meet at sharp corners of its edge chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuledCorners {
+    /// Extended or cut back until they meet.
+    #[default]
+    Mitre,
+    /// Joined by a sector (inside corners are cut back).
+    Round,
+}
+
+impl RuledCorners {
+    fn is_mitre(&self) -> bool {
+        *self == RuledCorners::Mitre
+    }
+}
+
 /// Angular starts in older designs used the raw axis sign. New revolves measure starts
 /// along the same sketch-normal sweep direction as the kernel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -1116,11 +1154,41 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tolerance: Option<String>,
     },
-    /// A planar surface body extended outward by `distance` past the edges through `edges`.
+    /// A strip of ruled surface `distance` wide hanging off the chain of `body`'s edges through
+    /// `edges`, as a new surface body: along `mode` (`angle` from `direction`, or from the
+    /// face's normal; along `direction`), from the face at `face` where it borders the chain;
+    /// `flip` puts it on the other side; sharp corners as `corners` says.
+    SurfaceRuled {
+        body: String,
+        edges: Vec<Vec3>,
+        distance: String,
+        #[serde(default, skip_serializing_if = "RuledMode::is_normal")]
+        mode: RuledMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        angle: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        direction: Option<Vec3>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        flip: bool,
+        #[serde(default, skip_serializing_if = "RuledCorners::is_mitre")]
+        corners: RuledCorners,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        face: Option<Vec3>,
+    },
+    /// A surface body's boundary edges through `edges` extended outward: by `distance`, or up
+    /// to `up_to`; the surface continued (`mode` natural) or a run-off face along each edge
+    /// (tangent, curvature). `neighbours`: the edges next to an extended edge are lengthened to
+    /// meet it (else the extension's sides run square to the edge).
     SurfaceExtend {
         body: String,
         edges: Vec<Vec3>,
         distance: String,
+        #[serde(default, skip_serializing_if = "ExtendMode::is_natural")]
+        mode: ExtendMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        up_to: Option<ExtendTo>,
+        #[serde(default = "yes", skip_serializing_if = "is_yes")]
+        neighbours: bool,
     },
     /// A surface body trimmed by a plane, or by a face of a body (`tool`), keeping the side of
     /// `keep`.
@@ -1166,6 +1234,37 @@ pub enum FeatureKind {
         file: String,
         meshes: Vec<MeshData>,
     },
+}
+
+/// How Extend continues a surface past its edges.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtendMode {
+    /// The surface itself, continued.
+    #[default]
+    Natural,
+    /// A ruled run-off in the surface's tangent plane (G1).
+    Tangent,
+    /// A run-off that keeps the surface's curvature across the edge (G2).
+    Curvature,
+}
+
+impl ExtendMode {
+    pub fn is_natural(&self) -> bool {
+        *self == ExtendMode::Natural
+    }
+}
+
+/// What Extend extends up to instead of a distance.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtendTo {
+    /// A plane.
+    Plane(PlaneRef),
+    /// The surface of a body's face (extended).
+    Face(FaceAt),
+    /// The surface's own bounds (natural only): a trim undone.
+    Bounds,
 }
 
 /// How a fillet's size is given.
@@ -1493,6 +1592,7 @@ impl FeatureKind {
             FeatureKind::Thicken { .. } => "ThickenFeature",
             FeatureKind::SurfaceTrim { .. } => "TrimFeature",
             FeatureKind::SurfaceExtend { .. } => "ExtendFeature",
+            FeatureKind::SurfaceRuled { .. } => "RuledSurfaceFeature",
             FeatureKind::Unstitch { .. } => "UnstitchFeature",
             FeatureKind::ReverseNormal { .. } => "ReverseNormalFeature",
             FeatureKind::SurfaceUntrim { .. } => "UntrimFeature",
@@ -1568,6 +1668,7 @@ impl FeatureKind {
             FeatureKind::Thicken { .. } => "Thicken",
             FeatureKind::SurfaceTrim { .. } => "Trim",
             FeatureKind::SurfaceExtend { .. } => "Extend",
+            FeatureKind::SurfaceRuled { .. } => "RuledSurface",
             FeatureKind::Unstitch { .. } => "Unstitch",
             FeatureKind::ReverseNormal { .. } => "ReverseNormal",
             FeatureKind::SurfaceUntrim { .. } => "Untrim",
