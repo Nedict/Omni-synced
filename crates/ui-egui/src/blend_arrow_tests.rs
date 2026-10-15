@@ -28,7 +28,7 @@ fn edge(h: &Harness, p: Vec3) -> Sel {
 }
 
 fn grow(h: &Harness, s: &Sel) -> Vec3 {
-    let Sel::Edge { body, index, point } = s else { unreachable!() };
+    let Sel::Edge { body, index, point } = s else { panic!("an edge") };
     blend_grow_dir(&h.app.session.world_state().body(body).unwrap().mesh(), *index, *point).unwrap()
 }
 
