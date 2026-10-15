@@ -25,6 +25,7 @@ pub mod design_properties;
 pub mod dialogs;
 pub mod dialogs_appearance;
 pub mod dialogs_assembly;
+pub mod dialogs_coupling;
 pub mod dialogs_library;
 pub mod dialogs_motion;
 pub mod dialogs_move;
@@ -149,6 +150,7 @@ pub mod sketch_tools;
 pub mod smart_extrude;
 #[cfg(test)]
 mod smart_extrude_ui_tests;
+pub mod space_mouse;
 pub mod stand_up;
 #[cfg(test)]
 mod sweep_dialog_tests;
@@ -374,6 +376,8 @@ pub struct SolveApp {
     /// The language the installed font fallback chain is ordered for (`fonts::fallback_order`);
     /// changing `preferences.language` re-installs the fonts on the next frame.
     applied_fonts_language: String,
+    /// The interface font the fonts were last set up with (`Prefs::ui_font`).
+    applied_ui_font: String,
 }
 
 impl SolveApp {
@@ -456,6 +460,7 @@ impl SolveApp {
             file_load: file_load::FileLoad::default(),
             docs: documents::Documents::default(),
             applied_fonts_language: "en".into(),
+            applied_ui_font: String::new(),
         }
     }
 
@@ -1273,9 +1278,10 @@ impl SolveApp {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         expression_complete::begin_frame(ui.ctx());
         let t0 = now_ms();
-        if self.preferences.language != self.applied_fonts_language {
+        if self.preferences.language != self.applied_fonts_language || self.preferences.ui_font != self.applied_ui_font {
             self.applied_fonts_language.clone_from(&self.preferences.language);
-            crate::fonts::setup_fonts_for(ui.ctx(), &self.preferences.language);
+            self.applied_ui_font.clone_from(&self.preferences.ui_font);
+            crate::fonts::setup_fonts_for(ui.ctx(), &self.preferences.language, &self.preferences.ui_font);
         }
         let _language = crate::i18n::scope(&self.preferences.language);
         let mut report_input = None;

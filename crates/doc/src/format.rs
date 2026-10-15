@@ -222,7 +222,14 @@
 //!   parameters); the source's `at`, `height` and `angle` then hold the numbers they last came
 //!   to. A text without `exprs` is set as it always was; 0.12.0 asks for an update instead of
 //!   dropping the expressions and keeping the text at its last numbers.
-//! - 23: an explicit plane (a mirror's, or any plane reference) can be `placed`: an `origin` of
+//! - 23: a motion link can carry a `coupling`: a gear pair (`ra`, `rb`, `internal`), a rack and
+//!   pinion (`radius`) or a screw (`pitch`), each size a number in mm, an expression or a picked
+//!   round face, and `reverse`. The link's `ratio` is worked out from it whenever the design
+//!   changes and saved as well, so a link reads the same without it. Version 22 designs need no
+//!   transformation: a link without `coupling` is a plain motion link, as it always was; 0.13.0
+//!   (which reads up to 22) asks for an update instead of keeping a gear's ratio when its radius
+//!   changes.
+//! - 24: an explicit plane (a mirror's, or any plane reference) can be `placed`: an `origin` of
 //!   three length expressions with `x_dir` and `y_dir`, so it follows the design's parameters
 //!   (#1492). A plane whose origin is plain numbers is still saved as `custom`. Version 22 designs
 //!   need no transformation; 0.13.0 (which reads up to 22) asks for an update instead of failing
@@ -233,7 +240,7 @@ use serde_json::Value;
 use crate::{DocError, Document, Result};
 
 /// The format this build writes.
-pub const FORMAT: u32 = 23;
+pub const FORMAT: u32 = 24;
 
 pub fn format_string(n: u32) -> String {
     format!("solidcraft/{n}")
@@ -250,7 +257,7 @@ pub fn version_of(s: &str) -> Option<u32> {
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
 type JsonStep = fn(&mut Value) -> Result<()>;
-const JSON_STEPS: [JsonStep; 22] = [
+const JSON_STEPS: [JsonStep; 23] = [
     |_| Ok(()),
     v2_to_v3,
     v3_to_v4,
@@ -264,6 +271,7 @@ const JSON_STEPS: [JsonStep; 22] = [
     |_| Ok(()),
     |_| Ok(()),
     v13_to_v14,
+    |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
