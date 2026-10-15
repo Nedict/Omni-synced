@@ -1154,6 +1154,29 @@ fn a_bridge_made_before_the_app_runs_connects_once_it_does() {
     app.join().unwrap();
 }
 
+/// An app that quits while it runs a request may have applied it: the retry then finds nothing
+/// listening, and the error says the call may have run, not just that the app is not running.
+#[test]
+fn an_app_that_quits_during_a_call_may_have_run_it() {
+    use std::io::{BufRead, BufReader};
+
+    use crate::backend::Backend;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    let app = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut line = String::new();
+        BufReader::new(stream.try_clone().unwrap()).read_line(&mut line).unwrap();
+        // Quit without answering: the port closes first, so the retry is refused.
+        drop(listener);
+        drop(stream);
+    });
+    let mut remote = crate::Remote::connect(&addr).unwrap();
+    let e = remote.call("engine.execute", json!({"command": "solid.box"})).unwrap_err();
+    app.join().unwrap();
+    assert!(!e.starts_with(crate::backend::NOT_RUNNING) && e.contains("may have quit") && e.contains("Inspect the design"), "{e}");
+}
+
 /// Tool annotations never understate what a tool may do (#205): `screenshot` writes a file when
 /// given a `path`, and `execute`, `batch`, `save`, `export` and `open` can overwrite or delete
 /// files, so none of them is read-only and all are destructive and reach the file system.

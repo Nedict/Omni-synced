@@ -40,7 +40,8 @@ instructions then say the app was not running, and every tool call answers with 
 starts `no SolidCraft app is listening at HOST:PORT` and says how to start it
 (`solidcraft --control PORT`). The first call after the app starts connects to it, reading that
 launch's token. When the app quits or crashes mid-session, the next call says the same; a call
-that was running when it went away says the app did not answer and may have quit or crashed.
+that was running when it went away says the app did not answer and may have quit or crashed,
+after running the call or not, so inspect the design before sending a change again.
 A `batch` that could not be sent says the app is not running, so it is safe to send again.
 
 stdout carries only protocol messages; errors go to stderr. Bridged screenshots are written to a

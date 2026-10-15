@@ -105,7 +105,9 @@ impl Remote {
                  (or ask the user to); the next call connects to it"
             )
         } else {
-            format!("the SolidCraft app at {addr} did not answer ({e}); it may have quit or crashed during this call")
+            format!(
+                "the SolidCraft app at {addr} did not answer ({e}): it may have quit or crashed during this call, after                  running it or not. Inspect the design before sending a change again; if the app quit, start it with                  `solidcraft --control {port}`"
+            )
         }
     }
 
@@ -172,8 +174,12 @@ impl Backend for Remote {
         let reply = if method == "engine.batch" {
             self.send_batch(&line)
         } else {
-            // One retry on a fresh connection (the app may have restarted).
-            self.roundtrip(&line).or_else(|_| self.roundtrip(&line))
+            // One retry on a fresh connection (the app may have restarted). When nothing listens
+            // any more, the app went away, maybe while running this request: say that, not
+            // just "not running".
+            self.roundtrip(&line).or_else(|lost| {
+                self.roundtrip(&line).map_err(|e| if e.kind() == std::io::ErrorKind::NotConnected && lost.kind() != e.kind() { lost } else { e })
+            })
         }
         .map_err(|e| self.explain(&e))?;
         let v: Value = serde_json::from_str(&reply).map_err(|e| format!("bad reply from the app: {e}"))?;
