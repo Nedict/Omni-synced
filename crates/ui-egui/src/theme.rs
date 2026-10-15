@@ -266,8 +266,6 @@ pub struct Tokens {
     pub app_bar_text: Color32,
     /// A hovered tab on the application bar (keeps `app_bar_text` readable).
     pub app_bar_hover: Color32,
-    /// Outline of the inactive tabs on the application bar, so neighbouring tabs stay apart.
-    pub app_bar_tab_edge: Color32,
     /// Timeline items: normal and failed.
     pub timeline_item: Color32,
     pub timeline_item_error: Color32,

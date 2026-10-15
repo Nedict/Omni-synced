@@ -59,6 +59,11 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 | M14 | Configurations: a table of rows (parameter expressions and feature suppressions per row) switched with config.activate (undoable, all or nothing), kept through parameter renames and feature deletes (config.configure, config.table, config.column/row/activate). Per-row body materials and appearances (library looks, custom colour/opacity and clearing overrides), undoable activation and save/reopen: done. Ordered typed configuration rules, atomic validation and structured rule editing: done. Component appearance and certified semantic face style columns, atomic preview/apply and independent-copy remapping: done. Exact constructed sketch-side and immutable imported-face lineage now preserve legacy names and reject retargeting. Left: ambiguous shifted/two-sided caps | in progress | 4 |
 | M13 | Never lose work: atomic saves (temporary file, flush, rename; a crash at any moment leaves the old file or the new one) with the replaced version kept as `<file>.bak`; autosave of unsaved changes to the recovery folder every 5 minutes (preference) and after big operations, only when something changed; "Recover unsaved design?" on the next launch (`doc.recovery_list`, `doc.recover`, `doc.recovery_discard`); a kill-mid-save test (process killed while saving a 0.5 MB design 25 times). File format: `"format": "solidcraft/12"`, older formats upgraded step by step (`doc::format`), newer ones refused with a message, out-of-range numbers and broken placements refused; a corpus of designs saved by M0, components-era, joints-era and current builds (apps/solidcraft-cli/tests/corpus) that must open and evaluate as saved; damaged and hostile variants (truncation, bit flips, hostile values, removed keys, repeated features, deep nesting) never panic | done | 6 |
 
+M6 navigation preferences include **Touchpad**: Shift + pointer movement pans, Alt/Option +
+pointer movement orbits without a mouse button, and vertical scrolling zooms. Other presets
+retain their saved two-finger scroll preference; camera motion is available through
+`view.navigate` and modifier-aware `ui.move` automation.
+
 ## Physical material data
 
 - Physical material card validation (#923/#922) provides typed SI mechanical and
@@ -89,6 +94,27 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 
 ## Render foundation
 
+- Opt-in opaque PBR (#1046) connects persisted surface parameters to the integrated
+  product viewport and CPU PNG, using a fixed direct-light studio. Geometry and mass
+  stay unchanged. HDRI, transmission and textures remain separate gates.
+  See [the consumer and limitations](docs/render-opaque-pbr.md).
+
+- Combined integration is tracked in #842, with independent scalar libraries in
+  #863 and richer PBR/material-card transport in #1086. See [phase boundaries and validation gates](docs/render-integration.md).
+  Render/library consumers use the merged asynchronous picker (#1127). Material-card
+  UI (#1094), texture mapping and HDRI lighting remain explicit follow-ups.
+
+- R4a adds bounded CPU product-image jobs, cancellation and atomic PNG export through
+  engine commands, the Render panel, CLI and persistent MCP. Immutable captures and
+  results stay outside persistence/undo; native workers and cooperative browser tasks
+  share the same work protocol. See [jobs, limits and export](docs/render-jobs.md).
+
+- R3 adds an overlay-free product scene and the integrated Render workspace, with
+  runtime GPU host capabilities, per-document drafts and named camera/background
+  controls. Design keeps its camera and drawing policy. Raster transparency remains
+  approximate; PBR and environments are later slices. See
+  [workspace and scene contracts](docs/render-workspace.md).
+
 - R2 adds bounded named render setups in document format 21 and the read/save
   `render.settings.get/set` commands. Proven render-only changes preserve geometry
   and prepared world data through undo/redo and checkpoint restore. This slice does
@@ -101,7 +127,8 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 
 - The initial opaque surface numerical contract for #1004 provides bounded linear
   color/metallic/roughness/IOR admission and an original tested direct-light BRDF.
-  It does not enable PBR rendering or change stored appearances. See
+  The numerical module alone advertises no capabilities; the installed consumer above
+  provides rendering. See
   [the model, evidence and remaining consumer gates](docs/render-surface.md).
 
 - A bounded cooperative Radiance RGBE input utility is available in L1 render;
@@ -110,8 +137,8 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 - R1 adds renderer-independent backend/profile metadata, strict request resolution and
   bounded image/scratch admission checks, exposed by the read-only `render.backends`
   command. It describes the current CPU raster snapshot path without evaluating the model.
-  Existing snapshot and viewport routes remain unchanged. The Render workspace, HDRI/PBR,
-  render jobs and optional engines remain future work; see [the contract](docs/render-backends.md)
+  The legacy Design snapshot route remains unchanged. Later slices above provide the
+  workspace/jobs and opaque PBR; HDRI and optional engines remain future work. See [the contract](docs/render-backends.md)
   and [the phased proposal (#620)](https://github.com/bherbruck/solidcraft/issues/620).
 
 ## Dimensioning and error reporting

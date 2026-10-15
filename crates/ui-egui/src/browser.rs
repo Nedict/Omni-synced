@@ -268,6 +268,9 @@ pub(crate) struct Row<'a> {
     pub(crate) eye: Option<bool>,
     pub(crate) icon: &'a str,
     pub(crate) label: &'a str,
+    /// The label is a name someone gave (a body, sketch, component, …): it is shown as typed,
+    /// not translated when it happens to match a UI label.
+    pub(crate) name: bool,
     pub(crate) selected: bool,
     pub(crate) dim: bool,
     pub(crate) color: Option<Color32>,
@@ -375,7 +378,7 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
         x += 21.0;
     }
     let col = row.color.unwrap_or(if row.dim { t.text_dim } else { t.text });
-    let label_display = crate::i18n::tr_dyn(row.label);
+    let label_display = if row.name { crate::i18n::tr_name(row.label) } else { crate::i18n::tr_dyn(row.label) };
     let galley = ui.painter().layout_no_wrap(label_display, FontId::proportional(12.5), col);
     let lw = galley.size().x;
     ui.painter().galley(pos2(x, cy - galley.size().y / 2.0), galley, col);
@@ -596,6 +599,7 @@ fn component_rows(app: &mut SolveApp, ui: &mut egui::Ui, id: u64, depth: usize, 
         eye: (id != 0).then_some(visible),
         icon: "component",
         label: &name,
+        name: true,
         selected: app.tree.picked_components.contains(&id),
         dim: faded,
         radio: Some(active),
@@ -699,6 +703,7 @@ fn occurrence_rows(app: &mut SolveApp, ui: &mut egui::Ui, path: Vec<u64>, depth:
             eye: Some(own_visible),
             icon: "component",
             label: &placement.name,
+            name: true,
             selected,
             dim: faded || !visible,
             radio: Some(active),
@@ -891,7 +896,11 @@ fn named_view_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &m
     }
     let names: Vec<String> = app.session.doc.named_views.iter().map(|v| v.name.clone()).collect();
     for name in names {
-        let r = draw_row(ui, ui.id().with(("view", &name)), &Row { depth: depth + 1, icon: "perspective", label: &name, ..Default::default() });
+        let r = draw_row(
+            ui,
+            ui.id().with(("view", &name)),
+            &Row { depth: depth + 1, icon: "perspective", label: &name, name: true, ..Default::default() },
+        );
         if r.double {
             restore_view(app, &name);
         }
@@ -1031,7 +1040,7 @@ fn canvas_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &mut A
         let r = draw_row(
             ui,
             ui.id().with(("canvas", id)),
-            &Row { depth: depth + 1, eye: Some(visible), icon: "canvas", label: &name, selected, dim: !visible, ..Default::default() },
+            &Row { depth: depth + 1, eye: Some(visible), icon: "canvas", label: &name, name: true, selected, dim: !visible, ..Default::default() },
         );
         if r.eye {
             let _ = app.run("canvas.edit", json!({ "canvas": id, "visible": !visible }));
@@ -1461,7 +1470,16 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
         let r = draw_row(
             ui,
             ui.id().with(&gkey),
-            &Row { depth: depth + 1, fold: Some(gopen), eye: Some(gvis), icon: "folder", label: &label, dim: !gvis, ..Default::default() },
+            &Row {
+                depth: depth + 1,
+                fold: Some(gopen),
+                eye: Some(gvis),
+                icon: "folder",
+                label: &label,
+                name: true,
+                dim: !gvis,
+                ..Default::default()
+            },
         );
         if r.fold || r.clicked {
             toggle(app, &gkey, true);
@@ -1517,6 +1535,7 @@ fn entry_row(
             eye: Some(e.visible),
             icon: e.icon,
             label: &e.label,
+            name: true,
             selected: e.selected,
             dim: !e.visible,
             color: e.color,

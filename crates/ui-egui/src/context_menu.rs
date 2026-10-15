@@ -329,8 +329,15 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
         Target::ToolbarCommand { id } => crate::toolbar_custom::command_items(app, id),
         Target::Toolbar => crate::toolbar_custom::toolbar_items(app),
         Target::Workspace => {
-            let mut v = vec![act("ui.workspace", "Design", "box").key("current")];
-            for w in ["Render", "Animation", "Simulation", "Manufacture", "Drawing"] {
+            let rendering = crate::render_workspace::active(app);
+            let mut v = vec![
+                act("ui.workspace.design", "Design", "box").with(json!({"workspace":"design"})).key(if rendering { "" } else { "current" }),
+                act("ui.workspace.render", "Render", "camera")
+                    .with(json!({"workspace":"render"}))
+                    .key(if rendering { "current" } else { "" })
+                    .on(app.session.active_sketch.is_none() && app.tool.is_none() && app.dialog.is_none() && !app.file_load.busy()),
+            ];
+            for w in ["Animation", "Simulation", "Manufacture", "Drawing"] {
                 v.push(act("ui.workspace", w, "").key("coming later").on(false));
             }
             v
@@ -975,7 +982,13 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         "ui.toolbarPin" | "ui.toolbarRemove" | "ui.toolbarReset" | "ui.toolbarCustomize" | "ui.shortcutPin" => {
             crate::toolbar_custom::run(app, &item.id, &p)
         }
-        "ui.workspace" => {}
+        "ui.workspace" | "ui.workspace.design" | "ui.workspace.render" => {
+            if let Some(workspace) = p.get("workspace").and_then(Value::as_str)
+                && let Err(e) = crate::render_workspace::enter(app, workspace == "render")
+            {
+                app.set_status(e, true);
+            }
+        }
         "ui.findJoint" => {
             if let Some(id) = id_of(&p, "joint") {
                 crate::dialogs_assembly::find_joint(app, id);
@@ -1043,6 +1056,7 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
                 {
                     k.color = look.color;
                     k.opacity = look.opacity;
+                    k.pbr = look.pbr;
                     k.look = Some(look.name.clone());
                 }
                 k.component = Some(name);

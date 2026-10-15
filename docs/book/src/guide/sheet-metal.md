@@ -143,6 +143,10 @@ and bends that close a ring.
  "bends":[[50,0,0],[100,30,0],[50,60,0],[0,30,0]]}}
 ```
 
+The `face` can also be the name `model.faces` lists for it (`"face":"F1:+z"`), which saves
+computing a point on a face with holes or a curved outline: `model.faces` gives every face a
+`point` that lies on it.
+
 For a shop drawing or spreadsheet, `sheet.export_bend_table` returns CSV by default; choose
 `format: "json"` for structured data. It includes the sheet rule, thickness, bend angles,
 radii, allowances and flat centre-line coordinates. Lengths use millimetres and angles use

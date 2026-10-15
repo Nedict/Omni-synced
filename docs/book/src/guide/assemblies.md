@@ -34,7 +34,9 @@ mechanism stays in the assembly mode it started in (an open four-bar does not fl
 crossed one). If the motion would take a loop past the point where it can still close, for
 example driving a rocker beyond its swing, the motion stops at the last position where the loop
 closes, and the drive reports `stopped_by_loop`. A loop that cannot close at all is listed
-under `conflicts` and nothing in it moves. The Drive Joints dialog says when a drive stops short and
+under `conflicts` and nothing in it moves. `joint.list` reports how many degrees of freedom each
+part still has with its loops closed: the moving parts of a four-bar have one between them, and a
+loop locked by a rigid joint has none. The Drive Joints dialog says when a drive stops short and
 why. While it previews, a row under the values gives the value the joint reached and the reason
 (the loop that can't close further, or the two parts a contact set keeps apart), and after OK the
 status line repeats it. The value box keeps what you typed.

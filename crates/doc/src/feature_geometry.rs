@@ -139,9 +139,19 @@ macro_rules! geometry_walk {
                         f(Pos(start));
                     }
                 }
-                FeatureKind::Chamfer { edges, .. } | FeatureKind::SheetHem { edges, .. } | FeatureKind::SurfaceExtend { edges, .. } => {
+                FeatureKind::Chamfer { edges, .. } | FeatureKind::SheetHem { edges, .. } => {
                     for e in edges {
                         f(Pos(e));
+                    }
+                }
+                FeatureKind::SurfaceExtend { edges, up_to, .. } => {
+                    for e in edges {
+                        f(Pos(e));
+                    }
+                    match up_to {
+                        Some(crate::ExtendTo::Plane(plane)) => f(Plane(plane)),
+                        Some(crate::ExtendTo::Face(t)) => f(Pos(& $($m)? t.point)),
+                        Some(crate::ExtendTo::Bounds) | None => {}
                     }
                 }
                 FeatureKind::Shell { faces, .. }
@@ -152,9 +162,29 @@ macro_rules! geometry_walk {
                         f(Pick(p));
                     }
                 }
+                FeatureKind::SurfaceRuled { edges, direction, face, .. } => {
+                    for e in edges {
+                        f(Pos(e));
+                    }
+                    if let Some(d) = direction {
+                        f(Dir(d));
+                    }
+                    if let Some(p) = face {
+                        f(Pick(p));
+                    }
+                }
                 FeatureKind::Unstitch { faces, .. } | FeatureKind::ReverseNormal { faces, .. } => {
                     for p in faces {
                         f(Pos(p));
+                    }
+                }
+                // The face is picked (and named); the holes are picked by points on their edges.
+                FeatureKind::SurfaceUntrim { face, holes, .. } => {
+                    f(Pick(& $($m)? face.point));
+                    if let Some(points) = holes {
+                        for p in points {
+                            f(Pos(p));
+                        }
                     }
                 }
                 FeatureKind::BoundaryFill { cells, .. } => {

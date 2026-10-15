@@ -7,8 +7,11 @@
 mod backend;
 mod camera;
 mod curve_display;
+pub mod job;
 pub mod lighting;
+mod product;
 mod raster;
+pub mod studio;
 pub mod surface;
 pub mod texture_input;
 
@@ -19,4 +22,5 @@ pub use backend::{
 };
 pub use camera::{Camera, CameraAnim, Mat4, Quat, StandardView, UpAxis, ease_in_out};
 pub use curve_display::{PixelCurveView, SampledPath, SamplingBudget, SamplingQuality, sample_segment, sample_segment_unclipped};
+pub use product::{FaceAppearance, ProductMesh, ProductScene};
 pub use raster::{Canvas, Rgb, SECTION_CAP, Scene, SceneLine, SceneMesh, png, render, render_png, render_transparent};
