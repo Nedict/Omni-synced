@@ -416,7 +416,8 @@ pub(crate) fn expand_sketch_entity(session: &solidcraft_engine::Session, sel: &S
             if *sketch != active {
                 return vec![];
             }
-            let Some(ss) = session.world_state().sketch(active) else { return vec![] };
+            let world = session.world_state();
+            let Some(ss) = world.sketch(active) else { return vec![] };
             let Some(profile) = ss.profiles.get(*index) else { return vec![] };
             profile.curve_ids().into_iter().map(|id| Sel::SketchCurve { id }).collect()
         }
