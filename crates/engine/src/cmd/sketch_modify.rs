@@ -479,6 +479,55 @@ fn uses(c: &Curve, p: usize) -> bool {
 // ---------------------------------------------------------------------------------------------
 // Corners: fillet and chamfer
 
+/// A corner drawn as two curves whose ends are separate points held together by a Coincident
+/// constraint (a line drawn to where an arc starts, #1208) becomes one shared point, so it can be
+/// rounded or cut like a corner drawn through one point. Only a partner held by nothing but that
+/// constraint is welded; anything else is left as it is.
+fn weld_corner(sk: &mut Sketch, p: &Value) {
+    let ends = |sk: &Sketch, c: usize| match sk.curves.get(c).map(|c| &c.kind) {
+        Some(CurveKind::Line { a, b }) | Some(CurveKind::Arc { a, b, .. }) => Some([*a, *b]),
+        _ => None,
+    };
+    let q = if let Some(r) = str_(p, "point") {
+        sk.resolve_point(r)
+    } else {
+        let curve = |k: &str| str_(p, k).and_then(|i| sk.curve_index(i)).and_then(|c| ends(sk, c));
+        let (Some(ea), Some(eb)) = (curve("a"), curve("b")) else { return };
+        if ea.iter().any(|x| eb.contains(x)) {
+            return;
+        }
+        // The end of `a` held coincident with an end of `b`.
+        ea.into_iter().find(|x| {
+            sk.constraints
+                .iter()
+                .any(|k| matches!(k.kind, ConstraintKind::Coincident { p, q } if (p == *x && eb.contains(&q)) || (q == *x && eb.contains(&p))))
+        })
+    };
+    let Some(mut q) = q else { return };
+    // Each pass welds one partner; a pass removes a constraint, so this ends.
+    for _ in 0..sk.constraints.len() {
+        let partner = sk.constraints.iter().enumerate().find_map(|(i, k)| {
+            let o = match k.kind {
+                ConstraintKind::Coincident { p, q: r } if p == q && r != q => r,
+                ConstraintKind::Coincident { p, q: r } if r == q && p != q => p,
+                _ => return None,
+            };
+            let held_elsewhere = sk.constraints.iter().enumerate().any(|(j, k)| j != i && k.kind.refers_to_point(o));
+            let linked = (0..sk.curves.len()).any(|c| sk.is_linked_curve(c) && sk.curves.get(c).is_some_and(|x| x.kind.uses(o)));
+            (o != 0 && !held_elsewhere && !linked).then_some((i, o))
+        });
+        let Some((i, o)) = partner else { return };
+        for c in sk.curves.iter_mut() {
+            c.kind.map_points(&|x| if x == o { q } else { x });
+        }
+        sk.constraints.remove(i);
+        sk.remove_points(&[o]);
+        if o < q {
+            q -= 1;
+        }
+    }
+}
+
 /// A corner of two lines: (line a, line b, corner point, far end of a, far end of b).
 fn corner(sk: &Sketch, p: &Value, cmd: &str) -> Result<(usize, usize, usize, usize, usize)> {
     let ends = |l: usize| match sk.curves.get(l).map(|c| &c.kind) {
@@ -653,6 +702,7 @@ fn kept_json(kept: Vec<CornerKept>) -> (Vec<String>, Vec<String>) {
 /// Round one corner (`point` or `a`, `b`) with an arc of radius `r` tangent to both curves:
 /// the arc, the tangent constraints and what became of the corner point.
 fn fillet_corner(sk: &mut Sketch, p: &Value, r: f64, cmd: &str) -> Result<(usize, Vec<String>, CornerKept)> {
+    weld_corner(sk, p);
     let (la, lb, c, fa, fb) = match corner(sk, p, cmd) {
         Ok(x) => x,
         // Not two lines: a corner with an arc.
@@ -761,6 +811,7 @@ fn round_corner(sk: &mut Sketch, p: &Value, r: f64, cmd: &str) -> Result<Option<
 
 fn chamfer(s: &mut Session, p: &Value, cmd: &str, dists: impl FnOnce(f64) -> Result<(f64, f64)>) -> Result<Value> {
     let (out, info) = edit(s, p, cmd, false, |sk, _| {
+        weld_corner(sk, p);
         let (la, lb, c, fa, fb) = corner(sk, p, cmd)?;
         let (pc, pa, pb) = (sk.point(c).unwrap_or_default(), sk.point(fa).unwrap_or_default(), sk.point(fb).unwrap_or_default());
         let (u, v) = ((pa - pc).normalized().unwrap_or(Vec2::X), (pb - pc).normalized().unwrap_or(Vec2::Y));

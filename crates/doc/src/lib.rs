@@ -39,6 +39,7 @@ pub mod physical_material;
 mod piece_names;
 mod profile_refs;
 pub mod progress;
+mod walk;
 pub use profile_refs::{capture_profile_selection, profile_selection_indices};
 pub mod plastic;
 pub mod project;
