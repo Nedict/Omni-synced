@@ -20,6 +20,10 @@ use crate::{SolveApp, icons};
 mod appearance_tests;
 
 #[cfg(test)]
+#[path = "viewport_removed_later_tests.rs"]
+mod removed_later_tests;
+
+#[cfg(test)]
 #[path = "viewport_plane_target_tests.rs"]
 mod plane_target_tests;
 

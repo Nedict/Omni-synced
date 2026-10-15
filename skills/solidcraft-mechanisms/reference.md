@@ -129,7 +129,7 @@ The same pattern moved the solar wings of the SELENE rover (`Rover-v7.solidcraft
 | A linked joint stops following | Its value is clamped to its own limits. Hinge 2 in the example has `[[-60, 0]]`, so a drive of Hinge below 0 leaves it at 0. Give a mirrored joint the mirrored limits. |
 | A drive stops short, `stopped_by_contact` | Two bodies of a contact set touch. `fraction` is how far the move got. |
 | `occurrence.ground` says there is no occurrence `Frame` | It takes occurrence names only: `Frame:1`. |
-| `a joint needs two different occurrences` | Both origins found the same part. Give `occurrence` on both. |
+| `a joint needs two different occurrences` | Both origins found the same part. Give `occurrence` on both. If the parts are bodies of one component (an imported STEP file often brings them so), run `component.from_bodies {"bodies": [...]}` first. |
 | "unknown command" for `file.open` | Open a design with the `open` tool or `doc.open {path}`. |
 | Rigid hoses, cables or springs drift as the mechanism moves | Bodies don't bend. Hide them with `browser.visibility`, or model them per link. |
 | `solidcraft-cli snapshot SCRIPT --in design` runs on an empty design | `snapshot` ignores `--in`. Run `solidcraft-cli run SCRIPT --in design --save out.solidcraft` first. |

@@ -490,6 +490,12 @@ pub struct SheetBody {
     /// Perforation fields (#732), flat coordinates; their holes are computed on demand and never cut into the B-rep.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub perforations: Vec<SheetPerforation>,
+    /// Regions (flat coordinates) that text cut or machined, letters with their counters as
+    /// holes: a record of where the sheet's text went, so that its DXF can write the letters on
+    /// layers of their own (see [`SheetBody::letters`]). The cut-outs and pockets themselves are
+    /// in `holes` and `pockets`. Derived from feature history, like `pockets`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<Region2>,
     /// Unfolded.
     pub flat: bool,
     /// Gap between flanges that meet at a corner.
@@ -1598,6 +1604,26 @@ impl SheetBody {
             }
         }
         Ok(through.unwrap_or_default())
+    }
+
+    /// The text the sheet carries: what [`SheetBody::labels`] records, ready to tell whether a
+    /// loop of the flat pattern is a letter.
+    pub fn letters(&self) -> Letters {
+        let regions = self
+            .labels
+            .iter()
+            .map(|r| {
+                let (mut lo, mut hi) = (Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN));
+                for p in r.outer.polyline(1e-3) {
+                    lo = Vec2::new(lo.x.min(p.x), lo.y.min(p.y));
+                    hi = Vec2::new(hi.x.max(p.x), hi.y.max(p.y));
+                }
+                // A polyline of 0.001 mm chords is within 0.001 mm of the curve.
+                let pad = Vec2::new(0.01, 0.01);
+                (lo - pad, hi + pad, std::iter::once(&r.outer).chain(&r.holes).flat_map(|lp| lp.segs.iter().copied()).collect())
+            })
+            .collect();
+        Letters { regions }
     }
 
     /// Pocket operations clipped to the surviving flat material, with exact depth intervals.
@@ -3953,6 +3979,30 @@ fn polys_cross(a: &[Vec2], b: &[Vec2]) -> bool {
     })
 }
 
+/// Whether every segment of `lp` lies on one of `curves` (its ends and its middle, within
+/// 0.0001 mm): the loop is made of those curves, or of parts of them.
+pub fn loop_lies_on(lp: &Loop2, curves: &[Seg2]) -> bool {
+    const TOL: f64 = 1e-4;
+    let near = |p: Vec2| curves.iter().any(|c| c.point_at(c.closest_param(p)).dist(p) <= TOL);
+    !lp.segs.is_empty() && lp.segs.iter().all(|g| near(g.start()) && near(g.mid()) && near(g.end()))
+}
+
+/// Tells which loops of a sheet's flat pattern are letters (see [`SheetBody::letters`]).
+#[derive(Clone, Debug)]
+pub struct Letters {
+    /// Each text region's corners (lowest, highest) and the segments of its outlines.
+    regions: Vec<(Vec2, Vec2, Vec<Seg2>)>,
+}
+
+impl Letters {
+    /// Whether `lp` is made of the outlines of text the sheet carries: a letter, or one of its
+    /// counters.
+    pub fn is_letter(&self, lp: &Loop2) -> bool {
+        let Some(p) = lp.segs.first().map(Seg2::start) else { return false };
+        self.regions.iter().any(|(lo, hi, curves)| p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y && loop_lies_on(lp, curves))
+    }
+}
+
 /// Bounded overlap predicate, including crossing-only cuts whose vertices lie outside a panel.
 pub(crate) fn flat_regions_overlap(a: &Region2, b: &Region2, work: &mut FlatWork) -> Result<bool> {
     let (a, b) = (planar_region(a)?, planar_region(b)?);
@@ -3974,6 +4024,7 @@ pub fn base_flange(body: &str, rule: &str, rv: &RuleValues, plane: Plane, region
         pockets: Vec::new(),
         bores: Vec::new(),
         perforations: Vec::new(),
+        labels: Vec::new(),
         flat: false,
         gap: rv.gap,
         relief: rv.corner_relief_shape,
@@ -4031,6 +4082,7 @@ pub fn contour_flange(body: &str, rule: &str, rv: &RuleValues, plane: &Plane, pt
         pockets: Vec::new(),
         bores: Vec::new(),
         perforations: Vec::new(),
+        labels: Vec::new(),
         flat: false,
         gap: rv.gap,
         relief: rv.corner_relief_shape,
@@ -4173,6 +4225,41 @@ mod tests {
 
     fn vol(b: &Body) -> f64 {
         kernel::measure(b).map(|m| m.volume).unwrap_or(f64::NAN)
+    }
+
+    #[test]
+    fn loops_lie_on_the_curves_they_are_made_of() {
+        let circle = Loop2::circle(Vec2::new(5.0, 5.0), 3.0);
+        let curves: Vec<Seg2> = circle.segs.clone();
+        // The loop itself, started elsewhere and run the other way, and a loop of its halves.
+        assert!(loop_lies_on(&circle, &curves));
+        assert!(loop_lies_on(&Loop2::circle_from(Vec2::new(5.0, 5.0), 3.0, 1.0).reversed(), &curves));
+        let halves: Vec<Seg2> = circle.segs.iter().flat_map(|g| [g.split_half().0, g.split_half().1]).collect();
+        assert!(loop_lies_on(&Loop2 { segs: halves }, &curves));
+        // Another circle, a square and an empty loop do not.
+        assert!(!loop_lies_on(&Loop2::circle(Vec2::new(5.0, 5.0), 3.1), &curves));
+        assert!(!loop_lies_on(&Loop2::circle(Vec2::new(5.0, 5.0), 2.0), &curves));
+        assert!(!loop_lies_on(&rect(Vec2::ZERO, Vec2::X, Vec2::new(1.0, 1.0), Vec2::Y).outer, &curves));
+        assert!(!loop_lies_on(&Loop2 { segs: Vec::new() }, &curves));
+        // A loop only partly on them (a letter across the sheet's edge) is not on them.
+        let notch = Loop2 { segs: vec![circle.segs[0], Seg2::Line { a: circle.segs[0].end(), b: Vec2::new(50.0, 50.0) }] };
+        assert!(!loop_lies_on(&notch, &curves));
+    }
+
+    #[test]
+    fn a_sheet_knows_the_letters_it_carries() {
+        // A recorded text region with a counter: its outline and its counter are letters, the same
+        // circle elsewhere, a loop near it that is another size and a loop far away are not.
+        let mut s = plate(100.0, 60.0);
+        let counter = Loop2::circle(Vec2::new(20.0, 20.0), 2.0).reversed();
+        s.labels.push(Region2 { outer: Loop2::circle(Vec2::new(20.0, 20.0), 5.0), holes: vec![counter.clone()] });
+        let letters = s.letters();
+        assert!(letters.is_letter(&Loop2::circle(Vec2::new(20.0, 20.0), 5.0)));
+        assert!(letters.is_letter(&counter.reversed()));
+        assert!(!letters.is_letter(&Loop2::circle(Vec2::new(20.0, 20.0), 4.0)));
+        assert!(!letters.is_letter(&Loop2::circle(Vec2::new(70.0, 20.0), 5.0)));
+        // A sheet that carries none has no letters.
+        assert!(!plate(100.0, 60.0).letters().is_letter(&Loop2::circle(Vec2::new(20.0, 20.0), 5.0)));
     }
 
     #[test]
