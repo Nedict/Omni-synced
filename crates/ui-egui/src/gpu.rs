@@ -295,6 +295,12 @@ fn joined<'a>(blocks: impl Iterator<Item = &'a Option<Batch>>, own: Option<Batch
     (!parts.is_empty()).then_some(Batch { parts, chunk })
 }
 
+/// Planned bodies end a GPU chunk one time in this many (by their plan's address), and a chunk
+/// holds at most [`MAX_CHUNK_BODIES`]: a scene of a thousand bodies takes a few dozen dispatches
+/// once, and a changed body re-evaluates a few dozen bodies, not all of them.
+const CHUNK_SPLIT: u64 = 32;
+const MAX_CHUNK_BODIES: usize = 128;
+
 #[derive(Default)]
 struct Batches {
     /// The scene blocks on the GPU, by key.
@@ -381,18 +387,25 @@ impl Batches {
         encoder: &mut wgpu::CommandEncoder,
         bodies: &[PlannedBody],
     ) -> Vec<PlannedDraw> {
+        // Chunks end where a body's own plan says (or when full), so a body whose plan changes
+        // (an edit, or a refinement as the view zooms in, #1320) re-evaluates only its own
+        // chunk, not the whole scene.
         let mut chunks: Vec<Vec<&PlannedBody>> = Vec::new();
         let mut filled = 0usize;
+        let mut open = false;
         for b in bodies {
             let n = b.plan.vertex_count();
             match chunks.last_mut() {
-                Some(c) if filled + n <= solidcraft_gpu::MAX_BATCH => c.push(b),
+                Some(c) if open && filled + n <= solidcraft_gpu::MAX_BATCH => c.push(b),
                 _ => {
                     chunks.push(vec![b]);
                     filled = 0;
                 }
             }
             filled += n;
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(&(Arc::as_ptr(&b.plan) as usize), &mut h);
+            open = !std::hash::Hasher::finish(&h).is_multiple_of(CHUNK_SPLIT) && chunks.last().is_some_and(|c| c.len() < MAX_CHUNK_BODIES);
         }
         let key = |c: &[&PlannedBody]| c.iter().map(|b| Arc::as_ptr(&b.plan) as usize).collect::<Vec<usize>>();
         self.resident.retain(|k, _| chunks.iter().any(|c| key(c) == *k));

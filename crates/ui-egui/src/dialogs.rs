@@ -2374,8 +2374,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             for (k, (t, r)) in mids.iter_mut().enumerate() {
                                 row_label(ui, "Mid Radius");
                                 ui.horizontal(|ui| {
-                                    ui.add(egui::DragValue::new(t).speed(0.01).range(0.01..=0.99).fixed_decimals(2))
-                                        .on_hover_text(tr("Position along the edge, 0 at the start end, 1 at the other"));
+                                    ui.add(
+                                        egui::DragValue::new(t)
+                                            .speed(0.01)
+                                            .range(0.01..=0.99)
+                                            .fixed_decimals(2)
+                                            .custom_parser(crate::prefs::parse_number),
+                                    )
+                                    .on_hover_text(tr("Position along the edge, 0 at the start end, 1 at the other"));
                                     enter |= field(ui, r);
                                     if ui.small_button("×").on_hover_text(tr("Remove this point")).clicked() {
                                         remove = Some(k);

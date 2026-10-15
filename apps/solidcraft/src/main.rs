@@ -160,6 +160,8 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
         http_download: Some(std::sync::Arc::new(http_download)),
         assistant_http: Some(std::sync::Arc::new(assistant_http::stream)),
         start_agent_endpoint: Some(std::sync::Arc::new(control_server::start_agent_endpoint)),
+        // Already an installed app: only the browser build offers to install.
+        install_app: None,
         show_in_folder: Some(Box::new(|path| {
             let folder = std::path::Path::new(path).parent().unwrap_or_else(|| std::path::Path::new("."));
             let mut command = std::process::Command::new(if cfg!(target_os = "windows") {

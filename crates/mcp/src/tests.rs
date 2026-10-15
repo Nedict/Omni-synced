@@ -214,7 +214,7 @@ fn open_stands_a_y_up_step_file_up() {
     assert_eq!(r["features"], 1, "{r}");
     assert!((height(&mut s) - 5.0).abs() < 1e-6, "as written");
     let r = tool(&mut s, "open", json!({"path": step, "up": "y", "names": "product"}));
-    assert_eq!(r["features"], 2, "the import and the turn: {r}");
+    assert_eq!(r["features"], 1, "the import, its component turned: {r}");
     assert!((height(&mut s) - 40.0).abs() < 1e-6, "Y became Z");
 
     for args in [json!({"path": step, "up": "x"}), json!({"path": step, "names": "label"}), json!({"path": step, "up": 1})] {

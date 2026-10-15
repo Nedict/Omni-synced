@@ -249,10 +249,10 @@ pub fn tool_definitions() -> Vec<Value> {
             "open",
             "Open a design",
             "Open a .solidcraft design file, a STEP file (.step/.stp: a new design whose bodies come from the file, as an \
-             Import base feature) or a 3MF/STL mesh (.3mf/.stl: mesh bodies). Replaces the current design; insert into it \
+             Import base feature in a component named after the file; an assembly's parts become nested components) or a \
+             3MF/STL mesh (.3mf/.stl: mesh bodies in such a component); the result reports the component (id, component_name). Replaces the current design; insert into it \
              instead with the file.insert_step (STEP) or file.insert_mesh (3MF/STL) commands. A STEP file from a system \
-             that has Y up opens lying on its back: `up: \"y\"` turns it a quarter turn about X (Y becomes Z) with a Move \
-             feature. `names` picks what the bodies are named after when the solids' own names say nothing useful.",
+             that has Y up opens lying on its back: `up: \"y\"` turns its component a quarter turn about X (Y becomes Z). `names` picks what the bodies are named after when the solids' own names say nothing useful.",
             obj(
                 json!({
                     "path": string("Path to a .solidcraft, .step/.stp, .3mf or .stl file"),

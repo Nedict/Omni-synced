@@ -73,16 +73,25 @@ doesn't update automatically.
 ## Web
 
 The same app runs in the browser: [open SolidCraft on the web](../app/) (`?sample` opens the sample
-part, `?webgl` forces WebGL2 where WebGPU is missing). Designs are saved in the browser's private
-file storage, which needs HTTPS or localhost. Planned worker and tiered-storage integration is
+part, `?webgl` forces WebGL2 where WebGPU is missing or misbehaves; the browser remembers it until
+`?webgpu`, and an app installed from Chrome or Edge starts with it too). Designs are saved in the
+browser's private file storage, which needs HTTPS or localhost.
+Planned worker and tiered-storage integration is
 described in [web-runtime.md](https://github.com/bherbruck/solidcraft/blob/main/docs/web-runtime.md)
 (design; not yet wired in the shipped wasm build).
 
 After the first visit the web app works offline: the browser keeps a copy of it. Online, each
 launch gets the latest published build (the browser downloads it once when it changes); offline,
 when the network doesn't answer within a few seconds, or when a new build can't be downloaded
-whole, the kept copy starts (and the download carries on for the next launch). To build it
-yourself:
+whole, the kept copy starts (and the download carries on for the next launch).
+
+Browsers that can install web apps add **Install app…** to the File menu: it installs SolidCraft
+as an app with its own window and launcher icon, working offline like the page. In Chrome, Edge
+and other Chromium browsers it shows the browser's install prompt, and once SolidCraft is
+installed the item is gone. Safari has no such prompt, so the item shows its steps instead:
+Share › Add to Home Screen on iPhone and iPad, File › Add to Dock on a Mac (Safari 17 or later).
+
+To build it yourself:
 
 ```sh
 rustup target add wasm32-unknown-unknown

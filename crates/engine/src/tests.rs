@@ -307,6 +307,7 @@ mod blend_fit;
 mod boolean_diagnostics;
 mod component_frames;
 mod curved_seam_round;
+mod import_component;
 mod large_step_import;
 mod loft_cut;
 mod loft_ring;
@@ -1057,7 +1058,9 @@ fn join_onto_a_finely_faceted_import() {
     let prism = volume(&mut s);
 
     let mut d = Session::default();
-    run(&mut d, "file.insert_step", json!({"path": p.to_string_lossy()}));
+    // The import is a component (#1386): the pin is made in it to join its body.
+    let r = run(&mut d, "file.insert_step", json!({"path": p.to_string_lossy()}));
+    run(&mut d, "component.activate", json!({"component": r["component"]}));
     run(&mut d, "sketch.create", json!({"plane": "XY", "name": "Pin"}));
     run(&mut d, "sketch.rectangle.two_point", json!({"p0": [-5, -5], "p1": [5, 5]}));
     run(&mut d, "sketch.finish", json!({}));

@@ -126,6 +126,25 @@ impl ModelBody {
             .clone()
     }
 
+    /// The display plan and its mesh `k` steps finer than `q` (view-dependent refinement, #1320;
+    /// see [`crate::display_quality::refinement_for`]). Step 0 is the cached plan at `q`; finer
+    /// steps are made on each call and kept by the viewport, which evicts them when it runs over
+    /// its budget. `None` when the body has no plan at that step.
+    pub fn refined_display(&self, q: crate::display_quality::DisplayQuality, k: u8) -> Option<(Arc<TessPlan>, Arc<Mesh>)> {
+        if k == 0 {
+            return Some((self.display_plan_at(q)?, self.plan_mesh_at(q)?));
+        }
+        let plan = match self.body.display_plan_angular(q.refined_chord(self.body.size(), k), q.refined_angle(k)) {
+            Ok(plan) => plan,
+            Err(e) => {
+                log::debug!("{}: no display plan refined {k} steps ({e})", self.name);
+                return None;
+            }
+        };
+        let mesh = self.body.display_mesh_of(&plan).ok()?;
+        Some((Arc::new(plan), Arc::new(mesh)))
+    }
+
     /// The display mesh's chord tolerance: 1/1000 of the body's size.
     fn display_tol(&self) -> f64 {
         (self.body.size() * 1e-3).max(1e-3)
@@ -4662,15 +4681,12 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             }
             Ok(())
         }
-        FeatureKind::Import { step, .. } => {
+        FeatureKind::Import { step, skip, .. } => {
             let imp = kernel::step_import_shared(step)?;
             let digest = crate::config::payload_digest(step);
-            // Files from board and assembly tools give thousands of bodies the same name: name
-            // them from a set, not by searching the bodies for every candidate (cubic).
-            let mut names = BodyNames::new(st);
-            for (k, b) in imp.bodies.iter().enumerate() {
-                let base = f.body_names.get(k).filter(|n| !n.trim().is_empty()).unwrap_or(&b.name);
-                let name = names.unique(base);
+            let names = import_body_names(st, &f.body_names, &imp, skip);
+            for (b, name) in imp.bodies.iter().zip(names) {
+                let Some(name) = name else { continue };
                 let b = crate::lineage::numbered_tool(b.body.clone().with_import_certificate(&digest, f.id)?);
                 st.bodies.push(ModelBody::traced_new(name, b, f.id));
             }
@@ -4701,6 +4717,27 @@ fn mesh_bodies(meshes: &[crate::MeshData]) -> Result<Vec<(String, Body)>> {
         out.push((m.name.clone(), b.with_color(m.color)));
     }
     Ok(out)
+}
+
+/// The names an Import feature gives the file's bodies, added after the bodies of `st`, in the
+/// file's order: `None` for a body it skips (a later instance of a repeated part). `body_names`
+/// are the feature's stored names (by index), else the file's own.
+pub fn import_body_names(st: &ModelState, body_names: &[String], imp: &kernel::StepImport, skip: &[u64]) -> Vec<Option<String>> {
+    let skip: std::collections::HashSet<u64> = skip.iter().copied().collect();
+    // Files from board and assembly tools give thousands of bodies the same name: name them
+    // from a set, not by searching the bodies for every candidate (cubic).
+    let mut names = BodyNames::new(st);
+    imp.bodies
+        .iter()
+        .enumerate()
+        .map(|(k, b)| {
+            if skip.contains(&(k as u64)) {
+                return None;
+            }
+            let base = body_names.get(k).filter(|n| !n.trim().is_empty()).unwrap_or(&b.name);
+            Some(names.unique(base))
+        })
+        .collect()
 }
 
 /// [`unique_body_name`] for many bodies in a row: the same names, in time linear in the bodies.
