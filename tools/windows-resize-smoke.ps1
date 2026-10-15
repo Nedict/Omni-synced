@@ -170,9 +170,12 @@ try {
     [void][Win]::ShowWindow($h, 3) # SW_MAXIMIZE
     Start-Sleep -Milliseconds 500
     if ([Win]::IsZoomed($h)) {
+        # The maximized window's rect overhangs the screen by the hidden frame (Windows' own
+        # frame answers there); the screen's left edge is where the pointer can be.
         $r = Rect $h
-        $got = [Win]::HitTest($h, $r.Left + 1, [int](($r.Top + $r.Bottom) / 2))
-        Check ($got -eq 1) "maximized, the left edge is client area ($($HT[$got]))"
+        $x = [Math]::Max($r.Left, 0) + 1
+        $got = [Win]::HitTest($h, $x, [int](($r.Top + $r.Bottom) / 2))
+        Check ($got -eq 1) "maximized ($($r.Left),$($r.Top) - $($r.Right),$($r.Bottom)), the screen's left edge is client area ($($HT[$got]))"
     } else {
         Check $false 'the window maximizes'
     }
