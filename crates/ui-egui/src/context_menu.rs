@@ -418,6 +418,7 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
         v.push(Item::sep());
         v.push(act("ui.appearance", "Appearance", "appearance").key("A"));
         v.push(act("ui.properties", "Properties", "measure").with(json!({ "bodies": [face] })));
+        v.push(act("ui.saveMesh", "Save As Mesh", "export").with(json!({ "bodies": [face] })));
         v.push(Item::sep());
         v.push(act("ui.delete", "Delete", "delete").key("Del"));
         v.push(act(if hidden { "ui.show" } else { "ui.hide" }, "Show/Hide", "eye").key("V").with(json!({ "bodies": [face] })));
@@ -437,6 +438,7 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
         v.push(act(if hidden { "ui.show" } else { "ui.hide" }, "Show/Hide", "eye").key("V").with(json!({ "bodies": [body] })));
         v.push(Item::sep());
         v.push(act("ui.findBrowser", "Find in Browser", "").with(json!({ "body": body })));
+        v.push(act("ui.saveMesh", "Save As Mesh", "export").with(json!({ "bodies": [body] })));
         v.push(Item::sep());
         v.push(act("ui.tangentChain", "Select Tangent Chain", ""));
         v.push(cmd(app, "inspect.measure", "Measure"));
@@ -598,7 +600,7 @@ fn occurrence_items(app: &SolveApp, path: &[u64]) -> Vec<Item> {
             }
             "ui.moveOccurrence" => {
                 item.params = Some(json!({"occurrence": placement.occurrence, "path": path}));
-                item.enabled = !placement.grounded;
+                item.enabled = !placement.grounded && app.session.held_by_rigid_group(placement.occurrence).is_none();
             }
             "ui.properties" => item.params = Some(json!({"occurrence": placement.occurrence, "path": path})),
             "occurrence.copy" => item.params = Some(json!({"occurrence": placement.occurrence, "translate": [10,10,0]})),
@@ -640,9 +642,18 @@ fn component_items(app: &SolveApp, id: u64) -> Vec<Item> {
         let oid = occ.map(|o| o.id).unwrap_or(0);
         v.push(act("ui.activate", "Activate", "component").with(json!({ "component": id })).on(!active));
         v.push(cmd(app, "occurrence.ground", if grounded { "Unground" } else { "Ground" }).with(json!({ "occurrence": oid, "grounded": !grounded })));
-        v.push(act("ui.moveOccurrence", "Move/Copy", "move").key("M").with(json!({ "occurrence": oid })).on(!grounded && occ.is_some()));
+        v.push(
+            act("ui.moveOccurrence", "Move/Copy", "move")
+                .key("M")
+                .with(json!({ "occurrence": oid }))
+                .on(!grounded && occ.is_some() && app.session.held_by_rigid_group(oid).is_none()),
+        );
         v.push(cmd(app, "component.capture_position", "Capture Position").on(!app.session.pending_moves.is_empty()));
         v.push(cmd(app, "component.revert_position", "Revert Position").on(!app.session.pending_moves.is_empty()));
+        // An imported assembly moves as one until its rigid group is released.
+        if !app.session.contents_joints(id).is_empty() {
+            v.push(cmd(app, "component.unlock", "Unlock Contents").with(json!({ "component": id })));
+        }
         v.push(Item::sep());
     } else {
         v.push(act("ui.activate", "Activate", "component").with(json!({ "component": id })).on(!active));
@@ -1068,8 +1079,9 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             app.start("material.assign");
         }
         "ui.saveMesh" => {
-            let name = bodies.first().cloned().unwrap_or_else(|| app.session.doc.name.clone());
-            app.pick_save_command(&format!("{name}.stl"), &["stl"], "file.save_mesh", json!({"bodies": bodies}));
+            let items: Vec<Value> = bodies.iter().map(|b| json!({"type": "body", "name": b})).collect();
+            let _ = app.run("select.set", json!({ "items": items }));
+            app.start("file.save_mesh");
         }
         "ui.exportDxf" => {
             if let Some(id) = id_of(&p, "sketch") {

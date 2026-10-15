@@ -207,6 +207,66 @@ fn ok_click_survives_a_busy_preview() {
     assert!(app.dialog.is_none());
 }
 
+/// #1239: two parts as bodies of one component (a multi-body STEP import). Picks on both used to
+/// make no joint with nothing said, so no option seemed to do anything. The dialog now says why
+/// under the picks and offers Create Components from Bodies, after which the same picks join.
+#[test]
+fn picks_on_one_component_say_why_and_offer_components() {
+    let mut s = Session::default();
+    s.execute("solid.box", &json!({"length": 20, "width": 20, "height": 10})).unwrap();
+    s.execute("solid.box", &json!({"length": 20, "width": 20, "height": 10, "corner": [30, 0, 0]})).unwrap();
+    let mut app = SolveApp::new(s, Services::default());
+    let bodies = vec!["Body1".to_string(), "Body2".to_string()];
+    // As-built: two bodies of one component are one component.
+    app.session.selection = vec![Sel::Body { name: "Body1".into() }, Sel::Body { name: "Body2".into() }];
+    app.start("joint.as_built");
+    let d = app.dialog.take().unwrap();
+    let Kind::Assembly(k) = &d.kind else { panic!("{:?}", d.kind) };
+    assert_eq!(joint_problem(&app, k, &d.inputs).map(|p| p.1), Some(bodies.clone()));
+    // Two faces of one body: pick another part (nothing to part).
+    app.session.selection.clear();
+    app.start("joint.create");
+    let mut d = app.dialog.take().unwrap();
+    d.pick(&app.session, face_sel(&app.session, Vec3::new(10.0, 10.0, 10.0)).unwrap());
+    d.pick(&app.session, face_sel(&app.session, Vec3::new(10.0, 10.0, 0.0)).unwrap());
+    let Kind::Assembly(k) = &d.kind else { panic!("{:?}", d.kind) };
+    assert_eq!(joint_problem(&app, k, &d.inputs).map(|p| p.1), Some(vec![]));
+    // A face of each body.
+    app.start("joint.create");
+    let mut d = app.dialog.take().unwrap();
+    d.pick(&app.session, face_sel(&app.session, Vec3::new(10.0, 10.0, 10.0)).unwrap());
+    d.pick(&app.session, face_sel(&app.session, Vec3::new(40.0, 10.0, 0.0)).unwrap());
+    assert!(apply_commands(&app, &d).is_err(), "one component: no joint");
+    app.dialog = Some(d);
+    let ctx = egui::Context::default();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0));
+    let frame = |app: &mut SolveApp, events: Vec<egui::Event>| {
+        let input = egui::RawInput { screen_rect: Some(screen), events, ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| crate::dialogs::show(app, ui.ctx()));
+        // Nothing is painted: drop the texture changes (an unapplied delta panics on drop).
+        out.textures_delta.clear();
+        out
+    };
+    // The auto-sized dialog takes a few frames to settle its width.
+    for _ in 0..3 {
+        frame(&mut app, vec![]);
+    }
+    let out = frame(&mut app, vec![]);
+    let why = crate::i18n::format("joint.one_component", &[("bodies", "Body1, Body2")]);
+    assert!(text_at(&out, &why).is_some(), "the dialog says why");
+    let at = text_at(&out, crate::i18n::tr("cmd.component_from_bodies")).expect("and offers the way out");
+    let button = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+    frame(&mut app, vec![egui::Event::PointerMoved(at)]);
+    frame(&mut app, vec![button(true)]);
+    frame(&mut app, vec![button(false)]);
+    assert!(bodies.iter().all(|b| app.session.doc.find_component(b).is_some()), "each body has a component");
+    let d = app.dialog.as_ref().expect("the dialog stays open");
+    let c = apply_commands(&app, d).unwrap();
+    assert_eq!((c[0].1["a"]["occurrence"].clone(), c[0].1["b"]["occurrence"].clone()), (json!(occ(&app, "Body1")), json!(occ(&app, "Body2"))));
+    let out = frame(&mut app, vec![]);
+    assert!(text_at(&out, &why).is_none(), "nothing left to say");
+}
+
 /// Two top faces mate face to face as in Fusion: B ends up upside down on A, not inside it;
 /// Flip turns it back over (into A).
 #[test]
@@ -415,7 +475,7 @@ fn drive_says_where_a_loop_stopped_it() {
     // Past its toggle position (about +50.4° from where it stands).
     ask(&mut d, "100 deg");
     let b = world_preview(&app.session, &apply_commands(&app, &d).unwrap(), colors).unwrap().unwrap();
-    let why = b.stopped.as_ref().and_then(|r| drive_stop(&app.session, r)).unwrap();
+    let why = b.stopped.as_ref().and_then(drive_stop).unwrap();
     assert!(why.starts_with("Stopped at 50.") && why.contains("can't close any further"), "{why}");
     // OK drives it there and says so.
     crate::dialogs::run_dialog(&mut app, &d).unwrap();
@@ -431,6 +491,62 @@ fn drive_says_which_parts_a_contact_set_stopped() {
     app.run("joint.create", json!({"type": "slider", "a": at("A"), "b": at("B"), "flip": true, "name": "Rail"})).unwrap();
     app.run("contact.create", json!({"occurrences": ["A:1", "B:1"]})).unwrap();
     let r = app.run("joint.drive", json!({"joint": "Rail", "value": -20})).unwrap();
-    let why = drive_stop(&app.session, &r).unwrap();
+    let why = drive_stop(&r).unwrap();
     assert!(why.starts_with("Stopped at -1") && why.contains("A:1") && why.contains("B:1") && why.contains("would pass through"), "{why}");
+}
+
+/// A drive whose joint is joined to nothing grounded moves nothing: the preview row and the
+/// status line name the part that floats.
+#[test]
+fn drive_says_when_its_joint_is_joined_to_nothing_grounded() {
+    let mut app = two_boxes();
+    for (name, x) in [("C", 100), ("D", 130)] {
+        app.run("component.activate", json!({"component": "root"})).unwrap();
+        app.run("component.create", json!({ "name": name })).unwrap();
+        app.run("solid.box", json!({"length": 20, "width": 20, "height": 10, "corner": [x, 0, 0]})).unwrap();
+    }
+    let at = |o: &str, x: f64| json!({"occurrence": o, "point": [x, 10, 5], "z": [1, 0, 0]});
+    app.run("joint.create", json!({"type": "slider", "a": at("A", 30.0), "b": at("B", 30.0), "flip": true, "name": "Rail"})).unwrap();
+    app.run("joint.create", json!({"type": "revolute", "a": at("C", 130.0), "b": at("D", 130.0), "flip": true, "name": "Turn"})).unwrap();
+    let turn = app.session.doc.assembly.joints.iter().find(|j| j.name == "Turn").unwrap().id;
+    let mut d = drive_joint(&app, turn).unwrap();
+    if let Kind::Assembly(Asm::Drive { values, .. }) = &mut d.kind {
+        values[0] = "45 deg".into();
+    }
+    let colors = crate::preview::Colors { body: [1, 1, 1, 255], added: [2, 2, 2, 255], removed: [3, 3, 3, 100], edge: [0, 0, 0, 255] };
+    let b = world_preview(&app.session, &apply_commands(&app, &d).unwrap(), colors).unwrap().unwrap();
+    let why = b.stopped.as_ref().and_then(drive_stop).unwrap();
+    assert!(why.starts_with("Moves nothing") && why.contains("C:1"), "{why}");
+    crate::dialogs::run_dialog(&mut app, &d).unwrap();
+    assert_eq!(app.status.clone().map(|(status, _, error)| (status, error)), Some((why, false)));
+}
+
+/// Drive Joints opens on the joint picked in the browser; with none picked, on the first joint
+/// that moves.
+#[test]
+fn drive_opens_on_the_picked_joint() {
+    let mut app = four_bar();
+    let drive_on = |app: &mut SolveApp| {
+        app.dialog = None;
+        app.start("joint.drive");
+        match &app.dialog.as_ref().unwrap().kind {
+            Kind::Assembly(Asm::Drive { joint, .. }) => app.session.doc.assembly.joints[*joint].name.clone(),
+            k => panic!("{k:?}"),
+        }
+    };
+    assert_eq!(drive_on(&mut app), "Crank");
+    let rocker = app.session.doc.assembly.joints.iter().find(|j| j.name == "Rocker").unwrap().id;
+    pick_joint(&mut app, rocker, false);
+    assert_eq!(drive_on(&mut app), "Rocker");
+}
+
+/// A rigid joint has nothing to drive: Drive Joints won't start on it.
+#[test]
+fn drive_preset_refuses_a_rigid_joint() {
+    let mut app = two_boxes();
+    let at = |o: &str| json!({"occurrence": o, "point": [25, 10, 5], "z": [1, 0, 0]});
+    app.run("joint.create", json!({"type": "rigid", "a": at("A"), "b": at("B"), "name": "Glue"})).unwrap();
+    let mut k = Asm::Drive { joint: 0, values: Vec::new(), focus: true };
+    let e = preset(&app.session, &mut k, &json!({"joint": "Glue"})).unwrap_err();
+    assert!(e.contains("rigid"), "{e}");
 }

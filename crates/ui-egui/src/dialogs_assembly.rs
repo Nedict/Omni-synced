@@ -152,7 +152,14 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
         "joint.origin" => (Asm::JointOrigin { name: String::new(), hover: None }, vec![SelInput::new("Snap", SNAPS, false)]),
         "joint.rigid_group" => (Asm::RigidGroup, vec![SelInput::new("Components", BODIES, true)]),
         "joint.drive" => {
-            let joint = movable(s).first().copied().unwrap_or(0);
+            // The joint picked in the browser, else the first that moves.
+            let list = movable(s);
+            let picked = app
+                .tree
+                .picked_joints
+                .iter()
+                .find_map(|id| list.iter().copied().find(|i| s.doc.assembly.joints.get(*i).is_some_and(|j| j.id == *id)));
+            let joint = picked.or(list.first().copied()).unwrap_or(0);
             (Asm::Drive { joint, values: current_values(s, joint), focus: true }, vec![])
         }
         "joint.motion_link" => {
@@ -165,6 +172,48 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
         _ => return None,
     };
     Some((Kind::Assembly(asm), inputs))
+}
+
+/// What an open dialog starts on when the control channel's `ui.start` passes `params`. Drive
+/// Joints takes `joint` (id or name) and `values` (numbers: degrees or millimetres; text: an
+/// expression), as `joint.drive` does. Nothing is driven until OK.
+pub fn preset(s: &Session, k: &mut Asm, p: &Value) -> Result<(), String> {
+    let Asm::Drive { joint, values, .. } = k else { return Err(format!("{} takes no params yet", k.title())) };
+    let o = p.as_object().ok_or("`params` must be an object")?;
+    if let Some(key) = o.keys().find(|k| !matches!(k.as_str(), "joint" | "values")) {
+        return Err(format!("unknown param `{key}` (Drive Joints takes joint, values)"));
+    }
+    if let Some(v) = o.get("joint") {
+        let key = match v {
+            Value::Number(n) => n.to_string(),
+            Value::String(x) => x.clone(),
+            _ => return Err("`joint` must be an id or a name".into()),
+        };
+        let i = s.doc.assembly.joints.iter().position(|j| j.id.to_string() == key || j.name == key).ok_or_else(|| format!("no joint `{key}`"))?;
+        if !movable(s).contains(&i) {
+            return Err(format!("joint `{key}` is rigid: it has nothing to drive"));
+        }
+        *joint = i;
+        *values = current_values(s, i);
+    }
+    if let Some(v) = o.get("values") {
+        let j = s.doc.assembly.joints.get(*joint).ok_or("no joint that moves yet")?;
+        let list = v.as_array().ok_or("`values` must be a list")?;
+        if list.len() > values.len() {
+            return Err(format!("`{}` takes {} value(s)", j.name, values.len()));
+        }
+        for (i, (slot, v)) in values.iter_mut().zip(list).enumerate() {
+            *slot = match v {
+                Value::Number(n) => {
+                    let x = n.as_f64().filter(|x| x.is_finite() && x.abs() < 1e9).ok_or("values must be finite numbers")?;
+                    num(x, if j.kind.is_angle(i) { "deg" } else { "mm" })
+                }
+                Value::String(t) if t.len() <= 1000 => t.clone(),
+                _ => return Err("values must be numbers or expressions".into()),
+            };
+        }
+    }
+    Ok(())
 }
 
 /// Indices (into the design's joints) of joints that move (not rigid).
@@ -223,23 +272,28 @@ pub fn animate_joint(app: &SolveApp, id: u64) -> Option<Dialog> {
 pub fn find_joint(app: &mut SolveApp, id: u64) {
     let s = &app.session;
     let Some(j) = s.doc.assembly.joints.iter().find(|j| j.id == id) else { return };
-    let occs = [j.a.occurrence, j.b.occurrence];
-    let model = s.model.state();
-    let world = s.world_state();
-    let mut bb = Aabb3::default();
-    for (name, _, path, _) in s.doc.body_frames(&model) {
-        // The root (occurrence 0) holds the bodies outside every occurrence.
-        let on = occs.iter().any(|o| if *o == 0 { path.is_empty() } else { path.contains(o) });
-        if on && let Some(b) = world.body(&name) {
-            bb = bb.union(&b.mesh().bounds());
-        }
-    }
+    let bb = occurrence_bounds(s, &[j.a.occurrence, j.b.occurrence]);
     if bb.is_empty() {
         return;
     }
     let mut cam = app.cam;
     cam.fit(&bb);
     app.animate_to(cam);
+}
+
+/// The box around the bodies of occurrences (and of the occurrences inside them), where they
+/// are placed; occurrence 0 is the root, holding the bodies outside every occurrence.
+pub fn occurrence_bounds(s: &Session, occs: &[u64]) -> Aabb3 {
+    let model = s.model.state();
+    let world = s.world_state();
+    let mut bb = Aabb3::default();
+    for (name, _, path, _) in s.doc.body_frames(&model) {
+        let on = occs.iter().any(|o| if *o == 0 { path.is_empty() } else { path.contains(o) });
+        if on && let Some(b) = world.body(&name) {
+            bb = bb.union(&b.mesh().bounds());
+        }
+    }
+    bb
 }
 
 pub fn drive_joint(app: &SolveApp, id: u64) -> Option<Dialog> {
@@ -396,6 +450,7 @@ fn shifted(s: &SnapPt, x: f64, y: f64) -> Value {
 pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [SelInput], active: &mut usize) -> bool {
     let t = Tokens::get();
     let mut enter = false;
+    let problem = joint_problem(app, k, inputs);
     match k {
         Asm::NewComponent { name, activate } => {
             row_label(ui, "Name");
@@ -410,6 +465,20 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             // As-built: two components picked, the position comes next.
             if f.as_built && *active == 0 && inputs.first().is_some_and(|i| i.items.len() >= 2) {
                 *active = 1;
+            }
+            // Picks that make no joint say why, under them, and offer the way out (#1239).
+            if let Some((why, bodies)) = problem {
+                row_label(ui, "");
+                ui.vertical(|ui| {
+                    ui.add(egui::Label::new(RichText::new(why).color(t.warning)).wrap());
+                    if !bodies.is_empty()
+                        && ui.button(crate::i18n::tr("cmd.component_from_bodies")).on_hover_text(crate::i18n::tr("joint.from_bodies_hint")).clicked()
+                    {
+                        // A refusal shows on the status line; the picks stay either way.
+                        let _ = app.run("component.from_bodies", json!({ "bodies": bodies }));
+                    }
+                });
+                ui.end_row();
             }
             row_label(ui, "Motion");
             ui.label("");
@@ -550,7 +619,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             }
             // The preview drove the joint: where it stopped short, and why (a closed loop or a
             // contact set), so the values asked for are not taken for where it is.
-            if let Some(why) = app.preview.stopped.as_ref().and_then(|r| drive_stop(&app.session, r)) {
+            if let Some(why) = app.preview.stopped.as_ref().and_then(drive_stop) {
                 row_label(ui, "");
                 ui.label(RichText::new(why).color(t.warning));
                 ui.end_row();
@@ -673,6 +742,42 @@ fn interference_rows(app: &SolveApp, ui: &mut egui::Ui, r: &Value) {
 
 fn sel_items(inputs: &[SelInput], i: usize) -> &[Sel] {
     inputs.get(i).map(|x| x.items.as_slice()).unwrap_or(&[])
+}
+
+/// The body a pick is on.
+fn body_of(sel: &Sel) -> Option<&str> {
+    match sel {
+        Sel::Face { body, .. } | Sel::Edge { body, .. } | Sel::Vertex { body, .. } => Some(body),
+        Sel::Body { name } => Some(name),
+        _ => None,
+    }
+}
+
+/// Why the Joint dialog's picks, all in, make no joint: without it the preview and OK just go
+/// quiet, and no option seems to do anything (#1239). With it, the bodies Create Components from
+/// Bodies would part (none when that would not help). The usual case is every pick on one
+/// component: a STEP file with several parts often brings them as bodies of one component.
+fn joint_problem(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Option<(String, Vec<String>)> {
+    let Asm::Joint(f) = k else { return None };
+    let picks: Vec<&Sel> =
+        if f.as_built { sel_items(inputs, 0).iter().collect() } else { (0..2).filter_map(|i| sel_items(inputs, i).first()).collect() };
+    if f.editing.is_some() || picks.len() < 2 {
+        return None;
+    }
+    let mut bodies: Vec<String> = Vec::new();
+    for b in picks.iter().filter_map(|p| body_of(p)) {
+        if !bodies.iter().any(|x| x == b) {
+            bodies.push(b.to_string());
+        }
+    }
+    let occs: Vec<Option<u64>> = bodies.iter().map(|b| occurrence_of_body(&app.session, b)).collect();
+    if occs.first().is_some_and(|first| first.is_some() && occs.iter().all(|o| o == first)) {
+        return Some(match bodies.as_slice() {
+            [body] => (crate::i18n::format("joint.one_body", &[("body", body.as_str())]), Vec::new()),
+            _ => (crate::i18n::format("joint.one_component", &[("bodies", &bodies.join(", "))]), bodies),
+        });
+    }
+    commands(app, k, inputs).err().map(|e| (e, Vec::new()))
 }
 
 /// The occurrences of picked bodies (deduplicated, in pick order).
@@ -844,7 +949,9 @@ pub fn world_preview(s: &Session, cmds: &[(String, Value)], colors: Colors) -> O
     let stopped = cmds
         .iter()
         .zip(&preview.replies)
-        .find(|((c, _), r)| c == "joint.drive" && (r["stopped_by_loop"].is_object() || r["stopped_by_contact"].is_object()))
+        .find(|((c, _), r)| {
+            c == "joint.drive" && (r["stopped_by_loop"].is_object() || r["stopped_by_contact"].is_object() || r["unconnected"].is_string())
+        })
         .map(|(_, r)| r.clone());
     let (before, after) = (preview.before, preview.after);
     // A moved component looks like itself (no new surface), with its old place as the ghost.
@@ -861,18 +968,20 @@ pub fn world_preview(s: &Session, cmds: &[(String, Value)], colors: Colors) -> O
 }
 
 /// What a drive that stopped short of the asked values says: where the joint got to and why
-/// (`None`: it went all the way). `reply` is `joint.drive`'s result.
-pub fn drive_stop(s: &Session, reply: &Value) -> Option<String> {
-    let id = reply.get("joint").and_then(Value::as_u64)?;
-    let j = s.doc.assembly.joints.iter().find(|j| j.id == id)?;
+/// (`None`: it went all the way). `reply` is `joint.drive`'s result. A drive whose joint is
+/// joined to nothing grounded moves nothing, and says which part that is.
+pub fn drive_stop(reply: &Value) -> Option<String> {
+    if let Some(part) = reply.get("unconnected").and_then(Value::as_str) {
+        return Some(crate::i18n::format("drive.unconnected", &[("part", part)]));
+    }
+    // The values come as joint.list gives them: degrees and millimetres.
     let at: Vec<String> = reply
         .get("values")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .enumerate()
-        .filter_map(|(i, v)| v.as_f64().map(|v| (i, v)))
-        .map(|(i, v)| if j.kind.is_angle(i) { num((v.to_degrees() * 10.0).round() / 10.0, "deg") } else { num((v * 100.0).round() / 100.0, "mm") })
+        .filter_map(|v| Some((v.get("value")?.as_f64()?, v.get("unit")?.as_str()?)))
+        .map(|(v, unit)| if unit == "deg" { num((v * 10.0).round() / 10.0, "deg") } else { num((v * 100.0).round() / 100.0, "mm") })
         .collect();
     let at = at.join(", ");
     let name = |v: &Value| v.as_str().unwrap_or_default().to_string();

@@ -19,6 +19,8 @@ pub mod product_scene;
 pub mod recovery;
 pub mod render_jobs;
 pub mod sample;
+mod slicer_icon;
+pub mod slicers;
 pub mod view;
 
 use std::sync::Arc;
@@ -43,7 +45,7 @@ pub const MAX_LINE: usize = 16 << 20;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
-    #[error("unknown command `{0}`")]
+    #[error("unknown command `{0}`{hint}", hint = cmd::did_you_mean(.0))]
     UnknownCommand(String),
     #[error("`{0}` is not available right now: {1}")]
     Disabled(String, String),
@@ -217,6 +219,7 @@ pub struct Session {
     pub pending_moves: std::collections::BTreeMap<u64, solidcraft_doc::Mat>,
     world_cache: std::sync::Mutex<Option<WorldCache>>,
     occurrence_visibility_cache: std::sync::Mutex<Option<occurrences::VisibilityCache>>,
+    removed_later_cache: std::sync::Mutex<Option<occurrences::RemovedLaterCache>>,
     /// Features copied with `timeline.copy` (pasted by `timeline.paste`).
     pub clipboard: Vec<solidcraft_doc::Feature>,
     /// Section Analysis: a view cut by a plane (origin, unit normal; the normal side is hidden).
@@ -321,6 +324,7 @@ impl Session {
             pending_moves: Default::default(),
             world_cache: Default::default(),
             occurrence_visibility_cache: Default::default(),
+            removed_later_cache: Default::default(),
             clipboard: Vec::new(),
             section: None,
             analysis: None,
@@ -786,6 +790,7 @@ impl Session {
             pending_moves: self.pending_moves.clone(),
             world_cache: std::sync::Mutex::new(self.world_cache.lock().ok().and_then(|cache| cache.clone())),
             occurrence_visibility_cache: Default::default(),
+            removed_later_cache: Default::default(),
             clipboard: self.clipboard.clone(),
             section: None,
             analysis: None,
@@ -828,6 +833,12 @@ impl Session {
         self.active_component = computed.active_component;
         self.active_occurrence_path = computed.active_occurrence_path;
         self.pending_moves = computed.pending_moves;
+        // Joints the computation hid (an import's rigid group) stay hidden.
+        for j in computed.visibility.hidden_joints {
+            if !self.visibility.hidden_joints.contains(&j) {
+                self.visibility.hidden_joints.push(j);
+            }
+        }
         for message in computed.log {
             self.echo(message);
         }
@@ -936,6 +947,8 @@ mod hole_matrix_tests;
 #[cfg(test)]
 mod large_assembly_tests;
 #[cfg(test)]
+mod measure_centre_tests;
+#[cfg(test)]
 mod naming_history_tests;
 #[cfg(test)]
 mod pattern_suppress_tests;
@@ -943,6 +956,8 @@ mod pattern_suppress_tests;
 mod profile_curves_tests;
 #[cfg(test)]
 mod profile_refs_tests;
+#[cfg(test)]
+mod sketch_edit_removed_tests;
 #[cfg(test)]
 mod split_face_tests;
 #[cfg(test)]

@@ -28,6 +28,13 @@ made. Contact sets stop motion where bodies would pass through each other,
 **Motion Study** keys joint values along a timeline, and **Interference** shows overlapping
 volumes in red.
 
+A joint moves one component against another, so its two picks must be on different components.
+A STEP file with several parts often comes in as bodies of one component, and picks on two of
+those bodies make no joint. The Joint and As-built Joint dialogs say so under the picks and offer
+**Create Components from Bodies**: each picked body gets a component of its own and stays where it
+is, the picks are kept, and the joint previews. `joint.create` refuses such origins with the same
+advice.
+
 Joints may close a loop, as in a four-bar linkage or a slider-crank. When one joint of the loop
 is driven, the other joints in the loop follow so that every joint still meets, and the
 mechanism stays in the assembly mode it started in (an open four-bar does not flip to the
@@ -39,10 +46,28 @@ part still has with its loops closed: the moving parts of a four-bar have one be
 loop locked by a rigid joint has none. The Drive Joints dialog says when a drive stops short and
 why. While it previews, a row under the values gives the value the joint reached and the reason
 (the loop that can't close further, or the two parts a contact set keeps apart), and after OK the
-status line repeats it. The value box keeps what you typed.
+status line repeats it. The value box keeps what you typed. The dialog opens on the joint
+picked in the browser, or on the first joint that moves when none is picked.
 
-**Insert Design** (`component.insert_design {path, translate?}`) adds a component linked to
-another saved design, so each part can live in its own document. The part's solid bodies come
+The solver places what it reaches from the root and from grounded components. A chain of joints
+that is joined to nothing grounded is never placed, so driving one of its joints moves nothing.
+The drive says so: `joint.drive` answers `moved: false` with a `reason` and the `unconnected`
+part ("Pedestal:1 is not connected to anything grounded"), the Drive Joints dialog shows the same
+row, `motion.play` lists such joints under `unmoved`, and `joint.list` names every such chain under
+`floating`. Ground a part of the chain, or join it to a grounded part (a rigid as-built joint keeps
+it where it is), and it moves.
+
+`joint.drive` answers the joint's values as `joint.list` gives them, in degrees and millimetres
+with their units and limits, and `moved` says whether any part moved. A joint's origins are mated
+by default: B's z axis is turned against A's, as two faces meet. `flip: true` lines them up
+instead, so two origins given at one point with the same z stay as they are. For scripts that
+drive many steps, `quiet: true` leaves the per-part degrees of freedom out of joint answers, and
+`motion.play` with `quiet: true` gives the poses of only the parts that moved.
+
+**Insert Design** (`component.insert_design {path, translate?}`, on the **ASSEMBLE** panel and
+in the **File** menu) adds a component linked to another saved design, so each part can live in
+its own document. A STEP or mesh file picked there is inserted as **Insert STEP** or **Insert
+Mesh** would. The part's solid bodies come
 in as they sit in that design, and they are kept in the assembly, so it opens even without the
 part file. The link is stored relative to the assembly's folder once the assembly is saved.
 After the part file changes, **Update Links** (`component.update_links`) reads it again.
