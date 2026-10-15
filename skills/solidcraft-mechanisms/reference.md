@@ -118,6 +118,7 @@ The same pattern moved the solar wings of the SELENE rover (`Rover-v7.solidcraft
 | Symptom | Cause and fix |
 |---|---|
 | A part turns 180 degrees when joined; a loop reports "off by ... and 180 degrees" | `flip` left out. Pass `flip: true`, or `joint.edit {"joint":..., "flip":true}`. |
+| A part turns to a limit as soon as it is joined | A new joint starts at 0 and is clamped to its limits. Make the limits include 0: `[[10, 60]]` on a hinge turns it 10 degrees. |
 | A part turns by some other angle when joined | The two origins have different forms or x axes. Use `point` + `z` on both sides, or `joint.as_built`. |
 | `joint.drive` or `motion.play` answers values and no conflicts (`[]` from a drive, `0` from play), and nothing moves | The chain is joined to nothing grounded (`dof: 6` in `joint.list`). Ground it, join it, or `joint.rigid_group` it with the structure. |
 | `joint.drive` answers `values: [0.349]` after a drive to 20 | Its `values` are radians. `joint.list` answers degrees with `unit`. |
