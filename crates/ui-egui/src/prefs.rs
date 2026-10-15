@@ -683,6 +683,16 @@ pub fn length_number(mm: f64, units: &str, decimals: u8) -> String {
     format!("{:.*}", length_precision(value, units, decimals), value)
 }
 
+/// A plain number typed into a field, with a decimal point or a decimal comma (#1347): "2.5"
+/// and "2,5" are both 2.5, as a numeric keypad types either depending on the locale. Spaces are
+/// ignored and "−" is a minus, as in egui's own parser. A comma beside a point ("1.234,5") or a
+/// second comma is not guessed at: the text is not a number.
+pub fn parse_number(text: &str) -> Option<f64> {
+    let t: String = text.chars().filter(|c| !c.is_whitespace()).map(|c| if c == '\u{2212}' { '-' } else { c }).collect();
+    let t = if !t.contains('.') && t.matches(',').count() == 1 { t.replacen(',', ".", 1) } else { t };
+    t.parse::<f64>().ok().filter(|v| v.is_finite())
+}
+
 /// Edit a millimetre value through a control expressed in the current design units.
 /// Keep the stored value untouched unless the user actually changes the field.
 pub fn length_drag<'a>(value: &'a mut f64, units: &str, decimals: u8) -> egui::DragValue<'a> {
@@ -1001,7 +1011,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             });
             ui.end_row();
             ui.label(app.tr("ui.autosave_every"));
-            if ui.add(egui::DragValue::new(&mut app.autosave_minutes).range(0.0..=120.0).speed(0.5).suffix(" min")).changed() {
+            if ui.add(egui::DragValue::new(&mut app.autosave_minutes).range(0.0..=120.0).speed(0.5).suffix(" min").custom_parser(parse_number)).changed() {
                 set_autosave(app);
             }
             ui.end_row();
@@ -1438,6 +1448,19 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn number_fields_take_a_decimal_point_or_a_decimal_comma() {
+        // #1347
+        assert_eq!(super::parse_number("2.5"), Some(2.5));
+        assert_eq!(super::parse_number("2,5"), Some(2.5));
+        assert_eq!(super::parse_number(" -0,25 "), Some(-0.25));
+        assert_eq!(super::parse_number("\u{2212}1,5"), Some(-1.5));
+        assert_eq!(super::parse_number("12"), Some(12.0));
+        for bad in ["1.234,5", "1,2,3", ",", "abc", "", "inf", "NaN"] {
+            assert_eq!(super::parse_number(bad), None, "{bad}");
+        }
+    }
+
     /// Display quality (#1287) is a preference like any other: set by name, checked, saved with
     /// the others, back to Normal with Restore Defaults.
     #[test]

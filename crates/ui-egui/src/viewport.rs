@@ -44,6 +44,11 @@ pub struct ViewportState {
     pick_bounds: std::sync::Mutex<Option<BodyBounds>>,
     /// The model scene's blocks of bodies by key, from the last scene built.
     pub(crate) blocks: std::sync::Mutex<std::collections::HashMap<u64, CachedBlock>>,
+    /// View-dependent display refinement (#1320): which bodies are drawn finer than the chosen
+    /// display quality, and their refined plans.
+    pub(crate) lod: std::sync::Mutex<crate::display_lod::Lod>,
+    /// The view and model the refinement was last chosen for.
+    lod_view: u64,
     /// Each body mesh's box (the mesh held, so its address stays its own), from the last state.
     mesh_bounds: std::sync::Mutex<std::collections::HashMap<usize, (std::sync::Arc<solidcraft_engine::geom::Mesh>, solidcraft_engine::geom::Aabb3)>>,
     /// The last click in the view was the middle button's (for the middle double-click).
@@ -274,6 +279,7 @@ fn scene_key(app: &SolveApp) -> u64 {
     app.ui.visual_style.hash(&mut h);
     app.ui.ground_shadow.hash(&mut h);
     solidcraft_engine::doc::display_quality::current().hash(&mut h);
+    lod_generation(app).hash(&mut h);
     // The section plane (its cut outlines are part of the model scene).
     section_plane(app).map(|(o, n)| [o.x, o.y, o.z, n.x, n.y, n.z].map(f64::to_bits)).hash(&mut h);
     app.cam.up.hash(&mut h);
@@ -372,7 +378,8 @@ const SS_SETTLE: f64 = 0.25;
 /// The display plan the model scene draws `b` from on the GPU, or `None` when its faces are built
 /// here from the reference mesh. Opaque shaded bodies (`opaque`: not faded, and no see-through
 /// body or face) are drawn from their plans where the device evaluates them; faded and
-/// see-through ones (sorted and blended per triangle) are built here.
+/// see-through ones (sorted and blended per triangle) are built here. A body seen up close is
+/// drawn from its refined plan ([`crate::display_lod`]).
 fn drawn_plan(
     app: &SolveApp,
     b: &solidcraft_engine::doc::ModelBody,
@@ -380,9 +387,20 @@ fn drawn_plan(
 ) -> Option<std::sync::Arc<solidcraft_engine::geom::tess::TessPlan>> {
     let shaded = app.ui.visual_style != 2;
     (shaded && opaque && app.viewport.gpu.is_some_and(|g| g.tess))
-        .then(|| b.display_plan())
+        .then(|| refined(app, b).map(|(plan, _)| plan).or_else(|| b.display_plan()))
         .flatten()
         .filter(|plan| plan.vertex_count() <= solidcraft_gpu::MAX_BATCH)
+}
+
+/// The refined plan and mesh `b` is drawn from, when the view has it drawn finer than the chosen
+/// display quality (#1320).
+fn refined(app: &SolveApp, b: &solidcraft_engine::doc::ModelBody) -> crate::display_lod::Refined {
+    app.viewport.lod.lock().ok()?.refined(b, solidcraft_engine::doc::display_quality::current())
+}
+
+/// Changes whenever a body's refinement changes (the scene and highlight keys).
+fn lod_generation(app: &SolveApp) -> u64 {
+    app.viewport.lod.lock().map_or(0, |l| l.generation)
 }
 
 /// The mesh whose triangles the model scene shows for `b`'s faces: the plan's (evaluated on the
@@ -394,6 +412,10 @@ fn shown_mesh(
     b: &solidcraft_engine::doc::ModelBody,
     active_bodies: &Option<Vec<String>>,
 ) -> std::sync::Arc<solidcraft_engine::geom::Mesh> {
+    if let Some((_, mesh)) = refined(app, b) {
+        // Refined: faces drawn from the refined plan on the GPU or built from its mesh here.
+        return mesh;
+    }
     let doc = &app.session.doc;
     let opaque =
         || !body_faded(app, b, active_bodies) && doc.model_body_opacity(b) >= 0.999 && doc.face_colors(b).iter().all(|(_, l)| l.opacity >= 0.999);
@@ -401,16 +423,82 @@ fn shown_mesh(
         .then(|| drawn_plan(app, b, true))
         .flatten()
         .and_then(|_| b.plan_mesh())
-        .unwrap_or_else(|| drawn_mesh(b))
+        .unwrap_or_else(|| drawn_mesh(app, b))
 }
 
 /// The mesh the model scene builds `b` from on the CPU (its edges always, its faces when they
-/// are not drawn from the plan on the GPU): the reference mesh at Normal display quality, else
-/// the plan's mesh at the chosen quality (finer or coarser faces and edges alike), falling back
-/// to the reference mesh when the body has no plan.
-fn drawn_mesh(b: &solidcraft_engine::doc::ModelBody) -> std::sync::Arc<solidcraft_engine::geom::Mesh> {
+/// are not drawn from the plan on the GPU): a refined plan's mesh when the view has one for it
+/// (#1320), the reference mesh at Normal display quality, else the plan's mesh at the chosen
+/// quality (finer or coarser faces and edges alike), falling back to the reference mesh when the
+/// body has no plan.
+fn drawn_mesh(app: &SolveApp, b: &solidcraft_engine::doc::ModelBody) -> std::sync::Arc<solidcraft_engine::geom::Mesh> {
     use solidcraft_engine::doc::display_quality::{DisplayQuality, current};
+    if let Some((_, mesh)) = refined(app, b) {
+        return mesh;
+    }
     if current() == DisplayQuality::Normal { b.mesh() } else { b.plan_mesh().unwrap_or_else(|| b.mesh()) }
+}
+
+/// Choose which bodies to draw finer than the chosen display quality for this view (#1320):
+/// each shown body's screen-space error from its box on screen, refinements planned off the UI
+/// thread and swapped in when ready. Keeps repainting while refinements are being planned.
+fn update_refinement(app: &mut SolveApp, ctx: &egui::Context, proj: &Proj) {
+    if app.viewport.gpu.is_none() || !crate::display_lod::enabled() {
+        return; // The CPU picture draws the reference mesh.
+    }
+    let q = solidcraft_engine::doc::display_quality::current();
+    // Nothing to choose again while the view, the model and the planning stand still.
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    scene_key(app).hash(&mut h);
+    crate::sketch_display::projection_key(proj, app.viewport.pixels_per_point()).hash(&mut h);
+    let view = h.finish();
+    // While refinements are being planned, the view standing still: only collect finished ones.
+    if view == app.viewport.lod_view {
+        let (busy, finished) = app.viewport.lod.lock().map_or((false, false), |mut l| {
+            let finished = l.collect();
+            (l.busy(), finished)
+        });
+        if busy {
+            ctx.request_repaint_after(std::time::Duration::from_millis(30));
+        }
+        if !finished {
+            return;
+        }
+    }
+    let t0 = crate::now_ms();
+    app.viewport.lod_view = view;
+    let st = app.session.world_state();
+    let ppp = f64::from(app.viewport.pixels_per_point());
+    let lens = crate::display_lod::Lens::new(&proj.cam, f64::from(proj.rect.height()) * ppp);
+    let bounds = body_bounds(app, &st);
+    let mut live = std::collections::HashSet::with_capacity(st.bodies.len());
+    let mut candidates = Vec::new();
+    for (b, (name, bx)) in st.bodies.iter().zip(bounds.iter()) {
+        let id = crate::display_lod::body_id(b).0;
+        live.insert(id);
+        if b.name != *name || b.body.is_mesh() {
+            continue;
+        }
+        let shown = app.session.body_visible(&b.name) && !app.preview.replaced.contains(&b.name);
+        let on_screen = match screen_box(proj, bx, 0.0).filter(|_| shown) {
+            Some(r) => r.intersects(proj.rect).then(|| f64::from(r.width().max(r.height())) * ppp),
+            // A corner behind the eye: the view is inside or right by the box.
+            None => (shown && proj.cam.fov > 0.0 && lens.in_front(bx)).then_some(f64::INFINITY),
+        };
+        let err_px = crate::display_lod::error_px(q, b.body.size(), bx, on_screen, &lens);
+        candidates.push(crate::display_lod::Candidate { body: b, err_px, triangles: b.mesh().triangles.len() });
+    }
+    let busy = match app.viewport.lod.lock() {
+        Ok(mut lod) => {
+            lod.update(q, candidates, &live);
+            lod.stats.choose_ms = crate::now_ms() - t0;
+            lod.busy()
+        }
+        Err(_) => false,
+    };
+    if busy {
+        ctx.request_repaint_after(std::time::Duration::from_millis(30));
+    }
 }
 
 /// A model scene block kept by the viewport: its bytes and the meshes they were built from
@@ -561,7 +649,7 @@ fn build_scene(app: &SolveApp) -> GpuScene {
                 .collect();
             sc.planned.push(crate::gpu::PlannedBody { plan, face_colors });
         }
-        let body = BodyDraw { mesh: drawn_mesh(b), col, faded, opacity, face_looks, on_gpu };
+        let body = BodyDraw { mesh: drawn_mesh(app, b), col, faded, opacity, face_looks, on_gpu };
         let key = body.key(shaded, edges, hidden_edges, edge_col, hidden_col);
         key.hash(&mut run_key);
         run.push(body);
@@ -1683,6 +1771,7 @@ fn highlight_key(app: &SolveApp) -> u64 {
     app.viewport.hover_feature.hash(&mut h);
     app.viewport.hover_bodies.hash(&mut h);
     // Which mesh lights a face follows how the model draws its body (see `shown_mesh`).
+    lod_generation(app).hash(&mut h);
     app.session.active_component.hash(&mut h);
     app.session.active_occurrence_path.hash(&mut h);
     app.ui.visual_style.hash(&mut h);
@@ -1783,7 +1872,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
                 // A live preview stands in for the body: its old faces would fight with it.
                 if let Some(b) = st.body(body).filter(|_| app.session.body_visible(body) && !app.preview.replaced.contains(body)) {
                     face_tris(&mut sc, &shown(b), *index, c4(t.sel_face), false);
-                    hidden_face_outline(&mut sc, &drawn_mesh(b), *index, t.sel_edge);
+                    hidden_face_outline(&mut sc, &drawn_mesh(app, b), *index, t.sel_edge);
                 }
             }
             Sel::Body { name } => {
@@ -1799,7 +1888,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
             Sel::Edge { body, index, point } => {
                 if let Some(b) = st.body(body)
                     && app.session.body_visible(body)
-                    && let Some(e) = edge_of(&drawn_mesh(b), *index, *point)
+                    && let Some(e) = edge_of(&drawn_mesh(app, b), *index, *point)
                 {
                     edge_lines(&mut sc, e, t.sel_edge, t.sel_edge_rim, 3.0);
                 }
@@ -1863,7 +1952,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
         }
         let k = t.hover_face_lift;
         let c = body_rgb(app, &b.name);
-        let m = drawn_mesh(b);
+        let m = drawn_mesh(app, b);
         let lit = shown(b);
         for &f in &faces {
             if !sel.iter().any(|x| {
@@ -1898,7 +1987,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
             if let Some(b) = st.body(body) {
                 let k = t.hover_face_lift;
                 let c = body_rgb(app, body);
-                let m = drawn_mesh(b);
+                let m = drawn_mesh(app, b);
                 let patch = m.surface_patch(*index);
                 let lit = shown(b);
                 for &f in &patch {
@@ -1916,7 +2005,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
         Some(Hit::Edge { body, index, mid }) => {
             if let Some(b) = st.body(body) {
                 // Lit over the drawn edges (finer away from Normal display quality).
-                let m = drawn_mesh(b);
+                let m = drawn_mesh(app, b);
                 for i in m.circular_rim(*index) {
                     let selected = sel.iter().any(|x| matches!(x, Sel::Edge { body: b, index: j, .. } if b == body && *j == i));
                     if !selected && let Some(e) = if i == *index { edge_of(&m, i, *mid) } else { m.edges.get(i) } {
@@ -2439,6 +2528,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     painter.add(Shape::mesh(mesh));
 
     // ---- model ----
+    update_refinement(app, ui.ctx(), &proj);
     let key = scene_key(app);
     let t0 = crate::now_ms();
     if let Some(_g) = app.viewport.gpu {
@@ -4621,6 +4711,65 @@ mod tests {
         app.cam_anim = None;
         hover_frame(&mut app, &ctx, vec![]);
         assert!(app.viewport.hover.is_some());
+    }
+
+    /// After a close-up refines a body (#1320), the model draws it from the refined plan (on the
+    /// GPU) or its mesh (on the CPU), its edges come from that mesh too, and a hovered face lights
+    /// exactly triangles the model draws, never another triangulation (#1064).
+    #[test]
+    fn a_refined_body_highlights_on_its_drawn_triangles() {
+        use solidcraft_engine::doc::display_quality::current;
+        let tris_of = |bytes: &[u8]| -> Vec<[u32; 9]> {
+            bytes
+                .chunks(3 * crate::gpu::TRI_SIZE)
+                .map(|t| {
+                    let mut v: Vec<[u32; 3]> = t
+                        .chunks(crate::gpu::TRI_SIZE)
+                        .map(|c| std::array::from_fn(|i| u32::from_le_bytes(c[i * 4..i * 4 + 4].try_into().unwrap())))
+                        .collect();
+                    v.sort_unstable();
+                    std::array::from_fn(|i| v[i / 3][i % 3])
+                })
+                .collect()
+        };
+        let mesh_tris = |m: &solidcraft_engine::geom::Mesh| -> std::collections::HashSet<[u32; 9]> {
+            let mut sc = GpuScene::default();
+            for f in 0..m.tri_face.iter().map(|f| *f as usize + 1).max().unwrap_or(0) {
+                face_tris(&mut sc, m, f, [0; 4], true);
+            }
+            tris_of(&sc.tris).into_iter().collect()
+        };
+        for tess in [true, false] {
+            let mut app = cylinder_app();
+            app.viewport.no_pixels = true;
+            app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess });
+            let body = app.session.world_state().bodies[0].clone();
+            let before = build_scene(&app).merged();
+            let key = scene_key(&app);
+            assert!(app.viewport.lod.lock().unwrap().force(&body, current(), 2));
+            assert_ne!(scene_key(&app), key, "a refinement rebuilds the scene");
+            let (plan, mesh) = refined(&app, &body).unwrap();
+            assert!(mesh.triangles.len() > body.plan_mesh().unwrap().triangles.len() * 2);
+            let scene = build_scene(&app).merged();
+            if tess {
+                assert!(std::sync::Arc::ptr_eq(&scene.planned[0].plan, &plan), "faces drawn from the refined plan");
+            } else {
+                assert_eq!(scene.tris.len(), mesh.triangles.len() * 3 * crate::gpu::TRI_SIZE, "faces built from the refined mesh");
+                assert!(scene.tris.len() > before.tris.len());
+            }
+            // Edges (lines) from the refined mesh: finer polylines.
+            assert!(scene.lines.len() > before.lines.len(), "{} vs {}", scene.lines.len(), before.lines.len());
+            let drawn = mesh_tris(&mesh);
+            let mut lit_faces = 0;
+            for index in 0..body.body.face_count() {
+                app.viewport.hover = Some(Hit::Face { body: body.name.clone(), index, point: Vec3::ZERO });
+                let lit = tris_of(&build_highlight(&app).tris);
+                assert!(!lit.is_empty(), "face {index} lights");
+                assert!(lit.iter().all(|t| drawn.contains(t)), "face {index}: every lit triangle is a drawn one");
+                lit_faces += 1;
+            }
+            assert!(lit_faces >= 3, "{lit_faces} faces");
+        }
     }
 
     fn cylinder_app() -> SolveApp {

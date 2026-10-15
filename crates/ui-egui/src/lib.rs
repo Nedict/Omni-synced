@@ -55,6 +55,7 @@ mod i18n_menu_tests;
 mod i18n_ui_tests;
 pub mod icons;
 pub mod inference;
+pub mod install;
 pub mod issue_report;
 pub mod keymap;
 #[cfg(test)]
@@ -90,6 +91,7 @@ mod file_picker;
 pub use file_picker::FilePickerFuture;
 #[cfg(test)]
 mod blend_arrow_tests;
+pub(crate) mod display_lod;
 #[cfg(test)]
 mod file_load_ui_tests;
 #[cfg(test)]
@@ -243,6 +245,8 @@ pub struct Services {
     pub http_get: Option<update::HttpGet>,
     /// HTTPS download to a file, with progress, for one-click updates (`update::install`).
     pub http_download: Option<update::install::HttpDownload>,
+    /// The browser's offer to install the web app (`install`); None: no Install button (desktop).
+    pub install_app: Option<install::InstallApp>,
 }
 
 pub struct SolveApp {
@@ -285,6 +289,8 @@ pub struct SolveApp {
     pub crashes: crash_ui::CrashUi,
     /// The update check and its window (`update`).
     pub updater: update::Updater,
+    /// Safari's steps for installing the web app, while their window is open (`install`).
+    pub install_steps: Option<install::Steps>,
     /// Toolbar buttons the user pinned, removed or reordered.
     pub toolbar_custom: toolbar_custom::ToolbarCustom,
     pub sketch_choices: sketch_families::Choices,
@@ -311,6 +317,8 @@ pub struct SolveApp {
     pub recoverable: Vec<solidcraft_engine::recovery::Entry>,
     /// The bodies of a just-opened Y-up file, offered to be stood up (`stand_up`).
     pub stand_up: Option<Vec<String>>,
+    /// The placement of the component that file came in as: the offer turns it.
+    pub stand_up_occurrence: Option<u64>,
     /// The anti-aliasing sample counts the graphics device supports (empty without a GPU).
     pub msaa_supported: Vec<u32>,
     /// Settings put back at start because they kept SolidCraft from starting, one line each,
@@ -322,6 +330,9 @@ pub struct SolveApp {
     pub autosave_minutes: f64,
     /// The application bar is the window's title bar (Windows, Linux: no OS decorations).
     pub custom_titlebar: bool,
+    /// The OS hit test already offers the resize border ([`titlebar`]; the Windows desktop app),
+    /// so no egui resize zones are laid out.
+    pub native_resize_border: bool,
     /// macOS: the traffic lights sit over the application bar's left end.
     pub integrated_titlebar: bool,
     /// Build bodies' display meshes on the CPU even where the GPU could (safe mode). Read by
@@ -388,6 +399,7 @@ impl SolveApp {
             issue_report: issue_report::ReportState::default(),
             crashes: crash_ui::CrashUi::default(),
             updater: update::Updater::default(),
+            install_steps: None,
             toolbar_custom: toolbar_custom::ToolbarCustom::default(),
             sketch_choices: sketch_families::Choices::default(),
             preferences: prefs::Prefs::default(),
@@ -403,11 +415,13 @@ impl SolveApp {
             autosave: None,
             recoverable: Vec::new(),
             stand_up: None,
+            stand_up_occurrence: None,
             msaa_supported: Vec::new(),
             settings_reset: Vec::new(),
             big_operation: false,
             autosave_minutes: 5.0,
             custom_titlebar: false,
+            native_resize_border: false,
             integrated_titlebar: false,
             cpu_meshing: false,
             frame_ms: 0.0,
@@ -675,6 +689,21 @@ impl SolveApp {
             self.pick_open_command(id, json!({}));
             return;
         }
+        if id == "component.insert_design" {
+            // Another design becomes a linked component; a STEP or mesh file picked here is
+            // inserted the way Insert STEP or Insert Mesh would (#1240).
+            self.pick_open(|app, path| {
+                let Some(path) = path else { return };
+                if is_design_path(&path) {
+                    if app.run("component.insert_design", json!({ "path": path })).is_ok() {
+                        app.fit_view();
+                    }
+                } else {
+                    app.insert_path_async(&path);
+                }
+            });
+            return;
+        }
         if matches!(id, "file.insert_step" | "file.insert_mesh") {
             self.pick_open(|app, path| {
                 if let Some(path) = path {
@@ -890,9 +919,9 @@ impl SolveApp {
     pub fn open_path(&mut self, path: &str) {
         self.home.open = false;
         documents::prepare_open(self);
-        if self.run("doc.open", json!({ "path": path })).is_ok() {
+        if let Ok(r) = self.run("doc.open", json!({ "path": path })) {
             self.fit_view();
-            stand_up::offer(self, path, &[]);
+            stand_up::offer(self, path, &[], Some(&r));
         }
     }
 
@@ -910,7 +939,7 @@ impl SolveApp {
         let before: Vec<String> = self.session.world_state().bodies.iter().map(|b| b.name.clone()).collect();
         if let Ok(r) = self.run(cmd, json!({ "path": path })) {
             self.fit_view();
-            stand_up::offer(self, path, &before);
+            stand_up::offer(self, path, &before, Some(&r));
             if let Some(w) = r["warnings"].as_array().filter(|w| !w.is_empty()) {
                 self.set_status(format!("imported with {} warning(s): {}", w.len(), w.first().and_then(Value::as_str).unwrap_or("")), false);
             }
@@ -1214,6 +1243,11 @@ impl SolveApp {
         issue_report::CadInput::block(self, ui, &mut report_input);
         self.cad_ui(ui, &mut report_input);
         drop(report_input);
+        // After everything else, on every page (the start page too, which returns early from
+        // `cad_ui`): the window's edges resize it (#1381).
+        if self.custom_titlebar && !self.native_resize_border {
+            titlebar::resize_zones(ui);
+        }
         if self.file_picker.is_none() {
             issue_report::show(self, ui.ctx());
         }
@@ -1233,6 +1267,7 @@ impl SolveApp {
         file_load::show(self, ui.ctx());
         documents::prompt(self, ui.ctx());
         update::show(self, ui.ctx());
+        install::show(self, ui.ctx());
         if self.home.open {
             home::show(self, ui);
             if self.home.open {
@@ -1279,9 +1314,6 @@ impl SolveApp {
         prefs::show_reset_notice(self, ui.ctx());
         context_menu::show(self, ui.ctx());
         delete::show(self, ui.ctx());
-        if self.custom_titlebar {
-            titlebar::resize_zones(ui);
-        }
         shortcut_box::show(self, ui.ctx());
         prefs::show(self, ui.ctx());
         toolbar_custom::window(self, ui.ctx());
@@ -1413,3 +1445,10 @@ pub fn now_ms() -> f64 {
 
 #[cfg(test)]
 mod picker_test_support;
+
+/// A SolidCraft design file (`.solidcraft`, or a design saved as JSON), as opposed to a STEP or
+/// mesh file.
+fn is_design_path(path: &str) -> bool {
+    let ext = std::path::Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    matches!(ext.as_str(), "solidcraft" | "solvecraft" | "json")
+}

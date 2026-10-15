@@ -249,8 +249,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj
         app.dialog = Some(d);
         return;
     }
-    if let Kind::Measure { result: Some(r), .. } = &d.kind {
-        measure_line(app, painter, proj, r);
+    if let Kind::Measure { result: Some(r), show, .. } = &d.kind {
+        measure_line(app, painter, proj, r, *show);
         app.dialog = Some(d);
         return;
     }
@@ -527,17 +527,12 @@ fn drag_arrow(
 ) -> Option<Pos2> {
     let t = Tokens::get();
     let min = 40.0 * 2.0 * half_height / f64::from(proj.rect.height().max(1.0));
-    let shown = if l.abs() < min { min * if l < 0.0 { -1.0 } else { 1.0 } } else { l };
-    let ts = proj.to_screen(base + n * shown)?;
-    crate::scenario::publish_handle(if id == egui::Id::new("sc_manipulator") { "arrow" } else { "arrow2" }, ts);
+    let tip = |length: f64| {
+        let shown = if length.abs() < min { min * if length < 0.0 { -1.0 } else { 1.0 } } else { length };
+        proj.to_screen(base + n * shown)
+    };
+    let mut ts = tip(l)?;
     let r = ui.interact(egui::Rect::from_center_size(ts, vec2(20.0, 20.0)), id, egui::Sense::drag());
-    let hot = r.hovered() || r.dragged();
-    let col = if hot { t.accent } else { t.manipulator };
-    arrow(painter, bs, ts, col);
-    if hot {
-        painter.circle_stroke(ts, 8.0, Stroke::new(1.5, col));
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-    }
     if r.dragged()
         && let Some(p) = r.interact_pointer_pos()
         && let Some(v) = along(proj, p, base, n)
@@ -549,6 +544,17 @@ fn drag_arrow(
             v = v.max(if free { 1e-3 } else { step });
         }
         *value = format_len(v);
+        ts = tip(v)?;
+    }
+    // Paint the value just read from this frame's pointer, including the value box anchor.
+    // Using the old distance here made both trail the drag by another frame.
+    crate::scenario::publish_handle(if id == egui::Id::new("sc_manipulator") { "arrow" } else { "arrow2" }, ts);
+    let hot = r.hovered() || r.dragged();
+    let col = if hot { t.accent } else { t.manipulator };
+    arrow(painter, bs, ts, col);
+    if hot {
+        painter.circle_stroke(ts, 8.0, Stroke::new(1.5, col));
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
     Some(ts)
 }
@@ -758,14 +764,11 @@ fn radius_spline_handles(app: &SolveApp, ui: &mut egui::Ui, painter: &egui::Pain
     true
 }
 
-/// The measured distance: a line between the closest points with its length.
-fn measure_line(app: &SolveApp, painter: &egui::Painter, proj: &Proj, r: &serde_json::Value) {
+/// The measured distance: a line between the ends of the shown measure (the centres for
+/// centre to centre, the closest or farthest points) with its length.
+fn measure_line(app: &SolveApp, painter: &egui::Painter, proj: &Proj, r: &serde_json::Value, show: Option<crate::dialogs::Shown>) {
     let t = Tokens::get();
-    let p = |k: &str| -> Option<Vec3> {
-        let a = r.get(k)?.as_array()?;
-        Some(Vec3::new(a.first()?.as_f64()?, a.get(1)?.as_f64()?, a.get(2)?.as_f64()?))
-    };
-    let (Some(a), Some(b), Some(d)) = (p("from"), p("to"), r.get("distance_mm").and_then(|v| v.as_f64())) else { return };
+    let Some((_, d, a, b)) = crate::dialogs::shown_distance(r, show) else { return };
     let (Some(sa), Some(sb)) = (proj.to_screen(a), proj.to_screen(b)) else { return };
     painter.line_segment([sa, sb], Stroke::new(2.0, t.manipulator));
     for s in [sa, sb] {

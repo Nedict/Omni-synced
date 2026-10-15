@@ -1475,6 +1475,11 @@ pub enum FeatureKind {
         /// The file's product/assembly tree, kept for components.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         components: Vec<solidcraft_kernel::StepNode>,
+        /// The file's bodies (by index) this feature does not build: later instances of a part
+        /// the file places more than once, shown by the other occurrences of that part's
+        /// component (#1386). Empty in designs from before format 22: every body is built.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        skip: Vec<u64>,
     },
     /// Rebuild an upstream constant-section mesh with analytic planar/cylindrical faces.
     MeshConvert {

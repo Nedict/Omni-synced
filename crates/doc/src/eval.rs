@@ -126,6 +126,25 @@ impl ModelBody {
             .clone()
     }
 
+    /// The display plan and its mesh `k` steps finer than `q` (view-dependent refinement, #1320;
+    /// see [`crate::display_quality::refinement_for`]). Step 0 is the cached plan at `q`; finer
+    /// steps are made on each call and kept by the viewport, which evicts them when it runs over
+    /// its budget. `None` when the body has no plan at that step.
+    pub fn refined_display(&self, q: crate::display_quality::DisplayQuality, k: u8) -> Option<(Arc<TessPlan>, Arc<Mesh>)> {
+        if k == 0 {
+            return Some((self.display_plan_at(q)?, self.plan_mesh_at(q)?));
+        }
+        let plan = match self.body.display_plan_angular(q.refined_chord(self.body.size(), k), q.refined_angle(k)) {
+            Ok(plan) => plan,
+            Err(e) => {
+                log::debug!("{}: no display plan refined {k} steps ({e})", self.name);
+                return None;
+            }
+        };
+        let mesh = self.body.display_mesh_of(&plan).ok()?;
+        Some((Arc::new(plan), Arc::new(mesh)))
+    }
+
     /// The display mesh's chord tolerance: 1/1000 of the body's size.
     fn display_tol(&self) -> f64 {
         (self.body.size() * 1e-3).max(1e-3)
@@ -1697,8 +1716,12 @@ fn region_samples(r: &Region2) -> Vec<Vec2> {
 /// Grow profile edges that lie on a face of a target body away from the profile, by a small
 /// amount, when the space they grow into is already material (join) or empty (cut). `probe`
 /// maps a sketch point to the world points where the tool would be (along the extrude, around
-/// the revolve). Only loops of straight edges are adjusted.
+/// the revolve). Loops of lines and arcs are adjusted: a line moves out, an arc keeps its centre
+/// and changes its radius (a rounded corner of a face cut whole, #1275). Arcs move only where
+/// both of their ends meet tangent neighbours that move with them; otherwise the loop is left
+/// as it is.
 fn grow_profile_for_coplanar(st: &ModelState, r: &Region2, op: Operation, targets: &[String], probe: &dyn Fn(Vec2) -> Vec<Vec3>) -> Region2 {
+    use solidcraft_geom::Seg2;
     if !matches!(op, Operation::Cut | Operation::Join) {
         return r.clone();
     }
@@ -1710,55 +1733,94 @@ fn grow_profile_for_coplanar(st: &ModelState, r: &Region2, op: Operation, target
     let size = bodies.iter().map(|b| b.body.size()).fold(0.0, f64::max);
     let delta = (size * 0.005).max(1e-3);
     let lp = r.outer.ccw();
-    let lines: Option<Vec<(Vec2, Vec2)>> =
-        lp.segs.iter().map(|s| if let solidcraft_geom::Seg2::Line { a, b } = *s { Some((a, b)) } else { None }).collect();
-    let Some(lines) = lines else { return r.clone() };
+    let segs = &lp.segs;
+    if segs.is_empty() || !segs.iter().all(|s| matches!(s, Seg2::Line { .. } | Seg2::Arc { .. })) {
+        return r.clone();
+    }
+    // The outward normal (away from the profile) at parameter `t` of a segment of the
+    // counterclockwise loop: the tangent turned clockwise.
+    let out_at = |s: &Seg2, t: f64| -> Option<Vec2> {
+        match *s {
+            Seg2::Line { a, b } => (b - a).normalized().map(|d| Vec2::new(d.y, -d.x)),
+            Seg2::Arc { start, sweep, .. } => Some(Vec2::from_angle(start + sweep * t) * sweep.signum()),
+            _ => None,
+        }
+    };
     let inside_any = |p: Vec3| meshes.iter().any(|m| m.contains(p));
-    let mut grow = vec![0.0; lines.len()];
+    let mut grow = vec![0.0; segs.len()];
     let mut any = false;
-    for (i, (a, b)) in lines.iter().enumerate() {
-        let Some(dir) = (*b - *a).normalized() else { continue };
-        let out = Vec2::new(dir.y, -dir.x);
+    for (i, seg) in segs.iter().enumerate() {
+        if let Seg2::Arc { radius, sweep, .. } = *seg
+            && sweep < 0.0
+            && radius <= 2.0 * delta
+        {
+            // A concave arc too small to shrink by the step.
+            continue;
+        }
         // Is the edge on a body face? Material on exactly one side of it.
-        let mids = [a.lerp(*b, 0.25), a.lerp(*b, 0.5), a.lerp(*b, 0.75)];
-        let side = |k: f64| mids.iter().flat_map(|m| probe(*m + out * (delta * k))).map(inside_any).collect::<Vec<bool>>();
+        let mids: Vec<(Vec2, Vec2)> = [0.25, 0.5, 0.75].iter().filter_map(|t| Some((seg.point_at(*t), out_at(seg, *t)?))).collect();
+        if mids.len() < 3 {
+            continue;
+        }
+        let side = |k: f64| mids.iter().flat_map(|(m, out)| probe(*m + *out * (delta * k))).map(inside_any).collect::<Vec<bool>>();
         let (outer, inner) = (side(0.5), side(-0.5));
         let want_outer = op == Operation::Join;
         let on_face = outer.iter().all(|x| *x == want_outer) && inner.iter().any(|x| *x != want_outer);
         let room = side(1.0).iter().all(|x| *x == want_outer);
-        if on_face && room {
-            if let Some(g) = grow.get_mut(i) {
-                *g = delta;
-            }
+        if on_face
+            && room
+            && let Some(g) = grow.get_mut(i)
+        {
+            *g = delta;
             any = true;
         }
     }
     if !any {
         return r.clone();
     }
-    // Offset the chosen lines and re-intersect neighbours.
-    let n = lines.len();
-    let shifted: Vec<(Vec2, Vec2)> = lines
-        .iter()
-        .zip(&grow)
-        .map(|((a, b), g)| {
-            let dir = (*b - *a).normalized().unwrap_or(Vec2::X);
-            let out = Vec2::new(dir.y, -dir.x);
-            (*a + out * *g, dir)
-        })
-        .collect();
-    let mut pts = Vec::with_capacity(n);
+    let n = segs.len();
+    let tangent = |a: &Seg2, b: &Seg2| a.end_tangent().cross(b.start_tangent()).abs() < 1e-6 && a.end_tangent().dot(b.start_tangent()) > 0.0;
+    // Where segment `i` starts once grown: the corner of it and the one before.
+    let mut starts = Vec::with_capacity(n);
     for i in 0..n {
-        let (Some(&(p0, d0)), Some(&(p1, d1))) = (shifted.get((i + n - 1) % n), shifted.get(i)) else { return r.clone() };
+        let (Some(prev), Some(cur), Some(&g0), Some(&g1)) = (segs.get((i + n - 1) % n), segs.get(i), grow.get((i + n - 1) % n), grow.get(i)) else {
+            return r.clone();
+        };
+        let corner = cur.start();
+        if g0 == 0.0 && g1 == 0.0 {
+            starts.push(corner);
+            continue;
+        }
+        if tangent(prev, cur) {
+            // Moved together, a tangent joint moves along the common normal and stays tangent.
+            if g0 != g1 {
+                return r.clone();
+            }
+            let Some(out) = out_at(cur, 0.0) else { return r.clone() };
+            starts.push(corner + out * g1);
+            continue;
+        }
+        let (Seg2::Line { a: a0, b: b0 }, Seg2::Line { a: a1, b: b1 }) = (*prev, *cur) else { return r.clone() };
+        let (Some(d0), Some(d1)) = ((b0 - a0).normalized(), (b1 - a1).normalized()) else { return r.clone() };
+        let (p0, p1) = (a0 + Vec2::new(d0.y, -d0.x) * g0, a1 + Vec2::new(d1.y, -d1.x) * g1);
         let den = d0.cross(d1);
         if den.abs() < 1e-12 {
-            pts.push(p1);
+            starts.push(p1);
             continue;
         }
         let t = (p1 - p0).cross(d1) / den;
-        pts.push(p0 + d0 * t);
+        starts.push(p0 + d0 * t);
     }
-    Region2 { outer: solidcraft_geom::Loop2::polygon(&pts), holes: r.holes.clone() }
+    let mut out = Vec::with_capacity(n);
+    for (i, seg) in segs.iter().enumerate() {
+        let (Some(&a), Some(&b), Some(&g)) = (starts.get(i), starts.get((i + 1) % n), grow.get(i)) else { return r.clone() };
+        out.push(match *seg {
+            Seg2::Line { .. } => Seg2::Line { a, b },
+            Seg2::Arc { center, radius, start, sweep } => Seg2::Arc { center, radius: radius + g * sweep.signum(), start, sweep },
+            _ => return r.clone(),
+        });
+    }
+    Region2 { outer: solidcraft_geom::Loop2 { segs: out }, holes: r.holes.clone() }
 }
 
 /// Booleans struggle with coincident faces (a cut starting on the face it cuts, a boss
@@ -4619,15 +4681,12 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             }
             Ok(())
         }
-        FeatureKind::Import { step, .. } => {
+        FeatureKind::Import { step, skip, .. } => {
             let imp = kernel::step_import_shared(step)?;
             let digest = crate::config::payload_digest(step);
-            // Files from board and assembly tools give thousands of bodies the same name: name
-            // them from a set, not by searching the bodies for every candidate (cubic).
-            let mut names = BodyNames::new(st);
-            for (k, b) in imp.bodies.iter().enumerate() {
-                let base = f.body_names.get(k).filter(|n| !n.trim().is_empty()).unwrap_or(&b.name);
-                let name = names.unique(base);
+            let names = import_body_names(st, &f.body_names, &imp, skip);
+            for (b, name) in imp.bodies.iter().zip(names) {
+                let Some(name) = name else { continue };
                 let b = crate::lineage::numbered_tool(b.body.clone().with_import_certificate(&digest, f.id)?);
                 st.bodies.push(ModelBody::traced_new(name, b, f.id));
             }
@@ -4658,6 +4717,27 @@ fn mesh_bodies(meshes: &[crate::MeshData]) -> Result<Vec<(String, Body)>> {
         out.push((m.name.clone(), b.with_color(m.color)));
     }
     Ok(out)
+}
+
+/// The names an Import feature gives the file's bodies, added after the bodies of `st`, in the
+/// file's order: `None` for a body it skips (a later instance of a repeated part). `body_names`
+/// are the feature's stored names (by index), else the file's own.
+pub fn import_body_names(st: &ModelState, body_names: &[String], imp: &kernel::StepImport, skip: &[u64]) -> Vec<Option<String>> {
+    let skip: std::collections::HashSet<u64> = skip.iter().copied().collect();
+    // Files from board and assembly tools give thousands of bodies the same name: name them
+    // from a set, not by searching the bodies for every candidate (cubic).
+    let mut names = BodyNames::new(st);
+    imp.bodies
+        .iter()
+        .enumerate()
+        .map(|(k, b)| {
+            if skip.contains(&(k as u64)) {
+                return None;
+            }
+            let base = body_names.get(k).filter(|n| !n.trim().is_empty()).unwrap_or(&b.name);
+            Some(names.unique(base))
+        })
+        .collect()
 }
 
 /// [`unique_body_name`] for many bodies in a row: the same names, in time linear in the bodies.

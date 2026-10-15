@@ -859,6 +859,11 @@ fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
                 app.session.visibility.hidden_origin.retain(|h| h != k);
             }
         }
+        if let Some(p) = r.secondary
+            && icon == "plane"
+        {
+            crate::context_menu::open_for(app, p, Target::OriginPlane { name: k.into() });
+        }
         if r.clicked
             && let Some(x) = sel
         {
@@ -1155,7 +1160,7 @@ fn canvas_panel(app: &mut SolveApp, ctx: &egui::Context) {
                     let r3 = ui.add(crate::prefs::length_drag(&mut w, &app.session.doc.units, app.preferences.length_decimals).range(0.01..=1e6));
                     ui.end_row();
                     ui.label(crate::i18n::tr_label("Angle"));
-                    let r4 = ui.add(egui::DragValue::new(&mut ang).speed(1.0).suffix(" deg"));
+                    let r4 = ui.add(egui::DragValue::new(&mut ang).speed(1.0).suffix(" deg").custom_parser(crate::prefs::parse_number));
                     ui.end_row();
                     ui.label(crate::i18n::tr_label("Opacity"));
                     let r5 = ui.add(egui::Slider::new(&mut op, 0.0..=1.0));
@@ -1721,7 +1726,7 @@ fn occurrence_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                 for (k, axis) in ["X angle", "Y angle", "Z angle"].iter().enumerate() {
                     ui.label(*axis);
                     if let Some(v) = m.angles.get_mut(k) {
-                        let response = ui.add(egui::DragValue::new(v).speed(1.0).suffix(" deg"));
+                        let response = ui.add(egui::DragValue::new(v).speed(1.0).suffix(" deg").custom_parser(crate::prefs::parse_number));
                         crate::scenario::publish_handle(&format!("occurrence-move:angle:{k}"), response.rect.center());
                     }
                     ui.end_row();

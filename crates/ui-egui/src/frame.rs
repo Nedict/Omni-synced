@@ -149,20 +149,6 @@ pub fn drag_dock(ui: &Ui, band: egui::Rect, title: &str, moved: egui::Vec2, appl
     }
 }
 
-/// A button whose size does not change when it is hovered or pressed: one drawn with its own
-/// `stroke` width (a chip), which egui would otherwise lay out with each state's stroke width,
-/// so the button and an auto-sized dialog around it shrank under the pointer (#1335).
-pub fn steady_button(ui: &mut Ui, button: egui::Button<'_>, stroke: f32) -> egui::Response {
-    ui.scope(|ui| {
-        let w = &mut ui.visuals_mut().widgets;
-        for v in [&mut w.noninteractive, &mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
-            v.bg_stroke.width = stroke;
-        }
-        ui.add(button)
-    })
-    .inner
-}
-
 /// A floating window, centred on the screen unless the caller places it, shrink-wrapped to its
 /// content up to its width limit.
 pub fn window<'a>(ctx: &egui::Context, title: impl Into<WidgetText>, width: Width) -> egui::Window<'a> {
@@ -177,6 +163,22 @@ pub fn window<'a>(ctx: &egui::Context, title: impl Into<WidgetText>, width: Widt
         .pivot(Align2::CENTER_CENTER)
         .default_pos(c - vec2(0.0, 60.0))
         .max_width(max)
+}
+
+/// Add a button drawn with its own outline (`Button::stroke`) of `width`, keeping the same size
+/// in every state (#1335). egui sizes a button's padding as the spacing minus the *theme's*
+/// outline width for the state (none while idle, 1 px hovered), which keeps a themed button's
+/// size steady, but a button with its own outline then lost a pixel of padding each side on
+/// hover: it shrank, and the panel around it with it.
+pub fn add_outlined(ui: &mut Ui, button: egui::Button<'_>, width: f32) -> egui::Response {
+    ui.scope(|ui| {
+        let w = &mut ui.visuals_mut().widgets;
+        for state in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
+            state.bg_stroke.width = width;
+        }
+        ui.add(button)
+    })
+    .inner
 }
 
 /// Floating model controls share the report's read-only drawing boundary with windows.
