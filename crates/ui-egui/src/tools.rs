@@ -586,6 +586,14 @@ pub(crate) fn preview_curve(t: &Tool, hover: Vec2, sweep: Option<f64>, rho: Opti
         ("sketch.circle.two_point", [a]) => {
             sk.add_circle((*a + hover) * 0.5, a.dist(hover) * 0.5, None, None).ok()?;
         }
+        // The first click is the middle: the line runs from the cursor's mirror image through
+        // it to the cursor (#1358), not from the middle to the cursor.
+        ("sketch.line.midpoint", [m]) => {
+            if m.dist(hover) <= 1e-9 {
+                return None;
+            }
+            sk.add_line(*m * 2.0 - hover, hover, None, None, None).ok()?;
+        }
         ("sketch.circle.three_point" | "sketch.arc.three_point", [a, b]) => {
             let ab = *b - *a;
             let ah = hover - *a;

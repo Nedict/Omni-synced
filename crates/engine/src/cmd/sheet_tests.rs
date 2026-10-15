@@ -1551,7 +1551,7 @@ fn flat_dxf_preserves_exact_cutout_entities() {
         outer: Loop2 { segs: vec![Seg2::Arc { center: Vec2::new(40.0, 30.0), radius: 5.0, start: -PI, sweep: -2.0 * PI }] },
         holes: Vec::new(),
     }];
-    let dxf = super::flat_dxf(&sh, super::DxfCurves::Exact).unwrap();
+    let dxf = super::flat_dxf(&sh, &super::DxfOptions::default()).unwrap();
     assert_eq!(dxf.matches("0\nCIRCLE\n").count(), 1, "{dxf}");
     assert!(!dxf.contains("0\nARC\n"), "a full circle must not become a zero-length ARC");
     let read = solidcraft_io::read_dxf(&dxf).unwrap();
@@ -1563,7 +1563,7 @@ fn flat_dxf_preserves_exact_cutout_entities() {
             Seg2::Arc { center: Vec2::new(20.0, 10.0), radius: 10.0, start: 0.0, sweep: PI },
         ],
     };
-    let dxf = super::flat_dxf(&sh, super::DxfCurves::Exact).unwrap();
+    let dxf = super::flat_dxf(&sh, &super::DxfOptions::default()).unwrap();
     assert_eq!(dxf.matches("0\nLINE\n").count(), 5, "four outline lines and one exact cutout line");
     assert_eq!(dxf.matches("0\nARC\n").count(), 1);
     assert!(dxf.contains(" 50\n0.0\n 51\n180.0\n"), "{dxf}");
@@ -2001,7 +2001,9 @@ fn dxf_outline_only(text: &str) -> String {
     for end in 1..=pairs.len() {
         if end == pairs.len() || pairs.get(end).is_some_and(|p| p.0 == "0") {
             let entity = &pairs[start..end];
-            if entity.first().is_some_and(|p| matches!(p.1, "LINE" | "ARC" | "CIRCLE")) && entity.iter().any(|p| p.0 == "8" && p.1 == "OUTLINE") {
+            if entity.first().is_some_and(|p| matches!(p.1, "LINE" | "ARC" | "CIRCLE"))
+                && entity.iter().any(|p| p.0 == "8" && matches!(p.1, "OUTLINE" | "CUT"))
+            {
                 for (code, value) in entity {
                     out.push_str(&format!("{code}\n{value}\n"));
                 }

@@ -768,7 +768,16 @@ pub(super) fn sheet_cut(
     }
     let Some(ss) = st.sketch(*sketch).cloned() else { return Ok(Vec::new()) };
     let regions = solidcraft_sketch::merge_regions(&select_profiles(&ss, profiles)?);
-    sheet_prism_cut(f, st, &ss.plane, &regions, *operation, tools, targets, constructor, extent.to.is_some())
+    // The outlines of the sketch's text: the sheet remembers where its letters went.
+    let text: Vec<Seg2> = ss
+        .sketch
+        .links
+        .iter()
+        .filter(|l| matches!(l.source, solidcraft_sketch::LinkSource::Text { .. }))
+        .flat_map(|l| ss.sketch.link_curves(&l.id))
+        .flat_map(|ci| ss.sketch.exact_segs(ci).unwrap_or_else(|| ss.sketch.segs(ci)))
+        .collect();
+    sheet_prism_cut(f, st, &ss.plane, &regions, *operation, tools, targets, constructor, extent.to.is_some(), &text)
 }
 
 /// Whether a cut of `f` with these targets (else its participants, else its component's
@@ -824,7 +833,7 @@ pub(super) fn sheet_primitive_cut(
     let Some(normal) = normal else { return Ok(Vec::new()) };
     let Some((plane, region, interval)) = prism.along(normal) else { return Ok(Vec::new()) };
     let tools = kernel::extrude(&plane, std::slice::from_ref(&region), interval.0, interval.1)?;
-    sheet_prism_cut(f, st, &plane, std::slice::from_ref(&region), operation, &tools, &[], None, false)
+    sheet_prism_cut(f, st, &plane, std::slice::from_ref(&region), operation, &tools, &[], None, false, &[])
 }
 
 /// A hole's straight drill along a panel of a sheet (into its rim), kept as a bore of each
@@ -911,6 +920,12 @@ impl PrimitivePrism {
     }
 }
 
+/// The most outline segments of a sketch's text a cut tells letters by, and the most text regions
+/// a sheet keeps (see [`crate::sheet::SheetBody::labels`]).
+const MAX_TEXT_CURVES: usize = 20_000;
+const MAX_LABELS: usize = 1000;
+
+/// `text` is the outlines of the text in the cut's sketch (none for a primitive's cut).
 #[allow(clippy::too_many_arguments)]
 fn sheet_prism_cut(
     f: &Feature,
@@ -922,6 +937,7 @@ fn sheet_prism_cut(
     targets: &[String],
     constructor: Option<&ExtrudeConstructor>,
     footprints_bound: bool,
+    text: &[Seg2],
 ) -> Result<Vec<String>> {
     let n = plane.normal();
     let mut work = sheet::FlatWork::new();
@@ -960,6 +976,12 @@ fn sheet_prism_cut(
             && current_footprints.iter().all(|(plane, r)| plane.x == placed_basis.x && plane.y == placed_basis.y && regions.contains(r)))
         .then_some(c.interval)
     });
+    // The regions of the cut that are letters, with their counters.
+    let letters: Vec<&Region2> = if operation == Operation::Cut && !text.is_empty() && text.len() <= MAX_TEXT_CURVES {
+        regions.iter().filter(|r| sheet::loop_lies_on(&r.outer, text)).collect()
+    } else {
+        Vec::new()
+    };
     let mut plans = Vec::new();
     'sheets: for original in &st.sheets {
         if !sheet_eligible(f, st, targets, original) {
@@ -993,6 +1015,7 @@ fn sheet_prism_cut(
             sh.material_panels(Some(plane), &mut work)?
         };
         let mut modeled = false;
+        let mut labels = Vec::new();
         for (pi, panel) in candidates {
             let w = if sh.flat { sh.world(None) } else { sh.world(pi) };
             let zorigin = (apply_point(&w, Vec3::ZERO) - plane.origin).dot(n);
@@ -1032,6 +1055,7 @@ fn sheet_prism_cut(
             let (z0, z1) = (a.min(b).max(0.0), a.max(b).min(sh.t));
             // Sub-resolution layers must not be silently erased by endpoint snapping.
             let depth_resolved = ![z0, sh.t - z1, z1 - z0].into_iter().any(|d| d > 0.0 && d < 1e-6);
+            labels.extend(letters.iter().filter_map(|r| sh.region_to_flat(pi, plane, r).ok()));
             let mapped = if footprints_bound && current_footprints.len() == tools.len() {
                 current_footprints.iter().map(|(plane, r)| sh.region_to_flat(pi, plane, r)).collect::<Result<Vec<_>>>()?
             } else {
@@ -1093,6 +1117,13 @@ fn sheet_prism_cut(
                             modeled = true;
                         }
                     }
+                }
+            }
+        }
+        if modeled {
+            for flat in labels {
+                if !sh.labels.contains(&flat) && sh.labels.len() < MAX_LABELS {
+                    sh.labels.push(flat);
                 }
             }
         }

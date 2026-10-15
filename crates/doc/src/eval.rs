@@ -3043,7 +3043,8 @@ fn feature_tools_with_constructor(
             let roles = crate::lineage::SectionRoles { sections: sketches.into_iter().zip(secs.iter().map(|(_, lp)| lp)).collect() };
             Ok(vec![roles.tool(body)])
         }
-        FeatureKind::Sweep { sketch, profiles, path_sketch, path, .. } => {
+        FeatureKind::Sweep { sketch, profiles, path_sketch, path, orientation, twist, scale, .. } => {
+            let ctl = sweep_control(vals, orientation, twist, scale)?;
             let ss = st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?;
             let ps =
                 st.sketch(*path_sketch).ok_or_else(|| DocError::Unknown(format!("sketch {path_sketch} (it must come earlier in the timeline)")))?;
@@ -3061,10 +3062,10 @@ fn feature_tools_with_constructor(
             let tool = |r: &Region2, body: Body| crate::lineage::ProfileRoles::swept(Some(ss), Some(r)).tool(body, None);
             // A path through 3D sketch curves follows them as points.
             if let Some(pts) = path_points(ps, path, start)? {
-                return regions.iter().map(|r| Ok(tool(r, kernel::sweep_path(&ss.plane, r, &pts)?))).collect();
+                return regions.iter().map(|r| Ok(tool(r, kernel::sweep_path_with(&ss.plane, r, &pts, &ctl)?))).collect();
             }
             let segs = path_segments(ps, path, start)?;
-            regions.iter().map(|r| Ok(tool(r, kernel::sweep(&ss.plane, r, &segs)?))).collect()
+            regions.iter().map(|r| Ok(tool(r, kernel::sweep_with(&ss.plane, r, &segs, &ctl)?))).collect()
         }
         FeatureKind::Pipe { path_sketch, path, diameter, wall, .. } => {
             let ps =
@@ -3112,6 +3113,32 @@ fn feature_tools_with_constructor(
 }
 
 /// A chain of sketch curves as 3D path segments, starting at the end nearest `start`.
+/// A sweep's options from its stored orientation and its twist and end scale expressions
+/// (none: no twist, scale 1). Out-of-range values are refused by the kernel.
+pub(crate) fn sweep_control(
+    vals: &BTreeMap<String, Value>,
+    orientation: &crate::SweepOrientation,
+    twist: &Option<String>,
+    scale: &Option<String>,
+) -> Result<kernel::SweepControl> {
+    let orientation = match *orientation {
+        crate::SweepOrientation::Perpendicular => kernel::SweepOrientation::Perpendicular,
+        crate::SweepOrientation::Parallel => kernel::SweepOrientation::Parallel,
+        crate::SweepOrientation::Direction(d) => kernel::SweepOrientation::Direction(d),
+    };
+    let twist = match twist {
+        Some(t) => val(vals, t, Kind::Angle)?,
+        None => 0.0,
+    };
+    let scale = match scale {
+        Some(k) => val(vals, k, Kind::Unitless)?,
+        None => 1.0,
+    };
+    let ctl = kernel::SweepControl { orientation, twist, scale };
+    ctl.check()?;
+    Ok(ctl)
+}
+
 /// A pipe's section: a circle of radius `r`, hollow when it has a wall.
 fn pipe_region(vals: &BTreeMap<String, Value>, r: f64, wall: &Option<String>) -> Result<Region2> {
     let holes = match wall {

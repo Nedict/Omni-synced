@@ -1,7 +1,9 @@
 //! Solid feature commands: extrude, revolve, fillet, chamfer, primitives, combine, move.
 
 use serde_json::{Value, json};
-use solidcraft_doc::{AxisRef, Direction, Extent, FeatureKind, Operation, PointExpr, ProfileSel, ThinSide, ThinWall, expr::Kind, point_expr};
+use solidcraft_doc::{
+    AxisRef, Direction, Extent, FeatureKind, Operation, PointExpr, ProfileSel, SweepOrientation, ThinSide, ThinWall, expr::Kind, point_expr,
+};
 use solidcraft_geom::Vec3;
 
 use super::{CommandSpec, not_in_sketch};
@@ -21,7 +23,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.sweep", "Sweep", sweep)
         .at("SOLID", "CREATE")
         .icon("sweep")
-        .params("sketch: profile sketch; profiles?; path_sketch: sketch; path: [curve ids in order]; operation?, targets?, name?, body_name?"),
+        .params("sketch: profile sketch; profiles?; path_sketch: sketch; path: [curve ids in order]; orientation?: perpendicular (default: square to the path, turning with it) | parallel (as drawn: the profile moves without turning; the path must keep crossing its plane) | [x,y,z] (square to the path, its turn about the path fixed by this direction); twist?: angle expr (the profile turns this much about the path over its length; within 4 turns); scale?: expr (the profile's scale at the end, linear along the path; 0.01…100); operation?, targets?, name?, body_name?"),
     CommandSpec::new("solid.loft", "Loft", loft).at("SOLID", "CREATE").icon("loft").params("sections: [{sketch, profiles?} | {sketch, point: id} (an apex)] (2 or more, in order); operation?, targets?, name?, body_name?"),
     CommandSpec::new("solid.box", "Box", prim_box).at("SOLID", "CREATE").icon("box").params("length, width, height: expr; corner?: [x,y,z] | center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
     CommandSpec::new("solid.cylinder", "Cylinder", prim_cylinder).at("SOLID", "CREATE").icon("cylinder").params("radius | diameter, height: expr; base?: [x,y,z] (centre of the bottom: numbers in mm or length expressions; default: the origin); axis?: X|Y|Z|[x,y,z] (default Z); operation?, targets?: [body], name?, body_name?"),
@@ -1621,6 +1623,7 @@ fn sweep(s: &mut Session, p: &Value) -> Result<Value> {
     if path.is_empty() {
         return Err(bad(cmd, "`path` must list curve ids"));
     }
+    let (orientation, twist, scale) = sweep_options(s, p, cmd)?;
     add_feature(
         s,
         p,
@@ -1629,10 +1632,56 @@ fn sweep(s: &mut Session, p: &Value) -> Result<Value> {
             profiles: profiles(p, cmd)?,
             path_sketch,
             path,
+            orientation,
+            twist,
+            scale,
             operation: operation(p, cmd)?,
             targets: string_list(p, "targets"),
         },
     )
+}
+
+/// A sweep's `orientation`, `twist` and `scale` (solid.sweep and surface.sweep), checked: an
+/// orientation the sweep knows, a twist within four turns, an end scale within 0.01…100.
+pub(super) fn sweep_options(s: &Session, p: &Value, cmd: &str) -> Result<(SweepOrientation, Option<String>, Option<String>)> {
+    let orientation = match p.get("orientation") {
+        None | Some(Value::Null) => SweepOrientation::Perpendicular,
+        Some(Value::String(o)) if o.eq_ignore_ascii_case("perpendicular") => SweepOrientation::Perpendicular,
+        Some(Value::String(o)) if o.eq_ignore_ascii_case("parallel") => SweepOrientation::Parallel,
+        Some(v) => {
+            let d = vec3(v)
+                .or_else(|| v.get("direction").and_then(vec3))
+                .ok_or_else(|| bad(cmd, "`orientation` must be perpendicular, parallel or a direction [x, y, z]"))?;
+            if !(d.len() > 1e-9) {
+                return Err(bad(cmd, "the `orientation` direction must not be zero"));
+            }
+            SweepOrientation::Direction(d)
+        }
+    };
+    let twist = match p.get("twist") {
+        None | Some(Value::Null) => None,
+        Some(_) => {
+            let t = expr(p, "twist").ok_or_else(|| bad(cmd, "`twist` must be an angle or an expression"))?;
+            let v = s.doc.eval(&t, Kind::Angle).map_err(|e| bad(cmd, format!("twist: {e}")))?;
+            if !(v.is_finite() && v.abs() <= solidcraft_kernel::SweepControl::MAX_TWIST) {
+                return Err(bad(cmd, "`twist` must be within four turns (1440 deg)"));
+            }
+            Some(t)
+        }
+    };
+    let scale = match p.get("scale") {
+        None | Some(Value::Null) => None,
+        Some(_) => {
+            let k = expr(p, "scale").ok_or_else(|| bad(cmd, "`scale` must be a number or an expression"))?;
+            let v = s.doc.eval(&k, Kind::Unitless).map_err(|e| bad(cmd, format!("scale: {e}")))?;
+            let range = solidcraft_kernel::SweepControl::MIN_SCALE..=solidcraft_kernel::SweepControl::MAX_SCALE;
+            if !(v.is_finite() && range.contains(&v)) {
+                return Err(bad(cmd, "`scale` (the end scale) must be between 0.01 and 100"));
+            }
+            Some(k)
+        }
+    };
+    Ok((orientation, twist, scale))
 }
 
 fn loft(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1752,6 +1801,10 @@ mod patterns_tests;
 #[cfg(test)]
 #[path = "revolve_convention_tests.rs"]
 mod revolve_convention_tests;
+
+#[cfg(test)]
+#[path = "sweep_options_tests.rs"]
+mod sweep_options_tests;
 
 #[cfg(test)]
 #[path = "offset_topology_tests.rs"]

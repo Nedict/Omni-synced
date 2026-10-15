@@ -191,6 +191,10 @@
 //!   A bend point can also lie on a bend modelled with its radius (a cylinder between two flat
 //!   faces tangent to it), which then is one bend at the two faces' virtual sharp with the
 //!   rule's radius; 0.11.0 found no edge there or refused the curved face.
+//!   Also under 21, a Sweep and a Surface Sweep can carry `orientation` (`parallel`, or
+//!   `{direction: [x, y, z]}`; absent: perpendicular), `twist` (an angle expression) and `scale`
+//!   (the end scale, an expression). A sweep without them saves as before; 0.11.x refuses
+//!   format 21, so no released build sweeps a twisted or scaled profile straight.
 
 use serde_json::Value;
 
@@ -1762,5 +1766,29 @@ mod tests {
         assert_eq!(back.components.len(), before);
         let json = edited(&d, |v| v["components"][1]["id"] = u64::MAX.into());
         assert!(read(&json).unwrap_err().to_string().contains("damaged design"));
+    }
+
+    /// A sweep saved before its options existed loads as a plain sweep and saves as it was; the
+    /// options round-trip.
+    #[test]
+    fn sweep_options_are_optional_and_round_trip() {
+        use crate::{FeatureKind, SweepOrientation};
+        let old =
+            serde_json::json!({"type": "sweep", "sketch": 1, "profiles": {"type": "all"}, "path_sketch": 2, "path": ["l1"], "operation": "new_body"});
+        let k: FeatureKind = serde_json::from_value(old.clone()).unwrap();
+        let FeatureKind::Sweep { orientation, twist, scale, .. } = &k else { panic!("{k:?}") };
+        assert!(orientation.is_perpendicular() && twist.is_none() && scale.is_none());
+        assert_eq!(serde_json::to_value(&k).unwrap(), old);
+        let old = serde_json::json!({"type": "surface_sweep", "sketch": 1, "path_sketch": 2, "path": ["l1"]});
+        let k: FeatureKind = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&k).unwrap(), old);
+        let new = serde_json::json!({"type": "surface_sweep", "sketch": 1, "path_sketch": 2, "path": ["l1"],
+            "orientation": {"direction": [0.0, 1.0, 0.0]}, "twist": "90 deg", "scale": "0.5"});
+        let k: FeatureKind = serde_json::from_value(new.clone()).unwrap();
+        let FeatureKind::SurfaceSweep { orientation, .. } = &k else { panic!("{k:?}") };
+        assert_eq!(*orientation, SweepOrientation::Direction(solidcraft_geom::Vec3::Y));
+        assert_eq!(serde_json::to_value(&k).unwrap(), new);
+        let parallel: SweepOrientation = serde_json::from_value(serde_json::json!("parallel")).unwrap();
+        assert_eq!(parallel, SweepOrientation::Parallel);
     }
 }
