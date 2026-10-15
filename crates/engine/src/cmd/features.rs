@@ -1751,7 +1751,7 @@ pub(super) fn sweep_options(s: &Session, p: &Value, cmd: &str) -> Result<(SweepO
             if !(v.is_finite() && v.abs() <= solidcraft_kernel::SweepControl::MAX_TWIST) {
                 return Err(bad(cmd, "`twist` must be within four turns (1440 deg)"));
             }
-            Some(Expr::from(t))
+            Some(t)
         }
     };
     let scale = match p.get("scale") {
@@ -1763,7 +1763,7 @@ pub(super) fn sweep_options(s: &Session, p: &Value, cmd: &str) -> Result<(SweepO
             if !(v.is_finite() && range.contains(&v)) {
                 return Err(bad(cmd, "`scale` (the end scale) must be between 0.01 and 100"));
             }
-            Some(Expr::from(k))
+            Some(k)
         }
     };
     Ok((orientation, twist, scale))
