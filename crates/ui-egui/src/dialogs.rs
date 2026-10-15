@@ -42,6 +42,8 @@ pub enum Kind {
         /// Into a body: cut; additions: join when a solid exists, otherwise new.
         /// until the user picks one.
         auto_op: bool,
+        /// The direction from the picked side and the latched operation (#1257).
+        smart: crate::smart_extrude::Smart,
         /// The other side's distance (two sides).
         distance2: String,
         /// Taper angle (empty or zero: none).
@@ -439,6 +441,7 @@ impl Dialog {
                     direction: 0,
                     operation: usize::from(has_bodies),
                     auto_op: true,
+                    smart: Default::default(),
                     distance2: "10 mm".into(),
                     taper: "0 deg".into(),
                     taper_present: false,
@@ -1797,21 +1800,54 @@ fn measure_rows(app: &SolveApp, ui: &mut egui::Ui, r: Option<&Value>) {
     }
 }
 
-/// Keep an automatic extrude operation in step with the geometry.
+/// Smart Extrude (#1257, see [`crate::smart_extrude`]): a new pick sets the direction from the
+/// side it was picked from, and the automatic operation follows the geometry, latched per side.
 fn auto_operation(app: &SolveApp, d: &mut Dialog) {
+    let Kind::Extrude { smart, .. } = &d.kind else { return };
+    let picked = d.inputs.first().map(|i| i.items.as_slice()).unwrap_or_default();
+    if smart.picked != picked {
+        let new_first = smart.picked.first() != picked.first();
+        let picked = picked.to_vec();
+        let side_of_pick = if new_first && !smart.manual_dir { picked.first().and_then(|first| picked_side(app, d, first)) } else { None };
+        let Kind::Extrude { direction, smart, .. } = &mut d.kind else { return };
+        smart.picked = picked;
+        smart.latch = None;
+        if *direction < 2
+            && let Some(dir) = side_of_pick
+        {
+            *direction = dir;
+        }
+    }
+    let Kind::Extrude { direction, distance, .. } = &d.kind else { return };
+    let Ok(dist) = app.session.doc.eval(distance, solidcraft_engine::doc::expr::Kind::Length) else { return };
+    let side = crate::smart_extrude::side(dist, *direction);
     if !matches!(d.kind, Kind::Extrude { auto_op: true, .. }) {
         return;
     }
-    let Some(op) =
-        dialog_commands(app, d).ok().and_then(|c| c.into_iter().next()).and_then(|(_, p)| solidcraft_engine::auto_operation(&app.session, &p))
+    let Some(fresh) = dialog_commands(app, d)
+        .ok()
+        .and_then(|c| c.into_iter().next())
+        .and_then(|(_, p)| solidcraft_engine::auto_operation(&app.session, &p))
+        .and_then(|op| OPS.iter().position(|o| *o == op))
     else {
         return;
     };
-    if let Kind::Extrude { operation, .. } = &mut d.kind
-        && let Some(i) = OPS.iter().position(|o| *o == op)
-    {
-        *operation = i;
+    if let Kind::Extrude { operation, smart, .. } = &mut d.kind {
+        *operation = crate::smart_extrude::operation(fresh, *operation, side, &mut smart.latch);
     }
+}
+
+/// The one-side direction a new extrude takes for its first pick: toward the side of a sketch
+/// profile (or curve) the camera looks from; None for picks that keep their own way.
+fn picked_side(app: &SolveApp, d: &Dialog, first: &Sel) -> Option<usize> {
+    let normal = match first {
+        Sel::Profile { sketch, .. } => crate::canvas::profile_plane(app, *sketch)?.normal(),
+        Sel::SketchCurve { id } => app.session.world_state().sketches.iter().rev().find(|ss| ss.sketch.curve_index(id).is_some())?.plane.normal(),
+        Sel::Face { .. } => return Some(0),
+        _ => return None,
+    };
+    let (at, _) = crate::canvas::anchor(app, d)?;
+    Some(crate::smart_extrude::picked_direction(crate::smart_extrude::view_ray(&app.cam, at), normal, false))
 }
 
 /// Show the active dialog (if any), docked flush to an edge of the viewport just below the axis
@@ -1995,6 +2031,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         direction,
                         operation,
                         auto_op,
+                        smart,
                         distance2,
                         taper,
                         taper_present,
@@ -2050,6 +2087,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         combo(ui, "ex_dir", &["One Side", "Two Sides", "Symmetric"], &mut pos);
                         if pos != order.iter().position(|o| o == direction).unwrap_or(0) {
                             *direction = order.get(pos).copied().unwrap_or(0);
+                            // An explicit direction ends the automatic choices (#1257).
+                            smart.manual_dir = true;
+                            *auto_op = false;
                         }
                         ui.end_row();
                         if *direction < 2 {
@@ -2057,6 +2097,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                             let mut reverse = *direction == 1;
                             if ui.checkbox(&mut reverse, tr("Reverse Direction")).changed() {
                                 *direction = usize::from(reverse);
+                                // An explicit direction ends the automatic choices (#1257).
+                                smart.manual_dir = true;
+                                *auto_op = false;
                             }
                             ui.end_row();
                         }
@@ -4139,6 +4182,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 },
                 operation: op_index(operation),
                 auto_op: false,
+                smart: crate::smart_extrude::Smart { manual_dir: true, ..Default::default() },
                 distance2: extent.distance2.clone().unwrap_or_else(|| "10 mm".into()),
                 taper: extent.taper.clone().unwrap_or_else(|| "0 deg".into()),
                 taper_present: extent.taper.is_some(),

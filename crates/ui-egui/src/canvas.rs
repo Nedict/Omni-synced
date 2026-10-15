@@ -159,7 +159,7 @@ fn poly_mid(poly: &[Vec2]) -> Option<(Vec2, Vec2)> {
     last
 }
 
-fn profile_plane(app: &SolveApp, sketch: u64) -> Option<solidcraft_engine::geom::Plane> {
+pub(crate) fn profile_plane(app: &SolveApp, sketch: u64) -> Option<solidcraft_engine::geom::Plane> {
     let component = app.session.doc.feature(sketch)?.component;
     let state = app.session.model.state();
     let plane = state.sketch(sketch)?.plane;

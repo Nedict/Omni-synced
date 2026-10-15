@@ -851,5 +851,10 @@
   "In place (surfaces)": "제자리에서 (서피스)",
   "None": "없음",
   "Picked": "선택한 항목",
-  "Restore outer boundary": "외부 경계 복원"
+  "Restore outer boundary": "외부 경계 복원",
+  "RULED SURFACE": "룰드 서피스",
+  "Mitre": "연귀",
+  "Reference face": "참조 면",
+  "Round": "둥글게",
+  "Type": "유형"
 }
