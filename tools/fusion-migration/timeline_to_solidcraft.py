@@ -403,12 +403,58 @@ def emit_draft(step, out, ctx):
     return {"faces": len(pts)}
 
 
+def world_axis(axis):
+    """Name the world axis a revolve turns about, or None if it is not one of them.
+
+    Only X, Y and Z through the origin can be named. A parallel axis offset from the origin is
+    a different axis entirely, so it has to be refused rather than rounded to the nearest name --
+    the earlier version guessed "x" unconditionally, which silently produced the wrong solid.
+    """
+    if not axis or not axis.get("start") or not axis.get("end"):
+        return None
+    s, e = axis["start"], axis["end"]
+    d = [e[i] - s[i] for i in range(3)]
+    length = sum(c * c for c in d) ** 0.5
+    if length < 1e-9:
+        return None
+    d = [c / length for c in d]
+    for i, name in enumerate("XYZ"):
+        if abs(abs(d[i]) - 1.0) > 1e-6:
+            continue
+        # Aligned with this axis; it must also pass through the origin to *be* that axis.
+        off = [s[j] for j in range(3) if j != i]
+        if max(abs(v) for v in off) <= 1e-6:
+            return name
+        return None
+    return None
+
+
 def emit_revolve(step, out, ctx):
-    a = expr(step.get("angle"), "360 deg")
-    out.append({"command": "solid.revolve",
-                "params": {"axis": "x", "angle": a, "profiles": profiles_param(step, ctx),
-                           "operation": op_of(step)}})
-    return {"note": "axis guessed as sketch x -- check it"}
+    name = world_axis(step.get("axis"))
+    if not name:
+        raise Skip("axis is not a world axis through the origin ({})".format(
+            "no axis captured" if not step.get("axis") else "offset or oblique"))
+    params = {"axis": name, "angle": expr(step.get("angle"), "360 deg"),
+              "profiles": profiles_param(step, ctx), "operation": op_of(step)}
+    a2 = expr(step.get("angle2"))
+    if a2:
+        params["angle2"] = a2
+    if str(step.get("extent_type")) == "2" or step.get("is_symmetric") in (True, "True"):
+        params["direction"] = "symmetric"
+    out.append({"command": "solid.revolve", "params": params})
+    return {"axis": name}
+
+
+def emit_offset_faces(step, out, ctx):
+    pts = step.get("face_points")
+    if not pts:
+        raise Skip("no face geometry captured ({} faces referenced)".format(
+            step.get("face_count", "?")))
+    d = expr(step.get("distance"))
+    if not d:
+        raise Skip("no offset distance expression")
+    out.append({"command": "solid.offset_face", "params": {"faces": pts, "distance": d}})
+    return {"faces": len(pts)}
 
 
 HANDLERS = {
@@ -419,6 +465,7 @@ HANDLERS = {
     "ShellFeature": emit_shell,
     "DraftFeature": emit_draft,
     "RevolveFeature": emit_revolve,
+    "OffsetFacesFeature": emit_offset_faces,
 }
 
 
