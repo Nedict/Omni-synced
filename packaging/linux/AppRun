@@ -47,7 +47,9 @@ integrate() {
   # (only one it wrote: it points Exec at a path in quotes) and leave the rest to appimaged.
   apps="$data/applications"
   for other in "$apps"/appimagekit_*.desktop; do
-    [ -f "$other" ] && grep -qF "$appimage" "$other" 2>/dev/null || continue
+    if ! { [ -f "$other" ] && grep -qF "$appimage" "$other" 2>/dev/null; }; then
+      continue
+    fi
     mine="$apps/$DESK_ID.desktop"
     if [ -f "$mine" ] && grep -q '^Exec="' "$mine"; then
       rm -f "$mine"
