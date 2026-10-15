@@ -1109,5 +1109,9 @@
   "In place (surfaces)": "その場で（サーフェス）",
   "None": "なし",
   "Picked": "選択したもの",
-  "Restore outer boundary": "外側の境界を復元"
+  "Restore outer boundary": "外側の境界を復元",
+  "RULED SURFACE": "ルールドサーフェス",
+  "Mitre": "留め継ぎ",
+  "Reference face": "参照面",
+  "Round": "丸め"
 }

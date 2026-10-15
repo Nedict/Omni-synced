@@ -161,6 +161,11 @@ pub(super) fn fixtures() -> Vec<(&'static str, Value)> {
             "surface_extend_to_face",
             json!({"type": "surface_extend", "body": "B", "edges": [o], "distance": "extend.distance", "up_to": {"face": {"body": "B", "point": o}}, "neighbours": false}),
         ),
+        (
+            "surface_ruled",
+            json!({"type": "surface_ruled", "body": "B", "edges": [o], "distance": "ruled.distance", "mode": "angle", "angle": "ruled.angle",
+                "direction": [0, 0, 1], "face": [1, 0, 0]}),
+        ),
         ("surface_trim", json!({"type": "surface_trim", "body": "B", "plane": plane("trim"), "keep": o})),
         ("move", json!({"type": "move", "bodies": ["B"], "translate": ["move.x", "move.y", "move.z"], "angle": "move.angle"})),
         ("import", json!({"type": "import", "file": "a.step", "step": ""})),

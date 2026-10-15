@@ -1109,5 +1109,9 @@
   "In place (surfaces)": "原位（曲面）",
   "None": "无",
   "Picked": "所选",
-  "Restore outer boundary": "恢复外边界"
+  "Restore outer boundary": "恢复外边界",
+  "RULED SURFACE": "直纹曲面",
+  "Mitre": "斜接",
+  "Reference face": "参考面",
+  "Round": "圆角"
 }

@@ -851,5 +851,10 @@
   "In place (surfaces)": "An Ort und Stelle (Flächen)",
   "None": "Keine",
   "Picked": "Ausgewählte",
-  "Restore outer boundary": "Äußere Begrenzung wiederherstellen"
+  "Restore outer boundary": "Äußere Begrenzung wiederherstellen",
+  "RULED SURFACE": "REGELFLÄCHE",
+  "Mitre": "Gehrung",
+  "Reference face": "Referenzfläche",
+  "Round": "Rund",
+  "Type": "Typ"
 }

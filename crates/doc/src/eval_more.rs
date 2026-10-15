@@ -157,16 +157,25 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
     }
 }
 
-/// Unit outward normal of the planar face through `p`.
+/// Unit outward normal of the planar face through `p`: of the planar faces whose plane runs
+/// through it, the one nearest it. A face elsewhere in such a plane (the wall of a notch, the end
+/// of a rib, in line with a rim) is no pick of `p`, though its plane runs through it as exactly.
 fn planar_normal_at(b: &Body, p: Vec3) -> Option<Vec3> {
     let tol = (b.size() * 2e-3).max(1e-3);
     let faces = b.faces(tol).ok()?;
+    let mesh = b.tessellate(tol).ok()?;
+    let mut near = vec![f64::INFINITY; faces.len()];
+    for (t, f) in mesh.triangles.iter().zip(&mesh.tri_face) {
+        if let (Some([u, v, w]), Some(d)) = (mesh.tri(t), near.get_mut(*f as usize)) {
+            *d = d.min(crate::appearance::closest_on_triangle(p, u, v, w).dist(p));
+        }
+    }
     faces
         .iter()
-        .filter_map(|f| f.plane_normal.map(|n| (n, ((p - f.centroid).dot(n)).abs())))
-        .filter(|(_, d)| *d < tol * 5.0)
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(n, _)| n)
+        .filter_map(|f| f.plane_normal.map(|n| (n, ((p - f.centroid).dot(n)).abs(), near.get(f.index).copied().unwrap_or(f64::INFINITY))))
+        .filter(|(_, d, _)| *d < tol * 5.0)
+        .min_by(|a, b| a.2.total_cmp(&b.2).then(a.1.total_cmp(&b.1)))
+        .map(|(n, _, _)| n)
 }
 
 /// The curves of a chain as one polyline in sketch coordinates, in order.

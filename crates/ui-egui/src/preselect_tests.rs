@@ -969,6 +969,46 @@ fn surface_loft_dialog_makes_a_section_per_sketch() {
 }
 
 #[test]
+fn ruled_surface_dialog_takes_edges_a_face_and_a_direction() {
+    // A box top's front and right edges, ruled across the top 2 mm with round corners: two
+    // 10 × 2 strips and a quarter disc between them. Edit Feature brings it back; along a
+    // direction it needs one, and keeps the one it was made with.
+    let mut app = app_with(json!([{"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "body_name": "Box"}}]));
+    let mut d = start(&mut app, vec![], "surface.ruled");
+    assert!(apply_commands(&app, &d).is_err(), "no edges yet");
+    let edge = |i: usize, p: Vec3| Sel::Edge { body: "Box".into(), index: i, point: p };
+    d.inputs[0].items = vec![edge(0, Vec3::new(5.0, 0.0, 10.0)), edge(1, Vec3::new(10.0, 5.0, 10.0))];
+    d.inputs[1].items = vec![Sel::Face { body: "Box".into(), index: 0, point: Vec3::new(5.0, 5.0, 10.0) }];
+    if let Kind::Surface(crate::dialogs_surface::Surf::Ruled { distance, mode, round, .. }) = &mut d.kind {
+        *distance = "2 mm".into();
+        *mode = 1;
+        *round = true;
+    }
+    let (id, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!(
+        (id.as_str(), &p["body"], &p["mode"], &p["corners"], &p["face"]),
+        ("surface.ruled", &json!("Box"), &json!("tangent"), &json!("round"), &json!([5.0, 5.0, 10.0])),
+        "{p}"
+    );
+    app.session.execute(&id, &p).unwrap();
+    let m = app.session.model.state().bodies.last().unwrap().mesh().measure();
+    let want = 40.0 + std::f64::consts::PI;
+    assert!((m.area - want).abs() < want * 2e-3, "{} vs {want}", m.area); // (measured on meshes)
+    let fid = app.session.doc.features.last().unwrap().id;
+    let mut back = crate::dialogs::for_feature(&app, fid, None).unwrap();
+    assert_eq!((back.inputs[0].items.len(), back.inputs[1].items.len()), (2, 1));
+    assert!(matches!(back.kind, Kind::Surface(crate::dialogs_surface::Surf::Ruled { mode: 1, round: true, .. })));
+    if let Kind::Surface(crate::dialogs_surface::Surf::Ruled { mode, .. }) = &mut back.kind {
+        *mode = 3;
+    }
+    assert!(apply_commands(&app, &back).is_err(), "a direction is needed");
+    back.inputs[2].items = vec![Sel::Axis { name: "Z".into() }];
+    // Edit Feature runs the command's parameters as an edit of the feature.
+    let (_, p) = apply_commands(&app, &back).unwrap().remove(0);
+    assert_eq!((&p["params"]["mode"], &p["params"]["direction"]), (&json!("direction"), &json!([0.0, 0.0, 1.0])), "{p}");
+}
+
+#[test]
 fn untrim_dialog_takes_a_face_its_holes_and_the_outer_boundary() {
     // A 40 × 20 × 2 plate with three holes: its top untrimmed (every hole) is the whole 800 mm²
     // rectangle; one hole picked by an edge; Edit Feature brings the picks and options back.

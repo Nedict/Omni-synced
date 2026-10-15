@@ -359,6 +359,12 @@ macro_rules! feature_walk {
                         $plane(plane, f);
                     }
                 }
+                FeatureKind::SurfaceRuled { distance, angle, .. } => {
+                    f("Distance", distance, L, I);
+                    if let Some(a) = angle {
+                        f("Angle", a, A, I);
+                    }
+                }
                 FeatureKind::Unstitch { .. } | FeatureKind::ReverseNormal { .. } | FeatureKind::SurfaceUntrim { .. } => {}
                 FeatureKind::SurfaceOffset { distance, tolerance, .. } => {
                     f("Distance", distance, L, I);

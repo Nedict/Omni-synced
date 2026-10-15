@@ -1109,5 +1109,9 @@
   "In place (surfaces)": "In place (surfaces)",
   "None": "None",
   "Picked": "Picked",
-  "Restore outer boundary": "Restore outer boundary"
+  "Restore outer boundary": "Restore outer boundary",
+  "RULED SURFACE": "RULED SURFACE",
+  "Mitre": "Mitre",
+  "Reference face": "Reference face",
+  "Round": "Round"
 }

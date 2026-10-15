@@ -121,6 +121,17 @@ rebuilds it; `run` then exits with status 1, lists the failing features and writ
 its `--out` and `--save` files, because the bodies lack what those features should have made.
 `--allow-errors` writes them anyway.
 
+`run` prints each command's result with `--results` (otherwise the measurement), and `eval`
+prints the measurement, as JSON on stdout. `--json-out FILE` writes that JSON to a file
+instead. The file is plain UTF-8, which is not what a redirect gives you everywhere: Windows
+PowerShell's `>` re-encodes a program's output, as UTF-16 or as UTF-8 with a byte-order mark
+depending on its settings, and strict JSON readers such as Python's `json.load` then refuse it.
+
+```sh
+cargo run --release -p solidcraft-cli -- run examples/bracket.json --results --json-out results.json
+cargo run --release -p solidcraft-cli -- eval examples/bracket.json --json-out measures.json
+```
+
 A design's history turns into a script that rebuilds it, which makes a bug that only shows
 on one design a one-file reproduction:
 
