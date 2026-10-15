@@ -119,9 +119,9 @@ The agent reaches the open design only through SolidCraft's own tools (the
 Preferences → AI → **Permissions** decides what the agent may do without asking, for every agent;
 each agent can have its own setting in its row.
 
-- **Ask every time** (the default): every change to the design and every file action waits for
-  **Allow**, **Always allow** or **Deny** in the panel.
-- **Auto-allow model edits:** modelling commands run at once; saving, opening, exporting,
+- **Ask every time:** every change to the design and every file action waits for **Allow**,
+  **Always allow** or **Deny** in the panel.
+- **Auto-allow model edits** (the default): modelling commands run at once; saving, opening, exporting,
   importing, starting a new design, any command given a file name, and undoing past the start of
   your message still ask.
 - **Allow everything:** nothing asks. The page warns you: the agent can then save, overwrite and

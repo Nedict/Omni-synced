@@ -420,7 +420,7 @@ impl Default for Prefs {
             ai_toolbar_button: true,
             agents: Vec::new(),
             agent_default: String::new(),
-            ai_permissions: crate::agent_chat::agents::Mode::Ask,
+            ai_permissions: crate::agent_chat::agents::Mode::Edits,
             agent_permissions: Default::default(),
             agent_always_allow: Default::default(),
             agent_chat_side: "right".into(),

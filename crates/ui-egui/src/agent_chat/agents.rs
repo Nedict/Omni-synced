@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
     /// Every change to the design, file and destructive action asks first.
-    #[default]
     Ask,
-    /// Modelling commands run; files and destructive actions still ask.
+    /// Modelling commands run; files and destructive actions still ask (the default).
+    #[default]
     Edits,
     /// Nothing asks (crash reports and the folder limits still hold).
     All,
@@ -218,10 +218,10 @@ mod tests {
             assert_eq!(Mode::parse(m.id()), Some(m));
         }
         let mut p = crate::prefs::Prefs::default();
-        assert_eq!(p.ai_permissions, Mode::Ask, "asking is the default");
-        p.agent_permissions.insert("codex".into(), Mode::Edits);
-        assert_eq!(mode_for(&p, "codex"), Mode::Edits);
-        assert_eq!(mode_for(&p, "claude"), Mode::Ask);
+        assert_eq!(p.ai_permissions, Mode::Edits, "model edits run, files ask: the default");
+        p.agent_permissions.insert("codex".into(), Mode::Ask);
+        assert_eq!(mode_for(&p, "codex"), Mode::Ask);
+        assert_eq!(mode_for(&p, "claude"), Mode::Edits);
         remember(&mut p, "claude", "mcp__solidcraft__save");
         remember(&mut p, "claude", "mcp__solidcraft__save");
         assert!(always_allowed(&p, "claude", "mcp__solidcraft__save") && !always_allowed(&p, "codex", "mcp__solidcraft__save"));

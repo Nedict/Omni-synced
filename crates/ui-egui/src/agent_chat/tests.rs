@@ -61,7 +61,8 @@ fn a_permission_is_answered_once() {
 /// An app with the chat's endpoint wired to a channel the test feeds, and a message in progress.
 fn app_in_a_turn() -> (SolveApp, Sender<ControlRequest>) {
     let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
-    app.preferences.ai_permissions = agents::Mode::Edits;
+    // The default mode: modelling runs, files ask.
+    assert_eq!(app.preferences.ai_permissions, agents::Mode::Edits);
     let (tx, rx) = channel();
     app.agent_chat.tools_rx = Some(rx);
     app.agent_chat.state = Some(State::Busy);

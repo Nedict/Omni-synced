@@ -141,7 +141,7 @@ Requests from that endpoint don't go to the app directly. `pump_tools` passes ea
   Cancel/Stop declines everything waiting, and after four minutes it is declined (the MCP
   server stops waiting at five).
 - **Permission modes** (Preferences → AI, global with a per-agent override): *Ask every time*
-  (default) turns every change into a question too; *Auto-allow model edits* is the list above;
+  turns every change into a question too; *Auto-allow model edits* (default) is the list above;
   *Allow everything* runs what would ask (never what is refused). "Always allow" on a card
   remembers the command per agent. The agent's own ACP permission questions about SolidCraft's
   tools are answered "allow once" by the client (the gate decides), and others follow the mode
