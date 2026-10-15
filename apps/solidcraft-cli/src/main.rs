@@ -395,7 +395,7 @@ fn cmd_mcp(args: &[String]) -> Result<(), String> {
     let backend: Box<dyn solidcraft_mcp::Backend> = match (flag(args, "--connect"), flag(args, "--in")) {
         (Some(_), Some(_)) => return Err("mcp: use either --connect or --in, not both".into()),
         (Some(addr), None) => {
-            let Some(port) = addr.rsplit_once(':').and_then(|(_, p)| p.parse::<u16>().ok()) else {
+            let Some(port) = addr.rsplit_once(':').and_then(|(_, p)| p.parse::<u16>().ok()).filter(|p| *p != 0) else {
                 return Err(format!("mcp: --connect wants HOST:PORT, such as 127.0.0.1:7878, not `{addr}`"));
             };
             // Serve without the app too: the tools connect once it runs, and say it isn't until then.

@@ -74,8 +74,10 @@ fn mcp_connect_serves_before_the_app_runs_and_reaches_it_once_it_does() {
 
 #[test]
 fn mcp_connect_without_a_port_is_refused_at_start() {
-    let output = Command::new(env!("CARGO_BIN_EXE_solidcraft-cli")).args(["mcp", "--connect", "localhost"]).stdin(Stdio::null()).output().unwrap();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success(), "{stderr}");
-    assert!(stderr.contains("HOST:PORT"), "{stderr}");
+    for addr in ["localhost", "127.0.0.1:0"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_solidcraft-cli")).args(["mcp", "--connect", addr]).stdin(Stdio::null()).output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{addr}: {stderr}");
+        assert!(stderr.contains("HOST:PORT"), "{addr}: {stderr}");
+    }
 }
