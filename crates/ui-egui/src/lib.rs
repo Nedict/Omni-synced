@@ -637,7 +637,7 @@ impl SolveApp {
                     // applying cancellation hooks (such as restoring its timeline marker).
                     self.dialog = None;
                     self.tool = None;
-                    self.preview = preview::PreviewState::default();
+                    self.preview.reset();
                     self.cam = Camera::default();
                     self.fit_view();
                 }
