@@ -206,7 +206,8 @@ pub fn nav_preset(id: &str) -> &'static NavPreset {
     NAV_PRESETS.iter().find(|p| p.id == id).unwrap_or(&NAV_PRESETS[0])
 }
 /// The dialog's pages, in order.
-pub const PAGES: [&str; 7] = ["General", "Navigation", "Keyboard Shortcuts", "Design", "Graphics", "Sketch", "Selection"];
+pub const PAGES: [&str; 8] = ["General", "Navigation", "Keyboard Shortcuts", "Design", "Graphics", "Sketch", "Selection", "AI"];
+pub const PAGE_AI: usize = 7;
 pub const PAGE_SHORTCUTS: usize = 2;
 pub const PAGE_DESIGN: usize = 3;
 pub const PAGE_GRAPHICS: usize = 4;
@@ -325,11 +326,21 @@ pub struct Prefs {
     pub save_mesh_send: bool,
     pub save_mesh_slicer: String,
     pub custom_slicers: Vec<String>,
-    /// Agent chat (desktop; docs/agent-chat.md): off by default; when on, the View menu, a small
-    /// chat button and Ctrl+Shift+A open its panel.
-    pub agent_chat_enabled: bool,
-    /// The ACP agent the chat starts; empty: the first one found.
-    pub agent_command: String,
+    /// AI features (docs/agent-chat.md): the master switch. Off: no AI button, shortcut, menu
+    /// entry or panel, and nothing is looked for or started.
+    pub ai_features: bool,
+    /// The AI button at the toolbar row's right end (the shortcut and View menu entry stay).
+    pub ai_toolbar_button: bool,
+    /// Agents the user added (the installed ones are found by themselves). API keys are never
+    /// here: they live in the system keychain.
+    pub agents: Vec<crate::agent_chat::agents::AgentConfig>,
+    /// The agent a new conversation starts with (an agent's id; empty: the first one available).
+    pub agent_default: String,
+    /// How much the agent may do without asking (`ask`, `edits`, `all`), and per agent.
+    pub ai_permissions: crate::agent_chat::agents::Mode,
+    pub agent_permissions: std::collections::BTreeMap<String, crate::agent_chat::agents::Mode>,
+    /// "Always allow" answers: per agent, the tools it may use without asking.
+    pub agent_always_allow: std::collections::BTreeMap<String, Vec<String>>,
     /// The side the panel docks on (`left` or `right`), its width, and whether it is folded to a strip.
     pub agent_chat_side: String,
     pub agent_chat_width: f32,
@@ -405,8 +416,13 @@ impl Default for Prefs {
             save_mesh_send: false,
             save_mesh_slicer: String::new(),
             custom_slicers: Vec::new(),
-            agent_chat_enabled: false,
-            agent_command: String::new(),
+            ai_features: true,
+            ai_toolbar_button: true,
+            agents: Vec::new(),
+            agent_default: String::new(),
+            ai_permissions: crate::agent_chat::agents::Mode::Ask,
+            agent_permissions: Default::default(),
+            agent_always_allow: Default::default(),
             agent_chat_side: "right".into(),
             agent_chat_width: 380.0,
             agent_chat_minimized: false,
@@ -506,14 +522,19 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.check_updates = d.check_updates;
             app.ui.dark = true;
             app.ui.agent_cursor = Default::default();
-            p.agent_chat_enabled = d.agent_chat_enabled;
-            p.agent_command = d.agent_command;
+            app.autosave_minutes = 5.0;
+            set_autosave(app);
+        }
+        PAGE_AI => {
+            // The agents the user added and their "always allow" answers stay.
+            p.ai_features = d.ai_features;
+            p.ai_toolbar_button = d.ai_toolbar_button;
+            p.ai_permissions = d.ai_permissions;
+            p.agent_permissions = d.agent_permissions;
             p.agent_chat_side = d.agent_chat_side;
             p.agent_chat_width = d.agent_chat_width;
             p.agent_chat_minimized = d.agent_chat_minimized;
             p.agent_chat_turn_limit = d.agent_chat_turn_limit;
-            app.autosave_minutes = 5.0;
-            set_autosave(app);
         }
         1 => {
             p.nav = d.nav;
@@ -986,6 +1007,10 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
         crate::keymap::page(app, ui);
         return;
     }
+    if app.prefs_window.section == PAGE_AI {
+        crate::agent_chat::settings::page(app, ui);
+        return;
+    }
     egui::Grid::new(("sc_prefs_grid", app.prefs_window.section)).num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| match app.prefs_window.section {
         0 => {
             ui.label(app.tr("ui.language"));
@@ -1059,38 +1084,6 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.add_enabled(s.show, egui::Checkbox::new(&mut s.follow_camera, crate::i18n::tr_label("Follow the camera (Look At sketches)")));
             ui.end_row();
             crate::update::prefs_rows(app, ui, t);
-            ui.label(app.tr("ui.agent_chat"));
-            let desktop = cfg!(not(target_arch = "wasm32"));
-            ui.add_enabled(desktop, egui::Checkbox::new(&mut app.preferences.agent_chat_enabled, crate::i18n::tr("ui.agent_chat_enable")));
-            ui.end_row();
-            if desktop {
-                ui.label(app.tr("ui.agent_chat_command"));
-                ui.add_enabled(
-                    app.preferences.agent_chat_enabled,
-                    egui::TextEdit::singleline(&mut app.preferences.agent_command).hint_text("claude-agent-acp").desired_width(240.0),
-                );
-                ui.end_row();
-                note(ui, app.tr("ui.agent_chat_command_hint"));
-                ui.label(app.tr("ui.agent_chat_side"));
-                ui.add_enabled_ui(app.preferences.agent_chat_enabled, |ui| {
-                    ui.horizontal(|ui| {
-                        let side = &mut app.preferences.agent_chat_side;
-                        if ui.radio(side == "left", crate::i18n::tr("ui.agent_chat_left")).clicked() {
-                            *side = "left".into();
-                        }
-                        if ui.radio(side != "left", crate::i18n::tr("ui.agent_chat_right")).clicked() {
-                            *side = "right".into();
-                        }
-                    });
-                });
-                ui.end_row();
-                ui.label(app.tr("ui.agent_chat_turn_limit"));
-                ui.add_enabled(app.preferences.agent_chat_enabled, egui::DragValue::new(&mut app.preferences.agent_chat_turn_limit).range(1..=200));
-                ui.end_row();
-                note(ui, app.tr("ui.agent_chat_privacy_note"));
-            } else {
-                note(ui, app.tr("ui.agent_chat_desktop_only"));
-            }
         }
         1 => {
             ui.label(app.tr_label("Pan, zoom, orbit"));

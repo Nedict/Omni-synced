@@ -27,9 +27,28 @@ pub enum FromAgent {
 }
 
 pub struct AgentProcess {
-    child: Option<Child>,
+    child: ProcessHandle,
     to_agent: Option<Sender<String>>,
     pub from_agent: Receiver<FromAgent>,
+}
+
+/// Ends the process from another thread than the one that talks to it.
+#[derive(Clone)]
+pub struct ProcessHandle(std::sync::Arc<std::sync::Mutex<Option<Child>>>);
+
+impl ProcessHandle {
+    pub fn pid(&self) -> Option<u32> {
+        self.0.lock().ok().and_then(|c| c.as_ref().map(Child::id))
+    }
+    /// End it and everything it started; `wait`: block until done.
+    pub fn shutdown(&self, wait: bool) {
+        let Some(child) = self.0.lock().ok().and_then(|mut c| c.take()) else { return };
+        if wait {
+            end_tree(child);
+        } else {
+            std::thread::spawn(move || end_tree(child));
+        }
+    }
 }
 
 /// On Windows, npm installs `.cmd` shims, which only `cmd.exe` runs.
@@ -200,7 +219,7 @@ impl AgentProcess {
             let _ = tx.send(FromAgent::Exited(lines));
             wake();
         });
-        Ok(AgentProcess { child: Some(child), to_agent: Some(to_agent), from_agent })
+        Ok(AgentProcess { child: ProcessHandle(std::sync::Arc::new(std::sync::Mutex::new(Some(child)))), to_agent: Some(to_agent), from_agent })
     }
 
     pub fn send(&self, msg: &serde_json::Value) {
@@ -210,19 +229,18 @@ impl AgentProcess {
     }
 
     pub fn pid(&self) -> Option<u32> {
-        self.child.as_ref().map(Child::id)
+        self.child.pid()
+    }
+
+    pub fn handle(&self) -> ProcessHandle {
+        self.child.clone()
     }
 
     /// End the agent and its helpers. `wait`: block until they are gone (quitting the app);
     /// otherwise the ending runs on a thread of its own and this returns at once.
     pub fn shutdown(&mut self, wait: bool) {
         self.to_agent = None;
-        let Some(child) = self.child.take() else { return };
-        if wait {
-            end_tree(child);
-        } else {
-            std::thread::spawn(move || end_tree(child));
-        }
+        self.child.shutdown(wait);
     }
 }
 

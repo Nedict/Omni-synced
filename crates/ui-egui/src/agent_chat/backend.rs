@@ -35,6 +35,8 @@ pub enum Event {
     AuthRequired { methods: Vec<AuthMethod> },
     /// What it says about its login.
     AuthStatus(String),
+    /// Its own modes (an ACP agent's `modes`: ask, accept edits, plan, …) and the current one.
+    Modes { current: String, available: Vec<(String, String)> },
     /// The message is answered (`reason`: why it stopped, empty for a normal end).
     TurnEnded { reason: String },
     /// Something failed; the backend is still running unless [`Event::Exited`] follows.
@@ -68,12 +70,35 @@ pub trait ChatBackend {
     fn answer_permission(&mut self, key: u64, option: Option<&str>);
     /// Ask the backend to sign in by itself with one of its methods (it opens the browser).
     fn authenticate(&mut self, method: &str);
+    /// Switch to one of the modes it reported in [`Event::Modes`].
+    fn set_mode(&mut self, _mode: &str) {}
     /// Its process, for status and tests.
     fn pid(&self) -> Option<u32> {
         None
     }
     /// End it and everything it started. `wait`: block until done (quitting).
     fn shutdown(&mut self, wait: bool);
+}
+
+/// One HTTP request of the API backend (the desktop host sends it; nothing else in the chat
+/// reaches the network).
+#[derive(Clone, Debug, PartialEq)]
+pub struct HttpRequest {
+    pub method: &'static str,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Option<Vec<u8>>,
+    pub timeout_s: u64,
+}
+
+/// Sends an [`HttpRequest`]: the status and the body, or why it failed.
+pub type HttpFn = std::sync::Arc<dyn Fn(&HttpRequest) -> Result<(u16, Vec<u8>), String> + Send + Sync>;
+
+/// The system keychain (the desktop host's), for API keys: never in the preferences.
+pub trait Secrets: Send + Sync {
+    fn get(&self, id: &str) -> Result<Option<String>, String>;
+    fn set(&self, id: &str, secret: &str) -> Result<(), String>;
+    fn delete(&self, id: &str) -> Result<(), String>;
 }
 
 /// Standard base64 with padding (RFC 4648), for pictures in messages.

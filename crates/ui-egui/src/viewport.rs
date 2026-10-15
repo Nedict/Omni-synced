@@ -3775,7 +3775,7 @@ fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
                 ui.checkbox(&mut s.follow_camera, crate::i18n::tr_label("Follow camera (Look At sketches)"));
             });
             // The agent chat panel, once the chat is turned on in Preferences.
-            if app.preferences.agent_chat_enabled && cfg!(not(target_arch = "wasm32")) {
+            if crate::agent_chat::shown(app) {
                 ui.separator();
                 let mut open = app.agent_chat.open;
                 let r = ui.checkbox(&mut open, crate::agent_chat::panel_tip());
