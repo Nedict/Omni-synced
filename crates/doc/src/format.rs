@@ -200,12 +200,6 @@
 //!   and a bend ending beside more of the fixed face its bend relief (0.11.0 left every corner a
 //!   notch and cut no bend relief), and a wall on part of an edge bends only where it stands
 //!   (0.11.0 refused it).
-//!
-//!   The Class-A surface pass adds `SurfaceBoundary` (Boundary Surface: `sketch`, `curves`,
-//!   optional `orders`, `crown`, `samples`), `SurfaceMatch` (Match Surface: `body`, optional
-//!   `faces`, `target`, `edges`, optional `order`) and `SurfaceFair` (Fair Surface: `body`,
-//!   optional `faces`, `strength`, `iterations`, `keep_edges`, `tolerance`), first saved in 22, so
-//!   0.11.0 and 0.12.0 ask for an update instead of meeting a feature it can't read.
 //! - 22: an Import (STEP) feature can list `skip`: indices of the file's bodies it does not
 //!   build, because they are later instances of a part the file places more than once and the
 //!   other occurrences of that part's component show them (#1386: an imported file becomes a
@@ -228,13 +222,19 @@
 //!   parameters); the source's `at`, `height` and `angle` then hold the numbers they last came
 //!   to. A text without `exprs` is set as it always was; 0.12.0 asks for an update instead of
 //!   dropping the expressions and keeping the text at its last numbers.
+//! - 23: the Class-A surface pass adds `SurfaceBoundary` (Boundary Surface: `sketch`, `curves`,
+//!   optional `orders`, `crown`, `samples`), `SurfaceMatch` (Match Surface: `body`, optional
+//!   `faces`, `target`, `edges`, optional `order`) and `SurfaceFair` (Fair Surface: `body`,
+//!   optional `faces`, `strength`, `iterations`, `keep_edges`, `tolerance`). Version 22 designs
+//!   need no transformation; 0.13.0 (which reads up to 22) asks for an update instead of meeting
+//!   a feature it can't read.
 
 use serde_json::Value;
 
 use crate::{DocError, Document, Result};
 
 /// The format this build writes.
-pub const FORMAT: u32 = 22;
+pub const FORMAT: u32 = 23;
 
 pub fn format_string(n: u32) -> String {
     format!("solidcraft/{n}")
@@ -251,7 +251,7 @@ pub fn version_of(s: &str) -> Option<u32> {
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
 type JsonStep = fn(&mut Value) -> Result<()>;
-const JSON_STEPS: [JsonStep; 21] = [
+const JSON_STEPS: [JsonStep; 22] = [
     |_| Ok(()),
     v2_to_v3,
     v3_to_v4,
@@ -265,6 +265,7 @@ const JSON_STEPS: [JsonStep; 21] = [
     |_| Ok(()),
     |_| Ok(()),
     v13_to_v14,
+    |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
