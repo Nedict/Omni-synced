@@ -6,7 +6,7 @@
 //! the software renderer; see `startup` and docs/book/src/guide/troubleshooting.md.
 //!
 //! A `.step`/`.stp` file opens as a new design holding the file's bodies (an Import feature); a
-//! `.3mf`/`.stl` file as a new design holding mesh bodies.
+//! `.3mf`/`.stl`/`.obj`/`.glb`/`.gltf` file as a new design holding mesh bodies.
 //!
 //! `--control <port>` (or `SOLIDCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control
 //! server: `{"id":1,"method":"engine.execute","params":{"command":"solid.box","params":{…}}}`.
@@ -125,12 +125,18 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
                         "3MF",
                         "stl",
                         "STL",
+                        "obj",
+                        "OBJ",
+                        "glb",
+                        "GLB",
+                        "gltf",
+                        "GLTF",
                     ],
                 )
                 .add_filter("SolidCraft design (container or JSON)", &[io::DESIGN_EXT, io::LEGACY_DESIGN_EXT, "json"])
                 .add_filter("STEP", &["step", "stp", "STEP", "STP"])
                 .add_filter("IGES", &["igs", "iges", "IGS", "IGES"])
-                .add_filter("Mesh (3MF, STL)", &["3mf", "3MF", "stl", "STL"])
+                .add_filter("Mesh (3MF, STL, OBJ, glTF)", &["3mf", "3MF", "stl", "STL", "obj", "OBJ", "glb", "GLB", "gltf", "GLTF"])
                 .add_filter("Sketch drawings (DXF, SVG)", &["dxf", "DXF", "svg", "SVG"])
                 .add_filter("All files", &["*"])
                 .pick_file();

@@ -250,13 +250,15 @@ pub fn tool_definitions() -> Vec<Value> {
             "Open a design",
             "Open a .solidcraft design file, a STEP file (.step/.stp: a new design whose bodies come from the file, as an \
              Import base feature in a component named after the file; an assembly's parts become nested components) or a \
-             3MF/STL mesh (.3mf/.stl: mesh bodies in such a component); the result reports the component (id, component_name). Replaces the current design; insert into it \
-             instead with the file.insert_step (STEP) or file.insert_mesh (3MF/STL) commands. A STEP file from a system \
-             that has Y up opens lying on its back: `up: \"y\"` turns its component a quarter turn about X (Y becomes Z). `names` picks what the bodies are named after when the solids' own names say nothing useful.",
+             mesh (.3mf/.stl/.obj/.glb/.gltf: mesh bodies in such a component; a glTF file's nodes become nested components and its \
+             materials appearances); the result reports the component (id, component_name). Replaces the current design; insert into it \
+             instead with the file.insert_step (STEP) or file.insert_mesh (mesh) commands. A STEP file from a system \
+             that has Y up opens lying on its back: `up: \"y\"` turns its component a quarter turn about X (Y becomes Z). glTF is Y up, \
+             so it is turned by default (`up: \"z\"` keeps its axes). `names` picks what the bodies are named after when the solids' own names say nothing useful.",
             obj(
                 json!({
-                    "path": string("Path to a .solidcraft, .step/.stp, .3mf or .stl file"),
-                    "up": {"type": "string", "enum": ["z", "y"], "description": "STEP only. z (default) keeps the file's axes; y: the file has Y up, so its bodies are turned to stand Z up"},
+                    "path": string("Path to a .solidcraft, .step/.stp, .3mf, .stl, .obj, .glb or .gltf file"),
+                    "up": {"type": "string", "enum": ["z", "y"], "description": "STEP and glTF only. z keeps the file's axes; y: the file has Y up, so its bodies are turned to stand Z up. Default: z for STEP, y for glTF"},
                     "names": {"type": "string", "enum": ["solid", "product", "instance"], "description": "STEP only. What the bodies are named after: solid (default: the solid's own name, else the product's), product (the part's name) or instance (the assembly occurrence's name, else the product's)"},
                 }),
                 &["path"],
