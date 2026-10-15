@@ -286,6 +286,8 @@ retain their saved two-finger scroll preference; camera motion is available thro
   basin rims within the rim width); convex fillets also meet sloped planar ends and reflex
   corners around pocket rims, with unequal wall slopes and extensions confined to the face;
   connected equal-distance chamfers also trim each other across unequal sloped rim walls;
+  curved chamfer chains with straight planar ends can terminate across two existing planar
+  bevel faces, splitting their shared seam; picks on the same tangent chain are applied once (#1303);
   whole smooth loops of a planar face, picked whole or by one edge (tangent
   chain), including circles and walls at any angle (boss bases and tops, bores, pocket floors,
   plate outlines), loops with sharp corners between straight edges (the blends meet in mitres), runs of

@@ -204,14 +204,8 @@
 //!   The Class-A surface pass adds `SurfaceBoundary` (Boundary Surface: `sketch`, `curves`,
 //!   optional `orders`, `crown`, `samples`), `SurfaceMatch` (Match Surface: `body`, optional
 //!   `faces`, `target`, `edges`, optional `order`) and `SurfaceFair` (Fair Surface: `body`,
-//!   optional `faces`, `strength`, `iterations`, `keep_edges`, `tolerance`), first saved in 21, so
-//!   0.11.0 asks for an update instead of meeting a feature it can't read.
-//!
-//!   The Class-A surface pass adds `SurfaceBlend` (Blend Surface: `from`/`to` edge chains of two
-//!   bodies, optional `continuity`, `bulge`, `align`, `stitch`), first saved in 21, so 0.11.0 asks
-//!   for an update instead of meeting a feature it can't read. Under the same version, a `Patch`
-//!   can carry a `crown` (0 by default: a bump that vanishes on the loop, so the face still meets
-//!   the picked edges).
+//!   optional `faces`, `strength`, `iterations`, `keep_edges`, `tolerance`), first saved in 22, so
+//!   0.11.0 and 0.12.0 ask for an update instead of meeting a feature it can't read.
 //! - 22: an Import (STEP) feature can list `skip`: indices of the file's bodies it does not
 //!   build, because they are later instances of a part the file places more than once and the
 //!   other occurrences of that part's component show them (#1386: an imported file becomes a
@@ -220,6 +214,15 @@
 //!   whose imports sit loose in a component are left as they are. The version stamp makes
 //!   0.12.0 (which reads up to 21) ask for an update instead of building those instances again
 //!   on top of their occurrences.
+//!   Also under 22, a number in an expression can be written with a decimal comma outside
+//!   parentheses (`2,5 mm` is `2.5 mm`, #1347; inside a function's parentheses the comma still
+//!   separates its arguments). Nothing new is saved, but an expression typed that way is saved as
+//!   typed; 0.12.0 asks for an update instead of failing to evaluate it.
+//!   Also under 22, a design can hold a `SurfaceBlend` (Blend Surface: `from`/`to` edge chains of
+//!   two bodies, optional `continuity`, `bulge`, `align`, `stitch`), and a `Patch` can carry a
+//!   `crown` (0 by default, and then not saved: a bump that vanishes on the loop, so the face
+//!   still meets the picked edges). Version 21 designs need no transformation; 0.12.0 asks for an
+//!   update instead of meeting a feature it can't read or dropping a patch's crown.
 
 use serde_json::Value;
 
