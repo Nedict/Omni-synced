@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod access;
+pub mod agent_chat;
 pub mod agent_cursor;
 pub mod browser;
 pub mod canvas;
@@ -58,6 +59,7 @@ pub mod inference;
 pub mod install;
 pub mod issue_report;
 pub mod keymap;
+mod material_card_review;
 #[cfg(test)]
 mod menu_tests;
 #[cfg(test)]
@@ -96,6 +98,7 @@ pub(crate) mod display_lod;
 mod file_load_ui_tests;
 #[cfg(test)]
 mod fillet_spline_handle_tests;
+pub(crate) mod navigation;
 pub mod palette;
 pub mod params_dialog;
 pub mod prefs;
@@ -247,6 +250,10 @@ pub struct Services {
     pub http_download: Option<update::install::HttpDownload>,
     /// The browser's offer to install the web app (`install`); None: no Install button (desktop).
     pub install_app: Option<install::InstallApp>,
+    /// HTTP for the agent chat's API agents (OpenAI-compatible endpoints); None: no API agents.
+    pub agent_http: Option<agent_chat::backend::HttpFn>,
+    /// The system keychain, for API agents' keys; None: keys can't be stored.
+    pub secrets: Option<std::sync::Arc<dyn agent_chat::backend::Secrets>>,
 }
 
 pub struct SolveApp {
@@ -272,6 +279,7 @@ pub struct SolveApp {
     pub params: Option<params_dialog::ParamsDialog>,
     /// The Design Properties window, when open.
     pub design_properties: Option<design_properties::DesignProperties>,
+    material_card_review: Option<material_card_review::ReviewWindow>,
     pub palette: palette::Palette,
     /// Context menus, rename box and Properties window.
     pub menu: context_menu::MenuState,
@@ -347,12 +355,16 @@ pub struct SolveApp {
     control_held: std::collections::VecDeque<ControlRequest>,
     /// The agent cursor acting out control requests.
     pub agent: agent_cursor::AgentCursor,
+    /// The agent chat panel (docs/design/in-app-agent-chat.md).
+    pub agent_chat: agent_chat::AgentChat,
     pending_shots: Vec<(u64, Option<String>, std::sync::mpsc::Sender<Value>, f64)>,
     queued_shots: Vec<(u64, f64, u32)>,
     shot_token: u64,
     styled: bool,
     fitted: bool,
     pending_fit: Option<(Camera, solidcraft_engine::geom::Aabb3, bool)>,
+    /// The sheet metal flat pattern's own pan and zoom.
+    pub flat_view: dialogs_sheet::FlatView,
     /// The start page.
     pub home: home::HomeState,
     pub file_load: file_load::FileLoad,
@@ -390,6 +402,7 @@ impl SolveApp {
             dialog: None,
             params: None,
             design_properties: None,
+            material_card_review: None,
             palette: palette::Palette::default(),
             menu: context_menu::MenuState::default(),
             tree: browser::TreeState::default(),
@@ -428,6 +441,7 @@ impl SolveApp {
             synthetic: Vec::new(),
             synthetic_mods: egui::Modifiers::default(),
             control_rx: None,
+            agent_chat: Default::default(),
             control_held: Default::default(),
             agent: Default::default(),
             pending_shots: Vec::new(),
@@ -436,6 +450,7 @@ impl SolveApp {
             styled: false,
             fitted: false,
             pending_fit: None,
+            flat_view: Default::default(),
             home: home::HomeState::default(),
             file_load: file_load::FileLoad::default(),
             docs: documents::Documents::default(),
@@ -664,6 +679,11 @@ impl SolveApp {
         {
             let label = self.tr_label(info.label).to_string();
             self.set_status(format!("{label}: {why}"), true);
+            return;
+        }
+        if id == "material.properties.validate" {
+            self.material_card_review = Some(material_card_review::ReviewWindow::default());
+            self.home.open = false;
             return;
         }
         // Another command ends Edit Text (its dialog is not a feature edit to keep).
@@ -969,6 +989,10 @@ impl SolveApp {
     }
 
     pub fn fit_view(&mut self) {
+        if dialogs_sheet::flat_active(self) {
+            self.flat_view.fitted = false;
+            return;
+        }
         if render_workspace::active(self) {
             self.cancel_view_animation();
             match solidcraft_engine::product_scene::extract(&self.session) {
@@ -1056,6 +1080,15 @@ impl SolveApp {
 
     /// Frame everything shown, keeping the orientation (animated; the selection is ignored).
     pub fn animate_fit_all(&mut self) {
+        if dialogs_sheet::flat_active(self) {
+            self.animate_view("fit");
+            return;
+        }
+        if render_workspace::active(self) {
+            // The Render preview frames its product scene (see `fit_view`).
+            self.fit_view();
+            return;
+        }
         self.pending_fit = None;
         let request = Some((self.cam, viewport::view_bounds(self), true));
         let to = self.fitted(self.cam);
@@ -1065,6 +1098,11 @@ impl SolveApp {
 
     /// Animated view changes for the axis view and navigation bar.
     pub fn animate_view(&mut self, v: &str) {
+        // The flat pattern is a 2D view: Fit and Home frame it, and the Design camera stays put.
+        if dialogs_sheet::flat_active(self) && matches!(v, "fit" | "home") {
+            self.flat_view.fitted = false;
+            return;
+        }
         if render_workspace::active(self) && matches!(v, "fit" | "home") {
             if v == "home" {
                 self.cam.set_view(StandardView::Iso);
@@ -1295,6 +1333,7 @@ impl SolveApp {
         if render_workspace::active(self) {
             render_workspace::panel(self, ui);
         }
+        agent_chat::show(self, ui);
         preview::update(self, ui.ctx());
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
             if render_workspace::active(self) {
@@ -1309,6 +1348,7 @@ impl SolveApp {
         self.resolve_fit(ui.ctx());
         params_dialog::show(self, ui.ctx());
         design_properties::show(self, ui.ctx());
+        material_card_review::show(self, ui.ctx());
         recovery_ui::show(self, ui.ctx());
         stand_up::show(self, ui.ctx());
         prefs::show_reset_notice(self, ui.ctx());
@@ -1327,7 +1367,12 @@ impl SolveApp {
         /// Held requests beyond this are refused rather than kept.
         const MAX_HELD: usize = 256;
 
-        let Some(rx) = self.control_rx.take() else { return };
+        // Held requests (and the agent chat's, which it hands over here) run even when the app
+        // has no control channel of its own.
+        if self.control_rx.is_none() && self.control_held.is_empty() {
+            return;
+        }
+        let rx = self.control_rx.take();
         // While the agent cursor acts out a request, later ones wait their turn.
         for _ in 0..PER_FRAME {
             if self.agent.busy() {
@@ -1335,7 +1380,7 @@ impl SolveApp {
             }
             // Held requests go first, in order, once the file is in.
             let held = if self.file_load.busy() || self.file_picker.is_some() { None } else { self.control_held.pop_front() };
-            let Some(req) = held.or_else(|| rx.try_recv().ok()) else { break };
+            let Some(req) = held.or_else(|| rx.as_ref().and_then(|rx| rx.try_recv().ok())) else { break };
             // A file is loading: commands that change the design wait for it (the window,
             // inspection and screenshots still answer).
             if ((self.file_load.busy() || self.file_picker.is_some())
@@ -1372,7 +1417,7 @@ impl SolveApp {
             }
             ctx.request_repaint();
         }
-        self.control_rx = Some(rx);
+        self.control_rx = rx;
     }
 
     fn issue_screenshots(&mut self, ctx: &egui::Context) {
