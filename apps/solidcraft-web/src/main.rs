@@ -85,7 +85,16 @@ mod web {
             for (text, error) in self.files.messages.borrow_mut().drain(..) {
                 self.app.set_status(text, error);
             }
-            let incoming: Vec<_> = self.files.incoming.borrow_mut().drain(..).collect();
+            let mut incoming: Vec<_> = self.files.incoming.borrow_mut().drain(..).collect();
+            // A glTF file's buffers picked with it are kept next to it, not opened.
+            incoming.retain_mut(|(name, bytes, _)| {
+                let companion =
+                    std::path::Path::new(name.as_str()).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("bin"));
+                if companion {
+                    vfs::insert(&format!("{}{name}", files::UPLOAD), std::mem::take(bytes));
+                }
+                !companion
+            });
             for (name, bytes, intent) in incoming {
                 let design = solidcraft_engine::io::is_design_path(&name);
                 let path = if design && intent == Intent::Open {
