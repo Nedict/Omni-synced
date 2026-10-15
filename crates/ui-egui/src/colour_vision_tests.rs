@@ -373,7 +373,6 @@ const NO_MEANING: &[(&str, &str)] = &[
     ("overlay", "a chip's ground over the view"),
     ("app_bar_text", "text"),
     ("app_bar_hover", "a hovered tab, translucent white"),
-    ("app_bar_tab_edge", "an inactive tab's outline, translucent white"),
     ("timeline_marker", "the rollback marker, alone"),
     ("field", "a field's ground"),
     // Highlights: shades of the accent blue over what they mark, by design close to each other.

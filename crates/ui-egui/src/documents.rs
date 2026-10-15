@@ -455,7 +455,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
 }
 
 /// One tab of the strip: the active tab takes the toolbar's colour and runs into it; the others
-/// sit on the application bar with a faint outline (no bottom edge) so neighbours stay apart.
+/// sit on the application bar, lighter while hovered.
 fn tab_shape(painter: &egui::Painter, t: &Tokens, r: Rect, active: bool, hovered: bool) {
     let corners = egui::CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 };
     let fill = if active {
@@ -466,11 +466,6 @@ fn tab_shape(painter: &egui::Painter, t: &Tokens, r: Rect, active: bool, hovered
         t.app_bar
     };
     painter.rect_filled(r, corners, fill);
-    if !active {
-        // Drawn past the bottom and clipped, so only the top and the sides show.
-        let outline = Rect::from_min_max(r.min, pos2(r.max.x, r.max.y + 2.0));
-        painter.with_clip_rect(r).rect_stroke(outline, corners, Stroke::new(1.0, t.app_bar_tab_edge), egui::StrokeKind::Inside);
-    }
 }
 
 /// Which tabs the strip shows in `room` points: (first, how many, tab width). Tabs shrink to
@@ -629,10 +624,9 @@ mod tests {
     }
 
     /// The tabs sit on the dark application bar in both themes: a hovered tab (the Home tab
-    /// included) keeps the bar's light text readable, and an inactive tab is outlined so
-    /// neighbouring tabs stay apart.
+    /// included) keeps the bar's light text readable, and no tab is outlined.
     #[test]
-    fn title_bar_tabs_are_outlined_and_keep_their_text_readable_on_hover() {
+    fn title_bar_tabs_keep_their_text_readable_on_hover() {
         fn luminance(c: Color32) -> f32 {
             let c = egui::Rgba::from(c);
             0.2126 * c.r() + 0.7152 * c.g() + 0.0722 * c.b()
@@ -662,11 +656,7 @@ mod tests {
                     let (hi, lo) = (luminance(t.app_bar_text).max(luminance(bg)), luminance(t.app_bar_text).min(luminance(bg)));
                     assert!((hi + 0.05) / (lo + 0.05) >= 4.5, "text on a tab (hovered: {hovered}) must stay readable: {bg:?} {t:?}");
                 }
-                let outline = rects.iter().find(|(rect, _)| rect.stroke.width > 0.0);
-                assert_eq!(outline.is_some(), !active, "only inactive tabs are outlined (active: {active})");
-                if let Some((rect, clip)) = outline {
-                    assert!(rect.rect.bottom() > r.bottom() && clip.bottom() <= r.bottom(), "the outline has no bottom edge");
-                }
+                assert!(rects.iter().all(|(rect, _)| rect.stroke.width == 0.0), "tabs have no outline (active: {active})");
             }
         }
     }
