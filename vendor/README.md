@@ -40,7 +40,14 @@ Changes:
 
 ## truck-geometry 0.5.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/truck)
 
-Changes: none yet (vendored to be fixed).
+Changes:
+- `decorators/intersection_curve.rs`: `IntersectionCurve::parameter_division` divides as
+  `algo::curve::parameter_division` does (the same split points, in the same order), but each
+  point's projection onto the two surfaces starts from the parameters of the point that begins
+  its piece, instead of a search of the whole surfaces (a grid pre-search of a B-spline surface
+  for every point: a small hole on a large curved face took seconds, #1038). A hinted result
+  away from the leader's point (the projection settled on another part of a surface) is
+  dropped for the search from nothing, as before.
 
 ## truck-stepio 0.3.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/truck)
 

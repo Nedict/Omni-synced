@@ -163,9 +163,84 @@ where
     S: ParametricSurface3D + SearchNearestParameter<D2, Point = Point3>,
 {
     type Point = Point3;
-    #[inline(always)]
+    // SolidCraft: the division of `algo::curve::parameter_division` (the same split points and
+    // the same order), but each point's projection onto the two surfaces starts from the
+    // parameters of the point that begins its piece instead of a search of the whole surfaces:
+    // that search ran for every point and made dividing an intersection edge on a large B-spline
+    // surface take seconds. A point the hinted projection misses is searched for as before.
     fn parameter_division(&self, range: (f64, f64), tol: f64) -> (Vec<f64>, Vec<Point3>) {
-        algo::curve::parameter_division(self, range, tol)
+        nonpositive_tolerance!(tol);
+        let start = self.hinted_triple(range.0, None);
+        let end = self.hinted_triple(range.1, None);
+        hinted_sub_division(self, range, (start, end), tol, 100)
+    }
+}
+
+// SolidCraft: a point of the curve with its parameters on both surfaces.
+type Triple = (Point3, Point2, Point2);
+
+impl<C, S> IntersectionCurve<C, S>
+where
+    C: ParametricCurve3D,
+    S: ParametricSurface3D + SearchNearestParameter<D2, Point = Point3>,
+{
+    // SolidCraft: `search_triple` started from `hint`'s parameters, falling back to the search
+    // from nothing (and, where that fails too, to `subs` as before). A hinted result is taken
+    // only near the leader's point: started from a neighbour, the projection can settle on
+    // another part of a surface, which the search from nothing would not.
+    fn hinted_triple(&self, t: f64, hint: Option<Triple>) -> Triple {
+        let lead = self.leader.subs(t);
+        let near = 10.0 * self.tol.max(TOLERANCE);
+        let hinted = hint.and_then(|(_, uv0, uv1)| {
+            double_projection(
+                self.surface0(),
+                Some((uv0.x, uv0.y)),
+                self.surface1(),
+                Some((uv1.x, uv1.y)),
+                lead,
+                self.leader.der(t),
+                100,
+            )
+            .filter(|(p, _, _)| p.distance(lead) <= near)
+        });
+        match hinted.or_else(|| self.search_triple(t)) {
+            Some(triple) => triple,
+            None => (self.subs(t), Point2::origin(), Point2::origin()),
+        }
+    }
+}
+
+// SolidCraft: `algo::curve::sub_parameter_division`, carrying each end's parameters.
+fn hinted_sub_division<C, S>(
+    curve: &IntersectionCurve<C, S>,
+    range: (f64, f64),
+    ends: (Triple, Triple),
+    tol: f64,
+    trials: usize,
+) -> (Vec<f64>, Vec<Point3>)
+where
+    C: ParametricCurve3D,
+    S: ParametricSurface3D + SearchNearestParameter<D2, Point = Point3>,
+{
+    let (p0, p1) = (ends.0 .0, ends.1 .0);
+    let gen = p0.midpoint(p1);
+    let p = 0.5 + (0.2 * HashGen::hash1(gen) - 0.1);
+    let t = range.0 * (1.0 - p) + range.1 * p;
+    let mid = p0 + (p1 - p0) * p;
+    let dist2 = curve.hinted_triple(t, Some(ends.0)).0.distance2(mid);
+    if dist2 < tol * tol || trials == 0 {
+        (vec![range.0, range.1], vec![p0, p1])
+    } else {
+        let mid_param = (range.0 + range.1) / 2.0;
+        let mid_value = curve.hinted_triple(mid_param, Some(ends.0));
+        let (mut params, mut pts) =
+            hinted_sub_division(curve, (range.0, mid_param), (ends.0, mid_value), tol, trials - 1);
+        let _ = (params.pop(), pts.pop());
+        let (new_params, new_pts) =
+            hinted_sub_division(curve, (mid_param, range.1), (mid_value, ends.1), tol, trials - 1);
+        params.extend(new_params);
+        pts.extend(new_pts);
+        (params, pts)
     }
 }
 
