@@ -1638,7 +1638,7 @@ fn input_rows(d: &mut Dialog, ui: &mut egui::Ui, s: &Session) {
                 .stroke(stroke)
                 .min_size(vec2(0.0, 22.0))
                 .sense(egui::Sense::CLICK);
-            let chip = ui.add(b);
+            let chip = crate::frame::add_outlined(ui, b, stroke.width);
             publish_row(&chip);
             let tooltip = if custom_axis {
                 if let Kind::Revolve { axis: Some(axis), .. } = &d.kind {

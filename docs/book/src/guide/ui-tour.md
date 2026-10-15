@@ -45,7 +45,8 @@
   home, framing what is shown now (Navigation › **Middle double-click** can make it Fit, which
   keeps the orientation, or turn it off).
   Right-click for the marking menu: eight commands around the cursor, plus a
-  menu for whatever is under it.
+  menu for whatever is under it. Near the window's bottom or right edge a menu opens above or
+  to the left of the cursor, so it stays in view.
   Shaded views omit certified smooth joins between spline spans on extruded
   walls. Real creases, cap outlines and authored face splits remain visible.
   Wireframe retains its edge presentation, and hiding a join does not remove its CAD

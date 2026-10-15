@@ -878,8 +878,10 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
         Asm::MotionLink { a, b, ia, ib, ratio, offset } => {
             let js = &s.doc.assembly.joints;
             let (Some(ja), Some(jb)) = (js.get(*a), js.get(*b)) else { return Err("needs two joints".into()) };
-            let num = |e: &str| eval(e, ValueKind::Unitless);
-            cmd("joint.motion_link", json!({"a": ja.id, "b": jb.id, "ia": ia, "ib": ib, "ratio": num(ratio)?, "offset": num(offset)?}))
+            // The offset as typed: the engine reads it in Joint 2's units (deg or mm), and the
+            // ratio in Joint 2's units per Joint 1's.
+            let ratio = eval(ratio, ValueKind::Unitless)?;
+            cmd("joint.motion_link", json!({"a": ja.id, "b": jb.id, "ia": ia, "ib": ib, "ratio": ratio, "offset": offset.trim()}))
         }
         // The check runs from its Compute button; OK only closes.
         Asm::Interference { .. } => Vec::new(),
