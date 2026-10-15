@@ -188,14 +188,20 @@ pub fn fill_general(
     let mut per = 16usize;
     let mut fit = sample(&(0..per).map(|i| i as f64 / per as f64).collect::<Vec<_>>())?;
     let mut best = Shortfall::default();
+    // Each round starts at the grid the last one stopped at: the coarser grids fell short with
+    // fewer stations, and more stations do not make a coarse grid hold the loop closer.
+    let mut level = MIN_SPANS;
     loop {
         let check = sample(&(0..per).map(|i| (i as f64 + 0.5) / per as f64).collect::<Vec<_>>())?;
         // Each side in order: fitted and checked stations alternating.
         let all: Vec<Vec<Station>> = fit.iter().zip(&check).map(|(f, c)| f.iter().zip(c).flat_map(|(a, b)| [*a, *b]).collect()).collect();
         let flat: Vec<Station> = all.iter().flatten().copied().collect();
-        match fit_round(&flat, spec)? {
+        match fit_round(&flat, spec, level)? {
             Round::Done(fill) => return Ok(*fill),
-            Round::Denser(s) => best = best.min(s),
+            Round::Denser(s, at) => {
+                best = best.min(s);
+                level = at;
+            }
             Round::Exhausted(s) => {
                 best = best.min(s);
                 break;
@@ -247,7 +253,8 @@ impl Shortfall {
 
 enum Round {
     Done(Box<GeneralFill>),
-    Denser(Shortfall),
+    /// Denser sampling is needed for the grid of this level (the coarser ones fell short).
+    Denser(Shortfall, usize),
     Exhausted(Shortfall),
 }
 
@@ -580,7 +587,7 @@ fn along(nu: [f64; 2], order: usize) -> Vec<(usize, usize, f64)> {
 }
 
 /// One round: develop the loop `st` (the fitted stations at even places), then try the grids.
-fn fit_round(st: &[Station], spec: &FillSpec) -> SplineResult<Round> {
+fn fit_round(st: &[Station], spec: &FillSpec, start: usize) -> SplineResult<Round> {
     let dev = develop(st)?;
     let m = st.len();
     let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
@@ -620,12 +627,12 @@ fn fit_round(st: &[Station], spec: &FillSpec) -> SplineResult<Round> {
     let fade = fades(st);
     let longer = extent[0].max(extent[1]);
     let mut best = Shortfall::default();
-    let mut level = MIN_SPANS;
+    let mut level = start.max(MIN_SPANS);
     while level <= MAX_GENERAL_SPANS {
         let spans = [0, 1].map(|d| ((extent[d] / longer * level as f64).ceil() as usize).clamp(1, level));
         let holds = (0..2).all(|d| extent[d] / spans[d] as f64 >= 2.0 * step[d]);
-        if !holds && level > MIN_SPANS {
-            return Ok(Round::Denser(best));
+        if !holds && level > start {
+            return Ok(Round::Denser(best, level));
         }
         let grid = Grid::new(spans, lo, hi);
         let cell = (grid.cell(0) * grid.cell(1)).sqrt();
@@ -652,7 +659,7 @@ fn fit_round(st: &[Station], spec: &FillSpec) -> SplineResult<Round> {
             })));
         }
         if !holds {
-            return Ok(Round::Denser(best));
+            return Ok(Round::Denser(best, level));
         }
         level *= 2;
     }
@@ -818,7 +825,7 @@ fn fit_positions<'a>(grid: &'a Grid, data: &[([f64; 2], Vec3)]) -> SplineResult<
     }
     let lambda = SMOOTHNESS * sys.rows as f64 / n as f64 * grid.cell(0) * grid.cell(1);
     grid.add_energy(&mut sys.band, lambda);
-    let factor = sys.band.factor()?;
+    let factor = sys.band.factor_rows()?;
     let [x, y, z] = sys.rhs;
     let (x, y, z) = (factor.substitute(x)?, factor.substitute(y)?, factor.substitute(z)?);
     net_of(grid, x.iter().zip(&y).zip(&z).map(|((x, y), z)| Vec3::new(*x, *y, *z)).collect())
@@ -939,7 +946,7 @@ fn fit_coupled<'a>(grid: &'a Grid, data: &[([f64; 2], Vec3)], rows: &mut [Hermit
             band.add(index(i, j, c), index(k, l, c), e);
         }
     });
-    let factor = band.factor()?;
+    let factor = band.factor_rows()?;
     let rounds = if second.is_empty() { 1 } else { G2_ROUNDS };
     let mut net = None;
     for _ in 0..rounds {

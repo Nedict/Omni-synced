@@ -264,7 +264,9 @@ fn an_opened_tube_end_capped_g1_and_g2_meets_the_wall() {
     let mut kappas = Vec::new();
     for g in [Continuity::G1, Continuity::G2] {
         let name = format!("tube end {}", g.as_str());
+        let started = std::time::Instant::now();
         let (fill, r) = patch_edges_report(&open, &rim, &spec(g)).unwrap();
+        eprintln!("{name}: filled in {:?}", started.elapsed());
         report(&name, &r);
         assert!(r.general);
         let area = check_face(&name, &open, &fill);

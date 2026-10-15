@@ -785,6 +785,42 @@ impl Band {
         Ok(self)
     }
 
+    /// [`Band::factor`] by rows: once row `r` of `U` is known, the rows below it within the band
+    /// are updated from it at once (right-looking), which walks memory row by row instead of down
+    /// columns. The same factor, to rounding; what the general fill, whose bands are wide, uses.
+    pub(crate) fn factor_rows(mut self) -> SplineResult<Band> {
+        let (n, bw) = (self.n, self.bw);
+        let w = bw + 1;
+        let mut row = vec![0.0; w];
+        for r in 0..n {
+            let Some(here) = self.a.get_mut(r * w..r * w + w) else { return invalid("the fit's equations are out of shape") };
+            let d = here.first().copied().unwrap_or(0.0);
+            if !(d > 0.0) {
+                return invalid("the fit's equations are singular");
+            }
+            let d = d.sqrt();
+            for (k, x) in here.iter_mut().enumerate() {
+                *x = if k == 0 { d } else { *x / d };
+            }
+            row.copy_from_slice(here);
+            let end = (r + bw + 1).min(n);
+            for s in r + 1..end {
+                let us = row.get(s - r).copied().unwrap_or(0.0);
+                if us == 0.0 {
+                    continue;
+                }
+                let len = end - s;
+                let (Some(dst), Some(src)) = (self.a.get_mut(s * w..s * w + len), row.get(s - r..s - r + len)) else {
+                    return invalid("the fit's equations are out of shape");
+                };
+                for (x, y) in dst.iter_mut().zip(src) {
+                    *x -= us * y;
+                }
+            }
+        }
+        Ok(self)
+    }
+
     /// Solve `Uᵀ·U·x = b` with a factor from [`Band::factor`].
     pub(crate) fn substitute(&self, mut b: Vec<f64>) -> SplineResult<Vec<f64>> {
         let (n, bw) = (self.n, self.bw);
