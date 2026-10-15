@@ -33,7 +33,7 @@ const GAUSS4: [(f64, f64); 4] = [
     (0.861_136_311_594_052_6, 0.347_854_845_137_453_8),
 ];
 /// The smoothness term's weight per fitted point (see [`fill_loop`]).
-const SMOOTHNESS: f64 = 1e-7;
+pub(crate) const SMOOTHNESS: f64 = 1e-7;
 /// A loop step shorter than this fraction of its length in space, seen along the normal, runs
 /// along the normal (steeper than about 87° from the plane).
 const MIN_STEP_SLOPE: f64 = 0.05;
@@ -431,7 +431,7 @@ fn loop_gap(uv: &[[f64; 2]]) -> [f64; 2] {
 }
 
 /// Whether `p` is inside the closed loop `uv` (ray casting).
-fn inside_loop(p: [f64; 2], uv: &[[f64; 2]]) -> bool {
+pub(crate) fn inside_loop(p: [f64; 2], uv: &[[f64; 2]]) -> bool {
     let m = uv.len();
     let mut inside = false;
     for k in 0..m {
@@ -512,7 +512,7 @@ fn check_projectable(points: &[Vec3], uv: &[[f64; 2]]) -> SplineResult<()> {
 }
 
 /// Whether the closed segments `ab` and `cd` share a point.
-fn segments_meet(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
+pub(crate) fn segments_meet(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
     let orient = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
     let within =
         |p: [f64; 2], q: [f64; 2], r: [f64; 2]| r[0] >= p[0].min(q[0]) && r[0] <= p[0].max(q[0]) && r[1] >= p[1].min(q[1]) && r[1] <= p[1].max(q[1]);
@@ -525,9 +525,9 @@ fn segments_meet(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
 
 /// A bicubic height field's grid: uniform clamped knots over `[lo, hi]` in each direction,
 /// `count` control points along each.
-struct Grid {
-    knots: [Vec<f64>; 2],
-    count: [usize; 2],
+pub(crate) struct Grid {
+    pub(crate) knots: [Vec<f64>; 2],
+    pub(crate) count: [usize; 2],
 }
 
 impl LoopFill {
@@ -540,7 +540,7 @@ impl LoopFill {
 }
 
 impl Grid {
-    fn new(spans: [usize; 2], lo: [f64; 2], hi: [f64; 2]) -> Grid {
+    pub(crate) fn new(spans: [usize; 2], lo: [f64; 2], hi: [f64; 2]) -> Grid {
         let knots = [0, 1].map(|d| {
             let (a, b, s) = (lo[d], hi[d], spans[d]);
             let mut k = vec![a; 4];
@@ -552,7 +552,7 @@ impl Grid {
     }
 
     /// The length of one span in direction `d`.
-    fn cell(&self, d: usize) -> f64 {
+    pub(crate) fn cell(&self, d: usize) -> f64 {
         let (Some(k), Some(&c)) = (self.knots.get(d), self.count.get(d)) else { return 0.0 };
         (k.last().copied().unwrap_or(0.0) - k.first().copied().unwrap_or(0.0)) / (c - 3) as f64
     }
@@ -564,7 +564,7 @@ impl Grid {
 
     /// The four non-zero basis functions' `r`-th derivatives and the first index, at `x` in
     /// direction `d`.
-    fn basis_derivative(&self, d: usize, x: f64, r: usize) -> Option<(usize, [f64; 4])> {
+    pub(crate) fn basis_derivative(&self, d: usize, x: f64, r: usize) -> Option<(usize, [f64; 4])> {
         let kn = self.knots.get(d)?;
         let x = x.clamp(*kn.first()?, *kn.last()?);
         let span = find_span(kn, 3, *self.count.get(d)?, x)?;
@@ -622,6 +622,15 @@ impl Grid {
         // against the data term (squared heights) alike at any size. Each term is a product of
         // one-direction Gram matrices of the basis functions' derivatives.
         let lambda = SMOOTHNESS * fitted as f64 / n as f64 * self.cell(0) * self.cell(1);
+        self.add_energy(&mut band, lambda);
+        band.solve(rhs)
+    }
+
+    /// Add `lambda` times the thin-plate energy `∫∫ h_uu² + 2·h_uv² + h_vv²` over the grid's box
+    /// to the normal equations `band` (unknowns i fastest): each term is a product of
+    /// one-direction Gram matrices of the basis functions' derivatives.
+    pub(crate) fn add_energy(&self, band: &mut Band, lambda: f64) {
+        let [cu, cv] = self.count;
         let gram = |d: usize, r: usize| -> Vec<f64> {
             let c = self.count.get(d).copied().unwrap_or(0);
             let mut g = vec![0.0; c * c];
@@ -661,7 +670,6 @@ impl Grid {
                 }
             }
         }
-        band.solve(rhs)
     }
 
     /// The surface of the net `heights` over the plane `o`, `x`, `y`, `n`: control point `(i, j)`
@@ -680,14 +688,15 @@ impl Grid {
 }
 
 /// A symmetric banded matrix: the upper band, row `r` holding columns `r ..= r + bw`.
-struct Band {
+#[derive(Clone)]
+pub(crate) struct Band {
     n: usize,
     bw: usize,
     a: Vec<f64>,
 }
 
 impl Band {
-    fn new(n: usize, bw: usize) -> Band {
+    pub(crate) fn new(n: usize, bw: usize) -> Band {
         Band { n, bw, a: vec![0.0; n * (bw + 1)] }
     }
     fn index(&self, r: usize, s: usize) -> Option<usize> {
@@ -704,7 +713,7 @@ impl Band {
     }
     /// Add `v` at `(r, s)` with `r ≤ s` (the lower half is the same by symmetry: callers adding
     /// a full outer product reach each stored entry once through `r ≤ s`).
-    fn add(&mut self, r: usize, s: usize, v: f64) {
+    pub(crate) fn add(&mut self, r: usize, s: usize, v: f64) {
         if r <= s
             && let Some(x) = self.index(r, s).and_then(|i| self.a.get_mut(i))
         {
@@ -713,7 +722,13 @@ impl Band {
     }
     /// Solve `A·x = b` by banded Cholesky factorisation `A = Uᵀ·U`; an error when `A` is not
     /// positive definite.
-    fn solve(mut self, mut b: Vec<f64>) -> SplineResult<Vec<f64>> {
+    fn solve(self, b: Vec<f64>) -> SplineResult<Vec<f64>> {
+        self.factor()?.substitute(b)
+    }
+
+    /// The Cholesky factor `U` of `A = Uᵀ·U`, in place; an error when `A` is not positive
+    /// definite.
+    pub(crate) fn factor(mut self) -> SplineResult<Band> {
         let (n, bw) = (self.n, self.bw);
         for r in 0..n {
             let mut d = self.get(r, r);
@@ -734,6 +749,12 @@ impl Band {
                 self.set(r, s, v / d);
             }
         }
+        Ok(self)
+    }
+
+    /// Solve `Uᵀ·U·x = b` with a factor from [`Band::factor`].
+    pub(crate) fn substitute(&self, mut b: Vec<f64>) -> SplineResult<Vec<f64>> {
+        let (n, bw) = (self.n, self.bw);
         // Uᵀ·y = b, then U·x = y.
         for r in 0..n {
             let mut v = b.get(r).copied().unwrap_or(0.0);
