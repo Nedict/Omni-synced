@@ -36,9 +36,13 @@ pub mod gizmo;
 pub mod gpu;
 pub mod help;
 #[cfg(test)]
+mod hole_direction_ui_tests;
+#[cfg(test)]
 mod hole_placement_ui_tests;
 pub mod home;
 pub mod i18n;
+#[cfg(test)]
+mod i18n_menu_tests;
 #[cfg(test)]
 mod i18n_ui_tests;
 pub mod icons;
@@ -109,6 +113,8 @@ mod sketch_drag_ui_tests;
 #[cfg(test)]
 mod sketch_edit_tests;
 mod sketch_families;
+#[cfg(test)]
+mod sketch_guidance_ui_tests;
 pub mod sketch_modify_ui;
 #[cfg(test)]
 mod sketch_modify_ui_tests;
@@ -494,7 +500,13 @@ impl SolveApp {
         }
         match &r {
             Ok(_) => {
-                self.session.echo(format!("{} done", command_label(id)));
+                // Programmatic callers (the control channel, scripts) run outside a render
+                // language scope, so resolve the echo from the saved preference instead of the
+                // thread-local scope. The command's own label is translated too, so the echo
+                // reads the same way the toolbar button it came from does.
+                let language = i18n::Locale::for_language(&self.preferences.language);
+                let label = language.label(command_label(id));
+                self.session.echo(language.format("ui.command_done", &[("command", label)]));
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
                     self.sketch_choices = sketch_families::Choices::default();
                     dim_view::cancel();

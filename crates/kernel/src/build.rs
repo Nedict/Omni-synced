@@ -1075,17 +1075,17 @@ pub(crate) fn loft_wires(sections: &[(Plane, Loop2)]) -> Result<(Vec<mt::Wire>, 
         // Break angles: the lead section's vertex directions seen in this plane.
         let angles: Vec<f64> = lead_dirs.iter().map(|d| Vec2::new(d.dot(p.x), d.dot(p.y)).angle()).collect();
         let mut r = l.resample(n, &angles);
-        // Start at the vertex closest in direction to the lead's first vertex.
-        if let Some(d0) = lead_dirs.first() {
-            let target = Vec2::new(d0.dot(p.x), d0.dot(p.y)).angle();
-            let ang = |s: &Seg2| {
-                let d = ((s.start() - c).angle() - target).rem_euclid(std::f64::consts::TAU);
-                d.min(std::f64::consts::TAU - d)
-            };
-            let best = r.lp.segs.iter().enumerate().min_by(|a, b| ang(a.1).total_cmp(&ang(b.1))).map(|(k, _)| k);
-            if let Some(k) = best {
-                r.rotate_left(k);
-            }
+        // Start where every vertex lines up best with the lead's vertex of the same number (the
+        // largest sum of dot products of their directions from the centroids). The one vertex
+        // closest in direction to the lead's first vertex twisted non-convex sections (#881): a
+        // zig-zag's centroid sits off its outline, so its first vertex can point away from the
+        // lead's.
+        let dirs: Vec<Vec2> = lead_dirs.iter().map(|d| Vec2::new(d.dot(p.x), d.dot(p.y))).collect();
+        let m = r.lp.segs.len();
+        let fit =
+            |k: usize| -> f64 { dirs.iter().enumerate().filter_map(|(i, d)| r.lp.segs.get((i + k) % m).map(|s| (s.start() - c).dot(*d))).sum() };
+        if let Some(k) = (0..m).min_by(|a, b| fit(*b).total_cmp(&fit(*a))) {
+            r.rotate_left(k);
         }
         wires.push(uniform_wire(p, &r.lp)?);
         edge_sources.push(r.from);
@@ -1332,10 +1332,34 @@ fn cubic_basis(knots: &[f64], n_ctrl: usize, u: f64) -> Vec<f64> {
 /// Cubic B-spline through points at uniform parameters (clamped, knots by averaging).
 pub(crate) fn interpolate_cubic(pts: &[Vec3]) -> Option<mt::BSplineCurve<mt::Point3>> {
     let m = pts.len();
-    if m < 4 {
+    let u: Vec<f64> = (0..m).map(|i| i as f64 / (m.max(2) - 1) as f64).collect();
+    interpolate_cubic_at(pts, &u)
+}
+
+/// [`interpolate_cubic`] by chord length: the parameters (0 to 1) in proportion to the distance
+/// along the points. Points closer together toward an end (where a curve leaves another
+/// tangentially) then don't slow the curve to a stop there, where a uniform parameter lets it
+/// double back on itself.
+pub(crate) fn interpolate_cubic_chordal(pts: &[Vec3]) -> Option<(mt::BSplineCurve<mt::Point3>, Vec<f64>)> {
+    let mut u = vec![0.0];
+    for w in pts.windows(2) {
+        let (Some(a), Some(b)) = (w.first(), w.get(1)) else { return None };
+        u.push(u.last().copied().unwrap_or(0.0) + a.dist(*b));
+    }
+    let total = u.last().copied().filter(|t| t.is_finite() && *t > 0.0)?;
+    let u: Vec<f64> = u.iter().map(|x| x / total).collect();
+    if u.windows(2).any(|w| w.first() >= w.get(1)) {
         return None;
     }
-    let u: Vec<f64> = (0..m).map(|i| i as f64 / (m - 1) as f64).collect();
+    interpolate_cubic_at(pts, &u).map(|c| (c, u))
+}
+
+/// The cubic B-spline through `pts` at parameters `u` (rising from 0 to 1), its knots averaged.
+fn interpolate_cubic_at(pts: &[Vec3], u: &[f64]) -> Option<mt::BSplineCurve<mt::Point3>> {
+    let m = pts.len();
+    if m < 4 || u.len() != m {
+        return None;
+    }
     let mut knots = vec![0.0; 4];
     for j in 1..(m - 3) {
         knots.push((j..j + 3).filter_map(|i| u.get(i)).sum::<f64>() / 3.0);

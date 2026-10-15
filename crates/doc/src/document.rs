@@ -1032,8 +1032,9 @@ pub enum FeatureKind {
     Import {
         /// Source file name (display only).
         file: String,
-        /// The STEP (ISO 10303-21) text.
-        step: String,
+        /// The STEP (ISO 10303-21) text, shared by every copy of the design (undo states,
+        /// previews, scratch sessions): a large file is held once, not once per edit.
+        step: std::sync::Arc<str>,
         /// The file's product/assembly tree, kept for components.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         components: Vec<solidcraft_kernel::StepNode>,
@@ -1059,6 +1060,9 @@ pub enum FilletStyle {
     Constant,
     /// `radius` is the chord: the width across the blend.
     Chord,
+    /// G2 quintic blend of planar faces along a straight edge. `radius` sets the
+    /// equivalent circular setback, not a constant curvature radius.
+    Curvature,
     /// `radius` at the end of each edge nearest `start`, `radius2` at the other; `mid` radii at
     /// positions between (0 to 1 from the start end); straight between them, or `smooth`.
     Variable {
@@ -1131,6 +1135,9 @@ pub struct MeshData {
 pub struct SketchPoints {
     pub sketch: u64,
     pub ids: Vec<String>,
+    /// Drill the other way: away from the side the holes would go into by themselves.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flip: bool,
 }
 
 /// A component: a node of the design tree that owns sketches, features and bodies. The root
@@ -1650,7 +1657,7 @@ impl FeatureKind {
                         v.extend(mid.iter().map(|(_, r)| r.as_str()));
                     }
                     FilletStyle::Spline { radii, .. } => v.extend(radii.iter().map(String::as_str)),
-                    FilletStyle::Constant | FilletStyle::Chord => {}
+                    FilletStyle::Constant | FilletStyle::Chord | FilletStyle::Curvature => {}
                 }
             }
             FeatureKind::Chamfer { distance, distance2, angle, .. } => {
@@ -2672,45 +2679,9 @@ impl Document {
 }
 
 /// Density of the default material (g/cm³), as Fusion's default.
-pub const DEFAULT_DENSITY: f64 = 1.29;
-
-/// Physical materials: name and density (g/cm³).
-pub const MATERIALS: [(&str, f64); 14] = [
-    ("Default", DEFAULT_DENSITY),
-    ("Steel", 7.85),
-    ("Stainless Steel", 8.0),
-    ("Aluminum", 2.70),
-    ("Brass", 8.50),
-    ("Copper", 8.96),
-    ("Titanium", 4.43),
-    ("Cast Iron", 7.20),
-    ("ABS Plastic", 1.06),
-    ("PLA", 1.24),
-    ("Nylon", 1.14),
-    ("Polycarbonate", 1.20),
-    ("Oak", 0.75),
-    ("Glass", 2.50),
-];
-
-/// How a physical material looks (sRGB); the default material has no colour of its own.
-pub fn material_color(name: &str) -> Option<[u8; 3]> {
-    Some(match name {
-        "Steel" => [158, 164, 172],
-        "Stainless Steel" => [186, 191, 198],
-        "Aluminum" => [204, 208, 214],
-        "Brass" => [208, 172, 88],
-        "Copper" => [204, 122, 80],
-        "Titanium" => [150, 148, 158],
-        "Cast Iron" => [104, 104, 110],
-        "ABS Plastic" => [222, 222, 216],
-        "PLA" => [110, 160, 222],
-        "Nylon" => [236, 230, 214],
-        "Polycarbonate" => [196, 216, 232],
-        "Oak" => [190, 146, 92],
-        "Glass" => [170, 208, 218],
-        _ => return None,
-    })
-}
+#[path = "../../../assets/materials/library.rs"]
+mod materials;
+pub use materials::{DEFAULT_DENSITY, MATERIALS, material_color};
 
 /// A physical material defined in a design (`material.create`): its name, its density and,
 /// optionally, the look it gives bodies without an appearance of their own.
