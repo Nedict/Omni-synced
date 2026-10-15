@@ -209,7 +209,7 @@ returns the whole state, for tests and screenshots.
 | Area | Work |
 |---|---|
 | Conversation | Diffs, history per design, resume (`session/load`) |
-| Session controls | Model and mode pickers from `configOptions` / `modes`, slash commands |
+| Session controls | Model and mode pickers from `configOptions` / `modes`, the agent's own slash commands (`available_commands_update`; SolidCraft's quick actions are separate and pass any other `/word` through) |
 | Auth | An embedded terminal or "open a terminal here" for terminal logins on each OS; logout |
 | Discovery | Read the ACP registry; keychain-aware login check on macOS |
 | Packaging | Make sure every desktop package ships `solidcraft-cli` next to `solidcraft` (Flatpak, AppImage, macOS bundle, Windows zip), or serve MCP from the app binary itself |

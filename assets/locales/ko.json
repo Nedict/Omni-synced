@@ -1047,5 +1047,11 @@
   "Type": "유형",
   "joint.one_component": "이 부품들은 한 구성 요소의 바디입니다: {bodies}. 관절은 한 구성 요소를 다른 구성 요소에 대해 움직이므로 부품마다 자체 구성 요소가 필요합니다.",
   "joint.one_body": "두 선택이 모두 {body}에 있습니다. 두 번째는 다른 부품에서 선택하세요.",
-  "joint.from_bodies_hint": "선택한 각 바디가 제자리에 그대로 있으면서 자체의 새 구성 요소로 옮겨집니다."
+  "joint.from_bodies_hint": "선택한 각 바디가 제자리에 그대로 있으면서 자체의 새 구성 요소로 옮겨집니다.",
+  "ui.agent_chat_quick_title": "빠른 작업:",
+  "ui.agent_chat_quick_explain": "설계 또는 선택 항목 설명",
+  "ui.agent_chat_quick_fix": "피처가 실패하는 이유를 찾아 수정",
+  "ui.agent_chat_quick_params": "매개변수 검토",
+  "ui.agent_chat_quick_check": "설계를 변경하지 않고 확인",
+  "ui.agent_chat_quick_help": "빠른 작업 목록"
 }

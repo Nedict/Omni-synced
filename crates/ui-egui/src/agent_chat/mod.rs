@@ -499,12 +499,28 @@ pub fn shutdown(app: &mut SolveApp) {
 
 /// Send what the user typed: now if the agent is ready, else once it is (starting it if needed).
 pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: String) {
+    use solidcraft_assistant::slash::{self, Input};
     let text: String = text.chars().take(MAX_PROMPT).collect();
     if text.trim().is_empty() {
         return;
     }
     let image = app.agent_chat.attach_view && app.agent_chat.images;
-    app.agent_chat.push(Item::User { text: text.clone(), image });
+    // A quick action (`/explain`, `/fix`, …) is shown as typed and sent as its prompt; any other
+    // text, a coding agent's own `/command` included, goes as it is.
+    let (shown, text) = match slash::parse(&text, &quick_situation(app)) {
+        Input::Message(m) => (m.clone(), m),
+        Input::Prompt { shown, prompt } => (shown, prompt),
+        Input::Help => {
+            app.agent_chat.push(Item::User { text: text.trim().to_string(), image: false });
+            let mut help = tr("ui.agent_chat_quick_title").to_string();
+            for q in slash::QUICK {
+                help.push_str(&format!("\n- `/{}`: {}", q.name, tr(q.summary)));
+            }
+            app.agent_chat.notice(help, false);
+            return;
+        }
+    };
+    app.agent_chat.push(Item::User { text: shown, image });
     match app.agent_chat.state() {
         State::Ready => start_turn(app, text, image),
         State::Busy => app.agent_chat.notice(tr("ui.agent_chat_wait_turn"), false),
@@ -518,6 +534,26 @@ pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: String) {
             let _ = (s, ctx);
         }
     }
+}
+
+/// What a quick action's prompt may mention: the features with an error or a warning, and how
+/// many things are selected.
+fn quick_situation(app: &SolveApp) -> solidcraft_assistant::slash::Situation {
+    let failing = app
+        .session
+        .doc
+        .features
+        .iter()
+        .filter_map(|f| {
+            let r = app.session.model.result(f.id)?;
+            match (&r.error, &r.warning) {
+                (Some(e), _) => Some(format!("{}: {e}", f.name)),
+                (None, Some(w)) => Some(format!("{} (warning): {w}", f.name)),
+                _ => None,
+            }
+        })
+        .collect();
+    solidcraft_assistant::slash::Situation { failing, selected: app.session.selection.len() }
 }
 
 fn start_turn(app: &mut SolveApp, text: String, image: bool) {

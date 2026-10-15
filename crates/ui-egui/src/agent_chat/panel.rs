@@ -274,6 +274,19 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
     });
     ui.separator();
     let busy = state == State::Busy;
+    // Quick actions, offered while a `/word` is being typed.
+    if let Some(word) = solidcraft_assistant::slash::typing(&app.agent_chat.input) {
+        let found: Vec<&'static solidcraft_assistant::slash::Quick> = solidcraft_assistant::slash::matching(word);
+        ui.horizontal_wrapped(|ui| {
+            for q in found {
+                let b = ui.small_button(format!("/{}", q.name)).on_hover_text(tr(q.summary));
+                crate::scenario::publish_handle(&format!("agent_chat:quick:{}", q.name), b.rect.center());
+                if b.clicked() {
+                    app.agent_chat.input = format!("/{} ", q.name);
+                }
+            }
+        });
+    }
     let edit = egui::TextEdit::multiline(&mut app.agent_chat.input)
         .hint_text(tr("ui.agent_chat_placeholder"))
         .desired_rows(2)

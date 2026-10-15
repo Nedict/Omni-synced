@@ -1304,5 +1304,11 @@
   "Round": "Round",
   "joint.one_component": "These parts are bodies of one component: {bodies}. A joint moves one component against another, so each part needs a component of its own.",
   "joint.one_body": "Both picks are on {body}. Pick the second one on another part.",
-  "joint.from_bodies_hint": "Each picked body moves into a new component of its own and stays where it is."
+  "joint.from_bodies_hint": "Each picked body moves into a new component of its own and stays where it is.",
+  "ui.agent_chat_quick_title": "Quick actions:",
+  "ui.agent_chat_quick_explain": "Explain the design, or the selection",
+  "ui.agent_chat_quick_fix": "Find out why features fail, and fix them",
+  "ui.agent_chat_quick_params": "Review the parameters",
+  "ui.agent_chat_quick_check": "Check the design without changing it",
+  "ui.agent_chat_quick_help": "List the quick actions"
 }

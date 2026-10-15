@@ -1304,5 +1304,11 @@
   "Round": "丸め",
   "joint.one_component": "これらの部品は 1 つのコンポーネントのボディです: {bodies}。ジョイントはコンポーネント同士を動かすため、部品ごとに専用のコンポーネントが必要です。",
   "joint.one_body": "両方の選択が {body} 上にあります。2 つ目は別の部品で選択してください。",
-  "joint.from_bodies_hint": "選択した各ボディを、位置はそのままで専用の新しいコンポーネントに移動します。"
+  "joint.from_bodies_hint": "選択した各ボディを、位置はそのままで専用の新しいコンポーネントに移動します。",
+  "ui.agent_chat_quick_title": "クイック操作:",
+  "ui.agent_chat_quick_explain": "設計または選択範囲を説明する",
+  "ui.agent_chat_quick_fix": "フィーチャーが失敗する理由を調べて修正する",
+  "ui.agent_chat_quick_params": "パラメーターを見直す",
+  "ui.agent_chat_quick_check": "設計を変更せずに確認する",
+  "ui.agent_chat_quick_help": "クイック操作を一覧表示する"
 }

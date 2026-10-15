@@ -117,6 +117,23 @@ The agent reaches the open design only through SolidCraft's own tools (the
 - **Attach view:** tick it to send a picture of the current view with your message, for agents
   that take pictures.
 
+## Quick actions
+
+Type `/` in the message box and the matching quick actions appear above it; click one, or keep
+typing:
+
+| | |
+|---|---|
+| `/explain` | Explain the design, or the selection |
+| `/fix` | Find out why features fail and fix them; the failing features and their messages are listed for the agent |
+| `/params` | Review the parameters; suggestions first, no changes without your yes |
+| `/check` | Check the design without changing it |
+| `/help` | List these in the conversation |
+
+Text after the action is added to it (`/fix keep the wall thickness`). The conversation shows what
+you typed; the agent gets the full prompt. These work with every agent. Any other `/word` is sent
+as typed, so an agent's own slash commands (`/compact`, …) reach the agent unchanged.
+
 ## Permissions
 
 Preferences → AI → **Permissions** decides what the agent may do without asking, for every agent;

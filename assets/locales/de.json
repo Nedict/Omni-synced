@@ -1047,5 +1047,11 @@
   "Type": "Typ",
   "joint.one_component": "Diese Teile sind Körper einer Komponente: {bodies}. Ein Gelenk bewegt eine Komponente gegenüber einer anderen, daher braucht jedes Teil eine eigene Komponente.",
   "joint.one_body": "Beide Auswahlen liegen auf {body}. Wählen Sie die zweite auf einem anderen Teil.",
-  "joint.from_bodies_hint": "Jeder ausgewählte Körper kommt in eine eigene neue Komponente und bleibt, wo er ist."
+  "joint.from_bodies_hint": "Jeder ausgewählte Körper kommt in eine eigene neue Komponente und bleibt, wo er ist.",
+  "ui.agent_chat_quick_title": "Schnellaktionen:",
+  "ui.agent_chat_quick_explain": "Den Entwurf oder die Auswahl erklären",
+  "ui.agent_chat_quick_fix": "Herausfinden, warum Features fehlschlagen, und sie beheben",
+  "ui.agent_chat_quick_params": "Die Parameter prüfen",
+  "ui.agent_chat_quick_check": "Den Entwurf prüfen, ohne ihn zu ändern",
+  "ui.agent_chat_quick_help": "Die Schnellaktionen auflisten"
 }

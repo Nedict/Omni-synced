@@ -1304,5 +1304,11 @@
   "Round": "圆角",
   "joint.one_component": "这些零件是同一组件的实体：{bodies}。接头使一个组件相对另一个组件运动，因此每个零件都需要自己的组件。",
   "joint.one_body": "两次选择都在 {body} 上。请在另一个零件上选择第二个。",
-  "joint.from_bodies_hint": "每个所选实体移入各自的新组件，位置保持不变。"
+  "joint.from_bodies_hint": "每个所选实体移入各自的新组件，位置保持不变。",
+  "ui.agent_chat_quick_title": "快捷操作：",
+  "ui.agent_chat_quick_explain": "解释设计或所选内容",
+  "ui.agent_chat_quick_fix": "找出特征失败的原因并修复",
+  "ui.agent_chat_quick_params": "检查参数",
+  "ui.agent_chat_quick_check": "在不更改设计的情况下检查",
+  "ui.agent_chat_quick_help": "列出快捷操作"
 }

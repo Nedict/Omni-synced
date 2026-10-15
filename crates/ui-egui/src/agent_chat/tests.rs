@@ -321,3 +321,35 @@ fn an_agents_markdown_is_drawn_as_blocks() {
     h.app.agent_chat.items.push(Item::Agent { thought: false, text: "*".repeat(50_000) + &"[".repeat(5_000) + &"`a".repeat(5_000) });
     h.frames(3);
 }
+
+/// Quick actions: `/word` offers its matches; `/help` answers without an agent; text that
+/// is not one of ours goes to the agent as typed.
+#[test]
+fn quick_actions_are_offered_expanded_and_unknown_commands_pass_through() {
+    use crate::scenario::handle_at;
+    let mut h = crate::scenario::Harness::new();
+    h.call("ui.agent_chat", json!({"open": true}));
+    h.frames(3);
+    h.app.agent_chat.input = "/e".into();
+    h.frames(3);
+    assert!(handle_at("agent_chat:quick:explain").is_some(), "/explain is offered for /e");
+    assert!(handle_at("agent_chat:quick:fix").is_none());
+    // /help lists them without starting anything.
+    h.call("ui.agent_chat", json!({"send": "/help"}));
+    h.frames(2);
+    let notice = h.app.agent_chat.items.iter().rev().find_map(|i| if let Item::Notice { text, .. } = i { Some(text.clone()) } else { None });
+    let notice = notice.expect("a help notice");
+    for q in ["/explain", "/fix", "/params", "/check"] {
+        assert!(notice.contains(q), "{q} in {notice}");
+    }
+    assert!(h.app.agent_chat.backend.is_none(), "nothing was started");
+    // An agent's own command is queued as typed; a quick action is queued as its prompt while
+    // the conversation shows what was typed.
+    h.app.agent_chat.state = Some(State::Busy);
+    h.app.agent_chat.items.clear();
+    send(&mut h.app, &egui::Context::default(), "/compact".into());
+    assert!(matches!(&h.app.agent_chat.items[0], Item::User { text, .. } if text == "/compact"));
+    h.app.agent_chat.items.clear();
+    send(&mut h.app, &egui::Context::default(), "/check thin walls".into());
+    assert!(matches!(&h.app.agent_chat.items[0], Item::User { text, .. } if text == "/check thin walls"));
+}
