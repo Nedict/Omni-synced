@@ -40,15 +40,21 @@ pub fn install_picture_renderer(rs: &egui_wgpu::RenderState) {
                 Ok(solidcraft_engine::capture::Picture { rgba, renderer: capturer.renderer() })
             }));
         }
-        // The last tier: the CPU rasterizer, and every picture says so.
         Err(e) => {
             log::warn!("pictures of the model are drawn by the CPU rasterizer: the GPU cannot draw them: {e}");
-            solidcraft_engine::capture::install(std::sync::Arc::new(|scene, cam, w, h| {
-                let canvas = solidcraft_engine::render::render(scene, cam, w as usize, h as usize);
-                Ok(solidcraft_engine::capture::Picture { rgba: canvas.rgba, renderer: "cpu" })
-            }));
+            install_cpu_picture_renderer();
         }
     }
+}
+
+/// The last tier: draw this process's headless pictures with the CPU rasterizer, and every
+/// picture says so. The app uses it when its device cannot draw pictures; the web app always
+/// does, since a browser cannot wait for the GPU to hand a picture back.
+pub fn install_cpu_picture_renderer() {
+    solidcraft_engine::capture::install(std::sync::Arc::new(|scene, cam, w, h| {
+        let canvas = solidcraft_engine::render::render(scene, cam, w as usize, h as usize);
+        Ok(solidcraft_engine::capture::Picture { rgba: canvas.rgba, renderer: "cpu" })
+    }));
 }
 
 #[cfg(test)]
