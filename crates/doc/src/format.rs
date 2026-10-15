@@ -179,6 +179,11 @@
 //!   neighbouring edges as they are (`neighbours: false`). An Extend without them builds the
 //!   planar extension it always did and saves as before; 0.11.0 asks for an update instead of
 //!   dropping them and extending a plane by the distance.
+//!   Under the same version, an extrude's extent records how a symmetric `distance` is read
+//!   (`convention`: `total_distance`, split evenly around the start plane, which new solid
+//!   extrudes save; or `legacy_per_side`). An extent without it keeps the per-side reading
+//!   designs always had, so their thickness and parameters don't change; 0.11.0 asks for an
+//!   update instead of doubling a total-distance extrude.
 //!   Also under 21, a Sweep and a Surface Sweep can carry `orientation` (`parallel`, or
 //!   `{direction: [x, y, z]}`; absent: perpendicular), `twist` (an angle expression) and `scale`
 //!   (the end scale, an expression). A sweep without them saves as before; 0.11.x refuses
@@ -1135,6 +1140,7 @@ mod tests {
                     sketch,
                     profiles: ProfileSel::All,
                     extent: Extent {
+                        convention: crate::ExtrudeConvention::LegacyPerSide,
                         distance: "10".into(),
                         direction: Direction::Negative,
                         distance2: None,

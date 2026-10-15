@@ -53,6 +53,7 @@ impl Walk for crate::document::ThinSide {}
 impl Walk for crate::document::ExtendMode {}
 impl Walk for crate::document::RuledMode {}
 impl Walk for crate::document::RuledCorners {}
+impl Walk for crate::document::ExtrudeConvention {}
 
 /// Containers walk what they hold, in order.
 macro_rules! walk_each {

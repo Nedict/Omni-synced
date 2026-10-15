@@ -180,27 +180,37 @@ pub fn adopt(app: &mut SolveApp, session: Session) {
     }
 }
 
-/// A new, empty design in its own tab.
+/// A new, empty design in its own tab. One that is already empty keeps its tab and still
+/// takes Units of new designs (#1205): a launch starts on that empty design, so returning
+/// here used to leave it in millimetres.
 pub fn new_design(app: &mut SolveApp) {
     if app.file_picker_busy() {
         return;
     }
     app.home.open = false;
     if active_is_blank(app) {
+        crate::prefs::apply_new_design(app);
         return;
     }
     if let Err(e) = open_tab(app, Session::default()) {
         app.set_status(e, true);
+    } else {
+        crate::prefs::apply_new_design(app);
     }
-    crate::prefs::apply_new_design(app);
 }
 
-/// Before opening a file: a fresh tab unless the active design is blank.
+/// Before opening a file: a fresh tab unless the active design is blank. The empty design,
+/// new or already showing, takes Units of new designs so a cancelled open is not millimetres
+/// when the preference says otherwise.
 pub fn prepare_open(app: &mut SolveApp) {
-    if !active_is_blank(app)
-        && let Err(e) = open_tab(app, Session::default())
-    {
+    if active_is_blank(app) {
+        crate::prefs::apply_new_design(app);
+        return;
+    }
+    if let Err(e) = open_tab(app, Session::default()) {
         app.set_status(e, true);
+    } else {
+        crate::prefs::apply_new_design(app);
     }
 }
 
@@ -226,6 +236,7 @@ pub fn close(app: &mut SolveApp, i: usize, force: bool) {
         app.tool = None;
         app.session.replace_design(Session::default());
         app.session.revision = rev + 1;
+        crate::prefs::apply_new_design(app);
         app.cam = Camera::default();
         app.fit_view();
         put_view(app, DocView::default());
@@ -786,6 +797,49 @@ mod tests {
         adopt(&mut a, Session::default());
         assert_eq!(a.docs.count(), 1);
         assert!(!a.session.auto_project, "a design adopted over a blank one");
+    }
+
+    /// #1205: Units of new designs apply to the empty design a launch shows, to New while that
+    /// design is still empty, to `file.new`, and to the blank design left when the last tab closes.
+    /// A design that already has features keeps its units.
+    #[test]
+    fn new_designs_use_the_preferred_units_including_a_blank_one() {
+        let mut a = app();
+        a.preferences.default_units = "in".into();
+        assert_eq!(a.session.doc.units, "mm");
+        // What a launch with no file does after reading preferences.
+        crate::prefs::apply_new_design(&mut a);
+        assert_eq!(a.session.doc.units, "in");
+        assert!(!a.session.is_dirty());
+        assert!(active_is_blank(&a));
+        let tabs = a.docs.count();
+        new_design(&mut a);
+        assert_eq!(a.docs.count(), tabs, "New on an empty design does not open another tab");
+        assert_eq!(a.session.doc.units, "in");
+        assert!(!a.session.is_dirty());
+        // Geometry already there is left alone. New then opens a tab in the preferred units.
+        a.run("solid.box", json!({"length": 25.4, "width": 25.4, "height": 25.4})).unwrap();
+        assert_eq!(a.session.doc.units, "in");
+        a.preferences.default_units = "ft".into();
+        new_design(&mut a);
+        assert_eq!(a.docs.count(), tabs + 1);
+        assert_eq!(a.session.doc.units, "ft");
+        assert!(a.session.doc.features.is_empty());
+        assert!(!a.session.is_dirty());
+        a.run("file.new", json!({"name": "From command"})).unwrap();
+        assert_eq!(a.session.doc.units, "ft");
+        assert_eq!(a.session.doc.name, "From command");
+        assert!(!a.session.is_dirty());
+        // Closing every tab leaves a blank design in the preferred units.
+        assert_eq!(a.docs.count(), 2);
+        let active = a.docs.active;
+        close(&mut a, active, true);
+        assert_eq!(a.docs.count(), 1);
+        assert!(!a.session.doc.features.is_empty(), "the other tab still has its part");
+        close(&mut a, 0, true);
+        assert!(active_is_blank(&a));
+        assert_eq!(a.session.doc.units, "ft");
+        assert!(!a.session.is_dirty());
     }
 
     /// A design built elsewhere replaces a blank one and gets a tab otherwise.

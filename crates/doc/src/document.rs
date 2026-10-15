@@ -134,7 +134,7 @@ pub enum Direction {
     #[default]
     Positive,
     Negative,
-    /// Both sides; `distance` per side.
+    /// Both sides; the extent convention determines whether `distance` is total or per side.
     Symmetric,
 }
 
@@ -186,11 +186,32 @@ pub enum RevolveConvention {
     SketchNormal,
 }
 
+/// Symmetric distance semantics. Missing markers preserve existing designs' thickness.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtrudeConvention {
+    #[default]
+    LegacyPerSide,
+    TotalDistance,
+}
+
+impl ExtrudeConvention {
+    /// Distance from the mid-plane to either cap for a distance-limited extent.
+    pub fn symmetric_half_distance(self, distance: f64) -> f64 {
+        match self {
+            Self::LegacyPerSide => distance,
+            Self::TotalDistance => distance * 0.5,
+        }
+    }
+}
+
 /// Extent of an extrude.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
 pub struct Extent {
     #[walk(length = "Distance")]
     pub distance: String,
+    #[serde(default)]
+    pub convention: ExtrudeConvention,
     #[serde(default)]
     pub direction: Direction,
     /// Optional second side distance (two-sided extrude), along the negative normal.
