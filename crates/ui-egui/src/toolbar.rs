@@ -248,12 +248,6 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let _ = app.run("edit.redo", json!({}));
             }
             x += step;
-            // The assistant sidebar (Ctrl+Shift+A also toggles it when the bar is this narrow).
-            let assistant_tip = crate::i18n::format("assistant.toggle_tip", &[("key", "Ctrl+Shift+A")]);
-            if click(ui, x, "assistant", &assistant_tip, idle) {
-                app.ui.show_assistant = !app.ui.show_assistant;
-            }
-            x += step;
         }
         if file {
             app.ui.palette_open = false;
@@ -285,7 +279,16 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
         // A newer release: its Update button, left of Report a bug (`update`).
         let update = crate::update::button(app, ui, report.left() - 6.0, report.top(), report_label);
-        let tabs_end = update.map_or(report.left(), |u| u.left()) - 8.0;
+        let mut tabs_end = update.map_or(report.left(), |u| u.left()) - 8.0;
+        // The assistant sidebar's button ends the tab strip, so nothing on the left moves. A
+        // narrow bar leaves it out (Ctrl+Shift+A still toggles the sidebar).
+        if !compact_actions {
+            let assistant_tip = crate::i18n::format("assistant.toggle_tip", &[("key", "Ctrl+Shift+A")]);
+            if click(ui, tabs_end - 13.0, "assistant", &assistant_tip, idle) {
+                app.ui.show_assistant = !app.ui.show_assistant;
+            }
+            tabs_end -= 30.0;
+        }
         // Narrow title bars can fit only part of the tab strip. Its hit regions must not
         // extend into the persistent report and window controls.
         let tabs_rect = Rect::from_min_max(pos2(tabs_start.min(tabs_end), r.top()), pos2(tabs_end, r.bottom()));
