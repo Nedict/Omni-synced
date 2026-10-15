@@ -53,6 +53,7 @@ ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
 
 # images
 image = { version = "0.25", default-features = false, features = ["png", "hdr"] }
+png = "0.18.1"
 
 # ui
 egui = "0.36"

@@ -185,10 +185,22 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
 }
 
 fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) -> Outcome {
+    crate::render_workspace::sync_backend(app);
     let s = |k: &str| p.get(k).and_then(Value::as_str);
     let f = |k: &str| p.get(k).and_then(Value::as_f64).filter(|x| x.is_finite());
     let b = |k: &str| p.get(k).and_then(Value::as_bool).unwrap_or(false);
     match method {
+        "ui.workspace" => {
+            if let Some(workspace) = s("workspace") {
+                if !matches!(workspace, "design" | "render") {
+                    return err("workspace must be design or render");
+                }
+                if let Err(e) = crate::render_workspace::enter(app, workspace == "render") {
+                    return err(e);
+                }
+            }
+            ok(json!({"workspace":if crate::render_workspace::active(app) {"render"} else {"design"}}))
+        }
         "engine.execute" | "command" => {
             let Some(id) = s("command").or(s("id")) else { return err("missing `command`") };
             wrap(execute(app, id, p.get("params").cloned().filter(|v| !v.is_null()).unwrap_or(json!({}))))
@@ -230,6 +242,7 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
             "frame_ms": app.frame_ms,
             "file_busy": app.file_load.busy(),
             "file_picker_busy": app.file_picker_busy(),
+            "file_dialog_open": app.file_picker_busy(),
             "build_ms": app.viewport.build_ms,
             "preview": {"active": app.preview.active, "busy": app.preview.busy, "error": app.preview.error, "ms": app.preview.ms, "replaced": app.preview.replaced},
             "home": app.home.open,
@@ -283,6 +296,11 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
             }
             match (serde_json::from_value::<crate::UiState>(cur), serde_json::from_value::<solidcraft_engine::Visibility>(vis)) {
                 (Ok(u), Ok(v)) => {
+                    if (u.tab == "RENDER") != crate::render_workspace::active(app)
+                        && let Err(e) = crate::render_workspace::enter(app, u.tab == "RENDER")
+                    {
+                        return err(e);
+                    }
                     app.ui = u;
                     app.session.visibility = v;
                     ok(serde_json::to_value(&app.ui).unwrap_or_default())
@@ -630,14 +648,14 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
         "ui.render" => {
             let w = f("width").unwrap_or(1280.0).clamp(16.0, 8192.0) as usize;
             let h = f("height").unwrap_or(800.0).clamp(16.0, 8192.0) as usize;
-            // In the window's theme, and cut by the section the viewport shows (an open Section
+            // In the window's theme and colour vision mode, and cut by the section the viewport shows (an open Section
             // Analysis dialog's preview, a sketch's Slice), not only the committed one.
             let scene = solidcraft_engine::view::scene_with_palette(
                 &app.session,
                 &app.cam,
                 crate::viewport::section_plane(app),
                 solidcraft_engine::view::world_curve_parts,
-                &crate::viewport::scene_palette(app.ui.dark),
+                &crate::viewport::scene_palette(app.ui.dark, app.preferences.color_vision),
             );
             let Some(png) = render_png(&scene, &app.cam, w, h) else { return err("render failed") };
             match s("path") {

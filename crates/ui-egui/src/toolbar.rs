@@ -57,6 +57,7 @@ pub fn panels(tab: &str) -> &'static [&'static str] {
         "MESH" => &["CREATE", "PREPARE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
         "SHEET METAL" => &["CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
         "PLASTIC" => &["CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
+        "RENDER" => &["SCENE"],
         _ => &["MAKE", "ADD-INS", "UTILITY", "INSPECT", "SELECT"],
     }
 }
@@ -187,14 +188,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 ui.painter().rect_filled(br, 4.0, Color32::from_white_alpha(30));
             }
             let dim = |c: Color32| if enabled { c } else { c.gamma_multiply(0.35) };
-            icons::paint(
-                ui.painter(),
-                br.shrink(5.0),
-                icon,
-                dim(Color32::from_rgb(225, 230, 238)),
-                dim(Color32::from_rgb(120, 140, 170)),
-                dim(Color32::from_rgb(120, 190, 255)),
-            );
+            icons::paint(ui.painter(), br.shrink(5.0), icon, dim(t.app_bar_icon[0]), dim(t.app_bar_icon[1]), dim(t.app_bar_icon[2]));
             let clicked = resp.on_hover_text(tip).clicked();
             enabled && clicked
         };
@@ -404,6 +398,11 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     close = true;
                 }
                 ui.separator();
+                if item_if(ui, &format!("{}…", app.tr_label("Design Properties")), "", shown) {
+                    app.start("document.metadata");
+                    close = true;
+                }
+                ui.separator();
                 if item(ui, &format!("{}…", app.tr("ui.preferences")), "") {
                     app.prefs_window.open = true;
                     close = true;
@@ -499,7 +498,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         painter.text(
             pos2(ws.center().x - 5.0, ws.top() + 52.0),
             Align2::CENTER_CENTER,
-            app.tr_label(crate::toolbar_custom::WORKSPACE),
+            app.tr_label(if crate::render_workspace::active(app) { "RENDER" } else { crate::toolbar_custom::WORKSPACE }),
             FontId::proportional(12.0),
             t.text,
         );
@@ -515,7 +514,11 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         if sketching {
             tabs.push("SKETCH");
         }
-        tabs.extend(TABS.iter());
+        if crate::render_workspace::active(app) {
+            tabs.push("RENDER");
+        } else {
+            tabs.extend(TABS.iter());
+        }
         for tab in tabs {
             let display_tab = app.tr_label(tab);
             let text_width = painter.layout_no_wrap(display_tab.to_string(), FontId::proportional(12.0), t.text).size().x;

@@ -89,6 +89,27 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 
 ## Render foundation
 
+- Opt-in opaque PBR (#1046) connects persisted surface parameters to the integrated
+  product viewport and CPU PNG, using a fixed direct-light studio. Geometry and mass
+  stay unchanged. HDRI, transmission and textures remain separate gates.
+  See [the consumer and limitations](docs/render-opaque-pbr.md).
+
+- Combined integration is tracked in #842, with independent scalar libraries in
+  #863 and richer PBR/material-card transport in #1086. See [phase boundaries and validation gates](docs/render-integration.md).
+  Render/library consumers use the merged asynchronous picker (#1127). Material-card
+  UI (#1094), texture mapping and HDRI lighting remain explicit follow-ups.
+
+- R4a adds bounded CPU product-image jobs, cancellation and atomic PNG export through
+  engine commands, the Render panel, CLI and persistent MCP. Immutable captures and
+  results stay outside persistence/undo; native workers and cooperative browser tasks
+  share the same work protocol. See [jobs, limits and export](docs/render-jobs.md).
+
+- R3 adds an overlay-free product scene and the integrated Render workspace, with
+  runtime GPU host capabilities, per-document drafts and named camera/background
+  controls. Design keeps its camera and drawing policy. Raster transparency remains
+  approximate; PBR and environments are later slices. See
+  [workspace and scene contracts](docs/render-workspace.md).
+
 - R2 adds bounded named render setups in document format 21 and the read/save
   `render.settings.get/set` commands. Proven render-only changes preserve geometry
   and prepared world data through undo/redo and checkpoint restore. This slice does
@@ -101,7 +122,8 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 
 - The initial opaque surface numerical contract for #1004 provides bounded linear
   color/metallic/roughness/IOR admission and an original tested direct-light BRDF.
-  It does not enable PBR rendering or change stored appearances. See
+  The numerical module alone advertises no capabilities; the installed consumer above
+  provides rendering. See
   [the model, evidence and remaining consumer gates](docs/render-surface.md).
 
 - A bounded cooperative Radiance RGBE input utility is available in L1 render;
@@ -110,8 +132,8 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
 - R1 adds renderer-independent backend/profile metadata, strict request resolution and
   bounded image/scratch admission checks, exposed by the read-only `render.backends`
   command. It describes the current CPU raster snapshot path without evaluating the model.
-  Existing snapshot and viewport routes remain unchanged. The Render workspace, HDRI/PBR,
-  render jobs and optional engines remain future work; see [the contract](docs/render-backends.md)
+  The legacy Design snapshot route remains unchanged. Later slices above provide the
+  workspace/jobs and opaque PBR; HDRI and optional engines remain future work. See [the contract](docs/render-backends.md)
   and [the phased proposal (#620)](https://github.com/bherbruck/solidcraft/issues/620).
 
 ## Dimensioning and error reporting
@@ -453,6 +475,15 @@ editing. Construction planes and points resolve drawn 3D wires without applying 
 plane a second time. Curved paths use sampled segments; multi-curve chains, absolute distance
 and reference-object placement remain separate work, as do loft rails and centerlines.
 
+## Design properties (#1015)
+
+- Designs carry project, part number, revision, author, organization, description and licence
+  in an optional `metadata` object (File → Design Properties…, `document.metadata.*`,
+  `inspect_design`). STEP and IGES headers and 3MF model metadata take the fields their format
+  has a place for. Other tools keep their own data under a reverse-DNS key, kept as it is
+  through open, edit and save and never exported. See [design properties](docs/book/src/guide/files.md#design-properties).
+  Per-component properties (a part number per component) can follow with the same type.
+
 ## Document-opening performance
 
 - Desktop STEP import prepares consecutive independent solids in bounded batches with up
@@ -498,6 +529,14 @@ and reference-object placement remain separate work, as do loft rails and center
   events by strategy and reports any bounded-log truncation. Existing geometry
   acceptance checks remain in force.
 
+- Cylinders of one radius whose axes cross (a second bore across a bore of the same size, a pipe
+  tee of equal pipes) touch at two points, where the mesh intersection cannot trace the curves
+  and a boolean cannot tell the four arms of the crossing apart. When the ordinary boolean fails
+  on such a pair, both faces are split along the line of their cylinder through the touching
+  points (the solids are unchanged), the boolean is taken of those, and its history is composed
+  back over the operands as given (#788). The result keeps the split lines as edges of the bore
+  walls. A crossing the ordinary route fails on and the split faces do not help (a radius of 17.5
+  in a 45 mm block with a tool of 80 mm) is still refused.
 - Boolean intersection-curve construction refuses point-only, collapsed and non-finite
   polylines without panicking. Direct constructor regressions retain valid open endpoints
   and closed spherical intersections; the original interactive trigger remains unidentified.

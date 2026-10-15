@@ -138,6 +138,44 @@ pub enum Direction {
     Symmetric,
 }
 
+/// The direction a ruled surface leaves its edges (`surface.ruled`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuledMode {
+    /// Along the normal of the face beside each edge.
+    #[default]
+    Normal,
+    /// Continuing the face beside each edge.
+    Tangent,
+    /// At an angle from a reference direction (the face's normal unless one is given).
+    Angle,
+    /// Along a fixed direction.
+    Direction,
+}
+
+impl RuledMode {
+    fn is_normal(&self) -> bool {
+        *self == RuledMode::Normal
+    }
+}
+
+/// How a ruled surface's strips meet at sharp corners of its edge chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuledCorners {
+    /// Extended or cut back until they meet.
+    #[default]
+    Mitre,
+    /// Joined by a sector (inside corners are cut back).
+    Round,
+}
+
+impl RuledCorners {
+    fn is_mitre(&self) -> bool {
+        *self == RuledCorners::Mitre
+    }
+}
+
 /// Angular starts in older designs used the raw axis sign. New revolves measure starts
 /// along the same sketch-normal sweep direction as the kernel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -1019,6 +1057,19 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         faces: Vec<Vec3>,
     },
+    /// The face at `face` restored towards its surface: the inner loops at the `holes` points
+    /// taken away (every one when `None`; none when empty), and with `outer` its outer boundary
+    /// back at the surface's natural bounds (an analytic surface's: the face's own span). A new
+    /// surface body; with `in_place`, a surface body's face is untrimmed where it is.
+    SurfaceUntrim {
+        face: FaceAt,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        holes: Option<Vec<Vec3>>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        outer: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        in_place: bool,
+    },
     /// A surface body turned about an axis from open curve chains and the boundaries of
     /// profiles: walls only, no caps (a solid where a full turn closes them).
     SurfaceRevolve {
@@ -1064,6 +1115,27 @@ pub enum FeatureKind {
         chain: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tolerance: Option<String>,
+    },
+    /// A strip of ruled surface `distance` wide hanging off the chain of `body`'s edges through
+    /// `edges`, as a new surface body: along `mode` (`angle` from `direction`, or from the
+    /// face's normal; along `direction`), from the face at `face` where it borders the chain;
+    /// `flip` puts it on the other side; sharp corners as `corners` says.
+    SurfaceRuled {
+        body: String,
+        edges: Vec<Vec3>,
+        distance: String,
+        #[serde(default, skip_serializing_if = "RuledMode::is_normal")]
+        mode: RuledMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        angle: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        direction: Option<Vec3>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        flip: bool,
+        #[serde(default, skip_serializing_if = "RuledCorners::is_mitre")]
+        corners: RuledCorners,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        face: Option<Vec3>,
     },
     /// A planar surface body extended outward by `distance` past the edges through `edges`.
     SurfaceExtend {
@@ -1442,8 +1514,10 @@ impl FeatureKind {
             FeatureKind::Thicken { .. } => "ThickenFeature",
             FeatureKind::SurfaceTrim { .. } => "TrimFeature",
             FeatureKind::SurfaceExtend { .. } => "ExtendFeature",
+            FeatureKind::SurfaceRuled { .. } => "RuledSurfaceFeature",
             FeatureKind::Unstitch { .. } => "UnstitchFeature",
             FeatureKind::ReverseNormal { .. } => "ReverseNormalFeature",
+            FeatureKind::SurfaceUntrim { .. } => "UntrimFeature",
             FeatureKind::Import { .. } => "BaseFeature",
             FeatureKind::MeshImport { .. } => "MeshFeature",
             FeatureKind::MeshConvert { .. } => "MeshConvertFeature",
@@ -1516,8 +1590,10 @@ impl FeatureKind {
             FeatureKind::Thicken { .. } => "Thicken",
             FeatureKind::SurfaceTrim { .. } => "Trim",
             FeatureKind::SurfaceExtend { .. } => "Extend",
+            FeatureKind::SurfaceRuled { .. } => "RuledSurface",
             FeatureKind::Unstitch { .. } => "Unstitch",
             FeatureKind::ReverseNormal { .. } => "ReverseNormal",
+            FeatureKind::SurfaceUntrim { .. } => "Untrim",
             FeatureKind::Import { .. } => "Import",
             FeatureKind::MeshImport { .. } => "Mesh",
             FeatureKind::MeshConvert { .. } => "ConvertMesh",
@@ -1622,6 +1698,9 @@ pub struct Document {
     pub name: String,
     #[serde(default = "default_units")]
     pub units: String,
+    /// Design properties (project, author…) and other tools' data, kept as they are (#1015).
+    #[serde(default, skip_serializing_if = "crate::Metadata::is_empty")]
+    pub metadata: crate::Metadata,
     pub params: Vec<Param>,
     pub features: Vec<Feature>,
     /// Timeline marker: features at or after this index are rolled back (not evaluated).
@@ -1835,6 +1914,7 @@ impl Document {
             format: default_format(),
             name: name.into(),
             units: default_units(),
+            metadata: Default::default(),
             params: Vec::new(),
             features: Vec::new(),
             marker: None,

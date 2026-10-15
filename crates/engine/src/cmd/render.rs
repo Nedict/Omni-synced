@@ -10,7 +10,19 @@ use super::CommandSpec;
 use crate::params::bad;
 use crate::{Result, Session};
 
+mod jobs;
+
 pub static COMMANDS: &[CommandSpec] = &[
+CommandSpec::new("render.preflight", "Check Render Request", jobs::preflight).noundo().doc_only()
+    .params("setup?: saved name OR settings?: full RenderSetup; transparent_background?: false; replace?: false. Validates the installed image host and bounded captured product scene without starting work. Stale geometry is rejected. See docs/render-jobs.md"),
+CommandSpec::new("render.start", "Render Image", jobs::start).noundo().doc_only().at("RENDER", "IMAGE").icon("box")
+    .params("Same request as render.preflight. Captures an immutable product scene and queues a bounded image job. Returns its session-scoped job identity, captured scene_generation and progress. Does not change the design. See docs/render-jobs.md"),
+CommandSpec::new("render.status", "Render Progress", jobs::status).noundo().doc_only()
+    .params("job: {session, serial, generation}. Non-blocking progress, error and completed frame metadata; no image bytes and no rendering in this call."),
+CommandSpec::new("render.cancel", "Cancel Render", jobs::cancel).noundo().doc_only()
+    .params("job: {session, serial, generation}. Requests cooperative cancellation; completed jobs remain completed. Late cancelled frames cannot be published."),
+CommandSpec::new("render.export", "Export Render Image", jobs::export).noundo().doc_only()
+    .params("job: {session, serial, generation}, path: PNG destination, overwrite?: false. Exports a retained completed image atomically; an existing destination is preserved on failure. See docs/render-jobs.md"),
 CommandSpec::new("render.backends", "Render Backends", backends)
     .noundo()
     .doc_only()
@@ -19,7 +31,36 @@ CommandSpec::new("render.settings.get", "Render Settings", get_settings).noundo(
     .params("name?: saved setup. Without name returns {setups, defaults}; with name returns {name, setup}. Does not evaluate the model or apply a camera. See docs/render-settings.md"),
 CommandSpec::new("render.settings.set", "Save Render Settings", set_settings).doc_only()
     .params("name: setup name, set: object of fields to replace (backend, mode, camera, width, height, format, exposure_ev, environment_rotation, environment_intensity, background). Creates from defaults, validates atomically, one undo step; identical edits are no-ops. See docs/render-settings.md"),
+CommandSpec::new("render.scene", "Inspect Render Scene", scene).noundo().at("RENDER", "SCENE").icon("box")
+    .params("No parameters. Authoritative product-scene metadata, without modelling overlays or mesh payloads. Explicitly settles stale geometry; does not render an image. See docs/render-workspace.md"),
+CommandSpec::new("render.settings.apply", "Apply Render Camera", apply_settings).noundo().doc_only()
+    .params("name: saved setup. Applies its existing Camera snapshot including roll/up as view state, without modifying the document or starting a render."),
 ];
+
+fn scene(s: &mut Session, params: &Value) -> Result<Value> {
+    if !params.as_object().is_some_and(|p| p.is_empty()) {
+        return Err(bad("render.scene", "expected an empty parameter object"));
+    }
+    let scene = crate::product_scene::extract(s)?;
+    let bodies: Vec<_> = scene
+        .meshes
+        .iter()
+        .map(|m| json!({"name":m.name,"triangles":m.mesh.triangles.len(),"color":m.color,"opacity":m.opacity,"face_appearances":m.faces.len()}))
+        .collect();
+    Ok(
+        json!({"bodies":bodies,"bounds":if scene.bounds.is_empty() { Value::Null } else { json!({"min":scene.bounds.min,"max":scene.bounds.max}) },"overlays":false}),
+    )
+}
+
+fn apply_settings(s: &mut Session, params: &Value) -> Result<Value> {
+    let request: GetSettings = serde_json::from_value(params.clone()).map_err(|e| bad("render.settings.apply", e.to_string()))?;
+    let name = request.name.ok_or_else(|| bad("render.settings.apply", "`name` is required"))?;
+    RenderSettings::validate_name(&name).map_err(|e| bad("render.settings.apply", e.to_string()))?;
+    let setup = s.doc.render.setups.get(&name).ok_or_else(|| bad("render.settings.apply", "no saved render setup with that name"))?;
+    setup.validate().map_err(|e| bad("render.settings.apply", e.to_string()))?;
+    s.camera = Some(setup.camera);
+    Ok(json!({"name":name,"camera":setup.camera}))
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -71,11 +112,11 @@ fn set_settings(s: &mut Session, params: &Value) -> Result<Value> {
     Ok(reply)
 }
 
-fn backends(_: &mut Session, params: &Value) -> Result<Value> {
+fn backends(s: &mut Session, params: &Value) -> Result<Value> {
     if !params.as_object().is_some_and(|p| p.is_empty()) {
         return Err(bad("render.backends", "expected an empty parameter object"));
     }
-    Ok(json!({"schema_version": 1, "default_backend": "builtin", "backends": [crate::render::builtin_backend()]}))
+    Ok(json!({"schema_version": 1, "default_backend": "builtin", "backends": [s.render_backend()]}))
 }
 
 #[cfg(test)]
@@ -152,3 +193,6 @@ mod tests {
 
 #[cfg(test)]
 mod settings_tests;
+
+#[cfg(test)]
+mod job_tests;

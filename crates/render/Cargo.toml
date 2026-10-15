@@ -12,6 +12,7 @@ workspace = true
 solidcraft-geom = { workspace = true }
 serde = { workspace = true }
 image = { workspace = true, features = ["jpeg"] }
+png = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

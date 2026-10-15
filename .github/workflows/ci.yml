@@ -205,16 +205,17 @@ jobs:
   action-matrix:
     # Every ordinary action on every face, edge, vertex and body of the design corpus, against
     # tests/action_matrix/baseline.json (docs/action-matrix.md). Every test run checks a sample;
-    # the whole matrix runs nightly (or by hand), a quarter per job.
-    name: Action matrix (${{ matrix.part }}/4)
+    # the whole matrix runs nightly (or by hand) in shards of about equal cost, cut by
+    # tests/action_matrix/costs.json. Keep SHARDS in step with the matrix below.
+    name: Action matrix (${{ matrix.shard }}/16)
     needs: build-tests
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 55
     strategy:
       fail-fast: false
       matrix:
-        part: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
@@ -223,12 +224,48 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: nextest-archive
-      - name: Run a quarter of the matrix
+      - name: Run one shard of the matrix
+        # A step limit below the job's, so the outcomes so far are still uploaded.
+        timeout-minutes: 45
         env:
-          PART: ${{ matrix.part }}
+          SHARDS: 16
+          SHARD: ${{ matrix.shard }}
+          OUT: ${{ github.workspace }}/action-matrix
+        run: |
+          mkdir -p "$OUT"
+          export ACTION_MATRIX_SHARD="$SHARD/$SHARDS" ACTION_MATRIX_RESULTS="$OUT/results-$SHARD.json" \
+            ACTION_MATRIX_TIMINGS="$OUT/timings-$SHARD.jsonl" ACTION_MATRIX_WORKDIR="$OUT/raw-$SHARD"
+          cargo nextest run --archive-file tests.tar.zst --workspace-remap . --extract-to . --extract-overwrite \
+            --profile ci --success-output final --run-ignored only -E "binary(action_matrix) & test(=action_matrix_shard)"
+      - name: Upload the outcomes and timings
+        # `cargo xtask action-matrix --from DIR --bless` (with every shard's files in DIR)
+        # records them in the baseline and costs.json.
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: action-matrix-${{ matrix.shard }}
+          path: action-matrix
+          retention-days: 14
+
+  action-matrix-determinism:
+    # A sample of the matrix run twice on one runner: every action must come out the same.
+    name: Action matrix determinism
+    needs: build-tests
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-nextest
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nextest-archive
+      - name: Run a sample twice
         run: |
           cargo nextest run --archive-file tests.tar.zst --workspace-remap . --extract-to . --extract-overwrite \
-            --profile ci --run-ignored only -E "binary(action_matrix) & test(=action_matrix_full_$PART)"
+            --profile ci --success-output final --run-ignored only -E "binary(action_matrix) & test(=action_matrix_determinism)"
 
   doc-tests:
     name: Doc tests
@@ -328,7 +365,7 @@ jobs:
         with:
           key: windows-startup
       - name: Backend order and probing on Windows
-        run: cargo test -p solidcraft --profile ci --locked -- startup::tests
+        run: cargo test -p solidcraft --profile ci --locked -- startup::tests native_crash::tests
       - name: Build the app
         run: cargo build -p solidcraft --profile ci --locked
       - name: Start the app under different settings
