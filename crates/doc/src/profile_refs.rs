@@ -309,7 +309,7 @@ mod tests {
             .add_feature(
                 crate::FeatureKind::Extrude {
                     thin: None,
-                    sketch: feature,
+                    sketch: crate::SketchId(feature),
                     profiles: selection.clone(),
                     extent: crate::Extent {
                         distance: "2".into(),
@@ -435,7 +435,7 @@ mod tests {
             .add_feature(
                 crate::FeatureKind::Extrude {
                     thin: None,
-                    sketch: feature,
+                    sketch: crate::SketchId(feature),
                     profiles: selection.clone(),
                     extent: crate::Extent {
                         distance: "2".into(),

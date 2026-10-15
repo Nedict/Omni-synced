@@ -2,6 +2,7 @@
 
 use serde_json::{Value, json};
 use solidcraft_doc::{AxisRef, Direction, Expr, Extent, FeatureKind, Operation, PointExpr, ProfileSel, ThinSide, ThinWall, expr::Kind, point_expr};
+use solidcraft_doc::{BodyName, FeatureName, SketchId};
 use solidcraft_doc::{Dir, FacePick, Position};
 use solidcraft_geom::Vec3;
 
@@ -525,7 +526,7 @@ fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
         _ => None,
     };
     let kind = FeatureKind::Extrude {
-        sketch,
+        sketch: SketchId(sketch),
         profiles: match face_profile {
             Some(f) => f,
             None if thin.is_some() => ProfileSel::All,
@@ -536,7 +537,7 @@ fn extrude(s: &mut Session, p: &Value) -> Result<Value> {
             Some(o) if o.eq_ignore_ascii_case("auto") => Operation::parse(auto_operation(s, p).unwrap_or("new")).unwrap_or(Operation::NewBody),
             _ => operation(p, cmd)?,
         },
-        targets: string_list(p, "targets"),
+        targets: string_list(p, "targets").into_iter().map(BodyName).collect(),
         thin,
     };
     add_feature(s, p, kind)
@@ -672,12 +673,12 @@ fn revolve(s: &mut Session, p: &Value) -> Result<Value> {
         Some(value) => serde_json::from_value(value.clone()).map_err(|_| bad(cmd, "`convention` must be sketch_normal or legacy_axis_start"))?,
     };
     let kind = FeatureKind::Revolve {
-        sketch,
+        sketch: SketchId(sketch),
         profiles,
         axis,
         angle,
         operation: operation(p, cmd)?,
-        targets: string_list(p, "targets"),
+        targets: string_list(p, "targets").into_iter().map(BodyName).collect(),
         angle2,
         symmetric,
         convention,
@@ -997,7 +998,7 @@ fn fillet(s: &mut Session, p: &Value) -> Result<Value> {
     let mut out = add_feature(
         s,
         p,
-        FeatureKind::Fillet { edges: edges.into_iter().map(Position).collect(), radius, body: str_(p, "body").map(str::to_string), style, fit },
+        FeatureKind::Fillet { edges: edges.into_iter().map(Position).collect(), radius, body: str_(p, "body").map(BodyName::from), style, fit },
     )?;
     // The radii the fillet used, when `fit: reduce` reduced it.
     if let Some(id) = out.get("feature").and_then(Value::as_u64)
@@ -1037,7 +1038,7 @@ fn chamfer(s: &mut Session, p: &Value) -> Result<Value> {
             distance2,
             angle,
             flip,
-            body: str_(p, "body").map(str::to_string),
+            body: str_(p, "body").map(BodyName::from),
         },
     )
 }
@@ -1056,7 +1057,12 @@ fn combine(s: &mut Session, p: &Value) -> Result<Value> {
     let mut out = add_feature(
         s,
         p,
-        FeatureKind::Combine { target: target.clone(), tools, operation: op, keep_tools: bool_(p, "keep_tools").unwrap_or(false) },
+        FeatureKind::Combine {
+            target: target.clone().into(),
+            tools: tools.into_iter().map(BodyName).collect(),
+            operation: op,
+            keep_tools: bool_(p, "keep_tools").unwrap_or(false),
+        },
     )?;
     // New Component: the result goes into a component of its own.
     if bool_(p, "new_component").unwrap_or(false) {
@@ -1097,7 +1103,7 @@ fn move_bodies(s: &mut Session, p: &Value) -> Result<Value> {
         s,
         p,
         FeatureKind::Move {
-            bodies,
+            bodies: bodies.into_iter().map(BodyName).collect(),
             translate: t,
             rotate_axis: p.get("axis").and_then(vec3).map(Dir),
             angle,
@@ -1145,7 +1151,15 @@ fn axis_line(p: &Value, cmd: &str) -> Result<(Vec3, Vec3)> {
 fn finish_pattern(s: &mut Session, p: &Value, features: Vec<String>, pattern: solidcraft_doc::PatternKind, bodies: Vec<String>) -> Result<Value> {
     let comps = string_list(p, "components");
     if comps.is_empty() {
-        return add_feature(s, p, FeatureKind::Pattern { features, pattern, bodies });
+        return add_feature(
+            s,
+            p,
+            FeatureKind::Pattern {
+                features: features.into_iter().map(FeatureName).collect(),
+                pattern,
+                bodies: bodies.into_iter().map(BodyName).collect(),
+            },
+        );
     }
     let cmd = "pattern (components)";
     let mats = solidcraft_doc::pattern_matrices(&s.doc, &s.model.state(), &pattern)?;
@@ -1231,7 +1245,7 @@ fn pattern_path(s: &mut Session, p: &Value) -> Result<Value> {
         Some(o) => return Err(bad(cmd, format!("unknown orientation `{o}` (identical or path)"))),
     };
     let flip = bool_(p, "flip").unwrap_or(false);
-    let pattern = solidcraft_doc::PatternKind::Path { path_sketch, path, count, spacing, extent, flip, orient };
+    let pattern = solidcraft_doc::PatternKind::Path { path_sketch: SketchId(path_sketch), path, count, spacing, extent, flip, orient };
     finish_pattern(s, p, features, pattern, bodies)
 }
 
@@ -1241,7 +1255,16 @@ fn mirror(s: &mut Session, p: &Value) -> Result<Value> {
     let features = if bodies.is_empty() { source_features(s, p, cmd)? } else { Vec::new() };
     let plane = plane_param(s, p.get("plane"), cmd)?;
     let combine = bool_(p, "combine").unwrap_or(false);
-    add_feature(s, p, FeatureKind::Mirror { features, plane, bodies, combine })
+    add_feature(
+        s,
+        p,
+        FeatureKind::Mirror {
+            features: features.into_iter().map(FeatureName).collect(),
+            plane,
+            bodies: bodies.into_iter().map(BodyName).collect(),
+            combine,
+        },
+    )
 }
 
 /// The other name of an origin plane (`Top` for `XY`, `XY` for `Top`...), if `name` is one.
@@ -1277,7 +1300,7 @@ pub(super) fn plane_param(s: &Session, v: Option<&Value>, cmd: &str) -> Result<s
     use solidcraft_doc::PlaneRef;
     const WANT: &str = "XY, XZ, YZ, a construction plane name or id, or {origin, normal}";
     let construction = |r: &str| match s.doc.find_feature(r) {
-        Some(f) if matches!(f.kind, FeatureKind::ConstructionPlane { .. }) => Ok(PlaneRef::Construction { name: f.name.clone() }),
+        Some(f) if matches!(f.kind, FeatureKind::ConstructionPlane { .. }) => Ok(PlaneRef::Construction { name: f.name.clone().into() }),
         Some(f) => Err(bad(cmd, format!("`{}` is not a construction plane (a plane is {WANT})", f.name))),
         None => Err(bad(cmd, format!("no plane `{r}` (a plane is {WANT})"))),
     };
@@ -1358,17 +1381,23 @@ fn split_face(s: &mut Session, p: &Value) -> Result<Value> {
         let point = t.get("point").and_then(crate::params::vec3).ok_or_else(|| bad(cmd, "`tool.point` must be [x, y, z] on the tool face"))?;
         FeatureKind::SplitFace {
             faces: faces.into_iter().map(FacePick).collect(),
-            body,
+            body: body.map(BodyName),
             plane: xy(),
-            tool: Some(solidcraft_doc::FaceAt { body: tb, point: Position(point) }),
+            tool: Some(solidcraft_doc::FaceAt { body: BodyName(tb), point: Position(point) }),
             sketch: None,
         }
     } else if p.get("sketch").is_some_and(|v| !v.is_null()) {
         let sketch = sketch_id(s, p.get("sketch"), cmd, "sketch")?;
-        FeatureKind::SplitFace { faces: faces.into_iter().map(FacePick).collect(), body, plane: xy(), tool: None, sketch: Some(sketch) }
+        FeatureKind::SplitFace {
+            faces: faces.into_iter().map(FacePick).collect(),
+            body: body.map(BodyName),
+            plane: xy(),
+            tool: None,
+            sketch: Some(SketchId(sketch)),
+        }
     } else {
         let plane = plane_param(s, p.get("plane"), cmd)?;
-        FeatureKind::SplitFace { faces: faces.into_iter().map(FacePick).collect(), body, plane, tool: None, sketch: None }
+        FeatureKind::SplitFace { faces: faces.into_iter().map(FacePick).collect(), body: body.map(BodyName), plane, tool: None, sketch: None }
     };
     add_feature(s, p, kind)
 }
@@ -1392,14 +1421,14 @@ fn split_body(s: &mut Session, p: &Value) -> Result<Value> {
             s,
             p,
             FeatureKind::Split {
-                body,
+                body: BodyName(body),
                 plane: solidcraft_doc::PlaneRef::Origin { name: "XY".into() },
-                tool: Some(solidcraft_doc::FaceAt { body: tb, point: Position(point) }),
+                tool: Some(solidcraft_doc::FaceAt { body: BodyName(tb), point: Position(point) }),
             },
         );
     }
     let plane = plane_param(s, p.get("plane"), cmd)?;
-    add_feature(s, p, FeatureKind::Split { body, plane, tool: None })
+    add_feature(s, p, FeatureKind::Split { body: BodyName(body), plane, tool: None })
 }
 
 /// ISO 273 clearance hole diameters (close, normal, loose fit) for metric bolts.
@@ -1461,7 +1490,7 @@ fn hole(s: &mut Session, p: &Value) -> Result<Value> {
             let first =
                 ids.first().and_then(|id| ss.sketch.points.iter().find(|q| &q.id == id)).map(|q| ss.plane.to_world(q.pos)).unwrap_or_default();
             let flip = p.get("flip").and_then(Value::as_bool).unwrap_or(false);
-            Some((solidcraft_doc::SketchPoints { sketch, ids, flip }, first, -n))
+            Some((solidcraft_doc::SketchPoints { sketch: SketchId(sketch), ids, flip }, first, -n))
         }
         _ => None,
     };
@@ -1611,7 +1640,7 @@ fn shell(s: &mut Session, p: &Value) -> Result<Value> {
         FeatureKind::Shell {
             faces: faces.into_iter().map(FacePick).collect(),
             thickness,
-            body: str_(p, "body").map(str::to_string),
+            body: str_(p, "body").map(BodyName::from),
             direction: if direction == "inside" { String::new() } else { direction },
             tangent_chain: bool_(p, "tangent_chain").unwrap_or(false),
         },
@@ -1635,7 +1664,7 @@ fn draft(s: &mut Session, p: &Value) -> Result<Value> {
             angle,
             neutral,
             pull: Dir(pull),
-            body: str_(p, "body").map(str::to_string),
+            body: str_(p, "body").map(BodyName::from),
         },
     )
 }
@@ -1664,12 +1693,12 @@ fn sweep(s: &mut Session, p: &Value) -> Result<Value> {
         s,
         p,
         FeatureKind::Sweep {
-            sketch,
+            sketch: SketchId(sketch),
             profiles: profiles(p, cmd)?,
-            path_sketch,
+            path_sketch: SketchId(path_sketch),
             path,
             operation: operation(p, cmd)?,
-            targets: string_list(p, "targets"),
+            targets: string_list(p, "targets").into_iter().map(BodyName).collect(),
         },
     )
 }
@@ -1689,12 +1718,20 @@ fn loft(s: &mut Session, p: &Value) -> Result<Value> {
             if !st.sketch(sketch).is_some_and(|ss| ss.sketch.points.iter().any(|q| q.id == pt)) {
                 return Err(bad(cmd, format!("no point `{pt}` in the section's sketch")));
             }
-            sections.push(solidcraft_doc::LoftSection { sketch, profiles: solidcraft_doc::ProfileSel::All, point: Some(pt.to_string()) });
+            sections.push(solidcraft_doc::LoftSection {
+                sketch: SketchId(sketch),
+                profiles: solidcraft_doc::ProfileSel::All,
+                point: Some(pt.to_string()),
+            });
             continue;
         }
-        sections.push(solidcraft_doc::LoftSection { sketch, profiles: profiles(sec, cmd)?, point: None });
+        sections.push(solidcraft_doc::LoftSection { sketch: SketchId(sketch), profiles: profiles(sec, cmd)?, point: None });
     }
-    add_feature(s, p, FeatureKind::Loft { sections, operation: operation(p, cmd)?, targets: string_list(p, "targets") })
+    add_feature(
+        s,
+        p,
+        FeatureKind::Loft { sections, operation: operation(p, cmd)?, targets: string_list(p, "targets").into_iter().map(BodyName).collect() },
+    )
 }
 
 fn thread(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1733,14 +1770,25 @@ fn pipe(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(w) = &wall {
         check_expr(s, w, Kind::Length, cmd, "wall")?;
     }
-    add_feature(s, p, FeatureKind::Pipe { path_sketch, path, diameter, wall, operation: operation(p, cmd)?, targets: string_list(p, "targets") })
+    add_feature(
+        s,
+        p,
+        FeatureKind::Pipe {
+            path_sketch: SketchId(path_sketch),
+            path,
+            diameter,
+            wall,
+            operation: operation(p, cmd)?,
+            targets: string_list(p, "targets").into_iter().map(BodyName).collect(),
+        },
+    )
 }
 
 fn bounding_solid(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.bounding_solid";
     let margin = expr(p, "margin").unwrap_or_else(|| "0".into());
     check_expr(s, &margin, Kind::Length, cmd, "margin")?;
-    add_feature(s, p, FeatureKind::BoundingSolid { bodies: string_list(p, "bodies"), margin })
+    add_feature(s, p, FeatureKind::BoundingSolid { bodies: string_list(p, "bodies").into_iter().map(BodyName).collect(), margin })
 }
 
 fn scale(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1767,13 +1815,13 @@ fn scale(s: &mut Session, p: &Value) -> Result<Value> {
     };
     check_expr(s, &factor, Kind::Unitless, cmd, "factor")?;
     let origin = p.get("origin").and_then(vec3).unwrap_or(Vec3::ZERO);
-    add_feature(s, p, FeatureKind::Scale { bodies, origin: Position(origin), factor, factors })
+    add_feature(s, p, FeatureKind::Scale { bodies: bodies.into_iter().map(BodyName).collect(), origin: Position(origin), factor, factors })
 }
 
 fn delete_face(s: &mut Session, p: &Value) -> Result<Value> {
     let faces = face_points(s, p, "face.delete")?;
     let heal = bool_(p, "heal").unwrap_or(true);
-    add_feature(s, p, FeatureKind::DeleteFace { faces: faces.into_iter().map(FacePick).collect(), body: str_(p, "body").map(str::to_string), heal })
+    add_feature(s, p, FeatureKind::DeleteFace { faces: faces.into_iter().map(FacePick).collect(), body: str_(p, "body").map(BodyName::from), heal })
 }
 
 fn offset_face(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1784,7 +1832,7 @@ fn offset_face(s: &mut Session, p: &Value) -> Result<Value> {
     add_feature(
         s,
         p,
-        FeatureKind::OffsetFace { faces: faces.into_iter().map(FacePick).collect(), distance, body: str_(p, "body").map(str::to_string) },
+        FeatureKind::OffsetFace { faces: faces.into_iter().map(FacePick).collect(), distance, body: str_(p, "body").map(BodyName::from) },
     )
 }
 

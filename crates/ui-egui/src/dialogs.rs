@@ -623,7 +623,7 @@ impl Dialog {
         let preselection: &[Sel] = if matches!(d.kind, Kind::Text(_)) { &[] } else { &s.selection };
         for sel in preselection {
             let as_body = match sel {
-                Sel::Face { body, .. } | Sel::Edge { body, .. } | Sel::Vertex { body, .. } => Some(Sel::Body { name: body.clone() }),
+                Sel::Face { body, .. } | Sel::Edge { body, .. } | Sel::Vertex { body, .. } => Some(Sel::Body { name: body.to_string() }),
                 _ => None,
             };
             if let Some(b) = as_body
@@ -3177,7 +3177,7 @@ pub fn apply_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>
             };
             if let Some(sketch) = original_all
                 && !d.profile_selection_changed
-                && let Some(ss) = app.session.world_state().sketch(sketch)
+                && let Some(ss) = app.session.world_state().sketch(sketch.0)
             {
                 let mut selected: Vec<usize> = sels(d, 0)
                     .iter()
@@ -3317,7 +3317,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                     _ => None,
                 });
                 let has_all = |id: u64| curves.iter().all(|c| st.sketch(id).is_some_and(|ss| ss.sketch.curve_index(c).is_some()));
-                let sketch = match sketch.or(edited) {
+                let sketch = match sketch.or(edited.map(u64::from)) {
                     Some(id) if has_all(id) => id,
                     _ => curves_sketch(app, &curves, None).ok_or("the curves must be in one sketch")?,
                 };
@@ -4086,7 +4086,8 @@ fn emboss_face_sel(s: &Session, component: u64, face: &solidcraft_engine::doc::E
 
 pub(crate) fn plane_sel(s: &Session, pl: &PlaneRef) -> Option<Sel> {
     match pl {
-        PlaneRef::Origin { name } | PlaneRef::Construction { name } => Some(Sel::Plane { name: name.clone() }),
+        PlaneRef::Origin { name } => Some(Sel::Plane { name: name.clone() }),
+        PlaneRef::Construction { name } => Some(Sel::Plane { name: name.to_string() }),
         PlaneRef::Custom { plane } | PlaneRef::Face { plane, .. } => face_sel(s, plane.origin),
         _ => None,
     }
@@ -4167,9 +4168,9 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                     inp.items = thin.curves.iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect();
                 }
             } else {
-                let items = st.sketch(*sketch).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
+                let items = st.sketch(sketch.0).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
                 if let Some(inp) = d.inputs.first_mut() {
-                    inp.items = items.into_iter().map(|index| Sel::Profile { sketch: *sketch, index }).collect();
+                    inp.items = items.into_iter().map(|index| Sel::Profile { sketch: sketch.0, index }).collect();
                 }
             }
             if !targets.is_empty() {
@@ -4201,9 +4202,9 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                     input.items = vec![Sel::Vertex { body: String::new(), point: solidcraft_engine::doc::apply_point(&frame, point.0) }];
                 }
             }
-            let items = st.sketch(*sketch).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
+            let items = st.sketch(sketch.0).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
             if let Some(inp) = d.inputs.get_mut(0) {
-                inp.items = items.into_iter().map(|index| Sel::Profile { sketch: *sketch, index }).collect();
+                inp.items = items.into_iter().map(|index| Sel::Profile { sketch: sketch.0, index }).collect();
             }
             let ax = match axis {
                 AxisRef::World { axis } => Some(Sel::Axis { name: axis.to_ascii_uppercase() }),
@@ -4422,10 +4423,10 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let mut d = start("solid.boundary_fill")?;
             // The cells again, ticked where a stored cell point lies in the same cell.
             let before = s.model.state_before(f.id);
-            let found = fill_cells(&before, tools);
+            let found = fill_cells(&before, &solidcraft_engine::doc::plain(tools));
             let filled: Vec<String> =
                 cells.iter().filter_map(|c| found.iter().min_by(|a, b| a.0.dist(c.0).total_cmp(&b.0.dist(c.0))).map(|x| x.1.clone())).collect();
-            let items: Vec<Sel> = tools.iter().map(|n| Sel::Body { name: n.clone() }).collect();
+            let items: Vec<Sel> = tools.iter().map(|n| Sel::Body { name: n.to_string() }).collect();
             d.kind = Kind::BoundaryFill {
                 operation: op_index(operation),
                 cells: found.into_iter().map(|(p, l)| (p, l.clone(), filled.contains(&l))).collect(),
@@ -4443,10 +4444,10 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let mut d = start("solid.combine")?;
             d.kind = Kind::Combine { operation: op_index(operation).max(1), keep_tools: *keep_tools };
             if let Some(inp) = d.inputs.get_mut(0) {
-                inp.items = vec![Sel::Body { name: target.clone() }];
+                inp.items = vec![Sel::Body { name: target.to_string() }];
             }
             if let Some(inp) = d.inputs.get_mut(1) {
-                inp.items = tools.iter().map(|n| Sel::Body { name: n.clone() }).collect();
+                inp.items = tools.iter().map(|n| Sel::Body { name: n.to_string() }).collect();
             }
             d
         }
@@ -4457,7 +4458,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let as_features = ids.iter().any(|id| !st.bodies.iter().any(|b| b.feature == *id));
             if let Some(inp) = d.inputs.get_mut(0) {
                 if !bodies.is_empty() {
-                    inp.items = bodies.iter().map(|name| Sel::Body { name: name.clone() }).collect();
+                    inp.items = bodies.iter().map(|name| Sel::Body { name: name.to_string() }).collect();
                 } else if as_features {
                     inp.accept = selection::FEATURES;
                     inp.label = objects_label(inp.accept);
@@ -4476,7 +4477,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let bodies: Vec<Sel> = if copied.is_empty() {
                 st.bodies.iter().filter(|b| ids.contains(&b.feature)).map(|b| Sel::Body { name: b.name.clone() }).collect()
             } else {
-                copied.iter().map(|name| Sel::Body { name: name.clone() }).collect()
+                copied.iter().map(|name| Sel::Body { name: name.to_string() }).collect()
             };
             let mut d = match pattern {
                 PatternKind::Rectangular { dir1, count1, spacing1, dir2, count2, spacing2 } => {
@@ -4541,8 +4542,8 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 inp.items = sections
                     .iter()
                     .flat_map(|sec| {
-                        let idx = st.sketch(sec.sketch).map(|ss| profile_indices(ss, &sec.profiles)).unwrap_or_default();
-                        idx.into_iter().map(move |index| Sel::Profile { sketch: sec.sketch, index })
+                        let idx = st.sketch(sec.sketch.0).map(|ss| profile_indices(ss, &sec.profiles)).unwrap_or_default();
+                        idx.into_iter().map(move |index| Sel::Profile { sketch: sec.sketch.0, index })
                     })
                     .collect();
             }
@@ -4554,9 +4555,9 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         FeatureKind::Sweep { sketch, profiles, path, operation, targets, .. } => {
             let mut d = start("solid.sweep")?;
             d.kind = Kind::Sweep { operation: op_index(operation) };
-            let items = st.sketch(*sketch).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
+            let items = st.sketch(sketch.0).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
             if let Some(inp) = d.inputs.get_mut(0) {
-                inp.items = items.into_iter().map(|index| Sel::Profile { sketch: *sketch, index }).collect();
+                inp.items = items.into_iter().map(|index| Sel::Profile { sketch: sketch.0, index }).collect();
             }
             if let Some(inp) = d.inputs.get_mut(1) {
                 inp.items = path.iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect();
@@ -4612,7 +4613,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         FeatureKind::Split { body, plane, tool } => {
             let mut d = start("solid.split_body")?;
             if let Some(inp) = d.inputs.first_mut() {
-                inp.items = vec![Sel::Body { name: body.clone() }];
+                inp.items = vec![Sel::Body { name: body.to_string() }];
             }
             if let Some(inp) = d.inputs.get_mut(1) {
                 inp.items = match tool {
@@ -4626,7 +4627,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let mut d = start("solid.scale")?;
             d.kind = Kind::Scale { factor: factor.to_string() };
             if let Some(inp) = d.inputs.first_mut() {
-                inp.items = bodies.iter().map(|n| Sel::Body { name: n.clone() }).collect();
+                inp.items = bodies.iter().map(|n| Sel::Body { name: n.to_string() }).collect();
             }
             d.extra.insert("origin".into(), pt3(origin.0));
             if let Some(f) = factors {
@@ -4663,7 +4664,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let mut d = start("solid.bounding_solid")?;
             d.kind = Kind::Stock { margin: margin.to_string() };
             if let Some(inp) = d.inputs.first_mut() {
-                inp.items = bodies.iter().map(|n| Sel::Body { name: n.clone() }).collect();
+                inp.items = bodies.iter().map(|n| Sel::Body { name: n.to_string() }).collect();
             }
             d
         }
@@ -4682,9 +4683,9 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         FeatureKind::Emboss { sketch, profiles, depth, deboss, targets, face } => {
             let mut d = start("solid.emboss")?;
             d.kind = Kind::Emboss { depth: depth.to_string(), deboss: *deboss };
-            let items = st.sketch(*sketch).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
+            let items = st.sketch(sketch.0).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
             if let Some(inp) = d.inputs.first_mut() {
-                inp.items = items.into_iter().map(|index| Sel::Profile { sketch: *sketch, index }).collect();
+                inp.items = items.into_iter().map(|index| Sel::Profile { sketch: sketch.0, index }).collect();
             }
             if !targets.is_empty() {
                 d.extra.insert("targets".into(), json!(targets));
@@ -4725,13 +4726,20 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         FeatureKind::Remove { bodies } => {
             let mut d = start("solid.remove")?;
             if let Some(inp) = d.inputs.first_mut() {
-                inp.items = bodies.iter().map(|n| Sel::Body { name: n.clone() }).collect();
+                inp.items = bodies.iter().map(|n| Sel::Body { name: n.to_string() }).collect();
             }
             d
         }
         FeatureKind::Move { bodies, translate, rotate_axis, angle, copy } => {
             let mut d = start("solid.move")?;
-            crate::dialogs_move::for_feature(&mut d, bodies, translate, rotate_axis.map(Vec3::from), angle.as_ref(), *copy);
+            crate::dialogs_move::for_feature(
+                &mut d,
+                &solidcraft_engine::doc::plain(bodies),
+                translate,
+                rotate_axis.map(Vec3::from),
+                angle.as_ref(),
+                *copy,
+            );
             d
         }
         other => {

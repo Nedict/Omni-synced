@@ -10,7 +10,7 @@ use solidcraft_geom::{Loop2, Seg2};
 pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut ModelState) -> Result<()> {
     match &f.kind {
         FeatureKind::Emboss { sketch, profiles, depth, deboss, targets, face } => {
-            let ss = st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch}")))?;
+            let ss = st.sketch(sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {sketch}")))?;
             let regions = select_profiles(ss, profiles)?;
             let d = val(vals, depth, Kind::Length)?;
             if !(d > 0.0) {
@@ -67,10 +67,10 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             if st.bodies.is_empty() {
                 return Err(DocError::Invalid("there is no body to emboss".into()));
             }
-            apply_op(st, f, tools, if *deboss { Operation::Cut } else { Operation::Join }, targets)
+            apply_op(st, f, tools, if *deboss { Operation::Cut } else { Operation::Join }, &crate::plain(targets))
         }
         FeatureKind::Rib { sketch, curves, thickness, depth, flip, web } => {
-            let ss = st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch}")))?.clone();
+            let ss = st.sketch(sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {sketch}")))?.clone();
             let t = val(vals, thickness, Kind::Length)?;
             if !(t > 0.0) {
                 return Err(DocError::Invalid("the rib thickness must be positive".into()));
@@ -151,7 +151,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
                     return Err(DocError::Unknown(format!("body `{n}`")));
                 }
             }
-            st.bodies.retain(|b| !bodies.contains(&b.name));
+            st.bodies.retain(|b| !bodies.iter().any(|t| *t == b.name));
             Ok(())
         }
         _ => Err(DocError::Invalid(format!("{} is not evaluated here", f.name))),
@@ -332,7 +332,7 @@ fn rebuild_sheet(st: &mut ModelState, idx: usize) -> Result<()> {
 }
 
 /// The sheet a feature works on: by body name, else the one with an edge nearest the pick.
-fn sheet_for(st: &ModelState, body: &Option<String>, pick: Option<Vec3>) -> Result<usize> {
+fn sheet_for(st: &ModelState, body: &Option<crate::BodyName>, pick: Option<Vec3>) -> Result<usize> {
     if let Some(n) = body {
         return st.sheets.iter().position(|s| &s.body == n).ok_or_else(|| DocError::Invalid(format!("`{n}` is not a sheet metal body")));
     }
@@ -392,7 +392,7 @@ pub(super) fn sheet_eval(
     use crate::sheet;
     match &f.kind {
         FeatureKind::SheetBase { sketch, profiles, rule, flip } => {
-            let ss = st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch}")))?.clone();
+            let ss = st.sketch(sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {sketch}")))?.clone();
             let regions = solidcraft_sketch::merge_regions(&select_profiles(&ss, profiles)?);
             let r = doc.sheet_rule(rule.as_deref());
             let rv = doc.rule_values(vals, &r)?;
@@ -426,7 +426,7 @@ pub(super) fn sheet_eval(
             Ok(())
         }
         FeatureKind::SheetContour { sketch, curves, distance, rule, flip, reverse } => {
-            let ss = st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch}")))?.clone();
+            let ss = st.sketch(sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {sketch}")))?.clone();
             for id in curves {
                 let ci = ss.sketch.curve_index(id).ok_or_else(|| DocError::Unknown(format!("curve `{id}`")))?;
                 if !ss.sketch.segs(ci).iter().all(|s| matches!(s, Seg2::Line { .. })) {
@@ -544,7 +544,7 @@ pub(super) fn sheet_eval(
             // The sketch line, where it is now.
             let (a, b) = match (sketch, curve) {
                 (Some(sk), Some(c)) => {
-                    let ss = st.sketch(*sk).ok_or_else(|| DocError::Unknown(format!("sketch {sk}")))?;
+                    let ss = st.sketch(sk.0).ok_or_else(|| DocError::Unknown(format!("sketch {sk}")))?;
                     let ci = ss.sketch.curve_index(c).ok_or_else(|| DocError::Unknown(format!("curve `{c}`")))?;
                     match ss.sketch.segs(ci).as_slice() {
                         [Seg2::Line { a, b }] => (ss.plane.to_world(*a), ss.plane.to_world(*b)),
@@ -757,7 +757,7 @@ pub(super) fn sheet_cut(
     if extent.taper.is_some() || !any_eligible_sheet(f, st, targets) {
         return Ok(Vec::new());
     }
-    let Some(ss) = st.sketch(*sketch).cloned() else { return Ok(Vec::new()) };
+    let Some(ss) = st.sketch(sketch.0).cloned() else { return Ok(Vec::new()) };
     let regions = solidcraft_sketch::merge_regions(&select_profiles(&ss, profiles)?);
     sheet_prism_cut(f, st, &ss.plane, &regions, *operation, tools, targets, constructor, extent.to.is_some())
 }
@@ -1261,7 +1261,7 @@ fn outline_loop(pts: &[(Vec2, Option<u32>)], wall: &mut impl FnMut(u32) -> Optio
 }
 
 /// The body a placed plastic feature joins: by name, else the one under the point.
-fn body_under(st: &ModelState, body: &Option<String>, p: Vec3) -> Result<String> {
+fn body_under(st: &ModelState, body: &Option<crate::BodyName>, p: Vec3) -> Result<String> {
     let i = body_at(st, body, &[p])?;
     let b = st.bodies.get(i).ok_or_else(|| DocError::Invalid("there is no body".into()))?;
     let tolerance = (b.body.size() * 1e-5).max(1e-4);

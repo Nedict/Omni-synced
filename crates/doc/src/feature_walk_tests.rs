@@ -73,9 +73,9 @@ fn ref_record() -> String {
     out
 }
 
-/// A variant with a field that refers to a sketch (a field named `*sketch*` holding an id, sketch
-/// points or loft sections) must report it from `input_sketches`, or deleting the sketch leaves
-/// the feature broken. New variants are caught by the walk's exhaustive match; this catches a
+/// A variant with a field that refers to a sketch (a `SketchId`, sketch points or loft
+/// sections) must report it from `input_sketches`, or deleting the sketch leaves the feature
+/// broken. New variants are caught by the walk's exhaustive match; this catches a
 /// sketch field added to an existing variant (its fixture has to set it).
 /// Per fixture (with every reference and position set): the fields `transform_geometry` changes
 /// under a turn and a shift (every point, direction and plane it maps), the face points that name
@@ -151,8 +151,8 @@ fn input_sketches_lists_every_variant_with_a_sketch_field() {
             variant = t.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("").to_lowercase();
             continue;
         }
-        let Some((name, ty)) = t.strip_prefix("pub ").unwrap_or(t).split_once(':') else { continue };
-        let refers = (name.contains("sketch") && ty.contains("u64")) || ty.contains("SketchPoints") || ty.contains("LoftSection");
+        let Some((_, ty)) = t.strip_prefix("pub ").unwrap_or(t).split_once(':') else { continue };
+        let refers = ty.contains("SketchId") || ty.contains("SketchPoints") || ty.contains("LoftSection");
         if refers && !t.starts_with("//") && !with_sketch.contains(&variant) {
             with_sketch.push(variant.clone());
         }

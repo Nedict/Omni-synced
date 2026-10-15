@@ -30,7 +30,7 @@ fn plate_doc() -> (Document, u64) {
     doc.add_feature(
         FeatureKind::Extrude {
             thin: None,
-            sketch: s,
+            sketch: crate::SketchId(s),
             profiles: ProfileSel::All,
             extent: Extent {
                 distance: "20".into(),
@@ -122,7 +122,7 @@ fn box_fillet_cut_timeline() {
     doc.add_feature(
         FeatureKind::Extrude {
             thin: None,
-            sketch: s2,
+            sketch: crate::SketchId(s2),
             profiles: ProfileSel::Points { points: vec![Vec2::new(20.0, 15.0)] },
             extent: Extent {
                 distance: "20".into(),
@@ -160,7 +160,7 @@ fn errors_are_reported_not_fatal() {
     let (mut doc, s) = plate_doc();
     doc.add_feature(
         FeatureKind::Revolve {
-            sketch: s,
+            sketch: crate::SketchId(s),
             profiles: ProfileSel::All,
             axis: AxisRef::SketchAxis { axis: "y".into() },
             angle: "90 deg".into(),

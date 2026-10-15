@@ -774,7 +774,7 @@ fn vertical_features(app: &mut SolveApp, ui: &mut egui::Ui) {
             if let Some(sketch) = sketch
                 && ui.button("Edit Profile Sketch").clicked()
             {
-                app.edit_sketch(sketch);
+                app.edit_sketch(sketch.0);
                 ui.close();
             }
             if ui.button("Rename Feature").clicked() {

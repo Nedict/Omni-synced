@@ -55,7 +55,7 @@ macro_rules! geometry_walk {
                 FeatureKind::Extrude { sketch, profiles, extent, thin, .. } => {
                     // A thin extrude follows curves; its profiles are not used.
                     if thin.is_none() {
-                        f(Profiles(*sketch, profiles));
+                        f(Profiles(sketch.0, profiles));
                     }
                     if let Some(p) = & $($m)? extent.to {
                         f(Pick(p));
@@ -68,7 +68,7 @@ macro_rules! geometry_walk {
                 // Extrude.
                 FeatureKind::SurfaceExtrude { sketch, profiles, extent, .. } => {
                     if let Some(s) = profiles {
-                        f(Profiles(*sketch, s));
+                        f(Profiles(sketch.0, s));
                     }
                     if let Some(p) = & $($m)? extent.to {
                         f(Pick(p));
@@ -78,7 +78,7 @@ macro_rules! geometry_walk {
                     }
                 }
                 FeatureKind::Revolve { sketch, profiles, axis, to, .. } => {
-                    f(Profiles(*sketch, profiles));
+                    f(Profiles(sketch.0, profiles));
                     if let AxisRef::Line { origin, dir } = axis {
                         f(Pos(origin));
                         f(Dir(dir));
@@ -89,21 +89,21 @@ macro_rules! geometry_walk {
                 }
                 FeatureKind::SurfaceRevolve { sketch, profiles, axis, .. } => {
                     if let Some(s) = profiles {
-                        f(Profiles(*sketch, s));
+                        f(Profiles(sketch.0, s));
                     }
                     if let AxisRef::Line { origin, dir } = axis {
                         f(Pos(origin));
                         f(Dir(dir));
                     }
                 }
-                FeatureKind::Sweep { sketch, profiles, .. } | FeatureKind::SheetBase { sketch, profiles, .. } => f(Profiles(*sketch, profiles)),
+                FeatureKind::Sweep { sketch, profiles, .. } | FeatureKind::SheetBase { sketch, profiles, .. } => f(Profiles(sketch.0, profiles)),
                 FeatureKind::SurfaceSweep { sketch, profiles, .. } => {
                     if let Some(s) = profiles {
-                        f(Profiles(*sketch, s));
+                        f(Profiles(sketch.0, s));
                     }
                 }
                 FeatureKind::Emboss { sketch, profiles, face, .. } => {
-                    f(Profiles(*sketch, profiles));
+                    f(Profiles(sketch.0, profiles));
                     if let Some(face) = face {
                         f(Pinned(& $($m)? face.at));
                     }
@@ -112,20 +112,20 @@ macro_rules! geometry_walk {
                     // A section that is a point has no profile.
                     for s in sections {
                         if s.point.is_none() {
-                            f(Profiles(s.sketch, & $($m)? s.profiles));
+                            f(Profiles(s.sketch.0, & $($m)? s.profiles));
                         }
                     }
                 }
                 FeatureKind::SurfaceLoft { sections } => {
                     for s in sections {
                         if let Some(p) = & $($m)? s.profiles {
-                            f(Profiles(s.sketch, p));
+                            f(Profiles(s.sketch.0, p));
                         }
                     }
                 }
                 FeatureKind::Patch { sketch, profiles, edges, .. } => {
                     if let Some(sketch) = sketch {
-                        f(Profiles(*sketch, profiles));
+                        f(Profiles(sketch.0, profiles));
                     }
                     for e in edges {
                         f(Pos(e));

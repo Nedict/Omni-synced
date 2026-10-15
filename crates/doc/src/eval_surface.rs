@@ -10,7 +10,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
         FeatureKind::Patch { sketch, profiles, body, edges } => {
             let mut made = Vec::new();
             if let Some(sk) = sketch {
-                let ss = st.sketch(*sk).ok_or_else(|| DocError::Unknown(format!("sketch {sk} (it must come earlier in the timeline)")))?;
+                let ss = st.sketch(sk.0).ok_or_else(|| DocError::Unknown(format!("sketch {sk} (it must come earlier in the timeline)")))?;
                 let regions = solidcraft_sketch::merge_regions(&select_profiles(ss, profiles)?);
                 for r in &regions {
                     made.push(kernel::patch_region(&ss.plane, r)?);
@@ -58,7 +58,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             if tools.is_empty() {
                 return Err(DocError::Invalid("pick the surfaces to thicken".into()));
             }
-            apply_op(st, f, tools, *operation, targets)
+            apply_op(st, f, tools, *operation, &crate::plain(targets))
         }
         FeatureKind::SurfaceTrim { body, plane, tool, keep } => {
             let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
@@ -90,7 +90,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
         FeatureKind::SurfaceExtrude { sketch, profiles, curves, extent } => {
             let ss = sketch_in_feature_frame(
                 doc,
-                st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?,
+                st.sketch(sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?,
                 f.component,
             )?;
             if extent.through_all || extent.taper.is_some() || extent.to.is_some() || extent.from.is_some() {
@@ -107,7 +107,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
         FeatureKind::SurfaceRevolve { sketch, profiles, curves, axis, angle, angle2, symmetric } => {
             let ss = sketch_in_feature_frame(
                 doc,
-                st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?,
+                st.sketch(sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?,
                 f.component,
             )?;
             let (o, d) = revolve_axis(&ss, axis)?;
@@ -157,9 +157,9 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             Ok(())
         }
         FeatureKind::SurfaceSweep { sketch, profiles, curves, path_sketch, path } => {
-            let ss = st.sketch(*sketch).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?;
+            let ss = st.sketch(sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?;
             let ps =
-                st.sketch(*path_sketch).ok_or_else(|| DocError::Unknown(format!("sketch {path_sketch} (it must come earlier in the timeline)")))?;
+                st.sketch(path_sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {path_sketch} (it must come earlier in the timeline)")))?;
             // As Sweep: a 3D path sketch is followed in the feature's frame, the curves with it.
             let profile;
             let ss = if !ps.sketch.wires.is_empty() {
@@ -188,7 +188,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             for sec in sections {
                 let ss = sketch_in_feature_frame(
                     doc,
-                    st.sketch(sec.sketch)
+                    st.sketch(sec.sketch.0)
                         .ok_or_else(|| DocError::Unknown(format!("sketch {} (it must come earlier in the timeline)", sec.sketch)))?,
                     f.component,
                 )?;

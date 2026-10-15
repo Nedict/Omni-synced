@@ -505,20 +505,20 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(K
             }
             let k = Surf::Revolve { angle: angle.to_string(), symmetric: *symmetric, axis: stored };
             let mut ins = inputs(&k);
-            for (inp, items) in ins.iter_mut().zip([sheet_sels(app, *sketch, profiles.as_ref(), curves), pick.into_iter().collect()]) {
+            for (inp, items) in ins.iter_mut().zip([sheet_sels(app, sketch.0, profiles.as_ref(), curves), pick.into_iter().collect()]) {
                 inp.items = items;
             }
             return Some((Kind::Surface(k), ins, extra));
         }
         FeatureKind::SurfaceSweep { sketch, profiles, curves, path, .. } => (
             Surf::Sweep,
-            vec![sheet_sels(app, *sketch, profiles.as_ref(), curves), path.iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect()],
+            vec![sheet_sels(app, sketch.0, profiles.as_ref(), curves), path.iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect()],
         ),
         FeatureKind::SurfaceLoft { sections } => {
-            (Surf::Loft, vec![sections.iter().flat_map(|sec| sheet_sels(app, sec.sketch, sec.profiles.as_ref(), &sec.curves)).collect()])
+            (Surf::Loft, vec![sections.iter().flat_map(|sec| sheet_sels(app, sec.sketch.0, sec.profiles.as_ref(), &sec.curves)).collect()])
         }
         FeatureKind::SurfaceExtrude { sketch, profiles, curves, extent } => {
-            let sels = sheet_sels(app, *sketch, profiles.as_ref(), curves);
+            let sels = sheet_sels(app, sketch.0, profiles.as_ref(), curves);
             let direction = match extent.direction {
                 Direction::Positive => 0,
                 Direction::Symmetric => 1,
@@ -530,8 +530,8 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(K
             let mut sels: Vec<Sel> = edges.iter().filter_map(edge).collect();
             if let Some(sk) = sketch {
                 let st = s.world_state();
-                if let Some(ss) = st.sketch(*sk) {
-                    sels.extend((0..ss.profiles.len()).map(|index| Sel::Profile { sketch: *sk, index }));
+                if let Some(ss) = st.sketch(sk.0) {
+                    sels.extend((0..ss.profiles.len()).map(|index| Sel::Profile { sketch: sk.0, index }));
                 }
             }
             (Surf::Patch, vec![sels])
@@ -542,7 +542,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(K
         ),
         FeatureKind::Unstitch { body, faces } | FeatureKind::ReverseNormal { body, faces } => {
             let sels: Vec<Sel> = if faces.is_empty() {
-                vec![Sel::Body { name: body.clone() }]
+                vec![Sel::Body { name: body.to_string() }]
             } else {
                 faces.iter().filter_map(|p| crate::dialogs::face_sel(s, p.0)).collect()
             };
@@ -550,14 +550,14 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(K
         }
         FeatureKind::Stitch { bodies, tolerance } => (
             Surf::Stitch { tolerance: if tolerance.trim() == "0" { String::new() } else { tolerance.to_string() } },
-            vec![bodies.iter().map(|n| Sel::Body { name: n.clone() }).collect()],
+            vec![bodies.iter().map(|n| Sel::Body { name: n.to_string() }).collect()],
         ),
         FeatureKind::MeshConvert { body, tolerance } => {
-            (Surf::ConvertMesh { tolerance: tolerance.to_string() }, vec![vec![Sel::Body { name: body.clone() }]])
+            (Surf::ConvertMesh { tolerance: tolerance.to_string() }, vec![vec![Sel::Body { name: body.to_string() }]])
         }
         FeatureKind::Thicken { bodies, thickness, symmetric, operation, .. } => (
             Surf::Thicken { thickness: thickness.to_string(), symmetric: *symmetric, operation: op_index(operation) },
-            vec![bodies.iter().map(|n| Sel::Body { name: n.clone() }).collect()],
+            vec![bodies.iter().map(|n| Sel::Body { name: n.to_string() }).collect()],
         ),
         FeatureKind::SurfaceExtend { edges, distance, .. } => {
             (Surf::Extend { distance: distance.to_string() }, vec![edges.iter().filter_map(edge).collect()])
@@ -565,7 +565,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(K
         FeatureKind::SurfaceTrim { body, plane, tool, keep } => (
             Surf::Trim,
             vec![
-                vec![Sel::Body { name: body.clone() }],
+                vec![Sel::Body { name: body.to_string() }],
                 tool_sel(app, plane, tool.as_ref()).into_iter().collect(),
                 crate::dialogs::face_sel(s, keep.0).into_iter().collect(),
             ],

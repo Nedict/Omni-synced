@@ -54,8 +54,8 @@ point_type!(
     Dir
 );
 
-/// The plain points of a list of picks, positions or directions (for the kernel, which takes
-/// `Vec3`s).
-pub fn plain<P: Copy + Into<Vec3>>(ps: &[P]) -> Vec<Vec3> {
-    ps.iter().map(|&p| p.into()).collect()
+/// The plain values of a list of picks, positions, directions or names (for code that takes
+/// `Vec3`s or `String`s).
+pub fn plain<T, P: Clone + Into<T>>(ps: &[P]) -> Vec<T> {
+    ps.iter().map(|p| p.clone().into()).collect()
 }

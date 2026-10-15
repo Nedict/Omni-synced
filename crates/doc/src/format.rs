@@ -1119,7 +1119,7 @@ mod tests {
             .add_feature(
                 FeatureKind::Extrude {
                     thin: None,
-                    sketch,
+                    sketch: crate::SketchId(sketch),
                     profiles: ProfileSel::All,
                     extent: Extent {
                         distance: "10".into(),

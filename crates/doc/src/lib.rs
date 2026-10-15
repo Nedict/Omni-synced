@@ -33,6 +33,7 @@ pub mod metadata;
 pub use metadata::Metadata;
 pub mod motion;
 mod name_lookup;
+mod names;
 pub mod naming;
 mod params;
 pub mod physical_material;
@@ -60,6 +61,7 @@ pub use eval::{
     world_state_reusing,
 };
 pub use expr::Expr;
+pub use names::{BodyName, FeatureName, SketchId};
 pub use params::{ParamRow, ParamUser, cycles};
 pub use points::{Dir, FacePick, Position, plain};
 pub use solidcraft_kernel as kernel;

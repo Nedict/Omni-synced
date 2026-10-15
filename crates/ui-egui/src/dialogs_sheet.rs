@@ -649,13 +649,13 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
     let mut extra = Map::new();
     let (k, items): (Sm, Vec<Sel>) = match kind {
         FeatureKind::SheetBase { sketch, profiles, rule, flip } => {
-            let ps = st.sketch(*sketch).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
+            let ps = st.sketch(sketch.0).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
             let mut f = new_flange(0);
             if let Sm::Flange { flip: fl, rule: r, .. } = &mut f {
                 *fl = *flip;
                 *r = rule_index(rule);
             }
-            (f, ps.into_iter().map(|index| Sel::Profile { sketch: *sketch, index }).collect())
+            (f, ps.into_iter().map(|index| Sel::Profile { sketch: sketch.0, index }).collect())
         }
         FeatureKind::SheetContour { curves, distance, rule, flip, reverse, .. } => {
             let mut f = new_flange(2);
@@ -735,7 +735,9 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
             }
             return Some((Kind::Sheet(k), ins, extra));
         }
-        FeatureKind::SheetUnfold { body, refold } => (Sm::Unfold { refold: *refold }, body.iter().map(|n| Sel::Body { name: n.clone() }).collect()),
+        FeatureKind::SheetUnfold { body, refold } => {
+            (Sm::Unfold { refold: *refold }, body.iter().map(|n| Sel::Body { name: n.to_string() }).collect())
+        }
         FeatureKind::SheetConvert { face, rule, bends, .. } => {
             let (_, mut ins) = start(app, "sheet.convert")?;
             if let Some(i) = ins.first_mut() {

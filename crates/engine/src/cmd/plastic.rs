@@ -1,6 +1,7 @@
 //! Plastic (enclosure) features: Boss, Lip / Groove, Snap Fit and Rest, and plastic rules.
 
 use serde_json::{Value, json};
+use solidcraft_doc::BodyName;
 use solidcraft_doc::FeatureKind;
 use solidcraft_doc::expr::Kind;
 use solidcraft_doc::plastic::PlasticRule;
@@ -168,7 +169,7 @@ fn rest(s: &mut Session, p: &Value) -> Result<Value> {
         height: required(s, p, "height", Kind::Length, cmd)?,
         draft: checked(s, p, "draft", Kind::Angle, cmd)?,
         thickness: checked(s, p, "thickness", Kind::Length, cmd)?,
-        body: str_(p, "body").map(str::to_string),
+        body: str_(p, "body").map(BodyName::from),
     };
     add_feature(s, p, kind)
 }
@@ -215,7 +216,7 @@ fn boss(s: &mut Session, p: &Value) -> Result<Value> {
         rib_thickness: checked(s, p, "rib_thickness", Kind::Length, cmd)?,
         rib_length: checked(s, p, "rib_length", Kind::Length, cmd)?,
         rib_offset: checked(s, p, "rib_offset", Kind::Length, cmd)?,
-        body: str_(p, "body").map(str::to_string),
+        body: str_(p, "body").map(BodyName::from),
     };
     add_feature(s, p, kind)
 }
@@ -240,7 +241,7 @@ fn lip(s: &mut Session, p: &Value) -> Result<Value> {
         groove,
         gap: checked(s, p, "gap", Kind::Length, cmd)?,
         outside: outside || bool_(p, "outside").unwrap_or(false),
-        body: str_(p, "body").map(str::to_string),
+        body: str_(p, "body").map(BodyName::from),
     };
     add_feature(s, p, kind)
 }
@@ -261,7 +262,7 @@ fn snap_fit(s: &mut Session, p: &Value) -> Result<Value> {
         width: required(s, p, "width", Kind::Length, cmd)?,
         catch_depth: required(s, p, "catch_depth", Kind::Length, cmd)?,
         catch_length: required(s, p, "catch_length", Kind::Length, cmd)?,
-        body: str_(p, "body").map(str::to_string),
+        body: str_(p, "body").map(BodyName::from),
     };
     add_feature(s, p, kind)
 }
