@@ -1909,9 +1909,7 @@ fn fillet_an_open_curved_edge() {
     // Pappus: the corner's cross-section r²(1 − π/4), its centroid 0.2234 r in from the wall.
     let r = 2.0;
     let want = r * r * (1.0 - PI / 4.0) * (10.0 - r * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI))) * PI;
-    // Tangent mitres approximate the exact arc/line offset intersection; the measured
-    // residual is below 0.5% while still rejecting the original 19% shortfall.
-    assert!(rel(removed, want) < 5e-3, "{removed} vs {want}");
+    assert!(rel(removed, want) < 1e-3, "{removed} vs {want}");
 }
 
 fn mixed_arc_and_line_prism() -> Body {
@@ -1923,6 +1921,97 @@ fn mixed_arc_and_line_prism() -> Body {
         ],
     };
     extrude(&Plane::XY, &[Region2 { outer: d, holes: vec![] }], 0.0, 15.0).unwrap().pop().unwrap()
+}
+
+#[test]
+fn fillet_smooth_arc_and_line_loop_keeps_exact_removal() {
+    use solidcraft_geom::Seg2;
+    // A stadium: four tangent joints, none of which should use a sharp-corner mitre.
+    let outline = Loop2 {
+        segs: vec![
+            Seg2::Line { a: Vec2::new(-10.0, -10.0), b: Vec2::new(10.0, -10.0) },
+            Seg2::Arc { center: Vec2::new(10.0, 0.0), radius: 10.0, start: -PI / 2.0, sweep: PI },
+            Seg2::Line { a: Vec2::new(10.0, 10.0), b: Vec2::new(-10.0, 10.0) },
+            Seg2::Arc { center: Vec2::new(-10.0, 0.0), radius: 10.0, start: PI / 2.0, sweep: PI },
+        ],
+    };
+    let body = extrude(&Plane::XY, &[Region2 { outer: outline, holes: vec![] }], 0.0, 15.0).unwrap().pop().unwrap();
+    let blended =
+        fillet(&body, &[Vec3::new(0.0, -10.0, 15.0), Vec3::new(20.0, 0.0, 15.0), Vec3::new(0.0, 10.0, 15.0), Vec3::new(-20.0, 0.0, 15.0)], 0.5)
+            .unwrap();
+    assert!(blended.validity().is_empty(), "{:?}", blended.validity());
+    let r = 0.5;
+    let area = r * r * (1.0 - PI / 4.0);
+    let centroid = r * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI));
+    let want = area * (40.0 + 2.0 * PI * (10.0 - centroid));
+    let fine = |b: &Body| b.tessellate_with(1e-4, true).unwrap().measure().volume;
+    let removed = fine(&body) - fine(&blended);
+    assert!(rel(removed, want) < 1e-3, "{removed} vs {want}");
+}
+
+#[test]
+fn fillet_sharp_arc_and_arc_loop() {
+    use solidcraft_geom::Seg2;
+    // The intersection of two radius-10 disks whose centres are 10 mm apart.
+    let outline = Loop2 {
+        segs: vec![
+            Seg2::Arc { center: Vec2::new(-5.0, 0.0), radius: 10.0, start: -PI / 3.0, sweep: 2.0 * PI / 3.0 },
+            Seg2::Arc { center: Vec2::new(5.0, 0.0), radius: 10.0, start: 2.0 * PI / 3.0, sweep: 2.0 * PI / 3.0 },
+        ],
+    };
+    let body = extrude(&Plane::XY, &[Region2 { outer: outline, holes: vec![] }], 0.0, 15.0).unwrap().pop().unwrap();
+    let blended = fillet(&body, &[Vec3::new(5.0, 0.0, 15.0), Vec3::new(-5.0, 0.0, 15.0)], 0.5).unwrap();
+    assert!(blended.validity().is_empty(), "{:?}", blended.validity());
+    let mesh = blended.tessellate_with(1e-4, true).unwrap();
+    for p in &mesh.positions {
+        assert!((p.x - 5.0).hypot(p.y) <= 10.0 + 1e-3 && (p.x + 5.0).hypot(p.y) <= 10.0 + 1e-3, "outside the lens: {p:?}");
+    }
+    let area = |rho: f64| 2.0 * rho * rho * (5.0 / rho).acos() - 10.0 * (rho * rho - 25.0).sqrt();
+    let dt = (PI / 2.0) / 8192.0;
+    let want: f64 = (0..8192)
+        .map(|i| {
+            let theta = (f64::from(i) + 0.5) * dt;
+            (area(10.0) - area(10.0 - 0.5 * (1.0 - theta.cos()))) * 0.5 * theta.cos() * dt
+        })
+        .sum();
+    let removed = body.tessellate_with(1e-4, true).unwrap().measure().volume - mesh.measure().volume;
+    assert!(rel(removed, want) < 1e-3, "{removed} vs {want}");
+}
+
+#[test]
+fn fillet_tabbed_plate_outer_loop_and_partial_selection_after_hole() {
+    use solidcraft_geom::Seg2;
+    // Public-safe approximation of #485: a radius-25 plate, a rounded tab and a hole.
+    let theta = (4.0_f64 / 25.0).acos();
+    let y = (625.0_f64 - 16.0).sqrt();
+    let top = 29.1111;
+    let outline = Loop2 {
+        segs: vec![
+            Seg2::Arc { center: Vec2::ZERO, radius: 25.0, start: PI - theta, sweep: PI + 2.0 * theta },
+            Seg2::Line { a: Vec2::new(4.0, y), b: Vec2::new(4.0, top) },
+            Seg2::Arc { center: Vec2::new(0.0, top), radius: 4.0, start: 0.0, sweep: PI },
+            Seg2::Line { a: Vec2::new(-4.0, top), b: Vec2::new(-4.0, y) },
+        ],
+    };
+    let body =
+        extrude(&Plane::XY, &[Region2 { outer: outline, holes: vec![Loop2::circle(Vec2::new(0.0, top), 1.5)] }], 0.0, 2.0).unwrap().pop().unwrap();
+    let inner = fillet(&body, &[Vec3::new(1.5, top, 2.0)], 0.5).unwrap();
+    let edges = [
+        Vec3::new(-25.0, 0.0, 2.0),
+        Vec3::new(25.0, 0.0, 2.0),
+        Vec3::new(4.0, (y + top) / 2.0, 2.0),
+        Vec3::new(0.0, top + 4.0, 2.0),
+        Vec3::new(-4.0, (y + top) / 2.0, 2.0),
+    ];
+    for picks in [&edges[..], &edges[2..], &edges[3..4]] {
+        let blended = fillet(&inner, picks, 0.5).unwrap();
+        assert!(blended.validity().is_empty(), "{:?}", blended.validity());
+        let mesh = blended.display_mesh(0.01).unwrap();
+        for p in &mesh.positions {
+            let inside = p.x.hypot(p.y) <= 25.001 || (p.x.abs() <= 4.001 && p.y >= y - 0.001 && p.y <= top) || p.x.hypot(p.y - top) <= 4.001;
+            assert!(inside && p.z >= -0.001 && p.z <= 2.001, "outside the plate: {p:?}");
+        }
+    }
 }
 
 fn partial_mixed_run_prism() -> Body {
@@ -1967,20 +2056,26 @@ fn fillet_mixed_arc_and_line_perimeter_edges() {
     let body = mixed_arc_and_line_prism();
     let blended = fillet(&body, &[Vec3::new(0.0, 10.0, 15.0), Vec3::new(5.0, 0.0, 15.0)], 0.5).unwrap();
     assert!(blended.validity().is_empty(), "{:?}", blended.validity());
-    let mesh = blended.tessellate_with(1e-4, true).unwrap();
-    let bounds = mesh.bounds();
-    let tol = 1e-3;
-    assert!(
-        bounds.min.x >= -10.0 - tol
-            && bounds.max.x <= 10.0 + tol
-            && bounds.min.y >= -tol
-            && bounds.max.y <= 10.0 + tol
-            && bounds.min.z >= -tol
-            && bounds.max.z <= 15.0 + tol,
-        "{bounds:?}"
-    );
-    for p in &mesh.positions {
-        assert!(p.x.hypot(p.y) <= 10.0 + tol, "outside the source semicircle: {p:?}");
+    let display_tol = (blended.size() * 1e-3).max(1e-3);
+    for mesh in [
+        blended.tessellate_with(1e-4, true).unwrap(),
+        blended.display_mesh_angular(display_tol, crate::DISPLAY_ANGLE).unwrap(),
+        blended.reference_display_mesh_angular(display_tol, crate::DISPLAY_ANGLE).unwrap(),
+    ] {
+        let bounds = mesh.bounds();
+        let tol = 1e-3;
+        assert!(
+            bounds.min.x >= -10.0 - tol
+                && bounds.max.x <= 10.0 + tol
+                && bounds.min.y >= -tol
+                && bounds.max.y <= 10.0 + tol
+                && bounds.min.z >= -tol
+                && bounds.max.z <= 15.0 + tol,
+            "{bounds:?}"
+        );
+        for p in &mesh.positions {
+            assert!(p.x.hypot(p.y) <= 10.0 + tol, "outside the source semicircle: {p:?}");
+        }
     }
 }
 
@@ -2019,13 +2114,15 @@ fn fillet_mixed_arc_and_line_removed_volume_converges() {
             // Equal chord tolerances reduce (not necessarily cancel) the error from the
             // unchanged walls. The convergence and exact-source checks below guard this.
             let removed = source - volume;
-            // Tangent mitres leave 0.34% geometric error at r/R=0.05; resolution changes
-            // removal by <0.1%. A 0.5% budget covers both, but rejects the old 19% deficit.
-            assert!(rel(removed, want) < 5e-3, "r={r}, tol={tol}: removed {removed}, expected {want}");
+            assert!(rel(removed, want) < 1e-3, "r={r}, tol={tol}: removed {removed}, expected {want}");
             if let Some(coarser) = previous {
                 assert!(rel(removed, coarser) < 1e-3, "r={r}: removal has not converged: {coarser} -> {removed}");
                 let exact_removed = source_exact - volume;
-                assert!(rel(exact_removed, want) < 5e-3, "r={r}: exact-source removal {exact_removed}, expected {want}");
+                // The source's inscribed semicylinder loses at most pi*R*H*tol.
+                // Do not charge its chord error to the much smaller fillet volume.
+                let source_error = (source_exact - source).abs();
+                assert!(source_error < PI * 10.0 * 15.0 * tol, "source chord error {source_error}");
+                assert!((exact_removed - want).abs() < source_error + want * 1e-3, "r={r}: exact-source removal {exact_removed}, expected {want}");
             }
             previous = Some(removed);
         }
@@ -2033,7 +2130,36 @@ fn fillet_mixed_arc_and_line_removed_volume_converges() {
 }
 
 #[test]
-fn fillet_mixed_arc_and_line_mitre_preserves_section_radius() {
+fn loop_chamfer_mixed_arc_and_line_uses_offset_intersections() {
+    let body = mixed_arc_and_line_prism();
+    // Exercise the shared loop builder; public chamfer prefers boolean cutters first.
+    let solid = body.deep_copy();
+    let top = solid
+        .face_iter()
+        .find(|face| face.edge_iter().all(|edge| (edge.front().point().z - 15.0).abs() < 1e-9 && (edge.back().point().z - 15.0).abs() < 1e-9))
+        .unwrap();
+    let edges: Vec<_> = top.edge_iter().map(|edge| edge.id()).collect();
+    let (result, history) = crate::loopblend::loop_blend(&solid, &edges, body.size(), 0.5, false).unwrap().unwrap();
+    let blended = crate::record::rebuilt(result, &[&solid], &history).unwrap();
+    assert!(blended.validity().is_empty(), "{:?}", blended.validity());
+    // A chamfer has a linear inset through its height instead of a circular section.
+    let step = 0.5 / 8192.0;
+    let want: f64 = (0..8192)
+        .map(|i| {
+            let d = (f64::from(i) + 0.5) * step;
+            let rho = 10.0 - d;
+            let remaining = rho * rho * (d / rho).acos() - d * (rho * rho - d * d).sqrt();
+            (PI * 50.0 - remaining) * step
+        })
+        .sum();
+    // The cone's triangulation needs this chord tolerance for the small volume difference.
+    let fine = |b: &Body| b.tessellate_with(2.5e-5, true).unwrap().measure().volume;
+    let removed = fine(&body) - fine(&blended);
+    assert!(rel(removed, want) < 1e-3, "{removed} vs {want}");
+}
+
+#[test]
+fn fillet_mixed_arc_and_line_joint_preserves_both_section_radii() {
     use truck_modeling::{BoundedCurve, ParametricCurve};
 
     let r = 0.5;
@@ -2054,13 +2180,14 @@ fn fillet_mixed_arc_and_line_mitre_preserves_section_radius() {
             }
             let curve = edge.oriented_curve();
             let (lo, hi) = curve.range_tuple();
-            for i in 0..=32 {
-                let p = crate::body::from_p3(curve.subs(lo + (hi - lo) * f64::from(i) / 32.0));
-                // The tangent mitre satisfies |x|+y=R. Viewed normal to the straight
-                // edge, its section must remain a radius-r circle, independent of meshing.
-                assert!((p.x.abs() + p.y - 10.0).abs() < 1e-8, "off mitre: {p:?}");
+            for i in 0..=257 {
+                let p = crate::body::from_p3(curve.subs(lo + (hi - lo) * f64::from(i) / 257.0));
+                // The joint lies on both the cylindrical line blend and the toroidal
+                // arc blend, not their tangent-plane approximation.
                 let radius2 = (p.y - r).powi(2) + (p.z - (15.0 - r)).powi(2);
-                assert!((radius2 - r * r).abs() < 1e-8, "distorted section at {p:?}: radius squared {radius2}");
+                assert!((radius2 - r * r).abs() < 1e-7, "distorted line section at {p:?}: radius squared {radius2}");
+                let radius2 = (p.x.hypot(p.y) - (10.0 - r)).powi(2) + (p.z - (15.0 - r)).powi(2);
+                assert!((radius2 - r * r).abs() < 1e-7, "distorted arc section at {p:?}: radius squared {radius2}");
             }
         }
         assert_eq!(mitres.len(), 2, "both arc/line corners must be checked");

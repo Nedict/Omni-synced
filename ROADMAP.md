@@ -281,8 +281,9 @@ PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
   connected equal-distance chamfers also trim each other across unequal sloped rim walls;
   whole smooth loops of a planar face, picked whole or by one edge (tangent
   chain), including circles and walls at any angle (boss bases and tops, bores, pocket floors,
-  plate outlines), loops with sharp corners between straight or mixed arc/line edges (the blends
-  meet in mitres, with the mixed D-rim removal checked within 0.5% of analytic offset slices), runs of
+  plate outlines), loops with sharp corners between straight or mixed arc/line edges (straight
+  blends meet in mitres; perpendicular curved walls use offset intersections, with D-rim removal
+  checked within 0.1% of analytic offset slices), runs of
   neighbouring edges along a planar face's loop (two top edges of a box: mitred, ending square;
   with the edge between them too, the corner becomes a sphere octant),
   rounded corners rounded again (sphere octants, tori at concave corners); every edge of a
