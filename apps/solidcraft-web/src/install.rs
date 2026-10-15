@@ -16,7 +16,7 @@ fn offer() -> Option<js_sys::Object> {
     js_sys::Reflect::get(&window, &OFFER.into()).ok()?.dyn_into().ok()
 }
 
-/// Show the browser's install prompt (from the Install button's click, so the page may).
+/// Show the browser's install prompt (from the File menu click, so the page may).
 fn prompt() {
     let Some(offer) = offer() else { return };
     if let Some(window) = web_sys::window() {
@@ -44,7 +44,7 @@ fn running_installed(window: &web_sys::Window) -> bool {
     standalone || home_screen
 }
 
-/// The host service for the Install button; the app bar is drawn again whenever the browser
+/// The host service for File ▸ Install app…; the UI is drawn again whenever the browser
 /// makes or withdraws its offer (even with nothing else happening).
 pub fn service(ctx: &egui::Context) -> InstallApp {
     // Safari's steps, decided once: the browser and the way the page runs don't change.

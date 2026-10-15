@@ -42,7 +42,7 @@
       addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
     }
     // Install as an app: the browser's offer can come before the app runs, so it is kept here for
-    // the app's Install button (src/install.rs). Installed, the browser makes no more offers.
+    // the app's File ▸ Install app… item (src/install.rs). Installed, the browser makes no more offers.
     addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); window.solidcraftInstall = e; });
     addEventListener("appinstalled", () => { window.solidcraftInstall = null; });
   </script>

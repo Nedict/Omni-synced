@@ -307,15 +307,11 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 d.insert_temp(egui::Id::new("sc_help_anchor"), at);
             });
         }
-        // Buttons for something on offer go leftwards from Report a bug, in the space up to the
-        // bar's own buttons on the left (File, Undo and Redo, which end before `x`).
-        let span = |right: f32| Rect::from_min_max(pos2(x, report.top()), pos2(right, report.bottom()));
-        // A newer release: its Update button, left of Report a bug (`update`).
-        let update = crate::update::button(app, ui, span(report.left() - 6.0), report_label);
-        let left = update.map_or(report.left(), |u| u.left());
-        // The browser can install SolidCraft as an app: Install, left of those (`install`).
-        let install = crate::install::button(app, ui, span(left - 6.0), report_label);
-        let tabs_end = install.map_or(left, |i| i.left()) - 8.0;
+        // A newer release: its Update button, left of Report a bug (`update`), in the space up to
+        // the bar's own buttons on the left (File, Undo and Redo, which end before `x`).
+        let span = Rect::from_min_max(pos2(x, report.top()), pos2(report.left() - 6.0, report.bottom()));
+        let update = crate::update::button(app, ui, span, report_label);
+        let tabs_end = update.map_or(report.left(), |u| u.left()) - 8.0;
         // Narrow title bars can fit only part of the tab strip. Its hit regions must not
         // extend into the persistent report and window controls.
         let tabs_rect = Rect::from_min_max(pos2(tabs_start.min(tabs_end), r.top()), pos2(tabs_end, r.bottom()));
@@ -466,6 +462,16 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     close = true;
                 }
                 ui.separator();
+                // The browser can install SolidCraft as an app (`install`): only while it offers to.
+                if let Some(offer) = crate::install::offered(app)
+                    && ui
+                        .add(egui::Button::new(crate::i18n::tr("install.menu")).min_size(vec2(180.0, 22.0)))
+                        .on_hover_text(crate::i18n::tr("install.button_tip"))
+                        .clicked()
+                {
+                    crate::install::start(app, offer);
+                    close = true;
+                }
                 if item(ui, &format!("{}…", app.tr("ui.preferences")), "") {
                     app.prefs_window.open = true;
                     close = true;

@@ -1,13 +1,11 @@
 //! Install as an app (the browser build). A browser that can install the web app (a PWA: its own
-//! window and launcher icon, working offline) offers it to the page; while it does, an Install
-//! button sits in the application bar beside Report a bug, and clicking it shows the browser's
-//! own install prompt. An installed app, or the app running installed, gets no offer, so the
-//! button is gone. The host keeps the offer (`Services::install_app`); desktop builds have none.
+//! window and launcher icon, working offline) offers it to the page; while it does, the File menu
+//! has Install app…, which shows the browser's own install prompt. An installed app, or the app
+//! running installed, gets no offer, so the item is gone. The host keeps the offer
+//! (`Services::install_app`); desktop builds have none.
 //!
 //! Safari installs web apps too (Add to Home Screen on iPhone and iPad, Add to Dock on a Mac) but
-//! offers no prompt a page can show and can't tell the page whether the app is installed. There
-//! the button opens a window with the steps, which can hide the button for good (Preferences ▸
-//! General brings it back).
+//! offers no prompt a page can show. There the item opens a window with the steps.
 
 use egui::RichText;
 
@@ -70,27 +68,22 @@ pub fn safari_steps(user_agent: &str, vendor: &str, touch_points: i32) -> Option
     (user_agent.contains("Macintosh") && major >= 17).then_some(Steps::Dock)
 }
 
-/// What is on offer now, unless the user hid Safari's steps.
-fn offered(app: &SolveApp) -> Option<Offer> {
-    let offer = app.services.install_app.as_ref().and_then(|i| (i.offer)())?;
-    (offer == Offer::Prompt || !app.preferences.install_steps_hidden).then_some(offer)
+/// What the browser offers now (None: nothing, so File has no Install app… item).
+pub fn offered(app: &SolveApp) -> Option<Offer> {
+    app.services.install_app.as_ref().and_then(|i| (i.offer)())
 }
 
-/// The application bar's Install button, at the right of `span`; returns its rect (None: not shown).
-pub fn button(app: &mut SolveApp, ui: &mut egui::Ui, span: egui::Rect, labeled: bool) -> Option<egui::Rect> {
-    let offer = offered(app)?;
-    let (rect, response) = crate::toolbar::offer_button(ui, span, labeled, crate::i18n::tr("install.button"), "install_app", "titlebar:install")?;
-    if response.on_hover_text(crate::i18n::tr("install.button_tip")).clicked() {
-        match offer {
-            Offer::Prompt => {
-                if let Some(install) = &app.services.install_app {
-                    (install.prompt)();
-                }
+/// File ▸ Install app…: the browser's own prompt (browsers only show it right after a click), or
+/// Safari's steps.
+pub fn start(app: &mut SolveApp, offer: Offer) {
+    match offer {
+        Offer::Prompt => {
+            if let Some(install) = &app.services.install_app {
+                (install.prompt)();
             }
-            Offer::Steps(steps) => app.install_steps = if app.install_steps.is_some() { None } else { Some(steps) },
         }
+        Offer::Steps(steps) => app.install_steps = Some(steps),
     }
-    Some(rect)
 }
 
 /// The window with Safari's steps, while open.
@@ -99,7 +92,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let t = Tokens::get();
     let (lines, after) = steps.messages();
     let mut open = true;
-    let mut hide = None;
+    let mut done = false;
     crate::frame::window(ctx, crate::i18n::tr("install.title"), crate::frame::Width::Normal)
         .id(egui::Id::new("sc_install_steps"))
         .open(&mut open)
@@ -113,35 +106,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             ui.add_space(4.0);
             ui.add(egui::Label::new(RichText::new(crate::i18n::tr(after)).color(t.text_dim)).wrap());
             ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                if ui.button(crate::i18n::tr("install.done")).clicked() {
-                    hide = Some(false);
-                }
-                if ui.button(crate::i18n::tr("install.hide")).on_hover_text(crate::i18n::tr("install.hide_tip")).clicked() {
-                    hide = Some(true);
-                }
-            });
+            if ui.button(crate::i18n::tr("install.done")).clicked() {
+                done = true;
+            }
         });
-    if hide == Some(true) {
-        app.preferences.install_steps_hidden = true;
-    }
-    if !open || hide.is_some() {
+    if !open || done {
         app.install_steps = None;
     }
-}
-
-/// Preferences ▸ General: show or hide the Install button where Safari's steps are on offer.
-pub fn prefs_rows(app: &mut SolveApp, ui: &mut egui::Ui) {
-    let steps = app.services.install_app.as_ref().and_then(|i| (i.offer)());
-    if !matches!(steps, Some(Offer::Steps(_))) {
-        return;
-    }
-    ui.label(crate::i18n::tr("install.prefs_label"));
-    let mut show = !app.preferences.install_steps_hidden;
-    if ui.checkbox(&mut show, crate::i18n::tr("install.prefs_show")).changed() {
-        app.preferences.install_steps_hidden = !show;
-    }
-    ui.end_row();
 }
 
 #[cfg(test)]
@@ -154,128 +125,65 @@ mod tests {
     use super::*;
     use crate::scenario::{Harness, handle_at};
 
-    const HANDLE: &str = "titlebar:install";
+    const ITEM: &str = "install.menu";
 
     fn host(h: &mut Harness, offer: Rc<Cell<Option<Offer>>>, prompts: Rc<Cell<u32>>) {
         h.app.services.install_app =
             Some(InstallApp { offer: Box::new(move || offer.get()), prompt: Box::new(move || prompts.set(prompts.get() + 1)) });
     }
 
-    fn click_install(h: &mut Harness) {
-        let at = handle_at(HANDLE).map(|p| [p.x, p.y]);
-        assert!(at.is_some(), "the Install button is shown");
-        assert_eq!(h.step(&json!({ "click": at })), Ok(()));
+    /// Open the File menu and look for Install app….
+    fn file_menu_item(h: &mut Harness) -> bool {
+        h.ctx.data_mut(|d| d.insert_temp(egui::Id::new("sc_file_menu"), true));
+        h.frames(2);
+        h.widget(crate::i18n::tr(ITEM)).is_some()
     }
 
     #[test]
-    fn install_shows_while_offered_and_prompts_on_click() {
+    fn install_is_in_the_file_menu_only_while_offered_and_prompts_on_click() {
         let offer = Rc::new(Cell::new(None));
         let prompts = Rc::new(Cell::new(0));
         let mut h = Harness::new();
         host(&mut h, offer.clone(), prompts.clone());
-        h.frames(2);
-        assert!(handle_at(HANDLE).is_none(), "no offer, no button");
+        assert!(!file_menu_item(&mut h), "no offer, no menu item");
 
         offer.set(Some(Offer::Prompt));
-        h.frames(2);
-        let report = handle_at("titlebar:report").map_or(0.0, |p| p.x);
-        assert!(handle_at(HANDLE).is_some_and(|p| p.x < report), "left of Report a bug");
-        click_install(&mut h);
+        assert!(file_menu_item(&mut h), "offered: File has Install app…");
+        assert_eq!(h.step(&json!({ "widget": crate::i18n::tr(ITEM) })), Ok(()));
         assert_eq!(prompts.get(), 1, "a click shows the browser's prompt");
         assert_eq!(h.app.install_steps, None, "no steps window for a browser with a prompt");
 
         offer.set(None);
-        h.frames(2);
-        assert!(handle_at(HANDLE).is_none(), "installed: the button is gone");
+        assert!(!file_menu_item(&mut h), "installed: the item is gone");
     }
 
     #[test]
-    fn safari_shows_its_steps_until_hidden() {
-        let offer = Rc::new(Cell::new(Some(Offer::Steps(Steps::Dock))));
+    fn install_is_not_in_the_application_bar() {
+        let mut h = Harness::new();
+        host(&mut h, Rc::new(Cell::new(Some(Offer::Prompt))), Rc::new(Cell::new(0)));
+        h.frames(2);
+        assert!(handle_at("titlebar:install").is_none());
+        assert!(h.widget(crate::i18n::tr(ITEM)).is_none(), "only in the File menu");
+    }
+
+    #[test]
+    fn safari_shows_its_steps() {
         let prompts = Rc::new(Cell::new(0));
         let mut h = Harness::new();
-        host(&mut h, offer, prompts.clone());
-        h.frames(2);
-        click_install(&mut h);
+        host(&mut h, Rc::new(Cell::new(Some(Offer::Steps(Steps::Dock)))), prompts.clone());
+        assert!(file_menu_item(&mut h));
+        assert_eq!(h.step(&json!({ "widget": crate::i18n::tr(ITEM) })), Ok(()));
         assert_eq!(h.app.install_steps, Some(Steps::Dock), "a click opens the steps");
         assert_eq!(prompts.get(), 0, "Safari has no prompt");
+        h.frames(2);
         assert_eq!(h.step(&json!({ "widget": crate::i18n::tr("install.done") })), Ok(()));
         assert_eq!(h.app.install_steps, None, "Done closes the steps");
-        assert!(handle_at(HANDLE).is_some(), "and the button stays");
-
-        click_install(&mut h);
-        assert_eq!(h.step(&json!({ "widget": crate::i18n::tr("install.hide") })), Ok(()));
-        h.frames(2);
-        assert!(h.app.preferences.install_steps_hidden, "Don't show again is remembered");
-        assert_eq!(h.app.install_steps, None);
-        assert!(handle_at(HANDLE).is_none(), "the button is hidden");
-
-        h.app.preferences.install_steps_hidden = false;
-        h.frames(2);
-        assert!(handle_at(HANDLE).is_some(), "the preference brings it back");
     }
 
     #[test]
-    fn preferences_bring_safaris_button_back() {
+    fn no_install_item_without_the_host_service() {
         let mut h = Harness::new();
-        host(&mut h, Rc::new(Cell::new(Some(Offer::Steps(Steps::HomeScreen)))), Rc::new(Cell::new(0)));
-        h.app.preferences.install_steps_hidden = true;
-        h.call("ui.prefs", json!({ "open": "General" }));
-        let page = crate::scenario::rect_of("prefs:window").map(|r| r.center());
-        assert!(page.is_some(), "Preferences is open");
-        let [x, y] = page.map_or([0.0, 0.0], |p| [p.x, p.y]);
-        h.call("ui.scroll", json!({ "x": x, "y": y, "delta": -100 }));
-        h.frames(3);
-        assert_eq!(h.step(&json!({ "widget": crate::i18n::tr("install.prefs_show") })), Ok(()));
-        h.call("ui.prefs", json!({ "button": "ok" }));
-        h.frames(2);
-        assert!(!h.app.preferences.install_steps_hidden);
-        assert!(handle_at(HANDLE).is_some(), "the button is back");
-    }
-
-    #[test]
-    fn no_preferences_row_where_the_browser_prompts() {
-        let mut h = Harness::new();
-        host(&mut h, Rc::new(Cell::new(Some(Offer::Prompt))), Rc::new(Cell::new(0)));
-        h.call("ui.prefs", json!({ "open": "General" }));
-        assert!(h.widget(crate::i18n::tr("install.prefs_show")).is_none());
-    }
-
-    #[test]
-    fn install_never_covers_the_bars_other_buttons() {
-        let mut h = Harness::new();
-        host(&mut h, Rc::new(Cell::new(Some(Offer::Prompt))), Rc::new(Cell::new(0)));
-        for width in [320.0, 340.0, 360.0, 400.0, 639.0, 640.0, 900.0, 1600.0] {
-            h.call("ui.resize", json!({ "width": width, "height": 700 }));
-            h.frames(2);
-            // Only a bar too narrow for even the icon leaves it out; phones are 360 px or wider.
-            let Some(install) = crate::scenario::rect_of(HANDLE) else {
-                assert!(width < 360.0, "{width} px: room for Install, but it isn't shown");
-                continue;
-            };
-            for other in ["appbar:file", "appbar:undo", "appbar:redo", "appbar:help", "titlebar:report"] {
-                // The bar draws Undo and Redo only when it has room for them.
-                let Some(o) = crate::scenario::rect_of(other) else { continue };
-                let shared = install.intersect(o);
-                assert!(shared.width() <= 0.0 || shared.height() <= 0.0, "{width} px: Install ({install:?}) covers {other} ({o:?})");
-            }
-        }
-    }
-
-    #[test]
-    fn hiding_safaris_steps_never_hides_a_browser_prompt() {
-        let mut h = Harness::new();
-        host(&mut h, Rc::new(Cell::new(Some(Offer::Prompt))), Rc::new(Cell::new(0)));
-        h.app.preferences.install_steps_hidden = true;
-        h.frames(2);
-        assert!(handle_at(HANDLE).is_some());
-    }
-
-    #[test]
-    fn no_install_button_without_the_host_service() {
-        let mut h = Harness::new();
-        h.frames(2);
-        assert!(handle_at(HANDLE).is_none());
+        assert!(!file_menu_item(&mut h));
     }
 
     #[test]

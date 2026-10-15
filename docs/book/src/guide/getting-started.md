@@ -85,13 +85,11 @@ launch gets the latest published build (the browser downloads it once when it ch
 when the network doesn't answer within a few seconds, or when a new build can't be downloaded
 whole, the kept copy starts (and the download carries on for the next launch).
 
-Browsers that can install web apps show an **Install app** button in the application bar, beside
-Report a bug: it installs SolidCraft as an app with its own window and launcher icon, working
-offline like the page. In Chrome, Edge and other Chromium browsers it shows the browser's install
-prompt, and once SolidCraft is installed the button is gone. Safari has no such prompt, so the
-button shows its steps instead: Share ▸ Add to Home Screen on iPhone and iPad, File ▸ Add to Dock
-on a Mac (Safari 17 or later). Safari can't tell the page whether SolidCraft is already installed:
-**Don't show again** hides the button, and Preferences ▸ General brings it back.
+Browsers that can install web apps add **Install app…** to the File menu: it installs SolidCraft
+as an app with its own window and launcher icon, working offline like the page. In Chrome, Edge
+and other Chromium browsers it shows the browser's install prompt, and once SolidCraft is
+installed the item is gone. Safari has no such prompt, so the item shows its steps instead:
+Share › Add to Home Screen on iPhone and iPad, File › Add to Dock on a Mac (Safari 17 or later).
 
 To build it yourself:
 

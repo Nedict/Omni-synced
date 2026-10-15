@@ -271,13 +271,6 @@ pub(crate) fn paint_with(p: &Painter, r: Rect, name: &str, ink: Color32, fill: C
             pen.line(&[(7.5, 10.0), (12.0, 14.5), (16.5, 10.0)], ink);
             pen.line(&[(4.0, 15.0), (4.0, 20.0), (20.0, 20.0), (20.0, 15.0)], ink);
         }
-        // Install as an app: an arrow down into an application window.
-        "install_app" => {
-            pen.closed(&[(3.0, 4.0), (21.0, 4.0), (21.0, 19.5), (3.0, 19.5)], ink);
-            pen.line(&[(3.0, 8.0), (21.0, 8.0)], ink);
-            pen.line(&[(12.0, 10.5), (12.0, 17.0)], ink);
-            pen.line(&[(9.0, 14.0), (12.0, 17.0), (15.0, 14.0)], ink);
-        }
         // Help: a question mark in a ring.
         "help" => {
             pen.circle(12.0, 12.0, 9.0, Color32::TRANSPARENT, ink);
