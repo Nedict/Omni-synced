@@ -297,7 +297,14 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let report_text = crate::i18n::tr("ui.report_a_bug");
         let report_font = FontId::proportional(13.0);
         let label_width = ui.painter().layout_no_wrap(report_text.to_string(), report_font.clone(), t.app_bar_text).size().x;
-        let (report, report_label) = report_rect(r, captions, tabs_start, label_width);
+        // The agent chat's small button sits left of Help once the chat is turned on in
+        // Preferences (docs/agent-chat.md); Report a bug moves over to make room.
+        let chat = app.preferences.agent_chat_enabled && cfg!(not(target_arch = "wasm32"));
+        let chat_room = if chat { 30.0 } else { 0.0 };
+        let (report, report_label) = report_rect(r, captions + chat_room, tabs_start, label_width);
+        if chat && click(ui, help_x(r, captions) - 30.0, "agent_chat", &crate::agent_chat::panel_tip(), true) {
+            crate::agent_chat::toggle(app);
+        }
         // Help, on the right between Report a bug and Preferences.
         if click(ui, help_x(r, captions), "help", app.tr("ui.help"), true) {
             app.help.menu = !app.help.menu;

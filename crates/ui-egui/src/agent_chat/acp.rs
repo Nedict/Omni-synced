@@ -69,7 +69,14 @@ impl McpBridge {
 pub const SYSTEM_NOTE: &str = "You are running inside SolidCraft, a parametric 3D CAD application, as the user's assistant. \
 The open design is reachable through the `solidcraft` MCP server: use its tools (list_commands, batch, execute, inspect_design, \
 measure, screenshot, set_parameter, undo) to read and change the design the user is looking at, and verify with measure or \
-inspect_design. Keep answers short.";
+inspect_design. Prefer one `batch` over many small calls. Saving, opening or exporting files waits for the user's approval in \
+the chat, and each message allows a limited number of changes. Don't use shell or file tools: work through the SolidCraft tools. \
+Keep answers short.";
+
+/// The Claude Code adapter's own tools that reach the computer rather than the design: turned off
+/// for the session (`_meta.claudeCode.options.disallowedTools`), so it works through SolidCraft's.
+pub const CLAUDE_DISALLOWED_TOOLS: &[&str] =
+    &["Bash", "BashOutput", "KillShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "WebFetch", "WebSearch", "Task"];
 
 pub fn session_new_params(cwd: &std::path::Path, bridge: Option<&McpBridge>) -> Value {
     let servers: Vec<Value> = bridge.map(McpBridge::to_json).into_iter().collect();
@@ -80,13 +87,19 @@ pub fn session_new_params(cwd: &std::path::Path, bridge: Option<&McpBridge>) -> 
             "systemPrompt": {"append": SYSTEM_NOTE},
             // Hosts may opt a session out of "bypass permissions" (the Claude adapter reads it):
             // every tool call the agent asks about reaches the panel.
-            "claudeCode": {"options": {"allowDangerouslySkipPermissions": false}},
+            // Its own shell and file tools are off: the agent works through SolidCraft's tools.
+            "claudeCode": {"options": {"allowDangerouslySkipPermissions": false, "disallowedTools": CLAUDE_DISALLOWED_TOOLS}},
         },
     })
 }
 
-pub fn prompt_params(session: &str, text: &str) -> Value {
-    json!({"sessionId": session, "prompt": [{"type": "text", "text": text}]})
+pub fn prompt_params(session: &str, parts: &[super::backend::PromptPart]) -> Value {
+    json!({"sessionId": session, "prompt": super::backend::content_blocks(parts)})
+}
+
+/// Whether the agent takes pictures in a message (`agentCapabilities.promptCapabilities.image`).
+pub fn takes_images(init: &Value) -> bool {
+    init.pointer("/agentCapabilities/promptCapabilities/image").and_then(Value::as_bool).unwrap_or(false)
 }
 
 /// One way to log in that the agent offers (`authMethods` in its `initialize` reply).
@@ -400,7 +413,8 @@ mod tests {
         assert_eq!(s["name"], "solidcraft");
         assert_eq!(s["args"], json!(["mcp", "--connect", "127.0.0.1:41234"]));
         let text = p.to_string();
-        assert!(!text.contains("allow-any-path") && !text.contains("TOKEN"), "{text}");
+        assert!(!text.contains("allow-any-path") && !text.contains("TOKEN") && !text.contains("token"), "{text}");
+        assert!(p["_meta"]["claudeCode"]["options"]["disallowedTools"].as_array().is_some_and(|t| t.iter().any(|x| x == "Bash")));
         assert_eq!(session_new_params(std::path::Path::new("/tmp"), None)["mcpServers"], json!([]));
     }
 
