@@ -266,6 +266,7 @@ fn scene_key(app: &SolveApp) -> u64 {
     app.ui.show_grid.hash(&mut h);
     app.ui.visual_style.hash(&mut h);
     app.ui.ground_shadow.hash(&mut h);
+    solidcraft_engine::doc::display_quality::current().hash(&mut h);
     // The section plane (its cut outlines are part of the model scene).
     section_plane(app).map(|(o, n)| [o.x, o.y, o.z, n.x, n.y, n.z].map(f64::to_bits)).hash(&mut h);
     app.cam.up.hash(&mut h);
@@ -347,7 +348,7 @@ fn drawn_plan(
 }
 
 /// The mesh whose triangles the model scene shows for `b`'s faces: the plan's (evaluated on the
-/// CPU, the same triangles the GPU draws) or the reference mesh. A face highlighted over the model
+/// CPU, the same triangles the GPU draws) or [`drawn_mesh`]. A face highlighted over the model
 /// must use the same triangles: another triangulation of the same face fights it at equal depth
 /// and shimmers.
 fn shown_mesh(
@@ -362,7 +363,16 @@ fn shown_mesh(
         .then(|| drawn_plan(app, b, true))
         .flatten()
         .and_then(|_| b.plan_mesh())
-        .unwrap_or_else(|| b.mesh())
+        .unwrap_or_else(|| drawn_mesh(b))
+}
+
+/// The mesh the model scene builds `b` from on the CPU (its edges always, its faces when they
+/// are not drawn from the plan on the GPU): the reference mesh at Normal display quality, else
+/// the plan's mesh at the chosen quality (finer or coarser faces and edges alike), falling back
+/// to the reference mesh when the body has no plan.
+fn drawn_mesh(b: &solidcraft_engine::doc::ModelBody) -> std::sync::Arc<solidcraft_engine::geom::Mesh> {
+    use solidcraft_engine::doc::display_quality::{DisplayQuality, current};
+    if current() == DisplayQuality::Normal { b.mesh() } else { b.plan_mesh().unwrap_or_else(|| b.mesh()) }
 }
 
 /// A model scene block kept by the viewport: its bytes and the meshes they were built from
@@ -513,7 +523,7 @@ fn build_scene(app: &SolveApp) -> GpuScene {
                 .collect();
             sc.planned.push(crate::gpu::PlannedBody { plan, face_colors });
         }
-        let body = BodyDraw { mesh: b.mesh(), col, faded, opacity, face_looks, on_gpu };
+        let body = BodyDraw { mesh: drawn_mesh(b), col, faded, opacity, face_looks, on_gpu };
         let key = body.key(shaded, edges, hidden_edges, edge_col, hidden_col);
         key.hash(&mut run_key);
         run.push(body);

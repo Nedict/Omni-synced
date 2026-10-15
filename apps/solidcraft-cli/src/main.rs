@@ -4,7 +4,7 @@
 //! solidcraft-cli run <script.json|design.solidcraft|part.step|mesh.3mf> [--in design|part.step|mesh.3mf] [--out FILE]... [--save FILE] [--quiet] [--results] [--json-out FILE] [--allow-errors]
 //! solidcraft-cli eval <script.json|design.solidcraft|part.step> [--json-out FILE] (alias: inspect) measurements as JSON
 //! solidcraft-cli script <design.solidcraft> [--out script.json]     the design's history as a command script
-//! solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only] loading timings as JSON lines
+//! solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only] [--display LEVEL [--edit NAME EXPR]] loading timings as JSON lines
 //! solidcraft-cli bench-agent [--scale F] [--save F] [--script-out F] a ~1,300-body design built command by command, timed
 //! solidcraft-cli snapshot <script|design> --out shot.png [--width W] [--height H] [--view iso|front|top|…]
 //! solidcraft-cli exec <command> [json-params]                 run one command on an empty design
@@ -45,7 +45,7 @@ const USAGE: &str = "usage:
        as plain UTF-8: a shell's > can re-encode it, e.g. Windows PowerShell adds a byte-order mark)
   solidcraft-cli script <design.solidcraft|script.json> [--out script.json]
       (the design's history as a command script that eval and run replay)
-  solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only]
+  solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only] [--display LEVEL [--edit NAME EXPR]]
   solidcraft-cli bench-agent [--scale F] [--save design.solidcraft] [--script-out script.json]
   solidcraft-cli snapshot <script|design> --out shot.png [--width W] [--height H] [--view iso|front|back|top|bottom|left|right]
   solidcraft-cli render <script|design> --out image.png [--setup NAME] [--width W] [--height H] [--transparent] [--overwrite] [--timeout SECONDS]
@@ -500,5 +500,37 @@ pub(crate) fn cmd_bench_open(args: &[String]) -> Result<(), String> {
     st.warm_meshes(|| true);
     let triangles: usize = st.bodies.iter().map(|b| b.mesh().triangles.len()).sum();
     println!("{}", json!({"step": "mesh", "ms": t.elapsed().as_secs_f64() * 1000.0, "bodies": st.bodies.len(), "triangles": triangles}));
+    // `--display LEVEL`: the display plans the viewport draws at that display quality, made as
+    // the GPU viewport makes them; `--edit NAME EXPR` then changes a parameter and times the
+    // evaluation and the plans of the bodies it changed.
+    let flag = |name: &str| args.iter().position(|a| a == name);
+    let Some(level) = flag("--display").and_then(|i| args.get(i + 1)) else { return Ok(()) };
+    let q = solidcraft_engine::doc::display_quality::DisplayQuality::parse(level).ok_or("--display: coarse, normal, fine or ultra")?;
+    let plans = |st: &solidcraft_engine::doc::ModelState| {
+        let t = std::time::Instant::now();
+        solidcraft_engine::kernel::for_each_on_threads(&st.bodies, 16, |b| {
+            let _ = b.plan_mesh_at(q);
+        });
+        let triangles: usize = st.bodies.iter().filter_map(|b| b.plan_mesh_at(q)).map(|m| m.triangles.len()).sum();
+        (t.elapsed().as_secs_f64() * 1000.0, triangles)
+    };
+    let (ms, triangles) = plans(&st);
+    println!("{}", json!({"step": "display", "quality": q.id(), "ms": ms, "triangles": triangles}));
+    if let Some(i) = flag("--edit") {
+        let (Some(name), Some(expr)) = (args.get(i + 1), args.get(i + 2)) else { return Err("--edit NAME EXPR".into()) };
+        let mut s = s;
+        let t = std::time::Instant::now();
+        s.execute("parameters.change", &json!({"name": name, "expression": expr})).map_err(|e| e.to_string())?;
+        let eval_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let st = s.world_state();
+        let t = std::time::Instant::now();
+        st.warm_meshes(|| true);
+        let mesh_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let (ms, triangles) = plans(&st);
+        println!(
+            "{}",
+            json!({"step": "edit", "quality": q.id(), "evaluate_ms": eval_ms, "mesh_ms": mesh_ms, "display_ms": ms, "triangles": triangles})
+        );
+    }
     Ok(())
 }
