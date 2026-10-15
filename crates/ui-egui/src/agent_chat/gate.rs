@@ -151,11 +151,13 @@ fn is_scratch(params: &Value) -> bool {
         return false;
     }
     let ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("png"));
-    ok && params
-        .get("allow_paths")
-        .and_then(Value::as_array)
-        .is_some_and(|roots| roots.iter().filter_map(Value::as_str).map(std::path::Path::new)
-            .any(|r| r.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("solidcraft-mcp-")) && path.starts_with(r)))
+    ok && params.get("allow_paths").and_then(Value::as_array).is_some_and(|roots| {
+        roots
+            .iter()
+            .filter_map(Value::as_str)
+            .map(std::path::Path::new)
+            .any(|r| r.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("solidcraft-mcp-")) && path.starts_with(r))
+    })
 }
 
 #[cfg(test)]

@@ -95,7 +95,7 @@ fn test_line(ui: &mut egui::Ui, t: &Option<&Test>) {
             ui.label(RichText::new(tr("ui.ai_testing")).color(tk.text_dim).size(11.0));
         }
         Some(Test::Done(Ok(m))) => {
-            ui.label(RichText::new(format!("✓ {m}")).color(tk.accent).size(11.0));
+            ui.label(RichText::new(m.clone()).color(tk.accent).size(11.0));
         }
         Some(Test::Done(Err(e))) => {
             ui.add(egui::Label::new(RichText::new(e).color(tk.error).size(11.0)).wrap());
@@ -160,7 +160,8 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     note(ui, tr("ui.ai_modes_scope"));
     // "Always allow" answers.
-    let remembered: Vec<(String, Vec<String>)> = app.preferences.agent_always_allow.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let remembered: Vec<(String, Vec<String>)> =
+        app.preferences.agent_always_allow.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
     ui.add_space(4.0);
     ui.label(RichText::new(tr("ui.ai_always_allowed")).strong());
     if remembered.is_empty() {
@@ -320,6 +321,8 @@ pub fn dialog(app: &mut SolveApp, ctx: &egui::Context) {
         .collapsible(false)
         .resizable(false)
         .default_width(460.0)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_pos(ctx.content_rect().center())
         .open(&mut open)
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
@@ -328,12 +331,22 @@ pub fn dialog(app: &mut SolveApp, ctx: &egui::Context) {
                 test.poll();
             }
             ui.horizontal(|ui| {
-                for (k, label) in [(AddKind::Installed, "ui.ai_add_installed"), (AddKind::Custom, "ui.ai_add_custom"), (AddKind::Api, "ui.ai_add_api")] {
+                for (k, label) in
+                    [(AddKind::Installed, "ui.ai_add_installed"), (AddKind::Custom, "ui.ai_add_custom"), (AddKind::Api, "ui.ai_add_api")]
+                {
                     let r = ui.selectable_value(&mut s.kind, k, tr(label));
                     crate::scenario::publish_handle(&format!("ai_add:{label}"), r.rect.center());
                     if r.clicked() {
                         s.error = None;
                         s.test = None;
+                        s.command.clear();
+                        s.name.clear();
+                        if k == AddKind::Api
+                            && let Some((name, url, _)) = agents::API_PRESETS.get(s.preset)
+                        {
+                            s.name = name.to_string();
+                            s.base_url = url.to_string();
+                        }
                     }
                 }
             });
@@ -410,7 +423,10 @@ pub fn dialog(app: &mut SolveApp, ctx: &egui::Context) {
                     ui.add(egui::TextEdit::singleline(&mut s.model).hint_text("qwen3:14b").desired_width(300.0));
                     ui.end_row();
                     ui.label(tr("ui.ai_key"));
-                    ui.add_enabled(has_keychain, egui::TextEdit::singleline(&mut s.key).password(true).hint_text(tr("ui.ai_key_hint")).desired_width(300.0));
+                    ui.add_enabled(
+                        has_keychain,
+                        egui::TextEdit::singleline(&mut s.key).password(true).hint_text(tr("ui.ai_key_hint")).desired_width(300.0),
+                    );
                     ui.end_row();
                     ui.label("");
                     let note = if has_keychain { tr("ui.ai_key_note") } else { tr("ui.ai_no_keychain") };

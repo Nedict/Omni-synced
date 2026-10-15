@@ -940,7 +940,14 @@ fn ai_button(app: &mut SolveApp, ui: &mut egui::Ui, at: Rect) {
     if open || resp.hovered() {
         painter.rect_filled(at, 4.0, if open { t.accent_soft } else { t.hover });
     }
-    icons::paint(painter, Rect::from_center_size(pos2(at.center().x, at.top() + 24.0), vec2(26.0, 26.0)), "agent_chat", t.icon, t.icon_fill, t.accent);
+    icons::paint(
+        painter,
+        Rect::from_center_size(pos2(at.center().x, at.top() + 24.0), vec2(26.0, 26.0)),
+        "agent_chat",
+        t.icon,
+        t.icon_fill,
+        t.accent,
+    );
     painter.text(pos2(at.center().x, at.top() + 52.0), Align2::CENTER_CENTER, crate::i18n::tr("ui.ai_button"), FontId::proportional(11.0), t.text);
     let waiting = app.agent_chat.waiting();
     if waiting > 0 {

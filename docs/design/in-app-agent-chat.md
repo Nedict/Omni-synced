@@ -1,6 +1,6 @@
 # In-app agent chat over ACP
 
-Status: desktop only, behind Settings → AI → *Show AI features* (on by default; off hides and
+Status: desktop only, behind Preferences → AI → *Show AI features* (on by default; off hides and
 stops everything). The user guide is
 [docs/agent-chat.md](../agent-chat.md). This note records what I found about the Agent Client
 Protocol and the agents that speak it, how the chat is built, and what's still open.
@@ -92,7 +92,7 @@ Code: `crates/ui-egui/src/agent_chat/`.
 | `acp.rs`, `acp_client.rs` | The protocol messages, and `AcpBackend`, the first backend. |
 | `api_client.rs` | `ApiBackend`: an OpenAI-compatible endpoint, with SolidCraft running the tool loop. |
 | `agents.rs` | The agents (found and added), permission modes, "always allow" answers. |
-| `settings.rs` | Settings → AI and the Add agent dialog. |
+| `settings.rs` | Preferences → AI and the Add agent dialog. |
 | `process.rs` | The agent as a child process in a process group of its own; stopping it ends the group. |
 | `discover.rs` | Which agents are installed, their versions, whether they look signed in. |
 | `gate.rs` | What the agent's tool requests may do: run, wait for Allow/Deny, or never. |
@@ -140,7 +140,7 @@ Requests from that endpoint don't go to the app directly. `pump_tools` passes ea
   turn's first change. The request waits (the endpoint is patient) until the user answers;
   Cancel/Stop declines everything waiting, and after four minutes it is declined (the MCP
   server stops waiting at five).
-- **Permission modes** (Settings → AI, global with a per-agent override): *Ask every time*
+- **Permission modes** (Preferences → AI, global with a per-agent override): *Ask every time*
   (default) turns every change into a question too; *Auto-allow model edits* is the list above;
   *Allow everything* runs what would ask (never what is refused). "Always allow" on a card
   remembers the command per agent. The agent's own ACP permission questions about SolidCraft's
@@ -190,7 +190,7 @@ reported as *key set*, `CLAUDE_CONFIG_DIR` and `CODEX_HOME` respected, and OpenC
 ### Panel
 
 Opened from the **AI** button at the toolbar row's right end (the panels give it room and spill
-into » as usual; Settings → AI → *Show button in toolbar* hides it), Ctrl+Shift+A and the View
+into » as usual; Preferences → AI → *Show button in toolbar* hides it), Ctrl+Shift+A and the View
 settings menu. Docked left or right (dragging the header across the window, or Preferences), resizable, folded
 to a 30 px strip with Minimise (state dot and a count of open questions), closed with ×. Side,
 width, fold and the per-turn limit are preferences, not design data. Ctrl+Shift+A is reserved in the shortcut editor and works from the chat's text box too. The

@@ -231,10 +231,18 @@ impl Worker {
                     .unwrap_or(json!({}));
                 let title = tool_title(&name, &args);
                 let tool_id = format!("{id}-{}", self.next);
-                self.emit(Event::Tool { id: tool_id.clone(), title: Some(title), kind: Some(String::new()), status: Some(ToolStatus::InProgress), output: None });
+                self.emit(Event::Tool {
+                    id: tool_id.clone(),
+                    title: Some(title),
+                    kind: Some(String::new()),
+                    status: Some(ToolStatus::InProgress),
+                    output: None,
+                });
                 let (text, failed) = if self.cancel.load(Ordering::Relaxed) {
                     ("cancelled by the user".to_string(), true)
-                } else if HIDDEN_TOOLS.contains(&name.as_str()) || !self.tools.iter().any(|t| t.pointer("/function/name").and_then(Value::as_str) == Some(name.as_str())) {
+                } else if HIDDEN_TOOLS.contains(&name.as_str())
+                    || !self.tools.iter().any(|t| t.pointer("/function/name").and_then(Value::as_str) == Some(name.as_str()))
+                {
                     (format!("unknown tool `{name}`"), true)
                 } else {
                     match self.mcp_call("tools/call", json!({"name": name, "arguments": args})) {
@@ -284,14 +292,19 @@ impl Worker {
 
 /// An endpoint's refusal as people read it.
 pub fn http_error(status: u16, body: &Value) -> String {
-    let detail = body.pointer("/error/message").or_else(|| body.get("error")).and_then(Value::as_str).unwrap_or("").chars().take(300).collect::<String>();
+    let detail =
+        body.pointer("/error/message").or_else(|| body.get("error")).and_then(Value::as_str).unwrap_or("").chars().take(300).collect::<String>();
     let what = match status {
         401 | 403 => crate::i18n::tr("ui.ai_http_key"),
         404 => crate::i18n::tr("ui.ai_http_not_found"),
         429 => crate::i18n::tr("ui.ai_http_busy"),
         _ => "",
     };
-    format!("HTTP {status}{}{}", if what.is_empty() { String::new() } else { format!(": {what}") }, if detail.is_empty() { String::new() } else { format!(" ({detail})") })
+    format!(
+        "HTTP {status}{}{}",
+        if what.is_empty() { String::new() } else { format!(": {what}") },
+        if detail.is_empty() { String::new() } else { format!(" ({detail})") }
+    )
 }
 
 /// The message for what the user typed (and the view, as a data URL).
@@ -369,7 +382,11 @@ fn tool_title(name: &str, args: &Value) -> String {
     match name {
         "execute" => format!("execute: {}", args.get("command").and_then(Value::as_str).unwrap_or("?")),
         "batch" => {
-            let ids: Vec<&str> = args.get("commands").and_then(Value::as_array).map(|c| c.iter().filter_map(|s| s.get("command").and_then(Value::as_str)).take(4).collect()).unwrap_or_default();
+            let ids: Vec<&str> = args
+                .get("commands")
+                .and_then(Value::as_array)
+                .map(|c| c.iter().filter_map(|s| s.get("command").and_then(Value::as_str)).take(4).collect())
+                .unwrap_or_default();
             format!("batch: {}", ids.join(", "))
         }
         _ => name.to_string(),
@@ -391,12 +408,10 @@ pub fn test_endpoint(http: &HttpFn, base_url: &str, key: Option<&str>, model: &s
     if status != 200 {
         return Err(http_error(status, &v));
     }
-    let ids: Vec<&str> = v.get("data").and_then(Value::as_array).map(|a| a.iter().filter_map(|m| m.get("id").and_then(Value::as_str)).collect()).unwrap_or_default();
+    let ids: Vec<&str> =
+        v.get("data").and_then(Value::as_array).map(|a| a.iter().filter_map(|m| m.get("id").and_then(Value::as_str)).collect()).unwrap_or_default();
     let found = model.is_empty() || ids.contains(&model);
-    Ok(crate::i18n::format(
-        if found { "ui.ai_test_ok" } else { "ui.ai_test_no_model" },
-        &[("count", &ids.len().to_string()), ("model", model)],
-    ))
+    Ok(crate::i18n::format(if found { "ui.ai_test_ok" } else { "ui.ai_test_no_model" }, &[("count", &ids.len().to_string()), ("model", model)]))
 }
 
 #[cfg(test)]
