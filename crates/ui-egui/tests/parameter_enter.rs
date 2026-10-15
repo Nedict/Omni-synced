@@ -124,3 +124,16 @@ fn parameter_rename_arrow_keys_move_cursor_and_keep_editing() {
     let result = h.app.session.execute("parameters.list", &json!({})).unwrap();
     assert!(result["parameters"].as_array().unwrap().iter().any(|p| p["name"] == "plate_width"));
 }
+#[test]
+fn parameter_add_resets_expression_for_next_row() {
+    let mut h = open();
+    let initial = h.app.params.as_ref().unwrap().new_expr.clone();
+    fill(&mut h, "name", "width");
+    fill(&mut h, "expression", "25 mm");
+    enter(&mut h, false);
+    let result = h.app.session.execute("parameters.list", &json!({})).unwrap();
+    assert!(result["parameters"].as_array().unwrap().iter().any(|p| p["name"] == "width" && p["expression"] == "25 mm"));
+    let d = h.app.params.as_ref().unwrap();
+    assert!(d.new_name.is_empty());
+    assert_eq!(d.new_expr, initial);
+}
