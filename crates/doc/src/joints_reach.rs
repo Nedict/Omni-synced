@@ -12,7 +12,7 @@ use super::{
     Assembly, Held, MAX_LOOP_VALUES, MAX_LOOP_WORK, MAX_LOOPS, Solution, Tree, Values, apply_links, build, closure_gaps, jacobian, joint_values,
     largest, least_squares, limit_bounds, link_chains, loop_groups, loop_scale, unknowns,
 };
-use crate::{Document, ModelState, apply_point, apply_vector};
+use crate::{Document, ModelState, apply_point, apply_vector, mat_mul};
 
 /// How close counts as reached: mm for the point, degrees for the axis.
 pub const REACH_TOL: f64 = 1e-4;
@@ -126,9 +126,18 @@ pub fn reach(doc: &Document, st: &ModelState, r: &Reach) -> Result<Reached, Stri
     let scale = loop_scale(tree, &around, &vals);
     let bounds = limit_bounds(tree, &vars);
     let x0: Vec<f64> = vars.iter().map(|(id, i)| vals.get(id).and_then(|q| q.get(*i)).copied().unwrap_or(0.0)).collect();
-    // A distance steps by a share of the chain's size or of the way to the target, whichever is
-    // longer (one slider on its own has no size).
-    let span = tree.world(r.occurrence, &vals).map_or(scale, |t| scale.max(apply_point(&t, r.point).dist(r.to)));
+    // A distance steps by a share of the chain's size, of the way to the target or of the point's
+    // reach from its joints, whichever is longest (one slider on its own has no size, and a part
+    // turning about a joint far from its point moves that far).
+    let point = tree.world(r.occurrence, &vals).map(|t| apply_point(&t, r.point));
+    let lever = path
+        .iter()
+        .filter_map(|id| {
+            let (j, (fa, _)) = (tree.joints.get(id)?, tree.frames.get(id)?);
+            Some(apply_point(&mat_mul(&tree.world(j.a.occurrence, &vals)?, fa), Vec3::ZERO).dist(point?))
+        })
+        .fold(0.0, f64::max);
+    let span = point.map_or(scale, |p| scale.max(p.dist(r.to)).max(lever));
     let cap: Vec<f64> = vars
         .iter()
         .map(|(id, i)| if tree.joints.get(id).is_some_and(|j| j.kind.is_angle(*i)) { STEP_ANGLE.to_radians() } else { STEP_SHARE * span })

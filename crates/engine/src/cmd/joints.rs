@@ -631,11 +631,13 @@ fn reach(s: &mut Session, p: &Value) -> Result<Value> {
     }
     out["reached"] = json!(there);
     let name = |id: u64| s.doc.assembly.joints.iter().find(|j| j.id == id);
+    // As joint.list gives them: with what motion links set.
+    let effective = joints::joint_values(&s.doc.assembly);
     out["values"] = reached
         .values
         .keys()
         .filter_map(|id| name(*id))
-        .map(|j| json!({"joint": j.id, "name": j.name, "values": named_values(j, &j.values)}))
+        .map(|j| json!({"joint": j.id, "name": j.name, "values": named_values(j, effective.get(&j.id).unwrap_or(&j.values))}))
         .collect();
     out["moved"] = json!(super::motion::moved(&before, &super::motion::positions(s)).next().is_some());
     out["stopped_by_limit"] = if reached.limits.is_empty() {

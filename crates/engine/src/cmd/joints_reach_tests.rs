@@ -211,6 +211,24 @@ fn a_loop_geared_up_from_the_chain_holds_it() {
     assert!(value(&mut s, "Shoulder").abs() < 1e-6, "{r}");
 }
 
+/// A planar joint far from the point turns it and slides the long way round, and the answer
+/// gives the values as joint.list does.
+#[test]
+fn a_planar_joint_far_from_the_point_turns_and_slides() {
+    let mut s = Session::default();
+    part(&mut s, "Base", [-1.0, -1.0, -1.0]);
+    part(&mut s, "Puck", [99.0, -1.0, 2.0]);
+    let base = occ(&s, "Base");
+    run(&mut s, "occurrence.ground", json!({"occurrence": base, "grounded": true}));
+    pin(&mut s, "planar", "Table", "Base", "Puck", Vec3::ZERO, Vec3::Z);
+    let r = reach(&mut s, "Puck", Vec3::new(100.0, 0.0, 0.0), json!({"point": [100, 0, 0], "z": [0, 1, 0], "axis": [1, 0, 0]}));
+    assert_eq!(r["reached"], true, "{r}");
+    let l = run(&mut s, "joint.list", json!({"quiet": true}));
+    let listed = l["joints"].as_array().and_then(|js| js.iter().find(|j| j["name"] == "Table")).map(|j| j["values"].clone());
+    assert_eq!(Some(r["values"][0]["values"].clone()), listed, "{r}");
+    assert!((r["values"][0]["values"][2]["value"].as_f64().unwrap_or(f64::NAN) - 90.0).abs() < 1e-6, "{r}");
+}
+
 /// A slider on its own (a chain with no size) still travels the whole way.
 #[test]
 fn a_lone_slider_travels_all_the_way() {
