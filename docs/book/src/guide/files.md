@@ -16,21 +16,16 @@ Opening a STEP or IGES file creates a design with the file's bodies as a base fe
 inserting one adds them to the current design. Later features build on them. Mesh bodies render,
 measure, move and export, but solid features need B-rep bodies.
 
-For closed mechanical meshes with a constant cross-section, use **Mesh → Modify →
-Convert Mesh**. Select the mesh body and set the fitting tolerance. The conversion
-rebuilds planar faces and circular through-walls, replacing the mesh with a solid
-that accepts solid modeling operations. The imported triangles remain embedded
-upstream: changing their scale, undoing the conversion or reopening the design
-rebuilds the result through the timeline. Double-click the conversion to edit its
-tolerance or source body.
+**File → Save as mesh…** (also on the Mesh tab under Modify, and in the right-click menu of a
+body) saves the selected bodies as STL, 3MF or 3MF with face tags (below). With **Send to slicer** ticked, it writes the file to
+a temporary folder and opens it in the chosen slicer instead of asking for a file name. The slicer
+list shows the slicers found on the computer with their icons; **Custom…** adds any other program
+to the top of the list (kept between runs; hover an entry you added and press Delete to remove it).
 
-The tolerance bounds circular reconstruction against the original chords. Coarse
-polygons remain polygons when rounding would exceed it. Open/nonmanifold meshes,
-tapers, stepped parts and organic scans are refused by this first reconstruction
-method; it does not silently substitute a faceted solid. Conversion currently
-accepts at most 50,000 triangles and a bounded number of boundary segments.
+Closed mechanical meshes with a constant cross-section can be rebuilt as solids with the
+`mesh.convert` command (command palette, scripts and the control channel).
 
-**File → Export 3MF with Face Tags** (`file.export` with `format: "3mf-tagged"`) writes an
+**File → Save as mesh…** with the format **3MF with face tags** (`file.export` or `file.save_mesh` with `format: "3mf-tagged"`) writes an
 ordinary 3MF in which every triangle also names the B-rep face it lies on and every coordinate
 is the tessellation's own double-precision value. Meshing and analysis tools can use the tags to
 keep a model's faces (for loads, boundary conditions or feature edges); other 3MF readers ignore
@@ -73,7 +68,7 @@ is available. Missing or incompatible pictures use the usual thumbnail generatio
 The default `cache: false` omits the portable thumbnail too.
 The repository's `docs/design-container.md` describes limits and encoding details.
 
-Current designs use format 21, including design properties, named render setups, thin extrudes, sheet metal perforation fields, associative editable sketch patterns, editable associative offset-distance dimensions, the style of sketch text (bold, italic, alignment, spacing and the curve it follows), face anchors on a piece of a face by its own name, sheet metal rims and bend ends, bend edges for Convert to Sheet Metal, the tear corner relief of sheet metal rules, the names of projected edges, physical materials defined in the design, the font of sketch text, sheet metal corner relief shapes, sketch face anchors on cylinder caps, sketch axis
+Current designs use format 21, including design properties, named render setups, opaque PBR looks, thin extrudes, sheet metal perforation fields, associative editable sketch patterns, editable associative offset-distance dimensions, the style of sketch text (bold, italic, alignment, spacing and the curve it follows), face anchors on a piece of a face by its own name, sheet metal rims and bend ends, bend edges for Convert to Sheet Metal, the tear corner relief of sheet metal rules, the names of projected edges, physical materials defined in the design, the font of sketch text, sheet metal corner relief shapes, sketch face anchors on cylinder caps, sketch axis
 links, persistent
 names from exact face history, exact planar shell-face anchors, persistent analytic offset boundary roles and
 association profile references, durable sketch face anchors, periodic fit splines and versioned

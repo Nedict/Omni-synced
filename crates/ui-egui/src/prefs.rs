@@ -30,6 +30,7 @@ use crate::viewport::NavMode;
 
 pub const UNITS: [&str; 5] = ["mm", "cm", "m", "in", "ft"];
 pub const OPENSCAD_NAV: &str = "openscad";
+pub const TOUCHPAD_NAV: &str = "touchpad";
 /// A mouse button that can drag the camera.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavButton {
@@ -93,7 +94,7 @@ use NavButton::{Left, Middle, Right};
 use NavMode::{Orbit, Pan, Zoom};
 
 /// The mouse mappings. The first is the default.
-pub const NAV_PRESETS: [NavPreset; 6] = [
+pub const NAV_PRESETS: [NavPreset; 7] = [
     NavPreset {
         id: "fusion",
         label: "Fusion",
@@ -159,7 +160,39 @@ pub const NAV_PRESETS: [NavPreset; 6] = [
             bind(Middle, NavKeys::NONE, Pan),
         ],
     },
+    NavPreset {
+        id: TOUCHPAD_NAV,
+        label: "Touchpad",
+        help: "Hold Shift and move the pointer to pan; hold Alt/Option and move it to orbit. No mouse button is needed. Vertical scroll zooms.",
+        reverse_zoom: false,
+        bindings: &[bind(Middle, NavKeys::NONE, Pan), bind(Right, NavKeys::NONE, Orbit)],
+    },
 ];
+
+impl NavPreset {
+    /// Button-free motion has exact modifiers, unlike the additive drag bindings.
+    pub fn motion_mode(&self, mods: Modifiers) -> Option<NavMode> {
+        if self.id != TOUCHPAD_NAV || mods.ctrl || mods.command || mods.mac_cmd {
+            return None;
+        }
+        match (mods.shift, mods.alt) {
+            (true, false) => Some(Pan),
+            (false, true) => Some(Orbit),
+            _ => None,
+        }
+    }
+
+    fn translated_label(&self) -> &str {
+        if self.id == TOUCHPAD_NAV { crate::i18n::tr("nav.touchpad.label") } else { crate::i18n::tr_label(self.label) }
+    }
+}
+
+impl Prefs {
+    /// Touchpad scroll zooms without overwriting the user's preference for other presets.
+    pub fn trackpad_pans(&self) -> bool {
+        self.nav != TOUCHPAD_NAV && self.trackpad_pan
+    }
+}
 
 /// The preset with this id (the default for an unknown one).
 pub fn nav_preset(id: &str) -> &'static NavPreset {
@@ -172,6 +205,8 @@ pub const PAGE_DESIGN: usize = 3;
 pub const PAGE_GRAPHICS: usize = 4;
 pub const THEMES: [(&str, &str); 3] = [("dark", "Dark"), ("light", "Light"), ("system", "System")];
 pub const MSAA: [u32; 4] = [1, 2, 4, 8];
+/// Supersampling factors (#1288): off, 1.5× and 2× the viewport's pixels each way.
+pub const SUPERSAMPLING: [f32; 3] = [1.0, 1.5, 2.0];
 
 /// Original view navigators, independent of the mouse navigation preset.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,6 +250,14 @@ pub struct Prefs {
     pub space_mouse_speed: f32,
     /// Anti-aliasing samples (applies on restart).
     pub msaa: u32,
+    /// How finely the viewport tessellates curved faces and edges: `coarse`, `normal`, `fine` or
+    /// `ultra` (#1287). Only the display plan the viewport draws; never the design or exports.
+    pub display_quality: String,
+    /// Supersampling (#1288): the view drawn at this many times its pixels each way and filtered
+    /// down (1, 1.5 or 2; 1 is off).
+    pub supersampling: f32,
+    /// Supersample only while the view holds still (full speed while orbiting).
+    pub supersampling_adaptive: bool,
     /// Decimals shown for lengths and angles.
     pub length_decimals: u8,
     pub angle_decimals: u8,
@@ -252,6 +295,12 @@ pub struct Prefs {
     pub check_updates: bool,
     /// When the last update check ran, and the versions skipped or put off (`update::Memo`).
     pub update: crate::update::Memo,
+    /// Save as mesh: the last format (`stl` or `3mf`), whether it was sent to a slicer, which one
+    /// (an installed slicer's id or a program path), and the programs the user added (newest first).
+    pub save_mesh_format: String,
+    pub save_mesh_send: bool,
+    pub save_mesh_slicer: String,
+    pub custom_slicers: Vec<String>,
 }
 
 /// What a middle-button double-click in the view does.
@@ -294,6 +343,9 @@ impl Default for Prefs {
             space_mouse_enabled: true,
             space_mouse_speed: 1.0,
             msaa: 4,
+            display_quality: "normal".into(),
+            supersampling: 1.0,
+            supersampling_adaptive: true,
             length_decimals: 2,
             angle_decimals: 1,
             theme: "dark".into(),
@@ -313,6 +365,10 @@ impl Default for Prefs {
             color_vision: crate::theme::ColorVision::Off,
             check_updates: true,
             update: crate::update::Memo::default(),
+            save_mesh_format: "stl".into(),
+            save_mesh_send: false,
+            save_mesh_slicer: String::new(),
+            custom_slicers: Vec::new(),
         }
     }
 }
@@ -434,6 +490,9 @@ fn defaults(app: &mut SolveApp, page: usize) {
         PAGE_GRAPHICS => {
             let msaa = p.msaa != d.msaa;
             p.msaa = d.msaa;
+            p.display_quality = d.display_quality;
+            p.supersampling = d.supersampling;
+            p.supersampling_adaptive = d.supersampling_adaptive;
             p.color_vision = d.color_vision;
             app.ui.visual_style = 0;
             app.ui.show_grid = true;
@@ -451,6 +510,10 @@ fn defaults(app: &mut SolveApp, page: usize) {
 /// Settings that follow the preferences every frame: the theme when it follows the system, and
 /// the interface scale.
 pub fn apply(app: &mut SolveApp, ctx: &egui::Context) {
+    // The viewport's display quality (an unknown saved value draws at Normal).
+    solidcraft_engine::doc::display_quality::set_current(
+        solidcraft_engine::doc::display_quality::DisplayQuality::parse(&app.preferences.display_quality).unwrap_or_default(),
+    );
     // The view's up axis follows the preference (set in the dialog, by ui.prefs or loaded).
     if app.prefs_window.applied_up.as_deref() != Some(app.preferences.up_axis.as_str()) {
         up_axis_changed(app);
@@ -483,6 +546,8 @@ pub fn apply(app: &mut SolveApp, ctx: &egui::Context) {
 }
 
 /// A new, empty design takes the preferred units (not an undo step, not a change to save).
+/// Callers: a launch with no file, New on a design that is already empty, `file.new`, and the
+/// blank design left when the last tab closes. A design that already has features is unchanged.
 pub fn apply_new_design(app: &mut SolveApp) {
     if app.session.doc.features.is_empty() && app.session.doc.units != app.preferences.default_units {
         let saved = !app.session.is_dirty();
@@ -542,7 +607,7 @@ pub fn orbit(app: &mut SolveApp, rect: egui::Rect, dx: f64, dy: f64, press: Opti
 
 /// The model point under a screen position. Over empty space: the centre of the visible bodies
 /// and sketches (what Fit frames), or the view's centre when nothing is visible.
-fn pivot_under(app: &SolveApp, proj: &crate::viewport::Proj, at: Pos2) -> Vec3 {
+pub(crate) fn pivot_under(app: &SolveApp, proj: &crate::viewport::Proj, at: Pos2) -> Vec3 {
     use crate::viewport::Hit;
     for h in crate::viewport::pick(app, proj, at) {
         match h {
@@ -927,18 +992,22 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
         }
         1 => {
             ui.label(app.tr_label("Pan, zoom, orbit"));
-            let current_preset_label = app.tr_label(nav_preset(&app.preferences.nav).label);
+            let current_preset_label = nav_preset(&app.preferences.nav).translated_label();
             egui::ComboBox::from_id_salt("pref_nav").selected_text(current_preset_label).show_ui(ui, |ui| {
                 for p in &NAV_PRESETS {
-                    if ui.selectable_value(&mut app.preferences.nav, p.id.to_string(), crate::i18n::tr_label(p.label)).clicked() {
+                    if ui.selectable_value(&mut app.preferences.nav, p.id.to_string(), p.translated_label()).clicked() {
                         app.preferences.zoom_reverse = p.reverse_zoom;
                     }
                 }
             });
             ui.end_row();
-            let snap_help = if app.preferences.nav == OPENSCAD_NAV { "" } else { "; hold Shift during orbit to snap" };
-            let raw_help = format!("{}; Ctrl+left drag on empty space orbits{snap_help}; the wheel zooms", nav_preset(&app.preferences.nav).help);
-            note(ui, crate::i18n::tr_label(&raw_help));
+            if app.preferences.nav == TOUCHPAD_NAV {
+                note(ui, crate::i18n::tr("nav.touchpad.help"));
+            } else {
+                let snap_help = if app.preferences.nav == OPENSCAD_NAV { "" } else { "; hold Shift during orbit to snap" };
+                let raw_help = format!("{}; Ctrl+left drag on empty space orbits{snap_help}; the wheel zooms", nav_preset(&app.preferences.nav).help);
+                note(ui, crate::i18n::tr_label(&raw_help));
+            }
             ui.label(crate::i18n::tr_label("Context menu"));
             ui.checkbox(&mut app.preferences.radial_context_menu, crate::i18n::tr_label("Radial context menu"));
             ui.end_row();
@@ -966,9 +1035,12 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 .on_hover_text(crate::i18n::tr_label("Turn off to apply each wheel event immediately, without a smoothing tail"));
             ui.end_row();
             ui.label(crate::i18n::tr_label("Two-finger scroll pans"));
-            ui.checkbox(&mut app.preferences.trackpad_pan, "").on_hover_text(crate::i18n::tr_label(
-                "Trackpad gestures pan (off: they zoom like the wheel); mouse wheel zooms, thumb wheel pans sideways, pinch always zooms",
-            ));
+            let touchpad = app.preferences.nav == TOUCHPAD_NAV;
+            ui.add_enabled(!touchpad, egui::Checkbox::new(&mut app.preferences.trackpad_pan, "")).on_hover_text(if touchpad {
+                crate::i18n::tr("nav.touchpad.scroll")
+            } else {
+                crate::i18n::tr_label("Trackpad gestures pan (off: they zoom like the wheel); mouse wheel zooms, thumb wheel pans sideways, pinch always zooms")
+            });
             ui.end_row();
             ui.label(crate::i18n::tr_label("Orbit around"));
             ui.horizontal(|ui| {
@@ -1052,6 +1124,34 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             });
             ui.end_row();
             note(ui, app.tr("settings.msaa_applies_on_restart"));
+            ui.label(app.tr("ui.display_quality"));
+            {
+                use solidcraft_engine::doc::display_quality::DisplayQuality;
+                let label = |q: DisplayQuality| crate::i18n::tr(&format!("ui.display_quality_{}", q.id())).to_string();
+                let current = DisplayQuality::parse(&app.preferences.display_quality).unwrap_or_default();
+                egui::ComboBox::from_id_salt("pref_display_quality").selected_text(label(current)).show_ui(ui, |ui| {
+                    for q in DisplayQuality::ALL {
+                        if ui.selectable_label(q == current, label(q)).clicked() {
+                            app.preferences.display_quality = q.id().to_string();
+                        }
+                    }
+                });
+            }
+            ui.end_row();
+            note(ui, app.tr("settings.display_quality_note"));
+            ui.label(app.tr("ui.supersampling"));
+            let ss_label = |f: f32| if f > 1.0 { format!("{f}×") } else { crate::i18n::tr("ui.supersampling_off").to_string() };
+            let adaptive = app.tr("ui.supersampling_adaptive").to_string();
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("pref_ssaa").selected_text(ss_label(app.preferences.supersampling)).show_ui(ui, |ui| {
+                    for f in SUPERSAMPLING {
+                        ui.selectable_value(&mut app.preferences.supersampling, f, ss_label(f));
+                    }
+                });
+                ui.add_enabled(app.preferences.supersampling > 1.0, egui::Checkbox::new(&mut app.preferences.supersampling_adaptive, adaptive));
+            });
+            ui.end_row();
+            note(ui, app.tr("settings.supersampling_note"));
             ui.label(crate::i18n::tr_label("Renderer"));
             ui.label(match (&app.viewport.gpu, &app.help.gpu) {
                 (Some(_), Some(g)) => format!("GPU: {g}"),
@@ -1249,7 +1349,7 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
         return Err(format!("units must be one of {}", UNITS.join(", ")));
     }
     if !NAV_PRESETS.iter().any(|p| p.id == new.nav) || !MSAA.contains(&new.msaa) {
-        return Err("`nav` must be fusion, solidworks, inventor, alias, tinkercad or openscad and `msaa` 1, 2, 4 or 8".into());
+        return Err(format!("`nav` must be one of {} and `msaa` 1, 2, 4 or 8", NAV_PRESETS.iter().map(|p| p.id).collect::<Vec<_>>().join(", ")));
     }
     if new.msaa != app.preferences.msaa && !app.msaa_supported.is_empty() && !app.msaa_supported.contains(&new.msaa) {
         return Err(format!("this graphics device doesn't support `msaa` {}; it supports {:?}", new.msaa, app.msaa_supported));
@@ -1262,6 +1362,12 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     }
     if !(0.5..=2.5).contains(&new.ui_scale) || !(0.25..=4.0).contains(&new.look_at_speed) {
         return Err("`ui_scale` must be 0.5…2.5 and `look_at_speed` 0.25…4".into());
+    }
+    if solidcraft_engine::doc::display_quality::DisplayQuality::parse(&new.display_quality).is_none() {
+        return Err("`display_quality` must be coarse, normal, fine or ultra".into());
+    }
+    if !SUPERSAMPLING.contains(&new.supersampling) {
+        return Err("`supersampling` must be 1 (off), 1.5 or 2".into());
     }
     if MiddleDoubleClick::parse(&new.middle_double_click).is_none() {
         return Err("`middle_double_click` must be home, fit or off".into());
@@ -1283,6 +1389,36 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
 
 #[cfg(test)]
 mod tests {
+    /// Display quality (#1287) is a preference like any other: set by name, checked, saved with
+    /// the others, back to Normal with Restore Defaults.
+    #[test]
+    fn display_quality_is_set_checked_and_restored() {
+        use serde_json::json;
+        let mut app = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        assert_eq!(app.preferences.display_quality, "normal");
+        let out = super::set(&mut app, &json!({"display_quality": "fine"})).unwrap();
+        assert_eq!(out["display_quality"], "fine");
+        assert!(super::set(&mut app, &json!({"display_quality": "silky"})).unwrap_err().contains("coarse, normal, fine or ultra"));
+        assert_eq!(app.preferences.display_quality, "fine");
+        assert_eq!(super::lenient(&json!({"display_quality": "ultra"})).display_quality, "ultra");
+        super::defaults(&mut app, super::PAGE_GRAPHICS);
+        assert_eq!(app.preferences.display_quality, "normal");
+    }
+
+    /// Supersampling (#1288): off by default, adaptive, set by factor and checked.
+    #[test]
+    fn supersampling_is_off_by_default_and_checked() {
+        use serde_json::json;
+        let mut app = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        assert_eq!((app.preferences.supersampling, app.preferences.supersampling_adaptive), (1.0, true));
+        super::set(&mut app, &json!({"supersampling": 2.0})).unwrap();
+        assert_eq!(app.preferences.supersampling, 2.0);
+        assert!(super::set(&mut app, &json!({"supersampling": 3.0})).unwrap_err().contains("1 (off), 1.5 or 2"));
+        super::set(&mut app, &json!({"supersampling": 1.5, "supersampling_adaptive": false})).unwrap();
+        super::defaults(&mut app, super::PAGE_GRAPHICS);
+        assert_eq!((app.preferences.supersampling, app.preferences.supersampling_adaptive), (1.0, true));
+    }
+
     #[test]
     fn a_value_this_version_does_not_understand_keeps_the_other_preferences() {
         use serde_json::json;
@@ -1472,6 +1608,24 @@ mod tests {
     }
 
     #[test]
+    fn touchpad_preset_persists_and_obeys_preference_transactions() {
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        control(&mut app, &json!({"open":"Navigation", "nav":"touchpad"})).unwrap();
+        assert_eq!(app.preferences.nav, "touchpad");
+        assert!(app.preferences.trackpad_pan, "choosing Touchpad must not overwrite the saved scroll preference");
+        control(&mut app, &json!({"button":"cancel"})).unwrap();
+        assert_eq!(app.preferences.nav, "fusion");
+        control(&mut app, &json!({"open":"Navigation", "nav":"touchpad", "button":"apply"})).unwrap();
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        other.load_prefs(&app.prefs());
+        assert_eq!(other.preferences.nav, "touchpad");
+        control(&mut app, &json!({"button":"defaults"})).unwrap();
+        assert_eq!(app.preferences.nav, "fusion");
+        control(&mut app, &json!({"button":"cancel"})).unwrap();
+        assert_eq!(app.preferences.nav, "touchpad");
+    }
+
+    #[test]
     fn openscad_preset_maps_navigation_and_persists() {
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         set(&mut app, &json!({"nav": OPENSCAD_NAV})).unwrap();
@@ -1584,7 +1738,7 @@ mod tests {
         assert!(control(&mut app, &json!({"open": "Plugins"})).is_err());
         assert!(set(&mut app, &json!({"up_axis": "x"})).is_err());
         assert!(set(&mut app, &json!({"theme": "sepia"})).is_err());
-        assert!(set(&mut app, &json!({"language": "fr"})).is_err());
+        assert!(set(&mut app, &json!({"language": "xx"})).is_err());
     }
 
     #[test]

@@ -17,11 +17,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solidcraft design, or a .step/.stp file (opens as a new design)"),
+        .params("path: .solidcraft design, or a .step/.stp file (opens as a new design); up?: z|y and names?: solid|product|instance for a STEP or IGES file (see file.insert_step)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
-        .params("path: .step/.stp file (its bodies join the design as an Import base feature); name?"),
+        .params("path: .step/.stp file (its bodies join the design as an Import base feature); name?; up?: z|y (default z: the file's axes are kept; y: the file has Y up, so its bodies are turned a quarter turn about X, Y becoming Z, by a Move feature after the import); names?: solid|product|instance (what the bodies are named after: the solid's own name, else the product's (default); the name of the product (part) that holds the body; the name of the assembly occurrence (instance), else the product's)"),
     CommandSpec::new("file.insert_mesh", "Insert Mesh", insert_mesh)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -46,7 +46,14 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("export")
         .noundo()
         .params("path; format?: stl|stla|obj|step|3mf|3mf-tagged|urdf|json (default from extension; 3mf-tagged: 3MF whose triangles carry their B-rep face, at full precision, for meshing and analysis tools; docs/formats/3mf-face-tags.md; urdf: the whole assembly as a robot, with STL meshes written next to it; docs/urdf.md); bodies?: [names] (JSON and URDF export the complete design); urdf only: mesh_prefix? (before each mesh file name, e.g. package://robot/meshes/), effort? (default 1000), velocity? (default 10)"),
-    CommandSpec::new("file.save_mesh", "Save As Mesh", save_stl).icon("export").noundo().params("path; bodies?: [names]; ascii?: bool"),
+    CommandSpec::new("file.save_mesh", "Save As Mesh", save_mesh)
+        .at("MESH", "MODIFY")
+        .icon("export")
+        .noundo()
+        .params("path; format?: stl|3mf|3mf-tagged (default from the extension, else stl; 3mf-tagged: docs/formats/3mf-face-tags.md); bodies?: [names] (default: all); ascii?: bool (STL); slicer?: id, name or program path from file.slicers (open the saved file there)"),
+    CommandSpec::new("file.slicers", "Installed Slicers", slicers)
+        .noundo()
+        .params("→ the slicers found on this machine: [{id, name, icon?}]; pass an id or name as file.save_mesh's `slicer`"),
 ];
 
 fn new_doc(s: &mut Session, p: &Value) -> Result<Value> {
@@ -59,15 +66,60 @@ fn path_arg<'a>(p: &'a Value, cmd: &str) -> Result<&'a str> {
     str_(p, "path").filter(|x| !x.trim().is_empty() && x.len() < 4096).ok_or_else(|| bad(cmd, "`path` is required"))
 }
 
+/// How a STEP or IGES file comes in beyond its path: which way is up in the file, and what its
+/// bodies are named after.
+struct StepOptions {
+    /// `up: "y"`: the file has Y up, so the bodies it brings are turned a quarter turn about X
+    /// (Y becomes Z), as the app's "Stand it up" offer does. `z` (the default) keeps the file's axes.
+    y_up: bool,
+    names: solidcraft_io::StepNames,
+}
+
+fn step_options(p: &Value, cmd: &str) -> Result<StepOptions> {
+    let y_up = match p.get("up") {
+        None | Some(Value::Null) => false,
+        Some(v) => match v.as_str().map(|u| u.trim().to_ascii_lowercase()).as_deref() {
+            Some("z") => false,
+            Some("y") => true,
+            _ => return Err(bad(cmd, "`up` must be \"z\" (the file's axes are kept) or \"y\" (the file has Y up: its Y becomes Z)")),
+        },
+    };
+    let names = match p.get("names") {
+        None | Some(Value::Null) => solidcraft_io::StepNames::default(),
+        Some(v) => {
+            v.as_str().and_then(solidcraft_io::StepNames::parse).ok_or_else(|| bad(cmd, "`names` must be \"solid\", \"product\" or \"instance\""))?
+        }
+    };
+    Ok(StepOptions { y_up, names })
+}
+
 /// Read a STEP file as an Import feature.
-fn read_step(path: &str) -> Result<solidcraft_io::StepFeature> {
+fn read_step(path: &str, names: solidcraft_io::StepNames) -> Result<solidcraft_io::StepFeature> {
     let bytes = solidcraft_io::vfs::read(path, solidcraft_io::MAX_STEP_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-    solidcraft_io::step_import_feature(&bytes, path).map_err(|e| EngineError::Other(format!("{path}: {e}")))
+    solidcraft_io::step_import_feature_named(&bytes, path, names).map_err(|e| EngineError::Other(format!("{path}: {e}")))
+}
+
+/// Turn bodies a quarter turn about X (a file's Y up becomes Z up) with one Move feature, the
+/// same one the app's "Stand it up" offer adds, and report its id.
+fn stand_up(s: &mut Session, bodies: &[String]) -> Result<u64> {
+    let kind = solidcraft_doc::FeatureKind::Move {
+        bodies: bodies.to_vec(),
+        translate: ["0".into(), "0".into(), "0".into()],
+        rotate_axis: Some(solidcraft_geom::Vec3::X),
+        angle: Some("90 deg".into()),
+        copy: false,
+    };
+    let id = s.doc_mut().add_feature(kind, None)?;
+    s.refresh();
+    match s.model.result(id).and_then(|r| r.error.clone()) {
+        Some(e) => Err(EngineError::Other(e)),
+        None => Ok(id),
+    }
 }
 
 /// Add an Import feature for a STEP file to the session's design.
-fn add_step(s: &mut Session, path: &str, name: Option<&str>) -> Result<Value> {
-    let sf = read_step(path)?;
+fn add_step(s: &mut Session, path: &str, name: Option<&str>, options: &StepOptions) -> Result<Value> {
+    let sf = read_step(path, options.names)?;
     let fname = name.filter(|n| !n.trim().is_empty()).unwrap_or(&sf.name).to_string();
     let id = s.doc_mut().add_feature(sf.kind, Some(&fname))?;
     if let Some(f) = s.doc_mut().feature_mut(id) {
@@ -78,10 +130,14 @@ fn add_step(s: &mut Session, path: &str, name: Option<&str>) -> Result<Value> {
     if let Some(e) = s.model.result(id).and_then(|r| r.error.clone()) {
         return Err(EngineError::Other(e));
     }
-    let st = s.model.state();
-    let bodies: Vec<&str> = st.bodies.iter().filter(|b| b.feature == id).map(|b| b.name.as_str()).collect();
+    let created: Vec<String> = s.model.state().bodies.iter().filter(|b| b.feature == id).map(|b| b.name.clone()).collect();
+    let turned = if options.y_up && !created.is_empty() { Some(stand_up(s, &created)?) } else { None };
     let fname = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
-    Ok(json!({"path": path, "feature": id, "name": fname, "bodies": bodies, "created_bodies": bodies, "warnings": sf.warnings}))
+    let mut out = json!({"path": path, "feature": id, "name": fname, "bodies": created, "created_bodies": created, "warnings": sf.warnings});
+    if let Some(turned) = turned {
+        out["stand_up"] = json!(turned);
+    }
+    Ok(out)
 }
 
 /// Add a MeshImport feature for a 3MF or STL file.
@@ -119,16 +175,24 @@ fn insert_step(s: &mut Session, p: &Value) -> Result<Value> {
     if !solidcraft_io::is_step_path(path) {
         return Err(bad(cmd, "only STEP files (.step, .stp) can be inserted"));
     }
-    add_step(s, path, str_(p, "name"))
+    let options = step_options(p, cmd)?;
+    add_step(s, path, str_(p, "name"), &options)
 }
 
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = path_arg(p, "doc.open")?;
+    if !solidcraft_io::is_step_path(path) && ["up", "names"].iter().any(|k| p.get(*k).is_some_and(|v| !v.is_null())) {
+        return Err(bad("doc.open", "`up` and `names` apply to STEP and IGES files only"));
+    }
     if solidcraft_io::is_step_path(path) || solidcraft_io::is_mesh_path(path) {
         // A new, unsaved design holding the file's bodies.
         let stem = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "Untitled".into());
         let mut fresh = Session::new(Document::new(&stem));
-        let r = if solidcraft_io::is_step_path(path) { add_step(&mut fresh, path, None)? } else { add_mesh(&mut fresh, path, None)? };
+        let r = if solidcraft_io::is_step_path(path) {
+            add_step(&mut fresh, path, None, &step_options(p, "doc.open")?)?
+        } else {
+            add_mesh(&mut fresh, path, None)?
+        };
         fresh.undo.clear();
         s.replace_design(fresh);
         let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
@@ -393,10 +457,43 @@ fn export_urdf(s: &Session, path: &str, p: &Value) -> Result<Value> {
     )
 }
 
-fn save_stl(s: &mut Session, p: &Value) -> Result<Value> {
-    let path = path_arg(p, "file.save_mesh")?;
-    let f = if bool_(p, "ascii").unwrap_or(false) { Format::StlAscii } else { Format::StlBinary };
-    export_to(s, path, f, &string_list(p, "bodies"))
+fn save_mesh(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "file.save_mesh";
+    let path = path_arg(p, cmd)?;
+    let format = match str_(p, "format").map(str::to_ascii_lowercase).as_deref() {
+        None => match std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).as_deref() {
+            Some("3mf") => Format::ThreeMf,
+            _ => Format::StlBinary,
+        },
+        Some("stl") if bool_(p, "ascii").unwrap_or(false) => Format::StlAscii,
+        Some("stl") => Format::StlBinary,
+        Some("3mf") => Format::ThreeMf,
+        Some("3mf-tagged") => Format::ThreeMfTagged,
+        Some(other) => return Err(bad(cmd, format!("unknown mesh format `{other}` (stl, 3mf, 3mf-tagged)"))),
+    };
+    let slicer = match str_(p, "slicer") {
+        None => None,
+        Some(spec) => Some(
+            crate::slicers::resolve(spec).ok_or_else(|| bad(cmd, format!("no slicer `{spec}` (see file.slicers, or give the path of a program)")))?,
+        ),
+    };
+    let mut out = export_to(s, path, format, &string_list(p, "bodies"))?;
+    if let (Some(slicer), Some(obj)) = (slicer, out.as_object_mut()) {
+        // The file is saved either way; a slicer that won't start is reported, not fatal.
+        match slicer.open(path) {
+            Ok(()) => obj.insert("slicer".into(), json!(slicer.name)),
+            Err(e) => obj.insert("slicer_error".into(), json!(e)),
+        };
+    }
+    Ok(out)
+}
+
+fn slicers(_: &mut Session, _: &Value) -> Result<Value> {
+    let list: Vec<Value> = crate::slicers::detect()
+        .iter()
+        .map(|d| json!({"id": d.id, "name": d.name, "icon": d.icon.as_ref().map(|i| i.path().to_string_lossy().into_owned())}))
+        .collect();
+    Ok(json!({ "slicers": list }))
 }
 
 fn recovery_dir(p: &Value, cmd: &str) -> Result<std::path::PathBuf> {

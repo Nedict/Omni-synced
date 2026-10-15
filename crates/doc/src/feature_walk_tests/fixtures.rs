@@ -75,6 +75,11 @@ pub(super) fn fixtures() -> Vec<(&'static str, Value)> {
         ("thread", json!({"type": "thread", "face": o, "length": "thread.length"})),
         ("loft", json!({"type": "loft", "sections": []})),
         ("sweep", json!({"type": "sweep", "sketch": 1, "profiles": {"type": "all"}, "path_sketch": 2, "path": ["l1"]})),
+        (
+            "sweep_options",
+            json!({"type": "sweep", "sketch": 1, "profiles": {"type": "all"}, "path_sketch": 2, "path": ["l1"],
+                "orientation": {"direction": [0, 1, 0]}, "twist": "sweep.twist", "scale": "sweep.scale"}),
+        ),
         ("shell", json!({"type": "shell", "faces": [o], "thickness": "shell.thickness"})),
         ("draft", json!({"type": "draft", "faces": [o], "angle": "draft.angle", "neutral": plane("draft_neutral"), "pull": [0, 0, 1]})),
         ("construction_plane", json!({"type": "construction_plane", "plane": plane("cplane")})),
@@ -147,11 +152,30 @@ pub(super) fn fixtures() -> Vec<(&'static str, Value)> {
             json!({"type": "surface_revolve", "sketch": 1, "axis": {"type": "world", "axis": "X"}, "angle": "srev.angle", "angle2": "srev.angle2"}),
         ),
         ("surface_sweep", json!({"type": "surface_sweep", "sketch": 1, "path_sketch": 2, "path": ["l1"]})),
+        (
+            "surface_sweep_options",
+            json!({"type": "surface_sweep", "sketch": 1, "path_sketch": 2, "path": ["l1"],
+                "orientation": "parallel", "twist": "surface_sweep.twist", "scale": "surface_sweep.scale"}),
+        ),
         ("surface_loft", json!({"type": "surface_loft", "sections": []})),
         ("surface_offset", json!({"type": "surface_offset", "faces": [o], "distance": "soff.distance", "tolerance": "soff.tolerance"})),
         ("unstitch", json!({"type": "unstitch", "body": "B"})),
         ("reverse_normal", json!({"type": "reverse_normal", "body": "B"})),
+        ("surface_untrim", json!({"type": "surface_untrim", "face": {"body": "B", "point": o}, "holes": [o], "outer": true})),
         ("surface_extend", json!({"type": "surface_extend", "body": "B", "edges": [o], "distance": "extend.distance"})),
+        (
+            "surface_extend_to_plane",
+            json!({"type": "surface_extend", "body": "B", "edges": [o], "distance": "extend.distance", "mode": "curvature", "up_to": {"plane": plane("extend")}}),
+        ),
+        (
+            "surface_extend_to_face",
+            json!({"type": "surface_extend", "body": "B", "edges": [o], "distance": "extend.distance", "up_to": {"face": {"body": "B", "point": o}}, "neighbours": false}),
+        ),
+        (
+            "surface_ruled",
+            json!({"type": "surface_ruled", "body": "B", "edges": [o], "distance": "ruled.distance", "mode": "angle", "angle": "ruled.angle",
+                "direction": [0, 0, 1], "face": [1, 0, 0]}),
+        ),
         ("surface_trim", json!({"type": "surface_trim", "body": "B", "plane": plane("trim"), "keep": o})),
         ("move", json!({"type": "move", "bodies": ["B"], "translate": ["move.x", "move.y", "move.z"], "angle": "move.angle"})),
         ("import", json!({"type": "import", "file": "a.step", "step": ""})),
@@ -167,7 +191,7 @@ pub(super) fn with_refs(name: &str, mut v: Value) -> Value {
     let o = [0, 0, 0];
     let tool = json!({"body": "B", "point": o});
     let extra = match name {
-        "extrude" | "extrude_thin" | "revolve" | "sweep" | "pipe" | "coil" | "thicken" => json!({"targets": ["B"]}),
+        "extrude" | "extrude_thin" | "revolve" | "sweep" | "sweep_options" | "pipe" | "coil" | "thicken" => json!({"targets": ["B"]}),
         "fillet_constant" | "fillet_chord" | "fillet_curvature" | "fillet_variable" | "fillet_spline" | "chamfer" | "shell" | "draft"
         | "offset_face" | "delete_face" | "replace_face" | "sheet_flange" | "sheet_hem" | "sheet_perforate" | "sheet_unfold" | "boss" | "lip"
         | "snap_fit" | "rest" | "surface_offset" => {

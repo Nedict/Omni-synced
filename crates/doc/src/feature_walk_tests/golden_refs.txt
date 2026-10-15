@@ -67,6 +67,10 @@ sweep
   sketches: [1, 2]
   remap_refs: path_sketch, sketch
   remap_bodies: targets[0]
+sweep_options
+  sketches: [1, 2]
+  remap_refs: path_sketch, sketch
+  remap_bodies: targets[0]
 shell
   remap_bodies: body
 draft
@@ -159,6 +163,9 @@ surface_revolve
 surface_sweep
   sketches: [1, 2]
   remap_refs: path_sketch, sketch
+surface_sweep_options
+  sketches: [1, 2]
+  remap_refs: path_sketch, sketch
 surface_loft
   sketches: [4, 5]
   remap_refs: sections[0].sketch, sections[1].sketch
@@ -168,7 +175,16 @@ unstitch
   remap_bodies: body
 reverse_normal
   remap_bodies: body
+surface_untrim
+  remap_bodies: face.body
 surface_extend
+  remap_bodies: body
+surface_extend_to_plane
+  remap_refs: up_to.plane.base.base.name
+  remap_bodies: body
+surface_extend_to_face
+  remap_bodies: body, up_to.face.body
+surface_ruled
   remap_bodies: body
 surface_trim
   remap_refs: plane.base.base.name

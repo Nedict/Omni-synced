@@ -136,6 +136,11 @@ thread
   expressions: thread.length
 loft
 sweep
+sweep_options
+  inputs:
+    Twist = sweep.twist (Angle)
+    Scale = sweep.scale (Unitless)
+  expressions: sweep.twist, sweep.scale
 shell
   inputs:
     Thickness = shell.thickness (Length)
@@ -317,6 +322,11 @@ surface_revolve
     Angle 2 = srev.angle2 (Angle)
   expressions: srev.angle, srev.angle2
 surface_sweep
+surface_sweep_options
+  inputs:
+    Twist = surface_sweep.twist (Angle)
+    Scale = surface_sweep.scale (Unitless)
+  expressions: surface_sweep.twist, surface_sweep.scale
 surface_loft
 surface_offset
   inputs:
@@ -325,10 +335,26 @@ surface_offset
   expressions: soff.distance, soff.tolerance
 unstitch
 reverse_normal
+surface_untrim
 surface_extend
   inputs:
     Distance = extend.distance (Length)
   expressions: extend.distance
+surface_extend_to_plane
+  inputs:
+    Distance = extend.distance (Length)
+    Angle = extend.angle (Angle)
+    Offset = extend.offset (Length)
+  expressions: extend.distance, extend.angle, extend.offset
+surface_extend_to_face
+  inputs:
+    Distance = extend.distance (Length)
+  expressions: extend.distance
+surface_ruled
+  inputs:
+    Distance = ruled.distance (Length)
+    Angle = ruled.angle (Angle)
+  expressions: ruled.distance, ruled.angle
 surface_trim
   inputs:
     Angle = trim.angle (Angle)

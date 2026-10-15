@@ -1,4 +1,4 @@
-//! A drag must keep showing completed geometry even when the next distance is already queued.
+//! Completed distances must reach the viewport before a continuously moving pointer stops.
 use super::*;
 use serde_json::json;
 
@@ -7,73 +7,79 @@ fn colors() -> Colors {
 }
 
 fn fixture() -> Session {
-    let mut session = Session::new(solidcraft_engine::doc::Document::new("Preview drag"));
-    session.execute("sketch.create", &json!({"plane":"XY", "name":"Profile"})).unwrap();
-    session.execute("sketch.rectangle.two_point", &json!({"p0":[0,0], "p1":[10,10]})).unwrap();
-    session.execute("sketch.finish", &json!({})).unwrap();
-    session
+    let mut s = Session::new(solidcraft_engine::doc::Document::new("Preview drag"));
+    s.execute("sketch.create", &json!({"plane":"XY", "name":"Profile"})).unwrap();
+    s.execute("sketch.rectangle.two_point", &json!({"p0":[0,0], "p1":[10,10]})).unwrap();
+    s.execute("sketch.finish", &json!({})).unwrap();
+    s
 }
 
-fn commands(distance: i32) -> Vec<(String, Value)> {
+fn extrude(distance: i32) -> Vec<(String, Value)> {
     vec![("solid.extrude".into(), json!({"sketch":"Profile", "distance":distance, "operation":"new"}))]
 }
 
-#[test]
-fn extrude_drag_displays_completed_geometry_before_the_mouse_stops() {
-    let session = fixture();
-    let original = serde_json::to_value(&*session.doc).unwrap();
-    let undo = session.undo.len();
+fn check_drag(s: &Session, commands: impl Fn(i32) -> Vec<(String, Value)>, base_z: f64) {
+    let original = serde_json::to_value(&*s.doc).unwrap();
+    let undo = s.undo.len();
     let mut pv = PreviewState::default();
     for (finished, wanted) in [(10, 20), (20, 30), (30, 30)] {
         let old = commands(finished);
         let new = commands(wanted);
-        let old_key = job_key(&old, session.revision, colors());
-        let key = job_key(&new, session.revision, colors());
-        let context = stream_key(&new, session.revision, colors());
-        assert!(context.is_some());
+        let old_key = job_key(&old, s.revision, colors());
+        let key = job_key(&new, s.revision, colors());
         let (tx, rx) = std::sync::mpsc::channel();
         pv.running = Some((old_key, rx));
-        pv.running_stream_key = stream_key(&old, session.revision, colors());
-        tx.send(Msg::Done(compute(&session, &old, colors()))).unwrap();
-        pv.poll(key, context);
-        assert!(pv.active && pv.error.is_none());
-        assert!((pv.bounds.max.z - f64::from(finished)).abs() < 1e-8, "completed distance must reach the viewport");
+        pv.running_tool = as_new_body(&old).is_some();
+        pv.running_stream_key = stream_key(&old, s.revision, colors());
+        let built = compute_tool(s, &old, colors()).unwrap();
+        tx.send(Ok(built)).unwrap();
+        pv.poll(key, stream_key(&new, s.revision, colors()));
+        assert!(pv.active && pv.error.is_none(), "completed geometry must show during the drag: {:?}", pv.error);
+        assert!((pv.bounds.max.z - base_z - f64::from(finished)).abs() < 1e-8);
         assert_eq!(pv.shown_key, Some(old_key));
-        assert_eq!(pv.shown_key == Some(key), finished == wanted, "only the exact final distance satisfies the request");
+        assert_eq!(pv.shown_key == Some(key), finished == wanted, "only the final distance satisfies the latest request");
         assert!(pv.running.is_none());
     }
-    assert_eq!(serde_json::to_value(&*session.doc).unwrap(), original);
-    assert_eq!(session.undo.len(), undo);
+    assert_eq!(serde_json::to_value(&*s.doc).unwrap(), original);
+    assert_eq!(s.undo.len(), undo);
 }
 
 #[test]
-fn extrude_tool_streams_while_its_boolean_is_still_running() {
-    let session = fixture();
-    let old = commands(10);
-    let new = commands(20);
-    let old_key = job_key(&old, session.revision, colors());
-    let key = job_key(&new, session.revision, colors());
-    let (tx, rx) = std::sync::mpsc::channel();
-    let mut pv =
-        PreviewState { running: Some((old_key, rx)), running_stream_key: stream_key(&old, session.revision, colors()), ..Default::default() };
-    tx.send(Msg::Partial(compute(&session, &old, colors()).unwrap())).unwrap();
-    pv.poll(key, stream_key(&new, session.revision, colors()));
-    assert!(pv.active && pv.running.is_some(), "the tool must show before boolean validation completes");
-    assert_eq!(pv.shown_key, Some(old_key));
-    // A late boolean failure validates only its old distance, not the newer one.
-    tx.send(Msg::Done(Ok(Built { error: Some("old boolean failed".into()), ..compute(&session, &old, colors()).unwrap() }))).unwrap();
-    pv.poll(key, stream_key(&new, session.revision, colors()));
-    assert!(pv.error.is_none());
-    assert_eq!(pv.bounds.max.z, 10.0);
-    assert!(pv.running.is_none());
+fn new_body_extrude_keeps_moving_during_a_drag() {
+    check_drag(&fixture(), extrude, 0.0);
+}
+
+#[test]
+fn edited_new_body_extrude_keeps_moving_during_a_drag() {
+    let mut s = fixture();
+    let feature = s.execute("solid.extrude", &extrude(5)[0].1).unwrap()["feature"].as_u64().unwrap();
+    check_drag(
+        &s,
+        |distance| vec![("timeline.redefine".into(), json!({"feature":feature,"command":"solid.extrude","params":extrude(distance)[0].1}))],
+        0.0,
+    );
+}
+
+#[test]
+fn face_offset_keeps_moving_during_a_drag() {
+    let mut s = Session::new(solidcraft_engine::doc::Document::new("Face offset drag"));
+    s.execute("solid.box", &json!({"length":10,"width":10,"height":10})).unwrap();
+    check_drag(&s, |distance| vec![("solid.offset_face".into(), json!({"faces":[[5,5,10]],"distance":distance}))], 10.0);
+}
+
+#[test]
+fn join_tool_keeps_moving_without_waiting_for_its_boolean() {
+    let mut s = fixture();
+    s.execute("solid.box", &json!({"length":10,"width":10,"height":5})).unwrap();
+    check_drag(&s, |distance| vec![("solid.extrude".into(), json!({"sketch":"Profile","distance":distance,"operation":"join"}))], 0.0);
 }
 
 #[test]
 fn distance_stream_keeps_feature_selection_and_extent_context() {
-    let old = commands(10);
+    let old = extrude(10);
     let key = stream_key(&old, 7, colors());
     assert!(key.is_some());
-    assert_eq!(key, stream_key(&commands(20), 7, colors()));
+    assert_eq!(key, stream_key(&extrude(20), 7, colors()));
     assert_ne!(key, stream_key(&old, 8, colors()));
     let mut recolored = colors();
     recolored.added = [40, 50, 60, 255];
@@ -102,7 +108,7 @@ fn distance_stream_keeps_feature_selection_and_extent_context() {
         assert_eq!(stream_key(&from, 7, colors()), stream_key(&to, 7, colors()));
     }
     let edit =
-        |feature, distance| vec![("timeline.redefine".into(), json!({"feature":feature,"command":"solid.extrude","params":commands(distance)[0].1}))];
+        |feature, distance| vec![("timeline.redefine".into(), json!({"feature":feature,"command":"solid.extrude","params":extrude(distance)[0].1}))];
     assert_eq!(stream_key(&edit(2, 10), 7, colors()), stream_key(&edit(2, 20), 7, colors()));
     assert_ne!(stream_key(&edit(2, 10), 7, colors()), stream_key(&edit(3, 20), 7, colors()));
     assert_ne!(key, stream_key(&edit(2, 10), 7, colors()));
@@ -117,18 +123,27 @@ fn distance_stream_keeps_feature_selection_and_extent_context() {
 }
 
 #[test]
-fn old_partial_geometry_is_rejected_after_the_extrude_setup_changes() {
-    let session = fixture();
-    let old = commands(10);
-    let mut new = commands(20);
-    new[0].1["operation"] = json!("cut");
-    let (tx, rx) = std::sync::mpsc::channel();
-    let mut pv =
-        PreviewState { running: Some((job_key(&old, 7, colors()), rx)), running_stream_key: stream_key(&old, 7, colors()), ..Default::default() };
-    tx.send(Msg::Partial(compute(&session, &old, colors()).unwrap())).unwrap();
-    pv.poll(job_key(&new, 7, colors()), stream_key(&new, 7, colors()));
-    assert!(!pv.active);
-    tx.send(Msg::Done(compute(&session, &old, colors()))).unwrap();
-    pv.poll(job_key(&new, 7, colors()), stream_key(&new, 7, colors()));
-    assert!(!pv.active);
+fn distance_results_reject_other_setups_and_obsolete_errors() {
+    let s = fixture();
+    let old = extrude(10);
+    let current = extrude(20);
+    for (revision, failed) in [(s.revision + 1, false), (s.revision, true)] {
+        let mut built = compute_tool(&s, &old, colors()).unwrap();
+        if failed {
+            built.error = Some("old distance failed".into());
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut pv = PreviewState {
+            running: Some((job_key(&old, s.revision, colors()), rx)),
+            running_stream_key: stream_key(&old, s.revision, colors()),
+            ..Default::default()
+        };
+        tx.send(Ok(built)).unwrap();
+        pv.poll(job_key(&current, revision, colors()), stream_key(&current, revision, colors()));
+        assert!(!pv.active && pv.error.is_none() && pv.shown_key.is_none());
+    }
+    let mut join = current.clone();
+    join[0].1["operation"] = json!("join");
+    assert!(as_new_body(&join).is_some());
+    assert!(stream_key(&join, s.revision, colors()).is_none(), "tool previews retain their upstream streaming path");
 }

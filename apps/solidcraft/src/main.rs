@@ -98,6 +98,7 @@ impl eframe::App for App {
 fn services(cc: &eframe::CreationContext<'_>) -> Services {
     let parent = rfd::AsyncFileDialog::new().set_parent(cc);
     let open_parent = parent.clone();
+    let program_parent = parent.clone();
     Services {
         pick_open: Some(Box::new(move || {
             let future = open_parent
@@ -129,6 +130,12 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
                 .add_filter("Sketch drawings (DXF, SVG)", &["dxf", "DXF", "svg", "SVG"])
                 .add_filter("All files", &["*"])
                 .pick_file();
+            Box::pin(async move { future.await.map(|p| p.path().to_string_lossy().into_owned()) })
+        })),
+        pick_program: Some(Box::new(move || {
+            let dialog = program_parent.clone().set_title("Choose your slicer");
+            let dialog = if cfg!(target_os = "windows") { dialog.add_filter("Programs", &["exe"]) } else { dialog };
+            let future = dialog.pick_file();
             Box::pin(async move { future.await.map(|p| p.path().to_string_lossy().into_owned()) })
         })),
         pick_save: Some(Box::new(move |name: &str, exts: &[&str]| {
@@ -456,6 +463,7 @@ fn main() -> eframe::Result {
             solidcraft_engine::crash::phase("app setup");
             solidcraft_ui_egui::fonts::setup_fonts(&cc.egui_ctx);
             let mut app = SolveApp::new(Session::default(), services(cc));
+            app.apply_off_thread = Some(solidcraft_ui_egui::dialogs::APPLY_AT_ONCE);
             app.custom_titlebar = CUSTOM_TITLEBAR;
             app.integrated_titlebar = cfg!(target_os = "macos");
             app.cpu_meshing = safe_mode;
@@ -498,6 +506,11 @@ fn main() -> eframe::Result {
             };
             for f in &files {
                 app.open_path_async(f);
+            }
+            // No file and no sample: the empty design takes Units of new designs (#1205).
+            // An opened file and the sample part keep the units they were saved or built with.
+            if files.is_empty() && !sample {
+                solidcraft_ui_egui::prefs::apply_new_design(&mut app);
             }
             // No design given: the start page (not when driven over the control channel, whose
             // clients expect the design view; `ui.home` shows it there).

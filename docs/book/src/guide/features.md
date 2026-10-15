@@ -55,6 +55,13 @@ hole identities also makes it lost. Older curve-span selections retain their exa
 multisets. If an older feature has already lost its profile after subdivision changed, edit
 the feature and reselect the intended current region to capture the new identity.
 
+New symmetric solid extrusions treat the entered distance as the total thickness and split it evenly
+around the start plane: 10 mm spans -5 to +5 mm on an XY sketch. Switching from One Side to
+Symmetric keeps the entered total thickness. Through All still reaches targets in both
+directions, and Two Sides retains its independent distances. Symmetric extrusions saved before
+this change keep their original per-side distances when reopened or edited. Selecting another direction
+in the feature editor uses the current total-distance convention.
+
 New symmetric revolves split the entered angle evenly around the sketch profile, regardless
 of which way the selected axis points. Two Sides measures the second angle backward and the
 first angle forward along the sketch-normal sweep direction. Profiles on opposite sides of
@@ -154,6 +161,16 @@ still be added through `set`. The fields of the common features:
 | Mirror | `plane`, `features`, `bodies`, `combine` |
 
 For any other feature, `timeline.inspect` shows the fields.
+
+Where a command takes a face as a point (`face.delete`, `solid.shell`, `solid.draft`,
+`solid.offset_face`, `solid.split_face`, the `faces` of `solid.replace_face`, and the `face` of
+`sheet.convert`), a script can give the face's name instead, as `model.faces` lists it:
+`{"command": "face.delete", "params": {"faces": ["F2:side#1", "F2:side#2"], "body": "Plate"}}`.
+`model.faces` also lists a `point` on each face that picks it (the centroid of a face with a hole
+in it is in the hole, that of a half cylinder inside the cylinder) and, for a cylindrical face,
+its `cylinder`: `origin` and `axis` of its axis, and `radius`. A name that is more than one face
+(the pieces of a split face, or one face of several bodies) is refused; `body` says which body to
+look on.
 
 Press **Delete** on anything selected (bodies, faces, sketches, features, planes, components,
 canvases). It runs as one undoable step and lists the features that would go with it or fail.

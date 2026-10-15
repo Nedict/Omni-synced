@@ -1,7 +1,9 @@
 //! Solid feature commands: extrude, revolve, fillet, chamfer, primitives, combine, move.
 
 use serde_json::{Value, json};
-use solidcraft_doc::{AxisRef, Direction, Extent, FeatureKind, Operation, PointExpr, ProfileSel, ThinSide, ThinWall, expr::Kind, point_expr};
+use solidcraft_doc::{
+    AxisRef, Direction, Extent, FeatureKind, Operation, PointExpr, ProfileSel, SweepOrientation, ThinSide, ThinWall, expr::Kind, point_expr,
+};
 use solidcraft_geom::Vec3;
 
 use super::{CommandSpec, not_in_sketch};
@@ -13,7 +15,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "CREATE")
         .icon("extrude")
         .key("E")
-        .params("distance: expr (or through_all: true); taper?: angle expr; sketch?: id|name (default: active or last sketch); profiles?: all | [index] | [{curves: [ids]}] (the profile whose outer loop is made of exactly these curves, or pieces of them; found again on every recompute, so it follows parameter changes; islands inside are its holes; an error when no profile or several match) | [{point:[x,y]}] (index and point picks are stored by their curves when that finds the same profile); face?: [x,y,z] (extrude a planar body face instead of a sketch profile); face_body?: name (whose face, where faces of several bodies meet at the point); direction?: positive|negative|symmetric; distance2?; start_offset?: expr (along the sketch normal, also with direction: negative); to?: [x,y,z] (To Object: a face, vertex or point; to_offset?: expr past it); from?: [x,y,z] (From Object: start at that face or point); operation?: new|join|cut|intersect|auto (cut into a body, otherwise join existing solids; new in an empty component); targets?: [body]; name?; body_name?; thin?: true (Thin: a wall along sketch curves instead of the profiles) with curves?: [curve ids] (open chains and closed loops, joined where they meet end to end; default: every drawn curve of the sketch), thickness: expr, side?: center|inside|outside|two_sides (a closed loop's inside is the area it encloses, an open chain's the side it bends toward, a straight line's the left of its first curve as drawn; default center), thickness2?: expr (two_sides: the thickness outside); corners are mitred, crossing walls are one"),
+        .params("distance: expr (or through_all: true); taper?: angle expr; sketch?: id|name (default: active or last sketch); profiles?: all | [index] | [{curves: [ids]}] (the profile whose outer loop is made of exactly these curves, or pieces of them; found again on every recompute, so it follows parameter changes; islands inside are its holes; an error when no profile or several match) | [{point:[x,y]}] (index and point picks are stored by their curves when that finds the same profile); face?: [x,y,z] (extrude a planar body face instead of a sketch profile); face_body?: name (whose face, where faces of several bodies meet at the point); direction?: positive|negative|symmetric (distance is total thickness, split evenly around the start plane); convention?: total_distance|legacy_per_side (default total_distance; legacy preserves older symmetric extents); distance2?; start_offset?: expr (along the sketch normal, also with direction: negative); to?: [x,y,z] (To Object: a face, vertex or point; to_offset?: expr past it); from?: [x,y,z] (From Object: start at that face or point); operation?: new|join|cut|intersect|auto (cut into a body, otherwise join existing solids; new in an empty component); targets?: [body]; name?; body_name?; thin?: true (Thin: a wall along sketch curves instead of the profiles) with curves?: [curve ids] (open chains and closed loops, joined where they meet end to end; default: every drawn curve of the sketch), thickness: expr, side?: center|inside|outside|two_sides (a closed loop's inside is the area it encloses, an open chain's the side it bends toward, a straight line's the left of its first curve as drawn; default center), thickness2?: expr (two_sides: the thickness outside); corners are mitred, crossing walls are one"),
     CommandSpec::new("solid.revolve", "Revolve", revolve)
         .at("SOLID", "CREATE")
         .icon("revolve")
@@ -21,7 +23,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.sweep", "Sweep", sweep)
         .at("SOLID", "CREATE")
         .icon("sweep")
-        .params("sketch: profile sketch; profiles?; path_sketch: sketch; path: [curve ids in order]; operation?, targets?, name?, body_name?"),
+        .params("sketch: profile sketch; profiles?; path_sketch: sketch; path: [curve ids in order]; orientation?: perpendicular (default: square to the path, turning with it) | parallel (as drawn: the profile moves without turning; the path must keep crossing its plane) | [x,y,z] (square to the path, its turn about the path fixed by this direction); twist?: angle expr (the profile turns this much about the path over its length; within 4 turns); scale?: expr (the profile's scale at the end, linear along the path; 0.01…100); operation?, targets?, name?, body_name?"),
     CommandSpec::new("solid.loft", "Loft", loft).at("SOLID", "CREATE").icon("loft").params("sections: [{sketch, profiles?} | {sketch, point: id} (an apex)] (2 or more, in order); operation?, targets?, name?, body_name?"),
     CommandSpec::new("solid.box", "Box", prim_box).at("SOLID", "CREATE").icon("box").params("length, width, height: expr; corner?: [x,y,z] | center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
     CommandSpec::new("solid.cylinder", "Cylinder", prim_cylinder).at("SOLID", "CREATE").icon("cylinder").params("radius | diameter, height: expr; base?: [x,y,z] (centre of the bottom: numbers in mm or length expressions; default: the origin); axis?: X|Y|Z|[x,y,z] (default Z); operation?, targets?: [body], name?, body_name?"),
@@ -67,11 +69,11 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("face.delete", "Delete Face", delete_face)
         .at("SOLID", "MODIFY")
         .icon("delete")
-        .params("faces: [[x,y,z] points on the faces]; body?; heal?: bool (default true: the neighbouring planes close the gap, as when a rounded edge, hole or boss is taken off; false: the gap stays open and the faces left are a surface body)"),
+        .params("faces: [[x,y,z] points on the faces, or face names from model.faces]; body?; heal?: bool (default true: the neighbouring planes close the gap, as when a rounded edge, hole or boss is taken off; false: the gap stays open and the faces left are a surface body)"),
     CommandSpec::new("solid.offset_face", "Offset Face", offset_face)
         .at("SOLID", "MODIFY")
         .icon("offset_face")
-        .params("faces: [[x,y,z] points on planar faces]; distance: expr (positive: outward); body?"),
+        .params("faces: [[x,y,z] points on planar faces, or face names from model.faces]; distance: expr (positive: outward); body?"),
     CommandSpec::new("solid.thread", "Thread", thread)
         .at("SOLID", "CREATE")
         .icon("thread")
@@ -79,11 +81,11 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.shell", "Shell", shell)
         .at("SOLID", "MODIFY")
         .icon("shell")
-        .params("faces: [[x,y,z] points on the faces to remove]; thickness: expr; direction?: inside|outside|both; tangent_chain?: bool (also open faces joined smoothly to the picked ones); body?"),
+        .params("faces: [[x,y,z] points on the faces to remove, or face names from model.faces]; thickness: expr; direction?: inside|outside|both; tangent_chain?: bool (also open faces joined smoothly to the picked ones); body?"),
     CommandSpec::new("solid.draft", "Draft", draft)
         .at("SOLID", "MODIFY")
         .icon("draft")
-        .params("faces: [[x,y,z]]; angle: expr; neutral: XY|XZ|YZ|plane name|{origin, normal}; pull?: [x,y,z] (default: neutral plane normal); body?"),
+        .params("faces: [[x,y,z] points, or face names from model.faces]; angle: expr; neutral: XY|XZ|YZ|plane name|{origin, normal}; pull?: [x,y,z] (default: neutral plane normal); body?"),
     CommandSpec::new("construct.plane.offset", "Offset Plane", plane_offset)
         .at("SOLID", "CONSTRUCT")
         .icon("plane")
@@ -96,7 +98,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "MODIFY")
         .icon("split")
         .params(
-            "faces: [[x,y,z] points on the faces to split]; body?; and the splitting tool: plane: XY|XZ|YZ|plane name|{origin, normal} — or tool: {body, point} (a face of a body, its surface extended) — or sketch: id or name (its curves, along the sketch's normal)",
+            "faces: [[x,y,z] points on the faces to split, or face names from model.faces]; body?; and the splitting tool: plane: XY|XZ|YZ|plane name|{origin, normal} — or tool: {body, point} (a face of a body, its surface extended) — or sketch: id or name (its curves, along the sketch's normal)",
         ),
     CommandSpec::new("solid.split_body", "Split Body", split_body)
         .at("SOLID", "MODIFY")
@@ -137,9 +139,16 @@ fn extrude_base(s: &Session, p: &Value) -> Option<(Vec3, Vec3)> {
     Some((ss.plane.to_world(q), ss.plane.normal()))
 }
 
+/// How far past the profile [`auto_operation`] looks for material it starts in.
+const START_PROBE_MM: f64 = 0.1;
+
 /// What `operation: "auto"` means for an extrude with these parameters: `cut` when it goes
 /// into a body, otherwise `join` when the active component has a solid. Keeping an
 /// addition separate requires an explicit `new` operation.
+///
+/// "Goes into a body" is decided where the extrude starts: just past the profile in the
+/// direction it grows, or halfway along it. With the halfway point alone, a cut dragged far
+/// past a body's far side read as a Join (#1257).
 pub fn auto_operation(s: &Session, p: &Value) -> Option<&'static str> {
     let d = s.doc.eval(&expr(p, "distance")?, Kind::Length).ok()?;
     let dir = str_(p, "direction").map(str::to_ascii_lowercase);
@@ -161,10 +170,13 @@ pub fn auto_operation(s: &Session, p: &Value) -> Option<&'static str> {
         return Some("new");
     }
     let inside = |q: Vec3| bodies.iter().any(|b| b.mesh().contains(q));
+    // A step into whatever is right in front of the profile, short of the far end.
+    let near = |d: f64| d.signum() * (d.abs() * 0.5).min(START_PROBE_MM);
+    let into = |d: f64| inside(base + n * near(d)) || inside(base + n * (d * 0.5));
     if symmetric {
-        return Some(if inside(base + n * (d.abs() * 0.5)) || inside(base - n * (d.abs() * 0.5)) { "cut" } else { "join" });
+        return Some(if into(d.abs()) || into(-d.abs()) { "cut" } else { "join" });
     }
-    if inside(base + n * (d * 0.5)) {
+    if into(d) {
         Some("cut")
     } else {
         // A profile can meet material along its side, or only around part of a
@@ -622,8 +634,15 @@ pub(super) fn extent_param(s: &Session, p: &Value, cmd: &str) -> Result<Extent> 
     if let Some(d) = &start_offset {
         check_expr(s, d, Kind::Length, cmd, "start_offset")?;
     }
+    let convention = match p.get("convention") {
+        // Surface Extrude shares Extent but retains its existing per-side distance semantics.
+        None if cmd == "surface.extrude" => solidcraft_doc::ExtrudeConvention::LegacyPerSide,
+        None => solidcraft_doc::ExtrudeConvention::TotalDistance,
+        Some(value) => serde_json::from_value(value.clone()).map_err(|_| bad(cmd, "`convention` must be total_distance or legacy_per_side"))?,
+    };
     Ok(Extent {
         distance,
+        convention,
         direction,
         distance2,
         start_offset,
@@ -1323,7 +1342,7 @@ fn plane_angle(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn split_face(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.split_face";
-    let faces = face_points(p, cmd)?;
+    let faces = face_points(s, p, cmd)?;
     let body = str_(p, "body").map(str::to_string);
     let xy = || solidcraft_doc::PlaneRef::Origin { name: "XY".into() };
     let kind = if let Some(t) = p.get("tool").filter(|t| !t.is_null()) {
@@ -1542,17 +1561,17 @@ fn sketch_hole_points(s: &Session, sketch: u64) -> Vec<String> {
     ss.sketch.points.iter().enumerate().filter(|(i, p)| p.id != "origin" && !ends.contains(i)).map(|(_, p)| p.id.clone()).collect()
 }
 
-fn face_points(p: &Value, cmd: &str) -> Result<Vec<Vec3>> {
-    let a = p.get("faces").and_then(Value::as_array).ok_or_else(|| bad(cmd, "`faces` must be a list of points"))?;
+fn face_points(s: &Session, p: &Value, cmd: &str) -> Result<Vec<Vec3>> {
+    let a = p.get("faces").and_then(Value::as_array).ok_or_else(|| bad(cmd, "`faces` must be a list of points or face names"))?;
     if a.is_empty() || a.len() > 1000 {
         return Err(bad(cmd, "select 1…1000 faces"));
     }
-    a.iter().map(|v| vec3(v).or_else(|| v.get("point").and_then(vec3)).ok_or_else(|| bad(cmd, "a face is a point [x, y, z] on it"))).collect()
+    a.iter().map(|v| super::face::face_ref(s, v, str_(p, "body"), cmd)).collect()
 }
 
 fn shell(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.shell";
-    let faces = face_points(p, cmd)?;
+    let faces = face_points(s, p, cmd)?;
     let thickness = req_expr(cmd, p, "thickness")?;
     check_expr(s, &thickness, Kind::Length, cmd, "thickness")?;
     let direction = str_(p, "direction").map(str::to_ascii_lowercase).unwrap_or_default();
@@ -1574,7 +1593,7 @@ fn shell(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn draft(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.draft";
-    let faces = face_points(p, cmd)?;
+    let faces = face_points(s, p, cmd)?;
     let angle = req_expr(cmd, p, "angle")?;
     check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
     let neutral = plane_param(s, p.get("neutral"), cmd)?;
@@ -1604,6 +1623,7 @@ fn sweep(s: &mut Session, p: &Value) -> Result<Value> {
     if path.is_empty() {
         return Err(bad(cmd, "`path` must list curve ids"));
     }
+    let (orientation, twist, scale) = sweep_options(s, p, cmd)?;
     add_feature(
         s,
         p,
@@ -1612,10 +1632,56 @@ fn sweep(s: &mut Session, p: &Value) -> Result<Value> {
             profiles: profiles(p, cmd)?,
             path_sketch,
             path,
+            orientation,
+            twist,
+            scale,
             operation: operation(p, cmd)?,
             targets: string_list(p, "targets"),
         },
     )
+}
+
+/// A sweep's `orientation`, `twist` and `scale` (solid.sweep and surface.sweep), checked: an
+/// orientation the sweep knows, a twist within four turns, an end scale within 0.01…100.
+pub(super) fn sweep_options(s: &Session, p: &Value, cmd: &str) -> Result<(SweepOrientation, Option<String>, Option<String>)> {
+    let orientation = match p.get("orientation") {
+        None | Some(Value::Null) => SweepOrientation::Perpendicular,
+        Some(Value::String(o)) if o.eq_ignore_ascii_case("perpendicular") => SweepOrientation::Perpendicular,
+        Some(Value::String(o)) if o.eq_ignore_ascii_case("parallel") => SweepOrientation::Parallel,
+        Some(v) => {
+            let d = vec3(v)
+                .or_else(|| v.get("direction").and_then(vec3))
+                .ok_or_else(|| bad(cmd, "`orientation` must be perpendicular, parallel or a direction [x, y, z]"))?;
+            if !(d.len() > 1e-9) {
+                return Err(bad(cmd, "the `orientation` direction must not be zero"));
+            }
+            SweepOrientation::Direction(d)
+        }
+    };
+    let twist = match p.get("twist") {
+        None | Some(Value::Null) => None,
+        Some(_) => {
+            let t = expr(p, "twist").ok_or_else(|| bad(cmd, "`twist` must be an angle or an expression"))?;
+            let v = s.doc.eval(&t, Kind::Angle).map_err(|e| bad(cmd, format!("twist: {e}")))?;
+            if !(v.is_finite() && v.abs() <= solidcraft_kernel::SweepControl::MAX_TWIST) {
+                return Err(bad(cmd, "`twist` must be within four turns (1440 deg)"));
+            }
+            Some(t)
+        }
+    };
+    let scale = match p.get("scale") {
+        None | Some(Value::Null) => None,
+        Some(_) => {
+            let k = expr(p, "scale").ok_or_else(|| bad(cmd, "`scale` must be a number or an expression"))?;
+            let v = s.doc.eval(&k, Kind::Unitless).map_err(|e| bad(cmd, format!("scale: {e}")))?;
+            let range = solidcraft_kernel::SweepControl::MIN_SCALE..=solidcraft_kernel::SweepControl::MAX_SCALE;
+            if !(v.is_finite() && range.contains(&v)) {
+                return Err(bad(cmd, "`scale` (the end scale) must be between 0.01 and 100"));
+            }
+            Some(k)
+        }
+    };
+    Ok((orientation, twist, scale))
 }
 
 fn loft(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1715,14 +1781,14 @@ fn scale(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn delete_face(s: &mut Session, p: &Value) -> Result<Value> {
-    let faces = face_points(p, "face.delete")?;
+    let faces = face_points(s, p, "face.delete")?;
     let heal = bool_(p, "heal").unwrap_or(true);
     add_feature(s, p, FeatureKind::DeleteFace { faces, body: str_(p, "body").map(str::to_string), heal })
 }
 
 fn offset_face(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.offset_face";
-    let faces = face_points(p, cmd)?;
+    let faces = face_points(s, p, cmd)?;
     let distance = req_expr(cmd, p, "distance")?;
     check_expr(s, &distance, Kind::Length, cmd, "distance")?;
     add_feature(s, p, FeatureKind::OffsetFace { faces, distance, body: str_(p, "body").map(str::to_string) })
@@ -1735,6 +1801,10 @@ mod patterns_tests;
 #[cfg(test)]
 #[path = "revolve_convention_tests.rs"]
 mod revolve_convention_tests;
+
+#[cfg(test)]
+#[path = "sweep_options_tests.rs"]
+mod sweep_options_tests;
 
 #[cfg(test)]
 #[path = "offset_topology_tests.rs"]
@@ -1770,3 +1840,7 @@ mod move_in_sketch_tests;
 #[cfg(test)]
 #[path = "thin_extrude_tests.rs"]
 mod thin_extrude_tests;
+
+#[cfg(test)]
+#[path = "extrude_convention_tests.rs"]
+mod extrude_convention_tests;

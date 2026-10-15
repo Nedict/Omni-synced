@@ -28,6 +28,7 @@ mod coplanar;
 mod curveblend;
 mod delete_face;
 mod emboss;
+mod face_params;
 #[cfg(test)]
 mod face_source_tests;
 mod fill;
@@ -54,6 +55,8 @@ mod issue_788_tests;
 mod issue_851_tests;
 #[cfg(test)]
 mod issue_871_tests;
+#[cfg(test)]
+mod join_between_caps_tests;
 mod lip;
 mod loopblend;
 mod measure;
@@ -65,6 +68,9 @@ mod native;
 mod numbered;
 mod offset;
 mod ops;
+mod outline;
+#[cfg(test)]
+mod outline_tests;
 mod par;
 pub use par::{for_each_on_threads, map_on_threads};
 #[cfg(test)]
@@ -87,12 +93,17 @@ mod splitface;
 mod step;
 mod step_in;
 mod step_out;
+mod surface_extend;
 mod surface_kind;
 mod surface_offset;
+mod surface_ruled;
+mod surface_untrim;
 mod surfaces;
 mod sweep_path;
 mod tangent_cylinders;
 mod tess;
+#[cfg(test)]
+mod thread_display_tests;
 #[cfg(test)]
 mod thread_tests;
 mod topo;
@@ -107,7 +118,8 @@ pub use blend_variable::{RadiusSpline, Taper, fillet_chord, fillet_tapered, fill
 pub use body::{Body, CapSignature, DISPLAY_ANGLE, EdgeInfo, FaceInfo, FacePaint, FaceSource, Paint};
 pub use boolean_diagnostics::{BooleanDiagnostics, BooleanFallback, BooleanStrategy, capture_boolean_diagnostics};
 pub use build::{
-    PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, extrude_tapered_between, loft, revolve, sphere, sweep, torus,
+    PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, extrude_tapered_between, loft, revolve, sphere, sweep,
+    sweep_with, torus,
 };
 pub use delete_face::delete_faces;
 pub use emboss::{cylinder_emboss_anchor, emboss_cylinder, emboss_cylinder_at, has_cylinder_emboss_wall, infer_cylinder_emboss};
@@ -130,13 +142,16 @@ pub use splitface::{SplitTool, split_body, split_faces, split_faces_with_map};
 pub use step::step_export;
 pub use step_in::{ImportedBody, StepImport, StepNode, step_cache_alive, step_import, step_import_shared, step_orientation_errors, step_validate};
 pub use step_out::{ExportBody, ExportProduct, StepHeader, step_export_bodies, step_export_products};
+pub use surface_extend::{ExtendLimit, ExtendMode, ExtendOptions, extend_surface};
 pub use surface_kind::{FaceSurface, face_surface};
 pub use surface_offset::offset_surface;
+pub use surface_ruled::{Ruled, RuledCorners, RuledMode, ruled_surface};
+pub use surface_untrim::{UntrimHoles, untrim};
 pub use surfaces::{
     copy_faces, extend, extrude_sheet, loft_sheet, patch_edges, patch_region, remove_faces, reverse_faces, revolve_sheet, stitch, sweep_sheet,
-    sweep_sheet_points, thicken, trim, unstitch,
+    sweep_sheet_points, sweep_sheet_points_with, sweep_sheet_with, thicken, trim, unstitch,
 };
-pub use sweep_path::sweep_path;
+pub use sweep_path::{SweepControl, SweepOrientation, sweep_path, sweep_path_with};
 pub use topo::{CylinderFace, cylinder_face_at};
 pub use topo::{TopoCounts, merged_topology, seam_flags};
 pub use tspline::tspline_sheet;

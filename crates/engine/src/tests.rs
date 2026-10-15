@@ -306,8 +306,10 @@ fn join_of_a_lobed_disc_pattern_is_not_refused() {
 mod blend_fit;
 mod boolean_diagnostics;
 mod component_frames;
+mod curved_seam_round;
 mod large_step_import;
 mod loft_cut;
+mod loft_ring;
 mod loft_spacing;
 mod mirror_planes;
 mod path_scope;
@@ -316,6 +318,7 @@ mod rim_cut;
 mod robustness;
 mod robustness_goldens;
 mod spiral_join;
+mod step_import_options;
 mod xz_plane;
 
 /// Plan area a round of radius `r` fills at the concave corner `x` where circles (c1, r1) and
@@ -766,6 +769,9 @@ fn hostile_params_never_panic() {
         "filter",
         "kind",
         "prefix",
+        "orientation",
+        "twist",
+        "scale",
     ];
     // Commands are independent; worker threads take them one at a time (their costs vary a lot).
     let ids: Vec<&str> = command_specs()
@@ -833,6 +839,20 @@ fn only_own_ids_name_commands() {
         let err = s.execute(old, &serde_json::json!({})).unwrap_err();
         assert!(matches!(err, crate::EngineError::UnknownCommand(_)), "{old}: {err}");
     }
+}
+
+/// An unknown command's error names the ids it was probably meant to be: a typo's, or the
+/// command that ends in the same word.
+#[test]
+fn unknown_commands_suggest_the_closest_ids() {
+    let mut s = Session::default();
+    let mut msg = |id: &str| s.execute(id, &serde_json::json!({})).unwrap_err().to_string();
+    assert_eq!(msg("file.open"), "unknown command `file.open` (did you mean `doc.open`?)");
+    assert!(msg("solid.extrud").starts_with("unknown command `solid.extrud` (did you mean `solid.extrude`"), "{}", msg("solid.extrud"));
+    assert!(msg("Extrude").contains("`solid.extrude`"), "{}", msg("Extrude"));
+    assert_eq!(msg("FusionFilletEdgesCommand"), "unknown command `FusionFilletEdgesCommand`");
+    let long = "x".repeat(10_000);
+    assert_eq!(msg(&long), format!("unknown command `{long}`"));
 }
 
 #[test]
@@ -1148,6 +1168,9 @@ fn extrude_auto_operation() {
     assert!(rel(volume(&mut s), 40.0 * 30.0 * 15.0) < 1e-6);
     // Pulled out, it joins.
     assert_eq!(auto_operation(&s, &json!({"face": [20, 15, 15], "distance": 5})), Some("join"));
+    // Pushed in far past the bottom (halfway is below the box), it still cuts (#1257).
+    assert_eq!(auto_operation(&s, &json!({"face": [20, 15, 15], "distance": -50})), Some("cut"));
+    assert_eq!(auto_operation(&s, &json!({"face": [20, 15, 15], "distance": 50, "direction": "negative"})), Some("cut"));
     // A sketch on XY under the box: up goes into it (cut), down grows out of it (join), and a
     // profile beside the box still defaults to Join (New Body remains explicit).
     run(&mut s, "sketch.create", json!({"plane": "XY"}));
@@ -2418,6 +2441,21 @@ fn lip_after_boss() {
             assert!((volume(&mut s) - v0).abs() > 1.0, "boss {i} lip {j}");
         }
     }
+}
+
+/// A lip on a rim with a face elsewhere in line with the pick: a notch under the floor whose
+/// wall lies in the plane y = 25 through the picked point. The pick is the rim's, the face the
+/// point lies on, not the first face whose plane runs through it.
+#[test]
+fn lip_on_a_rim_in_line_with_another_face() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 80, "width": 50, "height": 30}));
+    run(&mut s, "solid.shell", json!({"faces": [[40, 25, 30]], "thickness": 2}));
+    run(&mut s, "solid.box", json!({"length": 20, "width": 10, "height": 1, "corner": [30, 25, 0], "operation": "cut", "targets": ["Body1"]}));
+    let v0 = volume(&mut s);
+    run(&mut s, "plastic.lip", json!({"face": [1, 25, 30], "width": 1, "height": 2}));
+    // The band inside the rim, 1 wide and 2 high: (78 × 48 − 76 × 46) × 2.
+    assert!(rel(volume(&mut s) - v0, 496.0) < 1e-6, "{}", volume(&mut s) - v0);
 }
 
 /// A drilled hole as deep as the plate: the drill point breaks through the bottom.

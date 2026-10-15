@@ -824,23 +824,32 @@ arrow upward by 150 screen points (120 input steps, Ctrl held) exposed preview s
 A completed worker result was discarded whenever the pointer had already changed the
 requested distance. The arrow also drew the previous frame's distance.
 
-The preview now accepts successful intermediate distances from the same extrude or face-offset
-setup, including feature edits and partial join/cut tool previews. Selections, operation,
-extent mode, feature identity, revision and colours remain part of the setup identity. Errors
-still apply only to the exact requested inputs, and the final distance is computed normally.
-The arrow and value-box anchor use the current frame's pointer value.
+Main's tool-only preview already delivers intermediate Join/Cut/Intersect geometry. New Body
+extrusions (including feature edits) and Offset Face use full-result previews and still discard
+completed distances during a moving drag. Those paths now accept successful intermediate
+distances from the same setup. Selections, operation, extent mode, feature identity, revision
+and colours remain part of the setup identity. Errors still apply only to the exact requested
+inputs, and the final distance is computed normally. Tool previews and background Apply retain
+their existing paths. The arrow and value-box anchor use the current frame's pointer value.
 
-A release-build control-channel reproduction against upstream `01b1b705` and the fix sampled
-27 distinct distances in each run, ending at 19.585 mm:
+Release-build control-channel checks against upstream `4dc63810` with the arrow fix alone,
+then with the distance fallback, used the same 150-point, 120-step drags. The cylinder used
+the setup above; planar-face Press Pull (Join) and Offset Face used a 30 × 30 × 10 mm box.
+The samples captured 25–27 distinct requested distances per drag:
 
-| Observation | Before | After |
+| Preview updates before reaching the final distance | Main + arrow fix | With distance fallback |
 |---|---:|---:|
-| Preview updates before reaching the final distance | 0 | 24 |
-| Preview updates including final settling, excluding the initial scene | 1 | 26 |
-| Largest sampled UI frame work | 1.37 ms | 1.32 ms |
+| Edited New Body extrusion | 0 | 24 |
+| Planar-face Press Pull (Join) | 22 | 24 |
+| Offset Face | 0 | 23 |
+
+Join already streams on main; the small count difference reflects sampling, not a change to
+that path. Applying the fixed New Body extrusion produced the requested 19.585 mm height;
+applying the 11.672 mm face offset produced a 21.672 mm tall box.
 
 These are sampled preview deliveries (`ui.inspect.preview.ms` changes), not every rendered
-frame. The UI timings exclude GPU presentation; the improvement is continued delivery of
-preview geometry during motion, not a claimed speedup of the geometry kernel. Regression tests
-cover intermediate geometry, exact final convergence, obsolete errors and setup changes, and
-the arrow's position on each held input frame.
+frame or a geometry-kernel speed benchmark. With main's preview code unchanged, the New Body,
+edited New Body and Offset Face drag regressions fail while Join passes. With the fallback,
+all six distance-preview regressions pass, covering intermediate geometry, exact final
+convergence, unchanged document/undo, obsolete errors and setup changes. A separate regression
+checks the arrow's position on each held input frame.
