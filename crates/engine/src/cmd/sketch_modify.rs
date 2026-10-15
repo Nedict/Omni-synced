@@ -1078,7 +1078,7 @@ fn offset_length(s: &Session, p: &Value, key: &str, positive: bool) -> Result<(f
     let cmd = "sketch.offset";
     let expression = match num(p, key) {
         Some(v) => format!("{v} mm"),
-        None => expr(p, key).ok_or_else(|| bad(cmd, format!("`{key}` must be a length expression")))?,
+        None => expr(p, key).ok_or_else(|| bad(cmd, format!("`{key}` must be a length expression")))?.into_string(),
     };
     let expression = s.doc.with_design_unit(&expression, solidcraft_doc::expr::Kind::Length);
     let value = s.doc.eval(&expression, solidcraft_doc::expr::Kind::Length)?;

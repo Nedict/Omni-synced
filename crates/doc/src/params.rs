@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::expr::{self, Kind, ParamDef, Value};
+use crate::expr::{self, Expr, Kind, ParamDef, Value};
 use crate::{DocError, Document, FeatureKind, HoleKind, MAX_PARAMS, PatternKind, PlaneRef, Result};
 
 /// Whether an expression of a feature is one of its inputs, which become model parameters named
@@ -24,7 +24,7 @@ pub(crate) enum ExprRole {
 /// nothing). Nesting is capped like every walk over a plane.
 macro_rules! plane_walk {
     ($name:ident $(, $m:tt)?) => {
-        fn $name<'a>(mut p: &'a $($m)? PlaneRef, f: &mut impl FnMut(&'static str, &'a $($m)? String, Kind, ExprRole)) {
+        fn $name<'a>(mut p: &'a $($m)? PlaneRef, f: &mut impl FnMut(&'static str, &'a $($m)? Expr, Kind, ExprRole)) {
             for _ in 0..64 {
                 match p {
                     PlaneRef::Offset { base, distance } => {
@@ -54,7 +54,7 @@ plane_walk!(plane_exprs_mut, mut);
 /// walk, `$refs` the matching `refs`/`refs_mut`, `$m` is `mut` or nothing.
 macro_rules! feature_walk {
     ($name:ident, $plane:ident, $refs:ident $(, $m:tt)?) => {
-        pub(crate) fn $name<'a>(&'a $($m)? self, f: &mut impl FnMut(&'static str, &'a $($m)? String, Kind, ExprRole)) {
+        pub(crate) fn $name<'a>(&'a $($m)? self, f: &mut impl FnMut(&'static str, &'a $($m)? Expr, Kind, ExprRole)) {
             use ExprRole::{Input as I, Placement as P};
             use Kind::{Angle as A, Length as L, Unitless as U};
             const XYZ: [&str; 3] = ["X", "Y", "Z"];
@@ -387,7 +387,7 @@ impl FeatureKind {
     feature_walk!(walk_exprs_mut, plane_exprs_mut, refs_mut, mut);
 
     /// The feature's numeric inputs: (label, expression, kind), in a fixed order.
-    pub fn inputs_mut(&mut self) -> Vec<(&'static str, &mut String, Kind)> {
+    pub fn inputs_mut(&mut self) -> Vec<(&'static str, &mut Expr, Kind)> {
         let mut v = Vec::new();
         self.walk_exprs_mut(&mut |label, e, kind, role| {
             if role == ExprRole::Input {
@@ -402,7 +402,7 @@ impl FeatureKind {
         let mut v = Vec::new();
         self.walk_exprs(&mut |label, e, kind, role| {
             if role == ExprRole::Input {
-                v.push((label, e.clone(), kind));
+                v.push((label, e.to_string(), kind));
             }
         });
         v
@@ -596,7 +596,7 @@ impl Document {
         if let Some(f) = next.features.get_mut(i)
             && let Some((_, e, _)) = f.kind.inputs_mut().into_iter().nth(k)
         {
-            *e = expr_s.clone();
+            *e = expr_s.clone().into();
         }
         if let Some(c) = comment {
             next.param_comments.insert(name.to_string(), c.to_string());
@@ -644,7 +644,7 @@ impl Document {
             if *target != normalized {
                 changed.insert(name.clone());
             }
-            *target = normalized;
+            *target = normalized.into();
         }
         let (_, errors) = next.param_values();
         for (name, error) in errors {
@@ -985,14 +985,14 @@ impl Document {
             for e in f.kind.point_expr_mut().into_iter().flatten() {
                 let r = expr::rename_reference(e, old, new);
                 if r != *e {
-                    *e = r;
+                    *e = r.into();
                     n += 1;
                 }
             }
             for (_, e, _) in f.kind.inputs_mut() {
                 let r = expr::rename_reference(e, old, new);
                 if r != *e {
-                    *e = r;
+                    *e = r.into();
                     n += 1;
                 }
             }

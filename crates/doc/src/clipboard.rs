@@ -220,10 +220,10 @@ impl crate::Feature {
             *n = remap_topology(n, ids, bodies);
         }
         for (_, e, _) in self.kind.inputs_mut() {
-            *e = clone_expression(e, parameters);
+            *e = clone_expression(e, parameters).into();
         }
         for e in self.kind.point_expr_mut().into_iter().flatten() {
-            *e = clone_expression(e, parameters);
+            *e = clone_expression(e, parameters).into();
         }
         self.kind.remap_bodies(bodies);
         match &mut self.kind {

@@ -2190,7 +2190,7 @@ fn hole_spots(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
 
 /// A hole's depth: down to the To Object (where the hole's axis meets the face there, else the
 /// point's depth along the axis), else as given.
-fn hole_depth_to(st: &ModelState, at: &Vec3, dir: Vec3, to: &Option<Vec3>, depth: &Option<String>) -> Result<Option<String>> {
+fn hole_depth_to(st: &ModelState, at: &Vec3, dir: Vec3, to: &Option<Vec3>, depth: &Option<crate::Expr>) -> Result<Option<crate::Expr>> {
     let Some(t) = to else { return Ok(depth.clone()) };
     let mut d = (*t - *at).dot(dir);
     // The face at the To point, met along the axis.
@@ -2207,7 +2207,7 @@ fn hole_depth_to(st: &ModelState, at: &Vec3, dir: Vec3, to: &Option<Vec3>, depth
     if !(d > 1e-6) {
         return Err(DocError::Invalid("the hole's To object is not ahead of the hole".into()));
     }
-    Ok(Some(format!("{d} mm")))
+    Ok(Some(format!("{d} mm").into()))
 }
 
 /// A hole's spots as given (not yet moved onto the surface) and its direction.
@@ -2306,7 +2306,7 @@ fn hole_tools(
     position: &Vec3,
     dir: Vec3,
     diameter: &str,
-    depth: &Option<String>,
+    depth: &Option<crate::Expr>,
     hole: &HoleKind,
 ) -> Result<Vec<Traced>> {
     Ok(hole_tools_and_prisms(vals, st, position, dir, diameter, depth, hole)?.into_iter().map(|(tool, _)| tool).collect())
@@ -2323,7 +2323,7 @@ fn hole_tools_and_prisms(
     position: &Vec3,
     dir: Vec3,
     diameter: &str,
-    depth: &Option<String>,
+    depth: &Option<crate::Expr>,
     hole: &HoleKind,
 ) -> Result<Vec<(Traced, Option<more::PrimitivePrism>)>> {
     let r = val(vals, diameter, Kind::Length)? / 2.0;
@@ -3084,7 +3084,7 @@ fn feature_tools_with_constructor(
 
 /// A chain of sketch curves as 3D path segments, starting at the end nearest `start`.
 /// A pipe's section: a circle of radius `r`, hollow when it has a wall.
-fn pipe_region(vals: &BTreeMap<String, Value>, r: f64, wall: &Option<String>) -> Result<Region2> {
+fn pipe_region(vals: &BTreeMap<String, Value>, r: f64, wall: &Option<crate::Expr>) -> Result<Region2> {
     let holes = match wall {
         Some(w) => {
             let wt = val(vals, w, Kind::Length)?;
@@ -3885,8 +3885,8 @@ fn chamfer_with(
     b: &kernel::Body,
     edges: &[Vec3],
     d: f64,
-    distance2: &Option<String>,
-    angle: &Option<String>,
+    distance2: &Option<crate::Expr>,
+    angle: &Option<crate::Expr>,
     flip: bool,
 ) -> Result<kernel::Body> {
     let side = match (distance2, angle) {

@@ -107,7 +107,7 @@ fn geometry_record() -> String {
             out += &format!("  profiles: {}\n", profiles.join(", "));
         }
         if let Some(p) = kind.point_expr() {
-            out += &format!("  placement: {}\n", p.join(", "));
+            out += &format!("  placement: {}\n", p.iter().map(|e| e.as_str()).collect::<Vec<_>>().join(", "));
         }
     }
     out

@@ -58,6 +58,7 @@ pub use eval::{
     revolve_extent_with_convention, select_profiles, sketch_hole_direction, state_in_frame, state_in_frame_at, through_all_distance, world_state,
     world_state_reusing,
 };
+pub use expr::Expr;
 pub use params::{ParamRow, ParamUser, cycles};
 pub use solidcraft_kernel as kernel;
 pub use solidcraft_sketch as sketch;

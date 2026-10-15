@@ -4130,7 +4130,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         FeatureKind::Extrude { sketch, profiles, extent, operation, targets, thin } => {
             let mut d = start("solid.extrude")?;
             d.kind = Kind::Extrude {
-                distance: extent.distance.clone(),
+                distance: extent.distance.to_string(),
                 direction: match (extent.direction, &extent.distance2) {
                     (_, Some(_)) => TWO_SIDES,
                     (Direction::Positive, None) => 0,
@@ -4139,16 +4139,16 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 },
                 operation: op_index(operation),
                 auto_op: false,
-                distance2: extent.distance2.clone().unwrap_or_else(|| "10 mm".into()),
-                taper: extent.taper.clone().unwrap_or_else(|| "0 deg".into()),
+                distance2: extent.distance2.as_deref().map(str::to_string).unwrap_or_else(|| "10 mm".into()),
+                taper: extent.taper.as_deref().map(str::to_string).unwrap_or_else(|| "0 deg".into()),
                 taper_present: extent.taper.is_some(),
-                to_offset: extent.to_offset.clone().unwrap_or_default(),
-                start: extent.start_offset.clone().unwrap_or_default(),
+                to_offset: extent.to_offset.as_deref().map(str::to_string).unwrap_or_default(),
+                start: extent.start_offset.as_deref().map(str::to_string).unwrap_or_default(),
                 all: extent.through_all,
                 thin: thin.is_some(),
-                wall: thin.as_ref().map_or_else(|| "2 mm".into(), |t| t.thickness.clone()),
+                wall: thin.as_ref().map_or_else(|| "2 mm".into(), |t| t.thickness.to_string()),
                 wall_side: thin.as_ref().map_or(0, |t| WALL_SIDES.iter().position(|w| ThinSide::parse(w) == Some(t.side)).unwrap_or(0)),
-                wall2: thin.as_ref().and_then(|t| t.thickness2.clone()).unwrap_or_else(|| "1 mm".into()),
+                wall2: thin.as_ref().and_then(|t| t.thickness2.as_deref().map(str::to_string)).unwrap_or_else(|| "1 mm".into()),
             };
             // Extent references belong to the extrude's authoring frame, including free
             // points. They are not body-local picks (a reference may be on another body).
@@ -4187,7 +4187,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 })),
                 _ => None,
             };
-            d.kind = Kind::Revolve { angle: angle.clone(), operation: op_index(operation), axis: stored_axis };
+            d.kind = Kind::Revolve { angle: angle.to_string(), operation: op_index(operation), axis: stored_axis };
             d.extra.insert("convention".into(), json!(convention));
             if let Some(a2) = angle2 {
                 d.extra.insert("angle2".into(), json!(a2));
@@ -4229,10 +4229,10 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 if let FeatureKind::Chamfer { distance2: d2, angle: a, flip: f, .. } = &f.kind {
                     if let Some(v) = d2 {
                         *ctype = 1;
-                        *distance2 = v.clone();
+                        *distance2 = v.to_string();
                     } else if let Some(v) = a {
                         *ctype = 2;
-                        *angle = v.clone();
+                        *angle = v.to_string();
                     }
                     *flip = *f;
                 }
@@ -4293,7 +4293,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         }
         FeatureKind::Shell { faces, thickness, direction, tangent_chain, .. } => {
             let mut d = start("solid.shell")?;
-            d.kind = Kind::Shell { thickness: thickness.clone() };
+            d.kind = Kind::Shell { thickness: thickness.to_string() };
             d.extra.insert("tangent_chain".into(), json!(tangent_chain));
             if !direction.is_empty() && direction != "inside" {
                 d.extra.insert("direction".into(), json!(direction));
@@ -4305,7 +4305,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         }
         FeatureKind::Draft { faces, angle, neutral, pull, .. } => {
             let mut d = start("solid.draft")?;
-            d.kind = Kind::Draft { angle: angle.clone() };
+            d.kind = Kind::Draft { angle: angle.to_string() };
             if let Some(inp) = d.inputs.get_mut(0) {
                 inp.items = faces.iter().filter_map(|p| face_sel(s, *p)).collect();
             }
@@ -4319,7 +4319,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             let mut d = start("solid.hole")?;
             let mut k = hole_defaults();
             if let Kind::Hole { diameter: dia, depth: dep, kind, cb_diameter, cb_depth, cs_diameter, cs_angle, opts } = &mut k {
-                *dia = diameter.clone();
+                *dia = diameter.to_string();
                 opts.all = depth.is_none();
                 opts.angled = matches!(hole, HoleKind::Drilled { .. });
                 opts.multiple = points.is_some();
@@ -4328,21 +4328,21 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                     opts.thread = th.clone();
                 }
                 if let Some(dd) = depth {
-                    *dep = dd.clone();
+                    *dep = dd.to_string();
                 }
                 match hole {
                     HoleKind::Counterbore { cb_diameter: a, cb_depth: b } => {
                         *kind = 1;
-                        *cb_diameter = a.clone();
-                        *cb_depth = b.clone();
+                        *cb_diameter = a.to_string();
+                        *cb_depth = b.to_string();
                     }
                     HoleKind::Countersink { cs_diameter: a, cs_angle: b } => {
                         *kind = 2;
-                        *cs_diameter = a.clone();
-                        *cs_angle = b.clone();
+                        *cs_diameter = a.to_string();
+                        *cs_angle = b.to_string();
                     }
                     HoleKind::Drilled { tip_angle } => {
-                        opts.tip_angle = tip_angle.clone();
+                        opts.tip_angle = tip_angle.to_string();
                     }
                     HoleKind::Simple => {}
                 }
@@ -4482,10 +4482,10 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 PatternKind::Rectangular { dir1, count1, spacing1, dir2, count2, spacing2 } => {
                     let mut d = start("solid.pattern.rectangular")?;
                     d.kind = Kind::PatternRect {
-                        count: count1.clone(),
-                        spacing: spacing1.clone(),
-                        count2: count2.clone().unwrap_or_else(|| "1".into()),
-                        spacing2: spacing2.clone().unwrap_or_else(|| "20 mm".into()),
+                        count: count1.to_string(),
+                        spacing: spacing1.to_string(),
+                        count2: count2.as_deref().map(str::to_string).unwrap_or_else(|| "1".into()),
+                        spacing2: spacing2.as_deref().map(str::to_string).unwrap_or_else(|| "20 mm".into()),
                     };
                     // Directions along the origin axes show as those axes; others are kept as is.
                     for (i, (key, dir)) in [("dir1", Some(*dir1)), ("dir2", *dir2)].into_iter().enumerate() {
@@ -4505,7 +4505,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 }
                 PatternKind::Circular { origin, axis, count, angle } => {
                     let mut d = start("solid.pattern.circular")?;
-                    d.kind = Kind::PatternCirc { count: count.clone(), angle: angle.clone() };
+                    d.kind = Kind::PatternCirc { count: count.to_string(), angle: angle.to_string() };
                     match world_axis(*axis).filter(|_| origin.len() < 1e-9) {
                         Some(name) => {
                             if let Some(inp) = d.inputs.get_mut(1) {
@@ -4568,7 +4568,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         }
         FeatureKind::ConstructionPlane { plane: PlaneRef::Offset { base, distance } } => {
             let mut d = start("construct.plane.offset")?;
-            d.kind = Kind::OffsetPlane { offset: distance.clone() };
+            d.kind = Kind::OffsetPlane { offset: distance.to_string() };
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = plane_sel(s, base).into_iter().collect();
             }
@@ -4585,7 +4585,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                 }
                 _ => return None,
             };
-            d.kind = Kind::PathPlane { t: t.clone(), sketch };
+            d.kind = Kind::PathPlane { t: t.to_string(), sketch };
             if let Some(input) = d.inputs.first_mut() {
                 input.items = vec![item];
             }
@@ -4593,7 +4593,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         }
         FeatureKind::ConstructionPlane { plane: PlaneRef::AtAngle { base, axis_origin, axis_dir, angle } } => {
             let mut d = start("construct.plane.at_angle")?;
-            d.kind = Kind::AnglePlane { angle: angle.clone() };
+            d.kind = Kind::AnglePlane { angle: angle.to_string() };
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = plane_sel(s, base).into_iter().collect();
             }
@@ -4624,7 +4624,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         }
         FeatureKind::Scale { bodies, origin, factor, factors } => {
             let mut d = start("solid.scale")?;
-            d.kind = Kind::Scale { factor: factor.clone() };
+            d.kind = Kind::Scale { factor: factor.to_string() };
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = bodies.iter().map(|n| Sel::Body { name: n.clone() }).collect();
             }
@@ -4636,7 +4636,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         }
         FeatureKind::OffsetFace { faces, distance, body } => {
             let mut d = start("solid.offset_face")?;
-            d.kind = Kind::OffsetFaces { distance: distance.clone() };
+            d.kind = Kind::OffsetFaces { distance: distance.to_string() };
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = faces.iter().filter_map(|p| face_sel(s, *p)).collect();
             }
@@ -4650,7 +4650,10 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             if *modeled {
                 d.extra.insert("modeled".into(), json!(true));
             }
-            d.kind = Kind::Thread { designation: designation.clone().unwrap_or_default(), length: length.clone().unwrap_or_default() };
+            d.kind = Kind::Thread {
+                designation: designation.clone().unwrap_or_default(),
+                length: length.as_deref().map(str::to_string).unwrap_or_default(),
+            };
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = face_sel(s, *face).into_iter().collect();
             }
@@ -4658,7 +4661,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         }
         FeatureKind::BoundingSolid { bodies, margin } => {
             let mut d = start("solid.bounding_solid")?;
-            d.kind = Kind::Stock { margin: margin.clone() };
+            d.kind = Kind::Stock { margin: margin.to_string() };
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = bodies.iter().map(|n| Sel::Body { name: n.clone() }).collect();
             }
@@ -4666,7 +4669,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         }
         FeatureKind::Pipe { path, diameter, wall, operation, targets, .. } => {
             let mut d = start("solid.pipe")?;
-            d.kind = Kind::Pipe { diameter: diameter.clone(), wall: wall.clone().unwrap_or_default() };
+            d.kind = Kind::Pipe { diameter: diameter.to_string(), wall: wall.as_deref().map(str::to_string).unwrap_or_default() };
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = path.iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect();
             }
@@ -4678,7 +4681,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         }
         FeatureKind::Emboss { sketch, profiles, depth, deboss, targets, face } => {
             let mut d = start("solid.emboss")?;
-            d.kind = Kind::Emboss { depth: depth.clone(), deboss: *deboss };
+            d.kind = Kind::Emboss { depth: depth.to_string(), deboss: *deboss };
             let items = st.sketch(*sketch).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = items.into_iter().map(|index| Sel::Profile { sketch: *sketch, index }).collect();
@@ -4695,7 +4698,12 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
         }
         FeatureKind::Rib { curves, thickness, depth, flip, web, .. } => {
             let mut d = start(if *web { "solid.web" } else { "solid.rib" })?;
-            d.kind = Kind::Rib { web: *web, thickness: thickness.clone(), depth: depth.clone().unwrap_or_default(), flip: *flip };
+            d.kind = Kind::Rib {
+                web: *web,
+                thickness: thickness.to_string(),
+                depth: depth.as_deref().map(str::to_string).unwrap_or_default(),
+                flip: *flip,
+            };
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = curves.iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect();
             }

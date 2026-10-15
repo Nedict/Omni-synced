@@ -1,7 +1,7 @@
 //! Solid feature commands: extrude, revolve, fillet, chamfer, primitives, combine, move.
 
 use serde_json::{Value, json};
-use solidcraft_doc::{AxisRef, Direction, Extent, FeatureKind, Operation, PointExpr, ProfileSel, ThinSide, ThinWall, expr::Kind, point_expr};
+use solidcraft_doc::{AxisRef, Direction, Expr, Extent, FeatureKind, Operation, PointExpr, ProfileSel, ThinSide, ThinWall, expr::Kind, point_expr};
 use solidcraft_geom::Vec3;
 
 use super::{CommandSpec, not_in_sketch};
@@ -381,7 +381,7 @@ fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) ->
     if s.doc.units.trim() != "mm" {
         let doc = s.doc.clone();
         for (_, e, k) in kind.inputs_mut() {
-            *e = doc.with_design_unit(e, k);
+            *e = doc.with_design_unit(e, k).into();
         }
     }
     // Profiles picked by index are kept by the curves around them: a recompute can renumber a
@@ -698,12 +698,12 @@ pub(super) fn axis_param(p: &Value, cmd: &str) -> Result<AxisRef> {
     }
 }
 
-fn radius_expr(s: &Session, p: &Value, cmd: &str) -> Result<String> {
+fn radius_expr(s: &Session, p: &Value, cmd: &str) -> Result<Expr> {
     match (expr(p, "radius"), expr(p, "diameter")) {
         (Some(r), _) => Ok(r),
         (None, Some(d)) => {
             let [d] = length_operands(s, [(&d, &typed_length_unit(s))]);
-            Ok(format!("({d}) / 2"))
+            Ok(format!("({d}) / 2").into())
         }
         _ => Err(bad(cmd, "needs `radius` or `diameter`")),
     }
@@ -777,11 +777,13 @@ fn prim_box(s: &mut Session, p: &Value) -> Result<Value> {
         (None, Some([cx, cy, cz])) => {
             let unit = typed_length_unit(s);
             let mm_per_unit = solidcraft_doc::expr::unit_info(&unit).map_or(1.0, |(_, k)| k);
-            let back = |c: String, size: &String| match (c.parse::<f64>(), size.parse::<f64>()) {
-                (Ok(a), Ok(b)) => format!("{}", a - b * mm_per_unit / 2.0),
-                _ => {
-                    let [c, size] = length_operands(s, [(&c, "mm"), (size, &unit)]);
-                    format!("({c}) - ({size}) / 2")
+            let back = |c: Expr, size: &Expr| -> Expr {
+                match (c.parse::<f64>(), size.parse::<f64>()) {
+                    (Ok(a), Ok(b)) => format!("{}", a - b * mm_per_unit / 2.0).into(),
+                    _ => {
+                        let [c, size] = length_operands(s, [(&c, "mm"), (size, &unit)]);
+                        format!("({c}) - ({size}) / 2").into()
+                    }
                 }
             };
             [back(cx, &l), back(cy, &w), back(cz, &h)]
@@ -912,8 +914,8 @@ fn press_pull(s: &mut Session, p: &Value) -> Result<Value> {
     // Pushed in: the extrude cuts the other way by as much (a bare number stays one, so it keeps
     // being read as a bare number typed into the extrude).
     let flipped = match distance.trim().parse::<f64>() {
-        Ok(v) if solidcraft_doc::expr::is_bare_number(&distance) => format!("{}", -v),
-        _ => format!("-({distance})"),
+        Ok(v) if solidcraft_doc::expr::is_bare_number(&distance) => Expr::new(format!("{}", -v)),
+        _ => Expr::new(format!("-({distance})")),
     };
     let (dist, dir, op) = if d > 0.0 { (distance, "positive", "join") } else { (flipped, "negative", "cut") };
     extrude(s, &json!({"face": face, "distance": dist, "direction": dir, "operation": op}))
@@ -947,7 +949,7 @@ fn fillet(s: &mut Session, p: &Value) -> Result<Value> {
                     _ => return Err(bad(cmd, "a `mid` radius is a number or an expression")),
                 };
                 check_expr(s, &r, Kind::Length, cmd, "mid radius")?;
-                mid.push((t, r));
+                mid.push((t, r.into()));
             }
             let smooth = p.get("smooth").and_then(Value::as_bool).unwrap_or(false);
             solidcraft_doc::FilletStyle::Variable { radius2, start, mid, smooth }
@@ -966,7 +968,7 @@ fn fillet(s: &mut Session, p: &Value) -> Result<Value> {
                     _ => return Err(bad(cmd, "a control radius is a number or an expression")),
                 };
                 check_expr(s, &r, Kind::Length, cmd, "control radius")?;
-                radii.push(r);
+                radii.push(Expr::from(r));
             }
             // All control radii (`radius` and `radii`) plus the degree (1…3) plus one.
             if radii.is_empty() || !(radii.len() + 3..=radii.len() + 5).contains(&knots.len()) {
@@ -1055,7 +1057,7 @@ fn move_bodies(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let t = match p.get("translate") {
         Some(Value::Array(a)) if a.len() == 3 => {
-            let mut out: [String; 3] = Default::default();
+            let mut out: [Expr; 3] = Default::default();
             for (i, v) in a.iter().enumerate() {
                 let e = expr(&json!({"v": v}), "v").ok_or_else(|| bad(cmd, "translate entries must be numbers or expressions"))?;
                 check_expr(s, &e, Kind::Length, cmd, "translate")?;
@@ -1462,11 +1464,11 @@ fn hole(s: &mut Session, p: &Value) -> Result<Value> {
         (None, _, Some(c)) => {
             let fit = str_(p, "fit").unwrap_or("normal").to_ascii_lowercase();
             let d = clearance_diameter(c, &fit).ok_or_else(|| bad(cmd, format!("no clearance hole for `{c}` ({fit} fit): M1.6 to M64")))?;
-            format!("{d} mm")
+            Expr::new(format!("{d} mm"))
         }
         (None, Some(t), None) => {
             let (major, pitch) = solidcraft_doc::parse_metric_thread(t).ok_or_else(|| bad(cmd, "thread"))?;
-            format!("{} mm", ((major - pitch) * 1000.0).round() / 1000.0)
+            Expr::new(format!("{} mm", ((major - pitch) * 1000.0).round() / 1000.0))
         }
         (None, None, None) => return Err(bad(cmd, "needs `diameter`, `thread` (a tapped hole) or `clearance` (a bolt size)")),
     };
@@ -1475,7 +1477,7 @@ fn hole(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(d) = &depth {
         check_expr(s, d, Kind::Length, cmd, "depth")?;
     }
-    let get = |k: &str| -> Result<String> {
+    let get = |k: &str| -> Result<Expr> {
         let e = req_expr(cmd, p, k)?;
         Ok(e)
     };
@@ -1699,7 +1701,7 @@ fn scale(s: &mut Session, p: &Value) -> Result<Value> {
             for x in &e {
                 check_expr(s, x, Kind::Unitless, cmd, "factors")?;
             }
-            Some([e[0].clone(), e[1].clone(), e[2].clone()])
+            Some([e[0].clone().into(), e[1].clone().into(), e[2].clone().into()])
         }
         Some(_) => return Err(bad(cmd, "`factors` must have three values")),
         None => None,

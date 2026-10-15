@@ -200,8 +200,8 @@ impl Mapper<'_> {
     fn make_expr(&mut self, m: &Mat, v: &Value) -> Option<Value> {
         let a = v.as_array().filter(|a| a.len() == 3)?;
         let c = |i: usize| match a.get(i)? {
-            Value::Number(n) => n.as_f64().filter(|x| x.is_finite()).map(|x| format!("{x}")),
-            Value::String(e) => Some(e.clone()),
+            Value::Number(n) => n.as_f64().filter(|x| x.is_finite()).map(|x| solidcraft_doc::Expr::new(format!("{x}"))),
+            Value::String(e) => Some(solidcraft_doc::Expr::new(e.as_str())),
             _ => None,
         };
         let mut p = [c(0)?, c(1)?, c(2)?];

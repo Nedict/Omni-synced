@@ -87,7 +87,7 @@ fn manage_rules(s: &mut Session, p: &Value) -> Result<Value> {
             let probe = e.replace("Thickness", "(1 mm)");
             check_expr(s, &probe, kind, cmd, k)?;
             if let Some(slot) = rule.field_mut(k) {
-                *slot = e;
+                *slot = e.into();
             }
         }
     }
@@ -172,7 +172,7 @@ fn rest(s: &mut Session, p: &Value) -> Result<Value> {
     add_feature(s, p, kind)
 }
 
-fn checked(s: &Session, p: &Value, k: &str, kind: Kind, cmd: &str) -> Result<Option<String>> {
+fn checked(s: &Session, p: &Value, k: &str, kind: Kind, cmd: &str) -> Result<Option<solidcraft_doc::Expr>> {
     match expr(p, k) {
         Some(e) => {
             check_expr(s, &e, kind, cmd, k)?;
@@ -182,7 +182,7 @@ fn checked(s: &Session, p: &Value, k: &str, kind: Kind, cmd: &str) -> Result<Opt
     }
 }
 
-fn required(s: &Session, p: &Value, k: &str, kind: Kind, cmd: &str) -> Result<String> {
+fn required(s: &Session, p: &Value, k: &str, kind: Kind, cmd: &str) -> Result<solidcraft_doc::Expr> {
     let e = req_expr(cmd, p, k)?;
     check_expr(s, &e, kind, cmd, k)?;
     Ok(e)

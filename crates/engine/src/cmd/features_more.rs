@@ -57,11 +57,11 @@ fn coil(s: &mut Session, p: &Value) -> Result<Value> {
         (Some(n), _, Some(pt)) => (n, pt),
         (Some(n), Some(h), None) => {
             let [h] = length_operands(s, [(&h, &unit)]);
-            (n.clone(), format!("({h}) / ({n})"))
+            (n.clone(), format!("({h}) / ({n})").into())
         }
         (None, Some(h), Some(pt)) => {
             let [h, by] = length_operands(s, [(&h, &unit), (&pt, &unit)]);
-            (format!("({h}) / ({by})"), pt)
+            (format!("({h}) / ({by})").into(), pt)
         }
         _ => return Err(bad(cmd, "give two of `revolutions`, `height` and `pitch`")),
     };

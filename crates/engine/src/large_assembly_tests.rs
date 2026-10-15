@@ -24,7 +24,7 @@ fn generated_assembly(parts: usize) -> Document {
             (id, m)
         })
         .collect();
-    let mm = |v: f64| format!("{v} mm");
+    let mm = |v: f64| solidcraft_doc::Expr::new(format!("{v} mm"));
     let mut made = Vec::new();
     for i in 0..parts {
         let o = Vec3::new(30.0 * (i % 20) as f64, 30.0 * (i / 20) as f64, 0.0);

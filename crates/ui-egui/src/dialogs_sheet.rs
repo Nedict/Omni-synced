@@ -662,7 +662,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
             if let Sm::Flange { flip: fl, rule: r, distance: d, reverse: rv, .. } = &mut f {
                 *fl = *flip;
                 *r = rule_index(rule);
-                *d = distance.clone();
+                *d = distance.to_string();
                 *rv = *reverse;
             }
             (f, curves.iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect())
@@ -677,15 +677,19 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
             for e in edges {
                 let Some(sel) = edge_sel(s, e.point) else { continue };
                 if let (Sel::Edge { point, .. }, true) = (&sel, e.angle.is_some() || e.height.is_some()) {
-                    own.push((*point, e.angle.clone().unwrap_or_default(), e.height.clone().unwrap_or_default()));
+                    own.push((
+                        *point,
+                        e.angle.as_deref().map(str::to_string).unwrap_or_default(),
+                        e.height.as_deref().map(str::to_string).unwrap_or_default(),
+                    ));
                 }
                 picked.push(sel);
             }
             let f = Sm::Flange {
                 ty: 1,
-                height: height.clone(),
-                angle: angle.clone(),
-                radius: radius.clone().unwrap_or_default(),
+                height: height.to_string(),
+                angle: angle.to_string(),
+                radius: radius.as_deref().map(str::to_string).unwrap_or_default(),
                 position: POSITIONS.iter().position(|p| p == position).unwrap_or(0),
                 flip: *flip,
                 distance: "20 mm".into(),
@@ -700,7 +704,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
                 extra.insert("body".into(), json!(b));
             }
             (
-                Sm::Hem { length: length.clone(), gap: gap.clone().unwrap_or_default(), flip: *flip },
+                Sm::Hem { length: length.to_string(), gap: gap.as_deref().map(str::to_string).unwrap_or_default(), flip: *flip },
                 edges.iter().filter_map(|p| edge_sel(s, *p)).collect(),
             )
         }
@@ -709,8 +713,8 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
                 extra.insert("body".into(), json!(bd));
             }
             let k = Sm::Fold {
-                angle: angle.clone(),
-                radius: radius.clone().unwrap_or_default(),
+                angle: angle.to_string(),
+                radius: radius.as_deref().map(str::to_string).unwrap_or_default(),
                 position: FOLD_POSITIONS.iter().position(|x| x == position || (*x == "mould" && position == "mold")).unwrap_or(0),
                 flip: *flip,
             };

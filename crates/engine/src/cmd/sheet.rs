@@ -96,7 +96,7 @@ fn flange_edges(s: &Session, p: &Value, cmd: &str) -> Result<Vec<FlangeEdge>> {
             return Err(bad(cmd, format!("edges[{i}]: unknown key `{k}` (an edge takes point, angle and height)")));
         }
         let point = o.get("point").and_then(vec3).ok_or_else(|| bad(cmd, format!("edges[{i}]: `point` must be [x, y, z]")))?;
-        let own = |k: &str, kind: Kind| -> Result<Option<String>> {
+        let own = |k: &str, kind: Kind| -> Result<Option<solidcraft_doc::Expr>> {
             if o.get(k).is_none_or(Value::is_null) {
                 return Ok(None);
             }
@@ -340,7 +340,7 @@ fn rules(s: &mut Session, p: &Value) -> Result<Value> {
         ("gap", &mut rule.gap),
     ] {
         if let Some(e) = expr(p, k) {
-            *slot = e;
+            *slot = e.into();
         }
     }
     if let Some(shape) = p.get("corner_relief_shape").filter(|v| !v.is_null()) {
