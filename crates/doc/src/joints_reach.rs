@@ -231,7 +231,7 @@ pub fn reach(doc: &Document, st: &ModelState, r: &Reach) -> Result<Reached, Stri
     let gained = before - miss(&res) > 1e-7;
     for ((id, i), v) in vars.iter().zip(&x).filter(|_| gained) {
         let Some(j) = tree.joints.get(id) else { continue };
-        if j.values.get(*i).is_some_and(|s| (s - v).abs() <= 1e-12) {
+        if j.values.get(*i) == Some(v) {
             continue;
         }
         let q = out.values.entry(*id).or_insert_with(|| {
