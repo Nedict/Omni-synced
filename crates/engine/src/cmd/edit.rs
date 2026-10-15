@@ -853,6 +853,7 @@ fn redefine(s: &mut Session, p: &Value) -> Result<Value> {
                 | "plastic.lip"
                 | "plastic.snap_fit"
                 | "plastic.rest"
+                | "mesh.convert"
         );
     if !constructor {
         return Err(bad(cmd, format!("`{cid}` does not make a feature")));

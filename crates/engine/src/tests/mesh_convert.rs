@@ -53,6 +53,33 @@ fn mesh_conversion_is_parametric_undoable_and_editable_after_cold_reopen() {
     assert!(cold.model.results.iter().all(|r| r.error.is_none()));
 }
 
+/// Edit Feature on a mesh conversion redefines it through `timeline.redefine`, which refused
+/// `mesh.convert` as "does not make a feature" before it was listed as a constructor.
+#[test]
+fn mesh_conversion_can_be_redefined_from_the_timeline() {
+    let mut s = imported_box();
+    run(&mut s, "mesh.convert", json!({"body":"Mesh","tolerance":"0.01 mm","name":"Reconstructed prism"}));
+    let id = s.doc.find_feature("Reconstructed prism").unwrap().id;
+    let tolerance = |s: &Session| match &s.doc.feature(id).unwrap().kind {
+        FeatureKind::MeshConvert { tolerance, .. } => tolerance.clone(),
+        other => panic!("not a mesh conversion: {other:?}"),
+    };
+    run(
+        &mut s,
+        "timeline.redefine",
+        json!({"feature":"Reconstructed prism","command":"mesh.convert","params":{"body":"Mesh","tolerance":"0.02 mm"}}),
+    );
+    assert_eq!(tolerance(&s), "0.02 mm");
+    assert_eq!(s.doc.find_feature("Reconstructed prism").unwrap().id, id);
+    let state = s.model.state();
+    let body = &state.body("Mesh").unwrap().body;
+    assert!(!body.is_mesh());
+    assert_eq!(body.faces(0.01).unwrap().len(), 6);
+    assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(tolerance(&s), "0.01 mm");
+}
+
 #[test]
 fn failed_mesh_conversions_leave_the_design_unchanged() {
     let mut s = imported_box();

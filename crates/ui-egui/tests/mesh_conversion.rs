@@ -41,4 +41,16 @@ fn convert_mesh_uses_preselection_and_reopens_its_timeline_dialog() {
     assert!(h.app.session.model.state().body("Mesh").unwrap().body.is_mesh());
     h.step(&json!({"key":"Escape"})).unwrap();
     assert!(!h.app.session.model.state().body("Mesh").unwrap().body.is_mesh());
+
+    // Edit Feature with a new tolerance and OK redefines the conversion in place.
+    let response = h.call("ui.editFeature", json!({"feature":feature}));
+    assert_eq!(response["ok"], true, "{response}");
+    h.run(&json!([{"widget":"0.05 mm"}, {"key":"A","cmd":true}, {"text":"0.02 mm"}, {"widget":"OK"}])).unwrap();
+    assert!(h.app.dialog.is_none(), "{:?}", h.app.status);
+    assert!(
+        matches!(&h.app.session.doc.feature(feature).unwrap().kind, FeatureKind::MeshConvert { tolerance, .. } if tolerance == "0.02 mm"),
+        "{:?}",
+        h.app.status
+    );
+    assert!(!h.app.session.model.state().body("Mesh").unwrap().body.is_mesh());
 }
