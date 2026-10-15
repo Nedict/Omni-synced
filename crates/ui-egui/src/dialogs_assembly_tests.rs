@@ -460,3 +460,33 @@ fn drive_says_when_its_joint_is_joined_to_nothing_grounded() {
     crate::dialogs::run_dialog(&mut app, &d).unwrap();
     assert_eq!(app.status.clone().map(|(status, _, error)| (status, error)), Some((why, false)));
 }
+
+/// Drive Joints opens on the joint picked in the browser; with none picked, on the first joint
+/// that moves.
+#[test]
+fn drive_opens_on_the_picked_joint() {
+    let mut app = four_bar();
+    let drive_on = |app: &mut SolveApp| {
+        app.dialog = None;
+        app.start("joint.drive");
+        match &app.dialog.as_ref().unwrap().kind {
+            Kind::Assembly(Asm::Drive { joint, .. }) => app.session.doc.assembly.joints[*joint].name.clone(),
+            k => panic!("{k:?}"),
+        }
+    };
+    assert_eq!(drive_on(&mut app), "Crank");
+    let rocker = app.session.doc.assembly.joints.iter().find(|j| j.name == "Rocker").unwrap().id;
+    pick_joint(&mut app, rocker, false);
+    assert_eq!(drive_on(&mut app), "Rocker");
+}
+
+/// A rigid joint has nothing to drive: Drive Joints won't start on it.
+#[test]
+fn drive_preset_refuses_a_rigid_joint() {
+    let mut app = two_boxes();
+    let at = |o: &str| json!({"occurrence": o, "point": [25, 10, 5], "z": [1, 0, 0]});
+    app.run("joint.create", json!({"type": "rigid", "a": at("A"), "b": at("B"), "name": "Glue"})).unwrap();
+    let mut k = Asm::Drive { joint: 0, values: Vec::new(), focus: true };
+    let e = preset(&app.session, &mut k, &json!({"joint": "Glue"})).unwrap_err();
+    assert!(e.contains("rigid"), "{e}");
+}

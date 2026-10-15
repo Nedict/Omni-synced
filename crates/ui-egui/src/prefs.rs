@@ -205,6 +205,8 @@ pub const PAGE_DESIGN: usize = 3;
 pub const PAGE_GRAPHICS: usize = 4;
 pub const THEMES: [(&str, &str); 3] = [("dark", "Dark"), ("light", "Light"), ("system", "System")];
 pub const MSAA: [u32; 4] = [1, 2, 4, 8];
+/// Supersampling factors (#1288): off, 1.5× and 2× the viewport's pixels each way.
+pub const SUPERSAMPLING: [f32; 3] = [1.0, 1.5, 2.0];
 
 /// Original view navigators, independent of the mouse navigation preset.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,6 +253,11 @@ pub struct Prefs {
     /// How finely the viewport tessellates curved faces and edges: `coarse`, `normal`, `fine` or
     /// `ultra` (#1287). Only the display plan the viewport draws; never the design or exports.
     pub display_quality: String,
+    /// Supersampling (#1288): the view drawn at this many times its pixels each way and filtered
+    /// down (1, 1.5 or 2; 1 is off).
+    pub supersampling: f32,
+    /// Supersample only while the view holds still (full speed while orbiting).
+    pub supersampling_adaptive: bool,
     /// Decimals shown for lengths and angles.
     pub length_decimals: u8,
     pub angle_decimals: u8,
@@ -331,6 +338,8 @@ impl Default for Prefs {
             space_mouse_speed: 1.0,
             msaa: 4,
             display_quality: "normal".into(),
+            supersampling: 1.0,
+            supersampling_adaptive: true,
             length_decimals: 2,
             angle_decimals: 1,
             theme: "dark".into(),
@@ -472,6 +481,8 @@ fn defaults(app: &mut SolveApp, page: usize) {
             let msaa = p.msaa != d.msaa;
             p.msaa = d.msaa;
             p.display_quality = d.display_quality;
+            p.supersampling = d.supersampling;
+            p.supersampling_adaptive = d.supersampling_adaptive;
             p.color_vision = d.color_vision;
             app.ui.visual_style = 0;
             app.ui.show_grid = true;
@@ -1118,6 +1129,19 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             }
             ui.end_row();
             note(ui, app.tr("settings.display_quality_note"));
+            ui.label(app.tr("ui.supersampling"));
+            let ss_label = |f: f32| if f > 1.0 { format!("{f}×") } else { crate::i18n::tr("ui.supersampling_off").to_string() };
+            let adaptive = app.tr("ui.supersampling_adaptive").to_string();
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("pref_ssaa").selected_text(ss_label(app.preferences.supersampling)).show_ui(ui, |ui| {
+                    for f in SUPERSAMPLING {
+                        ui.selectable_value(&mut app.preferences.supersampling, f, ss_label(f));
+                    }
+                });
+                ui.add_enabled(app.preferences.supersampling > 1.0, egui::Checkbox::new(&mut app.preferences.supersampling_adaptive, adaptive));
+            });
+            ui.end_row();
+            note(ui, app.tr("settings.supersampling_note"));
             ui.label(crate::i18n::tr_label("Renderer"));
             ui.label(match (&app.viewport.gpu, &app.help.gpu) {
                 (Some(_), Some(g)) => format!("GPU: {g}"),
@@ -1332,6 +1356,9 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     if solidcraft_engine::doc::display_quality::DisplayQuality::parse(&new.display_quality).is_none() {
         return Err("`display_quality` must be coarse, normal, fine or ultra".into());
     }
+    if !SUPERSAMPLING.contains(&new.supersampling) {
+        return Err("`supersampling` must be 1 (off), 1.5 or 2".into());
+    }
     if MiddleDoubleClick::parse(&new.middle_double_click).is_none() {
         return Err("`middle_double_click` must be home, fit or off".into());
     }
@@ -1366,6 +1393,20 @@ mod tests {
         assert_eq!(super::lenient(&json!({"display_quality": "ultra"})).display_quality, "ultra");
         super::defaults(&mut app, super::PAGE_GRAPHICS);
         assert_eq!(app.preferences.display_quality, "normal");
+    }
+
+    /// Supersampling (#1288): off by default, adaptive, set by factor and checked.
+    #[test]
+    fn supersampling_is_off_by_default_and_checked() {
+        use serde_json::json;
+        let mut app = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        assert_eq!((app.preferences.supersampling, app.preferences.supersampling_adaptive), (1.0, true));
+        super::set(&mut app, &json!({"supersampling": 2.0})).unwrap();
+        assert_eq!(app.preferences.supersampling, 2.0);
+        assert!(super::set(&mut app, &json!({"supersampling": 3.0})).unwrap_err().contains("1 (off), 1.5 or 2"));
+        super::set(&mut app, &json!({"supersampling": 1.5, "supersampling_adaptive": false})).unwrap();
+        super::defaults(&mut app, super::PAGE_GRAPHICS);
+        assert_eq!((app.preferences.supersampling, app.preferences.supersampling_adaptive), (1.0, true));
     }
 
     #[test]

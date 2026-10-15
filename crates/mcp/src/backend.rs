@@ -7,6 +7,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use solidcraft_engine::Session;
 use solidcraft_engine::render::{StandardView, render_png};
+use solidcraft_engine::view::Guides;
 
 /// Something that answers control-channel methods: `engine.execute`, `engine.commands`,
 /// `document.inspect`, `ui.view`, `ui.render`, `ui.screenshot`.
@@ -275,7 +276,10 @@ impl Backend for Headless {
                     cam.set_view(self.view);
                     cam
                 });
-                let scene = solidcraft_engine::view::scene(s, &cam);
+                // The grid and the axes are drawn unless the request leaves them out.
+                let shown = |k: &str| p.get(k).and_then(Value::as_bool).unwrap_or(true);
+                let guides = Guides { grid: shown("grid"), axes: shown("axes") };
+                let scene = solidcraft_engine::view::scene_with_guides(s, &cam, s.section, guides);
                 let png = render_png(&scene, &cam, w, h).ok_or("render failed")?;
                 let path = str_p("path").ok_or("missing `path`")?;
                 solidcraft_engine::io::vfs::write(path, &png).map_err(|e| format!("{path}: {e}"))?;

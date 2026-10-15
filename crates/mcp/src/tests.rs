@@ -705,6 +705,97 @@ fn screenshot_renders_a_saved_named_view() {
     assert_eq!(shot(&mut s, "iso"), iso);
 }
 
+/// The ground grid lies on Z 0 and cuts through a part that straddles it: `grid: false` and
+/// `axes: false` leave it and the origin's axes out of the render. An axis hidden with
+/// `browser.visibility` stays out whatever `axes` says.
+#[test]
+fn screenshot_can_leave_the_grid_and_the_axes_out() {
+    let mut s = server();
+    tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 40, "width": 30, "height": 20, "corner": [10, -15, -10]}}));
+    let shot = |s: &mut Server, extra: Value| {
+        let mut args = json!({"view": "front", "width": 96, "height": 64});
+        args.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        tool(s, "screenshot", args)["data"].as_str().unwrap_or_default().to_string()
+    };
+    let all = shot(&mut s, json!({}));
+    let no_grid = shot(&mut s, json!({"grid": false}));
+    let no_axes = shot(&mut s, json!({"axes": false}));
+    let bare = shot(&mut s, json!({"grid": false, "axes": false}));
+    assert!(all.starts_with("iVBORw0KGgo"), "not a PNG");
+    let pictures = [&all, &no_grid, &no_axes, &bare];
+    for (i, a) in pictures.iter().enumerate() {
+        for b in &pictures[i + 1..] {
+            assert_ne!(a, b, "two of the pictures are the same");
+        }
+    }
+    // Asking for them is the default.
+    assert_eq!(shot(&mut s, json!({"grid": true, "axes": true})), all);
+    // Hiding the origin leaves the axes out, with or without `axes`; the grid is not the origin.
+    tool(&mut s, "execute", json!({"command": "browser.visibility", "params": {"folder": "origin", "visible": false}}));
+    assert_eq!(shot(&mut s, json!({})), no_axes);
+    assert_eq!(shot(&mut s, json!({"axes": true})), no_axes);
+    assert_eq!(shot(&mut s, json!({"grid": false})), bare);
+    // Other than booleans are schema errors.
+    for bad in [json!({"grid": "no"}), json!({"axes": 0})] {
+        assert_eq!(raw_tool(&mut s, "screenshot", bad)["error"]["code"], -32602);
+    }
+}
+
+/// Bridged to an app, `grid` and `axes` ask for a model render and travel with it; without them
+/// the window is captured as before; the window cannot be asked to leave things out.
+#[test]
+fn bridged_screenshots_with_grid_or_axes_are_model_renders() {
+    struct App {
+        calls: Vec<(String, Value)>,
+    }
+    impl crate::backend::Backend for App {
+        fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+            self.calls.push((method.to_string(), params.clone()));
+            match method {
+                "ui.render" | "ui.screenshot" => {
+                    let path = params["path"].as_str().ok_or("missing `path`")?;
+                    std::fs::write(path, b"\x89PNG").map_err(|e| e.to_string())?;
+                    Ok(json!({"path": path, "width": 64, "height": 48}))
+                }
+                other => Err(format!("unknown method `{other}`")),
+            }
+        }
+        fn has_ui(&self) -> bool {
+            true
+        }
+        fn describe(&self) -> String {
+            "app".into()
+        }
+    }
+    let dir = std::env::temp_dir().join(format!("solidcraft-mcp-guides-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("shot.png").to_string_lossy().to_string();
+    let shoot = |extra: Value| {
+        let mut args = json!({"path": path, "width": 64, "height": 48});
+        args.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let mut app = App { calls: Vec::new() };
+        let r = crate::tools::call_tool(&mut app, "screenshot", &args);
+        (app.calls, r)
+    };
+    let (calls, r) = shoot(json!({}));
+    assert!(r["isError"] != json!(true), "{r}");
+    assert_eq!(calls.iter().map(|(m, _)| m.as_str()).collect::<Vec<_>>(), ["ui.screenshot"]);
+    let (calls, r) = shoot(json!({"grid": false, "axes": false}));
+    assert!(r["isError"] != json!(true), "{r}");
+    assert_eq!(calls, [("ui.render".to_string(), json!({"path": path, "width": 64, "height": 48, "grid": false, "axes": false}))]);
+    let (calls, _) = shoot(json!({"axes": true}));
+    assert_eq!(calls, [("ui.render".to_string(), json!({"path": path, "width": 64, "height": 48, "axes": true}))]);
+    let (calls, r) = shoot(json!({"source": "model", "grid": false}));
+    assert!(r["isError"] != json!(true), "{r}");
+    assert_eq!(calls, [("ui.render".to_string(), json!({"path": path, "width": 64, "height": 48, "grid": false}))]);
+    // The window shows what it shows: nothing is called, and the error says what to ask for.
+    let (calls, r) = shoot(json!({"source": "window", "grid": false, "view": "top"}));
+    assert_eq!(r["isError"], json!(true), "{r}");
+    assert!(r["content"][0]["text"].as_str().unwrap().contains("source"), "{r}");
+    assert!(calls.is_empty(), "{calls:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// #530: in a design with many bodies every feature result lists all of them, so a batch reply
 /// is mostly the same body list once per step. A compact batch reply names only what each step
 /// added or changed.

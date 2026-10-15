@@ -171,7 +171,8 @@ pub fn tool_definitions() -> Vec<Value> {
             "Render the design and return it as a PNG image. Headless: a CPU render of the model, fitted to the view. \
              Connected to the app: a screenshot of the window (source \"window\", the default) or a render of the model \
              with the app's camera (source \"model\"). Both show an active section (inspect.section) with its cut face \
-             capped. `view` first turns the camera to a standard view or a saved named view (view.save), `camera` to              any camera (as view.apply).",
+             capped. `view` first turns the camera to a standard view or a saved named view (view.save), `camera` to              any camera (as view.apply). \
+             `grid: false` and `axes: false` leave the ground grid (on Z 0) and the origin's axes out of a model render.",
             obj(
                 json!({
                     "view": string(
@@ -182,6 +183,8 @@ pub fn tool_definitions() -> Vec<Value> {
                     "width": {"type": "integer", "description": "Render width in pixels (model renders; default 960)"},
                     "height": {"type": "integer", "description": "Render height in pixels (model renders; default 600)"},
                     "source": {"type": "string", "enum": ["window", "model"], "description": "window = app screenshot, model = model render"},
+                    "grid": {"type": "boolean", "description": "false: leave the ground grid out of the render. It lies on Z 0 and cuts through a part that straddles it. Model renders only: default true, or as the app shows it when connected; with `grid` or `axes` a connected screenshot is a model render, and source \"window\" is an error"},
+                    "axes": {"type": "boolean", "description": "false: leave the origin's three axes out of the render (see `grid`). Axes hidden with browser.visibility stay hidden"},
                 }),
                 &[],
             ),
@@ -579,6 +582,16 @@ fn screenshot(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
 }
 
 fn capture(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<(Vec<u8>, Value), String> {
+    // `grid` and `axes` shape a model render; the window shows what it shows.
+    let guides: Vec<(&str, bool)> = ["grid", "axes"].into_iter().filter_map(|k| a.get(k).and_then(Value::as_bool).map(|v| (k, v))).collect();
+    let window = match str_arg(a, "source") {
+        Some("model") => false,
+        Some("window") if !guides.is_empty() => {
+            return Err("screenshot: `grid` and `axes` apply to model renders; use source \"model\" (the window shows what it shows)".into());
+        }
+        Some("window") => true,
+        _ => b.has_ui() && guides.is_empty(),
+    };
     let apply = |b: &mut dyn Backend, params: Value| b.call("engine.execute", json!({"command": "view.apply", "params": params}));
     match (str_arg(a, "view"), a.get("camera").filter(|c| !c.is_null())) {
         (Some(_), Some(_)) => return Err("screenshot: give `view` or `camera`, not both".into()),
@@ -604,13 +617,14 @@ fn capture(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<(Vec<u8>, Valu
         let dir = crate::scratch_dir().unwrap_or_else(vfs::temp_dir);
         dir.join(format!("shot-{n}.png")).to_string_lossy().to_string()
     });
-    let window = match str_arg(a, "source") {
-        Some("model") => false,
-        Some("window") => true,
-        _ => b.has_ui(),
-    };
     let size = |k: &str, d: u64| a.get(k).and_then(Value::as_u64).unwrap_or(d).clamp(16, 4096);
-    let render = |b: &mut dyn Backend| b.call("ui.render", json!({"path": path, "width": size("width", 960), "height": size("height", 600)}));
+    let render = |b: &mut dyn Backend| {
+        let mut params = json!({"path": path, "width": size("width", 960), "height": size("height", 600)});
+        for (k, v) in &guides {
+            params[*k] = json!(v);
+        }
+        b.call("ui.render", params)
+    };
     let (info, source) = if window {
         match b.call("ui.screenshot", json!({"path": path})) {
             Ok(v) => (v, "window"),
