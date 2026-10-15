@@ -38,8 +38,9 @@ static FRENCH: Catalog = Catalog::new("fr", "Français", include_str!(concat!(en
 static KOREAN: Catalog = Catalog::new("ko", "한국어", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ko.json")));
 static RUSSIAN: Catalog = Catalog::new("ru", "Русский", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ru.json")));
 static UKRAINIAN: Catalog = Catalog::new("uk", "Українська", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/uk.json")));
+static TURKISH: Catalog = Catalog::new("tr", "Türkçe", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/tr.json")));
 static CHINESE: Catalog = Catalog::new("zh", "中文", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/zh.json")));
-pub const LOCALES: &[&Catalog] = &[&ENGLISH, &JAPANESE, &GERMAN, &FRENCH, &KOREAN, &RUSSIAN, &UKRAINIAN, &CHINESE];
+pub const LOCALES: &[&Catalog] = &[&ENGLISH, &JAPANESE, &GERMAN, &FRENCH, &KOREAN, &RUSSIAN, &UKRAINIAN, &TURKISH, &CHINESE];
 
 pub fn is_supported(id: &str) -> bool {
     LOCALES.iter().any(|catalog| catalog.id == id)
@@ -506,6 +507,17 @@ mod tests {
         assert_eq!(fr.dynamic("Parameters (5)"), "Paramètres (5)");
         assert_eq!(fr.dynamic("4 degrees of freedom"), "4 degrés de liberté");
         assert_eq!(fr.dynamic("Sketch of bracket"), "Sketch of bracket");
+    }
+
+    #[test]
+    fn turkish_catalog_is_registered_and_translates_keys() {
+        let tr = Locale::for_language("tr");
+        assert_eq!(tr.name(), "Türkçe");
+        assert!(is_supported("tr"));
+        assert_eq!(tr.text("ui.preferences"), "Ayarlar");
+        assert_eq!(tr.format("document.save_changes", &[("name", "My {design}")]), "My {design} içindeki değişiklikler kaydedilsin mi?");
+        assert_eq!(tr.format("dialog.selected_count", &[("count", "2")]), "↖ 2 seçildi");
+        assert_eq!(tr.label("NonExistentKey"), "NonExistentKey");
     }
 
     #[test]
