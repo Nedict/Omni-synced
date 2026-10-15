@@ -16,7 +16,7 @@ use egui::{FontId, Pos2, Rect, Shape, Stroke, vec2};
 use serde_json::json;
 use solidcraft_engine::Sel;
 use solidcraft_engine::geom::Vec2;
-use solidcraft_engine::sketch::{ConstraintKind, DimFrame, chain_centres, default_text, dim_frame, dim_layout};
+use solidcraft_engine::sketch::{ConstraintKind, DimFrame, chain_centres, default_text, dim_frame, dim_layout_reaching, dim_reach};
 
 use crate::SolveApp;
 use crate::theme::Tokens;
@@ -516,7 +516,7 @@ pub fn show(app: &mut SolveApp, ui: &egui::Ui, painter: &egui::Painter, proj: &P
         let half = Vec2::new(f64::from(size.x) * 0.5 * px, f64::from(size.y) * 0.5 * px);
         // Unplaced linear dimensions sit outside the shape they measure.
         let away = first_point(sk, &c.kind).and_then(|p| centres.get(p).copied()).unwrap_or(anchor);
-        let lay = dim_layout(&frame, c.text.or_else(|| default_text(&frame, away, px)), px, half);
+        let lay = dim_layout_reaching(&frame, c.text.or_else(|| default_text(&frame, away, px)), px, half, dim_reach(sk, &c.kind));
         let stroke = Stroke::new(1.0, col);
         let mut segs = Vec::new();
         for line in &lay.lines {

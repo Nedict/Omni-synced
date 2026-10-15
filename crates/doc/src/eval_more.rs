@@ -618,7 +618,10 @@ pub(super) fn sheet_eval(
                     None => *p,
                 });
             }
-            let mut sh = sheet::convert_body(&mb, &r.name, &rv, *face, &picks)?;
+            let (mut sh, notes) = sheet::convert_body(&mb, &r.name, &rv, *face, &picks)?;
+            for note in notes {
+                append_warning(warning, note);
+            }
             tag_flanges(&mut sh, 0, f.id);
             put_sheet(st, sh)
         }
@@ -761,6 +764,7 @@ pub(super) fn sheet_cut(
     tools: &[Body],
     targets: &[String],
     constructor: Option<&ExtrudeConstructor>,
+    warning: &mut Option<String>,
 ) -> Result<Vec<String>> {
     let FeatureKind::Extrude { sketch, profiles, operation, extent, .. } = &f.kind else { return Ok(Vec::new()) };
     if extent.taper.is_some() || !any_eligible_sheet(f, st, targets) {
@@ -777,7 +781,7 @@ pub(super) fn sheet_cut(
         .flat_map(|l| ss.sketch.link_curves(&l.id))
         .flat_map(|ci| ss.sketch.exact_segs(ci).unwrap_or_else(|| ss.sketch.segs(ci)))
         .collect();
-    sheet_prism_cut(f, st, &ss.plane, &regions, *operation, tools, targets, constructor, extent.to.is_some(), &text)
+    sheet_prism_cut(f, st, &ss.plane, &regions, *operation, tools, targets, constructor, extent.to.is_some(), &text, warning)
 }
 
 /// Whether a cut of `f` with these targets (else its participants, else its component's
@@ -809,6 +813,7 @@ pub(super) fn sheet_primitive_cut(
     prism: PrimitivePrism,
     operation: Operation,
     drill: bool,
+    warning: &mut Option<String>,
 ) -> Result<Vec<String>> {
     if !matches!(operation, Operation::Cut | Operation::Intersect) || !any_eligible_sheet(f, st, &[]) {
         return Ok(Vec::new());
@@ -833,7 +838,7 @@ pub(super) fn sheet_primitive_cut(
     let Some(normal) = normal else { return Ok(Vec::new()) };
     let Some((plane, region, interval)) = prism.along(normal) else { return Ok(Vec::new()) };
     let tools = kernel::extrude(&plane, std::slice::from_ref(&region), interval.0, interval.1)?;
-    sheet_prism_cut(f, st, &plane, std::slice::from_ref(&region), operation, &tools, &[], None, false, &[])
+    sheet_prism_cut(f, st, &plane, std::slice::from_ref(&region), operation, &tools, &[], None, false, &[], warning)
 }
 
 /// A hole's straight drill along a panel of a sheet (into its rim), kept as a bore of each
@@ -938,6 +943,7 @@ fn sheet_prism_cut(
     constructor: Option<&ExtrudeConstructor>,
     footprints_bound: bool,
     text: &[Seg2],
+    warning: &mut Option<String>,
 ) -> Result<Vec<String>> {
     let n = plane.normal();
     let mut work = sheet::FlatWork::new();
@@ -983,6 +989,7 @@ fn sheet_prism_cut(
         Vec::new()
     };
     let mut plans = Vec::new();
+    let mut notes = Vec::new();
     'sheets: for original in &st.sheets {
         if !sheet_eligible(f, st, targets, original) {
             continue;
@@ -1130,16 +1137,24 @@ fn sheet_prism_cut(
         if !modeled {
             super::sheet_boolean_unchanged(&mb.body, tools, operation)?;
             plans.push((sh.body.clone(), Some((sh, mb.body.clone()))));
-        } else if sh.flat_material()?.is_empty() {
-            // Empty exact material removes geometry and metadata together. Budget or
-            // topology errors propagate; they are never mistaken for an empty blank.
-            plans.push((sh.body.clone(), None));
         } else {
-            let body = sh.solid()?;
-            plans.push((sh.body.clone(), Some((sh, body))));
+            let material = sh.flat_material()?;
+            if material.is_empty() {
+                // Empty exact material removes geometry and metadata together. Budget or
+                // topology errors propagate; they are never mistaken for an empty blank.
+                plans.push((sh.body.clone(), None));
+            } else {
+                // Every piece the cut leaves stays; the ones it parts from the base are named.
+                notes.extend(parted_note(&sh, &material, original));
+                let body = sh.solid()?;
+                plans.push((sh.body.clone(), Some((sh, body))));
+            }
         }
     }
     let handled = plans.iter().map(|(name, _)| name.clone()).collect();
+    if !notes.is_empty() {
+        append_warning(warning, notes.join("; "));
+    }
     for (name, result) in plans {
         match result {
             Some((sh, body)) => {
@@ -1158,6 +1173,35 @@ fn sheet_prism_cut(
         }
     }
     Ok(handled)
+}
+
+/// A cut's note on the pieces it parted from the base of `sh` (see
+/// [`sheet::SheetBody::parted_from_base`]; `material` is the sheet's flat material after the cut,
+/// `before` the sheet before it): how many, their area and where they lie in the flat pattern.
+/// The pieces stay, as every piece a cut leaves does. None when nothing is parted, and when the
+/// pieces can't be worked out: the note is no reason for a cut to fail.
+fn parted_note(sh: &sheet::SheetBody, material: &[Region2], before: &sheet::SheetBody) -> Option<String> {
+    let pieces = sh.parted_from_base(material, before).ok().filter(|p| !p.is_empty())?;
+    let area: f64 = pieces.iter().map(Region2::area).sum();
+    let at: Vec<String> = pieces
+        .iter()
+        .take(4)
+        .map(|r| {
+            let c = r.interior_point();
+            format!("({:.1}, {:.1})", c.x, c.y)
+        })
+        .collect();
+    let at = at.join(", ");
+    let body = &sh.body;
+    Some(match pieces.len() {
+        1 => format!("1 piece of `{body}` is no longer joined to its base ({area:.2} mm², near {at} in the flat pattern); it is kept"),
+        n => {
+            let more = if n > 4 { format!(" and {} more", n - 4) } else { String::new() };
+            format!(
+                "{n} pieces of `{body}` are no longer joined to its base ({area:.2} mm² in all, near {at}{more} in the flat pattern); they are kept"
+            )
+        }
+    })
 }
 
 /// Outline loops (in `plane` coordinates) of the mesh triangles lying in the plane at distance

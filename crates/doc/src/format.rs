@@ -132,7 +132,7 @@
 //!   Holes at sketch points can be flipped (`flip: true` in the hole's `points`): they drill away
 //!   from the side they would go into by themselves. Holes without it save as before; 0.9.0 would
 //!   drop the flip and drill the other way.
-
+//!
 //! - 19: editable associative offset-distance dimensions. Older offsets retain their saved
 //!   fixed distances; migration does not invent dimensions or change geometry.
 //!   Under the same version, a fillet's style can be `curvature` (a G2 quintic blend; `radius`
@@ -195,7 +195,13 @@
 //!   `{direction: [x, y, z]}`; absent: perpendicular), `twist` (an angle expression) and `scale`
 //!   (the end scale, an expression). A sweep without them saves as before; 0.11.x refuses
 //!   format 21, so no released build sweeps a twisted or scaled profile straight.
-
+//!
+//!   Nothing new is saved for converted sheets' corners and bend ends, but a design converts as
+//!   the rule says when it is evaluated: corners between the walls take the rule's corner relief
+//!   and a bend ending beside more of the fixed face its bend relief (0.11.0 left every corner a
+//!   notch and cut no bend relief), and a wall on part of an edge bends only where it stands
+//!   (0.11.0 refused it).
+//!
 //!   The Class-A surface pass adds five feature kinds, also first saved in 21, so 0.11.0 asks
 //!   for an update instead of meeting a feature it can't read: `SurfaceBlend` (Blend Surface:
 //!   `from`/`to` edge chains of two bodies, optional `continuity`, `bulge`, `align`, `stitch`),
