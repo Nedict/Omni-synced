@@ -978,6 +978,7 @@
   "ui.command_done": "{command} 完成",
   "drive.stopped_by_loop": "停在 {value}：经过 {joint} 的环路无法再闭合",
   "drive.stopped_by_contact": "停在 {value}：{a} 会穿过 {b}",
+  "drive.unconnected": "没有任何移动：{part} 未连接到任何固定的零部件",
   "timeline.group": "新建特征文件夹",
   "timeline.ungroup": "移除特征文件夹",
   "timeline.rename_group": "重命名特征文件夹",

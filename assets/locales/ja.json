@@ -980,6 +980,7 @@
   "ui.command_done": "{command} 完了",
   "drive.stopped_by_loop": "{value} で停止: {joint} を通るループはこれ以上閉じられません",
   "drive.stopped_by_contact": "{value} で停止: {a} が {b} を通り抜けてしまいます",
+  "drive.unconnected": "何も動きません: {part} は空間固定されたものに接続されていません",
   "timeline.group": "フィーチャーフォルダを新規作成",
   "timeline.ungroup": "フィーチャーフォルダを削除",
   "timeline.rename_group": "フィーチャーフォルダの名前を変更",

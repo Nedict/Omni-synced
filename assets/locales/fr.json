@@ -1028,5 +1028,6 @@
   "update.dmg_opened": "L'image disque est ouverte et vérifiée : faites glisser SolidCraft dans Applications en remplaçant l'ancienne copie, puis redémarrez SolidCraft.",
   "update.install_failed": "La mise à jour ne s'est pas installée : {error}. Rien n'a été modifié ; Télécharger récupère plutôt le paquet.",
   "cmd.render_settings_get": "Réglages de rendu",
-  "cmd.render_settings_set": "Enregistrer les réglages de rendu"
+  "cmd.render_settings_set": "Enregistrer les réglages de rendu",
+  "drive.unconnected": "Rien ne bouge : {part} n'est relié à rien de fixé"
 }

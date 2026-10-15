@@ -424,6 +424,7 @@
   "ui.command_done": "{command} 완료",
   "drive.stopped_by_loop": "{value}에서 멈춤: {joint}을(를) 지나는 루프를 더 이상 닫을 수 없습니다",
   "drive.stopped_by_contact": "{value}에서 멈춤: {a}이(가) {b}을(를) 통과하게 됩니다",
+  "drive.unconnected": "아무것도 움직이지 않습니다: {part}이(가) 고정된 것에 연결되어 있지 않습니다",
   "cmd.appearance_assign": "외관",
   "cmd.appearance_library": "외관 라이브러리",
   "cmd.appearance_list": "외관 목록",

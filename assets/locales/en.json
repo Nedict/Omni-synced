@@ -980,6 +980,7 @@
   "ui.command_done": "{command} done",
   "drive.stopped_by_loop": "Stopped at {value}: the loop through {joint} can't close any further",
   "drive.stopped_by_contact": "Stopped at {value}: {a} would pass through {b}",
+  "drive.unconnected": "Moves nothing: {part} is not connected to anything grounded",
   "timeline.group": "New Feature Folder",
   "timeline.ungroup": "Remove Feature Folders",
   "timeline.rename_group": "Rename Feature Folder",
