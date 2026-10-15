@@ -66,6 +66,11 @@ pointer movement orbits without a mouse button, and vertical scrolling zooms. Ot
 retain their saved two-finger scroll preference; camera motion is available through
 `view.navigate` and modifier-aware `ui.move` automation.
 
+M11 precursor: File → Export Current View as DXF exports shown placed bodies from the current
+camera as a 2D millimetre drawing, with hidden edges omitted or dashed. Vector occlusion splits
+partly hidden edges and includes curved silhouettes. Curves are approximated; drawing sheets,
+annotations and exact projected curves remain deferred. See [view DXF](docs/view-dxf.md).
+
 ## Physical material data
 
 - Physical material card validation (#923/#922) provides typed SI mechanical and
