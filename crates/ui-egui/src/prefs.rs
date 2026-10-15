@@ -234,9 +234,9 @@ impl NavigatorStyle {
 #[serde(rename_all = "snake_case")]
 pub enum OrbitAround {
     /// The world origin: the view turns about it and keeps it still on screen.
-    #[default]
     Origin,
-    /// The view's centre: what Pan moves and Fit frames.
+    /// The view's centre: what Pan moves and Fit frames (the default, as it always was).
+    #[default]
     ViewCentre,
     /// The model point under the cursor when the drag began.
     Cursor,
@@ -597,8 +597,8 @@ pub fn zoom_sign(app: &SolveApp) -> f64 {
     if app.preferences.zoom_reverse { -1.0 } else { 1.0 }
 }
 
-/// Orbit by pixel deltas about the configured centre: the world origin (default), the view's
-/// centre, or the model point that was under the cursor when the drag began. The origin and the
+/// Orbit by pixel deltas about the configured centre: the view's centre (default), the world
+/// origin, or the model point that was under the cursor when the drag began. The origin and the
 /// cursor pivot are kept still on screen; a cursor drag that begins over empty space turns around
 /// the centre of the visible geometry instead, so the model never swings around a far-off point.
 /// The cursor pivot is chosen once, when the drag begins.
@@ -1844,15 +1844,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The default orbit turns about the world origin: the origin stays where it was drawn, even
-    /// when Pan has moved it off to the side.
+    /// Orbiting about the world origin keeps the origin where it was drawn, even when Pan has
+    /// moved it off to the side.
     #[test]
     fn orbiting_around_the_origin_keeps_it_still() {
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         app.run("solid.box", json!({"length": 40, "width": 40, "height": 40})).unwrap();
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
         app.fit_view();
-        assert_eq!(app.preferences.orbit_around, OrbitAround::Origin, "the origin is the default");
+        assert_eq!(app.preferences.orbit_around, OrbitAround::ViewCentre, "the view centre stays the default");
+        app.preferences.orbit_around = OrbitAround::Origin;
         app.cam.pan(60.0, -25.0, 600.0);
         let was = (app.cam.yaw, app.cam.pitch);
         let before = crate::viewport::projection(&app, rect).to_screen(Vec3::ZERO).unwrap();
@@ -1867,12 +1868,13 @@ mod tests {
     #[test]
     fn saved_cursor_preference_migrates_to_the_origin_option() {
         assert_eq!(lenient(&json!({"orbit_cursor": true})).orbit_around, OrbitAround::Cursor);
-        assert_eq!(lenient(&json!({"orbit_cursor": false})).orbit_around, OrbitAround::Origin);
-        assert_eq!(lenient(&json!({})).orbit_around, OrbitAround::Origin);
+        assert_eq!(lenient(&json!({"orbit_cursor": false})).orbit_around, OrbitAround::ViewCentre);
+        assert_eq!(lenient(&json!({})).orbit_around, OrbitAround::ViewCentre);
+        assert_eq!(lenient(&json!({"orbit_around": "origin"})).orbit_around, OrbitAround::Origin);
 
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
-        set(&mut app, &json!({"orbit_around": "view_centre"})).unwrap();
-        assert_eq!(app.preferences.orbit_around, OrbitAround::ViewCentre);
+        set(&mut app, &json!({"orbit_around": "origin"})).unwrap();
+        assert_eq!(app.preferences.orbit_around, OrbitAround::Origin);
         set(&mut app, &json!({"orbit_cursor": true})).unwrap();
         assert_eq!(app.preferences.orbit_around, OrbitAround::Cursor, "the old key still moves the choice");
         assert!(!app.preferences.orbit_cursor, "and is folded away");

@@ -2300,16 +2300,22 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     if let Some((mode, delta)) = motion {
         if delta != egui::Vec2::ZERO {
             let mut params = json!({"motion":if mode == NavMode::Pan {"pan"} else {"orbit"},"delta":[delta.x,delta.y]});
-            if mode == NavMode::Orbit && app.preferences.orbit_cursor {
-                let pivot = match app.viewport.orbit_pivot {
-                    Some(pivot) => pivot,
-                    None => {
-                        let pivot = crate::prefs::pivot_under(app, &projection(app, rect), hover.unwrap_or(rect.center()) - delta);
-                        app.viewport.orbit_pivot = Some(pivot);
-                        pivot
-                    }
+            if mode == NavMode::Orbit {
+                let pivot = match app.preferences.orbit_around {
+                    crate::prefs::OrbitAround::ViewCentre => None,
+                    crate::prefs::OrbitAround::Origin => Some(Vec3::ZERO),
+                    crate::prefs::OrbitAround::Cursor => Some(match app.viewport.orbit_pivot {
+                        Some(pivot) => pivot,
+                        None => {
+                            let pivot = crate::prefs::pivot_under(app, &projection(app, rect), hover.unwrap_or(rect.center()) - delta);
+                            app.viewport.orbit_pivot = Some(pivot);
+                            pivot
+                        }
+                    }),
                 };
-                params["pivot"] = json!(pivot);
+                if let Some(pivot) = pivot {
+                    params["pivot"] = json!(pivot);
+                }
             }
             camera_motion(app, rect, params);
         }
@@ -4435,7 +4441,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = hover_app(false);
         app.preferences.nav = "touchpad".into();
-        app.preferences.orbit_cursor = true;
+        app.preferences.orbit_around = crate::prefs::OrbitAround::Cursor;
         let p = pos2(350.0, 300.0);
         let alt = egui::Modifiers { alt: true, ..Default::default() };
         hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(p)]);
@@ -5505,11 +5511,12 @@ mod tests {
         }
     }
 
-    /// The default (origin) pivot holds through a Shift drag that snaps to an axis: the spring
-    /// eases the view round without letting the origin slide on screen.
+    /// The origin pivot holds through a Shift drag that snaps to an axis: the spring eases the
+    /// view round without letting the origin slide on screen.
     #[test]
     fn snapping_keeps_the_origin_still() {
         let mut h = crate::scenario::Harness::new();
+        h.app.preferences.orbit_around = crate::prefs::OrbitAround::Origin;
         h.app.run("solid.box", json!({"length":40,"width":40,"height":40})).unwrap();
         h.app.fit_view();
         let rect = h.app.viewport.rect.unwrap();
