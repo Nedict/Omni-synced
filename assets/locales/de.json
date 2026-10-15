@@ -867,7 +867,7 @@
   "render.reload_settings": "Gespeicherte Einstellungen laden",
   "render.unavailable_preview": "Dieses Setup verlangt ein nicht verfügbares Vorschauprofil.",
   "render.use_preview": "Integrierte Vorschau verwenden",
-  "render.navigation_help": "Ziehen zum Drehen; mit mittlerer Taste ziehen zum Verschieben; scrollen zum Zoomen. Setup speichern übernimmt die aktuelle Kamera.",
+  "render.navigation_help": "Die Kamera bewegt sich wie im Konstruieren (Einstellungen › Navigation). Setup speichern übernimmt die aktuelle Kamera.",
   "render.return_design": "Zurück zu Design",
   "render.image_title": "Bild rendern",
   "render.image_help": "CPU-Vorschaubild · PNG · angenäherte Transparenz",

@@ -1125,7 +1125,7 @@
   "render.reload_settings": "保存した設定を再読み込み",
   "render.unavailable_preview": "このセットアップは利用できないプレビュープロファイルを要求しています。",
   "render.use_preview": "統合プレビューを使用",
-  "render.navigation_help": "ドラッグで回転、中央ボタンのドラッグで移動、スクロールでズームします。「セットアップを保存」で現在のカメラを記録します。",
+  "render.navigation_help": "カメラはデザインと同じように動きます（環境設定 › ナビゲーション）。「セットアップを保存」で現在のカメラを記録します。",
   "render.return_design": "設計に戻る",
   "render.image_title": "画像をレンダリング",
   "render.image_help": "CPUプレビュー画像 · PNG · 近似透過",

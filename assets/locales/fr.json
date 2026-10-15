@@ -1129,7 +1129,7 @@
   "render.reload_settings": "Recharger les réglages enregistrés",
   "render.unavailable_preview": "Ce préréglage demande un profil d'aperçu indisponible.",
   "render.use_preview": "Utiliser l'aperçu intégré",
-  "render.navigation_help": "Faire glisser pour orbiter ; glisser avec le bouton du milieu pour un panoramique ; molette pour zoomer. Enregistrer le préréglage mémorise la caméra actuelle.",
+  "render.navigation_help": "La caméra se déplace comme dans Conception (Préférences › Navigation). Enregistrer le préréglage mémorise la caméra actuelle.",
   "render.return_design": "Revenir à la conception",
   "render.image_title": "Image de rendu",
   "render.image_help": "Image d'aperçu CPU · PNG · transparence approximative",

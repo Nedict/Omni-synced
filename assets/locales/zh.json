@@ -1125,7 +1125,7 @@
   "render.reload_settings": "重新加载已保存设置",
   "render.unavailable_preview": "此设置请求了不可用的预览配置。",
   "render.use_preview": "使用集成预览",
-  "render.navigation_help": "拖动以旋转，按住中键拖动以平移，滚动以缩放。保存设置会记录当前相机。",
+  "render.navigation_help": "相机的操作与设计中相同（首选项 › 导航）。保存设置会记录当前相机。",
   "render.return_design": "返回设计",
   "render.image_title": "渲染图像",
   "render.image_help": "CPU 预览图像 · PNG · 近似透明度",

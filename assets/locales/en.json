@@ -1125,7 +1125,7 @@
   "render.reload_settings": "Reload Saved Settings",
   "render.unavailable_preview": "This setup requests an unavailable preview profile.",
   "render.use_preview": "Use Integrated Preview",
-  "render.navigation_help": "Drag to orbit; middle-drag to pan; scroll to zoom. Save Setup records the current camera.",
+  "render.navigation_help": "The camera moves as in Design (Preferences › Navigation). Save Setup records the current camera.",
   "render.return_design": "Return to Design",
   "render.image_title": "Render Image",
   "render.image_help": "CPU preview image · PNG · approximate transparency",
