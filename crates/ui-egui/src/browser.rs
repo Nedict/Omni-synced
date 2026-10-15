@@ -859,6 +859,11 @@ fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
                 app.session.visibility.hidden_origin.retain(|h| h != k);
             }
         }
+        if let Some(p) = r.secondary
+            && icon == "plane"
+        {
+            crate::context_menu::open_for(app, p, Target::OriginPlane { name: k.into() });
+        }
         if r.clicked
             && let Some(x) = sel
         {
