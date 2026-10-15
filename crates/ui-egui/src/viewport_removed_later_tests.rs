@@ -26,8 +26,8 @@ fn app() -> SolveApp {
 }
 
 fn triangles(app: &SolveApp) -> usize {
-    let scene = build_scene(app);
-    scene.tris.len() + scene.trans.len() + scene.glass.len()
+    let scene = build_scene(app).merged();
+    scene.tris.len() + scene.pbr.len() + scene.trans.len() + scene.glass.len()
 }
 
 #[test]
