@@ -106,7 +106,7 @@ unit regardless of the design, pass an expression with one: `"value": "50 mm"` o
 | `ui.view` | `view`: `front`, `back`, `top`, `bottom`, `left`, `right`, `iso`, `home`, `fit`; `animate` (bool, default false: snap) | |
 | `ui.start` | `command` | like a toolbar click: starts the sketch tool or dialog for the command |
 | `ui.click` | `x`, `y` (screen points), `button?`: left/right/middle, `shift?`, `ctrl?`, `double?` | real pointer input |
-| `ui.move` | `x`, `y` | |
+| `ui.move` | `x`, `y`, `shift?`, `alt?`, `ctrl?`, `cmd?` | pointer movement without a button; modifiers apply until the next synthetic move/click; a move with omitted modifiers releases them. With `nav: "touchpad"`, Shift pans and Alt/Option orbits. |
 | `ui.drag` | `x0`, `y0`, `x1`, `y1`, `button?`, `shift?`, `ctrl?`, `steps?`, `hold?`, `hold_end?` | press, move, release; a left drag on the model is a box selection (left to right: window, right to left: crossing); with OpenSCAD navigation, plain left-drag on empty space orbits, Shift+left-drag box-selects, and drags starting on sketch geometry edit it; `hold` keeps the button down that many frames first (a right press-and-hold opens the marking menu, releasing over a direction picks it), `hold_end` that many frames at the end (a sketch drag shows its snap) |
 | `ui.menu` | `x?`, `y?`, `target?`, `close?` | with a point: open a context menu there as a right-click would (the viewport's marking menu, or a browser menu with `target: {"type": "body", "name"} \| {"type": "sketch", "id"} \| {"type": "component", "id"}`); without: the open menu (`radial` and `items`: id, label, shortcut, enabled) |
 | `ui.menuPick` | `item`: id or label | runs an item of the open menu, as clicking it does |
@@ -131,7 +131,7 @@ unit regardless of the design, pass an expression with one: `"value": "50 mm"` o
 | `ui.home` | `open?`: bool; `sample?`: index | the start page: show or hide it, open a built-in sample (once built); returns `open` and the recent designs |
 | `ui.shortcut` | `command`, `key?`, `replace?` | a command's key, or rebinds it (`""` clears; a key another command uses is refused unless `replace`) |
 | `ui.help` | `item?`: `about`, `shortcuts` (read only), `report` (opens a report draft for review), `crashes` (the Crash Reports window) | the version, commit, build date and diagnostic text |
-| `ui.prefs` | any of `default_units`, `nav` (`fusion`, `solidworks`, `inventor`, `alias`, `tinkercad`, `openscad`), `zoom_reverse`, `zoom_to_cursor`, `smooth_wheel_zoom` (default true), `trackpad_pan` (default true: two-finger scroll pans, pinch zooms), `orbit_cursor`, `look_at_anim`, `look_at_speed`, `middle_double_click` (`home` (default), `fit`, `off`), `msaa`, `length_decimals`, `angle_decimals`, `theme` (`dark`, `light`, `system`), `language` (`en`, `ja`, `de`, `fr`, `ko`, `ru`, `uk`, `zh`; see [localization](localization.md)), `ui_scale`, `up_axis` (`z`, `y`), `offer_stand_up`, `color_vision` (`off` (default), `protan`, `deutan`, `tritan`: colour vision modes, #778), `check_updates` (default true; [updates](book/src/guide/updates.md)); `open` (a page: General, Navigation, Keyboard Shortcuts, Design, Graphics, Sketch, Selection) opens the Preferences dialog there; `button`: `ok`, `cancel`, `apply`, `defaults`; `stand_up: true` stands up a just-opened Y-up file | sets preferences (kept between runs), returns them all plus `dialog` (the open page or null), `dark` and `stand_up_offer` |
+| `ui.prefs` | any of `default_units`, `nav` (`fusion`, `solidworks`, `inventor`, `alias`, `tinkercad`, `openscad`, `touchpad`), `zoom_reverse`, `zoom_to_cursor`, `smooth_wheel_zoom` (default true), `trackpad_pan` (default true: two-finger scroll pans, except Touchpad always zooms; pinch zooms), `orbit_cursor`, `look_at_anim`, `look_at_speed`, `middle_double_click` (`home` (default), `fit`, `off`), `msaa`, `length_decimals`, `angle_decimals`, `theme` (`dark`, `light`, `system`), `language` (`en`, `ja`, `de`, `fr`, `ko`, `ru`, `uk`, `zh`; see [localization](localization.md)), `ui_scale`, `up_axis` (`z`, `y`), `offer_stand_up`, `color_vision` (`off` (default), `protan`, `deutan`, `tritan`: colour vision modes, #778), `check_updates` (default true; [updates](book/src/guide/updates.md)); `open` (a page: General, Navigation, Keyboard Shortcuts, Design, Graphics, Sketch, Selection) opens the Preferences dialog there; `button`: `ok`, `cancel`, `apply`, `defaults`; `stand_up: true` stands up a just-opened Y-up file | sets preferences (kept between runs), returns them all plus `dialog` (the open page or null), `dark` and `stand_up_offer` |
 | `ui.capture` | `action?`: `capture`, `revert`, `cancel` | answers the Capture Position question (asked when a command starts or the design is saved while components were moved without capturing); without `action`, what waits |
 | `ui.window` | `action`: minimize, maximize, restore, toggle, close | what the title bar's caption buttons do (on Windows and Linux the application bar is the title bar); close asks about unsaved designs first |
 | `ui.agent_cursor` | `show` (bool), `speed`: a number from 1 to 5 (times the normal speed) or `"instant"` (no animation: the command runs at once and the pointer jumps to where it acted), `follow_camera` (bool); all optional | the settings. While the cursor is shown, `engine.execute` first glides to the command's toolbar button and to each pick, then runs and replies; later requests wait their turn. `"animate": false` on a call skips it |
@@ -141,6 +141,16 @@ unit regardless of the design, pass an expression with one: `"value": "50 mm"` o
 `ui.workspace {workspace?: "design" | "render"}` reads or changes the active workspace.
 Entering Render requires finishing the current modelling operation; returning restores
 the Design camera. See [the integrated Render workspace](render-workspace.md).
+
+### Continuous camera motion
+
+Continuous camera motion is also available through `engine.execute` with command
+`view.navigate`: pass `camera` (from `ui.inspect`) and `motion: "pan" | "orbit" | "zoom"`.
+Pan and orbit take `delta: [dx,dy]` in screen points (each within ±10000); pan also requires
+`viewport: [width,height]` (each 1..1000000). Orbit accepts a world-space `pivot` with the
+viewport size. Zoom takes `factor` (0.05..20, below 1 zooms in) and an optional world-space
+`anchor`. The returned `camera` is applied immediately by the UI, without animation,
+document edits, undo steps or a success-log entry per movement.
 
 ## MCP
 

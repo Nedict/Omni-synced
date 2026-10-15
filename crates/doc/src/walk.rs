@@ -50,6 +50,9 @@ impl Walk for crate::document::MeshData {}
 impl Walk for crate::document::RevolveConvention {}
 impl Walk for crate::document::CoilSection {}
 impl Walk for crate::document::ThinSide {}
+impl Walk for crate::document::ExtendMode {}
+impl Walk for crate::document::RuledMode {}
+impl Walk for crate::document::RuledCorners {}
 
 /// Containers walk what they hold, in order.
 macro_rules! walk_each {

@@ -30,6 +30,7 @@ use crate::viewport::NavMode;
 
 pub const UNITS: [&str; 5] = ["mm", "cm", "m", "in", "ft"];
 pub const OPENSCAD_NAV: &str = "openscad";
+pub const TOUCHPAD_NAV: &str = "touchpad";
 /// A mouse button that can drag the camera.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavButton {
@@ -93,7 +94,7 @@ use NavButton::{Left, Middle, Right};
 use NavMode::{Orbit, Pan, Zoom};
 
 /// The mouse mappings. The first is the default.
-pub const NAV_PRESETS: [NavPreset; 6] = [
+pub const NAV_PRESETS: [NavPreset; 7] = [
     NavPreset {
         id: "fusion",
         label: "Fusion",
@@ -159,7 +160,39 @@ pub const NAV_PRESETS: [NavPreset; 6] = [
             bind(Middle, NavKeys::NONE, Pan),
         ],
     },
+    NavPreset {
+        id: TOUCHPAD_NAV,
+        label: "Touchpad",
+        help: "Hold Shift and move the pointer to pan; hold Alt/Option and move it to orbit. No mouse button is needed. Vertical scroll zooms.",
+        reverse_zoom: false,
+        bindings: &[bind(Middle, NavKeys::NONE, Pan), bind(Right, NavKeys::NONE, Orbit)],
+    },
 ];
+
+impl NavPreset {
+    /// Button-free motion has exact modifiers, unlike the additive drag bindings.
+    pub fn motion_mode(&self, mods: Modifiers) -> Option<NavMode> {
+        if self.id != TOUCHPAD_NAV || mods.ctrl || mods.command || mods.mac_cmd {
+            return None;
+        }
+        match (mods.shift, mods.alt) {
+            (true, false) => Some(Pan),
+            (false, true) => Some(Orbit),
+            _ => None,
+        }
+    }
+
+    fn translated_label(&self) -> &str {
+        if self.id == TOUCHPAD_NAV { crate::i18n::tr("nav.touchpad.label") } else { crate::i18n::tr_label(self.label) }
+    }
+}
+
+impl Prefs {
+    /// Touchpad scroll zooms without overwriting the user's preference for other presets.
+    pub fn trackpad_pans(&self) -> bool {
+        self.nav != TOUCHPAD_NAV && self.trackpad_pan
+    }
+}
 
 /// The preset with this id (the default for an unknown one).
 pub fn nav_preset(id: &str) -> &'static NavPreset {
@@ -542,7 +575,7 @@ pub fn orbit(app: &mut SolveApp, rect: egui::Rect, dx: f64, dy: f64, press: Opti
 
 /// The model point under a screen position. Over empty space: the centre of the visible bodies
 /// and sketches (what Fit frames), or the view's centre when nothing is visible.
-fn pivot_under(app: &SolveApp, proj: &crate::viewport::Proj, at: Pos2) -> Vec3 {
+pub(crate) fn pivot_under(app: &SolveApp, proj: &crate::viewport::Proj, at: Pos2) -> Vec3 {
     use crate::viewport::Hit;
     for h in crate::viewport::pick(app, proj, at) {
         match h {
@@ -927,18 +960,22 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
         }
         1 => {
             ui.label(app.tr_label("Pan, zoom, orbit"));
-            let current_preset_label = app.tr_label(nav_preset(&app.preferences.nav).label);
+            let current_preset_label = nav_preset(&app.preferences.nav).translated_label();
             egui::ComboBox::from_id_salt("pref_nav").selected_text(current_preset_label).show_ui(ui, |ui| {
                 for p in &NAV_PRESETS {
-                    if ui.selectable_value(&mut app.preferences.nav, p.id.to_string(), crate::i18n::tr_label(p.label)).clicked() {
+                    if ui.selectable_value(&mut app.preferences.nav, p.id.to_string(), p.translated_label()).clicked() {
                         app.preferences.zoom_reverse = p.reverse_zoom;
                     }
                 }
             });
             ui.end_row();
-            let snap_help = if app.preferences.nav == OPENSCAD_NAV { "" } else { "; hold Shift during orbit to snap" };
-            let raw_help = format!("{}; Ctrl+left drag on empty space orbits{snap_help}; the wheel zooms", nav_preset(&app.preferences.nav).help);
-            note(ui, crate::i18n::tr_label(&raw_help));
+            if app.preferences.nav == TOUCHPAD_NAV {
+                note(ui, crate::i18n::tr("nav.touchpad.help"));
+            } else {
+                let snap_help = if app.preferences.nav == OPENSCAD_NAV { "" } else { "; hold Shift during orbit to snap" };
+                let raw_help = format!("{}; Ctrl+left drag on empty space orbits{snap_help}; the wheel zooms", nav_preset(&app.preferences.nav).help);
+                note(ui, crate::i18n::tr_label(&raw_help));
+            }
             ui.label(crate::i18n::tr_label("Context menu"));
             ui.checkbox(&mut app.preferences.radial_context_menu, crate::i18n::tr_label("Radial context menu"));
             ui.end_row();
@@ -966,9 +1003,12 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 .on_hover_text(crate::i18n::tr_label("Turn off to apply each wheel event immediately, without a smoothing tail"));
             ui.end_row();
             ui.label(crate::i18n::tr_label("Two-finger scroll pans"));
-            ui.checkbox(&mut app.preferences.trackpad_pan, "").on_hover_text(crate::i18n::tr_label(
-                "Trackpad gestures pan (off: they zoom like the wheel); mouse wheel zooms, thumb wheel pans sideways, pinch always zooms",
-            ));
+            let touchpad = app.preferences.nav == TOUCHPAD_NAV;
+            ui.add_enabled(!touchpad, egui::Checkbox::new(&mut app.preferences.trackpad_pan, "")).on_hover_text(if touchpad {
+                crate::i18n::tr("nav.touchpad.scroll")
+            } else {
+                crate::i18n::tr_label("Trackpad gestures pan (off: they zoom like the wheel); mouse wheel zooms, thumb wheel pans sideways, pinch always zooms")
+            });
             ui.end_row();
             ui.label(crate::i18n::tr_label("Orbit around"));
             ui.horizontal(|ui| {
@@ -1249,7 +1289,7 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
         return Err(format!("units must be one of {}", UNITS.join(", ")));
     }
     if !NAV_PRESETS.iter().any(|p| p.id == new.nav) || !MSAA.contains(&new.msaa) {
-        return Err("`nav` must be fusion, solidworks, inventor, alias, tinkercad or openscad and `msaa` 1, 2, 4 or 8".into());
+        return Err(format!("`nav` must be one of {} and `msaa` 1, 2, 4 or 8", NAV_PRESETS.iter().map(|p| p.id).collect::<Vec<_>>().join(", ")));
     }
     if new.msaa != app.preferences.msaa && !app.msaa_supported.is_empty() && !app.msaa_supported.contains(&new.msaa) {
         return Err(format!("this graphics device doesn't support `msaa` {}; it supports {:?}", new.msaa, app.msaa_supported));
@@ -1469,6 +1509,24 @@ mod tests {
         assert!(app.preferences.smooth_wheel_zoom);
         control(&mut app, &json!({"button":"cancel"})).unwrap();
         assert!(!app.preferences.smooth_wheel_zoom);
+    }
+
+    #[test]
+    fn touchpad_preset_persists_and_obeys_preference_transactions() {
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        control(&mut app, &json!({"open":"Navigation", "nav":"touchpad"})).unwrap();
+        assert_eq!(app.preferences.nav, "touchpad");
+        assert!(app.preferences.trackpad_pan, "choosing Touchpad must not overwrite the saved scroll preference");
+        control(&mut app, &json!({"button":"cancel"})).unwrap();
+        assert_eq!(app.preferences.nav, "fusion");
+        control(&mut app, &json!({"open":"Navigation", "nav":"touchpad", "button":"apply"})).unwrap();
+        let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        other.load_prefs(&app.prefs());
+        assert_eq!(other.preferences.nav, "touchpad");
+        control(&mut app, &json!({"button":"defaults"})).unwrap();
+        assert_eq!(app.preferences.nav, "fusion");
+        control(&mut app, &json!({"button":"cancel"})).unwrap();
+        assert_eq!(app.preferences.nav, "touchpad");
     }
 
     #[test]

@@ -308,6 +308,7 @@ mod boolean_diagnostics;
 mod component_frames;
 mod large_step_import;
 mod loft_cut;
+mod loft_ring;
 mod loft_spacing;
 mod mirror_planes;
 mod path_scope;
@@ -1148,6 +1149,9 @@ fn extrude_auto_operation() {
     assert!(rel(volume(&mut s), 40.0 * 30.0 * 15.0) < 1e-6);
     // Pulled out, it joins.
     assert_eq!(auto_operation(&s, &json!({"face": [20, 15, 15], "distance": 5})), Some("join"));
+    // Pushed in far past the bottom (halfway is below the box), it still cuts (#1257).
+    assert_eq!(auto_operation(&s, &json!({"face": [20, 15, 15], "distance": -50})), Some("cut"));
+    assert_eq!(auto_operation(&s, &json!({"face": [20, 15, 15], "distance": 50, "direction": "negative"})), Some("cut"));
     // A sketch on XY under the box: up goes into it (cut), down grows out of it (join), and a
     // profile beside the box still defaults to Join (New Body remains explicit).
     run(&mut s, "sketch.create", json!({"plane": "XY"}));
