@@ -25,7 +25,13 @@ fn vertex_measurement(a: [f64; 3], b: [f64; 3]) -> Harness {
 
 /// Inspect the actual painted text, including the viewport labels (which are not widgets).
 fn painted_text(h: &mut Harness) -> Vec<String> {
-    let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))), ..Default::default() };
+    // Continue the harness clock (a hair on) so egui's input history never sees time go backwards.
+    let time = h.ctx.input(|i| i.time) + 1e-4;
+    let raw = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))),
+        time: Some(time),
+        ..Default::default()
+    };
     let mut output = h.ctx.run_ui(raw, |ui| h.app.ui(ui));
     output.textures_delta.clear();
     output.shapes.iter().filter_map(|s| if let egui::Shape::Text(t) = &s.shape { Some(t.galley.text().to_string()) } else { None }).collect()
