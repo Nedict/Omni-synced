@@ -447,6 +447,20 @@ fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, world: bool) ->
     if participants.len() > 10_000 || participants.iter().any(|b| b != "*" && s.model.state().body(b).is_none()) {
         return Err(EngineError::Other(format!("`{key}` must list existing bodies")));
     }
+    // A cut or intersect made where the active component has no body of its own (a sketch in
+    // the assembly's root, cutting through the parts, #1234) would have nothing to work on: it
+    // takes part in every body instead, which it changes only where it meets them.
+    let participants = if participants.is_empty()
+        && !primitive
+        && matches!(str_(p, "operation").and_then(Operation::parse), Some(Operation::Cut | Operation::Intersect))
+        && {
+            let st = s.model.state();
+            !st.bodies.is_empty() && !st.bodies.iter().any(|b| s.doc.model_body_component(b) == s.active_component)
+        } {
+        vec!["*".to_string()]
+    } else {
+        participants
+    };
     if matches!(kind, FeatureKind::ConstructionPlane { .. })
         && let Some(n) = name
     {
