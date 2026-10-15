@@ -128,18 +128,27 @@ pub fn reach(doc: &Document, st: &ModelState, r: &Reach) -> Result<Reached, Stri
     let x0: Vec<f64> = vars.iter().map(|(id, i)| vals.get(id).and_then(|q| q.get(*i)).copied().unwrap_or(0.0)).collect();
     // A distance steps by a share of the chain's size or of the way to the target, whichever is
     // longer (one slider on its own has no size).
-    let span = tree.world(r.occurrence, &vals).map_or(scale, |t| scale.max(apply_point(&t, r.point).dist(r.to)).min(1e6));
+    let span = tree.world(r.occurrence, &vals).map_or(scale, |t| scale.max(apply_point(&t, r.point).dist(r.to)));
     let cap: Vec<f64> = vars
         .iter()
         .map(|(id, i)| if tree.joints.get(id).is_some_and(|j| j.kind.is_angle(*i)) { STEP_ANGLE.to_radians() } else { STEP_SHARE * span })
         .collect();
+    // Every value around the chain and its loops, links included, moves at most a step at a time:
+    // a value a link sets can turn far more than the one that drives it, and a loop must stay
+    // closed on the way, as joint.drive steps its loops.
+    let mut paced: Vec<((u64, usize), f64)> = Vec::new();
+    for j in around.iter().filter_map(|id| tree.joints.get(id)) {
+        for i in 0..j.kind.dofs().len() {
+            paced.push(((j.id, i), if j.kind.is_angle(i) { STEP_ANGLE.to_radians() } else { STEP_SHARE * span }));
+        }
+    }
     let tol = (1e-10 * scale).min(1e-7);
     let mt = if r.axis.is_some() { 6 } else { 3 };
     let spent = Cell::new(0usize);
     let mut work = vals.clone();
     let mut f = |x: &[f64]| misses(tree, asm, r, scale, &vars, &closers, x, &mut work, &spent);
     let mut x = x0.clone();
-    let res = approach(&mut f, mt, &mut x, &bounds, &cap, tol)
+    let res = approach(&mut f, &|a, b| stride(asm, &vals, &vars, &paced, a, b), mt, &mut x, &bounds, &cap, tol)
         .ok_or("a closed loop on its chain is open and can't close (joint.list shows its conflict)")?;
     let mut out = Reached::default();
     let miss = |res: &[f64]| res.iter().take(mt).map(|v| v * v).sum::<f64>().sqrt();
@@ -197,8 +206,9 @@ pub fn reach(doc: &Document, st: &ModelState, r: &Reach) -> Result<Reached, Stri
             let mut alone = vals.clone();
             let mut g = |x: &[f64]| misses(tree, asm, r, scale, &drive, &[], x, &mut alone, &spent);
             let (mut xo, bo, co) = (x0.get(..k).unwrap_or_default().to_vec(), bounds.get(..k).unwrap_or_default(), cap.get(..k).unwrap_or_default());
-            if let Some(ro) = approach(&mut g, mt, &mut xo, bo, co, tol)
-                && miss(&ro) < miss(&res) * (1.0 - 1e-3) - REACH_TOL
+            // The loops left open, nothing to pace.
+            if let Some(ro) = approach(&mut g, &|_, _| 0.0, mt, &mut xo, bo, co, tol)
+                && miss(&ro) < miss(&res) - REACH_TOL.max(1e-9 * miss(&res))
             {
                 out.stopped_by_loop = Some(*first);
             }
@@ -207,7 +217,8 @@ pub fn reach(doc: &Document, st: &ModelState, r: &Reach) -> Result<Reached, Stri
     // The stored values that changed.
     for ((id, i), v) in vars.iter().zip(&x) {
         let Some(j) = tree.joints.get(id) else { continue };
-        if j.values.get(*i).is_some_and(|s| (s - v).abs() <= 1e-12) {
+        // Closer than this is the solver's noise, not a move.
+        if j.values.get(*i).is_some_and(|s| (s - v).abs() <= 1e-9) {
             continue;
         }
         let q = out.values.entry(*id).or_insert_with(|| {
@@ -266,14 +277,33 @@ fn target(tree: &Tree, r: &Reach, scale: f64, vals: &Values) -> Option<Vec<f64>>
     Some(out)
 }
 
+/// How many steps apart the values `vars` at `a` and at `b` put the `paced` values (each with its
+/// step), motion links followed.
+fn stride(asm: &Assembly, vals: &Values, vars: &[(u64, usize)], paced: &[((u64, usize), f64)], a: &[f64], b: &[f64]) -> f64 {
+    let at = |x: &[f64]| {
+        let mut w = vals.clone();
+        for ((id, i), v) in vars.iter().zip(x) {
+            if let Some(slot) = w.get_mut(id).and_then(|q| q.get_mut(*i)) {
+                *slot = *v;
+            }
+        }
+        apply_links(asm, &mut w);
+        w
+    };
+    let (wa, wb) = (at(a), at(b));
+    let get = |w: &Values, id: &u64, i: usize| w.get(id).and_then(|q| q.get(i)).copied().unwrap_or(0.0);
+    paced.iter().map(|((id, i), step)| (get(&wb, id, *i) - get(&wa, id, *i)).abs() / step).fold(0.0, f64::max)
+}
+
 /// Levenberg-Marquardt that stays on the loops: move `x` (within `bounds`, at most `cap` per value
-/// a step) to bring the first `mt` values of `f` (the target's misses) toward zero, the rest (the
+/// and a step of every value `stride` measures, links included, a step) to bring the first `mt` values of `f` (the target's misses) toward zero, the rest (the
 /// loops' weighted gaps) at zero. Each step is solved over all the rows, values on a limit the
 /// step pushes past held, then put back on the loops (`least_squares` on their gaps) and taken
 /// when it gets closer. It ends at the target, or as close as the limits and loops let it get.
 /// Returns `f` there, or `None` when the loops don't close at the start.
 fn approach(
     f: &mut dyn FnMut(&[f64]) -> Option<Vec<f64>>,
+    stride: &dyn Fn(&[f64], &[f64]) -> f64,
     mt: usize,
     x: &mut Vec<f64>,
     bounds: &[(f64, f64)],
@@ -347,7 +377,8 @@ fn approach(
                     held = held.iter().zip(&past).map(|(h, p)| *h || *p).collect();
                     continue;
                 }
-                let over = d.iter().zip(cap).map(|(d, c)| d.abs() / c).fold(1.0f64, f64::max);
+                let full: Vec<f64> = x.iter().zip(&d).map(|(v, dv)| v + dv).collect();
+                let over = d.iter().zip(cap).map(|(d, c)| d.abs() / c).fold(1.0f64, f64::max).max(stride(x, &full));
                 let mut next: Vec<f64> = x.iter().zip(&d).zip(bounds).map(|((v, dv), (lo, hi))| (v + dv / over).max(*lo).min(*hi)).collect();
                 if (!loops || close(f, &mut next))
                     && let Some(rn) = f(&next)

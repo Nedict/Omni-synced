@@ -187,6 +187,23 @@ fn a_target_across_the_pivot_is_reached() {
     }
 }
 
+/// A loop that only closes again after a full turn of a value geared up from the arm's (a joint
+/// between two grounded parts, linked 36:1 to the shoulder) holds the arm: a step of a tenth of a
+/// turn would close it at both ends, but not on the way.
+#[test]
+fn a_loop_geared_up_from_the_chain_holds_it() {
+    let tip = Vec3::new(100.0, 0.0, 0.0);
+    let mut s = arm(false, 0.0);
+    part(&mut s, "Lock", [-1.0, 5.0, -1.0]);
+    let lock = occ(&s, "Lock");
+    run(&mut s, "occurrence.ground", json!({"occurrence": lock, "grounded": true}));
+    pin(&mut s, "revolute", "Lock", "Base", "Lock", Vec3::ZERO, Vec3::Z);
+    run(&mut s, "joint.motion_link", json!({"a": "Shoulder", "b": "Lock", "ratio": 36}));
+    let r = reach(&mut s, "Fore", tip, json!({"point": [0, 1e6, 0], "joints": ["Shoulder"]}));
+    assert_eq!((&r["reached"], &r["stopped_by_loop"]), (&json!(false), &json!({"joint": "Lock"})), "{r}");
+    assert!(value(&mut s, "Shoulder").abs() < 1e-6, "{r}");
+}
+
 /// A slider on its own (a chain with no size) still travels the whole way.
 #[test]
 fn a_lone_slider_travels_all_the_way() {
@@ -199,6 +216,9 @@ fn a_lone_slider_travels_all_the_way() {
     let r = reach(&mut s, "Ram", Vec3::ZERO, json!({"point": [0, 0, 100]}));
     assert_eq!(r["reached"], true, "{r}");
     assert!((value(&mut s, "Rail") - 100.0).abs() < 1e-6, "{r}");
+    // However far.
+    let r = reach(&mut s, "Ram", Vec3::ZERO, json!({"point": [0, 0, 3e7]}));
+    assert_eq!(r["reached"], true, "{r}");
 }
 
 /// The four-bar's rocker reaches a point on its swing, the crank and coupler following with the

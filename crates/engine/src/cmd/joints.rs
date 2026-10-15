@@ -593,7 +593,7 @@ fn reach(s: &mut Session, p: &Value) -> Result<Value> {
     let only = match p.get("joints") {
         None => None,
         Some(Value::Array(a)) if a.len() <= MAX_REACH_JOINTS => Some(a.iter().map(|v| joint_id(s, Some(v), cmd)).collect::<Result<BTreeSet<u64>>>()?),
-        Some(_) => return Err(bad(cmd, format!("`joints` must list at most {MAX_REACH_JOINTS} joints"))),
+        Some(_) => return Err(bad(cmd, format!("`joints` must be a list of joints (ids or names), at most {MAX_REACH_JOINTS}"))),
     };
     let before = super::motion::positions(s);
     let st = s.model.state();
