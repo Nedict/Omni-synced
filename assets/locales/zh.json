@@ -95,6 +95,7 @@
   "cmd.file_insert_mesh": "插入网格",
   "cmd.file_insert_step": "插入 STEP",
   "cmd.file_save_mesh": "另存为网格",
+  "cmd.file_slicers": "已安装的切片软件",
   "cmd.inspect_accessibility": "可达性分析",
   "cmd.inspect_center_of_mass": "质心",
   "cmd.inspect_curvature_comb": "曲率梳分析",

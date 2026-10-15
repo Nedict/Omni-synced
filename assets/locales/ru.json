@@ -90,6 +90,7 @@
   "cmd.file_insert_mesh": "Вставить меш",
   "cmd.file_insert_step": "Вставить STEP",
   "cmd.file_save_mesh": "Сохранить как меш",
+  "cmd.file_slicers": "Установленные слайсеры",
   "cmd.inspect_accessibility": "Анализ доступности",
   "cmd.inspect_center_of_mass": "Центр масс",
   "cmd.inspect_curvature_comb": "Анализ кривизны (гребёнка)",

@@ -474,6 +474,7 @@
   "cmd.file_insert_mesh": "메쉬 삽입",
   "cmd.file_insert_step": "STEP 삽입",
   "cmd.file_save_mesh": "메쉬로 저장",
+  "cmd.file_slicers": "설치된 슬라이서",
   "cmd.inspect_accessibility": "접근성 분석",
   "cmd.inspect_center_of_mass": "무게중심",
   "cmd.inspect_curvature_comb": "곡률빗 분석",

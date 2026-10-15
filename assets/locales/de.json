@@ -474,6 +474,7 @@
   "cmd.file_insert_mesh": "Netz einfügen",
   "cmd.file_insert_step": "STEP einfügen",
   "cmd.file_save_mesh": "Als Netz speichern",
+  "cmd.file_slicers": "Installierte Slicer",
   "cmd.inspect_accessibility": "Zugänglichkeitsanalyse",
   "cmd.inspect_center_of_mass": "Massenschwerpunkt",
   "cmd.inspect_curvature_comb": "Krümmungskamm-Analyse",

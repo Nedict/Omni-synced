@@ -17,6 +17,8 @@ pub mod occurrences;
 pub mod params;
 pub mod recovery;
 pub mod sample;
+mod slicer_icon;
+pub mod slicers;
 pub mod view;
 
 use std::sync::Arc;
