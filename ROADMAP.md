@@ -21,6 +21,8 @@ offsets and plastic face placements, XZ (+Y normal) with a v6 migration preservi
 designs, interactive angle placement, file-picker sketch imports, Home/recent controls,
 toolbar overflow, and the remaining component-frame and assembly WIP work. The enclosure
 acceptance scenarios now include board resizes; STEP reopening is automated. See [WIP reconciliation](docs/wip-reconciliation.md).
+Face-based Extrude Join (including outward Press Pull) now defaults to the picked body,
+so edge-touching assembly neighbours stay separate regardless of body order (#226).
 
 In scope, in priority order:
 1. SOLID and SKETCH (now).

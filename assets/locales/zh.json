@@ -1160,5 +1160,8 @@
   "RULED SURFACE": "直纹曲面",
   "Mitre": "斜接",
   "Reference face": "参考面",
-  "Round": "圆角"
+  "Round": "圆角",
+  "joint.one_component": "这些零件是同一组件的实体：{bodies}。接头使一个组件相对另一个组件运动，因此每个零件都需要自己的组件。",
+  "joint.one_body": "两次选择都在 {body} 上。请在另一个零件上选择第二个。",
+  "joint.from_bodies_hint": "每个所选实体移入各自的新组件，位置保持不变。"
 }
