@@ -75,6 +75,10 @@ fn a_two_link_arm_reaches_its_closed_form_pose() {
     let (t1, t2) = two_link(50.0, 50.0, 60.0, 40.0);
     assert!((value(&mut s, "Shoulder") - t1).abs() < 1e-6 && (value(&mut s, "Elbow") - t2).abs() < 1e-6, "{r}");
     assert_eq!(r["values"].as_array().map(Vec::len), Some(2), "{r}");
+    // Already there, a reach moves nothing and adds no undo step.
+    let steps = s.undo.len();
+    let r = reach(&mut s, "Fore", tip, json!({"point": pt(to)}));
+    assert_eq!((&r["reached"], &r["moved"], s.undo.len()), (&json!(true), &json!(false), steps), "{r}");
     // One undo step puts it back.
     run(&mut s, "edit.undo", json!({}));
     assert!((value(&mut s, "Elbow") - 30.0).abs() < 1e-9 && value(&mut s, "Shoulder").abs() < 1e-9);

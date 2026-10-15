@@ -600,10 +600,13 @@ fn reach(s: &mut Session, p: &Value) -> Result<Value> {
     let r = joints::reach(&s.doc, &st, &joints::Reach { occurrence: occ, point: at, to, axis, joints: only });
     let reached = match &r {
         Ok(x) => {
-            let doc = s.doc_mut();
-            for (id, q) in &x.values {
-                if let Some(j) = doc.assembly.joints.iter_mut().find(|j| j.id == *id) {
-                    j.values.clone_from(q);
+            // Only a reach that moves something touches the design (and so adds an undo step).
+            if !x.values.is_empty() {
+                let doc = s.doc_mut();
+                for (id, q) in &x.values {
+                    if let Some(j) = doc.assembly.joints.iter_mut().find(|j| j.id == *id) {
+                        j.values.clone_from(q);
+                    }
                 }
             }
             x.clone()
