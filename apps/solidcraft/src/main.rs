@@ -98,6 +98,7 @@ impl eframe::App for App {
 fn services(cc: &eframe::CreationContext<'_>) -> Services {
     let parent = rfd::AsyncFileDialog::new().set_parent(cc);
     let open_parent = parent.clone();
+    let program_parent = parent.clone();
     Services {
         pick_open: Some(Box::new(move || {
             let future = open_parent
@@ -129,6 +130,12 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
                 .add_filter("Sketch drawings (DXF, SVG)", &["dxf", "DXF", "svg", "SVG"])
                 .add_filter("All files", &["*"])
                 .pick_file();
+            Box::pin(async move { future.await.map(|p| p.path().to_string_lossy().into_owned()) })
+        })),
+        pick_program: Some(Box::new(move || {
+            let dialog = program_parent.clone().set_title("Choose your slicer");
+            let dialog = if cfg!(target_os = "windows") { dialog.add_filter("Programs", &["exe"]) } else { dialog };
+            let future = dialog.pick_file();
             Box::pin(async move { future.await.map(|p| p.path().to_string_lossy().into_owned()) })
         })),
         pick_save: Some(Box::new(move |name: &str, exts: &[&str]| {

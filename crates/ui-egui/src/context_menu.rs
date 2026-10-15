@@ -418,6 +418,7 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
         v.push(Item::sep());
         v.push(act("ui.appearance", "Appearance", "appearance").key("A"));
         v.push(act("ui.properties", "Properties", "measure").with(json!({ "bodies": [face] })));
+        v.push(act("ui.saveMesh", "Save As Mesh", "export").with(json!({ "bodies": [face] })));
         v.push(Item::sep());
         v.push(act("ui.delete", "Delete", "delete").key("Del"));
         v.push(act(if hidden { "ui.show" } else { "ui.hide" }, "Show/Hide", "eye").key("V").with(json!({ "bodies": [face] })));
@@ -437,6 +438,7 @@ fn viewport_items(app: &SolveApp) -> Vec<Item> {
         v.push(act(if hidden { "ui.show" } else { "ui.hide" }, "Show/Hide", "eye").key("V").with(json!({ "bodies": [body] })));
         v.push(Item::sep());
         v.push(act("ui.findBrowser", "Find in Browser", "").with(json!({ "body": body })));
+        v.push(act("ui.saveMesh", "Save As Mesh", "export").with(json!({ "bodies": [body] })));
         v.push(Item::sep());
         v.push(act("ui.tangentChain", "Select Tangent Chain", ""));
         v.push(cmd(app, "inspect.measure", "Measure"));
@@ -1068,8 +1070,9 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             app.start("material.assign");
         }
         "ui.saveMesh" => {
-            let name = bodies.first().cloned().unwrap_or_else(|| app.session.doc.name.clone());
-            app.pick_save_command(&format!("{name}.stl"), &["stl"], "file.save_mesh", json!({"bodies": bodies}));
+            let items: Vec<Value> = bodies.iter().map(|b| json!({"type": "body", "name": b})).collect();
+            let _ = app.run("select.set", json!({ "items": items }));
+            app.start("file.save_mesh");
         }
         "ui.exportDxf" => {
             if let Some(id) = id_of(&p, "sketch") {

@@ -29,8 +29,10 @@ pub mod dialogs_motion;
 pub mod dialogs_move;
 pub mod dialogs_parts;
 pub mod dialogs_plastic;
+pub mod dialogs_save_mesh;
 pub mod dialogs_sheet;
 pub mod dialogs_surface;
+pub mod dialogs_sweep;
 pub mod dim_view;
 #[cfg(test)]
 mod dimension_create_ui_tests;
@@ -140,6 +142,8 @@ pub mod smart_extrude;
 #[cfg(test)]
 mod smart_extrude_ui_tests;
 pub mod stand_up;
+#[cfg(test)]
+mod sweep_dialog_tests;
 pub mod theme;
 #[cfg(test)]
 mod thin_extrude_tests;
@@ -228,6 +232,8 @@ impl Default for UiState {
 pub struct Services {
     pub pick_open: Option<Box<dyn Fn() -> FilePickerFuture>>,
     pub pick_save: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
+    /// Open a dialog asking for a program (a slicer); `None` when the host has no such dialog.
+    pub pick_program: Option<Box<dyn Fn() -> FilePickerFuture>>,
     pub show_in_folder: Option<Box<dyn Fn(&str)>>,
     /// Where the host reads the anti-aliasing preference at start (a small JSON file).
     pub graphics_path: Option<String>,
@@ -283,6 +289,8 @@ pub struct SolveApp {
     /// Preferences kept between runs, and their window.
     pub preferences: prefs::Prefs,
     pub prefs_window: prefs::PrefsWindow,
+    /// The slicers the Save as mesh dialog offers.
+    pub slicer_menu: dialogs_save_mesh::SlicerMenu,
     pub preview: preview::PreviewState,
     /// OK pressed on a feature that takes a while: its evaluation runs off the window thread.
     pub applying: Option<dialogs::Applying>,
@@ -382,6 +390,7 @@ impl SolveApp {
             sketch_choices: sketch_families::Choices::default(),
             preferences: prefs::Prefs::default(),
             prefs_window: prefs::PrefsWindow::default(),
+            slicer_menu: dialogs_save_mesh::SlicerMenu::default(),
             preview: preview::PreviewState::default(),
             applying: None,
             apply_off_thread: None,
