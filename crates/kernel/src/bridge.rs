@@ -109,8 +109,7 @@ pub fn chain(body: &Body, at: &[Vec3]) -> Result<Vec<mt::Edge>> {
         Some(e) => e.back().clone(),
         None => return Err(KernelError::Invalid("pick at least one edge".into())),
     };
-    loop {
-        let Some(k) = pool.iter().position(|e| e.front().id() == end.id() || e.back().id() == end.id()) else { break };
+    while let Some(k) = pool.iter().position(|e| e.front().id() == end.id() || e.back().id() == end.id()) {
         let e = pool.remove(k);
         let e = if e.front().id() == end.id() { e } else { e.inverse() };
         end = e.back().clone();
@@ -120,8 +119,7 @@ pub fn chain(body: &Body, at: &[Vec3]) -> Result<Vec<mt::Edge>> {
         Some(e) => e.front().clone(),
         None => return Err(KernelError::Invalid("pick at least one edge".into())),
     };
-    loop {
-        let Some(k) = pool.iter().position(|e| e.front().id() == start.id() || e.back().id() == start.id()) else { break };
+    while let Some(k) = pool.iter().position(|e| e.front().id() == start.id() || e.back().id() == start.id()) {
         let e = pool.remove(k);
         let e = if e.back().id() == start.id() { e } else { e.inverse() };
         start = e.front().clone();
