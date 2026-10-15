@@ -307,6 +307,7 @@ mod blend_fit;
 mod boolean_diagnostics;
 mod component_frames;
 mod curved_seam_round;
+mod gltf_import;
 mod import_component;
 mod large_step_import;
 mod loft_cut;
