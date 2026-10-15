@@ -1,4 +1,8 @@
 {
+  "Use center axis": "중심축 사용",
+  "Use circle center": "원/호 중심 사용",
+  "Cylinder center axis": "원통 중심축",
+  "Circle/arc center": "원/호 중심",
   "Send your report on GitHub": "GitHub에서 보고서 보내기",
   "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. 아래에서 GitHub 초안을 열고 클립보드에 복사된 보고서를 붙여넣으세요.",
   "1. Open GitHub draft below. Your title and report will be filled in.": "1. 아래에서 GitHub 초안을 여세요. 제목과 보고서가 자동으로 입력됩니다.",

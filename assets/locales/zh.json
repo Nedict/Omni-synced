@@ -1,4 +1,8 @@
 {
+  "Use center axis": "使用中心轴",
+  "Use circle center": "使用圆或圆弧的圆心",
+  "Cylinder center axis": "圆柱中心轴",
+  "Circle/arc center": "圆或圆弧的圆心",
   "Send your report on GitHub": "在 GitHub 上发送报告",
   "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. 点击下方按钮打开 GitHub 草稿，然后粘贴已复制到剪贴板的报告。",
   "1. Open GitHub draft below. Your title and report will be filled in.": "1. 点击下方按钮打开 GitHub 草稿。标题和报告将自动填入。",
@@ -921,7 +925,7 @@
   "no joint that moves yet": "尚无运动接头",
   "no picture": "无图片",
   "pick a hole to seat it, or OK places it at the origin": "选择一个孔放置，或单击确定放置在原点",
-  "pick one or two vertices, edges or faces": "选择一个或两个顶点、边或面",
+  "pick sketch points or curves, vertices, edges or faces": "选择一个或两个草图点（如圆或圆弧的圆心）、曲线、顶点、边或面",
   "the parts library is not available": "零件库不可用",
   "to the next face": "到下一个面",
   "Revert Position": "恢复位置",

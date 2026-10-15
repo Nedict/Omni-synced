@@ -41,6 +41,7 @@ pub(crate) mod joints;
 mod libraries;
 mod material_properties;
 mod materials;
+mod measure_center;
 mod measure_sel;
 mod mesh;
 mod metadata;
@@ -48,7 +49,7 @@ pub(crate) mod motion;
 mod parts;
 mod script;
 mod section;
-pub(crate) use measure_sel::measure_items;
+pub(crate) use measure_sel::{measure_items, measure_items_with_centers};
 #[cfg(test)]
 mod kernel_heal_tests;
 mod parameters;

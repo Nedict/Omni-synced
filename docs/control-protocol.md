@@ -97,6 +97,28 @@ read in the design's units, exactly as if it were typed into the dimension box: 
 unit regardless of the design, pass an expression with one: `"value": "50 mm"` or
 `"value": "0.5 in"`. Angles are degrees unless the expression says otherwise.
 
+`inspect.measure` also accepts sketch points and curves in `items`. A circle or arc centre
+is a sketch point: use `{"type":"sketch_point","id":"c1.center"}` in the active sketch,
+or `{"type":"external_sketch_point","sketch":1,"id":"a1.center"}` for a finished sketch.
+Qualified ids such as `"1:a1.center"` also work with `sketch_point` and `sketch_curve`.
+Pair the point with a sketch curve or a model edge to measure its shortest distance to that
+edge (clamped to its endpoints). In the UI, Measure exposes the points of visible sketches;
+pick the centre and then the edge, in either order. Its distance line and label remain on
+the canvas while the measurement dialog is open and disappear when it closes.
+
+For 3D geometry, pass `centers: [true, true]` to `inspect.measure` to measure the pitch
+between cylindrical centre axes, or the 3D distance between circle/arc centres inferred
+from model edges. The flags follow `items` and can be set independently: `[true, false]`
+measures from the first item's axis/centre to the second item's actual edge or surface.
+Cylinder axes are infinite lines, so parallel cylinders at different heights still give
+their perpendicular pitch. Circular edges give centre points at the edges' actual heights.
+Noncircular edges and noncylindrical faces cannot be used as centre references (a circular
+planar cap is also supported). The reply's `items[].center` describes an available centre;
+`reference: "axis" | "center"` indicates one used in the result. Without `centers`, the
+existing closest-surface measurement is preserved. The UI exposes a separate **Use center
+axis** or **Use circle/arc center** checkbox for each eligible item; the distance line and
+the selected centre axes remain visible until the measurement dialog closes.
+
 ## UI
 
 | Method | Params | Notes |

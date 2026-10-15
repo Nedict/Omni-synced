@@ -2912,6 +2912,19 @@ pub(crate) fn measurement_selection(s: &solidcraft_engine::Session, sel: &Sel) -
     let pieces = grouped_selection(s, sel);
     let mut representative = sel.clone();
     match &mut representative {
+        Sel::SketchPoint { id } | Sel::SketchCurve { id } => {
+            let target = match id.split_once(':') {
+                Some((sketch, id)) => sketch.parse::<u64>().ok().map(|sketch| (sketch, id.to_string())),
+                None => s.active_sketch.map(|sketch| (sketch, id.clone())),
+            };
+            if let Some((sketch, id)) = target {
+                return if matches!(sel, Sel::SketchPoint { .. }) {
+                    Sel::ExternalSketchPoint { sketch, id }
+                } else {
+                    Sel::ExternalSketchCurve { sketch, id }
+                };
+            }
+        }
         Sel::Edge { index, .. } => {
             if let Some(Sel::Edge { index: i, .. }) = pieces.first() {
                 *index = *i;
@@ -3142,7 +3155,19 @@ fn hover_highlight(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
 fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let t = Tokens::get();
     let st = app.session.world_state();
-    for item in &app.session.selection {
+    // Finished sketches expose their points too while Measure is picking, including hole centres.
+    if app.dialog.as_ref().is_some_and(|d| matches!(d.kind, crate::dialogs::Kind::Measure { .. })) {
+        for sid in visible_sketches(app).into_iter().filter(|sid| Some(*sid) != app.session.active_sketch) {
+            let Some(ss) = st.sketch(sid) else { continue };
+            let visible = solidcraft_engine::view::SketchPointVisibility::new(&ss.sketch);
+            for point in ss.sketch.points.iter().filter(|point| visible.takes(point)) {
+                if let Some(pos) = proj.to_screen(ss.plane.to_world(point.pos)) {
+                    painter.circle(pos, 3.0, t.overlay, Stroke::new(1.2, t.sketch_point));
+                }
+            }
+        }
+    }
+    for item in &app.highlighted() {
         if let Sel::ExternalSketchPoint { sketch, id } = item
             && let Some(ss) = st.sketch(*sketch)
             && let Some(point) = ss.sketch.resolve_point(id).and_then(|i| ss.sketch.point(i))

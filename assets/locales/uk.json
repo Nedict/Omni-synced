@@ -1,4 +1,8 @@
 {
+  "Use center axis": "Використовувати центральну вісь",
+  "Use circle center": "Використовувати центр кола/дуги",
+  "Cylinder center axis": "Центральна вісь циліндра",
+  "Circle/arc center": "Центр кола/дуги",
   "Send your report on GitHub": "Надіслати звіт на GitHub",
   "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. Відкрийте чернетку GitHub нижче, а потім вставте звіт, скопійований у буфер обміну.",
   "1. Open GitHub draft below. Your title and report will be filled in.": "1. Відкрийте чернетку GitHub нижче. Заголовок і звіт буде заповнено.",
@@ -863,7 +867,7 @@
   "no joint that moves yet": "ще немає рухомого з'єднання",
   "no picture": "немає зображення",
   "pick a hole to seat it, or OK places it at the origin": "виберіть отвір для посадки, або OK розмістить його в початку координат",
-  "pick one or two vertices, edges or faces": "виберіть одну-дві вершини, ребра або грані",
+  "pick sketch points or curves, vertices, edges or faces": "виберіть одну або дві точки чи криві ескізу, вершини, ребра або грані",
   "the parts library is not available": "бібліотека деталей недоступна",
   "to the next face": "до наступної грані",
   "Revert Position": "Повернути положення",

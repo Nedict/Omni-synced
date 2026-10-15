@@ -1,4 +1,8 @@
 {
+  "Use center axis": "Utiliser l’axe central",
+  "Use circle center": "Utiliser le centre du cercle/de l’arc",
+  "Cylinder center axis": "Axe central du cylindre",
+  "Circle/arc center": "Centre du cercle/de l’arc",
   "Send your report on GitHub": "Envoyer votre rapport sur GitHub",
   "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. Ouvrir le brouillon GitHub ci-dessous, puis coller le rapport copié dans le presse-papiers.",
   "1. Open GitHub draft below. Your title and report will be filled in.": "1. Ouvrir le brouillon GitHub ci-dessous. Votre titre et votre rapport y seront déjà remplis.",
@@ -878,7 +882,7 @@
   "no joint that moves yet": "aucune liaison mobile pour l'instant",
   "no picture": "aucune image",
   "pick a hole to seat it, or OK places it at the origin": "choisir un trou pour la loger, ou OK la place à l'origine",
-  "pick one or two vertices, edges or faces": "choisir un ou deux sommets, arêtes ou faces",
+  "pick sketch points or curves, vertices, edges or faces": "choisir un ou deux points ou courbes d’esquisse, sommets, arêtes ou faces",
   "the parts library is not available": "la bibliothèque de pièces n'est pas disponible",
   "to the next face": "jusqu'à la face suivante",
   "Revert Position": "Rétablir la position",

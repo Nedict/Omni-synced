@@ -193,6 +193,8 @@ pub enum Kind {
     Measure {
         result: Option<Value>,
         of: Vec<Sel>,
+        centers: [bool; 2],
+        measured_centers: [bool; 2],
     },
     /// Move bodies by a distance along X, Y and Z.
     /// Move/Copy (see `dialogs_move`): the move type, X/Y/Z distances (Point to Position: the
@@ -528,9 +530,10 @@ impl Dialog {
             "inspect.section" => {
                 Dialog::new(Kind::Section { offset: "0 mm".into(), flip: false }, vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)])
             }
-            "inspect.measure" => {
-                Dialog::new(Kind::Measure { result: None, of: Vec::new() }, vec![SelInput::new("Items", FACES | EDGES | selection::VERTICES, true)])
-            }
+            "inspect.measure" => Dialog::new(
+                Kind::Measure { result: None, of: Vec::new(), centers: [false; 2], measured_centers: [false; 2] },
+                vec![SelInput::new("Items", FACES | EDGES | selection::VERTICES | selection::POINTS | CURVES, true)],
+            ),
             "solid.pattern.rectangular" => Dialog::new(
                 Kind::PatternRect { count: "3".into(), spacing: "20 mm".into(), count2: "1".into(), spacing2: "20 mm".into() },
                 vec![
@@ -646,7 +649,11 @@ impl Dialog {
                 _ => true,
             };
             let takes = |i: &SelInput| {
-                fits(i.accept, sel) && (i.multi || i.items.is_empty()) && (planar_ok || i.accept & FACES != 0 || !matches!(sel, Sel::Face { .. }))
+                let measure_sketch =
+                    matches!(d.kind, Kind::Measure { .. }) && matches!(sel, Sel::ExternalSketchPoint { .. } | Sel::ExternalSketchCurve { .. });
+                (fits(i.accept, sel) || measure_sketch)
+                    && (i.multi || i.items.is_empty())
+                    && (planar_ok || i.accept & FACES != 0 || !matches!(sel, Sel::Face { .. }))
             };
             if let Some(inp) = d.inputs.iter_mut().find(|i| takes(i)) {
                 // Fillets and chamfers take an edge with its tangent chain, as a pick does.
@@ -875,6 +882,13 @@ impl Dialog {
                 Hit::Face { body, index, point } => feature_of_face(s, body, *index, *point).map(|id| Sel::Feature { id }),
                 _ => None,
             };
+        }
+        if matches!(self.kind, Kind::Measure { .. }) {
+            match h {
+                Hit::SketchCurve { sketch, id, .. } => return Some(Sel::ExternalSketchCurve { sketch: *sketch, id: id.clone() }),
+                Hit::SketchPoint { sketch, id, .. } => return Some(Sel::ExternalSketchPoint { sketch: *sketch, id: id.clone() }),
+                _ => {}
+            }
         }
         if snaps_to_points(inp.accept)
             && let Hit::SketchPoint { sketch, at, .. } = h
@@ -1582,6 +1596,7 @@ fn placement_row(d: &mut Dialog, ui: &mut egui::Ui) {
 
 fn selection_label(s: &Session, item: &Sel) -> String {
     match item {
+        Sel::ExternalSketchPoint { sketch, id } | Sel::ExternalSketchCurve { sketch, id } => format!("{sketch}:{id}"),
         Sel::SketchCurve { id } => id.clone(),
         Sel::SketchPoint { id } => crate::sketch_modify_ui::point_id(s, item).unwrap_or(id).to_string(),
         Sel::Plane { name } | Sel::Axis { name } | Sel::Body { name } => name.clone(),
@@ -1745,11 +1760,29 @@ pub(crate) fn fill_cells(st: &solidcraft_engine::doc::ModelState, tools: &[Strin
 /// Measure again when the picked items changed.
 fn update_measure(app: &SolveApp, d: &mut Dialog) {
     let items: Vec<Sel> = sels(d, 0).to_vec();
-    if let Kind::Measure { result, of } = &mut d.kind
-        && *of != items
-    {
-        *result = if items.is_empty() { None } else { Some(app.session.measure_items(&items)) };
+    if let Kind::Measure { result, of, centers, measured_centers } = &mut d.kind {
+        let changed = *of != items;
+        if changed {
+            let previous = *centers;
+            for (i, flag) in centers.iter_mut().enumerate() {
+                *flag = items
+                    .get(i)
+                    .and_then(|item| of.iter().position(|old| selection::same_item(old, item)))
+                    .and_then(|j| previous.get(j))
+                    .copied()
+                    .unwrap_or(false);
+            }
+        }
+        if !changed && *centers == *measured_centers {
+            return;
+        }
+        *result = if items.is_empty() {
+            None
+        } else {
+            Some(app.session.measure_items_with_centers(&items, centers.get(..items.len()).unwrap_or_default()))
+        };
         *of = items;
+        *measured_centers = *centers;
     }
 }
 
@@ -1758,11 +1791,11 @@ fn fmt_mm(app: &SolveApp, v: &Value) -> String {
 }
 
 /// The measurement in the dialog.
-fn measure_rows(app: &SolveApp, ui: &mut egui::Ui, r: Option<&Value>) {
+fn measure_rows(app: &SolveApp, ui: &mut egui::Ui, r: Option<&Value>, centers: &mut [bool; 2]) {
     let t = Tokens::get();
     let Some(r) = r else {
         ui.label("");
-        ui.label(RichText::new(tr("pick one or two vertices, edges or faces")).color(t.text_dim));
+        ui.label(RichText::new(tr("pick sketch points or curves, vertices, edges or faces")).color(t.text_dim));
         ui.end_row();
         return;
     };
@@ -1783,7 +1816,23 @@ fn measure_rows(app: &SolveApp, ui: &mut egui::Ui, r: Option<&Value>) {
             _ => String::new(),
         };
         ui.label(format!("Item {}", i + 1));
-        ui.label(what);
+        ui.vertical(|ui| {
+            if let Some(reference) = it["reference"].as_str() {
+                ui.label(tr(if reference == "axis" { "Cylinder center axis" } else { "Circle/arc center" }));
+            } else {
+                ui.label(what);
+            }
+            if it.get("center").is_some()
+                && let Some(use_center) = centers.get_mut(i)
+            {
+                let axis = it["center"]["axis"].is_array();
+                let response = ui.checkbox(use_center, tr(if axis { "Use center axis" } else { "Use circle center" }));
+                if response.changed() {
+                    ui.ctx().request_repaint();
+                }
+                crate::scenario::publish_handle(&format!("measure:center:{}", i + 1), response.rect.center());
+            }
+        });
         ui.end_row();
     }
     if r.get("distance_mm").is_some() {
@@ -2373,7 +2422,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         d.extra.insert("combine".into(), json!(op == 1));
                         ui.end_row();
                     }
-                    Kind::Measure { result, .. } => measure_rows(app, ui, result.as_ref()),
+                    Kind::Measure { result, centers, .. } => measure_rows(app, ui, result.as_ref(), centers),
                     Kind::OffsetPlane { offset } => {
                         row_label(ui, "Distance");
                         enter |= field(ui, offset);

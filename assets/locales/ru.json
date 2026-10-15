@@ -1,4 +1,8 @@
 {
+  "Use center axis": "Использовать центральную ось",
+  "Use circle center": "Использовать центр окружности/дуги",
+  "Cylinder center axis": "Центральная ось цилиндра",
+  "Circle/arc center": "Центр окружности/дуги",
   "browser.body_name": "Тело{number}",
   "browser.component_name": "Компонент{number}",
   "browser.parameters": "Параметры ({count})",
@@ -894,7 +898,7 @@
   "no joint that moves yet": "пока нет подвижных сопряжений",
   "no picture": "нет картинки",
   "pick a hole to seat it, or OK places it at the origin": "выберите отверстие для установки, или OK разместит в начале координат",
-  "pick one or two vertices, edges or faces": "выберите одну-две вершины, ребра или грани",
+  "pick sketch points or curves, vertices, edges or faces": "выберите одну или две точки или кривые эскиза, вершины, ребра или грани",
   "the parts library is not available": "библиотека деталей недоступна",
   "to the next face": "до следующей грани",
   "Revert Position": "Вернуть положение",

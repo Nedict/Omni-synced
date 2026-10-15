@@ -113,7 +113,7 @@ pub enum Sel {
     SketchPoint {
         id: String,
     },
-    /// Geometry of a different sketch, retained for projection preselection.
+    /// Geometry in a named sketch, retained for projection preselection and measurement.
     ExternalSketchCurve {
         sketch: u64,
         id: String,
@@ -890,6 +890,13 @@ impl Session {
     pub fn measure_items(&self, items: &[Sel]) -> Value {
         let v = serde_json::to_value(items).unwrap_or(Value::Null);
         cmd::measure_items(self, &v).unwrap_or_else(|e| serde_json::json!({ "error": e.to_string() }))
+    }
+
+    /// Measure selected geometry using a circular centre or cylindrical axis for flagged items.
+    pub fn measure_items_with_centers(&self, items: &[Sel], centers: &[bool]) -> Value {
+        let items = serde_json::to_value(items).unwrap_or(Value::Null);
+        let centers = serde_json::to_value(centers).unwrap_or(Value::Null);
+        cmd::measure_items_with_centers(self, &items, &centers).unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}))
     }
 
     /// Run a script: a JSON array of `{"command": id, "params": {...}}` (or an object with a

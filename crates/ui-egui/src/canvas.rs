@@ -736,6 +736,17 @@ fn measure_line(app: &SolveApp, painter: &egui::Painter, proj: &Proj, r: &serde_
         Some(Vec3::new(a.first()?.as_f64()?, a.get(1)?.as_f64()?, a.get(2)?.as_f64()?))
     };
     let (Some(a), Some(b), Some(d)) = (p("from"), p("to"), r.get("distance_mm").and_then(|v| v.as_f64())) else { return };
+    for (i, item) in r["items"].as_array().into_iter().flatten().enumerate() {
+        if item["reference"].as_str() == Some("axis")
+            && let Ok(axis) = serde_json::from_value::<Vec3>(item["center"]["axis"].clone())
+        {
+            let at = if i == 0 { a } else { b };
+            let span = axis * app.cam.half_height() * 0.3;
+            if let (Some(start), Some(end)) = (proj.to_screen(at - span), proj.to_screen(at + span)) {
+                painter.add(egui::Shape::dashed_line(&[start, end], Stroke::new(1.2, t.manipulator), 5.0, 4.0));
+            }
+        }
+    }
     let (Some(sa), Some(sb)) = (proj.to_screen(a), proj.to_screen(b)) else { return };
     painter.line_segment([sa, sb], Stroke::new(2.0, t.manipulator));
     for s in [sa, sb] {
@@ -744,6 +755,7 @@ fn measure_line(app: &SolveApp, painter: &egui::Painter, proj: &Proj, r: &serde_
     let mid = sa + (sb - sa) * 0.5 + vec2(10.0, -14.0);
     let galley = painter.layout_no_wrap(crate::prefs::show_mm(app, d, 1), egui::FontId::proportional(12.5), t.text);
     let rect = egui::Rect::from_min_size(mid, galley.size() + vec2(10.0, 6.0));
+    crate::scenario::publish_handle("measure:label", rect.center());
     painter.rect(rect, 3.0, t.overlay, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     painter.galley(rect.min + vec2(5.0, 3.0), galley, t.text);
 }

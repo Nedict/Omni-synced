@@ -13,7 +13,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("measure")
         .key("I")
         .noundo()
-        .params("bodies?: [names] (default all); or items: [1-2 selections] → length/area/volume, minimum distance (from, to) and angle"),
+        .params("bodies?: [names] (default all); or items: [1-2 selections: sketch points/curves, vertices, edges, faces, bodies]; centers?: [bool per item] (default false): use cylindrical centre axes or circle/arc centres for flagged items → length/area/volume, minimum distance (from, to) and angle; sketch ids: active or <sketch>:<id>, external_sketch_point/curve: {sketch, id}"),
     CommandSpec::new("document.inspect", "Inspect Design", inspect).noundo().params("measure?: bool (include body measurements)"),
     CommandSpec::new("sketch.inspect", "Inspect Sketch", sketch_inspect).noundo().params("sketch?: id|name (default active)"),
     CommandSpec::new("model.edges", "List Edges", model_edges).noundo().params("body: name"),
@@ -64,7 +64,7 @@ pub fn measure_json(b: &solidcraft_doc::ModelBody) -> Value {
 
 fn measure(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(items) = p.get("items") {
-        return super::measure_sel::measure_items(s, items);
+        return super::measure_sel::measure_items_with_centers(s, items, &p["centers"]);
     }
     let want = string_list(p, "bodies");
     let st = s.world_state();

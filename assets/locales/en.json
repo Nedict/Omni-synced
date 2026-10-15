@@ -1,4 +1,8 @@
 {
+  "Use center axis": "Use center axis",
+  "Use circle center": "Use circle/arc center",
+  "Cylinder center axis": "Cylinder center axis",
+  "Circle/arc center": "Circle/arc center",
   "Send your report on GitHub": "Send your report on GitHub",
   "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. Open GitHub draft below, then paste the report copied to your clipboard.",
   "1. Open GitHub draft below. Your title and report will be filled in.": "1. Open GitHub draft below. Your title and report will be filled in.",
@@ -923,7 +927,7 @@
   "no joint that moves yet": "no joint that moves yet",
   "no picture": "no picture",
   "pick a hole to seat it, or OK places it at the origin": "pick a hole to seat it, or OK places it at the origin",
-  "pick one or two vertices, edges or faces": "pick one or two vertices, edges or faces",
+  "pick sketch points or curves, vertices, edges or faces": "pick one or two sketch points or curves, vertices, edges or faces",
   "the parts library is not available": "the parts library is not available",
   "to the next face": "to the next face",
   "Revert Position": "Revert Position",

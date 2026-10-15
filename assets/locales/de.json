@@ -1,4 +1,8 @@
 {
+  "Use center axis": "Mittelachse verwenden",
+  "Use circle center": "Kreis-/Bogenmittelpunkt verwenden",
+  "Cylinder center axis": "Zylindermittelachse",
+  "Circle/arc center": "Kreis-/Bogenmittelpunkt",
   "Send your report on GitHub": "Bericht auf GitHub senden",
   "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. Unten den GitHub-Entwurf öffnen und den kopierten Bericht aus der Zwischenablage einfügen.",
   "1. Open GitHub draft below. Your title and report will be filled in.": "1. Unten den GitHub-Entwurf öffnen. Titel und Bericht werden vorausgefüllt.",

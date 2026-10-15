@@ -1,4 +1,8 @@
 {
+  "Use center axis": "中心軸を使う",
+  "Use circle center": "円・円弧の中心を使う",
+  "Cylinder center axis": "円筒の中心軸",
+  "Circle/arc center": "円・円弧の中心",
   "Send your report on GitHub": "GitHubでレポートを送信",
   "1. Open GitHub draft below, then paste the report copied to your clipboard.": "1. 下のボタンでGitHubの下書きを開き、クリップボードにコピーされたレポートを貼り付けます。",
   "1. Open GitHub draft below. Your title and report will be filled in.": "1. 下のボタンでGitHubの下書きを開きます。タイトルとレポートは入力済みです。",
@@ -923,7 +927,7 @@
   "no joint that moves yet": "可動ジョイントがまだありません",
   "no picture": "画像なし",
   "pick a hole to seat it, or OK places it at the origin": "配置先の穴を選択するか、［OK］を押すと原点に配置します。",
-  "pick one or two vertices, edges or faces": "1つまたは2つの頂点、エッジ、面を選択",
+  "pick sketch points or curves, vertices, edges or faces": "スケッチの点（円・円弧の中心など）、曲線、頂点、エッジ、面から1つまたは2つ選択",
   "the parts library is not available": "パーツライブラリは利用できません",
   "to the next face": "次の面まで",
   "Revert Position": "位置を元に戻す",
