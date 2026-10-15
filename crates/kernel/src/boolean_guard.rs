@@ -162,14 +162,16 @@ pub(crate) fn check_retry(a: &Body, b: &Body, op: BoolOp, result: Option<&Body>)
         return Err(bad(op, "the result could not be checked".into()));
     };
     // A mesh as coarse as `t` on a round smaller than it has no inside to speak of (a through
-    // hole 0.13 mm across in a 900 mm slab measured −30272 mm³, #1255): each body's volume is
-    // measured at a tenth of its smallest radius, where that is finer. `scale` refines it all.
+    // hole 0.13 mm across in a 900 mm slab measured −30272 mm³, #1255): the volumes are measured
+    // at a tenth of the bodies' smallest radius, where that is finer. All three at the same
+    // tolerance, so the chords' error on the faces they share cancels. `scale` refines it all.
+    let finest = [a, b, r].iter().filter_map(|x| smallest_radius(x)).fold(f64::INFINITY, f64::min);
+    let fine = if finest * 0.1 < t { (finest * 0.1).max(t * 1e-2) } else { t };
     let volume = |body: &Body, mesh: &Mesh, scale: f64| -> Result<f64> {
-        let fine = smallest_radius(body).map(|r| (r * 0.1).max(t * 1e-2)).filter(|fine| *fine < t).unwrap_or(t) * scale;
-        if fine == t {
+        if fine == t && scale == 1.0 {
             return Ok(mesh.measure().volume);
         }
-        body.tessellate_with(fine, true).map(|m| m.measure().volume).map_err(|_| bad(op, "the result could not be checked".into()))
+        body.tessellate_with(fine * scale, true).map(|m| m.measure().volume).map_err(|_| bad(op, "the result could not be checked".into()))
     };
     let judge = |scale: f64| -> Result<(bool, f64, f64, f64)> {
         let (va, vb, vr) = (volume(a, &ma, scale)?, volume(b, &mb, scale)?, volume(r, &mr, scale)?);
