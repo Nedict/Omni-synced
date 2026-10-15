@@ -623,6 +623,18 @@ pub(super) fn face_contains(m: &solidcraft_geom::Mesh, fi: usize, p: Vec3, tol: 
 
 fn create_sketch(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.create";
+    // These name the plane, so they belong inside `plane`. Next to it they were ignored and the
+    // sketch went to XY (or the plane given) without a word.
+    for (key, example) in [
+        ("face", r#"{"plane": {"face": [x, y, z]}}"#),
+        ("origin", r#"{"plane": {"origin": [x, y, z], "x_dir": [..], "y_dir": [..]}}"#),
+        ("x_dir", r#"{"plane": {"origin": [x, y, z], "x_dir": [..], "y_dir": [..]}}"#),
+        ("y_dir", r#"{"plane": {"origin": [x, y, z], "x_dir": [..], "y_dir": [..]}}"#),
+    ] {
+        if p.get(key).is_some() {
+            return Err(bad(cmd, format!("`{key}` belongs inside `plane`: {example}")));
+        }
+    }
     create_sketch_with_plane(s, p, plane_ref(s, p, cmd)?, None)
 }
 
