@@ -89,6 +89,8 @@ mod file_load;
 mod file_picker;
 pub use file_picker::FilePickerFuture;
 #[cfg(test)]
+mod blend_arrow_tests;
+#[cfg(test)]
 mod file_load_ui_tests;
 #[cfg(test)]
 mod fillet_spline_handle_tests;
