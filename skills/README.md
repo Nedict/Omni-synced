@@ -19,7 +19,7 @@ They teach the agent to:
 
 They also list the traps that otherwise cost failed calls. Examples are the sketch axes of the XZ plane, edge picks that snap to the nearest edge, and cuts that miss but still report success.
 
-They are written for SolidCraft 0.8 and later; `solidcraft-mechanisms` for the release after 0.11.1, which counts the degrees of freedom of closed loops.
+They are written for SolidCraft 0.8 and later; `solidcraft-mechanisms` for `main` after 0.11.1 (the next release), which counts the degrees of freedom of closed loops.
 
 ## Install
 
