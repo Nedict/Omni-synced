@@ -1,5 +1,5 @@
-//! Sketch Move/Copy: a 2D version of the body Move window (Free, Translate, Rotate) on the
-//! sketch plane, with the same icon row and a planar triad on the canvas.
+//! Sketch Move/Copy: a 2D version of the body Move window (Free, Translate, Rotate, Point to
+//! Point) on the sketch plane, with the same icon row and a planar triad on the canvas.
 
 use serde_json::json;
 use solidcraft_engine::Sel;
@@ -9,13 +9,14 @@ use solidcraft_engine::geom::{Vec2, Vec3};
 use crate::SolveApp;
 use crate::dialogs::{Dialog, Kind, field, icon_choice, row_label};
 use crate::gizmo::{self, Change, Drag};
-use crate::sketch_modify_ui::Mod;
+use crate::sketch_modify_ui::{self, Mod};
 
-pub const TYPES: [&str; 3] = ["Free Move", "Translate", "Rotate"];
-const ICONS: [&str; 3] = ["move_free", "move_translate", "move_rotate"];
+pub const TYPES: [&str; 4] = ["Free Move", "Translate", "Rotate", "Point to Point"];
+const ICONS: [&str; 4] = ["move_free", "move_translate", "move_rotate", "move_ptp"];
 pub const FREE: usize = 0;
 pub const TRANSLATE: usize = 1;
 pub const ROTATE: usize = 2;
+pub const POINT_TO_POINT: usize = 3;
 
 pub fn kind(mode: usize) -> Mod {
     Mod::Move { mode, x: "0 mm".into(), y: "0 mm".into(), angle: "0 deg".into(), copy: false }
@@ -29,15 +30,13 @@ pub fn type_row(d: &mut Dialog, ui: &mut egui::Ui) {
     ui.end_row();
     if m != mode {
         let entities = d.inputs.first().map(|i| i.items.clone()).unwrap_or_default();
-        let center = d.inputs.get(1).map(|i| i.items.clone()).unwrap_or_default();
         d.kind = Kind::SketchModify(kind(m));
+        d.inputs = sketch_modify_ui::move_inputs(m);
         if let Some(i) = d.inputs.first_mut() {
             i.items = entities;
         }
-        if let Some(i) = d.inputs.get_mut(1) {
-            i.items = center;
-        }
         d.extra.remove("drag0");
+        d.active = if entities.is_empty() { 0 } else { 1.min(d.inputs.len() - 1) };
     }
 }
 
@@ -49,19 +48,12 @@ fn plane_axes(app: &SolveApp) -> Option<(Vec3, Vec3, Vec3)> {
     Some((o, u, v))
 }
 
-fn center_world(app: &SolveApp, d: &Dialog) -> Option<Vec3> {
-    if let Some(Sel::SketchPoint { id }) = d.inputs.get(1).and_then(|i| i.items.first()) {
-        let sid = app.session.active_sketch?;
-        let world = app.session.world_state();
-        let ss = world.sketch(sid)?;
-        let p = ss.sketch.point(ss.sketch.resolve_point(id)?)?;
-        return Some(ss.plane.to_world(p));
-    }
+fn entity_centroid_local(app: &SolveApp, d: &Dialog) -> Option<Vec2> {
     let sid = app.session.active_sketch?;
     let world = app.session.world_state();
     let ss = world.sketch(sid)?;
     let mut bb: Option<(Vec2, Vec2)> = None;
-    for sel in d.inputs.first()?.items.iter().flat_map(|s| crate::sketch_modify_ui::expand_sketch_entity(&app.session, s)) {
+    for sel in d.inputs.first()?.items.iter().flat_map(|s| sketch_modify_ui::expand_sketch_entity(&app.session, s)) {
         let p = match &sel {
             Sel::SketchCurve { id } => {
                 let idx = ss.sketch.curve_index(id)?;
@@ -80,9 +72,37 @@ fn center_world(app: &SolveApp, d: &Dialog) -> Option<Vec3> {
         });
     }
     Some(match bb {
-        Some((lo, hi)) => ss.plane.to_world((lo + hi) * 0.5),
-        None => ss.plane.to_world(Vec2::ZERO),
+        Some((lo, hi)) => (lo + hi) * 0.5,
+        None => Vec2::ZERO,
     })
+}
+
+fn center_world(app: &SolveApp, d: &Dialog) -> Option<Vec3> {
+    let Kind::SketchModify(Mod::Move { mode, .. }) = &d.kind else { return None };
+    let sid = app.session.active_sketch?;
+    let world = app.session.world_state();
+    let ss = world.sketch(sid)?;
+    if *mode == POINT_TO_POINT {
+        let from = d.inputs.get(1).and_then(|i| i.items.first());
+        let to = d.inputs.get(2).and_then(|i| i.items.first());
+        if let (Some(f), Some(t)) = (from, to) {
+            if let (Some(a), Some(b)) = (sketch_modify_ui::sketch_point_pos(&app.session, f), sketch_modify_ui::sketch_point_pos(&app.session, t)) {
+                let c = entity_centroid_local(app, d)? + (b - a);
+                return Some(ss.plane.to_world(c));
+            }
+        }
+        if let Some(f) = from {
+            if let Some(a) = sketch_modify_ui::sketch_point_pos(&app.session, f) {
+                return Some(ss.plane.to_world(a));
+            }
+        }
+        return Some(ss.plane.to_world(entity_centroid_local(app, d)?));
+    }
+    if let Some(Sel::SketchPoint { id }) = d.inputs.get(1).and_then(|i| i.items.first()) {
+        let p = ss.sketch.point(ss.sketch.resolve_point(id)?)?;
+        return Some(ss.plane.to_world(p));
+    }
+    Some(ss.plane.to_world(entity_centroid_local(app, d)?))
 }
 
 fn len(app: &SolveApp, s: &str) -> Result<f64, String> {
@@ -105,9 +125,37 @@ fn deg(v: f64) -> String {
     format!("{} deg", if s == "-0" || s.is_empty() { "0" } else { s })
 }
 
+/// Keep typed X/Y in sync with From→To for point-to-point (preview and value box).
+pub fn sync_p2p(app: &SolveApp, d: &mut Dialog) {
+    let Kind::SketchModify(Mod::Move { mode, x, y, .. }) = &mut d.kind else { return };
+    if *mode != POINT_TO_POINT {
+        return;
+    }
+    let from = d.inputs.get(1).and_then(|i| i.items.first());
+    let to = d.inputs.get(2).and_then(|i| i.items.first());
+    if let (Some(f), Some(t)) = (from, to) {
+        if let (Some(a), Some(b)) = (sketch_modify_ui::sketch_point_pos(&app.session, f), sketch_modify_ui::sketch_point_pos(&app.session, t)) {
+            *x = mm(b.x - a.x);
+            *y = mm(b.y - a.y);
+        }
+    }
+}
+
 pub fn triad(app: &SolveApp, d: &Dialog) -> Option<gizmo::Triad> {
     let Kind::SketchModify(Mod::Move { mode, x, y, .. }) = &d.kind else { return None };
     let (_, u, v) = plane_axes(app)?;
+    match *mode {
+        POINT_TO_POINT => {
+            let from = d.inputs.get(1).and_then(|i| i.items.first());
+            let to = d.inputs.get(2).and_then(|i| i.items.first());
+            if from.is_some() && to.is_none() {
+                let c = center_world(app, d)?;
+                return Some(gizmo::Triad { center: c, translate: true, rotate: false, ring_axis: None, translate_u: Some(u), translate_v: Some(v) });
+            }
+            return None;
+        }
+        _ => {}
+    }
     let mut c = center_world(app, d)?;
     if matches!(*mode, FREE | TRANSLATE) {
         let t = Vec2::new(len(app, x).unwrap_or(0.0), len(app, y).unwrap_or(0.0));
@@ -126,8 +174,31 @@ pub fn triad(app: &SolveApp, d: &Dialog) -> Option<gizmo::Triad> {
     })
 }
 
+/// Arrow from From to To when both sketch points are picked.
+pub fn line_drag(app: &SolveApp, d: &Dialog) -> Option<gizmo::LineDrag> {
+    let Kind::SketchModify(Mod::Move { mode, .. }) = &d.kind else { return None };
+    if *mode != POINT_TO_POINT || d.inputs.first().is_none_or(|i| i.items.is_empty()) {
+        return None;
+    }
+    let from = d.inputs.get(1).and_then(|i| i.items.first())?;
+    let to = d.inputs.get(2).and_then(|i| i.items.first())?;
+    let sid = app.session.active_sketch?;
+    let world = app.session.world_state();
+    let ss = world.sketch(sid)?;
+    let a = sketch_modify_ui::sketch_point_pos(&app.session, from)?;
+    let b = sketch_modify_ui::sketch_point_pos(&app.session, to)?;
+    let from_w = ss.plane.to_world(a);
+    let to_w = ss.plane.to_world(b);
+    let delta = to_w - from_w;
+    let dir = delta.normalized()?;
+    Some(gizmo::LineDrag { start: from_w, dir, length: delta.len() })
+}
+
 pub fn drag(app: &SolveApp, d: &mut Dialog, g: Drag) {
     let Kind::SketchModify(Mod::Move { mode, x, y, angle, .. }) = &d.kind else { return };
+    if *mode == POINT_TO_POINT {
+        return;
+    }
     if g.started || !d.extra.contains_key("drag0") {
         let v: Vec<f64> = match *mode {
             ROTATE => vec![ang(app, angle).unwrap_or(0.0)],
@@ -173,6 +244,14 @@ pub fn value_rows(ui: &mut egui::Ui, mode: usize, x: &mut String, y: &mut String
             }
         }
         ROTATE => row(ui, "Angle", angle),
+        POINT_TO_POINT => {
+            row_label(ui, "X Distance");
+            ui.label(x.as_str());
+            ui.end_row();
+            row_label(ui, "Y Distance");
+            ui.label(y.as_str());
+            ui.end_row();
+        }
         _ => {}
     }
     row_label(ui, "Create Copy");

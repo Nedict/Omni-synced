@@ -307,6 +307,30 @@ fn the_context_menu_item_fills_the_window_from_the_selection() {
 }
 
 #[test]
+fn point_to_point_move_uses_the_vector_between_the_two_picks() {
+    let h = rectangle();
+    let sid = h.app.session.active_sketch.unwrap();
+    let st = h.app.session.model.state();
+    let sk = &st.sketch(sid).unwrap().sketch;
+    let at_origin = sk.points.iter().find(|p| p.pos.x.abs() < 1e-6 && p.pos.y.abs() < 1e-6).expect("corner at origin");
+    let far = sk.points.iter().find(|p| (p.pos.x - 20.0).abs() < 1e-6 && (p.pos.y - 10.0).abs() < 1e-6).expect("far corner");
+    let mut inputs = crate::sketch_modify_ui::move_inputs(crate::sketch_move_ui::POINT_TO_POINT);
+    inputs[0].items = curve_ids(&h).iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect();
+    inputs[1].items = vec![Sel::SketchPoint { id: at_origin.id.clone() }];
+    inputs[2].items = vec![Sel::SketchPoint { id: far.id.clone() }];
+    let k = Mod::Move {
+        mode: crate::sketch_move_ui::POINT_TO_POINT,
+        x: "0 mm".into(),
+        y: "0 mm".into(),
+        angle: "0 deg".into(),
+        copy: false,
+    };
+    let out = commands(&h.app, &k, &inputs, &serde_json::Map::new()).unwrap();
+    assert_eq!(out[0].1["translate"], json!([20.0, 10.0]));
+    assert!(out[0].1.get("center").is_none());
+}
+
+#[test]
 fn the_typed_distances_and_angle_reach_the_command() {
     let h = rectangle();
     let inputs = move_inputs(&h);

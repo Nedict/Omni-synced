@@ -1,9 +1,10 @@
 //! On-canvas command input: while a feature dialog is open, its main value (extrude distance,
 //! fillet radius…) gets a value box in the viewport next to the geometry, and an arrow
-//! (extrude, fillet, shell, move) that can be dragged: values snap to round steps (hold Alt or
-//! Ctrl for a free drag) and the dialog follows. The box takes the keyboard as soon as the
-//! command has its geometry, so typing a number sets the value at once; Enter applies, Tab
-//! moves on, Esc cancels.
+//! (extrude, fillet, shell, move) that can be dragged: values snap to round steps (hold
+//! Ctrl/Cmd for a free drag; Alt also works when the "manipulator free drag also on Alt"
+//! preference is on — legacy default) and the dialog follows. The box takes the keyboard as
+//! soon as the command has its geometry, so typing a number sets the value at once; Enter
+//! applies, Tab moves on, Esc cancels.
 
 use egui::{Color32, Pos2, Stroke, vec2};
 use solidcraft_engine::Sel;
@@ -219,6 +220,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj
     // one sets it. The triad is the manipulator here, so the box comes without the drag arrow
     // every other dialog's value gets (`dir` is None below).
     if matches!(d.kind, Kind::SketchModify(crate::sketch_modify_ui::Mod::Move { .. })) {
+        crate::sketch_move_ui::sync_p2p(app, &mut d);
         let mut dragging = false;
         let step = snap_step(app.cam.half_height());
         if let Some(t) = crate::sketch_move_ui::triad(app, &d)
@@ -226,6 +228,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj
         {
             crate::sketch_move_ui::drag(app, &mut d, g);
             dragging = true;
+        } else if let Some(line) = crate::sketch_move_ui::line_drag(app, &d) {
+            let _ = crate::gizmo::line_show(ui, painter, proj, egui::Id::new("sc_sketch_move_line"), &line, step);
         }
         let triad = crate::sketch_move_ui::triad(app, &d);
         let at = triad.map(|t| t.center).or_else(|| anchor(app, &d).map(|(base, _)| base));
@@ -518,7 +522,10 @@ fn drag_arrow(
         && let Some(p) = r.interact_pointer_pos()
         && let Some(v) = along(proj, p, base, n)
     {
-        let free = ui.input(|i| i.modifiers.alt || i.modifiers.ctrl || i.modifiers.command);
+        // Free drag (no value snap): driven by the per-frame manipulator_free flag, which
+        // is set from prefs::manipulator_free_held in the viewport (Ctrl always; Alt only
+        // when the "manipulator free drag also on Alt" preference is on — legacy default: on).
+        let free = crate::tool_modifiers::manipulator_free();
         let step = snap_step(half_height);
         let mut v = if free { v } else { (v / step).round() * step };
         if !signed {
@@ -532,7 +539,7 @@ fn drag_arrow(
 /// A fillet's radius spline on each of its edges (a spline fillet, or the splines a taper gave
 /// them): the radius curve drawn into the body from the edge, and a handle per control radius at
 /// its Greville position, that far from the edge. Dragging a handle sets its control radius
-/// (snapped unless Alt/Ctrl); double-clicking the curve adds a control radius there without
+/// (snapped unless Ctrl/Cmd, or Alt when "manipulator free drag also on Alt" is on); double-clicking the curve adds a control radius there without
 /// changing it, double-clicking a handle between the ends removes it. A spline fillet's edges
 /// share one spline, so every edge's handles edit it. A taper's handles show on a single edge
 /// only: the first edit makes the fillet a spline fillet starting from that edge's taper, which

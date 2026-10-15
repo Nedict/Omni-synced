@@ -115,6 +115,7 @@ impl Mod {
             Mod::Offset { distance, .. } => Some(("Distance", ValueKind::Length, distance)),
             Mod::Move { mode, x, angle, .. } => match *mode {
                 crate::sketch_move_ui::ROTATE => Some(("Angle", ValueKind::Angle, angle)),
+                crate::sketch_move_ui::POINT_TO_POINT => Some(("X Distance", ValueKind::Length, x)),
                 _ => Some(("X Distance", ValueKind::Length, x)),
             },
             Mod::Mirror => None,
@@ -126,13 +127,24 @@ impl Mod {
     }
 }
 
+/// Selection inputs for a sketch move type.
+pub(crate) fn move_inputs(mode: usize) -> Vec<SelInput> {
+    let entities = SelInput::new("Entities", CURVES | SKETCH_POINTS | PROFILES, true);
+    match mode {
+        crate::sketch_move_ui::POINT_TO_POINT => {
+            vec![entities, SelInput::new("From", SKETCH_POINTS, false), SelInput::new("To", SKETCH_POINTS, false)]
+        }
+        _ => vec![entities, SelInput::new("Center", SKETCH_POINTS, false)],
+    }
+}
+
 fn inputs(k: &Mod) -> Vec<SelInput> {
     match k {
         Mod::Scale { .. } => vec![SelInput::new("Entities", CURVES | SKETCH_POINTS, true), SelInput::new("Base point", SKETCH_POINTS, false)],
         Mod::Offset { .. } => vec![SelInput::new("Curves", CURVES, true)],
         // AXES is the mask that takes a straight sketch curve (`selection::SelInput::accepts`).
         Mod::Mirror => vec![SelInput::new("Entities", CURVES | SKETCH_POINTS, true), SelInput::new("Mirror line", AXES, false)],
-        Mod::Move { .. } => vec![SelInput::new("Entities", CURVES | SKETCH_POINTS | PROFILES, true), SelInput::new("Center", SKETCH_POINTS, false)],
+        Mod::Move { mode, .. } => move_inputs(*mode),
         // The direction is optional: `sketch.pattern.rectangular` documents sketch x as its
         // default, the way the engine reads it.
         Mod::PatternRect { .. } => vec![SelInput::new("Entities", CURVES | SKETCH_POINTS, true), SelInput::new("Direction", AXES, false)],
@@ -575,6 +587,15 @@ fn picked_point(session: &solidcraft_engine::Session, inputs: &[SelInput], i: us
     items(inputs, i).first().and_then(|sel| point_id(session, sel)).map(str::to_string)
 }
 
+/// The sketch-plane position of a picked sketch point.
+pub(crate) fn sketch_point_pos(session: &solidcraft_engine::Session, sel: &Sel) -> Option<Vec2> {
+    let id = point_id(session, sel)?;
+    let sid = session.active_sketch?;
+    let world = session.world_state();
+    let ss = world.sketch(sid)?;
+    ss.sketch.point(ss.sketch.resolve_point(id)?)
+}
+
 /// The command a sketch modify dialog makes. Scale, Move, and patterns send evaluated
 /// numbers. Offset and Fillet retain expressions in persistent driving dimensions.
 pub fn commands(app: &SolveApp, k: &Mod, inputs: &[SelInput], extra: &Map<String, Value>) -> Result<Vec<(String, Value)>, String> {
@@ -635,17 +656,28 @@ pub fn commands(app: &SolveApp, k: &Mod, inputs: &[SelInput], extra: &Map<String
             if entities.is_empty() {
                 return Err("Select the sketch curves or points to move first".into());
             }
-            let (dx, dy) = if *mode == crate::sketch_move_ui::ROTATE {
-                (0.0, 0.0)
+            let (dx, dy, deg) = if *mode == crate::sketch_move_ui::POINT_TO_POINT {
+                let from = items(inputs, 1).first().ok_or("Select the point to move from")?;
+                let to = items(inputs, 2).first().ok_or("Select the point to move to")?;
+                let a = sketch_point_pos(&app.session, from).ok_or("The from point must be a sketch point of this sketch")?;
+                let b = sketch_point_pos(&app.session, to).ok_or("The to point must be a sketch point of this sketch")?;
+                (b.x - a.x, b.y - a.y, 0.0)
+            } else if *mode == crate::sketch_move_ui::ROTATE {
+                (0.0, 0.0, value(app, angle, ValueKind::Angle, "Angle")?.to_degrees())
             } else {
-                (value(app, x, ValueKind::Length, "X Distance")?, value(app, y, ValueKind::Length, "Y Distance")?)
+                (
+                    value(app, x, ValueKind::Length, "X Distance")?,
+                    value(app, y, ValueKind::Length, "Y Distance")?,
+                    if *mode == crate::sketch_move_ui::TRANSLATE { 0.0 } else { value(app, angle, ValueKind::Angle, "Angle")?.to_degrees() },
+                )
             };
-            let deg = if *mode == crate::sketch_move_ui::TRANSLATE { 0.0 } else { value(app, angle, ValueKind::Angle, "Angle")?.to_degrees() };
             if dx.abs() < 1e-9 && dy.abs() < 1e-9 && deg.abs() < 1e-9 {
                 return Err("Type a distance or an angle to move by".into());
             }
             let mut p = json!({"entities": entities, "translate": [dx, dy], "angle": deg, "copy": copy});
-            if let Some(center) = items(inputs, 1).first().and_then(|sel| point_id(&app.session, sel)) {
+            if *mode != crate::sketch_move_ui::POINT_TO_POINT
+                && let Some(center) = items(inputs, 1).first().and_then(|sel| point_id(&app.session, sel))
+            {
                 p["center"] = json!(center);
             }
             ("sketch.move", p)
