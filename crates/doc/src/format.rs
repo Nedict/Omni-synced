@@ -201,9 +201,8 @@
 //!   and a bend ending beside more of the fixed face its bend relief (0.11.0 left every corner a
 //!   notch and cut no bend relief), and a wall on part of an edge bends only where it stands
 //!   (0.11.0 refused it).
-<<<<<<< HEAD
 //!
-//!   The Class-A surface pass adds five feature kinds, also first saved in 22, so 0.11.0 and 0.12.0 ask
+//!   The Class-A surface pass adds five feature kinds, also first saved in 23, so 0.11.0, 0.12.0 and 0.13.0 ask
 //!   for an update instead of meeting a feature it can't read: `SurfaceBlend` (Blend Surface:
 //!   `from`/`to` edge chains of two bodies, optional `continuity`, `bulge`, `align`, `stitch`),
 //!   `SurfaceMatch` (Match Surface: `body`, optional `faces`, `target`, `edges`, optional
@@ -215,9 +214,7 @@
 //!   `sections`; both are optional and a design without them saves as before except that a
 //!   loft without `continuity` reads and writes as `[g0, g0]`, the plain loft it always was.
 //!   A `Fillet` can also carry `corner` (`rolling`, the default and what every older design
-//!   meant, or `g2`); 0.11.0 asks for an update instead of meeting a style it does not round.
-=======
->>>>>>> fork/class-a/2-surface-family
+//!   meant, or `g2`); 0.11.0, 0.12.0 and 0.13.0 ask for an update instead of meeting a style it does not round.
 //! - 22: an Import (STEP) feature can list `skip`: indices of the file's bodies it does not
 //!   build, because they are later instances of a part the file places more than once and the
 //!   other occurrences of that part's component show them (#1386: an imported file becomes a
