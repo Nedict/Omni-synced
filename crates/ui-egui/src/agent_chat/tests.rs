@@ -302,3 +302,22 @@ fn the_agents_own_questions_are_answered_by_the_mode_or_asked() {
     on_permission(&mut app, 3, "Run ls".into(), opts());
     assert!(matches!(app.agent_chat.items.last(), Some(Item::Notice { .. })), "remembered");
 }
+
+/// An agent's text is Markdown: a code block shows with its Copy button and a link is a button
+/// of its own, instead of the raw markers.
+#[test]
+fn an_agents_markdown_is_drawn_as_blocks() {
+    let mut h = crate::scenario::Harness::new();
+    h.call("ui.agent_chat", json!({"open": true}));
+    h.frames(3);
+    h.app.agent_chat.items.push(Item::Agent {
+        thought: false,
+        text: "# Result\n\n- a **bold** point\n- another\n\n```\nlet x = 1;\n```\n\nSee [the docs](https://example.com/a).".into(),
+    });
+    h.frames(3);
+    assert!(h.widget("Copy").is_some(), "the code block has its Copy button");
+    assert!(h.widget("the docs").is_some(), "the link is a button");
+    // A hostile reply draws too (no panic, bounded work).
+    h.app.agent_chat.items.push(Item::Agent { thought: false, text: "*".repeat(50_000) + &"[".repeat(5_000) + &"`a".repeat(5_000) });
+    h.frames(3);
+}

@@ -47,6 +47,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("ui-egui", Class::Layer(5)),
     ("gpu", Class::Layer(5)),
     ("mcp", Class::Layer(5)),
+    ("assistant", Class::Layer(5)),
     ("testkit", Class::Testkit),
     // apps and tooling
     ("solidcraft", Class::Exempt),
@@ -56,8 +57,9 @@ pub const TABLE: &[(&str, Class)] = &[
 ];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).
-/// The viewport draws display plans the GPU crate evaluates.
-pub const INTRA_LAYER_ORDER: &[&[&str]] = &[&["gpu", "ui-egui"]];
+/// The viewport draws display plans the GPU crate evaluates; the agent chat's panel draws what the
+/// assistant crate (text and conversation data, no toolkit) provides.
+pub const INTRA_LAYER_ORDER: &[&[&str]] = &[&["gpu", "ui-egui"], &["assistant", "ui-egui"]];
 
 fn intra_layer_allowed(from: &str, to: &str) -> bool {
     let (from, to) = (short_name(from), short_name(to));
@@ -259,6 +261,14 @@ mod tests {
     fn sideways_dependency_flagged() {
         let v = check(&[c("solidcraft-kernel", &[("solidcraft-sketch", Normal, true)])]);
         assert!(matches!(v[..], [Violation::Upward { from: 1, to: 1, .. }]));
+    }
+
+    /// The assistant crate holds what the UI draws: the UI may use it, never the other way round.
+    #[test]
+    fn the_ui_may_use_the_assistant_crate_and_not_the_reverse() {
+        assert!(check(&[c("solidcraft-ui-egui", &[("solidcraft-assistant", Normal, true)])]).is_empty());
+        let v = check(&[c("solidcraft-assistant", &[("solidcraft-ui-egui", Normal, true)])]);
+        assert!(matches!(v[..], [Violation::Upward { from: 5, to: 5, .. }]));
     }
 
     #[test]

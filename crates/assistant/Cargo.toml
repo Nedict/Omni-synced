@@ -1,0 +1,11 @@
+[package]
+name = "solidcraft-assistant"
+description = "Parts of SolidCraft's in-app assistant that need no window: conversation text, history and quick actions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
