@@ -318,8 +318,14 @@ fn add_joint(s: &mut Session, j: Joint, p: &Value) -> Result<Value> {
     if s.doc.assembly.joints.len() >= 10_000 {
         return Err(EngineError::Other("too many joints".into()));
     }
+    // Several parts as bodies of one component (a multi-body STEP import, #1239): say how to
+    // get two components.
     if j.a.occurrence == j.b.occurrence {
-        return Err(bad("joint.create", "a joint needs two different occurrences"));
+        return Err(bad(
+            "joint.create",
+            "a joint needs two different occurrences: both origins are on one component; give each part a component of its own first \
+             (component.from_bodies)",
+        ));
     }
     let id = j.id;
     let name = j.name.clone();

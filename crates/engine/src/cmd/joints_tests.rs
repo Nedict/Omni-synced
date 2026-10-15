@@ -247,6 +247,22 @@ fn faces_mate_by_default() {
     assert!(near(place(&s, "B", Vec3::new(25.0, 5.0, 10.0)), Vec3::new(5.0, 5.0, 0.0)), "{:?}", place(&s, "B", Vec3::new(25.0, 5.0, 10.0)));
 }
 
+/// #1239: two parts as bodies of one component (a multi-body STEP import). The refusal names the
+/// way out, and after Create Components from Bodies the same origins make the joint.
+#[test]
+fn bodies_of_one_component_get_components_first() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [20, 0, 0]}));
+    let p = json!({"type": "rigid", "a": {"face": [5, 5, 10]}, "b": {"face": [25, 5, 0]}});
+    let e = s.execute("joint.create", &p).map(|_| ()).unwrap_err().to_string();
+    assert!(e.contains("two different occurrences") && e.contains("component.from_bodies"), "{e}");
+    run(&mut s, "component.from_bodies", json!({"bodies": ["Body1", "Body2"]}));
+    run(&mut s, "joint.create", p);
+    // The first joint's A side stays; B lands on top of it.
+    assert!(near(place(&s, "Body2", Vec3::new(25.0, 5.0, 0.0)), Vec3::new(5.0, 5.0, 10.0)));
+}
+
 /// #527: an assembly with its fasteners passes 200 bodies quickly; the clash check must still
 /// cover the whole design. 201 separate 1 mm cubes 2 mm apart, plus one cube pushed half-way
 /// into the first: exactly that pair overlaps, by 0.5 mm³.
