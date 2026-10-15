@@ -1968,7 +1968,6 @@ fn fillet_mixed_arc_and_line_perimeter_edges() {
     let blended = fillet(&body, &[Vec3::new(0.0, 10.0, 15.0), Vec3::new(5.0, 0.0, 15.0)], 0.5).unwrap();
     assert!(blended.validity().is_empty(), "{:?}", blended.validity());
     let mesh = blended.tessellate_with(1e-4, true).unwrap();
-    let source_mesh = body.tessellate_with(1e-4, true).unwrap();
     let bounds = mesh.bounds();
     let tol = 1e-3;
     assert!(
@@ -1983,16 +1982,91 @@ fn fillet_mixed_arc_and_line_perimeter_edges() {
     for p in &mesh.positions {
         assert!(p.x.hypot(p.y) <= 10.0 + tol, "outside the source semicircle: {p:?}");
     }
-    // Exact inward-offset D slices: d = r(1-cos(theta)), rho = R-d,
-    // S(d) = rho^2 acos(d/rho) - d sqrt(rho^2-d^2). Integrating
-    // (PI R^2/2 - S(d)) r cos(theta) over 0..PI/2 gives this removal, including corners.
-    let want = 2.715578447526581;
-    // Subtract meshes made with the same tolerance so tessellation error cancels; using
-    // the exact source volume here would measure the source mesh error as if it were removal.
-    let removed = source_mesh.measure().volume - mesh.measure().volume;
-    // Tangent mitres approximate the exact arc/line offset intersection; the measured
-    // residual is below 0.5% while still rejecting the original 19% shortfall.
-    assert!(rel(removed, want) < 5e-3, "{removed} vs {want}");
+}
+
+/// Integrate exact inward-offset D slices, including the arc/line corner overlaps.
+/// At height H-r+r*sin(theta), the inset is d=r*(1-cos(theta)); the remaining
+/// slice is the circular segment of radius R-d above y=d. No kernel geometry is used.
+fn d_fillet_removed_reference(r: f64, steps: u32) -> f64 {
+    let dt = (PI / 2.0) / f64::from(steps);
+    (0..steps)
+        .map(|i| {
+            let theta = (f64::from(i) + 0.5) * dt;
+            let d = r * (1.0 - theta.cos());
+            let rho = 10.0 - d;
+            let remaining = rho * rho * (d / rho).acos() - d * (rho * rho - d * d).sqrt();
+            (PI * 50.0 - remaining) * r * theta.cos() * dt
+        })
+        .sum()
+}
+
+#[test]
+fn fillet_mixed_arc_and_line_removed_volume_converges() {
+    let body = mixed_arc_and_line_prism();
+    let source_exact = PI * 100.0 * 15.0 / 2.0;
+    let tolerances = [1e-4, 2.5e-5];
+    let source_volumes = tolerances.map(|tol| body.tessellate_with(tol, true).unwrap().measure().volume);
+    for r in [0.5, 0.25] {
+        let want = d_fillet_removed_reference(r, 8192);
+        assert!((want - d_fillet_removed_reference(r, 4096)).abs() < 1e-7, "reference quadrature must converge");
+        if r == 0.5 {
+            assert!((want - 2.715578447526581).abs() < 1e-7, "{want}");
+        }
+        let blended = fillet(&body, &[Vec3::new(0.0, 10.0, 15.0), Vec3::new(5.0, 0.0, 15.0)], r).unwrap();
+        let mut previous = None;
+        for (tol, source) in tolerances.into_iter().zip(source_volumes) {
+            let volume = blended.tessellate_with(tol, true).unwrap().measure().volume;
+            // Equal chord tolerances reduce (not necessarily cancel) the error from the
+            // unchanged walls. The convergence and exact-source checks below guard this.
+            let removed = source - volume;
+            // Tangent mitres leave 0.34% geometric error at r/R=0.05; resolution changes
+            // removal by <0.1%. A 0.5% budget covers both, but rejects the old 19% deficit.
+            assert!(rel(removed, want) < 5e-3, "r={r}, tol={tol}: removed {removed}, expected {want}");
+            if let Some(coarser) = previous {
+                assert!(rel(removed, coarser) < 1e-3, "r={r}: removal has not converged: {coarser} -> {removed}");
+                let exact_removed = source_exact - volume;
+                assert!(rel(exact_removed, want) < 5e-3, "r={r}: exact-source removal {exact_removed}, expected {want}");
+            }
+            previous = Some(removed);
+        }
+    }
+}
+
+#[test]
+fn fillet_mixed_arc_and_line_mitre_preserves_section_radius() {
+    use truck_modeling::{BoundedCurve, ParametricCurve};
+
+    let r = 0.5;
+    let body = mixed_arc_and_line_prism();
+    let blended = fillet(&body, &[Vec3::new(0.0, 10.0, 15.0), Vec3::new(5.0, 0.0, 15.0)], r).unwrap();
+    crate::guard("inspect mixed fillet mitres", || {
+        let solid = blended.deep_copy();
+        let mut mitres = std::collections::HashSet::new();
+        for edge in solid.boundaries().iter().flat_map(|shell| shell.edge_iter()) {
+            let a = crate::body::from_p3(edge.front().point());
+            let b = crate::body::from_p3(edge.back().point());
+            // Only the two corner profiles join the top contact to the wall contact.
+            if (a.z - b.z).abs() < r - 1e-8 || a.z.min(b.z) < 15.0 - r - 1e-8 || a.x * b.x <= 0.0 {
+                continue;
+            }
+            if !mitres.insert(edge.id()) {
+                continue;
+            }
+            let curve = edge.oriented_curve();
+            let (lo, hi) = curve.range_tuple();
+            for i in 0..=32 {
+                let p = crate::body::from_p3(curve.subs(lo + (hi - lo) * f64::from(i) / 32.0));
+                // The tangent mitre satisfies |x|+y=R. Viewed normal to the straight
+                // edge, its section must remain a radius-r circle, independent of meshing.
+                assert!((p.x.abs() + p.y - 10.0).abs() < 1e-8, "off mitre: {p:?}");
+                let radius2 = (p.y - r).powi(2) + (p.z - (15.0 - r)).powi(2);
+                assert!((radius2 - r * r).abs() < 1e-8, "distorted section at {p:?}: radius squared {radius2}");
+            }
+        }
+        assert_eq!(mitres.len(), 2, "both arc/line corners must be checked");
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[test]
