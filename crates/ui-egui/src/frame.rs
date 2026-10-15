@@ -108,6 +108,22 @@ pub fn window<'a>(ctx: &egui::Context, title: impl Into<WidgetText>, width: Widt
         .max_width(max)
 }
 
+/// Add a button drawn with its own outline (`Button::stroke`) of `width`, keeping the same size
+/// in every state (#1335). egui sizes a button's padding as the spacing minus the *theme's*
+/// outline width for the state (none while idle, 1 px hovered), which keeps a themed button's
+/// size steady, but a button with its own outline then lost a pixel of padding each side on
+/// hover: it shrank, and the panel around it with it.
+pub fn add_outlined(ui: &mut Ui, button: egui::Button<'_>, width: f32) -> egui::Response {
+    ui.scope(|ui| {
+        let w = &mut ui.visuals_mut().widgets;
+        for state in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {
+            state.bg_stroke.width = width;
+        }
+        ui.add(button)
+    })
+    .inner
+}
+
 /// Floating model controls share the report's read-only drawing boundary with windows.
 pub fn area(id: egui::Id) -> egui::Area {
     egui::Area::new(id).enabled(!crate::issue_report::cad_input_blocked())

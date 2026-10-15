@@ -24,6 +24,7 @@ mod boolean_diagnostics;
 mod boolean_guard;
 mod boolean_record;
 mod bore_guard;
+mod bridge;
 mod build;
 mod clearance;
 mod coplanar;
@@ -119,12 +120,14 @@ pub use blend_corner::fillet_radii;
 pub use blend_variable::{RadiusSpline, Taper, fillet_chord, fillet_tapered, fillet_variable, fillet_variable_points, fillet_variable_spline, taper};
 pub use body::{Body, CapSignature, DISPLAY_ANGLE, EdgeInfo, FaceInfo, FacePaint, FaceSource, Paint};
 pub use boolean_diagnostics::{BooleanDiagnostics, BooleanFallback, BooleanStrategy, capture_boolean_diagnostics};
+pub use bridge::{Continuity, Frame, blend_between, bridge, chain, chain_closes, frames, sample_grid};
 pub use build::{
     PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, extrude_tapered_between, loft, revolve, sphere, sweep,
     sweep_with, torus,
 };
 pub use delete_face::delete_faces;
 pub use emboss::{cylinder_emboss_anchor, emboss_cylinder, emboss_cylinder_at, has_cylinder_emboss_wall, infer_cylinder_emboss};
+pub use fill::patch_edges_crowned;
 pub use helix::{loft_to_point, sweep_helix, sweep_helix_mesh};
 pub use iges_in::{MAX_IGES_BYTES, iges_import, iges_to_step};
 pub use iges_out::iges_export_bodies;
@@ -142,10 +145,12 @@ pub use prism_measure::certified_prism_equivalent;
 pub use sew::{EdgeSpec, FaceSpec, SurfSpec, sew, sew_touching};
 pub use splitface::{SplitTool, split_body, split_faces, split_faces_with_map};
 pub use step::step_export;
-pub use step_in::{ImportedBody, StepImport, StepNode, step_cache_alive, step_import, step_import_shared, step_orientation_errors, step_validate};
+pub use step_in::{
+    ImportedBody, StepImport, StepNode, StepReading, step_cache_alive, step_import, step_import_shared, step_orientation_errors, step_validate,
+};
 pub use step_out::{ExportBody, ExportProduct, StepHeader, step_export_bodies, step_export_products};
 pub use surface_extend::{ExtendLimit, ExtendMode, ExtendOptions, extend_surface};
-pub use surface_kind::{FaceSurface, face_surface};
+pub use surface_kind::{EdgeCircle, FaceSurface, edge_circle, face_surface};
 pub use surface_offset::offset_surface;
 pub use surface_ruled::{Ruled, RuledCorners, RuledMode, ruled_surface};
 pub use surface_untrim::{UntrimHoles, untrim};

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use solidcraft_geom::{Plane, Vec2, Vec3};
+use solidcraft_kernel::Continuity;
 use solidcraft_sketch::Sketch;
 
 use crate::construct::{AxisDef, GeoRef, PointDef};
@@ -1254,6 +1255,10 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         #[walk(pos)]
         edges: Vec<Vec3>,
+        /// How full a fitted patch's middle is (`crown`, -0.9…3, default 0; a planar loop is an
+        /// exact plane whatever this says).
+        #[serde(default, skip_serializing_if = "is_zero")]
+        crown: f64,
     },
     /// Surface bodies sewn along shared edges into the first one (a solid when they close).
     Stitch {
@@ -1437,6 +1442,25 @@ pub enum FeatureKind {
         #[serde(default = "yes", skip_serializing_if = "is_yes")]
         neighbours: bool,
     },
+    /// A blend surface bridging two picked edge chains of two bodies (`surface.blend`): each end
+    /// repeats the surface it leaves up to its requested continuity, with the fullness `bulge`.
+    SurfaceBlend {
+        from: BlendSide,
+        to: BlendSide,
+        /// How much of each support surface the blend repeats: [from, to].
+        #[serde(default = "blend_orders")]
+        continuity: [Continuity; 2],
+        /// How full each end leaves: [from, to]; 0 is the plain bridge.
+        #[serde(default)]
+        bulge: [f64; 2],
+        /// Points the blend leaves towards, when the faces at the picks do not say: [from, to].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[walk(pos)]
+        align: Option<[Vec3; 2]>,
+        /// Sew the blend onto its two bodies where the boundaries meet.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        stitch: bool,
+    },
     /// A surface body trimmed by a plane, or by a face of a body (`tool`), keeping the side of
     /// `keep`.
     SurfaceTrim {
@@ -1475,6 +1499,11 @@ pub enum FeatureKind {
         /// The file's product/assembly tree, kept for components.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         components: Vec<solidcraft_kernel::StepNode>,
+        /// The file's bodies (by index) this feature does not build: later instances of a part
+        /// the file places more than once, shown by the other occurrences of that part's
+        /// component (#1386). Empty in designs from before format 22: every body is built.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        skip: Vec<u64>,
     },
     /// Rebuild an upstream constant-section mesh with analytic planar/cylindrical faces.
     MeshConvert {
@@ -1609,6 +1638,22 @@ pub struct FaceAt {
     pub point: Vec3,
 }
 
+/// One end of a blend: a body and the points that pick the edges of its boundary chain. With two
+/// picks on the same edge the chain is that one edge; more pick a chain that runs on from pick to
+/// pick (the order of the picks does not matter).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
+pub struct BlendSide {
+    #[walk(body)]
+    pub body: String,
+    #[walk(pos)]
+    pub edges: Vec<Vec3>,
+}
+
+/// The continuity a blend repeats by default: the tangent plane on both sides.
+fn blend_orders() -> [Continuity; 2] {
+    [Continuity::G1, Continuity::G1]
+}
+
 /// Triangles of one imported mesh body (millimetres).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MeshData {
@@ -1679,6 +1724,11 @@ pub enum CoilSection {
 
 fn is_zero_i8(v: &i8) -> bool {
     *v == 0
+}
+
+/// A parameter that is left out when it is 0 (an optional shape knob).
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 /// Hole shapes.
@@ -1887,6 +1937,7 @@ impl FeatureKind {
             FeatureKind::SurfaceRevolve { .. } => "SurfaceRevolveFeature",
             FeatureKind::SurfaceSweep { .. } => "SurfaceSweepFeature",
             FeatureKind::SurfaceLoft { .. } => "SurfaceLoftFeature",
+            FeatureKind::SurfaceBlend { .. } => "BlendFeature",
             FeatureKind::Stitch { .. } => "StitchFeature",
             FeatureKind::Thicken { .. } => "ThickenFeature",
             FeatureKind::SurfaceTrim { .. } => "TrimFeature",
@@ -1963,6 +2014,7 @@ impl FeatureKind {
             FeatureKind::SurfaceRevolve { .. } => "SurfaceRevolve",
             FeatureKind::SurfaceSweep { .. } => "SurfaceSweep",
             FeatureKind::SurfaceLoft { .. } => "SurfaceLoft",
+            FeatureKind::SurfaceBlend { .. } => "Blend",
             FeatureKind::Stitch { .. } => "Stitch",
             FeatureKind::Thicken { .. } => "Thicken",
             FeatureKind::SurfaceTrim { .. } => "Trim",

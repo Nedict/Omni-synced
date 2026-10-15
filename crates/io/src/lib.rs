@@ -182,7 +182,7 @@ pub fn step_import_feature_named(bytes: &[u8], file: &str, names: StepNames) -> 
     Ok(StepFeature {
         name,
         body_names,
-        kind: solidcraft_doc::FeatureKind::Import { file: file_name, step: text.into(), components: imp.tree.clone() },
+        kind: solidcraft_doc::FeatureKind::Import { file: file_name, step: text.into(), components: imp.tree.clone(), skip: Vec::new() },
         warnings: iges_warnings.into_iter().chain(imp.warnings.iter().cloned()).collect(),
         import: imp,
     })

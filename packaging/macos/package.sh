@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build and package SolidCraft for macOS:
 #
-#   $DIST/solidcraft-<version>-macos-<arch>.dmg        SolidCraft.app on a drag-to-Applications DMG
+#   $DIST/solidcraft-<version>-macos-<arch>.dmg        SolidCraft.app (with solidcraft-cli inside) on a
+#                                                      drag-to-Applications DMG
 #   $DIST/solidcraft-cli-<version>-macos-<arch>.zip    the headless CLI (and its solvecraft-cli
 #                                                      compatibility alias) with the licence files
 #
@@ -60,6 +61,9 @@ done
 echo "==> assembling $APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$WORK/bin/solidcraft" "$APP/Contents/MacOS/SolidCraft"
+# solidcraft-cli next to the app, as every other package has it: the agent chat starts it as the
+# agent's MCP server (`solidcraft-cli mcp --connect`) and looks for it beside the running program.
+cp "$WORK/bin/solidcraft-cli" "$APP/Contents/MacOS/solidcraft-cli"
 # Apple-compiled layered icon and older-macOS fallback (regeneration: assets/README.md).
 # Keep compiled resources so packaging also works on runners with older Xcode versions.
 cp "$ROOT/assets/icons/app/macos/exports/Assets.car" "$APP/Contents/Resources/Assets.car"
@@ -72,6 +76,7 @@ printf 'APPL????' >"$APP/Contents/PkgInfo"
 # Ad-hoc signature over the whole bundle (Apple silicon refuses unsigned code).
 codesign --force --sign - --timestamp=none "$APP"
 codesign --verify --strict --deep --verbose=2 "$APP"
+test -x "$APP/Contents/MacOS/solidcraft-cli" || { echo "solidcraft-cli is missing from $APP" >&2; exit 1; }
 
 # ---- DMG ---------------------------------------------------------------------------------------
 echo "==> building $DMG"

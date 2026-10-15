@@ -58,6 +58,16 @@ isotropic derived response and its reciprocals must also remain finite/positive.
 Moisture is kg water / kg dry material and can exceed one. It is not a wet-mass
 fraction. Unspecified temperature/state, wood moisture or polymer strain rate are
 reported in `unspecified_conditions`; they are not guessed or replaced by zero.
+The validation report also returns `missing_condition_fields`, a map from each
+incomplete property kind to its exact absent field names. Temperature and state
+apply to every family; wood additionally checks dry-basis moisture and polymers
+strain rate, following the same reporting policy as `unspecified_conditions`.
+For example, a wood density with temperature and state but no moisture reports
+`{"density":["moisture_dry_basis_kg_kg"]}`. Complete properties are omitted;
+an empty card returns an empty map, without inventing properties or conditions.
+This detail is read-only and does not change admission or the saved card schema.
+Older serialized validation reports without the map deserialize with an empty
+map; regenerate validation from the card to obtain the missing-field detail.
 The family label does not certify that a chosen constitutive model fits a material.
 Scalar strengths are individual measurements, not a three-dimensional failure
 envelope. Typed strength directions and test methods remain a separate extension.
