@@ -166,30 +166,44 @@ fn report_rect(bar: Rect, captions: f32, tabs_start: f32, label_width: f32) -> (
     (Rect::from_min_size(pos2(right - width, bar.top() + 4.0), vec2(width, 26.0)), labeled)
 }
 
-/// An application-bar button for something on offer (Update, Install) at the right of `span` (the
-/// bar's free space): an accent-framed `icon`, labeled with `text` when `labeled` and it fits.
-/// None when even the icon alone doesn't fit: it never covers the bar's other buttons. `handle`
-/// names it for scenarios.
-pub(crate) fn offer_button(ui: &mut egui::Ui, span: Rect, labeled: bool, text: &str, icon: &str, handle: &str) -> Option<(Rect, egui::Response)> {
+/// The height of an application-bar pill ([`offer_pill`]), a little under the bar's 26 px buttons.
+pub(crate) const PILL_HEIGHT: f32 = 22.0;
+
+/// An application-bar pill for something on offer (Update) at the right of `span` (the bar's free
+/// space): accent-filled, with `icon` and the first of `labels` that fits (the icon alone when
+/// none does or `labeled` is false). None when even the icon doesn't fit: it never covers the
+/// bar's other buttons. `handle` names it for scenarios.
+pub(crate) fn offer_pill(ui: &mut egui::Ui, span: Rect, labeled: bool, labels: &[&str], icon: &str, handle: &str) -> Option<(Rect, egui::Response)> {
     let t = Tokens::get();
-    let full = 30.0 + ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), FontId::proportional(13.0), t.app_bar_text).size().x) + 10.0;
-    let labeled = labeled && full <= span.width();
-    let width = if labeled { full } else { 28.0 };
+    let font = FontId::proportional(12.5);
+    let (icon_x, text_x, right_pad) = (16.0, 29.0, 11.0);
+    let label = labels.iter().filter(|_| labeled).find_map(|text| {
+        let galley = ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), font.clone(), t.app_bar_text));
+        let width = text_x + galley.size().x + right_pad;
+        (width <= span.width()).then_some((*text, width))
+    });
+    let width = label.map_or(PILL_HEIGHT + 4.0, |(_, w)| w);
     if width > span.width() {
         return None;
     }
-    let rect = Rect::from_min_size(pos2(span.right() - width, span.top()), vec2(width, 26.0));
-    let response = ui.interact(rect, ui.id().with(("sc_offer_button", handle)), Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), text));
+    let rect = Rect::from_min_size(pos2(span.right() - width, span.center().y - PILL_HEIGHT / 2.0), vec2(width, PILL_HEIGHT));
+    let response = ui.interact(rect, ui.id().with(("sc_offer_pill", handle)), Sense::click());
+    let name = label.map(|(text, _)| text).or(labels.first().copied()).unwrap_or_default().to_string();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &name));
     crate::scenario::publish_handle(handle, rect.center());
     crate::scenario::publish_rect(handle, rect);
-    let fill = if response.hovered() || response.has_focus() { t.hover } else { t.app_bar };
-    ui.painter().rect_filled(rect, 4.0, fill);
-    ui.painter().rect_stroke(rect, 4.0, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
-    let glyph = Rect::from_center_size(pos2(rect.left() + 14.0, rect.center().y), vec2(18.0, 18.0));
-    icons::paint(ui.painter(), glyph, icon, t.accent, t.accent, t.app_bar);
-    if labeled {
-        ui.painter().text(pos2(rect.left() + 29.0, rect.center().y), Align2::LEFT_CENTER, text, FontId::proportional(13.0), t.app_bar_text);
+    let hot = response.hovered() || response.has_focus();
+    let fill = if hot { t.accent.lerp_to_gamma(t.app_bar_text, 0.18) } else { t.accent };
+    let radius = PILL_HEIGHT / 2.0;
+    ui.painter().rect_filled(rect, radius, fill);
+    if response.has_focus() {
+        ui.painter().rect_stroke(rect.expand(2.0), radius + 2.0, Stroke::new(1.0, t.app_bar_text), egui::StrokeKind::Outside);
+    }
+    let glyph_x = if label.is_some() { rect.left() + icon_x } else { rect.center().x };
+    let glyph = Rect::from_center_size(pos2(glyph_x, rect.center().y), vec2(16.0, 16.0));
+    icons::paint(ui.painter(), glyph, icon, t.app_bar_text, fill, t.app_bar_text);
+    if let Some((text, _)) = label {
+        ui.painter().text(pos2(rect.left() + text_x, rect.center().y), Align2::LEFT_CENTER, text, font, t.app_bar_text);
     }
     Some((rect, response))
 }

@@ -996,6 +996,7 @@
   "Profiles/Curves": "프로파일/곡선",
   "update.button": "업데이트",
   "update.button_tip": "SolidCraft {version} 사용 가능",
+  "update.button_version": "{version}(으)로 업데이트",
   "install.menu": "앱 설치…",
   "install.button_tip": "SolidCraft를 앱으로 설치합니다. 별도 창에서 열리며 오프라인에서도 작동합니다",
   "install.title": "SolidCraft 설치",

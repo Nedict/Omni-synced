@@ -1113,6 +1113,7 @@
   "cmd.material_properties_directional": "Module d'élasticité directionnel",
   "update.button": "Mettre à jour",
   "update.button_tip": "SolidCraft {version} est disponible",
+  "update.button_version": "Mettre à jour vers {version}",
   "install.menu": "Installer l'app…",
   "install.button_tip": "Installer SolidCraft comme une app : il s'ouvre dans sa propre fenêtre et fonctionne hors ligne",
   "install.title": "Installer SolidCraft",

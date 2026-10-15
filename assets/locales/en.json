@@ -1254,6 +1254,7 @@
   "cmd.material_properties_directional": "Directional Elastic Modulus",
   "update.button": "Update",
   "update.button_tip": "SolidCraft {version} is available",
+  "update.button_version": "Update to {version}",
   "install.menu": "Install app…",
   "install.button_tip": "Install SolidCraft as an app: it opens in its own window and works offline",
   "install.title": "Install SolidCraft",

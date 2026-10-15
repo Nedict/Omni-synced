@@ -1014,6 +1014,7 @@
   "cmd.material_properties_directional": "Спрямований модуль пружності",
   "update.button": "Оновити",
   "update.button_tip": "Доступна версія SolidCraft {version}",
+  "update.button_version": "Оновити до {version}",
   "install.menu": "Встановити застосунок…",
   "install.button_tip": "Встановити SolidCraft як застосунок: він відкривається в окремому вікні й працює без мережі",
   "install.title": "Встановлення SolidCraft",

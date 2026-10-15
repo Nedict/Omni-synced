@@ -996,6 +996,7 @@
   "Profiles/Curves": "Profile/Kurven",
   "update.button": "Update",
   "update.button_tip": "SolidCraft {version} ist verfügbar",
+  "update.button_version": "Auf {version} aktualisieren",
   "install.menu": "App installieren…",
   "install.button_tip": "SolidCraft als App installieren: eigenes Fenster, funktioniert auch offline",
   "install.title": "SolidCraft installieren",
