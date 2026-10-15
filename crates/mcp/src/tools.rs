@@ -238,8 +238,17 @@ pub fn tool_definitions() -> Vec<Value> {
             "Open a design",
             "Open a .solidcraft design file, a STEP file (.step/.stp: a new design whose bodies come from the file, as an \
              Import base feature) or a 3MF/STL mesh (.3mf/.stl: mesh bodies). Replaces the current design; insert into it \
-             instead with the file.insert_step (STEP) or file.insert_mesh (3MF/STL) commands.",
-            obj(json!({"path": string("Path to a .solidcraft, .step/.stp, .3mf or .stl file")}), &["path"]),
+             instead with the file.insert_step (STEP) or file.insert_mesh (3MF/STL) commands. A STEP file from a system \
+             that has Y up opens lying on its back: `up: \"y\"` turns it a quarter turn about X (Y becomes Z) with a Move \
+             feature. `names` picks what the bodies are named after when the solids' own names say nothing useful.",
+            obj(
+                json!({
+                    "path": string("Path to a .solidcraft, .step/.stp, .3mf or .stl file"),
+                    "up": {"type": "string", "enum": ["z", "y"], "description": "STEP only. z (default) keeps the file's axes; y: the file has Y up, so its bodies are turned to stand Z up"},
+                    "names": {"type": "string", "enum": ["solid", "product", "instance"], "description": "STEP only. What the bodies are named after: solid (default: the solid's own name, else the product's), product (the part's name) or instance (the assembly occurrence's name, else the product's)"},
+                }),
+                &["path"],
+            ),
             Effect::Files,
         ),
         tool(
@@ -401,7 +410,7 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<V
         "undo" => exec(b, "edit.undo", json!({})),
         "redo" => exec(b, "edit.redo", json!({})),
         "new_design" => exec(b, "file.new", pick(a, &["name"])),
-        "open" => exec(b, "doc.open", pick(a, &["path"])),
+        "open" => exec(b, "doc.open", pick(a, &["path", "up", "names"])),
         "save" => exec(b, "file.save", pick(a, &["path", "format"])),
         other => Err(format!("unknown tool `{other}`")),
     }
@@ -479,6 +488,8 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
             Ok(r) => return batch_reply(&r, rollback, verbose),
             // Older apps and the headless session, or the app wants the steps one by one.
             Err(e) if e.starts_with("unknown method") || e.starts_with("engine.batch unavailable") => {}
+            // Never sent: no app to send it to.
+            Err(e) if e.starts_with(crate::backend::NOT_RUNNING) => return text_result(&Value::String(e), true),
             // The app may have run it: sending the steps again would apply them twice.
             Err(e) => {
                 let msg = format!("the app did not answer engine.batch ({e}); it may have run: inspect the design before sending it again");

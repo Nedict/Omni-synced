@@ -266,6 +266,7 @@ fn scene_key(app: &SolveApp) -> u64 {
     app.ui.show_grid.hash(&mut h);
     app.ui.visual_style.hash(&mut h);
     app.ui.ground_shadow.hash(&mut h);
+    solidcraft_engine::doc::display_quality::current().hash(&mut h);
     // The section plane (its cut outlines are part of the model scene).
     section_plane(app).map(|(o, n)| [o.x, o.y, o.z, n.x, n.y, n.z].map(f64::to_bits)).hash(&mut h);
     app.cam.up.hash(&mut h);
@@ -347,7 +348,7 @@ fn drawn_plan(
 }
 
 /// The mesh whose triangles the model scene shows for `b`'s faces: the plan's (evaluated on the
-/// CPU, the same triangles the GPU draws) or the reference mesh. A face highlighted over the model
+/// CPU, the same triangles the GPU draws) or [`drawn_mesh`]. A face highlighted over the model
 /// must use the same triangles: another triangulation of the same face fights it at equal depth
 /// and shimmers.
 fn shown_mesh(
@@ -362,7 +363,16 @@ fn shown_mesh(
         .then(|| drawn_plan(app, b, true))
         .flatten()
         .and_then(|_| b.plan_mesh())
-        .unwrap_or_else(|| b.mesh())
+        .unwrap_or_else(|| drawn_mesh(b))
+}
+
+/// The mesh the model scene builds `b` from on the CPU (its edges always, its faces when they
+/// are not drawn from the plan on the GPU): the reference mesh at Normal display quality, else
+/// the plan's mesh at the chosen quality (finer or coarser faces and edges alike), falling back
+/// to the reference mesh when the body has no plan.
+fn drawn_mesh(b: &solidcraft_engine::doc::ModelBody) -> std::sync::Arc<solidcraft_engine::geom::Mesh> {
+    use solidcraft_engine::doc::display_quality::{DisplayQuality, current};
+    if current() == DisplayQuality::Normal { b.mesh() } else { b.plan_mesh().unwrap_or_else(|| b.mesh()) }
 }
 
 /// A model scene block kept by the viewport: its bytes and the meshes they were built from
@@ -513,7 +523,7 @@ fn build_scene(app: &SolveApp) -> GpuScene {
                 .collect();
             sc.planned.push(crate::gpu::PlannedBody { plan, face_colors });
         }
-        let body = BodyDraw { mesh: b.mesh(), col, faded, opacity, face_looks, on_gpu };
+        let body = BodyDraw { mesh: drawn_mesh(b), col, faded, opacity, face_looks, on_gpu };
         let key = body.key(shaded, edges, hidden_edges, edge_col, hidden_col);
         key.hash(&mut run_key);
         run.push(body);
@@ -1361,6 +1371,76 @@ fn analysis_uniform(app: &SolveApp) -> [f32; 8] {
     }
 }
 
+/// While Draft, Accessibility or Curvature Map analysis is on, what each of its colours means and
+/// the values it stands for, at the bottom left of the viewport (#973). The colours alone don't
+/// say, and with colour vision loss they can be hard to tell apart.
+fn analysis_legend(app: &SolveApp, painter: &egui::Painter, rect: Rect) {
+    use solidcraft_engine::SurfaceAnalysis as A;
+    let t = Tokens::get();
+    let tr = crate::i18n::tr_label;
+    let col = |c: [f32; 3]| {
+        let u = |x: f32| (x.clamp(0.0, 1.0) * 255.0).round() as u8;
+        Color32::from_rgb(u(c[0]), u(c[1]), u(c[2]))
+    };
+    let dir = |v: Vec3| format!("({:.2}, {:.2}, {:.2})", v.x, v.y, v.z);
+    let a = &t.analysis;
+    // (title, the direction it measures along, rows of colour, text, hatched).
+    let (title, along, rows): (&str, Option<String>, Vec<(Color32, String, bool)>) = match app.session.analysis {
+        Some(A::Draft { pull, angle }) => (
+            tr("Draft Analysis"),
+            Some(format!("{} {}", tr("Pull direction"), dir(pull))),
+            vec![
+                (col(a.draft[0]), format!("≥ {angle:.1}°"), false),
+                (col(a.draft[1]), format!("−{angle:.1}° … {angle:.1}°"), false),
+                (col(a.draft[2]), format!("≤ −{angle:.1}°"), a.hatch),
+            ],
+        ),
+        Some(A::Access { dir: d }) => (
+            tr("Accessibility Analysis"),
+            Some(format!("{} {}", tr("Tool direction"), dir(d))),
+            vec![(col(a.access[0]), tr("Reachable").to_string(), false), (col(a.access[1]), tr("Blocked").to_string(), a.hatch)],
+        ),
+        // The shader's scale reaches its middle at twice the analysis radius.
+        Some(A::Curvature { radius }) => (
+            tr("Curvature Map Analysis"),
+            None,
+            vec![
+                (col(a.curvature[0]), tr("Flat").to_string(), false),
+                (col(a.curvature[1]), format!("{} {}", tr("Radius"), crate::prefs::show_mm(app, 2.0 * radius, 1)), false),
+                (col(a.curvature[2]), format!("{} ≤ {}", tr("Radius"), crate::prefs::show_mm(app, radius, 1)), false),
+            ],
+        ),
+        _ => return,
+    };
+    let (pad, row) = (8.0, 18.0);
+    let h = pad * 2.0 + 18.0 + along.as_ref().map_or(0.0, |_| row) + row * rows.len() as f32;
+    let r = Rect::from_min_size(pos2(rect.left() + 12.0, rect.bottom() - 12.0 - h), vec2(230.0, h));
+    painter.rect(r, 6.0, t.overlay, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    crate::scenario::publish_handle("analysis:legend", r.center());
+    let mut y = r.top() + pad;
+    painter.text(pos2(r.left() + pad, y), Align2::LEFT_TOP, title, FontId::proportional(13.0), t.text);
+    y += 18.0;
+    if let Some(along) = along {
+        painter.text(pos2(r.left() + pad, y), Align2::LEFT_TOP, along, FontId::proportional(11.5), t.text_dim);
+        y += row;
+    }
+    for (c, text, hatched) in rows {
+        let sw = Rect::from_min_size(pos2(r.left() + pad, y + 2.0), vec2(12.0, 12.0));
+        painter.rect_filled(sw, 2.0, c);
+        if hatched {
+            // The stripes the viewport adds to these faces (colour vision modes).
+            for k in [3.0, 7.0, 11.0] {
+                painter.line_segment(
+                    [pos2(sw.left() + k - 3.0, sw.bottom()), pos2(sw.left() + k + 1.0, sw.top())],
+                    Stroke::new(1.2, Color32::from_black_alpha(110)),
+                );
+            }
+        }
+        painter.text(pos2(sw.right() + 8.0, y), Align2::LEFT_TOP, text, FontId::proportional(12.0), t.text);
+        y += row;
+    }
+}
+
 fn section_clip(app: &SolveApp) -> [f32; 4] {
     match section_plane(app) {
         Some((o, n)) => [n.x as f32, n.y as f32, n.z as f32, n.dot(o) as f32],
@@ -1665,7 +1745,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
                 // A live preview stands in for the body: its old faces would fight with it.
                 if let Some(b) = st.body(body).filter(|_| app.session.body_visible(body) && !app.preview.replaced.contains(body)) {
                     face_tris(&mut sc, &shown(b), *index, c4(t.sel_face), false);
-                    hidden_face_outline(&mut sc, &b.mesh(), *index, t.sel_edge);
+                    hidden_face_outline(&mut sc, &drawn_mesh(b), *index, t.sel_edge);
                 }
             }
             Sel::Body { name } => {
@@ -1681,7 +1761,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
             Sel::Edge { body, index, point } => {
                 if let Some(b) = st.body(body)
                     && app.session.body_visible(body)
-                    && let Some(e) = edge_of(&b.mesh(), *index, *point)
+                    && let Some(e) = edge_of(&drawn_mesh(b), *index, *point)
                 {
                     edge_lines(&mut sc, e, t.sel_edge, t.sel_edge_rim, 3.0);
                 }
@@ -1745,7 +1825,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
         }
         let k = t.hover_face_lift;
         let c = body_rgb(app, &b.name);
-        let m = b.mesh();
+        let m = drawn_mesh(b);
         let lit = shown(b);
         for &f in &faces {
             if !sel.iter().any(|x| {
@@ -1780,7 +1860,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
             if let Some(b) = st.body(body) {
                 let k = t.hover_face_lift;
                 let c = body_rgb(app, body);
-                let m = b.mesh();
+                let m = drawn_mesh(b);
                 let patch = m.surface_patch(*index);
                 let lit = shown(b);
                 for &f in &patch {
@@ -1797,7 +1877,8 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
         }
         Some(Hit::Edge { body, index, mid }) => {
             if let Some(b) = st.body(body) {
-                let m = b.mesh();
+                // Lit over the drawn edges (finer away from Normal display quality).
+                let m = drawn_mesh(b);
                 for i in m.circular_rim(*index) {
                     let selected = sel.iter().any(|x| matches!(x, Sel::Edge { body: b, index: j, .. } if b == body && *j == i));
                     if !selected && let Some(e) = if i == *index { edge_of(&m, i, *mid) } else { m.edges.get(i) } {
@@ -2371,6 +2452,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     } else {
         cpu_render(app, ui.ctx(), &painter, rect, &proj);
     }
+    analysis_legend(app, &painter, rect);
 
     // ---- interaction ----
     let add = mods.shift || mods.command || mods.ctrl;
@@ -4589,6 +4671,28 @@ mod tests {
         assert_eq!(d.items().len(), 2, "a rim and a wall are two measurement targets");
         d.pick(&app.session, Sel::Face { body: b.name.clone(), index: faces[1] as usize, point: Vec3::new(-10.0, 0.0, 10.0) });
         assert_eq!(d.items().len(), 1, "the other half toggles the same wall");
+    }
+
+    #[test]
+    fn colour_analyses_show_a_legend() {
+        // #973: Draft, Accessibility and Curvature Map say what their colours mean; Zebra and no
+        // analysis draw no legend.
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.run("solid.box", json!({"length":20,"width":20,"height":20})).unwrap();
+        let legend = |h: &mut crate::scenario::Harness| {
+            h.frames(2);
+            crate::scenario::handle_at("analysis:legend").is_some()
+        };
+        assert!(!legend(&mut h));
+        for (cmd, shown) in [("inspect.draft", true), ("inspect.accessibility", true), ("inspect.curvature_map", true), ("inspect.zebra", false)] {
+            h.app.session.analysis = None;
+            h.app.run(cmd, json!({})).unwrap();
+            assert!(h.app.session.analysis.is_some(), "{cmd}");
+            assert_eq!(legend(&mut h), shown, "{cmd}");
+        }
+        h.app.session.analysis = None;
+        assert!(!legend(&mut h));
     }
 
     #[test]

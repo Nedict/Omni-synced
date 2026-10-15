@@ -248,6 +248,9 @@ pub struct Prefs {
     pub space_mouse_speed: f32,
     /// Anti-aliasing samples (applies on restart).
     pub msaa: u32,
+    /// How finely the viewport tessellates curved faces and edges: `coarse`, `normal`, `fine` or
+    /// `ultra` (#1287). Only the display plan the viewport draws; never the design or exports.
+    pub display_quality: String,
     /// Decimals shown for lengths and angles.
     pub length_decimals: u8,
     pub angle_decimals: u8,
@@ -327,6 +330,7 @@ impl Default for Prefs {
             space_mouse_enabled: true,
             space_mouse_speed: 1.0,
             msaa: 4,
+            display_quality: "normal".into(),
             length_decimals: 2,
             angle_decimals: 1,
             theme: "dark".into(),
@@ -467,6 +471,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
         PAGE_GRAPHICS => {
             let msaa = p.msaa != d.msaa;
             p.msaa = d.msaa;
+            p.display_quality = d.display_quality;
             p.color_vision = d.color_vision;
             app.ui.visual_style = 0;
             app.ui.show_grid = true;
@@ -484,6 +489,10 @@ fn defaults(app: &mut SolveApp, page: usize) {
 /// Settings that follow the preferences every frame: the theme when it follows the system, and
 /// the interface scale.
 pub fn apply(app: &mut SolveApp, ctx: &egui::Context) {
+    // The viewport's display quality (an unknown saved value draws at Normal).
+    solidcraft_engine::doc::display_quality::set_current(
+        solidcraft_engine::doc::display_quality::DisplayQuality::parse(&app.preferences.display_quality).unwrap_or_default(),
+    );
     // The view's up axis follows the preference (set in the dialog, by ui.prefs or loaded).
     if app.prefs_window.applied_up.as_deref() != Some(app.preferences.up_axis.as_str()) {
         up_axis_changed(app);
@@ -1094,6 +1103,21 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             });
             ui.end_row();
             note(ui, app.tr("settings.msaa_applies_on_restart"));
+            ui.label(app.tr("ui.display_quality"));
+            {
+                use solidcraft_engine::doc::display_quality::DisplayQuality;
+                let label = |q: DisplayQuality| crate::i18n::tr(&format!("ui.display_quality_{}", q.id())).to_string();
+                let current = DisplayQuality::parse(&app.preferences.display_quality).unwrap_or_default();
+                egui::ComboBox::from_id_salt("pref_display_quality").selected_text(label(current)).show_ui(ui, |ui| {
+                    for q in DisplayQuality::ALL {
+                        if ui.selectable_label(q == current, label(q)).clicked() {
+                            app.preferences.display_quality = q.id().to_string();
+                        }
+                    }
+                });
+            }
+            ui.end_row();
+            note(ui, app.tr("settings.display_quality_note"));
             ui.label(crate::i18n::tr_label("Renderer"));
             ui.label(match (&app.viewport.gpu, &app.help.gpu) {
                 (Some(_), Some(g)) => format!("GPU: {g}"),
@@ -1305,6 +1329,9 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     if !(0.5..=2.5).contains(&new.ui_scale) || !(0.25..=4.0).contains(&new.look_at_speed) {
         return Err("`ui_scale` must be 0.5…2.5 and `look_at_speed` 0.25…4".into());
     }
+    if solidcraft_engine::doc::display_quality::DisplayQuality::parse(&new.display_quality).is_none() {
+        return Err("`display_quality` must be coarse, normal, fine or ultra".into());
+    }
     if MiddleDoubleClick::parse(&new.middle_double_click).is_none() {
         return Err("`middle_double_click` must be home, fit or off".into());
     }
@@ -1325,6 +1352,22 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
 
 #[cfg(test)]
 mod tests {
+    /// Display quality (#1287) is a preference like any other: set by name, checked, saved with
+    /// the others, back to Normal with Restore Defaults.
+    #[test]
+    fn display_quality_is_set_checked_and_restored() {
+        use serde_json::json;
+        let mut app = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        assert_eq!(app.preferences.display_quality, "normal");
+        let out = super::set(&mut app, &json!({"display_quality": "fine"})).unwrap();
+        assert_eq!(out["display_quality"], "fine");
+        assert!(super::set(&mut app, &json!({"display_quality": "silky"})).unwrap_err().contains("coarse, normal, fine or ultra"));
+        assert_eq!(app.preferences.display_quality, "fine");
+        assert_eq!(super::lenient(&json!({"display_quality": "ultra"})).display_quality, "ultra");
+        super::defaults(&mut app, super::PAGE_GRAPHICS);
+        assert_eq!(app.preferences.display_quality, "normal");
+    }
+
     #[test]
     fn a_value_this_version_does_not_understand_keeps_the_other_preferences() {
         use serde_json::json;

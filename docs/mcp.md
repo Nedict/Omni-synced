@@ -34,6 +34,16 @@ Bridged, the server finds the app's control token in the token file the app wrot
 it explicitly when the app runs in a sandbox whose data folder the server can't see (prefer the
 variable: command-line arguments are visible to other users in the process list).
 
+A bridged server starts even when no app listens on that port yet, so an MCP client that
+launches it before the app (or after the app was closed) keeps its tools. The server's
+instructions then say the app was not running, and every tool call answers with an error that
+starts `no SolidCraft app is listening at HOST:PORT` and says how to start it
+(`solidcraft --control PORT`). The first call after the app starts connects to it, reading that
+launch's token. When the app quits or crashes mid-session, the next call says the same; a call
+that was running when it went away says the app did not answer and may have quit or crashed,
+after running the call or not, so inspect the design before sending a change again.
+A `batch` that could not be sent says the app is not running, so it is safe to send again.
+
 stdout carries only protocol messages; errors go to stderr. Bridged screenshots are written to a
 temporary file by the app and read back by the server, so both must run on the same machine.
 
@@ -120,10 +130,11 @@ Claude Desktop (`claude_desktop_config.json`), bridged to a running app:
 
 ### Agent skills
 
-[`skills/`](https://github.com/bherbruck/solidcraft/tree/main/skills) holds three [Agent Skills](https://agentskills.io) for agents that model through this server:
+[`skills/`](https://github.com/bherbruck/solidcraft/tree/main/skills) holds four [Agent Skills](https://agentskills.io) for agents that model through this server:
 - `solidcraft-modeling` covers building a new part.
 - `solidcraft-editing` covers changing an existing design.
 - `solidcraft-checking` adds checks for errors SolidCraft does not report, regression tests and porting, next to the other two.
+- `solidcraft-mechanisms` covers assemblies: joints placed by world coordinates, motion links, closed loops such as actuators, contact sets and motion studies, checked against analytic values.
 
 They cover the workflow, the command shapes, how to verify with `measure`, and the known traps. With them an agent builds a part in a few `batch` calls and reads far less output. To install them for Claude Code, copy the folders into `~/.claude/skills/`; [skills/README.md](https://github.com/bherbruck/solidcraft/blob/main/skills/README.md) has the details.
 
@@ -170,10 +181,10 @@ The `camera` of `screenshot` (the object `view.apply` and `view.save` take too) 
 
 To look closely at one part of a large model, such as a STEP assembly, work in a headless session. These steps change only the open design in memory:
 
-1. Open the model with `solidcraft-cli mcp --in assembly.step` (or the `open` tool). `inspect_design` lists the bodies with their names and bounding boxes.
+1. Open the model with `solidcraft-cli mcp --in assembly.step` (or the `open` tool, which also takes `up` and `names`, see step 4 and [STEP import](step-import.md)). `inspect_design` lists the bodies with their names and bounding boxes.
 2. Remove what is in the way with `solid.remove`, e.g. `{"bodies": ["Cover"]}`.
 3. Cut the region out of the rest with `solid.box`, e.g. `{"corner": [40, 0, -45], "length": 20, "width": 50, "height": 45, "operation": "intersect", "targets": ["Housing", "Plate"]}`. Each listed body is trimmed to the box, and one that lies wholly outside the box is removed. The box itself is not kept.
-4. If the model lies on its back (many STEP files have +Y up), stand it Z up with `solid.move`, listing every body you keep, e.g. `{"bodies": ["Housing", "Plate"], "axis": [1, 0, 0], "angle": 90}`. It turns the bodies about the world origin, and a bare angle is in degrees. A turn of +90° about X takes +Y to +Z.
+4. If the model lies on its back (many STEP files have +Y up), open it with `up: "y"` (the `open` tool, `doc.open`, `file.insert_step`), which turns the file's bodies a quarter turn about X (Y becomes Z). One already open is stood Z up with `solid.move`, listing every body you keep, e.g. `{"bodies": ["Housing", "Plate"], "axis": [1, 0, 0], "angle": 90}`. It turns the bodies about the world origin, and a bare angle is in degrees. A turn of +90° about X takes +Y to +Z.
 5. Colour the parts that matter with `appearance.assign`, e.g. `{"bodies": ["Housing"], "color": "#3a7bd5"}`, and hide helper bodies or sketches with `browser.visibility`, e.g. `{"items": ["Plate"], "visible": false}`.
 6. Cut a section with `inspect.section`, e.g. `{"plane": {"origin": [50, 30, 0], "normal": [0, 1, 0]}}` or `{"plane": "XY", "at": 5}`.
 7. Take the picture with `screenshot`: a `camera` whose `target` is the centre of the region and whose eye is on the cut side, `source: "model"`, and `path`, `width` and `height` as needed. An orthographic picture is 0.8 × `distance` high, so a `distance` of about 1.5 times the region's size frames it. Look at the image, adjust `yaw`, `pitch` and `distance`, and shoot again. Headless, the picture is always a render of the model; bridged to the app, `source: "model"` asks for that render instead of the app's window.

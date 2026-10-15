@@ -3181,7 +3181,7 @@ pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
             Ok(reply) => {
                 // A drive that stopped short says where, and why.
                 if cmd == "joint.drive"
-                    && let Some(why) = crate::dialogs_assembly::drive_stop(&app.session, &reply)
+                    && let Some(why) = crate::dialogs_assembly::drive_stop(&reply)
                 {
                     app.set_status(why, false);
                 }

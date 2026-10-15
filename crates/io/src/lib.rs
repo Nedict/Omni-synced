@@ -90,12 +90,58 @@ pub fn is_iges_path(path: &str) -> bool {
     std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("igs") || e.eq_ignore_ascii_case("iges"))
 }
 
+/// What the bodies of an imported STEP file are named after. Files from different CAD systems
+/// fill the solid's own name with different things (the part's name, the last feature's name,
+/// nothing), so the caller chooses.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StepNames {
+    /// The solid's own name in the file, else the name of the product that holds it.
+    #[default]
+    Solid,
+    /// The name of the product (part) that holds the body, else the solid's name.
+    Product,
+    /// The name of the assembly occurrence (instance) that holds the body, else the product's
+    /// name (a body of a root part has no occurrence), else the solid's.
+    Instance,
+}
+
+impl StepNames {
+    /// `solid`, `product` or `instance` (any case); `None` for anything else.
+    pub fn parse(s: &str) -> Option<StepNames> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "solid" => Some(StepNames::Solid),
+            "product" => Some(StepNames::Product),
+            "instance" => Some(StepNames::Instance),
+            _ => None,
+        }
+    }
+}
+
+/// A name that says nothing about its body: empty, or the placeholder a file or the importer
+/// gives to something it has no name for.
+fn generic_name(n: &str) -> bool {
+    n.trim().is_empty() || n.starts_with('(') || n.eq_ignore_ascii_case("import") || n.eq_ignore_ascii_case("unnamed")
+}
+
+/// The name an imported body gets under the `names` choice; the solid's name when the chosen
+/// one is missing or says nothing.
+fn body_name(b: &solidcraft_kernel::ImportedBody, names: StepNames) -> String {
+    let usable = |n: &&String| !generic_name(n);
+    let chosen = match names {
+        StepNames::Solid => None,
+        StepNames::Product => b.path.last().filter(usable),
+        StepNames::Instance => b.instance.as_ref().filter(usable).or(b.path.last().filter(usable)),
+    };
+    chosen.cloned().unwrap_or_else(|| b.name.clone())
+}
+
 /// A STEP file read as an import feature.
 pub struct StepFeature {
     /// Timeline name: the root product's name, else the file name.
     pub name: String,
     pub kind: solidcraft_doc::FeatureKind,
-    /// Body names from the file (solid names, else product names).
+    /// Body names from the file, as [`StepNames`] chose them (by default the solid names, else
+    /// the product names).
     pub body_names: Vec<String>,
     pub warnings: Vec<String>,
     /// The file as read. Hold it until the feature has been evaluated: the timeline then reuses
@@ -106,6 +152,11 @@ pub struct StepFeature {
 /// Read STEP bytes (`file` is the source file name) into an Import base feature. The file is
 /// read once here to fail early and collect names; the feature holds the STEP text.
 pub fn step_import_feature(bytes: &[u8], file: &str) -> Result<StepFeature> {
+    step_import_feature_named(bytes, file, StepNames::default())
+}
+
+/// [`step_import_feature`], with the bodies named after `names`.
+pub fn step_import_feature_named(bytes: &[u8], file: &str, names: StepNames) -> Result<StepFeature> {
     if bytes.len() > MAX_STEP_BYTES {
         return Err(IoError::Invalid(format!("STEP file too large ({} MB, limit {} MB)", bytes.len() >> 20, MAX_STEP_BYTES >> 20)));
     }
@@ -120,17 +171,17 @@ pub fn step_import_feature(bytes: &[u8], file: &str) -> Result<StepFeature> {
         .map(|s| s.to_string_lossy().to_string())
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "Import".into());
-    let generic = |n: &str| n.trim().is_empty() || n.starts_with('(') || n.eq_ignore_ascii_case("import") || n.eq_ignore_ascii_case("unnamed");
+    let body_names: Vec<String> = imp.bodies.iter().map(|b| body_name(b, names)).collect();
     // The root product's name; else the only body's name; else the file name.
-    let name = match (imp.tree.as_slice(), imp.bodies.as_slice()) {
-        ([root], _) if !generic(&root.name) => root.name.clone(),
-        (_, [only]) if !generic(&only.name) => only.name.clone(),
+    let name = match (imp.tree.as_slice(), body_names.as_slice()) {
+        ([root], _) if !generic_name(&root.name) => root.name.clone(),
+        (_, [only]) if !generic_name(only) => only.clone(),
         _ => stem,
     };
     let file_name = std::path::Path::new(file).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| file.to_string());
     Ok(StepFeature {
         name,
-        body_names: imp.bodies.iter().map(|b| b.name.clone()).collect(),
+        body_names,
         kind: solidcraft_doc::FeatureKind::Import { file: file_name, step: text.into(), components: imp.tree.clone() },
         warnings: iges_warnings.into_iter().chain(imp.warnings.iter().cloned()).collect(),
         import: imp,
@@ -705,6 +756,60 @@ mod tests {
         let mut fake = vec![0u8; 84];
         fake[80..84].copy_from_slice(&u32::MAX.to_le_bytes());
         assert!(read_stl(&fake).is_err());
+    }
+
+    /// A frame holding a plate and two posts, whose solids carry the names of the last feature
+    /// that made them, as some CAD systems write them; as STEP text.
+    fn frame_step() -> String {
+        use solidcraft_kernel::{ExportBody, ExportProduct, StepHeader, box_solid, step_export_products};
+        let plate = box_solid(Vec3::ZERO, Vec3::new(10.0, 10.0, 2.0)).unwrap();
+        let post = box_solid(Vec3::ZERO, Vec3::new(2.0, 2.0, 8.0)).unwrap();
+        let at = |x: f64| [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [x, 0.0, 0.0, 1.0]];
+        let part = |name: &str, label: &str, body| ExportProduct {
+            name: name.into(),
+            bodies: vec![ExportBody { name: label.into(), body, color: None }],
+            children: Vec::new(),
+        };
+        let products = vec![
+            ExportProduct {
+                name: "Frame".into(),
+                bodies: Vec::new(),
+                children: vec![(1, at(0.0), "Plate-1".into()), (2, at(20.0), "Post-1".into()), (2, at(30.0), "Post-2".into())],
+            },
+            part("Plate", "Cut-Extrude3", &plate),
+            part("Post", "Boss-Extrude1", &post),
+        ];
+        step_export_products(&products, 0, &StepHeader::default()).unwrap()
+    }
+
+    /// The bodies of a STEP file are named after the solid (the default), the product that holds
+    /// them, or the assembly occurrence; a name the file leaves out or fills with a placeholder
+    /// falls back to the next one.
+    #[test]
+    fn step_import_names_follow_the_choice() {
+        let text = frame_step();
+        let names = |text: &str, choice| step_import_feature_named(text.as_bytes(), "frame.step", choice).unwrap().body_names;
+        assert_eq!(names(&text, StepNames::Solid), ["Cut-Extrude3", "Boss-Extrude1", "Boss-Extrude1"]);
+        assert_eq!(names(&text, StepNames::Product), ["Plate", "Post", "Post"]);
+        assert_eq!(names(&text, StepNames::Instance), ["Plate-1", "Post-1", "Post-2"]);
+        // Without a choice it is the solid's name, as before.
+        assert_eq!(step_import_feature(text.as_bytes(), "frame.step").unwrap().body_names, names(&text, StepNames::Solid));
+        // The timeline entry is the root product's name whatever the bodies are called.
+        for choice in [StepNames::Solid, StepNames::Product, StepNames::Instance] {
+            assert_eq!(step_import_feature_named(text.as_bytes(), "frame.step", choice).unwrap().name, "Frame");
+        }
+        // A product the file leaves unnamed says nothing: its bodies keep the solid's name.
+        let unnamed = text.replace("PRODUCT('Plate','Plate',", "PRODUCT('(unnamed)','(unnamed)',");
+        assert_eq!(names(&unnamed, StepNames::Product), ["Cut-Extrude3", "Post", "Post"]);
+        // A part file has no occurrence: the instance choice gives the product's name.
+        let (_, m) = model();
+        let part = String::from_utf8(export(&m.state(), &[], Format::Step, "Bracket").unwrap()).unwrap();
+        assert_eq!(names(&part, StepNames::Solid), ["Body1"]);
+        assert_eq!(names(&part, StepNames::Product), ["Bracket"]);
+        assert_eq!(names(&part, StepNames::Instance), ["Bracket"]);
+        assert_eq!(StepNames::parse(" Product "), Some(StepNames::Product));
+        assert_eq!(StepNames::parse("INSTANCE"), Some(StepNames::Instance));
+        assert_eq!(StepNames::parse("label"), None);
     }
 
     fn stl_volume(bytes: &[u8]) -> f64 {

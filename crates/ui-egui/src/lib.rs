@@ -946,6 +946,15 @@ impl SolveApp {
         self.cam = self.fitted(self.cam);
     }
 
+    /// Frame `bounds` at once, keeping the view direction (programmatic use).
+    pub fn fit_bounds(&mut self, bounds: solidcraft_engine::geom::Aabb3) {
+        self.cancel_view_animation();
+        self.viewport.orbit_snap = None;
+        self.viewport.orbit_free = None;
+        self.pending_fit = Some((self.cam, bounds, false));
+        self.cam = self.fitted_bounds(self.cam, &bounds);
+    }
+
     /// `cam` moved to frame the whole model.
     pub fn fitted(&self, mut cam: Camera) -> Camera {
         let b = viewport::view_bounds(self);
