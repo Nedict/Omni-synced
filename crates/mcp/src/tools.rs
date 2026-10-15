@@ -142,8 +142,9 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "body_topology",
             "List edges and faces",
-            "The edges (index, midpoint, length, endpoints) and faces (index, area, centroid, plane normal) of a body. Use \
-             an edge midpoint as the [x,y,z] point that picks the edge for fillet and chamfer.",
+            "The edges (index, midpoint, length, endpoints) and faces (index, name, area, centroid, plane normal, a `point` that lies \
+             on the face, and for a cylindrical face its `cylinder`: origin, axis, radius) of a body. Use an edge midpoint as the \
+             [x,y,z] point that picks the edge for fillet and chamfer; a face's point or its name picks the face for the face commands.",
             obj(json!({"body": string("Body name, e.g. \"Body1\"")}), &["body"]),
             Effect::ReadOnly,
         ),

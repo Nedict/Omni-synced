@@ -62,10 +62,10 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SURFACE", "CREATE")
         .icon("surface_blend")
         .params("planned: from, to: {body, edges: [[x,y,z]]} (two edge chains apart); continuity?: [g0|g1|g2, g0|g1|g2] (each side); bulge?: [number, number]; align?: auto|[[x,y,z], [x,y,z]]; stitch?: bool"),
-    planned!("surface.untrim", "Untrim", "761")
+    CommandSpec::new("surface.untrim", "Untrim", untrim)
         .at("SURFACE", "MODIFY")
         .icon("untrim")
-        .params("planned: face: {body, point}; holes?: all|[[x,y,z]] (points on the inner loops to remove); outer?: bool (restore the natural bounds); in_place?: bool (a surface body only)"),
+        .params("face: {body, point}; holes?: all|[[x,y,z]] (points on the inner loops to remove; default: all); outer?: bool (restore the outer boundary to the surface's natural bounds: a free-form surface's own, an analytic surface's span of the face); in_place?: bool (untrim a surface body's face where it is; a solid's face is always copied out). A surface body; the face keeps its name"),
     CommandSpec::new("surface.unstitch", "Unstitch", unstitch)
         .at("SURFACE", "MODIFY")
         .icon("unstitch")
@@ -127,6 +127,34 @@ fn unstitch(s: &mut Session, p: &Value) -> Result<Value> {
 fn reverse_normal(s: &mut Session, p: &Value) -> Result<Value> {
     let (body, faces) = body_faces(s, p, "surface.reverse_normal")?;
     add_feature(s, p, FeatureKind::ReverseNormal { body, faces })
+}
+
+fn untrim(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "surface.untrim";
+    let face = p.get("face").ok_or_else(|| bad(cmd, "`face` is required: {body, point}"))?;
+    let body = face.get("body").and_then(Value::as_str).ok_or_else(|| bad(cmd, "`face.body` must name a body"))?.to_string();
+    if s.model.state().body(&body).is_none() {
+        return Err(bad(cmd, format!("no body `{body}`")));
+    }
+    let point = face.get("point").and_then(vec3).ok_or_else(|| bad(cmd, "`face.point` must be [x, y, z] on the face"))?;
+    let holes = match p.get("holes") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(all)) if all == "all" => None,
+        Some(Value::Array(points)) => {
+            if points.len() > 10_000 {
+                return Err(bad(cmd, "too many holes"));
+            }
+            let points: Option<Vec<solidcraft_geom::Vec3>> = points.iter().map(vec3).collect();
+            Some(points.ok_or_else(|| bad(cmd, "`holes` must list points [x, y, z] on the inner loops"))?)
+        }
+        Some(_) => return Err(bad(cmd, "`holes` must be \"all\" or a list of points [x, y, z] on the inner loops")),
+    };
+    let outer = bool_(p, "outer").unwrap_or(false);
+    if !outer && holes.as_ref().is_some_and(Vec::is_empty) {
+        return Err(bad(cmd, "nothing to untrim: pick holes to remove or restore the outer boundary"));
+    }
+    let kind = FeatureKind::SurfaceUntrim { face: FaceAt { body, point }, holes, outer, in_place: bool_(p, "in_place").unwrap_or(false) };
+    add_feature(s, p, kind)
 }
 
 /// The profiles and curves a surface builder takes: `curves`, and `profiles` (all of them when
@@ -638,12 +666,116 @@ mod tests {
         assert!(s.execute("surface.offset", &json!({"distance": 1})).is_err());
     }
 
+    /// A 40 × 20 × 2 plate with three holes of radius 2 through it at x = 10, 20, 30 on y = 10.
+    fn plate_with_three_holes(s: &mut Session) {
+        run(s, "solid.box", json!({"length": 40, "width": 20, "height": 2, "body_name": "Plate"}));
+        for x in [10, 20, 30] {
+            run(s, "solid.cylinder", json!({"radius": 2, "height": 4, "base": [x, 10, -1], "operation": "cut", "targets": ["Plate"]}));
+        }
+    }
+
+    fn edge_count(s: &Session, name: &str) -> usize {
+        s.world_state().body(name).unwrap().body.edge_count()
+    }
+
+    /// Untrim the plate's top: every hole taken away gives one face of the whole 40 × 20
+    /// rectangle (800) bounded by its four edges alone, still named as the plate's top; one hole taken away
+    /// leaves two (800 − 2 · 4π). The plate stays; undo, redo and reopening give the same face.
+    #[test]
+    fn untrim_a_plate_with_three_holes() {
+        let mut s = Session::default();
+        plate_with_three_holes(&mut s);
+        let top = [5.0, 5.0, 2.0];
+        let name =
+            solidcraft_doc::naming::face_name_at_body(s.model.state().body("Plate").unwrap(), solidcraft_geom::Vec3::new(5.0, 5.0, 2.0)).unwrap();
+        run(&mut s, "surface.untrim", json!({"face": {"body": "Plate", "point": top}, "body_name": "Top"}));
+        let st = s.world_state();
+        let made = &st.body("Top").unwrap().body;
+        assert!(made.is_surface() && made.face_count() == 1);
+        assert_eq!(edge_count(&s, "Top"), 4, "the rectangle alone");
+        assert!((area(&s, "Top") - 800.0).abs() < 1e-9, "{}", area(&s, "Top"));
+        assert_eq!(solidcraft_doc::naming::face_names(s.model.state().body("Top").unwrap()).first(), Some(&name), "the face keeps its name");
+        assert!(st.body("Plate").is_some(), "the solid stays");
+        run(&mut s, "edit.undo", json!({}));
+        assert!(s.world_state().body("Top").is_none());
+        run(&mut s, "edit.redo", json!({}));
+        let cold = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+        assert!((area(&cold, "Top") - 800.0).abs() < 1e-9);
+        // One hole, by a point on its rim.
+        run(&mut s, "surface.untrim", json!({"face": {"body": "Plate", "point": top}, "holes": [[22, 10, 2]], "body_name": "Two"}));
+        assert!(edge_count(&s, "Two") > 4);
+        let want = 800.0 - 2.0 * 4.0 * std::f64::consts::PI;
+        assert!((area(&s, "Two") - want).abs() < want * 1e-3, "{} vs {want}", area(&s, "Two")); // (measured on meshes)
+        // Refused, the design left as it was: nothing to untrim, a point on no hole, bad input.
+        let before = s.doc.features.len();
+        for bad in [
+            json!({"face": {"body": "Plate", "point": top}, "holes": []}),
+            json!({"face": {"body": "Plate", "point": top}, "holes": [[5, 5, 2]]}),
+            json!({"face": {"body": "Plate", "point": [20, 0, 1]}}),
+            json!({"face": {"body": "Nope", "point": top}}),
+            json!({"face": {"body": "Plate"}}),
+            json!({"face": {"body": "Plate", "point": top}, "holes": "some"}),
+            json!({"face": {"body": "Plate", "point": top}, "holes": [[1, 2]]}),
+            json!({}),
+        ] {
+            assert!(s.execute("surface.untrim", &bad).is_err(), "{bad}");
+        }
+        assert_eq!(s.doc.features.len(), before);
+    }
+
+    /// A half cylinder sheet (radius 10, height 20) trimmed by the slanted plane z = 15 − y/2
+    /// (area 150π − 100) and untrimmed in place with its outer boundary restored: the same body
+    /// fills its face's own span again, angles 0…π by heights 0…15 (150π), and its face keeps its
+    /// name.
+    #[test]
+    fn untrim_restores_a_trimmed_cylinder_face_in_place() {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
+        let arc = run(&mut s, "sketch.arc.three_point", json!({"start": [10, 0], "end": [-10, 0], "through": [0, 10]}))["created"]["curves"][0]
+            .as_str()
+            .unwrap()
+            .to_string();
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "surface.extrude", json!({"sketch": "S", "curves": [arc], "distance": 20, "body_name": "Half"}));
+        run(&mut s, "surface.trim", json!({"body": "Half", "plane": {"origin": [0, 0, 15], "normal": [0, 0.5, 1]}, "keep": [0, 10, 1]}));
+        let pi = std::f64::consts::PI;
+        assert!((area(&s, "Half") - (150.0 * pi - 100.0)).abs() < 150.0 * pi * 1e-3, "{}", area(&s, "Half"));
+        let name = solidcraft_doc::naming::face_names(s.model.state().body("Half").unwrap()).first().cloned().unwrap();
+        let on = [10.0 * 2.5f64.cos(), 10.0 * 2.5f64.sin(), 5.0];
+        assert!(s.execute("surface.untrim", &json!({"face": {"body": "Half", "point": on}})).is_err(), "no holes, outer kept");
+        run(&mut s, "surface.untrim", json!({"face": {"body": "Half", "point": on}, "outer": true, "in_place": true}));
+        let st = s.world_state();
+        assert_eq!(st.bodies.len(), 1, "untrimmed where it is");
+        assert!((area(&s, "Half") - 150.0 * pi).abs() < 150.0 * pi * 1e-3, "{}", area(&s, "Half")); // (measured on meshes)
+        let bb = solidcraft_kernel::measure(&st.body("Half").unwrap().body).unwrap().bbox;
+        assert!(bb.min.z.abs() < 1e-9 && (bb.max.z - 15.0).abs() < 1e-6, "{bb:?}");
+        assert_eq!(solidcraft_doc::naming::face_names(s.model.state().body("Half").unwrap()).first(), Some(&name), "the face keeps its name");
+    }
+
+    /// The plate written to STEP and inserted back: its imported top face untrims to the whole
+    /// rectangle, outer boundary restored too.
+    #[test]
+    fn untrim_an_imported_step_face() {
+        let mut s = Session::default();
+        plate_with_three_holes(&mut s);
+        let step = solidcraft_kernel::step_export(&[&s.world_state().body("Plate").unwrap().body], "untrim test").unwrap();
+        let path = std::env::temp_dir().join(format!("solidcraft-untrim-{}.step", std::process::id()));
+        std::fs::write(&path, step).unwrap();
+        let mut s = Session::default();
+        run(&mut s, "file.insert_step", json!({"path": path.to_string_lossy()}));
+        let _ = std::fs::remove_file(&path);
+        let body = s.world_state().bodies.first().unwrap().name.clone();
+        run(&mut s, "surface.untrim", json!({"face": {"body": body, "point": [5, 5, 2]}, "holes": "all", "outer": true, "body_name": "Top"}));
+        assert_eq!(edge_count(&s, "Top"), 4, "the rectangle alone");
+        assert!((area(&s, "Top") - 800.0).abs() < 1e-9, "{}", area(&s, "Top"));
+    }
+
     /// The planned surface commands are registered but refuse to run: disabled with the
     /// issue that tracks them, an error (never a panic) from every caller, and the design left
     /// as it was.
     #[test]
     fn planned_commands_refuse_and_leave_the_design_alone() {
-        let planned = ["surface.ruled", "surface.boundary", "surface.blend", "surface.untrim", "surface.fillet", "inspect.continuity"];
+        let planned = ["surface.ruled", "surface.boundary", "surface.blend", "surface.fillet", "inspect.continuity"];
         let mut s = Session::default();
         run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "B"}));
         let before = s.doc.features.len();

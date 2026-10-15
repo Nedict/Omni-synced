@@ -13,10 +13,15 @@ pub mod agent_cursor;
 pub mod assistant_ui;
 pub mod browser;
 pub mod canvas;
+#[cfg(test)]
+mod colour_tokens_tests;
+#[cfg(test)]
+mod colour_vision_tests;
 pub mod context_menu;
 pub mod control;
 pub mod crash_ui;
 pub mod delete;
+pub mod design_properties;
 pub mod dialogs;
 pub mod dialogs_appearance;
 pub mod dialogs_assembly;
@@ -56,6 +61,8 @@ mod menu_tests;
 #[cfg(test)]
 mod surface_clamp_tests;
 #[cfg(test)]
+mod timeline_marks_tests;
+#[cfg(test)]
 mod status_tests {
     #[test]
     fn the_status_bar_names_commands_by_label() {
@@ -72,6 +79,8 @@ mod status_tests {
         assert!(app.session.log.last().is_some_and(|l| l.starts_with("Redo: ") && !l.contains("edit.redo")), "{:?}", app.session.log.last());
     }
 }
+#[cfg(test)]
+mod apply_off_thread_tests;
 mod expression_complete;
 #[cfg(test)]
 mod extrude_edit_tests;
@@ -92,6 +101,7 @@ pub mod preview;
 mod primitive_units_tests;
 pub mod recovery_ui;
 pub mod ref_images;
+pub mod render_workspace;
 #[cfg(test)]
 mod revolve_edit_tests;
 #[cfg(test)]
@@ -214,7 +224,7 @@ impl Default for UiState {
     }
 }
 
-/// Host services (file pickers) injected by the app so this crate stays portable.
+/// Host services injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
     pub pick_open: Option<Box<dyn Fn() -> FilePickerFuture>>,
@@ -250,10 +260,13 @@ pub struct SolveApp {
     pub services: Services,
     file_picker: Option<file_picker::Pending>,
     pub viewport: viewport::ViewportState,
+    pub render_workspace: render_workspace::State,
     pub tool: Option<tools::Tool>,
     pub dialog: Option<dialogs::Dialog>,
     /// The Change Parameters window, when open.
     pub params: Option<params_dialog::ParamsDialog>,
+    /// The Design Properties window, when open.
+    pub design_properties: Option<design_properties::DesignProperties>,
     pub palette: palette::Palette,
     /// Context menus, rename box and Properties window.
     pub menu: context_menu::MenuState,
@@ -278,6 +291,11 @@ pub struct SolveApp {
     pub preferences: prefs::Prefs,
     pub prefs_window: prefs::PrefsWindow,
     pub preview: preview::PreviewState,
+    /// OK pressed on a feature that takes a while: its evaluation runs off the window thread.
+    pub applying: Option<dialogs::Applying>,
+    /// How long OK waits for a feature before computing it off the window thread, saying so;
+    /// `None`: it waits as long as it takes (headless use, tests). The desktop app sets it.
+    pub apply_off_thread: Option<std::time::Duration>,
     /// The last command started interactively (id, label), for Repeat.
     pub last_command: Option<(String, String)>,
     /// Esc was already acted on this frame (by the shortcuts), so later handlers skip it.
@@ -334,7 +352,16 @@ pub struct SolveApp {
 }
 
 impl SolveApp {
-    pub fn new(session: Session, services: Services) -> Self {
+    pub fn new(mut session: Session, services: Services) -> Self {
+        #[cfg(test)]
+        let image_host = Some(solidcraft_engine::render::job::CpuHost::cooperative());
+        #[cfg(not(test))]
+        let image_host = solidcraft_engine::render::job::CpuHost::for_platform().map_err(|e| log::error!("render image host: {e}")).ok();
+        if let Err(e) = session.set_render_job_host(image_host.clone()) {
+            log::error!("render image host: {e}");
+        }
+        let mut render_workspace = render_workspace::State::default();
+        render_workspace.image_host = image_host;
         SolveApp {
             session,
             ui: UiState::default(),
@@ -346,9 +373,11 @@ impl SolveApp {
             services,
             file_picker: None,
             viewport: viewport::ViewportState::default(),
+            render_workspace,
             tool: None,
             dialog: None,
             params: None,
+            design_properties: None,
             palette: palette::Palette::default(),
             menu: context_menu::MenuState::default(),
             tree: browser::TreeState::default(),
@@ -363,6 +392,8 @@ impl SolveApp {
             preferences: prefs::Prefs::default(),
             prefs_window: prefs::PrefsWindow::default(),
             preview: preview::PreviewState::default(),
+            applying: None,
+            apply_off_thread: None,
             last_command: None,
             esc_handled: false,
             status: None,
@@ -411,6 +442,19 @@ impl SolveApp {
     /// stencil buffer bits and MSAA sample count). Without it the viewport renders on the CPU.
     pub fn set_wgpu(&mut self, rs: &egui_wgpu::RenderState, depth_bits: u8, stencil_bits: u8, samples: u32) {
         self.viewport.gpu = Some(gpu::install(rs, depth_bits, stencil_bits, samples, !self.cpu_meshing));
+        render_workspace::invalidate_scene(self);
+        self.render_workspace.host = match render_workspace::host_executor(
+            rs.device.limits().max_texture_dimension_2d,
+            self.viewport.gpu.is_some_and(|g| g.depth.is_some()),
+            samples.max(1),
+        ) {
+            Ok(executor) => Some(executor),
+            Err(error) => {
+                self.set_status(error, true);
+                None
+            }
+        };
+        render_workspace::sync_backend(self);
         self.msaa_supported = rs.msaa_supported.clone();
         let info = rs.adapter.get_info();
         self.help.gpu = Some(format!("{} ({:?}, {:?})", info.name.trim(), info.backend, info.device_type));
@@ -548,6 +592,7 @@ impl SolveApp {
                 let label = language.label(command_label(id));
                 self.session.echo(language.format("ui.command_done", &[("command", label)]));
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
+                    render_workspace::reset_document(self);
                     self.sketch_choices = sketch_families::Choices::default();
                     dim_view::cancel();
                     self.menu.props = None;
@@ -640,6 +685,10 @@ impl SolveApp {
         }
         if id == "parameters.change" {
             params_dialog::open(self);
+            return;
+        }
+        if matches!(id, "document.metadata" | "document.metadata.set") {
+            design_properties::open(self);
             return;
         }
         if id == "sketch.finish" {
@@ -885,6 +934,15 @@ impl SolveApp {
     }
 
     pub fn fit_view(&mut self) {
+        if render_workspace::active(self) {
+            self.cancel_view_animation();
+            match solidcraft_engine::product_scene::extract(&self.session) {
+                Ok(scene) if !scene.bounds.is_empty() => self.cam.fit(&scene.bounds),
+                Err(e) => self.set_status(e.to_string(), true),
+                _ => {}
+            }
+            return;
+        }
         self.cam_anim = None;
         self.viewport.orbit_snap = None;
         self.viewport.orbit_free = None;
@@ -963,6 +1021,13 @@ impl SolveApp {
 
     /// Animated view changes for the axis view and navigation bar.
     pub fn animate_view(&mut self, v: &str) {
+        if render_workspace::active(self) && matches!(v, "fit" | "home") {
+            if v == "home" {
+                self.cam.set_view(StandardView::Iso);
+            }
+            self.fit_view();
+            return;
+        }
         self.pending_fit = None;
         let mut to = self.cam;
         match v {
@@ -996,7 +1061,11 @@ impl SolveApp {
     /// change, or at once (control requests, so a screenshot right after shows it).
     pub fn follow_view_request(&mut self, animate: bool) {
         let Some(mut to) = self.session.camera.take() else { return };
-        to.up = self.cam.up;
+        if render_workspace::active(self) {
+            self.ui.up_axis = to.up;
+        } else {
+            to.up = self.cam.up;
+        }
         if animate {
             self.animate_to(to);
         } else if to.is_valid() {
@@ -1036,11 +1105,14 @@ impl SolveApp {
     /// Per-frame logic before layout.
     pub fn logic(&mut self, ctx: &egui::Context) {
         file_picker::tick(self, ctx);
+        render_workspace::sync_backend(self);
+        render_workspace::tick(self, ctx);
         file_load::tick(self, ctx);
         self.esc_handled = false;
         prefs::apply(self, ctx);
-        if !self.styled || theme::is_dark() != self.ui.dark {
+        if !self.styled || theme::is_dark() != self.ui.dark || theme::vision() != self.preferences.color_vision {
             theme::set_dark(self.ui.dark);
+            theme::set_vision(self.preferences.color_vision);
             theme::apply(ctx);
             self.styled = true;
         }
@@ -1146,8 +1218,9 @@ impl SolveApp {
             }
         }
         toolbar::toolbar(self, ui);
-        let left_timeline = self.ui.show_timeline && self.preferences.timeline_left;
-        if self.ui.show_timeline && !left_timeline {
+        let show_timeline = self.ui.show_timeline && !render_workspace::active(self);
+        let left_timeline = show_timeline && self.preferences.timeline_left;
+        if show_timeline && !left_timeline {
             timeline::timeline(self, ui);
         }
         palette::palette_bar(self, ui);
@@ -1160,16 +1233,24 @@ impl SolveApp {
         } else if left_timeline {
             timeline_left::left_panel(self, ui);
         }
+        if render_workspace::active(self) {
+            render_workspace::panel(self, ui);
+        }
         assistant_ui::panel::show(self, ui);
         preview::update(self, ui.ctx());
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
-            viewport::show(self, ui);
+            if render_workspace::active(self) {
+                render_workspace::show(self, ui);
+            } else {
+                viewport::show(self, ui);
+            }
         });
         dialogs::show(self, ui.ctx());
         issue_report::CadInput::block(self, ui, report_input);
         sketch_palette::show(self, ui.ctx());
         self.resolve_fit(ui.ctx());
         params_dialog::show(self, ui.ctx());
+        design_properties::show(self, ui.ctx());
         recovery_ui::show(self, ui.ctx());
         stand_up::show(self, ui.ctx());
         prefs::show_reset_notice(self, ui.ctx());
@@ -1309,3 +1390,6 @@ pub fn now_ms() -> f64 {
     use web_time::{SystemTime, UNIX_EPOCH};
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0)
 }
+
+#[cfg(test)]
+mod picker_test_support;

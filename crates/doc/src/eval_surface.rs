@@ -1,6 +1,6 @@
 //! Evaluation of the surface features: Patch, Stitch, Thicken, Trim, Extend, Surface Extrude,
-//! Revolve, Sweep and Loft, Offset, Unstitch and Reverse Normal (kernel `surfaces`,
-//! `surface_offset`).
+//! Revolve, Sweep and Loft, Offset, Untrim, Unstitch and Reverse Normal (kernel `surfaces`,
+//! `surface_offset`, `surface_untrim`).
 
 use super::*;
 use solidcraft_geom::Seg2;
@@ -232,6 +232,28 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             let made = Traced::step(kernel::offset_surface(&mb.body, &picked, d, tol)?, &[&mb.traced()]);
             let name = new_name(st, f, 0);
             st.bodies.push(ModelBody::traced_new(name, made, f.id));
+            Ok(())
+        }
+        FeatureKind::SurfaceUntrim { face, holes, outer, in_place } => {
+            let i = st.bodies.iter().position(|b| b.name == face.body).ok_or_else(|| DocError::Unknown(format!("body `{}`", face.body)))?;
+            let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            let fi = crate::appearance::face_index_at(&mb, face.point)
+                .ok_or_else(|| DocError::Invalid(format!("Untrim: no face of {} at {:?}", mb.name, face.point)))?;
+            let which = match holes {
+                None => kernel::UntrimHoles::All,
+                Some(points) => kernel::UntrimHoles::At(points),
+            };
+            // A surface body's face is untrimmed where it is when asked; a solid's is copied out.
+            let replace = *in_place && mb.body.is_surface();
+            let made = mb.traced().then(kernel::untrim(&mb.body, fi, which, *outer, replace)?);
+            if replace {
+                if let Some(slot) = st.bodies.get_mut(i) {
+                    *slot = ModelBody::traced_new(mb.name, made, mb.feature);
+                }
+            } else {
+                let name = new_name(st, f, 0);
+                st.bodies.push(ModelBody::traced_new(name, made, f.id));
+            }
             Ok(())
         }
         _ => Err(DocError::Invalid("not a surface feature".into())),

@@ -157,6 +157,15 @@ macro_rules! geometry_walk {
                         f(Pos(p));
                     }
                 }
+                // The face is picked (and named); the holes are picked by points on their edges.
+                FeatureKind::SurfaceUntrim { face, holes, .. } => {
+                    f(Pick(& $($m)? face.point));
+                    if let Some(points) = holes {
+                        for p in points {
+                            f(Pos(p));
+                        }
+                    }
+                }
                 FeatureKind::BoundaryFill { cells, .. } => {
                     for p in cells {
                         f(Pos(p));

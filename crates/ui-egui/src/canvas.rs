@@ -199,6 +199,10 @@ fn edge_bisector(m: &Mesh, index: usize, p: Vec3) -> Option<Vec3> {
 
 /// Draw the manipulator and the value box (called by the viewport after the model is drawn).
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj) {
+    // While OK computes, the inputs hold what it computes: no arrow to drag, no box to type in.
+    if app.applying.is_some() {
+        return;
+    }
     let Some(mut d) = app.dialog.take() else { return };
     if matches!(d.kind, Kind::Assembly(_)) {
         crate::dialogs_assembly::overlay(app, painter, proj, &mut d);

@@ -969,6 +969,41 @@ fn surface_loft_dialog_makes_a_section_per_sketch() {
 }
 
 #[test]
+fn untrim_dialog_takes_a_face_its_holes_and_the_outer_boundary() {
+    // A 40 × 20 × 2 plate with three holes: its top untrimmed (every hole) is the whole 800 mm²
+    // rectangle; one hole picked by an edge; Edit Feature brings the picks and options back.
+    let mut app = app_with(json!([
+        {"command": "solid.box", "params": {"length": 40, "width": 20, "height": 2, "body_name": "Plate"}},
+        {"command": "solid.cylinder", "params": {"radius": 2, "height": 4, "base": [10, 10, -1], "operation": "cut", "targets": ["Plate"]}},
+        {"command": "solid.cylinder", "params": {"radius": 2, "height": 4, "base": [20, 10, -1], "operation": "cut", "targets": ["Plate"]}},
+        {"command": "solid.cylinder", "params": {"radius": 2, "height": 4, "base": [30, 10, -1], "operation": "cut", "targets": ["Plate"]}}
+    ]));
+    let mut d = start(&mut app, vec![], "surface.untrim");
+    assert!(apply_commands(&app, &d).is_err(), "no face yet");
+    d.inputs[0].items = vec![Sel::Face { body: "Plate".into(), index: 0, point: Vec3::new(5.0, 5.0, 2.0) }];
+    let (id, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!((id.as_str(), &p["face"], &p["holes"]), ("surface.untrim", &json!({"body": "Plate", "point": [5.0, 5.0, 2.0]}), &json!("all")), "{p}");
+    app.session.execute(&id, &p).unwrap();
+    let m = app.session.model.state().bodies.last().unwrap().mesh().measure();
+    assert!((m.area - 800.0).abs() < 1e-6, "{}", m.area);
+    app.session.execute("edit.undo", &json!({})).unwrap();
+    // Picked holes: none picked is refused; an edge of the middle hole sends its point.
+    if let Kind::Surface(crate::dialogs_surface::Surf::Untrim { holes, outer, .. }) = &mut d.kind {
+        *holes = 1;
+        *outer = true;
+    }
+    assert!(apply_commands(&app, &d).is_err(), "no holes picked");
+    d.inputs[1].items = vec![Sel::Edge { body: "Plate".into(), index: 0, point: Vec3::new(22.0, 10.0, 2.0) }];
+    let (id, p) = apply_commands(&app, &d).unwrap().remove(0);
+    assert_eq!((&p["holes"], &p["outer"]), (&json!([[22.0, 10.0, 2.0]]), &json!(true)), "{p}");
+    app.session.execute(&id, &p).unwrap();
+    let fid = app.session.doc.features.last().unwrap().id;
+    let back = crate::dialogs::for_feature(&app, fid, None).unwrap();
+    assert!(matches!(back.kind, Kind::Surface(crate::dialogs_surface::Surf::Untrim { holes: 1, outer: true, in_place: false })));
+    assert_eq!((back.inputs[0].items.len(), back.inputs[1].items.len()), (1, 1));
+}
+
+#[test]
 fn offset_surface_dialog_takes_faces_a_distance_and_the_chain() {
     // A box top picked, moved up 5: a 10 × 10 square at z = 15; Edit Feature brings it back.
     let mut app = app_with(json!([{"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "body_name": "Box"}}]));

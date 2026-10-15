@@ -174,6 +174,7 @@ macro_rules! feature_walk {
                         f(B(b));
                     }
                 }
+                FeatureKind::SurfaceUntrim { face, .. } => f(B(& $($m)? face.body)),
                 FeatureKind::SheetConvert { body, .. }
                 | FeatureKind::SurfaceExtend { body, .. }
                 | FeatureKind::Unstitch { body, .. }

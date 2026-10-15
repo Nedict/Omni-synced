@@ -1019,6 +1019,19 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         faces: Vec<Vec3>,
     },
+    /// The face at `face` restored towards its surface: the inner loops at the `holes` points
+    /// taken away (every one when `None`; none when empty), and with `outer` its outer boundary
+    /// back at the surface's natural bounds (an analytic surface's: the face's own span). A new
+    /// surface body; with `in_place`, a surface body's face is untrimmed where it is.
+    SurfaceUntrim {
+        face: FaceAt,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        holes: Option<Vec<Vec3>>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        outer: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        in_place: bool,
+    },
     /// A surface body turned about an axis from open curve chains and the boundaries of
     /// profiles: walls only, no caps (a solid where a full turn closes them).
     SurfaceRevolve {
@@ -1444,6 +1457,7 @@ impl FeatureKind {
             FeatureKind::SurfaceExtend { .. } => "ExtendFeature",
             FeatureKind::Unstitch { .. } => "UnstitchFeature",
             FeatureKind::ReverseNormal { .. } => "ReverseNormalFeature",
+            FeatureKind::SurfaceUntrim { .. } => "UntrimFeature",
             FeatureKind::Import { .. } => "BaseFeature",
             FeatureKind::MeshImport { .. } => "MeshFeature",
             FeatureKind::MeshConvert { .. } => "MeshConvertFeature",
@@ -1518,6 +1532,7 @@ impl FeatureKind {
             FeatureKind::SurfaceExtend { .. } => "Extend",
             FeatureKind::Unstitch { .. } => "Unstitch",
             FeatureKind::ReverseNormal { .. } => "ReverseNormal",
+            FeatureKind::SurfaceUntrim { .. } => "Untrim",
             FeatureKind::Import { .. } => "Import",
             FeatureKind::MeshImport { .. } => "Mesh",
             FeatureKind::MeshConvert { .. } => "ConvertMesh",
@@ -1614,11 +1629,17 @@ pub struct DesignLink {
 /// The document.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
+    /// Named, renderer-independent setups. Device/job state is never saved here.
+    #[serde(default, skip_serializing_if = "crate::render_settings::RenderSettings::is_empty")]
+    pub render: std::sync::Arc<crate::render_settings::RenderSettings>,
     #[serde(default = "default_format")]
     pub format: String,
     pub name: String,
     #[serde(default = "default_units")]
     pub units: String,
+    /// Design properties (project, author…) and other tools' data, kept as they are (#1015).
+    #[serde(default, skip_serializing_if = "crate::Metadata::is_empty")]
+    pub metadata: crate::Metadata,
     pub params: Vec<Param>,
     pub features: Vec<Feature>,
     /// Timeline marker: features at or after this index are rolled back (not evaluated).
@@ -1828,9 +1849,11 @@ impl Default for Document {
 impl Document {
     pub fn new(name: &str) -> Self {
         Document {
+            render: Default::default(),
             format: default_format(),
             name: name.into(),
             units: default_units(),
+            metadata: Default::default(),
             params: Vec::new(),
             features: Vec::new(),
             marker: None,
@@ -1857,6 +1880,18 @@ impl Document {
             named_views: Vec::new(),
             visibility: Visibility::default(),
         }
+    }
+
+    /// A complete structural proof: no non-render field is allowed to differ. Keeping this
+    /// comparison based on the whole Document also includes fields added in future versions.
+    /// The clone/comparison is only needed when render intent actually differs.
+    pub fn differs_only_in_render(&self, previous: &Document) -> bool {
+        if std::sync::Arc::ptr_eq(&self.render, &previous.render) || self.render == previous.render || self.render.validate().is_err() {
+            return false;
+        }
+        let mut normalized = previous.clone();
+        normalized.render = self.render.clone();
+        *self == normalized
     }
 
     /// The colour a body is shown and exported in (sRGB as 0–1 fractions): its appearance,
