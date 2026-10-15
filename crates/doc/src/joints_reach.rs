@@ -74,14 +74,17 @@ pub fn reach(doc: &Document, st: &ModelState, r: &Reach) -> Result<Reached, Stri
     let linked: BTreeSet<(u64, usize)> = asm.links.iter().map(|l| (l.b, l.ib)).collect();
     let allowed = |id: &u64| r.joints.as_ref().is_none_or(|js| js.contains(id));
     let path: BTreeSet<u64> = tree.path(r.occurrence).1.iter().map(|(k, _)| *k).collect();
-    // The values that move it: those of the joints on its chain, a linked one through the start
-    // of its link chain.
+    // The values that move it: those of the joints on its chain (the ones given), a linked one
+    // through the start of its link chain (given or not), and the starts given of the chain's
+    // other linked values.
+    let chosen: BTreeSet<u64> = path.iter().copied().filter(allowed).collect();
     let mut drive: Vec<(u64, usize)> = Vec::new();
-    for j in path.iter().filter(|id| allowed(id)).filter_map(|id| tree.joints.get(id)) {
+    for j in chosen.iter().filter_map(|id| tree.joints.get(id)) {
         drive.extend((0..j.kind.dofs().len()).map(|i| (j.id, i)).filter(|v| !linked.contains(v)));
     }
-    for v in link_chains(asm, tree, &path, &linked).1 {
-        if allowed(&v.0) && !drive.contains(&v) {
+    let starts = link_chains(asm, tree, &path, &linked).1.into_iter().filter(|v| allowed(&v.0));
+    for v in link_chains(asm, tree, &chosen, &linked).1.into_iter().chain(starts) {
+        if !drive.contains(&v) {
             drive.push(v);
         }
     }
@@ -147,10 +150,39 @@ pub fn reach(doc: &Document, st: &ModelState, r: &Reach) -> Result<Reached, Stri
             let eps = 1e-6 * scale * miss(&res);
             for (k, (((id, i), v), (lo, hi))) in vars.iter().zip(&x).zip(&bounds).enumerate() {
                 let pull: f64 = -(0..mt).map(|row| jac.get(row * n + k).copied().unwrap_or(0.0) * res.get(row).copied().unwrap_or(0.0)).sum::<f64>();
-                let at = |b: f64| (v - b).abs() <= 1e-9 * b.abs().max(1.0);
+                let at = |b: f64| b.is_finite() && (v - b).abs() <= 1e-9 * b.abs().max(1.0);
                 if at(*hi) && pull > eps {
                     out.limits.push((*id, *i, true));
                 } else if at(*lo) && pull < -eps {
+                    out.limits.push((*id, *i, false));
+                }
+            }
+        }
+        // A value a motion link sets, held at its own limit (the link clamps it there): the
+        // target's pull on it as if it were free.
+        if f(&x).is_some() {
+            for (id, i) in linked.iter().filter(|(id, _)| around.contains(id)) {
+                let (Some(v), Some((lo, hi))) = (work.get(id).and_then(|q| q.get(*i)).copied(), limit_bounds(tree, &[(*id, *i)]).first().copied())
+                else {
+                    continue;
+                };
+                let at = |b: f64| b.is_finite() && (v - b).abs() <= 1e-9 * b.abs().max(1.0);
+                if !at(lo) && !at(hi) {
+                    continue;
+                }
+                let nudged = |dv: f64| {
+                    let mut w = work.clone();
+                    if let Some(slot) = w.get_mut(id).and_then(|q| q.get_mut(*i)) {
+                        *slot = v + dv;
+                    }
+                    target(tree, r, scale, &w)
+                };
+                let (Some(up), Some(down)) = (nudged(1e-6), nudged(-1e-6)) else { continue };
+                let pull: f64 = -up.iter().zip(&down).zip(&res).map(|((a, b), r)| (a - b) / 2e-6 * r).sum::<f64>();
+                let eps = 1e-6 * scale * miss(&res);
+                if at(hi) && pull > eps {
+                    out.limits.push((*id, *i, true));
+                } else if at(lo) && pull < -eps {
                     out.limits.push((*id, *i, false));
                 }
             }
@@ -210,19 +242,25 @@ fn misses(
         }
     }
     apply_links(asm, work);
-    let t = tree.world(r.occurrence, work)?;
-    let d = apply_point(&t, r.point) - r.to;
-    let mut out = vec![d.x, d.y, d.z];
-    if let Some((a, z)) = r.axis {
-        let w = (apply_vector(&t, a) - z) * scale;
-        out.extend([w.x, w.y, w.z]);
-    }
+    let mut out = target(tree, r, scale, work)?;
     let n = out.len();
     closure_gaps(tree, closers, work, scale, &mut out)?;
     for v in out.iter_mut().skip(n) {
         *v *= LOOP_WEIGHT;
     }
     out.iter().all(|v| v.is_finite()).then_some(out)
+}
+
+/// The target's misses for these values: the point's (mm), then the axis's (as mm across `scale`).
+fn target(tree: &Tree, r: &Reach, scale: f64, vals: &Values) -> Option<Vec<f64>> {
+    let t = tree.world(r.occurrence, vals)?;
+    let d = apply_point(&t, r.point) - r.to;
+    let mut out = vec![d.x, d.y, d.z];
+    if let Some((a, z)) = r.axis {
+        let w = (apply_vector(&t, a) - z) * scale;
+        out.extend([w.x, w.y, w.z]);
+    }
+    Some(out)
 }
 
 /// Levenberg-Marquardt that stays on the loops: move `x` (within `bounds`, at most `cap` per value
@@ -249,7 +287,7 @@ fn approach(
         return None;
     }
     let mut r = f(x)?;
-    let mut lambda = 1e-3;
+    let (mut lambda, mut kicked) = (1e-3, false);
     for _ in 0..MAX_REACH_STEPS {
         if largest(r.get(..mt).unwrap_or_default()) <= tol {
             break;
@@ -313,7 +351,9 @@ fn approach(
                     && miss(&rn) < miss(&r)
                 {
                     (*x, r) = (next, rn);
-                    lambda = (lambda / 3.0).max(1e-9);
+                    // A step cut down to the cap (as at a stretched, singular pose) damps the next one
+                    // more instead of less, so it doesn't crawl along its longest value.
+                    lambda = if over > 1.0 { (lambda * over).min(1e6) } else { (lambda / 3.0).max(1e-9) };
                     stepped = true;
                 }
                 break;
@@ -323,6 +363,25 @@ fn approach(
             }
         }
         if !stepped {
+            // Where nothing changes the misses to first order but they aren't least (the target
+            // straight across a pivot from the point), a small kick off it gets closer, once.
+            if kicked {
+                break;
+            }
+            kicked = true;
+            let mut next: Vec<f64> = x
+                .iter()
+                .zip(cap.iter().zip(bounds))
+                .enumerate()
+                .map(|(k, (v, (c, (lo, hi))))| (v + 1e-3 * c * if k % 2 == 0 { 1.0 } else { -1.0 }).max(*lo).min(*hi))
+                .collect();
+            if (!loops || close(f, &mut next))
+                && let Some(rn) = f(&next)
+                && miss(&rn) < miss(&r)
+            {
+                (*x, r, lambda) = (next, rn, 1e-3);
+                continue;
+            }
             break;
         }
     }

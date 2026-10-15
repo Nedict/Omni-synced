@@ -149,9 +149,32 @@ fn a_linked_joint_follows_the_reach() {
     let mut s = arm(false, 0.0);
     run(&mut s, "joint.motion_link", json!({"a": "Shoulder", "b": "Elbow", "ratio": -1}));
     let th = 40f64.to_radians();
-    let r = reach(&mut s, "Fore", tip, json!({"point": [40.0 + 60.0 * th.cos(), 60.0 * th.sin(), 0.0]}));
+    let to = json!([40.0 + 60.0 * th.cos(), 60.0 * th.sin(), 0.0]);
+    let r = reach(&mut s, "Fore", tip, json!({"point": to}));
     assert_eq!(r["reached"], true, "{r}");
     assert!((value(&mut s, "Shoulder") - 40.0).abs() < 1e-6 && (value(&mut s, "Elbow") + 40.0).abs() < 1e-6, "{r}");
+    // Given only the linked elbow, the reach turns it through its link's source.
+    run(&mut s, "edit.undo", json!({}));
+    let r = reach(&mut s, "Fore", tip, json!({"point": to, "joints": ["Elbow"]}));
+    assert_eq!(r["reached"], true, "{r}");
+    assert!((value(&mut s, "Shoulder") - 40.0).abs() < 1e-6, "{r}");
+    // The elbow held at its own limit by the link stops the reach, and is named.
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "joint.limits", json!({"joint": "Elbow", "min": -30, "max": 30}));
+    let r = reach(&mut s, "Fore", tip, json!({"point": to}));
+    assert_eq!(r["reached"], false, "{r}");
+    assert!(r["stopped_by_limit"].as_array().is_some_and(|l| l.contains(&json!({"joint": "Elbow", "value": "angle", "limit": "min"}))), "{r}");
+}
+
+/// A target straight across the pivot from the point (where the misses don't change to first
+/// order) is still reached: the arm turns half round.
+#[test]
+fn a_target_across_the_pivot_is_reached() {
+    let tip = Vec3::new(100.0, 0.0, 0.0);
+    let mut s = arm(false, 0.0);
+    let r = reach(&mut s, "Fore", tip, json!({"point": [-100, 0, 0], "joints": ["Shoulder"]}));
+    assert_eq!(r["reached"], true, "{r}");
+    assert!((value(&mut s, "Shoulder").abs() - 180.0).abs() < 1e-6, "{r}");
 }
 
 /// The four-bar's rocker reaches a point on its swing, the crank and coupler following with the
@@ -174,6 +197,8 @@ fn a_four_bar_reaches_with_its_rocker() {
     let (mut s, _, q0) = four_bar();
     let r = run(&mut s, "joint.reach", json!({"occurrence": "Rocker", "at": pt(q0), "point": pt(swing(100.0))}));
     assert_eq!((&r["reached"], &r["stopped_by_loop"]), (&json!(false), &json!({"joint": "Rocker pin"})), "{r}");
+    // Its joints have no limits, so none is named.
+    assert_eq!(r["stopped_by_limit"], Value::Null, "{r}");
     assert_eq!(r["conflicts"].as_array().map(Vec::len), Some(0), "{r}");
     let limit = ((900.0f64 - 3625.0) / 3600.0).acos().to_degrees() - start.to_degrees();
     let at = value(&mut s, "Rocker");
