@@ -284,7 +284,7 @@ pub fn triad(app: &SolveApp, d: &Dialog) -> Option<gizmo::Triad> {
 }
 
 /// Point-to-point arrow when both picks exist.
-pub fn line_drag(app: &SolveApp, d: &Dialog) -> Option<gizmo::LineDrag> {
+pub fn line_drag(_app: &SolveApp, d: &Dialog) -> Option<gizmo::LineDrag> {
     let Kind::Move { mode, .. } = &d.kind else { return None };
     if *mode != POINT_TO_POINT || bodies_empty(d) {
         return None;
@@ -301,13 +301,13 @@ pub fn line_drag(app: &SolveApp, d: &Dialog) -> Option<gizmo::LineDrag> {
 pub fn drag(app: &SolveApp, d: &mut Dialog, g: Drag) {
     let Kind::Move { mode, x, y, z, rx, ry, rz, angle, .. } = &d.kind else { return };
     if g.started || !d.extra.contains_key("drag0") {
-        let v = match *mode {
-            ROTATE => [ang(app, angle).unwrap_or(0.0)],
+        let v: Vec<f64> = match *mode {
+            ROTATE => vec![ang(app, angle).unwrap_or(0.0)],
             POINT_TO_POSITION => {
                 let at = Vec3::new(len(app, x).unwrap_or(0.0), len(app, y).unwrap_or(0.0), len(app, z).unwrap_or(0.0));
-                [at.x, at.y, at.z]
+                vec![at.x, at.y, at.z]
             }
-            _ => [len(app, x), len(app, y), len(app, z), ang(app, rx), ang(app, ry), ang(app, rz)].map(|r| r.unwrap_or(0.0)),
+            _ => [len(app, x), len(app, y), len(app, z), ang(app, rx), ang(app, ry), ang(app, rz)].map(|r| r.unwrap_or(0.0)).into(),
         };
         d.extra.insert("drag0".into(), json!(v));
     }

@@ -408,7 +408,7 @@ pub fn line_show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: eg
     let r = ui.interact(Rect::from_center_size(p, vec2(24.0, 24.0)), id, Sense::drag());
     let free = ui.input(|i| i.modifiers.alt || i.modifiers.ctrl || i.modifiers.command);
     let mut started = false;
-    let mut st = match ui.data(|d| d.get_temp::<LineState>(id)) {
+    let st = match ui.data(|d| d.get_temp::<LineState>(id)) {
         Some(s) => s,
         None => {
             if !r.drag_started() {
