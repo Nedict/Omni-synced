@@ -126,7 +126,7 @@ fn paint_icon(ui: &egui::Ui, rect: egui::Rect, tex: Option<egui::TextureId>, nam
             let t = Tokens::get();
             ui.painter().rect_filled(rect, 3.0, t.chip);
             let letter = name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
-            ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, letter, egui::FontId::proportional(11.0), Color32::WHITE);
+            ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, letter, egui::FontId::proportional(11.0), t.text);
         }
     }
 }
@@ -224,7 +224,7 @@ fn slicer_combo(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut SaveMesh) {
             egui::Align2::LEFT_CENTER,
             "Custom…",
             egui::FontId::proportional(13.0),
-            Color32::WHITE,
+            Tokens::get().text,
         );
         crate::scenario::publish_handle("dialog:Slicer:Custom", rect.center());
         if resp.on_hover_text("Choose a slicer program to add to the list").clicked() {
