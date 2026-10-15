@@ -39,7 +39,23 @@ part still has with its loops closed: the moving parts of a four-bar have one be
 loop locked by a rigid joint has none. The Drive Joints dialog says when a drive stops short and
 why. While it previews, a row under the values gives the value the joint reached and the reason
 (the loop that can't close further, or the two parts a contact set keeps apart), and after OK the
-status line repeats it. The value box keeps what you typed.
+status line repeats it. The value box keeps what you typed. The dialog opens on the joint
+picked in the browser, or on the first joint that moves when none is picked.
+
+The solver places what it reaches from the root and from grounded components. A chain of joints
+that is joined to nothing grounded is never placed, so driving one of its joints moves nothing.
+The drive says so: `joint.drive` answers `moved: false` with a `reason` and the `unconnected`
+part ("Pedestal:1 is not connected to anything grounded"), the Drive Joints dialog shows the same
+row, `motion.play` lists such joints under `unmoved`, and `joint.list` names every such chain under
+`floating`. Ground a part of the chain, or join it to a grounded part (a rigid as-built joint keeps
+it where it is), and it moves.
+
+`joint.drive` answers the joint's values as `joint.list` gives them, in degrees and millimetres
+with their units and limits, and `moved` says whether any part moved. A joint's origins are mated
+by default: B's z axis is turned against A's, as two faces meet. `flip: true` lines them up
+instead, so two origins given at one point with the same z stay as they are. For scripts that
+drive many steps, `quiet: true` leaves the per-part degrees of freedom out of joint answers, and
+`motion.play` with `quiet: true` gives the poses of only the parts that moved.
 
 **Insert Design** (`component.insert_design {path, translate?}`) adds a component linked to
 another saved design, so each part can live in its own document. The part's solid bodies come

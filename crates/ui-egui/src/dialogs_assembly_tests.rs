@@ -415,7 +415,7 @@ fn drive_says_where_a_loop_stopped_it() {
     // Past its toggle position (about +50.4° from where it stands).
     ask(&mut d, "100 deg");
     let b = world_preview(&app.session, &apply_commands(&app, &d).unwrap(), colors).unwrap().unwrap();
-    let why = b.stopped.as_ref().and_then(|r| drive_stop(&app.session, r)).unwrap();
+    let why = b.stopped.as_ref().and_then(drive_stop).unwrap();
     assert!(why.starts_with("Stopped at 50.") && why.contains("can't close any further"), "{why}");
     // OK drives it there and says so.
     crate::dialogs::run_dialog(&mut app, &d).unwrap();
@@ -431,6 +431,62 @@ fn drive_says_which_parts_a_contact_set_stopped() {
     app.run("joint.create", json!({"type": "slider", "a": at("A"), "b": at("B"), "flip": true, "name": "Rail"})).unwrap();
     app.run("contact.create", json!({"occurrences": ["A:1", "B:1"]})).unwrap();
     let r = app.run("joint.drive", json!({"joint": "Rail", "value": -20})).unwrap();
-    let why = drive_stop(&app.session, &r).unwrap();
+    let why = drive_stop(&r).unwrap();
     assert!(why.starts_with("Stopped at -1") && why.contains("A:1") && why.contains("B:1") && why.contains("would pass through"), "{why}");
+}
+
+/// A drive whose joint is joined to nothing grounded moves nothing: the preview row and the
+/// status line name the part that floats.
+#[test]
+fn drive_says_when_its_joint_is_joined_to_nothing_grounded() {
+    let mut app = two_boxes();
+    for (name, x) in [("C", 100), ("D", 130)] {
+        app.run("component.activate", json!({"component": "root"})).unwrap();
+        app.run("component.create", json!({ "name": name })).unwrap();
+        app.run("solid.box", json!({"length": 20, "width": 20, "height": 10, "corner": [x, 0, 0]})).unwrap();
+    }
+    let at = |o: &str, x: f64| json!({"occurrence": o, "point": [x, 10, 5], "z": [1, 0, 0]});
+    app.run("joint.create", json!({"type": "slider", "a": at("A", 30.0), "b": at("B", 30.0), "flip": true, "name": "Rail"})).unwrap();
+    app.run("joint.create", json!({"type": "revolute", "a": at("C", 130.0), "b": at("D", 130.0), "flip": true, "name": "Turn"})).unwrap();
+    let turn = app.session.doc.assembly.joints.iter().find(|j| j.name == "Turn").unwrap().id;
+    let mut d = drive_joint(&app, turn).unwrap();
+    if let Kind::Assembly(Asm::Drive { values, .. }) = &mut d.kind {
+        values[0] = "45 deg".into();
+    }
+    let colors = crate::preview::Colors { body: [1, 1, 1, 255], added: [2, 2, 2, 255], removed: [3, 3, 3, 100], edge: [0, 0, 0, 255] };
+    let b = world_preview(&app.session, &apply_commands(&app, &d).unwrap(), colors).unwrap().unwrap();
+    let why = b.stopped.as_ref().and_then(drive_stop).unwrap();
+    assert!(why.starts_with("Moves nothing") && why.contains("C:1"), "{why}");
+    crate::dialogs::run_dialog(&mut app, &d).unwrap();
+    assert_eq!(app.status.clone().map(|(status, _, error)| (status, error)), Some((why, false)));
+}
+
+/// Drive Joints opens on the joint picked in the browser; with none picked, on the first joint
+/// that moves.
+#[test]
+fn drive_opens_on_the_picked_joint() {
+    let mut app = four_bar();
+    let drive_on = |app: &mut SolveApp| {
+        app.dialog = None;
+        app.start("joint.drive");
+        match &app.dialog.as_ref().unwrap().kind {
+            Kind::Assembly(Asm::Drive { joint, .. }) => app.session.doc.assembly.joints[*joint].name.clone(),
+            k => panic!("{k:?}"),
+        }
+    };
+    assert_eq!(drive_on(&mut app), "Crank");
+    let rocker = app.session.doc.assembly.joints.iter().find(|j| j.name == "Rocker").unwrap().id;
+    pick_joint(&mut app, rocker, false);
+    assert_eq!(drive_on(&mut app), "Rocker");
+}
+
+/// A rigid joint has nothing to drive: Drive Joints won't start on it.
+#[test]
+fn drive_preset_refuses_a_rigid_joint() {
+    let mut app = two_boxes();
+    let at = |o: &str| json!({"occurrence": o, "point": [25, 10, 5], "z": [1, 0, 0]});
+    app.run("joint.create", json!({"type": "rigid", "a": at("A"), "b": at("B"), "name": "Glue"})).unwrap();
+    let mut k = Asm::Drive { joint: 0, values: Vec::new(), focus: true };
+    let e = preset(&app.session, &mut k, &json!({"joint": "Glue"})).unwrap_err();
+    assert!(e.contains("rigid"), "{e}");
 }

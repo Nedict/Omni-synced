@@ -301,7 +301,8 @@ retain their saved two-finger scroll preference; camera motion is available thro
   of two edges at a vertex meet in a crease, as on a box), picked together or one after the
   other, except a round after a round of the edge between the wall and a flat face that it
   would run over; the three edges at a vertex of any smooth faces, of one radius, end in a
-  piece of sphere.
+  piece of sphere. A limiting blend that collapses a side wall into coincident boundary
+  curves is refused as too large rather than returning an unmeshable face (#1113).
 - Booleans: prisms along one direction (plates with holes, slots, patterns of them, equal
   sections stacked end to end) are combined exactly in 2D. Qualified axial cuts preserve
   annular holes with overrun cutters, including inward Press Pull after a joined extrusion;

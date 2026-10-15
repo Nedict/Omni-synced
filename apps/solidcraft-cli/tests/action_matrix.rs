@@ -1292,6 +1292,106 @@ fn a_fillet_or_chamfer_on_one_edge_ending_at_a_cylinder() {
     }
 }
 
+// #1255: a round on a knuckle's cap circle (oracle/63's hinge), 0.73 wide on a ring of radius
+// 4. The run past each end of the circle followed the end tangent so far that its sections
+// wrapped round the ring and the blend was refused; it is shortened now while it still
+// crosses the end face. Before #1101 a 0.13 mm station on the leaf's top edge kept the
+// matrix's radius at 0.013, which never got that far.
+#[test]
+fn a_round_on_a_knuckle_cap_circle() {
+    for (cmd, size, removed) in [("solid.fillet", "radius", (2.4, 2.8)), ("solid.chamfer", "distance", (5.6, 6.3))] {
+        let mut s = load(&root().join("tests/oracle/63-hinge-knuckle/recipe.json")).unwrap();
+        let volume = |s: &Session| s.model.state().bodies.iter().map(|b| b.body.tessellate(0.001).unwrap().measure().volume).sum::<f64>();
+        let before = volume(&s);
+        s.execute(cmd, &json!({"edges": [[40.0, 29.837_722, 6.449_490]], size: 0.728})).unwrap_or_else(|e| panic!("{cmd}: {e}"));
+        check(&s, 0, &BTreeMap::new()).unwrap_or_else(|(kind, e)| panic!("{cmd}: {kind}: {e}"));
+        let st = s.model.state();
+        let body = &st.bodies.first().unwrap().body;
+        assert!(body.validity().is_empty(), "{cmd}: {:?}", body.validity());
+        let gone = before - volume(&s);
+        assert!(gone > removed.0 && gone < removed.1, "{cmd} took {gone} mm³");
+    }
+}
+
+// #1255: a hole 0.133 mm across on the 0.5 mm ledge a loft cut leaves in a pocket floor of a
+// 900 mm slab. The Boolean needed a retry, and its guard meshed the drill as coarsely as the
+// slab's size allows (0.4 mm, three times the drill's width): the mesh had no inside, the drill
+// measured −30272 mm³ and the right cut was refused. Volumes are measured finer than each
+// body's smallest radius now.
+#[test]
+fn a_hair_thin_hole_on_a_ledge_beside_a_loft_cut() {
+    let mut s = load(&root().join("examples/regressions/loft_cut_beside_round_hole.json")).unwrap();
+    let volume = |s: &Session| s.model.state().bodies.iter().map(|b| b.body.tessellate_with(0.005, true).unwrap().measure().volume).sum::<f64>();
+    let before = volume(&s);
+    s.execute("solid.hole", &json!({"diameter": 0.133, "position": [357.22, -150.993_333, 730.0]})).unwrap();
+    check(&s, 0, &BTreeMap::new()).unwrap_or_else(|(kind, e)| panic!("{kind}: {e}"));
+    // The drill goes through the 4 mm ledge and on through the slab below: 690 to 730.
+    let gone = before - volume(&s);
+    let expected = std::f64::consts::PI * 0.0665 * 0.0665 * 40.0;
+    assert!((gone - expected).abs() < 0.2, "the hole took {gone} mm³, not {expected}");
+}
+
+// #1255: a 0.8 mm hole through the side wall of the plastic part's rest. Meshed at the
+// tolerance the 200 mm drill sets, the part with its rounds, bosses and draft measured 6.8 mm³
+// more after the cut than before; ten times finer it is 1.44 mm³ less, the drill's volume
+// through the 2.9 mm wall. A volume out of bounds is measured again finer before it refuses.
+#[test]
+fn a_small_hole_through_the_wall_of_a_plastic_rest() {
+    let mut s = load(&root().join("apps/solidcraft-cli/tests/corpus/modern-plastic.solidcraft")).unwrap();
+    let volume = |s: &Session| s.model.state().bodies.iter().map(|b| b.body.tessellate_with(0.002, true).unwrap().measure().volume).sum::<f64>();
+    let before = volume(&s);
+    s.execute("solid.hole", &json!({"diameter": 0.8, "position": [63.069_841_5, 28.333_333, 4.0]})).unwrap();
+    check(&s, 0, &BTreeMap::new()).unwrap_or_else(|(kind, e)| panic!("{kind}: {e}"));
+    let gone = before - volume(&s);
+    assert!(gone > 1.2 && gone < 1.7, "the hole took {gone} mm³");
+}
+
+// #1255: a hole square to a flange bent at 45°. The drill's cap, evaluated at that angle, lay
+// 2.9e-11 mm off the plane it was made on against a bound of 2.2e-11, so the sheet didn't take
+// the hole as a cut-out of its flat pattern and the cut was refused. The sheet keeps the hole
+// and still unfolds and folds back.
+#[test]
+fn a_hole_square_to_a_45_degree_flange() {
+    let mut s = load(&root().join("tests/oracle/70-sm-flange-45/recipe.json")).unwrap();
+    let volume = |s: &Session| s.model.state().bodies.iter().map(|b| b.body.tessellate_with(0.002, true).unwrap().measure().volume).sum::<f64>();
+    let before = volume(&s);
+    s.execute("solid.hole", &json!({"diameter": 3.448, "position": [66.666_667, -4.511_845, 4.511_845]})).unwrap();
+    check(&s, 0, &BTreeMap::new()).unwrap_or_else(|(kind, e)| panic!("{kind}: {e}"));
+    // Through the 2.5 mm flange.
+    let gone = before - volume(&s);
+    let expected = std::f64::consts::PI * 1.724 * 1.724 * 2.5;
+    assert!((gone - expected).abs() < 0.1, "the hole took {gone} mm³, not {expected}");
+    let sheets: Vec<String> = s.model.state().sheets.iter().map(|sh| sh.body.clone()).collect();
+    assert!(!sheets.is_empty());
+    for body in sheets {
+        for id in ["sheet.unfold", "sheet.refold"] {
+            s.execute(id, &json!({"body": body})).unwrap_or_else(|e| panic!("{id}: {e}"));
+        }
+    }
+}
+
+// #1255: an axis through a corner round of the sensor enclosure's lid, then a parameter that
+// widens the lid. The round is found again by name, but its point nearest the old pick is the
+// end of its arc, on the edge it shares with the flat side, and picking again by that point
+// took the side: "the face is not a cylinder". The named face is used as found now.
+#[test]
+fn an_axis_through_a_corner_round_that_a_parameter_moves() {
+    let mut s = load(&root().join("examples/acceptance/sensor_enclosure.json")).unwrap();
+    s.execute("construct.axis.through_cylinder", &json!({"face": {"face": [36.242_617, 29.977_740, 27.0]}})).unwrap();
+    let start = s.doc.features.len();
+    s.execute("parameters.change", &json!({"name": "board_w", "expression": "(60 mm) * 1.1"})).unwrap();
+    check(&s, start, &BTreeMap::new()).unwrap_or_else(|(kind, e)| panic!("{kind}: {e}"));
+    let st = s.model.state();
+    let axis = st.construct.iter().find_map(|c| match &c.geom {
+        solidcraft_engine::doc::construct::ConstructGeom::Axis { origin, dir } => Some((*origin, *dir)),
+        _ => None,
+    });
+    let (origin, dir) = axis.expect("the axis");
+    // The round's axis moved with the lid's corner, from x = 36 to 39.
+    let off = origin - Vec3::new(39.0, 26.0, 0.0);
+    assert!((off - dir * off.dot(dir)).len() < 1e-6, "the axis passes {origin:?} along {dir:?}");
+}
+
 #[test]
 fn a_sketch_on_a_patterned_boss_top() {
     let mut c: Vec<Value> = rectangle(json!("XY"), [0., 0.], [60., 20.]).into();
