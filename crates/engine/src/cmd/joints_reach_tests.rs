@@ -244,6 +244,14 @@ fn a_lone_slider_travels_all_the_way() {
     // However far.
     let r = reach(&mut s, "Ram", Vec3::ZERO, json!({"point": [0, 0, 3e7]}));
     assert_eq!(r["reached"], true, "{r}");
+    // A limit on it is named whatever the chain's size.
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "joint.limits", json!({"joint": "Rail", "min": -50, "max": 100}));
+    let r = reach(&mut s, "Ram", Vec3::ZERO, json!({"point": [0, 0, 1e6]}));
+    assert_eq!(r["stopped_by_limit"], json!([{"joint": "Rail", "value": "distance", "limit": "max"}]), "{r}");
+    // And a reach of a thousandth of a millimetre still moves it.
+    let r = reach(&mut s, "Ram", Vec3::ZERO, json!({"point": [0, 0, 99.999]}));
+    assert_eq!((&r["reached"], &r["moved"]), (&json!(true), &json!(true)), "{r}");
 }
 
 /// The four-bar's rocker reaches a point on its swing, the crank and coupler following with the

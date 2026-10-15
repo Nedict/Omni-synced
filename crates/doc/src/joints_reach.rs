@@ -157,20 +157,23 @@ pub fn reach(doc: &Document, st: &ModelState, r: &Reach) -> Result<Reached, Stri
     let mut work = vals.clone();
     let mut f = |x: &[f64]| misses(tree, asm, r, scale, &vars, &closers, x, &mut work, &spent);
     let mut x = x0.clone();
+    let miss = |res: &[f64]| res.iter().take(mt).map(|v| v * v).sum::<f64>().sqrt();
+    let before = f(&x0).map_or(f64::INFINITY, |r| miss(&r));
     let res = approach(&mut f, &|a, b| stride(asm, &vals, &vars, &paced, a, b), mt, &mut x, &bounds, &cap, tol)
         .ok_or("a closed loop on its chain is open and can't close (joint.list shows its conflict)")?;
     let mut out = Reached::default();
-    let miss = |res: &[f64]| res.iter().take(mt).map(|v| v * v).sum::<f64>().sqrt();
     let point_miss = res.iter().take(3).map(|v| v * v).sum::<f64>().sqrt();
     let turn_miss = (res.iter().skip(3).take(mt - 3).map(|v| v * v).sum::<f64>().sqrt() / scale).to_degrees();
     if point_miss > REACH_TOL || turn_miss > REACH_TOL {
         // The limits it rests on: the target pulls the value past them (−Jᵀr over the target's
-        // rows, ignoring pulls at right angles to the miss).
+        // rows, ignoring pulls at right angles to the miss: under a millionth of the value's own
+        // reach times the miss).
         let n = x.len();
         if let Some(jac) = jacobian(&mut f, &x, res.len()) {
-            let eps = 1e-6 * scale * miss(&res);
             for (k, (((id, i), v), (lo, hi))) in vars.iter().zip(&x).zip(&bounds).enumerate() {
-                let pull: f64 = -(0..mt).map(|row| jac.get(row * n + k).copied().unwrap_or(0.0) * res.get(row).copied().unwrap_or(0.0)).sum::<f64>();
+                let column = |row: usize| jac.get(row * n + k).copied().unwrap_or(0.0);
+                let pull: f64 = -(0..mt).map(|row| column(row) * res.get(row).copied().unwrap_or(0.0)).sum::<f64>();
+                let eps = 1e-6 * (0..mt).map(|row| column(row).powi(2)).sum::<f64>().sqrt() * miss(&res);
                 let at = |b: f64| b.is_finite() && (v - b).abs() <= 1e-9 * b.abs().max(1.0);
                 if at(*hi) && pull > eps {
                     out.limits.push((*id, *i, true));
@@ -200,7 +203,7 @@ pub fn reach(doc: &Document, st: &ModelState, r: &Reach) -> Result<Reached, Stri
                 };
                 let (Some(up), Some(down)) = (nudged(1e-6), nudged(-1e-6)) else { continue };
                 let pull: f64 = -up.iter().zip(&down).zip(&res).map(|((a, b), r)| (a - b) / 2e-6 * r).sum::<f64>();
-                let eps = 1e-6 * scale * miss(&res);
+                let eps = 1e-6 * up.iter().zip(&down).map(|(a, b)| ((a - b) / 2e-6).powi(2)).sum::<f64>().sqrt() * miss(&res);
                 if at(hi) && pull > eps {
                     out.limits.push((*id, *i, true));
                 } else if at(lo) && pull < -eps {
@@ -223,11 +226,12 @@ pub fn reach(doc: &Document, st: &ModelState, r: &Reach) -> Result<Reached, Stri
             }
         }
     }
-    // The stored values that changed.
-    for ((id, i), v) in vars.iter().zip(&x) {
+    // The stored values that changed, when that got it closer (by more than the solver's noise:
+    // a held part doesn't creep).
+    let gained = before - miss(&res) > 1e-7;
+    for ((id, i), v) in vars.iter().zip(&x).filter(|_| gained) {
         let Some(j) = tree.joints.get(id) else { continue };
-        // Closer than this is the solver's noise, not a move.
-        if j.values.get(*i).is_some_and(|s| (s - v).abs() <= 1e-9) {
+        if j.values.get(*i).is_some_and(|s| (s - v).abs() <= 1e-12) {
             continue;
         }
         let q = out.values.entry(*id).or_insert_with(|| {
