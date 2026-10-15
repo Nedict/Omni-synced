@@ -4088,6 +4088,8 @@ dependencies = [
  "naga",
  "pollster 0.4.0",
  "serde",
+ "serde_json",
+ "solidcraft-engine",
  "solidcraft-geom",
  "solidcraft-kernel",
  "solidcraft-render",

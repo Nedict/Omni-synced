@@ -23,5 +23,8 @@ wgpu = { workspace = true, features = ["metal", "vulkan", "dx12", "gles"] }
 
 [dev-dependencies]
 solidcraft-kernel = { workspace = true }
+# Headless pictures of real designs (capture tests).
+solidcraft-engine = { workspace = true }
+serde_json = { workspace = true }
 # The HLSL the D3D12 backend compiles (tests check it suits FXC).
 naga = { workspace = true, features = ["wgsl-in", "hlsl-out"] }

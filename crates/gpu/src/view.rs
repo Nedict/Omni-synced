@@ -1,14 +1,15 @@
 //! The viewport's drawing: shaded triangles and screen-space wide lines with a depth buffer,
 //! the section cap, surface analysis, reference images and supersampling, as render pipelines on
 //! any wgpu device. The desktop and web viewport draws through it (an `egui_wgpu` paint callback
-//! hands it the device and the pass); headless pictures can draw through it
-//! offscreen. Geometry is uploaded when a scene changes; each frame only the camera
+//! hands it the device and the pass); headless pictures draw through it offscreen
+//! ([`crate::capture`]). Geometry is uploaded when a scene changes; each frame only the camera
 //! uniform changes. Where the device runs compute shaders, opaque bodies are drawn straight from
 //! their display plans: the plan is evaluated on the GPU into the vertex buffer the pass draws
 //! (see [`PlannedBody`]), with nothing built or read back on the CPU.
 
 use std::sync::{Arc, Mutex};
 
+use solidcraft_geom::Vec3;
 use wgpu::util::DeviceExt;
 
 use crate::pbr;
@@ -262,6 +263,99 @@ pub struct AccessMap {
     pub u: [f32; 4],
     pub v: [f32; 4],
     pub scale: f32,
+}
+
+/// The accessibility depth map's resolution (pixels per side).
+pub const ACCESS_SIZE: u32 = 1024;
+
+impl AccessMap {
+    /// The depth map of `meshes` seen along `dir` (`version`: what the GPU uploads it by):
+    /// rasterise the triangles seen along `dir` (orthographic), keeping the highest point per pixel.
+    pub fn build(meshes: &[&solidcraft_geom::Mesh], dir: Vec3, version: u64) -> Option<AccessMap> {
+        let d = dir.normalized()?;
+        let u = d.cross(if d.x.abs() < 0.9 { Vec3::X } else { Vec3::Y }).normalized()?;
+        let v = d.cross(u);
+        let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+        for m in meshes {
+            for p in &m.positions {
+                let (a, b) = (p.dot(u), p.dot(v));
+                lo = [lo[0].min(a), lo[1].min(b)];
+                hi = [hi[0].max(a), hi[1].max(b)];
+            }
+        }
+        let ext = (hi[0] - lo[0]).max(hi[1] - lo[1]);
+        if !(ext.is_finite() && ext > 1e-9) {
+            return None;
+        }
+        let n = ACCESS_SIZE as usize;
+        let scale = (ACCESS_SIZE - 2) as f64 / ext;
+        // One pixel of margin on each side.
+        let (ou, ov) = (-lo[0] + 1.0 / scale, -lo[1] + 1.0 / scale);
+        let mut depth = vec![f32::NEG_INFINITY; n * n];
+        for m in meshes {
+            for t in &m.triangles {
+                let q: Vec<(f64, f64, f64)> = t
+                    .iter()
+                    .filter_map(|i| m.positions.get(*i as usize))
+                    .map(|p| ((p.dot(u) + ou) * scale, (p.dot(v) + ov) * scale, p.dot(d)))
+                    .collect();
+                let [a, b, c] = q[..] else { continue };
+                let area = (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0);
+                let (x0, x1) = (a.0.min(b.0).min(c.0).floor().max(0.0) as usize, (a.0.max(b.0).max(c.0).ceil() as usize).min(n - 1));
+                let (y0, y1) = (a.1.min(b.1).min(c.1).floor().max(0.0) as usize, (a.1.max(b.1).max(c.1).ceil() as usize).min(n - 1));
+                // Edge-on triangles: their vertices still count.
+                if area.abs() < 1e-12 {
+                    for p in [a, b, c] {
+                        let (x, y) = (p.0 as usize, p.1 as usize);
+                        if let Some(z) = depth.get_mut(y * n + x) {
+                            *z = z.max(p.2 as f32);
+                        }
+                    }
+                    continue;
+                }
+                for y in y0..=y1 {
+                    for x in x0..=x1 {
+                        let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
+                        let w0 = ((b.0 - px) * (c.1 - py) - (b.1 - py) * (c.0 - px)) / area;
+                        let w1 = ((c.0 - px) * (a.1 - py) - (c.1 - py) * (a.0 - px)) / area;
+                        let w2 = 1.0 - w0 - w1;
+                        if w0 < -1e-9 || w1 < -1e-9 || w2 < -1e-9 {
+                            continue;
+                        }
+                        let z = (w0 * a.2 + w1 * b.2 + w2 * c.2) as f32;
+                        if let Some(cell) = depth.get_mut(y * n + x) {
+                            *cell = cell.max(z);
+                        }
+                    }
+                }
+            }
+        }
+        Some(AccessMap {
+            version,
+            size: ACCESS_SIZE,
+            depth: Arc::new(depth),
+            u: [u.x as f32, u.y as f32, u.z as f32, ou as f32],
+            v: [v.x as f32, v.y as f32, v.z as f32, ov as f32],
+            scale: scale as f32,
+        })
+    }
+}
+
+/// The shader's surface analysis uniform (see [`Frame::analysis`]) for `mode`; Accessibility
+/// reads its depth map's scale and size from `access`.
+pub fn analysis_uniform(mode: Option<solidcraft_render::AnalysisMode>, access: Option<&AccessMap>) -> [f32; 8] {
+    use solidcraft_render::AnalysisMode as A;
+    match mode {
+        Some(A::Zebra { stripes }) => [1.0, stripes as f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        Some(A::Draft { pull, angle }) => [2.0, angle as f32, 0.0, 0.0, pull.x as f32, pull.y as f32, pull.z as f32, 0.0],
+        Some(A::Curvature { radius }) => [3.0, radius as f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        Some(A::Environment) => [4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        Some(A::Access { dir }) => {
+            let (scale, size, eps) = access.map(|m| (m.scale, m.size as f32, 1.5 / m.scale.max(1e-9))).unwrap_or((0.0, 0.0, 0.0));
+            [5.0, eps, scale, size, dir.x as f32, dir.y as f32, dir.z as f32, 0.0]
+        }
+        None => [0.0; 8],
+    }
 }
 
 /// Vertices (or line instances) on the GPU, in as many buffers as the device's buffer size

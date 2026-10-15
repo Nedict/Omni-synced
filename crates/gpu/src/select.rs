@@ -46,6 +46,15 @@ impl Policy {
         }
     }
 
+    /// `auto`, `hardware` or `software`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Policy::Auto => "auto",
+            Policy::Hardware => "hardware",
+            Policy::Software => "software",
+        }
+    }
+
     fn admits(self, tier: Tier) -> bool {
         match self {
             Policy::Auto => true,

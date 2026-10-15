@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use solidcraft_geom::{Aabb3, Plane, Vec3};
-use solidcraft_render::{Camera, Rgb, Scene, SceneLine, SceneMesh};
+use solidcraft_render::{AnalysisColors, Camera, Rgb, Scene, SceneAnalysis, SceneLine, SceneMesh};
 use solidcraft_sketch::Sketch;
 
 use crate::{Sel, Session};
@@ -68,6 +68,8 @@ pub struct Palette {
     pub axes: [Rgb; 3],
     /// What the section cap is tinted toward.
     pub cap: Rgb,
+    /// The surface analysis colours.
+    pub analysis: AnalysisColors,
 }
 
 impl Palette {
@@ -89,6 +91,7 @@ impl Palette {
         sketch_centerline: colors::SKETCH_CENTERLINE,
         axes: [colors::AXIS_X, colors::AXIS_Y, colors::AXIS_Z],
         cap: colors::SECTION_CAP,
+        analysis: AnalysisColors::DEFAULT,
     };
 }
 
@@ -362,10 +365,17 @@ fn build_scene(
 ) -> Scene {
     let st = s.world_state();
     let section = section.filter(|(o, n)| o.is_finite() && n.is_finite() && n.len() > 1e-9);
-    let mut sc = Scene { background: Some(p.background), clip: section.map(|(o, n)| (n, n.dot(o))), cap: Some(p.cap), ..Default::default() };
+    let mut sc = Scene {
+        background: Some(p.background),
+        clip: section.map(|(o, n)| (n, n.dot(o))),
+        cap: Some(p.cap),
+        analysis: s.analysis.map(|a| SceneAnalysis { mode: a.mode(), colors: p.analysis }),
+        ..Default::default()
+    };
     let b = bounds(s);
     sc.radius = (b.diagonal() * 0.5).max(cam.half_height()).max(10.0) + b.center().dist(cam.target);
-    // Grid on the ground plane (XY with Z up, XZ with Y up).
+    // Grid on the ground plane (XY with Z up, XZ with Y up), drawn under the model as in the
+    // viewport.
     if guides.grid {
         let (minor, major) = grid_step(cam.half_height());
         let ext = (cam.half_height() * 3.0 / major).ceil() * major;
@@ -376,13 +386,13 @@ fn build_scene(
         for i in -n..=n {
             let t = i as f64 * minor;
             let col = if (t / major).fract().abs() < 1e-9 { p.grid_major } else { p.grid };
-            sc.lines.push(SceneLine {
+            sc.grid.push(SceneLine {
                 points: vec![w(c + Vec3::new(t, -ext, 0.0)), w(c + Vec3::new(t, ext, 0.0))],
                 color: col,
                 width: 0.6,
                 on_top: false,
             });
-            sc.lines.push(SceneLine {
+            sc.grid.push(SceneLine {
                 points: vec![w(c + Vec3::new(-ext, t, 0.0)), w(c + Vec3::new(ext, t, 0.0))],
                 color: col,
                 width: 0.6,
@@ -583,8 +593,8 @@ mod tests {
 
     use super::*;
 
-    /// The CPU renderer (snapshots) shows appearances as the viewport does: a body's colour and
-    /// faces with looks of their own.
+    /// Headless pictures show appearances as the viewport does: a body's colour and faces with
+    /// looks of their own (the picture itself: `solidcraft-gpu`'s capture tests).
     #[test]
     fn snapshot_scene_carries_appearances() {
         let mut s = Session::default();
@@ -596,9 +606,6 @@ mod tests {
         let sc = scene(&s, &cam);
         assert!(sc.meshes.iter().any(|m| m.color == Rgb(220, 60, 40)));
         assert!(sc.meshes.iter().any(|m| m.face_colors.iter().any(|(_, c)| *c == Rgb(40, 170, 80))));
-        // And the rendered picture has the green top.
-        let img = solidcraft_render::render(&sc, &cam, 200, 140);
-        assert!(img.rgba.chunks(4).any(|p| p[1] > 120 && p[0] < 90 && p[2] < 110), "no green pixels");
     }
 
     /// A render can leave out the ground grid and the origin's axes (a box straddling Z 0 is cut
@@ -610,7 +617,7 @@ mod tests {
         let cam = home_camera(&s);
         let grid = [colors::GRID, colors::GRID_MAJOR];
         let axes = [colors::AXIS_X, colors::AXIS_Y, colors::AXIS_Z];
-        let count = |sc: &Scene, colours: &[Rgb]| sc.lines.iter().filter(|l| colours.contains(&l.color)).count();
+        let count = |sc: &Scene, colours: &[Rgb]| sc.grid.iter().chain(&sc.lines).filter(|l| colours.contains(&l.color)).count();
         let all = scene(&s, &cam);
         let (grid_lines, edges) = (count(&all, &grid), count(&all, &[colors::EDGE]));
         assert!(grid_lines > 20 && edges >= 12, "{grid_lines} grid lines, {edges} edges");
@@ -622,10 +629,7 @@ mod tests {
         let no_axes = render(Guides { grid: true, axes: false });
         assert_eq!((count(&no_axes, &grid), count(&no_axes, &axes), count(&no_axes, &[colors::EDGE])), (grid_lines, 0, edges));
         let bare = render(Guides { grid: false, axes: false });
-        assert_eq!(bare.lines.len(), edges);
-        // The picture changes with each.
-        let png = |sc: &Scene| solidcraft_render::render_png(sc, &cam, 160, 100);
-        assert!(png(&all) != png(&no_grid) && png(&all) != png(&no_axes) && png(&no_grid) != png(&bare));
+        assert_eq!((bare.lines.len(), bare.grid.len()), (edges, 0));
     }
 
     /// An origin axis hidden with `browser.visibility` stays out of headless renders, as it does
@@ -646,62 +650,37 @@ mod tests {
         s.execute("browser.visibility", &json!({"folder": "origin", "visible": false})).unwrap();
         assert!(shown(&s).is_empty());
         let sc = scene_with_guides(&s, &cam, None, Guides { grid: true, axes: true });
-        assert!(sc.lines.iter().any(|l| l.color == colors::GRID), "the grid is not part of the origin");
+        assert!(sc.grid.iter().any(|l| l.color == colors::GRID), "the grid is not part of the origin");
         s.execute("browser.visibility", &json!({"folder": "origin", "visible": true})).unwrap();
         assert_eq!(shown(&s), axes);
     }
 
-    /// Curved surfaces get a dark silhouette line in snapshots where they turn away.
+    /// A section cuts the headless scene: the clip plane and the cap colour, and the outline
+    /// where the plane cuts each body (the picture: `solidcraft-gpu`'s capture tests).
     #[test]
-    fn snapshots_draw_silhouettes_on_curved_surfaces() {
-        let mut s = Session::default();
-        s.execute("solid.sphere", &json!({"diameter": 20})).unwrap();
-        let cam = home_camera(&s);
-        let img = solidcraft_render::render(&scene(&s, &cam), &cam, 400, 400);
-        let dark = img.rgba.chunks(4).filter(|p| p[0] < 70 && p[1] < 70 && p[2] < 75).count();
-        assert!(dark > 40, "silhouette pixels: {dark}");
-    }
-
-    /// A section shows in snapshots: the cut part is gone and the cut face is drawn.
-    #[test]
-    fn snapshots_show_the_section() {
+    fn the_section_cuts_the_scene() {
         let mut s = Session::default();
         s.execute("solid.box", &json!({"length": 40, "width": 30, "height": 20})).unwrap();
         let cam = home_camera(&s);
-        let whole = solidcraft_render::render(&scene(&s, &cam), &cam, 200, 140).rgba;
+        assert!(scene(&s, &cam).clip.is_none());
         s.execute("inspect.section", &json!({"plane": {"origin": [0, 15, 0], "normal": [0, -1, 0]}})).unwrap();
         let sc = scene(&s, &cam);
-        assert!(sc.clip.is_some());
-        let cut = solidcraft_render::render(&sc, &cam, 200, 140).rgba;
-        let changed = whole.chunks(4).zip(cut.chunks(4)).filter(|(a, b)| a != b).count();
-        assert!(changed > 500, "{changed} pixels changed");
+        let (n, d) = sc.clip.unwrap();
+        assert!((n - Vec3::new(0.0, -1.0, 0.0)).len() < 1e-12 && (d + 15.0).abs() < 1e-12, "{n:?} {d}");
+        assert_eq!(sc.cap, Some(colors::SECTION_CAP));
+        assert!(!section_segments(&s.world_state().bodies[0].mesh(), Vec3::new(0.0, 15.0, 0.0), -Vec3::Y).is_empty());
     }
 
-    /// The section's cut face hides what lies inside the body behind it (it is drawn at the
-    /// plane's depth, not on the far wall like a pane of glass), shows in the cap colour, and
-    /// the cut's outline is drawn.
+    /// The surface analysis shades the headless scene too, in the palette's colours.
     #[test]
-    fn snapshot_section_caps_hide_the_inside() {
+    fn the_surface_analysis_shades_the_scene() {
         let mut s = Session::default();
         s.execute("solid.box", &json!({"length": 40, "width": 30, "height": 20})).unwrap();
-        // Cut away the front half (y < 15), so the iso camera looks into the cut.
-        s.execute("inspect.section", &json!({"plane": {"origin": [0, 15, 0], "normal": [0, -1, 0]}})).unwrap();
-        for fov in [0.0, 0.6] {
-            let mut cam = home_camera(&s);
-            cam.fov = fov;
-            let mut sc = scene(&s, &cam);
-            assert!(!section_segments(&s.world_state().bodies[0].mesh(), Vec3::new(0.0, 15.0, 0.0), -Vec3::Y).is_empty());
-            // A marker inside the body, behind the cut face.
-            let red = Rgb(255, 0, 0);
-            sc.lines.push(SceneLine { points: vec![Vec3::new(5.0, 25.0, 10.0), Vec3::new(35.0, 25.0, 10.0)], color: red, width: 3.0, on_top: false });
-            let img = solidcraft_render::render(&sc, &cam, 300, 220);
-            let px = || img.rgba.chunks(4);
-            let marker = px().filter(|p| p[0] > 200 && p[1] < 60 && p[2] < 60).count();
-            assert_eq!(marker, 0, "fov {fov}: the inside shows through the cut face");
-            // The cap: warm (red over blue), unlike the grey-blue body and background.
-            let cap = px().filter(|p| p[0] as i32 - p[2] as i32 > 20).count();
-            assert!(cap > 500, "fov {fov}: cap pixels {cap}");
-        }
+        let cam = home_camera(&s);
+        assert!(scene(&s, &cam).analysis.is_none());
+        s.analysis = Some(crate::SurfaceAnalysis::Curvature { radius: 5.0 });
+        let a = scene(&s, &cam).analysis.unwrap();
+        assert_eq!((a.mode, a.colors), (solidcraft_render::AnalysisMode::Curvature { radius: 5.0 }, Palette::DEFAULT.analysis));
     }
 }
 
