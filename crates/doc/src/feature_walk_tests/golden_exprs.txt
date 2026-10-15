@@ -328,6 +328,7 @@ surface_sweep_options
     Scale = surface_sweep.scale (Unitless)
   expressions: surface_sweep.twist, surface_sweep.scale
 surface_loft
+surface_blend
 surface_offset
   inputs:
     Distance = soff.distance (Length)
