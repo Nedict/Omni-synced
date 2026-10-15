@@ -307,9 +307,9 @@ fn a_design_with_a_loose_import_rebuilds_unchanged() {
     let mut doc = solidcraft_doc::Document::new("Old");
     let id = doc.add_feature(sf.kind, Some(&sf.name)).unwrap();
     doc.feature_mut(id).unwrap().body_names = sf.body_names;
-    // As a format 20 file has it.
+    // As a format 21 file (0.12.0) has it.
     let mut json: Value = serde_json::from_str(&doc.to_json()).unwrap();
-    json["format"] = json!("solidcraft/20");
+    json["format"] = json!("solidcraft/21");
     assert!(json["features"][0]["kind"].get("skip").is_none());
     let file = dir.join("old.solidcraft");
     std::fs::write(&file, json.to_string()).unwrap();
