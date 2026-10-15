@@ -849,5 +849,18 @@
   "appearance.dielectric_ior": "Brechungsindex des Dielektrikums",
   "appearance.pbr_help": "Diese Oberfläche in Render oder einem Produkt-PNG ansehen. Keine Brechung oder Transmission.",
   "render.opaque_preview_help": "Opakes PBR und einfache Farben; Transparenz durch Blending. Brechung, HDRI und finales Rendering sind noch nicht verfügbar.",
-  "render.opaque_image_summary": "Vorschau-PNG · opakes PBR · Transparenz durch Blending"
+  "render.opaque_image_summary": "Vorschau-PNG · opakes PBR · Transparenz durch Blending",
+  "UNTRIM": "TRIMMEN AUFHEBEN",
+  "Face": "Fläche",
+  "Holes": "Löcher",
+  "Holes (edges on them)": "Löcher (ihre Kanten)",
+  "In place (surfaces)": "An Ort und Stelle (Flächen)",
+  "None": "Keine",
+  "Picked": "Ausgewählte",
+  "Restore outer boundary": "Äußere Begrenzung wiederherstellen",
+  "RULED SURFACE": "REGELFLÄCHE",
+  "Mitre": "Gehrung",
+  "Reference face": "Referenzfläche",
+  "Round": "Rund",
+  "Type": "Typ"
 }

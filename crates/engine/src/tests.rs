@@ -1148,6 +1148,9 @@ fn extrude_auto_operation() {
     assert!(rel(volume(&mut s), 40.0 * 30.0 * 15.0) < 1e-6);
     // Pulled out, it joins.
     assert_eq!(auto_operation(&s, &json!({"face": [20, 15, 15], "distance": 5})), Some("join"));
+    // Pushed in far past the bottom (halfway is below the box), it still cuts (#1257).
+    assert_eq!(auto_operation(&s, &json!({"face": [20, 15, 15], "distance": -50})), Some("cut"));
+    assert_eq!(auto_operation(&s, &json!({"face": [20, 15, 15], "distance": 50, "direction": "negative"})), Some("cut"));
     // A sketch on XY under the box: up goes into it (cut), down grows out of it (join), and a
     // profile beside the box still defaults to Join (New Body remains explicit).
     run(&mut s, "sketch.create", json!({"plane": "XY"}));
@@ -2418,6 +2421,21 @@ fn lip_after_boss() {
             assert!((volume(&mut s) - v0).abs() > 1.0, "boss {i} lip {j}");
         }
     }
+}
+
+/// A lip on a rim with a face elsewhere in line with the pick: a notch under the floor whose
+/// wall lies in the plane y = 25 through the picked point. The pick is the rim's, the face the
+/// point lies on, not the first face whose plane runs through it.
+#[test]
+fn lip_on_a_rim_in_line_with_another_face() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 80, "width": 50, "height": 30}));
+    run(&mut s, "solid.shell", json!({"faces": [[40, 25, 30]], "thickness": 2}));
+    run(&mut s, "solid.box", json!({"length": 20, "width": 10, "height": 1, "corner": [30, 25, 0], "operation": "cut", "targets": ["Body1"]}));
+    let v0 = volume(&mut s);
+    run(&mut s, "plastic.lip", json!({"face": [1, 25, 30], "width": 1, "height": 2}));
+    // The band inside the rim, 1 wide and 2 high: (78 × 48 − 76 × 46) × 2.
+    assert!(rel(volume(&mut s) - v0, 496.0) < 1e-6, "{}", volume(&mut s) - v0);
 }
 
 /// A drilled hole as deep as the plate: the drill point breaks through the bottom.

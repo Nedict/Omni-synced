@@ -1107,5 +1107,17 @@
   "appearance.dielectric_ior": "电介质折射率",
   "appearance.pbr_help": "在渲染工作区或产品 PNG 中查看此表面。不支持折射或透射。",
   "render.opaque_preview_help": "不透明 PBR 和纯色；透明效果使用混合。不支持折射、HDRI 和最终渲染。",
-  "render.opaque_image_summary": "预览 PNG · 不透明 PBR · 混合透明"
+  "render.opaque_image_summary": "预览 PNG · 不透明 PBR · 混合透明",
+  "UNTRIM": "取消修剪",
+  "Face": "面",
+  "Holes": "孔",
+  "Holes (edges on them)": "孔（孔上的边）",
+  "In place (surfaces)": "原位（曲面）",
+  "None": "无",
+  "Picked": "所选",
+  "Restore outer boundary": "恢复外边界",
+  "RULED SURFACE": "直纹曲面",
+  "Mitre": "斜接",
+  "Reference face": "参考面",
+  "Round": "圆角"
 }

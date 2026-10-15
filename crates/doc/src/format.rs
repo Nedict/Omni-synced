@@ -167,6 +167,12 @@
 //!   Under the same version, looks can explicitly select opaque PBR parameters (`pbr`: metal
 //!   fraction, roughness, dielectric IOR). Absent fields keep the scalar shading a look always
 //!   had; 0.11.0 asks for an update instead of silently dropping the response.
+//!   A `SurfaceUntrim` feature (Untrim: a `face` as `body` and `point`, optional `holes`
+//!   points, `outer` and `in_place`) is also first saved in 21; 0.11.0 asks for an update
+//!   instead of meeting a feature it can't read.
+//!   A `SurfaceRuled` feature (Ruled Surface: `body`, `edges` points, `distance`, optional
+//!   `mode`, `angle`, `direction`, `flip`, `corners` and `face`) is also first saved in 21;
+//!   0.11.0 asks for an update instead of meeting a feature it can't read.
 
 use serde_json::Value;
 

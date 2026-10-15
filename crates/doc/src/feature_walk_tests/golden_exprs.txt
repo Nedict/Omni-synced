@@ -325,10 +325,16 @@ surface_offset
   expressions: soff.distance, soff.tolerance
 unstitch
 reverse_normal
+surface_untrim
 surface_extend
   inputs:
     Distance = extend.distance (Length)
   expressions: extend.distance
+surface_ruled
+  inputs:
+    Distance = ruled.distance (Length)
+    Angle = ruled.angle (Angle)
+  expressions: ruled.distance, ruled.angle
 surface_trim
   inputs:
     Angle = trim.angle (Angle)

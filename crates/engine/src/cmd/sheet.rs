@@ -38,7 +38,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SHEET METAL", "CREATE")
         .icon("convert_sheet")
         .params(
-            "body; face: [x,y,z] on its large flat face (a plate of even thickness); rule?; \
+            "body; face: [x,y,z] on its large flat face (a plate of even thickness), or that face's name from model.faces; rule?; \
              bends?: [[x,y,z] on sharp edges] (a solid or a shelled body: `face` is the fixed face and the flat faces reached from it \
              across these edges become the sheet; a shell keeps its thickness, a solid takes the rule's inward; \
              edges between two of those faces that are no bends are cut open with the rule's gap)",
@@ -297,7 +297,8 @@ fn convert(s: &mut Session, p: &Value) -> Result<Value> {
     if s.model.state().body(&body).is_none() {
         return Err(bad(cmd, format!("no body `{body}`")));
     }
-    let face = p.get("face").and_then(vec3).ok_or_else(|| bad(cmd, "`face` must be a point [x, y, z] on the plate's face"))?;
+    let face = p.get("face").ok_or_else(|| bad(cmd, "`face` must be a point [x, y, z] on the plate's face, or its name from model.faces"))?;
+    let face = super::face::face_ref(s, face, Some(&body), cmd)?;
     // With bend edges, a solid or shelled body; without, a plate.
     let bends = match p.get("bends") {
         None | Some(Value::Null) => Vec::new(),

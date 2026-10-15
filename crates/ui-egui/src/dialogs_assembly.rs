@@ -1119,7 +1119,16 @@ pub fn browser_joints(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
         let r = draw_row(
             ui,
             ui.id().with(("joint", id)),
-            &Row { depth: depth + 1, eye: Some(visible), icon: "joint", label: &name, selected, dim: suppressed || !visible, ..Default::default() },
+            &Row {
+                depth: depth + 1,
+                eye: Some(visible),
+                icon: "joint",
+                label: &name,
+                name: true,
+                selected,
+                dim: suppressed || !visible,
+                ..Default::default()
+            },
         );
         if let Some(resp) = &r.resp {
             resp.clone().on_hover_text(format!("{kind:?} joint"));

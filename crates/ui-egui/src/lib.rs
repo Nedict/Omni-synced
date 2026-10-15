@@ -136,6 +136,9 @@ pub(crate) mod sketch_text;
 mod sketch_text_handles;
 mod sketch_text_move;
 pub mod sketch_tools;
+pub mod smart_extrude;
+#[cfg(test)]
+mod smart_extrude_ui_tests;
 pub mod stand_up;
 pub mod theme;
 #[cfg(test)]

@@ -155,6 +155,16 @@ still be added through `set`. The fields of the common features:
 
 For any other feature, `timeline.inspect` shows the fields.
 
+Where a command takes a face as a point (`face.delete`, `solid.shell`, `solid.draft`,
+`solid.offset_face`, `solid.split_face`, the `faces` of `solid.replace_face`, and the `face` of
+`sheet.convert`), a script can give the face's name instead, as `model.faces` lists it:
+`{"command": "face.delete", "params": {"faces": ["F2:side#1", "F2:side#2"], "body": "Plate"}}`.
+`model.faces` also lists a `point` on each face that picks it (the centroid of a face with a hole
+in it is in the hole, that of a half cylinder inside the cylinder) and, for a cylindrical face,
+its `cylinder`: `origin` and `axis` of its axis, and `radius`. A name that is more than one face
+(the pieces of a split face, or one face of several bodies) is refused; `body` says which body to
+look on.
+
 Press **Delete** on anything selected (bodies, faces, sketches, features, planes, components,
 canvases). It runs as one undoable step and lists the features that would go with it or fail.
 

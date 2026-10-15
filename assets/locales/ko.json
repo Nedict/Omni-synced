@@ -849,5 +849,18 @@
   "appearance.dielectric_ior": "유전체 굴절률",
   "appearance.pbr_help": "이 표면은 렌더링 작업 공간이나 제품 PNG에서 확인하세요. 굴절과 투과는 지원하지 않습니다.",
   "render.opaque_preview_help": "불투명 PBR 및 단색 표시, 블렌딩 투명도를 지원합니다. 굴절, HDRI 및 최종 렌더링은 아직 지원하지 않습니다.",
-  "render.opaque_image_summary": "미리보기 PNG · 불투명 PBR · 블렌딩 투명도"
+  "render.opaque_image_summary": "미리보기 PNG · 불투명 PBR · 블렌딩 투명도",
+  "UNTRIM": "트림 해제",
+  "Face": "면",
+  "Holes": "구멍",
+  "Holes (edges on them)": "구멍 (구멍의 모서리)",
+  "In place (surfaces)": "제자리에서 (서피스)",
+  "None": "없음",
+  "Picked": "선택한 항목",
+  "Restore outer boundary": "외부 경계 복원",
+  "RULED SURFACE": "룰드 서피스",
+  "Mitre": "연귀",
+  "Reference face": "참조 면",
+  "Round": "둥글게",
+  "Type": "유형"
 }

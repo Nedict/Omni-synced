@@ -1107,5 +1107,17 @@
   "appearance.dielectric_ior": "誘電体の屈折率",
   "appearance.pbr_help": "この表面はレンダリング作業空間または製品PNGで確認できます。屈折や透過には対応していません。",
   "render.opaque_preview_help": "不透明PBRと単色表示、アルファ合成による透明表示に対応します。屈折、HDRI、最終レンダリングにはまだ対応していません。",
-  "render.opaque_image_summary": "プレビューPNG · 不透明PBR · アルファ合成の透明表示"
+  "render.opaque_image_summary": "プレビューPNG · 不透明PBR · アルファ合成の透明表示",
+  "UNTRIM": "トリム解除",
+  "Face": "面",
+  "Holes": "穴",
+  "Holes (edges on them)": "穴（そのエッジ）",
+  "In place (surfaces)": "その場で（サーフェス）",
+  "None": "なし",
+  "Picked": "選択したもの",
+  "Restore outer boundary": "外側の境界を復元",
+  "RULED SURFACE": "ルールドサーフェス",
+  "Mitre": "留め継ぎ",
+  "Reference face": "参照面",
+  "Round": "丸め"
 }
