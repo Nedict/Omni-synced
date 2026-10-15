@@ -223,9 +223,9 @@ pub fn frames(face: &mt::Face, edges: &[mt::Edge], leave: Vec3, count: usize) ->
         let n = Vec3::new(normal.x, normal.y, normal.z)
             .normalized()
             .ok_or_else(|| KernelError::Failed("bridge: the support surface has no normal".into()))?;
-        let w = (leave - n * leave.dot(n)).normalized().ok_or_else(|| {
-            KernelError::Invalid("the leave direction is normal to the support surface: it has no tangent plane there".to_string())
-        })?;
+        let w = (leave - n * leave.dot(n))
+            .normalized()
+            .ok_or_else(|| KernelError::Invalid("the leave direction is normal to the support surface: it has no tangent plane there".to_string()))?;
         // Parameter-space direction that leaves in `w` at unit 3D speed: S_u·du + S_v·dv = w.
         let su = tangent(&surf, u, v, range_u, true);
         let sv = tangent(&surf, u, v, range_v, false);
