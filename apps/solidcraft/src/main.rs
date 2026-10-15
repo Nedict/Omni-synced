@@ -21,6 +21,8 @@ mod app_icon;
 mod control_server;
 #[cfg(target_os = "windows")]
 mod native_crash;
+#[cfg(target_os = "windows")]
+mod native_frame;
 #[cfg(target_os = "macos")]
 mod open_documents;
 #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -155,6 +157,8 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
         graphics_path: graphics_path().map(|p| p.to_string_lossy().to_string()),
         http_get: Some(std::sync::Arc::new(http_get)),
         http_download: Some(std::sync::Arc::new(http_download)),
+        // Already an installed app: only the browser build offers to install.
+        install_app: None,
         show_in_folder: Some(Box::new(|path| {
             let folder = std::path::Path::new(path).parent().unwrap_or_else(|| std::path::Path::new("."));
             let mut command = std::process::Command::new(if cfg!(target_os = "windows") {
@@ -465,6 +469,15 @@ fn main() -> eframe::Result {
             let mut app = SolveApp::new(Session::default(), services(cc));
             app.apply_off_thread = Some(solidcraft_ui_egui::dialogs::APPLY_AT_ONCE);
             app.custom_titlebar = CUSTOM_TITLEBAR;
+            // Windows: the OS hit test offers the resize border, at the window's DPI, from the
+            // first message (#1381).
+            #[cfg(target_os = "windows")]
+            {
+                app.native_resize_border = CUSTOM_TITLEBAR && native_frame::install(cc);
+                if CUSTOM_TITLEBAR && !app.native_resize_border {
+                    eprintln!("SolidCraft window: no native resize border; egui edge zones instead");
+                }
+            }
             app.integrated_titlebar = cfg!(target_os = "macos");
             app.cpu_meshing = safe_mode;
             if let Some(p) = cc.storage.and_then(|s| solidcraft_ui_egui::prefs::stored(|k| s.get_string(k))).filter(|_| !safe_mode) {

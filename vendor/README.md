@@ -17,6 +17,10 @@ Changes:
 - `transversal/integrate/mod.rs`: the result's shells and faces keep the order of the shell
   they come from (truck's connected components followed hash order of face addresses, so a
   boolean's faces came out in a different order on every run).
+- `transversal/loops_store/mod.rs`: a point at an end of a boundary curve (within the point
+  tolerance) is that end, whatever its parameter: a polyline's parameter counts segments, so
+  an intersection curve ending 2e-7 mm from another's end could read as inside it, cut it
+  into a sliver with a vertex of its own, and leave the result's shell open (#391).
 - `transversal/loops_store/mod.rs`: an intersection edge added to a face at a vertex that more
   than one wire visits (several curves end on it: the touching point of two equal cylinders) goes
   into the corner that holds its direction, swept counterclockwise about the face's normal from
@@ -75,6 +79,13 @@ Changes:
   and the face was then left unmeshed, which also failed every boolean with the body (#882). A
   walk that succeeds is kept as it was: where a loop starts decides how it is laid out across a
   periodic surface's seam.
+- `tessellation/mod.rs`, `triangulation.rs`: edges are sampled through a new `TrySubs` trait
+  (`try_subs`, `approx_subs`), a bound of `PolylineableCurve`, instead of `subs`. truck's
+  `IntersectionCurve::subs` unwraps a projection onto its two surfaces that can fail to
+  converge, which panicked while meshing (#1252). A failed sample at an interval's end uses the
+  intersection curve's leader point, so the polyline stays finite; a failed interior probe is
+  NaN, which already counts as flat. `truck-shapeops`' `ShapeOpsCurve` carries the same bound,
+  and `truck-modeling` is now a regular dependency (it was a dev-dependency).
 - `tessellation/triangulation.rs`: the inside test of a face's boundary skips loops whose
   parameter box is clear of the point (it tested every segment of every loop, so a face with
   hundreds of holes meshed in quadratic time).
