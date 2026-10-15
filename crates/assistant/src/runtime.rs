@@ -2,16 +2,26 @@
 //! tools run. The worker reports through a channel the UI drains once per frame.
 
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, Sender, channel};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc::channel;
+use std::sync::mpsc::{Receiver, Sender};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::acp::process;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::acp::protocol::Wire;
 use crate::acp::session::{AgentSession, McpServer, PermissionRequest};
-use crate::model::{Message, ToolDef, Usage};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::model::Usage;
+use crate::model::{Message, ToolDef};
 use crate::net::{Cancel, HttpStream};
 use crate::provider::Codec;
-use crate::settings::{AgentMode, AgentProfile, Secret};
-use crate::tool_loop::{Event, Finish, ToolHost, TurnConfig, TurnOutcome, run_turn};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::settings::AgentMode;
+use crate::settings::{AgentProfile, Secret};
+use crate::tool_loop::{Event, ToolHost, TurnOutcome};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::tool_loop::{Finish, TurnConfig, run_turn};
 
 /// Everything one turn needs, owned, so it can move to the worker.
 pub struct Job {
