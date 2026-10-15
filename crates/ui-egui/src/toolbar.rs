@@ -208,7 +208,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::scenario::publish_handle("appbar:folder", br.center());
             let open = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new("sc_file_menu")).unwrap_or(false));
             if idle && (resp.hovered() || open) {
-                ui.painter().rect_filled(br, 4.0, Color32::from_white_alpha(30));
+                ui.painter().rect_filled(br, 4.0, t.app_bar_hover);
             }
             let ink = if idle { t.app_bar_text } else { t.app_bar_text.gamma_multiply(0.35) };
             ui.painter().galley(pos2(br.left() + 8.0, br.center().y - galley.size().y / 2.0), galley, ink);
