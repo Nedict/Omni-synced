@@ -697,7 +697,8 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
 /// `ui.camera`: the viewport's orbit camera (`target`, `yaw`, `pitch`, `roll` in radians,
 /// `distance` in mm, `fov`, `up`), or a new one. A field left out keeps its value, so a reply
 /// passed back sets the same view again. `fit`: frame the listed occurrences (ids or names;
-/// `root`: the bodies outside every component), or everything (`true`), keeping the direction.
+/// `root`: the bodies outside every component), or everything (`true`), keeping the direction;
+/// `false` frames nothing.
 /// Nothing changes when a field is refused.
 fn camera(app: &mut SolveApp, p: &Value) -> Result<Value, String> {
     const FIELDS: [&str; 8] = ["target", "yaw", "pitch", "roll", "distance", "fov", "up", "fit"];
@@ -741,8 +742,12 @@ fn camera(app: &mut SolveApp, p: &Value) -> Result<Value, String> {
             }
             Some(Some(b))
         }
-        Some(_) => return Err("`fit` must be true or a list of occurrences".into()),
+        Some(_) => return Err("`fit` must be true, false or a list of occurrences".into()),
     };
+    // A read leaves a view change that is animating alone.
+    if cam == app.cam && fit.is_none() {
+        return serde_json::to_value(app.cam).map_err(|e| e.to_string());
+    }
     app.cancel_view_animation();
     app.viewport.orbit_snap = None;
     app.viewport.orbit_free = None;
@@ -1176,6 +1181,20 @@ mod tests {
         h.app = SolveApp::new(s, Services::default());
         h.app.viewport.no_pixels = true;
         h.frames(2);
+        let before = h.app.cam;
+        // Reading during an animated view change leaves it running (no frames run between).
+        let mut raw = |method: &str, params: Value| {
+            let (req, _rx) = ControlRequest::new(method, params);
+            match handle(&mut h.app, &h.ctx, &req) {
+                Outcome::Done(v) => v,
+                Outcome::Screenshot { .. } => Value::Null,
+            }
+        };
+        raw("ui.view", json!({"view": "top", "animate": true}));
+        let r = raw("ui.camera", Value::Null);
+        assert!(r["ok"] == true && h.app.cam_anim.is_some(), "{r}");
+        h.app.cam_anim = None;
+        h.app.cam = before;
         let mut cam = |p: Value| {
             let r = h.call("ui.camera", p);
             assert_eq!(r["ok"], true, "{r}");
