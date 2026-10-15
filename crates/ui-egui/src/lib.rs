@@ -577,6 +577,10 @@ impl SolveApp {
                 let language = i18n::Locale::for_language(&self.preferences.language);
                 let label = language.label(command_label(id));
                 self.session.echo(language.format("ui.command_done", &[("command", label)]));
+                if id == "file.new" {
+                    // `file.new` starts from millimetres. Units of new designs still apply (#1205).
+                    prefs::apply_new_design(self);
+                }
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
                     render_workspace::reset_document(self);
                     self.sketch_choices = sketch_families::Choices::default();

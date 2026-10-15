@@ -500,6 +500,11 @@ fn main() -> eframe::Result {
             for f in &files {
                 app.open_path_async(f);
             }
+            // No file and no sample: the empty design takes Units of new designs (#1205).
+            // An opened file and the sample part keep the units they were saved or built with.
+            if files.is_empty() && !sample {
+                solidcraft_ui_egui::prefs::apply_new_design(&mut app);
+            }
             // No design given: the start page (not when driven over the control channel, whose
             // clients expect the design view; `ui.home` shows it there).
             if files.is_empty() && !sample && control_port.is_none() {
