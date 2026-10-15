@@ -333,6 +333,7 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
             }
             ok(json!(app.cam))
         }
+        "ui.camera" => wrap(camera(app, p)),
         "ui.start" => {
             let Some(id) = s("command") else { return err("missing `command`") };
             app.start(id);
@@ -691,6 +692,96 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
         }
         other => err(format!("unknown method `{other}`")),
     }
+}
+
+/// `ui.camera`: the viewport's orbit camera (`target`, `yaw`, `pitch`, `roll` in radians,
+/// `distance` in mm, `fov`, `up`), or a new one. A field left out keeps its value, so a reply
+/// passed back sets the same view again. `fit`: frame the listed occurrences (ids or names;
+/// `root`: the bodies outside every component), or everything (`true`), keeping the direction;
+/// `false` frames nothing.
+/// Nothing changes when a field is refused.
+fn camera(app: &mut SolveApp, p: &Value) -> Result<Value, String> {
+    const FIELDS: [&str; 8] = ["target", "yaw", "pitch", "roll", "distance", "fov", "up", "fit"];
+    let o = match p {
+        Value::Null => serde_json::Map::new(),
+        Value::Object(o) => o.clone(),
+        _ => return Err("params must be an object".into()),
+    };
+    if let Some(k) = o.keys().find(|k| !FIELDS.contains(&k.as_str())) {
+        return Err(format!("unknown camera field `{k}` (it takes {})", FIELDS.join(", ")));
+    }
+    let mut cam = app.cam;
+    let sets = o.keys().any(|k| k != "fit");
+    if sets {
+        let mut v = serde_json::to_value(app.cam).map_err(|e| e.to_string())?;
+        for (k, x) in o.iter().filter(|(k, _)| *k != "fit") {
+            v[k] = x.clone();
+        }
+        cam = serde_json::from_value(v).map_err(|e| format!("bad camera: {e}"))?;
+        // The distance cap is far past any Fit (so every reply replays) and still finite in f32.
+        if !cam.is_valid() || cam.distance > 1e15 || cam.pitch.abs() > std::f64::consts::FRAC_PI_2 {
+            return Err("the camera must be finite, with a distance up to 1e15 mm and a pitch within ±π/2".into());
+        }
+        // Straight up or down keeps a heading, as the standard views do.
+        let lim = std::f64::consts::FRAC_PI_2 - 1e-6;
+        cam.pitch = cam.pitch.clamp(-lim, lim);
+        // Perspective and the up axis are settings the camera follows, not its own.
+        if cam.fov != app.cam.fov {
+            return Err("`fov` follows the perspective setting (ui.set {perspective})".into());
+        }
+        if cam.up != app.cam.up {
+            return Err("`up` follows the up axis preference (ui.prefs {up_axis})".into());
+        }
+    }
+    let fit = match o.get("fit") {
+        None | Some(Value::Bool(false)) => None,
+        Some(Value::Bool(true)) if !crate::render_workspace::active(app) && crate::viewport::view_bounds(app).is_empty() => {
+            return Err("nothing is shown to fit".into());
+        }
+        Some(Value::Bool(true)) => Some(None),
+        Some(Value::Array(list)) if !list.is_empty() && list.len() <= 10_000 => {
+            let occs = list.iter().map(|v| occurrence(&app.session, v)).collect::<Result<Vec<u64>, String>>()?;
+            let b = crate::dialogs_assembly::occurrence_bounds(&app.session, &occs);
+            if b.is_empty() {
+                return Err("those occurrences show nothing to fit".into());
+            }
+            Some(Some(b))
+        }
+        Some(_) => return Err("`fit` must be true, false or a list of occurrences".into()),
+    };
+    // A read leaves a view change that is animating alone.
+    if !sets && fit.is_none() {
+        return serde_json::to_value(app.cam).map_err(|e| e.to_string());
+    }
+    app.cancel_view_animation();
+    app.viewport.orbit_snap = None;
+    app.viewport.orbit_free = None;
+    app.cam = cam;
+    match fit {
+        Some(None) => app.fit_view(),
+        Some(Some(b)) => app.fit_bounds(b),
+        None => {}
+    }
+    serde_json::to_value(app.cam).map_err(|e| e.to_string())
+}
+
+/// An occurrence by id or name (or a component's name: its first occurrence); 0 is the root.
+fn occurrence(s: &solidcraft_engine::Session, v: &Value) -> Result<u64, String> {
+    let key = match v {
+        Value::Number(n) => n.to_string(),
+        Value::String(x) => x.clone(),
+        _ => return Err("an occurrence must be an id or a name".into()),
+    };
+    if key == "0" || key.eq_ignore_ascii_case("root") {
+        return Ok(0);
+    }
+    s.doc
+        .occurrences
+        .iter()
+        .find(|o| o.id.to_string() == key || o.name == key)
+        .map(|o| o.id)
+        .or_else(|| s.doc.find_component(&key).and_then(|c| s.doc.occurrence_of(c)).map(|o| o.id))
+        .ok_or_else(|| format!("no occurrence `{key}`"))
 }
 
 /// Save a screenshot PNG.
@@ -1077,5 +1168,87 @@ mod tests {
         let bad = call("engine.execute", json!({"command": "file.new", "allow_paths": "/"}), false);
         assert!(bad["error"].as_str().is_some_and(|e| e.contains("allow_paths")), "{bad}");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// `ui.camera` reads the camera and sets it; its reply, passed back, sets the same view
+    /// again. Fields left out keep their values, `fit` frames occurrences, and a refused field
+    /// changes nothing.
+    #[test]
+    fn ui_camera_reads_sets_and_replays_the_view() {
+        let mut s = Session::default();
+        for (name, x) in [("A", 0), ("B", 100)] {
+            s.execute("component.activate", &json!({"component": "root"})).unwrap();
+            s.execute("component.create", &json!({ "name": name })).unwrap();
+            s.execute("solid.box", &json!({"length": 20, "width": 20, "height": 10, "corner": [x, 0, 0]})).unwrap();
+        }
+        s.execute("component.activate", &json!({"component": "root"})).unwrap();
+        let mut h = crate::scenario::Harness::new();
+        h.app = SolveApp::new(s, Services::default());
+        h.app.viewport.no_pixels = true;
+        h.frames(2);
+        let before = h.app.cam;
+        // Reading during an animated view change leaves it running (no frames run between).
+        fn raw(h: &mut crate::scenario::Harness, method: &str, params: Value) -> Value {
+            let (req, _rx) = ControlRequest::new(method, params);
+            match handle(&mut h.app, &h.ctx, &req) {
+                Outcome::Done(v) => v,
+                Outcome::Screenshot { .. } => Value::Null,
+            }
+        }
+        raw(&mut h, "ui.view", json!({"view": "top", "animate": true}));
+        let r = raw(&mut h, "ui.camera", Value::Null);
+        assert!(r["ok"] == true && h.app.cam_anim.is_some(), "{r}");
+        // Setting it, even to where it is now, ends the animation there.
+        let yaw = h.app.cam.yaw;
+        let r = raw(&mut h, "ui.camera", json!({ "yaw": yaw }));
+        assert!(r["ok"] == true && h.app.cam_anim.is_none(), "{r}");
+        h.app.cam = before;
+        let mut cam = |p: Value| {
+            let r = h.call("ui.camera", p);
+            assert_eq!(r["ok"], true, "{r}");
+            (r["result"].clone(), h.app.cam)
+        };
+        let (start, now) = cam(json!({}));
+        assert_eq!(start, json!(now));
+        let (set, _) = cam(json!({"target": [5, 6, 7], "yaw": 0.5, "pitch": -0.25, "distance": 300}));
+        assert_eq!(
+            (set["target"].clone(), set["yaw"].clone(), set["pitch"].clone(), set["distance"].clone()),
+            (json!([5.0, 6.0, 7.0]), json!(0.5), json!(-0.25), json!(300.0))
+        );
+        assert_eq!(set["roll"], start["roll"], "a field left out keeps its value");
+        let (top, _) = cam(json!({"pitch": std::f64::consts::FRAC_PI_2}));
+        assert!(top["pitch"].as_f64().unwrap() < std::f64::consts::FRAC_PI_2, "straight down keeps a heading: {top}");
+        let (again, now) = cam(set.clone());
+        assert_eq!((again, json!(now)), (set.clone(), set.clone()), "the reply sets the same view again");
+        let (fit, _) = cam(json!({"fit": ["B"]}));
+        let t: Vec<f64> = fit["target"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+        // Framed as Fit frames (the viewport's panels shift the target a little): on B, not A.
+        assert!((100.0..120.0).contains(&t[0]) && (0.0..20.0).contains(&t[1]) && (0.0..10.0).contains(&t[2]), "{fit}");
+        assert_eq!(fit["yaw"], set["yaw"], "fit keeps the direction");
+        let fov = h.app.cam.fov + 0.25;
+        for bad in [
+            json!({"zoom": 2}),
+            json!({"distance": -1}),
+            json!({"distance": 1e300}),
+            json!({"pitch": 2}),
+            json!({"yaw": "x"}),
+            json!({"fov": fov}),
+            json!({"up": "y"}),
+            json!({"yaw": 1, "fit": ["Nope"]}),
+            json!({"fit": []}),
+            json!({"fit": 1}),
+            json!([1, 2]),
+        ] {
+            let before = h.app.cam;
+            let r = h.call("ui.camera", bad.clone());
+            assert_eq!(r["ok"], false, "{bad}: {r}");
+            assert_eq!(h.app.cam, before, "{bad}");
+        }
+        // Nothing shown: nothing to fit.
+        let mut empty = crate::scenario::Harness::new();
+        empty.app.viewport.no_pixels = true;
+        let before = empty.app.cam;
+        let r = empty.call("ui.camera", json!({"yaw": 1, "fit": true}));
+        assert!(r["ok"] == false && empty.app.cam == before, "{r}");
     }
 }

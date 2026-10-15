@@ -223,23 +223,28 @@ pub fn animate_joint(app: &SolveApp, id: u64) -> Option<Dialog> {
 pub fn find_joint(app: &mut SolveApp, id: u64) {
     let s = &app.session;
     let Some(j) = s.doc.assembly.joints.iter().find(|j| j.id == id) else { return };
-    let occs = [j.a.occurrence, j.b.occurrence];
-    let model = s.model.state();
-    let world = s.world_state();
-    let mut bb = Aabb3::default();
-    for (name, _, path, _) in s.doc.body_frames(&model) {
-        // The root (occurrence 0) holds the bodies outside every occurrence.
-        let on = occs.iter().any(|o| if *o == 0 { path.is_empty() } else { path.contains(o) });
-        if on && let Some(b) = world.body(&name) {
-            bb = bb.union(&b.mesh().bounds());
-        }
-    }
+    let bb = occurrence_bounds(s, &[j.a.occurrence, j.b.occurrence]);
     if bb.is_empty() {
         return;
     }
     let mut cam = app.cam;
     cam.fit(&bb);
     app.animate_to(cam);
+}
+
+/// The box around the bodies of occurrences (and of the occurrences inside them), where they
+/// are placed; occurrence 0 is the root, holding the bodies outside every occurrence.
+pub fn occurrence_bounds(s: &Session, occs: &[u64]) -> Aabb3 {
+    let model = s.model.state();
+    let world = s.world_state();
+    let mut bb = Aabb3::default();
+    for (name, _, path, _) in s.doc.body_frames(&model) {
+        let on = occs.iter().any(|o| if *o == 0 { path.is_empty() } else { path.contains(o) });
+        if on && let Some(b) = world.body(&name) {
+            bb = bb.union(&b.mesh().bounds());
+        }
+    }
+    bb
 }
 
 pub fn drive_joint(app: &SolveApp, id: u64) -> Option<Dialog> {
@@ -550,7 +555,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             }
             // The preview drove the joint: where it stopped short, and why (a closed loop or a
             // contact set), so the values asked for are not taken for where it is.
-            if let Some(why) = app.preview.stopped.as_ref().and_then(|r| drive_stop(&app.session, r)) {
+            if let Some(why) = app.preview.stopped.as_ref().and_then(drive_stop) {
                 row_label(ui, "");
                 ui.label(RichText::new(why).color(t.warning));
                 ui.end_row();
@@ -844,7 +849,9 @@ pub fn world_preview(s: &Session, cmds: &[(String, Value)], colors: Colors) -> O
     let stopped = cmds
         .iter()
         .zip(&preview.replies)
-        .find(|((c, _), r)| c == "joint.drive" && (r["stopped_by_loop"].is_object() || r["stopped_by_contact"].is_object()))
+        .find(|((c, _), r)| {
+            c == "joint.drive" && (r["stopped_by_loop"].is_object() || r["stopped_by_contact"].is_object() || r["unconnected"].is_string())
+        })
         .map(|(_, r)| r.clone());
     let (before, after) = (preview.before, preview.after);
     // A moved component looks like itself (no new surface), with its old place as the ghost.
@@ -861,18 +868,20 @@ pub fn world_preview(s: &Session, cmds: &[(String, Value)], colors: Colors) -> O
 }
 
 /// What a drive that stopped short of the asked values says: where the joint got to and why
-/// (`None`: it went all the way). `reply` is `joint.drive`'s result.
-pub fn drive_stop(s: &Session, reply: &Value) -> Option<String> {
-    let id = reply.get("joint").and_then(Value::as_u64)?;
-    let j = s.doc.assembly.joints.iter().find(|j| j.id == id)?;
+/// (`None`: it went all the way). `reply` is `joint.drive`'s result. A drive whose joint is
+/// joined to nothing grounded moves nothing, and says which part that is.
+pub fn drive_stop(reply: &Value) -> Option<String> {
+    if let Some(part) = reply.get("unconnected").and_then(Value::as_str) {
+        return Some(crate::i18n::format("drive.unconnected", &[("part", part)]));
+    }
+    // The values come as joint.list gives them: degrees and millimetres.
     let at: Vec<String> = reply
         .get("values")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .enumerate()
-        .filter_map(|(i, v)| v.as_f64().map(|v| (i, v)))
-        .map(|(i, v)| if j.kind.is_angle(i) { num((v.to_degrees() * 10.0).round() / 10.0, "deg") } else { num((v * 100.0).round() / 100.0, "mm") })
+        .filter_map(|v| Some((v.get("value")?.as_f64()?, v.get("unit")?.as_str()?)))
+        .map(|(v, unit)| if unit == "deg" { num((v * 10.0).round() / 10.0, "deg") } else { num((v * 100.0).round() / 100.0, "mm") })
         .collect();
     let at = at.join(", ");
     let name = |v: &Value| v.as_str().unwrap_or_default().to_string();
