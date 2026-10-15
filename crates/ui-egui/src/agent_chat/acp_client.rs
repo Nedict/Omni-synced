@@ -225,7 +225,9 @@ pub fn test_agent(argv: &[String], cwd: &std::path::Path) -> Result<String, Stri
                         });
                     }
                 }
-                Ok(FromAgent::Exited(tail)) => return Err(tail.last().cloned().unwrap_or_else(|| crate::i18n::tr("ui.agent_chat_exited").to_string())),
+                Ok(FromAgent::Exited(tail)) => {
+                    return Err(tail.last().cloned().unwrap_or_else(|| crate::i18n::tr("ui.agent_chat_exited").to_string()));
+                }
                 Err(_) => return Err(crate::i18n::tr("ui.ai_no_answer").to_string()),
             }
         }

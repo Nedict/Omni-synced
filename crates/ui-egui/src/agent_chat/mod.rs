@@ -90,18 +90,47 @@ impl State {
 
 #[derive(Clone, Debug)]
 pub enum Item {
-    User { text: String, image: bool },
-    Agent { thought: bool, text: String },
-    Tool { id: String, title: String, kind: String, status: Option<ToolStatus>, output: Option<String> },
+    User {
+        text: String,
+        image: bool,
+    },
+    Agent {
+        thought: bool,
+        text: String,
+    },
+    Tool {
+        id: String,
+        title: String,
+        kind: String,
+        status: Option<ToolStatus>,
+        output: Option<String>,
+    },
     Plan(Vec<(String, String)>),
     /// The agent asks before running something of its own (its options, its words).
-    Permission { key: u64, title: String, options: Vec<PermissionOption>, answer: Option<String> },
+    Permission {
+        key: u64,
+        title: String,
+        options: Vec<PermissionOption>,
+        answer: Option<String>,
+    },
     /// A request of the agent's that SolidCraft holds for the user (files, replacing the design,
     /// or any change while the mode is "ask"); `tool`: what "Always allow" remembers.
-    Approval { id: u64, title: String, tool: String, answer: Option<bool> },
+    Approval {
+        id: u64,
+        title: String,
+        tool: String,
+        answer: Option<bool>,
+    },
     /// A message's changes, merged into one undo step; `doc`: the design right after it.
-    Changes { steps: usize, doc: Arc<solidcraft_engine::doc::Document>, undone: bool },
-    Notice { text: String, error: bool },
+    Changes {
+        steps: usize,
+        doc: Arc<solidcraft_engine::doc::Document>,
+        undone: bool,
+    },
+    Notice {
+        text: String,
+        error: bool,
+    },
 }
 
 /// The message being answered: what undo and the limits need.
@@ -221,7 +250,8 @@ impl AgentChat {
         if answer.is_some() {
             return;
         }
-        let label = option.and_then(|o| options.iter().find(|x| x.id == o)).map_or_else(|| tr("ui.agent_chat_cancel").to_string(), |o| o.name.clone());
+        let label =
+            option.and_then(|o| options.iter().find(|x| x.id == o)).map_or_else(|| tr("ui.agent_chat_cancel").to_string(), |o| o.name.clone());
         *answer = Some(label);
         let key = *key;
         if let Some(b) = self.backend.as_mut() {
@@ -369,7 +399,9 @@ fn find_cli() -> Option<std::path::PathBuf> {
 /// The agent's working folder: an empty folder of SolidCraft's own, so an agent's own file tools
 /// (where it has them) see nothing of the user's.
 fn working_dir() -> std::path::PathBuf {
-    let d = solidcraft_engine::recovery::data_dir().map(|d| d.join("agent-chat").join("work")).unwrap_or_else(|| std::env::temp_dir().join("solidcraft-agent-chat"));
+    let d = solidcraft_engine::recovery::data_dir()
+        .map(|d| d.join("agent-chat").join("work"))
+        .unwrap_or_else(|| std::env::temp_dir().join("solidcraft-agent-chat"));
     #[cfg(not(target_arch = "wasm32"))]
     let _ = std::fs::create_dir_all(&d);
     d
@@ -493,14 +525,8 @@ fn start_turn(app: &mut SolveApp, text: String, image: bool) {
         parts.push(PromptPart::Image { mime: "image/png".into(), base64: backend::base64(&png) });
     }
     let label: String = text.lines().next().unwrap_or("").chars().take(48).collect();
-    app.agent_chat.turn = Some(Turn {
-        start_doc: app.session.doc.clone(),
-        start_undo: app.session.undo.len(),
-        changes: 0,
-        requests: 0,
-        limit_told: false,
-        label,
-    });
+    app.agent_chat.turn =
+        Some(Turn { start_doc: app.session.doc.clone(), start_undo: app.session.undo.len(), changes: 0, requests: 0, limit_told: false, label });
     app.agent_chat.last = Some((text, image));
     app.agent_chat.state = Some(State::Busy);
     if let Some(b) = app.agent_chat.backend.as_mut() {
@@ -619,7 +645,12 @@ fn end_turn(app: &mut SolveApp) {
 
 /// Merge the undo steps made since `start_doc` (at depth `start_undo`) into one, labelled `label`;
 /// how many steps it took in (0: none were made, or the history no longer reaches that far).
-fn merge_undo(undo: &mut Vec<solidcraft_engine::Snapshot>, start_doc: &Arc<solidcraft_engine::doc::Document>, start_undo: usize, label: &str) -> usize {
+fn merge_undo(
+    undo: &mut Vec<solidcraft_engine::Snapshot>,
+    start_doc: &Arc<solidcraft_engine::doc::Document>,
+    start_undo: usize,
+    label: &str,
+) -> usize {
     // The first change of the turn saved the design as it was when the turn began. When the
     // history is full its oldest steps go, so look for it at or below where it was put.
     let Some(first) = (0..undo.len().min(start_undo + 1)).rev().find(|&i| undo.get(i).is_some_and(|s| Arc::ptr_eq(&s.doc, start_doc))) else {
@@ -677,7 +708,9 @@ fn pump_tools(app: &mut SolveApp) {
         let always = agents::always_allowed(&app.preferences, &app.agent_chat.running_id, &tool);
         let verdict = match gate::request(&req.method, &req.params, undo_left) {
             gate::Verdict::Ask(_) if mode == agents::Mode::All || always => gate::Verdict::Run { change: true },
-            gate::Verdict::Run { change: true } if mode == agents::Mode::Ask && !always => gate::Verdict::Ask(gate::describe(&req.method, &req.params)),
+            gate::Verdict::Run { change: true } if mode == agents::Mode::Ask && !always => {
+                gate::Verdict::Ask(gate::describe(&req.method, &req.params))
+            }
             v => v,
         };
         match verdict {
@@ -810,6 +843,27 @@ pub fn control(app: &mut SolveApp, ctx: &egui::Context, p: &Value) -> Result<Val
         if app.agent_chat.agent_id.as_deref() != Some(id) {
             disconnect(app);
             app.agent_chat.agent_id = Some(id.to_string());
+        }
+    }
+    // The Add agent dialog: open on a kind (`installed`, `custom`, `api`), or `false` to close.
+    if let Some(d) = p.get("add_dialog") {
+        match d.as_str() {
+            Some(k) => {
+                let kind = match k {
+                    "installed" => settings::AddKind::Installed,
+                    "custom" => settings::AddKind::Custom,
+                    "api" => settings::AddKind::Api,
+                    _ => return Err("add_dialog must be installed, custom, api or false".into()),
+                };
+                settings::open_add(app);
+                if let Some(a) = app.agent_chat.settings.add.as_mut() {
+                    a.kind = kind;
+                    if kind != settings::AddKind::Api {
+                        a.name.clear();
+                    }
+                }
+            }
+            None => app.agent_chat.settings.add = None,
         }
     }
     if let Some(id) = p.get("default_agent").and_then(Value::as_str) {

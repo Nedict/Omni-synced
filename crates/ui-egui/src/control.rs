@@ -174,10 +174,8 @@ pub fn request_scope(app: &SolveApp, params: &Value) -> Result<Option<vfs::PathS
 
 /// A model render of the view as the window shows it (theme, section, grid and axes), as PNG.
 pub fn view_png(app: &SolveApp, w: usize, h: usize) -> Option<Vec<u8>> {
-    let guides = solidcraft_engine::view::Guides {
-        grid: app.ui.show_grid && !crate::viewport::active_view(app).hide_grid,
-        axes: app.origin_visible(),
-    };
+    let guides =
+        solidcraft_engine::view::Guides { grid: app.ui.show_grid && !crate::viewport::active_view(app).hide_grid, axes: app.origin_visible() };
     let scene = solidcraft_engine::view::scene_with_palette_and_guides(
         &app.session,
         &app.cam,

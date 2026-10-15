@@ -263,7 +263,11 @@ fn permission_modes_decide_what_asks() {
     let dir = std::env::temp_dir().join(format!("sc-agent-chat-all-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("b.solidcraft");
-    let save = ask(&tx, "engine.execute", json!({"command": "file.save", "params": {"path": path.to_string_lossy()}, "allow_paths": [dir.to_string_lossy()]}));
+    let save = ask(
+        &tx,
+        "engine.execute",
+        json!({"command": "file.save", "params": {"path": path.to_string_lossy()}, "allow_paths": [dir.to_string_lossy()]}),
+    );
     frame(&mut app);
     frame(&mut app);
     assert_eq!(app.agent_chat.waiting(), 0);

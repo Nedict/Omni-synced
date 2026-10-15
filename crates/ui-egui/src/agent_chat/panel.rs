@@ -70,11 +70,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let left = app.preferences.agent_chat_side == "left";
     let side = |id: Id| if left { egui::Panel::left(id) } else { egui::Panel::right(id) };
     if app.preferences.agent_chat_minimized {
-        side(Id::new("sc_agent_chat_strip"))
-            .exact_size(STRIP)
-            .resizable(false)
-            .frame(egui::Frame::NONE.fill(t.panel))
-            .show(ui, |ui| strip(app, ui));
+        side(Id::new("sc_agent_chat_strip")).exact_size(STRIP).resizable(false).frame(egui::Frame::NONE.fill(t.panel)).show(ui, |ui| strip(app, ui));
         return;
     }
     let width = app.preferences.agent_chat_width.clamp(MIN_WIDTH, MAX_WIDTH);
@@ -231,7 +227,13 @@ fn dock_drag(app: &mut SolveApp, ui: &egui::Ui, drag: &egui::Response, left: boo
         let t = Tokens::get();
         let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::new("sc_agent_chat_dock_hint")));
         painter.rect(zone.shrink(4.0), 8.0, t.accent.gamma_multiply(0.18), Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
-        painter.text(zone.center(), Align2::CENTER_CENTER, tr(if to_left { "ui.agent_chat_dock_left" } else { "ui.agent_chat_dock_right" }), egui::FontId::proportional(14.0), t.text);
+        painter.text(
+            zone.center(),
+            Align2::CENTER_CENTER,
+            tr(if to_left { "ui.agent_chat_dock_left" } else { "ui.agent_chat_dock_right" }),
+            egui::FontId::proportional(14.0),
+            t.text,
+        );
     }
     if drag.drag_stopped()
         && let Some(p) = ui.ctx().pointer_interact_pos().or_else(|| ui.ctx().pointer_latest_pos())
@@ -455,17 +457,20 @@ fn picker(app: &mut SolveApp, ui: &mut egui::Ui) {
     let missing: Vec<discover::Missing> = app.agent_chat.detection.as_ref().map(|d| d.missing.clone()).unwrap_or_default();
     if !missing.is_empty() {
         let heading = if all.is_empty() { tr("ui.agent_chat_none_found") } else { tr("ui.agent_chat_not_installed") };
-        egui::CollapsingHeader::new(RichText::new(heading).color(t.text_dim)).id_salt("sc_agent_missing").default_open(all.is_empty()).show(ui, |ui| {
-            for m in missing {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(m.name).strong());
-                    if ui.small_button(tr("ui.agent_chat_copy")).on_hover_text(m.install).clicked() {
-                        ui.ctx().copy_text(m.install.to_string());
-                    }
-                });
-                ui.add(egui::Label::new(RichText::new(m.install).monospace().size(11.0).color(t.text_dim)).selectable(true).wrap());
-            }
-        });
+        egui::CollapsingHeader::new(RichText::new(heading).color(t.text_dim)).id_salt("sc_agent_missing").default_open(all.is_empty()).show(
+            ui,
+            |ui| {
+                for m in missing {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(m.name).strong());
+                        if ui.small_button(tr("ui.agent_chat_copy")).on_hover_text(m.install).clicked() {
+                            ui.ctx().copy_text(m.install.to_string());
+                        }
+                    });
+                    ui.add(egui::Label::new(RichText::new(m.install).monospace().size(11.0).color(t.text_dim)).selectable(true).wrap());
+                }
+            },
+        );
     }
 }
 
@@ -665,37 +670,43 @@ fn tool_card(ui: &mut egui::Ui, n: usize, title: &str, kind: &str, status: Optio
         Some(ToolStatus::InProgress) => (t.warning, true, "ui.ai_tool_running"),
         _ => (t.text_dim, false, "ui.ai_tool_waiting"),
     };
-    egui::Frame::NONE.fill(t.toolbar).stroke(Stroke::new(1.0, t.border)).corner_radius(6.0).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        let id = ui.make_persistent_id(("sc_agent_tool", n));
-        let mut state_ = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false);
-        let head = ui.horizontal(|ui| {
-            status_dot(ui, color, filled);
-            ui.add(egui::Label::new(RichText::new(title).monospace().size(11.5).color(t.text)).truncate());
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.label(RichText::new(tr(state)).size(10.5).color(color));
-                if !kind.is_empty() && kind != "other" {
-                    ui.label(RichText::new(kind).size(10.5).color(t.text_dim));
+    egui::Frame::NONE.fill(t.toolbar).stroke(Stroke::new(1.0, t.border)).corner_radius(6.0).inner_margin(egui::Margin::symmetric(6, 3)).show(
+        ui,
+        |ui| {
+            ui.set_width(ui.available_width());
+            let id = ui.make_persistent_id(("sc_agent_tool", n));
+            let mut state_ = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false);
+            let head = ui.horizontal(|ui| {
+                status_dot(ui, color, filled);
+                // The state and kind keep their room at the right; the title is cut short before them.
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(RichText::new(tr(state)).size(10.5).color(color));
+                    if !kind.is_empty() && kind != "other" {
+                        ui.label(RichText::new(kind).size(10.5).color(t.text_dim));
+                    }
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        ui.add(egui::Label::new(RichText::new(title).monospace().size(11.5).color(t.text)).truncate()).on_hover_text(title);
+                    });
+                });
+            });
+            let click = ui.interact(head.response.rect, id.with("head"), Sense::click());
+            crate::scenario::publish_handle(&format!("agent_chat:tool:{n}"), head.response.rect.center());
+            if output.is_some() && click.clicked() {
+                state_.toggle(ui);
+            }
+            if output.is_some() {
+                click.on_hover_text(tr("ui.ai_tool_unfold"));
+            }
+            state_.show_body_unindented(ui, |ui| {
+                if let Some(o) = output {
+                    ui.separator();
+                    egui::ScrollArea::vertical().id_salt(("sc_agent_tool_out", n)).max_height(180.0).show(ui, |ui| {
+                        ui.add(egui::Label::new(RichText::new(o).monospace().size(11.0)).selectable(true).wrap());
+                    });
                 }
             });
-        });
-        let click = ui.interact(head.response.rect, id.with("head"), Sense::click());
-        crate::scenario::publish_handle(&format!("agent_chat:tool:{n}"), head.response.rect.center());
-        if output.is_some() && click.clicked() {
-            state_.toggle(ui);
-        }
-        if output.is_some() {
-            click.on_hover_text(tr("ui.ai_tool_unfold"));
-        }
-        state_.show_body_unindented(ui, |ui| {
-            if let Some(o) = output {
-                ui.separator();
-                egui::ScrollArea::vertical().id_salt(("sc_agent_tool_out", n)).max_height(180.0).show(ui, |ui| {
-                    ui.add(egui::Label::new(RichText::new(o).monospace().size(11.0)).selectable(true).wrap());
-                });
-            }
-        });
-    });
+        },
+    );
 }
 
 /// A small status mark drawn as a shape (no glyph a system font might lack): filled when the

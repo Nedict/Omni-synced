@@ -8,9 +8,9 @@
 //! # Preferences → General → Agent chat → Add custom command: target/release/examples/acp_test_agent
 //! ```
 //!
-//! Every message: a plan, a box made with one `batch`, a fillet, a measurement. A message with
-//! "save" in it then saves to the user's Documents folder (which the chat holds for Allow or
-//! Deny); with "ask" in it the agent first asks its own permission for the batch.
+//! A message: a plan, a box made with one `batch`, a fillet, a measurement. A message with "save"
+//! in it only saves to the user's Documents folder (which the chat holds for Allow or Deny);
+//! with "ask" in it the agent first asks its own permission for the batch.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -138,7 +138,9 @@ fn main() {
             })),
             Some("session/new") => {
                 mcp = msg.pointer("/params/mcpServers/0").and_then(Mcp::start);
-                reply(json!({"sessionId": session}));
+                reply(json!({"sessionId": session, "modes": {"currentModeId": "default", "availableModes": [
+                    {"id": "default", "name": "Default"}, {"id": "acceptEdits", "name": "Accept edits"}, {"id": "plan", "name": "Plan"},
+                ]}}));
             }
             Some("session/prompt") => {
                 let text: String = msg
@@ -153,6 +155,18 @@ fn main() {
                     reply(json!({"stopReason": "end_turn"}));
                     continue;
                 };
+                // "save": only the save (the design is there already).
+                if text.contains("save") {
+                    let path = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default().join("Documents/block.solidcraft");
+                    let title = format!("save {}", path.display());
+                    say(session, "I'll save the design to your Documents folder.");
+                    tool(session, "t4", &title, "edit", "in_progress", None);
+                    let (out, failed) = m.tool("save", json!({"path": path.to_string_lossy()}));
+                    tool(session, "t4", &title, "edit", if failed { "failed" } else { "completed" }, Some(&out));
+                    say(session, if failed { "\nThe save didn't go through." } else { "\nSaved." });
+                    reply(json!({"stopReason": "end_turn"}));
+                    continue;
+                }
                 plan(session, 0);
                 if images > 0 {
                     say(session, "Thanks for the picture of the view. ");
@@ -162,7 +176,8 @@ fn main() {
                     tool(session, "t1", "batch: solid.box 40 × 30 × 20", "edit", "pending", None);
                     send(&json!({"jsonrpc": "2.0", "id": 900, "method": "session/request_permission", "params": {
                         "sessionId": session,
-                        "toolCall": {"toolCallId": "t1", "title": "batch: solid.box 40 × 30 × 20"},
+                        // Named as the Claude Code adapter names an MCP tool.
+                        "toolCall": {"toolCallId": "t1", "title": "mcp__solidcraft__batch"},
                         "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"}, {"optionId": "reject", "name": "Reject", "kind": "reject_once"}],
                     }}));
                     // Wait for the answer (other lines are not expected meanwhile).
@@ -191,23 +206,18 @@ fn main() {
                 // The block's vertical edges, by a point on each (its corner is at the origin).
                 let vertical = json!([[0, 0, 10], [40, 0, 10], [40, 30, 10], [0, 30, 10]]);
                 tool(session, "t2", "execute: solid.fillet r = 4 mm", "edit", "in_progress", None);
-                let (out, failed) = m.tool("execute", json!({"command": "solid.fillet", "params": {"edges": vertical, "radius": 4}, "verbose": false}));
+                let (out, failed) =
+                    m.tool("execute", json!({"command": "solid.fillet", "params": {"edges": vertical, "radius": 4}, "verbose": false}));
                 tool(session, "t2", "execute: solid.fillet r = 4 mm", "edit", if failed { "failed" } else { "completed" }, Some(&out));
                 plan(session, 2);
                 tool(session, "t3", "measure", "read", "in_progress", None);
                 let (out, failed) = m.tool("measure", json!({}));
                 tool(session, "t3", "measure", "read", if failed { "failed" } else { "completed" }, Some(&out));
                 plan(session, 3);
-                if text.contains("save") {
-                    let path = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default().join("Documents/block.solidcraft");
-                    let title = format!("save {}", path.display());
-                    tool(session, "t4", &title, "edit", "in_progress", None);
-                    let (out, failed) = m.tool("save", json!({"path": path.to_string_lossy()}));
-                    tool(session, "t4", &title, "edit", if failed { "failed" } else { "completed" }, Some(&out));
-                }
                 say(session, "\nDone: the block is 40 × 30 × 20 mm with 4 mm rounds on its vertical edges.");
                 reply(json!({"stopReason": "end_turn"}));
             }
+            Some("session/set_mode") => reply(json!({})),
             Some("session/cancel") => {}
             Some(_) if !id.is_null() => send(&json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "method not found"}})),
             _ => {}

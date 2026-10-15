@@ -15,7 +15,10 @@ pub use super::acp::{AuthMethod, PermissionOption, ToolStatus};
 pub enum PromptPart {
     Text(String),
     /// A picture of the design (PNG), sent only to agents that take images.
-    Image { mime: String, base64: String },
+    Image {
+        mime: String,
+        base64: String,
+    },
 }
 
 /// What a backend reports to the panel.
@@ -136,7 +139,8 @@ mod tests {
 
     #[test]
     fn base64_matches_the_rfc_examples() {
-        for (i, o) in [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foob", "Zm9vYg=="), ("fooba", "Zm9vYmE="), ("foobar", "Zm9vYmFy")] {
+        for (i, o) in [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foob", "Zm9vYg=="), ("fooba", "Zm9vYmE="), ("foobar", "Zm9vYmFy")]
+        {
             assert_eq!(base64(i.as_bytes()), o);
         }
     }

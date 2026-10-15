@@ -178,7 +178,11 @@ pub fn key_safe_for(url: &str) -> bool {
     let Some(rest) = u.strip_prefix("http://") else { return false };
     let host = rest.split(['/', '?']).next().unwrap_or("");
     let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
-    let name = if host.starts_with('[') { host.split(']').next().map(|h| format!("{h}]")).unwrap_or_default() } else { host.split(':').next().unwrap_or("").to_string() };
+    let name = if host.starts_with('[') {
+        host.split(']').next().map(|h| format!("{h}]")).unwrap_or_default()
+    } else {
+        host.split(':').next().unwrap_or("").to_string()
+    };
     matches!(name.as_str(), "localhost" | "127.0.0.1" | "[::1]")
 }
 

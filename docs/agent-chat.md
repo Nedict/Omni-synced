@@ -11,7 +11,7 @@ Desktop app only.
 
 ## Turning it on and off
 
-Everything about it is on one page: **Settings → AI**.
+Everything about it is on one page: **Preferences → AI**.
 
 - **Show AI features** (on by default) is the master switch. Turned off, SolidCraft shows nothing
   of it: no AI button, no shortcut, no menu entry, no panel, and nothing is looked for or
@@ -34,7 +34,7 @@ when you send a message or press **Connect**.
 
 - **Docking:** drag the panel's header (the dotted grip and the title) to the other half of the
   window and let go. The side it would land on lights up while you drag. You can also pick
-  **Left** or **Right** under Settings → AI → Panel. SolidCraft remembers the side.
+  **Left** or **Right** under Preferences → AI → Panel. SolidCraft remembers the side.
 - **Width:** drag the panel's inner edge. SolidCraft remembers it.
 - **Minimise** (the line in the header) folds the panel into a thin strip that keeps the chat
   icon, the agent's state, and a count of anything waiting for your answer. Click the icon to
@@ -45,7 +45,7 @@ when you send a message or press **Connect**.
 
 ## Agents
 
-Settings → AI → **Agents** lists every agent the chat can use, each with its kind (a program or
+Preferences → AI → **Agents** lists every agent the chat can use, each with its kind (a program or
 an endpoint), version or model, whether it looks signed in, **Test**, **Default** (the one a new
 conversation starts with), its own permission setting, and **Remove** for the ones you added.
 
@@ -116,7 +116,7 @@ The agent reaches the open design only through SolidCraft's own tools (the
 
 ## Permissions
 
-Settings → AI → **Permissions** decides what the agent may do without asking, for every agent;
+Preferences → AI → **Permissions** decides what the agent may do without asking, for every agent;
 each agent can have its own setting in its row.
 
 - **Ask every time** (the default): every change to the design and every file action waits for
@@ -176,6 +176,6 @@ no model behind it:
 cargo build --release -p solidcraft-ui-egui --example acp_test_agent
 ```
 
-Then add it under Settings → AI → **Add agent… → Custom command** with the path of
+Then add it under Preferences → AI → **Add agent… → Custom command** with the path of
 `target/release/examples/acp_test_agent`. Put "save" in your message to see an Allow / Deny card,
 or "ask" to see the agent ask its own permission.
