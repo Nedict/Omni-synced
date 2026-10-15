@@ -88,9 +88,9 @@ mod extrude_edit_tests;
 mod file_load;
 mod file_picker;
 pub use file_picker::FilePickerFuture;
-pub(crate) mod display_lod;
 #[cfg(test)]
 mod blend_arrow_tests;
+pub(crate) mod display_lod;
 #[cfg(test)]
 mod file_load_ui_tests;
 #[cfg(test)]
