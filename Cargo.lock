@@ -3459,6 +3459,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "pollster 0.4.0",
  "quick-xml",
+ "raw-window-handle",
  "rfd",
  "ron",
  "rustls",
