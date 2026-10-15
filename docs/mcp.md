@@ -14,6 +14,7 @@ For how the same command surface should work in the browser (workers, tiered sto
 agents), see [web-runtime.md](web-runtime.md). For sandboxed plugins and parametric timeline
 features that also use `run(command, args)`, see [plugins.md](plugins.md). Desktop MCP in this
 document remains the reference implementation today.
+
 ## Start it
 
 ```sh

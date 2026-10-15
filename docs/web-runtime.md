@@ -8,8 +8,8 @@ agent control that stay aligned with the desktop app, the control channel, and
 [`apps/solidcraft-web`](../apps/solidcraft-web) and [`files.rs`](../apps/solidcraft-web/src/files.rs)
 rather than growing a second stack here.
 
-Related: [plugins (#1221)](https://github.com/bherbruck/solidcraft/issues/1221) (desktop WIT +
-wasmtime first; same `run(command, args)` JSON as MCP), [design containers](design-container.md),
+Related: [plugins.md](plugins.md) and [#1221](https://github.com/bherbruck/solidcraft/issues/1221)
+(desktop WIT + wasmtime first; parametric timeline features in phase 2), [design containers](design-container.md),
 [control protocol](control-protocol.md).
 
 ## Problem
@@ -120,8 +120,11 @@ never `--allow-any-path` in the tab.
 | Desktop | wasmtime + fuel/memory limits; WIT `solidcraft:plugin@1.0.0` with `run`, `manifest`, permissions |
 | Web | Component or module in broker; same WIT contract; sandbox = manifest permissions enforced before `run()` |
 
-Start with one-shot commands and importers/exporters; parametric plugin features later. Command
-ids may use a `pluginname.function` prefix to avoid collisions.
+Milestone 1: one-shot commands and importers/exporters. Milestone 2: **parametric timeline
+features** via a generic host-owned `FeatureKind::Plugin` shell (params + display metadata
+including timeline icon and label); plugins rebuild through WIT `evaluate()` calling the same
+`run()` JSON. See [plugins.md](plugins.md). Command ids may use a `pluginname.function` prefix to
+avoid collisions.
 
 ## CollabCraft deployment
 
@@ -136,12 +139,13 @@ budgeted; per-app worker URLs are acceptable for pilots. CSP must allow `worker-
 3. **Worker broker:** headless `engine.execute` batches and container IO off UI thread.
 4. **Agent bridge:** MessagePort tool surface equivalent to MCP dialog-free tools.
 5. **Plugins on web:** after desktop wasmtime milestone and WIT stability.
+6. **Parametric plugin features:** [plugins.md](plugins.md) phase 2 (`evaluate`, display metadata, fallback policy).
 
 ## Out of scope (initial integration)
 
 - Moving egui/viewport WebGPU into SharedWorker
 - Second non-wgpu GPU backend in craft-libs
-- Parametric timeline features owned by plugins
+- **Implementing** parametric `FeatureKind::Plugin` (designed in [plugins.md](plugins.md); follows craft-runtime wiring)
 - Duplicating `craft-cloud` or embedding `craft-nextcloud` in SolidCraft wasm
 
 ## Tests
