@@ -390,6 +390,10 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     app.start("file.insert_mesh");
                     close = true;
                 }
+                if item_if(ui, &format!("{}…", app.tr_label("Insert Design")), "", shown) {
+                    app.start("component.insert_design");
+                    close = true;
+                }
                 if item_if(ui, app.tr("ui.save"), "Ctrl+S", shown) {
                     save(app);
                     close = true;

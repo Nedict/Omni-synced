@@ -673,6 +673,21 @@ impl SolveApp {
             self.pick_open_command(id, json!({}));
             return;
         }
+        if id == "component.insert_design" {
+            // Another design becomes a linked component; a STEP or mesh file picked here is
+            // inserted the way Insert STEP or Insert Mesh would (#1240).
+            self.pick_open(|app, path| {
+                let Some(path) = path else { return };
+                if is_design_path(&path) {
+                    if app.run("component.insert_design", json!({ "path": path })).is_ok() {
+                        app.fit_view();
+                    }
+                } else {
+                    app.insert_path_async(&path);
+                }
+            });
+            return;
+        }
         if matches!(id, "file.insert_step" | "file.insert_mesh") {
             self.pick_open(|app, path| {
                 if let Some(path) = path {
@@ -1411,3 +1426,10 @@ pub fn now_ms() -> f64 {
 
 #[cfg(test)]
 mod picker_test_support;
+
+/// A SolidCraft design file (`.solidcraft`, or a design saved as JSON), as opposed to a STEP or
+/// mesh file.
+fn is_design_path(path: &str) -> bool {
+    let ext = std::path::Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    matches!(ext.as_str(), "solidcraft" | "solvecraft" | "json")
+}
