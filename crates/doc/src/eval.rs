@@ -2763,6 +2763,8 @@ fn feature_tools_with_constructor(
             let mut untrimmed = extent.to.is_none() && extent.from.is_none() && !extent.through_all;
             // The footprint of each tool in the sketch: a tool lies in the prism over it.
             let mut footprints = Vec::with_capacity(regions.len());
+            // Each tool's extent along the normal (they differ where one is run on into a face).
+            let mut extents: Vec<(f64, f64)> = Vec::with_capacity(regions.len());
             for r in &regions {
                 if *operation == Operation::Join {
                     let exact = centered_extrude(&ss.plane, r, lo + off, hi + off, Some(&ss))?;
@@ -2776,6 +2778,7 @@ fn feature_tools_with_constructor(
                         // the sewable seam with a coincident curved intersection.
                         tools.extend(exact);
                         footprints.push(r.clone());
+                        extents.push((lo + off, hi + off));
                         continue;
                     }
                 }
@@ -2786,15 +2789,27 @@ fn feature_tools_with_constructor(
                 untrimmed &= l2 == lo + off && h2 == hi + off && &r == original;
                 tools.extend(centered_extrude(&ss.plane, &r, l2, h2, Some(&ss))?);
                 footprints.push(r);
+                extents.push((l2, h2));
             }
-            // A cut by profiles apart in the sketch (the letters of a text): each tool lies in the
-            // prism over its footprint, so the tools are apart too (whatever their heights, and
-            // trimmed or not). The body is then cut once by all of them rather than once per
-            // profile, each cut working on a body grown by the one before.
-            // (Sheet metal keeps its own way of cutting, tool by tool, to keep its flat pattern.)
+            // A cut or a join by profiles apart in the sketch (the letters of a text): each tool
+            // lies in the prism over its footprint, so the tools are apart too (whatever their
+            // heights, and trimmed or not). The body is then cut once by all of them, or joined to
+            // all of them at once, rather than once per profile, each on a body grown or cut by
+            // the ones before. (A join meeting several bodies keeps joining them tool by tool;
+            // sheet metal keeps its own way of cutting, tool by tool, to keep its flat pattern.)
             let sheet =
                 if targets.is_empty() { !st.sheets.is_empty() } else { targets.iter().any(|t| st.sheets.iter().any(|sheet| &sheet.body == t)) };
-            if *operation == Operation::Cut && !sheet && tools.len() > 1 && regions_apart(&footprints, APART_GAP) {
+            let one_target = if targets.is_empty() { st.bodies.len() == 1 } else { targets.len() == 1 };
+            // A join at once only of tools alike in height (one prism of them all, which the
+            // boolean joins exactly): tools that start at different levels (some run on into the
+            // face, one hanging over its edge) keep joining one by one.
+            let alike = extents.windows(2).all(|w| (w[0].0 - w[1].0).abs() < 1e-9 && (w[0].1 - w[1].1).abs() < 1e-9);
+            let at_once = match operation {
+                Operation::Cut => !sheet,
+                Operation::Join => one_target && !sheet && alike,
+                _ => false,
+            };
+            if at_once && tools.len() > 1 && regions_apart(&footprints, APART_GAP) {
                 let bodies: Vec<Body> = tools.iter().map(|t| t.body.clone()).collect();
                 if let Ok(Some(one)) = kernel::join_apart(&bodies) {
                     tools = vec![Traced::step(one, &tools.iter().collect::<Vec<_>>())];

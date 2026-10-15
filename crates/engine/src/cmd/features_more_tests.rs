@@ -1006,3 +1006,35 @@ fn a_line_of_text_is_cut_in_one_exact_boolean() {
     let off = cut([-6.0, 20.0], 1.0);
     assert!(off > 0.0 && off < one, "{off} {one}");
 }
+
+/// A line of text cut right through a part, and one joined on in relief, are decided in 2D in
+/// one boolean too. Through, each letter's counter (inside an "e" or an "a") comes out as a
+/// piece of its own. In relief the letters are joined to the part all at once: one by one, each
+/// joined to a part grown by the ones before, it took minutes.
+#[test]
+fn a_line_of_text_cut_through_or_joined_in_relief_is_one_boolean() {
+    let text = |op: &str, distance: f64| {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane":"XY"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[105,26]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance":40}));
+        let before = volume(&mut s);
+        run(&mut s, "sketch.create", json!({"plane":{"face":[50,13,40]}}));
+        run(&mut s, "sketch.text", json!({"text":"textvraiment tres long","at":[3,9],"height":6.5}));
+        run(&mut s, "sketch.finish", json!({}));
+        let id = run(&mut s, "solid.extrude", json!({"distance":distance,"operation":op}))["feature"].as_u64().unwrap();
+        let r = s.model.result(id).unwrap();
+        assert!(r.error.is_none() && r.boolean_diagnostics.events.is_empty(), "{op}: {r:?}");
+        (before, volume(&mut s), s.model.state().bodies.len())
+    };
+    let (before, through, pieces) = text("cut", -40.0);
+    let (_, one, _) = text("cut", -1.0);
+    // Through: the letters' area all the way down, with the counters left as pieces.
+    assert!(pieces > 1, "{pieces}");
+    assert!(rel(before - through, 40.0 * (before - one)) < 2e-3, "{} vs {}", before - through, 40.0 * (before - one));
+    // In relief 2 high: twice what a 1 mm cut takes.
+    let (_, relief, pieces) = text("join", 2.0);
+    assert_eq!(pieces, 1);
+    assert!(rel(relief - before, 2.0 * (before - one)) < 2e-3, "{} vs {}", relief - before, 2.0 * (before - one));
+}
