@@ -157,16 +157,25 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
     }
 }
 
-/// Unit outward normal of the planar face through `p`.
+/// Unit outward normal of the planar face through `p`: of the planar faces whose plane runs
+/// through it, the one nearest it. A face elsewhere in such a plane (the wall of a notch, the end
+/// of a rib, in line with a rim) is no pick of `p`, though its plane runs through it as exactly.
 fn planar_normal_at(b: &Body, p: Vec3) -> Option<Vec3> {
     let tol = (b.size() * 2e-3).max(1e-3);
     let faces = b.faces(tol).ok()?;
+    let mesh = b.tessellate(tol).ok()?;
+    let mut near = vec![f64::INFINITY; faces.len()];
+    for (t, f) in mesh.triangles.iter().zip(&mesh.tri_face) {
+        if let (Some([u, v, w]), Some(d)) = (mesh.tri(t), near.get_mut(*f as usize)) {
+            *d = d.min(crate::appearance::closest_on_triangle(p, u, v, w).dist(p));
+        }
+    }
     faces
         .iter()
-        .filter_map(|f| f.plane_normal.map(|n| (n, ((p - f.centroid).dot(n)).abs())))
-        .filter(|(_, d)| *d < tol * 5.0)
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(n, _)| n)
+        .filter_map(|f| f.plane_normal.map(|n| (n, ((p - f.centroid).dot(n)).abs(), near.get(f.index).copied().unwrap_or(f64::INFINITY))))
+        .filter(|(_, d, _)| *d < tol * 5.0)
+        .min_by(|a, b| a.2.total_cmp(&b.2).then(a.1.total_cmp(&b.1)))
+        .map(|(n, _, _)| n)
 }
 
 /// The curves of a chain as one polyline in sketch coordinates, in order.
@@ -485,6 +494,32 @@ pub(super) fn sheet_eval(
             tag_flanges(sh, n0, f.id);
             rebuild_sheet(st, i)
         }
+        FeatureKind::SheetPerforate { diameter, pitch, margin, pattern, body } => {
+            // Without a body name the field goes on the newest sheet, as the command's own body lookup does.
+            let i = match body {
+                Some(_) => sheet_for(st, body, None)?,
+                None => st.sheets.len().checked_sub(1).ok_or_else(|| DocError::Invalid("there is no sheet metal body".into()))?,
+            };
+            let d = val(vals, diameter, Kind::Length)?;
+            let pitch = val(vals, pitch, Kind::Length)?;
+            let margin = match margin {
+                Some(e) => val(vals, e, Kind::Length)?,
+                None => d,
+            };
+            let square = match pattern.as_deref() {
+                None | Some("staggered") => false,
+                Some("square") => true,
+                Some(o) => return Err(DocError::Invalid(format!("perforation pattern {o:?}: use \"staggered\" or \"square\""))),
+            };
+            if !(d > 0.0 && pitch > d && margin >= 0.0) {
+                return Err(DocError::Invalid(format!(
+                    "perforation needs diameter > 0, pitch > diameter and margin >= 0 (diameter {d}, pitch {pitch}, margin {margin})"
+                )));
+            }
+            let sh = st.sheets.get_mut(i).ok_or_else(|| DocError::Invalid("sheet".into()))?;
+            sh.perforations.push(crate::sheet::SheetPerforation { feature: f.id, diameter: d, pitch, margin, square });
+            Ok(())
+        }
         FeatureKind::SheetHem { edges, length, gap, flip, body } => {
             let i = sheet_for(st, body, edges.first().copied())?;
             let l = val(vals, length, Kind::Length)?;
@@ -590,11 +625,22 @@ pub(super) fn sheet_eval(
         FeatureKind::SheetConvert { body, face, rule, .. } => {
             let mb = st.body(body).cloned().ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let n = planar_normal_at(&mb.body, *face).ok_or_else(|| DocError::Invalid("pick a planar face of the plate".into()))?;
-            let tol = (mb.body.size() * 1e-3).max(1e-3);
-            let mesh = mb.body.tessellate(tol)?;
             // Thickness: the body's extent along the face normal.
-            let ds: Vec<f64> = mesh.positions.iter().map(|p| (*p - *face).dot(n)).collect();
-            let (lo, hi) = (ds.iter().cloned().fold(f64::MAX, f64::min), ds.iter().cloned().fold(f64::MIN, f64::max));
+            let extent = |mesh: &solidcraft_geom::Mesh| {
+                mesh.positions.iter().map(|p| (*p - *face).dot(n)).fold((f64::MAX, f64::MIN), |(lo, hi), d| (lo.min(d), hi.max(d)))
+            };
+            // The tolerance (the mesh's chords, and how far off the face's plane a point of it may
+            // be) is at most a tenth of the thickness, not only a thousandth of the size. On a long
+            // thin plate that thousandth passes the thickness: the far side's triangles counted as
+            // this face's (no outline was left), and a hole of a smaller radius than that fell out.
+            let mut tol = (mb.body.size() * 1e-3).max(1e-3);
+            let mut mesh = mb.body.tessellate(tol)?;
+            let (mut lo, mut hi) = extent(&mesh);
+            if hi - lo > 0.0 && tol > (hi - lo) * 0.1 {
+                tol = ((hi - lo) * 0.1).max(1e-6);
+                mesh = mb.body.tessellate(tol)?;
+                (lo, hi) = extent(&mesh);
+            }
             let t = hi - lo;
             // The face outline: boundary edges of the triangles on that face's plane, where it runs
             // along a round wall an arc of the wall's circle (not chords: the plate check below

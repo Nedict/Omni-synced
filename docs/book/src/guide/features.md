@@ -7,7 +7,7 @@ it.
 
 | Panel | Features |
 |---|---|
-| Create | extrude (one side, two sides, symmetric, taper, start offset, to a distance or through all; new body, join, cut, intersect), revolve, sweep, loft, box, cylinder, sphere, torus, coil, pipe, rib, web, emboss, hole (simple, counterbore, countersink, tapped; on faces or at sketch points), thread, rectangular/circular/path patterns, mirror |
+| Create | extrude (one side, two sides, symmetric, taper, start offset, to a distance or through all; new body, join, cut, intersect; thin walls along curves), revolve, sweep, loft, box, cylinder, sphere, torus, coil, pipe, rib, web, emboss, hole (simple, counterbore, countersink, tapped; on faces or at sketch points), thread, rectangular/circular/path patterns, mirror |
 | Modify | press pull, fillet, chamfer, shell, draft, scale, combine, split body, offset face, replace face, move/copy, align, remove |
 | Construct | offset plane, plane at angle, plane along path |
 | Inspect | measure, section analysis, interference, curvature comb and map, zebra, draft, minimum radius, isocurves, centre of mass |
@@ -17,6 +17,27 @@ solid, including sideways elbow connections and screw bosses that meet only part
 Extruding into existing material selects **Cut**. In an empty component it selects **New Body**;
 choose **New Body** explicitly to keep an addition separate. Changing the default does not alter
 operations already saved in a design.
+
+A taper slopes the sides of any profile, sketch text included: lines, arcs and spline or conic
+curves move in or out together, and a flat tip shorter than the taper closes to a point. On
+spline and conic sides the slope is approximate: the moved outline is a curve of the same kind
+within 2 % of the taper's offset (or 10 µm) of the true one, a curve that turns too much for
+that being cut into pieces first; where a curve bends tighter than the offset, the offset folds
+and is smoothed over. A taper steeper than the profile's details (a stroke, a curve or a gap
+narrower than it) is refused with that reason; a smaller taper or distance builds.
+
+**Thin Extrude** (`thin: true` on `solid.extrude`, the Thin Extrude box in its dialog) builds a
+wall of constant thickness along sketch curves instead of filling profiles: open chains (a single
+wall) and closed loops (a ring), lines, arcs, circles, ellipses and splines. In the dialog, a
+picked profile stands for the curves around it (its outline and its holes). The wall lies on the curves' centre, inside,
+outside, or on both sides with two thicknesses (`side`: `center`, `inside`, `outside`,
+`two_sides` with `thickness2`). A closed loop's inside is the area it encloses; an open chain's
+is the side it bends toward (the inside of a U), and a straight line's is the left of its first
+curve as drawn. Curves that meet end to end are one chain whose corners are mitred; walls that
+cross or meet (a ring and a cross, a honeycomb) become one piece. Every extent, operation and target of an extrude applies, and a taper
+for walls of straight lines or of whole circles. A wall thicker than the
+radius of a curve it follows on the inside is refused. Spline walls follow the exact offset
+within 0.0001 mm.
 
 Editing an extrusion retains its signed distances, From/To Object inputs, taper expressions
 and explicit body targets. Revolve edits retain world, sketch and explicit-line axes, both
@@ -119,7 +140,7 @@ still be added through `set`. The fields of the common features:
 
 | Feature | Fields |
 |---|---|
-| Extrude | `extent`: {`distance`, `direction`: positive\|negative\|symmetric, `distance2`, `start_offset`, `through_all`, `taper`, `to`, `to_offset`, `from`}; `operation`: new_body\|join\|cut\|intersect; `targets`; `profiles`; `sketch` |
+| Extrude | `extent`: {`distance`, `direction`: positive\|negative\|symmetric, `distance2`, `start_offset`, `through_all`, `taper`, `to`, `to_offset`, `from`}; `operation`: new_body\|join\|cut\|intersect; `targets`; `profiles`; `sketch`; `thin`: {`curves`, `thickness`, `side`: center\|inside\|outside\|two_sides, `thickness2`} |
 | Revolve | `angle`, `angle2`, `symmetric`, `axis`, `to`, `operation`, `targets`, `profiles`, `sketch` |
 | Fillet | `radius`, `edges` (a point on each edge), `body`, `style` |
 | Chamfer | `distance`, `distance2` or `angle`, `flip`, `edges`, `body` |
@@ -133,6 +154,16 @@ still be added through `set`. The fields of the common features:
 | Mirror | `plane`, `features`, `bodies`, `combine` |
 
 For any other feature, `timeline.inspect` shows the fields.
+
+Where a command takes a face as a point (`face.delete`, `solid.shell`, `solid.draft`,
+`solid.offset_face`, `solid.split_face`, the `faces` of `solid.replace_face`, and the `face` of
+`sheet.convert`), a script can give the face's name instead, as `model.faces` lists it:
+`{"command": "face.delete", "params": {"faces": ["F2:side#1", "F2:side#2"], "body": "Plate"}}`.
+`model.faces` also lists a `point` on each face that picks it (the centroid of a face with a hole
+in it is in the hole, that of a half cylinder inside the cylinder) and, for a cylindrical face,
+its `cylinder`: `origin` and `axis` of its axis, and `radius`. A name that is more than one face
+(the pieces of a split face, or one face of several bodies) is refused; `body` says which body to
+look on.
 
 Press **Delete** on anything selected (bodies, faces, sketches, features, planes, components,
 canvases). It runs as one undoable step and lists the features that would go with it or fail.

@@ -730,6 +730,41 @@ fn cutting_a_text_removes_each_letter_whether_its_letters_stand_apart_or_touch()
     }
 }
 
+/// A text joined onto a block with a taper: its letters are spline and conic outlines whose
+/// sides slope, standing on the block's face (run on into it) or hanging over its edge (a
+/// straight foot first). An outward taper adds a little more than the straight text; one
+/// steeper than the letters' strokes is refused, saying so.
+#[test]
+fn a_tapered_text_joins_a_block_on_its_face_or_hanging_over_its_edge() {
+    for (at, hanging) in [([5.0, 12.0], false), ([150.0, 12.0], true)] {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane":"XY"}));
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[200,40]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.extrude", json!({"distance":-10}));
+        run(&mut s, "sketch.create", json!({"plane":"XY"}));
+        run(&mut s, "sketch.text", json!({"text":"tres long","at":at,"height":8}));
+        let state = s.world_state();
+        let ss = state.sketch(s.active_sketch.unwrap()).unwrap();
+        // The letters' area, counters left out (a letter's hole is its own profile too).
+        let sorted = |ids: &[String]| {
+            let mut ids = ids.to_vec();
+            ids.sort();
+            ids
+        };
+        let counter = |p: &solidcraft_sketch::Profile| ss.profiles.iter().any(|q| q.hole_curves.iter().any(|h| sorted(h) == sorted(&p.outer_curves)));
+        let area: f64 = ss.profiles.iter().filter(|p| !counter(p)).map(|p| p.area).sum();
+        run(&mut s, "sketch.finish", json!({}));
+        let steep = s.execute("solid.extrude", &json!({"distance":2,"operation":"join","taper":"15 deg"})).unwrap_err();
+        assert!(steep.to_string().contains("the taper closes the profile"), "{steep}");
+        run(&mut s, "solid.extrude", json!({"distance":2,"operation":"join","taper":"3 deg"}));
+        let volume = run(&mut s, "inspect.measure", json!({}))["total"]["volume_mm3"].as_f64().unwrap();
+        let (block, text) = (200.0 * 40.0 * 10.0, 2.0 * area);
+        assert!(volume > block + text && volume < block + 1.3 * text, "hanging {hanging}: {volume} for {text} mm³ of straight text");
+        assert_eq!(s.world_state().bodies.len(), 1);
+    }
+}
+
 /// A rounded part as drawn in the app: a rectangle and a quarter circle tangent to its top
 /// line, extruded together. The arc (about (62.17, -21), radius 21) ends square at the front
 /// face and in a knife-edge tip where it runs into the back face.
@@ -922,4 +957,23 @@ fn fillet_two_edges_meeting_at_a_corner_one_running_into_the_arc_wall() {
     let removed = long + upright - (16.0 - 8.0 / 3.0 - 4.0 * std::f64::consts::PI);
     let after = planned(&s);
     assert!(rel(before - after, removed) < 1e-3, "removed {} vs {removed}", before - after);
+}
+
+/// A design saved before tapered sides were built through `taper_loop` (#1014), by the build
+/// before it: two tapered bosses apart from each other (now joined in one boolean), a fillet on
+/// a sloping side edge of one and on the top edge of the other, both saved by edge name. They
+/// still find their edges, and the part comes out the same.
+#[test]
+fn fillets_on_tapered_bosses_saved_before_still_find_their_edges() {
+    let text = include_str!("../../../../tests/taper/before-1014/two_tapered_bosses_filleted.json");
+    let mut s = Session::new(solidcraft_doc::Document::from_json(text).unwrap());
+    let volume = run(&mut s, "inspect.measure", json!({}))["total"]["volume_mm3"].as_f64().unwrap();
+    for name in ["Extrude2", "Fillet1", "Fillet2"] {
+        let id = s.doc.find_feature(name).unwrap().id;
+        let r = s.model.result(id).unwrap();
+        assert!(r.error.is_none() && r.warning.is_none(), "{name}: {:?} {:?}", r.error, r.warning);
+    }
+    // The build that saved it measured 69454.885209 mm³.
+    assert!((volume - 69454.8852092132).abs() < 1e-3, "{volume}");
+    assert_eq!(s.world_state().bodies.len(), 1);
 }

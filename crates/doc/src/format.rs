@@ -138,13 +138,48 @@
 //!   Under the same version, a fillet's style can be `curvature` (a G2 quintic blend; `radius`
 //!   is the equivalent circular setback). Fillets of the other styles save as before; 0.9.0
 //!   would refuse the unknown style.
+//! - 20: an Extrude can be thin (`thin`: `curves`, `thickness`, optional `side` and
+//!   `thickness2`): a wall along sketch curves instead of its profiles. Version 19 designs need
+//!   no transformation, and an extrude without `thin` saves as before; the version stamp makes
+//!   0.10.0 (which reads up to 19) ask for an update instead of ignoring the wall and filling
+//!   the sketch's profiles.
+//!   A `sheet_perforate` feature (Perforate: `diameter`, `pitch`, optional `margin`,
+//!   `pattern` and `body`): a perforation field stored on a sheet, for the flat pattern, the DXF
+//!   and the measure. It is also first saved in 20; 0.10.0 asks for an update instead of
+//!   meeting a feature it can't read.
+//!   Associative, editable sketch patterns (`patterns` in a sketch) and their point/radius
+//!   relations are also first saved in 20. Old sketch copies stay independent: migration cannot
+//!   infer which curves formed a pattern.
+//!   The saved visibility can also list hidden assembly joints (`visibility.hidden_joints`,
+//!   joint ids): their glyphs aren't drawn, but they still constrain and drive the parts. A
+//!   design without it shows every joint, as it always did; 0.10.0 would show them all.
+//! - 21: named render setups (`render: {setups: {name: setup}}`): renderer-independent render
+//!   intent (camera, resolution, exposure, environment). Version 20 designs need no
+//!   transformation (an absent field means no setups, and empty render state is not saved); the
+//!   version stamp makes 0.11.0 (which reads up to 20) ask for an update instead of silently
+//!   dropping saved setups.
+//!   Also first saved in 21, a design can carry `metadata` (#1015): design properties
+//!   (`project`, `part_number`, `revision`, `author`, `organization`, `description`, `license`,
+//!   each text) and other tools' data, each tool's under its own reverse-DNS key
+//!   (`com.example.tool`). Every key is kept as it is, and nothing in it is checked when the
+//!   design opens. A design without it saves as before. 0.11.x refuses format 21, so no
+//!   released build drops the properties when it saves.
+//!   Under the same version, looks can explicitly select opaque PBR parameters (`pbr`: metal
+//!   fraction, roughness, dielectric IOR). Absent fields keep the scalar shading a look always
+//!   had; 0.11.0 asks for an update instead of silently dropping the response.
+//!   A `SurfaceUntrim` feature (Untrim: a `face` as `body` and `point`, optional `holes`
+//!   points, `outer` and `in_place`) is also first saved in 21; 0.11.0 asks for an update
+//!   instead of meeting a feature it can't read.
+//!   A `SurfaceRuled` feature (Ruled Surface: `body`, `edges` points, `distance`, optional
+//!   `mode`, `angle`, `direction`, `flip`, `corners` and `face`) is also first saved in 21;
+//!   0.11.0 asks for an update instead of meeting a feature it can't read.
 
 use serde_json::Value;
 
 use crate::{DocError, Document, Result};
 
 /// The format this build writes.
-pub const FORMAT: u32 = 19;
+pub const FORMAT: u32 = 21;
 
 pub fn format_string(n: u32) -> String {
     format!("solidcraft/{n}")
@@ -161,7 +196,7 @@ pub fn version_of(s: &str) -> Option<u32> {
 
 /// JSON-level upgrades: entry `i` turns format `i + 1` into `i + 2`.
 type JsonStep = fn(&mut Value) -> Result<()>;
-const JSON_STEPS: [JsonStep; 18] = [
+const JSON_STEPS: [JsonStep; 20] = [
     |_| Ok(()),
     v2_to_v3,
     v3_to_v4,
@@ -175,6 +210,8 @@ const JSON_STEPS: [JsonStep; 18] = [
     |_| Ok(()),
     |_| Ok(()),
     v13_to_v14,
+    |_| Ok(()),
+    |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
     |_| Ok(()),
@@ -378,7 +415,7 @@ pub fn read(s: &str) -> Result<Document> {
             "this design was saved by a newer SolidCraft (file format {version}; this version reads formats up to {FORMAT}): update SolidCraft to open it"
         )));
     }
-    check_numbers(&v, 0)?;
+    check_design_numbers(&v)?;
     crate::config::validate_rules_json(&v)?;
     crate::config::validate_styles_json(&v)?;
     crate::face_anchor::validate_face_anchors_json(&v)?;
@@ -455,11 +492,18 @@ pub fn read(s: &str) -> Result<Document> {
             return Err(DocError::Invalid(format!("damaged design: occurrence `{}` has an invalid placement", o.name)));
         }
     }
+    if !all_unique(d.features.iter().map(|f| f.id))
+        || !all_unique(d.components.iter().map(|c| c.id))
+        || !all_unique(d.occurrences.iter().map(|o| o.id))
+    {
+        return Err(DocError::Invalid("damaged design: duplicate feature, component or occurrence id".into()));
+    }
     let component_ids: std::collections::BTreeSet<_> = d.components.iter().map(|component| component.id).chain(std::iter::once(0)).collect();
     for feature in &d.features {
         if let crate::FeatureKind::Sketch { sketch, .. } = &feature.kind {
             sketch.validate_freeform_offsets().map_err(|e| DocError::Invalid(format!("damaged design: {e}")))?;
             sketch.validate_wires().map_err(|e| DocError::Invalid(format!("damaged design: {e}")))?;
+            sketch.validate_patterns().map_err(|e| DocError::Invalid(format!("damaged design: {e}")))?;
             sketch.validate_periodic_splines().map_err(|e| DocError::Invalid(format!("damaged design: {e}")))?;
         }
         if let crate::FeatureKind::BodyTransfer { from, to, .. } = &feature.kind
@@ -476,8 +520,19 @@ pub fn read(s: &str) -> Result<Document> {
     // Fill in what older designs (and hand-edited files) may lack; a no-op otherwise.
     crate::format_offsets::validate_typed(&d)?;
     normalise(&mut d)?;
+    // `next_id` is trusted by nothing: a hand-edited or generated file may omit it or leave it stale,
+    // and the next feature, component or occurrence would then reuse an id that is already taken.
+    let largest =
+        d.features.iter().map(|f| f.id).chain(d.components.iter().map(|c| c.id)).chain(d.occurrences.iter().map(|o| o.id)).max().unwrap_or(0);
+    let floor = largest.checked_add(1).ok_or_else(|| DocError::Invalid("damaged design: the id space is exhausted".into()))?;
+    d.next_id = d.next_id.max(floor).max(1);
     d.format = format_string(FORMAT);
     Ok(d)
+}
+
+fn all_unique(ids: impl Iterator<Item = u64>) -> bool {
+    let mut seen = std::collections::BTreeSet::new();
+    ids.into_iter().all(|id| seen.insert(id))
 }
 
 /// The caps interactive editing enforces, applied to the raw JSON so an oversized sketch is
@@ -496,8 +551,33 @@ fn validate_sketch_sizes(value: &Value) -> Result<()> {
         if len("points") > solidcraft_sketch::MAX_POINTS
             || len("curves") > solidcraft_sketch::MAX_CURVES
             || len("constraints") > solidcraft_sketch::MAX_CONSTRAINTS
+            || len("patterns") > solidcraft_sketch::MAX_CONSTRAINTS
         {
             return Err(invalid());
+        }
+        if let Some(patterns) = sketch.get("patterns").and_then(Value::as_array) {
+            let mut points = 0usize;
+            let mut curves = 0usize;
+            let mut constraints = 0usize;
+            for pattern in patterns {
+                let Some(entities) = pattern.get("entities").and_then(Value::as_array) else { return Err(invalid()) };
+                let Some(instances) = pattern.get("instances").and_then(Value::as_array) else { return Err(invalid()) };
+                if entities.len() > solidcraft_sketch::MAX_CURVES + solidcraft_sketch::MAX_POINTS || instances.len() >= 500 {
+                    return Err(invalid());
+                }
+                for instance in instances {
+                    let size = |key| instance.get(key).and_then(Value::as_array).map_or(0, Vec::len);
+                    points = points.saturating_add(size("points"));
+                    curves = curves.saturating_add(size("curves"));
+                    constraints = constraints.saturating_add(size("constraints"));
+                    if points > solidcraft_sketch::MAX_POINTS
+                        || curves > solidcraft_sketch::MAX_CURVES
+                        || constraints > solidcraft_sketch::MAX_CONSTRAINTS
+                    {
+                        return Err(invalid());
+                    }
+                }
+            }
         }
     }
     Ok(())
@@ -804,6 +884,16 @@ fn validate_freeform_offsets(value: &Value) -> Result<()> {
 /// outside what the kernel's tolerances serve.
 const MAX_REAL: f64 = 1e9;
 
+/// Every number the design itself holds is in range ([`check_numbers`]). `metadata` is left
+/// alone: it is other tools' data, kept as it is and never read as a number (#1015); parsing
+/// already bounds its nesting.
+fn check_design_numbers(v: &Value) -> Result<()> {
+    match v {
+        Value::Object(m) => m.iter().filter(|(k, _)| k.as_str() != "metadata").try_for_each(|(_, x)| check_numbers(x, 1)),
+        v => check_numbers(v, 0),
+    }
+}
+
 /// Every non-integer number in the file is finite and within ±`MAX_REAL` (a damaged or hostile
 /// file is refused instead of overflowing the geometry later).
 fn check_numbers(v: &Value, depth: usize) -> Result<()> {
@@ -1031,6 +1121,7 @@ mod tests {
         document
             .add_feature(
                 FeatureKind::Extrude {
+                    thin: None,
                     sketch,
                     profiles: ProfileSel::All,
                     extent: Extent {
@@ -1593,5 +1684,64 @@ mod tests {
             let error = read(&value.to_string()).unwrap_err().to_string();
             assert!(error.contains("sketch too large"), "{key}: {error}");
         }
+    }
+
+    fn two_components_one_occurrence() -> Document {
+        let mut d = Document::new("ids");
+        let a = d.add_component(None, 0).unwrap();
+        d.add_component(None, 0).unwrap();
+        d.add_occurrence(a, 0, crate::IDENTITY).unwrap();
+        d
+    }
+
+    fn edited(d: &Document, f: impl FnOnce(&mut Value)) -> String {
+        let mut v: Value = serde_json::from_str(&d.to_json()).unwrap();
+        f(&mut v);
+        v.to_string()
+    }
+
+    #[test]
+    fn missing_or_stale_next_id_does_not_reuse_existing_ids() {
+        let d = two_components_one_occurrence();
+        let largest = d.components.iter().map(|c| c.id).chain(d.occurrences.iter().map(|o| o.id)).max().unwrap();
+        for stale in [None, Some(0), Some(1)] {
+            let json = edited(&d, |v| {
+                let o = v.as_object_mut().unwrap();
+                match stale {
+                    Some(n) => o.insert("next_id".into(), n.into()),
+                    None => o.remove("next_id"),
+                };
+            });
+            let mut back = read(&json).unwrap();
+            assert!(back.next_id > largest, "next_id {} after load with {stale:?}", back.next_id);
+            let fresh = back.add_component(None, 0).unwrap();
+            assert!(fresh > largest, "new component reused id {fresh}");
+        }
+    }
+
+    #[test]
+    fn duplicate_component_or_occurrence_ids_are_a_damaged_design() {
+        let d = two_components_one_occurrence();
+        let dup_component = edited(&d, |v| v["components"][1]["id"] = v["components"][0]["id"].clone());
+        let dup_occurrence = edited(&d, |v| {
+            let first = v["occurrences"][0].clone();
+            v["occurrences"].as_array_mut().unwrap().push(first);
+        });
+        for json in [dup_component, dup_occurrence] {
+            let error = read(&json).unwrap_err().to_string();
+            assert!(error.contains("damaged design"), "{error}");
+        }
+    }
+
+    #[test]
+    fn exhausted_id_space_is_an_error_not_a_panic() {
+        let d = two_components_one_occurrence();
+        let json = edited(&d, |v| v["next_id"] = u64::MAX.into());
+        let mut back = read(&json).unwrap();
+        let before = back.components.len();
+        assert!(back.add_component(None, 0).is_err());
+        assert_eq!(back.components.len(), before);
+        let json = edited(&d, |v| v["components"][1]["id"] = u64::MAX.into());
+        assert!(read(&json).unwrap_err().to_string().contains("damaged design"));
     }
 }

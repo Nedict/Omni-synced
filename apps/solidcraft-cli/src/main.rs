@@ -1,9 +1,11 @@
 //! SolidCraft headless command line.
 //!
 //! ```text
-//! solidcraft-cli run <script.json|design.solidcraft|part.step|mesh.3mf> [--in design|part.step|mesh.3mf] [--out FILE]... [--save FILE] [--quiet] [--allow-errors]
-//! solidcraft-cli eval <script.json|design.solidcraft|part.step> (alias: inspect) measurements as JSON
+//! solidcraft-cli run <script.json|design.solidcraft|part.step|mesh.3mf> [--in design|part.step|mesh.3mf] [--out FILE]... [--save FILE] [--quiet] [--results] [--json-out FILE] [--allow-errors]
+//! solidcraft-cli eval <script.json|design.solidcraft|part.step> [--json-out FILE] (alias: inspect) measurements as JSON
+//! solidcraft-cli script <design.solidcraft> [--out script.json]     the design's history as a command script
 //! solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only] loading timings as JSON lines
+//! solidcraft-cli bench-agent [--scale F] [--save F] [--script-out F] a ~1,300-body design built command by command, timed
 //! solidcraft-cli snapshot <script|design> --out shot.png [--width W] [--height H] [--view iso|front|top|…]
 //! solidcraft-cli exec <command> [json-params]                 run one command on an empty design
 //! solidcraft-cli commands                                     the command registry as JSON
@@ -17,10 +19,12 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod bench_agent;
 mod crashes;
 mod fuzz;
 mod oracle;
 mod recipe;
+mod render;
 mod spatial;
 
 use std::process::ExitCode;
@@ -33,12 +37,18 @@ use solidcraft_engine::Session;
 use solidcraft_engine::render::{StandardView, render_png};
 
 const USAGE: &str = "usage:
-  solidcraft-cli run <script.json|design.solidcraft|part.step> [--in design.solidcraft|part.step] [--out FILE]... [--save FILE] [--quiet] [--results] [--allow-errors]
+  solidcraft-cli run <script.json|design.solidcraft|part.step> [--in design.solidcraft|part.step] [--out FILE]... [--save FILE] [--quiet] [--results] [--json-out FILE] [--allow-errors]
   solidcraft-cli run --in <design.solidcraft|part.step> [--out FILE]...
       (a timeline feature that fails fails the run and nothing is written; --allow-errors writes anyway)
-  solidcraft-cli eval <script.json|design.solidcraft|part.step>     (alias: inspect; or --in FILE)
+  solidcraft-cli eval <script.json|design.solidcraft|part.step> [--json-out FILE]     (alias: inspect; or --in FILE)
+      (--json-out FILE writes the JSON that run (with --results, else the measurement) and eval print to FILE instead of stdout,
+       as plain UTF-8: a shell's > can re-encode it, e.g. Windows PowerShell adds a byte-order mark)
+  solidcraft-cli script <design.solidcraft|script.json> [--out script.json]
+      (the design's history as a command script that eval and run replay)
   solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only]
+  solidcraft-cli bench-agent [--scale F] [--save design.solidcraft] [--script-out script.json]
   solidcraft-cli snapshot <script|design> --out shot.png [--width W] [--height H] [--view iso|front|back|top|bottom|left|right]
+  solidcraft-cli render <script|design> --out image.png [--setup NAME] [--width W] [--height H] [--transparent] [--overwrite] [--timeout SECONDS]
   solidcraft-cli exec <command> [json-params]
   solidcraft-cli commands
   solidcraft-cli recipe <recipe.json>
@@ -55,7 +65,9 @@ fn main() -> ExitCode {
     let r = match args.first().map(String::as_str) {
         Some("run") => cmd_run(&args[1..]),
         Some("eval" | "inspect") => cmd_eval(&args[1..]),
+        Some("script") => cmd_script(&args[1..]),
         Some("snapshot") => cmd_snapshot(&args[1..]),
+        Some("render") => render::run(&args[1..]),
         Some("exec") => cmd_exec(&args[1..]),
         Some("commands") => {
             use std::io::Write as _;
@@ -91,6 +103,8 @@ fn main() -> ExitCode {
         // Hidden: time recomputes after parameter edits (docs/perf.md).
         Some("bench-edit") => cmd_bench_edit(&args[1..]),
         Some("bench-open") => cmd_bench_open(&args[1..]),
+        // A ~1,300-body design built command by command, as an agent builds one over MCP.
+        Some("bench-agent") => bench_agent::run(&args[1..]),
         Some("--version" | "-V") => {
             println!("solidcraft-cli {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -164,7 +178,36 @@ fn positional(args: &[String]) -> Option<&String> {
     None
 }
 
+/// `--json-out FILE`: where the JSON a command prints goes instead of stdout.
+fn json_out(args: &[String]) -> Result<Option<&str>, String> {
+    if !args.iter().any(|a| a == "--json-out") {
+        return Ok(None);
+    }
+    match flag(args, "--json-out") {
+        Some(file) if !file.starts_with("--") => Ok(Some(file)),
+        _ => Err("--json-out needs a FILE".to_string()),
+    }
+}
+
+/// `v` as indented JSON with a final newline: on stdout, or in `file`. The file is plain UTF-8
+/// with no byte-order mark, whatever the platform's shell does to redirected output (Windows
+/// PowerShell's `>` writes UTF-16, or UTF-8 with a BOM), so strict JSON readers take it.
+fn print_json(v: &Value, file: Option<&str>) -> Result<(), String> {
+    match file {
+        Some(file) => {
+            let mut text = pretty(v);
+            text.push('\n');
+            std::fs::write(file, text).map_err(|e| format!("{file}: {e}"))
+        }
+        None => {
+            println!("{}", pretty(v));
+            Ok(())
+        }
+    }
+}
+
 fn cmd_run(args: &[String]) -> Result<(), String> {
+    let json_out = json_out(args)?;
     let base = flag(args, "--in");
     let path = positional(args);
     if path.is_none() && base.is_none() {
@@ -204,10 +247,11 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         s.execute("file.save_as", &json!({"path": p})).map_err(|e| e.to_string())?;
     }
     if let Some(results) = results {
-        println!("{}", pretty(&results));
-    } else if !args.iter().any(|a| a == "--quiet") {
+        print_json(&results, json_out)?;
+    } else if json_out.is_some() || !args.iter().any(|a| a == "--quiet") {
+        // `--quiet` silences stdout; a file that was asked for is still written.
         let m = s.execute("inspect.measure", &json!({})).map_err(|e| e.to_string())?;
-        println!("{}", pretty(&m));
+        print_json(&m, json_out)?;
     }
     Ok(())
 }
@@ -226,6 +270,7 @@ fn timeline_ok(s: &Session) -> Result<(), String> {
 }
 
 fn cmd_eval(args: &[String]) -> Result<(), String> {
+    let json_out = json_out(args)?;
     let path = flag(args, "--in").or_else(|| positional(args).map(String::as_str)).ok_or_else(|| USAGE.to_string())?;
     let mut s = load(path)?;
     let m = s.execute("inspect.measure", &json!({})).map_err(|e| e.to_string())?;
@@ -238,7 +283,23 @@ fn cmd_eval(args: &[String]) -> Result<(), String> {
         "params": d["params"],
         "sketches": d["sketches"],
     });
-    println!("{}", pretty(&out));
+    print_json(&out, json_out)
+}
+
+/// A design's history as a command script (`timeline.export_script`): printed, or written to
+/// `--out`; what the script leaves out goes to stderr.
+fn cmd_script(args: &[String]) -> Result<(), String> {
+    let path = positional(args).ok_or_else(|| USAGE.to_string())?;
+    let s = &mut load(path)?;
+    let out = flag(args, "--out");
+    let r = s.execute("timeline.export_script", &json!({"path": out})).map_err(|e| e.to_string())?;
+    for what in r["omitted"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+        eprintln!("note: the script leaves out {what}");
+    }
+    match out {
+        Some(out) => eprintln!("{out}: {} steps", r["steps"]),
+        None => println!("{}", pretty(&r["script"])),
+    }
     Ok(())
 }
 
@@ -401,7 +462,7 @@ fn cmd_bench_edit(args: &[String]) -> Result<(), String> {
 }
 
 /// Separate file reading, JSON decoding/repair, timeline evaluation and display meshing.
-fn cmd_bench_open(args: &[String]) -> Result<(), String> {
+pub(crate) fn cmd_bench_open(args: &[String]) -> Result<(), String> {
     let path = args.first().ok_or("usage: solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only]")?;
     let t = std::time::Instant::now();
     let step = solidcraft_engine::io::is_step_path(path);

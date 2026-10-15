@@ -143,6 +143,10 @@ and bends that close a ring.
  "bends":[[50,0,0],[100,30,0],[50,60,0],[0,30,0]]}}
 ```
 
+The `face` can also be the name `model.faces` lists for it (`"face":"F1:+z"`), which saves
+computing a point on a face with holes or a curved outline: `model.faces` gives every face a
+`point` that lies on it.
+
 For a shop drawing or spreadsheet, `sheet.export_bend_table` returns CSV by default; choose
 `format: "json"` for structured data. It includes the sheet rule, thickness, bend angles,
 radii, allowances and flat centre-line coordinates. Lengths use millimetres and angles use
@@ -158,15 +162,20 @@ consume an undo step.
 {"command":"sheet.export_dxf","params":{"path":"bracket-flat.dxf"}}
 ```
 
-DXF cutout geometry preserves lines, circles and circular arcs; other curves are sampled
-adaptively. The `OUTLINE`, `BEND_UP` and `BEND_DOWN` layers separate cuts from bend centres.
+The DXF is an AutoCAD 2000 (`AC1015`) drawing in millimetres. The `OUTLINE`, `BEND_UP` and
+`BEND_DOWN` layers separate cuts from bend centres. A round hole is a `CIRCLE`, a circular arc an
+`ARC`, a whole ellipse one `ELLIPSE` and an arc of an ellipse an elliptical `ELLIPSE`; the pieces
+of a spline, the outlines of text and the other conics are `SPLINE`s of their own degree, so no
+curve is written as chords. For a machine that reads only lines and arcs, pass
+`"curves": "arcs"` to `sheet.export_dxf`: the free-form curves are then tangent arcs and lines
+within 0.001 mm.
 
 Base-flange profiles keep their interior holes. Through cuts that cross a sheet edge become
 notches in the flat outline; overlapping and repeated cuts remove their combined area once.
 The flat preview, DXF and unfolded solid use the same material boundaries. Lines and circular
 arcs remain exact. An ellipse, a spline or text stays the curve it was drawn as in the flat
 pattern and the unfolded solid; the folded solid follows it with tangent arcs within 0.001 mm,
-and the DXF and the point lists write it as chords within 0.001 mm.
+and the point lists write it as chords within 0.001 mm (the DXF keeps the curve, see above).
 Flat-pattern JSON lists each cut-out twice, in the same order: as points (`cutouts`), and
 exactly (`cutout_shapes`): a round hole as `{"circle": {"center", "radius"}}`, any other as its
 `line`, `arc` (centre, radius, start and sweep in degrees) and `polyline` segments (one

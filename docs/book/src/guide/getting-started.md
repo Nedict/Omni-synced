@@ -121,6 +121,34 @@ rebuilds it; `run` then exits with status 1, lists the failing features and writ
 its `--out` and `--save` files, because the bodies lack what those features should have made.
 `--allow-errors` writes them anyway.
 
+`run` prints each command's result with `--results` (otherwise the measurement), and `eval`
+prints the measurement, as JSON on stdout. `--json-out FILE` writes that JSON to a file
+instead. The file is plain UTF-8, which is not what a redirect gives you everywhere: Windows
+PowerShell's `>` re-encodes a program's output, as UTF-16 or as UTF-8 with a byte-order mark
+depending on its settings, and strict JSON readers such as Python's `json.load` then refuse it.
+
+```sh
+cargo run --release -p solidcraft-cli -- run examples/bracket.json --results --json-out results.json
+cargo run --release -p solidcraft-cli -- eval examples/bracket.json --json-out measures.json
+```
+
+A design's history turns into a script that rebuilds it, which makes a bug that only shows
+on one design a one-file reproduction:
+
+```sh
+cargo run --release -p solidcraft-cli -- script part.solidcraft --out repro.json
+cargo run --release -p solidcraft-cli -- eval repro.json               # the same part
+```
+
+The script starts with the user parameters (`parameters.add`) and the design's units, sheet
+metal and plastic rules and materials, then adds each timeline feature with `timeline.add`,
+exactly as the design file holds it: same ids, names and parameter names, so later steps
+still find the sketches and bodies they use, and a feature that failed in the design fails
+the same way. Edit a step's values to try a change, or delete the steps after a feature to
+see the design as it was there. Appearances, folders, named views and configurations are
+left out (the CLI notes which), and designs with components or joints are not supported
+yet. In the app and over MCP the same script comes from `timeline.export_script`.
+
 Units are millimetres and degrees unless an expression says otherwise (`"1 in"`, `"30 deg"`),
 and Z is up.
 

@@ -1127,6 +1127,13 @@ fn boolean2d_tagged(a: &Section, b: &Section, op: BoolOp, tol: f64) -> Option<Se
             }
         }
     }
+    // The loops below are chained by joining pieces whose ends lie within `near` of each other,
+    // so to them a piece shorter than that runs from a point back to the same point: a cut that
+    // would leave one, at either end of what is left of the segment, is not made. Two edges
+    // 0.57° apart that share a corner up to rounding cross a hundred times that rounding short
+    // of it; split there, the sliver between the crossing and the corner was taken for a
+    // second way out of the corner and closed as a loop of its own.
+    let near = tol * 10.0;
     let pieces = |s: &Seg2, cuts: &mut Vec<f64>| -> Vec<Seg2> {
         cuts.sort_by(f64::total_cmp);
         let mut out = Vec::new();
@@ -1138,7 +1145,7 @@ fn boolean2d_tagged(a: &Section, b: &Section, op: BoolOp, tol: f64) -> Option<Se
             }
             let local = (c - done) / (1.0 - done);
             let (x, y) = rest.split_at(local);
-            if x.length() > tol {
+            if x.length() > near && y.length() > near {
                 out.push(x);
                 rest = y;
                 done = c;
@@ -1210,7 +1217,6 @@ fn boolean2d_tagged(a: &Section, b: &Section, op: BoolOp, tol: f64) -> Option<Se
     // material meeting only at that point close as loops of their own; returning to its start,
     // a loop closes only when that is the tightest turn too. A loop that still passes a point
     // twice (a hole touching the outline) is split there into simple loops.
-    let near = tol * 10.0;
     let mut loops: Vec<(Loop2, Vec<Tag>)> = Vec::new();
     let mut used = vec![false; kept.len()];
     for start in 0..kept.len() {
@@ -1860,11 +1866,13 @@ fn stack_tagged(b: &Body, d: Vec3, plane: &Plane, tol: f64, index: &LazyIndex) -
 
 #[cfg(test)]
 fn stack_boolean(a: &Body, b: &Body, op: BoolOp) -> Option<Result<Option<Body>>> {
-    stack_indexed(a, b, op, [&LazyIndex::new(a, 0), &LazyIndex::new(b, 1)])
+    stack_indexed(a, b, op, [&LazyIndex::new(a, 0), &LazyIndex::new(b, 1)], true)
 }
 
-/// [`prism_boolean`] of stepped prisms, the operands' indexes given.
-fn stack_indexed(a: &Body, b: &Body, op: BoolOp, [ia, ib]: [&LazyIndex; 2]) -> Option<Result<Option<Body>>> {
+/// [`prism_boolean`] of stepped prisms, the operands' indexes given. A union is taken of
+/// operands that end at a common level when `common_cap` is set, else of those that don't (see
+/// [`prism_union_between_caps`]).
+fn stack_indexed(a: &Body, b: &Body, op: BoolOp, [ia, ib]: [&LazyIndex; 2], common_cap: bool) -> Option<Result<Option<Body>>> {
     // Common-cap joins and overlapping partial-depth cuts of aligned stepped prisms can
     // retain their exact section boundaries instead of intersecting meshes.
     // Nonaligned bodies retain their existing B-rep path.
@@ -1895,8 +1903,9 @@ fn stack_indexed(a: &Body, b: &Body, op: BoolOp, [ia, ib]: [&LazyIndex; 2]) -> O
         let pa = stack_tagged(a, d, &plane, tol, ia)?;
         let pb = stack_tagged(b, d, &plane, tol, ib)?;
         let (ea, eb) = (ends(&pa), ends(&pb));
+        let shared = (ea.0 - eb.0).abs() < tol || (ea.1 - eb.1).abs() < tol;
         match op {
-            BoolOp::Union if (ea.0 - eb.0).abs() >= tol && (ea.1 - eb.1).abs() >= tol => return None,
+            BoolOp::Union if shared != common_cap => return None,
             // A cut tool may extend past a cap into empty space. Exact slab sections
             // discard that space rather than intersecting coincident cylinder walls.
             BoolOp::Cut if ea.1 <= eb.0 + tol || eb.1 <= ea.0 + tol => return None,
@@ -1976,7 +1985,19 @@ pub(crate) fn prism_boolean_free_form(a: &Body, b: &Body, op: BoolOp) -> Option<
 pub(crate) fn prism_boolean(a: &Body, b: &Body, op: BoolOp) -> Option<Result<Option<Body>>> {
     // Each operand's index is built once, and only if it is read as a prism.
     let index = [&LazyIndex::new(a, 0), &LazyIndex::new(b, 1)];
-    crate::guard("prism boolean", || Ok(simple_prism_indexed(a, b, op, index).or_else(|| stack_indexed(a, b, op, index)))).ok().flatten()
+    crate::guard("prism boolean", || Ok(simple_prism_indexed(a, b, op, index).or_else(|| stack_indexed(a, b, op, index, true)))).ok().flatten()
+}
+
+/// [`prism_boolean`] of a union of stepped prisms along one direction that end at different
+/// levels (a barrel joined between two faces of a wider part, its ends flush with them), which
+/// that route leaves to the B-rep boolean: for when that boolean has failed. `None` for other
+/// operations and operands.
+pub(crate) fn prism_union_between_caps(a: &Body, b: &Body, op: BoolOp) -> Option<Result<Option<Body>>> {
+    if op != BoolOp::Union {
+        return None;
+    }
+    let index = [&LazyIndex::new(a, 0), &LazyIndex::new(b, 1)];
+    crate::guard("prism boolean", || Ok(stack_indexed(a, b, op, index, false))).ok().flatten()
 }
 
 #[cfg(test)]
@@ -2742,6 +2763,56 @@ mod planar_tests {
                 let taken = planar_regions_boolean(std::slice::from_ref(&plate), std::slice::from_ref(&cut), BoolOp::Intersect, 1e-7).unwrap();
                 assert!(taken.len() == 1 && taken[0].outer.segs.len() == 3, "{k} r {r}: {taken:?}");
                 assert!((taken[0].area() - r * r * (1.0 - std::f64::consts::FRAC_PI_4)).abs() < 1e-9, "{k} r {r}");
+            }
+        }
+    }
+
+    /// A 55 x 30 plate whose bottom edge bends up by `slope` over its last 5 mm before the
+    /// corner at (100, 50), and a strip 3 wide below the straight 50 mm, as a sheet's bend zone
+    /// lies against its base: the strip's corners on that edge rounded to the nanometre, as a
+    /// flange keeps them, and moved by `off`. Both turned by `theta` about the origin.
+    fn plate_and_strip_by_a_bent_edge(theta: f64, slope: f64, off: Vec2) -> (Region2, Region2) {
+        let (sn, cs) = theta.sin_cos();
+        let rot = |x: f64, y: f64| Vec2::new(x * cs - y * sn, x * sn + y * cs);
+        let nm = |p: Vec2| Vec2::new((p.x * 1e9).round() / 1e9, (p.y * 1e9).round() / 1e9) + off;
+        let plate = [rot(95.0, 50.0 + 5.0 * slope), rot(100.0, 50.0), rot(150.0, 50.0), rot(150.0, 80.0), rot(95.0, 80.0)];
+        let strip = [nm(rot(100.0, 50.0)), rot(100.0, 47.0), rot(150.0, 47.0), nm(rot(150.0, 50.0))];
+        (Region2 { outer: Loop2::polygon(&plate), holes: vec![] }, Region2 { outer: Loop2::polygon(&strip), holes: vec![] })
+    }
+
+    /// The bent piece of the plate's edge, a hair from the strip's edge, crosses it short of
+    /// the corner they share: the corners a nanometre apart at most, the crossing up to a
+    /// hundred times that before it at a slope of 1 in 100, a thousand at 1 in 1000. A split
+    /// there left a sliver of edge shorter than the distance within which the loops join their
+    /// pieces; the chaining took it for a second way out of the corner, and a loop of that one
+    /// sliver is open, its area not zero away from the origin: a hole no outline held (no
+    /// result at all) or a region of its own. The union is the plate and the strip, whole.
+    #[test]
+    fn a_bent_edge_crossing_its_neighbour_by_their_corner_leaves_no_sliver() {
+        let union_is_whole = |(plate, strip): (Region2, Region2), what: &str| {
+            let want = plate.area() + strip.area();
+            for (a, b) in [(&plate, &strip), (&strip, &plate)] {
+                let out = planar_regions_boolean(std::slice::from_ref(a), std::slice::from_ref(b), BoolOp::Union, 1e-7)
+                    .unwrap_or_else(|e| panic!("{what}: {e}"));
+                assert_eq!(out.len(), 1, "{what}: {out:?}");
+                let lp = &out[0].outer;
+                let shortest = lp.segs.iter().map(Seg2::length).fold(f64::MAX, f64::min);
+                assert!(out[0].holes.is_empty() && lp.segs.len() == 7 && shortest > 2.9, "{what}: {} edges, shortest {shortest:e}", lp.segs.len());
+                assert!((out[0].area() - want).abs() < 1e-6, "{what}: {} vs {want}", out[0].area());
+            }
+        };
+        for k in 0..360 {
+            for slope in [0.01, 0.001] {
+                union_is_whole(plate_and_strip_by_a_bent_edge((k as f64 * 0.25).to_radians(), slope, Vec2::ZERO), &format!("{k} slope {slope}"));
+            }
+        }
+        // Corners a few nanometres apart, any way round: the sliver is then longer than the
+        // tolerance (1e-7 with the strip 1e-9 into the plate) but shorter than the joining
+        // distance (1e-6).
+        for k in 0..16 {
+            for d in [1e-9, 4e-9] {
+                let off = Vec2::from_angle(k as f64 * std::f64::consts::TAU / 16.0) * d;
+                union_is_whole(plate_and_strip_by_a_bent_edge(0.0, 0.01, off), &format!("off {off:?}"));
             }
         }
     }

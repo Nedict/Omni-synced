@@ -3,6 +3,8 @@
 //! joint graph and moves the occurrences it places; the session re-solves after any edit too,
 //! so joints follow the geometry their origins snap to.
 
+use std::collections::BTreeMap;
+
 use serde_json::{Value, json};
 use solidcraft_doc::expr::Kind;
 use solidcraft_doc::joints::{self, Joint, JointKind, JointOrigin, MotionLink, NamedOrigin, Snap};
@@ -25,7 +27,8 @@ pub static COMMANDS: &[CommandSpec] = &[
     ),
     CommandSpec::new("joint.rigid_group", "Rigid Group", rigid_group).at("SOLID", "ASSEMBLE").icon("rigid_group").params("occurrences: [ids or names] (move together, as they are)"),
     CommandSpec::new("joint.drive", "Drive Joints", drive).at("SOLID", "ASSEMBLE").icon("drive").params(
-        "joint: id|name; value | values: [angles in deg or expressions, distances] (clamped to the limits)",
+        "joint: id|name; value | values: [angles in deg or expressions, distances] (clamped to the limits; the other joints of a \
+         closed loop follow, and the motion stops where the loop can no longer close → stopped_by_loop)",
     ),
     CommandSpec::new("joint.motion_link", "Motion Link", motion_link)
         .at("SOLID", "ASSEMBLE")
@@ -43,8 +46,14 @@ pub static COMMANDS: &[CommandSpec] = &[
 
 /// Re-solve the joints and move the occurrences they place (after any edit).
 pub fn resolve(s: &mut Session) -> joints::Solution {
+    resolve_holding(s, &BTreeMap::new())
+}
+
+/// Re-solve the joints, keeping the `held` values (the ones being driven, mapped to the values
+/// they move from) where loops are closed.
+pub fn resolve_holding(s: &mut Session, held: &joints::Held) -> joints::Solution {
     let st = s.model.state();
-    let sol = joints::solve(&s.doc, &st);
+    let sol = joints::solve_holding(&s.doc, &st, held);
     if !sol.world.is_empty() {
         let mut next = (*s.doc).clone();
         if next.apply_joint_solution(&sol) {
@@ -225,6 +234,8 @@ fn add_joint(s: &mut Session, j: Joint) -> Result<Value> {
     }
     let id = j.id;
     let name = j.name.clone();
+    // A new joint can take a deleted one's id; it starts shown.
+    s.visibility.hidden_joints.retain(|h| *h != id);
     s.doc_mut().assembly.joints.push(j);
     let sol = resolve(s);
     let mut out = sol_json(&sol);
@@ -353,13 +364,19 @@ fn drive(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     joints::clamp(j, &mut q);
-    // Moved as far toward `q` as contact sets allow.
-    let r = super::motion::drive_joint(s, id, q)?;
+    // Moved as far toward `q` as contact sets and closed loops allow. Values left out of
+    // `values` are not driven: in a closed loop they follow.
+    let given = match p.get("values") {
+        Some(Value::Array(a)) => a.len(),
+        _ => 1,
+    };
+    let r = super::motion::drive_joint(s, id, q, given)?;
     let sol = joints::solve(&s.doc, &s.model.state());
     let mut out = sol_json(&sol);
     out["joint"] = json!(id);
     out["values"] = json!(s.doc.assembly.joints.iter().find(|j| j.id == id).map(|j| j.values.clone()));
     out["stopped_by_contact"] = r["stopped_by_contact"].clone();
+    out["stopped_by_loop"] = r["stopped_by_loop"].clone();
     Ok(out)
 }
 
@@ -504,7 +521,7 @@ fn list(s: &mut Session, _p: &Value) -> Result<Value> {
                 .collect();
             let world = |o: &JointOrigin| s.doc.origin_world(&st, o).ok().map(|m| json!({"origin": [m[3][0], m[3][1], m[3][2]], "z": [m[2][0], m[2][1], m[2][2]]}));
             json!({"id": j.id, "name": j.name, "type": j.kind, "a": j.a.occurrence, "b": j.b.occurrence, "values": named,
-                "flip": j.flip, "offset": j.offset, "suppressed": j.suppressed, "frame_a": world(&j.a), "frame_b": world(&j.b)})
+                "flip": j.flip, "offset": j.offset, "suppressed": j.suppressed, "visible": s.joint_visible(j.id), "frame_a": world(&j.a), "frame_b": world(&j.b)})
         })
         .collect();
     let links: Vec<Value> =

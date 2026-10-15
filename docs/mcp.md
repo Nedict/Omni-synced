@@ -5,6 +5,11 @@ SolidCraft speaks the [Model Context Protocol](https://modelcontextprotocol.io) 
 An agent models exactly like a person does: every tool runs engine commands, the same ones the
 toolbar, palette, scripts and control channel use, and never opens a dialog.
 
+Persistent headless and bridged sessions expose asynchronous product images through the
+ordinary `execute` tool: `render.preflight`, `render.start`, `render.status`,
+`render.cancel` and `render.export`. Keep the complete returned job ID; image bytes remain
+in the session until explicit PNG export. See [render jobs](render-jobs.md).
+
 ## Start it
 
 ```sh
@@ -49,13 +54,17 @@ start-up and says when the `--in` design's folder was left out; `--allow-path` a
 
 Paths are resolved before they are compared, so `..` and symlinks that lead out are refused
 (saving through a link writes the file it points to, so the link's target is what counts), and
-a new file must go into a folder that exists. On Windows a path must be on a local drive
+a new file must go into a folder that exists (a missing folder inside an allowed one is reported as missing; it is not created and does not call for a wider `--allow-path`). On Windows a path must be on a local drive
 (`C:\…` or `\\?\C:\…`): UNC, device and NT paths in any spelling (`\\server\share`,
 `//server/share`, `\\?\UNC\…`, `\??\…`, `\\.\…`), drive-relative paths (`C:file`), a `:` in a
 file name (alternate data streams), reserved device names with any extension (`NUL`, `CON`,
 `COM1.txt`, …) and short 8.3 names (`PROGRA~1`) are refused before any file system call, and the
 resolved path is checked again, so a link or junction that leads to a share is refused too. This
-includes a `sketch.text` font given as a file path; installed fonts named by family still work.
+includes a `sketch.text` font given as a file path and the font file a design's text names when
+the design is opened; installed fonts named by family still work.
+The server spells its own folders (scratch, recovery) with long names, so they work when the
+temporary folder's path has a short name (`…\NAME~1.XYZ\AppData\Local\Temp`, as Windows often
+gives when the user folder's name is long).
 A refused path is a tool error saying why.
 
 A hard link inside an allowed folder can't be told apart from an ordinary file, so a hard link
@@ -120,9 +129,9 @@ They cover the workflow, the command shapes, how to verify with `measure`, and t
 | `list_commands` | `filter?` | The command catalog: id, label, tab/panel, shortcut, parameter docs, enabled now. `filter` matches id, label, tab and panel. |
 | `execute` | `command`, `params?`, `verbose?` (default true) | Run any command with JSON parameters (`list_commands` shows them). Failures leave the design unchanged. A feature command replies with the feature (`feature`, `name`), every body (`bodies`) and the bodies it created, changed and removed (`created_bodies`, `changed_bodies`, `removed_bodies`). `verbose: false` uses the same compact reply as `batch`. |
 | `batch` | `commands: [{command, params}]`, `rollback?` (default true), `verbose?` (default true) | Run steps in order, stop at the first error and undo the completed steps. The reply names the failing step (`failed.index`, `failed.command`, `failed.error`) and every result before it. `verbose: false` keeps the reply small in large designs: feature steps leave out the full body list (`created_bodies`, `changed_bodies`, `removed_bodies` stay) and sketch steps the ids they repeat outside `created`. Bridged to an app that has `engine.batch`, the whole batch is one control request (one frame of the app). Older apps, and apps showing the agent cursor, get the steps one by one. |
-| `inspect_design` | `measure?` (default true), `sketches?` (default true) | Parameters, timeline (type, suppressed, rolled back, error, warning, timing), bodies (volume, area, centre of mass, bbox, face/edge/vertex counts, visible), sketches (curves, points, constraints, profiles, DOF, solve status, visible), selection, undo depth. Hide helper sketches, bodies or construction planes with `execute` `browser.visibility` (`{items, visible}` or `{folder, visible}`). |
+| `inspect_design` | `measure?` (default true), `sketches?` (default true) | Design properties (`metadata`: project, author… and other tools' keys; set them with `execute` `document.metadata.set`), parameters, timeline (type, suppressed, rolled back, error, warning, timing), bodies (volume, area, centre of mass, bbox, face/edge/vertex counts, visible), sketches (curves, points, constraints, profiles, DOF, solve status, visible), selection, undo depth. Hide helper sketches, bodies or construction planes with `execute` `browser.visibility` (`{items, visible}` or `{folder, visible}`), and joint glyphs with `{joints: [id or name], visible}` or `{folder: "joints", visible}` (a hidden joint still constrains and drives; `joint.list` reports each joint's `visible`). |
 | `measure` | `body?` | Volume (mm³), area (mm²), centre of mass, bbox and topology counts per body, with totals. |
-| `body_topology` | `body` | Edges (index, midpoint, length, ends) and faces (index, area, centroid, normal). An edge midpoint is the `[x,y,z]` that picks that edge for fillet and chamfer. |
+| `body_topology` | `body` | Edges (index, midpoint, length, ends) and faces (index, name, area, centroid, normal, `point`, and for a cylindrical face its `cylinder`: `origin`, `axis`, `radius`). An edge midpoint is the `[x,y,z]` that picks that edge for fillet and chamfer. A face's `point` lies on it and picks it (its centroid may not: that of a face with a hole is in the hole); a face's `name` picks it for the commands that take faces (`face.delete`, `solid.shell`, `solid.draft`, `solid.offset_face`, `solid.split_face`, `solid.replace_face`, and `face` of `sheet.convert`). |
 | `set_parameter` | `name`, `value` (number or expression), `unit?`, `comment?` | Create or change a user parameter and recompute; reports `recomputed` (features rebuilt), `restored` (features whose earlier result for the same inputs was reused, e.g. a value set back) and features that now fail. |
 | `screenshot` | `view?` (iso, top, front, back, bottom, left, right, home, fit, or a named view saved with `view.save`), `camera?` (`{target, yaw, pitch, distance, fov?}`, as `view.apply`), `path?`, `width?`, `height?`, `source?` (window, model) | A PNG image content block. Headless: CPU render fitted to the model, or from the named view or camera. Bridged: the app window (default) or a model render with the app's camera; a named view or camera moves the app's viewport there first (`execute` `view.apply` does the same without a screenshot). |
 | `export` | `path`, `format?` (step, 3mf, 3mf-tagged, stl, stla, obj, urdf), `bodies?`, `mesh_prefix?`, `effort?`, `velocity?` | STEP, 3MF or mesh export; URDF writes the whole assembly with its meshes next to it (`docs/urdf.md`). |
@@ -149,6 +158,20 @@ step: the design, the active sketch and the undo history are restored exactly as
 however long the history is. Batches that call `file.new` or `doc.open` get the design back,
 not its file path. (An older app without checkpoints falls back to undoing as many steps as
 the batch added to the undo history.)
+
+## Camera and close-up recipe
+
+The `camera` of `screenshot` (the object `view.apply` and `view.save` take too) is an orbit camera, `{target, yaw, pitch, distance, fov?}`, in millimetres and **radians**. Unlike the `angle` of `solid.move`, a bare number is not degrees here. The eye is at `target + distance * (-sin(yaw) * cos(pitch), -cos(yaw) * cos(pitch), sin(pitch))`, looking at `target` with Z up on the screen. So `yaw: 0, pitch: 0` is the front view: the eye at -Y, looking along +Y, with +X to the right. A yaw of π/2 looks from -X, π from +Y and -π/2 from +X. The pitch is the elevation angle up from the XY plane, and π/2 looks straight down with +X to the right and +Y up. `fov` is the vertical field of view in radians. `0`, or no `fov`, is an orthographic view whose visible half-height is 0.4 × `distance`; with a perspective `fov` the half-height at the target is `distance * tan(fov / 2)`. `inspect.section` removes what lies on the side its normal points to: it keeps the points `p` with `n · p < d`, where `d = n · origin` (`flip: true` keeps the other side). To look into the cut, put the eye on the removed side.
+
+To look closely at one part of a large model, such as a STEP assembly, work in a headless session. These steps change only the open design in memory:
+
+1. Open the model with `solidcraft-cli mcp --in assembly.step` (or the `open` tool). `inspect_design` lists the bodies with their names and bounding boxes.
+2. Remove what is in the way with `solid.remove`, e.g. `{"bodies": ["Cover"]}`.
+3. Cut the region out of the rest with `solid.box`, e.g. `{"corner": [40, 0, -45], "length": 20, "width": 50, "height": 45, "operation": "intersect", "targets": ["Housing", "Plate"]}`. Each listed body is trimmed to the box, and one that lies wholly outside the box is removed. The box itself is not kept.
+4. If the model lies on its back (many STEP files have +Y up), stand it Z up with `solid.move`, listing every body you keep, e.g. `{"bodies": ["Housing", "Plate"], "axis": [1, 0, 0], "angle": 90}`. It turns the bodies about the world origin, and a bare angle is in degrees. A turn of +90° about X takes +Y to +Z.
+5. Colour the parts that matter with `appearance.assign`, e.g. `{"bodies": ["Housing"], "color": "#3a7bd5"}`, and hide helper bodies or sketches with `browser.visibility`, e.g. `{"items": ["Plate"], "visible": false}`.
+6. Cut a section with `inspect.section`, e.g. `{"plane": {"origin": [50, 30, 0], "normal": [0, 1, 0]}}` or `{"plane": "XY", "at": 5}`.
+7. Take the picture with `screenshot`: a `camera` whose `target` is the centre of the region and whose eye is on the cut side, `source: "model"`, and `path`, `width` and `height` as needed. An orthographic picture is 0.8 × `distance` high, so a `distance` of about 1.5 times the region's size frames it. Look at the image, adjust `yaw`, `pitch` and `distance`, and shoot again. Headless, the picture is always a render of the model; bridged to the app, `source: "model"` asks for that render instead of the app's window.
 
 ## Compact replies
 
