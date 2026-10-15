@@ -137,9 +137,16 @@ fn extrude_base(s: &Session, p: &Value) -> Option<(Vec3, Vec3)> {
     Some((ss.plane.to_world(q), ss.plane.normal()))
 }
 
+/// How far past the profile [`auto_operation`] looks for material it starts in.
+const START_PROBE_MM: f64 = 0.1;
+
 /// What `operation: "auto"` means for an extrude with these parameters: `cut` when it goes
 /// into a body, otherwise `join` when the active component has a solid. Keeping an
 /// addition separate requires an explicit `new` operation.
+///
+/// "Goes into a body" is decided where the extrude starts: just past the profile in the
+/// direction it grows, or halfway along it. With the halfway point alone, a cut dragged far
+/// past a body's far side read as a Join (#1257).
 pub fn auto_operation(s: &Session, p: &Value) -> Option<&'static str> {
     let d = s.doc.eval(&expr(p, "distance")?, Kind::Length).ok()?;
     let dir = str_(p, "direction").map(str::to_ascii_lowercase);
@@ -161,10 +168,13 @@ pub fn auto_operation(s: &Session, p: &Value) -> Option<&'static str> {
         return Some("new");
     }
     let inside = |q: Vec3| bodies.iter().any(|b| b.mesh().contains(q));
+    // A step into whatever is right in front of the profile, short of the far end.
+    let near = |d: f64| d.signum() * (d.abs() * 0.5).min(START_PROBE_MM);
+    let into = |d: f64| inside(base + n * near(d)) || inside(base + n * (d * 0.5));
     if symmetric {
-        return Some(if inside(base + n * (d.abs() * 0.5)) || inside(base - n * (d.abs() * 0.5)) { "cut" } else { "join" });
+        return Some(if into(d.abs()) || into(-d.abs()) { "cut" } else { "join" });
     }
-    if inside(base + n * (d * 0.5)) {
+    if into(d) {
         Some("cut")
     } else {
         // A profile can meet material along its side, or only around part of a

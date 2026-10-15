@@ -170,6 +170,9 @@
 //!   A `SurfaceUntrim` feature (Untrim: a `face` as `body` and `point`, optional `holes`
 //!   points, `outer` and `in_place`) is also first saved in 21; 0.11.0 asks for an update
 //!   instead of meeting a feature it can't read.
+//!   A `SurfaceRuled` feature (Ruled Surface: `body`, `edges` points, `distance`, optional
+//!   `mode`, `angle`, `direction`, `flip`, `corners` and `face`) is also first saved in 21;
+//!   0.11.0 asks for an update instead of meeting a feature it can't read.
 
 use serde_json::Value;
 

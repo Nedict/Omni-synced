@@ -76,6 +76,9 @@ The same app runs in the browser: [open SolidCraft on the web](../app/) (`?sampl
 part, `?webgl` forces WebGL2 where WebGPU is missing or misbehaves; the browser remembers it until
 `?webgpu`, and an app installed from Chrome or Edge starts with it too). Designs are saved in the
 browser's private file storage, which needs HTTPS or localhost.
+Planned worker and tiered-storage integration is
+described in [web-runtime.md](https://github.com/bherbruck/solidcraft/blob/main/docs/web-runtime.md)
+(design; not yet wired in the shipped wasm build).
 
 After the first visit the web app works offline: the browser keeps a copy of it. Online, each
 launch gets the latest published build (the browser downloads it once when it changes); offline,

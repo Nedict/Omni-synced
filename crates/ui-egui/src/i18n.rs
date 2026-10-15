@@ -77,15 +77,29 @@ impl Locale {
         interpolate(self.text(id), args)
     }
 
-    /// Translate generated browser names and labels, preserving custom names otherwise.
-    pub fn dynamic(self, text: &str) -> String {
+    /// The default names SolidCraft gives (`Sketch1`, `Body2`, `Component3`), translated.
+    fn default_name(self, text: &str) -> Option<String> {
         for (prefix, id) in [("Sketch", "browser.sketch_name"), ("Body", "browser.body_name"), ("Component", "browser.component_name")] {
             if let Some(number) = text.strip_prefix(prefix)
                 && !number.is_empty()
                 && number.chars().all(|c| c.is_ascii_digit())
             {
-                return self.format(id, &[("number", number)]);
+                return Some(self.format(id, &[("number", number)]));
             }
+        }
+        None
+    }
+
+    /// A name someone gave (a body, sketch, component, …): shown as typed, even when it matches
+    /// a UI label ("Fillet", "Boss"); only the default names are translated.
+    pub fn given_name(self, text: &str) -> String {
+        self.default_name(text).unwrap_or_else(|| text.to_string())
+    }
+
+    /// Translate generated browser names and labels, preserving custom names otherwise.
+    pub fn dynamic(self, text: &str) -> String {
+        if let Some(name) = self.default_name(text) {
+            return name;
         }
         for (prefix, id, arg) in [("Units: ", "browser.units", "units"), ("Precision: ", "browser.precision", "precision")] {
             if let Some(value) = text.strip_prefix(prefix) {
@@ -165,6 +179,9 @@ pub fn format(id: &str, args: &[(&str, &str)]) -> String {
 }
 pub fn tr_dyn(text: &str) -> String {
     CURRENT.with(|current| current.get().dynamic(text))
+}
+pub fn tr_name(text: &str) -> String {
+    CURRENT.with(|current| current.get().given_name(text))
 }
 
 #[cfg(test)]
@@ -400,6 +417,18 @@ mod tests {
         assert_eq!(ja.dynamic("4 degrees of freedom"), "自由度 4");
         assert_eq!(ja.dynamic("Sketch of bracket"), "Sketch of bracket");
         assert_eq!(Locale::for_language("en").dynamic("Sketch1"), "Sketch1");
+    }
+
+    #[test]
+    fn given_names_are_not_translated_as_labels() {
+        let de = Locale::for_language("de");
+        // "Boss" and "Fillet" are also UI labels, which `dynamic` translates.
+        assert_ne!(de.dynamic("Boss"), "Boss");
+        assert_ne!(de.dynamic("Fillet"), "Fillet");
+        assert_eq!(de.given_name("Boss"), "Boss");
+        assert_eq!(de.given_name("Fillet"), "Fillet");
+        assert_eq!(de.given_name("Sketch3"), de.dynamic("Sketch3"));
+        assert_ne!(de.given_name("Sketch3"), "Sketch3");
     }
 
     #[test]

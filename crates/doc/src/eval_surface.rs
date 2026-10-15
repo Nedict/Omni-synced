@@ -1,8 +1,9 @@
 //! Evaluation of the surface features: Patch, Stitch, Thicken, Trim, Extend, Surface Extrude,
-//! Revolve, Sweep and Loft, Offset, Untrim, Unstitch and Reverse Normal (kernel `surfaces`,
-//! `surface_offset`, `surface_untrim`).
+//! Revolve, Sweep and Loft, Offset, Ruled, Untrim, Unstitch and Reverse Normal (kernel `surfaces`,
+//! `surface_offset`, `surface_ruled`, `surface_untrim`).
 
 use super::*;
+use crate::{RuledCorners, RuledMode};
 use solidcraft_geom::Seg2;
 
 pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut ModelState) -> Result<()> {
@@ -230,6 +231,30 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
                 }
             }
             let made = Traced::step(kernel::offset_surface(&mb.body, &picked, d, tol)?, &[&mb.traced()]);
+            let name = new_name(st, f, 0);
+            st.bodies.push(ModelBody::traced_new(name, made, f.id));
+            Ok(())
+        }
+        FeatureKind::SurfaceRuled { body, edges, distance, mode, angle, direction, flip, corners, face } => {
+            let d = val(vals, distance, Kind::Length)?;
+            let mode = match mode {
+                RuledMode::Normal => kernel::RuledMode::Normal,
+                RuledMode::Tangent => kernel::RuledMode::Tangent,
+                RuledMode::Angle => {
+                    let a = angle.as_ref().ok_or_else(|| DocError::Invalid("a ruled surface at an angle needs `angle`".into()))?;
+                    kernel::RuledMode::Angle { angle: val(vals, a, Kind::Angle)?, reference: *direction }
+                }
+                RuledMode::Direction => kernel::RuledMode::Direction(
+                    direction.ok_or_else(|| DocError::Invalid("a ruled surface along a direction needs `direction`".into()))?,
+                ),
+            };
+            let corners = match corners {
+                RuledCorners::Mitre => kernel::RuledCorners::Mitre,
+                RuledCorners::Round => kernel::RuledCorners::Round,
+            };
+            let mb = st.body(body).cloned().ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let r = kernel::Ruled { distance: d, mode, flip: *flip, corners, face: *face };
+            let made = Traced::step(kernel::ruled_surface(&mb.body, edges, &r)?, &[&mb.traced()]);
             let name = new_name(st, f, 0);
             st.bodies.push(ModelBody::traced_new(name, made, f.id));
             Ok(())

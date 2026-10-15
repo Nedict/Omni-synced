@@ -354,6 +354,12 @@ macro_rules! feature_walk {
                 FeatureKind::Thicken { thickness, .. } => f("Thickness", thickness, L, I),
                 FeatureKind::SurfaceTrim { plane, .. } => $plane(plane, f),
                 FeatureKind::SurfaceExtend { distance, .. } => f("Distance", distance, L, I),
+                FeatureKind::SurfaceRuled { distance, angle, .. } => {
+                    f("Distance", distance, L, I);
+                    if let Some(a) = angle {
+                        f("Angle", a, A, I);
+                    }
+                }
                 FeatureKind::Unstitch { .. } | FeatureKind::ReverseNormal { .. } | FeatureKind::SurfaceUntrim { .. } => {}
                 FeatureKind::SurfaceOffset { distance, tolerance, .. } => {
                     f("Distance", distance, L, I);

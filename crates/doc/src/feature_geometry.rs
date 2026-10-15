@@ -152,6 +152,17 @@ macro_rules! geometry_walk {
                         f(Pick(p));
                     }
                 }
+                FeatureKind::SurfaceRuled { edges, direction, face, .. } => {
+                    for e in edges {
+                        f(Pos(e));
+                    }
+                    if let Some(d) = direction {
+                        f(Dir(d));
+                    }
+                    if let Some(p) = face {
+                        f(Pick(p));
+                    }
+                }
                 FeatureKind::Unstitch { faces, .. } | FeatureKind::ReverseNormal { faces, .. } => {
                     for p in faces {
                         f(Pos(p));
