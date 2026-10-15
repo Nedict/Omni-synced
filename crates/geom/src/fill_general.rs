@@ -11,23 +11,35 @@
 //!   (the turn *in* the patch: the boundary's geodesic turn, signed, so a reflex corner stays
 //!   reflex) and the rest (the turn the boundary makes *with* the patch bending under it, which a
 //!   plane cannot show). By Gauss–Bonnet the in-patch turns of a developable patch add up to a
-//!   full turn; a curved patch makes up the difference with its curvature, so the difference is
-//!   given back in proportion to the bending turns (a cap over a round rim, whose rim does not
-//!   turn in its neighbours' tangent planes at all, develops to the circle), and a saddle's
-//!   excess is scaled away. The headings then close exactly, and the small gap left in position
-//!   is spread along the steps by length. A domain that crosses itself is refused. The domain's
-//!   steps are as long as the loop's, so the parameters are millimetres along the boundary.
-//! - **The surface is a bicubic B-spline over the domain's box** whose control points (all three
-//!   coordinates) minimise, by least squares, the misfit to Hermite data along the boundary plus
-//!   a vanishing multiple of the thin-plate energy `∫∫ |S_uu|² + 2|S_uv|² + |S_vv|²` (which only
-//!   decides what the data leaves free): at every boundary station the position, and where the
-//!   neighbour asks for it the cross-boundary derivative `∂S/∂ν = s·w` (`ν` the domain's inward
-//!   normal, `w` the direction the neighbour leaves in across the edge, `s` the boundary's own
-//!   speed so the map is conformal there) — G1 — and the second derivative `∂²S/∂ν² = s²·k` (`k`
-//!   the neighbour's curvature vector along `w`, the same Hermite rows a bridge uses) — G2. All
-//!   conditions are linear and separate per coordinate, so the three coordinates share one
-//!   banded normal matrix, factored once. The face is bounded by the body's own edges, so the
-//!   surface only has to pass within the tolerance of them.
+//!   full turn; a curved patch makes up the difference with its curvature, so a shortfall is given
+//!   back in proportion to the bending turns (a cap over a round rim, whose rim does not turn in
+//!   its neighbours' tangent planes at all, develops to the circle), and a saddle's excess comes
+//!   off the smooth stretches, so corners keep their angles. The headings then close exactly, and
+//!   the small gap left in position is spread along the steps by length. A domain that crosses
+//!   itself is refused. The domain's steps are as long as the loop's, so the parameters are
+//!   millimetres along the boundary. (`up` is the neighbour's normal at a G1/G2 station; at a G0
+//!   station, the loop's tangent × the neighbour's leave direction tilted towards the loop's mean
+//!   plane.)
+//! - **The surface is a bicubic B-spline over the domain's box** whose control points minimise,
+//!   by least squares, the misfit to the boundary conditions plus a vanishing multiple of the
+//!   thin-plate energy `∫∫ |S_uu|² + 2|S_uv|² + |S_vv|²` (which only decides what the conditions
+//!   leave free):
+//!   - G0, every station: the position.
+//!   - G1: `n·∂S/∂ν = 0` (`ν` the domain's inward normal, `n` the neighbour's normal): the
+//!     cross-boundary derivative lies in the neighbour's tangent plane, which with the boundary
+//!     tangent makes the normals agree; plus weak Hermite rows `∂S/∂ν = s·w` (`w` the direction
+//!     the neighbour leaves in across the edge, `s` the boundary's own speed), which say that the
+//!     patch leaves into itself rather than folding back over the neighbour, and about how fast,
+//!     but give way where full Hermite data cannot all hold (it is consistent only with a map
+//!     exactly conformal at the boundary, which a curved patch's is not).
+//!   - G2: `n·∂²S/∂ν² = (∂S/∂ν·w)²·κ` (`κ` the neighbour's normal curvature along `w`, read off
+//!     the bridge's frames): the patch's normal curvature across the edge is the neighbour's. The
+//!     speed is the fit's own, so the row is solved again with the last solution's speed.
+//!
+//!   Without G1/G2 the three coordinates are fitted apart on one shared matrix; with them, together
+//!   (the geometric rows couple them), numbered so the band stays narrow. At corners the two
+//!   sides' conditions overdetermine the surface: see [`Near`] and [`fades`]. The face is bounded
+//!   by the body's own edges, so the surface only has to pass within the tolerance of them.
 //! - **Points the patch must pass through** are located on the fitted surface (nearest point,
 //!   inside the domain), added as position data there, and the fit and the location are repeated
 //!   — Hoschek's parameter correction — so each point ends on the surface.
@@ -37,6 +49,8 @@
 //!   where the neighbours' tangent planes disagree: no surface can meet both there), that passes
 //!   through the points, and that neither folds nor pinches inside the loop, is the fill. When a
 //!   grid needs more stations than it has, the sampling doubles.
+//! - **A crown** fills the middle out along the surface's own normals, on control points clear of
+//!   the loop, so it moves neither the loop nor the conditions across it.
 
 use crate::Vec3;
 use crate::bspline::{HPoint, NurbsSurface, SplineError, SplineResult, invalid};
@@ -46,10 +60,6 @@ use crate::fill::{Band, Grid, MAX_LOOP_POINTS, SMOOTHNESS, inside_loop, segments
 pub const MAX_GENERAL_SPANS: usize = 64;
 /// Most points a patch can be asked to pass through.
 pub const MAX_FILL_POINTS: usize = 64;
-/// How fast the patch may leave its G1/G2 edges, as a factor of the boundary's own speed: what a
-/// patch's `crown` scales (`1 + crown`).
-pub const MIN_SPEED: f64 = 0.1;
-pub const MAX_SPEED: f64 = 4.0;
 /// Fewest spans along the domain's longer side (the first grid tried).
 const MIN_SPANS: usize = 4;
 /// A turn between two loop steps sharper than this (radians) folds the loop back on itself.
@@ -61,8 +71,14 @@ const POINT_ROUNDS: usize = 3;
 /// A domain is rectilinear when this fraction of its length (weighted by how squarely it runs)
 /// lies along two directions at right angles.
 const RECTILINEAR: f64 = 0.5;
-/// G1 stations within this many grid cells of a corner whose neighbours disagree are not held to
-/// the angle tolerance.
+/// How far (radians) the domain's angle at a corner may be from the loop's for the corner to be
+/// met conformally (see [`Near`]).
+const CORNER_ANGLE_TOL: f64 = 0.5 * std::f64::consts::PI / 180.0;
+/// Near a corner whose neighbours disagree, the G1 rows are left out over this share of the run to
+/// the next corner (see [`fades`]).
+const BLEND_SHARE: f64 = 0.4;
+/// How close, in grid cells, a station is to a corner when it is near it (see [`Near`]): G1 and
+/// G2 stations that near a corner whose neighbours disagree are not held to the angle tolerance.
 const CLASH_CELLS: f64 = 2.0;
 
 /// What the face beside a station asks the patch to repeat across it.
@@ -101,8 +117,13 @@ pub struct FillSpec<'a> {
     pub tol: f64,
     /// How far (radians) the surface's normal may turn from a G1/G2 neighbour's.
     pub angle_tol: f64,
-    /// How fast the patch leaves its G1/G2 edges, against the boundary's own speed (1: as fast).
-    pub speed: f64,
+    /// How full the middle is made (see [`crate::fill::fill_loop`]'s crown, between
+    /// [`crate::fill::MIN_CROWN`] and [`crate::fill::MAX_CROWN`]): the bump, `crown` times the
+    /// domain's diagonal at its middle, is laid along the surface's own normal, turned to the side
+    /// the G1/G2 neighbours' normals face, on control points clear of the loop, so neither the
+    /// loop nor the conditions across it move. A loop with no G1/G2 station has no side to crown
+    /// to and is refused one.
+    pub crown: f64,
     /// Points the surface passes through.
     pub points: &'a [Vec3],
 }
@@ -134,7 +155,11 @@ pub struct GeneralFill {
 /// `stations(k, ts)` samples side `k` at the parameters `ts` (0 at its start, which is where side
 /// `k−1` ends, towards 1 at its end); it is asked for the same parameters again only when the
 /// sampling grows.
-pub fn fill_general(sides: usize, stations: &mut dyn FnMut(usize, &[f64]) -> Option<Vec<Station>>, spec: &FillSpec) -> SplineResult<GeneralFill> {
+pub fn fill_general(
+    sides: usize,
+    stations: &mut dyn FnMut(usize, &[f64]) -> Result<Vec<Station>, String>,
+    spec: &FillSpec,
+) -> SplineResult<GeneralFill> {
     if sides == 0 || sides.saturating_mul(16) > MAX_LOOP_POINTS / 2 {
         return Err(SplineError::TooLarge(format!("a loop of {sides} sides (at most {})", MAX_LOOP_POINTS / 32)));
     }
@@ -142,8 +167,8 @@ pub fn fill_general(sides: usize, stations: &mut dyn FnMut(usize, &[f64]) -> Opt
         return invalid("the fill tolerances must be positive");
     }
     // A range test also throws out NaN.
-    if !(MIN_SPEED..=MAX_SPEED).contains(&spec.speed) {
-        return invalid("the speed the patch leaves its edges must be between 0.1 and 4");
+    if !(crate::fill::MIN_CROWN..=crate::fill::MAX_CROWN).contains(&spec.crown) {
+        return invalid("the crown must be between -0.9 and 3");
     }
     if spec.points.len() > MAX_FILL_POINTS || spec.points.iter().any(|p| !p.is_finite()) {
         return invalid(format!("a patch passes through at most {MAX_FILL_POINTS} finite points"));
@@ -151,8 +176,12 @@ pub fn fill_general(sides: usize, stations: &mut dyn FnMut(usize, &[f64]) -> Opt
     let mut sample = |ts: &[f64]| -> SplineResult<Vec<Vec<Station>>> {
         (0..sides)
             .map(|k| {
-                let got = stations(k, ts).filter(|s| s.len() == ts.len() && s.iter().all(finite_station));
-                got.ok_or_else(|| SplineError::Invalid(format!("side {k} cannot be sampled")))
+                let got = stations(k, ts).map_err(SplineError::Invalid)?;
+                if got.len() == ts.len() && got.iter().all(finite_station) {
+                    Ok(got)
+                } else {
+                    Err(SplineError::Invalid(format!("side {k} has no finite stations")))
+                }
             })
             .collect()
     };
@@ -178,14 +207,14 @@ pub fn fill_general(sides: usize, stations: &mut dyn FnMut(usize, &[f64]) -> Opt
         fit = all;
         per *= 2;
     }
-    Err(SplineError::Unsupported(format!(
-        "filling this loop with one surface: the closest fit stays {:e} off the loop (tolerance {:e}), turns {:.3}° from its neighbours (tolerance {:.3}°) and {:e} off its points",
-        best.deviation,
-        spec.tol,
-        best.angle.to_degrees(),
-        spec.angle_tol.to_degrees(),
-        best.points
-    )))
+    let mut why = format!("filling this loop with one surface: the closest fit stays {:e} off the loop (tolerance {:e})", best.deviation, spec.tol);
+    if fit.iter().flatten().any(|s| s.across.is_some()) {
+        why += &format!(", turns {:.3}° from its neighbours (tolerance {:.3}°)", best.angle.to_degrees(), spec.angle_tol.to_degrees());
+    }
+    if !spec.points.is_empty() {
+        why += &format!(", {:e} off its points", best.points);
+    }
+    Err(SplineError::Unsupported(why))
 }
 
 fn finite_station(s: &Station) -> bool {
@@ -230,6 +259,9 @@ struct Developed {
     nu: Vec<[f64; 2]>,
     /// The boundary's speed at each station: loop length per domain length.
     speed: Vec<f64>,
+    /// Whether the domain turns at each station by the loop's own angle there (to
+    /// [`CORNER_ANGLE_TOL`]): a corner where it does not cannot be met conformally.
+    true_angle: Vec<bool>,
     counter_clockwise: bool,
 }
 
@@ -250,19 +282,43 @@ fn develop(st: &[Station]) -> SplineResult<Developed> {
         return Err(SplineError::Unsupported("filling a loop with two stations in one place".into()));
     }
     // The turn at each station, split into its part in the patch (signed about `up`) and the rest.
+    // A G0 station's `up` is the loop's tangent × its neighbour's leave direction: the patch's
+    // normal if it carried on from the neighbour, which says nothing about the turns of a loop
+    // whose neighbours stand square to the patch (a lid on walls). It is tilted towards the
+    // loop's own mean plane (Newell's area vector, its part square to the tangent, at half
+    // weight): that decides those turns, and where a loop wraps round so far that the mean plane
+    // faces the other way, the neighbour's direction still wins.
+    let area = (0..m).fold(Vec3::ZERO, |a, k| a + at(k).cross(at(k + 1)));
+    let loop_normal = area.normalized().unwrap_or(Vec3::ZERO);
+    let up: Vec<Vec3> = (0..m)
+        .map(|k| {
+            let Some(s) = st.get(k) else { return Vec3::ZERO };
+            if s.across.is_some() {
+                return s.up;
+            }
+            let (Some(a), Some(b)) = (chord.get((k + m - 1) % m), chord.get(k)) else { return s.up };
+            let Some(t) = (*a + *b).normalized() else { return s.up };
+            let square = loop_normal - t * loop_normal.dot(t);
+            (s.up + square * 0.5).normalized().unwrap_or(s.up)
+        })
+        .collect();
+    let mut full_turn = vec![0.0; m];
     let mut in_patch = vec![0.0; m];
     let mut bending = vec![0.0; m];
     for k in 0..m {
-        let (Some(a), Some(b), Some(s)) = (chord.get((k + m - 1) % m), chord.get(k), st.get(k)) else { continue };
+        let (Some(a), Some(b), Some(&up)) = (chord.get((k + m - 1) % m), chord.get(k), up.get(k)) else { continue };
         let (la, lb) = (a.len(), b.len());
         let cos = (a.dot(*b) / (la * lb)).clamp(-1.0, 1.0);
         let turn = cos.acos();
         if turn > FOLD_TURN {
             return Err(SplineError::Unsupported("filling a loop that folds back on itself".into()));
         }
+        if let Some(f) = full_turn.get_mut(k) {
+            *f = turn;
+        }
         let axis = a.cross(*b);
         let Some(axis) = axis.normalized().filter(|_| axis.len() > 1e-15 * la * lb) else { continue };
-        let along = axis.dot(s.up).clamp(-1.0, 1.0);
+        let along = axis.dot(up).clamp(-1.0, 1.0);
         if let (Some(g), Some(r)) = (in_patch.get_mut(k), bending.get_mut(k)) {
             *g = turn * along;
             *r = turn * (1.0 - along * along).max(0.0).sqrt();
@@ -272,7 +328,17 @@ fn develop(st: &[Station]) -> SplineResult<Developed> {
     let bend_total: f64 = bending.iter().sum();
     let sense = if geodesic >= 0.0 { 1.0 } else { -1.0 };
     let full = std::f64::consts::TAU;
-    let turns: Vec<f64> = if geodesic.abs() >= full {
+    // A saddle's boundary turns more than once round in the patch: the excess comes off the
+    // smooth stretches, so the corners keep their angles (a G1 patch is conformal at its
+    // boundary, and a map conformal at a corner keeps its angle); only when the corners alone
+    // turn too far are they scaled too.
+    let is_corner = |k: usize| st.get(k).is_some_and(|s| s.corner || s.clash);
+    let at_corners: f64 = (0..m).filter(|k| is_corner(*k)).filter_map(|k| in_patch.get(k)).sum::<f64>() * sense;
+    let smooth = geodesic * sense - at_corners;
+    let turns: Vec<f64> = if geodesic.abs() >= full && at_corners <= full && smooth > 0.0 {
+        let f = (full - at_corners) / smooth;
+        in_patch.iter().enumerate().map(|(k, g)| if is_corner(k) { *g } else { g * f }).collect()
+    } else if geodesic.abs() >= full {
         in_patch.iter().map(|g| g * full / geodesic.abs()).collect()
     } else if bend_total > 1e-9 {
         let mu = (full - geodesic.abs()) / bend_total;
@@ -364,7 +430,8 @@ fn develop(st: &[Station]) -> SplineResult<Developed> {
         let space = len.get((k + m - 1) % m).copied().unwrap_or(0.0) + len.get(k).copied().unwrap_or(0.0);
         speed.push(space / (la + lb));
     }
-    Ok(Developed { d, nu, speed, counter_clockwise: sense > 0.0 })
+    let true_angle = turns.iter().zip(&full_turn).map(|(t, f)| (t.abs() - f).abs() <= CORNER_ANGLE_TOL).collect();
+    Ok(Developed { d, nu, speed, true_angle, counter_clockwise: sense > 0.0 })
 }
 
 fn get2(d: &[[f64; 2]], k: usize) -> [f64; 2] {
@@ -420,6 +487,17 @@ impl Basis {
             }
         }
         Some(Basis { first, b })
+    }
+
+    /// The 16 (i, j, coefficient) terms of the derivative `Σ w[ru][rv] ∂^ru_u ∂^rv_v` at the point.
+    fn cells(&self, w: &[(usize, usize, f64)]) -> [(usize, usize, f64); 16] {
+        let mut out = [(0usize, 0usize, 0.0f64); 16];
+        for (t, slot) in out.iter_mut().enumerate() {
+            let (a, b) = (t % 4, t / 4);
+            let c: f64 = w.iter().map(|&(ru, rv, k)| k * self.b[0][ru.min(2)][a] * self.b[1][rv.min(2)][b]).sum();
+            *slot = (self.first[0] + a, self.first[1] + b, c);
+        }
+        out
     }
 
     /// The 16 (index, coefficient) terms of the derivative `Σ w[ru][rv] ∂^ru_u ∂^rv_v` at the
@@ -529,8 +607,17 @@ fn fit_round(st: &[Station], spec: &FillSpec) -> SplineResult<Round> {
             step[i] = step[i].max((q[i] - p[i]).abs());
         }
     }
-    // Where the corners whose neighbours disagree are, in the domain.
+    // Where the corners are in the domain, and those whose neighbours disagree.
+    let corners: Vec<[f64; 2]> = st.iter().zip(&dev.d).filter(|(s, _)| s.corner || s.clash).map(|(_, d)| *d).collect();
+    let rough: Vec<[f64; 2]> = st
+        .iter()
+        .zip(&dev.d)
+        .zip(&dev.true_angle)
+        .filter(|((s, _), true_angle)| s.clash || (s.corner && !**true_angle))
+        .map(|((_, d), _)| *d)
+        .collect();
     let clashes: Vec<[f64; 2]> = st.iter().zip(&dev.d).filter(|(s, _)| s.clash).map(|(_, d)| *d).collect();
+    let fade = fades(st);
     let longer = extent[0].max(extent[1]);
     let mut best = Shortfall::default();
     let mut level = MIN_SPANS;
@@ -541,15 +628,17 @@ fn fit_round(st: &[Station], spec: &FillSpec) -> SplineResult<Round> {
             return Ok(Round::Denser(best));
         }
         let grid = Grid::new(spans, lo, hi);
-        let (net, located) = fit_grid(&grid, st, &dev, spec)?;
         let cell = (grid.cell(0) * grid.cell(1)).sqrt();
-        let got = measure(&net, st, &dev, spec, &located, &clashes, cell)?;
+        let near = Near::of(&dev.d, &corners, &rough, &clashes, CLASH_CELLS * cell);
+        let (net, located) = fit_grid(&grid, st, &dev, spec, &near, &fade)?;
+        let got = measure(&net, st, &dev, spec, &located, &near, &fade)?;
         best = best.min(got.shortfall);
         let within = got.shortfall.deviation <= spec.tol && got.shortfall.angle <= spec.angle_tol && got.shortfall.points <= spec.tol;
         if within && holds {
             check_folds(&net, &dev.d, lo, hi)?;
             let ctrl: Vec<HPoint> = net.ctrl.iter().map(|p| HPoint::weighted(*p, 1.0)).collect();
             let surface = NurbsSurface::from_homogeneous([3, 3], grid.knots.clone(), ctrl)?;
+            let surface = crown(surface, &net, st, &dev, spec.crown)?;
             return Ok(Round::Done(Box::new(GeneralFill {
                 surface,
                 counter_clockwise: dev.counter_clockwise,
@@ -570,55 +659,326 @@ fn fit_round(st: &[Station], spec: &FillSpec) -> SplineResult<Round> {
     Ok(Round::Exhausted(best))
 }
 
+/// Which stations are close to a corner, and to a corner whose neighbours disagree, on one grid.
+///
+/// At a corner the two sides' conditions meet and overdetermine the surface (the compatibility
+/// of Hermite boundary data at a vertex): there one side's cross-boundary derivatives are the
+/// other side's boundary curve, and the development's corner angle only approximates the loop's.
+/// Close to any corner the second-derivative rows are left out, and close to a corner the domain
+/// does not turn by the loop's own angle (a conformal map keeps angles), or where the neighbours'
+/// tangent planes disagree, the first-derivative rows too: the positions decide there. The
+/// neighbourhood is a few grid cells, so it shrinks as the grid refines. (Where the neighbours'
+/// tangent planes disagree no surface is tangent to both; see [`fades`].)
+struct Near {
+    corner: Vec<bool>,
+    rough: Vec<bool>,
+    clash: Vec<bool>,
+}
+
+impl Near {
+    fn of(d: &[[f64; 2]], corners: &[[f64; 2]], rough: &[[f64; 2]], clashes: &[[f64; 2]], reach: f64) -> Near {
+        let close = |set: &[[f64; 2]]| -> Vec<bool> { d.iter().map(|q| set.iter().any(|c| (c[0] - q[0]).hypot(c[1] - q[1]) <= reach)).collect() };
+        Near { corner: close(corners), rough: close(rough), clash: close(clashes) }
+    }
+
+    fn rough(&self, k: usize) -> bool {
+        self.rough.get(k).copied().unwrap_or(true)
+    }
+
+    fn corner(&self, k: usize) -> bool {
+        self.corner.get(k).copied().unwrap_or(true)
+    }
+
+    fn clash(&self, k: usize) -> bool {
+        self.clash.get(k).copied().unwrap_or(true)
+    }
+}
+
+/// Whether each station's G1 rows are asked (1) or not (0): not near a corner whose neighbours'
+/// tangent planes disagree.
+struct Fade {
+    weight: Vec<f64>,
+}
+
+impl Fade {
+    fn at(&self, k: usize) -> f64 {
+        self.weight.get(k).copied().unwrap_or(0.0)
+    }
+}
+
+/// The G1 rows' weights. At a corner whose neighbours' tangent planes disagree no surface is
+/// tangent to both: its tangent plane there must hold both boundary tangents, so it is singular
+/// at the corner however it is shaped. Within [`BLEND_SHARE`] of the run to the next corner of
+/// such a corner the G1 rows are left out and the positions and the smoothness decide the
+/// surface; those stations are not held to the angle tolerance. (Rows fading out towards the
+/// corner instead keep asking for a tangent plane the corner cannot have, and the fit folds
+/// there.)
+fn fades(st: &[Station]) -> Fade {
+    let m = st.len();
+    let mut weight = vec![1.0f64; m];
+    let clashes: Vec<usize> = (0..m).filter(|k| st.get(*k).is_some_and(|s| s.clash)).collect();
+    if clashes.is_empty() || m < 3 {
+        return Fade { weight };
+    }
+    let p = |k: usize| st.get(k % m).map_or(Vec3::ZERO, |s| s.p);
+    let step = |k: usize| p(k + 1).dist(p(k));
+    let is_corner = |k: usize| st.get(k % m).is_some_and(|s| s.corner || s.clash);
+    for &c in &clashes {
+        if let Some(w) = weight.get_mut(c) {
+            *w = 0.0;
+        }
+        // Back along the incoming side, then on along the outgoing one.
+        for back in [true, false] {
+            let next = |k: usize| if back { (k + m - 1) % m } else { (k + 1) % m };
+            // The run to the next corner.
+            let (mut run, mut k) = (0.0, c);
+            for _ in 0..m {
+                let n = next(k);
+                run += if back { step(n) } else { step(k) };
+                k = n;
+                if is_corner(k) {
+                    break;
+                }
+            }
+            let reach = BLEND_SHARE * run;
+            let (mut dist, mut k) = (0.0, c);
+            for _ in 0..m {
+                let n = next(k);
+                dist += if back { step(n) } else { step(k) };
+                k = n;
+                if dist >= reach || is_corner(k) {
+                    break;
+                }
+                if let Some(w) = weight.get_mut(k) {
+                    *w = 0.0;
+                }
+            }
+        }
+    }
+    Fade { weight }
+}
+
 /// Fit the grid to the even stations' conditions and the points: the net, and where the points
 /// ended up in the domain.
-fn fit_grid<'a>(grid: &'a Grid, st: &[Station], dev: &Developed, spec: &FillSpec) -> SplineResult<(Net<'a>, Vec<[f64; 2]>)> {
+fn fit_grid<'a>(
+    grid: &'a Grid,
+    st: &[Station],
+    dev: &Developed,
+    spec: &FillSpec,
+    near: &Near,
+    fade: &Fade,
+) -> SplineResult<(Net<'a>, Vec<[f64; 2]>)> {
+    let cell = (grid.cell(0) * grid.cell(1)).sqrt();
+    let mut rows: Vec<Hermite> = Vec::new();
+    for (k, s) in st.iter().enumerate().step_by(2) {
+        let Some(across) = s.across.filter(|_| !s.corner) else { continue };
+        let (Some(&q), Some(&nu), Some(&speed)) = (dev.d.get(k), dev.nu.get(k), dev.speed.get(k)) else { continue };
+        let weight = fade.at(k);
+        if !(weight > 1e-3) {
+            continue;
+        }
+        let full = weight >= 1.0;
+        let bend = across.bend.filter(|_| full && !near.corner(k));
+        rows.push(Hermite {
+            q,
+            nu,
+            normal: across.normal,
+            leave: across.leave,
+            hermite: full && !near.rough(k),
+            weight,
+            curvature: bend.map(|b| across.normal.dot(b)),
+            speed,
+        });
+    }
+    // The fitted stations (every other one), then the points where they were last found.
+    let fitted: Vec<([f64; 2], Vec3)> = st.iter().zip(&dev.d).step_by(2).map(|(s, q)| (*q, s.p)).collect();
+    let mut extra: Vec<([f64; 2], Vec3)> = Vec::new();
+    let rounds = if spec.points.is_empty() { 0 } else { POINT_ROUNDS };
+    let mut round = 0;
+    loop {
+        let data: Vec<([f64; 2], Vec3)> = fitted.iter().chain(&extra).copied().collect();
+        let net = if rows.is_empty() { fit_positions(grid, &data)? } else { fit_coupled(grid, &data, &mut rows, cell)? };
+        let located = spec.points.iter().map(|p| locate(&net, &dev.d, *p)).collect::<SplineResult<Vec<_>>>()?;
+        if round >= rounds {
+            return Ok((net, located));
+        }
+        extra = located.iter().copied().zip(spec.points.iter().copied()).collect();
+        round += 1;
+    }
+}
+
+/// The fit to positions alone (G0 everywhere): the three coordinates apart, sharing one matrix.
+fn fit_positions<'a>(grid: &'a Grid, data: &[([f64; 2], Vec3)]) -> SplineResult<Net<'a>> {
     let [cu, cv] = grid.count;
     let n = cu * cv;
-    let cell = (grid.cell(0) * grid.cell(1)).sqrt();
-    let mut base = System::new(n, 3 * cu + 3);
-    for (k, s) in st.iter().enumerate().step_by(2) {
-        let (Some(&q), Some(&nu), Some(&speed)) = (dev.d.get(k), dev.nu.get(k), dev.speed.get(k)) else { continue };
-        let b = Basis::at(grid, q).ok_or_else(|| SplineError::Invalid("a station is off the grid".into()))?;
-        base.row(&b.terms(cu, &[(0, 0, 1.0)]), s.p);
-        let Some(across) = s.across.filter(|_| !s.corner) else { continue };
-        // Scaled by the cell so each row weighs like a position a cell away.
-        let v = speed * spec.speed;
-        let scale = |terms: [(usize, f64); 16], f: f64| terms.map(|(i, c)| (i, c * f));
-        base.row(&scale(b.terms(cu, &along(nu, 1)), cell), across.leave * (v * cell));
-        if let Some(bend) = across.bend {
-            base.row(&scale(b.terms(cu, &along(nu, 2)), cell * cell), bend * (v * v * cell * cell));
-        }
+    let mut sys = System::new(n, 3 * cu + 3);
+    for (q, p) in data {
+        let b = Basis::at(grid, *q).ok_or_else(|| SplineError::Invalid("a station is off the grid".into()))?;
+        sys.row(&b.terms(cu, &[(0, 0, 1.0)]), *p);
     }
-    let solve = |extra: &[([f64; 2], Vec3)]| -> SplineResult<Net<'a>> {
-        let mut sys = System { band: base.band.clone(), rhs: base.rhs.clone(), rows: base.rows };
-        for (q, p) in extra {
-            let b = Basis::at(grid, *q).ok_or_else(|| SplineError::Invalid("a point is off the grid".into()))?;
-            sys.row(&b.terms(cu, &[(0, 0, 1.0)]), *p);
+    let lambda = SMOOTHNESS * sys.rows as f64 / n as f64 * grid.cell(0) * grid.cell(1);
+    grid.add_energy(&mut sys.band, lambda);
+    let factor = sys.band.factor()?;
+    let [x, y, z] = sys.rhs;
+    let (x, y, z) = (factor.substitute(x)?, factor.substitute(y)?, factor.substitute(z)?);
+    net_of(grid, x.iter().zip(&y).zip(&z).map(|((x, y), z)| Vec3::new(*x, *y, *z)).collect())
+}
+
+fn net_of(grid: &Grid, ctrl: Vec<Vec3>) -> SplineResult<Net<'_>> {
+    if ctrl.iter().any(|p| !p.is_finite()) {
+        return invalid("the fit is not finite");
+    }
+    Ok(Net { grid, ctrl })
+}
+
+/// One G1/G2 station's rows (see [`fit_coupled`]).
+struct Hermite {
+    q: [f64; 2],
+    nu: [f64; 2],
+    /// The normal of the tangent plane asked for, and the direction the patch should leave in.
+    normal: Vec3,
+    leave: Vec3,
+    /// Whether the weak Hermite rows are asked (not close to a corner the development does not
+    /// keep the angle of, unless in a blend).
+    hermite: bool,
+    /// How much the G1 row weighs (see [`fades`]).
+    weight: f64,
+    /// G2: the neighbour's normal curvature along `leave`.
+    curvature: Option<f64>,
+    /// How fast the patch leaves: first the boundary's own speed, then what the fit gives.
+    speed: f64,
+}
+
+/// How much the Hermite rows (the full first derivative `s·w`) weigh against the G1 rows: enough
+/// to say which way and about how fast the patch leaves, little enough to give way where the
+/// full data cannot all hold.
+const HERMITE_WEIGHT: f64 = 0.05;
+/// Rounds of updating the speed a G2 row's curvature is asked at.
+const G2_ROUNDS: usize = 4;
+
+/// The fit with G1 and G2 rows: the three coordinates together, since the rows that hold the
+/// continuity are geometric and couple them.
+///
+/// - Positions, as for [`fit_positions`].
+/// - G1: `n·∂S/∂ν = 0` — the patch's cross-boundary derivative lies in the tangent plane asked
+///   for, which with the boundary tangent in it makes the normals agree. That is all G1 asks.
+/// - Weak Hermite rows `∂S/∂ν = s·w` (weight [`HERMITE_WEIGHT`]): which way the patch leaves
+///   (into the patch, not folding back over the neighbour) and about how fast. A whole set of
+///   full Hermite data is consistent only with a boundary map that is exactly conformal at the
+///   boundary's own speed, which a curved patch's is not, so these give way.
+/// - G2: `n·∂²S/∂ν² = (∂S/∂ν·w)²·κ` — the patch's normal curvature across the edge is the
+///   neighbour's. The speed is the fit's own, so the row is solved again with the speed from the
+///   last solution (the matrix stays, so each round is a back substitution).
+///
+/// The unknowns are numbered with the grid's shorter direction fastest and the coordinates
+/// innermost, which keeps the band narrow.
+fn fit_coupled<'a>(grid: &'a Grid, data: &[([f64; 2], Vec3)], rows: &mut [Hermite], cell: f64) -> SplineResult<Net<'a>> {
+    let [cu, cv] = grid.count;
+    let n = cu * cv;
+    let u_fast = cu <= cv;
+    let fast = if u_fast { cu } else { cv };
+    let index = |i: usize, j: usize, c: usize| if u_fast { (j * cu + i) * 3 + c } else { (i * cv + j) * 3 + c };
+    let mut band = Band::new(3 * n, 3 * (3 * fast + 3) + 2);
+    let mut rhs = vec![0.0; 3 * n];
+    let mut count = 0usize;
+    // A row on the three coordinates: `Σ_c Σ_t coefficient_t · weight_c · control_{t,c} = target`.
+    let mut row = |band: &mut Band, rhs: &mut [f64], cells: &[(usize, usize, f64); 16], weights: [f64; 3], target: f64| {
+        let mut terms = [(0usize, 0.0f64); 48];
+        for (c, w) in weights.iter().enumerate() {
+            for (t, &(i, j, k)) in cells.iter().enumerate() {
+                if let Some(slot) = terms.get_mut(c * 16 + t) {
+                    *slot = (index(i, j, c), k * w);
+                }
+            }
         }
-        let lambda = SMOOTHNESS * sys.rows as f64 / n as f64 * grid.cell(0) * grid.cell(1);
-        grid.add_energy(&mut sys.band, lambda);
-        let factor = sys.band.factor()?;
-        let [x, y, z] = sys.rhs;
-        let (x, y, z) = (factor.substitute(x)?, factor.substitute(y)?, factor.substitute(z)?);
-        let ctrl: Vec<Vec3> = x.iter().zip(&y).zip(&z).map(|((x, y), z)| Vec3::new(*x, *y, *z)).collect();
-        if ctrl.iter().any(|p| !p.is_finite()) {
-            return invalid("the fit is not finite");
+        for &(r, wr) in &terms {
+            if wr == 0.0 {
+                continue;
+            }
+            if let Some(slot) = rhs.get_mut(r) {
+                *slot += wr * target;
+            }
+            for &(s, ws) in &terms {
+                band.add(r, s, wr * ws);
+            }
         }
-        Ok(Net { grid, ctrl })
+        count += 1;
     };
-    let mut net = solve(&[])?;
-    let mut located = Vec::new();
-    if spec.points.is_empty() {
-        return Ok((net, located));
+    let axes = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    let coords = |p: Vec3| [p.x, p.y, p.z];
+    for &(q, p) in data {
+        let b = Basis::at(grid, q).ok_or_else(|| SplineError::Invalid("a station is off the grid".into()))?;
+        let cells = b.cells(&[(0, 0, 1.0)]);
+        for (axis, t) in axes.iter().zip(coords(p)) {
+            row(&mut band, &mut rhs, &cells, *axis, t);
+        }
     }
-    for _ in 0..POINT_ROUNDS {
-        located = spec.points.iter().map(|p| locate(&net, &dev.d, *p)).collect::<SplineResult<Vec<_>>>()?;
-        let extra: Vec<([f64; 2], Vec3)> = located.iter().copied().zip(spec.points.iter().copied()).collect();
-        net = solve(&extra)?;
+    // The right-hand side so far; the G2 rows' targets are added per round.
+    let mut second: Vec<([(usize, usize, f64); 16], usize)> = Vec::new();
+    for (h, r) in rows.iter().enumerate() {
+        let b = Basis::at(grid, r.q).ok_or_else(|| SplineError::Invalid("a station is off the grid".into()))?;
+        let first = b.cells(&along(r.nu, 1)).map(|(i, j, k)| (i, j, k * cell));
+        let held = first.map(|(i, j, k)| (i, j, k * r.weight));
+        row(&mut band, &mut rhs, &held, coords(r.normal), 0.0);
+        if r.hermite {
+            let w = HERMITE_WEIGHT * r.weight;
+            let weak = first.map(|(i, j, k)| (i, j, k * w));
+            for (axis, t) in axes.iter().zip(coords(r.leave * (r.speed * cell * w))) {
+                row(&mut band, &mut rhs, &weak, *axis, t);
+            }
+        }
+        if r.curvature.is_some() {
+            let cells = b.cells(&along(r.nu, 2)).map(|(i, j, k)| (i, j, k * cell * cell));
+            row(&mut band, &mut rhs, &cells, coords(r.normal), 0.0);
+            second.push((cells, h));
+        }
     }
-    located = spec.points.iter().map(|p| locate(&net, &dev.d, *p)).collect::<SplineResult<Vec<_>>>()?;
-    Ok((net, located))
+    let lambda = SMOOTHNESS * count as f64 / (3 * n) as f64 * grid.cell(0) * grid.cell(1);
+    grid.energy(lambda, &mut |(i, j), (k, l), e| {
+        for c in 0..3 {
+            band.add(index(i, j, c), index(k, l, c), e);
+        }
+    });
+    let factor = band.factor()?;
+    let rounds = if second.is_empty() { 1 } else { G2_ROUNDS };
+    let mut net = None;
+    for _ in 0..rounds {
+        let mut b = rhs.clone();
+        for (cells, h) in &second {
+            let Some(r) = rows.get(*h) else { continue };
+            let target = r.curvature.unwrap_or(0.0) * r.speed * r.speed * cell * cell;
+            for (c, w) in coords(r.normal).iter().enumerate() {
+                for &(i, j, k) in cells {
+                    if let Some(slot) = b.get_mut(index(i, j, c)) {
+                        *slot += k * w * target;
+                    }
+                }
+            }
+        }
+        let x = factor.substitute(b)?;
+        let ctrl: Vec<Vec3> = (0..cv)
+            .flat_map(|j| (0..cu).map(move |i| (i, j)))
+            .map(|(i, j)| {
+                Vec3::new(
+                    x.get(index(i, j, 0)).copied().unwrap_or(f64::NAN),
+                    x.get(index(i, j, 1)).copied().unwrap_or(f64::NAN),
+                    x.get(index(i, j, 2)).copied().unwrap_or(f64::NAN),
+                )
+            })
+            .collect();
+        let current = net_of(grid, ctrl)?;
+        for r in rows.iter_mut().filter(|r| r.curvature.is_some()) {
+            let (Some(su), Some(sv)) = (current.der(r.q, 1, 0), current.der(r.q, 0, 1)) else {
+                return invalid("the fit cannot be evaluated on the loop");
+            };
+            let ahead = (su * r.nu[0] + sv * r.nu[1]).dot(r.leave);
+            if ahead > 0.0 {
+                r.speed = ahead;
+            }
+        }
+        net = Some(current);
+    }
+    net.ok_or_else(|| SplineError::Invalid("the fit made no rounds".into()))
 }
 
 /// Where in the domain the surface comes nearest `p`: the nearest of a grid of samples inside
@@ -675,15 +1035,7 @@ struct Measured {
 }
 
 /// Measure a fit against every station and the points.
-fn measure(
-    net: &Net,
-    st: &[Station],
-    dev: &Developed,
-    spec: &FillSpec,
-    located: &[[f64; 2]],
-    clashes: &[[f64; 2]],
-    cell: f64,
-) -> SplineResult<Measured> {
+fn measure(net: &Net, st: &[Station], dev: &Developed, spec: &FillSpec, located: &[[f64; 2]], near: &Near, fade: &Fade) -> SplineResult<Measured> {
     let off = |what: &str| SplineError::Invalid(format!("the fit cannot be evaluated {what}"));
     let sense = if dev.counter_clockwise { 1.0 } else { -1.0 };
     let (mut deviation, mut angle, mut angle_all, mut curvature) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
@@ -696,12 +1048,11 @@ fn measure(
         let want = if across.normal.dot(s.up) * sense >= 0.0 { across.normal } else { across.normal * -1.0 };
         let a = normal.dot(want).clamp(-1.0, 1.0).acos();
         angle_all = angle_all.max(a);
-        let near_clash = clashes.iter().any(|c| (c[0] - q[0]).hypot(c[1] - q[1]) <= CLASH_CELLS * cell);
-        if near_clash {
+        if near.clash(k) || fade.at(k) < 1.0 {
             continue;
         }
         angle = angle.max(a);
-        if let Some(bend) = across.bend {
+        if let Some(bend) = across.bend.filter(|_| !near.corner(k)) {
             let first = su * nu[0] + sv * nu[1];
             let second = net.der(q, 2, 0).zip(net.der(q, 1, 1)).zip(net.der(q, 0, 2)).ok_or_else(|| off("on the loop"))?;
             let ((uu, uv), vv) = second;
@@ -720,6 +1071,27 @@ fn measure(
         return invalid("the fit is not finite");
     }
     Ok(Measured { shortfall: Shortfall { deviation, angle, points }, angle_all, curvature })
+}
+
+/// The fill with its crown (see [`FillSpec::crown`]).
+fn crown(surface: NurbsSurface, net: &Net, st: &[Station], dev: &Developed, crown: f64) -> SplineResult<NurbsSurface> {
+    if crown == 0.0 {
+        return Ok(surface);
+    }
+    // The side the neighbours' normals face, by the patch's normals at the G1/G2 stations.
+    let mut side = 0.0;
+    for (s, q) in st.iter().zip(&dev.d) {
+        if let (Some(a), Some((n, _, _))) = (s.across, net.frame(*q)) {
+            side += n.dot(a.normal).signum();
+        }
+    }
+    if side == 0.0 {
+        return Err(SplineError::Unsupported("crowning a patch with no g1 or g2 edge to say which side is out".into()));
+    }
+    let sign = side.signum();
+    let along = |g: [f64; 2]| net.frame(g).map(|(n, _, _)| n * sign);
+    let (surface, _, _) = crate::fill::crown_fill_along(surface, &dev.d, crown, &along, MAX_GENERAL_SPANS)?;
+    Ok(surface)
 }
 
 /// Refuse a fit that folds over or pinches inside the loop: on a grid of samples inside the

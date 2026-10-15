@@ -292,10 +292,29 @@ fn crown_fill(surface: NurbsSurface, uv: &[[f64; 2]], crown: f64, normal: Vec3) 
     if crown == 0.0 {
         return Ok((surface, 0, 0.0));
     }
+    if !normal.is_finite() {
+        return invalid("the loop's extent is not finite");
+    }
+    crown_fill_along(surface, uv, crown, &|_| Some(normal), MAX_FILL_SPANS)
+}
+
+/// [`crown_fill`] moving each control point along `along(ξ, η)` (at its Greville point, the mean
+/// of its knots each way) rather than one normal: what a fill that is not a height field takes,
+/// with its own normal there. Its net may be refined up to `max_spans` each way.
+pub(crate) fn crown_fill_along(
+    surface: NurbsSurface,
+    uv: &[[f64; 2]],
+    crown: f64,
+    along: &dyn Fn([f64; 2]) -> Option<Vec3>,
+    max_spans: usize,
+) -> SplineResult<(NurbsSurface, usize, f64)> {
+    if crown == 0.0 {
+        return Ok((surface, 0, 0.0));
+    }
     let gap = loop_gap(uv);
     let mut base = surface;
     loop {
-        if let Some((crowned, points)) = crown_net(&base, uv, gap, crown, normal)? {
+        if let Some((crowned, points)) = crown_net(&base, uv, gap, crown, along)? {
             let mut drift = 0.0f64;
             for q in uv {
                 if let (Ok(a), Ok(b)) = (base.eval(q[0], q[1]), crowned.eval(q[0], q[1])) {
@@ -309,11 +328,11 @@ fn crown_fill(surface: NurbsSurface, uv: &[[f64; 2]], crown: f64, normal: Vec3) 
         }
         // No room inside the loop yet: halve the cells (the surface itself does not change).
         let spans = [0, 1].map(|d| base.count()[d].saturating_sub(3));
-        if spans[0] >= MAX_FILL_SPANS && spans[1] >= MAX_FILL_SPANS {
+        if spans[0] >= max_spans && spans[1] >= max_spans {
             return Err(SplineError::Unsupported("crowning a patch whose loop leaves no room inside it".into()));
         }
         for (d, &s) in spans.iter().enumerate() {
-            if s < MAX_FILL_SPANS {
+            if s < max_spans {
                 base = subdivide(&base, d)?;
             }
         }
@@ -324,13 +343,19 @@ fn crown_fill(surface: NurbsSurface, uv: &[[f64; 2]], crown: f64, normal: Vec3) 
 /// loop takes `crown · size · B(ξ, η)`, `B` the bubble's blossom at the point's knots (so the
 /// surface between the perturbed points is exactly the bubble, not a fit of it) and `size` the
 /// box's diagonal. `None` when the net has no such point.
-fn crown_net(base: &NurbsSurface, uv: &[[f64; 2]], gap: [f64; 2], crown: f64, normal: Vec3) -> SplineResult<Option<(NurbsSurface, usize)>> {
+fn crown_net(
+    base: &NurbsSurface,
+    uv: &[[f64; 2]],
+    gap: [f64; 2],
+    crown: f64,
+    along: &dyn Fn([f64; 2]) -> Option<Vec3>,
+) -> SplineResult<Option<(NurbsSurface, usize)>> {
     let [cu, cv] = base.count();
     let degree = base.degree();
     let knots = base.knots();
     let domain = base.domain();
     let size = (domain[0][1] - domain[0][0]).hypot(domain[1][1] - domain[1][0]);
-    if !(size > 0.0 && size.is_finite() && normal.is_finite()) {
+    if !(size > 0.0 && size.is_finite()) {
         return invalid("the loop's extent is not finite");
     }
     // The bubble `4·s·(1−s)` per direction, as a quadratic in the plane coordinate.
@@ -351,6 +376,8 @@ fn crown_net(base: &NurbsSurface, uv: &[[f64; 2]], gap: [f64; 2], crown: f64, no
                 continue;
             }
             let bump = crown * size * blossom(qu, u_knots) * blossom(qv, v_knots);
+            let mean = |t: [f64; 3]| (t[0] + t[1] + t[2]) / 3.0;
+            let Some(normal) = along([mean(u_knots), mean(v_knots)]).filter(|n| n.is_finite()) else { continue };
             let Some(slot) = ctrl.get_mut(j * cu + i) else { continue };
             let h = *slot;
             let Some(p) = h.project() else { continue };
@@ -630,6 +657,13 @@ impl Grid {
     /// to the normal equations `band` (unknowns i fastest): each term is a product of
     /// one-direction Gram matrices of the basis functions' derivatives.
     pub(crate) fn add_energy(&self, band: &mut Band, lambda: f64) {
+        let cu = self.count[0];
+        self.energy(lambda, &mut |(i, j), (k, l), e| band.add(j * cu + i, l * cu + k, e));
+    }
+
+    /// The entries of `lambda` times the thin-plate energy's matrix (see [`Grid::add_energy`]),
+    /// control point `(i, j)` against `(k, l)`, for every pair whose supports overlap.
+    pub(crate) fn energy(&self, lambda: f64, add: &mut dyn FnMut((usize, usize), (usize, usize), f64)) {
         let [cu, cv] = self.count;
         let gram = |d: usize, r: usize| -> Vec<f64> {
             let c = self.count.get(d).copied().unwrap_or(0);
@@ -661,11 +695,10 @@ impl Grid {
         };
         for j in 0..cv {
             for i in 0..cu {
-                let r = j * cu + i;
                 for l in j.saturating_sub(3)..(j + 4).min(cv) {
                     for k in i.saturating_sub(3)..(i + 4).min(cu) {
                         let e: f64 = ENERGY.iter().map(|&(ru, rv, w)| w * g(0, ru, i, k) * g(1, rv, j, l)).sum();
-                        band.add(r, l * cu + k, lambda * e);
+                        add((i, j), (k, l), lambda * e);
                     }
                 }
             }
