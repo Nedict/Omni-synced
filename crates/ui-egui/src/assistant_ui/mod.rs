@@ -579,7 +579,7 @@ fn situation(app: &SolveApp) -> Situation {
 
 /// Render the current view and keep it for the next message (a vision model sees it).
 pub(crate) fn attach_view(app: &mut SolveApp) {
-    match crate::control::render_model_png(app, 960, 600) {
+    match crate::control::render_model_png(app, 960, 600, None, None) {
         Ok(png) => app.assistant.picture = Some(("image/png".into(), base64(&png))),
         Err(e) => app.assistant.notice(format!("Cannot attach the view: {e}"), true),
     }
