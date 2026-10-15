@@ -10,7 +10,7 @@ use solidcraft_engine::sketch::CurveKind;
 use solidcraft_engine::view::{colors, grid_step, sketch_lines_with_sampler};
 use std::hash::{Hash, Hasher};
 
-use crate::gpu::{GpuScene, GpuTarget, SceneSlot, ViewportCallback};
+use crate::gpu::{Frame, GpuScene, GpuTarget, SceneSlot, ViewportCallback};
 use crate::navigation::{CameraInput, NavCaps, OrbitSnap, orbit_drag};
 use crate::selection::{BoxSel, origin_quads, origin_size, ray_quad};
 use crate::theme::Tokens;
@@ -1485,7 +1485,7 @@ pub fn selection_bounds(app: &SolveApp) -> Option<solidcraft_engine::geom::Aabb3
 }
 
 /// The section as the shader's clip plane (normal, d), zero when there is none.
-/// The surface analysis for the shader (see `gpu::ViewportCallback::analysis`).
+/// The surface analysis for the shader (see `gpu::Frame::analysis`).
 fn analysis_uniform(app: &SolveApp) -> [f32; 8] {
     use solidcraft_engine::SurfaceAnalysis as A;
     match app.session.analysis {
@@ -2205,7 +2205,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         let ppp = ui.ctx().pixels_per_point();
         let size_px = [rect.width() * ppp, rect.height() * ppp];
         let ssaa = supersampling(app, ui.ctx(), proj.vp.to_f32(), size_px);
-        let cb = ViewportCallback {
+        let cb = ViewportCallback(Frame {
             ssaa,
             product: false,
             key: app.viewport.key,
@@ -2230,7 +2230,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let e = proj.cam.eye().to_f32();
                 [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }]
             },
-        };
+        });
         painter.add(egui_wgpu::Callback::new_paint_callback(rect, cb));
     } else {
         cpu_render(app, ui.ctx(), &painter, rect, &proj);

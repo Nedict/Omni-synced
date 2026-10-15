@@ -1,7 +1,9 @@
-//! GPU evaluation of display tessellation plans: the surface point and normal at every
-//! vertex's parameters, in a compute shader (`tess.wgsl`), the GPU twin of
-//! [`TessPlan::evaluate`]. Shared edge nodes keep their exact positions, so faces still meet
-//! exactly; evaluation runs in f32.
+//! SolidCraft's GPU work: the viewport's render pipelines ([`view`]) and display tessellation
+//! plans evaluated in a compute shader.
+//!
+//! Plan evaluation: the surface point and normal at every vertex's parameters, in a compute
+//! shader (`tess.wgsl`), the GPU twin of [`TessPlan::evaluate`]. Shared edge nodes keep their
+//! exact positions, so faces still meet exactly; evaluation runs in f32.
 //!
 //! Use [`TessGpu::new`] with the application's device, or [`TessGpu::headless`] (native only)
 //! to open one without a window, as the CLI and tests do. A viewport draws a plan straight from
@@ -17,8 +19,10 @@ use solidcraft_geom::Vec3;
 use solidcraft_geom::tess::{EvalCurve, EvalSurface, TessPlan};
 use wgpu::util::DeviceExt;
 
+mod pbr;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod select;
+pub mod view;
 
 /// The tessellation compute shader (WGSL).
 pub const SHADER: &str = include_str!("tess.wgsl");

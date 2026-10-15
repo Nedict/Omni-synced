@@ -1,6 +1,6 @@
 [package]
 name = "solidcraft-gpu"
-description = "SolidCraft GPU compute: evaluates display tessellation plans (surface points and normals) in a compute shader"
+description = "SolidCraft GPU rendering: the viewport's render pipelines, offscreen captures, and display tessellation plans evaluated in a compute shader"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 solidcraft-geom = { workspace = true }
+solidcraft-render = { workspace = true }
 wgpu = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }

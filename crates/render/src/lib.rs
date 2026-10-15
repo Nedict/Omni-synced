@@ -4,6 +4,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod analysis;
 mod backend;
 mod camera;
 mod curve_display;
@@ -18,6 +19,7 @@ pub mod texture_interpolation;
 pub mod texture_lod;
 pub mod texture_sampling;
 
+pub use analysis::{AnalysisColors, AnalysisMode, SceneAnalysis};
 pub use backend::{
     Availability, BackendDescriptor, BackendId, ExecutorDescriptor, ExecutorId, MAX_RENDER_ID_BYTES, RenderFeature, RenderFormat, RenderLimits,
     RenderMode, RenderOperation, RenderPolicy, RenderProfile, RenderRequest, ResolveError, ResolvedRequest, ScratchLayout, builtin_backend,
