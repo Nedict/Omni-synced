@@ -43,13 +43,13 @@ its steps, how it ended (ok, or the kind and the start of the error it was refus
 for the design it left the bodies' total volume and area (within a relative 1e-6) and their
 face, edge and shell counts (exact). `tests::robustness_goldens` fails on any change, better or
 worse, so a kernel change shows every seed it moves. Pull requests that touch `crates/kernel`
-run every 8th seed (`sample_0` … `sample_3`, about two minutes); pushes to `main` and the
-nightly run them all (`all_0` … `all_3`).
+run every 8th seed; pushes to `main` and the nightly run them all. Each seed is its own test
+(`seed_00` … `seed_95`), so the CI shards and their cores share them out.
 
 To record an intended change, give the reason:
 
 ```
-ROBUSTNESS_GOLDENS_BLESS="why it changed" cargo test --profile ci -p solidcraft-engine --lib robustness_goldens::all
+ROBUSTNESS_GOLDENS_BLESS="why it changed" cargo test --profile ci -p solidcraft-engine --lib robustness_goldens::seed_
 ```
 
 The changed seeds and the reason are added to the file's `notes`; say why in the pull request too.

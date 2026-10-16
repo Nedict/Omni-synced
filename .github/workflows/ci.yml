@@ -241,15 +241,15 @@ jobs:
           cargo nextest run --archive-file tests.tar.zst --workspace-remap . --extract-to . --extract-overwrite \
             --profile ci --partition "slice:$SHARD/4" --no-tests=pass "${all[@]}"
       - name: Robustness goldens sample (pull requests that touch the kernel)
-        # Every 8th seed of tests/robustness/goldens.json, a quarter per shard; pushes to main and
-        # the nightly run every seed in the step above.
+        # Every 8th seed of tests/robustness/goldens.json (each seed is a test), a quarter per
+        # shard; pushes to main and the nightly run every seed in the step above.
         if: github.event_name == 'pull_request' && needs.changes.outputs.kernel == 'true'
         env:
           SHARD: ${{ matrix.shard }}
         run: |
           cargo nextest run --archive-file tests.tar.zst --workspace-remap . --extract-to . --extract-overwrite \
-            --profile ci --ignore-default-filter \
-            -E "package(solidcraft-engine) & test(=tests::robustness_goldens::sample_$((SHARD - 1)))"
+            --profile ci --ignore-default-filter --partition "slice:$SHARD/4" --no-tests=pass \
+            -E 'package(solidcraft-engine) & test(/^tests::robustness_goldens::seed_(00|08|16|24|32|40|48|56|64|72|80|88)$/)'
       - name: Upload test timings
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
