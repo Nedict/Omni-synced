@@ -10,6 +10,8 @@
 mod files;
 #[cfg(target_arch = "wasm32")]
 mod install;
+#[cfg(any(target_arch = "wasm32", test))]
+mod space_mouse;
 
 #[cfg(target_arch = "wasm32")]
 mod web {
@@ -21,6 +23,7 @@ mod web {
     use wasm_bindgen::JsCast as _;
 
     use crate::files::{self, Files, Intent};
+    use crate::space_mouse::SpaceMouse;
 
     const CANVAS_ID: &str = "solidcraft_canvas";
     const LOADING_ID: &str = "solidcraft_loading";
@@ -67,6 +70,7 @@ mod web {
         /// On-demand CJK font: fetched only when a CJK language is selected.
         font: solidcraft_ui_egui::fonts::CjkFontLoader,
         font_result: FontLoadResult,
+        space_mouse: SpaceMouse,
     }
 
     impl Shell {
@@ -85,7 +89,16 @@ mod web {
             for (text, error) in self.files.messages.borrow_mut().drain(..) {
                 self.app.set_status(text, error);
             }
-            let incoming: Vec<_> = self.files.incoming.borrow_mut().drain(..).collect();
+            let mut incoming: Vec<_> = self.files.incoming.borrow_mut().drain(..).collect();
+            // A glTF file's buffers picked with it are kept next to it, not opened.
+            incoming.retain_mut(|(name, bytes, _)| {
+                let companion =
+                    std::path::Path::new(name.as_str()).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("bin"));
+                if companion {
+                    vfs::insert(&format!("{}{name}", files::UPLOAD), std::mem::take(bytes));
+                }
+                !companion
+            });
             for (name, bytes, intent) in incoming {
                 let design = solidcraft_engine::io::is_design_path(&name);
                 let path = if design && intent == Intent::Open {
@@ -373,11 +386,14 @@ mod web {
         fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
             self.tick_font(ctx);
             self.app.logic(ctx);
+            self.space_mouse.logic(&mut self.app, ctx);
             self.files_tick(ctx);
             UNSAVED.with(|u| u.set(solidcraft_ui_egui::documents::any_dirty(&self.app)));
         }
-        fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
             files::take_drops(&self.files, raw);
+            // Before the app's own hook, which adds the control channel's events.
+            self.space_mouse.raw_input_hook(ctx, self.app.preferences.space_mouse_enabled, raw);
             self.app.raw_input_hook(raw);
         }
         fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -475,6 +491,8 @@ mod web {
                             install_app: Some(crate::install::service(&cc.egui_ctx)),
                             ..Default::default()
                         };
+                        // Thumbnails of saves and start-page cards.
+                        solidcraft_ui_egui::gpu::install_cpu_picture_renderer();
                         let mut app = SolveApp::new(Session::default(), services);
                         if let Some(p) = cc.storage.and_then(|s| solidcraft_ui_egui::prefs::stored(|k| s.get_string(k))) {
                             app.load_prefs(&p);
@@ -507,6 +525,7 @@ mod web {
                             recents_synced: false,
                             font: Default::default(),
                             font_result: Rc::new(std::cell::RefCell::new(None)),
+                            space_mouse: SpaceMouse::default(),
                         }))
                     }),
                 )
