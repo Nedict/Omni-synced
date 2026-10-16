@@ -12,6 +12,6 @@ workspace = true
 solidcraft-geom = { workspace = true }
 solidcraft-kernel = { workspace = true }
 cadmpeg-core = { workspace = true }
-cadmpeg-ir = { workspace = true }
+cadmpeg-ir = { workspace = true, features = ["examples"] }
 cadmpeg-codec-step = { workspace = true }
 thiserror = { workspace = true }
