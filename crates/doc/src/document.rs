@@ -662,6 +662,12 @@ pub enum FeatureKind {
     Hole {
         #[walk(pick_if = points.is_none())]
         position: FacePick,
+        /// The position as length expressions, when it was given that way (#1678): the hole is
+        /// drilled where they evaluate, and follows the parameters. `position` keeps the point
+        /// they gave when the hole was made.
+        #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_point_expr")]
+        #[walk(placement)]
+        at: Option<PointExpr>,
         /// Drilling direction (into the material).
         direction: Dir,
         #[walk(length = "Diameter")]
@@ -1932,6 +1938,22 @@ mod point_expr {
         };
         let [x, y, z] = <[Coord; 3]>::deserialize(d)?;
         Ok([c(x), c(y), c(z)])
+    }
+}
+
+/// [`point_expr`] for an optional point.
+mod opt_point_expr {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Serialize, Deserialize)]
+    struct Wrap(#[serde(with = "super::point_expr")] super::PointExpr);
+
+    pub fn serialize<S: Serializer>(p: &Option<super::PointExpr>, s: S) -> Result<S::Ok, S::Error> {
+        p.as_ref().map(|p| Wrap(p.clone())).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<super::PointExpr>, D::Error> {
+        Ok(Option::<Wrap>::deserialize(d)?.map(|w| w.0))
     }
 }
 

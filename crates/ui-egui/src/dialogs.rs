@@ -4109,7 +4109,8 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                         continue;
                     }
                     taken.extend(crate::viewport::grouped_selection(s, x));
-                    places.extend(face_point(x).map(|p| json!({ "position": p })));
+                    let kept = d.extra.get("position_exprs").filter(|k| face_point(x).is_some_and(|p| p == k["point"])).map(|k| k["at"].clone());
+                    places.extend(face_point(x).map(|p| json!({ "position": kept.unwrap_or(p) })));
                 }
             }
             let mut out = Vec::new();
@@ -4697,7 +4698,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             d.extra.insert("pull".into(), pt3(pull.0));
             d
         }
-        FeatureKind::Hole { position, direction, diameter, depth, hole, points, thread, to } => {
+        FeatureKind::Hole { position, at, direction, diameter, depth, hole, points, thread, to } => {
             let mut d = start("solid.hole")?;
             let mut k = hole_defaults();
             if let Kind::Hole { diameter: dia, depth: dep, kind, cb_diameter, cb_depth, cs_diameter, cs_angle, opts } = &mut k {
@@ -4745,6 +4746,12 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                         inp.items = vec![face_sel(s, position.0).unwrap_or(Sel::Face { body: String::new(), index: 0, point: position.0 })];
                     }
                     d.extra.insert("direction".into(), pt3(direction.0));
+                    // A position given as expressions (#1678) is sent again while the pick
+                    // stays where the hole is; a new pick places it by the point picked.
+                    if let Some(at) = at {
+                        let exprs: Vec<&str> = at.iter().map(|e| e.as_str()).collect();
+                        d.extra.insert("position_exprs".into(), json!({"at": exprs, "point": pt3(position.0)}));
+                    }
                 }
             }
             if to.is_some() {
