@@ -522,8 +522,20 @@ fn value_box(ui: &mut egui::Ui, label: &str, value: &mut String, at: Pos2, selec
     });
 }
 
+/// How far (logical points) from an arrow's stem a press still takes the arrow.
+const ARROW_STEM_REACH: f32 = 6.0;
+
+/// The distance from `p` to the segment from `a` to `b` on screen.
+fn to_segment(p: Pos2, a: Pos2, b: Pos2) -> f32 {
+    let v = b - a;
+    let t = if v.length_sq() > 0.0 { ((p - a).dot(v) / v.length_sq()).clamp(0.0, 1.0) } else { 0.0 };
+    p.distance(a + v * t)
+}
+
 /// A draggable arrow from `base` along `n` showing `l` (at least a short stub); dragging writes
-/// the snapped length into `value`. Returns the tip's screen position.
+/// the snapped length into `value`. The tip and the stem take the drag (#1740): pressed on the
+/// stem, the arrow keeps its length until the pointer moves, and then moves with it as far as the
+/// pointer does. Returns the tip's screen position.
 #[allow(clippy::too_many_arguments)]
 fn drag_arrow(
     ui: &mut egui::Ui,
@@ -545,11 +557,28 @@ fn drag_arrow(
         proj.to_screen(base + n * shown)
     };
     let mut ts = tip(l)?;
-    let r = ui.interact(egui::Rect::from_center_size(ts, vec2(20.0, 20.0)), id, egui::Sense::drag());
+    let at_tip = egui::Rect::from_center_size(ts, vec2(20.0, 20.0));
+    // Over the stem, the arrow answers where the pointer is.
+    let on_stem = ui.input(|i| i.pointer.hover_pos()).filter(|p| !at_tip.contains(*p) && to_segment(*p, bs, ts) <= ARROW_STEM_REACH);
+    let area = on_stem.map_or(at_tip, |p| egui::Rect::from_center_size(p, vec2(2.0 * ARROW_STEM_REACH, 2.0 * ARROW_STEM_REACH)));
+    let r = ui.interact(area, id, egui::Sense::drag());
+    // How far along the arrow the press was short of its end: the drag keeps that gap.
+    let grab = id.with("stem grab");
+    if r.drag_started() {
+        let gap = on_stem.zip(r.interact_pointer_pos()).and_then(|(_, p)| along(proj, p, base, n)).map(|v| v - l);
+        ui.data_mut(|d| {
+            if let Some(g) = gap.filter(|g| g.is_finite()) {
+                d.insert_temp(grab, g);
+            } else {
+                d.remove::<f64>(grab);
+            }
+        });
+    }
     if r.dragged()
         && let Some(p) = r.interact_pointer_pos()
         && let Some(v) = along(proj, p, base, n)
     {
+        let v = v - ui.data(|d| d.get_temp::<f64>(grab)).unwrap_or(0.0);
         let free = ui.input(|i| i.modifiers.alt || i.modifiers.ctrl || i.modifiers.command);
         let step = snap_step(half_height);
         let mut v = if free { v } else { (v / step).round() * step };
