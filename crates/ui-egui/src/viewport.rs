@@ -5348,6 +5348,7 @@ mod tests {
 
     /// The mode is on from the next frame (theme, widgets, caches, `ui.render`), and Cancel puts
     /// it back.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn colour_vision_mode_reaches_the_frame_and_the_view_caches() {
         use crate::theme::ColorVision;
@@ -5367,8 +5368,11 @@ mod tests {
         h.frame();
         assert_eq!((h.app.preferences.color_vision, crate::theme::vision()), (ColorVision::Off, ColorVision::Off));
         assert_eq!(keys(&h.app), before);
-        // `ui.render` (the CPU picture) shows the mode too: a fixed sketch line in Deutan's value
-        // (in the light theme, where the red-green table changes it; the render follows the theme).
+        // `ui.render` shows the mode too: a fixed sketch line in Deutan's value (in the light
+        // theme, where the red-green table changes it; the render follows the theme).
+        if !crate::gpu::test_picture_renderer() {
+            return;
+        }
         h.call("ui.prefs", json!({"theme": "light"}));
         h.frame();
         h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();

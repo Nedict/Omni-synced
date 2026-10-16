@@ -637,8 +637,12 @@ mod tests {
     }
 
     /// Samples build in the background and make a picture; picking one opens its design.
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn sample_card_makes_a_picture_and_opens() {
+        if !crate::gpu::test_picture_renderer() {
+            return;
+        }
         let (key, img, session) = make("sample:0");
         assert_eq!(key, "sample:0");
         let img = img.unwrap();
