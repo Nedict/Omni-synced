@@ -2,7 +2,8 @@
 
 use serde_json::{Value, json};
 use solidcraft_doc::{
-    AxisRef, Direction, Expr, Extent, FeatureKind, Operation, PointExpr, ProfileSel, SweepOrientation, ThinSide, ThinWall, expr::Kind, point_expr,
+    AxisRef, Direction, Expr, Extent, FeatureKind, Operation, PointExpr, ProfileSel, RailFit, SweepOrientation, SweepRail, ThinSide, ThinWall,
+    expr::Kind, point_expr,
 };
 use solidcraft_doc::{BodyName, FeatureName, SketchId};
 use solidcraft_doc::{Dir, FacePick, Position};
@@ -25,7 +26,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.sweep", "Sweep", sweep)
         .at("SOLID", "CREATE")
         .icon("sweep")
-        .params("sketch: profile sketch; profiles?; path_sketch: sketch; path: [curve ids in order]; orientation?: perpendicular (default: square to the path, turning with it) | parallel (as drawn: the profile moves without turning; the path must keep crossing its plane) | [x,y,z] (square to the path, its turn about the path fixed by this direction); twist?: angle expr (the profile turns this much about the path over its length; within 4 turns); scale?: expr (the profile's scale at the end, linear along the path; 0.01…100); operation?, targets?, name?, body_name?"),
+        .params("sketch: profile sketch; profiles?; path_sketch: sketch; path: [curve ids in order]; orientation?: perpendicular (default: square to the path, turning with it) | parallel (as drawn: the profile moves without turning; the path must keep crossing its plane) | [x,y,z] (square to the path, its turn about the path fixed by this direction); twist?: angle expr (the profile turns this much about the path over its length; within 4 turns); scale?: expr (the profile's scale at the end, linear along the path; 0.01…100); rails?: [{sketch?: sketch (default path_sketch), curves: [curve ids in order]}] (guide rails, one or two, each meeting every plane square to the path once along it, from the end nearest the path's start: one rail turns the profile so its point where the rail starts stays on the rail and scales it with the rail's distance from the path; two rails carry it between them, its points where they start staying on both; rails take the default orientation, no twist and no scale, and a path without sharp corners); rail_fit?: scale (default: the profile grows and shrinks evenly) | stretch (only across to the rail, between the rails); operation?, targets?, name?, body_name?"),
     CommandSpec::new("solid.loft", "Loft", loft).at("SOLID", "CREATE").icon("loft").params("sections: [{sketch, profiles?} | {sketch, point: id} (an apex)] (2 or more, in order); operation?, targets?, name?, body_name?"),
     CommandSpec::new("solid.box", "Box", prim_box).at("SOLID", "CREATE").icon("box").params("length, width, height: expr; corner?: [x,y,z] | center?: [x,y,z] (numbers in mm or length expressions; default: the origin); operation?, targets?: [body], name?, body_name?"),
     CommandSpec::new("solid.cylinder", "Cylinder", prim_cylinder).at("SOLID", "CREATE").icon("cylinder").params("radius | diameter, height: expr; base?: [x,y,z] (centre of the bottom: numbers in mm or length expressions; default: the origin); axis?: X|Y|Z|[x,y,z] (default Z); operation?, targets?: [body], name?, body_name?"),
@@ -1850,6 +1851,7 @@ fn sweep(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "`path` must list curve ids"));
     }
     let (orientation, twist, scale) = sweep_options(s, p, cmd)?;
+    let (rails, rail_fit) = sweep_rails(s, p, cmd, path_sketch)?;
     add_feature(
         s,
         p,
@@ -1861,6 +1863,8 @@ fn sweep(s: &mut Session, p: &Value) -> Result<Value> {
             orientation,
             twist,
             scale,
+            rails,
+            rail_fit,
             operation: operation(p, cmd)?,
             targets: string_list(p, "targets").into_iter().map(BodyName).collect(),
         },
@@ -1908,6 +1912,44 @@ pub(super) fn sweep_options(s: &Session, p: &Value, cmd: &str) -> Result<(SweepO
         }
     };
     Ok((orientation, twist, scale))
+}
+
+/// A sweep's guide `rails` and `rail_fit` (solid.sweep and surface.sweep), checked: one or two
+/// rails, each a sketch (default: the path's) and 1…1000 of its curves; a fit of scale or
+/// stretch; and no orientation, twist or scale besides, since the rails set those.
+pub(super) fn sweep_rails(s: &Session, p: &Value, cmd: &str, path_sketch: u64) -> Result<(Vec<SweepRail>, RailFit)> {
+    let rail_fit = match p.get("rail_fit") {
+        None | Some(Value::Null) => RailFit::Scale,
+        Some(Value::String(f)) if f.eq_ignore_ascii_case("scale") => RailFit::Scale,
+        Some(Value::String(f)) if f.eq_ignore_ascii_case("stretch") => RailFit::Stretch,
+        Some(_) => return Err(bad(cmd, "`rail_fit` must be scale or stretch")),
+    };
+    let given = match p.get("rails") {
+        None | Some(Value::Null) => return Ok((Vec::new(), rail_fit)),
+        Some(Value::Array(a)) => a,
+        Some(_) => return Err(bad(cmd, "`rails` must list one or two rails: [{sketch?, curves: [ids]}]")),
+    };
+    if !(1..=2).contains(&given.len()) {
+        return Err(bad(cmd, "a sweep takes one or two guide rails"));
+    }
+    for key in ["orientation", "twist", "scale"] {
+        if p.get(key).is_some_and(|v| !v.is_null()) {
+            return Err(bad(cmd, format!("guide rails set the profile's turn and size along the path: leave out `{key}`")));
+        }
+    }
+    let mut rails = Vec::with_capacity(given.len());
+    for rail in given {
+        let sketch = match rail.get("sketch") {
+            None | Some(Value::Null) => path_sketch,
+            Some(_) => sketch_id(s, rail.get("sketch"), cmd, "rails[].sketch")?,
+        };
+        let curves = string_list(rail, "curves");
+        if curves.is_empty() || curves.len() > 1000 {
+            return Err(bad(cmd, "each rail's `curves` must list 1…1000 curve ids in order"));
+        }
+        rails.push(SweepRail { sketch: SketchId(sketch), curves });
+    }
+    Ok((rails, rail_fit))
 }
 
 fn loft(s: &mut Session, p: &Value) -> Result<Value> {
@@ -2058,6 +2100,10 @@ mod revolve_convention_tests;
 #[cfg(test)]
 #[path = "sweep_options_tests.rs"]
 mod sweep_options_tests;
+
+#[cfg(test)]
+#[path = "sweep_rails_tests.rs"]
+mod sweep_rails_tests;
 
 #[cfg(test)]
 #[path = "offset_topology_tests.rs"]

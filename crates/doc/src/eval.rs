@@ -962,17 +962,25 @@ fn placement_digest(doc: &Document, f: &Feature) -> u64 {
         | FeatureKind::Pattern { pattern: crate::PatternKind::Path { path_sketch, .. }, .. } => Some(*path_sketch),
         _ => None,
     };
+    let wired = |id: &crate::SketchId| doc.sketch(id.0).is_ok_and(|sketch| !sketch.wires.is_empty());
+    let rails: &[crate::SweepRail] = match &f.kind {
+        FeatureKind::Sweep { rails, .. } | FeatureKind::SurfaceSweep { rails, .. } => rails,
+        _ => &[],
+    };
     if let Some(path) = path
-        && doc.sketch(path.0).is_ok_and(|sketch| !sketch.wires.is_empty())
+        && (wired(&path) || rails.iter().any(|r| wired(&r.sketch)))
     {
         let mut hash = std::collections::hash_map::DefaultHasher::new();
         let owner = doc.feature(path.0).map(|feature| feature.component).unwrap_or(0);
         for frame in [doc.component_transform(f.component), doc.component_transform(owner)] {
             frame.iter().flatten().for_each(|value| value.to_bits().hash(&mut hash));
         }
-        if let FeatureKind::Sweep { sketch, .. } | FeatureKind::SurfaceSweep { sketch, .. } = &f.kind {
-            let owner = doc.feature(sketch.0).map(|feature| feature.component).unwrap_or(0);
-            doc.component_transform(owner).iter().flatten().for_each(|value| value.to_bits().hash(&mut hash));
+        if let FeatureKind::Sweep { sketch, rails, .. } | FeatureKind::SurfaceSweep { sketch, rails, .. } = &f.kind {
+            // The profile's and the rails' components place them too.
+            for sketch in std::iter::once(sketch).chain(rails.iter().map(|r| &r.sketch)) {
+                let owner = doc.feature(sketch.0).map(|feature| feature.component).unwrap_or(0);
+                doc.component_transform(owner).iter().flatten().for_each(|value| value.to_bits().hash(&mut hash));
+            }
         }
         return hash.finish();
     }
@@ -3271,8 +3279,7 @@ fn feature_tools_with_constructor(
             let roles = crate::lineage::SectionRoles { sections: sketches.into_iter().zip(secs.iter().map(|(_, lp)| lp)).collect() };
             Ok(vec![roles.tool(body)])
         }
-        FeatureKind::Sweep { sketch, profiles, path_sketch, path, orientation, twist, scale, .. } => {
-            let ctl = sweep_control(vals, orientation, twist, scale)?;
+        FeatureKind::Sweep { sketch, profiles, path_sketch, path, orientation, twist, scale, rails, rail_fit, .. } => {
             let ss = st.sketch(sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?;
             let ps =
                 st.sketch(path_sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {path_sketch} (it must come earlier in the timeline)")))?;
@@ -3288,11 +3295,25 @@ fn feature_tools_with_constructor(
             let regions = solidcraft_sketch::merge_regions(&select_profiles(ss, profiles)?);
             let start = regions.first().map(|r| ss.plane.to_world(r.centroid())).unwrap_or_default();
             let tool = |r: &Region2, body: Body| crate::lineage::ProfileRoles::swept(Some(ss), Some(r)).tool(body, None);
+            let points = path_points(ps, path, start)?;
+            let segs = match points {
+                Some(_) => Vec::new(),
+                None => path_segments(ps, path, start)?,
+            };
+            let path_start = points
+                .as_ref()
+                .and_then(|p| p.first().copied())
+                .or_else(|| match segs.first() {
+                    Some(kernel::PathSeg::Line { a, .. } | kernel::PathSeg::Arc { a, .. }) => Some(*a),
+                    None => None,
+                })
+                .unwrap_or(start);
+            let rails = rail_polylines(doc, st, rails, f.component, path_start)?;
+            let ctl = sweep_control(vals, orientation, twist, scale, rails, *rail_fit)?;
             // A path through 3D sketch curves follows them as points.
-            if let Some(pts) = path_points(ps, path, start)? {
+            if let Some(pts) = points {
                 return regions.iter().map(|r| Ok(tool(r, kernel::sweep_path_with(&ss.plane, r, &pts, &ctl)?))).collect();
             }
-            let segs = path_segments(ps, path, start)?;
             regions.iter().map(|r| Ok(tool(r, kernel::sweep_with(&ss.plane, r, &segs, &ctl)?))).collect()
         }
         FeatureKind::Pipe { path_sketch, path, diameter, wall, .. } => {
@@ -3341,13 +3362,16 @@ fn feature_tools_with_constructor(
 }
 
 /// A chain of sketch curves as 3D path segments, starting at the end nearest `start`.
-/// A sweep's options from its stored orientation and its twist and end scale expressions
-/// (none: no twist, scale 1). Out-of-range values are refused by the kernel.
+/// A sweep's options from its stored orientation, its twist and end scale expressions (none: no
+/// twist, scale 1) and its guide rails as polylines (see [`rail_polylines`]). Out-of-range values
+/// are refused by the kernel.
 pub(crate) fn sweep_control(
     vals: &BTreeMap<String, Value>,
     orientation: &crate::SweepOrientation,
     twist: &Option<crate::Expr>,
     scale: &Option<crate::Expr>,
+    rails: Vec<Vec<Vec3>>,
+    rail_fit: crate::RailFit,
 ) -> Result<kernel::SweepControl> {
     let orientation = match *orientation {
         crate::SweepOrientation::Perpendicular => kernel::SweepOrientation::Perpendicular,
@@ -3362,9 +3386,38 @@ pub(crate) fn sweep_control(
         Some(k) => val(vals, k, Kind::Unitless)?,
         None => 1.0,
     };
-    let ctl = kernel::SweepControl { orientation, twist, scale };
+    let rail_fit = match rail_fit {
+        crate::RailFit::Scale => kernel::RailFit::Scale,
+        crate::RailFit::Stretch => kernel::RailFit::Stretch,
+    };
+    let ctl = kernel::SweepControl { orientation, twist, scale, rails, rail_fit };
     ctl.check()?;
     Ok(ctl)
+}
+
+/// A sweep's guide rails as polylines in the feature's frame, each a chain of its sketch's curves
+/// (planar or 3D) from the end nearest `start`, the start of the path.
+pub(crate) fn rail_polylines(doc: &Document, st: &ModelState, rails: &[crate::SweepRail], consumer: u64, start: Vec3) -> Result<Vec<Vec<Vec3>>> {
+    if rails.len() > 2 {
+        return Err(DocError::Invalid("a sweep takes one or two guide rails".into()));
+    }
+    rails
+        .iter()
+        .map(|rail| {
+            if rail.curves.is_empty() {
+                return Err(DocError::Invalid("a guide rail needs its curves".into()));
+            }
+            let rs = st
+                .sketch(rail.sketch.0)
+                .ok_or_else(|| DocError::Unknown(format!("rail sketch {} (it must come earlier in the timeline)", rail.sketch)))?;
+            let mapped = path_in_frame(doc, rs, consumer)?;
+            let rs = mapped.as_ref();
+            match path_points(rs, &rail.curves, start)? {
+                Some(pts) => Ok(pts),
+                None => Ok(kernel::path_polyline(&path_segments(rs, &rail.curves, start)?)?),
+            }
+        })
+        .collect()
 }
 
 /// A pipe's section: a circle of radius `r`, hollow when it has a wall.
