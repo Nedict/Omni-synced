@@ -701,50 +701,71 @@ fn area(poly: &[Vec2]) -> f64 {
     (0..n).filter_map(|i| Some((*poly.get(i)? - o).cross(*poly.get((i + 1) % n)? - o))).sum::<f64>() / 2.0
 }
 
+/// The follower's places at the samples 0 ..= `CAM_SAMPLES` of a turn, `place(u, prev)` giving
+/// it with the cam `u` samples on (from `prev`, where it was, when it is `follows`ed from sample
+/// to sample). A followed follower must come back where it started after the turn. A step much
+/// larger than the steps either side of it is followed again in finer steps: a smooth rise
+/// shrinks with them, a jump (the follower leaving the profile and landing on another part of it)
+/// stays one step, and is refused. `floor`: steps no larger than it are not looked at.
+fn round(place: &dyn Fn(f64, Option<f64>) -> Result<f64>, follows: bool, floor: f64) -> Result<Vec<f64>> {
+    let mut raw: Vec<f64> = Vec::with_capacity(CAM_SAMPLES + 1);
+    for k in 0..=CAM_SAMPLES {
+        let prev = if follows { raw.last().copied() } else { None };
+        raw.push(place(k as f64, prev)?);
+    }
+    let at = |k: usize| raw.get(k).copied().unwrap_or(f64::NAN);
+    if follows && (at(0) - at(CAM_SAMPLES)).abs() > 1e-6 {
+        return Err(DocError::Invalid("cam: after a turn of the cam the follower does not come back where it started (it would jump)".into()));
+    }
+    let step = |k: usize| (at(k + 1) - at(k)).abs();
+    for k in 0..CAM_SAMPLES {
+        let (d, around) = (step(k), step((k + CAM_SAMPLES - 1) % CAM_SAMPLES).max(step((k + 1) % CAM_SAMPLES)));
+        if d <= floor || d <= 3.0 * around {
+            continue;
+        }
+        let (mut here, mut most) = (at(k), 0.0f64);
+        for j in 1..=32 {
+            let next = place(k as f64 + f64::from(j) / 32.0, follows.then_some(here))?;
+            most = most.max((next - here).abs());
+            here = next;
+        }
+        if most > 0.5 * d {
+            return Err(DocError::Invalid(format!("cam: the follower would jump near {k} degrees of the cam's turn (it leaves the profile there)")));
+        }
+    }
+    Ok(raw)
+}
+
 /// A cam link's table: b's values at a's values 2π·k / `CAM_SAMPLES`, offset left out. A
 /// translating follower stands at its first contact coming along its line; an oscillating one
 /// starts at its first contact turning from pointing away from the cam's axis and is followed from
-/// sample to sample, and must come back there after a turn.
+/// sample to sample (`round`).
 pub fn table(doc: &Document, st: &ModelState, l: &MotionLink, c: &Cam) -> Result<Vec<f64>> {
     let s = setup(doc, st, l, c)?;
-    let mut out = Vec::with_capacity(CAM_SAMPLES);
     let start = s.at.angle();
-    let (mut first, mut last): (Option<f64>, Option<f64>) = (None, None);
-    let misses = || DocError::Invalid("cam: the follower's arm does not reach the cam at every angle (or starts on it)".into());
-    for k in 0..=CAM_SAMPLES {
+    let follows = s.arm.is_some();
+    // Where the follower is with the cam `u` samples on: mm along its line, or the angle its arm
+    // turned through from pointing away from the cam's axis (the same direction in C at every
+    // sample), on from `prev` for an arm.
+    let place = |u: f64, prev: Option<f64>| -> Result<f64> {
         // The follower turned back instead of the profile turned on.
-        let q = -s.turn * TAU * k as f64 / CAM_SAMPLES as f64;
-        let v = match s.arm {
-            None if k == CAM_SAMPLES => break,
-            None => {
-                first_contact_along(&s.poly, rot(s.at, q), rot(s.dir * s.side, q), s.radius, s.flat)
-                    .ok_or_else(|| DocError::Invalid("cam: the follower's line misses the cam at some angles".into()))?
-                    * s.side
-            }
+        let q = -s.turn * TAU * u / CAM_SAMPLES as f64;
+        match s.arm {
+            None => first_contact_along(&s.poly, rot(s.at, q), rot(s.dir * s.side, q), s.radius, s.flat)
+                .map(|t| t * s.side)
+                .ok_or_else(|| DocError::Invalid("cam: the follower's line misses the cam at some angles".into())),
             Some(arm) => {
-                // The angle it turns through from pointing away from the cam's axis (the same
-                // direction in C at every sample), and the arm's angle in C.
                 let (pivot, from) = (rot(s.at, q), (start + q, s.side));
-                let swept = match last {
+                match prev {
                     None => first_contact_turning(&s.poly, pivot, arm.len(), s.radius, from.0, from.1),
-                    Some(prev) => next_contact_turning(&s.poly, pivot, arm.len(), s.radius, from, prev, 1e-9 * s.size),
+                    Some(p) => next_contact_turning(&s.poly, pivot, arm.len(), s.radius, from, p, 1e-9 * s.size),
                 }
-                .ok_or_else(misses)?;
-                if k == CAM_SAMPLES {
-                    if first.is_none_or(|f| (f - swept).abs() > 1e-6) {
-                        return Err(DocError::Invalid(
-                            "cam: after a turn of the cam the follower does not come back where it started (it would jump)".into(),
-                        ));
-                    }
-                    break;
-                }
-                first = first.or(Some(swept));
-                last = Some(swept);
-                start + s.side * swept
+                .ok_or_else(|| DocError::Invalid("cam: the follower's arm does not reach the cam at every angle (or starts on it)".into()))
             }
-        };
-        out.push(s.gain * v);
-    }
+        }
+    };
+    let raw = round(&place, follows, if follows { 1e-6 } else { 1e-6 * s.size })?;
+    let out: Vec<f64> = raw.iter().take(CAM_SAMPLES).map(|v| s.gain * if follows { start + s.side * v } else { *v }).collect();
     if !out.iter().all(|v| v.is_finite() && v.abs() <= 1e9 * s.size.max(1.0)) {
         return Err(DocError::Invalid("cam: the follower's travel is out of range".into()));
     }
@@ -863,6 +884,34 @@ mod tests {
         let poly = circle(Vec2::new(e, 0.0), r, 512);
         assert_eq!(first_contact_turning(&poly, pivot, 5.0, 0.0, start, 1.0), None);
         assert_eq!(first_contact_turning(&poly, Vec2::new(10.0, 0.0), 10.0, 0.0, 0.0, 1.0), None);
+    }
+
+    /// An arm whose first contact vanishes mid-turn and lands on another lobe jumps, though it
+    /// comes back after the turn: refused. On the eccentric circle it follows smoothly.
+    #[test]
+    fn a_follower_that_jumps_is_refused() {
+        let arm_round = |poly: &[Vec2], pivot: Vec2, arm: f64| {
+            let start = pivot.angle();
+            let place = |u: f64, prev: Option<f64>| -> Result<f64> {
+                let q = -TAU * u / CAM_SAMPLES as f64;
+                let p = rot(pivot, q);
+                match prev {
+                    None => first_contact_turning(poly, p, arm, 0.0, start + q, 1.0),
+                    Some(v) => next_contact_turning(poly, p, arm, 0.0, (start + q, 1.0), v, 1e-9),
+                }
+                .ok_or_else(|| DocError::Invalid("misses".into()))
+            };
+            round(&place, true, 1e-6)
+        };
+        let lobes: Vec<Vec2> = (0..240)
+            .map(|k| {
+                let t = TAU * f64::from(k) / 240.0;
+                Vec2::from_angle(t) * (28.0 + 2.0 / 3.0 + 13.0 * (3.0 * t).cos())
+            })
+            .collect();
+        let e = arm_round(&lobes, Vec2::new(35.0, 0.0), 20.0).map_err(|e| e.to_string()).err().unwrap_or_default();
+        assert!(e.contains("jump"), "{e}");
+        assert!(arm_round(&circle(Vec2::new(10.0, 0.0), 30.0, 2048), Vec2::new(-50.0, 40.0), 50.0).is_ok());
     }
 
     /// The table is read between its samples by a periodic cubic: a cosine sampled once a degree
