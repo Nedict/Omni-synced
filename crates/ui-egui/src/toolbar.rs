@@ -1348,10 +1348,9 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                 } else if !app.session.selection.is_empty() || app.session.active_sketch.is_none() {
                     app.tree.picked_joints.clear();
                     let _ = app.run("select.clear", json!({}));
-                } else {
-                    // Nothing left to cancel: Esc finishes the sketch.
-                    app.finish_sketch();
                 }
+                // An open sketch with nothing left to cancel stays open (#1804). Finish Sketch
+                // is what leaves it, so a second Escape after putting a tool down is harmless.
             }
             Key::S if !mods.shift && !mods.alt => {
                 let at = ctx.input(|i| i.pointer.latest_pos());
