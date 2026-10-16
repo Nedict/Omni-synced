@@ -54,7 +54,8 @@ impl FeatureKind {
     }
 
     /// The body a feature that works on one body's faces names (shell, draft, split, offset,
-    /// delete and replace face, surface offset): its face points pick faces of that body.
+    /// delete and replace face, surface offset, the placed plastic features, sheet metal
+    /// conversion, ruled surface): its face points pick faces of that body.
     pub fn face_body(&self) -> Option<&str> {
         match self {
             FeatureKind::Shell { body, .. }
@@ -63,7 +64,11 @@ impl FeatureKind {
             | FeatureKind::OffsetFace { body, .. }
             | FeatureKind::DeleteFace { body, .. }
             | FeatureKind::ReplaceFace { body, .. }
-            | FeatureKind::SurfaceOffset { body, .. } => body.as_deref(),
+            | FeatureKind::SurfaceOffset { body, .. }
+            | FeatureKind::Boss { body, .. }
+            | FeatureKind::SnapFit { body, .. }
+            | FeatureKind::Rest { body, .. } => body.as_deref(),
+            FeatureKind::SheetConvert { body, .. } | FeatureKind::SurfaceRuled { body, .. } => Some(body.as_ref()),
             _ => None,
         }
     }
