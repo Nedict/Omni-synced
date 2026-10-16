@@ -3749,7 +3749,6 @@ mod tests {
         for style in [0u8, 2] {
             let ctx = egui::Context::default();
             let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
-            app.viewport.no_pixels = true;
             app.run("solid.box", json!({"length":200,"width":120,"height":160})).unwrap();
             app.ui.show_origin = false;
             app.ui.visual_style = style;
