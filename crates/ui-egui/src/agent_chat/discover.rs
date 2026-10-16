@@ -306,8 +306,10 @@ mod tests {
         let (a, b) = (root.join("a"), root.join("b"));
         std::fs::create_dir_all(&a).unwrap();
         std::fs::create_dir_all(&b).unwrap();
-        std::fs::write(b.join("codex-acp"), "").unwrap();
-        assert_eq!(find_in("codex-acp", &[a.clone(), b.clone()]), Some(b.join("codex-acp")));
+        // A name this platform runs: Windows looks only for `.exe`/`.cmd`/`.bat` (#1554).
+        let name = names_for("codex-acp", cfg!(windows)).remove(0);
+        std::fs::write(b.join(&name), "").unwrap();
+        assert_eq!(find_in("codex-acp", &[a.clone(), b.clone()]), Some(b.join(name)));
         assert_eq!(find_in("gemini", &[a, b]), None);
         let _ = std::fs::remove_dir_all(root);
     }
