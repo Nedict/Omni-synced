@@ -3704,6 +3704,76 @@ mod tests {
         assert!(checked >= 3, "{checked} faces seen lit");
     }
 
+    /// An origin plane lying on a body's face is tinted evenly over it (#1739: a box built at the
+    /// origin, seen from below in orthographic; the XY plane's square z-fought with the bottom
+    /// face in stripes). Faces are pushed back by their slope (`FACE_BIAS`), the planes are not.
+    /// Skipped without a GPU adapter.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn an_origin_plane_on_a_face_is_tinted_evenly() {
+        let mut s = solidcraft_engine::Session::default();
+        s.execute("solid.box", &json!({"length": 40, "width": 30, "height": 10, "corner": [0, 0, 0]})).unwrap();
+        let mut app = SolveApp::new(s, crate::Services::default());
+        app.cam = Camera {
+            target: Vec3::new(16.904, 10.024, 3.661),
+            yaw: -0.32,
+            pitch: -0.9652,
+            roll: 0.0,
+            distance: 98.557,
+            fov: 0.0,
+            ..Default::default()
+        };
+        app.ui.perspective = false;
+        const SIZE: u32 = 256;
+        let rect = Rect::from_min_size(Pos2::ZERO, vec2(SIZE as f32, SIZE as f32));
+        let mut render = |origin: bool| {
+            app.ui.show_origin = origin;
+            app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess: false });
+            let (scene, highlight) = (build_scene(&app), build_highlight(&app).merged());
+            let proj = projection(&app, rect);
+            let e = proj.cam.eye().to_f32();
+            let img = crate::gpu::render_offscreen(
+                scene,
+                Some(highlight),
+                proj.vp.to_f32(),
+                proj.cam.back().to_f32(),
+                [e[0], e[1], e[2], 0.0],
+                SIZE,
+                None,
+                [0.0; 8],
+                crate::gpu::analysis_colors(&Tokens::get().analysis),
+            );
+            (img, proj)
+        };
+        let (Some(with), proj) = render(true) else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        let (Some(without), _) = render(false) else { return };
+        app.ui.show_origin = true;
+        let xy = origin_planes(&app).into_iter().find(|(n, _, _)| *n == "XY").map(|(_, _, q)| q).unwrap();
+        let (w, h, r) = (f64::from(SIZE), f64::from(SIZE), scene_radius(&app));
+        let (mut samples, mut plain) = (0, Vec::new());
+        // Points inside the square (away from its outline), where it lies on the bottom face.
+        for i in 1..12 {
+            for j in 1..12 {
+                let (u, v) = (f64::from(i) / 12.0, f64::from(j) / 12.0);
+                let p = xy[0] + (xy[1] - xy[0]) * u + (xy[3] - xy[0]) * v;
+                if !(p.x > 0.5 && p.x < 39.5 && p.y > 0.5 && p.y < 29.5) {
+                    continue;
+                }
+                let Some((x, y, _)) = proj.cam.to_screen(p, w, h, r) else { continue };
+                let at = (y as usize * SIZE as usize + x as usize) * 4;
+                samples += 1;
+                if with.get(at..at + 4) == without.get(at..at + 4) {
+                    plain.push((x as u32, y as u32));
+                }
+            }
+        }
+        assert!(samples > 40, "{samples} points of the square on the face");
+        assert!(plain.is_empty(), "{} of {samples} points of the XY plane's square do not show over the face: {:?}", plain.len(), &plain[..plain.len().min(6)]);
+    }
+
     #[test]
     fn construction_drawing_and_hover_overlays_preserve_visible_gaps() {
         fn length(shape: &Shape) -> f32 {
