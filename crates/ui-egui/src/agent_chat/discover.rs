@@ -69,6 +69,16 @@ pub const KNOWN: &[Known] = &[
         key_vars: &[],
     },
     Known {
+        id: "grok",
+        name: "XAI Grok",
+        programs: &["grok"],
+        args: &["agent", "stdio"],
+        install: "see https://docs.x.ai/build/overview (Grok Build installer); then run grok login",
+        credentials: Some(".grok/auth.json"),
+        config_dir_var: None,
+        key_vars: &["XAI_API_KEY"],
+    },
+    Known {
         id: "copilot",
         name: "GitHub Copilot CLI",
         programs: &["copilot"],
@@ -153,14 +163,14 @@ fn home() -> Option<PathBuf> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from).filter(|p| p.is_absolute())
 }
 
-/// PATH, then the usual places npm, Homebrew, nvm, Volta, bun and pipx put commands.
+/// PATH, then the usual places npm, Homebrew, nvm, Volta, bun, pipx and Grok put commands.
 pub fn search_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
     if let Some(prefix) = std::env::var_os("NPM_CONFIG_PREFIX").map(PathBuf::from) {
         dirs.push(if cfg!(windows) { prefix.clone() } else { prefix.join("bin") });
     }
     if let Some(h) = home() {
-        for d in [".local/bin", ".npm-global/bin", ".npm-packages/bin", ".volta/bin", ".bun/bin", ".cargo/bin", "bin"] {
+        for d in [".local/bin", ".npm-global/bin", ".npm-packages/bin", ".volta/bin", ".bun/bin", ".cargo/bin", ".grok/bin", "bin"] {
             dirs.push(h.join(d));
         }
         // nvm: every installed Node version's bin.
@@ -320,6 +330,7 @@ mod tests {
         assert_eq!(version_of("@agentclientprotocol/codex-acp 2.2.2"), "2.2.2");
         assert_eq!(version_of("2.1.295 (Claude Code)"), "2.1.295");
         assert_eq!(version_of("goose v1.9.0"), "v1.9.0");
+        assert_eq!(version_of("grok 1.0.58 (26283d10dd58) [alpha]"), "1.0.58");
         assert_eq!(version_of("dev build"), "dev build");
     }
 
@@ -330,6 +341,7 @@ mod tests {
         let gemini = KNOWN.iter().find(|k| k.id == "gemini").unwrap();
         let qwen = KNOWN.iter().find(|k| k.id == "qwen").unwrap();
         let goose = KNOWN.iter().find(|k| k.id == "goose").unwrap();
+        let grok = KNOWN.iter().find(|k| k.id == "grok").unwrap();
         if std::env::var_os("GEMINI_API_KEY").is_none() && std::env::var_os("GOOGLE_API_KEY").is_none() {
             assert_eq!(login_of(gemini, Some(&home)), Login::NotLoggedIn);
         }
@@ -339,6 +351,13 @@ mod tests {
             assert_eq!(login_of(qwen, Some(&home)), Login::NotLoggedIn);
         }
         assert_eq!(login_of(goose, Some(&home)), Login::Unknown, "keeps no file we know");
+        if std::env::var_os("XAI_API_KEY").is_none() {
+            assert_eq!(login_of(grok, Some(&home)), Login::NotLoggedIn);
+        }
+        std::fs::create_dir_all(home.join(".grok")).unwrap();
+        // Discovery checks only for the file; it never needs to parse the user's tokens.
+        std::fs::write(home.join(".grok/auth.json"), "not credential data").unwrap();
+        assert_eq!(login_of(grok, Some(&home)), Login::LooksLoggedIn);
         let _ = std::fs::remove_dir_all(home);
     }
 
