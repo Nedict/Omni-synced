@@ -3,7 +3,7 @@
 //! parameters and its checks, so that a loop it cannot hold is refused before anything is built.
 
 use serde_json::Value;
-use solidcraft_doc::FeatureKind;
+use solidcraft_doc::{FeatureKind, SketchId};
 use solidcraft_kernel::Continuity;
 
 use super::CommandSpec;
@@ -98,7 +98,7 @@ fn boundary(s: &mut Session, p: &Value) -> Result<Value> {
                 .ok_or_else(|| bad(cmd, format!("`samples` must be a whole number of stations between {MIN_SAMPLES} and {MAX_SAMPLES}")))?
         }
     };
-    add_feature(s, p, FeatureKind::SurfaceBoundary { sketch, curves, orders, crown, samples })
+    add_feature(s, p, FeatureKind::SurfaceBoundary { sketch: SketchId(sketch), curves, orders, crown, samples })
 }
 
 #[cfg(test)]

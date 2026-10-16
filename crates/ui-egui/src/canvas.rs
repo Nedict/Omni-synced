@@ -494,7 +494,7 @@ fn value_box(ui: &mut egui::Ui, label: &str, value: &mut String, at: Pos2, selec
     crate::frame::area(egui::Id::new("sc_canvas_area")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).inner_margin(egui::Margin::symmetric(6, 3)).show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(label).color(t.text_dim).size(11.5));
+                ui.label(egui::RichText::new(crate::i18n::tr_label(label)).color(t.text_dim).size(11.5));
                 let r = ui.add(egui::TextEdit::singleline(value).id(id).desired_width(72.0));
                 crate::params_dialog::complete(ui, &r, value);
                 if select_all {

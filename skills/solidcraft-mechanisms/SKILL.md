@@ -74,6 +74,7 @@ Written against SolidCraft `main` after 0.11.1, which counts the degrees of free
 |---|---|
 | "The origins are at the same point, so `flip` doesn't matter" | Pass `flip: true`, or the part turns 180 degrees. |
 | "The drive answered values, so it moved" | Read `moved`; a chain joined to nothing grounded answers `moved: false` and a `reason`. |
+| "Drive the arm joint by joint until the gripper gets there" | `joint.reach {"occurrence":..., "at":..., "point":...}` solves every joint on its chain at once; read `reached` and `error_mm`. |
 | "Key every joint of the loop in the study" | Key the driving joint only; the loop follows. |
 | "Check the pose with `component.list`" | `occurrence.properties` on the one occurrence. `component.list` is 140 KB on a 36-part assembly. |
 | "Open the design with `file.open`" | The `open` tool, or `doc.open`; there is no `file.open`. |

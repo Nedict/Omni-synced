@@ -44,6 +44,7 @@ pub mod drag_snap;
 pub mod edit_clipboard;
 pub mod fonts;
 pub mod frame;
+pub mod frame_rate;
 pub mod gizmo;
 pub mod gpu;
 pub mod help;
@@ -61,6 +62,7 @@ pub mod icons;
 pub mod inference;
 pub mod install;
 pub mod issue_report;
+pub mod joint_drag;
 pub mod keymap;
 mod material_card_review;
 #[cfg(test)]
@@ -146,6 +148,7 @@ pub mod sketch_modify_ui;
 #[cfg(test)]
 mod sketch_modify_ui_tests;
 pub mod sketch_palette;
+mod sketch_pattern_tree;
 pub(crate) mod sketch_text;
 mod sketch_text_handles;
 mod sketch_text_move;
@@ -353,6 +356,8 @@ pub struct SolveApp {
     /// [`SolveApp::set_wgpu`].
     pub cpu_meshing: bool,
     pub frame_ms: f64,
+    /// The viewport's frame-rate readout ([`frame_rate`]).
+    pub frame_rate: frame_rate::FrameRate,
     pub synthetic: Vec<egui::Event>,
     /// The modifiers of the synthetic press in progress (a Ctrl-drag keeps Ctrl while it moves).
     pub synthetic_mods: egui::Modifiers,
@@ -446,6 +451,7 @@ impl SolveApp {
             integrated_titlebar: false,
             cpu_meshing: false,
             frame_ms: 0.0,
+            frame_rate: frame_rate::FrameRate::default(),
             synthetic: Vec::new(),
             synthetic_mods: egui::Modifiers::default(),
             control_rx: None,
@@ -628,7 +634,9 @@ impl SolveApp {
                 // reads the same way the toolbar button it came from does.
                 let language = i18n::Locale::for_language(&self.preferences.language);
                 let label = language.label(command_label(id));
-                if !(id == "view.navigate" && v.get("continuous").and_then(Value::as_bool) == Some(true)) {
+                // Frames of a gesture (a continuous view move, a part dragged by its joints) are
+                // not echoed one by one.
+                if v.get("continuous").and_then(Value::as_bool) != Some(true) {
                     self.session.echo(language.format("ui.command_done", &[("command", label)]));
                 }
                 if id == "file.new" {

@@ -491,6 +491,8 @@ mod web {
                             install_app: Some(crate::install::service(&cc.egui_ctx)),
                             ..Default::default()
                         };
+                        // Thumbnails of saves and start-page cards.
+                        solidcraft_ui_egui::gpu::install_cpu_picture_renderer();
                         let mut app = SolveApp::new(Session::default(), services);
                         if let Some(p) = cc.storage.and_then(|s| solidcraft_ui_egui::prefs::stored(|k| s.get_string(k))) {
                             app.load_prefs(&p);

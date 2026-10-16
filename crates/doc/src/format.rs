@@ -132,7 +132,7 @@
 //!   Holes at sketch points can be flipped (`flip: true` in the hole's `points`): they drill away
 //!   from the side they would go into by themselves. Holes without it save as before; 0.9.0 would
 //!   drop the flip and drill the other way.
-//!
+
 //! - 19: editable associative offset-distance dimensions. Older offsets retain their saved
 //!   fixed distances; migration does not invent dimensions or change geometry.
 //!   Under the same version, a fillet's style can be `curvature` (a G2 quintic blend; `radius`
@@ -195,13 +195,11 @@
 //!   `{direction: [x, y, z]}`; absent: perpendicular), `twist` (an angle expression) and `scale`
 //!   (the end scale, an expression). A sweep without them saves as before; 0.11.x refuses
 //!   format 21, so no released build sweeps a twisted or scaled profile straight.
-//!
 //!   Nothing new is saved for converted sheets' corners and bend ends, but a design converts as
 //!   the rule says when it is evaluated: corners between the walls take the rule's corner relief
 //!   and a bend ending beside more of the fixed face its bend relief (0.11.0 left every corner a
 //!   notch and cut no bend relief), and a wall on part of an edge bends only where it stands
 //!   (0.11.0 refused it).
-//!
 //! - 22: an Import (STEP) feature can list `skip`: indices of the file's bodies it does not
 //!   build, because they are later instances of a part the file places more than once and the
 //!   other occurrences of that part's component show them (#1386: an imported file becomes a
@@ -1437,7 +1435,7 @@ mod tests {
             .add_feature(
                 FeatureKind::Extrude {
                     thin: None,
-                    sketch,
+                    sketch: crate::SketchId(sketch),
                     profiles: ProfileSel::All,
                     extent: Extent {
                         convention: crate::ExtrudeConvention::LegacyPerSide,
@@ -1447,9 +1445,9 @@ mod tests {
                         start_offset: None,
                         through_all: false,
                         taper: Some("0 deg".into()),
-                        to: Some(solidcraft_geom::Vec3::new(0.0, 0.0, 10.0)),
+                        to: Some(crate::FacePick(solidcraft_geom::Vec3::new(0.0, 0.0, 10.0))),
                         to_offset: Some("offset + 1 mm".into()),
-                        from: Some(solidcraft_geom::Vec3::new(0.0, 0.0, 5.0)),
+                        from: Some(crate::FacePick(solidcraft_geom::Vec3::new(0.0, 0.0, 5.0))),
                     },
                     operation: Operation::NewBody,
                     targets: vec![],
@@ -2079,7 +2077,7 @@ mod tests {
             "orientation": {"direction": [0.0, 1.0, 0.0]}, "twist": "90 deg", "scale": "0.5"});
         let k: FeatureKind = serde_json::from_value(new.clone()).unwrap();
         let FeatureKind::SurfaceSweep { orientation, .. } = &k else { panic!("{k:?}") };
-        assert_eq!(*orientation, SweepOrientation::Direction(solidcraft_geom::Vec3::Y));
+        assert_eq!(*orientation, SweepOrientation::Direction(crate::Dir(solidcraft_geom::Vec3::Y)));
         assert_eq!(serde_json::to_value(&k).unwrap(), new);
         let parallel: SweepOrientation = serde_json::from_value(serde_json::json!("parallel")).unwrap();
         assert_eq!(parallel, SweepOrientation::Parallel);

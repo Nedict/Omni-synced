@@ -7,6 +7,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod capture;
 pub mod cmd;
 pub mod control_auth;
 pub mod crash;
@@ -301,6 +302,20 @@ pub struct ContinuitySeam {
     pub points: Vec<Vec3>,
     /// The seam's worst verdict along its length.
     pub verdict: kernel::SeamVerdict,
+}
+
+impl SurfaceAnalysis {
+    /// How a picture shades the faces for this analysis.
+    pub fn mode(self) -> render::AnalysisMode {
+        use render::AnalysisMode as M;
+        match self {
+            SurfaceAnalysis::Zebra { stripes } => M::Zebra { stripes },
+            SurfaceAnalysis::Draft { pull, angle } => M::Draft { pull, angle },
+            SurfaceAnalysis::Curvature { radius } => M::Curvature { radius },
+            SurfaceAnalysis::Environment => M::Environment,
+            SurfaceAnalysis::Access { dir } => M::Access { dir },
+        }
+    }
 }
 
 const MAX_UNDO: usize = 200;

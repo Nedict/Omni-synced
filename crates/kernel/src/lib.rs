@@ -33,6 +33,8 @@ mod coplanar;
 mod corner_g2;
 mod curveblend;
 mod delete_face;
+#[cfg(test)]
+mod edge_polyline_tests;
 mod emboss;
 mod face_params;
 #[cfg(test)]
@@ -48,6 +50,8 @@ mod iges_in;
 mod iges_out;
 #[cfg(test)]
 mod intersection_curve_tests;
+#[cfg(test)]
+mod issue_1038_tests;
 #[cfg(test)]
 mod issue_1080_tests;
 #[cfg(test)]
@@ -127,7 +131,7 @@ pub use blend_variable::{RadiusSpline, Taper, fillet_chord, fillet_tapered, fill
 pub use body::{Body, CapSignature, DISPLAY_ANGLE, EdgeInfo, FaceInfo, FacePaint, FaceSource, Paint};
 pub use boolean_diagnostics::{BooleanDiagnostics, BooleanFallback, BooleanStrategy, capture_boolean_diagnostics};
 pub use boundary::{Boundary, boundary_patch};
-pub use bridge::{Continuity, Frame, blend_between, bridge, chain, chain_closes, frames, sample_grid};
+pub use bridge::{Continuity, Frame, blend_between, bridge, chain, chain_closes, frames, frames_across, sample_grid};
 pub use build::{
     PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, extrude_tapered_between, loft, revolve, sphere, sweep,
     sweep_with, torus,
@@ -142,7 +146,7 @@ pub use fair::{
     FairCurve, FairNet, FairOptions, FairReport, MAX_FAIR_ITERATIONS, MAX_FAIR_POINTS, fair_bspline_curve, fair_bspline_surface, fair_curve,
     fair_faces, fair_net, fair_nurbs_curve, fair_nurbs_surface, fair_surface,
 };
-pub use fill::patch_edges_crowned;
+pub use fill::{PATCH_ANGLE_TOL_DEG, PatchReport, PatchSpec, patch_edges_crowned, patch_edges_report, patch_edges_with};
 pub use helix::{loft_to_point, sweep_helix, sweep_helix_mesh};
 pub use iges_in::{MAX_IGES_BYTES, iges_import, iges_to_step};
 pub use iges_out::iges_export_bodies;

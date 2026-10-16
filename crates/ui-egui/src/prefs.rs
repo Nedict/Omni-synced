@@ -283,6 +283,8 @@ pub struct Prefs {
     pub supersampling: f32,
     /// Supersample only while the view holds still (full speed while orbiting).
     pub supersampling_adaptive: bool,
+    /// Show the frame rate in the view's corner (the view then redraws every frame).
+    pub show_frame_rate: bool,
     /// Show world X/Y/Z component dimensions beside the total distance in Measure.
     pub measure_axis_distances: bool,
     /// Decimals shown for lengths and angles.
@@ -346,6 +348,8 @@ pub struct Prefs {
     /// How much the agent may do without asking (`ask`, `edits`, `all`), and per agent.
     pub ai_permissions: crate::agent_chat::agents::Mode,
     pub agent_permissions: std::collections::BTreeMap<String, crate::agent_chat::agents::Mode>,
+    /// The model last chosen in the chat, per agent: put back when the agent offers it again.
+    pub agent_models: std::collections::BTreeMap<String, String>,
     /// "Always allow" answers: per agent, the tools it may use without asking.
     pub agent_always_allow: std::collections::BTreeMap<String, Vec<String>>,
     /// The side the panel docks on (`left` or `right`), its width, and whether it is folded to a strip.
@@ -400,6 +404,7 @@ impl Default for Prefs {
             display_quality: "normal".into(),
             supersampling: 1.0,
             supersampling_adaptive: true,
+            show_frame_rate: false,
             measure_axis_distances: true,
             length_decimals: 2,
             angle_decimals: 1,
@@ -432,6 +437,7 @@ impl Default for Prefs {
             agent_default: String::new(),
             ai_permissions: crate::agent_chat::agents::Mode::Edits,
             agent_permissions: Default::default(),
+            agent_models: Default::default(),
             agent_always_allow: Default::default(),
             agent_chat_side: "right".into(),
             agent_chat_width: 380.0,
@@ -624,6 +630,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.display_quality = d.display_quality;
             p.supersampling = d.supersampling;
             p.supersampling_adaptive = d.supersampling_adaptive;
+            p.show_frame_rate = d.show_frame_rate;
             p.measure_axis_distances = d.measure_axis_distances;
             p.color_vision = d.color_vision;
             app.ui.visual_style = 0;
@@ -1310,6 +1317,13 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             colour_vision_sample(ui, t);
             ui.end_row();
             note(ui, app.tr("ui.colour_vision_note"));
+            // Last, so the colour vision section above keeps its place on the page.
+            ui.label("");
+            ui.end_row();
+            ui.label(app.tr("ui.frame_rate"));
+            ui.checkbox(&mut app.preferences.show_frame_rate, "");
+            ui.end_row();
+            note(ui, app.tr("settings.frame_rate_note"));
         }
         5 => {
             ui.label(crate::i18n::tr_label("Project face edges into new sketches"));

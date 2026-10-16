@@ -77,6 +77,9 @@ impl eframe::App for App {
         }
     }
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        // Before the app's own hook, which adds the control channel's events.
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        self.space_mouse.raw_input_hook(self.solve.preferences.space_mouse_enabled, raw);
         self.solve.raw_input_hook(raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -567,6 +570,7 @@ fn main() -> eframe::Result {
                 eprintln!("SolidCraft graphics: {:?}, MSAA {}x (requested {}x)", rs.adapter.get_info().backend, rs.msaa_samples, samples);
                 solidcraft_engine::crash::phase("viewport pipelines (shader compile)");
                 app.set_wgpu(rs, DEPTH_BITS, STENCIL_BITS, rs.msaa_samples);
+                solidcraft_ui_egui::gpu::install_picture_renderer(rs);
                 // The graphics driver is loaded now; it may have put its own exception filter
                 // in front of ours.
                 #[cfg(target_os = "windows")]
