@@ -55,6 +55,33 @@ driven one. A joint follows one link at most, and a coupling that would drive it
 refused. `joint.list` lists each coupling's definition under `links` with an `error` when it can't
 be worked out (the picked face is gone); the link then keeps its last ratio.
 
+**Cam** (`joint.cam {a, b, profile}`, on the **ASSEMBLE** panel) makes a follower ride a cam. The
+cam turns on a revolute joint (a); the follower is a slider (b, a translating follower such as a
+valve tappet) or a revolute joint (b, an oscillating follower such as a rocker arm). The profile
+is the cam's outline in a plane square to its axis: a closed profile of a sketch in the cam's
+component, or the cam's edges picked on its body (one click on an edge takes the closed loop it is
+on in that plane). The follower is:
+
+- a **Knife edge**: a point on the cam;
+- a **Roller** of a radius, typed or taken from the roller's round face (picking that face also
+  says where the roller is);
+- a **Flat face** square to a slider's line, such as a bucket tappet.
+
+A translating follower's line runs along its slider's axis, through its **Tip** when one is picked
+(its knife's point or its roller's centre), so a follower offset from the cam's axis rides the
+right flank. An oscillating follower needs its tip, or its roller's face, to know its arm. The
+follower rides the cam from the side it is on (**Other side** takes the other one). The follower's
+travel over a turn of the cam is worked out from the profile and kept with the link, one value a
+degree with a smooth curve between them that never overshoots its samples. It is worked out again
+whenever the design changes: change the cam's sketch, a parameter or the roller, and the follower
+follows. Like the gears, the new link leaves the follower where it is (model it touching the cam),
+and the cam is a motion link: it drives in **Drive Joints**, plays in motion studies, works in
+closed loops (a tappet can be the piston of a slider-crank) and stops at contact sets. The profile
+may also be on the grounded part, with the follower's guide on a turret that the cam joint turns.
+`joint.list` gives a cam's link `lift` (the follower's lowest and highest values and its rise)
+instead of a ratio. A profile that is not closed, a line or an arm that misses the cam somewhere,
+a follower that would jump, and axes that are not square or parallel are refused.
+
 A joint moves one component against another, so its two picks must be on different components.
 A STEP file with several parts often comes in as bodies of one component, and picks on two of
 those bodies make no joint. The Joint and As-built Joint dialogs say so under the picks and offer
@@ -121,6 +148,23 @@ kept as a closed, smooth spline.
 study, samples?}`) answers the world points without changing the design, and
 `motion.trace.keep` with the same parameters (and `name?`) keeps them. A trace takes 2 to 500
 samples: 100 by default for a joint, one per step for a study.
+
+**Export Animation…** in the **Motion Study** dialog saves the study as an animated GIF, drawn
+from the viewport's camera as the study plays (the keys in the dialog count, even before OK).
+`motion.export_animation` does the same for scripts, the CLI and agents, without a window: give a
+`study`, or a `joint` with `from` and `to` (and `index?`) to animate a drive, and a `path`. A path
+ending in `.gif` gets an animated GIF that loops; any other path is a folder that gets the frames
+as `frame-0001.png`, `frame-0002.png`, and so on (made if missing; frames of a longer earlier
+export there are removed), for a video tool. The web app writes GIFs only. `samples` is
+the number of frames (one per step for a study by default, 100 for a joint), `width` and `height`
+their size in pixels (800 × 500 by default, at most 4096 a side), and `fps` the GIF's speed (20
+by default); `grid: false` and `axes: false` leave out the ground grid and the origin's axes.
+`camera` takes the reply of the control channel's `ui.camera` (or any of its fields;
+the rest come from the view `view.apply` chose, or the home view framing the model). The frames
+are drawn by the same renderer as `solidcraft-cli snapshot`, on a copy of the design, which is not
+changed. A GIF keeps one palette for all its frames, so colours don't flicker, and stores only
+what changed from one frame to the next. Frames are capped: at most 1000, and a GIF holds at most
+2^26 pixels of frames (about 160 frames of 800 × 500).
 
 **Insert Design** (`component.insert_design {path, translate?}`, on the **ASSEMBLE** panel and
 in the **File** menu) adds a component linked to another saved design, so each part can live in

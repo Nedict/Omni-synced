@@ -347,16 +347,23 @@ impl SpaceMouse {
     /// Before the app's own hook (which adds the control channel's events): with navigation on,
     /// the wheel events 3DxWare makes from the cap's motion are dropped.
     pub fn raw_input_hook(&mut self, enabled: bool, raw: &mut egui::RawInput) {
+        self.raw_input_hook_at(enabled, raw, Instant::now());
+    }
+
+    fn raw_input_hook_at(&mut self, enabled: bool, raw: &mut egui::RawInput, now: Instant) {
         if !enabled {
             return;
         }
-        let now = Instant::now();
         let moving = self.shared.lock().map(|reading| reading.current(now).moving()).unwrap_or(false);
         self.wheel.filter(moving, now.duration_since(self.started).as_secs_f64(), &mut raw.events);
     }
 
     pub fn tick(&mut self, app: &mut SolveApp, ctx: &Context) {
-        let now = Instant::now();
+        self.tick_at(app, ctx, Instant::now());
+    }
+
+    /// The frame at `now`. Tests pass their own clock, so a slow runner can't age a reading.
+    fn tick_at(&mut self, app: &mut SolveApp, ctx: &Context, now: Instant) {
         let seconds = now.duration_since(self.last_frame).as_secs_f64();
         self.last_frame = now;
         if now.duration_since(self.mapping_checked_at) >= RETRY_AFTER {
@@ -486,6 +493,9 @@ mod tests {
     #[test]
     fn each_frame_hands_the_view_its_motion_through_the_drivers_mapping() {
         // The reader's latest tilt, and a profile that makes tilt roll: the frame's motion rolls.
+        // The frame runs at the reading's own time, so a slow runner can't let the reading go stale.
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), solidcraft_ui_egui::Services::default());
+        app.home.open = false;
         let now = Instant::now();
         let mut reading = Reading::new(now);
         reading.axes.rotation = [0, 350, 0];
@@ -497,9 +507,7 @@ mod tests {
             wheel: WheelGuard::default(),
             started: now,
         };
-        let mut app = SolveApp::new(solidcraft_engine::Session::default(), solidcraft_ui_egui::Services::default());
-        app.home.open = false;
-        mouse.tick(&mut app, &Context::default());
+        mouse.tick_at(&mut app, &Context::default(), now);
         let DeviceMotion { motion, seconds } = app.viewport.device_motion.expect("the frame hands the page its motion");
         assert_eq!(motion, Motion { translation: [0.0; 3], rotation: [0.0, 0.0, -1.0] });
         assert!(seconds > 0.0);
@@ -514,8 +522,7 @@ mod tests {
         }
     }
 
-    fn mouse(reading: Reading) -> SpaceMouse {
-        let now = Instant::now();
+    fn mouse(reading: Reading, now: Instant) -> SpaceMouse {
         SpaceMouse {
             shared: Arc::new(Mutex::new(reading)),
             last_frame: now,
@@ -532,36 +539,37 @@ mod tests {
         let now = Instant::now();
         let mut tilted = Reading::new(now);
         tilted.axes.rotation = [-200, 0, 0];
-        let mut moving = mouse(tilted);
+        let mut moving = mouse(tilted, now);
         let mut raw = egui::RawInput { events: vec![wheel(), egui::Event::Zoom(1.1), egui::Event::Text("a".into())], ..Default::default() };
-        moving.raw_input_hook(true, &mut raw);
+        moving.raw_input_hook_at(true, &mut raw, now);
         assert_eq!(raw.events, [egui::Event::Text("a".into())]);
         // With navigation off, the wheel is the cap's only way to move the view: kept.
         let mut raw = egui::RawInput { events: vec![wheel()], ..Default::default() };
-        moving.raw_input_hook(false, &mut raw);
+        moving.raw_input_hook_at(false, &mut raw, now);
         assert_eq!(raw.events.len(), 1);
         // The cap at rest: the wheel is the user's.
-        let mut resting = mouse(Reading::new(now));
+        let mut resting = mouse(Reading::new(now), now);
         let mut raw = egui::RawInput { events: vec![wheel()], ..Default::default() };
-        resting.raw_input_hook(true, &mut raw);
+        resting.raw_input_hook_at(true, &mut raw, now);
         assert_eq!(raw.events.len(), 1);
     }
 
     #[test]
     fn the_wheel_is_the_users_again_once_the_cap_has_been_still_a_moment() {
-        let mut tilted = Reading::new(Instant::now());
+        let now = Instant::now();
+        let mut tilted = Reading::new(now);
         tilted.axes.rotation = [-200, 0, 0];
-        let mut cap = mouse(tilted);
+        let mut cap = mouse(tilted, now);
         let mut raw = egui::RawInput { events: vec![wheel()], ..Default::default() };
-        cap.raw_input_hook(true, &mut raw);
+        cap.raw_input_hook_at(true, &mut raw, now);
         assert!(raw.events.is_empty(), "dropped while the cap moves");
         // Let go, then wait out the quiet time.
+        let later = now + Duration::from_secs_f64(solidcraft_ui_egui::space_mouse::WHEEL_QUIET_S) + Duration::from_millis(60);
         if let Ok(mut reading) = cap.shared.lock() {
-            *reading = Reading::new(Instant::now());
+            *reading = Reading::new(later);
         }
-        std::thread::sleep(Duration::from_secs_f64(solidcraft_ui_egui::space_mouse::WHEEL_QUIET_S) + Duration::from_millis(60));
         let mut raw = egui::RawInput { events: vec![wheel()], ..Default::default() };
-        cap.raw_input_hook(true, &mut raw);
+        cap.raw_input_hook_at(true, &mut raw, later);
         assert_eq!(raw.events.len(), 1, "kept once the cap has been still");
     }
 }
