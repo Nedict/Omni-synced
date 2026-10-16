@@ -376,19 +376,20 @@ fn profile_points(doc: &Document, st: &ModelState, p: &CamProfile, cam: &super::
             let f = if *occurrence == cam.b.occurrence { fb } else { fa };
             let axis = Vec3::new(f[2][0], f[2][1], f[2][2]);
             let level = lines.first().and_then(|l| l.first()).map(|p| p.dot(axis)).unwrap_or(0.0);
-            let flat = 1e-6 * size + 1e-9;
+            // Joins and the plane to the picked edges' own size, not their bodies' (a small cam in a
+            // component with a large part must not close a gap of its own size).
+            let span = extent(lines.iter().flat_map(|l| l.iter()));
+            let (flat, join) = (1e-6 * span + 1e-9, 1e-6 * span + 1e-9);
             let pool: Vec<&Vec<Vec3>> = edges
                 .iter()
                 .flatten()
                 .filter(|e| !lines.iter().any(|l| std::ptr::eq(*l, *e)) && e.iter().all(|p| (p.dot(axis) - level).abs() <= flat))
                 .collect();
-            let loop_ = chain(&lines, &pool, 1e-5 * size)
+            let loop_ = chain(&lines, &pool, join)
                 .ok_or_else(|| bad(&format!("the picked edges must form one closed loop (of at most {MAX_PROFILE_POINTS} points)")))?;
             // The profile's own size (not its bodies'), for the checks on its plane and area.
-            let (lo, hi) = loop_.iter().fold((Vec3::new(f64::MAX, f64::MAX, f64::MAX), Vec3::new(f64::MIN, f64::MIN, f64::MIN)), |(lo, hi), p| {
-                (Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z)), Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z)))
-            });
-            Ok((loop_, *occurrence, (hi - lo).len()))
+            let size = extent(loop_.iter());
+            Ok((loop_, *occurrence, size))
         }
     }
 }
@@ -499,6 +500,14 @@ fn sampled(lp: &solidcraft_geom::Loop2, tol: f64) -> Option<Vec<Vec2>> {
         }
     }
     Some(out)
+}
+
+/// The diagonal of the box around some points (0 for none).
+fn extent<'a>(pts: impl Iterator<Item = &'a Vec3>) -> f64 {
+    let (lo, hi) = pts.fold((Vec3::new(f64::MAX, f64::MAX, f64::MAX), Vec3::new(f64::MIN, f64::MIN, f64::MIN)), |(lo, hi), p| {
+        (Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z)), Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z)))
+    });
+    if lo.x <= hi.x { (hi - lo).len() } else { 0.0 }
 }
 
 fn bounds_2d(pts: &[Vec2]) -> f64 {
