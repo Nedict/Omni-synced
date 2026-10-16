@@ -829,19 +829,20 @@ impl PolyBoundary {
     }
 }
 
-/// SolidCraft: most boundary points [`pinched`] compares with every segment.
+/// SolidCraft: most boundary points [`pinched`] compares with every segment, and most points it
+/// puts into segments.
 const MAX_PINCH_POINTS: usize = 8192;
 
 /// SolidCraft: `loops` with every point that lies within `TOLERANCE` of a segment, away from its
 /// ends, put into that segment (in order along it): where a loop touches itself or another,
 /// both pass through the same point. `None` when no point does, or the loops have more than
-/// [`MAX_PINCH_POINTS`] points.
+/// [`MAX_PINCH_POINTS`] points, or more than that would be put in.
 fn pinched(loops: &[Vec<Point2>]) -> Option<Vec<Vec<Point2>>> {
     if loops.iter().map(Vec::len).sum::<usize>() > MAX_PINCH_POINTS {
         return None;
     }
     let mut extra: Vec<Vec<Vec<(f64, Point2)>>> = loops.iter().map(|l| vec![Vec::new(); l.len()]).collect();
-    let mut found = false;
+    let mut found = 0;
     for (l, extra) in loops.iter().zip(&mut extra) {
         let n = l.len();
         for (i, extra) in extra.iter_mut().enumerate() {
@@ -857,14 +858,17 @@ fn pinched(loops: &[Vec<Point2>]) -> Option<Vec<Vec<Point2>>> {
                 }
                 let t = (p - q0).dot(d) / len2;
                 if t > 0.0 && t < 1.0 && p.distance2(q0 + d * t) <= TOLERANCE2 {
+                    if found == MAX_PINCH_POINTS {
+                        return None;
+                    }
                     extra.push((t, p));
-                    found = true;
+                    found += 1;
                 }
             }
             extra.sort_by(|a, b| a.0.total_cmp(&b.0));
         }
     }
-    found.then(|| {
+    (found > 0).then(|| {
         loops
             .iter()
             .zip(extra)

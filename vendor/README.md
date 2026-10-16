@@ -175,8 +175,8 @@ Changes:
   and the fallback that joins the next point instead cut across the face: such a face came out
   with no triangles, or without those at the pinch, depending on which segment went in first.
   When a segment is left out, every boundary point within `TOLERANCE` of a segment, away from its
-  ends, is put into it (`pinched`, at most 8192 boundary points), and the face is triangulated
-  again. Faces whose segments all go in are triangulated as before.
+  ends, is put into it (`pinched`: at most 8192 boundary points, and at most 8192 put in), and
+  the face is triangulated again. Faces whose segments all go in are triangulated as before.
 
 ## matext4cgmath 0.1.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/matext4cgmath)
 
