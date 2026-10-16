@@ -1,4 +1,4 @@
-//! 3D mouse navigation on Windows (through hidapi) and Linux (through spacenavd when it runs, else
+//! 3D mouse navigation on Windows and macOS (through hidapi) and Linux (through spacenavd when it runs, else
 //! hidraw). Read directly, any HID multi-axis controller works: 3Dconnexion's and homemade ones.
 //! The device reader never touches the document or UI; it publishes the latest axes, and the egui
 //! thread applies them once per frame.
@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use egui::Context;
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use hidapi::{DeviceInfo, HidApi};
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -188,7 +188,7 @@ impl Reading {
 
 /// The Generic Desktop "Multi-Axis Controller" usage names a 3D mouse's motion interface, whoever
 /// made it, and excludes ordinary mice and the keyboard interfaces of 3D mice.
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn is_3d_mouse(info: &DeviceInfo) -> bool {
     info.usage_page() == 0x01 && info.usage() == 0x08
 }
@@ -234,7 +234,7 @@ fn reset(ctx: &Context, shared: &Mutex<Reading>) {
     ctx.request_repaint();
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn reader(ctx: Context, shared: Arc<Mutex<Reading>>) {
     let Ok(mut api) = HidApi::new() else {
         log::warn!("3D mouse: HID initialization failed");
@@ -244,7 +244,10 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>) {
         if let Err(error) = api.refresh_devices() {
             log::warn!("3D mouse: device scan failed: {error}");
         } else if let Some((device, layout)) = api.device_list().filter(|info| is_3d_mouse(info)).find_map(|info| {
-            let device = info.open_device(&api).ok()?;
+            let device = info.open_device(&api).inspect_err(|error| {
+                // On macOS: missing Input Monitoring permission, or the 3DxWare helper holding the device.
+                log::warn!("3D mouse: cannot open the device: {error}");
+            }).ok()?;
             let layout = device_layout(&device, info.vendor_id())?;
             Some((device, layout))
         }) {
@@ -270,7 +273,7 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>) {
 /// read, or it's empty), a 3Dconnexion device (Logitech's id for the old SpaceNavigator,
 /// 3Dconnexion's own for the rest) gets 3Dconnexion's layout, and any other device is left alone
 /// rather than guessed at.
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn device_layout(device: &hidapi::HidDevice, vendor_id: u16) -> Option<Layout> {
     let mut descriptor = [0_u8; hidapi::MAX_REPORT_DESCRIPTOR_SIZE];
     let read = device.get_report_descriptor(&mut descriptor);

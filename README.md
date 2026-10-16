@@ -215,7 +215,7 @@ unaccepted artwork Open; run `cargo xtask icons` to check the collection.
 
 Windows builds: `cargo xwin build --release --target x86_64-pc-windows-msvc -p solidcraft`.
 
-On Windows and Linux, SolidCraft detects a connected 3D mouse through its HID multi-axis
+On Windows, macOS and Linux, SolidCraft detects a connected 3D mouse through its HID multi-axis
 controller interface: a 3Dconnexion SpaceNavigator or SpaceMouse, or a homemade device that
 declares itself one. Move the cap to pan and zoom, and tilt or twist it to rotate the 3D view.
 While editing a sketch, the cap pans and zooms without changing the sketch view. The Navigation
