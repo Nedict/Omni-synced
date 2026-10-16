@@ -96,6 +96,13 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
 - **Never break wasm**: everything below the apps must build for `wasm32-unknown-unknown`
   (`cargo xtask wasm`, part of `cargo xtask ci`).
 
+## Design file format
+A change that saves something new in a design adds ONE file, `crates/doc/src/format/pending/<name>.rs`
+(a `//!` note, and `pub fn step` if older designs must be rewritten). Never edit `FORMAT`,
+`JSON_STEPS`, the history in `format.rs`, another change's file or a `v<N>/` folder: the build
+works out the number (the next one while anything is pending), and the release folds pending
+changes into `v<N>/` with `scripts/fold-format-pending.sh`. See CONTRIBUTING.md.
+
 ## Application releases
 Development pushes are not application releases. Follow `docs/releasing.md` when asked to
 prepare or ship a release: choose the version from the actual changes, update Cargo.toml and

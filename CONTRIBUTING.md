@@ -163,6 +163,13 @@ in the PR. `cargo xtask test` builds the tests with it and then runs every test 
 `cargo xtask test -- shell`. Tests run beside each other on a busy machine, so a test must not
 depend on wall-clock timing.
 
+**PRs test what they touch; main and nightly test everything.** On a pull request, CI maps the
+changed files to workspace packages and runs Clippy, the test build and the tests for those and
+the packages that depend on them (`scripts/ci/affected.py`, self-tested in the `checks` job). A
+change to `Cargo.lock`, the root `Cargo.toml`, `.cargo/`, `.config/`, `.github/`, `vendor/`,
+`tests/`, `scripts/` or any file outside a package runs the whole workspace, as does every push
+to `main`, the nightly run and Run workflow.
+
 **CI shards the tests.** One job builds them into a cargo-nextest archive and four jobs run a
 quarter each, so every test runs in its own process: don't rely on state left by another test.
 Pull requests skip a few heavy tests (one to four minutes each), which run on every push to
@@ -191,6 +198,31 @@ program (`tools/freecad-oracle/`); each file says which. [docs/oracle.md](docs/o
 the current results, and CI runs `cargo xtask oracle` on every pull request. A case that fails
 because of a known bug names its issue in `expected.json` (`"known_failure": "#123"`); never
 change an expected value to match SolidCraft's output.
+
+## Changing the design file format
+
+A design file says which format it is in (`"format": "solidcraft/N"`). If your change saves
+something new in a design (a field, a feature type, a new kind of name), or makes older designs
+mean something else, it needs a format change. **Add one file, and edit nothing shared:**
+
+1. Create `crates/doc/src/format/pending/<what-it-is>.rs` (lowercase, dashes). Start it with a
+   `//!` note: what is saved, what older designs get without it, and that the last release asks
+   for an update instead of meeting it.
+2. If older designs must be rewritten as they open, put `pub fn step(v: &mut Value) ->
+   crate::Result<()>` in the same file. Pending steps run in file-name order, after the older
+   formats' steps.
+3. Don't touch `FORMAT`, `JSON_STEPS`, the history in `crates/doc/src/format.rs`, another
+   change's file, or any `v<N>/` folder: those are fixed once released.
+
+That's all. The build counts the files: while any are pending it writes the next format number,
+which no release reads, so a release refuses a design that has your change instead of losing it.
+A file also lists the pending changes it has (`format_pending`), so a later development build
+runs only the steps that file is missing. Two pull requests that each add a change merge without
+a conflict. `crates/doc/src/format/pending/README.md` has an example.
+
+**At release time** the maintainer runs `scripts/fold-format-pending.sh`, which moves the pending
+files into `crates/doc/src/format/v<N>/` and fixes that number for good (see
+[docs/releasing.md](docs/releasing.md)). Never add a file to a `v<N>/` folder afterwards.
 
 ## Sending a change
 
