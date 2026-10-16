@@ -258,6 +258,9 @@ pub enum Kind {
     /// Surface tools and Split Face (`dialogs_surface`).
     Surface(crate::dialogs_surface::Surf),
     SaveMesh(crate::dialogs_save_mesh::SaveMesh),
+    ViewDxf {
+        dashed: bool,
+    },
     /// Plastic features (`dialogs_plastic`).
     Plastic(crate::dialogs_plastic::Pl),
     /// Appearance (`dialogs_appearance`).
@@ -609,6 +612,7 @@ impl Dialog {
                     .or_else(|| crate::dialogs_sheet::start(app, id))
                     .or_else(|| crate::dialogs_surface::start(app, id))
                     .or_else(|| crate::dialogs_save_mesh::start(app, id))
+                    .or_else(|| crate::dialogs_view_dxf::start(app, id))
                     .or_else(|| crate::dialogs_plastic::start(app, id))
                     .or_else(|| crate::dialogs_appearance::start(app, id))
                     .or_else(|| crate::dialogs_motion::start(app, id))
@@ -1379,6 +1383,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::Sheet(k) => k.title(),
         Kind::Surface(k) => k.title(),
         Kind::SaveMesh(_) => "SAVE AS MESH",
+        Kind::ViewDxf { .. } => "Export Current View as DXF",
         Kind::Plastic(k) => k.title(),
         Kind::Appearance(_) => "APPEARANCE",
         Kind::Motion(k) => k.title(),
@@ -1935,7 +1940,10 @@ fn picked_side(app: &SolveApp, d: &Dialog, first: &Sel) -> Option<usize> {
 /// Sketch Palette keeps the right there, and the dialog takes the left so both stay on screen.
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     app.viewport.dialog_rect = None;
-    let Some(mut d) = app.dialog.take() else { return };
+    let Some(mut d) = app.dialog.take() else {
+        crate::frame::reset_dock_offset(ctx);
+        return;
+    };
     // Edit Text lasts as long as its text: other design changes leave it open.
     if let Kind::Text(k) = &mut d.kind
         && !crate::sketch_text::refresh(app, k)
@@ -1979,7 +1987,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     } else {
         crate::frame::Side::Right
     };
-    let anchor = egui::pos2(side.anchor_x(vp), top);
+    // Dragged by its title band, the dialog keeps that offset from its docked place while it
+    // is open (#1335), kept inside the viewport.
+    let moved = crate::frame::dock_offset(ctx, title(&d.kind));
+    let docked = egui::pos2(side.anchor_x(vp), top);
+    let anchor = crate::frame::offset_anchor(docked, moved, vp, side);
     let mut keep = true;
     let mut ok = false;
     let mut applied = false;
@@ -2020,7 +2032,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         ui.set_max_width(if wide { DIALOG_WIDE_MAX_W } else { DIALOG_MAX_W } - margin);
         // Rows that end at the right edge line up with last frame's content width.
         let total = crate::frame::content_width(ui, wkey, min_w);
-        // Header: "−" folds the dialog, the command name, "»" at the right, on the title band.
+        // Header: "−" folds the dialog, the command name, "»" at the right, on the title band,
+        // which also moves the dialog.
+        let band_top = ui.cursor().min;
+        let band = egui::Rect::from_min_size(band_top, vec2(total, ui.spacing().interact_size.y + 2.0));
+        crate::frame::drag_dock(ui, band, title(&d.kind), moved, anchor - docked);
         crate::frame::heading(ui, crate::frame::Level::Title, total, |ui| {
             let total = total - 2.0 * crate::frame::HEADING_MARGIN;
             let fold = if d.collapsed { "+" } else { "−" };
@@ -2031,7 +2047,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             {
                 d.collapsed = !d.collapsed;
             }
-            ui.label(RichText::new(heading.as_str()).strong().size(12.5));
+            // Not selectable: a drag on the title moves the dialog.
+            ui.add(egui::Label::new(RichText::new(heading.as_str()).strong().size(12.5)).selectable(false));
             let chevron_width = ui.spacing().interact_size.x;
             crate::frame::right_aligned(ui, total, chevron_width, |ui| {
                 let chevron = if d.collapsed { "«" } else { "»" };
@@ -2761,6 +2778,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     Kind::Surface(k) => enter |= crate::dialogs_surface::rows(ui, k),
                     Kind::SketchModify(k) => enter |= crate::sketch_modify_ui::rows(ui, k),
                     Kind::SaveMesh(k) => enter |= crate::dialogs_save_mesh::rows(app, ui, k),
+                    Kind::ViewDxf { dashed } => crate::dialogs_view_dxf::rows(app, ui, dashed),
                     Kind::Plastic(k) => enter |= crate::dialogs_plastic::rows(app, ui, k, &d.inputs),
                     Kind::Appearance(k) => enter |= crate::dialogs_appearance::rows(app, ui, k, &mut d.inputs),
                     Kind::Motion(k) => enter |= crate::dialogs_motion::rows(app, ui, k, &mut d.inputs),
@@ -2823,6 +2841,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             let raw_label = match &d.kind {
                 Kind::ConfirmDelete { .. } => "Delete",
                 Kind::SaveMesh(k) => crate::dialogs_save_mesh::button(k),
+                Kind::ViewDxf { .. } => "Export DXF…",
                 _ => "OK",
             };
             let label = tr(raw_label);
@@ -3266,6 +3285,9 @@ fn sels(d: &Dialog, i: usize) -> &[Sel] {
 }
 
 pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
+    if let Kind::ViewDxf { dashed } = &d.kind {
+        return crate::dialogs_view_dxf::run(app, *dashed);
+    }
     // Saving asks for a file name first; `Err("")` is the user backing out of that.
     if let Kind::SaveMesh(k) = &d.kind {
         return crate::dialogs_save_mesh::run(app, k, &d.inputs);
@@ -3963,6 +3985,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::Surface(k) => return crate::dialogs_surface::commands(app, k, &d.inputs, &d.extra),
         Kind::SketchModify(k) => return crate::sketch_modify_ui::commands(app, k, &d.inputs, &d.extra),
         Kind::SaveMesh(k) => return crate::dialogs_save_mesh::commands(k, &d.inputs),
+        Kind::ViewDxf { .. } => return Ok(Vec::new()),
         Kind::Plastic(k) => return crate::dialogs_plastic::commands(app, k, &d.inputs, &d.extra),
         Kind::Appearance(k) => return Ok(crate::dialogs_appearance::commands(k, &d.inputs)),
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),
