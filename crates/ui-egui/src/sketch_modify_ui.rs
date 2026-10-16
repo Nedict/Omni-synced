@@ -149,9 +149,10 @@ fn inputs(k: &Mod) -> Vec<SelInput> {
         ],
         // The centre is required: `sketch.pattern.circular` has no default for it.
         Mod::PatternCirc { .. } => vec![SelInput::new("Entities", CURVES | SKETCH_POINTS, true), SelInput::new("Center", SKETCH_POINTS, false)],
-        // A fillet rounds any number of corners to one radius (`points`). Each chamfer command
+        // A fillet rounds any number of corners to one radius (`points`), or the corner between
+        // two picked lines where more lines meet at its point (#1824). Each chamfer command
         // cuts one corner, so its input holds one.
-        Mod::Corner { chamfer: false, .. } => vec![SelInput::new("Corners", SKETCH_POINTS, true)],
+        Mod::Corner { chamfer: false, .. } => vec![SelInput::new("Corners", SKETCH_POINTS | CURVES, true)],
         Mod::Corner { .. } => vec![SelInput::new("Corner", SKETCH_POINTS, false)],
     }
 }
@@ -734,11 +735,21 @@ pub fn commands(app: &SolveApp, k: &Mod, inputs: &[SelInput], extra: &Map<String
         }
         Mod::Corner { chamfer: false, size, .. } => {
             let corners = corner_ids(app, inputs, 0);
-            if corners.is_empty() {
-                return Err("select the corners to round first".into());
-            }
+            let lines: Vec<String> = items(inputs, 0)
+                .iter()
+                .filter_map(|x| match x {
+                    Sel::SketchCurve { id } => Some(id.clone()),
+                    _ => None,
+                })
+                .collect();
             // The radius is checked where it is evaluated, against the document's parameters.
-            ("sketch.fillet", json!({"points": corners, "radius": size.trim()}))
+            match (corners.is_empty(), lines.as_slice()) {
+                (true, []) => return Err("select the corners to round first".into()),
+                (false, []) => ("sketch.fillet", json!({"points": corners, "radius": size.trim()})),
+                // Two lines name their corner even where other lines end at its point (#1824).
+                (true, [a, b]) => ("sketch.fillet", json!({"a": a, "b": b, "radius": size.trim()})),
+                _ => return Err("select corner points, or the two lines of one corner".into()),
+            }
         }
         Mod::Corner { ctype, size, distance2, angle, flip, .. } => {
             let point = corner_ids(app, inputs, 0).into_iter().next().ok_or("select the corner to cut first")?;
