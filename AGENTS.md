@@ -160,5 +160,11 @@ before the draft is verified.
 
 ## Roadmap
 `ROADMAP.md` (committed) tracks status, milestones and estimates. Update it whenever a
-milestone task lands. `cargo xtask features` regenerates `docs/features.md` (SolidCraft's
-commands by area, from the registry) when commands are added or renamed.
+milestone task lands. `docs/features.md` (SolidCraft's commands by area, from the registry) and
+`THIRD-PARTY-LICENSES.txt` are regenerated on `main` after each merge by the Generated files
+workflow; never regenerate them in a PR.
+
+## Lists many PRs add to
+Keep them conflict-free (CONTRIBUTING.md, "Lists many changes add to"): message catalogs sorted
+(`cargo xtask lists --fix`), `mod` lines in their sorted group, the language list English first
+then by id, generated files left to `main`, and a design-format change as one new file.
