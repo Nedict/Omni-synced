@@ -206,18 +206,46 @@ pub enum F3dOpenFeature {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn f3d_open_feature(bytes: &[u8], file: &str) -> Result<F3dOpenFeature> {
     match f3d::open(bytes, file)? {
-        f3d::F3dOpen::Brep { step, mut warnings } => {
-            // Name the import after the Fusion file; the bytes are STEP Part 21 text.
-            let step_name = format!("{}.step", std::path::Path::new(file).file_stem().and_then(|s| s.to_str()).unwrap_or("fusion"));
-            let mut sf = step_import_feature(&step, &step_name)?;
-            if let solidcraft_doc::FeatureKind::Import { file: ref mut stored, .. } = sf.kind {
-                *stored = std::path::Path::new(file).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| file.to_string());
-            }
+        f3d::F3dOpen::Brep { cadir, mut warnings } => {
+            let mut sf = cadir_import_feature(&cadir, file)?;
             sf.warnings.append(&mut warnings);
             Ok(F3dOpenFeature::Solid(sf))
         }
         f3d::F3dOpen::Mesh { objects, warnings } => Ok(F3dOpenFeature::Mesh(mesh_objects_feature(&objects, file, warnings)?)),
     }
+}
+
+/// Build an Import feature from canonical CadIr JSON (Fusion and other cadmpeg decodes).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn cadir_import_feature(cadir: &std::sync::Arc<str>, file: &str) -> Result<StepFeature> {
+    let ir = cadmpeg_ir::CadIr::from_json(cadir).map_err(|e| IoError::Invalid(format!("{file}: invalid CadIr: {e}")))?;
+    let (imp, report) =
+        solidcraft_cadmpeg_transfer::step_import_from_ir(&ir).map_err(|e| IoError::Invalid(format!("{file}: {e}")))?;
+    let stem = std::path::Path::new(file)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "Fusion".into());
+    let body_names: Vec<String> = imp.bodies.iter().map(|b| b.name.clone()).collect();
+    let name = match (imp.tree.as_slice(), body_names.as_slice()) {
+        ([root], _) if !generic_name(&root.name) => root.name.clone(),
+        (_, [only]) if !generic_name(only) => only.clone(),
+        _ => stem,
+    };
+    let file_name = std::path::Path::new(file).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| file.to_string());
+    Ok(StepFeature {
+        name,
+        body_names,
+        kind: solidcraft_doc::FeatureKind::Import {
+            file: file_name,
+            step: std::sync::Arc::from(""),
+            cadir: std::sync::Arc::clone(cadir),
+            components: imp.tree.clone(),
+            skip: Vec::new(),
+        },
+        warnings: report.warnings,
+        import: std::sync::Arc::new(imp),
+    })
 }
 
 /// Read a Fusion `.f3d` / `.f3z` as an Import base feature (B-rep only).
@@ -297,7 +325,13 @@ pub fn step_import_feature_named(bytes: &[u8], file: &str, names: StepNames) -> 
     Ok(StepFeature {
         name,
         body_names,
-        kind: solidcraft_doc::FeatureKind::Import { file: file_name, step: text.into(), components: imp.tree.clone(), skip: Vec::new() },
+        kind: solidcraft_doc::FeatureKind::Import {
+            file: file_name,
+            step: text.into(),
+            cadir: std::sync::Arc::from(""),
+            components: imp.tree.clone(),
+            skip: Vec::new(),
+        },
         warnings: iges_warnings.into_iter().chain(imp.warnings.iter().cloned()).collect(),
         import: imp,
     })

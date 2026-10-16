@@ -27,3 +27,4 @@ cadmpeg-codec-step = { workspace = true }
 cadmpeg-core = { workspace = true }
 cadmpeg-ir = { workspace = true }
 cadmpeg-registry = { workspace = true }
+solidcraft-cadmpeg-transfer = { workspace = true }

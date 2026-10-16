@@ -65,6 +65,16 @@ pub fn encode_native_body(body: &Body) -> Result<Vec<u8>> {
     })
 }
 
+/// Portable B-rep for neutral import (see `crate::portable_import`).
+pub(crate) fn encode_portable(solid: &super::body::Solid) -> Result<solidcraft_geom::brep::Brep> {
+    adapter::encode(solid)
+}
+
+/// Build runtime solid from portable B-rep.
+pub(crate) fn decode_portable(brep: solidcraft_geom::brep::Brep) -> Result<super::body::Solid> {
+    adapter::decode(brep)
+}
+
 /// Decode bounded untrusted data. Validate indices before topology extraction.
 /// Callers must not treat the decoded body as authoritative editing geometry.
 pub fn decode_native_body(bytes: &[u8]) -> Result<Body> {

@@ -1393,14 +1393,17 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         copy: bool,
     },
-    /// A non-parametric base feature: bodies imported from a STEP file. The STEP text is kept
-    /// in the design (it is the B-rep), so the design reopens without the original file.
+    /// A non-parametric base feature: bodies imported from STEP or cadmpeg neutral (CadIr) data.
     Import {
         /// Source file name (display only).
         file: String,
         /// The STEP (ISO 10303-21) text, shared by every copy of the design (undo states,
         /// previews, scratch sessions): a large file is held once, not once per edit.
         step: std::sync::Arc<str>,
+        /// Canonical CadIr JSON when the import came from Fusion or another cadmpeg decode.
+        /// Empty for STEP-only imports. See `docs/neutral-import.md`.
+        #[serde(default = "empty_import_cadir", skip_serializing_if = "import_cadir_empty")]
+        cadir: std::sync::Arc<str>,
         /// The file's product/assembly tree, kept for components.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         components: Vec<solidcraft_kernel::StepNode>,
@@ -1422,6 +1425,14 @@ pub enum FeatureKind {
         file: String,
         meshes: Vec<MeshData>,
     },
+}
+
+fn empty_import_cadir() -> std::sync::Arc<str> {
+    std::sync::Arc::from("")
+}
+
+fn import_cadir_empty(cadir: &std::sync::Arc<str>) -> bool {
+    cadir.is_empty()
 }
 
 /// How Extend continues a surface past its edges.

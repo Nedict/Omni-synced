@@ -186,6 +186,7 @@ mod tests {
                 crate::doc::FeatureKind::Import {
                     file: "original-generated.step".into(),
                     step: step.into(),
+                    cadir: std::sync::Arc::from(""),
                     components: Vec::new(),
                     skip: Vec::new(),
                 },

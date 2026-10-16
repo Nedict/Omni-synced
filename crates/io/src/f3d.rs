@@ -1,14 +1,12 @@
 //! Autodesk Fusion `.f3d` / `.f3z` import via [cadmpeg](https://github.com/cadmpeg/cadmpeg)
-//! (B-rep decode → STEP → existing STEP import, with mesh fallback when B-rep does not transfer).
+//! (B-rep decode → CadIr → neutral import, with mesh fallback when B-rep does not transfer).
 
 use std::io::Cursor;
 
 use cadmpeg_codec_f3d::F3dCodec;
-use cadmpeg_codec_step::StepCodec;
 use cadmpeg_core::decode::DecodePolicy;
-use cadmpeg_ir::codec::write::target::TargetRequest;
-use cadmpeg_ir::codec::write::{EncodeInput, Encoder};
 use cadmpeg_ir::document::Model;
+use cadmpeg_ir::document::CadIr;
 use cadmpeg_ir::ids::ProductDefinitionId;
 use cadmpeg_ir::products::{Occurrence, OccurrenceParent, PrototypeReference};
 use cadmpeg_ir::report::Severity;
@@ -61,8 +59,8 @@ pub fn looks_like_fusion_archive(bytes: &[u8]) -> bool {
 
 /// What opening a Fusion file produced.
 pub enum F3dOpen {
-    /// Solid B-rep exported to STEP for the Import feature.
-    Brep { step: Vec<u8>, warnings: Vec<String> },
+    /// Solid B-rep as canonical CadIr JSON for the Import feature.
+    Brep { cadir: std::sync::Arc<str>, warnings: Vec<String> },
     /// Cached/display tessellation from the Fusion file (mesh bodies).
     Mesh { objects: Vec<MeshObject>, warnings: Vec<String> },
 }
@@ -172,21 +170,15 @@ fn mesh_objects_or_none(ir: &cadmpeg_ir::document::CadIr, stem: &str) -> Option<
     (!objects.is_empty()).then_some(objects)
 }
 
-fn brep_step_from_ir(ir: &cadmpeg_ir::document::CadIr, warnings: &mut Vec<String>) -> std::result::Result<Vec<u8>, String> {
-    let plan = match StepCodec::default().plan(EncodeInput::new(ir, None), TargetRequest::Inherit) {
-        Ok(plan) => plan,
-        Err(e) => return Err(e.to_string()),
-    };
-    for loss in &plan.report().losses {
-        if matches!(loss.severity, Severity::Warning | Severity::Info) {
-            warnings.push(loss.message.clone());
-        }
-    }
-    let mut step = Vec::new();
-    if let Err(e) = plan.write_to(&mut step) {
-        return Err(e.to_string());
-    }
-    Ok(step)
+fn cadir_json_from_ir(ir: &CadIr) -> std::result::Result<std::sync::Arc<str>, String> {
+    let json = ir.to_canonical_json().map_err(|e| e.to_string())?;
+    Ok(std::sync::Arc::from(json))
+}
+
+fn transfer_preview(ir: &CadIr) -> std::result::Result<solidcraft_kernel::StepImport, String> {
+    solidcraft_cadmpeg_transfer::step_import_from_ir(ir)
+        .map(|(imp, _)| imp)
+        .map_err(|e| e.to_string())
 }
 
 fn mesh_objects_from_ir(ir: &cadmpeg_ir::document::CadIr, stem: &str) -> Vec<MeshObject> {
@@ -246,14 +238,23 @@ pub fn open(bytes: &[u8], file: &str) -> Result<F3dOpen> {
     if report.geometry_transferred() {
         let (mut ir, _, _) = decoded.into_parts();
         bake_component_placements_into_bodies(&mut ir.model);
-        match brep_step_from_ir(&ir, &mut warnings) {
-            Ok(step) => return Ok(F3dOpen::Brep { step, warnings }),
-            Err(step_err) => {
+        match cadir_json_from_ir(&ir) {
+            Ok(cadir) => {
+                if let Err(transfer_err) = transfer_preview(&ir) {
+                    if let Some(objects) = mesh_objects_or_none(&ir, &stem) {
+                        warnings.push(format!("Fusion B-rep did not transfer ({transfer_err}); opened cached mesh geometry from the file"));
+                        return Ok(F3dOpen::Mesh { objects, warnings });
+                    }
+                    return Err(IoError::Invalid(format!("{file}: neutral transfer failed: {transfer_err}")));
+                }
+                return Ok(F3dOpen::Brep { cadir, warnings });
+            }
+            Err(cadir_err) => {
                 if let Some(objects) = mesh_objects_or_none(&ir, &stem) {
-                    warnings.push(format!("Fusion B-rep did not export to STEP ({step_err}); opened cached mesh geometry from the file"));
+                    warnings.push(format!("Fusion B-rep did not serialize to CadIr ({cadir_err}); opened cached mesh geometry from the file"));
                     return Ok(F3dOpen::Mesh { objects, warnings });
                 }
-                return Err(IoError::Invalid(format!("{file}: STEP export failed: {step_err}")));
+                return Err(IoError::Invalid(format!("{file}: CadIr export failed: {cadir_err}")));
             }
         }
     }

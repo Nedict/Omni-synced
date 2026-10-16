@@ -129,9 +129,21 @@ pub fn write_design_container_with_thumbnail(
     let mut features = Vec::with_capacity(doc.features.len());
     for feature in &doc.features {
         let replacements = match &feature.kind {
-            FeatureKind::Import { step, .. } => {
-                let blob = writer.blob(step.as_bytes(), "step", compression == DesignCompression::Compact)?;
-                fields([("step", Value::String(String::new())), ("step_blob", blob)])
+            FeatureKind::Import { step, cadir, .. } => {
+                if !cadir.is_empty() {
+                    if !step.is_empty() {
+                        return Err(invalid("ambiguous embedded STEP and CadIr"));
+                    }
+                    let blob = writer.blob(cadir.as_bytes(), "cadir", compression == DesignCompression::Compact)?;
+                    fields([
+                        ("step", Value::String(String::new())),
+                        ("cadir", Value::String(String::new())),
+                        ("cadir_blob", blob),
+                    ])
+                } else {
+                    let blob = writer.blob(step.as_bytes(), "step", compression == DesignCompression::Compact)?;
+                    fields([("step", Value::String(String::new())), ("step_blob", blob)])
+                }
             }
             FeatureKind::MeshImport { meshes, .. } => {
                 let mut metadata = Vec::with_capacity(meshes.len());
@@ -148,9 +160,13 @@ pub fn write_design_container_with_thumbnail(
         };
         // Extra reference fields are added after serializing existing fields.
         let step_blob = replacements.get("step_blob").cloned();
+        let cadir_blob = replacements.get("cadir_blob").cloned();
         let mut value = replace(feature, replacements).map_err(invalid)?;
         if let Some(blob) = step_blob {
             value.as_object_mut().ok_or_else(|| invalid("feature metadata"))?.insert("step_blob".into(), blob);
+        }
+        if let Some(blob) = cadir_blob {
+            value.as_object_mut().ok_or_else(|| invalid("feature metadata"))?.insert("cadir_blob".into(), blob);
         }
         features.push(value);
     }
@@ -567,11 +583,18 @@ fn read_document<R: Read + Seek>(reader: &mut PackageReader<R>) -> Result<Docume
     for (index, feature) in doc.features.iter_mut().enumerate() {
         let value = metadata.get("features").and_then(|v| v.get(index)).ok_or_else(|| invalid("missing feature metadata"))?;
         match &mut feature.kind {
-            FeatureKind::Import { step, .. } => {
-                if !step.is_empty() {
-                    return Err(invalid("ambiguous embedded STEP and blob"));
+            FeatureKind::Import { step, cadir, .. } => {
+                if value.get("cadir_blob").is_some() {
+                    if !step.is_empty() || !cadir.is_empty() {
+                        return Err(invalid("ambiguous embedded CadIr and blob"));
+                    }
+                    *cadir = std::str::from_utf8(reader.blob(value, "cadir_blob", "cadir")?).map_err(invalid)?.into();
+                } else {
+                    if !step.is_empty() {
+                        return Err(invalid("ambiguous embedded STEP and blob"));
+                    }
+                    *step = std::str::from_utf8(reader.blob(value, "step_blob", "step")?).map_err(invalid)?.into();
                 }
-                *step = std::str::from_utf8(reader.blob(value, "step_blob", "step")?).map_err(invalid)?.into();
             }
             FeatureKind::MeshImport { meshes, .. } => {
                 for (index, mesh) in meshes.iter_mut().enumerate() {
@@ -643,7 +666,7 @@ mod tests {
     fn seekable_preview_defers_large_source_blob_until_document_read() {
         let mut doc = Document::new("Deferred source");
         let step = "ISO-10303-21;".repeat(200_000);
-        doc.add_feature(FeatureKind::Import { file: "large.step".into(), step: step.clone().into(), components: Vec::new(), skip: Vec::new() }, None)
+        doc.add_feature(FeatureKind::Import { file: "large.step".into(), step: step.clone().into(), cadir: std::sync::Arc::from(""), components: Vec::new(), skip: Vec::new() }, None)
             .unwrap();
         let preview = DesignPreview { meshes: vec![mesh()] };
         let bytes = write_design_container_with_preview(&doc, DesignCompression::Fast, Some(&preview)).unwrap();
@@ -703,7 +726,7 @@ mod tests {
     fn native_cache_round_trip_and_preview_defer_original_sources() {
         let mut doc = Document::new("Native cache");
         let step = "ISO-10303-21;".repeat(200_000);
-        doc.add_feature(FeatureKind::Import { file: "large.step".into(), step: step.clone().into(), components: Vec::new(), skip: Vec::new() }, None)
+        doc.add_feature(FeatureKind::Import { file: "large.step".into(), step: step.clone().into(), cadir: std::sync::Arc::from(""), components: Vec::new(), skip: Vec::new() }, None)
             .unwrap();
         let bodies = native_geometry();
         let bytes = write_design_container_with_cache(&doc, DesignCompression::Fast, None, Some(&bodies)).unwrap();
@@ -819,6 +842,7 @@ mod tests {
                 FeatureKind::Import {
                     file: "example.step".into(),
                     step: "ISO-10303-21;\nEND-ISO-10303-21;".into(),
+                    cadir: std::sync::Arc::from(""),
                     components: Vec::new(),
                     skip: Vec::new(),
                 },
@@ -1177,7 +1201,7 @@ mod tests {
             .collect();
         let step = solidcraft_kernel::step_export(&bodies.iter().collect::<Vec<_>>(), "SolidCraft storage benchmark").unwrap();
         let mut doc = Document::new("Generated STEP benchmark");
-        doc.add_feature(FeatureKind::Import { file: "generated.step".into(), step: step.into(), components: Vec::new(), skip: Vec::new() }, None)
+        doc.add_feature(FeatureKind::Import { file: "generated.step".into(), step: step.into(), cadir: std::sync::Arc::from(""), components: Vec::new(), skip: Vec::new() }, None)
             .unwrap();
         measure_storage(&doc, "step");
     }

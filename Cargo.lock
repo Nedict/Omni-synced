@@ -4147,6 +4147,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "solidcraft-cadmpeg-transfer"
+version = "0.13.1"
+dependencies = [
+ "cadmpeg-codec-step",
+ "cadmpeg-core",
+ "cadmpeg-ir",
+ "solidcraft-geom",
+ "solidcraft-kernel",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "solidcraft-cli"
 version = "0.13.1"
 dependencies = [
@@ -4170,10 +4182,12 @@ dependencies = [
 name = "solidcraft-doc"
 version = "0.13.1"
 dependencies = [
+ "cadmpeg-ir",
  "log",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "solidcraft-cadmpeg-transfer",
  "solidcraft-derive",
  "solidcraft-geom",
  "solidcraft-kernel",
@@ -4239,6 +4253,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "solidcraft-cadmpeg-transfer",
  "solidcraft-doc",
  "solidcraft-geom",
  "solidcraft-kernel",

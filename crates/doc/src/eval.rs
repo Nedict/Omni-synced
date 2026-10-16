@@ -4757,18 +4757,23 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             }
             Ok(())
         }
-        FeatureKind::Import { step, skip, .. } => {
-            let imp = kernel::step_import_shared(step)?;
-            let digest = crate::config::payload_digest(step);
+        FeatureKind::Import { step, cadir, skip, .. } => {
+            let (imp, mut import_warnings) = import_geometry(step, cadir)?;
+            let digest = if cadir.is_empty() {
+                crate::config::payload_digest(step)
+            } else {
+                crate::config::payload_digest(cadir)
+            };
             let names = import_body_names(st, &f.body_names, &imp, skip);
             for (b, name) in imp.bodies.iter().zip(names) {
                 let Some(name) = name else { continue };
                 let b = crate::lineage::numbered_tool(b.body.clone().with_import_certificate(&digest, f.id)?);
                 st.bodies.push(ModelBody::traced_new(name, b, f.id));
             }
-            if !imp.warnings.is_empty() {
-                let n = imp.warnings.len();
-                let shown: Vec<&str> = imp.warnings.iter().take(3).map(String::as_str).collect();
+            import_warnings.extend(imp.warnings.iter().cloned());
+            if !import_warnings.is_empty() {
+                let n = import_warnings.len();
+                let shown: Vec<&str> = import_warnings.iter().take(3).map(String::as_str).collect();
                 let more = if n > 3 { format!(" (+{} more)", n - 3) } else { String::new() };
                 *warning = Some(format!("{}{more}", shown.join("; ")));
             }
@@ -4793,6 +4798,23 @@ fn mesh_bodies(meshes: &[crate::MeshData]) -> Result<Vec<(String, Body)>> {
         out.push((m.name.clone(), b.with_color(m.color)));
     }
     Ok(out)
+}
+
+fn import_geometry(step: &str, cadir: &str) -> Result<(kernel::StepImport, Vec<String>)> {
+    if !cadir.is_empty() {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let ir = cadmpeg_ir::CadIr::from_json(cadir).map_err(|e| DocError::Invalid(format!("CadIr import: {e}")))?;
+            let (imp, report) =
+                solidcraft_cadmpeg_transfer::import_from_ir(&ir).map_err(|e| DocError::Invalid(format!("CadIr transfer: {e}")))?;
+            return Ok((imp, report.warnings));
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            return Err(DocError::Invalid("neutral CadIr import is not available in the browser build".into()));
+        }
+    }
+    Ok(((*kernel::step_import_shared(step)?).clone(), Vec::new()))
 }
 
 /// The names an Import feature gives the file's bodies, added after the bodies of `st`, in the

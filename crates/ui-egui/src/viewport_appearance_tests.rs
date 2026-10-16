@@ -15,7 +15,7 @@ fn placed_step_body_uses_imported_opacity_until_a_design_look_overrides_it() {
     let mut document = doc::Document::default();
     let component = document.add_component(Some("Imported part"), 0).unwrap();
     let feature = document
-        .add_feature(doc::FeatureKind::Import { file: "glass.step".into(), step: step.into(), components: Vec::new(), skip: Vec::new() }, None)
+        .add_feature(doc::FeatureKind::Import { file: "glass.step".into(), step: step.into(), cadir: std::sync::Arc::from(""), components: Vec::new(), skip: Vec::new() }, None)
         .unwrap();
     document.features.iter_mut().find(|f| f.id == feature).unwrap().component = component;
     let mut session = Session::new(document);

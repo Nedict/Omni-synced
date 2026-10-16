@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
+# cadmpeg-transfer is under crates/*
 # Third-party code kept with local fixes (see vendor/README.md); not linted as ours.
 exclude = ["vendor"]
 
@@ -25,6 +26,7 @@ solidcraft-engine = { path = "crates/engine" }
 solidcraft-ui-egui = { path = "crates/ui-egui" }
 solidcraft-mcp = { path = "crates/mcp" }
 solidcraft-derive = { path = "crates/derive" }
+solidcraft-cadmpeg-transfer = { path = "crates/cadmpeg-transfer" }
 
 # foundation
 thiserror = "2"
