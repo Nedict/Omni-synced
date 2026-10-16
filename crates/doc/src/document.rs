@@ -563,6 +563,10 @@ pub enum FeatureKind {
         /// What to do when the radius is too large for the geometry around the edges.
         #[serde(default, skip_serializing_if = "FilletFit::is_exact")]
         fit: FilletFit,
+        /// What fills the corners where three blended edges meet: the rolling ball's sphere
+        /// (default) or a G2 patch repeating each blend up to the second order.
+        #[serde(default, skip_serializing_if = "FilletCorner::is_rolling")]
+        corner: FilletCorner,
     },
     Chamfer {
         edges: Vec<Position>,
@@ -658,6 +662,12 @@ pub enum FeatureKind {
     Hole {
         #[walk(pick_if = points.is_none())]
         position: FacePick,
+        /// The position as length expressions, when it was given that way (#1678): the hole is
+        /// drilled where they evaluate, and follows the parameters. `position` keeps the point
+        /// they gave when the hole was made.
+        #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_point_expr")]
+        #[walk(placement)]
+        at: Option<PointExpr>,
         /// Drilling direction (into the material).
         direction: Dir,
         #[walk(length = "Diameter")]
@@ -1311,6 +1321,10 @@ pub enum FeatureKind {
     /// sketch curves: walls only, no caps.
     SurfaceLoft {
         sections: Vec<SheetSection>,
+        #[serde(default = "loft_plain_continuity", skip_serializing_if = "loft_continuity_is_plain")]
+        continuity: [Continuity; 2],
+        #[serde(default, skip_serializing_if = "loft_crown_is_plain")]
+        crown: [f64; 2],
     },
     /// The faces at `faces` copied out at a signed `distance` along their normals as a new
     /// surface body (0 copies them); `chain` takes each pick's whole smooth chain of faces;
@@ -1384,6 +1398,59 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         stitch: bool,
     },
+    /// One surface patch through a network of two to four boundary curves of a sketch
+    /// (`surface.boundary`, issue #763): the patch runs through the curves in loop order and leaves
+    /// each boundary at its own `order` — a sketch curve's boundary is a plane, so G1 and up hold
+    /// exactly — with `crown` shaping the middle without touching a boundary.
+    SurfaceBoundary {
+        sketch: SketchId,
+        /// The curves in loop order: each one ends where the next begins, and the last where the
+        /// first does.
+        curves: Vec<String>,
+        /// How much of the surface across each boundary the patch repeats, one per curve (none: a
+        /// tangent plane, `g1`, on every side).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        orders: Vec<Continuity>,
+        /// How full the middle is: 0 the plain construction, up to 3 fuller, down to -0.9 flatter.
+        #[serde(default)]
+        crown: f64,
+        /// The stations every boundary carries.
+        #[serde(default = "boundary_samples")]
+        samples: usize,
+    },
+    /// One face of a surface body rebuilt against another body (`surface.match`): the rebuilt
+    /// boundary nearest the chain of `edges` on `target` takes that chain's place and repeats the
+    /// target's own shape along the seam up to `order`, while the boundary opposite it, and the
+    /// body's name, stay where they were. `faces` picks the face to rebuild (its first, when none).
+    SurfaceMatch {
+        body: BodyName,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        faces: Vec<FacePick>,
+        target: BodyName,
+        edges: Vec<Position>,
+        #[serde(default = "match_order")]
+        order: Continuity,
+    },
+    /// The B-spline faces at `faces` of `body` faired (`surface.fair`): each face's interior
+    /// control vertices move to flatten the thin-plate (curvature-variation) energy of the face,
+    /// `strength` of the full least-squares step at a time, for at most `iterations` steps.
+    /// `keep_edges` holds the row of control points next to each edge as well as the boundary row
+    /// itself, so the face keeps meeting its neighbours in position and in tangent. `tolerance`
+    /// is the farthest a control point may move, so the faired face stays within it of the one the
+    /// design asked for; an empty `faces` fairs every face of the body.
+    SurfaceFair {
+        body: BodyName,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        faces: Vec<FacePick>,
+        #[serde(default = "fair_strength")]
+        strength: f64,
+        #[serde(default = "fair_iterations")]
+        iterations: u32,
+        #[serde(default = "fair_keep_edges")]
+        keep_edges: bool,
+        #[walk(length = "Tolerance")]
+        tolerance: Expr,
+    },
     /// A surface body trimmed by a plane, or by a face of a body (`tool`), keeping the side of
     /// `keep`.
     SurfaceTrim {
@@ -1436,6 +1503,23 @@ pub enum FeatureKind {
         file: String,
         meshes: Vec<MeshData>,
     },
+}
+
+/// What fills the corner where three blended edges meet.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilletCorner {
+    /// A piece of the rolling ball's sphere: tangent (G1) to each blend.
+    #[default]
+    Rolling,
+    /// A G2 patch repeating each blend's surface up to the second order (see `corner_g2`).
+    G2,
+}
+
+impl FilletCorner {
+    pub fn is_rolling(&self) -> bool {
+        matches!(self, FilletCorner::Rolling)
+    }
 }
 
 /// How Extend continues a surface past its edges.
@@ -1600,8 +1684,31 @@ fn is_g0(g: &Continuity) -> bool {
 }
 
 /// The continuity a blend repeats by default: the tangent plane on both sides.
+/// The stations a boundary patch carries by default.
+fn boundary_samples() -> usize {
+    25
+}
+
 fn blend_orders() -> [Continuity; 2] {
     [Continuity::G1, Continuity::G1]
+}
+
+/// The continuity a match holds by default: position, tangent plane and curvature.
+fn match_order() -> Continuity {
+    Continuity::G2
+}
+
+/// A fairing's defaults for a design that leaves them out: the whole least-squares step at a
+/// time, and the boundary held (the row next to each edge too, so the face still meets its
+/// neighbours in tangent).
+fn fair_strength() -> f64 {
+    1.0
+}
+fn fair_iterations() -> u32 {
+    1
+}
+fn fair_keep_edges() -> bool {
+    true
 }
 
 /// Triangles of one imported mesh body (millimetres).
@@ -1658,6 +1765,28 @@ pub struct SheetSection {
     pub profiles: Option<ProfileSel>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub curves: Vec<String>,
+    /// A section picked as an edge chain of a body instead of a sketch: `edges` are points on the
+    /// chain, and the face the chain bounds is the surface the loft leaves there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<BodyName>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edges: Vec<Position>,
+}
+
+/// A loft's continuity where a design does not say: both ends G0, the loft of old, which only
+/// passes through its sections.
+fn loft_plain_continuity() -> [Continuity; 2] {
+    [Continuity::G0, Continuity::G0]
+}
+
+/// A loft's continuity is plain when it only passes through its sections: both ends G0.
+fn loft_continuity_is_plain(c: &[Continuity; 2]) -> bool {
+    *c == [Continuity::G0, Continuity::G0]
+}
+
+/// A loft's crown is plain when neither end is filled out.
+fn loft_crown_is_plain(c: &[f64; 2]) -> bool {
+    c.iter().all(|v| *v == 0.0)
 }
 
 /// Coil cross-sections.
@@ -1812,6 +1941,22 @@ mod point_expr {
     }
 }
 
+/// [`point_expr`] for an optional point.
+mod opt_point_expr {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Serialize, Deserialize)]
+    struct Wrap(#[serde(with = "super::point_expr")] super::PointExpr);
+
+    pub fn serialize<S: Serializer>(p: &Option<super::PointExpr>, s: S) -> Result<S::Ok, S::Error> {
+        p.as_ref().map(|p| Wrap(p.clone())).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<super::PointExpr>, D::Error> {
+        Ok(Option::<Wrap>::deserialize(d)?.map(|w| w.0))
+    }
+}
+
 impl FeatureKind {
     /// A sheet metal feature (its result depends on the sheet metal rules).
     pub fn is_plastic(&self) -> bool {
@@ -1896,6 +2041,9 @@ impl FeatureKind {
             FeatureKind::SurfaceSweep { .. } => "SurfaceSweepFeature",
             FeatureKind::SurfaceLoft { .. } => "SurfaceLoftFeature",
             FeatureKind::SurfaceBlend { .. } => "BlendFeature",
+            FeatureKind::SurfaceBoundary { .. } => "BoundaryFeature",
+            FeatureKind::SurfaceMatch { .. } => "MatchFeature",
+            FeatureKind::SurfaceFair { .. } => "FairFeature",
             FeatureKind::Stitch { .. } => "StitchFeature",
             FeatureKind::Thicken { .. } => "ThickenFeature",
             FeatureKind::SurfaceTrim { .. } => "TrimFeature",
@@ -1973,6 +2121,9 @@ impl FeatureKind {
             FeatureKind::SurfaceSweep { .. } => "SurfaceSweep",
             FeatureKind::SurfaceLoft { .. } => "SurfaceLoft",
             FeatureKind::SurfaceBlend { .. } => "Blend",
+            FeatureKind::SurfaceBoundary { .. } => "Boundary",
+            FeatureKind::SurfaceMatch { .. } => "Match",
+            FeatureKind::SurfaceFair { .. } => "Fair",
             FeatureKind::Stitch { .. } => "Stitch",
             FeatureKind::Thicken { .. } => "Thicken",
             FeatureKind::SurfaceTrim { .. } => "Trim",
@@ -2074,12 +2225,21 @@ pub struct DesignLink {
     pub feature: u64,
 }
 
+fn read_manufacturing<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<solidcraft_cam::Manufacturing, D::Error> {
+    let manufacturing = <solidcraft_cam::Manufacturing as Deserialize>::deserialize(d)?;
+    manufacturing.validate().map_err(serde::de::Error::custom)?;
+    Ok(manufacturing)
+}
+
 /// The document.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     /// Named, renderer-independent setups. Device/job state is never saved here.
     #[serde(default, skip_serializing_if = "crate::render_settings::RenderSettings::is_empty")]
     pub render: std::sync::Arc<crate::render_settings::RenderSettings>,
+    /// Manufacturing definitions; generated toolpaths remain session caches.
+    #[serde(default, deserialize_with = "read_manufacturing", skip_serializing_if = "solidcraft_cam::Manufacturing::is_empty")]
+    pub manufacturing: solidcraft_cam::Manufacturing,
     #[serde(default = "default_format")]
     pub format: String,
     /// The changes of `format` this design has while they are pending (no release has fixed
@@ -2302,6 +2462,7 @@ impl Document {
     pub fn new(name: &str) -> Self {
         Document {
             render: Default::default(),
+            manufacturing: Default::default(),
             format: default_format(),
             format_pending: crate::format::pending_names(),
             name: name.into(),

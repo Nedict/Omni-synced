@@ -6,6 +6,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod cam;
 pub mod catalog;
 mod design;
 mod design_metadata;
@@ -864,6 +865,7 @@ mod tests {
                 body: None,
                 style: Default::default(),
                 fit: Default::default(),
+                corner: Default::default(),
             },
             None,
         )
@@ -948,6 +950,7 @@ mod tests {
                 body: None,
                 style: Default::default(),
                 fit: Default::default(),
+                corner: Default::default(),
             },
             None,
         )

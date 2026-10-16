@@ -122,6 +122,23 @@ study, samples?}`) answers the world points without changing the design, and
 `motion.trace.keep` with the same parameters (and `name?`) keeps them. A trace takes 2 to 500
 samples: 100 by default for a joint, one per step for a study.
 
+**Export Animation…** in the **Motion Study** dialog saves the study as an animated GIF, drawn
+from the viewport's camera as the study plays (the keys in the dialog count, even before OK).
+`motion.export_animation` does the same for scripts, the CLI and agents, without a window: give a
+`study`, or a `joint` with `from` and `to` (and `index?`) to animate a drive, and a `path`. A path
+ending in `.gif` gets an animated GIF that loops; any other path is a folder that gets the frames
+as `frame-0001.png`, `frame-0002.png`, and so on (made if missing; frames of a longer earlier
+export there are removed), for a video tool. The web app writes GIFs only. `samples` is
+the number of frames (one per step for a study by default, 100 for a joint), `width` and `height`
+their size in pixels (800 × 500 by default, at most 4096 a side), and `fps` the GIF's speed (20
+by default); `grid: false` and `axes: false` leave out the ground grid and the origin's axes.
+`camera` takes the reply of the control channel's `ui.camera` (or any of its fields;
+the rest come from the view `view.apply` chose, or the home view framing the model). The frames
+are drawn by the same renderer as `solidcraft-cli snapshot`, on a copy of the design, which is not
+changed. A GIF keeps one palette for all its frames, so colours don't flicker, and stores only
+what changed from one frame to the next. Frames are capped: at most 1000, and a GIF holds at most
+2^26 pixels of frames (about 160 frames of 800 × 500).
+
 **Insert Design** (`component.insert_design {path, translate?}`, on the **ASSEMBLE** panel and
 in the **File** menu) adds a component linked to another saved design, so each part can live in
 its own document. A STEP or mesh file picked there is inserted as **Insert STEP** or **Insert

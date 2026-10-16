@@ -40,6 +40,8 @@ impl Walk for bool {}
 impl Walk for u64 {}
 impl Walk for i8 {}
 impl Walk for f64 {}
+impl Walk for usize {}
+impl Walk for u32 {}
 impl Walk for ProfileSel {}
 impl Walk for solidcraft_sketch::Sketch {}
 impl Walk for solidcraft_sketch::PatternAlignment {}
@@ -48,6 +50,7 @@ impl Walk for crate::document::Operation {}
 impl Walk for solidcraft_kernel::Continuity {}
 impl Walk for crate::document::Direction {}
 impl Walk for crate::document::FilletFit {}
+impl Walk for crate::document::FilletCorner {}
 impl Walk for crate::document::MeshData {}
 impl Walk for crate::document::RevolveConvention {}
 impl Walk for crate::document::CoilSection {}

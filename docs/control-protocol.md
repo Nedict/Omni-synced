@@ -48,7 +48,16 @@ connections that send eight lines that are not JSON. At most 16 connections are 
 (further ones get `{"ok": false, "error": "too many connections"}`), at most 64 queued requests
 run per frame so a flood cannot starve drawing, and a request that the UI thread has not
 answered within 60 seconds (3600 seconds for `engine.batch`) is replied to with
-`{"ok": false, "error": "timeout"}`. The same 16 MiB line limit applies to the MCP server.
+`{"ok": false, "running": true, "error": "timeout: … is still running …"}`. The same 16 MiB line
+limit applies to the MCP server.
+
+A timed-out request has not failed: it is still running in the app and will still apply (a long
+fillet, say), so don't simply send it again. The connection keeps its reply (#1618). Ask for it
+with `control.pending`: `{"pending": <id>, "method": …, "done": false}` while it runs, then
+`{"pending": <id>, "method": …, "done": true, "reply": {…}}` (its own reply, once), and
+`{"pending": null}` when nothing is outstanding. Until it lands, any other request on that
+connection is refused at once with `{"ok": false, "busy": true, "error": "busy: …"}` and not
+run, so nothing is queued to apply unseen behind it.
 
 Any request's `params` may carry `allow_paths: ["/abs/folder", …]`: every file that request
 reads, writes or deletes (command paths such as `file.export`'s `path` or `doc.recovery_*`'s
@@ -135,7 +144,7 @@ labels; `prefs:measure_axis_distances` identifies the checkbox.
 | `ui.scroll` | `x`, `y`, `delta?` | wheel zoom at the cursor |
 | `ui.key` | `key` (egui key name, `Enter`, `Escape`…), `cmd?`, `shift?` | |
 | `ui.text` | `text` | typed text |
-| `ui.screenshot` | `path?` | PNG of the window (needs a presented frame) |
+| `ui.screenshot` | `path?` | PNG of the window (needs a presented frame: a minimised or fully covered window answers at once with `hidden: true` and an error; use `ui.render`) |
 | `ui.render` | `path`, `width?`, `height?`, `grid?`, `axes?` | Render of the model with the current camera (no window needed), drawn on the app's GPU device with the viewport's pipelines (the reply's `renderer`: `gpu`, or `gpu-software` on a software adapter), in the window's theme (light or dark; `solidcraft-cli snapshot` keeps the light colours); cut by the section the viewport shows (`inspect.section`, an open Section Analysis dialog's preview, a sketch's Slice), with the cut face capped. The ground grid and the origin's axes are drawn as the window shows them (`ui.set` `showGrid` and `showOrigin`, `hiddenOrigin`); `grid` and `axes` (booleans) say otherwise for this render |
 | `ui.confirm` | `accept?`: bool | answers the Delete confirmation (shown when a delete takes other features with it or makes some fail); without `accept`, what it lists |
 | `ui.documents` | `action?`: `new`, `switch`, `close`, `quit`; `index?`; `force?` (close without asking); `answer?`: `save`, `dont_save`, `cancel` (answers "save changes?") | the open designs (tabs): names, unsaved flags, the active one, a pending "save changes?" prompt, whether a quit is asking |
@@ -151,7 +160,7 @@ labels; `prefs:measure_axis_distances` identifies the checkbox.
 | `ui.resize` | `width`, `height` | |
 | `app.quit` | `force?` (quit without asking about unsaved designs) | `quitting` (the window closes), `asking` (a "save changes?" prompt is open) |
 
-`ui.workspace {workspace?: "design" | "render"}` reads or changes the active workspace.
+`ui.workspace {workspace?: "design" | "render" | "manufacture"}` reads or changes the active workspace.
 Entering Render requires finishing the current modelling operation; returning restores
 the Design camera. See [the integrated Render workspace](render-workspace.md).
 
