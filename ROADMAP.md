@@ -68,8 +68,15 @@ retain their saved two-finger scroll preference; camera motion is available thro
 
 M11 precursor: File → Export Current View as DXF exports shown placed bodies from the current
 camera as a 2D millimetre drawing, with hidden edges omitted or dashed. Vector occlusion splits
-partly hidden edges and includes curved silhouettes. Curves are approximated; drawing sheets,
+partly hidden edges and includes curved silhouettes. Repeated part meshes and triangle
+hierarchies are shared; bounded desktop preparation and occlusion use up to eight workers.
+Curves are approximated; drawing sheets,
 annotations and exact projected curves remain deferred. See [view DXF](docs/view-dxf.md).
+
+Desktop view DXF export runs in the file-operation worker with five-stage progress and
+cooperative cancellation. Curve tolerance (0.0001–1 mm, default 0.01 mm) is remembered alongside
+the hidden-edge setting. Cancelled exports preserve the model and the previous destination;
+completed drawings publish atomically. The browser still exports synchronously.
 
 ## Interactive modelling
 
