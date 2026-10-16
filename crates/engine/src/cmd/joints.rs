@@ -814,15 +814,15 @@ fn cam_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         Some(JointKind::Revolute) => true,
         _ => return Err(bad(cmd, "the follower (b) is a slider or a revolute joint")),
     };
-    if oscillating && p.get("tip").is_none() {
-        return Err(bad(cmd, "an oscillating follower needs `tip`: its knife's point or its roller's centre ({circle: [x, y, z]} on the roller)"));
-    }
     let follower = match str_(p, "follower").unwrap_or("knife") {
         "knife" => Follower::Knife,
         "roller" => Follower::Roller { radius: size_param(s, p, "radius", cmd)? },
         "flat" => Follower::Flat,
         _ => return Err(bad(cmd, "`follower` is knife, roller or flat")),
     };
+    if oscillating && p.get("tip").is_none() && !matches!(follower, Follower::Roller { radius: Size::Circle(_) }) {
+        return Err(bad(cmd, "an oscillating follower needs `tip`: its knife's point or its roller's centre ({circle: [x, y, z]} on the roller)"));
+    }
     let tip = match p.get("tip") {
         Some(v) => Some(origin_param(s, Some(v), cmd)?),
         None => None,
@@ -863,7 +863,8 @@ fn cam_profile(s: &Session, p: &Value, cmd: &str) -> Result<CamProfile> {
     if let Some(sk) = v.get("sketch") {
         let sketch = super::features::sketch_id(s, Some(sk), cmd, "profile.sketch")?;
         let st = s.model.state();
-        let solved = st.sketches.iter().find(|x| x.feature == sketch).ok_or_else(|| bad(cmd, "that sketch is not evaluated (it is after the marker?)"))?;
+        let solved =
+            st.sketches.iter().find(|x| x.feature == sketch).ok_or_else(|| bad(cmd, "that sketch is not evaluated (it is after the marker?)"))?;
         let picked = match v.get("index") {
             None => cam::sketch_profile(solved, &[]),
             Some(i) => i.as_u64().and_then(|i| usize::try_from(i).ok()).and_then(|i| solved.profiles.get(i)),
@@ -893,7 +894,12 @@ fn cam_profile(s: &Session, p: &Value, cmd: &str) -> Result<CamProfile> {
         .iter()
         .map(|q| {
             let near = |b: &&solidcraft_doc::ModelBody| {
-                b.mesh().edges.iter().flat_map(|e| e.windows(2)).filter_map(|w| Some(q.dist_to_segment(*w.first()?, *w.get(1)?))).fold(f64::MAX, f64::min)
+                b.mesh()
+                    .edges
+                    .iter()
+                    .flat_map(|e| e.windows(2))
+                    .filter_map(|w| Some(q.dist_to_segment(*w.first()?, *w.get(1)?)))
+                    .fold(f64::MAX, f64::min)
             };
             bodies
                 .iter()

@@ -209,6 +209,56 @@ fn an_oscillating_roller_follower_swings_to_the_offset_circle() {
         let at = place(&s, "Arm", start);
         assert!(at.dist(centre(deg, turn)) < 1e-3, "θ {deg}: {at:?}");
     }
+    // The roller's round face picked on its arm is where it touches, and its radius: the same table.
+    let table = s.doc.assembly.links.first().map(|l| l.lift.clone()).unwrap_or_default();
+    let mut t = cam_on_base();
+    run(&mut t, "component.activate", json!({"component": "root"}));
+    run(&mut t, "component.create", json!({"name": "Arm"}));
+    run(&mut t, "solid.cylinder", json!({"base": [start.x, start.y, 0], "axis": [0, 0, 1], "radius": roller, "height": 5}));
+    pin(&mut t, "revolute", "Arm", "Base", "Arm", pivot, Vec3::Z);
+    let face = [start.x + roller, start.y, 2.5];
+    run(
+        &mut t,
+        "joint.cam",
+        json!({"a": "Cam", "b": "Arm", "profile": {"sketch": "CamSketch"}, "follower": "roller", "radius": {"occurrence": "Arm", "circle": face}}),
+    );
+    let picked = t.doc.assembly.links.first().map(|l| l.lift.clone()).unwrap_or_default();
+    assert!(picked.len() == 360 && picked.iter().zip(&table).all(|(x, y)| close(*x, *y, 1e-6)));
+}
+
+/// A stationary cam: the profile on the grounded part, a rotor turning about it with the tappet's
+/// guide on it. Turned by +θ against the cam, the tappet stands where it would on a cam turned by
+/// −θ. A guide on the cam's own (grounded) side would turn with the profile: refused.
+#[test]
+fn a_stationary_cam_drives_a_follower_on_a_turning_rotor() {
+    let h = 6.0;
+    let tip = knife(0.0, h, R);
+    let mut s = cam_on_base();
+    // The cam is the fixed part: ground it, and take the base off its joint.
+    let (cam, base) = (occ(&s, "Cam"), occ(&s, "Base"));
+    run(&mut s, "joint.delete", json!({"joint": "Cam"}));
+    run(&mut s, "occurrence.ground", json!({"occurrence": cam, "grounded": true}));
+    run(&mut s, "occurrence.ground", json!({"occurrence": base, "grounded": false}));
+    pin(&mut s, "revolute", "Turret", "Cam", "Base", Vec3::ZERO, Vec3::Z);
+    tappet(&mut s, h, tip);
+    run(&mut s, "joint.cam", json!({"a": "Turret", "b": "Tappet", "profile": {"sketch": "CamSketch"}}));
+    for deg in [50.0f64, 140.0, 260.0] {
+        let d = run(&mut s, "joint.drive", json!({"joint": "Turret", "value": deg}));
+        assert_eq!(d["conflicts"].as_array().map(Vec::len), Some(0), "{d}");
+        let want = knife(-deg, h, R) - tip;
+        assert!(close(shown(&mut s, "Tappet"), want, 1e-3), "θ {deg}: {} vs {want}", shown(&mut s, "Tappet"));
+    }
+    let mut s = cam_on_base();
+    let (cam, base) = (occ(&s, "Cam"), occ(&s, "Base"));
+    run(&mut s, "joint.delete", json!({"joint": "Cam"}));
+    run(&mut s, "occurrence.ground", json!({"occurrence": cam, "grounded": true}));
+    run(&mut s, "occurrence.ground", json!({"occurrence": base, "grounded": false}));
+    part(&mut s, "Rotor", [-90.0, 60.0, -20.0]);
+    pin(&mut s, "revolute", "Turret", "Cam", "Rotor", Vec3::ZERO, Vec3::Z);
+    run(&mut s, "occurrence.ground", json!({"occurrence": base, "grounded": true}));
+    tappet(&mut s, h, tip);
+    let e = s.execute("joint.cam", &json!({"a": "Turret", "b": "Tappet", "profile": {"sketch": "CamSketch"}})).map_err(|e| e.to_string()).err();
+    assert!(e.as_deref().is_some_and(|e| e.contains("turns with the cam")), "{e:?}");
 }
 
 /// A motion study turning the cam plays the tappet through its analytic travel.

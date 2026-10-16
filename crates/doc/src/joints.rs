@@ -1463,7 +1463,8 @@ mod tests {
                 suppressed: false,
             })
             .collect();
-        let links = (1..n).rev().map(|a| MotionLink { a, ia: 0, b: a + 1, ib: 0, ratio: 2.0, offset: 0.0, coupling: None, lift: Vec::new() }).collect();
+        let links =
+            (1..n).rev().map(|a| MotionLink { a, ia: 0, b: a + 1, ib: 0, ratio: 2.0, offset: 0.0, coupling: None, lift: Vec::new() }).collect();
         Assembly { joints, links, ..Assembly::default() }
     }
 
