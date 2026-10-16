@@ -184,11 +184,28 @@ pub fn search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// The first `program` in `dirs` (on Windows also with `.exe`/`.cmd`).
+/// The first `program` in `dirs` (on Windows with `.exe`/`.cmd`/`.bat`).
 pub fn find_in(program: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
-    let names: Vec<String> =
-        if cfg!(windows) { ["", ".exe", ".cmd", ".bat"].iter().map(|e| format!("{program}{e}")).collect() } else { vec![program.to_string()] };
+    let names = names_for(program, cfg!(windows));
     dirs.iter().flat_map(|d| names.iter().map(move |n| d.join(n))).find(|p| p.is_file())
+}
+
+/// The file names `program` can have. On Windows only ones it can run: npm puts a Unix shell
+/// script with the bare name next to the `.cmd` shim, and starting that fails with "not a valid
+/// Win32 application".
+fn names_for(program: &str, windows: bool) -> Vec<String> {
+    if windows { [".exe", ".cmd", ".bat"].iter().map(|e| format!("{program}{e}")).collect() } else { vec![program.to_string()] }
+}
+
+/// A Windows command saved without an extension (`…\npm\codex-acp`, from an older version's
+/// lookup): the `.exe`/`.cmd`/`.bat` beside it, if there is one.
+pub fn runnable_sibling(program: &Path) -> Option<PathBuf> {
+    if program.extension().is_some() {
+        return None;
+    }
+    let dir = program.parent()?;
+    let name = program.file_name()?.to_str()?;
+    names_for(name, true).into_iter().map(|n| dir.join(n)).find(|p| p.is_file())
 }
 
 /// `program --version`'s first line, or `None` after `limit` (the probe is then stopped).
@@ -276,6 +293,25 @@ mod tests {
         std::fs::write(b.join("codex-acp"), "").unwrap();
         assert_eq!(find_in("codex-acp", &[a.clone(), b.clone()]), Some(b.join("codex-acp")));
         assert_eq!(find_in("gemini", &[a, b]), None);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn on_windows_only_runnable_shims_are_candidates() {
+        // npm's bare `codex-acp` is a shell script; Windows can't start it (os error 193).
+        assert_eq!(names_for("codex-acp", true), ["codex-acp.exe", "codex-acp.cmd", "codex-acp.bat"]);
+        assert_eq!(names_for("codex-acp", false), ["codex-acp"]);
+    }
+
+    #[test]
+    fn a_saved_bare_npm_path_runs_its_cmd_shim() {
+        let root = std::env::temp_dir().join(format!("sc-agent-shim-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("codex-acp"), "#!/bin/sh").unwrap();
+        std::fs::write(root.join("codex-acp.cmd"), "@echo off").unwrap();
+        assert_eq!(runnable_sibling(&root.join("codex-acp")), Some(root.join("codex-acp.cmd")));
+        assert_eq!(runnable_sibling(&root.join("codex-acp.cmd")), None);
+        assert_eq!(runnable_sibling(&root.join("gemini")), None);
         let _ = std::fs::remove_dir_all(root);
     }
 
