@@ -453,3 +453,25 @@ fn fillet_window_rounds_the_corner_between_two_picked_lines() {
     let sk = h.app.session.model.state().sketch(sid).unwrap().sketch.clone();
     assert_eq!(sk.curves.iter().filter(|c| matches!(c.kind, CurveKind::Arc { .. })).count(), 1, "{:?}", h.app.status);
 }
+
+/// #1824 (review): the Chamfer window takes a corner's two lines the same way.
+#[test]
+fn chamfer_window_cuts_the_corner_between_two_picked_lines() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+    h.app.run("sketch.line", json!({"points":[[0,0],[10,0]],"ids":["left"]})).unwrap();
+    h.app.run("sketch.line", json!({"points":["left.end",[20,0]],"ids":["right"]})).unwrap();
+    h.app.run("sketch.line", json!({"points":["left.end",[18,8]],"ids":["diag"]})).unwrap();
+    h.settle();
+    let sid = h.app.session.active_sketch.unwrap();
+    let before = h.app.session.model.state().sketch(sid).unwrap().sketch.curves.len();
+    h.step(&json!({"start":"sketch.chamfer.equal_distance"})).unwrap();
+    h.step(&json!({"click":{"world":[16,0,0]}})).unwrap();
+    h.step(&json!({"click":{"world":[13,3,0]}})).unwrap();
+    assert_eq!(dialog_curves(&h), vec!["right".to_string(), "diag".to_string()], "{:?}", h.app.status);
+    h.step(&json!({"widget":"OK"})).unwrap();
+    assert!(h.app.dialog.is_none(), "{:?}", h.app.status);
+    let sk = h.app.session.model.state().sketch(sid).unwrap().sketch.clone();
+    assert_eq!(sk.curves.len(), before + 1, "a chamfer line: {:?}", h.app.status);
+    assert!(sk.curve_index("left").is_some(), "the third line stays");
+}
