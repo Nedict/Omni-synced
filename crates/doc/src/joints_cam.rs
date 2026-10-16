@@ -339,10 +339,10 @@ fn profile_points(doc: &Document, st: &ModelState, p: &CamProfile, cam: &super::
             if bodies.is_empty() || !size.is_finite() || size <= 0.0 {
                 return Err(bad("the cam has no body"));
             }
-            let tol = tolerance(size);
+            // Each body sampled to its own size (a large part beside the cam leaves the cam fine).
             let edges: Vec<Vec<Vec<Vec3>>> = bodies
                 .iter()
-                .map(|b| b.body.edges(tol).map(|es| es.into_iter().map(|e| e.points).collect()))
+                .map(|b| b.body.edges(tolerance(b.body.size())).map(|es| es.into_iter().map(|e| e.points).collect()))
                 .collect::<std::result::Result<_, _>>()?;
             let mut lines: Vec<&Vec<Vec3>> = Vec::new();
             for (k, pick) in picks.iter().enumerate() {
@@ -589,7 +589,8 @@ fn setup(doc: &Document, st: &ModelState, l: &MotionLink, c: &Cam) -> Result<Set
     };
     // A roller picked by its round face (as its radius or its tip) turns about the face's axis:
     // square to the profile's plane.
-    for o in [c.tip.as_ref(), face].into_iter().flatten().filter(|o| matches!(o.snap, super::Snap::CircleCenter { .. })) {
+    let roller = matches!(c.follower, Follower::Roller { .. });
+    for o in [c.tip.as_ref(), face].into_iter().flatten().filter(|o| roller && matches!(o.snap, super::Snap::CircleCenter { .. })) {
         let at = mat_mul(&c_inv, &doc.origin_world(st, o)?);
         if Vec3::new(at[2][0], at[2][1], 0.0).len() > 1e-6 {
             return Err(bad("the roller's axis must be parallel to the cam's"));

@@ -849,6 +849,10 @@ fn cam_cmd(s: &mut Session, p: &Value) -> Result<Value> {
 /// A cam's follower travel over a turn of the cam: b's lowest and highest values and their
 /// difference, in degrees (`angle`) or mm.
 fn lift_json(l: &MotionLink, angle: bool) -> Value {
+    // A table that is not whole (a hand-edited file) moves nothing, and says so.
+    if l.lift.len() != cam::CAM_SAMPLES {
+        return Value::Null;
+    }
     let unit = |v: f64| if angle { v.to_degrees() } else { v };
     let (lo, hi) = l.lift.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
     let (lo, hi) = (unit(lo + l.offset), unit(hi + l.offset));
