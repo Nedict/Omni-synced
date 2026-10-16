@@ -179,6 +179,9 @@ pub struct MenuState {
     pub over_geometry: bool,
     /// The plane under the cursor when the viewport menu opened: it offers a sketch on it.
     pub plane: Option<String>,
+    /// The button that opened the menu, when it toggles it: a press there is not a press outside,
+    /// so its click closes the menu instead of closing and reopening it (#1522).
+    opener: Option<Rect>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -778,6 +781,20 @@ fn sketch_entity_items(app: &SolveApp) -> Vec<Item> {
     if !curves.is_empty() {
         v.push(cmd(app, "sketch.construction", "Normal / Construction").with(json!({ "curves": curves })));
     }
+    // Infinite lines (#1359): the selected lines switch together.
+    let lines: Vec<String> = curves
+        .iter()
+        .filter(|id| {
+            ss.sketch
+                .curve_index(id)
+                .and_then(|i| ss.sketch.curves.get(i))
+                .is_some_and(|c| matches!(c.kind, solidcraft_engine::sketch::CurveKind::Line { .. }))
+        })
+        .cloned()
+        .collect();
+    if !lines.is_empty() {
+        v.push(cmd(app, "sketch.infinite", "Infinite Line").with(json!({ "curves": lines })));
+    }
     if curves.len() == 1 && ss.sketch.freeform_offsets.iter().any(|offset| offset.output == curves[0]) {
         v.push(cmd(app, "sketch.offset.break", "Break Offset Association").with(json!({"curve":curves[0]})));
     }
@@ -1349,12 +1366,24 @@ pub fn open_for(app: &mut SolveApp, at: Pos2, target: Target) {
     app.menu.radial = target == Target::Viewport && app.preferences.radial_context_menu;
     app.menu.target = target;
     app.menu.flick = false;
+    app.menu.opener = None;
     app.viewport.context_menu = Some(at);
+}
+
+/// A button's menu: a click opens it, and a click on the same button while it is open closes it.
+pub fn toggle_for(app: &mut SolveApp, opener: Rect, at: Pos2, target: Target) {
+    if app.viewport.context_menu.is_some() && app.menu.target == target && app.menu.opener == Some(opener) {
+        close(app);
+    } else {
+        open_for(app, at, target);
+        app.menu.opener = Some(opener);
+    }
 }
 
 pub fn close(app: &mut SolveApp) {
     app.viewport.context_menu = None;
     app.menu.flick = false;
+    app.menu.opener = None;
 }
 
 /// Open the menu at a point for automation: the pointer moves there first so what is under it
@@ -1557,8 +1586,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let target = app.menu.target.clone();
     let list = items(app, &target);
     let mut picked: Option<Item> = None;
-    let mut inside = false;
     let pointer = ctx.input(|i| i.pointer.latest_pos());
+    let mut inside = app.menu.opener.is_some_and(|r| pointer.is_some_and(|p| r.contains(p)));
 
     let list_at = if app.menu.radial {
         let c = radial_center(at, screen);

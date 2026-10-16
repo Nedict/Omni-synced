@@ -4,7 +4,7 @@
 //! a match is a modify, like Trim, Extend and Fair.
 
 use serde_json::Value;
-use solidcraft_doc::FeatureKind;
+use solidcraft_doc::{BodyName, FacePick, FeatureKind, Position};
 use solidcraft_kernel::Continuity;
 
 use super::CommandSpec;
@@ -45,7 +45,17 @@ fn match_surface(s: &mut Session, p: &Value) -> Result<Value> {
         None => Continuity::G2,
         Some(v) => v.as_str().and_then(Continuity::parse).filter(|o| *o != Continuity::G0).ok_or_else(|| bad(cmd, "`order` must be g1, g2 or g3"))?,
     };
-    add_feature(s, p, FeatureKind::SurfaceMatch { body, faces, target, edges, order })
+    add_feature(
+        s,
+        p,
+        FeatureKind::SurfaceMatch {
+            body: BodyName::from(body),
+            faces: faces.into_iter().map(FacePick).collect(),
+            target: BodyName::from(target),
+            edges: edges.into_iter().map(Position).collect(),
+            order,
+        },
+    )
 }
 
 #[cfg(test)]

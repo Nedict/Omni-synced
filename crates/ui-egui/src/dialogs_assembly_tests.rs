@@ -330,7 +330,6 @@ fn drive_value_takes_the_keyboard() {
 fn drive_slider_previews_intermediate_positions_before_release() {
     let mut h = crate::scenario::Harness::new();
     h.app = two_boxes();
-    h.app.viewport.no_pixels = true;
     let (a, b) = (occ(&h.app, "A"), occ(&h.app, "B"));
     h.app
         .run(
@@ -364,7 +363,9 @@ fn drive_slider_previews_intermediate_positions_before_release() {
     let second = preview_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap();
     assert_ne!(first, second, "the held slider requests a new pose before release");
     assert!(h.ctx.input(|i| i.pointer.primary_down()));
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    // The preview runs on a worker thread; on a machine busy with other test binaries it can
+    // take several seconds, so wait as long as the other preview tests do (#1549).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while h.app.preview.busy {
         assert!(std::time::Instant::now() < deadline, "held-slider preview did not finish");
         std::thread::sleep(std::time::Duration::from_millis(1));

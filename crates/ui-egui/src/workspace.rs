@@ -119,6 +119,7 @@ pub fn layout<'a>(tab: &str, panel: &str, specs: &[&'a CommandSpec]) -> Option<(
             tab,
         ),
         ("SOLID", "CONFIGURE") => (&["parameters.change", "config.table"], 2, tab),
+        ("SKETCH", "PATTERN") => (&["sketch.mirror", "sketch.pattern.rectangular", "sketch.pattern.circular"], 3, tab),
         ("SOLID" | "SHEET METAL" | "PLASTIC", "ASSEMBLE") => (ASSEMBLE, 3, tab),
         ("SHEET METAL", "CREATE") => (SHEET_CREATE, 3, tab),
         ("SHEET METAL", "MODIFY") => (SHEET_MODIFY, 2, tab),

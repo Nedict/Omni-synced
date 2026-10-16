@@ -123,6 +123,16 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
   keep monitoring it while the task is active and make its pending status clear at handoff;
   do not claim it merged without checking.
 
+## Claim = a draft PR
+- Before working on issue #N, check nobody has it: `gh pr list -R bherbruck/solidcraft --state open --search "#N"`.
+- If none, branch from the latest `origin/main`, `git commit --allow-empty -m "claim: #N"`, push,
+  and open a **draft** PR titled `<summary> (#N)` right away. **The lowest-numbered open PR for an
+  issue wins**; if yours lost, close it. Don't claim by commenting or by editing files.
+- Push work in progress at least daily. A draft with no pushes for 72 hours may be taken over:
+  comment on it first, then open your own claim (you may start from its branch).
+- On a shared build machine, check the load before a big build (`cut -d' ' -f1 /proc/loadavg`)
+  and wait while it is over 24; build with `nice`.
+
 ## Design file format
 A change that saves something new in a design adds ONE file, `crates/doc/src/format/pending/<name>.rs`
 (a `//!` note, and `pub fn step` if older designs must be rewritten). Never edit `FORMAT`,

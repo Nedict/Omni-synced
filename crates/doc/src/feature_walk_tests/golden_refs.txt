@@ -81,6 +81,10 @@ construction_plane
 split
   remap_refs: plane.base.base.name
   remap_bodies: body, tool.body
+split_line
+  sketches: [6]
+  remap_refs: plane.base.base.name, sketch
+  remap_bodies: body
 construction_axis
 construction_point_planes
 construction_point_along
