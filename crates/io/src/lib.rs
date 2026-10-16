@@ -1123,6 +1123,38 @@ mod tests {
         assert!(!is_f3d_path("c.step") && !is_f3d_path("f3d"));
     }
 
+    /// Minimal ZIP whose central-directory names look like Fusion (no real B-rep payload).
+    fn fake_fusion_zip() -> Vec<u8> {
+        use std::io::Write;
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut cursor);
+            let opts = zip::write::SimpleFileOptions::default();
+            zip.start_file("Manifest.dat", opts).unwrap();
+            zip.write_all(b"fake").unwrap();
+            zip.start_file("FusionDesignSegmentType/x.bin", opts).unwrap();
+            zip.write_all(b"fake").unwrap();
+            zip.finish().unwrap();
+        }
+        cursor.into_inner()
+    }
+
+    #[test]
+    fn fusion_archive_is_not_a_solidcraft_design_container() {
+        let bytes = fake_fusion_zip();
+        assert!(looks_like_fusion_archive(&bytes));
+        assert!(!is_design_container(&bytes), "Fusion ZIP must not parse as .solidcraft");
+        let err = read_design(&bytes).unwrap_err().to_string();
+        assert!(err.contains("Fusion"), "{err}");
+        assert!(err.contains("not a SolidCraft design"), "{err}");
+    }
+
+    #[test]
+    fn fusion_f3d_path_refused_by_read_design_file() {
+        let err = read_design_file("part.f3d", Option::<fn(DesignPreview)>::None).unwrap_err().to_string();
+        assert!(err.contains("Fusion"), "{err}");
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn fusion_open_one_file() {
