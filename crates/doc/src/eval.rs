@@ -4436,7 +4436,11 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                     let tb = st.body(&t.body).ok_or_else(|| DocError::Unknown(format!("body `{}`", t.body)))?;
                     let face = crate::appearance::face_index_at(tb, t.point.0)
                         .ok_or_else(|| DocError::Invalid(format!("no face of `{}` at the tool point", t.body)))?;
+                    // The pieces keep the planar roles of the faces they share with the body (#565).
                     kernel::split_body(&mb.body, &kernel::SplitTool::Face { body: &tb.body, face })?
+                        .into_iter()
+                        .map(|part| part.with_preserved_planar_sources(&mb.body))
+                        .collect::<std::result::Result<Vec<_>, _>>()?
                 }
                 None => {
                     let pl = doc.resolve_plane_in(vals, plane, 0, Some(st))?;
