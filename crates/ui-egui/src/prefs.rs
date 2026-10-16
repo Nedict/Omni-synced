@@ -328,6 +328,8 @@ pub struct Prefs {
     /// Save as mesh: the last format (`stl` or `3mf`), whether it was sent to a slicer, which one
     /// (an installed slicer's id or a program path), and the programs the user added (newest first).
     pub save_mesh_format: String,
+    /// Hidden edges in the current-view DXF export (false: omit, true: dashed).
+    pub view_dxf_dashed: bool,
     pub save_mesh_send: bool,
     pub save_mesh_slicer: String,
     pub custom_slicers: Vec<String>,
@@ -420,6 +422,7 @@ impl Default for Prefs {
             check_updates: true,
             update: crate::update::Memo::default(),
             save_mesh_format: "stl".into(),
+            view_dxf_dashed: false,
             save_mesh_send: false,
             save_mesh_slicer: String::new(),
             custom_slicers: Vec::new(),
