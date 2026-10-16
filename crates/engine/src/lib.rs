@@ -156,6 +156,16 @@ pub struct Snapshot {
     pub pending_moves: std::collections::BTreeMap<u64, solidcraft_doc::Mat>,
 }
 
+/// A copy of a session that evaluates commands ahead of it ([`Session::ahead`]).
+pub struct Ahead(Session);
+
+impl Ahead {
+    /// Run `commands` (their results stay in the shared evaluation cache).
+    pub fn evaluate(self, commands: &[(String, Value)]) -> Result<()> {
+        self.0.preview_in_place(commands).map(|_| ())
+    }
+}
+
 /// What some commands would make, evaluated on a scratch copy of a session
 /// ([`Session::preview`]). The session itself is not changed.
 #[derive(Clone, Debug)]
@@ -885,6 +895,17 @@ impl Session {
             Arc::new(shown)
         };
         self.scratch().preview_in_place(commands).map(|(after, replies)| Preview { before: visible(self), after: visible(&after), replies })
+    }
+
+    /// Run `commands` on a [`Session::scratch`] copy that keeps the undo and redo stacks: what
+    /// they evaluate lands in the evaluation cache the copy shares with this session, so running
+    /// them here afterwards finds it there. For a front end that computes a command which may
+    /// take a while (undo, the history marker moved) off its window thread first.
+    pub fn ahead(&self) -> Ahead {
+        let mut copy = self.scratch();
+        copy.undo.clone_from(&self.undo);
+        copy.redo.clone_from(&self.redo);
+        Ahead(copy)
     }
 
     fn preview_in_place(mut self, commands: &[(String, Value)]) -> Result<(Self, Vec<Value>)> {

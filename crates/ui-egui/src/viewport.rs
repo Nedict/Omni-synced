@@ -2591,6 +2591,19 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::select_other::show(app, ui.ctx());
     axis_view(app, ui, rect);
     nav_bar(app, ui, rect);
+    // A command recomputing the history off the window thread (the marker moved, undo): the
+    // window goes on, and says so above the status chip.
+    if let Some(since) = app.computing_since() {
+        let seconds = ((crate::now_ms() - since) / 1000.0).floor().max(0.0);
+        let text = crate::i18n::format("dialog.computing", &[("seconds", &format!("{seconds:.0}"))]);
+        let pos = pos2(rect.left() + 12.0, rect.bottom() - 76.0);
+        let galley = painter.layout_no_wrap(text, FontId::proportional(12.5), t.text);
+        let r = Rect::from_min_size(pos, galley.size() + vec2(34.0, 8.0));
+        painter.rect_filled(r, 4.0, t.overlay);
+        egui::Spinner::new().size(12.0).paint_at(ui, Rect::from_center_size(pos2(r.left() + 13.0, r.center().y), vec2(12.0, 12.0)));
+        painter.galley(pos + vec2(26.0, 4.0), galley, t.text);
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+    }
     // Status chip.
     if let Some((msg, at, err)) = app.status.clone() {
         if crate::now_ms() - at < 6000.0 {
