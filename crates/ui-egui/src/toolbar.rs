@@ -448,6 +448,10 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     export(app, "step");
                     close = true;
                 }
+                if item_if(ui, app.tr_label("Export Current View as DXF…"), "", shown) {
+                    app.start("file.export_view_dxf");
+                    close = true;
+                }
                 if item_if(ui, "Export OBJ…", "", shown) {
                     export(app, "obj");
                     close = true;

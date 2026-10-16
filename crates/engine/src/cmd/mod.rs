@@ -76,6 +76,7 @@ mod surface;
 mod surface_analysis;
 mod surface_boundary;
 mod surface_match;
+mod view_dxf;
 mod view_navigation;
 
 use serde::Serialize;
@@ -269,6 +270,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(libraries::COMMANDS.iter());
     v.extend(section::COMMANDS.iter());
     v.extend(view_navigation::COMMANDS.iter());
+    v.extend(view_dxf::COMMANDS.iter());
     v.extend(diagnostics::COMMANDS.iter());
     v.extend(render::COMMANDS.iter());
     v
