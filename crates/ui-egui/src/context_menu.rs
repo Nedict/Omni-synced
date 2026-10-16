@@ -903,7 +903,10 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             if locked {
                 app.session.visibility.locked_bodies.retain(|b| !bodies.contains(b));
             } else {
-                app.session.visibility.locked_bodies.extend(bodies.into_iter().filter(|b| !app.session.visibility.locked_bodies.contains(b)).collect::<Vec<_>>());
+                app.session
+                    .visibility
+                    .locked_bodies
+                    .extend(bodies.into_iter().filter(|b| !app.session.visibility.locked_bodies.contains(b)).collect::<Vec<_>>());
             }
         }
         "ui.moveBodies" => {

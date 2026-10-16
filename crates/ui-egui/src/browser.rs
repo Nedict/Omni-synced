@@ -118,7 +118,8 @@ pub fn sketch_visible(app: &SolveApp, id: u64) -> bool {
     if app.session.visibility.hidden_sketches.contains(&id) {
         return false;
     }
-    app.session.visibility.shown_sketches.contains(&id) || (!app.session.visibility.sketches_hidden && !solidcraft_engine::view::sketch_consumed(&app.session, id))
+    app.session.visibility.shown_sketches.contains(&id)
+        || (!app.session.visibility.sketches_hidden && !solidcraft_engine::view::sketch_consumed(&app.session, id))
 }
 
 pub fn set_sketch_visible(app: &mut SolveApp, id: u64, on: bool) {
