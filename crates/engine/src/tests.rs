@@ -307,12 +307,15 @@ mod blend_fit;
 mod boolean_diagnostics;
 mod component_frames;
 mod curved_seam_round;
+mod gltf_import;
 mod import_component;
 mod large_step_import;
 mod loft_cut;
 mod loft_ring;
 mod loft_spacing;
 mod mirror_planes;
+#[cfg(not(target_arch = "wasm32"))]
+mod native_cad_import;
 mod path_scope;
 mod primitive_points;
 mod rim_cut;

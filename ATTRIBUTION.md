@@ -96,6 +96,7 @@ Editable drawing code, native projects and shipped exports are collected under `
 | assets/locales/ja.json | SolidCraft contributors | Original SolidCraft resource data or drawing code, collected without redesign | MIT OR Apache-2.0 |
 | assets/locales/ko.json | SolidCraft contributors | Original SolidCraft resource data or drawing code, collected without redesign | MIT OR Apache-2.0 |
 | assets/locales/ru.json | Alex Pro (del000) | Russian translation of the English catalog, contributed upstream | MIT OR Apache-2.0 |
+| assets/locales/tr.json | macrulz54 | Turkish translation of the English catalog, contributed upstream | MIT OR Apache-2.0 |
 | assets/locales/uk.json | Igor Bronovskyi (BrunIF) | Ukrainian translation of the English catalog, contributed upstream | MIT OR Apache-2.0 |
 | assets/locales/zh.json | SolidCraft contributors | Original SolidCraft resource data or drawing code, collected without redesign | MIT OR Apache-2.0 |
 | assets/materials/library.rs | SolidCraft contributors | Original SolidCraft resource data or drawing code, collected without redesign | MIT OR Apache-2.0 |
@@ -109,6 +110,8 @@ Editable drawing code, native projects and shipped exports are collected under `
 | assets/shaders/viewport.wgsl | SolidCraft contributors | Original SolidCraft resource data or drawing code, collected without redesign | MIT OR Apache-2.0 |
 | assets/styles/ui/palettes.rs | SolidCraft contributors | Original SolidCraft resource data or drawing code, collected without redesign | MIT OR Apache-2.0 |
 | assets/styles/web/loading.css | SolidCraft contributors | Original SolidCraft resource data or drawing code, collected without redesign | MIT OR Apache-2.0 |
+| crates/io/src/native_cad/fixtures/block.FCStd | SolidCraft contributors | original 10 × 20 × 30 mm test box saved by FreeCAD 1.1.4 run as an external program (`make_block_fcstd.py` beside it); no third-party geometry | MIT OR Apache-2.0 |
+| crates/io/src/native_cad/fixtures/block.3dm | SolidCraft contributors | original 10 × 20 × 30 mm test box written with McNeel's MIT-licensed rhino3dm Python package (`make_block_3dm.py` beside it); no third-party geometry | MIT OR Apache-2.0 |
 
 | docs/book/src/og.png | SolidCraft contributors | copy of assets/branding/web/source/og.png staged by cargo xtask book (gitignored) | MIT OR Apache-2.0 |
 
@@ -138,6 +141,27 @@ MIT OR Apache-2.0. Metadata parsing still uses that library. The adapter makes r
 work cooperative and adds checked run lengths, zero-run rejection, width validation,
 header/input/radiance bounds and cancellation. Original licence texts are retained
 in THIRD-PARTY-LICENSES.txt; no images or artwork from that project are copied.
+
+## File-format crates
+
+| Crate | Used for | Licence |
+|---|---|---|
+| gltf 1.4.1, gltf-json 1.4.1, gltf-derive 1.4.1 (https://github.com/gltf-rs/gltf) | glTF 2.0 import (crates/io/src/gltf_in.rs): the JSON document model and its reference checks; the GLB container, buffers and accessors are read by SolidCraft's own code | MIT OR Apache-2.0 |
+| inflections 1.1.1 (build-time, through gltf-derive) | case conversion in gltf's derive macros | MIT |
+| lazy_static 1.5.1 (through gltf-json) | | MIT OR Apache-2.0 |
+
+The glTF test files are built by the tests themselves (crates/io/src/gltf_in_tests.rs,
+crates/engine/src/tests/gltf_import.rs); no third-party models are committed.
+
+## FreeCAD and Rhino import library
+
+FreeCAD `.FCStd` and Rhino `.3dm` files are read with [cadmpeg](https://github.com/cadmpeg/cadmpeg)
+0.6.1 (Apache-2.0), linked as the crates `cadmpeg-core`, `cadmpeg-ir`, `cadmpeg-registry`,
+`cadmpeg-container`, `cadmpeg-codec-freecad`, `cadmpeg-codec-rhino` and `cadmpeg-codec-step`
+in native builds (`crates/io/src/native_cad.rs`). Only those open-format codecs are built: no
+default features, so cadmpeg's codecs for commercial CAD formats and its ShapeManager/ACIS
+codec are not compiled in. Its licence text is in THIRD-PARTY-LICENSES.txt; no code from it is
+copied into SolidCraft.
 
 ## Recovered contributions
 
