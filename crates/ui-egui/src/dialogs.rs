@@ -559,10 +559,16 @@ impl Dialog {
                 vec![SelInput::new("Objects", BODIES, true), SelInput::new("Axis", AXES, false)],
             ),
             "solid.loft" => Dialog::new(Kind::Loft { operation: usize::from(has_bodies) }, vec![SelInput::new("Profiles", PROFILES, true)]),
-            "solid.sweep" => Dialog::new(
-                Kind::Sweep { operation: usize::from(has_bodies), opts: crate::dialogs_sweep::SweepOpts::default() },
-                vec![SelInput::new("Profile", PROFILES, true), SelInput::new("Path", CURVES, true), crate::dialogs_sweep::direction_input()],
-            ),
+            "solid.sweep" => Dialog::new(Kind::Sweep { operation: usize::from(has_bodies), opts: crate::dialogs_sweep::SweepOpts::default() }, {
+                let [rail, rail2] = crate::dialogs_sweep::rail_inputs();
+                vec![
+                    SelInput::new("Profile", PROFILES, true),
+                    SelInput::new("Path", CURVES, true),
+                    crate::dialogs_sweep::direction_input(),
+                    rail,
+                    rail2,
+                ]
+            }),
             "solid.move" => Dialog::new(crate::dialogs_move::kind(0), crate::dialogs_move::inputs(0)),
             "solid.hole" => Dialog::new(hole_defaults(), vec![SelInput::new("Face", HOLE_FACES, true)]),
             "solid.box" => Dialog::new(
@@ -3892,7 +3898,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             let path: Vec<String> = sels(d, 1).iter().filter_map(|x| if let Sel::SketchCurve { id } = x { Some(id.clone()) } else { None }).collect();
             let path_sketch = curves_sketch(app, &path, sketch.as_u64()).ok_or("the path curves must be in one sketch")?;
             let mut p = json!({"sketch": sketch, "profiles": idx, "path_sketch": path_sketch, "path": path, "operation": OPS.get(*operation).copied().unwrap_or("new")});
-            crate::dialogs_sweep::params(app, opts, sels(d, 2).first(), &mut p)?;
+            crate::dialogs_sweep::params(app, opts, sels(d, 2).first(), [sels(d, 3), sels(d, 4)], &mut p)?;
             ("solid.sweep", p)
         }
         Kind::OffsetPlane { offset } => {
@@ -4978,12 +4984,15 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             }
             d
         }
-        FeatureKind::Sweep { sketch, profiles, path, operation, targets, orientation, twist, scale, .. } => {
+        FeatureKind::Sweep { sketch, profiles, path, operation, targets, orientation, twist, scale, rails, rail_fit, .. } => {
             let mut d = start("solid.sweep")?;
-            let (opts, direction) = crate::dialogs_sweep::SweepOpts::of(orientation, twist, scale, &feature_frame(s, f.component));
+            let (opts, direction) = crate::dialogs_sweep::SweepOpts::of(orientation, twist, scale, *rail_fit, &feature_frame(s, f.component));
             d.kind = Kind::Sweep { operation: op_index(operation), opts };
             if let Some(inp) = d.inputs.get_mut(2) {
                 inp.items = direction.into_iter().collect();
+            }
+            for (inp, items) in d.inputs.iter_mut().skip(3).zip(crate::dialogs_sweep::rail_sels(rails)) {
+                inp.items = items;
             }
             let items = st.sketch(sketch.0).map(|ss| profile_indices(ss, profiles)).unwrap_or_default();
             if let Some(inp) = d.inputs.get_mut(0) {
