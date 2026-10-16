@@ -490,6 +490,23 @@ pub(crate) fn paint_with(p: &Painter, r: Rect, name: &str, ink: Color32, fill: C
             }
             p.circle_filled(at(0.5), dot_r, a);
         }
+        "infinite" => {
+            // An infinite line (#1359): Construction's broken line, with an open arrowhead at
+            // each end saying it runs on. Accent only, like Construction and Centerline.
+            let w = line_type_stroke(r);
+            let at = |t: f32| pen.at(3.0 + 16.0 * t, 19.0 - 16.0 * t);
+            for (t0, t1) in [(0.0, 0.38), (0.62, 1.0)] {
+                p.add(Shape::line(vec![at(t0), at(t1)], Stroke::new(w, a)));
+            }
+            // Each head: two short strokes back from the tip, either side of the line.
+            let tip_len = 0.3;
+            for (tip, back) in [(0.0f32, tip_len), (1.0, 1.0 - tip_len)] {
+                let (t, b) = (at(tip), at(back));
+                let along = b - t;
+                let side = egui::vec2(-along.y, along.x) * 0.55;
+                p.add(Shape::line(vec![b + side, t, b - side], Stroke::new(w, a)));
+            }
+        }
         "c_hv" => {
             pen.line(&[(4.0, 18.0), (20.0, 18.0)], a);
             pen.line(&[(6.0, 4.0), (6.0, 14.0)], a);
@@ -745,6 +762,20 @@ pub(crate) fn paint_with(p: &Painter, r: Rect, name: &str, ink: Color32, fill: C
             pen.closed(&[(21.0, 6.0), (15.0, 10.0), (15.0, 18.0), (21.0, 18.0)], a);
         }
         "sketch_circ_pattern" => paint(p, r, "pattern_circ", ink, Color32::TRANSPARENT, a),
+        "pattern_flip" => {
+            // Opposing arrows show reversal, with a short reference tick between them.
+            pen.arrow((4.0, 7.0), (20.0, 7.0), a);
+            pen.arrow((20.0, 17.0), (4.0, 17.0), ink);
+            pen.line(&[(12.0, 10.0), (12.0, 14.0)], ink);
+        }
+        "pattern_center" => {
+            // An original on a reference axis, with one equally spaced copy on either side.
+            pen.line(&[(12.0, 3.0), (12.0, 21.0)], a);
+            pen.line(&[(4.0, 12.0), (20.0, 12.0)], ink);
+            for x in [4.0, 12.0, 20.0] {
+                pen.circle(x, 12.0, 2.4, fill, if x == 12.0 { a } else { ink });
+            }
+        }
         "sketch_rect_pattern" => paint(p, r, "pattern_rect", ink, Color32::TRANSPARENT, a),
         "line_mid" => {
             pen.line(&[(3.0, 19.0), (21.0, 5.0)], a);
@@ -1262,6 +1293,14 @@ pub(crate) fn paint_with(p: &Painter, r: Rect, name: &str, ink: Color32, fill: C
             pen.arc(12.0, 12.0, 8.5, 0.3, 4.6, a);
             pen.arrow((11.0, 20.4), (14.5, 20.3), a);
         }
+        // A crank on its pivot and the closed path its far end draws (accent).
+        "trace" => {
+            pen.curve([(15.0, 13.0), (22.0, 13.0), (23.0, 3.0), (15.0, 3.0)], a);
+            pen.curve([(15.0, 3.0), (8.0, 3.0), (9.0, 13.0), (15.0, 13.0)], a);
+            pen.line(&[(5.0, 20.0), (15.0, 13.0)], ink);
+            pen.circle(5.0, 20.0, 2.4, pen.fill, ink);
+            pen.dot(15.0, 13.0, a);
+        }
         "motion_link" => {
             pen.circle(7.0, 14.0, 4.5, pen.fill, ink);
             pen.circle(17.5, 9.0, 3.0, pen.fill, ink);
@@ -1482,7 +1521,7 @@ mod tests {
     /// theme's construction orange) and must not change with `ink`.
     #[test]
     fn construction_and_centerline_icons_follow_the_callers_accent_only() {
-        for name in ["construction", "centerline"] {
+        for name in ["construction", "centerline", "infinite"] {
             let base = drawn(name, Color32::BLACK, Color32::WHITE, Color32::from_rgb(1, 2, 3));
             let other_accent = drawn(name, Color32::BLACK, Color32::WHITE, Color32::from_rgb(4, 5, 6));
             assert_ne!(base, other_accent, "{name} icon must change with the caller's accent colour");

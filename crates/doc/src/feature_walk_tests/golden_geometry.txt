@@ -76,6 +76,8 @@ construction_plane
   moves: plane.axis_dir[0], plane.axis_dir[1], plane.axis_origin[0], plane.axis_origin[1], plane.axis_origin[2]
 split
   moves: plane.axis_dir[0], plane.axis_dir[1], plane.axis_origin[0], plane.axis_origin[1], plane.axis_origin[2], tool.point[0], tool.point[1], tool.point[2]
+split_line
+  moves: plane.axis_dir[0], plane.axis_dir[1], plane.axis_origin[0], plane.axis_origin[1], plane.axis_origin[2]
 construction_axis
   moves: def.a.plane.axis_dir[0], def.a.plane.axis_dir[1], def.a.plane.axis_origin[0], def.a.plane.axis_origin[1], def.a.plane.axis_origin[2], def.b.plane.axis_dir[0], def.b.plane.axis_dir[1], def.b.plane.axis_origin[0], def.b.plane.axis_origin[1], def.b.plane.axis_origin[2]
 construction_point_planes

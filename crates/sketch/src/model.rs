@@ -169,6 +169,11 @@ pub struct Curve {
     /// Fixed (locked): its points and radius are constants for the solver.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fixed: bool,
+    /// Infinite line type (#1359), for lines only: construction geometry drawn across the whole
+    /// view, through its two points, which fix where it lies and which way it runs. Never part of
+    /// a profile (it is construction too).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub infinite: bool,
 }
 
 /// Geometric constraints and dimensions. Indices refer to `Sketch::points` (`p`, `q`) or
@@ -184,6 +189,9 @@ pub enum ConstraintKind {
         center: Option<usize>,
         angle: f64,
         offset: Vec2,
+        /// Displacements along and perpendicular to live sketch lines (at most two).
+        #[serde(default)]
+        directions: [Option<(usize, Vec2)>; 2],
     },
     /// The independent radius of a patterned circle or ellipse follows its seed.
     PatternRadius {
@@ -418,7 +426,9 @@ impl ConstraintKind {
     pub fn indices(&self) -> (Vec<usize>, Vec<usize>) {
         use ConstraintKind::*;
         match *self {
-            PatternPoint { p, q, center, .. } => (vec![p, q].into_iter().chain(center).collect(), vec![]),
+            PatternPoint { p, q, center, directions, .. } => {
+                (vec![p, q].into_iter().chain(center).collect(), directions.into_iter().flatten().map(|(l, _)| l).collect())
+            }
             PatternRadius { a, b } => (vec![], vec![a, b]),
             Coincident { p, q } | HorizontalPoints { p, q } | VerticalPoints { p, q } => (vec![p, q], vec![]),
             Distance { p, q, .. } | DistanceX { p, q, .. } | DistanceY { p, q, .. } => (vec![p, q], vec![]),
@@ -453,11 +463,14 @@ impl ConstraintKind {
             None => ok2 = false,
         };
         match self {
-            PatternPoint { p, q, center, .. } => {
+            PatternPoint { p, q, center, directions, .. } => {
                 fp(p);
                 fp(q);
                 if let Some(c) = center {
                     fp(c);
+                }
+                for (l, _) in directions.iter_mut().flatten() {
+                    fc(l);
                 }
             }
             PatternRadius { a, b } => {
@@ -735,6 +748,7 @@ impl Sketch {
             link: None,
             centerline: false,
             fixed: false,
+            infinite: false,
         });
         Ok(self.curves.len() - 1)
     }
@@ -772,6 +786,7 @@ impl Sketch {
             link: None,
             centerline: false,
             fixed: false,
+            infinite: false,
         });
         Ok(self.curves.len() - 1)
     }
@@ -806,6 +821,7 @@ impl Sketch {
             link: None,
             centerline: false,
             fixed: false,
+            infinite: false,
         });
         Ok(self.curves.len() - 1)
     }
@@ -840,7 +856,13 @@ impl Sketch {
         let need_line = |i: usize| if is_line(i) { Ok(()) } else { Err(SketchError::WrongKind(name(i), "needs a line".into())) };
         let need_round = |i: usize| if is_round(i) { Ok(()) } else { Err(SketchError::WrongKind(name(i), "needs a circle or arc".into())) };
         match *k {
-            PatternPoint { p, q, angle, offset, .. } => {
+            PatternPoint { p, q, angle, offset, directions, .. } => {
+                for (l, distance) in directions.into_iter().flatten() {
+                    need_line(l)?;
+                    if !distance.x.is_finite() || !distance.y.is_finite() || distance.x.abs() > MAX_COORD || distance.y.abs() > MAX_COORD {
+                        return Err(SketchError::Invalid("invalid pattern direction displacement".into()));
+                    }
+                }
                 if p == q
                     || !angle.is_finite()
                     || angle.abs() > std::f64::consts::TAU
@@ -1376,7 +1398,7 @@ impl Sketch {
             }
         };
         let id = self.curve_id(id, prefix)?;
-        self.curves.push(Curve { id, kind, construction: false, reversed: false, link: None, centerline: false, fixed: false });
+        self.curves.push(Curve { id, kind, construction: false, reversed: false, link: None, centerline: false, fixed: false, infinite: false });
         Ok(self.curves.len() - 1)
     }
 

@@ -55,6 +55,7 @@ Written against SolidCraft `main` after 0.11.1, which counts the degrees of free
 - **Contact:** `contact.create {"occurrences":[...], "name":...}` and `contact.enable_sets {}`. A drive then stops where two bodies of one set would pass through each other, with `stopped_by_contact: {a, b, fraction}`. `contact.check {}` lists the pairs that overlap now.
 - **Motion study:** `motion.study {"name":..., "steps":N, "keys":[{"joint":..., "points":[[step, value], ...]}]}`. Values are degrees or mm, linear between points. Key only the driving joints; linked joints and loops follow.
 - **Play:** `motion.play {"study":..., "step":s}` sets the joints there, which changes the design, and answers every occurrence's pose (about 0.2 KB per occurrence). `motion.export {"study":..., "samples":n}` gives the poses at every step without changing the design.
+- **Trace:** `motion.trace {"occurrence":..., "point":[x,y,z], "joint":..., "from":0, "to":360}` (or `"study":...` instead of joint, from and to) answers the world path of a point of a part, such as a coupler curve, without changing the design. It ends at `stopped_at` where a loop or contact stops the motion. `motion.trace.keep` with the same params keeps it as a 3D sketch spline.
 
 ## Verify
 - **Each joint:** `execute occurrence.properties {"occurrence":"Wing:1"}` (under 1 KB) gives the world bbox and centre of mass of one occurrence. Joining must not move them.
@@ -74,6 +75,7 @@ Written against SolidCraft `main` after 0.11.1, which counts the degrees of free
 |---|---|
 | "The origins are at the same point, so `flip` doesn't matter" | Pass `flip: true`, or the part turns 180 degrees. |
 | "The drive answered values, so it moved" | Read `moved`; a chain joined to nothing grounded answers `moved: false` and a `reason`. |
+| "Drive the arm joint by joint until the gripper gets there" | `joint.reach {"occurrence":..., "at":..., "point":...}` solves every joint on its chain at once; read `reached` and `error_mm`. |
 | "Key every joint of the loop in the study" | Key the driving joint only; the loop follows. |
 | "Check the pose with `component.list`" | `occurrence.properties` on the one occurrence. `component.list` is 140 KB on a 36-part assembly. |
 | "Open the design with `file.open`" | The `open` tool, or `doc.open`; there is no `file.open`. |

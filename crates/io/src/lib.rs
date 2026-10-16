@@ -859,7 +859,7 @@ mod tests {
         .unwrap();
         doc.add_feature(
             FeatureKind::Fillet {
-                edges: vec![Vec3::new(0.0, 0.0, 5.0)],
+                edges: vec![solidcraft_doc::Position(Vec3::new(0.0, 0.0, 5.0))],
                 radius: "4".into(),
                 body: None,
                 style: Default::default(),
@@ -871,7 +871,7 @@ mod tests {
         doc.add_feature(
             FeatureKind::Cylinder {
                 base: point_expr(Vec3::new(80.0, 0.0, 0.0)),
-                axis: Vec3::Z,
+                axis: solidcraft_doc::Dir(Vec3::Z),
                 radius: "6".into(),
                 height: "15".into(),
                 operation: Operation::NewBody,
@@ -943,7 +943,7 @@ mod tests {
         .unwrap();
         doc.add_feature(
             FeatureKind::Fillet {
-                edges: vec![Vec3::new(0.1, -0.3, 5.0 + 1.0 / 3.0)],
+                edges: vec![solidcraft_doc::Position(Vec3::new(0.1, -0.3, 5.0 + 1.0 / 3.0))],
                 radius: "4".into(),
                 body: None,
                 style: Default::default(),

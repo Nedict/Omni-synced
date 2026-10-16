@@ -84,6 +84,7 @@ pub(super) fn fixtures() -> Vec<(&'static str, Value)> {
         ("draft", json!({"type": "draft", "faces": [o], "angle": "draft.angle", "neutral": plane("draft_neutral"), "pull": [0, 0, 1]})),
         ("construction_plane", json!({"type": "construction_plane", "plane": plane("cplane")})),
         ("split", json!({"type": "split", "body": "B", "plane": plane("split")})),
+        ("split_line", json!({"type": "split", "body": "B", "plane": plane("split_line")})),
         (
             "construction_axis",
             json!({"type": "construction_axis", "def": {"type": "two_planes", "a": geo_plane("axis_a"), "b": geo_plane("axis_b")}}),
@@ -203,6 +204,7 @@ pub(super) fn with_refs(name: &str, mut v: Value) -> Value {
         "hole_simple" | "hole_drilled" | "hole_counterbore" | "hole_countersink" => json!({"points": {"sketch": 3, "ids": ["p"]}}),
         "loft" => json!({"sections": [{"sketch": 4, "profiles": {"type": "all"}}, {"sketch": 5, "profiles": {"type": "all"}}], "targets": ["B"]}),
         "split" | "surface_trim" => json!({"tool": tool}),
+        "split_line" => json!({"sketch": 6, "line": "l1"}),
         "surface_loft" => json!({"sections": [{"sketch": 4}, {"sketch": 5}]}),
         "split_face" => json!({"body": "B", "tool": tool, "sketch": 6}),
         "emboss" => json!({"face": {"body": "B", "at": o}, "targets": ["B"]}),
