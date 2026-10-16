@@ -598,7 +598,8 @@ fn thin_param(s: &Session, p: &Value, sketch: u64, cmd: &str) -> Result<ThinWall
     let ss = st.sketch(sketch).ok_or_else(|| bad(cmd, "the sketch is not evaluated"))?;
     let mut curves = string_list(p, "curves");
     if curves.is_empty() {
-        curves = ss.sketch.curves.iter().filter(|c| !c.construction && !c.centerline && c.link.is_none()).map(|c| c.id.clone()).collect();
+        curves =
+            ss.sketch.curves.iter().filter(|c| !c.construction && !c.centerline && !c.infinite && c.link.is_none()).map(|c| c.id.clone()).collect();
     }
     if curves.is_empty() || curves.len() > 1000 {
         return Err(bad(cmd, "a thin extrude needs 1…1000 sketch curves (`curves`)"));
