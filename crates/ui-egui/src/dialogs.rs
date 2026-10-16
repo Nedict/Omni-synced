@@ -260,6 +260,7 @@ pub enum Kind {
     SaveMesh(crate::dialogs_save_mesh::SaveMesh),
     ViewDxf {
         dashed: bool,
+        tolerance: f64,
     },
     /// Plastic features (`dialogs_plastic`).
     Plastic(crate::dialogs_plastic::Pl),
@@ -2948,7 +2949,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     Kind::Surface(k) => enter |= crate::dialogs_surface::rows(ui, k),
                     Kind::SketchModify(k) => enter |= crate::sketch_modify_ui::rows(ui, k),
                     Kind::SaveMesh(k) => enter |= crate::dialogs_save_mesh::rows(app, ui, k),
-                    Kind::ViewDxf { dashed } => crate::dialogs_view_dxf::rows(app, ui, dashed),
+                    Kind::ViewDxf { dashed, tolerance } => crate::dialogs_view_dxf::rows(app, ui, dashed, tolerance),
                     Kind::Plastic(k) => enter |= crate::dialogs_plastic::rows(app, ui, k, &d.inputs),
                     Kind::Appearance(k) => enter |= crate::dialogs_appearance::rows(app, ui, k, &mut d.inputs),
                     Kind::Motion(k) => enter |= crate::dialogs_motion::rows(app, ui, k, &mut d.inputs),
@@ -3477,8 +3478,8 @@ fn sels(d: &Dialog, i: usize) -> &[Sel] {
 }
 
 pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
-    if let Kind::ViewDxf { dashed } = &d.kind {
-        return crate::dialogs_view_dxf::run(app, *dashed);
+    if let Kind::ViewDxf { dashed, tolerance } = &d.kind {
+        return crate::dialogs_view_dxf::run(app, *dashed, *tolerance);
     }
     // Saving asks for a file name first; `Err("")` is the user backing out of that.
     if let Kind::SaveMesh(k) = &d.kind {
@@ -4109,7 +4110,8 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                         continue;
                     }
                     taken.extend(crate::viewport::grouped_selection(s, x));
-                    places.extend(face_point(x).map(|p| json!({ "position": p })));
+                    let kept = d.extra.get("position_exprs").filter(|k| face_point(x).is_some_and(|p| p == k["point"])).map(|k| k["at"].clone());
+                    places.extend(face_point(x).map(|p| json!({ "position": kept.unwrap_or(p) })));
                 }
             }
             let mut out = Vec::new();
@@ -4697,7 +4699,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             d.extra.insert("pull".into(), pt3(pull.0));
             d
         }
-        FeatureKind::Hole { position, direction, diameter, depth, hole, points, thread, to } => {
+        FeatureKind::Hole { position, at, direction, diameter, depth, hole, points, thread, to } => {
             let mut d = start("solid.hole")?;
             let mut k = hole_defaults();
             if let Kind::Hole { diameter: dia, depth: dep, kind, cb_diameter, cb_depth, cs_diameter, cs_angle, opts } = &mut k {
@@ -4745,6 +4747,12 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                         inp.items = vec![face_sel(s, position.0).unwrap_or(Sel::Face { body: String::new(), index: 0, point: position.0 })];
                     }
                     d.extra.insert("direction".into(), pt3(direction.0));
+                    // A position given as expressions (#1678) is sent again while the pick
+                    // stays where the hole is; a new pick places it by the point picked.
+                    if let Some(at) = at {
+                        let exprs: Vec<&str> = at.iter().map(|e| e.as_str()).collect();
+                        d.extra.insert("position_exprs".into(), json!({"at": exprs, "point": pt3(position.0)}));
+                    }
                 }
             }
             if to.is_some() {

@@ -187,7 +187,7 @@ pub(crate) fn view_scene(app: &SolveApp, guides: solidcraft_engine::view::Guides
 }
 
 /// The grid and the origin's axes as the window shows them (the Grid and Origin switches).
-fn window_guides(app: &SolveApp) -> solidcraft_engine::view::Guides {
+pub(crate) fn window_guides(app: &SolveApp) -> solidcraft_engine::view::Guides {
     solidcraft_engine::view::Guides { grid: app.ui.show_grid && !crate::viewport::active_view(app).hide_grid, axes: app.origin_visible() }
 }
 

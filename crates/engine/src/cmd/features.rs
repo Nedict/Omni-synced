@@ -55,7 +55,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "CREATE")
         .icon("hole")
         .key("H")
-        .params("position: [x,y,z] on a face | sketch + points: [sketch point ids] (one hole each, perpendicular to the sketch, into the material on whichever side of the sketch plane it is) | sketch alone (every sketch point: standalone points and circle centres); flip?: bool (sketch points: drill to the other side); direction?: [x,y,z] (default: into the face, against its outward normal; one that leaves the face is mirrored into it; ignored with sketch points); diameter | thread (a tapped hole: the tap drill, major − pitch) | clearance: \"M6\" with fit?: close|normal|loose (ISO 273); depth? (default through all) | to?: [x,y,z] (To Object: drill to that face or point); type?: simple|drilled|counterbore|countersink; tip_angle?; cb_diameter?, cb_depth?; cs_diameter?, cs_angle?; thread?: \"M6\" (cosmetic)"),
+        .params("position: [x,y,z] on a face (numbers, or length expressions the hole follows) | sketch + points: [sketch point ids] (one hole each, perpendicular to the sketch, into the material on whichever side of the sketch plane it is) | sketch alone (every sketch point: standalone points and circle centres); flip?: bool (sketch points: drill to the other side); direction?: [x,y,z] (default: into the face, against its outward normal; one that leaves the face is mirrored into it; ignored with sketch points); diameter | thread (a tapped hole: the tap drill, major − pitch) | clearance: \"M6\" with fit?: close|normal|loose (ISO 273); depth? (default through all) | to?: [x,y,z] (To Object: drill to that face or point); type?: simple|drilled|counterbore|countersink; tip_angle?; cb_diameter?, cb_depth?; cs_diameter?, cs_angle?; thread?: \"M6\" (cosmetic)"),
     CommandSpec::new("solid.pipe", "Pipe", pipe)
         .at("SOLID", "CREATE")
         .icon("pipe")
@@ -1633,10 +1633,36 @@ fn hole(s: &mut Session, p: &Value) -> Result<Value> {
     {
         return Err(bad(cmd, format!("unknown thread `{t}` (ISO metric, like M6 or M6x0.75)")));
     }
-    let position = match (&points, p.get("position").and_then(vec3)) {
+    // A position given as length expressions (#1678), say `["leg_h*0.4", "width/2", "t"]`: kept,
+    // so the hole follows the parameters; drilled where they evaluate now.
+    let at: Option<solidcraft_doc::PointExpr> = match p.get("position").and_then(Value::as_array) {
+        Some(a) if points.is_none() && a.len() == 3 && a.iter().any(Value::is_string) => {
+            let mut coords = Vec::with_capacity(3);
+            for v in a {
+                let e = match v {
+                    Value::String(x) => x.trim().to_string(),
+                    Value::Number(n) => n.to_string(),
+                    _ => return Err(bad(cmd, "`position` must be [x, y, z]: numbers or length expressions")),
+                };
+                check_expr(s, &e, Kind::Length, cmd, "position")?;
+                coords.push(solidcraft_doc::Expr::new(e));
+            }
+            let [x, y, z]: [solidcraft_doc::Expr; 3] = coords.try_into().map_err(|_| bad(cmd, "`position` must be [x, y, z]"))?;
+            Some([x, y, z])
+        }
+        _ => None,
+    };
+    let at_value = match &at {
+        Some([x, y, z]) => {
+            let c = |e: &solidcraft_doc::Expr| s.doc.eval(e, Kind::Length).map_err(|e| bad(cmd, format!("`position`: {e}")));
+            Some(Vec3::new(c(x)?, c(y)?, c(z)?)).filter(|v| v.is_finite())
+        }
+        None => None,
+    };
+    let position = match (&points, at_value.or_else(|| p.get("position").and_then(vec3))) {
         (Some((_, first, _)), None) => *first,
         (_, Some(x)) => x,
-        (None, None) => return Err(bad(cmd, "`position` must be [x, y, z] (or give `sketch` and `points`)")),
+        (None, None) => return Err(bad(cmd, "`position` must be [x, y, z], numbers or length expressions (or give `sketch` and `points`)")),
     };
     let direction = match (p.get("direction").and_then(vec3), &points) {
         (None, Some((_, _, d))) => *d,
@@ -1706,6 +1732,7 @@ fn hole(s: &mut Session, p: &Value) -> Result<Value> {
         &p,
         FeatureKind::Hole {
             position: FacePick(position),
+            at,
             direction: Dir(direction),
             diameter,
             depth,

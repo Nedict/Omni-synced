@@ -1445,6 +1445,11 @@ impl SolveApp {
                 control::Outcome::Done(v) => {
                     let _ = reply.send(v);
                 }
+                // A window that is minimised or covered (another macOS Space) presents no frame:
+                // say so at once rather than after the deadline (#1677).
+                control::Outcome::Screenshot { .. } if window_hidden(ctx) => {
+                    let _ = reply.send(json!({"ok": false, "hidden": true, "error": "no frame was presented (window hidden?); use ui.render"}));
+                }
                 control::Outcome::Screenshot { path } => {
                     self.shot_token += 1;
                     let token = self.shot_token;
@@ -1498,14 +1503,22 @@ impl SolveApp {
             }
         }
         let now = now_ms();
+        // Hidden while waiting: no frame is coming.
+        let hidden = window_hidden(ctx);
         self.pending_shots.retain(|(_, _, reply, deadline)| {
-            if now < *deadline {
+            if now < *deadline && !hidden {
                 return true;
             }
             let _ = reply.send(json!({"ok": false, "error": "no frame was presented (window hidden?); use ui.render"}));
             false
         });
     }
+}
+
+/// The window is minimised or fully covered, so it presents no frames (#1677). Unknown counts as
+/// shown: the screenshot deadline still ends a wait for a frame that never comes.
+fn window_hidden(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.viewport().visible()) == Some(false)
 }
 
 /// A command's name as people see it (its label), for the status bar.
