@@ -34,6 +34,7 @@ impl Catalog {
 static ENGLISH: Catalog = Catalog::new("en", "English", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/en.json")));
 static GERMAN: Catalog = Catalog::new("de", "Deutsch", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/de.json")));
 static FRENCH: Catalog = Catalog::new("fr", "Français", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/fr.json")));
+static GALICIAN: Catalog = Catalog::new("gl", "Galego", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/gl.json")));
 static JAPANESE: Catalog = Catalog::new("ja", "日本語", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ja.json")));
 static KOREAN: Catalog = Catalog::new("ko", "한국어", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ko.json")));
 static PORTUGUESE_BR: Catalog =
@@ -49,6 +50,7 @@ pub const LOCALES: &[&Catalog] = &[
     &ENGLISH,
     &GERMAN,
     &FRENCH,
+    &GALICIAN,
     &JAPANESE,
     &KOREAN,
     &PORTUGUESE_BR,
@@ -554,6 +556,18 @@ mod tests {
         assert_eq!(pt.format("document.save_changes", &[("name", "My {design}")]), "Salvar as alterações em My {design}?");
         assert_eq!(pt.format("dialog.selected_count", &[("count", "2")]), "↖ 2 selecionados");
         assert_eq!(pt.label("NonExistentKey"), "NonExistentKey");
+    }
+
+    #[test]
+    fn galician_catalog_is_registered_and_translates_keys() {
+        let gl = Locale::for_language("gl");
+        assert_eq!(gl.name(), "Galego");
+        assert!(is_supported("gl"));
+        assert_eq!(gl.text("ui.preferences"), "Preferencias");
+        assert_eq!(gl.format("document.save_changes", &[("name", "My {design}")]), "Gardar os cambios en My {design}?");
+        assert_eq!(gl.format("dialog.selected_count", &[("count", "2")]), "↖ 2 seleccionados");
+        assert_eq!(gl.label("Fillet"), "Arredondamento");
+        assert_eq!(gl.label("NonExistentKey"), "NonExistentKey");
     }
 
     #[test]
