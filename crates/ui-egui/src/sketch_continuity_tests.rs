@@ -59,3 +59,17 @@ fn the_legend_shows_while_seams_are_shaded() {
     h.frame();
     assert!(crate::scenario::rect_of("continuity_legend").is_none(), "gone with the analysis");
 }
+
+/// While the tool runs, only what its click takes lights up under the pointer: an edge, never
+/// the face around it, whose outline would paint over the seam colours.
+#[test]
+fn only_edges_light_up_under_the_tool() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("solid.box", json!({"length": 20, "width": 20, "height": 20})).unwrap();
+    h.settle();
+    h.step(&json!({"start": "inspect.continuity"})).unwrap();
+    h.step(&json!({"move": {"world": [10, 10, 20]}})).unwrap();
+    assert_eq!(h.app.viewport.hover, None, "the top face is not lit");
+    h.step(&json!({"move": {"world": [10, 0, 20]}})).unwrap();
+    assert!(matches!(h.app.viewport.hover, Some(Hit::Edge { .. })), "{:?}", h.app.viewport.hover);
+}

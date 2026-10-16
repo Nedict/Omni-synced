@@ -403,6 +403,16 @@ enum Mode {
     Steps,
 }
 
+/// Whether a click with tool `id` acts on `hit`: what is under the pointer lights up only when
+/// the tool takes it, so the hover shows what a click does and lights nothing over a view the
+/// tool draws (Continuity Analysis's seam colours on a face the tool ignores).
+pub fn takes(id: &str, hit: &Hit) -> bool {
+    match id {
+        "inspect.continuity" => matches!(hit, Hit::Edge { .. }),
+        _ => true,
+    }
+}
+
 fn mode(id: &str) -> Option<Mode> {
     Some(match id {
         "sketch.project" | "sketch.intersect" | "sketch.include_3d" | "sketch.fit_curves_to_section" | "sketch.isoparametric_curve" => Mode::ModelRef,
@@ -656,7 +666,7 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
         }
         Mode::ModelRef if cmd == "inspect.continuity" => {
             // The edge measured again, added to the seams shown, and its numbers pinned there.
-            let edge = hits.iter().find_map(|h| if let Hit::Edge { mid, .. } = h { Some(*mid) } else { None });
+            let edge = hits.iter().filter(|h| takes(cmd, h)).find_map(|h| if let Hit::Edge { mid, .. } = h { Some(*mid) } else { None });
             if let Some(mid) = edge
                 && let Ok(v) = app.run(cmd, json!({"edges": [[mid.x, mid.y, mid.z]], "add": true}))
                 && let Some(seam) = v["bodies"][0]["edges"].get(0)
