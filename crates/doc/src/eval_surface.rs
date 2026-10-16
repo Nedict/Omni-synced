@@ -3,7 +3,7 @@
 //! `surface_offset`, `surface_ruled`, `surface_untrim`).
 
 use super::*;
-use crate::{RuledCorners, RuledMode};
+use crate::{RuledCorners, RuledMode, SheetSection};
 use solidcraft_geom::Seg2;
 
 pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut ModelState, warning: &mut Option<String>) -> Result<()> {
@@ -313,7 +313,13 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             push_sheet(st, f, traced);
             Ok(())
         }
-        FeatureKind::SurfaceLoft { sections } => {
+        FeatureKind::SurfaceLoft { sections, continuity, crown } => {
+            // A loft with edge chains for sections, or one that has to leave its ends a particular
+            // way, is built through `loft_blend` from the frames of every section; the plain one
+            // (sketch chains only, both ends G0) is the loft of old.
+            if *continuity != [kernel::Continuity::G0, kernel::Continuity::G0] || sections.iter().any(|s| s.body.is_some()) {
+                return loft_blend(st, f, sections, *continuity, *crown, doc);
+            }
             let mut secs = Vec::with_capacity(sections.len());
             let mut sketches = Vec::with_capacity(sections.len());
             for sec in sections {
@@ -552,4 +558,119 @@ fn curve_chains(ss: &SolvedSketch, ids: &[String]) -> Result<Vec<Vec<Seg2>>> {
         chains.push(chain);
     }
     Ok(chains)
+}
+
+/// A multi-section blend: every section as frames, the body ones read off the face their edge
+/// chain bounds, and the first and last leaving with `continuity` where the caller asks for it.
+fn loft_blend(
+    st: &mut ModelState,
+    f: &Feature,
+    sections: &[SheetSection],
+    continuity: [kernel::Continuity; 2],
+    crown: [f64; 2],
+    doc: &Document,
+) -> Result<()> {
+    /// One section: a chain of sketch curves in its plane, or a body's edge chain.
+    enum Piece {
+        Sketch(solidcraft_geom::Plane, Vec<solidcraft_geom::Seg2>),
+        Body(String, Vec<solidcraft_geom::Vec3>),
+    }
+    let mut pieces = Vec::with_capacity(sections.len());
+    let mut centres = Vec::with_capacity(sections.len());
+    for sec in sections {
+        if let Some(name) = sec.body.as_deref() {
+            if sec.edges.is_empty() {
+                return Err(DocError::Invalid("a loft section picked from a body needs a chain of its edges".into()));
+            }
+            let n = sec.edges.len() as f64;
+            centres.push(sec.edges.iter().fold(solidcraft_geom::Vec3::ZERO, |a, p| a + **p) * (1.0 / n));
+            pieces.push(Piece::Body(name.to_string(), crate::plain(&sec.edges)));
+            continue;
+        }
+        let ss = sketch_in_feature_frame(
+            doc,
+            st.sketch(sec.sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {} (it must come earlier in the timeline)", sec.sketch)))?,
+            f.component,
+        )?;
+        let profiles = match (&sec.profiles, sec.curves.is_empty()) {
+            (None, true) => Some(&ProfileSel::All),
+            (p, _) => p.as_ref(),
+        };
+        let mut chains = sheet_chains(&ss, profiles, &sec.curves)?.into_iter();
+        let (Some(chain), None) = (chains.next(), chains.next()) else {
+            return Err(DocError::Invalid("each loft section must be one chain: one profile without holes, or curves meeting end to end".into()));
+        };
+        let pts: Vec<Vec2> = chain.iter().flat_map(|s| s.polyline(1e-2)).collect();
+        let centre = pts.iter().fold(solidcraft_geom::Vec3::ZERO, |a, p| a + ss.plane.to_world(*p)) * (1.0 / pts.len().max(1) as f64);
+        centres.push(centre);
+        pieces.push(Piece::Sketch(ss.plane, chain));
+    }
+    // Each section leaves towards the one after it; the last one leaves back into the blend.
+    let stations = BLEND_STATIONS;
+    let last = pieces.len().saturating_sub(1);
+    let mut frames = Vec::with_capacity(pieces.len());
+    for (i, piece) in pieces.iter().enumerate() {
+        let (from, to) = if i < last { (i, i + 1) } else { (last, last.saturating_sub(1)) };
+        let leave = match (centres.get(from), centres.get(to)) {
+            (Some(a), Some(b)) => *b - *a,
+            _ => solidcraft_geom::Vec3::ZERO,
+        };
+        match piece {
+            Piece::Body(name, edges) => {
+                let b = st.body(name).ok_or_else(|| DocError::Unknown(format!("body `{name}`")))?.body.clone();
+                frames.push(kernel::loft_blend::section_frames(&b, edges, leave, stations)?);
+            }
+            Piece::Sketch(plane, chain) => frames.push(chain_frames(plane, chain, leave, stations)),
+        }
+    }
+    let body = kernel::loft_blend(&frames, continuity, crown, stations)?;
+    let name = new_name(st, f, 0);
+    st.bodies.push(ModelBody::new(name, body, f.id));
+    Ok(())
+}
+
+/// The frames of one sketch chain, sampled by arclength at `stations` stations: a sketch has no
+/// face behind it, so the surface leaves along the run with no curvature to repeat there.
+fn chain_frames(
+    plane: &solidcraft_geom::Plane,
+    chain: &[solidcraft_geom::Seg2],
+    leave: solidcraft_geom::Vec3,
+    stations: usize,
+) -> Vec<kernel::Frame> {
+    let mut pts: Vec<Vec2> = Vec::new();
+    for seg in chain {
+        for p in seg.polyline(1e-2) {
+            if pts.last().is_none_or(|l: &Vec2| (*l - p).len() > 1e-12) {
+                pts.push(p);
+            }
+        }
+    }
+    if pts.len() < 2 || stations < 2 {
+        return Vec::new();
+    }
+    let total: f64 = pts.windows(2).map(|w| (w[1] - w[0]).len()).sum();
+    if !(total > 1e-12) {
+        return Vec::new();
+    }
+    let step = total / (stations - 1) as f64;
+    let (mut walked, mut k) = (0.0f64, 0usize);
+    let mut out = Vec::with_capacity(stations);
+    for i in 0..stations {
+        let want = step * i as f64;
+        while k + 1 < pts.len() && walked + (pts[k + 1] - pts[k]).len() < want {
+            walked += (pts[k + 1] - pts[k]).len();
+            k += 1;
+        }
+        let (Some(a), Some(b)) = (pts.get(k).copied(), pts.get(k + 1).copied()) else {
+            if let Some(p) = pts.get(k).copied() {
+                out.push(kernel::Frame { p: plane.to_world(p), leave, bend: solidcraft_geom::Vec3::ZERO, bend_change: solidcraft_geom::Vec3::ZERO });
+            }
+            continue;
+        };
+        let span = (b - a).len();
+        let t = if span > 1e-12 { ((want - walked) / span).clamp(0.0, 1.0) } else { 0.0 };
+        let p = a * (1.0 - t) + b * t;
+        out.push(kernel::Frame { p: plane.to_world(p), leave, bend: solidcraft_geom::Vec3::ZERO, bend_change: solidcraft_geom::Vec3::ZERO });
+    }
+    out
 }

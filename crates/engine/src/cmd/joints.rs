@@ -305,8 +305,29 @@ fn origin_param(s: &Session, v: Option<&Value>, cmd: &str) -> Result<JointOrigin
         }
     };
     let o = JointOrigin { occurrence, snap };
-    joints::resolve_origin(&s.doc, &s.model.state(), &o).map_err(|e| bad(cmd, e.to_string()))?;
-    Ok(o)
+    match joints::resolve_origin(&s.doc, &s.model.state(), &o) {
+        Ok(_) => Ok(o),
+        // A circle given by its centre, where no face lies (#393).
+        Err(e) => match (what == "circle").then(|| circle_centre(s, occurrence, local(world))).flatten() {
+            Some(snap) => Ok(JointOrigin { occurrence, snap }),
+            None => Err(bad(cmd, e.to_string())),
+        },
+    }
+}
+
+/// The round end of a cylindrical face of the occurrence's bodies centred at `pick`: a point on
+/// its axis there, pointing out of that end (as picking its circular edge gives).
+fn circle_centre(s: &Session, occurrence: u64, pick: Vec3) -> Option<Snap> {
+    let component = if occurrence == 0 { 0 } else { s.doc.occurrences.iter().find(|o| o.id == occurrence)?.component };
+    let st = s.model.state();
+    let c = st
+        .bodies
+        .iter()
+        .filter(|b| s.doc.model_body_component(b) == component)
+        .find_map(|b| solidcraft_doc::kernel::cylinder_end_at(&b.body, pick))?;
+    let along = (pick - c.axis_point).dot(c.axis);
+    let (at, dir) = if (along - c.start).abs() <= (c.end - along).abs() { (c.start, -1.0) } else { (c.end, 1.0) };
+    Some(Snap::Point { point: c.axis_point + c.axis * at, z: Some(c.axis * dir) })
 }
 
 pub(crate) fn joint_id(s: &Session, v: Option<&Value>, cmd: &str) -> Result<u64> {
@@ -699,7 +720,10 @@ fn size_param(s: &Session, p: &Value, key: &str, cmd: &str) -> Result<Size> {
     match p.get(key) {
         Some(Value::Number(n)) => n.as_f64().map(Size::Length).ok_or_else(|| bad(cmd, format!("`{key}` must be a finite length"))),
         Some(Value::String(t)) if t.len() <= 1000 => Ok(Size::Expr(t.trim().to_string())),
-        Some(o @ Value::Object(m)) if m.contains_key("circle") => Ok(Size::Circle(origin_param(s, Some(o), cmd)?)),
+        Some(o @ Value::Object(m)) if m.contains_key("circle") => match origin_param(s, Some(o), cmd)? {
+            o @ JointOrigin { snap: Snap::CircleCenter { .. }, .. } => Ok(Size::Circle(o)),
+            _ => Err(bad(cmd, format!("`{key}`: give a point on the round face, not its centre"))),
+        },
         _ => Err(bad(cmd, format!("`{key}` must be a length (mm or an expression) or a round face ({{circle: [x, y, z]}})"))),
     }
 }

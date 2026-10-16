@@ -1171,7 +1171,8 @@ impl Model {
                 b.made = crate::lineage::Made::Before;
             }
             let mut warning = None;
-            // Face references by name: move each face point onto its named face.
+            // Face references by name: move each face point onto its named face (on the body the
+            // feature names, when it names one and the face is there).
             let renamed;
             // Cylindrical emboss resolves its named face in the selected body's frame
             // and certifies an analytic anchor; mesh projection here would undo that.
@@ -1191,7 +1192,7 @@ impl Model {
                     if n.is_empty() {
                         continue;
                     }
-                    match crate::naming::locate_face(&fst, n, *p) {
+                    match crate::name_lookup::locate_face_on_body(&fst, f.kind.face_body(), n, *p) {
                         Some(hit) => {
                             if let Some(note) = hit.note(n) {
                                 notes.push(note);
@@ -2299,8 +2300,8 @@ fn sketch_hole_dir(st: &ModelState, spots: &[Vec3], n: Vec3) -> Vec3 {
 
 /// Where a hole feature drills (each on the surface) and in which direction: at its sketch
 /// points perpendicular to the sketch (into the material), else at its position.
-fn hole_spots(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
-    let FeatureKind::Hole { position, direction, points, .. } = &f.kind else { return Err(DocError::Invalid("not a hole".into())) };
+fn hole_spots(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
+    let FeatureKind::Hole { position, at, direction, points, .. } = &f.kind else { return Err(DocError::Invalid("not a hole".into())) };
     let (spots, dir) = match points {
         Some(sp) => {
             let ss =
@@ -2316,7 +2317,7 @@ fn hole_spots(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
         }
         None => {
             let dir = direction.normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?;
-            let at = hole_on_surface(st, position.0, dir);
+            let at = hole_on_surface(st, hole_position(vals, position, at)?, dir);
             let dir = hole_dir_into_face(st, at, dir);
             return Ok((vec![hole_on_surface(st, at, dir)], dir));
         }
@@ -2350,8 +2351,8 @@ fn hole_depth_to(st: &ModelState, at: &Vec3, dir: Vec3, to: &Option<Vec3>, depth
 }
 
 /// A hole's spots as given (not yet moved onto the surface) and its direction.
-fn hole_spots_raw(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
-    let FeatureKind::Hole { position, direction, points, .. } = &f.kind else { return Err(DocError::Invalid("not a hole".into())) };
+fn hole_spots_raw(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
+    let FeatureKind::Hole { position, at, direction, points, .. } = &f.kind else { return Err(DocError::Invalid("not a hole".into())) };
     match points {
         Some(sp) => {
             let ss = st.sketch(sp.sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {}", sp.sketch)))?;
@@ -2363,16 +2364,29 @@ fn hole_spots_raw(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
         }
         None => {
             let dir = direction.normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?;
-            Ok((vec![position.0], hole_dir_into_face(st, hole_on_surface(st, position.0, dir), dir)))
+            let p = hole_position(vals, position, at)?;
+            Ok((vec![p], hole_dir_into_face(st, hole_on_surface(st, p, dir), dir)))
         }
     }
+}
+
+/// Where a hole placed by position is drilled: its `at` expressions evaluated, so it follows the
+/// parameters (#1678), else the point it was given.
+fn hole_position(vals: &BTreeMap<String, Value>, position: &crate::FacePick, at: &Option<crate::PointExpr>) -> Result<Vec3> {
+    let Some([x, y, z]) = at else { return Ok(position.0) };
+    let p =
+        Vec3::new(Document::eval_in(vals, x, Kind::Length)?, Document::eval_in(vals, y, Kind::Length)?, Document::eval_in(vals, z, Kind::Length)?);
+    if ![p.x, p.y, p.z].iter().all(|c| c.is_finite() && c.abs() < 1e9) {
+        return Err(DocError::Invalid("the hole's position is out of range".into()));
+    }
+    Ok(p)
 }
 
 /// The cutting tools of a hole feature at every spot, each with its exact geometry when it is a
 /// straight cylinder (see [`hole_tools_and_prisms`]).
 fn hole_feature_tools(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature) -> Result<Vec<(Traced, Option<more::PrimitivePrism>)>> {
     let FeatureKind::Hole { diameter, depth, hole, to, .. } = &f.kind else { return Err(DocError::Invalid("not a hole".into())) };
-    let (spots, dir) = hole_spots(st, f)?;
+    let (spots, dir) = hole_spots(vals, st, f)?;
     if spots.is_empty() || spots.len() > 10_000 {
         return Err(DocError::Invalid("a hole needs 1…10000 points".into()));
     }
@@ -3754,7 +3768,7 @@ fn replay(
             // A hole is drilled again at each copy of its spot (found on the surface there), so
             // a blind hole's depth counts from the face at the copy, not from the bottom of the
             // original hole under the original spot.
-            let (spots, dir) = hole_spots_raw(st, src)?;
+            let (spots, dir) = hole_spots_raw(vals, st, src)?;
             for (k, m) in mats.iter().enumerate() {
                 let d = crate::apply_vector(m, dir).normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?;
                 for p in &spots {
@@ -4207,7 +4221,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             apply_traced(st, f, tools, *operation, &crate::plain(targets))
         }
         FeatureKind::Hole { thread, diameter, .. } => {
-            let (spots, dir) = hole_spots(st, f)?;
+            let (spots, dir) = hole_spots(vals, st, f)?;
             let tools = hole_feature_tools(vals, st, f)?;
             let handled = sheet_hole_cut(st, f, &tools, warning)?;
             let tools: Vec<Traced> = tools.into_iter().map(|(tool, _)| tool).collect();
@@ -4550,8 +4564,16 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             };
             st.blend_edges.insert(f.id, edges.clone());
             let input = mb.traced();
+            // A G2 corner is built by the corner construction alone, for a constant radius: any
+            // other style (or a fitted radius) has no corner patch to repeat.
+            if let FeatureKind::Fillet { corner: crate::FilletCorner::G2, style, fit, .. } = &f.kind
+                && (!matches!(style, crate::FilletStyle::Constant) || !matches!(fit, crate::FilletFit::Exact))
+            {
+                return Err(DocError::Invalid("a G2 corner is built for a constant-radius fillet (type: constant, fit: exact) only".into()));
+            }
             // The blended body, and the lineage of what the last blend started from.
             let (nb, from) = match &f.kind {
+                FeatureKind::Fillet { corner: crate::FilletCorner::G2, .. } => (kernel::fillet_g2_corners(&mb.body, &edges, r)?, input),
                 FeatureKind::Fillet { style: crate::FilletStyle::Curvature, .. } => (kernel::fillet_g2(&mb.body, &edges, r)?, input),
                 FeatureKind::Fillet { style: crate::FilletStyle::Chord, .. } => (kernel::fillet_chord(&mb.body, &edges, r)?, input),
                 FeatureKind::Fillet { style: crate::FilletStyle::Variable { radius2, start, mid, smooth }, .. } => {
@@ -5237,6 +5259,7 @@ mod chain_tests {
                 body: None,
                 style: crate::FilletStyle::Constant,
                 fit: Default::default(),
+                corner: Default::default(),
             },
             None,
         )
@@ -5293,4 +5316,89 @@ pub fn sketch_line_plane(st: &ModelState, sketch: u64, line: &str) -> Result<Pla
     let (wa, wb) = (ss.plane.to_world(a), ss.plane.to_world(b));
     let x = (wb - wa).normalized().ok_or_else(|| DocError::Invalid(format!("`{line}` has no length")))?;
     Ok(Plane { origin: wa, x, y: ss.plane.normal() })
+}
+
+#[cfg(test)]
+mod named_face_lookup_tests {
+    use super::*;
+    use crate::naming::FaceHit;
+
+    /// A row of `n` 10 mm cubes `Part0`, `Part1`… 20 mm apart along x, without history: their
+    /// faces are named from geometry, which meshes them.
+    fn parts(n: usize) -> ModelState {
+        let mut st = ModelState::default();
+        for i in 0..n {
+            let x = 20.0 * i as f64;
+            let cube = kernel::box_solid(Vec3::new(x, 0.0, 0.0), Vec3::new(x + 10.0, 10.0, 10.0)).unwrap();
+            st.bodies.push(ModelBody::new(format!("Part{i}"), cube, 1));
+        }
+        st
+    }
+
+    /// The name of the face of `body` at `p`.
+    fn name_at(st: &ModelState, body: &str, p: Vec3) -> String {
+        let b = st.body(body).unwrap();
+        let face = crate::appearance::face_index_at(b, p).unwrap();
+        crate::naming::face_names(b)[face].clone()
+    }
+
+    /// Everything a lookup found, to compare two lookups.
+    fn found(hit: Option<FaceHit>) -> String {
+        format!("{hit:?}")
+    }
+
+    /// A shell late in a long timeline spent seconds meshing every body of the model to find its
+    /// face by name (#287). A feature that names its body finds the face there without naming
+    /// the other bodies, and finds what looking over every body finds.
+    #[test]
+    fn a_face_is_found_on_the_body_the_feature_names_without_meshing_the_others() {
+        let st = parts(12);
+        let top = Vec3::new(145.0, 5.0, 10.0);
+        let name = name_at(&st, "Part7", top);
+        let hit = crate::name_lookup::locate_face_on_body(&st, Some("Part7"), &name, top);
+        for b in st.bodies.iter().filter(|b| b.name != "Part7") {
+            assert!(b.mesh.get().is_none(), "{} was meshed", b.name);
+        }
+        let h = hit.unwrap();
+        assert_eq!((h.body, h.split, h.merged), (7, false, false));
+        assert_eq!(found(hit), found(crate::naming::locate_face(&st, &name, top)));
+        // Looking over every body names (and so meshes) them all.
+        assert!(st.bodies.iter().all(|b| b.mesh.get().is_some()));
+    }
+
+    /// A name the named body has no face of (it moved to another body: a combine took the face),
+    /// a body that is not there, no body, a name saved before format 14 or a name no face has:
+    /// looked for over every body, as without a body.
+    #[test]
+    fn a_name_not_on_the_named_body_is_looked_for_over_every_body() {
+        let st = parts(4);
+        let top = Vec3::new(45.0, 5.0, 10.0);
+        let name = name_at(&st, "Part2", top);
+        for name in [name.clone(), format!("{}{name}", crate::naming::LEGACY_MARK), "Part2:face:99".into()] {
+            let everywhere = found(crate::naming::locate_face(&st, &name, top));
+            for body in [Some("Part1"), Some("Part2"), Some("Nope"), None] {
+                assert_eq!(found(crate::name_lookup::locate_face_on_body(&st, body, &name, top)), everywhere, "{name} on {body:?}");
+            }
+        }
+        let moved = crate::name_lookup::locate_face_on_body(&st, Some("Part1"), &name, top).unwrap();
+        assert_eq!((moved.body, moved.split), (2, false));
+    }
+
+    /// A copy of a body has its source's face names. Over every body the name finds the face on
+    /// both, and the one nearest the point is taken as a piece of a split face. A feature on the
+    /// copy takes the copy's face, whole.
+    #[test]
+    fn the_same_face_on_a_copy_is_not_a_piece_of_the_named_bodys_face() {
+        let mut st = parts(2);
+        let source = st.bodies[0].clone();
+        st.bodies[1].names = crate::naming::NameCell::same(&source);
+        let top = Vec3::new(25.0, 5.0, 10.0);
+        let name = name_at(&st, "Part1", top);
+        assert_eq!(name, name_at(&st, "Part0", Vec3::new(5.0, 5.0, 10.0)));
+        let on_copy = crate::name_lookup::locate_face_on_body(&st, Some("Part1"), &name, top).unwrap();
+        let everywhere = crate::naming::locate_face(&st, &name, top).unwrap();
+        assert_eq!((on_copy.body, on_copy.face, on_copy.point), (everywhere.body, everywhere.face, everywhere.point));
+        assert_eq!((on_copy.split, everywhere.split), (false, true));
+        assert_eq!(on_copy.note(&name), None);
+    }
 }
