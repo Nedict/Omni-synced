@@ -1,5 +1,5 @@
 //! Agent chat: a side panel that talks to a coding agent the user already has (Claude Code,
-//! Codex, Gemini CLI, OpenCode, …) over the Agent Client Protocol, and gives that agent
+//! Codex, Antigravity, OpenCode, …) over the Agent Client Protocol, and gives that agent
 //! SolidCraft's MCP server, bridged to this window, as its way to read and change the open design
 //! (docs/agent-chat.md, docs/design/in-app-agent-chat.md).
 //!
