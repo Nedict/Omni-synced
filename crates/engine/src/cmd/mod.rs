@@ -33,7 +33,7 @@ mod edit;
 mod face;
 mod features;
 mod features_more;
-pub use features::auto_operation;
+pub use features::{auto_operation, extrude_reach};
 mod component_link;
 mod config;
 mod file;

@@ -1196,6 +1196,27 @@ fn extrude_auto_operation() {
     assert!(rel(volume(&mut s), 40.0 * 30.0 * 15.0 - 100.0 * 8.0) < 1e-6);
 }
 
+/// #1633: to an object, the extrude goes to it on whichever side it is, whatever its
+/// `direction`: through the body to its far face is a Cut, out to something above is a Join.
+#[test]
+fn extrude_auto_operation_follows_the_to_object() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 20}));
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 5, "corner": [0, 0, 50], "body_name": "Above"}));
+    for direction in ["positive", "negative"] {
+        // From the top face to the bottom face: through the body.
+        let down = json!({"face": [20, 15, 20], "to": [10, 10, 0], "distance": 19, "direction": direction});
+        assert!(extrude_reach(&s, &down).is_some_and(|h| (h + 20.0).abs() < 1e-6), "{down}");
+        assert_eq!(auto_operation(&s, &down), Some("cut"), "{down}");
+        // From the top face up to the box above: out of the body.
+        let up = json!({"face": [20, 15, 20], "to": [10, 10, 50], "distance": 19, "direction": direction});
+        assert!(extrude_reach(&s, &up).is_some_and(|h| (h - 30.0).abs() < 1e-6), "{up}");
+        assert_eq!(auto_operation(&s, &up), Some("join"), "{up}");
+    }
+    // Without a To object the direction still counts.
+    assert_eq!(extrude_reach(&s, &json!({"face": [20, 15, 20], "distance": 5, "direction": "negative"})), Some(-5.0));
+}
+
 /// Additive extrusions default to joining even when only a profile side touches material.
 #[test]
 fn auto_extrude_joins_side_contact_elbow_and_keeps_new_body_explicit() {

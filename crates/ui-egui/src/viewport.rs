@@ -40,6 +40,9 @@ pub enum NavMode {
 
 #[derive(Default)]
 pub struct ViewportState {
+    /// A two-point drawing tool's first point was placed by a press that became a drag: the
+    /// release places the second (#1630).
+    pub(crate) draw_drag: bool,
     /// Per-body boxes of one world state, held (not just its address, which a later state can
     /// reuse once the old one is freed, so stale boxes would come back).
     pick_bounds: std::sync::Mutex<Option<BodyBounds>>,
@@ -682,8 +685,31 @@ fn build_scene(app: &SolveApp) -> GpuScene {
             }
         }
     }
+    // Continuity analysis: each seam `inspect.continuity` measured, drawn over the model in the
+    // colour of its worst verdict.
+    for seam in &s.continuity {
+        let col = continuity_color(seam.verdict);
+        for w in seam.points.windows(2) {
+            if let (Some(a), Some(b)) = (w.first(), w.get(1)) {
+                sc.line(a.to_f32(), b.to_f32(), col, 2.6, true);
+            }
+        }
+    }
 
     sc
+}
+
+/// The colour of a measured seam: green within every tolerance, yellow where the faces only
+/// meet at an angle (over G1), red where they do not meet at all or the curvature jumps across
+/// them (over G2, the defect no chord tolerance shows). The greens, yellows and reds are the
+/// ones the shader's own analyses use (`assets/shaders/viewport.wgsl`).
+fn continuity_color(verdict: solidcraft_engine::kernel::SeamVerdict) -> [u8; 4] {
+    use solidcraft_engine::kernel::SeamVerdict as V;
+    match verdict {
+        V::Smooth => [51, 191, 77, 255],
+        V::Sharp => [242, 204, 38, 255],
+        V::CurvatureJump | V::Gap => [217, 56, 51, 255],
+    }
 }
 
 /// A soft dark ellipse on the ground under the shown bodies (darkest in the middle).
@@ -2254,11 +2280,40 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::frame_rate::paint(app, ui.ctx(), &painter, rect);
 
     // ---- interaction ----
+    // A two-point shape being dragged out (#1630) follows the pointer and ends where it is let go,
+    // even over the shape's own dimension box, which rides along beside the pointer.
+    if app.viewport.draw_drag {
+        let at = ui.input(|i| i.pointer.latest_pos()).filter(|p| rect.contains(*p));
+        if resp.drag_stopped() {
+            app.viewport.draw_drag = false;
+            if let Some(p) = at
+                && app.tool.as_ref().is_some_and(|t| t.pts.len() == 1)
+            {
+                crate::tools::on_hover(app, &proj, p);
+                crate::tools::on_click(app, &proj, p);
+            }
+        } else if let Some(p) = at {
+            crate::tools::on_hover(app, &proj, p);
+        }
+    }
     let add = mods.shift || mods.command || mods.ctrl;
     crate::sketch_text::set_one_letter(mods.shift);
     if let Some(p) = hover.filter(|_| inside) {
         if app.tool.is_some() {
             crate::tools::on_hover(app, &proj, p);
+        }
+        // Rectangles, circles and polygons also draw by press, drag and release (#1630): the press
+        // places the first point as a click there would, the release the second.
+        let two_point_start = app.tool.as_ref().is_some_and(|t| matches!(t.kind, crate::tools::Kind::Draw(2)) && t.pts.is_empty());
+        if two_point_start
+            && !held
+            && primary_nav.is_none()
+            && mode.is_none()
+            && resp.drag_started_by(egui::PointerButton::Primary)
+            && let Some(a) = ui.input(|i| i.pointer.press_origin())
+        {
+            crate::tools::on_click(app, &proj, a);
+            app.viewport.draw_drag = app.tool.as_ref().is_some_and(|t| t.pts.len() == 1);
         }
         if resp.clicked() && !held {
             if app.tool.is_some() {
@@ -2591,6 +2646,19 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::select_other::show(app, ui.ctx());
     axis_view(app, ui, rect);
     nav_bar(app, ui, rect);
+    // A command recomputing the history off the window thread (the marker moved, undo): the
+    // window goes on, and says so above the status chip.
+    if let Some(since) = app.computing_since() {
+        let seconds = ((crate::now_ms() - since) / 1000.0).floor().max(0.0);
+        let text = crate::i18n::format("dialog.computing", &[("seconds", &format!("{seconds:.0}"))]);
+        let pos = pos2(rect.left() + 12.0, rect.bottom() - 76.0);
+        let galley = painter.layout_no_wrap(text, FontId::proportional(12.5), t.text);
+        let r = Rect::from_min_size(pos, galley.size() + vec2(34.0, 8.0));
+        painter.rect_filled(r, 4.0, t.overlay);
+        egui::Spinner::new().size(12.0).paint_at(ui, Rect::from_center_size(pos2(r.left() + 13.0, r.center().y), vec2(12.0, 12.0)));
+        painter.galley(pos + vec2(26.0, 4.0), galley, t.text);
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+    }
     // Status chip.
     if let Some((msg, at, err)) = app.status.clone() {
         if crate::now_ms() - at < 6000.0 {
