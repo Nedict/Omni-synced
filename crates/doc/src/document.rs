@@ -2133,6 +2133,10 @@ pub struct Document {
     pub render: std::sync::Arc<crate::render_settings::RenderSettings>,
     #[serde(default = "default_format")]
     pub format: String,
+    /// The changes of `format` this design has while they are pending (no release has fixed
+    /// that number yet; `crate::format::pending_names`). Empty, and not saved, otherwise.
+    #[serde(default = "crate::format::pending_names", skip_serializing_if = "Vec::is_empty")]
+    pub format_pending: Vec<String>,
     pub name: String,
     #[serde(default = "default_units")]
     pub units: String,
@@ -2350,6 +2354,7 @@ impl Document {
         Document {
             render: Default::default(),
             format: default_format(),
+            format_pending: crate::format::pending_names(),
             name: name.into(),
             units: default_units(),
             metadata: Default::default(),
