@@ -1880,3 +1880,6 @@ mod thin_extrude_tests;
 #[cfg(test)]
 #[path = "extrude_convention_tests.rs"]
 mod extrude_convention_tests;
+#[cfg(test)]
+#[path = "fillet_connected_rounds_tests.rs"]
+mod fillet_connected_rounds_tests;

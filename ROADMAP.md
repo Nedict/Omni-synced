@@ -307,7 +307,9 @@ annotations and exact projected curves remain deferred. See [view DXF](docs/view
   is an equivalent circular setback. Curved faces/edges, sloped ends and corner junctions remain unsupported.
 - Fillets and chamfers: constant, variable-radius and chord-length fillets; a radius per edge,
   rounds next to earlier rounds of another radius, and smooth corner patches where three rounds
-  meet (a sphere for equal radii); straight edges (convex or concave) between planar faces with perpendicular
+  meet (a sphere for equal radii); perpendicular corner fillets after a closed ring of earlier
+  rounds preserve the ring's radii and the enclosed planar face (#1557);
+  straight edges (convex or concave) between planar faces with perpendicular
   planar end faces (equal-distance chamfers also meet sloped planar end faces, including inner
   basin rims within the rim width); convex fillets also meet sloped planar ends and reflex
   corners around pocket rims, with unequal wall slopes and extensions confined to the face;
