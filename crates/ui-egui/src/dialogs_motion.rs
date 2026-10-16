@@ -1317,6 +1317,48 @@ mod tests {
         }
     }
 
+    /// Export Animation saves the study the dialog shows (its keys need not be saved) as a GIF,
+    /// also when the name is typed without `.gif`, and the design keeps no study.
+    #[test]
+    fn export_animation_saves_the_dialogs_study_as_a_gif() {
+        // Drawn as the CLI draws (the headless device), as scenario shots are.
+        #[cfg(not(target_arch = "wasm32"))]
+        if solidcraft_engine::capture::installed().is_none() {
+            solidcraft_engine::capture::install(std::sync::Arc::new(|scene, cam, w, h| {
+                let (rgba, renderer) = solidcraft_gpu::capture::headless_rgba(scene, cam, w, h)?;
+                Ok(solidcraft_engine::capture::Picture { rgba, renderer })
+            }));
+        }
+        let mut h = crate::scenario::Harness::new();
+        for (name, x) in [("A", 0), ("B", 30)] {
+            h.app.run("component.activate", json!({"component": "root"})).unwrap();
+            h.app.run("component.create", json!({ "name": name })).unwrap();
+            h.app.run("solid.box", json!({"length": 20, "width": 20, "height": 10, "corner": [x, 0, 0]})).unwrap();
+        }
+        let a = json!({"occurrence": "A:1", "face": [10, 10, 10]});
+        h.app.run("joint.create", json!({"type": "revolute", "a": a, "b": {"occurrence": "B:1", "face": [40, 10, 0]}})).unwrap();
+        h.app.start("motion.study");
+        h.frames(3);
+        let Some(Kind::Motion(Mo::MotionStudy { name, steps, tracks, .. })) = h.app.dialog.as_mut().map(|d| &mut d.kind) else {
+            panic!("no Motion Study dialog");
+        };
+        *name = "Swing".into();
+        *steps = "4".into();
+        *tracks = vec![Track { joint: 0, index: 0, points: vec![(0, "0 deg".into()), (4, "90 deg".into())] }];
+        let dir = h.dir.clone();
+        h.app.services.pick_save = Some(Box::new(move |name, extensions| {
+            assert_eq!((name, extensions), ("Swing.gif", &["gif"][..]));
+            Box::pin(std::future::ready(Some(dir.join("swing").to_string_lossy().into_owned())))
+        }));
+        h.frames(2);
+        h.step(&json!({"widget": "Export Animation…"})).unwrap();
+        h.frames(3);
+        let gif = std::fs::read(h.dir.join("swing.gif")).unwrap();
+        assert!(gif.starts_with(b"GIF89a"), "{:?}", h.app.status);
+        assert!(h.app.status.as_ref().is_some_and(|s| !s.2), "{:?}", h.app.status);
+        assert!(h.app.session.doc.assembly.studies.is_empty(), "exporting saves no study");
+    }
+
     #[test]
     fn study_keys_by_joint_id() {
         let mut s = Session::default();
