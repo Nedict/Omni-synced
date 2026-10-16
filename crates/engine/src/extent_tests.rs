@@ -125,3 +125,19 @@ fn extrude_to_a_cylinder_beside_another_body() {
     assert!((end + (2.75f64 * 2.75 - 1.5 * 1.5).sqrt()).abs() < 1e-3, "{b}");
     assert!((b["bbox"]["min"][0].as_f64().unwrap_or(0.0) + 98.0).abs() < 1e-6, "{b}");
 }
+
+/// To Object on a wall of the body the profile stands on, edge-on to the extrusion, stops at the
+/// picked point's own height instead of running through the body and failing (#1504, #1509).
+#[test]
+fn extrude_to_a_face_edge_on_to_it_stops_at_the_point() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"corner": [0, 0, 0], "length": 20, "width": 20, "height": 20, "body_name": "Wall"}));
+    run(&mut s, "sketch.create", json!({"plane": "YZ", "name": "P"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [10, 10]}));
+    run(&mut s, "sketch.finish", json!({}));
+    // (5, 0, 10) lies on the wall y = 0, square to the YZ profile's normal.
+    run(&mut s, "solid.extrude", json!({"sketch": "P", "to": [5, 0, 10], "direction": "negative", "operation": "new", "body_name": "Post"}));
+    let b = body(&mut s, "Post");
+    let x = b["bbox"]["max"][0].as_f64().unwrap_or(0.0) - b["bbox"]["min"][0].as_f64().unwrap_or(0.0);
+    assert!(x > 1e-3, "{b}");
+}

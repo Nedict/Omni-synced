@@ -3862,7 +3862,8 @@ fn curved_face(st: &ModelState, face: Option<(usize, usize)>, n: Option<Vec3>) -
     let tol = (b.body.size() * 1e-3).max(1e-3);
     let normal = b.body.faces(tol).ok()?.into_iter().find(|f| f.index == fi).map(|f| f.plane_normal);
     let planar = match n {
-        Some(n) => normal.flatten().is_some_and(|fnrm| fnrm.cross(n).len() < 1e-6),
+        // A plane edge-on to `n` (its normal square to it) can't be followed: the point's own height stands (#1504, #1509).
+        Some(n) => normal.flatten().is_some_and(|fnrm| fnrm.cross(n).len() < 1e-6 || fnrm.dot(n).abs() < 1e-6),
         None => normal.is_some_and(|fnrm| fnrm.is_some()),
     };
     (!planar).then_some(bi)
