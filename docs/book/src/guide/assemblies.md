@@ -106,6 +106,22 @@ instead, so two origins given at one point with the same z stay as they are. For
 drive many steps, `quiet: true` leaves the per-part degrees of freedom out of joint answers, and
 `motion.play` with `quiet: true` gives the poses of only the parts that moved.
 
+**Motion Trace** (`motion.trace`, on the **ASSEMBLE** panel) draws the path a point of a part
+takes while a joint is driven or a motion study plays, such as the coupler curve of a four-bar.
+Pick the point on the part (a face centre, a circle centre, an edge midpoint or a vertex), then
+either a joint with the values to drive it from and to (a turn of the joint from where it is, at
+first) or a motion study. The path previews in the viewport as the mechanism would move: closed
+loops follow, and the path ends where a loop can no longer close or a contact set stops the
+motion, which the dialog says under the values. OK keeps the path as a 3D sketch spline in a new
+sketch of the root component (**Motion Trace1**, ...), where no joint moves it, and it can serve
+as a sweep or pipe path. It is a fixed curve: it
+does not follow later changes to the mechanism. A path that comes back to where it started is
+kept as a closed, smooth spline.
+`motion.trace {occurrence, point, joint, from, to, index?, samples?}` (or `{occurrence, point,
+study, samples?}`) answers the world points without changing the design, and
+`motion.trace.keep` with the same parameters (and `name?`) keeps them. A trace takes 2 to 500
+samples: 100 by default for a joint, one per step for a study.
+
 **Insert Design** (`component.insert_design {path, translate?}`, on the **ASSEMBLE** panel and
 in the **File** menu) adds a component linked to another saved design, so each part can live in
 its own document. A STEP or mesh file picked there is inserted as **Insert STEP** or **Insert

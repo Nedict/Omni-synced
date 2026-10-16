@@ -1293,6 +1293,14 @@ pub(crate) fn paint_with(p: &Painter, r: Rect, name: &str, ink: Color32, fill: C
             pen.arc(12.0, 12.0, 8.5, 0.3, 4.6, a);
             pen.arrow((11.0, 20.4), (14.5, 20.3), a);
         }
+        // A crank on its pivot and the closed path its far end draws (accent).
+        "trace" => {
+            pen.curve([(15.0, 13.0), (22.0, 13.0), (23.0, 3.0), (15.0, 3.0)], a);
+            pen.curve([(15.0, 3.0), (8.0, 3.0), (9.0, 13.0), (15.0, 13.0)], a);
+            pen.line(&[(5.0, 20.0), (15.0, 13.0)], ink);
+            pen.circle(5.0, 20.0, 2.4, pen.fill, ink);
+            pen.dot(15.0, 13.0, a);
+        }
         "motion_link" => {
             pen.circle(7.0, 14.0, 4.5, pen.fill, ink);
             pen.circle(17.5, 9.0, 3.0, pen.fill, ink);
