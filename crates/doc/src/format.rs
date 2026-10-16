@@ -167,6 +167,9 @@
 //!   Under the same version, looks can explicitly select opaque PBR parameters (`pbr`: metal
 //!   fraction, roughness, dielectric IOR). Absent fields keep the scalar shading a look always
 //!   had; 0.11.0 asks for an update instead of silently dropping the response.
+//!   User materials can also keep a validated engineering card (`physical_card`), independently
+//!   of mass density and optical looks. Absent cards stay unknown; 0.11.0 asks for an update
+//!   instead of silently dropping the card.
 //!   A `SurfaceUntrim` feature (Untrim: a `face` as `body` and `point`, optional `holes`
 //!   points, `outer` and `in_place`) is also first saved in 21; 0.11.0 asks for an update
 //!   instead of meeting a feature it can't read.
@@ -1035,15 +1038,40 @@ const MAX_REAL: f64 = 1e9;
 
 /// Every number the design itself holds is in range ([`check_numbers`]). `metadata` is left
 /// alone: it is other tools' data, kept as it is and never read as a number (#1015); parsing
-/// already bounds its nesting.
+/// already bounds its nesting. Engineering SI constants have their own bounded admission
+/// (e.g. E in Pa): only the exact root user-material card field bypasses the coordinate bound.
 fn check_design_numbers(v: &Value) -> Result<()> {
-    match v {
-        Value::Object(m) => m.iter().filter(|(k, _)| k.as_str() != "metadata").try_for_each(|(_, x)| check_numbers(x, 1)),
-        v => check_numbers(v, 0),
+    let Some(root) = v.as_object() else { return check_numbers(v, 0) };
+    for (key, value) in root {
+        if key == "metadata" {
+            continue;
+        }
+        if key != "user_materials" {
+            check_numbers(value, 1)?;
+            continue;
+        }
+        let Some(materials) = value.as_array() else { return check_numbers(value, 1) };
+        if materials.len() > crate::MAX_USER_MATERIALS {
+            return Err(DocError::Invalid("document exceeds 1000 user materials".into()));
+        }
+        for material in materials {
+            let Some(fields) = material.as_object() else {
+                check_numbers(material, 2)?;
+                continue;
+            };
+            for (field, data) in fields {
+                if field == "physical_card" && !data.is_null() {
+                    crate::physical_material::validate_card(data)?;
+                } else {
+                    check_numbers(data, 3)?;
+                }
+            }
+        }
     }
+    Ok(())
 }
 
-/// Every non-integer number in the file is finite and within ±`MAX_REAL` (a damaged or hostile
+/// Every non-integer number outside separately validated engineering cards is finite and within ±`MAX_REAL` (a damaged or hostile
 /// file is refused instead of overflowing the geometry later).
 fn check_numbers(v: &Value, depth: usize) -> Result<()> {
     if depth > 64 {

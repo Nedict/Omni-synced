@@ -175,6 +175,10 @@ rebuild with no errors, replayed here at 2× speed.
   integrated product viewport and CPU preview PNGs. Existing simple colors remain supported.
   Fixed direct lighting is a preview; HDRI, refraction and texture maps are not implemented.
   See [opaque surfaces](docs/render-opaque-pbr.md).
+- **Materials:** design-owned engineering cards retain optional SI properties, sources
+  and measurement conditions separately from mass density and visual appearance.
+  Numerical validation does not certify design values or provide an analysis solver.
+  See [physical cards and command inspection](docs/physical-material-cards.md).
 - **Display meshes** from our own tessellation planner: each face becomes a plan of (u, v)
   points and triangles that shares its edge nodes with its neighbours, so the mesh is watertight.
   Facets follow the chord tolerance, the facet angle and a longest side, with cells at most 2:1

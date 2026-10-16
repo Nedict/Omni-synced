@@ -84,6 +84,9 @@ pub struct ScalarMaterial {
 }
 impl ScalarMaterial {
     pub fn from_material(material: &UserMaterial) -> Result<Self> {
+        if material.physical_card.is_some() {
+            return Err(invalid("scalar catalog v1 cannot preserve engineering cards; export refused"));
+        }
         Ok(Self {
             name: material.name.clone(),
             density_g_cm3: material.density,
@@ -91,7 +94,7 @@ impl ScalarMaterial {
         })
     }
     pub fn to_material(&self, name: String) -> UserMaterial {
-        UserMaterial { name, density: self.density_g_cm3, appearance: self.appearance.as_ref().map(ScalarLook::to_look) }
+        UserMaterial { name, density: self.density_g_cm3, appearance: self.appearance.as_ref().map(ScalarLook::to_look), physical_card: None }
     }
     fn validate(&self) -> Result<()> {
         if !text(&self.name, 128) || !valid_density(self.density_g_cm3) {

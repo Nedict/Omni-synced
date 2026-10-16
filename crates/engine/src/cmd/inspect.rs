@@ -40,7 +40,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("material.list", "List Materials", material_list)
         .noundo()
         .doc_only()
-        .params("→ the built-in materials, then the design's own (user: true, with their look)"),
+        .params("→ built-in and design-owned materials (user: true, look, optional physical_card/physical_validation/density_comparison). Read-only; candidate engineering records do not certify sources or supply a solver"),
     CommandSpec::new("engine.commands", "List Commands", commands).noundo(),
 ];
 
@@ -606,8 +606,15 @@ fn appearance_list(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn material_list(s: &mut Session, _p: &Value) -> Result<Value> {
     let built_in = solidcraft_doc::MATERIALS.iter().map(|(n, d)| json!({"name": n, "density_g_cm3": d}));
-    let user = s.doc.user_materials.iter().map(
-        |m| json!({"name": m.name, "density_g_cm3": m.density, "appearance": s.doc.material_look(&m.name).as_ref().map(look_json), "user": true}),
-    );
+    let user = s
+        .doc
+        .user_materials
+        .iter()
+        .map(|m| {
+            let mut out = super::materials::material_json(m)?;
+            out["appearance"] = json!(s.doc.material_look(&m.name).as_ref().map(look_json));
+            Ok(out)
+        })
+        .collect::<Result<Vec<_>>>()?;
     Ok(json!({"materials": built_in.chain(user).collect::<Vec<_>>()}))
 }

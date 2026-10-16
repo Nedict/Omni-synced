@@ -92,10 +92,16 @@ completed drawings publish atomically. The browser still exports synchronously.
 
 ## Physical material data
 
+- Design-owned engineering cards (#1048) can be validated and saved through existing
+  material create/edit/list commands, with source/condition records, atomic refusal,
+  undo/reopen and explicit density comparison. Format 21 retains cards independently
+  of assigned mass density and optical looks. Scalar catalog v1 refuses data loss;
+  rich catalog transport and property-authoring UI remain separate phases.
+
 - Physical material card validation (#923/#922) provides typed SI mechanical and
   thermal data, per-property sources/conditions and isotropic/orthotropic stability
-  checks through read-only `material.properties.validate`. It does not assign or
-  persist properties, provide a solver or enable rendering; see
+  checks through read-only `material.properties.validate`. The validator alone does
+  not assign/persist properties; neither path provides a solver or enables rendering; see
   [the contract and staged follow-ups](docs/physical-material-cards.md).
 
 - Directional elasticity (#994) queries the validated card in material-local axes

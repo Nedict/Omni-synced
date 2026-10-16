@@ -3,8 +3,8 @@
 `material.properties.validate {card}` checks a caller-supplied candidate record,
 without assigning it, saving it in the design, reading files, fetching sources or
 changing history, selection, camera or live geometry. This is phase 1 of #923/#922,
-building towards #785. Existing `material.create/edit` and their density/appearance
-behavior are unchanged. The design format is unchanged.
+building towards #785. The initial validator remains read-only. The design-owned
+persistence phase (#1048) extends existing material commands as described below.
 
 Validation means numerical and structural consistency. It does not authenticate
 sources, approve redistribution, certify design values, provide a solver or enable
@@ -139,10 +139,47 @@ These deliberately invented constants demonstrate validation, not a real grade:
 The result has G = 4.8e9 Pa, K = 8e9 Pa, unspecified conditions and source review
 still required. No assigned mass, saved material or appearance changes.
 
+## Design-owned persistence (format 21)
+
+`material.create` accepts optional `physical_card`; omission or null means unknown.
+`material.edit` retains the current card when omitted, replaces it after validation
+when supplied, and clears it with explicit null. Density-only, optical-only and
+rename edits retain the card. The existing material assignment, configuration,
+undo/redo and copy behavior remains: a named definition belongs to the design;
+Paste New does not invent an independent duplicate of a globally named material.
+
+`material.list` includes optional `physical_card`, `physical_validation` and, when
+the card has a density measurement, `density_comparison`. Comparison converts the
+explicit assigned density from g/cm³ to kg/m³, reports relative difference using
+the larger positive value as denominator, and uses relative tolerance 1e-9. This
+only compares numbers: conditions and source applicability may still differ.
+It never chooses a measurement or changes the density used for mass. Card-only
+edits preserve geometry and optical response. Missing data remains unknown.
+
+Format 21 saves cards alongside render setups and opt-in PBR looks. Format-20 (v0.11.0) and older materials upgrade with absent cards; version-21 materials without cards also remain unknown. Later versions are refused.
+Saved cards use the same admission as commands, including direct deserialization.
+Only the exact root `user_materials[].physical_card` field uses physical SI limits;
+geometric numeric/depth limits elsewhere remain unchanged. This is necessary for
+elastic moduli in Pa above the coordinate limit. At most 1000 user materials are
+admitted by the normal file reader, matching command creation.
+
+Portable scalar catalog v1 refuses a material carrying a card rather than losing
+its engineering data. Rich versioned catalog transport and property-authoring UI
+remain separate work. The existing JSON commands expose full inspection through
+CLI/MCP/control; no source is fetched and no engineering dataset is bundled.
+
+`solidcraft-cli run examples/material-card.json --results --save candidate.solidcraft`
+creates an original 1 cm³ box with assigned density 0.8 g/cm³ (mass 0.8 g), a card
+density of 700 kg/m³ and invented isotropic E = 12.25 GPa, nu = 0.25. Inspection
+reports the density discrepancy and analytic G = 4.9 GPa, K = 8.1666666667 GPa.
+The example is deliberately synthetic, not data for a real grade. Run a script
+containing `material.list` with `--in candidate.solidcraft --results` to inspect
+the cold-reopened card and its validation report.
+
 ## Next phases and references
 
-Persistence/library integration needs a separately reviewed document migration,
-atomic edits, undo/redo and offline reopening, coordinated with #863. Curves,
+Rich library integration follows the design-owned persistence phase, coordinated
+with #863/#1046. Curves,
 uncertainty, hardness scales, viscoelasticity and failure criteria remain later work.
 Visual PBR/texture/environment consumption uses the renderer contract requested
 in #813, with #909/#837 input utilities; accepting physical data advertises none
