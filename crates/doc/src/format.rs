@@ -202,19 +202,6 @@
 //!   notch and cut no bend relief), and a wall on part of an edge bends only where it stands
 //!   (0.11.0 refused it).
 //!
-//!   The Class-A surface pass adds five feature kinds, also first saved in 23, so 0.11.0, 0.12.0 and 0.13.0 ask
-//!   for an update instead of meeting a feature it can't read: `SurfaceBlend` (Blend Surface:
-//!   `from`/`to` edge chains of two bodies, optional `continuity`, `bulge`, `align`, `stitch`),
-//!   `SurfaceMatch` (Match Surface: `body`, optional `faces`, `target`, `edges`, optional
-//!   `order`), `SurfaceBoundary` (Boundary Surface: `sketch`, `curves`, optional `orders`,
-//!   `crown`, `samples`), `SurfaceFair` (Fair Surface: `body`, optional `faces`, `strength`,
-//!   `iterations`, `keep_edges`, `tolerance`) and `BodyTransfer`'s companions' unchanged shapes.
-//!   Under the same version, a `Patch` can carry a `crown` (0 by default: a bump that vanishes
-//!   on the loop) and a `SurfaceLoft` can carry `continuity` and `crown` and body edge-chain
-//!   `sections`; both are optional and a design without them saves as before except that a
-//!   loft without `continuity` reads and writes as `[g0, g0]`, the plain loft it always was.
-//!   A `Fillet` can also carry `corner` (`rolling`, the default and what every older design
-//!   meant, or `g2`); 0.11.0, 0.12.0 and 0.13.0 ask for an update instead of meeting a style it does not round.
 //! - 22: an Import (STEP) feature can list `skip`: indices of the file's bodies it does not
 //!   build, because they are later instances of a part the file places more than once and the
 //!   other occurrences of that part's component show them (#1386: an imported file becomes a
@@ -237,23 +224,6 @@
 //!   parameters); the source's `at`, `height` and `angle` then hold the numbers they last came
 //!   to. A text without `exprs` is set as it always was; 0.12.0 asks for an update instead of
 //!   dropping the expressions and keeping the text at its last numbers.
-//! - 23: the Class-A surface pass adds `SurfaceBoundary` (Boundary Surface: `sketch`, `curves`,
-//!   optional `orders`, `crown`, `samples`), `SurfaceMatch` (Match Surface: `body`, optional
-//!   `faces`, `target`, `edges`, optional `order`) and `SurfaceFair` (Fair Surface: `body`,
-//!   optional `faces`, `strength`, `iterations`, `keep_edges`, `tolerance`). Version 22 designs
-//!   need no transformation; 0.13.0 (which reads up to 22) asks for an update instead of meeting
-//!   a feature it can't read.
-//!   Also in 23, a motion link can carry a `coupling`: a gear pair (`ra`, `rb`, `internal`), a rack and
-//!   pinion (`radius`) or a screw (`pitch`), each size a number in mm, an expression or a picked
-//!   round face, and `reverse`. The link's `ratio` is worked out from it whenever the design
-//!   changes and saved as well, so a link reads the same without it. Version 22 designs need no
-//!   transformation: a link without `coupling` is a plain motion link, as it always was; 0.13.0
-//!   (which reads up to 22) asks for an update instead of keeping a gear's ratio when its radius
-//!   changes.
-//!   Also under 23, an Import's `file` can name a FreeCAD `.FCStd` or Rhino `.3dm` file (#1435,
-//!   read through cadmpeg); its `step` is still the STEP text the file was restated as, so the
-//!   feature's fields are unchanged and version 22 designs need no transformation; 0.13.x asks
-//!   for an update before it meets these imports.
 //!
 //! Later formats are one file per change, so changes made side by side never edit the same line
 //! (`src/format/pending/README.md`):
