@@ -163,6 +163,13 @@ in the PR. `cargo xtask test` builds the tests with it and then runs every test 
 `cargo xtask test -- shell`. Tests run beside each other on a busy machine, so a test must not
 depend on wall-clock timing.
 
+**PRs test what they touch; main and nightly test everything.** On a pull request, CI maps the
+changed files to workspace packages and runs Clippy, the test build and the tests for those and
+the packages that depend on them (`scripts/ci/affected.py`, self-tested in the `checks` job). A
+change to `Cargo.lock`, the root `Cargo.toml`, `.cargo/`, `.config/`, `.github/`, `vendor/`,
+`tests/`, `scripts/` or any file outside a package runs the whole workspace, as does every push
+to `main`, the nightly run and Run workflow.
+
 **CI shards the tests.** One job builds them into a cargo-nextest archive and four jobs run a
 quarter each, so every test runs in its own process: don't rely on state left by another test.
 Pull requests skip a few heavy tests (one to four minutes each), which run on every push to
