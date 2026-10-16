@@ -5751,9 +5751,7 @@ mod tests {
 
     #[test]
     fn nc_program_output_name_and_cycle_time() {
-        let mut p = NcProgram::default();
-        p.file_name = "part".into();
-        p.nc_extension = "nc".into();
+        let mut p = NcProgram { file_name: "part".into(), nc_extension: "nc".into(), ..Default::default() };
         assert_eq!(p.output_file_name(), "part.nc");
         p.file_name = "part.nc".into();
         assert_eq!(p.output_file_name(), "part.nc");

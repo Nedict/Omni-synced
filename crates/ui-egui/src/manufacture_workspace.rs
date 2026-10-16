@@ -585,6 +585,7 @@ fn open_op_dialog(app: &mut SolveApp, setup_name: &str, op_index: usize) {
     }
 }
 
+#[allow(dead_code)]
 fn request_gcode_preview(app: &mut SolveApp) {
     let Some(job_wrap) = app.manufacture_workspace.cam_job_id.clone() else {
         app.set_status(app.tr("manufacture.post.no_job").to_string(), true);
@@ -803,7 +804,6 @@ pub fn browser_setup_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
 
 // ── Legacy dock panels (kept for CAM controls / later floating panels) ─────────
 #[allow(dead_code)]
-
 fn setup_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui.heading(app.tr("manufacture.setup.heading"));
 
@@ -1148,6 +1148,7 @@ fn delete_active_setup(app: &mut SolveApp) {
 
 // ── TOOLS panel (Fusion-style bit / holder measurements) ──────────────────────
 
+#[allow(dead_code)]
 fn tools_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui.heading(app.tr("manufacture.tools.heading"));
     ui.small(app.tr("manufacture.tools.hint"));
@@ -1307,6 +1308,7 @@ fn tools_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
 }
 
+#[allow(dead_code)]
 const TOOL_KINDS: &[solidcraft_manufacture::ToolKind] = &[
     solidcraft_manufacture::ToolKind::FlatEndmill,
     solidcraft_manufacture::ToolKind::BallEndmill,
@@ -1337,6 +1339,7 @@ fn tool_kind_label(kind: solidcraft_manufacture::ToolKind) -> &'static str {
     }
 }
 
+#[allow(dead_code)]
 fn drag_mm(ui: &mut egui::Ui, label: &str, value: &mut f64, speed: f64, range: std::ops::RangeInclusive<f64>) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
@@ -1346,6 +1349,7 @@ fn drag_mm(ui: &mut egui::Ui, label: &str, value: &mut f64, speed: f64, range: s
     changed
 }
 
+#[allow(dead_code)]
 fn save_setup_tools(app: &mut SolveApp, setup_name: &str, tools: Vec<solidcraft_manufacture::Tool>) -> bool {
     match serde_json::to_value(&tools) {
         Ok(tools_json) => match app.run("manufacture.settings.set", json!({"name": setup_name, "set": {"tools": tools_json}})) {
@@ -1368,6 +1372,7 @@ fn save_setup_tools(app: &mut SolveApp, setup_name: &str, tools: Vec<solidcraft_
 
 // ── OPERATIONS panel ──────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 fn operations_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui.heading(app.tr("manufacture.ops.heading"));
 
@@ -1433,6 +1438,7 @@ fn operations_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
 
 // ── SIMULATE panel ────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 fn simulate_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui.heading(app.tr("manufacture.sim.heading"));
 
@@ -1528,6 +1534,7 @@ fn run_simulation_inner(app: &mut SolveApp, with_machine: bool) {
 
 // ── POST panel ────────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 fn post_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui.heading(app.tr("manufacture.post.heading"));
 
@@ -1561,6 +1568,7 @@ fn post_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
 
 // ── CAM job controls ──────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 fn cam_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     // Preflight
     if ui.button(app.tr("manufacture.cam.preflight")).clicked() {
@@ -1589,7 +1597,8 @@ fn cam_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
 }
 
 /// Draw the current job's status row; returns `true` while the job is running.
-/// Reads status from the in-memory engine command — no network calls.
+/// Reads status from the in-memory engine command. No network calls.
+#[allow(dead_code)]
 fn job_status_row(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let job_id = app.manufacture_workspace.cam_job_id.clone();
     let Some(id) = job_id else { return false };

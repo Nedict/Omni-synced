@@ -1443,7 +1443,7 @@ fn manufacture_inspect_commands_registered() {
         "inspect.sustainability",
     ] {
         let c = crate::find_command(id).unwrap_or_else(|| panic!("missing {id}"));
-        assert_eq!(c.label.is_empty(), false, "{id}");
+        assert!(!c.label.is_empty(), "{id}");
     }
     let sus = crate::find_command("inspect.sustainability").unwrap();
     assert_eq!((sus.tab, sus.panel), ("MANUFACTURE", "INSPECT"));
