@@ -1763,6 +1763,11 @@ fn fill_void_holes(st: &ModelState, r: &Region2, op: Operation, targets: &[Strin
     Region2 { outer: r.outer.clone(), holes }
 }
 
+/// How far past a profile edge, in steps of [`grow_profile_for_coplanar`]'s growth, the space
+/// must already be as the operation wants for the edge to count as lying on a face: 0.02 of the
+/// step is 1e-4 of the body.
+const EDGE_PROBE: f64 = 0.02;
+
 /// Grow profile edges that lie on a face of a target body away from the profile, by a small
 /// amount, when the space they grow into is already material (join) or empty (cut). `probe`
 /// maps a sketch point to the world points where the tool would be (along the extrude, around
@@ -1815,7 +1820,11 @@ fn grow_profile_for_coplanar(st: &ModelState, r: &Region2, op: Operation, target
         let side = |k: f64| mids.iter().flat_map(|(m, out)| probe(*m + *out * (delta * k))).map(inside_any).collect::<Vec<bool>>();
         let (outer, inner) = (side(0.5), side(-0.5));
         let want_outer = op == Operation::Join;
-        let on_face = outer.iter().all(|x| *x == want_outer) && inner.iter().any(|x| *x != want_outer);
+        // On the face, not short of it: just past the edge is already as wanted. A cut ending
+        // 0.25 mm short of a wall's far face reads the same half a step out, and grown, it cut
+        // through the skin it should leave (#1669).
+        let at_edge = side(EDGE_PROBE).iter().all(|x| *x == want_outer);
+        let on_face = at_edge && outer.iter().all(|x| *x == want_outer) && inner.iter().any(|x| *x != want_outer);
         let room = side(1.0).iter().all(|x| *x == want_outer);
         if on_face
             && room

@@ -312,3 +312,32 @@ fn joined_loft_frames_plan_their_display_at_every_quality() {
         }
     }
 }
+
+/// #1669: an Extrude Cut whose profile stops 0.25 mm short of the far face of a 3.75 mm wall
+/// leaves that skin. The profile's edge was taken for one lying on the face (the space half a
+/// growth step past it is empty) and grown through the skin. A pleat window built so at the far
+/// end of a case then opened, where its mirror rightly left the skin.
+#[test]
+fn cut_stopping_short_of_a_face_leaves_the_skin() {
+    let wall = |width: f64| {
+        let s = replay(
+            &json!({"commands": [
+                {"command": "solid.box", "params": {"corner": [-100, 0, 0], "length": 200, "width": width, "height": 95, "body_name": "Wall"}},
+                {"command": "sketch.create", "params": {"plane": "XY", "offset": -1}},
+                {"command": "sketch.rectangle.two_point", "params": {"p0": [-24, -0.5], "p1": [24, 3.5]}},
+                {"command": "sketch.finish", "params": {}},
+                {"command": "solid.extrude", "params": {"distance": 91, "operation": "cut", "targets": ["Wall"]}}
+            ]})
+            .to_string(),
+        );
+        volume(&s, "Wall")
+    };
+    // 48 wide, 3.5 deep (of the wall's 3.75), 90 high.
+    let want = 200.0 * 3.75 * 95.0 - 48.0 * 3.5 * 90.0;
+    let v = wall(3.75);
+    assert!((v - want).abs() < 1e-6 * want, "{v} vs {want}");
+    // A profile ending on the far face still cuts clean through, as before.
+    let want = 200.0 * 3.5 * 95.0 - 48.0 * 3.5 * 90.0;
+    let v = wall(3.5);
+    assert!((v - want).abs() < 1e-6 * want, "{v} vs {want}");
+}
