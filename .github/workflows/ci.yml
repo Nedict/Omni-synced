@@ -6,7 +6,10 @@
 # vendor/, tests/, scripts/ or any file no package owns select the whole workspace, as do
 # pushes to main, the nightly run and Run workflow.
 # Tests are built once and run in 4 shards. A few heavy tests (see .config/nextest.toml) are
-# skipped on pull requests and run on pushes to main and nightly.
+# skipped on pull requests and run on pushes to main and nightly. The Windows jobs (D3D12 shaders
+# and app startup) run on pull requests only when what they test changes (the GPU crate, the app,
+# the viewport's GPU glue, the graphics dependencies, their scripts or this file); main and
+# nightly always run them. Only main saves the build caches; pull requests restore them.
 # Cross-compilation is opt-in through Run workflow; release builds remain in release.yml.
 name: CI
 
@@ -55,6 +58,7 @@ jobs:
     outputs:
       native: ${{ steps.paths.outputs.native }}
       kernel: ${{ steps.paths.outputs.kernel }}
+      windows: ${{ steps.paths.outputs.windows }}
       full: ${{ steps.paths.outputs.full }}
       packages: ${{ steps.paths.outputs.packages }}
     steps:
@@ -70,15 +74,23 @@ jobs:
         run: |
           native=false
           kernel=false
+          windows=false
           full=true
           packages=
           if [ "$EVENT_NAME" != pull_request ]; then
             native=true
+            windows=true
           else
             # Compare both old and new paths of renames; unknown paths run native checks.
             git diff --no-renames --name-only -z "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/ci-paths"
             while IFS= read -r -d '' path; do
               case "$path" in crates/kernel/*|vendor/truck-*) kernel=true ;; esac
+              # What the Windows D3D12 jobs exercise: the GPU crate and its shaders, the app and
+              # its startup, the viewport's wgpu glue, the vendored egui-wgpu, their scripts.
+              case "$path" in
+                crates/gpu/*|apps/solidcraft/*|crates/ui-egui/src/gpu.rs|vendor/egui-wgpu/*) windows=true ;;
+                tools/windows-*.ps1|.github/workflows/ci.yml|rust-toolchain*|.cargo/*) windows=true ;;
+              esac
               case "$path" in
                 .github/workflows/ci.yml) native=true ;;
                 *.rs|Cargo.toml|Cargo.lock|*/Cargo.toml|.cargo/*|rust-toolchain*) native=true ;;
@@ -86,6 +98,12 @@ jobs:
                 *) native=true ;;
               esac
             done < "$RUNNER_TEMP/ci-paths"
+            # A lockfile change that moves the graphics stack (wgpu, naga, egui, winit, windows).
+            if [ "$windows" = false ] && grep -qxz 'Cargo.lock' "$RUNNER_TEMP/ci-paths" \
+              && git diff "$BASE_SHA...$HEAD_SHA" -- Cargo.lock \
+                | grep -Eq '^[ +-]name = "(wgpu[a-z_-]*|naga|egui[a-z_-]*|eframe|winit|windows[a-z_-]*|d3d12)"'; then
+              windows=true
+            fi
             # Pull requests build and test the touched packages and their dependents.
             python3 -I scripts/ci/affected.py --paths "$RUNNER_TEMP/ci-paths" > "$RUNNER_TEMP/ci-affected"
             cat "$RUNNER_TEMP/ci-affected"
@@ -97,6 +115,7 @@ jobs:
           {
             echo "native=$native"
             echo "kernel=$kernel"
+            echo "windows=$windows"
             echo "full=$full"
             echo "packages=$packages"
           } >> "$GITHUB_OUTPUT"
@@ -113,6 +132,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: repo-checks
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Format
         run: cargo fmt --all -- --check
       - name: Asset attribution
@@ -142,6 +162,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: native-clippy
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Clippy
         env:
           FULL: ${{ needs.changes.outputs.full }}
@@ -169,6 +190,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: native-tests
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Set up compiler cache
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
@@ -365,6 +387,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: doc-tests
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Set up compiler cache
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
@@ -389,6 +412,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: oracle
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Set up compiler cache
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
@@ -412,7 +436,7 @@ jobs:
   windows-fxc:
     name: Windows D3D12 FXC shaders
     needs: changes
-    if: needs.changes.outputs.native == 'true'
+    if: needs.changes.outputs.windows == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -427,6 +451,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: windows-fxc
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # One test at a time: WARP's shader JIT crashes now and then (a null read in
       # d3d10warp.dll's JIT optimizer, about 1 run in 60) when several devices compile compute
       # pipelines at once, which the parallel tests do. Minidumps showed it in WARP itself, not
@@ -439,7 +464,7 @@ jobs:
   windows-startup:
     name: Windows app startup
     needs: changes
-    if: needs.changes.outputs.native == 'true'
+    if: needs.changes.outputs.windows == 'true'
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -448,6 +473,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: windows-startup
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Backend order and probing on Windows
         run: cargo test -p solidcraft --profile ci --locked -- startup::tests native_crash::tests native_frame::tests
       - name: Build the app
@@ -470,6 +496,7 @@ jobs:
           CHANGES: ${{ needs.changes.result }}
           CHECKS: ${{ needs.checks.result }}
           NATIVE: ${{ needs.changes.outputs.native }}
+          WINDOWS: ${{ needs.changes.outputs.windows }}
           CLIPPY: ${{ needs.clippy.result }}
           BUILD: ${{ needs.build-tests.result }}
           TESTS: ${{ needs.tests.result }}
@@ -486,6 +513,8 @@ jobs:
             test "$TESTS" = success
             test "$DOCS" = success
             test "$ORACLE" = success
+          fi
+          if [ "$WINDOWS" = true ]; then
             test "$WINDOWS_FXC" = success
             test "$WINDOWS_STARTUP" = success
           fi
@@ -503,6 +532,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: wasm
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo xtask wasm
 
   riscv64-gates:
@@ -524,6 +554,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: riscv64
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cross-compilation dependencies
         run: |
           # Ubuntu's regular archive serves amd64; RISC-V packages live in ports.
