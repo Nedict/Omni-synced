@@ -1386,12 +1386,19 @@ where
     if collection_frames.is_empty() {
         return Ok(Vec::new());
     }
-    let mut collections = ctx.try_collect_vec(
-        collection_frames
-            .into_iter()
-            .map(|frame| parse_mesh_collection_record(ctx, bytes, meta, frame)),
-        "f3d mesh collection records",
-    )?;
+    // A display-mesh collection whose frame does not match the known layout is skipped
+    // so B-rep transfer can continue. Resource limits still abort.
+    let mut collections = Vec::new();
+    for frame in collection_frames {
+        match parse_mesh_collection_record(ctx, bytes, meta, frame) {
+            Ok(collection) => {
+                ctx.reserve_vec(&mut collections, 1, "f3d mesh collection records")?;
+                collections.push(collection);
+            }
+            Err(error @ CodecError::ResourceLimit(_)) => return Err(error),
+            Err(_) => continue,
+        }
+    }
     collections.retain(|collection| !collection.body_records.is_empty());
     if collections.is_empty() {
         return Ok(Vec::new());
@@ -3137,15 +3144,14 @@ mod tests {
             ..mesh_collection::LEN + mesh_collection_base::BODY_COUNT + 4]
             .copy_from_slice(&2u32.to_le_bytes());
         let mut no_asset = no_texture_asset;
-        assert!(matches!(
-            parse_mesh_design_records(
-                &graph.bytes,
-                &graph.meta,
-                "Synthetic/BulkStream.dat",
-                &mut no_asset,
-            ),
-            Err(CodecError::Malformed(_))
-        ));
+        let design = parse_mesh_design_records(
+            &graph.bytes,
+            &graph.meta,
+            "Synthetic/BulkStream.dat",
+            &mut no_asset,
+        )
+        .expect("a collection whose body count disagrees is skipped");
+        assert!(design.is_empty());
     }
 
     #[test]

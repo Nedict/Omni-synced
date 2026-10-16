@@ -1185,8 +1185,10 @@ mod tests {
 
     #[test]
     fn fusion_f3d_path_refused_by_read_design_file() {
-        let err = read_design_file("part.f3d", Option::<fn(DesignPreview)>::None).unwrap_err().to_string();
-        assert!(err.contains("Fusion"), "{err}");
+        // A missing `.f3d` is an I/O error. Fusion bytes are refused by the sniff in `read_design`,
+        // not by the file extension (a SolidCraft container may be named `.f3d`).
+        let err = read_design_file("part-does-not-exist.f3d", Option::<fn(DesignPreview)>::None).unwrap_err().to_string();
+        assert!(!err.contains("not a SolidCraft design"), "{err}");
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1202,6 +1204,13 @@ mod tests {
         let label = path.file_name().unwrap().to_string_lossy();
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{label}: {e}"));
         let file = path.to_string_lossy();
+        if !looks_like_fusion_archive(&bytes) && is_design_container(&bytes) {
+            match read_design(&bytes) {
+                Ok(doc) => eprintln!("RESULT OK design {label} features={}", doc.features.len()),
+                Err(e) => eprintln!("RESULT FAIL {label}: {e}"),
+            }
+            return;
+        }
         match f3d_open_feature(&bytes, &file) {
             Ok(F3dOpenFeature::Solid(sf)) => eprintln!("RESULT OK solid {label} bodies={}", sf.body_names.len()),
             Ok(F3dOpenFeature::Mesh(mf)) => eprintln!("RESULT OK mesh {label} meshes={}", mf.body_names.len()),

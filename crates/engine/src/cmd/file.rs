@@ -251,6 +251,15 @@ fn insert_step(s: &mut Session, p: &Value) -> Result<Value> {
     add_step(s, path, str_(p, "name"), &options)
 }
 
+/// `.f3d` that is actually a SolidCraft container (ZIP with `container.json`), not Fusion.
+fn solidcraft_container_named_f3d(path: &str) -> Result<bool> {
+    if !solidcraft_io::is_f3d_path(path) {
+        return Ok(false);
+    }
+    let bytes = solidcraft_io::vfs::read(path, solidcraft_io::MAX_F3D_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    Ok(solidcraft_io::is_design_container(&bytes) && !solidcraft_io::looks_like_fusion_archive(&bytes))
+}
+
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = path_arg(p, "doc.open")?;
     if !solidcraft_io::is_step_path(path) && p.get("names").is_some_and(|v| !v.is_null()) {
@@ -259,11 +268,12 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     if !solidcraft_io::is_step_path(path) && !solidcraft_io::is_gltf_path(path) && p.get("up").is_some_and(|v| !v.is_null()) {
         return Err(bad("doc.open", "`up` applies to STEP, IGES and glTF files only"));
     }
-    if solidcraft_io::is_f3d_path(path) || solidcraft_io::is_step_path(path) || solidcraft_io::is_mesh_path(path) {
+    let fusion = solidcraft_io::is_f3d_path(path) && !solidcraft_container_named_f3d(path)?;
+    if fusion || solidcraft_io::is_step_path(path) || solidcraft_io::is_mesh_path(path) {
         // A new, unsaved design holding the file's bodies.
         let stem = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "Untitled".into());
         let mut fresh = Session::new(Document::new(&stem));
-        let r = if solidcraft_io::is_f3d_path(path) {
+        let r = if fusion {
             add_f3d(&mut fresh, path, None)?
         } else if solidcraft_io::is_step_path(path) {
             add_step(&mut fresh, path, None, &step_options(p, "doc.open")?)?

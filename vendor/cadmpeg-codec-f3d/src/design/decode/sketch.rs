@@ -603,12 +603,9 @@ fn decode_sketch_visibilities_in_stream(
         let Some(visibility) =
             decode_sketch_visibility_member(&bytes[..frame.end], member_at, entity_suffix)
         else {
-            return Err(crate::design::text::malformed_design(
-                ctx,
-                format_args!(
-                    "F3D sketch container {entity_suffix} has an invalid visibility member"
-                ),
-            ));
+            // SolidCraft: visibility is display metadata. A layout this decoder does not
+            // know must not abort B-rep import of the rest of the file.
+            continue;
         };
 
         ctx.reserve_vec(&mut out, 1, "f3d sketch visibility records")?;
