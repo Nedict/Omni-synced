@@ -53,6 +53,21 @@ impl FeatureKind {
         v
     }
 
+    /// The body a feature that works on one body's faces names (shell, draft, split, offset,
+    /// delete and replace face, surface offset): its face points pick faces of that body.
+    pub fn face_body(&self) -> Option<&str> {
+        match self {
+            FeatureKind::Shell { body, .. }
+            | FeatureKind::Draft { body, .. }
+            | FeatureKind::SplitFace { body, .. }
+            | FeatureKind::OffsetFace { body, .. }
+            | FeatureKind::DeleteFace { body, .. }
+            | FeatureKind::ReplaceFace { body, .. }
+            | FeatureKind::SurfaceOffset { body, .. } => body.as_deref(),
+            _ => None,
+        }
+    }
+
     /// The feature's profile selections, each with its sketch.
     pub fn profile_sels_mut(&mut self) -> Vec<(u64, &mut ProfileSel)> {
         let mut v = Vec::new();
