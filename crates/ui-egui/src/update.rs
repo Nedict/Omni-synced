@@ -29,8 +29,17 @@ pub const REPO: &str = "bherbruck/solidcraft";
 pub const LATEST_API: &str = "https://api.github.com/repos/bherbruck/solidcraft/releases/latest";
 /// Where Download goes when no package fits this installation.
 pub const RELEASES_PAGE: &str = "https://github.com/bherbruck/solidcraft/releases/latest";
-/// Release pages and assets must be on GitHub, under this repository.
-const RELEASE_PREFIX: &str = "https://github.com/bherbruck/solidcraft/releases/";
+/// Release pages and assets must be on GitHub, under this repository. The repository is moving
+/// to the `tangency-labs` organisation, so releases may name either owner (the API request stays
+/// on the old name, which GitHub redirects after a transfer).
+const RELEASE_PREFIXES: [&str; 2] =
+    ["https://github.com/bherbruck/solidcraft/releases/", "https://github.com/tangency-labs/solidcraft/releases/"];
+
+/// A release page or asset URL: github.com, one of the two owners, exactly `solidcraft`, then
+/// `/releases/` (the trailing slash rules out look-alike names such as `solidcraft-evil`).
+fn is_release_url(url: &str) -> bool {
+    RELEASE_PREFIXES.iter().any(|p| url.starts_with(p))
+}
 
 /// While the app stays open, automatic checks run once a day (every start checks too).
 pub const CHECK_INTERVAL_S: f64 = 24.0 * 3600.0;
@@ -358,7 +367,7 @@ impl Release {
             notes.truncate(cut);
             notes.push_str("\n\n…");
         }
-        let page = Some(s("html_url")).filter(|u| u.starts_with(RELEASE_PREFIX)).unwrap_or_else(|| RELEASES_PAGE.to_string());
+        let page = Some(s("html_url")).filter(|u| is_release_url(u)).unwrap_or_else(|| RELEASES_PAGE.to_string());
         let assets = v
             .get("assets")
             .and_then(Value::as_array)
@@ -368,7 +377,7 @@ impl Release {
             .filter_map(|a| {
                 let name = a.get("name")?.as_str()?.to_string();
                 let url = a.get("browser_download_url")?.as_str()?.to_string();
-                url.starts_with(RELEASE_PREFIX).then(|| Asset { name, url, size: a.get("size").and_then(Value::as_u64).unwrap_or(0) })
+                is_release_url(&url).then(|| Asset { name, url, size: a.get("size").and_then(Value::as_u64).unwrap_or(0) })
             })
             .collect();
         Ok(Release {
