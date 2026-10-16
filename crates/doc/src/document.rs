@@ -58,6 +58,14 @@ pub enum PlaneRef {
     AtAngle { base: Box<PlaneRef>, axis_origin: Vec3, axis_dir: Vec3, angle: Expr },
     /// A construction plane feature (by name).
     Construction { name: FeatureName },
+    /// `base` seen from its other side: the normal reversed by a half turn about the base's
+    /// own x axis (y reversed), or about its y axis (x reversed) when `about_y`. A sketch
+    /// started from behind a plane faces the viewer this way.
+    Flipped {
+        base: Box<PlaneRef>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        about_y: bool,
+    },
     /// Halfway between two planes (or planar faces); bisecting them when they meet at an angle.
     Midplane { a: Box<GeoRef>, b: Box<GeoRef> },
     /// Through two straight edges (lines) that lie in one plane.
@@ -1836,6 +1844,14 @@ pub enum PatternKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[walk(length = "Spacing 2")]
         spacing2: Option<Expr>,
+        #[serde(default, skip_serializing_if = "default_pattern_alignment")]
+        alignment: solidcraft_sketch::PatternAlignment,
+        #[serde(default, skip_serializing_if = "default_pattern_alignment")]
+        alignment2: solidcraft_sketch::PatternAlignment,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        reversed: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        reversed2: bool,
     },
     Circular {
         origin: Position,
@@ -1845,6 +1861,10 @@ pub enum PatternKind {
         /// Total angle (360 deg = evenly around).
         #[walk(angle = "Total angle")]
         angle: Expr,
+        #[serde(default, skip_serializing_if = "default_pattern_alignment")]
+        alignment: solidcraft_sketch::PatternAlignment,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        reversed: bool,
     },
     /// Copies along a chain of sketch curves: instance k moves by path(k·spacing) − path(0),
     /// measured along the path from its start.
@@ -1866,6 +1886,10 @@ pub enum PatternKind {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         orient: bool,
     },
+}
+
+fn default_pattern_alignment(alignment: &solidcraft_sketch::PatternAlignment) -> bool {
+    *alignment == solidcraft_sketch::PatternAlignment::Right
 }
 
 fn z_axis() -> Dir {
@@ -3013,6 +3037,7 @@ impl Document {
                 let o = *axis_origin + rot(b.origin - *axis_origin);
                 Plane::new(o, rot(b.x), rot(b.y)).ok_or_else(|| DocError::Invalid("degenerate plane".into()))
             }
+            PlaneRef::Flipped { base, about_y } => Ok(self.resolve_plane_in(vals, base, depth + 1, st)?.flipped(*about_y)),
             PlaneRef::Construction { name } => {
                 // Evaluated already: as it came out.
                 if let Some(c) = st.and_then(|st| st.construct.iter().find(|c| &c.name == name))

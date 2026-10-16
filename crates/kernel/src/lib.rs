@@ -96,6 +96,7 @@ mod polybool;
 mod polyhedron;
 mod prism;
 mod prism_curve;
+mod prism_local;
 mod prism_measure;
 pub mod provenance;
 mod record;

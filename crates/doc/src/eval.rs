@@ -3561,7 +3561,7 @@ fn pattern_transforms(doc: &Document, vals: &BTreeMap<String, Value>, st: &Model
     };
     let mut out = Vec::new();
     match p {
-        crate::PatternKind::Rectangular { dir1, count1, spacing1, dir2, count2, spacing2 } => {
+        crate::PatternKind::Rectangular { dir1, count1, spacing1, dir2, count2, spacing2, alignment, alignment2, reversed, reversed2 } => {
             let (n1, s1) = (count(count1)?, val(vals, spacing1, Kind::Length)?);
             let d1 = dir1.normalized().ok_or_else(|| DocError::Invalid("pattern direction".into()))?;
             let (n2, s2, d2) = match (dir2, count2, spacing2) {
@@ -3578,7 +3578,7 @@ fn pattern_transforms(doc: &Document, vals: &BTreeMap<String, Value>, st: &Model
                     if i == 0 && j == 0 {
                         continue;
                     }
-                    out.push(translation(d1 * (s1 * i as f64) + d2 * (s2 * j as f64)));
+                    out.push(translation(d1 * (s1 * alignment.multiplier(i, *reversed)) + d2 * (s2 * alignment2.multiplier(j, *reversed2))));
                 }
             }
         }
@@ -3615,7 +3615,7 @@ fn pattern_transforms(doc: &Document, vals: &BTreeMap<String, Value>, st: &Model
                 out.push(m);
             }
         }
-        crate::PatternKind::Circular { origin, axis, count: c, angle } => {
+        crate::PatternKind::Circular { origin, axis, count: c, angle, alignment, reversed } => {
             let n = count(c)?;
             let total = val(vals, angle, Kind::Angle)?;
             let full = (total.abs() - std::f64::consts::TAU).abs() < 1e-9;
@@ -3627,7 +3627,7 @@ fn pattern_transforms(doc: &Document, vals: &BTreeMap<String, Value>, st: &Model
                 0.0
             };
             for i in 1..n {
-                out.push(rotation(origin.0, axis.0, step * i as f64));
+                out.push(rotation(origin.0, axis.0, step * alignment.multiplier(i, *reversed)));
             }
         }
     }
@@ -3998,6 +3998,9 @@ pub(crate) fn sheet_face_plane_in_frame(doc: &Document, st: &ModelState, comp: u
             axis_dir: *axis_dir,
             angle: angle.clone(),
         },
+        PlaneRef::Flipped { base, about_y } => {
+            PlaneRef::Flipped { base: Box::new(sheet_face_plane_in_frame(doc, st, comp, base)?), about_y: *about_y }
+        }
         other => other.clone(),
     })
 }
