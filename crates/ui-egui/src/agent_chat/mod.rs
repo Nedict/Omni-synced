@@ -26,6 +26,8 @@ pub mod backend;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod discover;
 pub mod gate;
+mod markdown;
+mod markdown_view;
 mod panel;
 #[cfg(not(target_arch = "wasm32"))]
 mod process;
