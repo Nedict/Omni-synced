@@ -32,6 +32,7 @@ impl Catalog {
 }
 
 static ENGLISH: Catalog = Catalog::new("en", "English", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/en.json")));
+static CZECH: Catalog = Catalog::new("cs", "Čeština", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/cs.json")));
 static GERMAN: Catalog = Catalog::new("de", "Deutsch", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/de.json")));
 static FRENCH: Catalog = Catalog::new("fr", "Français", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/fr.json")));
 static JAPANESE: Catalog = Catalog::new("ja", "日本語", include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales/ja.json")));
@@ -45,6 +46,7 @@ static CHINESE: Catalog = Catalog::new("zh", "中文", include_str!(concat!(env!
 #[rustfmt::skip]
 pub const LOCALES: &[&Catalog] = &[
     &ENGLISH,
+    &CZECH,
     &GERMAN,
     &FRENCH,
     &JAPANESE,
@@ -230,12 +232,12 @@ mod tests {
     }
 
     /// Catalogs delivered complete. English is the source catalog; Japanese was completed
-    /// upstream and Chinese lands complete here. German, Korean, Russian, French and Ukrainian
+    /// upstream, Chinese and Czech land complete here. German, Korean, Russian, French and Ukrainian
     /// are partial (German and Korean predate the coverage guards; Russian, French and Ukrainian
     /// are kept partial so a new label doesn't need more translations), so their gaps fall back
     /// to English and are reported by `cargo xtask i18n` without failing the build, while
     /// nothing in the complete catalogs may regress.
-    const COMPLETE: &[&str] = &["ja", "zh"];
+    const COMPLETE: &[&str] = &["cs", "ja", "zh"];
 
     /// `text()` falls back to English silently, so a message a complete locale never received is
     /// shown in English inside an otherwise translated UI, with nothing in the build to say so.
@@ -308,6 +310,7 @@ mod tests {
     #[test]
     fn newly_catalogued_command_labels_translate() {
         let cases = [
+            ("cs", "Příruba", "Zebra analýza", "Studie pohybu"),
             ("zh", "法兰", "斑马纹分析", "运动研究"),
             ("ja", "フランジ", "ゼブラ解析", "モーション スタディ"),
             ("de", "Flansch", "Zebra-Analyse", "Bewegungsuntersuchung"),
