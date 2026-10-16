@@ -575,39 +575,49 @@ fn setup(doc: &Document, st: &ModelState, l: &MotionLink, c: &Cam) -> Result<Set
     Ok(Setup { poly, turn, at, dir: Vec2::X, arm: Some(arm), side, gain: sign_f * d.z.signum(), radius, flat, size, frame, moving })
 }
 
-/// Hops from occurrence `from` to the occurrences it is joined to, over the unsuppressed joints but
-/// `skip`; the root and the grounded occurrences are a hop from one another (all fixed to the
-/// world, which is `u64::MAX` here).
+/// How many moving joints part occurrence `from` from each occurrence it is joined to, over the
+/// unsuppressed joints but `skip`: a rigid joint moves nothing, and the root and the grounded
+/// occurrences are all fixed to the world (`u64::MAX` here), so they cost nothing either.
 fn hops(doc: &Document, from: u64, skip: [u64; 2]) -> std::collections::BTreeMap<u64, usize> {
     const WORLD: u64 = u64::MAX;
-    let mut next: std::collections::BTreeMap<u64, Vec<u64>> = std::collections::BTreeMap::new();
-    let mut join = |a: u64, b: u64| {
-        next.entry(a).or_default().push(b);
-        next.entry(b).or_default().push(a);
+    let mut next: std::collections::BTreeMap<u64, Vec<(u64, usize)>> = std::collections::BTreeMap::new();
+    let mut join = |a: u64, b: u64, cost: usize| {
+        next.entry(a).or_default().push((b, cost));
+        next.entry(b).or_default().push((a, cost));
     };
     for j in doc.assembly.joints.iter().filter(|j| !j.suppressed && !skip.contains(&j.id)).take(super::MAX_JOINTS) {
-        join(j.a.occurrence, j.b.occurrence);
+        join(j.a.occurrence, j.b.occurrence, usize::from(j.kind != JointKind::Rigid));
     }
-    join(0, WORLD);
+    join(0, WORLD, 0);
     for o in doc.occurrences.iter().filter(|o| o.grounded) {
-        join(o.id, WORLD);
+        join(o.id, WORLD, 0);
     }
-    let mut seen = std::collections::BTreeMap::from([(from, 0usize)]);
+    // Breadth first with free steps taken first (each occurrence settled once, at its least cost).
+    let mut cost = std::collections::BTreeMap::from([(from, 0usize)]);
+    let mut done = std::collections::BTreeSet::new();
     let mut queue = std::collections::VecDeque::from([from]);
     while let Some(o) = queue.pop_front() {
-        let d = seen.get(&o).copied().unwrap_or(0) + 1;
-        for other in next.get(&o).into_iter().flatten() {
-            if !seen.contains_key(other) {
-                seen.insert(*other, d);
-                queue.push_back(*other);
+        if !done.insert(o) {
+            continue;
+        }
+        let here = cost.get(&o).copied().unwrap_or(0);
+        for (other, step) in next.get(&o).into_iter().flatten() {
+            let d = here + step;
+            if cost.get(other).is_none_or(|c| d < *c) {
+                cost.insert(*other, d);
+                if *step == 0 {
+                    queue.push_front(*other);
+                } else {
+                    queue.push_back(*other);
+                }
             }
         }
     }
-    seen
+    cost
 }
 
 /// Whether a follower joint's b side is the follower (its a side the guide): the guide is the side
-/// nearer the part the cam turns against (`frame`) through the other joints. A guide joined only to
+/// fewer moving joints from the part the cam turns against (`frame`), through the other joints. A guide joined only to
 /// the profile's part (`cam`) would turn with the profile: refused.
 fn follower_is_b(doc: &Document, cam_joint: &super::Joint, fol: &super::Joint, (frame, cam): (u64, u64)) -> Result<bool> {
     let skip = [cam_joint.id, fol.id];
@@ -810,6 +820,51 @@ mod tests {
             assert!((30.0 - 1e-12..=30.0 + 0.9 * 60.0 + 1e-12).contains(&v), "{k}: {v}");
         }
         assert!(lift_at(&[2.0], 1e300).is_finite());
+    }
+
+    /// The guide is the side of the follower's joint fewer moving joints from the cam's frame: a
+    /// guide on four rigid joints from it beats a piston three moving joints round a slider-crank;
+    /// a guide only on the cam's own side is refused.
+    #[test]
+    fn the_guide_is_the_side_fewer_moving_joints_from_the_frame() {
+        let origin = JointOrigin { occurrence: 0, snap: super::super::Snap::Point { point: Vec3::ZERO, z: None } };
+        let joint = |id: u64, kind: JointKind, a: u64, b: u64| super::super::Joint {
+            id,
+            name: format!("J{id}"),
+            kind,
+            a: JointOrigin { occurrence: a, ..origin.clone() },
+            b: JointOrigin { occurrence: b, ..origin.clone() },
+            values: Vec::new(),
+            limits: Vec::new(),
+            flip: false,
+            offset: 0.0,
+            angle: 0.0,
+            suppressed: false,
+        };
+        let occ = |id: u64, grounded: bool| crate::Occurrence { id, component: id, parent: 0, name: format!("O{id}"), transform: IDENTITY, grounded };
+        // 1 frame (grounded), 2 cam, 3-6 a rigid chain to the guide 7, 8 the piston, 9 crank, 10 rod.
+        let mut doc = Document::default();
+        doc.occurrences = (1..=10).map(|id| occ(id, id == 1)).collect();
+        let (r, v, s) = (JointKind::Rigid, JointKind::Revolute, JointKind::Slider);
+        doc.assembly.joints = vec![
+            joint(1, v, 1, 2),
+            joint(2, r, 1, 3),
+            joint(3, r, 3, 4),
+            joint(4, r, 4, 5),
+            joint(5, r, 5, 7),
+            joint(6, s, 8, 7),
+            joint(7, v, 1, 9),
+            joint(8, v, 9, 10),
+            joint(9, v, 10, 8),
+        ];
+        let (cam, fol) = (doc.assembly.joints[0].clone(), doc.assembly.joints[5].clone());
+        // The piston (a) follows, the guide (b) stays.
+        assert!(matches!(follower_is_b(&doc, &cam, &fol, (1, 2)), Ok(false)));
+        // A guide joined only to the cam turns with it.
+        doc.assembly.joints[1] = joint(2, r, 2, 3);
+        doc.occurrences.iter_mut().for_each(|o| o.grounded = o.id == 2);
+        doc.assembly.joints.truncate(6);
+        assert!(follower_is_b(&doc, &cam, &fol, (1, 2)).is_err());
     }
 
     /// Edges join end to end either way round into one closed loop; a gap or a spare edge is no loop.
