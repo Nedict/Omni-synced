@@ -1117,7 +1117,7 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
                 }
             }
             // A cam's follower follows its table, not a ratio: its travel instead.
-            if !l.lift.is_empty()
+            if matches!(l.coupling, Some(Coupling::Cam(_)))
                 && let Some(o) = v.as_object_mut()
             {
                 o.remove("ratio");

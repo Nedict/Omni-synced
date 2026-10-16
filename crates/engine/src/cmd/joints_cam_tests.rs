@@ -12,6 +12,10 @@ use solidcraft_doc::joints::cam::CamProfile;
 const E: f64 = 10.0;
 const R: f64 = 30.0;
 
+fn joint_id(s: &Session, name: &str) -> u64 {
+    s.doc.assembly.joints.iter().find(|j| j.name == name).map(|j| j.id).unwrap_or(0)
+}
+
 /// A joint's value as `joint.list` gives it (degrees or mm).
 fn shown(s: &mut Session, joint: &str) -> f64 {
     let l = run(s, "joint.list", json!({"quiet": true}));
@@ -32,6 +36,7 @@ fn knife(deg: f64, h: f64, r: f64) -> f64 {
 fn cam_on_base() -> Session {
     let mut s = Session::default();
     run(&mut s, "parameters.add", json!({"name": "rc", "expression": "30 mm"}));
+    run(&mut s, "parameters.add", json!({"name": "th", "expression": "5 mm"}));
     part(&mut s, "Base", [-90.0, -90.0, -20.0]);
     let g = occ(&s, "Base");
     run(&mut s, "occurrence.ground", json!({"occurrence": g, "grounded": true}));
@@ -41,7 +46,7 @@ fn cam_on_base() -> Session {
     run(&mut s, "sketch.circle.center", json!({"center": [E, 0], "radius": R, "id": "c1"}));
     run(&mut s, "sketch.dimension", json!({"entities": ["c1"], "type": "radius", "value": "rc"}));
     run(&mut s, "sketch.finish", json!({}));
-    run(&mut s, "solid.extrude", json!({"distance": 5}));
+    run(&mut s, "solid.extrude", json!({"distance": "th"}));
     pin(&mut s, "revolute", "Cam", "Base", "Cam", Vec3::ZERO, Vec3::Z);
     s
 }
@@ -164,6 +169,10 @@ fn picked_edges_give_the_sketch_s_table() {
         Some(Coupling::Cam(c)) if matches!(&c.profile, CamProfile::Edges { names, .. } if names.first().is_some_and(|n| !n.is_empty()))
     ));
     run(&mut s, "parameters.change", json!({"name": "rc", "expression": "32 mm"}));
+    // A thicker cam: the picked edge is found at its new height, and its loop with it.
+    run(&mut s, "parameters.change", json!({"name": "th", "expression": "7 mm"}));
+    let l = run(&mut s, "joint.list", json!({"quiet": true}));
+    assert!(l["links"][0].get("error").is_none(), "{l}");
     run(&mut s, "joint.drive", json!({"joint": "Cam", "value": 90}));
     let want = knife(90.0, 0.0, 32.0) - (E + R);
     assert!(close(shown(&mut s, "Tappet"), want, 1e-3), "{} vs {want}", shown(&mut s, "Tappet"));
@@ -365,6 +374,7 @@ fn hostile_cams_are_refused() {
     assert!(s.doc.assembly.links.is_empty());
     // A table edited by hand: NaN leaves the follower where it is, any length reads.
     run(&mut s, "joint.cam", json!({"a": "Cam", "b": "Tappet", "profile": {"sketch": "CamSketch"}}));
+    let before = solidcraft_doc::joints::joint_values(&s.doc.assembly);
     for lift in [vec![f64::NAN; 360], vec![1.0, 2.0, 3.0], vec![f64::INFINITY]] {
         let mut d = (*s.doc).clone();
         if let Some(l) = d.assembly.links.first_mut() {
@@ -372,7 +382,24 @@ fn hostile_cams_are_refused() {
         }
         let vals = solidcraft_doc::joints::joint_values(&d.assembly);
         assert!(vals.values().flatten().all(|v| v.is_finite()), "{vals:?}");
+        // The follower keeps where it is.
+        assert_eq!(vals.get(&joint_id(&s, "Tappet")), d.assembly.joints.iter().find(|j| j.name == "Tappet").map(|j| &j.values), "{before:?}");
     }
+    // A table on a plain link is not read.
+    let mut d = (*s.doc).clone();
+    if let Some(l) = d.assembly.links.first_mut() {
+        (l.coupling, l.ratio, l.offset) = (None, 0.0, 3.0);
+    }
+    assert_eq!(solidcraft_doc::joints::joint_values(&d.assembly).get(&joint_id(&s, "Tappet")).and_then(|q| q.first()).copied(), Some(3.0));
+    // A roller's picked face must turn about an axis parallel to the cam's, a tip given or not.
+    run(&mut s, "component.activate", json!({"component": "root"}));
+    run(&mut s, "component.create", json!({"name": "Pin"}));
+    run(&mut s, "solid.cylinder", json!({"base": [60, 30, 0], "axis": [1, 0, 0], "radius": 3, "height": 10}));
+    run(&mut s, "joint.delete", json!({"link": 0}));
+    let tilted = json!({"a": "Cam", "b": "Tappet", "profile": {"sketch": "CamSketch"}, "follower": "roller",
+        "radius": {"occurrence": "Pin", "circle": [65, 33, 0]}, "tip": {"occurrence": "Tappet", "point": [E + R, 0, 2.5]}});
+    let e = refused(&mut s, tilted);
+    assert!(e.contains("roller's axis"), "{e}");
 }
 
 /// A cam saves and opens with its definition and table; a link saved before cams reads as a

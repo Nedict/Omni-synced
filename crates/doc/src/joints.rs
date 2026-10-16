@@ -166,9 +166,15 @@ pub struct MotionLink {
 }
 
 impl MotionLink {
-    /// b's value for a's value `x` (before b's limits).
+    /// b's value for a's value `x` (before b's limits). A cam's table that is not whole (a
+    /// hand-edited file) gives no value, so b keeps where it is; a table on any other link is
+    /// not read.
     pub fn follow(&self, x: f64) -> f64 {
-        if self.lift.is_empty() { self.ratio * x + self.offset } else { cam::lift_at(&self.lift, x) + self.offset }
+        match &self.coupling {
+            Some(Coupling::Cam(_)) if self.lift.len() == cam::CAM_SAMPLES => cam::lift_at(&self.lift, x) + self.offset,
+            Some(Coupling::Cam(_)) => f64::NAN,
+            _ => self.ratio * x + self.offset,
+        }
     }
 }
 

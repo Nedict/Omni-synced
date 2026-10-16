@@ -83,7 +83,7 @@ pub struct Cam {
 /// an empty table or a non-finite `x`.
 pub fn lift_at(table: &[f64], x: f64) -> f64 {
     let n = table.len();
-    let u = (x / TAU * n as f64).rem_euclid(n as f64);
+    let u = (x.rem_euclid(TAU) / TAU * n as f64).rem_euclid(n as f64);
     if n == 0 || !u.is_finite() {
         return f64::NAN;
     }
@@ -372,7 +372,7 @@ fn profile_points(doc: &Document, st: &ModelState, p: &CamProfile, cam: &super::
             // along them (a circle the kernel keeps as two arcs is picked with one click).
             let f = if *occurrence == cam.b.occurrence { fb } else { fa };
             let axis = Vec3::new(f[2][0], f[2][1], f[2][2]);
-            let level = picks.first().map(|p| p.dot(axis)).unwrap_or(0.0);
+            let level = lines.first().and_then(|l| l.first()).map(|p| p.dot(axis)).unwrap_or(0.0);
             let flat = 1e-6 * size + 1e-9;
             let pool: Vec<&Vec<Vec3>> = edges
                 .iter()
@@ -437,7 +437,11 @@ fn chain(lines: &[&Vec<Vec3>], pool: &[&Vec<Vec3>], tol: f64) -> Option<Vec<Vec3
 /// shares at least half of them (most of the cam's outline gone: a neighbouring region sharing a
 /// curve with it is not the cam).
 pub fn sketch_profile<'a>(sk: &'a crate::SolvedSketch, curves: &[String]) -> Option<&'a solidcraft_sketch::Profile> {
-    let shared = |p: &solidcraft_sketch::Profile| curves.iter().filter(|c| p.outer_curves.contains(c)).count();
+    if curves.len() > MAX_PROFILE_POINTS {
+        return None;
+    }
+    let named: std::collections::BTreeSet<&String> = curves.iter().collect();
+    let shared = |p: &solidcraft_sketch::Profile| p.outer_curves.iter().filter(|c| named.contains(c)).count();
     let area = |p: &solidcraft_sketch::Profile| p.region.outer.signed_area().abs();
     sk.profiles
         .iter()
@@ -531,18 +535,21 @@ fn setup(doc: &Document, st: &ModelState, l: &MotionLink, c: &Cam) -> Result<Set
     let turn = if on_b { 1.0 } else { -1.0 };
     let at = Vec2::new(g.x, g.y);
     // Where the follower touches now (in C): its tip, or the roller's picked round face.
-    let tip = c.tip.as_ref().or(match &c.follower {
+    let face = match &c.follower {
         Follower::Roller { radius: Size::Circle(o) } => Some(o),
         _ => None,
-    });
-    let tip = match tip {
+    };
+    // A roller picked by its round face (as its radius or its tip) turns about the face's axis:
+    // square to the profile's plane.
+    for o in [c.tip.as_ref(), face].into_iter().flatten().filter(|o| matches!(o.snap, super::Snap::CircleCenter { .. })) {
+        let at = mat_mul(&c_inv, &doc.origin_world(st, o)?);
+        if Vec3::new(at[2][0], at[2][1], 0.0).len() > 1e-6 {
+            return Err(bad("the roller's axis must be parallel to the cam's"));
+        }
+    }
+    let tip = match c.tip.as_ref().or(face) {
         Some(o) => {
-            let at = mat_mul(&c_inv, &doc.origin_world(st, o)?);
-            // A roller picked by its round face turns about its axis: square to the profile's plane.
-            if matches!(o.snap, super::Snap::CircleCenter { .. }) && Vec3::new(at[2][0], at[2][1], 0.0).len() > 1e-6 {
-                return Err(bad("the roller's axis must be parallel to the cam's"));
-            }
-            let t = apply_point(&at, Vec3::ZERO);
+            let t = apply_point(&mat_mul(&c_inv, &doc.origin_world(st, o)?), Vec3::ZERO);
             Some(Vec2::new(t.x, t.y))
         }
         None => None,
