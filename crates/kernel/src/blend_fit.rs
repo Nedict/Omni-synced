@@ -244,7 +244,9 @@ fn reaches_inside_beyond(poly: &[Vec3], planes: &[(Vec3, f64)], eps: f64, trimme
 /// Whether two sets of convex prisms overlap (by more than `eps`): a face of one reaches
 /// inside the other.
 fn overlap(a: &[Wedge], b: &[Wedge], eps: f64) -> bool {
-    a.iter().any(|x| b.iter().any(|y| y.faces.iter().any(|p| reaches_inside(p, &x.planes, eps)) || x.faces.iter().any(|p| reaches_inside(p, &y.planes, eps))))
+    a.iter().any(|x| {
+        b.iter().any(|y| y.faces.iter().any(|p| reaches_inside(p, &x.planes, eps)) || x.faces.iter().any(|p| reaches_inside(p, &y.planes, eps)))
+    })
 }
 
 /// The body's straight edges between planar faces nearest the points (each once; `None` for a
