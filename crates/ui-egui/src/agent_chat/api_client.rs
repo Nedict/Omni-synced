@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use super::acp::ModelInfo;
 use super::backend::{ChatBackend, Event, HttpFn, HttpRequest, PromptPart, StartContext, ToolStatus};
 use super::process::{AgentProcess, FromAgent, ProcessHandle};
 
@@ -44,6 +45,7 @@ pub struct ApiConfig {
 enum Cmd {
     Prompt(Vec<PromptPart>),
     NewChat,
+    SetModel(String),
 }
 
 pub struct ApiBackend {
@@ -92,6 +94,11 @@ impl ChatBackend for ApiBackend {
     }
     fn cancel(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
+    }
+    fn set_model(&mut self, model: &str) {
+        if let Some(c) = &self.cmds {
+            let _ = c.send(Cmd::SetModel(model.to_string()));
+        }
     }
     fn new_session(&mut self) {
         // A running turn is cancelled; the worker resets the history once it has ended.
@@ -144,9 +151,20 @@ impl Worker {
         }
         self.history.push(json!({"role": "system", "content": super::acp::SYSTEM_NOTE}));
         self.emit(Event::Ready { agent: format!("{} · {}", self.cfg.name, self.cfg.model), images: true });
+        // The endpoint's models for the picker; an endpoint that does not list them shows none.
+        if let Ok(list) = model_list(&self.cfg.http, &self.cfg.base_url, self.cfg.key.as_deref()) {
+            let mut available = list;
+            if !self.cfg.model.is_empty() && !available.iter().any(|m| m.id == self.cfg.model) {
+                available.insert(0, ModelInfo { id: self.cfg.model.clone(), name: self.cfg.model.clone(), description: String::new() });
+            }
+            if !available.is_empty() {
+                self.emit(Event::Models { current: self.cfg.model.clone(), available });
+            }
+        }
         for cmd in cmds {
             match cmd {
                 Cmd::Prompt(parts) => self.turn(parts),
+                Cmd::SetModel(m) => self.cfg.model = m,
                 Cmd::NewChat => {
                     self.history.truncate(1);
                     self.cancel.store(false, Ordering::Relaxed);
@@ -463,6 +481,32 @@ fn tool_title(name: &str, args: &Value) -> String {
     }
 }
 
+/// `GET {base_url}/models`: the model ids, in the order the endpoint lists them.
+fn model_ids(http: &HttpFn, base_url: &str, headers: Vec<(String, String)>) -> Result<Vec<String>, String> {
+    let req = HttpRequest { method: "GET", url: format!("{base_url}/models"), headers, body: None, timeout_s: 15 };
+    let (status, bytes) = http(&req)?;
+    let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    if status != 200 {
+        return Err(http_error(status, &v));
+    }
+    Ok(v.get("data")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().take(500).filter_map(|m| m.get("id").and_then(Value::as_str).map(String::from)).collect())
+        .unwrap_or_default())
+}
+
+/// The endpoint's models for the picker.
+pub fn model_list(http: &HttpFn, base_url: &str, key: Option<&str>) -> Result<Vec<ModelInfo>, String> {
+    let mut headers = Vec::new();
+    if let Some(k) = key {
+        if !super::agents::key_safe_for(base_url) {
+            return Err(crate::i18n::tr("ui.ai_key_needs_https").to_string());
+        }
+        headers.push(("Authorization".to_string(), format!("Bearer {k}")));
+    }
+    Ok(model_ids(http, base_url, headers)?.into_iter().map(|id| ModelInfo { name: id.clone(), id, description: String::new() }).collect())
+}
+
 /// Ask an endpoint for its models (Test connection): how many, and whether `model` is one.
 pub fn test_endpoint(http: &HttpFn, base_url: &str, key: Option<&str>, model: &str) -> Result<String, String> {
     let mut headers = Vec::new();
@@ -472,14 +516,8 @@ pub fn test_endpoint(http: &HttpFn, base_url: &str, key: Option<&str>, model: &s
         }
         headers.push(("Authorization".to_string(), format!("Bearer {k}")));
     }
-    let req = HttpRequest { method: "GET", url: format!("{base_url}/models"), headers, body: None, timeout_s: 15 };
-    let (status, bytes) = http(&req)?;
-    let v: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-    if status != 200 {
-        return Err(http_error(status, &v));
-    }
-    let ids: Vec<&str> =
-        v.get("data").and_then(Value::as_array).map(|a| a.iter().filter_map(|m| m.get("id").and_then(Value::as_str)).collect()).unwrap_or_default();
+    let ids = model_ids(http, base_url, headers)?;
+    let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
     let found = model.is_empty() || ids.contains(&model);
     Ok(crate::i18n::format(if found { "ui.ai_test_ok" } else { "ui.ai_test_no_model" }, &[("count", &ids.len().to_string()), ("model", model)]))
 }
@@ -519,6 +557,9 @@ mod tests {
         let seen = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
         let log = seen.clone();
         let http: HttpFn = Arc::new(move |r: &HttpRequest| {
+            if r.method == "GET" {
+                return Ok((200, b"{\"data\":[]}".to_vec()));
+            }
             log.lock().unwrap().push(serde_json::from_slice(r.body.as_deref().unwrap_or(b"null")).unwrap());
             let a = answers.lock().unwrap().pop().unwrap_or(json!({}));
             Ok((200, a.to_string().into_bytes()))
@@ -554,6 +595,9 @@ mod tests {
         let seen = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
         let log = seen.clone();
         let http: HttpFn = Arc::new(move |r: &HttpRequest| {
+            if r.method == "GET" {
+                return Ok((200, b"{\"data\":[]}".to_vec()));
+            }
             let n = {
                 let mut l = log.lock().unwrap();
                 l.push(serde_json::from_slice(r.body.as_deref().unwrap_or(b"null")).unwrap());
@@ -607,6 +651,9 @@ mod tests {
         let seen = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
         let log = seen.clone();
         let http: HttpFn = Arc::new(move |r: &HttpRequest| {
+            if r.method == "GET" {
+                return Ok((200, b"{\"data\":[]}".to_vec()));
+            }
             log.lock().unwrap().push(serde_json::from_slice(r.body.as_deref().unwrap_or(b"null")).unwrap());
             Ok((200, json!({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}).to_string().into_bytes()))
         });
@@ -634,6 +681,42 @@ mod tests {
         b.shutdown(true);
     }
 
+    /// The endpoint's `/models` fills the picker (with the current model first if it is not
+    /// listed), and choosing one changes the model of the next request.
+    #[test]
+    fn the_endpoint_lists_models_and_a_choice_changes_the_next_request() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+        let log = seen.clone();
+        let http: HttpFn = Arc::new(move |r: &HttpRequest| {
+            if r.method == "GET" {
+                assert!(r.url.ends_with("/models"));
+                return Ok((200, json!({"data": [{"id": "big"}, {"id": "small"}]}).to_string().into_bytes()));
+            }
+            log.lock().unwrap().push(serde_json::from_slice(r.body.as_deref().unwrap_or(b"null")).unwrap());
+            Ok((200, json!({"choices": [{"message": {"role": "assistant", "content": "ok"}}]}).to_string().into_bytes()))
+        });
+        let cfg = ApiConfig { name: "Test".into(), base_url: "http://localhost:1/v1".into(), model: "local".into(), key: None, http };
+        let ctx = StartContext { cwd: std::env::temp_dir(), bridge: None, tools: None, wake: Box::new(|| {}) };
+        let mut b = ApiBackend::start(cfg, ctx).unwrap();
+        let mut events = Vec::new();
+        let start = std::time::Instant::now();
+        while !events.iter().any(|e| matches!(e, Event::Models { .. })) && start.elapsed() < Duration::from_secs(10) {
+            events.extend(b.poll());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let Some(Event::Models { current, available }) = events.iter().find(|e| matches!(e, Event::Models { .. })) else { panic!("{events:?}") };
+        assert_eq!(current, "local");
+        assert_eq!(available.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["local", "big", "small"]);
+        b.set_model("big");
+        b.prompt(&[PromptPart::Text("hi".into())]);
+        let start = std::time::Instant::now();
+        while seen.lock().unwrap().is_empty() && start.elapsed() < Duration::from_secs(10) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(seen.lock().unwrap()[0]["model"], "big");
+        b.shutdown(true);
+    }
+
     #[test]
     fn tool_arguments_are_an_object_or_an_error() {
         assert_eq!(tool_arguments(None), Ok(json!({})));
@@ -655,6 +738,9 @@ mod tests {
         let seen = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
         let log = seen.clone();
         let http: HttpFn = Arc::new(move |r: &HttpRequest| {
+            if r.method == "GET" {
+                return Ok((200, b"{\"data\":[]}".to_vec()));
+            }
             log.lock().unwrap().push(serde_json::from_slice(r.body.as_deref().unwrap_or(b"null")).unwrap());
             Ok((200, answers.lock().unwrap().pop().unwrap_or(json!({})).to_string().into_bytes()))
         });

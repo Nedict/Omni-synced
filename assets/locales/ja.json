@@ -397,6 +397,7 @@
   "ui.agent_chat_send_now": "今すぐ送信",
   "ui.agent_chat_send_now_tip": "エージェントの現在のステップを止めて、これを次に送信します（Ctrl+Enter）",
   "ui.agent_chat_stop_turn_tip": "エージェントを停止します（Esc）。待機中のメッセージは待機のままです。",
+  "ui.agent_chat_model_tip": "エージェントが使うモデル。選択はこのエージェントに対して記憶されます。",
   "ui.agent_chat_send": "送信",
   "ui.agent_chat_cancel": "キャンセル",
   "ui.agent_chat_refresh": "再検索",

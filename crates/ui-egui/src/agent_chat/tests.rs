@@ -338,6 +338,9 @@ impl ChatBackend for Script {
     fn new_session(&mut self) {
         self.calls.lock().unwrap().push("new_session".into());
     }
+    fn set_model(&mut self, model: &str) {
+        self.calls.lock().unwrap().push(format!("set_model: {model}"));
+    }
     fn answer_permission(&mut self, _: u64, _: Option<&str>) {}
     fn authenticate(&mut self, _: &str) {}
     fn shutdown(&mut self, _: bool) {}
@@ -635,6 +638,121 @@ done
         log_text.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).filter_map(|v| v["method"].as_str().map(String::from)).collect();
     assert_eq!(methods, ["initialize", "session/new", "session/prompt", "session/new", "session/prompt"]);
     assert!(log_text.lines().last().is_some_and(|l| l.contains("\"s2\"")), "the prompt goes to the new session: {log_text}");
+    disconnect(&mut app);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn models_reply(current: &str) -> Event {
+    let m = |id: &str| acp::ModelInfo { id: id.into(), name: id.to_uppercase(), description: String::new() };
+    Event::Models { current: current.into(), available: vec![m("fast"), m("smart")] }
+}
+
+/// Choosing a model tells the agent, shows it as current and remembers it for this agent; a model
+/// the agent did not offer is ignored.
+#[test]
+fn choosing_a_model_sets_it_and_remembers_it() {
+    let (mut app, script, ctx) = app_with_script();
+    app.agent_chat.running_id = "claude".into();
+    script.report(models_reply("fast"));
+    poll(&mut app, &ctx);
+    assert!(models_shown(&app));
+    assert_eq!(app.agent_chat.model, "fast");
+    set_model(&mut app, "smart");
+    set_model(&mut app, "nonsense");
+    assert_eq!(script.calls(), ["set_model: smart"]);
+    assert_eq!(app.agent_chat.model, "smart");
+    assert_eq!(app.preferences.agent_models.get("claude").map(String::as_str), Some("smart"));
+    assert_eq!(status(&app)["model"], "smart");
+    // The agent switching its own model is shown too.
+    script.report(Event::Models { current: "fast".into(), available: vec![] });
+    poll(&mut app, &ctx);
+    assert_eq!(app.agent_chat.model, "fast");
+    assert_eq!(app.agent_chat.models.len(), 2, "the list stays");
+}
+
+/// The next session puts back the model chosen last time, when the agent offers it.
+#[test]
+fn the_remembered_model_is_set_on_the_next_session() {
+    let (mut app, script, ctx) = app_with_script();
+    app.agent_chat.running_id = "claude".into();
+    app.preferences.agent_models.insert("claude".into(), "smart".into());
+    script.report(models_reply("fast"));
+    script.report(Event::Ready { agent: "fake".into(), images: false });
+    poll(&mut app, &ctx);
+    assert_eq!(script.calls(), ["set_model: smart"]);
+    assert_eq!(app.agent_chat.model, "smart");
+    // Already on it, or no longer offered: nothing is sent.
+    script.report(models_reply("smart"));
+    script.report(Event::Ready { agent: "fake".into(), images: false });
+    poll(&mut app, &ctx);
+    app.preferences.agent_models.insert("claude".into(), "gone".into());
+    script.report(models_reply("fast"));
+    script.report(Event::Ready { agent: "fake".into(), images: false });
+    poll(&mut app, &ctx);
+    assert_eq!(script.calls().len(), 1);
+}
+
+/// An agent that reports no models gets no picker; another agent's choice is not applied to it.
+#[test]
+fn an_agent_without_models_shows_no_picker() {
+    let (mut app, script, ctx) = app_with_script();
+    app.agent_chat.running_id = "other".into();
+    app.preferences.agent_models.insert("claude".into(), "smart".into());
+    script.report(Event::Ready { agent: "fake".into(), images: false });
+    poll(&mut app, &ctx);
+    assert!(!models_shown(&app));
+    assert!(script.calls().is_empty());
+    assert_eq!(status(&app)["models"], json!([]));
+}
+
+/// With a real ACP agent the choice goes out as `session/set_model` with the session and model.
+#[cfg(unix)]
+#[test]
+fn set_model_goes_to_an_acp_agent() {
+    let dir = std::env::temp_dir().join(format!("sc-agent-chat-model-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = dir.join("received.log");
+    let script = r#"
+log="$1"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"agentInfo":{"name":"fake","version":"1"}}}\n' "$id" ;;
+    *'"method":"session/new"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"s1","models":{"currentModelId":"fast","availableModels":[{"modelId":"fast","name":"Fast"},{"modelId":"smart","name":"Smart"}]}}}\n' "$id" ;;
+    *'"method":"session/set_model"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id" ;;
+  esac
+done
+"#;
+    let argv = vec!["sh".to_string(), "-c".to_string(), script.to_string(), "fake-agent".to_string(), log.to_string_lossy().into_owned()];
+    let start = backend::StartContext { cwd: dir.clone(), bridge: None, tools: None, wake: Box::new(|| {}) };
+    let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+    app.agent_chat.backend = Some(Box::new(acp_client::AcpBackend::start(&argv, start).unwrap()));
+    app.agent_chat.state = Some(State::Starting);
+    app.agent_chat.running_id = "fake".into();
+    app.preferences.agent_models.insert("fake".into(), "smart".into());
+    let ctx = egui::Context::default();
+    let t = std::time::Instant::now();
+    loop {
+        poll(&mut app, &ctx);
+        let logged = std::fs::read_to_string(&log).unwrap_or_default();
+        if logged.contains("session/set_model") {
+            break;
+        }
+        assert!(t.elapsed() < std::time::Duration::from_secs(20), "no set_model: {logged}");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(models_shown(&app) && app.agent_chat.model == "smart", "the remembered model was put back");
+    let logged = std::fs::read_to_string(&log).unwrap();
+    let set: Value = logged.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).find(|v| v["method"] == "session/set_model").unwrap();
+    assert_eq!(set["params"], json!({"sessionId": "s1", "modelId": "smart"}));
+    // A choice made in the picker goes out too.
+    set_model(&mut app, "fast");
+    let t = std::time::Instant::now();
+    while std::fs::read_to_string(&log).unwrap_or_default().matches("session/set_model").count() < 2 {
+        assert!(t.elapsed() < std::time::Duration::from_secs(20));
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     disconnect(&mut app);
     let _ = std::fs::remove_dir_all(&dir);
 }

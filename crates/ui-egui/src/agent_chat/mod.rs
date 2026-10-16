@@ -208,6 +208,13 @@ pub struct AgentChat {
     /// The agent's own modes, and the current one.
     modes: Vec<(String, String)>,
     mode: String,
+    /// The models the agent offers (none: no picker), and the current one.
+    pub models: Vec<acp::ModelInfo>,
+    pub model: String,
+    /// An API endpoint's models, kept per endpoint (its base URL) for the next connection.
+    models_cache: std::collections::HashMap<String, Vec<acp::ModelInfo>>,
+    /// The running API agent's endpoint (empty for other agents).
+    running_endpoint: String,
     backend: Option<Box<dyn ChatBackend>>,
     turn: Option<Turn>,
     held: Vec<Held>,
@@ -354,6 +361,15 @@ impl AgentChat {
                     self.modes = available;
                 }
                 self.mode = current;
+            }
+            Event::Models { current, available } => {
+                if !available.is_empty() {
+                    if !self.running_endpoint.is_empty() {
+                        self.models_cache.insert(self.running_endpoint.clone(), available.clone());
+                    }
+                    self.models = available;
+                }
+                self.model = current;
             }
             Event::AuthRequired { methods } => {
                 self.auth = methods;
@@ -508,6 +524,14 @@ pub fn connect(app: &mut SolveApp, ctx: &egui::Context) {
             chat.running_id = entry.id.clone();
             chat.modes.clear();
             chat.mode.clear();
+            chat.models.clear();
+            chat.model.clear();
+            chat.running_endpoint = if entry.kind == agents::Kind::Api { entry.base_url.clone() } else { String::new() };
+            // An endpoint's models from the last time, until the new list arrives.
+            if let Some(list) = chat.models_cache.get(&chat.running_endpoint) {
+                chat.models = list.clone();
+                chat.model = entry.model.clone();
+            }
             chat.state = Some(State::Starting);
             chat.auth.clear();
             chat.auth_status = None;
@@ -954,6 +978,9 @@ pub fn poll(app: &mut SolveApp, ctx: &egui::Context) {
             Some(Outcome::Permission { key, title, options }) => on_permission(app, key, title, options),
             None => {}
         }
+        if ready {
+            apply_saved_model(app);
+        }
         if ready && let Some((text, image)) = app.agent_chat.queued.take() {
             start_turn(app, text, image);
         }
@@ -977,6 +1004,37 @@ pub fn refresh(app: &mut SolveApp, ctx: &egui::Context) {
         ctx.request_repaint();
     });
     app.agent_chat.detecting = Some(rx);
+}
+
+/// Choose the model for this chat (the header's model picker): the agent switches to it, and it is
+/// remembered for this agent; an API endpoint's agent also keeps it as its default model.
+pub fn set_model(app: &mut SolveApp, model: &str) {
+    if !app.agent_chat.models.iter().any(|m| m.id == model) {
+        return;
+    }
+    if let Some(b) = app.agent_chat.backend.as_mut() {
+        b.set_model(model);
+    }
+    app.agent_chat.model = model.to_string();
+    let agent = app.agent_chat.running_id.clone();
+    if let Some(a) = app.preferences.agents.iter_mut().find(|a| a.id == agent && a.kind == agents::Kind::Api) {
+        a.model = model.to_string();
+    }
+    app.preferences.agent_models.insert(agent, model.to_string());
+}
+
+/// A new session is ready: put back the model last chosen for this agent, when it offers it.
+fn apply_saved_model(app: &mut SolveApp) {
+    let chat = &app.agent_chat;
+    let Some(saved) = app.preferences.agent_models.get(&chat.running_id).cloned() else { return };
+    if saved != chat.model && chat.models.iter().any(|m| m.id == saved) {
+        set_model(app, &saved);
+    }
+}
+
+/// Whether the model picker shows: only for an agent that reports models.
+pub fn models_shown(app: &SolveApp) -> bool {
+    !app.agent_chat.models.is_empty() && app.agent_chat.state().running()
 }
 
 /// Switch the agent to one of its own modes (the header's mode picker).
@@ -1049,6 +1107,9 @@ pub fn control(app: &mut SolveApp, ctx: &egui::Context, p: &Value) -> Result<Val
     }
     if let Some(m) = p.get("mode").and_then(Value::as_str) {
         set_mode(app, m);
+    }
+    if let Some(m) = p.get("model").and_then(Value::as_str) {
+        set_model(app, m);
     }
     if !shown(app) {
         return Ok(status(app));
@@ -1160,6 +1221,8 @@ pub fn status(app: &SolveApp) -> Value {
         "permissions": app.preferences.ai_permissions.id(),
         "agents": agents::entries(app).iter().map(|e| json!({"id": e.id, "name": e.name, "kind": if e.kind == agents::Kind::Api { "api" } else { "acp" }, "found": e.found, "version": e.version, "login": e.login})).collect::<Vec<_>>(),
         "currentAgent": agents::current(app).map(|e| e.id),
+        "models": c.models.iter().map(|m| json!({"id": m.id, "name": m.name, "description": m.description})).collect::<Vec<_>>(),
+        "model": c.model,
         "modes": c.modes.iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),
         "mode": c.mode,
         "open": c.open,

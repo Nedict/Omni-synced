@@ -423,7 +423,9 @@ fn switcher(app: &mut SolveApp, ui: &mut egui::Ui) {
             || tr(if app.agent_chat.detecting.is_some() { "ui.agent_chat_detecting" } else { "ui.agent_chat_none_found_short" }).to_string(),
             |e| e.name.clone(),
         );
-        let w = (ui.available_width() - if app.agent_chat.modes.is_empty() { 4.0 } else { 120.0 }).clamp(120.0, 260.0);
+        let models = models_shown(app);
+        let w =
+            (ui.available_width() - if app.agent_chat.modes.is_empty() { 4.0 } else { 116.0 } - if models { 146.0 } else { 0.0 }).clamp(90.0, 260.0);
         let mut picked: Option<String> = None;
         let mut add = false;
         let combo = egui::ComboBox::from_id_salt("sc_agent_switch").width(w).selected_text(RichText::new(label).strong()).show_ui(ui, |ui| {
@@ -476,6 +478,27 @@ fn switcher(app: &mut SolveApp, ui: &mut egui::Ui) {
             r.response.on_hover_text(tr("ui.ai_agent_mode_tip"));
             if let Some(m) = pick {
                 set_mode(app, &m);
+            }
+        }
+        // The agent's models (ACP `models`, or an endpoint's list): shown only when it reports some.
+        if models {
+            let list = app.agent_chat.models.clone();
+            let cur = list.iter().find(|m| m.id == app.agent_chat.model).map_or_else(|| app.agent_chat.model.clone(), |m| m.name.clone());
+            let mut pick: Option<String> = None;
+            let r = egui::ComboBox::from_id_salt("sc_agent_model").width(140.0).truncate().selected_text(cur).show_ui(ui, |ui| {
+                for m in &list {
+                    let row = ui.selectable_label(m.id == app.agent_chat.model, &m.name);
+                    let row = if m.description.is_empty() { row } else { row.on_hover_text(&m.description) };
+                    crate::scenario::publish_handle(&format!("agent_chat:model:{}", m.id), row.rect.center());
+                    if row.clicked() {
+                        pick = Some(m.id.clone());
+                    }
+                }
+            });
+            crate::scenario::publish_handle("agent_chat:model", r.response.rect.center());
+            r.response.on_hover_text(tr("ui.agent_chat_model_tip"));
+            if let Some(m) = pick {
+                set_model(app, &m);
             }
         }
     });
