@@ -200,6 +200,12 @@ fn fs_tri(i: TOut) -> @location(0) vec4<f32> {
     return shade(i);
 }
 
+/// Reference planes: shaded like `fs_tri`, but never cut by the section plane.
+@fragment
+fn fs_tri_all(i: TOut) -> @location(0) vec4<f32> {
+    return shade(i);
+}
+
 fn shade(i: TOut) -> vec4<f32> {
     // A zero normal marks flat colour (selection fills, translucent planes).
     if (length(i.n) < 0.5) {

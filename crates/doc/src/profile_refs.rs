@@ -309,9 +309,10 @@ mod tests {
             .add_feature(
                 crate::FeatureKind::Extrude {
                     thin: None,
-                    sketch: feature,
+                    sketch: crate::SketchId(feature),
                     profiles: selection.clone(),
                     extent: crate::Extent {
+                        convention: crate::ExtrudeConvention::LegacyPerSide,
                         distance: "2".into(),
                         direction: crate::Direction::Positive,
                         distance2: None,
@@ -435,9 +436,10 @@ mod tests {
             .add_feature(
                 crate::FeatureKind::Extrude {
                     thin: None,
-                    sketch: feature,
+                    sketch: crate::SketchId(feature),
                     profiles: selection.clone(),
                     extent: crate::Extent {
+                        convention: crate::ExtrudeConvention::LegacyPerSide,
                         distance: "2".into(),
                         direction: crate::Direction::Positive,
                         distance2: None,

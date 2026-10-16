@@ -7,6 +7,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod capture;
 pub mod cmd;
 pub mod control_auth;
 pub mod crash;
@@ -20,6 +21,8 @@ pub mod product_scene;
 pub mod recovery;
 pub mod render_jobs;
 pub mod sample;
+mod slicer_icon;
+pub mod slicers;
 pub mod view;
 
 use std::sync::Arc;
@@ -29,7 +32,7 @@ use serde_json::Value;
 use solidcraft_doc::{Document, Model, ModelState};
 use solidcraft_geom::Vec3;
 
-pub use cmd::{CommandInfo, CommandSpec, auto_operation, command_specs, find_command};
+pub use cmd::{CommandInfo, CommandSpec, auto_operation, command_specs, extrude_reach, find_command};
 pub use solidcraft_doc as doc;
 pub use solidcraft_doc::Visibility;
 pub use solidcraft_geom as geom;
@@ -44,7 +47,7 @@ pub const MAX_LINE: usize = 16 << 20;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
-    #[error("unknown command `{0}`")]
+    #[error("unknown command `{0}`{hint}", hint = cmd::did_you_mean(.0))]
     UnknownCommand(String),
     #[error("`{0}` is not available right now: {1}")]
     Disabled(String, String),
@@ -154,6 +157,16 @@ pub struct Snapshot {
     pub pending_moves: std::collections::BTreeMap<u64, solidcraft_doc::Mat>,
 }
 
+/// A copy of a session that evaluates commands ahead of it ([`Session::ahead`]).
+pub struct Ahead(Session);
+
+impl Ahead {
+    /// Run `commands` (their results stay in the shared evaluation cache).
+    pub fn evaluate(self, commands: &[(String, Value)]) -> Result<()> {
+        self.0.preview_in_place(commands).map(|_| ())
+    }
+}
+
 /// What some commands would make, evaluated on a scratch copy of a session
 /// ([`Session::preview`]). The session itself is not changed.
 #[derive(Clone, Debug)]
@@ -218,12 +231,18 @@ pub struct Session {
     pub pending_moves: std::collections::BTreeMap<u64, solidcraft_doc::Mat>,
     world_cache: std::sync::Mutex<Option<WorldCache>>,
     occurrence_visibility_cache: std::sync::Mutex<Option<occurrences::VisibilityCache>>,
+    removed_later_cache: std::sync::Mutex<Option<occurrences::RemovedLaterCache>>,
     /// Features copied with `timeline.copy` (pasted by `timeline.paste`).
     pub clipboard: Vec<solidcraft_doc::Feature>,
+    /// Sketch geometry copied with `sketch.copy` (pasted by `sketch.paste`).
+    pub sketch_clipboard: Option<cmd::sketch_clipboard::SketchClip>,
     /// Section Analysis: a view cut by a plane (origin, unit normal; the normal side is hidden).
     pub section: Option<(Vec3, Vec3)>,
     /// Surface analysis shading the model (zebra, draft, curvature map).
     pub analysis: Option<SurfaceAnalysis>,
+    /// The seams `inspect.continuity` last measured, for the viewport to shade. View state: not
+    /// part of the design and not an undo step.
+    pub continuity: Vec<ContinuitySeam>,
     /// What is hidden or shown in the view (`browser.visibility`): saved with the design, not an
     /// undo step. A design brings its saved visibility when it opens (`Session::new`).
     pub visibility: Visibility,
@@ -289,6 +308,30 @@ pub enum SurfaceAnalysis {
     Access { dir: Vec3 },
 }
 
+/// One seam measured by `inspect.continuity`, where the viewport shades it: the stations it was
+/// sampled at, in world coordinates, and how it reads. View state only: the design is untouched.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct ContinuitySeam {
+    /// Sample points along the seam, in world coordinates.
+    pub points: Vec<Vec3>,
+    /// The seam's worst verdict along its length.
+    pub verdict: kernel::SeamVerdict,
+}
+
+impl SurfaceAnalysis {
+    /// How a picture shades the faces for this analysis.
+    pub fn mode(self) -> render::AnalysisMode {
+        use render::AnalysisMode as M;
+        match self {
+            SurfaceAnalysis::Zebra { stripes } => M::Zebra { stripes },
+            SurfaceAnalysis::Draft { pull, angle } => M::Draft { pull, angle },
+            SurfaceAnalysis::Curvature { radius } => M::Curvature { radius },
+            SurfaceAnalysis::Environment => M::Environment,
+            SurfaceAnalysis::Access { dir } => M::Access { dir },
+        }
+    }
+}
+
 const MAX_UNDO: usize = 200;
 /// Checkpoints kept (the oldest go first).
 const MAX_CHECKPOINTS: usize = 16;
@@ -325,9 +368,12 @@ impl Session {
             pending_moves: Default::default(),
             world_cache: Default::default(),
             occurrence_visibility_cache: Default::default(),
+            removed_later_cache: Default::default(),
             clipboard: Vec::new(),
+            sketch_clipboard: None,
             section: None,
             analysis: None,
+            continuity: Vec::new(),
             checkpoints: Vec::new(),
             next_checkpoint: 1,
             saved_visibility: visibility.clone(),
@@ -805,9 +851,12 @@ impl Session {
             pending_moves: self.pending_moves.clone(),
             world_cache: std::sync::Mutex::new(self.world_cache.lock().ok().and_then(|cache| cache.clone())),
             occurrence_visibility_cache: Default::default(),
+            removed_later_cache: Default::default(),
             clipboard: self.clipboard.clone(),
+            sketch_clipboard: self.sketch_clipboard.clone(),
             section: None,
             analysis: None,
+            continuity: Vec::new(),
             checkpoints: Vec::new(),
             next_checkpoint: 1,
             visibility: self.visibility.clone(),
@@ -849,6 +898,12 @@ impl Session {
         self.active_component = computed.active_component;
         self.active_occurrence_path = computed.active_occurrence_path;
         self.pending_moves = computed.pending_moves;
+        // Joints the computation hid (an import's rigid group) stay hidden.
+        for j in computed.visibility.hidden_joints {
+            if !self.visibility.hidden_joints.contains(&j) {
+                self.visibility.hidden_joints.push(j);
+            }
+        }
         for message in computed.log {
             self.echo(message);
         }
@@ -876,6 +931,17 @@ impl Session {
             Arc::new(shown)
         };
         self.scratch().preview_in_place(commands).map(|(after, replies)| Preview { before: visible(self), after: visible(&after), replies })
+    }
+
+    /// Run `commands` on a [`Session::scratch`] copy that keeps the undo and redo stacks: what
+    /// they evaluate lands in the evaluation cache the copy shares with this session, so running
+    /// them here afterwards finds it there. For a front end that computes a command which may
+    /// take a while (undo, the history marker moved) off its window thread first.
+    pub fn ahead(&self) -> Ahead {
+        let mut copy = self.scratch();
+        copy.undo.clone_from(&self.undo);
+        copy.redo.clone_from(&self.redo);
+        Ahead(copy)
     }
 
     fn preview_in_place(mut self, commands: &[(String, Value)]) -> Result<(Self, Vec<Value>)> {
@@ -957,6 +1023,8 @@ mod hole_matrix_tests;
 #[cfg(test)]
 mod large_assembly_tests;
 #[cfg(test)]
+mod measure_centre_tests;
+#[cfg(test)]
 mod naming_history_tests;
 #[cfg(test)]
 mod pattern_suppress_tests;
@@ -964,6 +1032,8 @@ mod pattern_suppress_tests;
 mod profile_curves_tests;
 #[cfg(test)]
 mod profile_refs_tests;
+#[cfg(test)]
+mod sketch_edit_removed_tests;
 #[cfg(test)]
 mod split_face_tests;
 #[cfg(test)]

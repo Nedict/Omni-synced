@@ -67,6 +67,22 @@ fn instance_selection_survives_rename_move_capture_and_serde() {
 }
 
 #[test]
+fn component_rename_carries_into_placement_names() {
+    // #1665: the browser row shows the placement's name, so a rename has to reach it.
+    let mut s = Session::default();
+    let (component, first) = created(&mut s, "Block");
+    let second = run(&mut s, "occurrence.copy", json!({"component": component, "translate": [20,0,0]}))["occurrence"].as_u64().unwrap();
+    let third = run(&mut s, "occurrence.copy", json!({"component": component, "translate": [40,0,0]}))["occurrence"].as_u64().unwrap();
+    let name = |s: &Session, id: u64| s.doc.occurrences.iter().find(|o| o.id == id).unwrap().name.clone();
+    assert_eq!(name(&s, second), "Block:2");
+    // A placement named otherwise (an import's own name) keeps it.
+    s.doc_mut().occurrences.iter_mut().find(|o| o.id == third).unwrap().name = "Blockade:3".into();
+    run(&mut s, "component.rename", json!({"component": component, "name": "box"}));
+    assert_eq!([name(&s, first), name(&s, second), name(&s, third)], ["box:1", "box:2", "Blockade:3"]);
+    assert_eq!(run(&mut s, "component.list", json!({}))["components"][0]["children"][0]["name"], "box:1");
+}
+
+#[test]
 fn instance_selection_delete_removes_only_selected_instance() {
     let mut s = Session::default();
     let (component, first) = created(&mut s, "Block");
@@ -538,4 +554,29 @@ fn a_linked_design_brings_its_bodies_in_and_follows_edits_to_the_part_file() {
     near(&measured["total"]["volume_mm3"], 9000.0);
     near(&measured["total"]["center_of_mass"][0], 55.0);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The compact list counts what a component holds and leaves out identity transforms; the full
+/// list stays as it was.
+#[test]
+fn compact_component_list_counts_and_skips_identity_transforms() {
+    let mut s = Session::default();
+    let (component, first) = created(&mut s, "Block");
+    run(&mut s, "solid.box", json!({"length": 1, "width": 1, "height": 1, "body_name": "Cube"}));
+    run(&mut s, "component.activate", json!({"component": "root"}));
+    let second = run(&mut s, "occurrence.copy", json!({"component": component, "translate": [20, 0, 0]}))["occurrence"].as_u64().unwrap();
+    let full = run(&mut s, "component.list", json!({}));
+    let block = |l: &Value| l["components"].as_array().unwrap().iter().find(|c| c["id"] == component).unwrap().clone();
+    assert_eq!(block(&full)["bodies"], json!(["Cube"]));
+    assert!(block(&full)["occurrences"].as_array().unwrap().iter().all(|o| o["transform"].is_array()));
+    let compact = run(&mut s, "component.list", json!({"compact": true}));
+    let b = block(&compact);
+    assert_eq!((&b["bodies"], &b["features"], &b["sketches"]), (&json!(1), &json!(1), &json!(0)), "{b}");
+    let placed = |id: u64| b["occurrences"].as_array().unwrap().iter().find(|o| o["id"] == id).unwrap().clone();
+    assert!(placed(first).get("transform").is_none(), "{b}");
+    assert_eq!(placed(second)["transform"][3][0], 20.0, "{b}");
+    let root = compact["components"].as_array().unwrap().iter().find(|c| c["id"] == 0).unwrap().clone();
+    assert_eq!(root["children"], json!([first, second]), "{root}");
+    // Body names on request.
+    assert_eq!(block(&run(&mut s, "component.list", json!({"compact": true, "bodies": true})))["bodies"], json!(["Cube"]));
 }

@@ -108,18 +108,8 @@ pub fn srgb(c: [f32; 3]) -> Color32 {
 }
 
 /// Surface analysis colours, straight sRGB 0..1 as the shader takes them (exact, so they read
-/// the same as when they were literals in the WGSL).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct AnalysisColors {
-    /// Draft Analysis: at least the draft angle, between, at most minus the angle.
-    pub draft: [[f32; 3]; 3],
-    /// Accessibility Analysis: reachable, blocked.
-    pub access: [[f32; 3]; 2],
-    /// Curvature Map: flat, the middle of the scale, at or below the analysis radius.
-    pub curvature: [[f32; 3]; 3],
-    /// Stripe the negative draft and blocked faces too, so colour is not the only cue.
-    pub hatch: bool,
-}
+/// the same as when they were literals in the WGSL). The light theme's are the headless default.
+pub use solidcraft_engine::render::AnalysisColors;
 
 /// The colours icons draw of their own (`icons::paint` takes ink, fill and accent from its
 /// caller). Every icon colour is a token so a colour vision mode can reach it.
@@ -266,8 +256,6 @@ pub struct Tokens {
     pub app_bar_text: Color32,
     /// A hovered tab on the application bar (keeps `app_bar_text` readable).
     pub app_bar_hover: Color32,
-    /// Outline of the inactive tabs on the application bar, so neighbouring tabs stay apart.
-    pub app_bar_tab_edge: Color32,
     /// Timeline items: normal and failed.
     pub timeline_item: Color32,
     pub timeline_item_error: Color32,

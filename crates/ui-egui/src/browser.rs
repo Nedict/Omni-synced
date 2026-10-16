@@ -10,6 +10,13 @@
 #[path = "occurrence_ui_tests.rs"]
 mod occurrence_ui_tests;
 
+#[path = "browser_model.rs"]
+mod model;
+
+#[cfg(test)]
+#[path = "browser_model_tests.rs"]
+mod model_tests;
+
 use crate::icons::glyphs::badge;
 use std::collections::BTreeSet;
 
@@ -42,6 +49,8 @@ pub fn drawn_occurrences() -> Vec<(Vec<u64>, String, Rect, bool)> {
 /// Browser state kept between frames.
 #[derive(Default)]
 pub struct TreeState {
+    /// Geometry and assembly queries, independent of the camera, selection and row visibility.
+    model: Option<model::Model>,
     /// Folders closed by the user (keys like `c0/bodies`).
     pub collapsed: BTreeSet<String>,
     /// Folders opened by the user (folders that start closed).
@@ -547,7 +556,60 @@ fn browser_contents(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
     browser_rows(app, ui, acts);
 }
 
+fn prepare_model(app: &mut SolveApp) {
+    if app.tree.model.as_ref().is_none_or(|model| !model.matches(&app.session)) {
+        app.tree.model = Some(model::Model::new(&app.session));
+    }
+}
+
+fn model_placement(app: &mut SolveApp, path: &[u64]) -> Option<std::sync::Arc<solidcraft_engine::occurrences::OccurrencePlacement>> {
+    prepare_model(app);
+    app.tree.model.as_mut()?.placement(&app.session, path)
+}
+
+fn model_children(app: &SolveApp, component: u64) -> Vec<u64> {
+    match app.tree.model.as_ref().filter(|model| model.matches(&app.session)) {
+        Some(model) => model.children.get(&component).cloned().unwrap_or_default(),
+        None => app.session.doc.occurrences.iter().filter(|o| o.parent == component).map(|o| o.id).collect(),
+    }
+}
+
+fn model_body_indices(app: &SolveApp, component: u64) -> Vec<usize> {
+    match app.tree.model.as_ref().filter(|model| model.matches(&app.session)) {
+        Some(model) => model.bodies.get(&component).cloned().unwrap_or_default(),
+        None => app
+            .session
+            .model
+            .state()
+            .bodies
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| app.session.doc.model_body_component(b) == component)
+            .map(|(i, _)| i)
+            .collect(),
+    }
+}
+
+fn model_feature_indices(app: &SolveApp, component: u64, sketches: bool) -> Vec<usize> {
+    match app.tree.model.as_ref().filter(|model| model.matches(&app.session)) {
+        Some(model) => (if sketches { &model.sketches } else { &model.planes }).get(&component).cloned().unwrap_or_default(),
+        None => app
+            .session
+            .doc
+            .features
+            .iter()
+            .enumerate()
+            .filter_map(|(i, f)| {
+                let kind =
+                    if sketches { matches!(f.kind, FeatureKind::Sketch { .. }) } else { matches!(f.kind, FeatureKind::ConstructionPlane { .. }) };
+                (f.component == component && kind).then_some(i)
+            })
+            .collect(),
+    }
+}
+
 fn browser_rows(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions) {
+    prepare_model(app);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .scroll_source(egui::scroll_area::ScrollSource { scroll_bar: true, mouse_wheel: true, ..egui::scroll_area::ScrollSource::NONE })
@@ -673,7 +735,7 @@ fn component_rows(app: &mut SolveApp, ui: &mut egui::Ui, id: u64, depth: usize, 
             crate::manufacture_workspace::browser_setup_rows(app, ui, d);
         }
     }
-    let children: Vec<u64> = app.session.doc.occurrences.iter().filter(|o| o.parent == id).map(|o| o.id).collect();
+    let children = model_children(app, id);
     for occurrence in children {
         occurrence_rows(app, ui, vec![occurrence], d, acts);
     }
@@ -686,7 +748,7 @@ fn occurrence_key(path: &[u64]) -> String {
 /// A placement, rather than a component definition: repeated child IDs remain distinct
 /// because their complete paths are the selection and row identity.
 fn occurrence_rows(app: &mut SolveApp, ui: &mut egui::Ui, path: Vec<u64>, depth: usize, acts: &mut Actions) {
-    let Ok(placement) = app.session.occurrence_placement(&path) else { return };
+    let Some(placement) = model_placement(app, &path) else { return };
     let key = occurrence_key(&path);
     let open = is_open(app, &key, true);
     let active = app.session.active_occurrence_path.as_deref() == Some(path.as_slice())
@@ -770,7 +832,7 @@ fn occurrence_rows(app: &mut SolveApp, ui: &mut egui::Ui, path: Vec<u64>, depth:
     for folder in ["bodies", "sketches", "construction"] {
         occurrence_folder_rows(app, ui, placement.component, &path, folder, depth + 1, acts);
     }
-    let children: Vec<u64> = app.session.doc.occurrences.iter().filter(|o| o.parent == placement.component).map(|o| o.id).collect();
+    let children = model_children(app, placement.component);
     if path.len() < 64 {
         for occurrence in children {
             let mut child = path.clone();
@@ -863,6 +925,11 @@ fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
             } else {
                 app.session.visibility.hidden_origin.retain(|h| h != k);
             }
+        }
+        if let Some(p) = r.secondary
+            && icon == "plane"
+        {
+            crate::context_menu::open_for(app, p, Target::OriginPlane { name: k.into() });
         }
         if r.clicked
             && let Some(x) = sel
@@ -1160,7 +1227,7 @@ fn canvas_panel(app: &mut SolveApp, ctx: &egui::Context) {
                     let r3 = ui.add(crate::prefs::length_drag(&mut w, &app.session.doc.units, app.preferences.length_decimals).range(0.01..=1e6));
                     ui.end_row();
                     ui.label(crate::i18n::tr_label("Angle"));
-                    let r4 = ui.add(egui::DragValue::new(&mut ang).speed(1.0).suffix(" deg"));
+                    let r4 = ui.add(egui::DragValue::new(&mut ang).speed(1.0).suffix(" deg").custom_parser(crate::prefs::parse_number));
                     ui.end_row();
                     ui.label(crate::i18n::tr_label("Opacity"));
                     let r5 = ui.add(egui::Slider::new(&mut op, 0.0..=1.0));
@@ -1248,14 +1315,12 @@ fn entries(app: &SolveApp, comp: u64, folder: &str) -> Vec<Entry> {
     let t = Tokens::get();
     let doc = &app.session.doc;
     let sel = &app.session.selection;
+    let state = app.session.model.state();
     match folder {
-        "bodies" => app
-            .session
-            .model
-            .state()
-            .bodies
-            .iter()
-            .filter(|b| doc.model_body_component(b) == comp)
+        "bodies" => model_body_indices(app, comp)
+            .into_iter()
+            .filter_map(|i| state.bodies.get(i))
+            .filter(|b| !app.session.body_removed_later(&b.name))
             .map(|b| Entry {
                 key: b.name.clone(),
                 row_key: format!("b:{}", b.name),
@@ -1271,10 +1336,9 @@ fn entries(app: &SolveApp, comp: u64, folder: &str) -> Vec<Entry> {
                 isolated: !crate::manufacture_workspace::setup_shows_body(app, &b.name),
             })
             .collect(),
-        "sketches" => doc
-            .features
-            .iter()
-            .filter(|f| f.component == comp && matches!(f.kind, FeatureKind::Sketch { .. }))
+        "sketches" => model_feature_indices(app, comp, true)
+            .into_iter()
+            .filter_map(|i| doc.features.get(i))
             .map(|f| {
                 let active = app.session.active_sketch == Some(f.id);
                 let lost = app.session.model.result(f.id).is_some_and(|result| result.error.is_some())
@@ -1301,10 +1365,9 @@ fn entries(app: &SolveApp, comp: u64, folder: &str) -> Vec<Entry> {
                 }
             })
             .collect(),
-        _ => doc
-            .features
-            .iter()
-            .filter(|f| f.component == comp && matches!(f.kind, FeatureKind::ConstructionPlane { .. }))
+        _ => model_feature_indices(app, comp, false)
+            .into_iter()
+            .filter_map(|i| doc.features.get(i))
             .map(|f| Entry {
                 key: f.id.to_string(),
                 row_key: format!("p:{}", f.id),
@@ -1401,7 +1464,7 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
     let mut all = entries(app, comp, folder);
     let prefix = path.map(occurrence_key).unwrap_or_else(|| format!("c{comp}"));
     if let Some(path) = path {
-        let Ok(placement) = app.session.occurrence_placement(path) else { return };
+        let Some(placement) = model_placement(app, path) else { return };
         // Each row's placed body by its definition's name (a search per row was quadratic in a
         // component's bodies, every frame).
         let mut placed: std::collections::HashMap<&str, &_> = std::collections::HashMap::with_capacity(placement.bodies.len());
@@ -1537,12 +1600,17 @@ fn entry_row(
     acts: &mut Actions,
 ) {
     app.tree.order.push(e.row_key.clone());
+    let pattern_sketch =
+        (folder == "sketches").then(|| e.key.parse::<u64>().ok()).flatten().filter(|id| crate::sketch_pattern_tree::has_patterns(app, *id));
+    let pattern_key = format!("{}/patterns", e.row_key);
+    let patterns_open = is_open(app, &pattern_key, true);
     let badges: &[&str] = if e.locked { &["lock"] } else { &[] };
     let r = draw_row(
         ui,
         ui.id().with(("item", &e.row_key)),
         &Row {
             depth,
+            fold: pattern_sketch.map(|_| patterns_open),
             eye: Some(e.visible),
             icon: e.icon,
             label: &e.label,
@@ -1554,6 +1622,9 @@ fn entry_row(
             ..Default::default()
         },
     );
+    if r.fold {
+        toggle(app, &pattern_key, true);
+    }
     if folder == "bodies"
         && app.tree.reveal.as_deref() == Some(e.key.as_str())
         && let Some(rect) = r.rect
@@ -1592,6 +1663,9 @@ fn entry_row(
             let _ = app.run("select.set", json!({ "items": [s] }));
         }
         acts.menu = Some((p, t));
+    }
+    if let Some(sketch) = pattern_sketch.filter(|_| patterns_open) {
+        crate::sketch_pattern_tree::rows(app, ui, sketch, depth + 1, "browser", path.map(|path| (comp, path)));
     }
     let Some(resp) = &r.resp else { return };
     // Drag: the selected items of this folder when this one is selected, else just this one.
@@ -1732,7 +1806,7 @@ fn occurrence_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
                 for (k, axis) in ["X angle", "Y angle", "Z angle"].iter().enumerate() {
                     ui.label(*axis);
                     if let Some(v) = m.angles.get_mut(k) {
-                        let response = ui.add(egui::DragValue::new(v).speed(1.0).suffix(" deg"));
+                        let response = ui.add(egui::DragValue::new(v).speed(1.0).suffix(" deg").custom_parser(crate::prefs::parse_number));
                         crate::scenario::publish_handle(&format!("occurrence-move:angle:{k}"), response.rect.center());
                     }
                     ui.end_row();
@@ -1830,7 +1904,7 @@ fn triad(app: &mut SolveApp, ui: &mut egui::Ui, m: &mut OccMove) {
 /// viewport like the sketch being edited draws its own (`crate::dim_view`), but not editable.
 pub fn dims_overlay(app: &SolveApp, ctx: &egui::Context) {
     use solidcraft_engine::geom::Vec2;
-    use solidcraft_engine::sketch::{DimFrame, chain_centres, default_text, dim_frame, dim_layout};
+    use solidcraft_engine::sketch::{DimFrame, chain_centres, default_text, dim_frame, dim_layout_reaching, dim_reach};
     let Some(rect) = app.viewport.rect else { return };
     if app.ui.shown_dims.is_empty() {
         return;
@@ -1868,7 +1942,7 @@ pub fn dims_overlay(app: &SolveApp, ctx: &egui::Context) {
             );
             let size = galley.size() + vec2(6.0, 2.0);
             let half = Vec2::new(f64::from(size.x) * 0.5 * px, f64::from(size.y) * 0.5 * px);
-            let lay = dim_layout(&frame, c.text.or_else(|| default_text(&frame, middle, px)), px, half);
+            let lay = dim_layout_reaching(&frame, c.text.or_else(|| default_text(&frame, middle, px)), px, half, dim_reach(sk, &c.kind));
             for line in &lay.lines {
                 painter.add(egui::Shape::line(line.iter().filter_map(|q| to(*q)).collect(), Stroke::new(1.0, col)));
             }
@@ -1970,6 +2044,12 @@ fn occurrence_origin(app: &SolveApp, occurrence: u64) -> Option<solidcraft_engin
     let parent = app.session.doc.component_transform(o.parent);
     let own = app.session.pending_moves.get(&occurrence).copied().unwrap_or(o.transform);
     Some(solidcraft_engine::doc::apply_point(&solidcraft_engine::doc::mat_mul(&parent, &own), solidcraft_engine::geom::Vec3::ZERO))
+}
+
+/// The names the Bodies folder lists at the top level, for tests.
+#[cfg(test)]
+pub(crate) fn body_rows(app: &SolveApp) -> Vec<String> {
+    entries(app, 0, "bodies").into_iter().map(|e| e.key).collect()
 }
 
 #[cfg(test)]
