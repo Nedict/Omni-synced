@@ -379,7 +379,13 @@ fn profile_points(doc: &Document, st: &ModelState, p: &CamProfile, cam: &super::
                 .flatten()
                 .filter(|e| !lines.iter().any(|l| std::ptr::eq(*l, *e)) && e.iter().all(|p| (p.dot(axis) - level).abs() <= flat))
                 .collect();
-            Ok((chain(&lines, &pool, 1e-5 * size).ok_or_else(|| bad("the picked edges must form one closed loop"))?, *occurrence, size))
+            let loop_ = chain(&lines, &pool, 1e-5 * size)
+                .ok_or_else(|| bad(&format!("the picked edges must form one closed loop (of at most {MAX_PROFILE_POINTS} points)")))?;
+            // The profile's own size (not its bodies'), for the checks on its plane and area.
+            let (lo, hi) = loop_.iter().fold((Vec3::new(f64::MAX, f64::MAX, f64::MAX), Vec3::new(f64::MIN, f64::MIN, f64::MIN)), |(lo, hi), p| {
+                (Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z)), Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z)))
+            });
+            Ok((loop_, *occurrence, (hi - lo).len()))
         }
     }
 }
@@ -391,9 +397,36 @@ fn chain(lines: &[&Vec<Vec3>], pool: &[&Vec<Vec3>], tol: f64) -> Option<Vec<Vec3
     let (first, rest) = lines.split_first()?;
     let mut out: Vec<Vec3> = first.to_vec();
     let (mut used, mut taken) = (vec![false; rest.len()], vec![false; pool.len()]);
-    // The next polyline on from `end`, and whether it runs backwards.
-    let next = |ls: &[&Vec<Vec3>], done: &[bool], end: Vec3| {
-        ls.iter().enumerate().filter(|(k, _)| !done.get(*k).copied().unwrap_or(true)).find_map(|(k, l)| {
+    // The pool's ends by their cell of a `tol` grid, so the next one is found among a few.
+    let cell = |p: Vec3| -> Option<[i64; 3]> {
+        let c = [p.x / tol, p.y / tol, p.z / tol];
+        c.iter().all(|v| v.is_finite() && v.abs() < 1e15).then(|| c.map(|v| v.round() as i64))
+    };
+    let mut ends: std::collections::BTreeMap<[i64; 3], Vec<(usize, bool)>> = std::collections::BTreeMap::new();
+    for (k, l) in pool.iter().enumerate() {
+        for (p, flip) in [(l.first(), false), (l.last(), true)] {
+            if let Some(c) = p.and_then(|p| cell(*p)) {
+                ends.entry(c).or_default().push((k, flip));
+            }
+        }
+    }
+    let near_end = |end: Vec3, taken: &[bool]| -> Option<(usize, bool)> {
+        let c = cell(end)?;
+        for d in 0..27i64 {
+            let key = [c[0] + d % 3 - 1, c[1] + d / 3 % 3 - 1, c[2] + d / 9 - 1];
+            for &(k, flip) in ends.get(&key).into_iter().flatten() {
+                let l = pool.get(k)?;
+                let p = if flip { l.last()? } else { l.first()? };
+                if taken.get(k) == Some(&false) && p.dist(end) <= tol {
+                    return Some((k, flip));
+                }
+            }
+        }
+        None
+    };
+    // The next picked polyline on from `end` (a few at most), and whether it runs backwards.
+    let next = |end: Vec3, used: &[bool]| {
+        rest.iter().enumerate().filter(|(k, _)| used.get(*k) == Some(&false)).find_map(|(k, l)| {
             if l.first()?.dist(end) <= tol {
                 Some((k, false))
             } else if l.last()?.dist(end) <= tol {
@@ -408,13 +441,16 @@ fn chain(lines: &[&Vec<Vec3>], pool: &[&Vec<Vec3>], tol: f64) -> Option<Vec<Vec3
         if out.len() > 3 && out.first()?.dist(end) <= tol {
             break;
         }
-        let (l, flip) = match next(rest, &used, end) {
+        if out.len() > MAX_PROFILE_POINTS {
+            return None;
+        }
+        let (l, flip) = match next(end, &used) {
             Some((k, flip)) => {
                 *used.get_mut(k)? = true;
                 (*rest.get(k)?, flip)
             }
             None => {
-                let (k, flip) = next(pool, &taken, end)?;
+                let (k, flip) = near_end(end, &taken)?;
                 *taken.get_mut(k)? = true;
                 (*pool.get(k)?, flip)
             }
@@ -425,7 +461,7 @@ fn chain(lines: &[&Vec<Vec3>], pool: &[&Vec<Vec3>], tol: f64) -> Option<Vec<Vec3
             out.extend(l.iter().skip(1));
         }
     }
-    if out.len() < 4 || out.first()?.dist(*out.last()?) > tol || !used.iter().all(|u| *u) {
+    if out.len() < 4 || out.len() > MAX_PROFILE_POINTS + 1 || out.first()?.dist(*out.last()?) > tol || !used.iter().all(|u| *u) {
         return None;
     }
     out.pop();
@@ -888,5 +924,17 @@ mod tests {
         // One pick goes on along the other edges of its plane; a spare pick still fails.
         assert_eq!(chain(&[&a], &[&d, &c, &b], 1e-9).map(|l| l.len()), Some(3));
         assert_eq!(chain(&[&a, &d], &[&c, &b], 1e-9), None);
+        // A loop of many short edges goes round from one of them, found by their ends; past the
+        // point cap it is refused, without going on round it.
+        let ring = |n: usize| -> Vec<Vec<Vec3>> {
+            let at = |k: usize| Vec3::new((TAU * k as f64 / n as f64).cos(), (TAU * k as f64 / n as f64).sin(), 0.0) * 100.0;
+            (0..n).map(|k| vec![at(k), at(k + 1)]).collect()
+        };
+        let small = ring(10_000);
+        let rest: Vec<&Vec<Vec3>> = small.iter().skip(1).rev().collect();
+        assert_eq!(chain(&[&small[0]], &rest, 1e-6).map(|l| l.len()), Some(10_000));
+        let big = ring(100_000);
+        let rest: Vec<&Vec<Vec3>> = big.iter().skip(1).collect();
+        assert_eq!(chain(&[&big[0]], &rest, 1e-7), None);
     }
 }
