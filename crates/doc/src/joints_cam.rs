@@ -352,15 +352,19 @@ fn profile_points(doc: &Document, st: &ModelState, p: &CamProfile, cam: &super::
             let mut sides: Vec<(usize, &[u32])> = Vec::new();
             for (k, pick) in picks.iter().enumerate() {
                 let mut at = *pick;
+                // A named edge is looked for on the body that has it, and only there.
+                let mut on: Option<usize> = None;
                 if let Some(name) = names.get(k).filter(|n| !n.is_empty()) {
-                    at = bodies
+                    let (body, p) = bodies
                         .iter()
-                        .find_map(|b| crate::naming::find_edge(b, name, *pick).ok())
-                        .map(|(p, _)| p)
+                        .enumerate()
+                        .find_map(|(i, b)| crate::naming::find_edge(b, name, *pick).ok().map(|(p, _)| (i, p)))
                         .ok_or_else(|| bad(&format!("the edge `{name}` no longer exists (edit the cam to pick again)")))?;
+                    (on, at) = (Some(body), p);
                 }
                 let nearest = edges
                     .iter()
+                    .filter(|e| on.is_none_or(|b| e.0 == b))
                     .map(|e| {
                         let d = e.1.windows(2).filter_map(|w| match w {
                             [p, q] => Some(at.dist_to_segment(*p, *q)),
