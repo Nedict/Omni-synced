@@ -619,6 +619,10 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
     // `tol_m` cost no more. `None` when no finer step is called for or the meshes are too large
     // for the test.
     let refined = std::cell::OnceCell::new();
+    // A mesh's triangles at `tol`, estimated from its triangles at `tol_m`: they grow at most as
+    // the step shrinks (a doubly curved face's do, a plane's stay). Meshes the test could not
+    // sample anyway are not made.
+    let grown = |n: usize, tol: f64| n as f64 * (tol_m / tol);
     let refine = || {
         let (Some(ma), Some(mb)) = &meshes else { return None };
         let (ba, bb) = (ma.bounds(), mb.bounds());
@@ -628,8 +632,8 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
             return None;
         }
         let tol = (side * 2e-3).max(size * 1e-5);
-        // Not much finer: the test at `tol_m` already said what this one would.
-        if !(tol < 0.5 * tol_m) {
+        // Not much finer (the test at `tol_m` already said what this one would), or too large.
+        if !(tol < 0.5 * tol_m) || grown(ma.triangles.len() + mb.triangles.len(), tol) > MISMATCH_TRIANGLES as f64 {
             return None;
         }
         let (fa, fb) = (a.tessellate_with(tol, true).ok()?, b.tessellate_with(tol, true).ok()?);
@@ -649,7 +653,8 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
             (Some(ma), Some(mb)) => mismatch(ma, mb, &mr, op).is_none_or(|f| {
                 f < 0.004
                     || refined.get_or_init(&refine).as_ref().is_some_and(|(fa, fb, tol)| {
-                        r.tessellate_with(*tol, true).ok().and_then(|fr| mismatch(fa, fb, &fr, op)).is_some_and(|f| f < 0.004)
+                        (fa.triangles.len() + fb.triangles.len()) as f64 + grown(mr.triangles.len(), *tol) <= MISMATCH_TRIANGLES as f64
+                            && r.tessellate_with(*tol, true).ok().and_then(|fr| mismatch(fa, fb, &fr, op)).is_some_and(|f| f < 0.004)
                     })
             }),
             _ => true,
