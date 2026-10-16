@@ -389,7 +389,14 @@ fn shell_create_polygon<S: PreMeshableSurface>(
         .collect::<Option<Vec<_>>>();
     let polygon: Option<PolygonMesh> = (|| {
         let boundary = PolyBoundary::new(preboundary?, &surface, tol);
-        Some(trimming_tessellation(surface, &boundary, tol, cap))
+        let mut mesh = trimming_tessellation(surface, &boundary, tol, cap);
+        // Display and export meshes only, as the ruling grid lines: the meshes Boolean
+        // operations intersect keep truck's points.
+        if tol.rulings {
+            let points: Vec<Point3> = wires.iter().flat_map(Wire::edge_iter).flat_map(|e| e.curve().0).collect();
+            onto_edges(&mut mesh, &points, tol.chord);
+        }
+        Some(mesh)
     })();
     // SolidCraft: faces with seam edges (a loop running along an edge both ways, as STEP
     // writes cylinders) are valid here; `debug_new` asserts simple loops in debug builds.
@@ -398,6 +405,44 @@ fn shell_create_polygon<S: PreMeshableSurface>(
         new_face.invert();
     }
     new_face
+}
+
+/// SolidCraft: a face's mesh puts every point where its own surface passes the point's
+/// parameters, and a boundary point's parameters are those its edge point projects to. An edge
+/// that lies on a surface only within tolerance (a sample of an intersection curve whose
+/// projection did not converge, an imported edge) then puts the point it shares with the next
+/// face in a different place on each face, and the shell's mesh cracks there. Each vertex on
+/// the mesh's open boundary goes back to the nearest point of the face's edges within `tol`, so
+/// the faces of an edge have the very same points along it.
+fn onto_edges(mesh: &mut PolygonMesh, points: &[Point3], tol: f64) {
+    let mut uses: HashMap<(usize, usize), u32> = HashMap::default();
+    for tri in mesh.faces().triangle_iter() {
+        for (a, b) in [(tri[0].pos, tri[1].pos), (tri[1].pos, tri[2].pos), (tri[2].pos, tri[0].pos)] {
+            *uses.entry((a.min(b), a.max(b))).or_default() += 1;
+        }
+    }
+    let open: Vec<usize> = uses.into_iter().filter(|(_, n)| *n == 1).flat_map(|((a, b), _)| [a, b]).collect();
+    let cell = |p: Point3| [p.x, p.y, p.z].map(|x| (x / tol).floor() as i64);
+    let mut grid: HashMap<[i64; 3], Vec<Point3>> = HashMap::default();
+    points.iter().for_each(|p| grid.entry(cell(*p)).or_default().push(*p));
+    let positions = mesh.positions_mut();
+    for i in open {
+        let Some(p) = positions.get_mut(i) else { continue };
+        let c = cell(*p);
+        let mut best = (tol * tol, None);
+        for d in (0..27).map(|k| [k % 3 - 1, k / 3 % 3 - 1, k / 9 - 1]) {
+            let key = [c[0].saturating_add(d[0]), c[1].saturating_add(d[1]), c[2].saturating_add(d[2])];
+            for q in grid.get(&key).into_iter().flatten() {
+                let d2 = q.distance2(*p);
+                if d2 <= best.0 {
+                    best = (d2, Some(*q));
+                }
+            }
+        }
+        if let Some(q) = best.1 {
+            *p = q;
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone)]
