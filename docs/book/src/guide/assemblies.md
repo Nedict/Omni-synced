@@ -28,6 +28,40 @@ made. Contact sets stop motion where bodies would pass through each other,
 **Motion Study** keys joint values along a timeline, and **Interference** shows overlapping
 volumes in red.
 
+**Gear**, **Rack and Pinion** and **Screw** (on the **ASSEMBLE** panel) are motion links whose
+ratio comes from the parts rather than a typed number:
+
+- **Gear** (`joint.gear {a, b, ra, rb}`) couples two joints that turn. Joint 2 turns ra/rb as far
+  as joint 1, the other way round; **Internal gear** (one of them is a ring gear) turns both the
+  same way. Pick the round face of each gear, such as its pitch cylinder, or type the radii. Tooth
+  counts work as well as radii, since only their proportion counts. Picking a gear's face also
+  chooses the joint that gear turns on.
+- **Rack and Pinion** (`joint.rack_pinion {a, b, radius}`) couples a joint that turns with one
+  that slides: the rack travels the pinion's pitch radius times its turn in radians (r·θ). Either
+  joint may drive the other. In `joint.list` the ratio is given per degree, as for any link between
+  an angle and a distance.
+- **Screw** (`joint.screw {joint, pitch}`, or `{a, b, pitch}` for a revolute joint and a slider)
+  advances `pitch` per turn. A cylindrical joint is a screw on its own: its turn drives its travel.
+  The thread is right-handed; **Reverse** makes it left-handed.
+
+A radius or pitch may be an expression of the design's parameters, and a picked face is found
+again whenever the design changes. Change the parameter or the gear's diameter, and the ratio
+follows. The new link leaves the driven joint where it is, so teeth modelled in mesh stay in mesh.
+**Reverse** turns the driven joint the other way, for joints whose axes point opposite ways. These
+couplings are motion links, so they work in closed loops, with contact sets and in motion studies:
+a rack can push the piston of a slider-crank, or a pinion can steer through a rack and its tie
+rods. Drive the joint that drives the coupling (joint 1, the pinion, or the screw's turn), not the
+driven one. A joint follows one link at most, and a coupling that would drive its own driver is
+refused. `joint.list` lists each coupling's definition under `links` with an `error` when it can't
+be worked out (the picked face is gone); the link then keeps its last ratio.
+
+A joint moves one component against another, so its two picks must be on different components.
+A STEP file with several parts often comes in as bodies of one component, and picks on two of
+those bodies make no joint. The Joint and As-built Joint dialogs say so under the picks and offer
+**Create Components from Bodies**: each picked body gets a component of its own and stays where it
+is, the picks are kept, and the joint previews. `joint.create` refuses such origins with the same
+advice.
+
 Joints may close a loop, as in a four-bar linkage or a slider-crank. When one joint of the loop
 is driven, the other joints in the loop follow so that every joint still meets, and the
 mechanism stays in the assembly mode it started in (an open four-bar does not flip to the
@@ -57,8 +91,10 @@ instead, so two origins given at one point with the same z stay as they are. For
 drive many steps, `quiet: true` leaves the per-part degrees of freedom out of joint answers, and
 `motion.play` with `quiet: true` gives the poses of only the parts that moved.
 
-**Insert Design** (`component.insert_design {path, translate?}`) adds a component linked to
-another saved design, so each part can live in its own document. The part's solid bodies come
+**Insert Design** (`component.insert_design {path, translate?}`, on the **ASSEMBLE** panel and
+in the **File** menu) adds a component linked to another saved design, so each part can live in
+its own document. A STEP or mesh file picked there is inserted as **Insert STEP** or **Insert
+Mesh** would. The part's solid bodies come
 in as they sit in that design, and they are kept in the assembly, so it opens even without the
 part file. The link is stored relative to the assembly's folder once the assembly is saved.
 After the part file changes, **Update Links** (`component.update_links`) reads it again.

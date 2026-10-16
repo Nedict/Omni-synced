@@ -1,5 +1,5 @@
 //! Assembly dialogs: New Component, Joint, As-built Joint, Joint Origin, Rigid Group, Drive
-//! Joints, Motion Link and Interference. Joint origins are picked by hovering geometry: a face
+//! Joints, Motion Link, Gear, Rack and Pinion, Screw (`dialogs_coupling`) and Interference. Joint origins are picked by hovering geometry: a face
 //! snaps to its centre (or a round face to the centre of its nearer end), an edge to its middle
 //! (a round edge to its centre), a vertex to itself; the snap shows as a glyph with its z axis
 //! before the click. Joints and drives preview on the placed (world) model: the moving
@@ -27,8 +27,19 @@ const TYPE_LABELS: [&str; 7] = ["Rigid", "Revolute", "Slider", "Cylindrical", "P
 /// What a joint origin input accepts (snaps on faces, edges and vertices).
 const SNAPS: u16 = FACES | EDGES | VERTICES;
 /// Commands whose effect is where occurrences sit (previewed on the placed model).
-const MOVES: [&str; 8] =
-    ["joint.create", "joint.as_built", "joint.drive", "joint.edit", "joint.limits", "joint.rigid_group", "parts.insert", "parts.fastener"];
+const MOVES: [&str; 11] = [
+    "joint.create",
+    "joint.as_built",
+    "joint.drive",
+    "joint.edit",
+    "joint.limits",
+    "joint.rigid_group",
+    "joint.gear",
+    "joint.rack_pinion",
+    "joint.screw",
+    "parts.insert",
+    "parts.fastener",
+];
 
 #[derive(Clone, Debug)]
 pub enum Asm {
@@ -56,6 +67,7 @@ pub enum Asm {
         ratio: String,
         offset: String,
     },
+    Coupling(Box<crate::dialogs_coupling::CouplingForm>),
     Interference {
         result: Option<Value>,
         overlaps: Vec<Mesh>,
@@ -128,12 +140,17 @@ impl Asm {
             Asm::RigidGroup => "RIGID GROUP",
             Asm::Drive { .. } => "DRIVE JOINTS",
             Asm::MotionLink { .. } => "MOTION LINK",
+            Asm::Coupling(f) => match f.command {
+                "joint.gear" => "GEAR",
+                "joint.rack_pinion" => "RACK AND PINION",
+                _ => "SCREW",
+            },
             Asm::Interference { .. } => "INTERFERENCE",
         }
     }
 
     pub fn previews(&self) -> bool {
-        matches!(self, Asm::Joint(_) | Asm::Drive { .. } | Asm::RigidGroup)
+        matches!(self, Asm::Joint(_) | Asm::Drive { .. } | Asm::RigidGroup | Asm::Coupling(_))
     }
 }
 
@@ -166,6 +183,7 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
             let b = usize::from(movable(s).len() > 1);
             (Asm::MotionLink { a: 0, b, ia: 0, ib: 0, ratio: "1".into(), offset: "0".into() }, vec![])
         }
+        "joint.gear" | "joint.rack_pinion" | "joint.screw" => crate::dialogs_coupling::start(app, id)?,
         "inspect.interference" => {
             (Asm::Interference { result: None, overlaps: Vec::new(), of: Vec::new() }, vec![SelInput::new("Bodies (all if none)", BODIES, true)])
         }
@@ -450,6 +468,7 @@ fn shifted(s: &SnapPt, x: f64, y: f64) -> Value {
 pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [SelInput], active: &mut usize) -> bool {
     let t = Tokens::get();
     let mut enter = false;
+    let problem = joint_problem(app, k, inputs);
     match k {
         Asm::NewComponent { name, activate } => {
             row_label(ui, "Name");
@@ -464,6 +483,20 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             // As-built: two components picked, the position comes next.
             if f.as_built && *active == 0 && inputs.first().is_some_and(|i| i.items.len() >= 2) {
                 *active = 1;
+            }
+            // Picks that make no joint say why, under them, and offer the way out (#1239).
+            if let Some((why, bodies)) = problem {
+                row_label(ui, "");
+                ui.vertical(|ui| {
+                    ui.add(egui::Label::new(RichText::new(why).color(t.warning)).wrap());
+                    if !bodies.is_empty()
+                        && ui.button(crate::i18n::tr("cmd.component_from_bodies")).on_hover_text(crate::i18n::tr("joint.from_bodies_hint")).clicked()
+                    {
+                        // A refusal shows on the status line; the picks stay either way.
+                        let _ = app.run("component.from_bodies", json!({ "bodies": bodies }));
+                    }
+                });
+                ui.end_row();
             }
             row_label(ui, "Motion");
             ui.label("");
@@ -642,6 +675,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut [Se
             enter |= field(ui, offset);
             ui.end_row();
         }
+        Asm::Coupling(f) => enter |= crate::dialogs_coupling::rows(app, ui, f, inputs),
         Asm::Interference { result, overlaps, of } => {
             let picked: Vec<Sel> = inputs.first().map(|i| i.items.clone()).unwrap_or_default();
             row_label(ui, "");
@@ -727,6 +761,42 @@ fn interference_rows(app: &SolveApp, ui: &mut egui::Ui, r: &Value) {
 
 fn sel_items(inputs: &[SelInput], i: usize) -> &[Sel] {
     inputs.get(i).map(|x| x.items.as_slice()).unwrap_or(&[])
+}
+
+/// The body a pick is on.
+fn body_of(sel: &Sel) -> Option<&str> {
+    match sel {
+        Sel::Face { body, .. } | Sel::Edge { body, .. } | Sel::Vertex { body, .. } => Some(body),
+        Sel::Body { name } => Some(name),
+        _ => None,
+    }
+}
+
+/// Why the Joint dialog's picks, all in, make no joint: without it the preview and OK just go
+/// quiet, and no option seems to do anything (#1239). With it, the bodies Create Components from
+/// Bodies would part (none when that would not help). The usual case is every pick on one
+/// component: a STEP file with several parts often brings them as bodies of one component.
+fn joint_problem(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Option<(String, Vec<String>)> {
+    let Asm::Joint(f) = k else { return None };
+    let picks: Vec<&Sel> =
+        if f.as_built { sel_items(inputs, 0).iter().collect() } else { (0..2).filter_map(|i| sel_items(inputs, i).first()).collect() };
+    if f.editing.is_some() || picks.len() < 2 {
+        return None;
+    }
+    let mut bodies: Vec<String> = Vec::new();
+    for b in picks.iter().filter_map(|p| body_of(p)) {
+        if !bodies.iter().any(|x| x == b) {
+            bodies.push(b.to_string());
+        }
+    }
+    let occs: Vec<Option<u64>> = bodies.iter().map(|b| occurrence_of_body(&app.session, b)).collect();
+    if occs.first().is_some_and(|first| first.is_some() && occs.iter().all(|o| o == first)) {
+        return Some(match bodies.as_slice() {
+            [body] => (crate::i18n::format("joint.one_body", &[("body", body.as_str())]), Vec::new()),
+            _ => (crate::i18n::format("joint.one_component", &[("bodies", &bodies.join(", "))]), bodies),
+        });
+    }
+    commands(app, k, inputs).err().map(|e| (e, Vec::new()))
 }
 
 /// The occurrences of picked bodies (deduplicated, in pick order).
@@ -827,9 +897,12 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
         Asm::MotionLink { a, b, ia, ib, ratio, offset } => {
             let js = &s.doc.assembly.joints;
             let (Some(ja), Some(jb)) = (js.get(*a), js.get(*b)) else { return Err("needs two joints".into()) };
-            let num = |e: &str| eval(e, ValueKind::Unitless);
-            cmd("joint.motion_link", json!({"a": ja.id, "b": jb.id, "ia": ia, "ib": ib, "ratio": num(ratio)?, "offset": num(offset)?}))
+            // The offset as typed: the engine reads it in Joint 2's units (deg or mm), and the
+            // ratio in Joint 2's units per Joint 1's.
+            let ratio = eval(ratio, ValueKind::Unitless)?;
+            cmd("joint.motion_link", json!({"a": ja.id, "b": jb.id, "ia": ia, "ib": ib, "ratio": ratio, "offset": offset.trim()}))
         }
+        Asm::Coupling(f) => return crate::dialogs_coupling::commands(app, f, inputs),
         // The check runs from its Compute button; OK only closes.
         Asm::Interference { .. } => Vec::new(),
     })
@@ -837,6 +910,9 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
 
 /// The preview's commands: OK's, with the joint's values playing its motion while animating.
 pub fn animate(app: &SolveApp, k: &Asm, cmds: &mut Vec<(String, Value)>) {
+    if let Asm::Coupling(f) = k {
+        crate::dialogs_coupling::animate(&app.session, f, cmds);
+    }
     let Asm::Joint(f) = k else { return };
     if !f.animate {
         return;

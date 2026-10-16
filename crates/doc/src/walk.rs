@@ -44,6 +44,7 @@ impl Walk for ProfileSel {}
 impl Walk for solidcraft_sketch::Sketch {}
 impl Walk for solidcraft_kernel::StepNode {}
 impl Walk for crate::document::Operation {}
+impl Walk for solidcraft_kernel::Continuity {}
 impl Walk for crate::document::Direction {}
 impl Walk for crate::document::FilletFit {}
 impl Walk for crate::document::MeshData {}
@@ -132,6 +133,36 @@ impl<T> Each<T> for Vec<T> {
     fn each_mut<'a>(&'a mut self, f: &mut dyn FnMut(&'a mut T)) {
         for t in self {
             f(t)
+        }
+    }
+}
+
+impl<T, const N: usize> Each<T> for [T; N] {
+    fn each<'a>(&'a self, f: &mut dyn FnMut(&'a T)) {
+        for t in self {
+            f(t)
+        }
+    }
+    fn each_mut<'a>(&'a mut self, f: &mut dyn FnMut(&'a mut T)) {
+        for t in self {
+            f(t)
+        }
+    }
+}
+
+impl<T, const N: usize> Each<T> for Option<[T; N]> {
+    fn each<'a>(&'a self, f: &mut dyn FnMut(&'a T)) {
+        if let Some(a) = self {
+            for t in a {
+                f(t)
+            }
+        }
+    }
+    fn each_mut<'a>(&'a mut self, f: &mut dyn FnMut(&'a mut T)) {
+        if let Some(a) = self {
+            for t in a {
+                f(t)
+            }
         }
     }
 }
@@ -233,8 +264,9 @@ impl<F: Fn(usize, usize) -> &'static str> Label for F {
     }
 }
 
-/// The offsets and angles of a plane, outermost first (nesting is capped like every walk over a
-/// plane), the construction plane it is built on, and the plane itself.
+/// The offsets and angles of a plane, outermost first, and an explicit origin's coordinates
+/// (nesting is capped like every walk over a plane), the construction plane it is built on, and
+/// the plane itself.
 impl Walk for PlaneRef {
     fn walk_exprs<'a>(&'a self, f: &mut dyn FnMut(ExprItem<'a>)) {
         let mut p = self;
@@ -249,6 +281,12 @@ impl Walk for PlaneRef {
                     p = base;
                 }
                 PlaneRef::AlongPath { t, .. } => return f(("Distance (0 to 1)", t, Kind::Unitless, ExprRole::Input)),
+                PlaneRef::Placed { origin, .. } => {
+                    for (label, e) in ["X", "Y", "Z"].into_iter().zip(origin) {
+                        f((label, e, Kind::Length, ExprRole::Placement));
+                    }
+                    return;
+                }
                 _ => return,
             }
         }
@@ -266,6 +304,12 @@ impl Walk for PlaneRef {
                     p = base;
                 }
                 PlaneRef::AlongPath { t, .. } => return f(("Distance (0 to 1)", t, Kind::Unitless, ExprRole::Input)),
+                PlaneRef::Placed { origin, .. } => {
+                    for (label, e) in ["X", "Y", "Z"].into_iter().zip(origin) {
+                        f((label, e, Kind::Length, ExprRole::Placement));
+                    }
+                    return;
+                }
                 _ => return,
             }
         }

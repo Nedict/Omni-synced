@@ -111,7 +111,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params(concat!("p0, p1: overall ends, width", connect_doc!(), created_doc!())),
     CommandSpec::new("sketch.point", "Point", draw_point).at("SKETCH", "CREATE").icon("point").enabled(in_sketch).params(concat!("point: [x,y], id?", connect_doc!(), created_doc!())),
     CommandSpec::new("sketch.dimension", "Sketch Dimension", dimension).at("SKETCH", "CREATE").icon("dimension").key("D").enabled(in_sketch).params(
-        "entities: [refs], type?: auto|distance|horizontal|vertical|length|radius|diameter|angle, value?: number or expression (default: current; a bare number is in the design's units, e.g. 2 means 2 in in an inch design; give a unit such as \"50 mm\" to override); text_at?: [x, y]. Two points or a line off the axes: with auto, text_at across from them is the distance between them, above or below them horizontal, beside them vertical. Two lines: the angle between them (acute, or 180° − it when the value is nearer that) unless text_at picks a sector. A dimension the sketch already determines is refused (naming what determines it); if_redundant?: \"driven\" places it as a driven (reference) dimension instead. Returns measured in unit (mm or deg)",
+        "entities: [refs], type?: auto|distance|horizontal|vertical|length|radius|diameter|angle, value?: number or expression (default: current; a bare number is in the design's units, e.g. 2 means 2 in in an inch design; give a unit such as \"50 mm\" to override); text_at?: [x, y]. Two points or a line off the axes: with auto, text_at across from them is the distance between them, above or below them horizontal, beside them vertical. Two lines: the angle between them (acute, or 180° − it when the value is nearer that) unless text_at picks a sector. A dimension the sketch already determines is refused (naming what determines it); if_redundant?: \"driven\" places it as a driven (reference) dimension instead. scale_sketch?: bool (the dimension tool sends true): when this is the sketch's first length dimension and nothing in the sketch fixes a size (no other driving length dimension, nothing fixed or projected), the whole sketch scales about its origin to the value instead of distorting. Returns measured in unit (mm or deg), and scaled: the factor when the sketch was scaled",
     ),
     CommandSpec::new("sketch.constraint.horizontal_vertical", "Horizontal/Vertical", c_horizontal_vertical)
         .at("SKETCH", "CONSTRAINTS")
@@ -623,6 +623,18 @@ pub(super) fn face_contains(m: &solidcraft_geom::Mesh, fi: usize, p: Vec3, tol: 
 
 fn create_sketch(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.create";
+    // These name the plane, so they belong inside `plane`. Next to it they were ignored and the
+    // sketch went to XY (or the plane given) without a word.
+    for (key, example) in [
+        ("face", r#"{"plane": {"face": [x, y, z]}}"#),
+        ("origin", r#"{"plane": {"origin": [x, y, z], "x_dir": [..], "y_dir": [..]}}"#),
+        ("x_dir", r#"{"plane": {"origin": [x, y, z], "x_dir": [..], "y_dir": [..]}}"#),
+        ("y_dir", r#"{"plane": {"origin": [x, y, z], "x_dir": [..], "y_dir": [..]}}"#),
+    ] {
+        if p.get(key).is_some() {
+            return Err(bad(cmd, format!("`{key}` belongs inside `plane`: {example}")));
+        }
+    }
     create_sketch_with_plane(s, p, plane_ref(s, p, cmd)?, None)
 }
 
@@ -1880,6 +1892,8 @@ fn dimension(s: &mut Session, p: &Value) -> Result<Value> {
     let value = expr(p, "value");
     let text_at = p.get("text_at").and_then(vec2);
     let driven = bool_(p, "driven").unwrap_or(false);
+    let scale_sketch = bool_(p, "scale_sketch").unwrap_or(false);
+    let mut scaled = None;
     let mut before = None;
     let (mut residual, mut new_id) = (None, String::new());
     let start = s.doc.clone();
@@ -2043,6 +2057,16 @@ fn dimension(s: &mut Session, p: &Value) -> Result<Value> {
         // only restates what the sketch already has.
         let want = vals.get(&pname).and_then(|v| v.to_kind(if is_angle { Kind::Angle } else { Kind::Length }).ok());
         residual = want.map(|w| (w - cur).abs()).filter(|r| r.is_finite());
+        // The first length dimension of a sketch with nothing sized yet scales it (#1365).
+        if scale_sketch
+            && !is_angle
+            && let Some(factor) = want.map(|w| w / cur).filter(|f| f.is_finite() && (f - 1.0).abs() > 1e-9)
+            && let Some(big) = sk.scaled_for_first_dimension(factor)
+        {
+            *sk = big;
+            scaled = Some(factor);
+            residual = Some(0.0);
+        }
         let name = k.name();
         let id = sk.add_constraint(k, Some(pname.clone()))?;
         new_id = id.clone();
@@ -2078,7 +2102,11 @@ fn dimension(s: &mut Session, p: &Value) -> Result<Value> {
         ));
     }
     let v = s.doc.param(&param).map(|p| p.expr.clone()).unwrap_or_default();
-    Ok(json!({"param": param, "type": kind_name, "expression": v, "measured": current.0, "unit": current.1, "sketch": info}))
+    let mut out = json!({"param": param, "type": kind_name, "expression": v, "measured": current.0, "unit": current.1, "sketch": info});
+    if let Some(factor) = scaled {
+        out["scaled"] = json!(round6(factor));
+    }
+    Ok(out)
 }
 
 /// A dimension's measured value as reported, in the unit its expression is written in.
@@ -2216,11 +2244,14 @@ fn construction(s: &mut Session, p: &Value) -> Result<Value> {
         let mut n = 0;
         for c in cs {
             if let Some(cu) = sk.curves.get_mut(c)
-                && (cu.construction != to || to && cu.centerline)
+                && (cu.construction != to || to && cu.centerline || !to && cu.infinite)
             {
                 cu.construction = to;
                 if to {
                     cu.centerline = false;
+                } else {
+                    // A normal line is a finite one.
+                    cu.infinite = false;
                 }
                 n += 1;
             }
@@ -2483,6 +2514,9 @@ mod drag_live_tests;
 #[cfg(test)]
 #[path = "sketch_ids_tests.rs"]
 mod ids_tests;
+#[cfg(test)]
+#[path = "sketch_infinite_tests.rs"]
+mod infinite_tests;
 #[cfg(test)]
 #[path = "sketch_redundant_tests.rs"]
 mod redundant_tests;
