@@ -138,9 +138,10 @@ unit regardless of the design, pass an expression with one: `"value": "50 mm"` o
 | `ui.resize` | `width`, `height` | |
 | `app.quit` | `force?` (quit without asking about unsaved designs) | `quitting` (the window closes), `asking` (a "save changes?" prompt is open) |
 
-`ui.workspace {workspace?: "design" | "render"}` reads or changes the active workspace.
-Entering Render requires finishing the current modelling operation; returning restores
-the Design camera. See [the integrated Render workspace](render-workspace.md).
+`ui.workspace {workspace?: "design" | "render" | "manufacture"}` reads or changes the
+active workspace. Entering Render or Manufacture requires finishing the current modelling
+operation; returning restores the Design camera. See [the integrated Render workspace](render-workspace.md)
+and [Manufacture jobs](manufacture-jobs.md).
 
 ## MCP
 

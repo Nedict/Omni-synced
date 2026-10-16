@@ -90,6 +90,24 @@ pub use file_picker::FilePickerFuture;
 mod file_load_ui_tests;
 #[cfg(test)]
 mod fillet_spline_handle_tests;
+pub mod manufacture_2d;
+pub mod manufacture_3d;
+pub mod manufacture_additive;
+pub mod manufacture_contour;
+pub mod manufacture_drill;
+pub mod manufacture_fabrication;
+pub mod manufacture_hole_recognition;
+pub mod manufacture_inspect;
+pub mod manufacture_inspection;
+pub mod manufacture_libraries;
+pub mod manufacture_modify;
+pub mod manufacture_multiaxis;
+pub mod manufacture_part_handling;
+pub mod manufacture_post;
+pub mod manufacture_setup;
+pub mod manufacture_tools;
+pub mod manufacture_turning;
+pub mod manufacture_workspace;
 pub mod palette;
 pub mod params_dialog;
 pub mod prefs;
@@ -129,9 +147,9 @@ mod sketch_families;
 #[cfg(test)]
 mod sketch_guidance_ui_tests;
 pub mod sketch_modify_ui;
-mod sketch_move_ui;
 #[cfg(test)]
 mod sketch_modify_ui_tests;
+mod sketch_move_ui;
 pub mod sketch_palette;
 pub(crate) mod sketch_text;
 mod sketch_text_handles;
@@ -147,6 +165,7 @@ mod thin_extrude_tests;
 pub mod timeline;
 pub mod timeline_left;
 pub mod titlebar;
+pub mod tool_modifiers;
 pub mod toolbar;
 pub mod toolbar_custom;
 pub mod tools;
@@ -255,6 +274,7 @@ pub struct SolveApp {
     file_picker: Option<file_picker::Pending>,
     pub viewport: viewport::ViewportState,
     pub render_workspace: render_workspace::State,
+    pub manufacture_workspace: manufacture_workspace::State,
     pub tool: Option<tools::Tool>,
     pub dialog: Option<dialogs::Dialog>,
     /// The Change Parameters window, when open.
@@ -366,6 +386,7 @@ impl SolveApp {
             file_picker: None,
             viewport: viewport::ViewportState::default(),
             render_workspace,
+            manufacture_workspace: manufacture_workspace::State::default(),
             tool: None,
             dialog: None,
             params: None,
@@ -580,6 +601,7 @@ impl SolveApp {
                 self.session.echo(language.format("ui.command_done", &[("command", label)]));
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
                     render_workspace::reset_document(self);
+                    manufacture_workspace::reset_document(self);
                     self.sketch_choices = sketch_families::Choices::default();
                     dim_view::cancel();
                     self.menu.props = None;
@@ -665,6 +687,9 @@ impl SolveApp {
             return;
         }
         if !sketch_tools::start_hook(self, id) {
+            return;
+        }
+        if !manufacture_workspace::start_hook(self, id) {
             return;
         }
         if solidcraft_engine::find_command(id).is_some_and(|c| c.info(&self.session).enabled) {
@@ -887,7 +912,7 @@ impl SolveApp {
     /// Insert a STEP file's bodies (an Import base feature) or a 3MF/STL file's meshes into the
     /// current design.
     pub fn insert_path(&mut self, path: &str) {
-        let cmd = if solidcraft_engine::io::is_mesh_path(path) { "file.insert_mesh" } else { "file.insert_step" };
+        let cmd = solidcraft_engine::io::exchange::insert_command_name(path).unwrap_or("file.insert_step");
         let before: Vec<String> = self.session.world_state().bodies.iter().map(|b| b.name.clone()).collect();
         if let Ok(r) = self.run(cmd, json!({ "path": path })) {
             self.fit_view();
@@ -901,7 +926,7 @@ impl SolveApp {
     /// A dropped file: a STEP, 3MF or STL file joins a design that has features, anything else
     /// opens.
     pub fn drop_path(&mut self, path: &str) {
-        let import = solidcraft_engine::io::is_step_path(path) || solidcraft_engine::io::is_mesh_path(path);
+        let import = solidcraft_engine::io::exchange::can_insert(path);
         if import && !self.session.doc.features.is_empty() {
             self.insert_path_async(path);
         } else {
@@ -1094,6 +1119,7 @@ impl SolveApp {
         file_picker::tick(self, ctx);
         render_workspace::sync_backend(self);
         render_workspace::tick(self, ctx);
+        manufacture_workspace::tick(self, ctx);
         file_load::tick(self, ctx);
         self.esc_handled = false;
         prefs::apply(self, ctx);
@@ -1222,12 +1248,20 @@ impl SolveApp {
         if render_workspace::active(self) {
             render_workspace::panel(self, ui);
         }
+        if manufacture_workspace::active(self) {
+            manufacture_workspace::panel(self, ui);
+        }
         preview::update(self, ui.ctx());
+        // Same shell as Design: central viewport (+ Manufacture overlays). Render owns its own view.
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
             if render_workspace::active(self) {
                 render_workspace::show(self, ui);
             } else {
-                viewport::show(self, ui);
+                if manufacture_workspace::active(self) {
+                    manufacture_workspace::show(self, ui);
+                } else {
+                    viewport::show(self, ui);
+                }
             }
         });
         dialogs::show(self, ui.ctx());

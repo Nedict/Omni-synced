@@ -14,6 +14,16 @@ pub static COMMANDS: &[CommandSpec] = &[
         .key("I")
         .noundo()
         .params("bodies?: [names] (default all); or items: [1-2 selections] → length/area/volume, minimum distance (from, to) and angle"),
+    // Fusion Manufacture → Inspect → Sustainability Insights (illustrative cradle-to-gate CO₂e).
+    CommandSpec::new("inspect.sustainability", "Sustainability Insights", sustainability)
+        .at("MANUFACTURE", "INSPECT")
+        .icon("environment_map")
+        .noundo()
+        .params(
+            "bodies?: [names] (default all); process?: subtractive|additive|injection (default subtractive); \
+             material?: name (default Aluminum); region?: label (default North America). \
+             Returns volume and an illustrative cradle-to-gate CO₂e estimate (not a certified LCA).",
+        ),
     CommandSpec::new("document.inspect", "Inspect Design", inspect).noundo().params("measure?: bool (include body measurements)"),
     CommandSpec::new("sketch.inspect", "Inspect Sketch", sketch_inspect).noundo().params("sketch?: id|name (default active)"),
     CommandSpec::new("model.edges", "List Edges", model_edges).noundo().params("body: name"),
@@ -60,6 +70,59 @@ pub fn measure_json(b: &solidcraft_doc::ModelBody) -> Value {
         }),
         Err(e) => json!({"name": b.name, "error": e.to_string()}),
     }
+}
+
+fn sustainability(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "inspect.sustainability";
+    let measured = measure(s, p)?;
+    let volume_mm3 = measured["total"]["volume_mm3"].as_f64().unwrap_or(0.0);
+    if !(volume_mm3.is_finite() && volume_mm3 >= 0.0) {
+        return Err(bad(cmd, "model volume is not finite"));
+    }
+    let process = str_(p, "process").unwrap_or("subtractive").to_ascii_lowercase();
+    let process = match process.as_str() {
+        "subtractive" | "cnc" | "milling" => "subtractive",
+        "additive" | "print" | "3d_print" => "additive",
+        "injection" | "molding" | "injection_molding" => "injection",
+        other => return Err(bad(cmd, format!("unknown process `{other}` (subtractive, additive, injection)"))),
+    };
+    let material = str_(p, "material").unwrap_or("Aluminum").to_string();
+    let region = str_(p, "region").unwrap_or("North America").to_string();
+    // Illustrative intensity kg CO₂e / cm³ (order-of-magnitude only; not Gravity Climate data).
+    let base = match material.to_ascii_lowercase().as_str() {
+        m if m.contains("aluminum") || m.contains("aluminium") => 0.022,
+        m if m.contains("steel") || m.contains("iron") => 0.035,
+        m if m.contains("titanium") => 0.055,
+        m if m.contains("abs") || m.contains("plastic") || m.contains("pla") || m.contains("petg") => 0.008,
+        m if m.contains("carbon") || m.contains("composite") => 0.040,
+        _ => 0.025,
+    };
+    let process_factor = match process {
+        "subtractive" => 1.35, // buy-to-fly waste
+        "additive" => 1.15,
+        "injection" => 1.05,
+        _ => 1.0,
+    };
+    let region_factor = match region.to_ascii_lowercase().as_str() {
+        r if r.contains("europe") || r.contains("eu") => 0.85,
+        r if r.contains("china") || r.contains("asia") => 1.15,
+        r if r.contains("south america") => 1.05,
+        _ => 1.0, // North America / default
+    };
+    let volume_cm3 = volume_mm3 / 1_000.0;
+    let co2e_kg = volume_cm3 * base * process_factor * region_factor;
+    Ok(json!({
+        "volume_mm3": volume_mm3,
+        "volume_cm3": volume_cm3,
+        "process": process,
+        "material": material,
+        "region": region,
+        "co2e_kg": co2e_kg,
+        "intensity_kg_per_cm3": base * process_factor * region_factor,
+        "illustrative": true,
+        "note": "Illustrative cradle-to-gate estimate for CAM planning — not a certified LCA.",
+        "bodies": measured["bodies"],
+    }))
 }
 
 fn measure(s: &mut Session, p: &Value) -> Result<Value> {

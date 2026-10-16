@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 solidcraft-engine = { workspace = true }
+solidcraft-manufacture = { workspace = true }
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 solidcraft-gpu = { workspace = true }
@@ -25,6 +26,8 @@ semver = { workspace = true }
 sha2 = { workspace = true }
 minisign-verify = "0.3"
 zip = { workspace = true }
+ehttp = { workspace = true }
+url = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # The offscreen viewport render test opens a device without a window.

@@ -51,8 +51,10 @@ impl Request {
     fn command(&self) -> (&'static str, Value) {
         match &self.kind {
             Kind::Open => ("doc.open", json!({"path": self.path})),
-            Kind::Insert if solidcraft_engine::io::is_mesh_path(&self.path) => ("file.insert_mesh", json!({"path": self.path})),
-            Kind::Insert => ("file.insert_step", json!({"path": self.path})),
+            Kind::Insert => {
+                let cmd = solidcraft_engine::io::exchange::insert_command_name(&self.path).unwrap_or("file.insert_step");
+                (cmd, json!({"path": self.path}))
+            }
             Kind::Recover { id, dir } => ("doc.recover", json!({"id": id, "dir": dir})),
         }
     }

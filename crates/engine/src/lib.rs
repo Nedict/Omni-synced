@@ -235,6 +235,8 @@ pub struct Session {
     render_viewport: Option<Arc<render::ExecutorDescriptor>>,
     render_jobs: render_jobs::Jobs,
     pub(crate) manufacture_jobs: manufacture_jobs::Jobs,
+    /// Session-only OEM machine plugin (MTConnect / fake / future FOCAS·THINC). Never saved.
+    pub(crate) machine_host: Option<solidcraft_manufacture::machine_host::MachineHost>,
     /// The visibility the design file holds (what `is_dirty` compares with).
     saved_visibility: Visibility,
     /// States to go back to (`edit.checkpoint`, `edit.restore_checkpoint`): how batches of
@@ -334,6 +336,7 @@ impl Session {
             render_viewport: None,
             render_jobs: Default::default(),
             manufacture_jobs: Default::default(),
+            machine_host: None,
             #[cfg(test)]
             evaluations: 0,
             crash_journal: false,
@@ -347,11 +350,22 @@ impl Session {
         let render_viewport = self.render_viewport.clone();
         let render_jobs = self.render_jobs.scratch();
         let manufacture_jobs = self.manufacture_jobs.scratch();
+        let machine_host = self.machine_host.clone();
         *self = fresh;
         self.auto_project = auto_project;
         self.render_viewport = render_viewport;
         self.render_jobs = render_jobs;
         self.manufacture_jobs = manufacture_jobs;
+        self.machine_host = machine_host;
+    }
+
+    /// Install or clear the OEM machine plugin for this session (not persisted).
+    pub fn set_machine_host(&mut self, host: Option<solidcraft_manufacture::machine_host::MachineHost>) {
+        self.machine_host = host;
+    }
+
+    pub fn machine_host(&self) -> Option<&solidcraft_manufacture::machine_host::MachineHost> {
+        self.machine_host.as_ref()
     }
 
     /// The design has changes not in its file: in the document, or in what is hidden.
@@ -801,6 +815,7 @@ impl Session {
             render_viewport: self.render_viewport.clone(),
             render_jobs: self.render_jobs.scratch(),
             manufacture_jobs: self.manufacture_jobs.scratch(),
+            machine_host: self.machine_host.clone(),
             saved_visibility: self.saved_visibility.clone(),
             #[cfg(test)]
             evaluations: 0,

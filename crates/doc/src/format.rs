@@ -1794,10 +1794,18 @@ mod tests {
                     flute_length: 16.0,
                     flutes: 4,
                     description: String::new(),
+                    ..Default::default()
                 }],
-                operations: vec![Operation::Face(FaceOperation { tool_number: 1, feeds: Feeds::default(), depth: 0.5, stepover: 0.75 })],
+                operations: vec![Operation::Face(FaceOperation {
+                    tool_number: 1,
+                    feeds: Feeds::default(),
+                    depth: 0.5,
+                    stepover: 0.75,
+                    ..Default::default()
+                })],
                 machine: None,
                 post: None,
+                ..Default::default()
             },
         );
         let mut with_mfg = Document::new("mfg roundtrip");

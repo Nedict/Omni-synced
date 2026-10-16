@@ -657,8 +657,6 @@ dependencies = [
 [[package]]
 name = "cadmpeg-codec-step"
 version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e83a52258c129a683f77fb360ca30af54ae34339625ad890be12621128a5811c"
 dependencies = [
  "base64 0.23.1",
  "cadmpeg-container",
@@ -1274,6 +1272,20 @@ dependencies = [
  "log",
  "profiling",
  "winit",
+]
+
+[[package]]
+name = "ehttp"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2f1b93eb2e039aaff63ce07cca59bd1dca02f2ce30075a17b619d2c42f56efc"
+dependencies = [
+ "document-features",
+ "js-sys",
+ "ureq",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -3985,6 +3997,7 @@ dependencies = [
  "solidcraft-geom",
  "solidcraft-io",
  "solidcraft-kernel",
+ "solidcraft-laser",
  "solidcraft-manufacture",
  "solidcraft-render",
  "solidcraft-sketch",
@@ -4051,6 +4064,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solidcraft-laser"
+version = "0.11.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "solidcraft-manufacture"
 version = "0.11.0"
 dependencies = [
@@ -4095,6 +4117,7 @@ version = "0.11.0"
 dependencies = [
  "egui",
  "egui-wgpu",
+ "ehttp",
  "image",
  "log",
  "minisign-verify",
@@ -4105,7 +4128,9 @@ dependencies = [
  "sha2 0.10.9",
  "solidcraft-engine",
  "solidcraft-gpu",
+ "solidcraft-manufacture",
  "ttf-parser",
+ "url",
  "web-time",
  "zip 3.0.0",
 ]
@@ -4695,6 +4720,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a7ac20be9b7726e0bbdbf974c059676d9acb1cd414961f570a4e8231cacd7fc"
 dependencies = [
  "base64 0.23.1",
+ "flate2",
  "log",
  "percent-encoding",
  "rustls",
@@ -4702,6 +4728,7 @@ dependencies = [
  "rustls-platform-verifier",
  "ureq-proto",
  "utf8-zero",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -5062,6 +5089,15 @@ name = "webpki-root-certs"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
 dependencies = [
  "rustls-pki-types",
 ]

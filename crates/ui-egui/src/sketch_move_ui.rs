@@ -32,11 +32,11 @@ pub fn type_row(d: &mut Dialog, ui: &mut egui::Ui) {
         let entities = d.inputs.first().map(|i| i.items.clone()).unwrap_or_default();
         d.kind = Kind::SketchModify(kind(m));
         d.inputs = sketch_modify_ui::move_inputs(m);
+        d.active = if entities.is_empty() { 0 } else { 1.min(d.inputs.len() - 1) };
         if let Some(i) = d.inputs.first_mut() {
             i.items = entities;
         }
         d.extra.remove("drag0");
-        d.active = if entities.is_empty() { 0 } else { 1.min(d.inputs.len() - 1) };
     }
 }
 
@@ -85,17 +85,15 @@ fn center_world(app: &SolveApp, d: &Dialog) -> Option<Vec3> {
     if *mode == POINT_TO_POINT {
         let from = d.inputs.get(1).and_then(|i| i.items.first());
         let to = d.inputs.get(2).and_then(|i| i.items.first());
-        if let (Some(f), Some(t)) = (from, to) {
-            if let (Some(a), Some(b)) = (sketch_modify_ui::sketch_point_pos(&app.session, f), sketch_modify_ui::sketch_point_pos(&app.session, t)) {
+        if let (Some(f), Some(t)) = (from, to)
+            && let (Some(a), Some(b)) = (sketch_modify_ui::sketch_point_pos(&app.session, f), sketch_modify_ui::sketch_point_pos(&app.session, t)) {
                 let c = entity_centroid_local(app, d)? + (b - a);
                 return Some(ss.plane.to_world(c));
             }
-        }
-        if let Some(f) = from {
-            if let Some(a) = sketch_modify_ui::sketch_point_pos(&app.session, f) {
+        if let Some(f) = from
+            && let Some(a) = sketch_modify_ui::sketch_point_pos(&app.session, f) {
                 return Some(ss.plane.to_world(a));
             }
-        }
         return Some(ss.plane.to_world(entity_centroid_local(app, d)?));
     }
     if let Some(Sel::SketchPoint { id }) = d.inputs.get(1).and_then(|i| i.items.first()) {
@@ -133,28 +131,24 @@ pub fn sync_p2p(app: &SolveApp, d: &mut Dialog) {
     }
     let from = d.inputs.get(1).and_then(|i| i.items.first());
     let to = d.inputs.get(2).and_then(|i| i.items.first());
-    if let (Some(f), Some(t)) = (from, to) {
-        if let (Some(a), Some(b)) = (sketch_modify_ui::sketch_point_pos(&app.session, f), sketch_modify_ui::sketch_point_pos(&app.session, t)) {
+    if let (Some(f), Some(t)) = (from, to)
+        && let (Some(a), Some(b)) = (sketch_modify_ui::sketch_point_pos(&app.session, f), sketch_modify_ui::sketch_point_pos(&app.session, t)) {
             *x = mm(b.x - a.x);
             *y = mm(b.y - a.y);
         }
-    }
 }
 
 pub fn triad(app: &SolveApp, d: &Dialog) -> Option<gizmo::Triad> {
     let Kind::SketchModify(Mod::Move { mode, x, y, .. }) = &d.kind else { return None };
     let (_, u, v) = plane_axes(app)?;
-    match *mode {
-        POINT_TO_POINT => {
-            let from = d.inputs.get(1).and_then(|i| i.items.first());
-            let to = d.inputs.get(2).and_then(|i| i.items.first());
-            if from.is_some() && to.is_none() {
-                let c = center_world(app, d)?;
-                return Some(gizmo::Triad { center: c, translate: true, rotate: false, ring_axis: None, translate_u: Some(u), translate_v: Some(v) });
-            }
-            return None;
+    if *mode == POINT_TO_POINT {
+        let from = d.inputs.get(1).and_then(|i| i.items.first());
+        let to = d.inputs.get(2).and_then(|i| i.items.first());
+        if from.is_some() && to.is_none() {
+            let c = center_world(app, d)?;
+            return Some(gizmo::Triad { center: c, translate: true, rotate: false, ring_axis: None, translate_u: Some(u), translate_v: Some(v) });
         }
-        _ => {}
+        return None;
     }
     let mut c = center_world(app, d)?;
     if matches!(*mode, FREE | TRANSLATE) {

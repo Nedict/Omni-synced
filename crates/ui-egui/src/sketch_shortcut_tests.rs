@@ -86,10 +86,7 @@ fn m_in_a_sketch_starts_sketch_move_not_body_move() {
     h.app.run("sketch.create", json!({"plane": "XY"})).unwrap();
     h.app.run("sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [20, 10]})).unwrap();
     press(&mut h, "M");
-    assert!(matches!(
-        h.app.dialog.as_ref().map(|d| &d.kind),
-        Some(crate::dialogs::Kind::SketchModify(crate::sketch_modify_ui::Mod::Move { .. }))
-    ));
+    assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(crate::dialogs::Kind::SketchModify(crate::sketch_modify_ui::Mod::Move { .. }))));
 }
 
 #[test]

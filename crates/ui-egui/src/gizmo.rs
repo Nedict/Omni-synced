@@ -1,8 +1,10 @@
 //! The move/rotate triad shared by Move/Copy and occurrence moves: X/Y/Z arrows, XY/YZ/XZ plane
 //! squares, X/Y/Z rotation rings and a centre ball for a free drag in the view plane. It is a
 //! constant size on screen. A drag reports its change since the drag began (distances snap to
-//! round steps at the current zoom, angles to 5°; hold Alt or Ctrl for a free drag), so the caller
-//! adds it to the values it had when the drag started.
+//! round steps at the current zoom, angles to 5°; hold Ctrl/Cmd for a free drag, or Alt if the
+//! "manipulator free drag also on Alt" preference is on), so the caller adds it to the values it
+//! had when the drag started.  The free-drag flag is communicated through the per-frame
+//! [`crate::tool_modifiers::manipulator_free`] thread-local.
 
 use std::cell::RefCell;
 
@@ -130,11 +132,7 @@ fn ring_basis(i: usize) -> (Vec3, Vec3) {
 
 fn ring_basis_axis(axis: Vec3) -> (Vec3, Vec3) {
     let n = axis.normalized().unwrap_or(Vec3::Z);
-    let e1 = if n.cross(Vec3::Z).len() > 1e-6 {
-        n.cross(Vec3::Z).normalized().unwrap_or(Vec3::X)
-    } else {
-        Vec3::X
-    };
+    let e1 = if n.cross(Vec3::Z).len() > 1e-6 { n.cross(Vec3::Z).normalized().unwrap_or(Vec3::X) } else { Vec3::X };
     let e2 = n.cross(e1).normalized().unwrap_or(Vec3::Y);
     (e1, e2)
 }
@@ -202,11 +200,8 @@ fn shapes(proj: &Proj, t: &Triad, l: f64) -> Option<Shapes> {
     let mut s = Shapes { arrows: Vec::new(), planes: Vec::new(), rings: Vec::new(), ball };
     if t.translate {
         let planar = t.translate_u.zip(t.translate_v);
-        let dirs: Vec<(usize, Vec3)> = if let Some((u, v)) = planar {
-            vec![(0, u), (1, v)]
-        } else {
-            DIRS.iter().enumerate().map(|(i, d)| (i, *d)).collect()
-        };
+        let dirs: Vec<(usize, Vec3)> =
+            if let Some((u, v)) = planar { vec![(0, u), (1, v)] } else { DIRS.iter().enumerate().map(|(i, d)| (i, *d)).collect() };
         for (i, d) in dirs {
             if let (Some(a), Some(b)) = (proj.to_screen(c + d * (0.18 * l)), proj.to_screen(c + d * l)) {
                 s.arrows.push((i, a, b));
@@ -239,8 +234,8 @@ fn shapes(proj: &Proj, t: &Triad, l: f64) -> Option<Shapes> {
         if let Some(ax) = t.ring_axis {
             add_ring(0, ax);
         } else {
-            for i in 0..3 {
-                add_ring(i, DIRS[i]);
+            for (i, dir) in DIRS.iter().enumerate() {
+                add_ring(i, *dir);
             }
         }
     }
@@ -312,7 +307,8 @@ pub fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::I
     active?;
     ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     let r = ui.interact(Rect::from_center_size(p, vec2(24.0, 24.0)), id.with("hit"), Sense::drag());
-    let free = ui.input(|i| i.modifiers.alt || i.modifiers.ctrl || i.modifiers.command);
+    // Free drag is driven by the per-frame thread-local set from prefs::manipulator_free_held.
+    let free = crate::tool_modifiers::manipulator_free();
     let view = proj.ray(sh.ball).1;
     let axis_dir = |i: usize| {
         t.translate_u
@@ -382,11 +378,7 @@ pub fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::I
                 st.last = th;
             }
             let angle = snap(st.turned, 5f64.to_radians(), free);
-            if st.ring_n.is_some() {
-                Change::RotateAbout { axis: n, angle }
-            } else {
-                Change::Rotate { axis: i, angle }
-            }
+            if st.ring_n.is_some() { Change::RotateAbout { axis: n, angle } } else { Change::Rotate { axis: i, angle } }
         }
         h => {
             let d = on_plane(proj, p, st.center, plane_normal(h)).map(|q| q - st.grab).unwrap_or(Vec3::ZERO);
@@ -422,8 +414,8 @@ pub fn line_show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: eg
     let dir = line.dir.normalized()?;
     let end = line.start + dir * line.length.max(1e-9);
     let tk = Tokens::get();
-    let Some(a) = proj.to_screen(line.start) else { return None };
-    let Some(b) = proj.to_screen(end) else { return None };
+    let a = proj.to_screen(line.start)?;
+    let b = proj.to_screen(end)?;
     let active = ui.data(|d| d.get_temp::<LineState>(id)).is_some();
     let pointer = ui.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos()));
     let hot = pointer.is_some_and(|p| ui.rect_contains_pointer(proj.rect) && seg_dist(p, a, b) < 8.0);
@@ -434,7 +426,8 @@ pub fn line_show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: eg
     }
     ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     let r = ui.interact(Rect::from_center_size(p, vec2(24.0, 24.0)), id, Sense::drag());
-    let free = ui.input(|i| i.modifiers.alt || i.modifiers.ctrl || i.modifiers.command);
+    // Free drag driven by per-frame thread-local (see tool_modifiers::manipulator_free).
+    let free = crate::tool_modifiers::manipulator_free();
     let mut started = false;
     let st = match ui.data(|d| d.get_temp::<LineState>(id)) {
         Some(s) => s,

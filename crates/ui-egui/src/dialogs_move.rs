@@ -223,11 +223,10 @@ pub fn params(app: &SolveApp, d: &Dialog) -> Result<Value, String> {
         POINT_TO_POINT => {
             let from = need_point(1, "the point to move from")?;
             let mut delta = need_point(2, "the point to move to")? - from;
-            if let Some(len) = d.extra.get("p2p_len").and_then(|v| v.as_f64()).filter(|l| l.is_finite()) {
-                if let Some(dir) = delta.normalized() {
+            if let Some(len) = d.extra.get("p2p_len").and_then(|v| v.as_f64()).filter(|l| l.is_finite())
+                && let Some(dir) = delta.normalized() {
                     delta = dir * len.max(0.0);
                 }
-            }
             p["translate"] = num(delta);
         }
         _ => {
@@ -266,7 +265,14 @@ pub fn triad(app: &SolveApp, d: &Dialog) -> Option<gizmo::Triad> {
     match *mode {
         FREE | TRANSLATE => {
             let t = Vec3::new(len(app, x).unwrap_or(0.0), len(app, y).unwrap_or(0.0), len(app, z).unwrap_or(0.0));
-            Some(gizmo::Triad { center: pivot(app, d)? + t, translate: true, rotate: *mode == FREE, ring_axis: None, translate_u: None, translate_v: None })
+            Some(gizmo::Triad {
+                center: pivot(app, d)? + t,
+                translate: true,
+                rotate: *mode == FREE,
+                ring_axis: None,
+                translate_u: None,
+                translate_v: None,
+            })
         }
         ROTATE => {
             let (o, a) = items(d, 1).first().and_then(|s| axis_line(app, s))?;
@@ -276,9 +282,14 @@ pub fn triad(app: &SolveApp, d: &Dialog) -> Option<gizmo::Triad> {
             let at = Vec3::new(len(app, x).unwrap_or(0.0), len(app, y).unwrap_or(0.0), len(app, z).unwrap_or(0.0));
             Some(gizmo::Triad { center: at, translate: true, rotate: false, ring_axis: None, translate_u: None, translate_v: None })
         }
-        POINT_TO_POINT if sel_point(items(d, 1).first()).is_some() && sel_point(items(d, 2).first()).is_none() => {
-            Some(gizmo::Triad { center: sel_point(items(d, 1).first())?, translate: true, rotate: false, ring_axis: None, translate_u: None, translate_v: None })
-        }
+        POINT_TO_POINT if sel_point(items(d, 1).first()).is_some() && sel_point(items(d, 2).first()).is_none() => Some(gizmo::Triad {
+            center: sel_point(items(d, 1).first())?,
+            translate: true,
+            rotate: false,
+            ring_axis: None,
+            translate_u: None,
+            translate_v: None,
+        }),
         _ => None,
     }
 }

@@ -134,7 +134,7 @@ pub fn read_json(path: &str) -> Result<Value, String> {
 /// A session from a design file, a STEP/3MF/STL file, a command script, or an oracle recipe.
 pub fn load(path: &str) -> Result<Session, String> {
     let mut s = Session::default();
-    if solidcraft_engine::io::is_step_path(path) || solidcraft_engine::io::is_mesh_path(path) {
+    if solidcraft_engine::io::exchange::opens_new_design(path) {
         s.execute("doc.open", &json!({"path": path})).map_err(|e| e.to_string())?;
         return Ok(s);
     }
@@ -465,8 +465,11 @@ fn cmd_bench_edit(args: &[String]) -> Result<(), String> {
 pub(crate) fn cmd_bench_open(args: &[String]) -> Result<(), String> {
     let path = args.first().ok_or("usage: solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only]")?;
     let t = std::time::Instant::now();
-    let step = solidcraft_engine::io::is_step_path(path);
-    let limit = if step { solidcraft_engine::io::MAX_STEP_BYTES } else { solidcraft_engine::io::MAX_DESIGN_BYTES };
+    let exchange = solidcraft_engine::io::exchange::provider_for_path(path);
+    let limit = exchange
+        .map(|id| solidcraft_engine::io::exchange::provider(id).max_bytes)
+        .unwrap_or(solidcraft_engine::io::MAX_DESIGN_BYTES);
+    let step = exchange == Some(solidcraft_engine::io::ExchangeProviderId::StepIges);
     let bytes = solidcraft_engine::io::vfs::read(path, limit).map_err(|e| format!("{path}: {e}"))?;
     let read_ms = t.elapsed().as_secs_f64() * 1000.0;
     println!("{}", json!({"step": "read", "ms": read_ms, "bytes": bytes.len()}));

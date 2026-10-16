@@ -8,6 +8,7 @@
 
 pub mod catalog;
 mod design;
+pub mod exchange;
 #[cfg(not(target_arch = "wasm32"))]
 mod f3d;
 mod design_metadata;
@@ -40,7 +41,35 @@ pub use threemf::{MAX_3MF_BYTES, MeshObject, model_xml, model_xml_with, read_3mf
 pub use f3d::{looks_like_fusion_archive, MAX_F3D_BYTES};
 #[cfg(target_arch = "wasm32")]
 pub const MAX_F3D_BYTES: usize = 512 << 20;
+/// Browser builds cannot decode Fusion B-rep; still sniff ZIP contents so opening an
+/// `.f3d`/`.f3z` as a native design fails with [`fusion_design_refusal`] instead of a
+/// cryptic container/JSON error.
+#[cfg(target_arch = "wasm32")]
+pub fn looks_like_fusion_archive(bytes: &[u8]) -> bool {
+    use std::io::Cursor;
+    if !bytes.starts_with(b"PK\x03\x04") {
+        return false;
+    }
+    let Ok(zip) = zip::ZipArchive::new(Cursor::new(bytes)) else {
+        return false;
+    };
+    let mut manifest = false;
+    let mut design = false;
+    for name in zip.file_names() {
+        if name == "Manifest.dat" || name.ends_with("/Manifest.dat") {
+            manifest = true;
+        }
+        if name.contains("FusionDesignSegmentType") || name.contains("Breps.BlobParts") {
+            design = true;
+        }
+        if manifest && design {
+            return true;
+        }
+    }
+    manifest && design
+}
 pub use urdf::{UrdfOptions, UrdfPackage, urdf};
+pub use exchange::{ExchangeCapabilities, ExchangeFileType, ExchangeImport, ExchangeProviderId};
 
 use solidcraft_doc::{Document, Metadata, ModelState};
 use solidcraft_geom::{Mesh, Vec3};
@@ -83,26 +112,24 @@ pub type Result<T> = std::result::Result<T, IoError>;
 pub const MAX_STEP_BYTES: usize = 512 << 20;
 
 /// Is this a Fusion design archive (`.f3d` / `.f3z`), any case?
-#[cfg(not(target_arch = "wasm32"))]
 pub fn is_f3d_path(path: &str) -> bool {
-    f3d::is_f3d_path(path)
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn is_f3d_path(path: &str) -> bool {
-    std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("f3d") || e.eq_ignore_ascii_case("f3z"))
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        exchange::matches_path(exchange::ExchangeProviderId::FusionF3d, path)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        std::path::Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("f3d") || e.eq_ignore_ascii_case("f3z"))
+    }
 }
 
 /// Is this a CAD exchange file read as an Import base feature: STEP (`.step` / `.stp`) or IGES
 /// (`.igs` / `.iges`), any case?
 pub fn is_step_path(path: &str) -> bool {
-    std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| ["step", "stp", "igs", "iges"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+    exchange::matches_path(exchange::ExchangeProviderId::StepIges, path)
 }
 
 /// Is this an IGES file name (`.igs` / `.iges`, any case)?
@@ -224,7 +251,7 @@ pub fn step_import_feature(bytes: &[u8], file: &str) -> Result<StepFeature> {
 
 /// Is this a mesh file we import (`.3mf`, `.stl`, `.obj`, any case)?
 pub fn is_mesh_path(path: &str) -> bool {
-    std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| ["3mf", "stl", "obj"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+    exchange::matches_path(exchange::ExchangeProviderId::MeshStl3mf, path)
 }
 
 /// A 3MF, STL or OBJ file read as a mesh import feature.
@@ -539,8 +566,8 @@ pub fn read_design(bytes: &[u8]) -> Result<Document> {
     if bytes.len() > MAX_DESIGN_BYTES {
         return Err(IoError::Invalid("design file too large".into()));
     }
-    if looks_like_fusion_archive(bytes) {
-        return Err(fusion_design_refusal());
+    if let Some(err) = exchange::refuse_native_design(bytes) {
+        return Err(err);
     }
     if is_design_container(bytes) {
         return design::read(bytes);
@@ -806,7 +833,7 @@ mod tests {
         };
         let mut entries: Vec<_> = std::fs::read_dir(&dir)
             .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
-            .filter_map(Result::ok)
+            .filter_map(|e| e.ok())
             .filter(|e| {
                 e.path()
                     .extension()
@@ -848,6 +875,28 @@ mod tests {
         }
         if std::env::var("F3D_CORPUS_STRICT").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true")) {
             assert!(failed.is_empty(), "{} file(s) still fail open", failed.len());
+        }
+    }
+
+    /// Open one file; set `F3D_ONE` to a full path (used by corpus shell loops with per-file timeout).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn fusion_open_one_file() {
+        let path = std::env::var("F3D_ONE").expect("F3D_ONE path required");
+        let path = std::path::PathBuf::from(&path);
+        let label = path.file_name().unwrap().to_string_lossy();
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{label}: {e}"));
+        let file = path.to_string_lossy();
+        match f3d_open_feature(&bytes, &file) {
+            Ok(F3dOpenFeature::Solid(sf)) => {
+                eprintln!("RESULT OK solid {label} bodies={}", sf.body_names.len());
+            }
+            Ok(F3dOpenFeature::Mesh(mf)) => {
+                eprintln!("RESULT OK mesh {label} meshes={}", mf.body_names.len());
+            }
+            Err(e) => {
+                eprintln!("RESULT FAIL {label}: {e}");
+            }
         }
     }
 

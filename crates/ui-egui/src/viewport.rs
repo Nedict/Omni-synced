@@ -257,6 +257,10 @@ pub fn view_bounds(app: &SolveApp) -> solidcraft_engine::geom::Aabb3 {
     solidcraft_engine::view::visible_bounds(&app.session, app.ui.show_sketches)
 }
 
+fn body_shown(app: &SolveApp, name: &str) -> bool {
+    app.session.body_visible(name) && crate::manufacture_workspace::setup_shows_body(app, name)
+}
+
 fn scene_key(app: &SolveApp) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     app.session.revision.hash(&mut h);
@@ -277,6 +281,7 @@ fn scene_key(app: &SolveApp) -> u64 {
     app.session.active_component.hash(&mut h);
     app.session.active_occurrence_path.hash(&mut h);
     app.preview.replaced.hash(&mut h);
+    crate::manufacture_workspace::setup_body_key(app).hash(&mut h);
     app.tree.redefine.hash(&mut h);
     crate::theme::is_dark().hash(&mut h);
     crate::theme::vision().hash(&mut h);
@@ -489,7 +494,7 @@ fn build_scene(app: &SolveApp) -> GpuScene {
     let mut run: Vec<BodyDraw> = Vec::new();
     let mut run_key = std::collections::hash_map::DefaultHasher::new();
     for b in &st.bodies {
-        if !app.session.body_visible(&b.name) || app.preview.replaced.contains(&b.name) {
+        if !body_shown(app, &b.name) || app.preview.replaced.contains(&b.name) {
             continue;
         }
         let faded = body_faded(app, b, &active_bodies);
@@ -535,7 +540,7 @@ fn build_scene(app: &SolveApp) -> GpuScene {
     // Section: the outline of each body where the plane cuts it.
     if let Some((o, n)) = section_plane(app) {
         let col = c4(tk.text.gamma_multiply(0.9));
-        for b in st.bodies.iter().filter(|b| app.session.body_visible(&b.name)) {
+        for b in st.bodies.iter().filter(|b| body_shown(app, &b.name)) {
             for (a, c) in solidcraft_engine::view::section_segments(&b.mesh(), o, n) {
                 sc.line(a.to_f32(), c.to_f32(), col, 1.8, false);
             }
@@ -618,7 +623,7 @@ fn ground_shadow(sc: &mut GpuScene, app: &SolveApp, st: &std::sync::Arc<solidcra
     let mut b = solidcraft_engine::geom::Aabb3::EMPTY;
     let boxes = body_bounds(app, st);
     for (x, (_, bb)) in st.bodies.iter().zip(boxes.iter()) {
-        if bb.is_empty() || !app.session.body_visible(&x.name) {
+        if bb.is_empty() || !body_shown(app, &x.name) {
             continue;
         }
         for i in 0..8 {
@@ -1060,7 +1065,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     let mut bestf: Option<(f64, Hit)> = None;
     let mut faces = Near::new(all);
     for b in &st.bodies {
-        if !app.session.body_visible(&b.name) {
+        if !body_shown(app, &b.name) {
             continue;
         }
         // Bodies whose box the ray misses (or enters behind the best hit so far) are skipped.
@@ -1090,7 +1095,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     let mut bestv = Near::new(all);
     let mut beste = Near::new(all);
     for b in &st.bodies {
-        if !app.session.body_visible(&b.name) {
+        if !body_shown(app, &b.name) {
             continue;
         }
         // Only bodies whose outline on screen is near the cursor can have an edge under it.
@@ -1241,7 +1246,7 @@ fn feature_geometry(app: &SolveApp, id: u64) -> Vec<Sel> {
     let prefix = format!("F{id}:");
     let mut out = Vec::new();
     for b in &st.bodies {
-        if !app.session.body_visible(&b.name) || app.preview.replaced.contains(&b.name) {
+        if !body_shown(app, &b.name) || app.preview.replaced.contains(&b.name) {
             continue;
         }
         if b.feature == id {
@@ -1272,7 +1277,7 @@ fn displayed_selection(app: &SolveApp, item: &Sel) -> Vec<Sel> {
             .occurrence_bodies(path, true)
             .unwrap_or_default()
             .into_iter()
-            .filter(|name| app.session.body_visible(name))
+            .filter(|name| body_shown(app, name))
             .map(|name| Sel::Body { name })
             .collect(),
         _ => grouped_selection(&app.session, item),
@@ -1660,14 +1665,14 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
         match x {
             Sel::Face { body, index, .. } => {
                 // A live preview stands in for the body: its old faces would fight with it.
-                if let Some(b) = st.body(body).filter(|_| app.session.body_visible(body) && !app.preview.replaced.contains(body)) {
+                if let Some(b) = st.body(body).filter(|_| body_shown(app, body) && !app.preview.replaced.contains(body)) {
                     face_tris(&mut sc, &shown(b), *index, c4(t.sel_face), false);
                     hidden_face_outline(&mut sc, &b.mesh(), *index, t.sel_edge);
                 }
             }
             Sel::Body { name } => {
                 if let Some(b) = st.body(name)
-                    && app.session.body_visible(name)
+                    && body_shown(app, name)
                 {
                     let m = shown(b);
                     for f in 0..b.body.face_count() {
@@ -1677,7 +1682,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
             }
             Sel::Edge { body, index, point } => {
                 if let Some(b) = st.body(body)
-                    && app.session.body_visible(body)
+                    && body_shown(app, body)
                     && let Some(e) = edge_of(&b.mesh(), *index, *point)
                 {
                     edge_lines(&mut sc, e, t.sel_edge, t.sel_edge_rim, 3.0);
@@ -1724,7 +1729,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
     // Timeline modifiers light only their resulting faces; browser rows light whole bodies.
     let mut hovered = app.viewport.hover_feature.map(|id| feature_geometry(app, id)).unwrap_or_default();
     hovered.extend(app.viewport.hover_bodies.iter().map(|name| Sel::Body { name: name.clone() }));
-    for b in st.bodies.iter().filter(|b| app.session.body_visible(&b.name) && !app.preview.replaced.contains(&b.name)) {
+    for b in st.bodies.iter().filter(|b| body_shown(app, &b.name) && !app.preview.replaced.contains(&b.name)) {
         let whole = hovered.iter().any(|x| matches!(x, Sel::Body { name } if name == &b.name));
         let faces: Vec<_> = if whole {
             (0..b.body.face_count()).collect()
@@ -2017,8 +2022,10 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // with no window or menu above it.
     let inside = resp.contains_pointer() && ui.rect_contains_pointer(rect) && hover.is_some_and(|p| !axes.contains(p));
     app.viewport.mouse = hover.filter(|_| inside);
-    // Ctrl or Alt held: drawing and dragging don't snap.
-    crate::drag_snap::set_suppressed(mods.ctrl || mods.alt || mods.command);
+    // Ctrl/Cmd held: drawing and dragging don't snap (Fusion). Alt does not suppress sketch
+    // snap. The manipulator-free flag (gizmo/canvas arrows) uses a separate pref.
+    crate::drag_snap::set_suppressed(crate::prefs::suppress_sketch_snap_held(app, mods));
+    crate::tool_modifiers::set_manipulator_free(crate::prefs::manipulator_free_held(app, mods));
     middle_double_click(app, ui, inside);
 
     // ---- navigation ----
@@ -2292,14 +2299,21 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
 
     // ---- interaction ----
-    let add = mods.shift || mods.command || mods.ctrl;
+    // Shift or Ctrl/Cmd adds to the selection; Ctrl/Cmd also allows toggle-removal (Fusion).
+    // When `selection_shift_add_only` is on (default), Shift alone is pure-add: it never
+    // removes already-selected items.  Ctrl/Cmd always toggles.
+    let ctrl_add = mods.ctrl || mods.command;
+    let add = mods.shift || ctrl_add;
+    // allow_toggle: whether already-selected items may be deselected by this click.
+    let allow_toggle = if app.preferences.selection_shift_add_only { ctrl_add } else { add };
     crate::sketch_text::set_one_letter(mods.shift);
     if let Some(p) = hover.filter(|_| inside) {
         if app.tool.is_some() {
             crate::tools::on_hover(app, &proj, p);
         }
         if resp.clicked() && !held {
-            if app.tool.is_some() {
+            if crate::manufacture_setup::try_pick_origin(app, &proj, p) {
+            } else if app.tool.is_some() {
                 crate::tools::on_click(app, &proj, p);
             } else if app.dialog.as_ref().is_some_and(|d| d.wants_picks()) {
                 if let Some((hit, Some(sel))) = cand {
@@ -2329,13 +2343,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                     // A text's resize or rotation handle: the text stays selected.
                 } else if !crate::sketch3d::click(app, &proj, p) {
                     match on_dim.or(on_glyph) {
-                        Some(id) => select(app, Some(Sel::SketchConstraint { id }), add),
+                        Some(id) => select(app, Some(Sel::SketchConstraint { id }), add, allow_toggle),
                         // Clicking again on the same spot selects the next thing under it (not
                         // the second click of a double-click, which has its own actions).
                         None if !add && !resp.double_clicked() && crate::select_other::cycle_click(app, &proj, p) => {}
                         None => {
                             let sel = cand.and_then(|c| c.1);
-                            select(app, sel.clone(), add);
+                            select(app, sel.clone(), add, allow_toggle);
                             crate::select_other::note_click(app, p, if add { None } else { sel });
                         }
                     }
@@ -2624,9 +2638,14 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
 }
 
-/// A click without a command: select the candidate (replacing the selection, or toggling it
-/// in with Shift/Ctrl); a click on nothing clears.
-pub(crate) fn select(app: &mut SolveApp, sel: Option<Sel>, add: bool) {
+/// A click without a command: select the candidate (replacing the selection, adding with
+/// Shift, or toggling with Ctrl/Cmd); a click on nothing clears.
+///
+/// `add`: whether to add to the current selection (Shift or Ctrl/Cmd held).
+/// `toggle`: whether already-selected items may be removed by this click (Ctrl/Cmd held).
+/// When `add` is true but `toggle` is false (Shift-only, Fusion behaviour), picked items
+/// are always added and never deselected.
+pub(crate) fn select(app: &mut SolveApp, sel: Option<Sel>, add: bool, toggle: bool) {
     if !add {
         // A joint picked in the browser (highlighted even when hidden) lets go.
         app.tree.picked_joints.clear();
@@ -2634,7 +2653,8 @@ pub(crate) fn select(app: &mut SolveApp, sel: Option<Sel>, add: bool) {
     match sel {
         Some(x) => {
             let items = picked_selection(&app.session, &x);
-            if add && items.iter().all(|x| app.session.selection.iter().any(|y| crate::selection::same_item(x, y))) {
+            // Toggle-removal: all picked items are already selected and toggle is allowed.
+            if add && toggle && items.iter().all(|x| app.session.selection.iter().any(|y| crate::selection::same_item(x, y))) {
                 let rest: Vec<Sel> =
                     app.session.selection.iter().filter(|y| !items.iter().any(|x| crate::selection::same_item(x, y))).cloned().collect();
                 let _ = app.run("select.set", json!({ "items": rest }));
@@ -2801,7 +2821,7 @@ fn box_select(app: &mut SolveApp, proj: &Proj, bx: BoxSel, add: bool) {
     } else {
         let accept = app.dialog.as_ref().and_then(|d| d.active_input()).map(|i| i.accept).unwrap_or(BODIES);
         for b in &st.bodies {
-            if !app.session.body_visible(&b.name) {
+            if !body_shown(app, &b.name) {
                 continue;
             }
             let m = b.mesh();
@@ -4308,12 +4328,12 @@ mod tests {
             app.viewport.hover = Some(Hit::Edge { body: b.name.clone(), index: i, mid });
             assert_eq!(build_highlight(&app).lines.len(), 2 * line_count * crate::gpu::LINE_SIZE);
             let item = hit_sel(app.viewport.hover.as_ref().unwrap()).unwrap();
-            select(&mut app, Some(item.clone()), false);
+            select(&mut app, Some(item.clone()), false, false);
             assert_eq!(app.session.selection.len(), 2);
             // Selecting both pieces must not draw each highlight twice.
             assert_eq!(build_highlight(&app).lines.len(), 2 * line_count * crate::gpu::LINE_SIZE);
             // Ctrl/Shift clicking either half deselects the entire rim.
-            select(&mut app, Some(item.clone()), true);
+            select(&mut app, Some(item.clone()), true, true);
             assert!(app.session.selection.is_empty());
             let mut d = crate::dialogs::Dialog::for_command(&app, "solid.chamfer").unwrap();
             if let crate::dialogs::Kind::Fillet { chain, .. } = &mut d.kind {
@@ -4357,7 +4377,7 @@ mod tests {
             app.viewport.hover = Some(Hit::Face { body: b.name.clone(), index, point });
             assert_eq!(build_highlight(&app).tris.len(), triangle_count * 3 * crate::gpu::TRI_SIZE);
             let item = hit_sel(app.viewport.hover.as_ref().unwrap()).unwrap();
-            select(&mut app, Some(item.clone()), false);
+            select(&mut app, Some(item.clone()), false, false);
             assert_eq!(app.session.selection.len(), 2);
             assert_eq!(build_highlight(&app).tris.len(), triangle_count * 3 * crate::gpu::TRI_SIZE);
             assert_eq!(app.session.selection.first(), Some(&item), "keep the original tool placement point first");
@@ -4369,7 +4389,7 @@ mod tests {
             assert_eq!(dialog.items().len(), 2);
             // A point elsewhere on the opposite half still toggles the whole surface off.
             let other = faces.iter().find(|&&x| x != f).unwrap();
-            select(&mut app, Some(Sel::Face { body: b.name.clone(), index: *other as usize, point: m.positions[0] }), true);
+            select(&mut app, Some(Sel::Face { body: b.name.clone(), index: *other as usize, point: m.positions[0] }), true, true);
             assert!(app.session.selection.is_empty());
         }
         // Planar caps and box corners stay separate.

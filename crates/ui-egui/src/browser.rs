@@ -667,6 +667,11 @@ fn component_rows(app: &mut SolveApp, ui: &mut egui::Ui, id: u64, depth: usize, 
     }
     if id == 0 {
         crate::dialogs_assembly::browser_joints(app, ui, d);
+        // Manufacture: Setups folder with each setup's operations (Face, Drill, 3D Contour, …)
+        // nested underneath — same tree the ribbon "steps" add into.
+        if crate::manufacture_workspace::active(app) || !app.session.doc.manufacture.setups.is_empty() {
+            crate::manufacture_workspace::browser_setup_rows(app, ui, d);
+        }
     }
     let children: Vec<u64> = app.session.doc.occurrences.iter().filter(|o| o.parent == id).map(|o| o.id).collect();
     for occurrence in children {
@@ -1226,6 +1231,8 @@ struct Entry {
     target: Option<Target>,
     /// Bodies lit when the row is hovered.
     bodies: Vec<String>,
+    /// Dimmed because the selected setup does not machine this body.
+    isolated: bool,
 }
 
 /// What is being dragged in the tree: items of one component folder.
@@ -1261,6 +1268,7 @@ fn entries(app: &SolveApp, comp: u64, folder: &str) -> Vec<Entry> {
                 sel: Some(Sel::Body { name: b.name.clone() }),
                 target: Some(Target::Body { name: b.name.clone() }),
                 bodies: vec![b.name.clone()],
+                isolated: !crate::manufacture_workspace::setup_shows_body(app, &b.name),
             })
             .collect(),
         "sketches" => doc
@@ -1289,6 +1297,7 @@ fn entries(app: &SolveApp, comp: u64, folder: &str) -> Vec<Entry> {
                     sel: Some(Sel::Feature { id: f.id }),
                     target: Some(Target::Sketch { id: f.id }),
                     bodies: Vec::new(),
+                    isolated: false,
                 }
             })
             .collect(),
@@ -1308,6 +1317,7 @@ fn entries(app: &SolveApp, comp: u64, folder: &str) -> Vec<Entry> {
                 sel: Some(Sel::Plane { name: f.name.clone() }),
                 target: Some(Target::Plane { id: f.id }),
                 bodies: Vec::new(),
+                isolated: false,
             })
             .collect(),
     }
@@ -1405,6 +1415,7 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
                 e.target = Some(Target::Body { name: body.world.clone() });
                 e.bodies = vec![body.world.clone()];
                 e.visible = app.session.body_visible(&body.world);
+                e.isolated = !crate::manufacture_workspace::setup_shows_body(app, &body.world);
                 e.selected = app.session.selection.contains(&Sel::Body { name: body.world.clone() });
                 e.row_key = format!("b:{}", body.world);
             } else {
@@ -1537,7 +1548,7 @@ fn entry_row(
             label: &e.label,
             name: true,
             selected: e.selected,
-            dim: !e.visible,
+            dim: !e.visible || e.isolated,
             color: e.color,
             badges,
             ..Default::default()

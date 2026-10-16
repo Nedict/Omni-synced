@@ -148,6 +148,12 @@ pub(crate) fn paint_with(p: &Painter, r: Rect, name: &str, ink: Color32, fill: C
             pen.arrow((15.0, 20.4), (18.5, 19.0), a);
         }
         "box" => pen.iso_box(3.0, 9.0, 10.0, 8.0, 9.0),
+        // Workspace: a mill over the stock, the same isometric faces as Design's box.
+        "manufacture" => {
+            pen.iso_box(3.5, 13.5, 9.0, 6.5, 5.5);
+            pen.line(&[(11.0, 2.2), (11.0, 8.4)], ink);
+            pen.poly(&[(7.6, 8.0), (14.4, 8.0), (14.4, 10.4), (7.6, 10.4)], a, ink);
+        }
         "cylinder" => {
             pen.poly(&[(5.0, 6.0), (19.0, 6.0), (19.0, 18.0), (5.0, 18.0)], pen.fill.gamma_multiply(0.8), Color32::TRANSPARENT);
             pen.line(&[(5.0, 6.0), (5.0, 18.0)], ink);

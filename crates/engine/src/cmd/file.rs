@@ -59,29 +59,19 @@ fn path_arg<'a>(p: &'a Value, cmd: &str) -> Result<&'a str> {
     str_(p, "path").filter(|x| !x.trim().is_empty() && x.len() < 4096).ok_or_else(|| bad(cmd, "`path` is required"))
 }
 
-/// Read a STEP file as an Import feature.
-fn read_step(path: &str) -> Result<solidcraft_io::StepFeature> {
-    let bytes = solidcraft_io::vfs::read(path, solidcraft_io::MAX_STEP_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-    solidcraft_io::step_import_feature(&bytes, path).map_err(|e| EngineError::Other(format!("{path}: {e}")))
-}
-
 enum ExchangeOpen {
     Solid(solidcraft_io::StepFeature),
     Mesh(solidcraft_io::MeshFeature),
 }
 
-/// Read STEP or Fusion for Open / Insert (Fusion may yield solid or mesh bodies).
+/// Read a registered exchange file for Open / Insert.
 fn read_exchange(path: &str) -> Result<ExchangeOpen> {
-    if solidcraft_io::is_f3d_path(path) {
-        let bytes = solidcraft_io::vfs::read(path, solidcraft_io::MAX_F3D_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-        return solidcraft_io::f3d_open_feature(&bytes, path)
-            .map(|f| match f {
-                solidcraft_io::F3dOpenFeature::Solid(sf) => ExchangeOpen::Solid(sf),
-                solidcraft_io::F3dOpenFeature::Mesh(mf) => ExchangeOpen::Mesh(mf),
-            })
-            .map_err(|e| EngineError::Other(e.to_string()));
-    }
-    read_step(path).map(ExchangeOpen::Solid)
+    solidcraft_io::exchange::read_path(path)
+        .map(|import| match import {
+            solidcraft_io::ExchangeImport::Solid(sf) => ExchangeOpen::Solid(sf),
+            solidcraft_io::ExchangeImport::Mesh(mf) => ExchangeOpen::Mesh(mf),
+        })
+        .map_err(|e| EngineError::Other(format!("{path}: {e}")))
 }
 
 /// Add an Import feature for a STEP file to the session's design.
@@ -149,8 +139,8 @@ fn add_mesh(s: &mut Session, path: &str, name: Option<&str>) -> Result<Value> {
 fn insert_mesh(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "file.insert_mesh";
     let path = path_arg(p, cmd)?;
-    if !solidcraft_io::is_mesh_path(path) {
-        return Err(bad(cmd, "only 3MF and STL files (.3mf, .stl) can be inserted as meshes"));
+    if solidcraft_io::exchange::provider_for_path(path) != Some(solidcraft_io::ExchangeProviderId::MeshStl3mf) {
+        return Err(bad(cmd, "only 3MF, STL and OBJ files can be inserted as meshes"));
     }
     add_mesh(s, path, str_(p, "name"))
 }
@@ -158,19 +148,20 @@ fn insert_mesh(s: &mut Session, p: &Value) -> Result<Value> {
 fn insert_step(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "file.insert_step";
     let path = path_arg(p, cmd)?;
-    if !solidcraft_io::is_step_path(path) && !solidcraft_io::is_f3d_path(path) {
-        return Err(bad(cmd, "only STEP (.step, .stp) or Fusion (.f3d, .f3z) files can be inserted"));
+    if !solidcraft_io::exchange::opens_as_step_or_fusion_insert(path) {
+        return Err(bad(cmd, "only STEP (.step, .stp), IGES (.igs, .iges) or Fusion (.f3d, .f3z) files can be inserted"));
     }
     add_step(s, path, str_(p, "name"))
 }
 
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = path_arg(p, "doc.open")?;
-    if solidcraft_io::is_step_path(path) || solidcraft_io::is_f3d_path(path) || solidcraft_io::is_mesh_path(path) {
+    if solidcraft_io::exchange::opens_new_design(path) {
         // A new, unsaved design holding the file's bodies.
         let stem = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "Untitled".into());
         let mut fresh = Session::new(Document::new(&stem));
-        let r = if solidcraft_io::is_mesh_path(path) { add_mesh(&mut fresh, path, None)? } else { add_step(&mut fresh, path, None)? };
+        let mesh = solidcraft_io::exchange::provider_for_path(path) == Some(solidcraft_io::ExchangeProviderId::MeshStl3mf);
+        let r = if mesh { add_mesh(&mut fresh, path, None)? } else { add_step(&mut fresh, path, None)? };
         fresh.undo.clear();
         fresh.path = Some(path.to_string());
         s.replace_design(fresh);

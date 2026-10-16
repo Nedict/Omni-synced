@@ -36,6 +36,10 @@ impl Class {
 /// prefix.
 pub const TABLE: &[(&str, Class)] = &[
     ("geom", Class::Layer(0)),
+    // CNC domain contracts (setups/tools/ops/posts/toolpath); no workspace deps.
+    ("manufacture", Class::Standalone),
+    // Laser mark profiles + LightBurn package contracts; no workspace deps.
+    ("laser", Class::Standalone),
     ("sketch", Class::Layer(1)),
     ("kernel", Class::Layer(1)),
     ("render", Class::Layer(1)),
@@ -50,6 +54,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("solidcraft", Class::Exempt),
     ("cli", Class::Exempt),
     ("web", Class::Exempt),
+    ("cam", Class::Exempt),
     ("xtask", Class::Exempt),
 ];
 

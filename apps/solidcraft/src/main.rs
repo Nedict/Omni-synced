@@ -100,37 +100,13 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
     let open_parent = parent.clone();
     Services {
         pick_open: Some(Box::new(move || {
-            let future = open_parent
-                .clone()
-                .add_filter(
-                    "Designs, Fusion, STEP, IGES and meshes",
-                    &[
-                        io::DESIGN_EXT,
-                        io::LEGACY_DESIGN_EXT,
-                        "json",
-                        "f3d",
-                        "F3D",
-                        "f3z",
-                        "F3Z",
-                        "step",
-                        "stp",
-                        "STEP",
-                        "STP",
-                        "igs",
-                        "iges",
-                        "IGS",
-                        "IGES",
-                        "3mf",
-                        "3MF",
-                        "stl",
-                        "STL",
-                    ],
-                )
-                .add_filter("SolidCraft design (container or JSON)", &[io::DESIGN_EXT, io::LEGACY_DESIGN_EXT, "json"])
-                .add_filter("Autodesk Fusion", &["f3d", "F3D", "f3z", "F3Z"])
-                .add_filter("STEP", &["step", "stp", "STEP", "STP"])
-                .add_filter("IGES", &["igs", "iges", "IGS", "IGES"])
-                .add_filter("Mesh (3MF, STL)", &["3mf", "3MF", "stl", "STL"])
+            let combined = io::exchange::open_dialog_combined_extensions();
+            let mut dialog = open_parent.clone().add_filter("Designs, Fusion, STEP, IGES and meshes", combined.as_slice());
+            dialog = dialog.add_filter("SolidCraft design (container or JSON)", &[io::DESIGN_EXT, io::LEGACY_DESIGN_EXT, "json"]);
+            for (label, exts) in io::exchange::dialog_filters() {
+                dialog = dialog.add_filter(label, exts);
+            }
+            let future = dialog
                 .add_filter("Sketch drawings (DXF, SVG)", &["dxf", "DXF", "svg", "SVG"])
                 .add_filter("All files", &["*"])
                 .pick_file();

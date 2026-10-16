@@ -332,14 +332,24 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
         Target::Toolbar => crate::toolbar_custom::toolbar_items(app),
         Target::Workspace => {
             let rendering = crate::render_workspace::active(app);
+            let manufacturing = crate::manufacture_workspace::active(app);
+            let idle = app.session.active_sketch.is_none() && app.tool.is_none() && app.dialog.is_none() && !app.file_load.busy();
             let mut v = vec![
-                act("ui.workspace.design", "Design", "box").with(json!({"workspace":"design"})).key(if rendering { "" } else { "current" }),
+                act("ui.workspace.design", "Design", "box").with(json!({"workspace":"design"})).key(if !rendering && !manufacturing {
+                    "current"
+                } else {
+                    ""
+                }),
                 act("ui.workspace.render", "Render", "camera")
                     .with(json!({"workspace":"render"}))
                     .key(if rendering { "current" } else { "" })
-                    .on(app.session.active_sketch.is_none() && app.tool.is_none() && app.dialog.is_none() && !app.file_load.busy()),
+                    .on(idle),
+                act("ui.workspace.manufacture", "Manufacture", "manufacture")
+                    .with(json!({"workspace":"manufacture"}))
+                    .key(if manufacturing { "current" } else { "" })
+                    .on(idle),
             ];
-            for w in ["Animation", "Simulation", "Manufacture", "Drawing"] {
+            for w in ["Animation", "Simulation", "Drawing"] {
                 v.push(act("ui.workspace", w, "").key("coming later").on(false));
             }
             v
@@ -989,11 +999,28 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         "ui.toolbarPin" | "ui.toolbarRemove" | "ui.toolbarReset" | "ui.toolbarCustomize" | "ui.shortcutPin" => {
             crate::toolbar_custom::run(app, &item.id, &p)
         }
-        "ui.workspace" | "ui.workspace.design" | "ui.workspace.render" => {
-            if let Some(workspace) = p.get("workspace").and_then(Value::as_str)
-                && let Err(e) = crate::render_workspace::enter(app, workspace == "render")
-            {
-                app.set_status(e, true);
+        "ui.workspace" | "ui.workspace.design" | "ui.workspace.render" | "ui.workspace.manufacture" => {
+            if let Some(workspace) = p.get("workspace").and_then(Value::as_str) {
+                match workspace {
+                    "render" => {
+                        if let Err(e) = crate::render_workspace::enter(app, true) {
+                            app.set_status(e, true);
+                        }
+                    }
+                    "manufacture" => {
+                        crate::manufacture_workspace::enter(app);
+                    }
+                    "design" => {
+                        if crate::render_workspace::active(app) {
+                            if let Err(e) = crate::render_workspace::enter(app, false) {
+                                app.set_status(e, true);
+                            }
+                        } else if crate::manufacture_workspace::active(app) {
+                            crate::manufacture_workspace::exit(app);
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
         "ui.findJoint" => {
