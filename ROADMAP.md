@@ -228,12 +228,13 @@ annotations and exact projected curves remain deferred. See [view DXF](docs/view
   `diagnostics.crash_reports`, the MCP `crash_reports` tool or the CLI. Nothing is sent
   anywhere. See [crash reports](docs/crash-reports.md).
 - Agent chat (off by default, desktop): a side panel that drives a coding agent the user
-  already has (Claude Code through its ACP adapter, Codex, Gemini CLI, OpenCode, …) over the
+  already has (Claude Code through its ACP adapter, Codex, Gemini CLI, OpenCode, Grok Build, …) over the
   Agent Client Protocol, under the user's own login; SolidCraft stores no keys. The agent works
   through SolidCraft's MCP tools on a gated endpoint of its own: file actions wait for Allow or
   Deny, crash reports are off limits, 24 changes per message, one undo step per message, and
   the agent's whole process group ends with the panel or the app. Docks left or right,
-  minimises to a strip. See [agent chat](docs/agent-chat.md).
+  minimises to a strip. Grok Build discovery includes `~/.grok/bin` and reuses the user's
+  Grok login. See [agent chat](docs/agent-chat.md).
 - Command scripts from designs (#886): `timeline.export_script` (CLI `solidcraft-cli script`)
   writes a design's history as a script that `eval` and `run` replay into the same design —
   user parameters, units, sheet metal and plastic rules and materials as their own commands,
