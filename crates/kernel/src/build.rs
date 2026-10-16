@@ -447,9 +447,44 @@ pub fn revolve(plane: &Plane, regions: &[Region2], axis_origin: Vec2, axis_dir: 
         let closed = angle.abs() >= std::f64::consts::TAU;
         let history = guard("revolve history", || Ok(record::swept_face(&solid, &f, &seeds(&profile), closed)))?;
         let solid = if shift.len() > 0.0 { builder::translated(&solid, v3(shift)) } else { solid };
+        let (solid, history) = if closed { turned_whole(solid, history) } else { (solid, history) };
         out.push(record::attach(Body::new(solid)?, &[], history, Default::default())?);
     }
     Ok(out)
+}
+
+/// A full turn's solid with its planar faces whole (#726): the sweep turns each profile edge
+/// into three patches, the planar ones on revolved surfaces, which stayed apart until a later
+/// feature healed the body, so a pick on one took a third of the face. Healed as booleans heal
+/// their results, each face is still generated, from the profile edges of the patches merged
+/// into it. The solid as it was when healing fails or can't be followed.
+fn turned_whole(solid: Solid, faces: Option<Vec<FaceProv>>) -> (Solid, Option<Vec<FaceProv>>) {
+    let Some(given) = faces.as_ref() else { return (solid, faces) };
+    let Ok(size) = Body::new(solid.clone()).map(|b| b.size()) else { return (solid, faces) };
+    let healed = guard("heal revolve", || {
+        let (healed, map) = crate::heal::heal_traced(solid.clone(), size, &[]);
+        let failed = || KernelError::Failed("heal revolve".into());
+        if !crate::boolean_record::edges_evaluate(&healed) {
+            return Err(failed());
+        }
+        let carried = map
+            .ok_or_else(failed)?
+            .faces
+            .iter()
+            .map(|under| {
+                let mut origins: Vec<_> = under.iter().map(|i| given.get(*i).map(|f| f.origins.clone())).collect::<Option<Vec<_>>>()?.concat();
+                origins.sort();
+                origins.dedup();
+                Some(FaceProv { origins, change: crate::history::Change::Generated })
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(failed)?;
+        Ok((healed, carried))
+    });
+    match healed {
+        Ok((healed, carried)) => (healed, Some(carried)),
+        Err(_) => (solid, faces),
+    }
 }
 
 /// Axis-aligned box between two corners.

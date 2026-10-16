@@ -512,6 +512,26 @@ fn revolve_and_primitives() {
     assert!(rel(m["total"]["volume_mm3"].as_f64().unwrap(), PI * 125.0 * 5.0 / 2.0) < 5e-4);
 }
 
+/// #726: a full turn swept each profile edge into three patches and left the planar ones apart,
+/// so a pick on such a face took a third of it, and a sketch or an extrude there was refused
+/// ("the selected planar face no longer exists") until a later feature merged them.
+#[test]
+fn revolved_planar_faces_come_out_whole() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XZ"}));
+    run(&mut s, "sketch.line", json!({"points": [[8, 0], [30, 0], [30, -6], [18, -6], [18, -22], [8, -22]], "closed": true}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.revolve", json!({"axis": "Z", "angle": 360}));
+    // The flange's top annulus (z = 6, r 18…30), well inside it.
+    let sk = run(&mut s, "sketch.create", json!({"plane": {"face": [12, 20.784609690826528, 6]}}));
+    assert_eq!(sk["attachment"], "exact_face", "{sk}");
+    run(&mut s, "sketch.finish", json!({}));
+    // The bottom annulus (z = 0, r 8…30).
+    let v = volume(&mut s);
+    run(&mut s, "solid.extrude", json!({"face": [-20, 1, 0], "distance": 2, "operation": "join"}));
+    assert!(volume(&mut s) > v + 1.0, "the extrude added nothing");
+}
+
 /// A spherical shell (a half ring between two arcs, both radial lines on the axis) revolved on a
 /// sketch plane that does not pass through the origin: the body is the shell, as it is on XY.
 /// Before, built in place, it measured a third too large (truck tessellates the degenerate faces
