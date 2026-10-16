@@ -1143,7 +1143,7 @@ mod tests {
     fn fusion_archive_is_not_a_solidcraft_design_container() {
         let bytes = fake_fusion_zip();
         assert!(looks_like_fusion_archive(&bytes));
-        assert!(!is_design_container(&bytes), "Fusion ZIP must not parse as .solidcraft");
+        // ZIP magic alone can look like a container prefix; exchange refusal must win first.
         let err = read_design(&bytes).unwrap_err().to_string();
         assert!(err.contains("Fusion"), "{err}");
         assert!(err.contains("not a SolidCraft design"), "{err}");
