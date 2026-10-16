@@ -554,7 +554,6 @@ fn flat_app(preset: &str) -> SolveApp {
     app.start("sheet.flat_pattern");
     let Some(Kind::Sheet(Sm::FlatPattern { data, .. })) = app.dialog.as_mut().map(|d| &mut d.kind) else { panic!("flat dialog") };
     *data = Some(Ok(flat));
-    app.viewport.no_pixels = true;
     app.preferences.nav = preset.into();
     app.preferences.zoom_to_cursor = true;
     app

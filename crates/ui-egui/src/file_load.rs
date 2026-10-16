@@ -554,8 +554,7 @@ fn partial_picture(world: &solidcraft_engine::doc::ModelState, stop: &dyn Fn() -
     if stop() || !preview_work_fits(&scene, &camera) {
         return None;
     }
-    let canvas = solidcraft_engine::render::render(&scene, &camera, 320, 200);
-    Some(egui::ColorImage::from_rgba_unmultiplied([320, 200], &canvas.rgba))
+    preview_image(&scene, &camera)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -601,12 +600,24 @@ fn saved_picture(preview: solidcraft_engine::io::DesignPreview) -> Option<egui::
     if !preview_work_fits(&scene, &camera) {
         return None;
     }
-    let canvas = solidcraft_engine::render::render(&scene, &camera, 320, 200);
-    Some(egui::ColorImage::from_rgba_unmultiplied([320, 200], &canvas.rgba))
+    preview_image(&scene, &camera)
 }
 
-/// Bound raster work as well as file size: repeated full-screen triangles must
-/// not monopolize the file worker. Match the rasterizer's 2x sampling rectangles.
+/// The preview picture, drawn on the GPU by the renderer the app installs (none: no picture).
+#[cfg(not(target_arch = "wasm32"))]
+fn preview_image(scene: &solidcraft_engine::render::Scene, camera: &solidcraft_engine::render::Camera) -> Option<egui::ColorImage> {
+    match solidcraft_engine::capture::rgba(scene, camera, 320, 200) {
+        Ok(picture) => Some(egui::ColorImage::from_rgba_unmultiplied([320, 200], &picture.rgba)),
+        Err(e) => {
+            log::warn!("no preview picture: {e}");
+            None
+        }
+    }
+}
+
+/// Bound drawing work as well as file size: repeated full-screen triangles (a hostile file) must
+/// not monopolize the file worker or a software GPU. Counts each triangle's pixel box at twice the
+/// picture's size.
 #[cfg(not(target_arch = "wasm32"))]
 fn preview_work_fits(scene: &solidcraft_engine::render::Scene, camera: &solidcraft_engine::render::Camera) -> bool {
     let mut pixels = 0.0;
@@ -950,6 +961,9 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn provisional_picture_renders_without_adopting_cached_meshes() {
+        if !crate::gpu::test_picture_renderer() {
+            return;
+        }
         let preview = solidcraft_engine::io::DesignPreview {
             meshes: vec![solidcraft_engine::doc::MeshData {
                 name: "Saved triangle".into(),
@@ -965,7 +979,7 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn repeated_large_preview_triangles_are_a_cache_miss_before_rasterization() {
+    fn repeated_large_preview_triangles_are_a_cache_miss_before_drawing() {
         let preview = solidcraft_engine::io::DesignPreview {
             meshes: vec![solidcraft_engine::doc::MeshData {
                 name: "Hostile overdraw".into(),
