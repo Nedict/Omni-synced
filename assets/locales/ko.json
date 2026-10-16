@@ -194,6 +194,8 @@
   "ui.supersampling_off": "끔 (1×)",
   "ui.supersampling_adaptive": "뷰가 멈춰 있을 때만",
   "settings.supersampling_note": "뷰를 더 높은 해상도로 그린 뒤 축소합니다. 4K 미만 화면에서 모서리, 선, 그리드가 더 매끄러워집니다. GPU 시간이 듭니다: 1.5×에서 약 2.25배, 2×에서 4배의 픽셀.",
+  "ui.frame_rate": "프레임 속도",
+  "settings.frame_rate_note": "뷰의 오른쪽 아래에 초당 프레임 수를 표시합니다. 켜져 있는 동안 뷰를 계속 다시 그립니다.",
   "ui.display_quality": "표시 품질",
   "ui.display_quality_coarse": "거침",
   "ui.display_quality_normal": "보통",

@@ -335,6 +335,8 @@
   "ui.supersampling_off": "Désactivé (1×)",
   "ui.supersampling_adaptive": "Seulement quand la vue est immobile",
   "settings.supersampling_note": "Dessine la vue à une résolution plus élevée puis la réduit : arêtes, lignes et grille plus lisses sur les écrans de définition inférieure à la 4K. Cela coûte du temps GPU : environ 2,25× plus de pixels à 1,5× et 4× plus à 2×.",
+  "ui.frame_rate": "Fréquence d'images",
+  "settings.frame_rate_note": "Affiche les images par seconde dans le coin inférieur droit de la vue. Tant qu'elle est activée, la vue est redessinée en continu.",
   "ui.display_quality": "Qualité d'affichage",
   "ui.display_quality_coarse": "Grossière",
   "ui.display_quality_normal": "Normale",

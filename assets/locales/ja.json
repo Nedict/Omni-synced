@@ -476,6 +476,8 @@
   "ui.supersampling_off": "オフ (1×)",
   "ui.supersampling_adaptive": "ビューが静止しているときのみ",
   "settings.supersampling_note": "ビューを高い解像度で描画してから縮小します。4K 未満の画面でエッジ、線、グリッドが滑らかになります。GPU の負荷が増えます（1.5× で約 2.25 倍、2× で 4 倍のピクセル）。",
+  "ui.frame_rate": "フレームレート",
+  "settings.frame_rate_note": "ビューの右下に 1 秒あたりのフレーム数を表示します。オンの間、ビューは常に再描画されます。",
   "ui.display_quality": "表示品質",
   "ui.display_quality_coarse": "粗い",
   "ui.display_quality_normal": "標準",

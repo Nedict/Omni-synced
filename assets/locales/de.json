@@ -194,6 +194,8 @@
   "ui.supersampling_off": "Aus (1×)",
   "ui.supersampling_adaptive": "Nur bei ruhender Ansicht",
   "settings.supersampling_note": "Zeichnet die Ansicht in höherer Auflösung und rechnet sie herunter: glattere Kanten, Linien und Raster auf Bildschirmen unter 4K. Kostet GPU-Zeit: etwa 2,25-mal so viele Pixel bei 1,5× und 4-mal bei 2×.",
+  "ui.frame_rate": "Bildrate",
+  "settings.frame_rate_note": "Zeigt die Bilder pro Sekunde unten rechts in der Ansicht. Solange sie an ist, wird die Ansicht fortlaufend neu gezeichnet.",
   "ui.display_quality": "Darstellungsqualität",
   "ui.display_quality_coarse": "Grob",
   "ui.display_quality_normal": "Normal",
