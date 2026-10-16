@@ -886,9 +886,9 @@ pub fn origin_planes(app: &SolveApp) -> Vec<(&'static str, Vec3, [Vec3; 4])> {
     if !app.origin_visible() {
         return Vec::new();
     }
-    // While the Origin is hidden, Create Sketch may bring the planes back (empty design): then
-    // every plane; otherwise only those not hidden one by one.
-    let creating = !app.ui.show_origin && app.dialog.as_ref().is_some_and(|d| matches!(d.kind, crate::dialogs::Kind::Sketch));
+    // While the Origin is hidden, Create Sketch brings the planes back: then every plane;
+    // otherwise only those not hidden one by one.
+    let creating = !app.ui.show_origin && app.picking_sketch_plane();
     origin_quads(origin_size(app.cam.half_height()))
         .into_iter()
         .filter(|(n, _, _)| creating || !app.session.visibility.hidden_origin.iter().any(|h| h == n))
@@ -1797,15 +1797,26 @@ pub(crate) fn profile_fill(sc: &mut GpuScene, app: &SolveApp, sketch: u64, index
 }
 
 /// An origin or construction plane: reference geometry, which a section does not cut (#1229).
-fn quad(sc: &mut GpuScene, q: &[Vec3; 4], fill: Color32, edge: Color32) {
+/// A reference plane's square. `through` draws it over the model (Create Sketch: a plane inside
+/// a body stays visible and pickable), else it is depth-tested like the rest of the scene.
+fn quad(sc: &mut GpuScene, q: &[Vec3; 4], fill: Color32, edge: Color32, through: bool) {
     let col = c4(fill);
     for i in [0, 1, 2, 0, 2, 3] {
         if let Some(p) = q.get(i) {
-            sc.guide_tri(p.to_f32(), col);
+            if through {
+                sc.xray_tri(p.to_f32(), [0.0; 3], col);
+            } else {
+                sc.guide_tri(p.to_f32(), col);
+            }
         }
     }
     for i in 0..4 {
-        sc.guide_line(q[i].to_f32(), q[(i + 1) % 4].to_f32(), c4(edge), 1.2);
+        let (a, b) = (q[i].to_f32(), q[(i + 1) % 4].to_f32());
+        if through {
+            sc.line(a, b, c4(edge), 1.2, true);
+        } else {
+            sc.guide_line(a, b, c4(edge), 1.2);
+        }
     }
 }
 
@@ -1826,6 +1837,7 @@ fn highlight_key(app: &SolveApp) -> u64 {
     crate::theme::vision().hash(&mut h);
     app.preview.replaced.hash(&mut h);
     app.origin_visible().hash(&mut h);
+    app.picking_sketch_plane().hash(&mut h);
     app.session.visibility.hidden_origin.hash(&mut h);
     app.session.visibility.hidden_bodies.hash(&mut h);
     app.session.visibility.hidden_occurrences.hash(&mut h);
@@ -1862,6 +1874,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
     };
     let mut planes: Vec<(String, [Vec3; 4], Color32)> = origin_planes(app).into_iter().map(|(n, _, q)| (n.to_string(), q, t.origin_plane)).collect();
     planes.extend(construction_quads(app).into_iter().map(|(n, _, q)| (n, q, t.construction_plane)));
+    let through = app.picking_sketch_plane();
     for (name, q, base) in &planes {
         let (selected, hovered) = plane_state(name);
         let fill = if hovered {
@@ -1871,7 +1884,7 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
         } else {
             *base
         };
-        quad(&mut sc, q, fill, if selected { t.sel_edge } else { t.origin_plane_edge });
+        quad(&mut sc, q, fill, if selected { t.sel_edge } else { t.origin_plane_edge }, through);
     }
     // Origin axes: solid near the origin, dashed beyond.
     for (name, dir) in origin_axes(app) {
@@ -5605,5 +5618,28 @@ mod grid_plane_tests {
                 assert!((n.dot(back).abs() - 1.0).abs() < 1e-9, "{view:?} {up:?}: facing the view");
             }
         }
+    }
+
+    /// Create Sketch shows the Origin even when the browser hides it, and draws its planes
+    /// through the model so a plane inside a body can be seen and picked; closing it restores
+    /// the hidden, depth-tested Origin.
+    #[test]
+    fn create_sketch_shows_the_origin_planes_through_the_model() {
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        app.run("solid.box", json!({"length":40,"width":40,"height":40})).unwrap();
+        app.ui.show_origin = false;
+        assert!(origin_planes(&app).is_empty());
+        assert!(build_highlight(&app).xray.is_empty());
+        app.start("sketch.create");
+        assert!(app.picking_sketch_plane());
+        assert_eq!(origin_planes(&app).len(), 3, "every origin plane is offered");
+        let sc = build_highlight(&app);
+        assert_eq!(sc.xray.len(), 3 * 6 * (6 * 4 + 4), "each plane's two triangles are drawn through the model");
+        assert!(sc.guide_trans.is_empty());
+        app.dialog = None;
+        assert!(origin_planes(&app).is_empty());
+        app.ui.show_origin = true;
+        let sc = build_highlight(&app);
+        assert!(sc.xray.is_empty() && !sc.guide_trans.is_empty(), "outside Create Sketch the planes are depth-tested");
     }
 }

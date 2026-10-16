@@ -1335,6 +1335,7 @@ impl Renderer {
         tris(pass, &res.trans, &h.trans);
         tris(pass, &res.guide_trans, &h.guide_trans);
         tris(pass, &res.xray, &pv.xray);
+        tris(pass, &res.xray, &h.xray);
         lines(pass, &res.overlay, &m.overlays);
         lines(pass, &res.overlay, &sk.overlays);
         lines(pass, &res.overlay, &h.overlays);
