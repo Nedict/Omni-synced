@@ -394,7 +394,7 @@ fn shell_create_polygon<S: PreMeshableSurface>(
         // operations intersect keep truck's points.
         if tol.rulings {
             let points: Vec<Point3> = wires.iter().flat_map(Wire::edge_iter).flat_map(|e| e.curve().0).collect();
-            onto_edges(&mut mesh, &points, tol.chord);
+            onto_edges(&mut mesh, &boundary, &points, tol.chord);
         }
         Some(mesh)
     })();
@@ -411,35 +411,33 @@ fn shell_create_polygon<S: PreMeshableSurface>(
 /// parameters, and a boundary point's parameters are those its edge point projects to. An edge
 /// that lies on a surface only within tolerance (a sample of an intersection curve whose
 /// projection did not converge, an imported edge) then puts the point it shares with the next
-/// face in a different place on each face, and the shell's mesh cracks there. Each vertex on
-/// the mesh's open boundary goes back to the nearest point of the face's edges within `tol`, so
-/// the faces of an edge have the very same points along it.
-fn onto_edges(mesh: &mut PolygonMesh, points: &[Point3], tol: f64) {
-    let mut uses: HashMap<(usize, usize), u32> = HashMap::default();
-    for tri in mesh.faces().triangle_iter() {
-        for (a, b) in [(tri[0].pos, tri[1].pos), (tri[1].pos, tri[2].pos), (tri[2].pos, tri[0].pos)] {
-            *uses.entry((a.min(b), a.max(b))).or_default() += 1;
-        }
-    }
-    let open: Vec<usize> = uses.into_iter().filter(|(_, n)| *n == 1).flat_map(|((a, b), _)| [a, b]).collect();
+/// face in a different place on each face, and the shell's mesh cracks there. Each vertex at a
+/// point of the boundary loops (the same parameters, as the triangulation got them) that is
+/// farther than `TOLERANCE` from the nearest point of the face's edges goes to that point, when
+/// it is within `tol`, so the faces of an edge have the very same points along it. Within
+/// `TOLERANCE` the points are already the same, and a face keeps them on its surface: grid
+/// points can lie on a boundary between its points (the ruling lines of a plane), and moving
+/// only the boundary points would bend the boundary there.
+fn onto_edges(mesh: &mut PolygonMesh, boundary: &PolyBoundary, points: &[Point3], tol: f64) {
+    let key = |x: f64, y: f64| [spade_round(x).to_bits(), spade_round(y).to_bits()];
+    let loops: rustc_hash::FxHashSet<[u64; 2]> = boundary.0.iter().flatten().map(|p| key(p.x, p.y)).collect();
+    let on_loops: Vec<bool> = mesh.uv_coords().iter().map(|uv| loops.contains(&key(uv.x, uv.y))).collect();
     let cell = |p: Point3| [p.x, p.y, p.z].map(|x| (x / tol).floor() as i64);
     let mut grid: HashMap<[i64; 3], Vec<Point3>> = HashMap::default();
     points.iter().for_each(|p| grid.entry(cell(*p)).or_default().push(*p));
-    let positions = mesh.positions_mut();
-    for i in open {
-        let Some(p) = positions.get_mut(i) else { continue };
+    for (p, _) in mesh.positions_mut().iter_mut().zip(on_loops).filter(|(_, on)| *on) {
         let c = cell(*p);
         let mut best = (tol * tol, None);
         for d in (0..27).map(|k| [k % 3 - 1, k / 3 % 3 - 1, k / 9 - 1]) {
-            let key = [c[0].saturating_add(d[0]), c[1].saturating_add(d[1]), c[2].saturating_add(d[2])];
-            for q in grid.get(&key).into_iter().flatten() {
+            let near = [c[0].saturating_add(d[0]), c[1].saturating_add(d[1]), c[2].saturating_add(d[2])];
+            for q in grid.get(&near).into_iter().flatten() {
                 let d2 = q.distance2(*p);
                 if d2 <= best.0 {
                     best = (d2, Some(*q));
                 }
             }
         }
-        if let Some(q) = best.1 {
+        if let Some(q) = best.1.filter(|_| best.0 > TOLERANCE2) {
             *p = q;
         }
     }

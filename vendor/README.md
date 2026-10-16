@@ -158,10 +158,11 @@ Changes:
   face's mesh puts each point at its parameters on the face's own surface, so a point of an edge
   that lies off a surface within tolerance (an intersection-curve sample whose projection did not
   converge, an imported edge) came out in a different place on each of the edge's faces, and the
-  exported mesh had a crack there. In display and export meshes (`Deflection::rulings`), each
-  vertex on a face mesh's open boundary now goes back to the nearest point of the face's edges
-  within the chord tolerance (`onto_edges`). The meshes Boolean operations intersect keep
-  truck's points.
+  exported mesh had a crack there. In display and export meshes (`Deflection::rulings`), a
+  vertex at a point of a face's boundary loops that is farther than `TOLERANCE` from the nearest
+  point of the face's edges now goes to that point, when it is within the chord tolerance
+  (`onto_edges`). Points within `TOLERANCE` stay on the surface, so exact geometry meshes as
+  before. The meshes Boolean operations intersect keep truck's points.
 
 ## matext4cgmath 0.1.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/matext4cgmath)
 
