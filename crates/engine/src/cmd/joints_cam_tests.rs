@@ -161,6 +161,14 @@ fn picked_edges_give_the_sketch_s_table() {
     let (edges, b) = table(json!({"edges": [[E + R, 0, 5]]}));
     assert_eq!((sketch.len(), edges.len()), (360, 360));
     assert!(sketch.iter().zip(&edges).all(|(x, y)| close(*x, *y, 1e-3)) && close(a, b, 1e-3));
+    // A second disc of the cam's component touching it in the same plane is not part of its loop.
+    let mut s = cam_on_base();
+    run(&mut s, "component.activate", json!({"component": "Cam"}));
+    run(&mut s, "solid.cylinder", json!({"base": [E + R + 20.0, 0, 0], "axis": [0, 0, 1], "radius": 20, "height": 5}));
+    tappet(&mut s, 0.0, E + R);
+    run(&mut s, "joint.cam", json!({"a": "Cam", "b": "Tappet", "profile": {"edges": [[E - R, 0, 5]]}}));
+    let touching = s.doc.assembly.links.first().map(|l| l.lift.clone()).unwrap_or_default();
+    assert!(touching.len() == 360 && touching.iter().zip(&sketch).all(|(x, y)| close(*x, *y, 1e-3)), "{touching:?}");
     let mut s = cam_on_base();
     tappet(&mut s, 0.0, E + R);
     run(&mut s, "joint.cam", json!({"a": "Cam", "b": "Tappet", "profile": {"edges": [[E + R, 0, 5]]}}));

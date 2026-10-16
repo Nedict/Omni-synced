@@ -340,11 +340,16 @@ fn profile_points(doc: &Document, st: &ModelState, p: &CamProfile, cam: &super::
                 return Err(bad("the cam has no body"));
             }
             // Each body sampled to its own size (a large part beside the cam leaves the cam fine).
-            let edges: Vec<Vec<Vec<Vec3>>> = bodies
+            // Each body's edges with the faces beside them.
+            let meshes: Vec<solidcraft_geom::Mesh> =
+                bodies.iter().map(|b| b.body.tessellate(tolerance(b.body.size()))).collect::<std::result::Result<_, _>>()?;
+            let edges: Vec<(usize, &Vec<Vec3>, &[u32])> = meshes
                 .iter()
-                .map(|b| b.body.edges(tolerance(b.body.size())).map(|es| es.into_iter().map(|e| e.points).collect()))
-                .collect::<std::result::Result<_, _>>()?;
+                .enumerate()
+                .flat_map(|(k, m)| m.edges.iter().enumerate().map(move |(i, e)| (k, e, m.edge_faces.get(i).map(Vec::as_slice).unwrap_or(&[]))))
+                .collect();
             let mut lines: Vec<&Vec<Vec3>> = Vec::new();
+            let mut sides: Vec<(usize, &[u32])> = Vec::new();
             for (k, pick) in picks.iter().enumerate() {
                 let mut at = *pick;
                 if let Some(name) = names.get(k).filter(|n| !n.is_empty()) {
@@ -356,9 +361,8 @@ fn profile_points(doc: &Document, st: &ModelState, p: &CamProfile, cam: &super::
                 }
                 let nearest = edges
                     .iter()
-                    .flatten()
                     .map(|e| {
-                        let d = e.windows(2).filter_map(|w| match w {
+                        let d = e.1.windows(2).filter_map(|w| match w {
                             [p, q] => Some(at.dist_to_segment(*p, *q)),
                             _ => None,
                         });
@@ -367,12 +371,14 @@ fn profile_points(doc: &Document, st: &ModelState, p: &CamProfile, cam: &super::
                     .min_by(|a, b| a.0.total_cmp(&b.0))
                     .filter(|(d, _)| *d <= 1e-3 * size + 1e-3)
                     .ok_or_else(|| bad("no edge there"))?;
-                if !lines.iter().any(|l| std::ptr::eq(*l, nearest.1)) {
-                    lines.push(nearest.1);
+                if !lines.iter().any(|l| std::ptr::eq(*l, nearest.1.1)) {
+                    lines.push(nearest.1.1);
+                    sides.push((nearest.1.0, nearest.1.2));
                 }
             }
-            // The other edges in the picked edges' plane square to the cam's axis: a loop continues
-            // along them (a circle the kernel keeps as two arcs is picked with one click).
+            // The other edges in the picked edges' plane square to the cam's axis, beside a face of
+            // theirs: a loop continues along them (a circle the kernel keeps as two arcs is picked
+            // with one click), and not onto another part touching it.
             let f = if *occurrence == cam.b.occurrence { fb } else { fa };
             let axis = Vec3::new(f[2][0], f[2][1], f[2][2]);
             let level = lines.first().and_then(|l| l.first()).map(|p| p.dot(axis)).unwrap_or(0.0);
@@ -380,10 +386,13 @@ fn profile_points(doc: &Document, st: &ModelState, p: &CamProfile, cam: &super::
             // component with a large part must not close a gap of its own size).
             let span = extent(lines.iter().flat_map(|l| l.iter()));
             let (flat, join) = (1e-6 * span + 1e-9, 1e-6 * span + 1e-9);
+            let beside = |(k, faces): (usize, &[u32])| sides.iter().any(|(sk, sf)| *sk == k && sf.iter().any(|f| faces.contains(f)));
             let pool: Vec<&Vec<Vec3>> = edges
                 .iter()
-                .flatten()
-                .filter(|e| !lines.iter().any(|l| std::ptr::eq(*l, *e)) && e.iter().all(|p| (p.dot(axis) - level).abs() <= flat))
+                .filter(|(k, e, faces)| {
+                    !lines.iter().any(|l| std::ptr::eq(*l, *e)) && beside((*k, faces)) && e.iter().all(|p| (p.dot(axis) - level).abs() <= flat)
+                })
+                .map(|(_, e, _)| *e)
                 .collect();
             let loop_ = chain(&lines, &pool, join)
                 .ok_or_else(|| bad(&format!("the picked edges must form one closed loop (of at most {MAX_PROFILE_POINTS} points)")))?;
