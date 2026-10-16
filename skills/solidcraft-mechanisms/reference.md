@@ -151,4 +151,6 @@ The same pattern moved the solar wings of the SELENE rover (`Rover-v7.solidcraft
 
 ## Showing it moving
 
-Bridged to the app, `motion.play {"study":..., "step":s}` moves the user's viewport, and `screenshot` captures the window at each step. To record outside MCP, drive the app's control channel (`docs/control-protocol.md`): `engine.execute` with `motion.play`, then `ui.screenshot` with a `path`, once per frame.
+`motion.export_animation {"study":..., "path":"tour.gif"}` draws the whole motion as an animated GIF in one call, headless or bridged, and changes nothing: `{"joint":..., "from":0, "to":90, "path":...}` animates a drive instead. A path that does not end in `.gif` is a folder for PNG frames (`frame-0001.png`, ...). Pass `camera` (the reply of `ui.camera`, or any of its fields), `width`/`height` (default 800 x 500), `samples` (frames; default the study's steps + 1, or 100), `fps` (default 20), and `grid: false` / `axes: false` for a clean background. The reply is small: `frames`, `bytes`, and `stopped_at` with `stopped_by_loop`/`stopped_by_contact` where the motion first stopped short.
+
+Bridged to the app, `motion.play {"study":..., "step":s}` moves the user's viewport, and `screenshot` captures the window at that step.

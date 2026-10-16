@@ -51,7 +51,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("surface.loft", "Surface Loft", surface_loft)
         .at("SURFACE", "CREATE")
         .icon("surface_loft")
-        .params("sections: [{sketch, curves?: [curve ids], profiles?}] (2…50 in order; each one chain: a profile without holes, or curves meeting end to end; all open or all closed); name?, body_name? (a surface body: ruled between two sections, smooth through three or more; no caps)"),
+        .params("sections: [{sketch, curves?: [curve ids], profiles?} | {body, edges: [[x,y,z]]}] (2…50 in order; each one chain: a profile without holes, or curves meeting end to end; all open or all closed; a body edge chain takes the face the chain bounds as the surface the end repeats); continuity?: [g0|g1|g2|g3, g0|g1|g2|g3] (each end, default g0: how much of the surface at the first and last section the loft repeats — the tangent plane, the curvature, or how that curvature changes); crown?: [number, number] (default 0: how full each end leaves, -0.9 flattest to 3 fullest); name?, body_name? (a surface body: ruled between two sections, smooth through three or more; no caps)"),
     CommandSpec::new("surface.offset", "Offset Surface", offset)
         .at("SURFACE", "CREATE")
         .icon("surface_offset")
@@ -369,15 +369,57 @@ fn surface_loft(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let mut sections = Vec::with_capacity(given.len());
     for sec in given {
+        // A section is a chain of sketch curves, or an edge chain of a body whose face the end of
+        // the loft repeats.
+        if let Some(body) = str_(sec, "body") {
+            let edges: Vec<solidcraft_geom::Vec3> =
+                sec.get("edges").and_then(Value::as_array).map(|a| a.iter().filter_map(vec3).collect()).unwrap_or_default();
+            if edges.is_empty() || edges.len() > 10_000 {
+                return Err(bad(cmd, "`sections.edges` must list 1 to 10000 points on the edges of a chain"));
+            }
+            if sec.get("sketch").is_some() {
+                return Err(bad(cmd, "a section is either a sketch chain or a body edge chain"));
+            }
+            sections.push(solidcraft_doc::SheetSection {
+                sketch: SketchId(0),
+                profiles: None,
+                curves: Vec::new(),
+                body: Some(BodyName::from(body.to_string())),
+                edges: edges.into_iter().map(Position).collect(),
+            });
+            continue;
+        }
         let sketch = sketch_id(s, sec.get("sketch"), cmd, "sections.sketch")?;
         let curves = string_list(sec, "curves");
         if curves.len() > 1000 {
             return Err(bad(cmd, "at most 1000 curves a section"));
         }
         let profiles = if sec.get("profiles").is_some() { Some(profiles(sec, cmd)?) } else { None };
-        sections.push(solidcraft_doc::SheetSection { sketch: SketchId(sketch), profiles, curves });
+        sections.push(solidcraft_doc::SheetSection { sketch: SketchId(sketch), profiles, curves, body: None, edges: Vec::new() });
     }
-    add_feature(s, p, FeatureKind::SurfaceLoft { sections })
+    let continuity = match p.get("continuity") {
+        None => [Continuity::G0, Continuity::G0],
+        Some(v) => {
+            let list = v.as_array().filter(|a| a.len() == 2).ok_or_else(|| bad(cmd, "`continuity` must be two words, one per end"))?;
+            let word = |x: Option<&Value>| -> Result<Continuity> {
+                x.and_then(Value::as_str).and_then(Continuity::parse).ok_or_else(|| bad(cmd, "`continuity` entries must be g0, g1, g2 or g3"))
+            };
+            [word(list.first())?, word(list.get(1))?]
+        }
+    };
+    let crown = match p.get("crown") {
+        None | Some(Value::Null) => [0.0, 0.0],
+        Some(v) => {
+            let list = v.as_array().filter(|a| a.len() == 2).ok_or_else(|| bad(cmd, "`crown` must be two numbers, one per end"))?;
+            let one = |x: Option<&Value>| -> Result<f64> {
+                x.and_then(Value::as_f64)
+                    .filter(|x| x.is_finite() && (-0.9..=3.0).contains(x))
+                    .ok_or_else(|| bad(cmd, "each `crown` entry must be between -0.9 (flattest) and 3 (fullest)"))
+            };
+            [one(list.first())?, one(list.get(1))?]
+        }
+    };
+    add_feature(s, p, FeatureKind::SurfaceLoft { sections, continuity, crown })
 }
 
 fn offset(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1212,7 +1254,7 @@ mod tests {
     /// as it was.
     #[test]
     fn planned_commands_refuse_and_leave_the_design_alone() {
-        let planned = ["surface.fillet", "inspect.continuity"];
+        let planned = ["surface.fillet"];
         let mut s = Session::default();
         run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "B"}));
         let before = s.doc.features.len();
@@ -1587,5 +1629,69 @@ mod tests {
         assert!(s.execute("surface.fair", &json!({"body": "Shell", "strength": 2, "tolerance": 1.0})).is_err());
         assert!(s.execute("surface.fair", &json!({"body": "Shell", "iterations": 0, "tolerance": 1.0})).is_err());
         assert!(s.execute("surface.fair", &json!({"body": "Shell", "tolerance": 0})).is_err());
+    }
+
+    /// A loft through three sections whose first and last are edge chains of two boxes, with
+    /// `continuity: ["g1","g1"]`: it leaves each box's top face tangentially (the run direction
+    /// lies in that face) and passes through the sketch between them.
+    #[test]
+    fn surface_loft_leaves_a_box_face_tangentially() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"corner": [0, 0, 0], "length": 20, "width": 20, "height": 10, "body_name": "Low"}));
+        run(&mut s, "solid.box", json!({"corner": [40, 0, 0], "length": 20, "width": 20, "height": 10, "body_name": "High"}));
+        run(&mut s, "construct.plane.offset", json!({"base": "YZ", "offset": 30, "name": "Mid"}));
+        run(&mut s, "sketch.create", json!({"plane": "Mid", "name": "Bump"}));
+        run(&mut s, "sketch.line", json!({"points": [[0, 14], [20, 14]], "ids": ["b"]}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(
+            &mut s,
+            "surface.loft",
+            json!({
+                "sections": [
+                    {"body": "Low", "edges": [[20, 5, 10], [20, 15, 10]]},
+                    {"sketch": "Bump", "curves": ["b"]},
+                    {"body": "High", "edges": [[40, 5, 10], [40, 15, 10]]}
+                ],
+                "continuity": ["g1", "g1"],
+                "crown": [0, 0],
+                "body_name": "Blend"
+            }),
+        );
+        let body = s.world_state().body("Blend").unwrap().body.clone();
+        // A fine grid in the run direction: the seams sit at u = 0, 1/2 and 1, and the first step
+        // off each one is the tangent there (a thousandth of the run, so it is the tangent).
+        let grid = solidcraft_kernel::sample_grid(&body, 1001, 9).unwrap();
+        // The ends lie on the two boxes' top faces, and the sketch is met exactly between them.
+        for p in &grid[0] {
+            assert!((p.z - 10.0).abs() < 1e-9 && (p.x - 20.0).abs() < 1e-9, "the first seam is the box edge: {p:?}");
+        }
+        for p in &grid[1000] {
+            assert!((p.z - 10.0).abs() < 1e-9 && (p.x - 40.0).abs() < 1e-9, "the last seam is the box edge: {p:?}");
+        }
+        for p in &grid[500] {
+            assert!((p.z - 14.0).abs() < 1e-9 && (p.x - 30.0).abs() < 1e-9, "the blend meets the sketch: {p:?}");
+        }
+        // The seam leaves along the box's top face: the run direction the blend is given is what
+        // the face holds, so the tangent there is horizontal and along the run. (The step the grid
+        // takes is a thousandth of the run, and a chord over that step carries an O(h²) bias of
+        // about 0.011 here, so 1e-2 on the rise off the face is what the grid can measure; the
+        // kernel's own tests pin the tangent to the frame's leave direction exactly.)
+        for j in [0usize, 4, 8] {
+            let d = (grid[1][j] - grid[0][j]).normalized().unwrap();
+            assert!(d.z.abs() < 2e-2 && d.x > 0.999, "the blend leaves the low box's top face: {d:?}");
+            let d = (grid[1000][j] - grid[999][j]).normalized().unwrap();
+            assert!(d.z.abs() < 2e-2 && d.x > 0.999, "the blend arrives along the high box's top face: {d:?}");
+        }
+        // Hostile parameters are refused, never panicking.
+        let bad = [
+            json!({"sections": [{"body": "Low", "edges": [[20, 5, 10], [20, 15, 10]]}, {"sketch": "Bump", "curves": ["b"]}], "continuity": ["g1"]}),
+            json!({"sections": [{"body": "Low", "edges": []}, {"sketch": "Bump", "curves": ["b"]}], "continuity": ["g1", "g1"]}),
+            json!({"sections": [{"body": "Low", "edges": [[20, 5, 10]], "sketch": "Bump"}, {"sketch": "Bump", "curves": ["b"]}]}),
+            json!({"sections": [{"sketch": "Bump", "curves": ["b"]}, {"sketch": "Bump", "curves": ["b"]}], "crown": [5, 0]}),
+            json!({"sections": [{"sketch": "Bump", "curves": ["b"]}, {"sketch": "Bump", "curves": ["b"]}], "continuity": ["g9", "g1"]}),
+        ];
+        for p in bad {
+            assert!(s.execute("surface.loft", &p).is_err(), "hostile loft params: {p}");
+        }
     }
 }

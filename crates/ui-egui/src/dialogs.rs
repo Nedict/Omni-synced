@@ -2054,16 +2054,18 @@ fn auto_operation(app: &SolveApp, d: &mut Dialog) {
     }
     let Kind::Extrude { direction, distance, .. } = &d.kind else { return };
     let Ok(dist) = app.session.doc.eval(distance, solidcraft_engine::doc::expr::Kind::Length) else { return };
-    let side = crate::smart_extrude::side(dist, *direction);
+    let mut side = crate::smart_extrude::side(dist, *direction);
     if !matches!(d.kind, Kind::Extrude { auto_op: true, .. }) {
         return;
     }
-    let Some(fresh) = dialog_commands(app, d)
-        .ok()
-        .and_then(|c| c.into_iter().next())
-        .and_then(|(_, p)| solidcraft_engine::auto_operation(&app.session, &p))
-        .and_then(|op| OPS.iter().position(|o| *o == op))
-    else {
+    let Some(params) = dialog_commands(app, d).ok().and_then(|c| c.into_iter().next()).map(|(_, p)| p) else { return };
+    // To an object, the extrude goes to it on whichever side it is: that is the side (#1633).
+    if params.get("to").is_some()
+        && let Some(reach) = solidcraft_engine::extrude_reach(&app.session, &params)
+    {
+        side = crate::smart_extrude::side(reach, 0);
+    }
+    let Some(fresh) = solidcraft_engine::auto_operation(&app.session, &params).and_then(|op| OPS.iter().position(|o| *o == op)) else {
         return;
     };
     if let Kind::Extrude { operation, smart, .. } = &mut d.kind {
