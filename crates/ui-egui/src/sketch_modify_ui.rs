@@ -149,10 +149,11 @@ fn inputs(k: &Mod) -> Vec<SelInput> {
         ],
         // The centre is required: `sketch.pattern.circular` has no default for it.
         Mod::PatternCirc { .. } => vec![SelInput::new("Entities", CURVES | SKETCH_POINTS, true), SelInput::new("Center", SKETCH_POINTS, false)],
-        // A fillet rounds any number of corners to one radius (`points`). Each chamfer command
-        // cuts one corner, so its input holds one.
-        Mod::Corner { chamfer: false, .. } => vec![SelInput::new("Corners", SKETCH_POINTS, true)],
-        Mod::Corner { .. } => vec![SelInput::new("Corner", SKETCH_POINTS, false)],
+        // A corner is picked as its point, or as its two sides when more than two lines end at
+        // the point and it cannot name the pair (#1824). A fillet rounds any number of corners to
+        // one radius. Each chamfer command cuts one corner, so `after_pick` keeps one.
+        Mod::Corner { chamfer: false, .. } => vec![SelInput::new("Corners", SKETCH_POINTS | CURVES, true)],
+        Mod::Corner { .. } => vec![SelInput::new("Corner", SKETCH_POINTS | CURVES, true)],
     }
 }
 
@@ -200,7 +201,41 @@ pub fn candidate(d: &Dialog, session: &solidcraft_engine::Session, hit: &Hit) ->
     let active = session.active_sketch?;
     match hit {
         Hit::SketchCurve { sketch, .. } | Hit::SketchPoint { sketch, .. } if *sketch != active => None,
+        // A point three or more lines end at cannot name the pair to round or cut. Offering it
+        // would only be refused at OK, and it would hide the side under it, which is how such a
+        // corner is picked (#1824).
+        Hit::SketchPoint { id, .. } if matches!(d.kind, Kind::SketchModify(Mod::Corner { .. })) && crowded_corner(session, active, id) => None,
         _ => d.active_input()?.accepts(hit, |_, _| false),
+    }
+}
+
+/// Do three or more editable curves end at sketch point `id`? Construction curves do not count,
+/// as the corner commands ignore them (#1026).
+fn crowded_corner(session: &solidcraft_engine::Session, sketch: u64, id: &str) -> bool {
+    let state = session.world_state();
+    let Some(sk) = state.sketch(sketch).map(|s| &s.sketch) else { return false };
+    let Some(pi) = sk.point_index(id) else { return false };
+    let ending = sk
+        .curves
+        .iter()
+        .enumerate()
+        .filter(|(ci, c)| !sk.is_linked_curve(*ci) && !c.construction && c.kind.ends().is_some_and(|(a, b)| a == pi || b == pi))
+        .count();
+    ending > 2
+}
+
+/// Keep a corner window's picks to what one corner is made of. A chamfer cuts one corner, so a
+/// new pick replaces the old: a point alone, or the last two sides. A fillet takes both kinds of
+/// pick, a point or a pair of sides, for as many corners as are wanted.
+pub(crate) fn after_pick(d: &mut Dialog, picked_curve: bool) {
+    let Kind::SketchModify(Mod::Corner { chamfer: true, .. }) = &d.kind else { return };
+    let Some(input) = d.inputs.first_mut() else { return };
+    if picked_curve {
+        input.items.retain(|x| matches!(x, Sel::SketchCurve { .. }));
+        let extra = input.items.len().saturating_sub(2);
+        input.items.drain(..extra);
+    } else if let Some(last) = input.items.last().cloned() {
+        input.items = vec![last];
     }
 }
 
@@ -734,15 +769,35 @@ pub fn commands(app: &SolveApp, k: &Mod, inputs: &[SelInput], extra: &Map<String
         }
         Mod::Corner { chamfer: false, size, .. } => {
             let corners = corner_ids(app, inputs, 0);
-            if corners.is_empty() {
+            let sides = curve_ids(inputs, 0);
+            if corners.is_empty() && sides.is_empty() {
                 return Err("select the corners to round first".into());
             }
+            if !sides.len().is_multiple_of(2) {
+                return Err("select both sides of each corner to round".into());
+            }
             // The radius is checked where it is evaluated, against the document's parameters.
-            ("sketch.fillet", json!({"points": corners, "radius": size.trim()}))
+            let mut p = json!({"radius": size.trim()});
+            if !corners.is_empty() {
+                p["points"] = json!(corners);
+            }
+            if !sides.is_empty() {
+                p["corners"] = sides.chunks(2).map(|s| json!({"a": s[0], "b": s[1]})).collect();
+            }
+            ("sketch.fillet", p)
         }
         Mod::Corner { ctype, size, distance2, angle, flip, .. } => {
-            let point = corner_ids(app, inputs, 0).into_iter().next().ok_or("select the corner to cut first")?;
-            let mut p = corner_ref(app, &point, *flip && *ctype > 0)?;
+            let flip = *flip && *ctype > 0;
+            let sides = curve_ids(inputs, 0);
+            let mut p = match corner_ids(app, inputs, 0).into_iter().next() {
+                Some(point) if sides.is_empty() => corner_ref(app, &point, flip)?,
+                None if sides.len() == 2 => {
+                    let (a, b) = if flip { (&sides[1], &sides[0]) } else { (&sides[0], &sides[1]) };
+                    json!({"a": a, "b": b})
+                }
+                None if sides.is_empty() => return Err("select the corner to cut first".into()),
+                _ => return Err("select a corner point, or both of its sides".into()),
+            };
             p["distance"] = json!(corner_size(app, size_label(true, *ctype), size, ValueKind::Length)?);
             match ctype {
                 1 => {

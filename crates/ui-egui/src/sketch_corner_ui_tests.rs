@@ -431,3 +431,63 @@ fn ordinary_drawing_keeps_origin_snap_and_real_origin_corners_work() {
     assert!(ss.sketch.curves.iter().any(|c| matches!(c.kind, CurveKind::Arc { .. })));
     assert_eq!(ss.profiles.len(), 1);
 }
+
+/// #1824: three lines end at one point (a horizontal in two pieces and a diagonal), so the point
+/// cannot name a pair. Clicking the two sides does, for a fillet and for a chamfer.
+fn three_lines_at_a_point() -> crate::scenario::Harness {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+    h.app.run("sketch.line", json!({"points":[[0,0],[10,0]],"ids":["left"]})).unwrap();
+    h.app.run("sketch.line", json!({"points":["left.end",[35,0]],"ids":["right"]})).unwrap();
+    h.app.run("sketch.line", json!({"points":["left.end",[20,15]],"ids":["diag"]})).unwrap();
+    h.frames(2);
+    h
+}
+
+#[test]
+fn fillet_window_rounds_a_corner_picked_by_its_two_sides() {
+    let mut h = three_lines_at_a_point();
+    let sid = h.app.session.active_sketch.unwrap();
+    h.step(&json!({"start":"sketch.fillet"})).unwrap();
+    h.frames(2);
+    // The shared point is not a corner of two lines, so it is not offered; a side is.
+    h.step(&json!({"move":{"world":[15,7.5,0]}})).unwrap();
+    assert!(matches!(h.app.viewport.hover, Some(crate::viewport::Hit::SketchCurve { ref id, .. }) if id == "diag"), "{:?}", h.app.viewport.hover);
+    h.step(&json!({"click":{"world":[15,7.5,0]}})).unwrap();
+    // One side is not a corner yet.
+    set_size(&mut h.app, "2");
+    apply(&mut h);
+    assert!(h.app.dialog.is_some(), "one side must not apply");
+    h.step(&json!({"click":{"world":[25,0,0]}})).unwrap();
+    h.frames(2);
+    assert_eq!(h.app.dialog.as_ref().map(|d| d.inputs[0].items.len()), Some(2));
+    let before = h.app.session.undo.len();
+    apply(&mut h);
+    assert!(h.app.dialog.is_none(), "{:?}", h.app.status);
+    assert_eq!(h.app.session.undo.len(), before + 1);
+    let st = h.app.session.world_state();
+    let sk = &st.sketch(sid).unwrap().sketch;
+    let arcs: Vec<_> = sk.curves.iter().filter(|c| matches!(c.kind, CurveKind::Arc { .. })).collect();
+    assert_eq!(arcs.len(), 1, "{:?}", h.app.status);
+}
+
+#[test]
+fn chamfer_window_cuts_a_corner_picked_by_its_two_sides_and_a_new_pick_replaces_it() {
+    let mut h = three_lines_at_a_point();
+    let sid = h.app.session.active_sketch.unwrap();
+    h.step(&json!({"start":"sketch.chamfer.equal_distance"})).unwrap();
+    h.frames(2);
+    h.step(&json!({"click":{"world":[15,7.5,0]}})).unwrap();
+    h.step(&json!({"click":{"world":[25,0,0]}})).unwrap();
+    // A third side starts a new pair rather than refusing at OK.
+    h.step(&json!({"click":{"world":[4,0,0]}})).unwrap();
+    h.frames(2);
+    assert_eq!(h.app.dialog.as_ref().map(|d| d.inputs[0].items.len()), Some(2));
+    set_size(&mut h.app, "2");
+    apply(&mut h);
+    assert!(h.app.dialog.is_none(), "{:?}", h.app.status);
+    let st = h.app.session.world_state();
+    let sk = &st.sketch(sid).unwrap().sketch;
+    // The two sides were cut back and joined by a new line: four lines now.
+    assert_eq!(sk.curves.len(), 4, "{:?}", h.app.status);
+}

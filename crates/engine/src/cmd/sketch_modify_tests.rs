@@ -705,6 +705,34 @@ fn ellipse_radii_dimensions() {
     assert!((a - std::f64::consts::PI * 60.0).abs() < 1e-6, "{a}");
 }
 
+/// #1824: where more than two lines end at one point, `corners` names the two sides of each
+/// corner to round, alongside `points` for the ordinary corners, all to one radius.
+#[test]
+fn fillet_corners_named_by_their_sides() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [40, 0]], "ids": ["left"]}));
+    run(&mut s, "sketch.line", json!({"points": ["left.end", [140, 0]], "ids": ["right"]}));
+    run(&mut s, "sketch.line", json!({"points": ["left.end", [80, 60]], "ids": ["diag"]}));
+    let e = s.execute("sketch.fillet", &json!({"point": "left.end", "radius": 2})).unwrap_err().to_string();
+    assert!(e.contains("`a` and `b`"), "{e}");
+    let f = run(&mut s, "sketch.fillet", json!({"corners": [{"a": "diag", "b": "right"}], "radius": 2}));
+    let arc = ids(&f["curves"])[0].clone();
+    let sk = sketch(&s);
+    let ai = sk.curve_index(&arc).unwrap();
+    assert!((sk.radius(ai).unwrap() - 2.0).abs() < 1e-7);
+    // The arc is tangent to the diagonal and the right-hand piece, so it sits above the x axis.
+    assert!(sk.center(ai).unwrap().y > 1.9, "{:?}", sk.center(ai));
+    // Empty or oversized lists are refused, never panic.
+    for bad in [json!([]), json!(vec![json!({"a": "x", "b": "y"}); 501])] {
+        assert!(s.execute("sketch.fillet", &json!({"corners": bad, "radius": 2})).is_err());
+    }
+    // Sides that do not meet are refused.
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [10, 0]], "ids": ["p"]}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 5], [10, 5]], "ids": ["q"]}));
+    assert!(s.execute("sketch.fillet", &json!({"corners": [{"a": "p", "b": "q"}], "radius": 1})).is_err());
+}
+
 /// #1026: a construction diagonal ending at a rectangle's corner is not one of the corner's
 /// sides. The corner is rounded, and the diagonal keeps its end on the virtual sharp corner.
 #[test]

@@ -961,7 +961,10 @@ impl Dialog {
             inp.items.retain(|x| !matches!(x, Sel::Profile { sketch: s2, .. } if s2 != sketch));
         }
         let Some(inp) = self.inputs.get_mut(self.active) else { return };
+        let picked_curve = picked.iter().any(|x| matches!(x, Sel::SketchCurve { .. }));
         inp.toggle(picked);
+        crate::sketch_modify_ui::after_pick(self, picked_curve);
+        let Some(inp) = self.inputs.get_mut(self.active) else { return };
         self.focus = true;
         // A measurement is between two items: a third pick starts over from the last one.
         if matches!(self.kind, Kind::Measure { .. }) && inp.items.len() > 2 {

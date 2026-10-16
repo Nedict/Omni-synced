@@ -23,7 +23,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SKETCH", "MODIFY")
         .icon("sketch_fillet")
         .enabled(in_sketch)
-        .params(concat!("point: corner shared by two curves (\"l1.end\") | points: [corners] (all rounded alike: one radius, the rest equal) | a, b: two lines or arcs meeting at a corner; radius: expr. A corner that dimensions or constraints measure to stays as a virtual sharp corner on both curves' extensions (`virtual_corners`; the moved ones in `moved_to_virtual_corner`)", created_doc!())),
+        .params(concat!("point: corner shared by two curves (\"l1.end\") | points: [corners] (all rounded alike: one radius, the rest equal) | a, b: two lines or arcs meeting at a corner, which names the sides when more than two curves end at its point | corners: [{a, b}] several such corners, rounded alike; radius: expr. A corner that dimensions or constraints measure to stays as a virtual sharp corner on both curves' extensions (`virtual_corners`; the moved ones in `moved_to_virtual_corner`)", created_doc!())),
     CommandSpec::new("sketch.chamfer.equal_distance", "Equal Distance Chamfer", chamfer_equal)
         .at("SKETCH", "MODIFY")
         .icon("sketch_chamfer")
@@ -719,12 +719,23 @@ fn cut_corner(
 fn fillet(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "sketch.fillet";
     let r_expr = expr(p, "radius").ok_or_else(|| bad(cmd, "`radius` must be a number or an expression"))?;
-    // Several corners at once (`points`), each like a single `point`.
-    let corners: Vec<Value> = match p.get("points").and_then(Value::as_array) {
-        Some(a) if !a.is_empty() && a.len() <= 500 => a.iter().map(|q| json!({ "point": q })).collect(),
-        Some(_) => return Err(bad(cmd, "`points` must list 1…500 corners")),
-        None => vec![p.clone()],
+    // Several corners at once: `points` (each like a single `point`) and `corners` (each like a
+    // single `{a, b}`, for a corner whose point more than two lines end at, #1824).
+    let listed = |key: &str| -> Result<Vec<Value>> {
+        match p.get(key).and_then(Value::as_array) {
+            Some(a) if !a.is_empty() && a.len() <= 500 => Ok(a.clone()),
+            Some(_) => Err(bad(cmd, format!("`{key}` must list 1…500 corners"))),
+            None => Ok(Vec::new()),
+        }
     };
+    let mut corners: Vec<Value> = listed("points")?.into_iter().map(|q| json!({ "point": q })).collect();
+    corners.extend(listed("corners")?);
+    if corners.len() > 500 {
+        return Err(bad(cmd, "at most 500 corners at once"));
+    }
+    if corners.is_empty() {
+        corners.push(p.clone());
+    }
     let (out, info) = edit(s, p, cmd, false, |sk, doc| {
         let r = doc.eval(&r_expr, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("radius: {e}")))?;
         if !(r > 1e-9 && r < 1e8) {
