@@ -97,6 +97,7 @@ fn swap_in(app: &mut SolveApp, slot: DocSlot) -> DocSlot {
     app.tool = None;
     app.params = None;
     app.design_properties = None;
+    app.material_estimate = None;
     app.cancel_view_animation();
     app.viewport.orbit_snap = None;
     app.viewport.orbit_free = None;
@@ -165,6 +166,7 @@ pub fn active_is_blank(app: &SolveApp) -> bool {
 /// otherwise in a new tab.
 pub fn adopt(app: &mut SolveApp, session: Session) {
     if active_is_blank(app) {
+        app.material_estimate = None;
         let rev = app.session.revision;
         crate::dialogs::cancel(app);
         app.manufacturing = Default::default();

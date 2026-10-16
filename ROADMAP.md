@@ -94,6 +94,12 @@ annotations and exact projected curves remain deferred. See [view DXF](docs/view
 
 ## Physical material data
 
+- Material purchase estimates (`material.estimate`) now have a native window with an editable
+  wood purchase reference, definition-frame rectangular blanks or net solid volume, placed
+  quantities and waste allowance. References persist undoably with the design. One EUR volume
+  rate applies to all parts; mixed material rates, mass pricing and print-process estimates
+  remain follow-ups. See [material estimates](docs/material-estimates.md).
+
 - Physical material card validation (#923/#922) provides typed SI mechanical and
   thermal data, per-property sources/conditions and isotropic/orthotropic stability
   checks through read-only `material.properties.validate`. It does not assign or

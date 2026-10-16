@@ -1,0 +1,17 @@
+[
+  {"note": "The estimator is an interactive native window. Editing its purchase price refreshes the estimate, Save reference persists one undoable change, Close preserves the model, and reopening remains accessible."},
+  {"call": "engine.execute", "params": {"command": "solid.box", "params": {"length": 1400, "width": 750, "height": 40, "body_name": "Reference board"}}},
+  {"start": "material.estimate"},
+  {"expect": {"shown_handles": ["estimate:price", "estimate:length", "estimate:width", "estimate:thickness", "estimate:waste", "estimate:save"]}},
+  {"click": {"handle": "estimate:price"}, "double": true},
+  {"key": "A", "cmd": true},
+  {"text": "200"},
+  {"key": "Enter"},
+  {"widget": "Save reference"},
+  {"shot": "material_estimate"},
+  {"widget": "Close"},
+  {"start": "material.estimate"},
+  {"expect": {"shown_handles": ["estimate:price", "estimate:save"]}},
+  {"widget": "Close"},
+  {"expect": {"bodies": 1, "errors": 0}}
+]

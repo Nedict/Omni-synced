@@ -50,6 +50,11 @@ fn command_dialogs_shrink_to_their_content_within_limits() {
                 }
             }
         }
+        // Close the estimator through its UI so a later docked dialog's width limit is not
+        // applied to this independent floating window.
+        if matches!(spec.id, "material.estimate" | "material.estimate.settings") {
+            h.step(&json!({"widget": "Close"})).unwrap();
+        }
         h.app.dialog = None;
         h.app.params = None;
         h.app.design_properties = None;
@@ -85,6 +90,7 @@ fn floating_windows_stay_within_limits() {
     h.app.ui.palette_open = true;
     solidcraft_ui_egui::params_dialog::open(&mut h.app);
     solidcraft_ui_egui::design_properties::open(&mut h.app);
+    h.call("ui.start", json!({"command": "material.estimate"}));
     h.frames(6);
     let ws = window_widths(&h);
     // Keyboard Shortcuts is a page of Preferences (one window, #36).
