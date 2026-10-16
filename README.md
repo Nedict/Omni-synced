@@ -209,6 +209,9 @@ report descriptor, so they work as well.
 In the browser: `cd apps/solidcraft-web && trunk build --release --public-url ./` (WebGPU, or
 WebGL2 with `?webgl`; `?sample` opens the sample part).
 
+Agents can control the document open in a browser tab through `window.solidcraft.execute(...)`
+and `window.solidcraft.request(...)`; see the [browser command API](docs/browser-api.md).
+
 ## Scripts
 
 A script is a JSON list of commands, the same ones the UI runs:
