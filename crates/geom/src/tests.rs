@@ -52,6 +52,37 @@ fn cube_measure() {
 }
 
 #[test]
+fn mesh_measure_far_from_origin_preserves_volume_and_centroid() {
+    // Unequal edges and an off-centre centroid catch incorrect first-moment shifts.
+    let base = Mesh {
+        positions: vec![Vec3::ZERO, Vec3::new(3.0, 0.0, 0.0), Vec3::new(0.0, 4.0, 0.0), Vec3::new(0.0, 0.0, 5.0)],
+        triangles: vec![[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]],
+        ..Mesh::default()
+    };
+    let expected = base.measure();
+    for off in [Vec3::ZERO, Vec3::new(1000.0, -700.0, 300.0), Vec3::new(-1e8, 7e7, -3e7)] {
+        for reversed in [false, true] {
+            let mut mesh = base.clone();
+            for p in &mut mesh.positions {
+                *p += off;
+            }
+            if reversed {
+                for t in &mut mesh.triangles {
+                    t.swap(1, 2);
+                }
+            }
+            let m = mesh.measure();
+            assert!((m.volume - if reversed { -10.0 } else { 10.0 }).abs() < 1e-10, "{off:?}: {m:?}");
+            assert!((m.area - expected.area).abs() < 1e-10);
+            assert!(m.centroid.dist(off + Vec3::new(0.75, 1.0, 1.25)) < 1e-8, "{off:?}: {m:?}");
+        }
+    }
+    let empty = Mesh::default().measure();
+    assert_eq!(empty.volume, 0.0);
+    assert_eq!(empty.centroid, Vec3::ZERO);
+}
+
+#[test]
 fn raycast_hits_front_face() {
     let m = cube_mesh(2.0);
     let (t, _) = m.raycast(Vec3::new(1.0, 1.0, 10.0), Vec3::new(0.0, 0.0, -1.0)).unwrap();

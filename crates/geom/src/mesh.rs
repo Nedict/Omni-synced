@@ -457,16 +457,20 @@ impl Mesh {
 
     /// Signed volume (divergence theorem), surface area and volume centroid.
     pub fn measure(&self) -> MeshMeasure {
+        // Integrate near the mesh: a distant origin magnifies round-off and small
+        // boundary gaps in tessellated surfaces. First moments use the same frame.
+        let origin = self.bounds().center();
         let (mut v6, mut area, mut c) = (0.0, 0.0, Vec3::ZERO);
         for t in &self.triangles {
             let Some([a, b, cc]) = self.tri(t) else { continue };
+            let (a, b, cc) = (a - origin, b - origin, cc - origin);
             let d = a.dot(b.cross(cc));
             v6 += d;
             c += (a + b + cc) * d;
             area += (b - a).cross(cc - a).len() * 0.5;
         }
         let volume = v6 / 6.0;
-        let centroid = if v6.abs() > 1e-12 { c / (4.0 * v6) } else { self.bounds().center() };
+        let centroid = if v6.abs() > 1e-12 { origin + c / (4.0 * v6) } else { origin };
         MeshMeasure { volume, area, centroid }
     }
 

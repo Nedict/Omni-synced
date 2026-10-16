@@ -22,11 +22,13 @@ pub struct BodyMeasure {
     pub merged: TopoCounts,
 }
 
-/// Per-face sums: area, 6 × signed volume and 24 × first moments (divergence theorem, origin 0).
-fn face_sums(m: &Mesh, nf: usize) -> Vec<(f64, f64, Vec3)> {
+/// Per-face sums about one common local origin: area, 6 × signed volume and
+/// 24 × first moments. A distant world origin amplifies small boundary mesh gaps.
+fn face_sums(m: &Mesh, nf: usize, origin: Vec3) -> Vec<(f64, f64, Vec3)> {
     let mut out = vec![(0.0, 0.0, Vec3::ZERO); nf];
     for (t, f) in m.triangles.iter().zip(&m.tri_face) {
         let (Some([a, b, c]), Some(slot)) = (m.tri(t), out.get_mut(*f as usize)) else { continue };
+        let (a, b, c) = (a - origin, b - origin, c - origin);
         let d = a.dot(b.cross(c));
         slot.0 += (b - a).cross(c - a).len() * 0.5;
         slot.1 += d;
@@ -87,7 +89,8 @@ pub fn measure(b: &Body) -> Result<BodyMeasure> {
     let fine = b.tessellate_with(fine_tol, true)?;
     let medium = b.tessellate_with((fine_tol * 5.0).max(2e-4), true)?;
     let nf = b.face_count();
-    let (sf, sm, sc) = (face_sums(&fine, nf), face_sums(&medium, nf), face_sums(&coarse, nf));
+    let origin = coarse.bounds().union(&fine.bounds()).center();
+    let (sf, sm, sc) = (face_sums(&fine, nf, origin), face_sums(&medium, nf, origin), face_sums(&coarse, nf, origin));
     let close = |x: f64, y: f64| (x - y).abs() <= 0.01 * x.abs().max(y.abs()) + 1e-9;
     let (mut area, mut v6, mut mom) = (0.0, 0.0, Vec3::ZERO);
     for ((f, m), c) in sf.iter().zip(&sm).zip(&sc) {
@@ -104,7 +107,7 @@ pub fn measure(b: &Body) -> Result<BodyMeasure> {
         mom += pick.2;
     }
     let volume = v6 / 6.0;
-    let centroid = if v6.abs() > 1e-12 { mom / (4.0 * v6) } else { fine.bounds().center() };
+    let centroid = if v6.abs() > 1e-12 { origin + mom / (4.0 * v6) } else { fine.bounds().center() };
     Ok(BodyMeasure {
         volume,
         area,

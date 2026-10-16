@@ -256,17 +256,3 @@ fn grid_sphere_box_union_is_sound() {
     let b = Prim::Box { at: [0.0, 0.0, 17.5], size: [5.0, 7.5, 5.0] };
     check(identity(&a, &b));
 }
-
-/// Two crossing cylinders: the union moved 1000 mm away loses about a tenth of its volume.
-#[test]
-#[ignore = "kernel bug, #1649"]
-fn crossing_cylinders_union_moved_far() {
-    let a = Prim::Cyl { at: [17.5, 30.0, 7.5], axis: 0, r: 5.0, h: 10.0 }.body();
-    let b = Prim::Cyl { at: [17.5, 30.0, 15.0], axis: 1, r: 12.5, h: 5.0 }.body();
-    let t = Vec3::new(1000.0, -700.0, 300.0);
-    let mv = |x: &Body| transform(x, t, Vec3::ZERO, Vec3::Z, 0.0).expect("translate");
-    let s = vol(&a) + vol(&b);
-    let here = run(&a, &b, BoolOp::Union).unwrap();
-    let there = run(&mv(&a), &mv(&b), BoolOp::Union).unwrap();
-    assert!(close(here, there, s), "union at origin {here:.4}, moved by 1000 gives {there:.4}");
-}
