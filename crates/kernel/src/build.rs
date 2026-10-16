@@ -305,6 +305,18 @@ pub fn canonical_revolve_axis(plane: &Plane, region: &Region2, axis_origin: Vec2
 /// Revolve each region about the sketch axis by `angle` radians.
 /// This legacy API preserves its historical sweep sign behavior.
 pub fn revolve(plane: &Plane, regions: &[Region2], axis_origin: Vec2, axis_dir: Vec2, angle: f64) -> Result<Vec<Body>> {
+    revolved(plane, regions, axis_origin, axis_dir, angle, false)
+}
+
+/// [`revolve`] for bodies that are final (new bodies, not a boolean's tools): a partial turn's
+/// planar faces come out whole too, as a full turn's always do (#726). A tool is left as swept:
+/// healed, its planar faces meet a target exactly where they are tangent to it, and the
+/// boolean leaves pieces there that touch. The boolean heals its own result anyway.
+pub fn revolve_whole(plane: &Plane, regions: &[Region2], axis_origin: Vec2, axis_dir: Vec2, angle: f64) -> Result<Vec<Body>> {
+    revolved(plane, regions, axis_origin, axis_dir, angle, true)
+}
+
+fn revolved(plane: &Plane, regions: &[Region2], axis_origin: Vec2, axis_dir: Vec2, angle: f64, whole: bool) -> Result<Vec<Body>> {
     let angle = finite(angle, "angle")?;
     if angle.abs() < 1e-6 {
         return Err(KernelError::Invalid("revolve angle is zero".into()));
@@ -447,15 +459,15 @@ pub fn revolve(plane: &Plane, regions: &[Region2], axis_origin: Vec2, axis_dir: 
         let closed = angle.abs() >= std::f64::consts::TAU;
         let history = guard("revolve history", || Ok(record::swept_face(&solid, &f, &seeds(&profile), closed)))?;
         let solid = if shift.len() > 0.0 { builder::translated(&solid, v3(shift)) } else { solid };
-        let (solid, history) = if closed { turned_whole(solid, history) } else { (solid, history) };
+        let (solid, history) = if closed || whole { turned_whole(solid, history) } else { (solid, history) };
         out.push(record::attach(Body::new(solid)?, &[], history, Default::default())?);
     }
     Ok(out)
 }
 
-/// A full turn's solid with its planar faces whole (#726): the sweep turns each profile edge
-/// into three patches, the planar ones on revolved surfaces, which stayed apart until a later
-/// feature healed the body, so a pick on one took a third of the face. Healed as booleans heal
+/// A revolved solid with its planar faces whole (#726): the sweep turns each profile edge into
+/// two or three patches, the planar ones on revolved surfaces, which stayed apart until a later
+/// feature healed the body, so a pick on one took part of the face. Healed as booleans heal
 /// their results, each face is still generated, from the profile edges of the patches merged
 /// into it. The solid as it was when healing fails or can't be followed.
 fn turned_whole(solid: Solid, faces: Option<Vec<FaceProv>>) -> (Solid, Option<Vec<FaceProv>>) {
