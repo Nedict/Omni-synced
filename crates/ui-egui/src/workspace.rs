@@ -20,6 +20,7 @@ const ASSEMBLE: &[&str] = &[
     "joint.rack_pinion",
     "joint.screw",
     "motion.study",
+    "motion.trace",
     "explode.create",
     "contact.enable_sets",
     "contact.enable_all",
