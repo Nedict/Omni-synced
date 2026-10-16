@@ -186,11 +186,13 @@ where
 {
     // SolidCraft: `search_triple` started from `hint`'s parameters, falling back to the search
     // from nothing (and, where that fails too, to `subs` as before). A hinted result is taken
-    // only near the leader's point: started from a neighbour, the projection can settle on
-    // another part of a surface, which the search from nothing would not.
+    // only within the curve's tolerance of the leader's point, where the leader lies: started
+    // from a neighbour (or from a periodic surface's seam), the projection can settle on another
+    // part of a surface, such as the far side of a small hole, which the search from nothing
+    // would not.
     fn hinted_triple(&self, t: f64, hint: Option<Triple>) -> Triple {
         let lead = self.leader.subs(t);
-        let near = 10.0 * self.tol.max(TOLERANCE);
+        let near = self.tol.max(TOLERANCE);
         let hinted = hint.and_then(|(_, uv0, uv1)| {
             double_projection(
                 self.surface0(),

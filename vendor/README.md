@@ -46,8 +46,9 @@ Changes:
   point's projection onto the two surfaces starts from the parameters of the point that begins
   its piece, instead of a search of the whole surfaces (a grid pre-search of a B-spline surface
   for every point: a small hole on a large curved face took seconds, #1038). A hinted result
-  away from the leader's point (the projection settled on another part of a surface) is
-  dropped for the search from nothing, as before.
+  farther from the leader's point than the curve's tolerance (the projection settled on another
+  part of a surface, such as the far side of a small hole) is dropped for the search from
+  nothing, as before. `crates/kernel/src/issue_1038_tests.rs` holds it to that search.
 
 ## truck-stepio 0.3.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/truck)
 
