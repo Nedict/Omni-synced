@@ -219,7 +219,10 @@ fn touches_turning(poly: &[Vec2], pivot: Vec2, arm: f64, r: f64, start: f64, tur
 fn overlaps_turning(poly: &[Vec2], pivot: Vec2, arm: f64, r: f64, (start, turn): (f64, f64), turned: f64, slack: f64) -> bool {
     let at = pivot + Vec2::from_angle(start + turn * turned) * arm;
     let n = poly.len();
-    inside(poly, at) || (0..n).filter_map(|i| Some((*poly.get(i)?, *poly.get((i + 1) % n)?))).any(|(p, q)| dist_to_segment(at, p, q) < r - slack)
+    let gap =
+        (0..n).filter_map(|i| Some((*poly.get(i)?, *poly.get((i + 1) % n)?))).map(|(p, q)| dist_to_segment(at, p, q)).fold(f64::INFINITY, f64::min);
+    // Inside counts only clear of the boundary: a knife on an edge touches it.
+    gap < r - slack || (gap > slack && inside(poly, at))
 }
 
 /// Where an oscillating follower first touches the closed polygon `poly` turning from `start`
@@ -681,9 +684,11 @@ fn follower_is_b(doc: &Document, cam_joint: &super::Joint, fol: &super::Joint, (
     })
 }
 
+/// A polygon's signed area, from its first point (so a small profile far from the axis keeps its
+/// digits).
 fn area(poly: &[Vec2]) -> f64 {
-    let n = poly.len();
-    (0..n).filter_map(|i| Some(poly.get(i)?.cross(*poly.get((i + 1) % n)?))).sum::<f64>() / 2.0
+    let (n, o) = (poly.len(), poly.first().copied().unwrap_or(Vec2::ZERO));
+    (0..n).filter_map(|i| Some((*poly.get(i)? - o).cross(*poly.get((i + 1) % n)? - o))).sum::<f64>() / 2.0
 }
 
 /// A cam link's table: b's values at a's values 2π·k / `CAM_SAMPLES`, offset left out. A
@@ -837,6 +842,13 @@ mod tests {
         assert!(on(first) > 0.0 && second > first, "{touches:?}");
         let stay = next_contact_turning(&c, pv, l, 0.0, (0.0, 1.0), second, 1e-9).unwrap_or(f64::NAN);
         assert!((stay - second).abs() < 1e-12, "{stay} vs {second}");
+        // A knife on an edge touches it, it doesn't overlap it; just inside, it does.
+        let square: Vec<Vec2> = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].into_iter().map(|(x, y)| Vec2::new(x, y)).collect();
+        let (pv, l) = (Vec2::new(0.0, -4.0), 3.0);
+        let up = std::f64::consts::FRAC_PI_2;
+        assert!(!overlaps_turning(&square, pv, l, 0.0, (up, 1.0), 0.0, 1e-9));
+        assert!(overlaps_turning(&square, pv, l + 0.01, 0.0, (up, 1.0), 0.0, 1e-9));
+        assert!((area(&square.iter().map(|p| *p * 0.004 + Vec2::new(524_288.0, 524_288.0)).collect::<Vec<_>>()) - 6.4e-5).abs() < 1e-12);
         // An arm that can't reach, and one that starts on the cam.
         let poly = circle(Vec2::new(e, 0.0), r, 512);
         assert_eq!(first_contact_turning(&poly, pivot, 5.0, 0.0, start, 1.0), None);
