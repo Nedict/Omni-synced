@@ -96,6 +96,7 @@ Code: `crates/ui-egui/src/agent_chat/`.
 | `settings.rs` | Preferences → AI and the Add agent dialog. |
 | `process.rs` | The agent as a child process in a process group of its own; stopping it ends the group. |
 | `discover.rs` | Which agents are installed, their versions, whether they look signed in. |
+| `markdown.rs`, `markdown_view.rs` | The agent's text as Markdown: a bounded reader, and its drawing (parsed once per item, again only when the text changes). |
 | `gate.rs` | What the agent's tool requests may do: run, wait for Allow/Deny, or never. |
 | `mod.rs` | The conversation, turns (undo as one step, the per-turn limit), held requests. |
 | `panel.rs` | The panel: docking, minimising, picker, sign-in, conversation, input. |
@@ -208,7 +209,7 @@ returns the whole state, for tests and screenshots.
 
 | Area | Work |
 |---|---|
-| Conversation | Markdown rendering, diffs, history per design, resume (`session/load`) |
+| Conversation | Diffs, history per design, resume (`session/load`) |
 | Session controls | Model and mode pickers from `configOptions` / `modes`, slash commands |
 | Auth | An embedded terminal or "open a terminal here" for terminal logins on each OS; logout |
 | Discovery | Read the ACP registry; keychain-aware login check on macOS |

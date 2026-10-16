@@ -1942,6 +1942,39 @@ fn extend_for_coplanar(st: &ModelState, plane: &Plane, r: &Region2, lo: f64, hi:
     (lo2, hi2)
 }
 
+/// Whether a tapered tool, run on by `depth` behind the plane it starts in (`dir` the way it
+/// extrudes), stays where running on changes nothing: in the targets for a join, out of them for
+/// a cut. Its sides keep their slope, so the section there is the profile grown by up to `widen`
+/// all round; that grown outline is probed at two depths.
+#[allow(clippy::too_many_arguments)]
+fn taper_run_on_fits(st: &ModelState, start: &Plane, dir: Vec3, r: &Region2, depth: f64, widen: f64, op: Operation, targets: &[String]) -> bool {
+    const MAX_SEGMENTS: usize = 2_000;
+    let meshes: Vec<Arc<Mesh>> = st.bodies.iter().filter(|b| targets.is_empty() || targets.contains(&b.name)).map(|b| b.mesh()).collect();
+    if meshes.is_empty() || !depth.is_finite() || !widen.is_finite() {
+        return false;
+    }
+    let want = op == Operation::Join;
+    // Each loop counterclockwise with the side away from the material: right of the outer loop,
+    // left of a hole.
+    let loops: Vec<(solidcraft_geom::Loop2, f64)> = std::iter::once((r.outer.ccw(), 1.0)).chain(r.holes.iter().map(|h| (h.ccw(), -1.0))).collect();
+    let count: usize = loops.iter().map(|(l, _)| l.segs.len()).sum();
+    if count > MAX_SEGMENTS {
+        return false;
+    }
+    loops.iter().all(|(lp, side)| {
+        lp.segs.iter().all(|seg| {
+            [0.0, 0.25, 0.5, 0.75].iter().all(|t| {
+                let Some(d) = seg.derivative(*t).normalized() else { return true };
+                let out = Vec2::new(d.y, -d.x) * *side;
+                [0.5, 1.0].iter().all(|k| {
+                    let p = start.to_world(seg.point_at(*t) + out * (widen * k)) - dir * (depth * k);
+                    meshes.iter().any(|m| m.contains(p)) == want
+                })
+            })
+        })
+    })
+}
+
 /// How high (mm) a tapered tool's sides stand straight where it starts on a face it can't run
 /// on into.
 const TAPER_FOOT: f64 = 0.01;
@@ -2840,16 +2873,40 @@ fn feature_tools_with_constructor(
                         // sides standing on a face are curved where they meet it (along text, say),
                         // and the boolean finds no result there. The sides keep their slope, so
                         // the profile stays the section at the start.
+                        let roles = crate::lineage::ProfileRoles { sketch: Some(&ss), region: Some(r), caps: caps.clone() };
+                        // A start that is a whole face of the target (a foot under a part's base) is sewn on
+                        // along it, as it lies: run on, the sides would leave the face through its edges.
+                        if on_face
+                            && *operation == Operation::Join
+                            && let Ok(exact) = kernel::extrude_tapered_between(&start_plane, r, 0.0, len, 0.0, sign, taper)
+                            && st
+                                .bodies
+                                .iter()
+                                .filter(|t| targets.is_empty() || targets.iter().any(|x| *x == t.name))
+                                .any(|t| kernel::can_join_touching_faces(&t.body, &exact))
+                        {
+                            growth = growth.max(len * taper.tan().abs());
+                            return Ok(roles.tool(exact, None));
+                        }
                         let (lo, hi) = if sign < 0.0 { (from - len, from) } else { (from, from + len) };
                         let (l2, h2) = extend_for_coplanar(st, &ss.plane, r, lo, hi, *operation, &crate::plain(targets));
-                        let (a, b) = if sign < 0.0 { (from - h2, from - l2) } else { (l2 - from, h2 - from) };
+                        let (mut a, b) = if sign < 0.0 { (from - h2, from - l2) } else { (l2 - from, h2 - from) };
+                        // A taper that narrows the tool away from the face widens it as it runs on into it, past
+                        // the profile (where the profile is the whole face, out through the body's sides, #1534):
+                        // then it starts on the face instead.
+                        if a < 0.0 && a * taper.tan() > 0.0 {
+                            let dir = n * sign;
+                            if !taper_run_on_fits(st, &start_plane, dir, r, -a, a * taper.tan(), *operation, &crate::plain(targets)) {
+                                a = 0.0;
+                            }
+                        }
                         // A start that can't run on (the profile hangs over the face's edge):
                         // the sides stand straight for a hair first, so the boolean can push the
                         // face the tool stands on into the body.
                         let foot = if a >= 0.0 && on_face { TAPER_FOOT.min((b - a) * 0.01) } else { 0.0 };
                         let body = kernel::extrude_tapered_between(&start_plane, r, a, b, foot, sign, taper)?;
                         growth = growth.max(a.abs().max(b.abs()) * taper.tan().abs());
-                        Ok(crate::lineage::ProfileRoles { sketch: Some(&ss), region: Some(r), caps: caps.clone() }.tool(body, None))
+                        Ok(roles.tool(body, None))
                     })
                     .collect::<Result<_>>()?;
                 // Profiles apart by more than the tools grow (the letters of a text): the tools
@@ -4435,13 +4492,14 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         FeatureKind::Split { body, plane, tool, sketch, line } => {
             let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Unknown(format!("body `{body}`"))) };
+            let input = mb.traced();
             let parts = match tool {
                 // A sketch line: the plane through it along the sketch's normal.
                 _ if sketch.is_some() || line.is_some() => {
                     let (Some(sketch), Some(line)) = (sketch, line) else {
                         return Err(DocError::Invalid("a sketch line tool needs both its sketch and its line".into()));
                     };
-                    kernel::split_by_plane(&mb.body, &sketch_line_plane(st, sketch.0, line)?)?
+                    split_by_plane_traced(&input, &sketch_line_plane(st, sketch.0, line)?)?
                 }
                 // A face of a body (its surface extended).
                 Some(t) => {
@@ -4451,19 +4509,18 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                     // The pieces keep the planar roles of the faces they share with the body (#565).
                     kernel::split_body(&mb.body, &kernel::SplitTool::Face { body: &tb.body, face })?
                         .into_iter()
-                        .map(|part| part.with_preserved_planar_sources(&mb.body))
-                        .collect::<std::result::Result<Vec<_>, _>>()?
+                        .map(|part| Ok(Traced::step(part.with_preserved_planar_sources(&mb.body)?, &[&input])))
+                        .collect::<Result<Vec<_>>>()?
                 }
                 None => {
                     let pl = doc.resolve_plane_in(vals, plane, 0, Some(st))?;
-                    kernel::split_by_plane(&mb.body, &pl)?
+                    split_by_plane_traced(&input, &pl)?
                 }
             };
             if parts.len() < 2 {
                 return Err(DocError::Invalid("the tool does not split the body".into()));
             }
-            let input = mb.traced();
-            let mut it = parts.into_iter().map(|part| Traced::step(part, &[&input]));
+            let mut it = parts.into_iter();
             if let (Some(first), Some(slot)) = (it.next(), st.bodies.get_mut(i)) {
                 *slot = ModelBody::traced_new(mb.name.clone(), first, mb.feature);
             }
@@ -5318,6 +5375,23 @@ mod body_name_tests {
         assert_eq!(last, "R_0603 (50000)");
         assert!(began.elapsed() < std::time::Duration::from_secs(5), "{:?}", began.elapsed());
     }
+}
+
+/// The parts of a body split by a plane, on its positive side first (only the non-empty ones).
+/// Each part's cut face is named `section` after the half-space box that cut it, so it takes an
+/// attachment that follows the plane (#565); the box's other faces never reach the part.
+fn split_by_plane_traced(input: &Traced, plane: &Plane) -> Result<Vec<Traced>> {
+    let mut parts = Vec::new();
+    for positive in [true, false] {
+        let (part, tool) = kernel::half_space(&input.body, plane, positive)?;
+        let Some(part) = part else { continue };
+        // The box's cap in the plane: its start cap on the positive side, its end cap on the other.
+        let section = Some("section".to_string());
+        let caps = if positive { [section, None] } else { [None, section] };
+        let tool = crate::lineage::ProfileRoles { sketch: None, region: None, caps }.tool(tool, None);
+        parts.push(Traced::step(part, &[input, &tool]));
+    }
+    Ok(parts)
 }
 
 /// The plane a straight sketch line sweeps along its sketch's normal: through the line, its x
