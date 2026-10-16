@@ -176,7 +176,7 @@ copied into SolidCraft.
 
 | Directory | Source | Licence | Changes |
 |---|---|---|---|
-| vendor/truck-meshalgo | truck-meshalgo 0.4.0, https://github.com/ricosjp/truck (RICOS Co. Ltd.) | Apache-2.0 | meshing: bounded parameter searches, collapsed-boundary projection, subdivision and provisional fixed-grid previews (vendor/README.md) |
+| vendor/truck-meshalgo | truck-meshalgo 0.4.0, https://github.com/ricosjp/truck (RICOS Co. Ltd.) | Apache-2.0 | meshing: fixed-tolerance CAM verification path and conservative boundary index; bounded parameter searches, collapsed-boundary projection, subdivision and provisional fixed-grid previews (vendor/README.md) |
 | vendor/truck-stepio | truck-stepio 0.3.0, https://github.com/ricosjp/truck (RICOS Co. Ltd.) | Apache-2.0 | STEP writer: intersection-curve surfaces written at unique ids (vendor/README.md) |
 | vendor/truck-shapeops | truck-shapeops 0.4.0, https://github.com/ricosjp/truck (RICOS Co. Ltd.) | Apache-2.0 | robust meshing and nearest-parameter fallback in booleans; degenerate intersection-curve rejection; face and edge history of booleans; trace macro; corner choice at vertices several intersection curves end on (vendor/README.md) |
 | vendor/truck-geometry | truck-geometry 0.5.0, https://github.com/ricosjp/truck (RICOS Co. Ltd.) | Apache-2.0 | intersection curves divided from their neighbours' surface parameters (vendor/README.md) |

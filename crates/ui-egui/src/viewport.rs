@@ -280,6 +280,7 @@ pub fn view_bounds(app: &SolveApp) -> solidcraft_engine::geom::Aabb3 {
 fn scene_key(app: &SolveApp) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     app.session.revision.hash(&mut h);
+    crate::manufacturing::view::key(app, &mut h);
     (std::sync::Arc::as_ptr(&app.session.world_state()) as usize).hash(&mut h);
     app.ui.show_grid.hash(&mut h);
     app.ui.visual_style.hash(&mut h);
@@ -617,6 +618,7 @@ fn build_scene(app: &SolveApp) -> GpuScene {
     let s = &app.session;
     // Bodies where their occurrences place them.
     let st = s.world_state();
+    let cam_bodies = crate::manufacturing::view::Bodies::new(app);
     let active_bodies = s.active_occurrence_path.as_ref().and_then(|p| s.occurrence_bodies(p, true).ok());
     let (shaded, edges) = match app.ui.visual_style {
         1 => (true, false),
@@ -633,16 +635,17 @@ fn build_scene(app: &SolveApp) -> GpuScene {
     let mut run: Vec<BodyDraw> = Vec::new();
     let mut run_key = std::collections::hash_map::DefaultHasher::new();
     for b in &st.bodies {
-        if !app.session.body_visible(&b.name) || app.preview.replaced.contains(&b.name) {
+        if !app.session.body_visible(&b.name) || app.preview.replaced.contains(&b.name) || !cam_bodies.visible(&b.name) {
             continue;
         }
         let faded = body_faded(app, b, &active_bodies);
-        let base = body_color(&s.doc, b).unwrap_or(tk.body);
+        let cam_color = cam_bodies.color(&b.name);
+        let base = cam_color.or_else(|| body_color(&s.doc, b)).unwrap_or(tk.body);
         let col = if faded { c4(base.gamma_multiply(0.35)) } else { c4(base) };
         // Appearances: the body's opacity, and faces with looks of their own.
         let opacity = s.doc.model_body_opacity(b);
         let face_looks: std::collections::HashMap<usize, solidcraft_engine::doc::appearance::Look> =
-            if shaded { s.doc.face_colors(b).into_iter().collect() } else { Default::default() };
+            if shaded && cam_color.is_none() { s.doc.face_colors(b).into_iter().collect() } else { Default::default() };
         let opaque = !faded && opacity >= 0.999 && face_looks.values().all(|l| l.opacity >= 0.999);
         let planned = drawn_plan(app, b, opaque);
         let on_gpu = planned.is_some();
@@ -673,13 +676,14 @@ fn build_scene(app: &SolveApp) -> GpuScene {
     if let Ok(mut b) = app.viewport.blocks.lock() {
         *b = made;
     }
+    crate::manufacturing::view::gpu(app, &mut sc);
     if app.ui.ground_shadow && app.ui.visual_style != 2 && app.cam.pitch > 0.0 {
         ground_shadow(&mut sc, app, &st);
     }
     // Section: the outline of each body where the plane cuts it.
     if let Some((o, n)) = section_plane(app) {
         let col = c4(tk.text.gamma_multiply(0.9));
-        for b in st.bodies.iter().filter(|b| app.session.body_visible(&b.name)) {
+        for b in st.bodies.iter().filter(|b| app.session.body_visible(&b.name) && cam_bodies.visible(&b.name)) {
             for (a, c) in solidcraft_engine::view::section_segments(&b.mesh(), o, n) {
                 sc.line(a.to_f32(), c.to_f32(), col, 1.8, false);
             }
@@ -787,8 +791,12 @@ fn ground_shadow(sc: &mut GpuScene, app: &SolveApp, st: &std::sync::Arc<solidcra
     // The bodies' box in the camera's Z-up frame (the ground is its XY plane).
     let mut b = solidcraft_engine::geom::Aabb3::EMPTY;
     let boxes = body_bounds(app, st);
-    for (x, (_, bb)) in st.bodies.iter().zip(boxes.iter()) {
-        if bb.is_empty() || !app.session.body_visible(&x.name) {
+    let bodies = crate::manufacturing::view::Bodies::new(app);
+    let stock = crate::manufacturing::view::stock(app);
+    let visible =
+        st.bodies.iter().zip(boxes.iter()).filter(|(x, _)| app.session.body_visible(&x.name) && bodies.visible(&x.name)).map(|(_, (_, bb))| *bb);
+    for bb in visible.chain(stock.iter().map(|mesh| mesh.bounds())) {
+        if bb.is_empty() {
             continue;
         }
         for i in 0..8 {
@@ -1010,7 +1018,9 @@ type BodyBounds = (std::sync::Arc<solidcraft_engine::doc::ModelState>, std::sync
 /// The model's extent: bodies (from the cached boxes) and sketches.
 pub fn model_bounds(app: &SolveApp) -> solidcraft_engine::geom::Aabb3 {
     let st = app.session.world_state();
-    let mut b = body_bounds(app, &st).iter().fold(solidcraft_engine::geom::Aabb3::EMPTY, |a, (_, x)| a.union(x));
+    let bodies = crate::manufacturing::view::Bodies::new(app);
+    let mut b =
+        body_bounds(app, &st).iter().filter(|(name, _)| bodies.visible(name)).fold(crate::manufacturing::view::bounds(app), |a, (_, x)| a.union(x));
     for ss in &st.sketches {
         if let Some((lo, hi)) = ss.sketch.bounds() {
             for p in [lo, hi] {
@@ -1083,6 +1093,7 @@ pub(crate) fn pick_cached(app: &mut SolveApp, proj: &Proj, pos: Pos2) -> Vec<Hit
         v.to_bits().hash(&mut h);
     }
     app.session.revision.hash(&mut h);
+    crate::manufacturing::view::key(app, &mut h);
     (std::sync::Arc::as_ptr(&app.session.world_state()) as usize).hash(&mut h);
     app.session.active_sketch.hash(&mut h);
     crate::sketch3d::drawing(app).hash(&mut h);
@@ -1179,6 +1190,7 @@ impl<T: PartialOrd + Copy> Near<T> {
 }
 
 fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, all: bool) -> Vec<Hit> {
+    let cam_bodies = crate::manufacturing::view::Bodies::new(app);
     let s = &app.session;
     let st = s.world_state();
     let bounds = body_bounds(app, &st);
@@ -1248,7 +1260,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     let mut bestf: Option<(f64, Hit)> = None;
     let mut faces = Near::new(all);
     for b in &st.bodies {
-        if !app.session.body_visible(&b.name) {
+        if !app.session.body_visible(&b.name) || !cam_bodies.visible(&b.name) {
             continue;
         }
         // Bodies whose box the ray misses (or enters behind the best hit so far) are skipped.
@@ -1280,7 +1292,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     let mut bestv = Near::new(all);
     let mut beste = Near::new(all);
     for b in &st.bodies {
-        if !app.session.body_visible(&b.name) {
+        if !app.session.body_visible(&b.name) || !cam_bodies.visible(&b.name) {
             continue;
         }
         // Only bodies whose outline on screen is near the cursor can have an edge under it.
@@ -1812,6 +1824,7 @@ fn quad(sc: &mut GpuScene, q: &[Vec3; 4], fill: Color32, edge: Color32) {
 fn highlight_key(app: &SolveApp) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     app.session.revision.hash(&mut h);
+    crate::manufacturing::view::key(app, &mut h);
     serde_json::to_string(&app.highlighted()).unwrap_or_default().hash(&mut h);
     format!("{:?}", app.viewport.hover).hash(&mut h);
     app.viewport.hover_feature.hash(&mut h);
@@ -1837,6 +1850,7 @@ fn highlight_key(app: &SolveApp) -> u64 {
 
 /// The highlight scene: origin widget, construction planes, selection and hover.
 fn build_highlight(app: &SolveApp) -> GpuScene {
+    let cam_bodies = crate::manufacturing::view::Bodies::new(app);
     let t = Tokens::get();
     let mut sc = GpuScene::default();
     let st = app.session.world_state();
@@ -1847,12 +1861,23 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
     let mut sel = Vec::new();
     for item in app.highlighted() {
         for piece in displayed_selection(app, &item) {
+            let body = match &piece {
+                Sel::Body { name } => Some(name),
+                Sel::Face { body, .. } | Sel::Edge { body, .. } | Sel::Vertex { body, .. } => Some(body),
+                _ => None,
+            };
+            if body.is_some_and(|name| !cam_bodies.visible(name)) {
+                continue;
+            }
             if !sel.iter().any(|x| crate::selection::same_item(x, &piece)) {
                 sel.push(piece);
             }
         }
     }
-    let hover = app.viewport.hover.as_ref();
+    let hover = app.viewport.hover.as_ref().filter(|h| match h {
+        Hit::Face { body, .. } | Hit::Edge { body, .. } | Hit::Vertex { body, .. } => cam_bodies.visible(body),
+        _ => true,
+    });
     let size = origin_size(app.cam.half_height());
     // Origin planes and construction planes.
     let plane_state = |name: &str| {
@@ -1980,7 +2005,8 @@ fn build_highlight(app: &SolveApp) -> GpuScene {
     // Timeline modifiers light only their resulting faces; browser rows light whole bodies.
     let mut hovered = app.viewport.hover_feature.map(|id| feature_geometry(app, id)).unwrap_or_default();
     hovered.extend(app.viewport.hover_bodies.iter().map(|name| Sel::Body { name: name.clone() }));
-    for b in st.bodies.iter().filter(|b| app.session.body_visible(&b.name) && !app.preview.replaced.contains(&b.name)) {
+    for b in st.bodies.iter().filter(|b| app.session.body_visible(&b.name) && !app.preview.replaced.contains(&b.name) && cam_bodies.visible(&b.name))
+    {
         let whole = hovered.iter().any(|x| matches!(x, Sel::Body { name } if name == &b.name));
         let faces: Vec<_> = if whole {
             (0..b.body.face_count()).collect()
@@ -2788,6 +2814,7 @@ fn box_select(app: &mut SolveApp, proj: &Proj, bx: BoxSel, add: bool) {
     if app.applying.is_some() {
         return;
     }
+    let bodies = crate::manufacturing::view::Bodies::new(app);
     let st = app.session.world_state();
     let mut out: Vec<Sel> = Vec::new();
     let to2 = |pts: &[Vec3]| -> Vec<Pos2> { pts.iter().filter_map(|p| proj.to_screen(*p)).collect() };
@@ -2851,7 +2878,7 @@ fn box_select(app: &mut SolveApp, proj: &Proj, bx: BoxSel, add: bool) {
     } else {
         let accept = app.dialog.as_ref().and_then(|d| d.active_input()).map(|i| i.accept).unwrap_or(BODIES);
         for b in &st.bodies {
-            if !app.session.body_visible(&b.name) {
+            if !app.session.body_visible(&b.name) || !bodies.visible(&b.name) {
                 continue;
             }
             let m = b.mesh();
@@ -2938,6 +2965,7 @@ fn box_select(app: &mut SolveApp, proj: &Proj, bx: BoxSel, add: bool) {
 /// Screen-space dots: the origin point, and hovered or selected body vertices.
 fn points_2d(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
     let t = Tokens::get();
+    let bodies = crate::manufacturing::view::Bodies::new(app);
     if app.origin_visible()
         && !app.session.visibility.hidden_origin.iter().any(|h| h == "O")
         && let Some(o) = proj.to_screen(Vec3::ZERO)
@@ -2945,13 +2973,15 @@ fn points_2d(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
         painter.circle(o, 4.5, t.origin_point, Stroke::new(1.0, Color32::from_gray(110)));
     }
     for x in app.highlighted() {
-        if let Sel::Vertex { point, .. } = x
+        if let Sel::Vertex { point, body, .. } = x
+            && bodies.visible(&body)
             && let Some(p) = proj.to_screen(point)
         {
             painter.circle(p, 4.0, t.sel_vertex, Stroke::new(1.5, t.sel_edge));
         }
     }
-    if let Some(Hit::Vertex { point, .. }) = &app.viewport.hover
+    if let Some(Hit::Vertex { point, body, .. }) = &app.viewport.hover
+        && bodies.visible(body)
         && let Some(p) = proj.to_screen(*point)
     {
         painter.circle(p, 4.5, t.hover_edge_halo, Stroke::new(1.5, t.hover_edge));
@@ -2986,6 +3016,7 @@ fn hover_highlight(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
 
 /// Sketch points and the status of the active sketch (constraint glyphs: `sketch_tools`).
 fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
+    crate::manufacturing::overlay(app, painter, proj);
     let t = Tokens::get();
     let st = app.session.world_state();
     for item in &app.session.selection {

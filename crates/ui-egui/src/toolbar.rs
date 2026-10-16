@@ -51,6 +51,7 @@ pub fn panels(tab: &str) -> &'static [&'static str] {
         return p;
     }
     match tab {
+        "MILLING" => &["SETUP", "TOOLPATHS", "VERIFY", "EXPORT"],
         "SOLID" => &["CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
         "SKETCH" => &["CREATE", "MODIFY", "PATTERN", "CONSTRAINTS", "INSPECT", "INSERT", "SELECT", "FINISH SKETCH"],
         "SURFACE" => &["CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
@@ -545,7 +546,7 @@ pub fn save(app: &mut SolveApp) {
     }
 }
 
-fn save_as(app: &mut SolveApp) {
+pub(crate) fn save_as(app: &mut SolveApp) {
     save_as_with_extension(app, solidcraft_engine::io::DESIGN_EXT);
 }
 
@@ -601,7 +602,13 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         painter.text(
             pos2(ws.center().x - 5.0, ws.top() + 52.0),
             Align2::CENTER_CENTER,
-            app.tr_label(if crate::render_workspace::active(app) { "RENDER" } else { crate::toolbar_custom::WORKSPACE }),
+            app.tr_label(if app.ui.tab == "MILLING" {
+                "Manufacture"
+            } else if crate::render_workspace::active(app) {
+                "RENDER"
+            } else {
+                crate::toolbar_custom::WORKSPACE
+            }),
             FontId::proportional(12.0),
             t.text,
         );
@@ -617,7 +624,9 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         if sketching {
             tabs.push("SKETCH");
         }
-        if crate::render_workspace::active(app) {
+        if app.ui.tab == "MILLING" {
+            tabs.push("MILLING");
+        } else if crate::render_workspace::active(app) {
             tabs.push("RENDER");
         } else {
             tabs.extend(TABS.iter());
@@ -1292,10 +1301,12 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
     if ctx.egui_wants_keyboard_input() || crate::dim_view::editing() || crate::dialogs_save_mesh::popup_open(ctx) {
         return;
     }
-    let (keys, mods) = ctx.input(|i| {
-        let keys: Vec<egui::Key> =
-            i.events.iter().filter_map(|e| if let egui::Event::Key { key, pressed: true, .. } = e { Some(*key) } else { None }).collect();
-        (keys, i.modifiers)
+    // A modifier released later in this frame must not turn Cmd+S into plain S.
+    let keys: Vec<_> = ctx.input(|i| {
+        i.events
+            .iter()
+            .filter_map(|e| if let egui::Event::Key { key, pressed: true, modifiers, .. } = e { Some((*key, *modifiers)) } else { None })
+            .collect()
     });
     // Home hides the design: only New, Open and Preferences work there.
     let shown = design_shown(app);
@@ -1304,7 +1315,7 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
     } else {
         crate::edit_clipboard::flush(ctx);
     }
-    for k in keys {
+    for (k, mods) in keys {
         use egui::Key;
         if shown && crate::navigation::view_key(app, ctx, k, mods) {
             continue;

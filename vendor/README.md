@@ -76,6 +76,12 @@ Changes:
 
 ## truck-meshalgo 0.4.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/truck)
 
+CAM uses a separate `tessellation/verification.rs` path adapted from the original
+fixed-tolerance triangulator. It propagates failed projection/refinement explicitly,
+retains a physical tolerance independent of display LOD, and uses an original bounded
+boundary candidate index plus Spade bulk loading. Display meshing remains unchanged.
+The adapter is exposed only through the guarded kernel verification-mesh API.
+
 Changes:
 - `tessellation/mod.rs`, `triangulation.rs`: a separate provisional `preview_face`
   path accepts at most 4,096 already sampled boundary points and a fixed grid of
@@ -149,6 +155,11 @@ Changes:
   compares the two.
 - `lib.rs`: compiler warnings no longer fail the build. Example, test and bench targets are
   dropped (their sources are not vendored).
+- `tessellation/triangulation.rs`: adaptive division also splits a cell that bows off its
+  corners' plane by more than the chord tolerance (a quarter of its twist `p00 - p01 - p10 +
+  p11`, across that plane, at the middle). A bilinear patch equals the blend of its corners the
+  division compared against, so a twisted ruled face (a loft between polylines) went out as two
+  triangles per face (#1666); a flat cell such as a cone's trapezoid between rulings is not split.
 
 ## matext4cgmath 0.1.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/matext4cgmath)
 

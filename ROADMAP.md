@@ -39,7 +39,21 @@ In scope, in priority order:
 5. A small PLASTIC subset for enclosures, after sheet metal: Boss, Rib, Web, Lip/Groove, Snap Fit.
 
 Deferred until further notice: MESH, FORM (T-splines), SURFACE beyond what solids need (scope proposed in #772), PCB / 3D
-PCB / Package, Render, Animation, Simulation, Manufacture/CAM, Drawings.
+PCB / Package, Render, Animation, Simulation, Drawings.
+
+## Milling
+
+The first Manufacture workflow implements rectangular stock, setups and fixtures,
+flat mills and drills, facing, contouring, pockets with islands and simple/peck drilling.
+It includes generation, playback, conservative stock/collision verification and five
+exports through shared commands. The reference post is not qualified for a physical
+controller. See [implementation and validation](docs/cam.md),
+[acceptance evidence](docs/cam-acceptance.md) and [dependency assessment](docs/cam-crates.md).
+
+[Adaptive clearing and 3D roughing/finishing](docs/cam-next-milestone.md) are the next milestone. They require their
+own analytic fixtures, independent engagement/surface checks and complete local Fusion
+comparisons at the existing dimensional budgets before parity is declared. Indexed and
+multi-axis machining follow later; turning, additive and inspection remain excluded.
 
 ## Milestones
 

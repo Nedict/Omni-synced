@@ -172,7 +172,7 @@ pub use step_in::{
 };
 pub use step_out::{ExportBody, ExportProduct, StepHeader, step_export_bodies, step_export_products};
 pub use surface_extend::{ExtendLimit, ExtendMode, ExtendOptions, extend_surface};
-pub use surface_kind::{EdgeCircle, FaceSurface, edge_circle, face_surface};
+pub use surface_kind::{EdgeCircle, FaceSurface, edge_circle, face_surface, hole_axis};
 pub use surface_offset::offset_surface;
 pub use surface_ruled::{Ruled, RuledCorners, RuledMode, ruled_surface};
 pub use surface_untrim::{UntrimHoles, untrim};
@@ -181,7 +181,7 @@ pub use surfaces::{
     sweep_sheet_points, sweep_sheet_points_with, sweep_sheet_with, thicken, trim, unstitch,
 };
 pub use sweep_path::{SweepControl, SweepOrientation, sweep_path, sweep_path_with};
-pub use topo::{CylinderFace, cylinder_face_at};
+pub use topo::{CylinderFace, cylinder_end_at, cylinder_face_at};
 pub use topo::{TopoCounts, merged_topology, seam_flags};
 pub use tspline::tspline_sheet;
 

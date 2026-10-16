@@ -65,6 +65,7 @@ pub mod install;
 pub mod issue_report;
 pub mod joint_drag;
 pub mod keymap;
+pub mod manufacturing;
 mod material_card_review;
 #[cfg(test)]
 mod measurement_ui_tests;
@@ -106,6 +107,8 @@ mod blend_arrow_tests;
 pub(crate) mod display_lod;
 #[cfg(test)]
 mod file_load_ui_tests;
+#[cfg(test)]
+mod file_ui_tests;
 #[cfg(test)]
 mod fillet_spline_handle_tests;
 pub(crate) mod navigation;
@@ -271,6 +274,7 @@ pub struct Services {
 }
 
 pub struct SolveApp {
+    pub manufacturing: manufacturing::State,
     pub session: Session,
     pub ui: UiState,
     pub cam: Camera,
@@ -420,6 +424,7 @@ impl SolveApp {
             file_picker: None,
             viewport: viewport::ViewportState::default(),
             render_workspace,
+            manufacturing: Default::default(),
             tool: None,
             dialog: None,
             params: None,
@@ -707,6 +712,31 @@ impl SolveApp {
         {
             let label = self.tr_label(info.label).to_string();
             self.set_status(format!("{label}: {why}"), true);
+            return;
+        }
+        match id {
+            "file.save" => {
+                self.home.open = false;
+                return toolbar::save(self);
+            }
+            "file.save_as" => {
+                self.home.open = false;
+                return toolbar::save_as(self);
+            }
+            "doc.open" => {
+                self.pick_open(|app, path| {
+                    if let Some(path) = path {
+                        app.open_path_async(&path);
+                    }
+                });
+                return;
+            }
+            _ => {}
+        }
+        manufacturing::cancel_editor(self);
+        if id.starts_with("cam.") {
+            self.home.open = false;
+            manufacturing::start(self, id);
             return;
         }
         if id == "material.properties.validate" {
@@ -1221,6 +1251,9 @@ impl SolveApp {
 
     /// Per-frame logic before layout.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        manufacturing::update_exports(self, ctx);
+        #[cfg(target_arch = "wasm32")]
+        manufacturing::advance(self, ctx);
         file_picker::tick(self, ctx);
         render_workspace::sync_backend(self);
         render_workspace::tick(self, ctx);
@@ -1358,7 +1391,9 @@ impl SolveApp {
             timeline::timeline(self, ui);
         }
         palette::palette_bar(self, ui);
-        if self.ui.show_browser {
+        if self.ui.tab == "MILLING" {
+            manufacturing::panel(self, ui);
+        } else if self.ui.show_browser {
             if left_timeline {
                 browser::browser_below_timeline(self, ui);
             } else {
@@ -1380,6 +1415,7 @@ impl SolveApp {
             }
         });
         dialogs::show(self, ui.ctx());
+        manufacturing::editor(self, ui.ctx());
         issue_report::CadInput::block(self, ui, report_input);
         sketch_palette::show(self, ui.ctx());
         self.resolve_fit(ui.ctx());
@@ -1445,6 +1481,11 @@ impl SolveApp {
                 control::Outcome::Done(v) => {
                     let _ = reply.send(v);
                 }
+                // A window that is minimised or covered (another macOS Space) presents no frame:
+                // say so at once rather than after the deadline (#1677).
+                control::Outcome::Screenshot { .. } if window_hidden(ctx) => {
+                    let _ = reply.send(json!({"ok": false, "hidden": true, "error": "no frame was presented (window hidden?); use ui.render"}));
+                }
                 control::Outcome::Screenshot { path } => {
                     self.shot_token += 1;
                     let token = self.shot_token;
@@ -1498,14 +1539,22 @@ impl SolveApp {
             }
         }
         let now = now_ms();
+        // Hidden while waiting: no frame is coming.
+        let hidden = window_hidden(ctx);
         self.pending_shots.retain(|(_, _, reply, deadline)| {
-            if now < *deadline {
+            if now < *deadline && !hidden {
                 return true;
             }
             let _ = reply.send(json!({"ok": false, "error": "no frame was presented (window hidden?); use ui.render"}));
             false
         });
     }
+}
+
+/// The window is minimised or fully covered, so it presents no frames (#1677). Unknown counts as
+/// shown: the screenshot deadline still ends a wait for a frame that never comes.
+fn window_hidden(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.viewport().visible()) == Some(false)
 }
 
 /// A command's name as people see it (its label), for the status bar.

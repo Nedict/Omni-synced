@@ -662,6 +662,12 @@ pub enum FeatureKind {
     Hole {
         #[walk(pick_if = points.is_none())]
         position: FacePick,
+        /// The position as length expressions, when it was given that way (#1678): the hole is
+        /// drilled where they evaluate, and follows the parameters. `position` keeps the point
+        /// they gave when the hole was made.
+        #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_point_expr")]
+        #[walk(placement)]
+        at: Option<PointExpr>,
         /// Drilling direction (into the material).
         direction: Dir,
         #[walk(length = "Diameter")]
@@ -1935,6 +1941,22 @@ mod point_expr {
     }
 }
 
+/// [`point_expr`] for an optional point.
+mod opt_point_expr {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Serialize, Deserialize)]
+    struct Wrap(#[serde(with = "super::point_expr")] super::PointExpr);
+
+    pub fn serialize<S: Serializer>(p: &Option<super::PointExpr>, s: S) -> Result<S::Ok, S::Error> {
+        p.as_ref().map(|p| Wrap(p.clone())).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<super::PointExpr>, D::Error> {
+        Ok(Option::<Wrap>::deserialize(d)?.map(|w| w.0))
+    }
+}
+
 impl FeatureKind {
     /// A sheet metal feature (its result depends on the sheet metal rules).
     pub fn is_plastic(&self) -> bool {
@@ -2203,12 +2225,21 @@ pub struct DesignLink {
     pub feature: u64,
 }
 
+fn read_manufacturing<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<solidcraft_cam::Manufacturing, D::Error> {
+    let manufacturing = <solidcraft_cam::Manufacturing as Deserialize>::deserialize(d)?;
+    manufacturing.validate().map_err(serde::de::Error::custom)?;
+    Ok(manufacturing)
+}
+
 /// The document.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     /// Named, renderer-independent setups. Device/job state is never saved here.
     #[serde(default, skip_serializing_if = "crate::render_settings::RenderSettings::is_empty")]
     pub render: std::sync::Arc<crate::render_settings::RenderSettings>,
+    /// Manufacturing definitions; generated toolpaths remain session caches.
+    #[serde(default, deserialize_with = "read_manufacturing", skip_serializing_if = "solidcraft_cam::Manufacturing::is_empty")]
+    pub manufacturing: solidcraft_cam::Manufacturing,
     #[serde(default = "default_format")]
     pub format: String,
     /// The changes of `format` this design has while they are pending (no release has fixed
@@ -2431,6 +2462,7 @@ impl Document {
     pub fn new(name: &str) -> Self {
         Document {
             render: Default::default(),
+            manufacturing: Default::default(),
             format: default_format(),
             format_pending: crate::format::pending_names(),
             name: name.into(),

@@ -171,6 +171,7 @@ cargo run --release -p solidcraft-cli -- run examples/bracket.json --out bracket
 cargo run --release -p solidcraft-cli -- eval examples/bracket.json     # volume, area, faces…
 cargo run --release -p solidcraft-cli -- snapshot examples/bracket.json --out bracket.png
 cargo run --release -p solidcraft-cli -- exec solid.box '{"length": 20, "width": 10, "height": 5}'
+cargo run --release -p solidcraft-cli -- run mechanism.json --in arm.solidcraft  # with a motion.export_animation step: a GIF
 ```
 
 A script is a list of commands:

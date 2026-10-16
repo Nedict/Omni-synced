@@ -63,7 +63,7 @@ Written against SolidCraft `main` after 0.11.1, which counts the degrees of free
 - **Each stop:** solve for where the limit is reached, and compare with the value the drive stopped at. Stops are found by bisection, so they land within about 0.01 degrees.
 - **Links:** b must equal r·a + o exactly, unless that is outside b's limits; then b sits at the limit and the mirror stops following.
 - **The whole motion:** `motion.play` at a few steps, or one `motion.export`, and compare the poses with the values you planned.
-- **Look:** when the server is bridged, `screenshot` after `motion.play` shows the app window at that step.
+- **Look:** when the server is bridged, `screenshot` after `motion.play` shows the app window at that step. `motion.export_animation {"study":..., "path":"tour.gif"}` (or `joint`, `from`, `to`) writes the whole motion as an animated GIF without changing the design.
 
 ## Save
 - Drive the joints back to the pose you planned to keep (`motion.play` at step 0, or `joint.drive`), then `save {path}`.

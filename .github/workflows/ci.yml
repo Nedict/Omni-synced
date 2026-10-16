@@ -119,6 +119,8 @@ jobs:
         run: cargo xtask assets
       - name: Licences
         run: cargo xtask licences --check
+      - name: Analytic CAM acceptance
+        run: cargo xtask cam-validate
       - name: Dependency layers
         run: cargo xtask layers
       - name: Web app offline use and updates (headless Chrome)
@@ -210,6 +212,7 @@ jobs:
       # would skip for want of an adapter fails instead.
       SOLIDCRAFT_GPU: software
       SOLIDCRAFT_REQUIRE_GPU: "1"
+      CAM_UI_EVIDENCE: ${{ github.workspace }}/target/cam-ui-evidence
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install a software Vulkan driver (lavapipe)
@@ -248,6 +251,14 @@ jobs:
           cargo nextest run --archive-file tests.tar.zst --workspace-remap . --extract-to . --extract-overwrite \
             --profile ci --ignore-default-filter \
             -E "package(solidcraft-engine) & test(=tests::robustness_goldens::sample_$((SHARD - 1)))"
+      - name: Upload original CAM review images
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cam-ui-evidence-${{ matrix.shard }}
+          path: target/cam-ui-evidence
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload test timings
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

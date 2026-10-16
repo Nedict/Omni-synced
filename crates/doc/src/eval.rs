@@ -2300,8 +2300,8 @@ fn sketch_hole_dir(st: &ModelState, spots: &[Vec3], n: Vec3) -> Vec3 {
 
 /// Where a hole feature drills (each on the surface) and in which direction: at its sketch
 /// points perpendicular to the sketch (into the material), else at its position.
-fn hole_spots(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
-    let FeatureKind::Hole { position, direction, points, .. } = &f.kind else { return Err(DocError::Invalid("not a hole".into())) };
+fn hole_spots(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
+    let FeatureKind::Hole { position, at, direction, points, .. } = &f.kind else { return Err(DocError::Invalid("not a hole".into())) };
     let (spots, dir) = match points {
         Some(sp) => {
             let ss =
@@ -2317,7 +2317,7 @@ fn hole_spots(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
         }
         None => {
             let dir = direction.normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?;
-            let at = hole_on_surface(st, position.0, dir);
+            let at = hole_on_surface(st, hole_position(vals, position, at)?, dir);
             let dir = hole_dir_into_face(st, at, dir);
             return Ok((vec![hole_on_surface(st, at, dir)], dir));
         }
@@ -2351,8 +2351,8 @@ fn hole_depth_to(st: &ModelState, at: &Vec3, dir: Vec3, to: &Option<Vec3>, depth
 }
 
 /// A hole's spots as given (not yet moved onto the surface) and its direction.
-fn hole_spots_raw(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
-    let FeatureKind::Hole { position, direction, points, .. } = &f.kind else { return Err(DocError::Invalid("not a hole".into())) };
+fn hole_spots_raw(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
+    let FeatureKind::Hole { position, at, direction, points, .. } = &f.kind else { return Err(DocError::Invalid("not a hole".into())) };
     match points {
         Some(sp) => {
             let ss = st.sketch(sp.sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {}", sp.sketch)))?;
@@ -2364,16 +2364,29 @@ fn hole_spots_raw(st: &ModelState, f: &Feature) -> Result<(Vec<Vec3>, Vec3)> {
         }
         None => {
             let dir = direction.normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?;
-            Ok((vec![position.0], hole_dir_into_face(st, hole_on_surface(st, position.0, dir), dir)))
+            let p = hole_position(vals, position, at)?;
+            Ok((vec![p], hole_dir_into_face(st, hole_on_surface(st, p, dir), dir)))
         }
     }
+}
+
+/// Where a hole placed by position is drilled: its `at` expressions evaluated, so it follows the
+/// parameters (#1678), else the point it was given.
+fn hole_position(vals: &BTreeMap<String, Value>, position: &crate::FacePick, at: &Option<crate::PointExpr>) -> Result<Vec3> {
+    let Some([x, y, z]) = at else { return Ok(position.0) };
+    let p =
+        Vec3::new(Document::eval_in(vals, x, Kind::Length)?, Document::eval_in(vals, y, Kind::Length)?, Document::eval_in(vals, z, Kind::Length)?);
+    if ![p.x, p.y, p.z].iter().all(|c| c.is_finite() && c.abs() < 1e9) {
+        return Err(DocError::Invalid("the hole's position is out of range".into()));
+    }
+    Ok(p)
 }
 
 /// The cutting tools of a hole feature at every spot, each with its exact geometry when it is a
 /// straight cylinder (see [`hole_tools_and_prisms`]).
 fn hole_feature_tools(vals: &BTreeMap<String, Value>, st: &ModelState, f: &Feature) -> Result<Vec<(Traced, Option<more::PrimitivePrism>)>> {
     let FeatureKind::Hole { diameter, depth, hole, to, .. } = &f.kind else { return Err(DocError::Invalid("not a hole".into())) };
-    let (spots, dir) = hole_spots(st, f)?;
+    let (spots, dir) = hole_spots(vals, st, f)?;
     if spots.is_empty() || spots.len() > 10_000 {
         return Err(DocError::Invalid("a hole needs 1…10000 points".into()));
     }
@@ -3755,7 +3768,7 @@ fn replay(
             // A hole is drilled again at each copy of its spot (found on the surface there), so
             // a blind hole's depth counts from the face at the copy, not from the bottom of the
             // original hole under the original spot.
-            let (spots, dir) = hole_spots_raw(st, src)?;
+            let (spots, dir) = hole_spots_raw(vals, st, src)?;
             for (k, m) in mats.iter().enumerate() {
                 let d = crate::apply_vector(m, dir).normalized().ok_or_else(|| DocError::Invalid("hole direction".into()))?;
                 for p in &spots {
@@ -4208,7 +4221,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             apply_traced(st, f, tools, *operation, &crate::plain(targets))
         }
         FeatureKind::Hole { thread, diameter, .. } => {
-            let (spots, dir) = hole_spots(st, f)?;
+            let (spots, dir) = hole_spots(vals, st, f)?;
             let tools = hole_feature_tools(vals, st, f)?;
             let handled = sheet_hole_cut(st, f, &tools, warning)?;
             let tools: Vec<Traced> = tools.into_iter().map(|(tool, _)| tool).collect();
