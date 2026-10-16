@@ -4423,13 +4423,14 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
         FeatureKind::Split { body, plane, tool, sketch, line } => {
             let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Unknown(format!("body `{body}`"))) };
+            let input = mb.traced();
             let parts = match tool {
                 // A sketch line: the plane through it along the sketch's normal.
                 _ if sketch.is_some() || line.is_some() => {
                     let (Some(sketch), Some(line)) = (sketch, line) else {
                         return Err(DocError::Invalid("a sketch line tool needs both its sketch and its line".into()));
                     };
-                    kernel::split_by_plane(&mb.body, &sketch_line_plane(st, sketch.0, line)?)?
+                    split_by_plane_traced(&input, &sketch_line_plane(st, sketch.0, line)?)?
                 }
                 // A face of a body (its surface extended).
                 Some(t) => {
@@ -4439,19 +4440,18 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                     // The pieces keep the planar roles of the faces they share with the body (#565).
                     kernel::split_body(&mb.body, &kernel::SplitTool::Face { body: &tb.body, face })?
                         .into_iter()
-                        .map(|part| part.with_preserved_planar_sources(&mb.body))
-                        .collect::<std::result::Result<Vec<_>, _>>()?
+                        .map(|part| Ok(Traced::step(part.with_preserved_planar_sources(&mb.body)?, &[&input])))
+                        .collect::<Result<Vec<_>>>()?
                 }
                 None => {
                     let pl = doc.resolve_plane_in(vals, plane, 0, Some(st))?;
-                    kernel::split_by_plane(&mb.body, &pl)?
+                    split_by_plane_traced(&input, &pl)?
                 }
             };
             if parts.len() < 2 {
                 return Err(DocError::Invalid("the tool does not split the body".into()));
             }
-            let input = mb.traced();
-            let mut it = parts.into_iter().map(|part| Traced::step(part, &[&input]));
+            let mut it = parts.into_iter();
             if let (Some(first), Some(slot)) = (it.next(), st.bodies.get_mut(i)) {
                 *slot = ModelBody::traced_new(mb.name.clone(), first, mb.feature);
             }
@@ -5306,6 +5306,23 @@ mod body_name_tests {
         assert_eq!(last, "R_0603 (50000)");
         assert!(began.elapsed() < std::time::Duration::from_secs(5), "{:?}", began.elapsed());
     }
+}
+
+/// The parts of a body split by a plane, on its positive side first (only the non-empty ones).
+/// Each part's cut face is named `section` after the half-space box that cut it, so it takes an
+/// attachment that follows the plane (#565); the box's other faces never reach the part.
+fn split_by_plane_traced(input: &Traced, plane: &Plane) -> Result<Vec<Traced>> {
+    let mut parts = Vec::new();
+    for positive in [true, false] {
+        let (part, tool) = kernel::half_space(&input.body, plane, positive)?;
+        let Some(part) = part else { continue };
+        // The box's cap in the plane: its start cap on the positive side, its end cap on the other.
+        let section = Some("section".to_string());
+        let caps = if positive { [section, None] } else { [None, section] };
+        let tool = crate::lineage::ProfileRoles { sketch: None, region: None, caps }.tool(tool, None);
+        parts.push(Traced::step(part, &[input, &tool]));
+    }
+    Ok(parts)
 }
 
 /// The plane a straight sketch line sweeps along its sketch's normal: through the line, its x
