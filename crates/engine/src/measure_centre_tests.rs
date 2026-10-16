@@ -138,6 +138,35 @@ fn elevated_cylinder_rims_measure_between_the_picked_circles_centres() {
 }
 
 #[test]
+fn an_elevated_circle_to_a_straight_edge_keeps_its_height_difference() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length":68,"width":50,"height":6,"body_name":"Plate"}));
+    run(&mut s, "solid.cylinder", json!({"base":[34,25,6],"radius":12,"height":14,"body_name":"Boss","operation":"new_body"}));
+    let straight = edge(&s, |p| p.y.abs() < 1e-9 && (p.z - 6.0).abs() < 1e-9);
+    let round = {
+        let st = s.model.state();
+        let b = st.bodies.iter().find(|b| b.name == "Boss").unwrap();
+        let m = b.mesh();
+        let index = m.edges.iter().position(|e| e.len() > 2 && e.iter().all(|p| (p.z - 20.0).abs() < 1e-9)).unwrap();
+        let e = &m.edges[index];
+        json!({"type":"edge","body":b.name,"index":index,"point":e[e.len()/2]})
+    };
+    for items in [vec![straight.clone(), round.clone()], vec![round, straight]] {
+        let r = measure(&mut s, items);
+        assert!(close(&r["center_distance"], 25_f64.hypot(14.0), 1e-9), "{r}");
+        let (line, circle) = if r["items"][0]["round"] == "circle" { ("center_to", "center_from") } else { ("center_from", "center_to") };
+        for (key, expected) in [(line, [34.0, 0.0, 6.0]), (circle, [34.0, 25.0, 20.0])] {
+            for (axis, value) in expected.into_iter().enumerate() {
+                assert!(close(&r[key][axis], value, 1e-9), "{r}");
+            }
+        }
+        assert!((r["center_delta"][2].as_f64().unwrap().abs() - 14.0).abs() < 1e-9, "{r}");
+        assert!(close(&r["min"], 13_f64.hypot(14.0), 1e-9), "{r}");
+        assert!(close(&r["max"], (34_f64.hypot(25.0) + 12.0).hypot(14.0), 0.05), "{r}");
+    }
+}
+
+#[test]
 fn a_hole_to_the_plate_edge_and_side_measures_from_its_axis() {
     let mut s = Session::default();
     plate(&mut s);

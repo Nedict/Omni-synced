@@ -96,6 +96,13 @@ People trust SolidCraft with their designs; a crash loses their work. **This out
 - **Never break wasm**: everything below the apps must build for `wasm32-unknown-unknown`
   (`cargo xtask wasm`, part of `cargo xtask ci`).
 
+## Design file format
+A change that saves something new in a design adds ONE file, `crates/doc/src/format/pending/<name>.rs`
+(a `//!` note, and `pub fn step` if older designs must be rewritten). Never edit `FORMAT`,
+`JSON_STEPS`, the history in `format.rs`, another change's file or a `v<N>/` folder: the build
+works out the number (the next one while anything is pending), and the release folds pending
+changes into `v<N>/` with `scripts/fold-format-pending.sh`. See CONTRIBUTING.md.
+
 ## Application releases
 Development pushes are not application releases. Follow `docs/releasing.md` when asked to
 prepare or ship a release: choose the version from the actual changes, update Cargo.toml and
@@ -126,5 +133,11 @@ before the draft is verified.
 
 ## Roadmap
 `ROADMAP.md` (committed) tracks status, milestones and estimates. Update it whenever a
-milestone task lands. `cargo xtask features` regenerates `docs/features.md` (SolidCraft's
-commands by area, from the registry) when commands are added or renamed.
+milestone task lands. `docs/features.md` (SolidCraft's commands by area, from the registry) and
+`THIRD-PARTY-LICENSES.txt` are regenerated on `main` after each merge by the Generated files
+workflow; never regenerate them in a PR.
+
+## Lists many PRs add to
+Keep them conflict-free (CONTRIBUTING.md, "Lists many changes add to"): message catalogs sorted
+(`cargo xtask lists --fix`), `mod` lines in their sorted group, the language list English first
+then by id, generated files left to `main`, and a design-format change as one new file.
