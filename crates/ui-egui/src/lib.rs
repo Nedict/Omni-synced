@@ -25,6 +25,7 @@ pub mod design_properties;
 pub mod dialogs;
 pub mod dialogs_appearance;
 pub mod dialogs_assembly;
+pub mod dialogs_coupling;
 pub mod dialogs_library;
 pub mod dialogs_motion;
 pub mod dialogs_move;
@@ -34,13 +35,16 @@ pub mod dialogs_save_mesh;
 pub mod dialogs_sheet;
 pub mod dialogs_surface;
 pub mod dialogs_sweep;
+pub mod dialogs_view_dxf;
 pub mod dim_view;
 #[cfg(test)]
 mod dimension_create_ui_tests;
 pub mod documents;
 pub mod drag_snap;
+pub mod edit_clipboard;
 pub mod fonts;
 pub mod frame;
+pub mod frame_rate;
 pub mod gizmo;
 pub mod gpu;
 pub mod help;
@@ -58,8 +62,11 @@ pub mod icons;
 pub mod inference;
 pub mod install;
 pub mod issue_report;
+pub mod joint_drag;
 pub mod keymap;
 mod material_card_review;
+#[cfg(test)]
+mod measurement_ui_tests;
 #[cfg(test)]
 mod menu_tests;
 #[cfg(test)]
@@ -141,6 +148,7 @@ pub mod sketch_modify_ui;
 #[cfg(test)]
 mod sketch_modify_ui_tests;
 pub mod sketch_palette;
+mod sketch_pattern_tree;
 pub(crate) mod sketch_text;
 mod sketch_text_handles;
 mod sketch_text_move;
@@ -148,6 +156,7 @@ pub mod sketch_tools;
 pub mod smart_extrude;
 #[cfg(test)]
 mod smart_extrude_ui_tests;
+pub mod space_mouse;
 pub mod stand_up;
 #[cfg(test)]
 mod sweep_dialog_tests;
@@ -347,6 +356,8 @@ pub struct SolveApp {
     /// [`SolveApp::set_wgpu`].
     pub cpu_meshing: bool,
     pub frame_ms: f64,
+    /// The viewport's frame-rate readout ([`frame_rate`]).
+    pub frame_rate: frame_rate::FrameRate,
     pub synthetic: Vec<egui::Event>,
     /// The modifiers of the synthetic press in progress (a Ctrl-drag keeps Ctrl while it moves).
     pub synthetic_mods: egui::Modifiers,
@@ -373,6 +384,8 @@ pub struct SolveApp {
     /// The language the installed font fallback chain is ordered for (`fonts::fallback_order`);
     /// changing `preferences.language` re-installs the fonts on the next frame.
     applied_fonts_language: String,
+    /// The interface font the fonts were last set up with (`Prefs::ui_font`).
+    applied_ui_font: String,
 }
 
 impl SolveApp {
@@ -438,6 +451,7 @@ impl SolveApp {
             integrated_titlebar: false,
             cpu_meshing: false,
             frame_ms: 0.0,
+            frame_rate: frame_rate::FrameRate::default(),
             synthetic: Vec::new(),
             synthetic_mods: egui::Modifiers::default(),
             control_rx: None,
@@ -455,6 +469,7 @@ impl SolveApp {
             file_load: file_load::FileLoad::default(),
             docs: documents::Documents::default(),
             applied_fonts_language: "en".into(),
+            applied_ui_font: String::new(),
         }
     }
 
@@ -619,7 +634,9 @@ impl SolveApp {
                 // reads the same way the toolbar button it came from does.
                 let language = i18n::Locale::for_language(&self.preferences.language);
                 let label = language.label(command_label(id));
-                if !(id == "view.navigate" && v.get("continuous").and_then(Value::as_bool) == Some(true)) {
+                // Frames of a gesture (a continuous view move, a part dragged by its joints) are
+                // not echoed one by one.
+                if v.get("continuous").and_then(Value::as_bool) != Some(true) {
                     self.session.echo(language.format("ui.command_done", &[("command", label)]));
                 }
                 if id == "file.new" {
@@ -636,7 +653,7 @@ impl SolveApp {
                     // applying cancellation hooks (such as restoring its timeline marker).
                     self.dialog = None;
                     self.tool = None;
-                    self.preview = preview::PreviewState::default();
+                    self.preview.reset();
                     self.cam = Camera::default();
                     self.fit_view();
                 }
@@ -952,7 +969,7 @@ impl SolveApp {
         file_load::begin(self, path, true);
     }
 
-    /// Insert a STEP file's bodies (an Import base feature) or a 3MF/STL file's meshes into the
+    /// Insert a STEP file's bodies (an Import base feature) or a mesh file's meshes into the
     /// current design.
     pub fn insert_path(&mut self, path: &str) {
         let cmd = if solidcraft_engine::io::is_mesh_path(path) { "file.insert_mesh" } else { "file.insert_step" };
@@ -966,7 +983,7 @@ impl SolveApp {
         }
     }
 
-    /// A dropped file: a STEP, 3MF or STL file joins a design that has features, anything else
+    /// A dropped file: a STEP or mesh file (3MF, STL, OBJ, glTF) joins a design that has features, anything else
     /// opens.
     pub fn drop_path(&mut self, path: &str) {
         let import = solidcraft_engine::io::is_step_path(path) || solidcraft_engine::io::is_mesh_path(path);
@@ -1272,9 +1289,10 @@ impl SolveApp {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         expression_complete::begin_frame(ui.ctx());
         let t0 = now_ms();
-        if self.preferences.language != self.applied_fonts_language {
+        if self.preferences.language != self.applied_fonts_language || self.preferences.ui_font != self.applied_ui_font {
             self.applied_fonts_language.clone_from(&self.preferences.language);
-            crate::fonts::setup_fonts_for(ui.ctx(), &self.preferences.language);
+            self.applied_ui_font.clone_from(&self.preferences.ui_font);
+            crate::fonts::setup_fonts_for(ui.ctx(), &self.preferences.language, &self.preferences.ui_font);
         }
         let _language = crate::i18n::scope(&self.preferences.language);
         let mut report_input = None;

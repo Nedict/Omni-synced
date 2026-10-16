@@ -7,6 +7,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod capture;
 pub mod cmd;
 pub mod control_auth;
 pub mod crash;
@@ -222,6 +223,8 @@ pub struct Session {
     removed_later_cache: std::sync::Mutex<Option<occurrences::RemovedLaterCache>>,
     /// Features copied with `timeline.copy` (pasted by `timeline.paste`).
     pub clipboard: Vec<solidcraft_doc::Feature>,
+    /// Sketch geometry copied with `sketch.copy` (pasted by `sketch.paste`).
+    pub sketch_clipboard: Option<cmd::sketch_clipboard::SketchClip>,
     /// Section Analysis: a view cut by a plane (origin, unit normal; the normal side is hidden).
     pub section: Option<(Vec3, Vec3)>,
     /// Surface analysis shading the model (zebra, draft, curvature map).
@@ -288,6 +291,20 @@ pub enum SurfaceAnalysis {
     Access { dir: Vec3 },
 }
 
+impl SurfaceAnalysis {
+    /// How a picture shades the faces for this analysis.
+    pub fn mode(self) -> render::AnalysisMode {
+        use render::AnalysisMode as M;
+        match self {
+            SurfaceAnalysis::Zebra { stripes } => M::Zebra { stripes },
+            SurfaceAnalysis::Draft { pull, angle } => M::Draft { pull, angle },
+            SurfaceAnalysis::Curvature { radius } => M::Curvature { radius },
+            SurfaceAnalysis::Environment => M::Environment,
+            SurfaceAnalysis::Access { dir } => M::Access { dir },
+        }
+    }
+}
+
 const MAX_UNDO: usize = 200;
 /// Checkpoints kept (the oldest go first).
 const MAX_CHECKPOINTS: usize = 16;
@@ -326,6 +343,7 @@ impl Session {
             occurrence_visibility_cache: Default::default(),
             removed_later_cache: Default::default(),
             clipboard: Vec::new(),
+            sketch_clipboard: None,
             section: None,
             analysis: None,
             checkpoints: Vec::new(),
@@ -792,6 +810,7 @@ impl Session {
             occurrence_visibility_cache: Default::default(),
             removed_later_cache: Default::default(),
             clipboard: self.clipboard.clone(),
+            sketch_clipboard: self.sketch_clipboard.clone(),
             section: None,
             analysis: None,
             checkpoints: Vec::new(),

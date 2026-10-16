@@ -52,7 +52,7 @@ pub fn panels(tab: &str) -> &'static [&'static str] {
     }
     match tab {
         "SOLID" => &["CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
-        "SKETCH" => &["CREATE", "MODIFY", "CONSTRAINTS", "INSPECT", "INSERT", "SELECT", "FINISH SKETCH"],
+        "SKETCH" => &["CREATE", "MODIFY", "PATTERN", "CONSTRAINTS", "INSPECT", "INSERT", "SELECT", "FINISH SKETCH"],
         "SURFACE" => &["CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
         "MESH" => &["CREATE", "PREPARE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
         "SHEET METAL" => &["CREATE", "MODIFY", "ASSEMBLE", "CONSTRUCT", "INSPECT", "INSERT", "SELECT"],
@@ -69,6 +69,7 @@ pub fn promoted(tab: &str, panel: &str) -> usize {
         ("SOLID", "CREATE") => 4,
         ("SOLID", "MODIFY") => 4,
         ("SKETCH", "CONSTRAINTS") => 6,
+        ("SKETCH", "PATTERN") => 3,
         (_, "FINISH SKETCH") => 1,
         _ => 2,
     }
@@ -166,30 +167,55 @@ fn report_rect(bar: Rect, captions: f32, tabs_start: f32, label_width: f32) -> (
     (Rect::from_min_size(pos2(right - width, bar.top() + 4.0), vec2(width, 26.0)), labeled)
 }
 
-/// An application-bar button for something on offer (Update, Install) at the right of `span` (the
-/// bar's free space): an accent-framed `icon`, labeled with `text` when `labeled` and it fits.
-/// None when even the icon alone doesn't fit: it never covers the bar's other buttons. `handle`
-/// names it for scenarios.
-pub(crate) fn offer_button(ui: &mut egui::Ui, span: Rect, labeled: bool, text: &str, icon: &str, handle: &str) -> Option<(Rect, egui::Response)> {
+/// The height of an application-bar pill ([`offer_pill`]), a little under the bar's 26 px buttons.
+pub(crate) const PILL_HEIGHT: f32 = 22.0;
+
+/// An application-bar pill for something on offer (Update) at the right of `span` (the bar's free
+/// space): accent-filled, with `icon` and the first of `labels` that fits (the icon alone when
+/// none does or `labeled` is false). Every label but the last also leaves `keep` points of the
+/// span free (for the document tabs). None when even the icon doesn't fit: it never covers the
+/// bar's other buttons. `handle` names it for scenarios.
+pub(crate) fn offer_pill(
+    ui: &mut egui::Ui,
+    span: Rect,
+    labeled: bool,
+    labels: &[&str],
+    keep: f32,
+    icon: &str,
+    handle: &str,
+) -> Option<(Rect, egui::Response)> {
     let t = Tokens::get();
-    let full = 30.0 + ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), FontId::proportional(13.0), t.app_bar_text).size().x) + 10.0;
-    let labeled = labeled && full <= span.width();
-    let width = if labeled { full } else { 28.0 };
+    let font = FontId::proportional(12.5);
+    let (icon_x, text_x, right_pad) = (16.0, 29.0, 11.0);
+    let last = labels.len().saturating_sub(1);
+    let label = labels.iter().enumerate().filter(|_| labeled).find_map(|(i, text)| {
+        let galley = ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), font.clone(), t.app_bar_text));
+        let width = text_x + galley.size().x + right_pad;
+        let room = if i < last { span.width() - keep } else { span.width() };
+        (width <= room).then_some((*text, width))
+    });
+    let width = label.map_or(PILL_HEIGHT + 4.0, |(_, w)| w);
     if width > span.width() {
         return None;
     }
-    let rect = Rect::from_min_size(pos2(span.right() - width, span.top()), vec2(width, 26.0));
-    let response = ui.interact(rect, ui.id().with(("sc_offer_button", handle)), Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), text));
+    let rect = Rect::from_min_size(pos2(span.right() - width, span.center().y - PILL_HEIGHT / 2.0), vec2(width, PILL_HEIGHT));
+    let response = ui.interact(rect, ui.id().with(("sc_offer_pill", handle)), Sense::click());
+    let name = label.map(|(text, _)| text).or(labels.first().copied()).unwrap_or_default().to_string();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &name));
     crate::scenario::publish_handle(handle, rect.center());
     crate::scenario::publish_rect(handle, rect);
-    let fill = if response.hovered() || response.has_focus() { t.hover } else { t.app_bar };
-    ui.painter().rect_filled(rect, 4.0, fill);
-    ui.painter().rect_stroke(rect, 4.0, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
-    let glyph = Rect::from_center_size(pos2(rect.left() + 14.0, rect.center().y), vec2(18.0, 18.0));
-    icons::paint(ui.painter(), glyph, icon, t.accent, t.accent, t.app_bar);
-    if labeled {
-        ui.painter().text(pos2(rect.left() + 29.0, rect.center().y), Align2::LEFT_CENTER, text, FontId::proportional(13.0), t.app_bar_text);
+    let hot = response.hovered() || response.has_focus();
+    let fill = if hot { t.accent.lerp_to_gamma(t.app_bar_text, 0.18) } else { t.accent };
+    let radius = PILL_HEIGHT / 2.0;
+    ui.painter().rect_filled(rect, radius, fill);
+    if response.has_focus() {
+        ui.painter().rect_stroke(rect.expand(2.0), radius + 2.0, Stroke::new(1.0, t.app_bar_text), egui::StrokeKind::Outside);
+    }
+    let glyph_x = if label.is_some() { rect.left() + icon_x } else { rect.center().x };
+    let glyph = Rect::from_center_size(pos2(glyph_x, rect.center().y), vec2(16.0, 16.0));
+    icons::paint(ui.painter(), glyph, icon, t.app_bar_text, fill, t.app_bar_text);
+    if let Some((text, _)) = label {
+        ui.painter().text(pos2(rect.left() + text_x, rect.center().y), Align2::LEFT_CENTER, text, font, t.app_bar_text);
     }
     Some((rect, response))
 }
@@ -448,6 +474,10 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     export(app, "step");
                     close = true;
                 }
+                if item_if(ui, app.tr_label("Export Current View as DXF…"), "", shown) {
+                    app.start("file.export_view_dxf");
+                    close = true;
+                }
                 if item_if(ui, "Export OBJ…", "", shown) {
                     export(app, "obj");
                     close = true;
@@ -578,7 +608,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         caret(&painter, pos2(ws.center().x + 27.0, ws.top() + 52.0), t.text);
         painter.text(pos2(ws.center().x, ws.top() + 69.0), Align2::CENTER_CENTER, app.tr("ui.workspace"), FontId::proportional(10.0), t.text_dim);
         if wresp.on_hover_text(app.tr("ui.change_workspace")).clicked() {
-            crate::context_menu::open_for(app, ws.left_bottom(), crate::context_menu::Target::Workspace);
+            crate::context_menu::toggle_for(app, ws, ws.left_bottom(), crate::context_menu::Target::Workspace);
         }
         crate::scenario::publish_rect("toolbar", r);
         crate::scenario::publish_rect("workspace_switcher", ws);
@@ -826,8 +856,16 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             let gy = lr.center().y - g.size().y / 2.0;
             painter.galley(pos2(gx, gy), g, lc);
             caret(&painter, pos2(gx + gw / 2.0 + 6.0, lr.center().y), lc);
+            // The label toggles its drop-down (#1522).
             if lresp.clicked() {
-                ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("sc_panel_open"), popup_id));
+                ui.ctx().data_mut(|d| {
+                    let key = egui::Id::new("sc_panel_open");
+                    if d.get_temp::<egui::Id>(key) == Some(popup_id) {
+                        d.remove::<egui::Id>(key);
+                    } else {
+                        d.insert_temp(key, popup_id);
+                    }
+                });
             }
             // Labels, gaps and margins append; actual buttons keep their insert-before target.
             // Respect the current layer so a dropdown covering the panel is not a drop target.
@@ -1261,8 +1299,16 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
     });
     // Home hides the design: only New, Open and Preferences work there.
     let shown = design_shown(app);
+    if shown {
+        crate::edit_clipboard::handle(app, ctx);
+    } else {
+        crate::edit_clipboard::flush(ctx);
+    }
     for k in keys {
         use egui::Key;
+        if shown && crate::navigation::view_key(app, ctx, k, mods) {
+            continue;
+        }
         if mods.command {
             match k {
                 Key::N => crate::documents::new_design(app),
@@ -1277,6 +1323,8 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
                 _ if !shown => {}
                 Key::Z => drop(app.run("edit.undo", json!({}))),
                 Key::Y => drop(app.run("edit.redo", json!({}))),
+                // Copy, Cut and Paste (`edit_clipboard::handle`).
+                Key::C | Key::X | Key::V if !mods.shift && !mods.alt => {}
                 Key::S => save(app),
                 _ => crate::keymap::press(app, &crate::keymap::key_name(k, mods)),
             }
@@ -1800,5 +1848,35 @@ mod icon_accent_tests {
             let seen = solidcraft_engine::find_command(id).map(|c| (c.tab, c.panel, c.icon));
             assert_eq!(seen, Some(("SKETCH", "CREATE", icon)), "{id} must be on the SKETCH CREATE panel");
         }
+    }
+}
+
+#[cfg(test)]
+mod dropdown_toggle_tests {
+    use crate::scenario::{Harness, rect_of};
+    use serde_json::json;
+
+    /// A second click on the button that opened a drop-down closes it (#1522): the workspace
+    /// switcher's menu, and a panel's command list.
+    #[test]
+    fn a_second_click_on_its_button_closes_a_drop_down() {
+        let mut h = Harness::new();
+        h.frames(3);
+        let ws = rect_of("workspace_switcher").unwrap().center();
+        h.step(&json!({"click": [ws.x, ws.y]})).unwrap();
+        assert!(h.app.viewport.context_menu.is_some(), "the first click opens the workspace menu");
+        h.step(&json!({"click": [ws.x, ws.y]})).unwrap();
+        h.frames(2);
+        assert!(h.app.viewport.context_menu.is_none(), "the second click closes it instead of reopening it");
+        h.step(&json!({"click": [ws.x, ws.y]})).unwrap();
+        assert!(h.app.viewport.context_menu.is_some(), "and a third opens it again");
+        h.step(&json!({"key": "Escape"})).unwrap();
+
+        h.step(&json!({"click": {"handle": "panel:SOLID:CREATE"}})).unwrap();
+        h.frames(2);
+        assert!(rect_of("toolbar_dropdown").is_some(), "the first click opens the panel's list");
+        h.step(&json!({"click": {"handle": "panel:SOLID:CREATE"}})).unwrap();
+        h.frames(2);
+        assert!(rect_of("toolbar_dropdown").is_none(), "the second click closes it");
     }
 }

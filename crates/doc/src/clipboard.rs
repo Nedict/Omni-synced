@@ -114,7 +114,7 @@ fn remap_plane(
     }
     match p {
         PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } => remap_plane(base, ids, names, bodies, depth + 1)?,
-        PlaneRef::Construction { name } => mapped_name(name, names),
+        PlaneRef::Construction { name } => mapped_name(&mut name.0, names),
         PlaneRef::Face { name, anchor, .. } => {
             if let Some(name) = name {
                 *name = remap_topology(name, ids, bodies);
@@ -221,10 +221,10 @@ impl crate::Feature {
             *n = remap_topology(n, ids, bodies);
         }
         for (_, e, _) in self.kind.inputs_mut() {
-            *e = clone_expression(e, parameters);
+            *e = clone_expression(e, parameters).into();
         }
-        for e in self.kind.point_expr_mut().into_iter().flatten() {
-            *e = clone_expression(e, parameters);
+        for e in self.kind.placement_exprs_mut() {
+            *e = clone_expression(e, parameters).into();
         }
         self.kind.remap_bodies(bodies);
         match &mut self.kind {

@@ -28,6 +28,33 @@ made. Contact sets stop motion where bodies would pass through each other,
 **Motion Study** keys joint values along a timeline, and **Interference** shows overlapping
 volumes in red.
 
+**Gear**, **Rack and Pinion** and **Screw** (on the **ASSEMBLE** panel) are motion links whose
+ratio comes from the parts rather than a typed number:
+
+- **Gear** (`joint.gear {a, b, ra, rb}`) couples two joints that turn. Joint 2 turns ra/rb as far
+  as joint 1, the other way round; **Internal gear** (one of them is a ring gear) turns both the
+  same way. Pick the round face of each gear, such as its pitch cylinder, or type the radii. Tooth
+  counts work as well as radii, since only their proportion counts. Picking a gear's face also
+  chooses the joint that gear turns on.
+- **Rack and Pinion** (`joint.rack_pinion {a, b, radius}`) couples a joint that turns with one
+  that slides: the rack travels the pinion's pitch radius times its turn in radians (r·θ). Either
+  joint may drive the other. In `joint.list` the ratio is given per degree, as for any link between
+  an angle and a distance.
+- **Screw** (`joint.screw {joint, pitch}`, or `{a, b, pitch}` for a revolute joint and a slider)
+  advances `pitch` per turn. A cylindrical joint is a screw on its own: its turn drives its travel.
+  The thread is right-handed; **Reverse** makes it left-handed.
+
+A radius or pitch may be an expression of the design's parameters, and a picked face is found
+again whenever the design changes. Change the parameter or the gear's diameter, and the ratio
+follows. The new link leaves the driven joint where it is, so teeth modelled in mesh stay in mesh.
+**Reverse** turns the driven joint the other way, for joints whose axes point opposite ways. These
+couplings are motion links, so they work in closed loops, with contact sets and in motion studies:
+a rack can push the piston of a slider-crank, or a pinion can steer through a rack and its tie
+rods. Drive the joint that drives the coupling (joint 1, the pinion, or the screw's turn), not the
+driven one. A joint follows one link at most, and a coupling that would drive its own driver is
+refused. `joint.list` lists each coupling's definition under `links` with an `error` when it can't
+be worked out (the picked face is gone); the link then keeps its last ratio.
+
 A joint moves one component against another, so its two picks must be on different components.
 A STEP file with several parts often comes in as bodies of one component, and picks on two of
 those bodies make no joint. The Joint and As-built Joint dialogs say so under the picks and offer
@@ -49,6 +76,21 @@ why. While it previews, a row under the values gives the value the joint reached
 status line repeats it. The value box keeps what you typed. The dialog opens on the joint
 picked in the browser, or on the first joint that moves when none is picked.
 
+**Drag a part that joints place** and it moves as far as its joints allow: the point you
+grabbed follows the pointer in the plane through it that faces the view, the joints on the
+part's chain take the values that bring it nearest, within their limits, through motion links,
+and with closed loops kept closed, and a four-bar's rocker stops at the end of its swing. The
+whole drag is one undo step. A grounded part, or one no joint places, is not moved; a drag on
+it draws a selection box as before. Each frame runs `joint.reach`, which scripts and agents use
+directly to put a part's point somewhere: `joint.reach {occurrence, point}` moves the joints on
+its chain from where they are to the nearest pose (the arm keeps its elbow up or down, and a
+linkage stays on its branch). `at` picks the part's point (the centre of its bodies by
+default), `z` with `axis` also turns one of its axes, and `joints` names the only joints to
+move (the other joints of a closed loop they are in follow). The answer says whether it
+`reached` the point and how close it got (`error_mm`, `error_deg`), and when it falls short,
+the limits it rests on (`stopped_by_limit`) or the loop that stopped it (`stopped_by_loop`).
+Contact sets are not checked by a reach; drive the joints for that.
+
 The solver places what it reaches from the root and from grounded components. A chain of joints
 that is joined to nothing grounded is never placed, so driving one of its joints moves nothing.
 The drive says so: `joint.drive` answers `moved: false` with a `reason` and the `unconnected`
@@ -63,6 +105,22 @@ by default: B's z axis is turned against A's, as two faces meet. `flip: true` li
 instead, so two origins given at one point with the same z stay as they are. For scripts that
 drive many steps, `quiet: true` leaves the per-part degrees of freedom out of joint answers, and
 `motion.play` with `quiet: true` gives the poses of only the parts that moved.
+
+**Motion Trace** (`motion.trace`, on the **ASSEMBLE** panel) draws the path a point of a part
+takes while a joint is driven or a motion study plays, such as the coupler curve of a four-bar.
+Pick the point on the part (a face centre, a circle centre, an edge midpoint or a vertex), then
+either a joint with the values to drive it from and to (a turn of the joint from where it is, at
+first) or a motion study. The path previews in the viewport as the mechanism would move: closed
+loops follow, and the path ends where a loop can no longer close or a contact set stops the
+motion, which the dialog says under the values. OK keeps the path as a 3D sketch spline in a new
+sketch of the root component (**Motion Trace1**, ...), where no joint moves it, and it can serve
+as a sweep or pipe path. It is a fixed curve: it
+does not follow later changes to the mechanism. A path that comes back to where it started is
+kept as a closed, smooth spline.
+`motion.trace {occurrence, point, joint, from, to, index?, samples?}` (or `{occurrence, point,
+study, samples?}`) answers the world points without changing the design, and
+`motion.trace.keep` with the same parameters (and `name?`) keeps them. A trace takes 2 to 500
+samples: 100 by default for a joint, one per step for a study.
 
 **Insert Design** (`component.insert_design {path, translate?}`, on the **ASSEMBLE** panel and
 in the **File** menu) adds a component linked to another saved design, so each part can live in

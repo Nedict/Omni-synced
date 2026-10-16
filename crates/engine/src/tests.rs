@@ -307,13 +307,19 @@ mod blend_fit;
 mod boolean_diagnostics;
 mod component_frames;
 mod curved_seam_round;
+mod flush_join_loft;
+mod gltf_import;
 mod import_component;
 mod large_step_import;
 mod loft_cut;
 mod loft_ring;
 mod loft_spacing;
 mod mirror_planes;
+#[cfg(not(target_arch = "wasm32"))]
+mod native_cad_import;
+mod nudge_slivers;
 mod path_scope;
+mod pleat_join;
 mod primitive_points;
 mod rim_cut;
 mod robustness;
@@ -773,6 +779,8 @@ fn hostile_params_never_panic() {
         "orientation",
         "twist",
         "scale",
+        "continuity",
+        "crown",
     ];
     // Commands are independent; worker threads take them one at a time (their costs vary a lot).
     let ids: Vec<&str> = command_specs()
@@ -1794,6 +1802,47 @@ fn split_body_by_a_face() {
     let core = PI * 16.0 * 30.0;
     assert!(v.len() == 2 && rel(v[0], core) < 1e-3 && rel(v[1], 6000.0 - core) < 1e-3, "{v:?}");
     assert!(s.execute("solid.split_body", &json!({"body": "Block", "tool": {"body": "Tool", "point": [100, 0, 0]}})).is_err());
+}
+
+/// Split Body by a sketch line (#1552): the plane through the line along the sketch's normal
+/// splits a box; the split follows the line when the sketch changes, the design saves the line,
+/// and anything but a straight line of a sketch is refused.
+#[test]
+fn split_body_by_a_sketch_line() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 20, "height": 30, "body_name": "Block"}));
+    let sk = run(&mut s, "sketch.create", json!({"plane": "XY"}))["sketch"].as_u64().unwrap();
+    run(&mut s, "sketch.line", json!({"points": [[4, -5], [4, 25]], "ids": ["cut"]}));
+    run(&mut s, "sketch.circle.center", json!({"center": [50, 50], "radius": 2, "id": "c"}));
+    run(&mut s, "sketch.finish", json!({}));
+    let volumes = |s: &Session| {
+        let st = s.world_state();
+        let mut v: Vec<f64> =
+            st.bodies.iter().filter(|b| b.name.starts_with("Block")).map(|b| solidcraft_kernel::measure(&b.body).unwrap().volume).collect();
+        v.sort_by(f64::total_cmp);
+        v
+    };
+    for bad in [
+        json!({"body": "Block", "sketch": sk, "line": "c"}),
+        json!({"body": "Block", "sketch": sk}),
+        json!({"body": "Block", "sketch": 999, "line": "cut"}),
+    ] {
+        assert!(s.execute("solid.split_body", &bad).is_err(), "{bad}");
+    }
+    run(&mut s, "solid.split_body", json!({"body": "Block", "sketch": sk, "line": "cut"}));
+    let v = volumes(&s);
+    assert!(v.len() == 2 && rel(v[0], 2400.0) < 1e-6 && rel(v[1], 3600.0) < 1e-6, "{v:?}");
+    // The split follows the line.
+    run(&mut s, "sketch.edit", json!({"sketch": sk}));
+    run(&mut s, "sketch.move_point", json!({"point": "cut.start", "to": [2, -5]}));
+    run(&mut s, "sketch.move_point", json!({"point": "cut.end", "to": [2, 25]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let v = volumes(&s);
+    assert!(v.len() == 2 && rel(v[0], 1200.0) < 1e-6 && rel(v[1], 4800.0) < 1e-6, "{v:?}");
+    // The design keeps the sketch and the line.
+    let saved: Value = serde_json::from_str(&s.doc.to_json()).unwrap();
+    let split = saved["features"].as_array().and_then(|f| f.iter().find(|f| f["type"] == "split")).cloned().unwrap();
+    assert_eq!((split["sketch"].as_u64(), split["line"].as_str()), (Some(sk), Some("cut")), "{split}");
 }
 
 /// Fillet types: chord length (radius from the face angle) and a radius varying along the

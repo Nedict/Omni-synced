@@ -41,6 +41,7 @@ Written against SolidCraft `main` after 0.11.1, which counts the degrees of free
 
 ## Linked and closed motion
 - **Motion links:** `joint.motion_link {"a":..., "b":..., "ratio":r, "offset":o}` sets b = r·a + o, clamped to b's own limits. `ratio` is b's units per a's: a pinion that moves its rack 0.5 mm per degree takes `ratio: 0.5`. `offset` is in b's units: degrees for an angle, mm for a distance, or an expression. A mirrored part takes `ratio: -1`, and limits mirrored too. Chains (a drives b, b drives c) work in any order of creation. Drive only the head of a chain.
+- **Gears, racks and screws:** links whose ratio comes from radii or a pitch, kept up to date when they change. `joint.gear {"a":..., "b":..., "ra":r1, "rb":r2}` turns b r1/r2 as far as a, the other way (`internal: true`: the same way). `joint.rack_pinion {"a":pinion, "b":rack, "radius":r}` moves the rack r·θ. `joint.screw {"joint":cylindrical, "pitch":p}` (or `a`, `b` for a revolute and a slider) advances p per turn. A size is mm, an expression (`"m*z1/2"`), or a round face `{"occurrence":..., "circle":[x,y,z]}` whose radius is read again after every edit. `reverse: true` turns b the other way (a left-hand thread). The driven joint keeps where it is. Drive a, never b.
 - **Closed loops:** an actuator between a frame and a hinged panel takes three joints besides the hinge:
   - a revolute root pin (frame and barrel)
   - a slider (barrel and rod), with z along the actuator from root to tip on both origins, both at the root pin, and the stroke as its limits
@@ -54,6 +55,7 @@ Written against SolidCraft `main` after 0.11.1, which counts the degrees of free
 - **Contact:** `contact.create {"occurrences":[...], "name":...}` and `contact.enable_sets {}`. A drive then stops where two bodies of one set would pass through each other, with `stopped_by_contact: {a, b, fraction}`. `contact.check {}` lists the pairs that overlap now.
 - **Motion study:** `motion.study {"name":..., "steps":N, "keys":[{"joint":..., "points":[[step, value], ...]}]}`. Values are degrees or mm, linear between points. Key only the driving joints; linked joints and loops follow.
 - **Play:** `motion.play {"study":..., "step":s}` sets the joints there, which changes the design, and answers every occurrence's pose (about 0.2 KB per occurrence). `motion.export {"study":..., "samples":n}` gives the poses at every step without changing the design.
+- **Trace:** `motion.trace {"occurrence":..., "point":[x,y,z], "joint":..., "from":0, "to":360}` (or `"study":...` instead of joint, from and to) answers the world path of a point of a part, such as a coupler curve, without changing the design. It ends at `stopped_at` where a loop or contact stops the motion. `motion.trace.keep` with the same params keeps it as a 3D sketch spline.
 
 ## Verify
 - **Each joint:** `execute occurrence.properties {"occurrence":"Wing:1"}` (under 1 KB) gives the world bbox and centre of mass of one occurrence. Joining must not move them.
@@ -73,6 +75,7 @@ Written against SolidCraft `main` after 0.11.1, which counts the degrees of free
 |---|---|
 | "The origins are at the same point, so `flip` doesn't matter" | Pass `flip: true`, or the part turns 180 degrees. |
 | "The drive answered values, so it moved" | Read `moved`; a chain joined to nothing grounded answers `moved: false` and a `reason`. |
+| "Drive the arm joint by joint until the gripper gets there" | `joint.reach {"occurrence":..., "at":..., "point":...}` solves every joint on its chain at once; read `reached` and `error_mm`. |
 | "Key every joint of the loop in the study" | Key the driving joint only; the loop follows. |
 | "Check the pose with `component.list`" | `occurrence.properties` on the one occurrence. `component.list` is 140 KB on a 36-part assembly. |
 | "Open the design with `file.open`" | The `open` tool, or `doc.open`; there is no `file.open`. |
