@@ -94,10 +94,12 @@ jobs:
             # Code changed but nothing was selected: be safe and test everything.
             if [ "$native" = true ] && [ "$full" != true ] && [ -z "$packages" ]; then full=true; fi
           fi
-          echo "native=$native" >> "$GITHUB_OUTPUT"
-          echo "kernel=$kernel" >> "$GITHUB_OUTPUT"
-          echo "full=$full" >> "$GITHUB_OUTPUT"
-          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+          {
+            echo "native=$native"
+            echo "kernel=$kernel"
+            echo "full=$full"
+            echo "packages=$packages"
+          } >> "$GITHUB_OUTPUT"
 
   checks:
     name: Format and repository checks
