@@ -213,7 +213,8 @@ Windows builds: `cargo xwin build --release --target x86_64-pc-windows-msvc -p s
 On Windows and Linux, SolidCraft detects a connected 3Dconnexion SpaceNavigator or SpaceMouse through its
 multi-axis HID interface. Move the cap to pan and zoom, and tilt or twist it to rotate the 3D view.
 While editing a sketch, the cap pans and zooms without changing the sketch view. The Navigation
-page in Preferences has an on/off switch and a speed control for the 3D mouse. The web app reads
+page in Preferences has an on/off switch, a speed control and, for each of the cap's six axes, an
+invert switch and a speed for the 3D mouse. The web app reads
 it too, through the browser; Firefox needs a 3DxWare setting first (see
 [Getting started › 3D mouse in the browser](docs/book/src/guide/getting-started.md#3d-mouse-in-the-browser)).
 

@@ -273,6 +273,11 @@ pub struct Prefs {
     pub space_mouse_enabled: bool,
     /// Speed multiplier for 3D mouse navigation.
     pub space_mouse_speed: f32,
+    /// Per physical axis of the cap (push X, Y, Z, then tilt X, Y, Z), whether it moves the view
+    /// the other way.
+    pub space_mouse_reverse: [bool; 6],
+    /// Per physical axis of the cap, a multiplier on top of `space_mouse_speed`; 0 switches it off.
+    pub space_mouse_axis_speed: [f32; 6],
     /// Anti-aliasing samples (applies on restart).
     pub msaa: u32,
     /// How finely the viewport tessellates curved faces and edges: `coarse`, `normal`, `fine` or
@@ -402,6 +407,8 @@ impl Default for Prefs {
             orbit_cursor: false,
             space_mouse_enabled: true,
             space_mouse_speed: 1.0,
+            space_mouse_reverse: [false; 6],
+            space_mouse_axis_speed: [1.0; 6],
             msaa: 4,
             display_quality: "normal".into(),
             supersampling: 1.0,
@@ -618,6 +625,8 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.orbit_cursor = d.orbit_cursor;
             p.space_mouse_enabled = d.space_mouse_enabled;
             p.space_mouse_speed = d.space_mouse_speed;
+            p.space_mouse_reverse = d.space_mouse_reverse;
+            p.space_mouse_axis_speed = d.space_mouse_axis_speed;
             p.look_at_anim = d.look_at_anim;
             p.look_at_speed = d.look_at_speed;
             p.middle_double_click = d.middle_double_click;
@@ -1214,6 +1223,20 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                 egui::Slider::new(&mut app.preferences.space_mouse_speed, 0.25..=3.0).step_by(0.05).custom_formatter(|v, _| format!("{v:.2}×")),
             );
             ui.end_row();
+            for (axis, name) in SPACE_MOUSE_AXES.iter().enumerate() {
+                ui.label(crate::i18n::tr_label(name));
+                ui.horizontal(|ui| {
+                    ui.add_enabled_ui(app.preferences.space_mouse_enabled, |ui| {
+                        if let Some(reverse) = app.preferences.space_mouse_reverse.get_mut(axis) {
+                            ui.checkbox(reverse, crate::i18n::tr_label("Invert"));
+                        }
+                        if let Some(speed) = app.preferences.space_mouse_axis_speed.get_mut(axis) {
+                            ui.add(egui::Slider::new(speed, 0.0..=3.0).step_by(0.05).custom_formatter(|v, _| format!("{v:.2}×")));
+                        }
+                    });
+                });
+                ui.end_row();
+            }
             note(ui, crate::i18n::tr_label("Move and rotate the view together; sketches use pan and zoom only."));
         }
         PAGE_DESIGN => {
@@ -1453,6 +1476,9 @@ pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::
 
 /// Fold a setting an older release kept in its own field into the one this version reads.
 /// `orbit_cursor` (`true` = the point under the cursor) became `orbit_around`.
+/// The cap's physical axes, in the order of `Prefs::space_mouse_reverse`.
+const SPACE_MOUSE_AXES: [&str; 6] = ["Push left / right", "Push forward / back", "Lift / press", "Tilt forward / back", "Tilt left / right", "Twist"];
+
 pub fn migrate(mut p: Prefs) -> Prefs {
     if p.orbit_cursor {
         p.orbit_around = OrbitAround::Cursor;
