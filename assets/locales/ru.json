@@ -362,6 +362,7 @@
   "cmd.joint_motion_link": "Связь движений",
   "cmd.joint_origin": "Точка сопряжения",
   "cmd.joint_rack_pinion": "Реечная передача",
+  "cmd.joint_reach": "Достичь точки",
   "cmd.joint_rigid_group": "Жёсткая группа",
   "cmd.joint_screw": "Винт",
   "cmd.joint_solve": "Решить сопряжения",

@@ -363,6 +363,7 @@
   "cmd.joint_motion_link": "Зв'язок руху",
   "cmd.joint_origin": "Початок з'єднання",
   "cmd.joint_rack_pinion": "Рейкова передача",
+  "cmd.joint_reach": "Досягти точки",
   "cmd.joint_rigid_group": "Жорстка група",
   "cmd.joint_screw": "Гвинт",
   "cmd.joint_solve": "Розв'язати з'єднання",

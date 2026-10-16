@@ -296,6 +296,8 @@ long as the change meets the rules above.
 
 ## Where help is wanted most
 
+**Kernel speed (slow fillets, booleans, STEP):** please don't rewrite the current kernel code for speed; it is being replaced by [solidcore](https://github.com/bherbruck/solidcore) ([progress](https://bherbruck.github.io/solidcore/)). Report slow cases with a file under the `kernel-perf` label, and put kernel effort into solidcore instead. See [#1597](https://github.com/bherbruck/solidcraft/issues/1597).
+
 See the [`help wanted`](https://github.com/bherbruck/solidcraft/labels/help%20wanted) and
 [`good first issue`](https://github.com/bherbruck/solidcraft/labels/good%20first%20issue) labels.
 In order of how much they'd help users:

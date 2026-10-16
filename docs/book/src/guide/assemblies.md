@@ -76,6 +76,21 @@ why. While it previews, a row under the values gives the value the joint reached
 status line repeats it. The value box keeps what you typed. The dialog opens on the joint
 picked in the browser, or on the first joint that moves when none is picked.
 
+**Drag a part that joints place** and it moves as far as its joints allow: the point you
+grabbed follows the pointer in the plane through it that faces the view, the joints on the
+part's chain take the values that bring it nearest, within their limits, through motion links,
+and with closed loops kept closed, and a four-bar's rocker stops at the end of its swing. The
+whole drag is one undo step. A grounded part, or one no joint places, is not moved; a drag on
+it draws a selection box as before. Each frame runs `joint.reach`, which scripts and agents use
+directly to put a part's point somewhere: `joint.reach {occurrence, point}` moves the joints on
+its chain from where they are to the nearest pose (the arm keeps its elbow up or down, and a
+linkage stays on its branch). `at` picks the part's point (the centre of its bodies by
+default), `z` with `axis` also turns one of its axes, and `joints` names the only joints to
+move (the other joints of a closed loop they are in follow). The answer says whether it
+`reached` the point and how close it got (`error_mm`, `error_deg`), and when it falls short,
+the limits it rests on (`stopped_by_limit`) or the loop that stopped it (`stopped_by_loop`).
+Contact sets are not checked by a reach; drive the joints for that.
+
 The solver places what it reaches from the root and from grounded components. A chain of joints
 that is joined to nothing grounded is never placed, so driving one of its joints moves nothing.
 The drive says so: `joint.drive` answers `moved: false` with a `reason` and the `unconnected`

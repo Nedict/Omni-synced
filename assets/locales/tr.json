@@ -788,7 +788,6 @@
   "ui.agent_chat_undo_label": "Ajan sohbeti: {message}",
   "ui.agent_chat_undone": "(geri alındı)",
   "ui.agent_chat_view_attached": "Görünüm eklendi",
-  "ui.agent_chat_wait_turn": "Ajan hâlâ son mesaj üzerinde çalışıyor: Bekleyin veya İptal'e tıklayın.",
   "ui.agent_cursor": "Ajan imleci",
   "ui.agent_cursor_speed": "Ajan imleci hızı",
   "ui.ai_add": "Ekle",

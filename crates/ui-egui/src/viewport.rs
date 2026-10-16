@@ -118,6 +118,8 @@ pub struct ViewportState {
     pub point_drag: Option<(String, usize, Option<Vec2>)>,
     /// Checkpoint and source for a cancellable whole-text drag.
     pub(crate) text_drag: Option<(u64, String)>,
+    /// A part that joints place, being dragged.
+    pub(crate) joint_drag: Option<crate::joint_drag::Drag>,
 }
 
 /// Something under the cursor.
@@ -2493,12 +2495,32 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     if crate::sketch_text_handles::dragging(app) && !crate::issue_report::cad_input_blocked() && !ui.input(|i| i.pointer.primary_down()) {
         crate::sketch_text_handles::drag_end(app);
     }
+    // Dragging a part that joints place moves it as far as they allow (outside sketches).
+    if app.tool.is_none() && app.dialog.is_none() && primary_nav.is_none() && mode.is_none() && app.session.active_sketch.is_none() && !held {
+        if resp.drag_started_by(egui::PointerButton::Primary)
+            && let Some(a) = ui.input(|i| i.pointer.press_origin())
+            && rect.contains(a)
+            && !axes.contains(a)
+        {
+            crate::joint_drag::start(app, &proj, a);
+        }
+        if crate::joint_drag::active(app)
+            && resp.dragged_by(egui::PointerButton::Primary)
+            && let Some(p) = hover
+        {
+            crate::joint_drag::to(app, &proj, p);
+        }
+    }
+    if crate::joint_drag::active(app) && (resp.drag_stopped() || !ui.input(|i| i.pointer.primary_down())) {
+        crate::joint_drag::end(app);
+    }
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()
         && !held
         && primary_nav.is_none()
         && mode.is_none()
         && app.viewport.point_drag.is_none()
+        && !crate::joint_drag::active(app)
         && !crate::dim_view::dragging()
         && !crate::sketch3d::dragging()
         && !crate::sketch_text_handles::dragging(app)
