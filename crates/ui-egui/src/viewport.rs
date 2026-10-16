@@ -695,7 +695,7 @@ fn build_scene(app: &SolveApp) -> GpuScene {
     // Continuity analysis: each seam `inspect.continuity` measured, drawn over the model in the
     // colour of its worst verdict.
     for seam in &s.continuity {
-        let col = continuity_color(seam.verdict);
+        let col = c4(continuity_color(&tk, seam.verdict));
         for w in seam.points.windows(2) {
             if let (Some(a), Some(b)) = (w.first(), w.get(1)) {
                 sc.line(a.to_f32(), b.to_f32(), col, 2.6, true);
@@ -706,16 +706,17 @@ fn build_scene(app: &SolveApp) -> GpuScene {
     sc
 }
 
-/// The colour of a measured seam: green within every tolerance, yellow where the faces only
-/// meet at an angle (over G1), red where they do not meet at all or the curvature jumps across
-/// them (over G2, the defect no chord tolerance shows). The greens, yellows and reds are the
-/// ones the shader's own analyses use (`assets/shaders/viewport.wgsl`).
-fn continuity_color(verdict: solidcraft_engine::kernel::SeamVerdict) -> [u8; 4] {
+/// The colour of a measured seam, one per verdict from the theme's `continuity` tokens: within
+/// every tolerance (G2), tangent with a curvature jump (G1), a crease (G0), and faces that do
+/// not meet.
+fn continuity_color(t: &Tokens, verdict: solidcraft_engine::kernel::SeamVerdict) -> Color32 {
     use solidcraft_engine::kernel::SeamVerdict as V;
+    let [smooth, jump, sharp, gap] = t.continuity;
     match verdict {
-        V::Smooth => [51, 191, 77, 255],
-        V::Sharp => [242, 204, 38, 255],
-        V::CurvatureJump | V::Gap => [217, 56, 51, 255],
+        V::Smooth => smooth,
+        V::CurvatureJump => jump,
+        V::Sharp => sharp,
+        V::Gap => gap,
     }
 }
 
@@ -3506,6 +3507,26 @@ fn view_menu(app: &mut SolveApp, ui: &mut egui::Ui, button: Rect) -> bool {
 mod tests {
     use super::*;
     use crate::navigation::*;
+
+    /// Continuity Analysis draws each seam in its verdict's `continuity` token (#770): a box
+    /// with one edge rounded shows the round's two tangent seams (G1) and the creases (G0), and
+    /// nothing in the smooth or gap colours.
+    #[test]
+    fn continuity_seams_take_their_colours_from_the_theme() {
+        let mut s = solidcraft_engine::Session::default();
+        s.execute("solid.box", &json!({"length": 20, "width": 20, "height": 20})).unwrap();
+        s.execute("solid.fillet", &json!({"edges": [[20, 20, 10]], "radius": 4})).unwrap();
+        s.execute("inspect.continuity", &json!({})).unwrap();
+        let app = SolveApp::new(s, crate::Services::default());
+        let sc = build_scene(&app);
+        // An overlay line is two points, a colour and a width: 32 bytes.
+        let colours: Vec<[u8; 4]> = sc.overlay.as_chunks::<32>().0.iter().map(|r| [r[24], r[25], r[26], r[27]]).collect();
+        let t = Tokens::get();
+        let count = |c: Color32| colours.iter().filter(|x| **x == c4(c)).count();
+        let [smooth, jump, sharp, gap] = t.continuity.map(count);
+        assert!(jump > 0 && sharp > 0, "tangent seams {jump}, creases {sharp} segments");
+        assert_eq!((smooth, gap), (0, 0));
+    }
 
     /// Bodies drawn from their display plans, evaluated on the GPU, look like the same bodies
     /// built into triangles on the CPU: the sample design rendered both ways through the
