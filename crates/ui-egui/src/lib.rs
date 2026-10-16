@@ -112,6 +112,8 @@ mod fillet_spline_handle_tests;
 pub(crate) mod navigation;
 pub mod palette;
 pub mod params_dialog;
+pub(crate) mod pick_buffer;
+pub(crate) mod pick_index;
 pub mod prefs;
 #[cfg(test)]
 mod preselect_tests;
