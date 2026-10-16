@@ -44,9 +44,6 @@ integrate() {
   src_desktop="$APPDIR/usr/share/applications/$DESK_ID.desktop"
   [ -f "$src_desktop" ] || return 0
 
-  # appimaged integrates AppImages itself (appimagekit_<hash>-<name>.desktop, Exec= this file):
-  # a second entry from here would show the app twice, so drop an entry this script wrote earlier
-  # (only one it wrote: it points Exec at a path in quotes) and leave the rest to appimaged.
   apps="$data/applications"
   # Gear Lever and AppImageLauncher write their own entry and start the AppImage with
   # DESKTOPINTEGRATION set; treat that like appimaged: no entry from here, and drop the one
@@ -59,6 +56,9 @@ integrate() {
     fi
     return 0
   fi
+  # appimaged integrates AppImages itself (appimagekit_<hash>-<name>.desktop, Exec= this file):
+  # a second entry from here would show the app twice, so drop an entry this script wrote earlier
+  # (only one it wrote: it points Exec at a path in quotes) and leave the rest to appimaged.
   for other in "$apps"/appimagekit_*.desktop; do
     if ! { [ -f "$other" ] && grep -qF "$appimage" "$other" 2>/dev/null; }; then
       continue
