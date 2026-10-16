@@ -10,7 +10,7 @@ Help is welcome, whether that's a one-line fix or owning a whole area. This page
 build it, how the code is laid out, the few rules that aren't negotiable, and where help is
 needed most.
 
-Questions, ideas or want to say what you're working on? Join the [Discord](https://discord.gg/FtU4NQNVDH).
+Questions, ideas or want to say what you're working on? Join the [Discord](https://solidcraft.io/discord).
 
 ## Get it running (about 10 minutes on a fast machine)
 
@@ -18,7 +18,7 @@ You need stable Rust 1.95 or newer (required by egui/eframe 0.36). For the web
 build you also need `rustup target add wasm32-unknown-unknown` and [`trunk`](https://trunkrs.dev).
 
 ```sh
-git clone https://github.com/bherbruck/solidcraft && cd solidcraft
+git clone https://github.com/tangency-labs/solidcraft && cd solidcraft
 cargo run --release -p solidcraft -- --sample      # desktop app with a sample part
 cargo xtask test                                   # unit, engine and UI-scenario tests
 cargo xtask ci                                     # everything a PR must pass (see below)
@@ -247,11 +247,11 @@ and a fresh CI run:
 
 ## Sending a change
 
-1. Work is tracked in [GitHub issues](https://github.com/bherbruck/solidcraft/issues), labelled
+1. Work is tracked in [GitHub issues](https://github.com/tangency-labs/solidcraft/issues), labelled
    by area (`area:kernel`, `area:sketch`, `area:doc`, `area:ui`, `area:infra`). For anything
    bigger than a bug fix that has no issue yet, open one first. **Claim the issue with a draft
    PR** before you start, so two people don't build the same thing:
-   - Check nobody has it: `gh pr list -R bherbruck/solidcraft --state open --search "#N"`.
+   - Check nobody has it: `gh pr list -R tangency-labs/solidcraft --state open --search "#N"`.
    - Branch from the latest `main`, commit `git commit --allow-empty -m "claim: #N"`, push, and
      open a **draft** PR titled `<summary> (#N)`, e.g. `Fillet: variable radius along a chain (#123)`.
    - **The lowest-numbered open PR for an issue wins.** If yours lost, close it (or offer to help
@@ -299,10 +299,10 @@ long as the change meets the rules above.
 
 ## Where help is wanted most
 
-**Kernel speed (slow fillets, booleans, STEP):** please don't rewrite the current kernel code for speed; it is being replaced by [solidcore](https://github.com/bherbruck/solidcore) ([progress](https://bherbruck.github.io/solidcore/)). Report slow cases with a file under the `kernel-perf` label, and put kernel effort into solidcore instead. See [#1597](https://github.com/bherbruck/solidcraft/issues/1597).
+**Kernel speed (slow fillets, booleans, STEP):** please don't rewrite the current kernel code for speed; it is being replaced by [solidcore](https://github.com/bherbruck/solidcore) ([progress](https://bherbruck.github.io/solidcore/)). Report slow cases with a file under the `kernel-perf` label, and put kernel effort into solidcore instead. See [#1597](https://github.com/tangency-labs/solidcraft/issues/1597).
 
-See the [`help wanted`](https://github.com/bherbruck/solidcraft/labels/help%20wanted) and
-[`good first issue`](https://github.com/bherbruck/solidcraft/labels/good%20first%20issue) labels.
+See the [`help wanted`](https://github.com/tangency-labs/solidcraft/labels/help%20wanted) and
+[`good first issue`](https://github.com/tangency-labs/solidcraft/labels/good%20first%20issue) labels.
 In order of how much they'd help users:
 
 1. **Fillet and blend robustness.** Fillets are our own code (truck has no fillet operation).
