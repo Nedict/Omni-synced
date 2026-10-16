@@ -7,19 +7,19 @@
 //! **Export / save:** design save stays on [`crate::DESIGN_EXT`] / JSON; mesh and B-rep export
 //! stay on [`crate::Format`] until an export arm is added per provider.
 
-mod mesh;
-mod step;
 #[cfg(not(target_arch = "wasm32"))]
 mod fusion;
+mod mesh;
+mod step;
 
 use std::path::Path;
 
 use crate::{IoError, MeshFeature, Result, StepFeature};
 
-pub use mesh::FILE_TYPE as MESH_FILE_TYPE;
-pub use step::FILE_TYPE as STEP_IGES_FILE_TYPE;
 #[cfg(not(target_arch = "wasm32"))]
 pub use fusion::FILE_TYPE as FUSION_F3D_FILE_TYPE;
+pub use mesh::FILE_TYPE as MESH_FILE_TYPE;
+pub use step::FILE_TYPE as STEP_IGES_FILE_TYPE;
 
 /// Stable id for logging, tests and future MCP metadata.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

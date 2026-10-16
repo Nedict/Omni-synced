@@ -310,7 +310,7 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
             app.set_status(app.tr("manufacture.ribbon.setup_dialog").to_string(), false);
             false
         }
-        "manufacture.setup.focus" | "manufacture.machines.open" => {
+        "manufacture.setup.focus" | "manufacture.machines" => {
             let name = app.manufacture_workspace.active_setup.clone();
             if !name.is_empty() && id == "manufacture.setup.focus" {
                 crate::manufacture_setup::open_edit(app, &name);
@@ -336,7 +336,7 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
             crate::manufacture_setup::open_menu(app, crate::manufacture_setup::SetupMenuDialog::ManualNc);
             false
         }
-        "manufacture.nest.open" => {
+        "manufacture.nest" => {
             app.manufacture_workspace.cam_mode = CamMode::Fabrication;
             crate::manufacture_fabrication::open_nest(app);
             false
@@ -380,71 +380,44 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
             crate::manufacture_modify::open(app, crate::manufacture_modify::ModifyDialogKind::MoveEntryPositions);
             false
         }
-        "manufacture.tools.open" => {
+        "manufacture.tools" => {
             crate::manufacture_tools::open_tool_library(app);
             false
         }
         "manufacture.manage.form_mill" => {
-            crate::manufacture_tools::open_manage_stub(
-                app,
-                crate::manufacture_tools::ManageStubKind::FormMill,
-            );
+            crate::manufacture_tools::open_manage_stub(app, crate::manufacture_tools::ManageStubKind::FormMill);
             false
         }
         "manufacture.manage.solid_holder" => {
-            crate::manufacture_tools::open_manage_stub(
-                app,
-                crate::manufacture_tools::ManageStubKind::SolidHolder,
-            );
+            crate::manufacture_tools::open_manage_stub(app, crate::manufacture_tools::ManageStubKind::SolidHolder);
             false
         }
         "manufacture.manage.machine_library" => {
-            crate::manufacture_libraries::open(
-                app,
-                crate::manufacture_libraries::LibraryDialogKind::Machine,
-            );
+            crate::manufacture_libraries::open(app, crate::manufacture_libraries::LibraryDialogKind::Machine);
             false
         }
         "manufacture.manage.post_library" => {
-            crate::manufacture_libraries::open(
-                app,
-                crate::manufacture_libraries::LibraryDialogKind::Post,
-            );
+            crate::manufacture_libraries::open(app, crate::manufacture_libraries::LibraryDialogKind::Post);
             false
         }
         "manufacture.manage.template_library" => {
-            crate::manufacture_libraries::open(
-                app,
-                crate::manufacture_libraries::LibraryDialogKind::Template,
-            );
+            crate::manufacture_libraries::open(app, crate::manufacture_libraries::LibraryDialogKind::Template);
             false
         }
         "manufacture.manage.task_manager" => {
-            crate::manufacture_tools::open_manage_stub(
-                app,
-                crate::manufacture_tools::ManageStubKind::TaskManager,
-            );
+            crate::manufacture_tools::open_manage_stub(app, crate::manufacture_tools::ManageStubKind::TaskManager);
             false
         }
         "manufacture.manage.export_defaults" => {
-            crate::manufacture_tools::open_manage_stub(
-                app,
-                crate::manufacture_tools::ManageStubKind::ExportDefaults,
-            );
+            crate::manufacture_tools::open_manage_stub(app, crate::manufacture_tools::ManageStubKind::ExportDefaults);
             false
         }
         "manufacture.manage.import_defaults" => {
-            crate::manufacture_tools::open_manage_stub(
-                app,
-                crate::manufacture_tools::ManageStubKind::ImportDefaults,
-            );
+            crate::manufacture_tools::open_manage_stub(app, crate::manufacture_tools::ManageStubKind::ImportDefaults);
             false
         }
         "manufacture.manage.reset_defaults" => {
-            crate::manufacture_tools::open_manage_stub(
-                app,
-                crate::manufacture_tools::ManageStubKind::ResetDefaults,
-            );
+            crate::manufacture_tools::open_manage_stub(app, crate::manufacture_tools::ManageStubKind::ResetDefaults);
             false
         }
         "manufacture.generate" => {
@@ -550,22 +523,14 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
             if id.starts_with("manufacture.op.turn_") || id.starts_with("manufacture.part_handling.") {
                 app.manufacture_workspace.cam_mode = CamMode::Turning;
             }
-            if id.contains("probe")
-                || id.contains("inspect_surface")
-                || id.contains("part_alignment")
-                || id.contains("manual_inspection")
-            {
+            if id.contains("probe") || id.contains("inspect_surface") || id.contains("part_alignment") || id.contains("manual_inspection") {
                 app.manufacture_workspace.cam_mode = CamMode::Inspection;
             }
             if id.contains("fab_2d_profile") {
                 app.manufacture_workspace.cam_mode = CamMode::Fabrication;
             }
             let setup = app.manufacture_workspace.active_setup.clone();
-            let params = if setup.is_empty() {
-                json!({})
-            } else {
-                json!({"setup": setup})
-            };
+            let params = if setup.is_empty() { json!({}) } else { json!({"setup": setup}) };
             match app.run(id, params) {
                 Ok(_) => {
                     app.manufacture_workspace.tab = MfgTab::Operations;
@@ -595,32 +560,16 @@ fn open_op_dialog(app: &mut SolveApp, setup_name: &str, op_index: usize) {
     };
     match op {
         solidcraft_manufacture::Operation::Drill(_) => crate::manufacture_drill::open(app, setup_name, op_index),
-        solidcraft_manufacture::Operation::HoleRecognition(_) => {
-            crate::manufacture_hole_recognition::open(app, setup_name, op_index)
-        }
+        solidcraft_manufacture::Operation::HoleRecognition(_) => crate::manufacture_hole_recognition::open(app, setup_name, op_index),
         solidcraft_manufacture::Operation::Profile(_) => crate::manufacture_contour::open(app, setup_name, op_index),
         solidcraft_manufacture::Operation::Threed(_) => crate::manufacture_3d::open(app, setup_name, op_index),
-        solidcraft_manufacture::Operation::MultiAxis(_) => {
-            crate::manufacture_multiaxis::open(app, setup_name, op_index)
-        }
-        solidcraft_manufacture::Operation::Turning(_) => {
-            crate::manufacture_turning::open(app, setup_name, op_index)
-        }
-        solidcraft_manufacture::Operation::PartHandling(_) => {
-            crate::manufacture_part_handling::open(app, setup_name, op_index)
-        }
-        solidcraft_manufacture::Operation::Additive(_) => {
-            crate::manufacture_additive::open(app, setup_name, op_index)
-        }
-        solidcraft_manufacture::Operation::Inspection(_) => {
-            crate::manufacture_inspection::open_inspection(app, setup_name, op_index)
-        }
-        solidcraft_manufacture::Operation::ManualInspection(_) => {
-            crate::manufacture_inspection::open_manual(app, setup_name, op_index)
-        }
-        solidcraft_manufacture::Operation::FabricationProfile(_) => {
-            crate::manufacture_fabrication::open(app, setup_name, op_index)
-        }
+        solidcraft_manufacture::Operation::MultiAxis(_) => crate::manufacture_multiaxis::open(app, setup_name, op_index),
+        solidcraft_manufacture::Operation::Turning(_) => crate::manufacture_turning::open(app, setup_name, op_index),
+        solidcraft_manufacture::Operation::PartHandling(_) => crate::manufacture_part_handling::open(app, setup_name, op_index),
+        solidcraft_manufacture::Operation::Additive(_) => crate::manufacture_additive::open(app, setup_name, op_index),
+        solidcraft_manufacture::Operation::Inspection(_) => crate::manufacture_inspection::open_inspection(app, setup_name, op_index),
+        solidcraft_manufacture::Operation::ManualInspection(_) => crate::manufacture_inspection::open_manual(app, setup_name, op_index),
+        solidcraft_manufacture::Operation::FabricationProfile(_) => crate::manufacture_fabrication::open(app, setup_name, op_index),
         solidcraft_manufacture::Operation::Face(_)
         | solidcraft_manufacture::Operation::Adaptive(_)
         | solidcraft_manufacture::Operation::Pocket(_)
@@ -708,9 +657,10 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
                 if let Some(code) = v.get("post_output").and_then(|c| c.as_str()).map(str::to_string) {
                     app.manufacture_workspace.generated_code = Some(code);
                 } else if let Ok(g) = app.session.execute("manufacture.gcode", &id)
-                    && let Some(code) = g.get("gcode").and_then(|c| c.as_str()).map(str::to_string) {
-                        app.manufacture_workspace.generated_code = Some(code);
-                    }
+                    && let Some(code) = g.get("gcode").and_then(|c| c.as_str()).map(str::to_string)
+                {
+                    app.manufacture_workspace.generated_code = Some(code);
+                }
             }
             Err(e) => app.set_status(e.to_string(), true),
         }
@@ -767,13 +717,7 @@ pub fn browser_setup_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
 
     let folder_key = "mfg/setups";
     let folder_open = is_open(app, folder_key, true);
-    let folder_row = Row {
-        depth,
-        fold: Some(folder_open),
-        icon: "folder",
-        label: "Setups",
-        ..Default::default()
-    };
+    let folder_row = Row { depth, fold: Some(folder_open), icon: "folder", label: "Setups", ..Default::default() };
     let fr = draw_row(ui, ui.id().with("mfg_setups_folder"), &folder_row);
     if fr.fold {
         toggle(app, folder_key, true);
@@ -797,15 +741,7 @@ pub fn browser_setup_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
         let sr = draw_row(
             ui,
             ui.id().with(("mfg_setup", name.as_str())),
-            &Row {
-                depth: depth + 1,
-                fold: Some(setup_open),
-                icon: "box",
-                label: &label,
-                name: true,
-                selected,
-                ..Default::default()
-            },
+            &Row { depth: depth + 1, fold: Some(setup_open), icon: "box", label: &label, name: true, selected, ..Default::default() },
         );
         if sr.fold {
             toggle(app, &setup_key, true);
@@ -833,14 +769,7 @@ pub fn browser_setup_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
             let orow = draw_row(
                 ui,
                 ui.id().with(("mfg_op", name.as_str(), i)),
-                &Row {
-                    depth: depth + 2,
-                    icon: "extrude",
-                    label: &op_label,
-                    name: true,
-                    selected: op_sel,
-                    ..Default::default()
-                },
+                &Row { depth: depth + 2, icon: "extrude", label: &op_label, name: true, selected: op_sel, ..Default::default() },
             );
             if orow.clicked || orow.double {
                 app.manufacture_workspace.active_setup = name.clone();
@@ -849,23 +778,12 @@ pub fn browser_setup_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
             }
             // Nested tool line (Fusion-style under the op).
             if let Some(tool) = setup.tools.iter().find(|t| t.number == tnum) {
-                let desc = if tool.description.is_empty() {
-                    tool_kind_label(tool.kind)
-                } else {
-                    tool.description.as_str()
-                };
+                let desc = if tool.description.is_empty() { tool_kind_label(tool.kind) } else { tool.description.as_str() };
                 let tool_label = format!("#{tnum} - ø{:.2}mm {desc}", tool.diameter);
                 let _ = draw_row(
                     ui,
                     ui.id().with(("mfg_op_tool", name.as_str(), i)),
-                    &Row {
-                        depth: depth + 3,
-                        icon: "hole",
-                        label: &tool_label,
-                        name: true,
-                        dim: true,
-                        ..Default::default()
-                    },
+                    &Row { depth: depth + 3, icon: "hole", label: &tool_label, name: true, dim: true, ..Default::default() },
                 );
             }
         }
@@ -875,13 +793,7 @@ pub fn browser_setup_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
         let hint = draw_row(
             ui,
             ui.id().with("mfg_setups_empty"),
-            &Row {
-                depth: depth + 1,
-                icon: "settings",
-                label: "New Setup…",
-                dim: true,
-                ..Default::default()
-            },
+            &Row { depth: depth + 1, icon: "settings", label: "New Setup…", dim: true, ..Default::default() },
         );
         if hint.clicked || hint.double {
             crate::manufacture_setup::open_new(app);
@@ -928,7 +840,10 @@ fn setup_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
 
     // SETUP menu containers summary
     let mfg = &app.session.doc.manufacture;
-    if !mfg.nc_programs.is_empty() || !mfg.folders.is_empty() || !mfg.patterns.is_empty() || !mfg.manual_nc.is_empty()
+    if !mfg.nc_programs.is_empty()
+        || !mfg.folders.is_empty()
+        || !mfg.patterns.is_empty()
+        || !mfg.manual_nc.is_empty()
         || !mfg.manufacturing_models.is_empty()
     {
         ui.separator();
@@ -1032,15 +947,8 @@ fn stock_section(app: &mut SolveApp, ui: &mut egui::Ui, setup: &solidcraft_manuf
             ui.label(format!("From preceding (rest={continue_rest})"));
         }
     }
-    ui.label(format!(
-        "{} · {}",
-        setup.operation_type.label(),
-        setup.wcs_origin_mode.label()
-    ));
-    ui.small(format!(
-        "Program {} · WCS offset {}",
-        setup.post_opts.program_name, setup.post_opts.wcs_offset
-    ));
+    ui.label(format!("{} · {}", setup.operation_type.label(), setup.wcs_origin_mode.label()));
+    ui.small(format!("Program {} · WCS offset {}", setup.post_opts.program_name, setup.post_opts.wcs_offset));
     if ui.small_button(app.tr("manufacture.stock.edit")).clicked() {
         let name = app.manufacture_workspace.active_setup.clone();
         crate::manufacture_setup::open_edit(app, &name);
@@ -1064,11 +972,7 @@ fn wcs_section(app: &mut SolveApp, ui: &mut egui::Ui, setup: &solidcraft_manufac
 fn machine_profile_section(app: &mut SolveApp, ui: &mut egui::Ui, setup: &solidcraft_manufacture::MfgSetup) {
     ui.heading(app.tr("manufacture.setup.machine"));
     let current = setup.machine.clone().unwrap_or_default();
-    let label = if current.is_empty() {
-        app.tr("manufacture.setup.machine_none").to_string()
-    } else {
-        current.clone()
-    };
+    let label = if current.is_empty() { app.tr("manufacture.setup.machine_none").to_string() } else { current.clone() };
     let setup_name = app.manufacture_workspace.active_setup.clone();
     let mut picked: Option<String> = None;
     egui::ComboBox::from_id_salt("mfg_machine_sel").selected_text(&label).show_ui(ui, |ui| {
@@ -1083,48 +987,29 @@ fn machine_profile_section(app: &mut SolveApp, ui: &mut egui::Ui, setup: &solidc
     });
     if let Some(choice) = picked {
         let _ = app.run("manufacture.machines.ensure_presets", json!({}));
-        let set = if choice.is_empty() {
-            json!({"machine": serde_json::Value::Null})
-        } else {
-            json!({"machine": choice})
-        };
+        let set = if choice.is_empty() { json!({"machine": serde_json::Value::Null}) } else { json!({"machine": choice}) };
         let _ = app.run("manufacture.settings.set", json!({"name": setup_name, "set": set}));
         app.manufacture_workspace.revision = u64::MAX;
     }
     if let Some(name) = &setup.machine
-        && let Some(m) = app.session.doc.manufacture.machines.get(name) {
-            let tc = &m.tool_changer;
+        && let Some(m) = app.session.doc.manufacture.machines.get(name)
+    {
+        let tc = &m.tool_changer;
+        ui.small(format!("{}: {:?} · {} {}", app.tr("manufacture.setup.atc"), tc.kind, tc.pockets, app.tr("manufacture.setup.atc_pockets")));
+        if tc.change_time_s > 0.0 {
             ui.small(format!(
-                "{}: {:?} · {} {}",
-                app.tr("manufacture.setup.atc"),
-                tc.kind,
-                tc.pockets,
-                app.tr("manufacture.setup.atc_pockets")
+                "{}: {:.1} s · max ⌀ {:.0} · L {:.0} mm",
+                app.tr("manufacture.setup.atc_change"),
+                tc.change_time_s,
+                tc.max_tool_diameter_mm,
+                tc.max_tool_length_mm
             ));
-            if tc.change_time_s > 0.0 {
-                ui.small(format!(
-                    "{}: {:.1} s · max ⌀ {:.0} · L {:.0} mm",
-                    app.tr("manufacture.setup.atc_change"),
-                    tc.change_time_s,
-                    tc.max_tool_diameter_mm,
-                    tc.max_tool_length_mm
-                ));
-            }
-            ui.small(format!(
-                "{}: {:?} · {:?}",
-                app.tr("manufacture.setup.integration"),
-                m.integration.kind,
-                m.spindle_taper
-            ));
-            if m.probe.present {
-                ui.small(format!(
-                    "{}: {:?} · T{}",
-                    app.tr("manufacture.setup.probe"),
-                    m.probe.style,
-                    m.probe.tool_number
-                ));
-            }
         }
+        ui.small(format!("{}: {:?} · {:?}", app.tr("manufacture.setup.integration"), m.integration.kind, m.spindle_taper));
+        if m.probe.present {
+            ui.small(format!("{}: {:?} · T{}", app.tr("manufacture.setup.probe"), m.probe.style, m.probe.tool_number));
+        }
+    }
     ui.separator();
     machine_plugin_section(app, ui);
 }
@@ -1180,10 +1065,7 @@ fn machine_plugin_section(app: &mut SolveApp, ui: &mut egui::Ui) {
             app.tr("manufacture.machine_plugin.status"),
             status["execution"].as_str().unwrap_or("—"),
             status["tool_number"].as_u64().map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
-            status["spindle_rpm"]
-                .as_f64()
-                .map(|n| format!("{n:.0}"))
-                .unwrap_or_else(|| "—".into())
+            status["spindle_rpm"].as_f64().map(|n| format!("{n:.0}")).unwrap_or_else(|| "—".into())
         ));
         if let Some(prog) = status["program"].as_str() {
             ui.small(format!("{}: {prog}", app.tr("manufacture.machine_plugin.program")));
@@ -1236,11 +1118,7 @@ fn refresh_machine_status(app: &mut SolveApp) {
 fn post_profile_section(app: &mut SolveApp, ui: &mut egui::Ui, setup: &solidcraft_manufacture::MfgSetup) {
     ui.heading(app.tr("manufacture.setup.post"));
     let current = setup.post.clone().unwrap_or_default();
-    let label = if current.is_empty() {
-        app.tr("manufacture.setup.post_none").to_string()
-    } else {
-        current.clone()
-    };
+    let label = if current.is_empty() { app.tr("manufacture.setup.post_none").to_string() } else { current.clone() };
     let setup_name = app.manufacture_workspace.active_setup.clone();
     let mut picked: Option<String> = None;
     egui::ComboBox::from_id_salt("mfg_post_sel").selected_text(&label).show_ui(ui, |ui| {
@@ -1255,11 +1133,7 @@ fn post_profile_section(app: &mut SolveApp, ui: &mut egui::Ui, setup: &solidcraf
     });
     if let Some(choice) = picked {
         let _ = app.run("manufacture.posts.ensure_presets", json!({}));
-        let set = if choice.is_empty() {
-            json!({"post": serde_json::Value::Null})
-        } else {
-            json!({"post": choice})
-        };
+        let set = if choice.is_empty() { json!({"post": serde_json::Value::Null}) } else { json!({"post": choice}) };
         let _ = app.run("manufacture.settings.set", json!({"name": setup_name, "set": set}));
         app.manufacture_workspace.revision = u64::MAX;
     }
@@ -1290,9 +1164,10 @@ fn tools_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
 
     // Clamp selection if the library shrank.
     if let Some(i) = app.manufacture_workspace.selected_tool
-        && i >= setup.tools.len() {
-            app.manufacture_workspace.selected_tool = setup.tools.len().checked_sub(1);
-        }
+        && i >= setup.tools.len()
+    {
+        app.manufacture_workspace.selected_tool = setup.tools.len().checked_sub(1);
+    }
 
     if ui.button(app.tr("manufacture.tools.open_library")).clicked() {
         crate::manufacture_tools::open_tool_library(app);
@@ -1304,63 +1179,48 @@ fn tools_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
         let can_dup = app.manufacture_workspace.selected_tool.is_some();
         if ui.add_enabled(can_dup, egui::Button::new(app.tr("manufacture.tools.duplicate"))).clicked()
-            && let Some(i) = app.manufacture_workspace.selected_tool {
-                let mut tools = setup.tools.clone();
-                if let Some(src) = tools.get(i).cloned() {
-                    let next_num = tools.iter().map(|t| t.number).max().unwrap_or(0).saturating_add(1).max(1);
-                    let mut copy = src;
-                    copy.number = next_num;
-                    if !copy.description.is_empty() {
-                        copy.description = format!("{} (copy)", copy.description);
-                    }
-                    tools.push(copy);
-                    let new_idx = tools.len() - 1;
-                    if save_setup_tools(app, &setup_name, tools) {
-                        app.manufacture_workspace.selected_tool = Some(new_idx);
-                    }
+            && let Some(i) = app.manufacture_workspace.selected_tool
+        {
+            let mut tools = setup.tools.clone();
+            if let Some(src) = tools.get(i).cloned() {
+                let next_num = tools.iter().map(|t| t.number).max().unwrap_or(0).saturating_add(1).max(1);
+                let mut copy = src;
+                copy.number = next_num;
+                if !copy.description.is_empty() {
+                    copy.description = format!("{} (copy)", copy.description);
+                }
+                tools.push(copy);
+                let new_idx = tools.len() - 1;
+                if save_setup_tools(app, &setup_name, tools) {
+                    app.manufacture_workspace.selected_tool = Some(new_idx);
                 }
             }
+        }
         let can_del = app.manufacture_workspace.selected_tool.is_some();
         if ui.add_enabled(can_del, egui::Button::new(app.tr("manufacture.tools.delete"))).clicked()
-            && let Some(i) = app.manufacture_workspace.selected_tool {
-                let mut tools = setup.tools.clone();
-                if i < tools.len() {
-                    tools.remove(i);
-                    let next = if tools.is_empty() {
-                        None
-                    } else {
-                        Some(i.min(tools.len() - 1))
-                    };
-                    if save_setup_tools(app, &setup_name, tools) {
-                        app.manufacture_workspace.selected_tool = next;
-                    }
+            && let Some(i) = app.manufacture_workspace.selected_tool
+        {
+            let mut tools = setup.tools.clone();
+            if i < tools.len() {
+                tools.remove(i);
+                let next = if tools.is_empty() { None } else { Some(i.min(tools.len() - 1)) };
+                if save_setup_tools(app, &setup_name, tools) {
+                    app.manufacture_workspace.selected_tool = next;
                 }
             }
+        }
     });
 
     ui.separator();
     ui.label(format!("{} {}", setup.tools.len(), app.tr("manufacture.ops.tool_count")));
 
     // Refresh setup after possible mutation above.
-    let setup = app
-        .session
-        .doc
-        .manufacture
-        .setups
-        .get(&setup_name)
-        .cloned()
-        .unwrap_or(setup);
+    let setup = app.session.doc.manufacture.setups.get(&setup_name).cloned().unwrap_or(setup);
 
     egui::ScrollArea::vertical().id_salt("mfg_tool_list").max_height(140.0).show(ui, |ui| {
         for (i, tool) in setup.tools.iter().enumerate() {
             let selected = app.manufacture_workspace.selected_tool == Some(i);
-            let row = format!(
-                "T{} · {} · ⌀{:.3} · L{:.1}",
-                tool.number,
-                tool_kind_label(tool.kind),
-                tool.diameter,
-                tool.length
-            );
+            let row = format!("T{} · {} · ⌀{:.3} · L{:.1}", tool.number, tool_kind_label(tool.kind), tool.diameter, tool.length);
             if ui.selectable_label(selected, row).clicked() {
                 app.manufacture_workspace.selected_tool = Some(i);
             }
@@ -1424,21 +1284,19 @@ fn tools_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
 
     // Soft ATC check against assigned machine
     if let Some(mname) = &setup.machine
-        && let Some(m) = app.session.doc.manufacture.machines.get(mname) {
-            let tc = &m.tool_changer;
-            if tc.pockets > 0 && tool.number > tc.pockets {
-                ui.colored_label(
-                    Color32::from_rgb(220, 190, 60),
-                    format!("{} (> {})", app.tr("manufacture.tools.warn_pocket"), tc.pockets),
-                );
-            }
-            if tc.max_tool_diameter_mm > 0.0 && tool.diameter > tc.max_tool_diameter_mm {
-                ui.colored_label(Color32::from_rgb(220, 190, 60), app.tr("manufacture.tools.warn_diameter"));
-            }
-            if tc.max_tool_length_mm > 0.0 && tool.length > tc.max_tool_length_mm {
-                ui.colored_label(Color32::from_rgb(220, 190, 60), app.tr("manufacture.tools.warn_length"));
-            }
+        && let Some(m) = app.session.doc.manufacture.machines.get(mname)
+    {
+        let tc = &m.tool_changer;
+        if tc.pockets > 0 && tool.number > tc.pockets {
+            ui.colored_label(Color32::from_rgb(220, 190, 60), format!("{} (> {})", app.tr("manufacture.tools.warn_pocket"), tc.pockets));
         }
+        if tc.max_tool_diameter_mm > 0.0 && tool.diameter > tc.max_tool_diameter_mm {
+            ui.colored_label(Color32::from_rgb(220, 190, 60), app.tr("manufacture.tools.warn_diameter"));
+        }
+        if tc.max_tool_length_mm > 0.0 && tool.length > tc.max_tool_length_mm {
+            ui.colored_label(Color32::from_rgb(220, 190, 60), app.tr("manufacture.tools.warn_length"));
+        }
+    }
 
     if dirty {
         let mut tools = setup.tools.clone();
@@ -1490,19 +1348,17 @@ fn drag_mm(ui: &mut egui::Ui, label: &str, value: &mut f64, speed: f64, range: s
 
 fn save_setup_tools(app: &mut SolveApp, setup_name: &str, tools: Vec<solidcraft_manufacture::Tool>) -> bool {
     match serde_json::to_value(&tools) {
-        Ok(tools_json) => {
-            match app.run("manufacture.settings.set", json!({"name": setup_name, "set": {"tools": tools_json}})) {
-                Ok(_) => {
-                    app.manufacture_workspace.revision = u64::MAX;
-                    app.manufacture_workspace.last_issues = app.session.doc.manufacture.issues();
-                    true
-                }
-                Err(e) => {
-                    app.set_status(e, true);
-                    false
-                }
+        Ok(tools_json) => match app.run("manufacture.settings.set", json!({"name": setup_name, "set": {"tools": tools_json}})) {
+            Ok(_) => {
+                app.manufacture_workspace.revision = u64::MAX;
+                app.manufacture_workspace.last_issues = app.session.doc.manufacture.issues();
+                true
             }
-        }
+            Err(e) => {
+                app.set_status(e, true);
+                false
+            }
+        },
         Err(e) => {
             app.set_status(e.to_string(), true);
             false
@@ -1535,14 +1391,7 @@ fn operations_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
     });
     for tool in &setup.tools {
-        ui.small(format!(
-            "  T{} – {} ⌀{:.3} L{:.1} ({} flute)",
-            tool.number,
-            tool_kind_label(tool.kind),
-            tool.diameter,
-            tool.length,
-            tool.flutes
-        ));
+        ui.small(format!("  T{} – {} ⌀{:.3} L{:.1} ({} flute)", tool.number, tool_kind_label(tool.kind), tool.diameter, tool.length, tool.flutes));
     }
 
     ui.separator();
@@ -1560,11 +1409,7 @@ fn operations_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
             open_op_dialog(app, &setup_name, i);
         }
         if let Some(tool) = setup.tools.iter().find(|t| t.number == tnum) {
-            let desc = if tool.description.is_empty() {
-                tool_kind_label(tool.kind)
-            } else {
-                tool.description.as_str()
-            };
+            let desc = if tool.description.is_empty() { tool_kind_label(tool.kind) } else { tool.description.as_str() };
             ui.small(format!("      #{tnum} - ø{:.2}mm {desc}", tool.diameter));
         } else {
             ui.small(format!("      #{tnum} — {}", app.tr("manufacture.ops.tool_missing")));
@@ -1778,9 +1623,10 @@ fn job_status_row(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
             }
             // Check scene staleness
             if let (Some(scene_gen), Ok(rev)) = (status["scene_generation"].as_u64(), Ok::<u64, ()>(app.session.revision))
-                && scene_gen != rev {
-                    ui.small(app.tr("manufacture.cam.stale"));
-                }
+                && scene_gen != rev
+            {
+                ui.small(app.tr("manufacture.cam.stale"));
+            }
             busy
         }
         Err(e) => {

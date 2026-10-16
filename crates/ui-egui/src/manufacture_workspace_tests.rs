@@ -15,26 +15,11 @@ fn fresh() -> SolveApp {
 #[test]
 fn loopback_url_parse_accepts_standard_form() {
     use super::parse_companion_url;
-    assert_eq!(
-        parse_companion_url("http://127.0.0.1:38473").unwrap().origin,
-        "http://127.0.0.1:38473"
-    );
-    assert_eq!(
-        parse_companion_url("http://127.0.0.1:38473/").unwrap().origin,
-        "http://127.0.0.1:38473"
-    );
-    assert_eq!(
-        parse_companion_url("http://127.0.0.1:38473/cam/v1").unwrap().origin,
-        "http://127.0.0.1:38473"
-    );
-    assert_eq!(
-        parse_companion_url("http://localhost:9000").unwrap().origin,
-        "http://localhost:9000"
-    );
-    assert_eq!(
-        parse_companion_url("http://[::1]:9000").unwrap().origin,
-        "http://[::1]:9000"
-    );
+    assert_eq!(parse_companion_url("http://127.0.0.1:38473").unwrap().origin, "http://127.0.0.1:38473");
+    assert_eq!(parse_companion_url("http://127.0.0.1:38473/").unwrap().origin, "http://127.0.0.1:38473");
+    assert_eq!(parse_companion_url("http://127.0.0.1:38473/cam/v1").unwrap().origin, "http://127.0.0.1:38473");
+    assert_eq!(parse_companion_url("http://localhost:9000").unwrap().origin, "http://localhost:9000");
+    assert_eq!(parse_companion_url("http://[::1]:9000").unwrap().origin, "http://[::1]:9000");
 }
 
 #[test]
@@ -54,48 +39,21 @@ fn loopback_url_parse_rejects_https_and_portless() {
 fn url_attack_userinfo_injection_rejected() {
     use super::parse_companion_url;
     // Classic "loopback in userinfo" attack — real host is evil.com
-    assert!(
-        parse_companion_url("http://127.0.0.1:38473@evil.com:80").is_err(),
-        "userinfo injection must be rejected"
-    );
-    assert!(
-        parse_companion_url("http://user:pass@127.0.0.1:38473").is_err(),
-        "explicit credentials must be rejected"
-    );
-    assert!(
-        parse_companion_url("http://user@127.0.0.1:38473").is_err(),
-        "username-only userinfo must be rejected"
-    );
+    assert!(parse_companion_url("http://127.0.0.1:38473@evil.com:80").is_err(), "userinfo injection must be rejected");
+    assert!(parse_companion_url("http://user:pass@127.0.0.1:38473").is_err(), "explicit credentials must be rejected");
+    assert!(parse_companion_url("http://user@127.0.0.1:38473").is_err(), "username-only userinfo must be rejected");
 }
 
 /// Remote (non-loopback) hosts must be rejected.
 #[test]
 fn url_attack_remote_hosts_rejected() {
     use super::parse_companion_url;
-    assert!(
-        parse_companion_url("http://evil.com:38473").is_err(),
-        "domain host rejected"
-    );
-    assert!(
-        parse_companion_url("http://192.168.1.1:38473").is_err(),
-        "LAN IP rejected"
-    );
-    assert!(
-        parse_companion_url("http://10.0.0.1:38473").is_err(),
-        "private IP rejected"
-    );
-    assert!(
-        parse_companion_url("http://0.0.0.0:38473").is_err(),
-        "all-interfaces 0.0.0.0 rejected"
-    );
-    assert!(
-        parse_companion_url("http://[::]:38473").is_err(),
-        "IPv6 unspecified :: rejected"
-    );
-    assert!(
-        parse_companion_url("http://[::ffff:127.0.0.1]:38473").is_err(),
-        "IPv4-mapped loopback rejected (must use exact [::1])"
-    );
+    assert!(parse_companion_url("http://evil.com:38473").is_err(), "domain host rejected");
+    assert!(parse_companion_url("http://192.168.1.1:38473").is_err(), "LAN IP rejected");
+    assert!(parse_companion_url("http://10.0.0.1:38473").is_err(), "private IP rejected");
+    assert!(parse_companion_url("http://0.0.0.0:38473").is_err(), "all-interfaces 0.0.0.0 rejected");
+    assert!(parse_companion_url("http://[::]:38473").is_err(), "IPv6 unspecified :: rejected");
+    assert!(parse_companion_url("http://[::ffff:127.0.0.1]:38473").is_err(), "IPv4-mapped loopback rejected (must use exact [::1])");
 }
 
 /// Query/fragment tricks do not bypass host validation.
@@ -103,22 +61,15 @@ fn url_attack_remote_hosts_rejected() {
 fn url_attack_query_and_fragment_tricks_rejected() {
     use super::parse_companion_url;
     // Host remains evil.com; query/fragment do not change URL host parsing
-    assert!(
-        parse_companion_url("http://evil.com:38473?x=127.0.0.1").is_err(),
-        "query trick: real host is evil.com"
-    );
-    assert!(
-        parse_companion_url("http://evil.com:38473#127.0.0.1").is_err(),
-        "fragment trick: real host is evil.com"
-    );
+    assert!(parse_companion_url("http://evil.com:38473?x=127.0.0.1").is_err(), "query trick: real host is evil.com");
+    assert!(parse_companion_url("http://evil.com:38473#127.0.0.1").is_err(), "fragment trick: real host is evil.com");
 }
 
 /// Path/query are stripped from the resulting origin so they cannot influence requests.
 #[test]
 fn url_parse_strips_path_and_query_from_origin() {
     use super::parse_companion_url;
-    let parsed =
-        parse_companion_url("http://127.0.0.1:38473/some/path?token=secret#frag").unwrap();
+    let parsed = parse_companion_url("http://127.0.0.1:38473/some/path?token=secret#frag").unwrap();
     assert_eq!(parsed.origin, "http://127.0.0.1:38473");
     assert!(!parsed.origin.contains("secret"), "token must not leak into origin");
     assert!(!parsed.origin.contains("path"), "path must not appear in origin");
@@ -130,10 +81,7 @@ fn parsed_companion_url_api_url_builds_correctly() {
     use super::parse_companion_url;
     let p = parse_companion_url("http://127.0.0.1:38473").unwrap();
     assert_eq!(p.api_url("/cam/v1/jobs"), "http://127.0.0.1:38473/cam/v1/jobs");
-    assert_eq!(
-        p.api_url("/cam/v1/jobs/abc/status"),
-        "http://127.0.0.1:38473/cam/v1/jobs/abc/status"
-    );
+    assert_eq!(p.api_url("/cam/v1/jobs/abc/status"), "http://127.0.0.1:38473/cam/v1/jobs/abc/status");
 }
 
 // ── Response mapping (deserialization) ────────────────────────────────────────
@@ -227,11 +175,7 @@ fn reset_document_clears_job_state_but_preserves_endpoint() {
     app.manufacture_workspace.cam_token = "secret".into();
     app.manufacture_workspace.simulate_step = 42;
     super::reset_document(&mut app);
-    assert_eq!(
-        app.manufacture_workspace.cam_endpoint,
-        "http://127.0.0.1:9999",
-        "endpoint preserved"
-    );
+    assert_eq!(app.manufacture_workspace.cam_endpoint, "http://127.0.0.1:9999", "endpoint preserved");
     assert!(app.manufacture_workspace.cam_token.is_empty(), "token cleared");
     assert_eq!(app.manufacture_workspace.simulate_step, 0, "step cleared");
 }
@@ -259,11 +203,7 @@ fn workspace_menu_contains_manufacture_and_it_is_enabled() {
     let app = fresh();
     let items = context_menu::items(&app, &Target::Workspace);
     let mfg = items.iter().find(|i| i.id == "ui.workspace.manufacture");
-    assert!(
-        mfg.is_some(),
-        "Manufacture item must appear in workspace menu, got: {:?}",
-        items.iter().map(|i| &i.id).collect::<Vec<_>>()
-    );
+    assert!(mfg.is_some(), "Manufacture item must appear in workspace menu, got: {:?}", items.iter().map(|i| &i.id).collect::<Vec<_>>());
     assert!(mfg.is_some_and(|i| i.enabled), "Manufacture workspace item must be enabled");
 }
 
@@ -284,15 +224,9 @@ fn workspace_menu_manufacture_switches_tab() {
 #[test]
 fn manufacture_settings_roundtrip_via_engine_command() {
     let mut app = fresh();
-    app.run(
-        "manufacture.settings.set",
-        json!({"name": "Setup1", "set": {"stock": {"kind": "box", "width": 100.0, "depth": 80.0, "height": 25.0}}}),
-    )
-    .unwrap();
-    let result = app
-        .session
-        .execute("manufacture.settings.get", &json!({"name": "Setup1"}))
+    app.run("manufacture.settings.set", json!({"name": "Setup1", "set": {"stock": {"kind": "box", "width": 100.0, "depth": 80.0, "height": 25.0}}}))
         .unwrap();
+    let result = app.session.execute("manufacture.settings.get", &json!({"name": "Setup1"})).unwrap();
     assert_eq!(result["name"].as_str(), Some("Setup1"));
     assert!(result["setup"]["stock"]["width"].as_f64().is_some());
 }
@@ -331,10 +265,7 @@ fn manufacture_scenario_preflight_with_no_setup_sets_status() {
 
 // ── State-machine tests using FakeCamBackend ───────────────────────────────────
 
-use solidcraft_manufacture::job::{
-    Availability, CamBackend, CamBackendDescriptor, CamHandle, CamJobId, CamJobInput, CamPhase,
-    CamResult,
-};
+use solidcraft_manufacture::job::{Availability, CamBackend, CamBackendDescriptor, CamHandle, CamJobId, CamJobInput, CamPhase, CamResult};
 use std::sync::{Arc, Mutex};
 
 /// A minimal fake backend that records submissions and provides controllable handles.
@@ -355,12 +286,7 @@ impl CamBackend for FakeCamBackend {
     }
 
     fn descriptor(&self) -> CamBackendDescriptor {
-        CamBackendDescriptor {
-            id: "fake".into(),
-            label: "Fake".into(),
-            availability: Availability::Available,
-            note: None,
-        }
+        CamBackendDescriptor { id: "fake".into(), label: "Fake".into(), availability: Availability::Available, note: None }
     }
 
     fn is_available(&self) -> bool {

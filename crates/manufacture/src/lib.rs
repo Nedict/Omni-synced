@@ -420,7 +420,6 @@ pub struct PostProfile {
     pub postamble: String,
 }
 
-
 fn validate_post(p: &PostProfile, path: &str) -> Result<()> {
     // Preamble/postamble must not contain null bytes.
     for (field, s) in [("preamble", &p.preamble), ("postamble", &p.postamble)] {
@@ -473,18 +472,9 @@ pub enum Stock {
     /// Fixed-size cylinder (diameter × length mm).
     Cylinder { diameter: f64, height: f64 },
     /// Relative cylinder around the model.
-    RelativeCylinder {
-        radial_offset: f64,
-        front_offset: f64,
-        back_offset: f64,
-        round_up: f64,
-    },
+    RelativeCylinder { radial_offset: f64, front_offset: f64, back_offset: f64, round_up: f64 },
     /// Fixed-size tube (OD / ID / length mm).
-    Tube {
-        outer_diameter: f64,
-        inner_diameter: f64,
-        height: f64,
-    },
+    Tube { outer_diameter: f64, inner_diameter: f64, height: f64 },
     /// Inherit stock from the preceding setup (rest machining).
     FromPreceding { continue_rest: bool },
 }
@@ -539,8 +529,7 @@ fn validate_stock(s: &Stock, path: &str) -> Result<()> {
             }
         }
         Stock::RelativeCylinder { radial_offset, front_offset, back_offset, round_up } => {
-            for (label, v) in
-                [("radial_offset", radial_offset), ("front_offset", front_offset), ("back_offset", back_offset), ("round_up", round_up)]
+            for (label, v) in [("radial_offset", radial_offset), ("front_offset", front_offset), ("back_offset", back_offset), ("round_up", round_up)]
             {
                 if !(v.is_finite() && *v >= 0.0) {
                     return Err(invalid(format!("{path}.{label}: must be ≥ 0 and finite")));
@@ -548,7 +537,12 @@ fn validate_stock(s: &Stock, path: &str) -> Result<()> {
             }
         }
         Stock::Tube { outer_diameter, inner_diameter, height } => {
-            if !(*outer_diameter > 0.0 && outer_diameter.is_finite() && *inner_diameter > 0.0 && inner_diameter.is_finite() && *height > 0.0 && height.is_finite())
+            if !(*outer_diameter > 0.0
+                && outer_diameter.is_finite()
+                && *inner_diameter > 0.0
+                && inner_diameter.is_finite()
+                && *height > 0.0
+                && height.is_finite())
             {
                 return Err(invalid(format!("{path}: tube dimensions must be strictly positive and finite")));
             }
@@ -675,12 +669,7 @@ pub struct SetupPostOpts {
 
 impl Default for SetupPostOpts {
     fn default() -> Self {
-        Self {
-            program_name: "1001".into(),
-            program_comment: String::new(),
-            wcs_offset: 1,
-            multiple_wcs_offsets: false,
-        }
+        Self { program_name: "1001".into(), program_comment: String::new(), wcs_offset: 1, multiple_wcs_offsets: false }
     }
 }
 
@@ -810,14 +799,8 @@ pub enum ToolCategory {
 }
 
 impl ToolCategory {
-    pub const ALL: &'static [ToolCategory] = &[
-        ToolCategory::Milling,
-        ToolCategory::HoleMaking,
-        ToolCategory::Turning,
-        ToolCategory::Cutting,
-        ToolCategory::Probe,
-        ToolCategory::Holders,
-    ];
+    pub const ALL: &'static [ToolCategory] =
+        &[ToolCategory::Milling, ToolCategory::HoleMaking, ToolCategory::Turning, ToolCategory::Cutting, ToolCategory::Probe, ToolCategory::Holders];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -845,14 +828,8 @@ pub enum ToolMaterial {
 }
 
 impl ToolMaterial {
-    pub const ALL: &'static [ToolMaterial] = &[
-        ToolMaterial::Hss,
-        ToolMaterial::Carbide,
-        ToolMaterial::Cobalt,
-        ToolMaterial::Ceramic,
-        ToolMaterial::Diamond,
-        ToolMaterial::Unknown,
-    ];
+    pub const ALL: &'static [ToolMaterial] =
+        &[ToolMaterial::Hss, ToolMaterial::Carbide, ToolMaterial::Cobalt, ToolMaterial::Ceramic, ToolMaterial::Diamond, ToolMaterial::Unknown];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -894,13 +871,7 @@ pub struct ToolHolder {
 
 impl Default for ToolHolder {
     fn default() -> Self {
-        Self {
-            description: String::new(),
-            product_id: String::new(),
-            product_link: String::new(),
-            vendor: String::new(),
-            gauge_length_mm: 60.0,
-        }
+        Self { description: String::new(), product_id: String::new(), product_link: String::new(), vendor: String::new(), gauge_length_mm: 60.0 }
     }
 }
 
@@ -1053,11 +1024,7 @@ impl Tool {
 
     /// Feed per tooth (mm) from cutting feedrate + rpm + flutes.
     pub fn feed_per_tooth(&self, feedrate: f64, spindle_rpm: u32) -> f64 {
-        if spindle_rpm == 0 || self.flutes == 0 {
-            0.0
-        } else {
-            feedrate / (f64::from(spindle_rpm) * f64::from(self.flutes))
-        }
+        if spindle_rpm == 0 || self.flutes == 0 { 0.0 } else { feedrate / (f64::from(spindle_rpm) * f64::from(self.flutes)) }
     }
 }
 
@@ -1095,11 +1062,7 @@ fn validate_tool(t: &Tool, path: &str) -> Result<()> {
     }
     for (i, seg) in t.shaft_segments.iter().enumerate() {
         let sp = format!("{path}.shaft_segments[{i}]");
-        for (label, v) in [
-            ("height_mm", seg.height_mm),
-            ("upper_diameter_mm", seg.upper_diameter_mm),
-            ("lower_diameter_mm", seg.lower_diameter_mm),
-        ] {
+        for (label, v) in [("height_mm", seg.height_mm), ("upper_diameter_mm", seg.upper_diameter_mm), ("lower_diameter_mm", seg.lower_diameter_mm)] {
             if !(v > 0.0 && v.is_finite()) {
                 return Err(invalid(format!("{sp}.{label}: must be strictly positive and finite")));
             }
@@ -1125,9 +1088,10 @@ fn validate_tool(t: &Tool, path: &str) -> Result<()> {
         }
     }
     if let Some(h) = &t.holder
-        && !(h.gauge_length_mm >= 0.0 && h.gauge_length_mm.is_finite()) {
-            return Err(invalid(format!("{path}.holder.gauge_length_mm: must be ≥ 0 and finite")));
-        }
+        && !(h.gauge_length_mm >= 0.0 && h.gauge_length_mm.is_finite())
+    {
+        return Err(invalid(format!("{path}.holder.gauge_length_mm: must be ≥ 0 and finite")));
+    }
     Ok(())
 }
 
@@ -1252,13 +1216,7 @@ pub enum Coolant {
 }
 
 impl Coolant {
-    pub const ALL: &'static [Coolant] = &[
-        Coolant::None,
-        Coolant::Flood,
-        Coolant::Mist,
-        Coolant::Air,
-        Coolant::ThroughSpindle,
-    ];
+    pub const ALL: &'static [Coolant] = &[Coolant::None, Coolant::Flood, Coolant::Mist, Coolant::Air, Coolant::ThroughSpindle];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -1358,15 +1316,7 @@ pub struct DrillHeightZs {
     pub bottom: f64,
 }
 
-fn resolve_height_from(
-    from: HeightFrom,
-    stock_top_z: f64,
-    depth: f64,
-    top_z: f64,
-    retract_z: f64,
-    clearance_z: f64,
-    feed_z: f64,
-) -> f64 {
+fn resolve_height_from(from: HeightFrom, stock_top_z: f64, depth: f64, top_z: f64, retract_z: f64, clearance_z: f64, feed_z: f64) -> f64 {
     let hole_top = stock_top_z;
     let hole_bottom = stock_top_z - depth;
     match from {
@@ -1387,12 +1337,9 @@ pub fn resolve_height_zs(heights: &DrillHeights, stock_top_z: f64, depth: f64) -
     let mut feed = stock_top_z;
     top = resolve_height_from(heights.top.from, stock_top_z, depth, top, retract, clearance, feed) + heights.top.offset_mm;
     feed = resolve_height_from(heights.feed.from, stock_top_z, depth, top, retract, clearance, feed) + heights.feed.offset_mm;
-    retract =
-        resolve_height_from(heights.retract.from, stock_top_z, depth, top, retract, clearance, feed) + heights.retract.offset_mm;
-    clearance = resolve_height_from(heights.clearance.from, stock_top_z, depth, top, retract, clearance, feed)
-        + heights.clearance.offset_mm;
-    let bottom =
-        resolve_height_from(heights.bottom.from, stock_top_z, depth, top, retract, clearance, feed) + heights.bottom.offset_mm;
+    retract = resolve_height_from(heights.retract.from, stock_top_z, depth, top, retract, clearance, feed) + heights.retract.offset_mm;
+    clearance = resolve_height_from(heights.clearance.from, stock_top_z, depth, top, retract, clearance, feed) + heights.clearance.offset_mm;
+    let bottom = resolve_height_from(heights.bottom.from, stock_top_z, depth, top, retract, clearance, feed) + heights.bottom.offset_mm;
     DrillHeightZs { clearance, retract, feed, top, bottom }
 }
 
@@ -1527,15 +1474,7 @@ pub struct ContourTabs {
 
 impl Default for ContourTabs {
     fn default() -> Self {
-        Self {
-            enabled: false,
-            shape: TabShape::Rectangular,
-            width_mm: 3.0,
-            height_mm: 0.4,
-            by_distance: true,
-            spacing_mm: 40.0,
-            count: 4,
-        }
+        Self { enabled: false, shape: TabShape::Rectangular, width_mm: 3.0, height_mm: 0.4, by_distance: true, spacing_mm: 40.0, count: 4 }
     }
 }
 
@@ -1548,7 +1487,6 @@ pub struct ContourGeometryOpts {
     pub stock_contours: bool,
     pub tabs: ContourTabs,
 }
-
 
 /// Passes / depths for a 2D Contour (Fusion Passes tab).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1703,11 +1641,7 @@ impl ProfileOperation {
 
     /// Contour sample points for overlays (`face_sample_points`, else drill_points).
     pub fn contour_points(&self) -> &[[f64; 3]] {
-        if !self.targets.face_sample_points.is_empty() {
-            &self.targets.face_sample_points
-        } else {
-            &self.targets.drill_points
-        }
+        if !self.targets.face_sample_points.is_empty() { &self.targets.face_sample_points } else { &self.targets.drill_points }
     }
 }
 
@@ -1973,14 +1907,7 @@ pub struct HoleGroup {
 
 impl Default for HoleGroup {
     fn default() -> Self {
-        Self {
-            diameter_mm: 6.0,
-            depth_mm: 10.0,
-            count: 1,
-            action: HoleAction::Drill,
-            thread_type: String::new(),
-            centres: Vec::new(),
-        }
+        Self { diameter_mm: 6.0, depth_mm: 10.0, count: 1, action: HoleAction::Drill, thread_type: String::new(), centres: Vec::new() }
     }
 }
 
@@ -2099,11 +2026,7 @@ impl DrillOperation {
 
     /// Hole centres used for path indicators (`drill_points`, else face samples).
     pub fn hole_centres(&self) -> &[[f64; 3]] {
-        if !self.targets.drill_points.is_empty() {
-            &self.targets.drill_points
-        } else {
-            &self.targets.face_sample_points
-        }
+        if !self.targets.drill_points.is_empty() { &self.targets.drill_points } else { &self.targets.face_sample_points }
     }
 }
 
@@ -2492,10 +2415,7 @@ impl ThreedStrategy {
     }
 
     pub fn is_roughing(self) -> bool {
-        matches!(
-            self,
-            ThreedStrategy::AdaptiveRoughing | ThreedStrategy::OffsetRoughing | ThreedStrategy::ThreePlusTwoRoughing
-        )
+        matches!(self, ThreedStrategy::AdaptiveRoughing | ThreedStrategy::OffsetRoughing | ThreedStrategy::ThreePlusTwoRoughing)
     }
 }
 
@@ -2592,11 +2512,7 @@ impl Default for ThreedOperation {
 
 impl ThreedOperation {
     pub fn with_strategy(strategy: ThreedStrategy) -> Self {
-        let mut op = Self {
-            strategy,
-            name: strategy.label().into(),
-            ..Default::default()
-        };
+        let mut op = Self { strategy, name: strategy.label().into(), ..Default::default() };
         match strategy {
             ThreedStrategy::AdaptiveRoughing => {
                 op.optimal_load = 0.4;
@@ -2664,12 +2580,7 @@ impl MultiAxisStrategy {
     }
 
     pub fn is_rotary(self) -> bool {
-        matches!(
-            self,
-            MultiAxisStrategy::RotaryOffsetRoughing
-                | MultiAxisStrategy::RotaryParallel
-                | MultiAxisStrategy::RotaryContour
-        )
+        matches!(self, MultiAxisStrategy::RotaryOffsetRoughing | MultiAxisStrategy::RotaryParallel | MultiAxisStrategy::RotaryContour)
     }
 
     pub fn is_swarf(self) -> bool {
@@ -2876,11 +2787,7 @@ impl Default for MultiAxisOperation {
 
 impl MultiAxisOperation {
     pub fn with_strategy(strategy: MultiAxisStrategy) -> Self {
-        let mut op = Self {
-            strategy,
-            name: strategy.label().into(),
-            ..Default::default()
-        };
+        let mut op = Self { strategy, name: strategy.label().into(), ..Default::default() };
         match strategy {
             MultiAxisStrategy::RotaryOffsetRoughing => {
                 op.stepover = 0.45;
@@ -3030,12 +2937,7 @@ impl TurningStrategy {
     }
 
     pub fn is_roughing(self) -> bool {
-        matches!(
-            self,
-            TurningStrategy::ProfileRoughing
-                | TurningStrategy::GrooveRoughing
-                | TurningStrategy::AdaptiveRoughing
-        )
+        matches!(self, TurningStrategy::ProfileRoughing | TurningStrategy::GrooveRoughing | TurningStrategy::AdaptiveRoughing)
     }
 }
 
@@ -3051,12 +2953,7 @@ pub struct TurningRadii {
 
 impl Default for TurningRadii {
     fn default() -> Self {
-        Self {
-            outer_radius_mm: 50.0,
-            inner_radius_mm: 0.0,
-            clearance_radius_mm: 55.0,
-            retract_radius_mm: 52.0,
-        }
+        Self { outer_radius_mm: 50.0, inner_radius_mm: 0.0, clearance_radius_mm: 55.0, retract_radius_mm: 52.0 }
     }
 }
 
@@ -3072,12 +2969,7 @@ pub struct TurningBounds {
 
 impl Default for TurningBounds {
     fn default() -> Self {
-        Self {
-            front_z_mm: 0.0,
-            back_z_mm: -50.0,
-            front_offset_mm: 0.0,
-            back_offset_mm: 0.0,
-        }
+        Self { front_z_mm: 0.0, back_z_mm: -50.0, front_offset_mm: 0.0, back_offset_mm: 0.0 }
     }
 }
 
@@ -3153,11 +3045,7 @@ impl Default for TurningOperation {
 
 impl TurningOperation {
     pub fn with_strategy(strategy: TurningStrategy) -> Self {
-        let mut op = Self {
-            strategy,
-            name: strategy.label().into(),
-            ..Default::default()
-        };
+        let mut op = Self { strategy, name: strategy.label().into(), ..Default::default() };
         match strategy {
             TurningStrategy::Face => {
                 op.depth_mm = 1.0;
@@ -3217,12 +3105,8 @@ pub enum PartHandlingKind {
 }
 
 impl PartHandlingKind {
-    pub const ALL: &'static [PartHandlingKind] = &[
-        PartHandlingKind::SubspindleGrab,
-        PartHandlingKind::BarPull,
-        PartHandlingKind::SubspindleReturn,
-        PartHandlingKind::ToolCall,
-    ];
+    pub const ALL: &'static [PartHandlingKind] =
+        &[PartHandlingKind::SubspindleGrab, PartHandlingKind::BarPull, PartHandlingKind::SubspindleReturn, PartHandlingKind::ToolCall];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -3245,11 +3129,7 @@ pub enum ChuckOpenMode {
 }
 
 impl ChuckOpenMode {
-    pub const ALL: &'static [ChuckOpenMode] = &[
-        ChuckOpenMode::KeepBothClamped,
-        ChuckOpenMode::UnclampPrimary,
-        ChuckOpenMode::UnclampSecondary,
-    ];
+    pub const ALL: &'static [ChuckOpenMode] = &[ChuckOpenMode::KeepBothClamped, ChuckOpenMode::UnclampPrimary, ChuckOpenMode::UnclampSecondary];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -3335,11 +3215,7 @@ impl Default for PartHandlingOperation {
 
 impl PartHandlingOperation {
     pub fn with_kind(kind: PartHandlingKind) -> Self {
-        let mut op = Self {
-            kind,
-            name: kind.label().into(),
-            ..Default::default()
-        };
+        let mut op = Self { kind, name: kind.label().into(), ..Default::default() };
         match kind {
             PartHandlingKind::SubspindleGrab => {
                 op.feed_plane_z_mm = 5.0;
@@ -3430,11 +3306,7 @@ impl Default for AdditiveOperation {
 
 impl AdditiveOperation {
     pub fn with_kind(kind: AdditiveKind) -> Self {
-        Self {
-            kind,
-            name: kind.label().into(),
-            ..Default::default()
-        }
+        Self { kind, name: kind.label().into(), ..Default::default() }
     }
 
     pub fn from_gcode(source_path: &str, gcode: &str) -> Self {
@@ -3455,16 +3327,8 @@ impl AdditiveOperation {
 
     pub fn simulation_segments(&self) -> Vec<PathSegment> {
         match self.kind {
-            AdditiveKind::ImportedGcode if !self.gcode.is_empty() => {
-                additive::segments_from_gcode(&self.gcode)
-            }
-            _ => additive::segments_for_generated(
-                self.layer_height_mm,
-                self.layer_count,
-                self.size_xy_mm,
-                self.feedrate_mmpm,
-                self.travel_mmpm,
-            ),
+            AdditiveKind::ImportedGcode if !self.gcode.is_empty() => additive::segments_from_gcode(&self.gcode),
+            _ => additive::segments_for_generated(self.layer_height_mm, self.layer_count, self.size_xy_mm, self.feedrate_mmpm, self.travel_mmpm),
         }
     }
 }
@@ -3481,12 +3345,8 @@ pub enum InspectionKind {
 }
 
 impl InspectionKind {
-    pub const ALL: &'static [InspectionKind] = &[
-        InspectionKind::ProbeWcs,
-        InspectionKind::ProbeGeometry,
-        InspectionKind::InspectSurface,
-        InspectionKind::PartAlignment,
-    ];
+    pub const ALL: &'static [InspectionKind] =
+        &[InspectionKind::ProbeWcs, InspectionKind::ProbeGeometry, InspectionKind::InspectSurface, InspectionKind::PartAlignment];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -3546,11 +3406,7 @@ impl Default for InspectionOperation {
 
 impl InspectionOperation {
     pub fn with_kind(kind: InspectionKind) -> Self {
-        let mut op = Self {
-            kind,
-            name: kind.label().into(),
-            ..Default::default()
-        };
+        let mut op = Self { kind, name: kind.label().into(), ..Default::default() };
         match kind {
             InspectionKind::ProbeWcs => {
                 op.probe_cycle = "single_surface".into();
@@ -3583,8 +3439,7 @@ pub enum ManualItemType {
 }
 
 impl ManualItemType {
-    pub const ALL: &'static [ManualItemType] =
-        &[ManualItemType::Distance, ManualItemType::PassFail, ManualItemType::Text];
+    pub const ALL: &'static [ManualItemType] = &[ManualItemType::Distance, ManualItemType::PassFail, ManualItemType::Text];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -3657,21 +3512,13 @@ pub struct ManualInspectionOperation {
 
 impl Default for ManualInspectionOperation {
     fn default() -> Self {
-        Self {
-            name: String::new(),
-            kind: ManualInspectionKind::Create,
-            items: vec![ManualInspectionItem::default()],
-        }
+        Self { name: String::new(), kind: ManualInspectionKind::Create, items: vec![ManualInspectionItem::default()] }
     }
 }
 
 impl ManualInspectionOperation {
     pub fn with_kind(kind: ManualInspectionKind) -> Self {
-        let mut op = Self {
-            kind,
-            name: kind.label().into(),
-            ..Default::default()
-        };
+        let mut op = Self { kind, name: kind.label().into(), ..Default::default() };
         if kind == ManualInspectionKind::Record {
             for item in &mut op.items {
                 item.measured_mm = Some(item.nominal_mm);
@@ -3836,26 +3683,11 @@ impl Default for FabricationProfileOperation {
             lead_in_sweep_deg: 90.0,
             linear_lead_in_mm: 2.0,
             heights: DrillHeights {
-                clearance: HeightPlane {
-                    from: HeightFrom::RetractHeight,
-                    offset_mm: 10.0,
-                },
-                retract: HeightPlane {
-                    from: HeightFrom::StockTop,
-                    offset_mm: 5.0,
-                },
-                feed: HeightPlane {
-                    from: HeightFrom::TopHeight,
-                    offset_mm: 5.0,
-                },
-                top: HeightPlane {
-                    from: HeightFrom::StockTop,
-                    offset_mm: 0.0,
-                },
-                bottom: HeightPlane {
-                    from: HeightFrom::ModelBottom,
-                    offset_mm: 0.0,
-                },
+                clearance: HeightPlane { from: HeightFrom::RetractHeight, offset_mm: 10.0 },
+                retract: HeightPlane { from: HeightFrom::StockTop, offset_mm: 5.0 },
+                feed: HeightPlane { from: HeightFrom::TopHeight, offset_mm: 5.0 },
+                top: HeightPlane { from: HeightFrom::StockTop, offset_mm: 0.0 },
+                bottom: HeightPlane { from: HeightFrom::ModelBottom, offset_mm: 0.0 },
                 tip_through_bottom: true,
             },
             linking: ContourLinking::default(),
@@ -3877,13 +3709,7 @@ pub struct NestSettings {
 
 impl Default for NestSettings {
     fn default() -> Self {
-        Self {
-            sheet_width_mm: 1_220.0,
-            sheet_height_mm: 2_440.0,
-            part_spacing_mm: 5.0,
-            sheet_margin_mm: 10.0,
-            rotate_parts: true,
-        }
+        Self { sheet_width_mm: 1_220.0, sheet_height_mm: 2_440.0, part_spacing_mm: 5.0, sheet_margin_mm: 10.0, rotate_parts: true }
     }
 }
 
@@ -3952,18 +3778,90 @@ impl Operation {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Operation::Face(o) => if o.name.is_empty() { "Face" } else { &o.name },
-            Operation::Profile(o) => if o.name.is_empty() { "2D Contour" } else { &o.name },
-            Operation::Pocket(o) => if o.name.is_empty() { "2D Pocket" } else { &o.name },
-            Operation::Drill(o) => if o.name.is_empty() { "Drill" } else { &o.name },
-            Operation::Adaptive(o) => if o.name.is_empty() { "2D Adaptive" } else { &o.name },
-            Operation::Slot(o) => if o.name.is_empty() { "Slot" } else { &o.name },
-            Operation::Trace(o) => if o.name.is_empty() { "Trace" } else { &o.name },
-            Operation::Thread(o) => if o.name.is_empty() { "Thread" } else { &o.name },
-            Operation::Bore(o) => if o.name.is_empty() { "Bore" } else { &o.name },
-            Operation::Circular(o) => if o.name.is_empty() { "Circular" } else { &o.name },
-            Operation::Engrave(o) => if o.name.is_empty() { "Engrave" } else { &o.name },
-            Operation::Chamfer(o) => if o.name.is_empty() { "2D Chamfer" } else { &o.name },
+            Operation::Face(o) => {
+                if o.name.is_empty() {
+                    "Face"
+                } else {
+                    &o.name
+                }
+            }
+            Operation::Profile(o) => {
+                if o.name.is_empty() {
+                    "2D Contour"
+                } else {
+                    &o.name
+                }
+            }
+            Operation::Pocket(o) => {
+                if o.name.is_empty() {
+                    "2D Pocket"
+                } else {
+                    &o.name
+                }
+            }
+            Operation::Drill(o) => {
+                if o.name.is_empty() {
+                    "Drill"
+                } else {
+                    &o.name
+                }
+            }
+            Operation::Adaptive(o) => {
+                if o.name.is_empty() {
+                    "2D Adaptive"
+                } else {
+                    &o.name
+                }
+            }
+            Operation::Slot(o) => {
+                if o.name.is_empty() {
+                    "Slot"
+                } else {
+                    &o.name
+                }
+            }
+            Operation::Trace(o) => {
+                if o.name.is_empty() {
+                    "Trace"
+                } else {
+                    &o.name
+                }
+            }
+            Operation::Thread(o) => {
+                if o.name.is_empty() {
+                    "Thread"
+                } else {
+                    &o.name
+                }
+            }
+            Operation::Bore(o) => {
+                if o.name.is_empty() {
+                    "Bore"
+                } else {
+                    &o.name
+                }
+            }
+            Operation::Circular(o) => {
+                if o.name.is_empty() {
+                    "Circular"
+                } else {
+                    &o.name
+                }
+            }
+            Operation::Engrave(o) => {
+                if o.name.is_empty() {
+                    "Engrave"
+                } else {
+                    &o.name
+                }
+            }
+            Operation::Chamfer(o) => {
+                if o.name.is_empty() {
+                    "2D Chamfer"
+                } else {
+                    &o.name
+                }
+            }
             Operation::Threed(o) => {
                 if o.name.is_empty() {
                     o.strategy.label()
@@ -4354,10 +4252,9 @@ impl Operation {
                 if !o.lead_angle_deg.is_finite() || !o.tilt_angle_deg.is_finite() {
                     return Err(invalid(format!("{path}: lead/tilt angles must be finite")));
                 }
-                if o.set_angular_limits
-                    && (!o.start_angle_deg.is_finite() || !o.end_angle_deg.is_finite()) {
-                        return Err(invalid(format!("{path}: angular limits must be finite")));
-                    }
+                if o.set_angular_limits && (!o.start_angle_deg.is_finite() || !o.end_angle_deg.is_finite()) {
+                    return Err(invalid(format!("{path}: angular limits must be finite")));
+                }
                 if !(o.pass_opts.tolerance_mm > 0.0 && o.pass_opts.tolerance_mm.is_finite()) {
                     return Err(invalid(format!("{path}: pass_opts.tolerance_mm must be strictly positive and finite")));
                 }
@@ -4376,9 +4273,7 @@ impl Operation {
                 if !(o.z_stock_mm >= 0.0 && o.z_stock_mm.is_finite()) {
                     return Err(invalid(format!("{path}: z_stock_mm must be ≥ 0 and finite")));
                 }
-                if !(o.radii.outer_radius_mm >= o.radii.inner_radius_mm
-                    && o.radii.outer_radius_mm.is_finite()
-                    && o.radii.inner_radius_mm.is_finite())
+                if !(o.radii.outer_radius_mm >= o.radii.inner_radius_mm && o.radii.outer_radius_mm.is_finite() && o.radii.inner_radius_mm.is_finite())
                 {
                     return Err(invalid(format!("{path}: outer_radius_mm must be ≥ inner_radius_mm and finite")));
                 }
@@ -4394,14 +4289,10 @@ impl Operation {
                         return Err(invalid(format!("{path}.{label}: must be finite")));
                     }
                 }
-                if o.strategy == TurningStrategy::Thread
-                    && !(o.thread_pitch_mm > 0.0 && o.thread_pitch_mm.is_finite())
-                {
+                if o.strategy == TurningStrategy::Thread && !(o.thread_pitch_mm > 0.0 && o.thread_pitch_mm.is_finite()) {
                     return Err(invalid(format!("{path}: thread_pitch_mm must be strictly positive and finite")));
                 }
-                if o.strategy == TurningStrategy::Chamfer
-                    && !(o.chamfer_width_mm > 0.0 && o.chamfer_width_mm.is_finite())
-                {
+                if o.strategy == TurningStrategy::Chamfer && !(o.chamfer_width_mm > 0.0 && o.chamfer_width_mm.is_finite()) {
                     return Err(invalid(format!("{path}: chamfer_width_mm must be strictly positive and finite")));
                 }
                 if o.strategy == TurningStrategy::Part {
@@ -4510,19 +4401,16 @@ impl Operation {
                     if item.label.trim().is_empty() {
                         return Err(invalid(format!("{ip}: label required")));
                     }
-                    for (label, v) in [
-                        ("nominal_mm", item.nominal_mm),
-                        ("upper_tol_mm", item.upper_tol_mm),
-                        ("lower_tol_mm", item.lower_tol_mm),
-                    ] {
+                    for (label, v) in [("nominal_mm", item.nominal_mm), ("upper_tol_mm", item.upper_tol_mm), ("lower_tol_mm", item.lower_tol_mm)] {
                         if !v.is_finite() || v < 0.0 {
                             return Err(invalid(format!("{ip}.{label}: must be ≥ 0 and finite")));
                         }
                     }
                     if let Some(m) = item.measured_mm
-                        && !m.is_finite() {
-                            return Err(invalid(format!("{ip}.measured_mm: must be finite")));
-                        }
+                        && !m.is_finite()
+                    {
+                        return Err(invalid(format!("{ip}.measured_mm: must be finite")));
+                    }
                 }
             }
             Operation::FabricationProfile(o) => {
@@ -4725,7 +4613,6 @@ pub struct NcOpRef {
     pub operation_index: usize,
 }
 
-
 /// NC Program (Setup → Create NC Program / Actions → Post Process).
 ///
 /// Groups setups and operations for one post output — the path from toolpaths to machine G-code.
@@ -4786,11 +4673,7 @@ impl Default for NcProgram {
 impl NcProgram {
     /// Resolved output filename with extension.
     pub fn output_file_name(&self) -> String {
-        let base = if self.file_name.trim().is_empty() {
-            self.program_name.as_str()
-        } else {
-            self.file_name.as_str()
-        };
+        let base = if self.file_name.trim().is_empty() { self.program_name.as_str() } else { self.file_name.as_str() };
         let ext = self.nc_extension.trim().trim_start_matches('.');
         if ext.is_empty() || base.rsplit_once('.').is_some_and(|(_, e)| e.eq_ignore_ascii_case(ext)) {
             base.to_string()
@@ -4804,13 +4687,7 @@ impl NcProgram {
 ///
 /// Linear/arc moves use `feed` (mm/min); rapids use `rapid_mmpm`. `feed_scale` multiplies cutting
 /// feeds (1.0 = programmed). Tool changes add `tool_change_s * tool_changes`.
-pub fn estimate_machining_time_s(
-    segments: &[PathSegment],
-    rapid_mmpm: f64,
-    feed_scale: f64,
-    tool_change_s: f64,
-    tool_changes: u32,
-) -> f64 {
+pub fn estimate_machining_time_s(segments: &[PathSegment], rapid_mmpm: f64, feed_scale: f64, tool_change_s: f64, tool_changes: u32) -> f64 {
     let rapid = if rapid_mmpm > 0.0 && rapid_mmpm.is_finite() { rapid_mmpm } else { 5_000.0 };
     let scale = if feed_scale > 0.0 && feed_scale.is_finite() { feed_scale } else { 1.0 };
     let mut cur = [0.0_f64; 3];
@@ -4857,17 +4734,10 @@ pub fn format_cycle_time(secs: f64) -> String {
 }
 
 /// Build a simple HTML setup sheet for the shop floor.
-pub fn build_setup_sheet_html(
-    doc_title: &str,
-    program: &NcProgram,
-    rows: &[(String, String, String, String)],
-    cycle_time: &str,
-) -> String {
+pub fn build_setup_sheet_html(doc_title: &str, program: &NcProgram, rows: &[(String, String, String, String)], cycle_time: &str) -> String {
     let mut ops = String::new();
     for (op, setup, tool, wcs) in rows {
-        ops.push_str(&format!(
-            "<tr><td>{op}</td><td>{setup}</td><td>{tool}</td><td>{wcs}</td></tr>\n"
-        ));
+        ops.push_str(&format!("<tr><td>{op}</td><td>{setup}</td><td>{tool}</td><td>{wcs}</td></tr>\n"));
     }
     format!(
         r#"<!DOCTYPE html>
@@ -4902,10 +4772,7 @@ th{{background:#f0f0f0}} .meta{{margin:4px 0;color:#444}}
 }
 
 fn escape_html(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
 /// Browser folder that groups operations inside a setup.
@@ -5006,12 +4873,7 @@ pub struct ManualNc {
 
 impl Default for ManualNc {
     fn default() -> Self {
-        Self {
-            name: "Manual NC".into(),
-            setup: String::new(),
-            kind: ManualNcKind::Comment,
-            code: String::new(),
-        }
+        Self { name: "Manual NC".into(), setup: String::new(), kind: ManualNcKind::Comment, code: String::new() }
     }
 }
 
@@ -5125,7 +4987,6 @@ pub struct ToolpathModHeader {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub notes: String,
 }
-
 
 /// Fusion Modify → Trim.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -5271,10 +5132,7 @@ pub struct MoveEntryModification {
 
 impl Default for MoveEntryModification {
     fn default() -> Self {
-        Self {
-            header: ToolpathModHeader { name: "Move Entry Positions".into(), ..Default::default() },
-            sketch_lines: Vec::new(),
-        }
+        Self { header: ToolpathModHeader { name: "Move Entry Positions".into(), ..Default::default() }, sketch_lines: Vec::new() }
     }
 }
 
@@ -5357,11 +5215,9 @@ impl ToolpathModification {
                 if !(m.safe_distance_mm >= 0.0 && m.safe_distance_mm.is_finite()) {
                     return Err(invalid(format!("{path}: safe_distance_mm must be ≥ 0 and finite")));
                 }
-                for (label, v) in [
-                    ("clearance_offset_mm", m.clearance_offset_mm),
-                    ("retract_offset_mm", m.retract_offset_mm),
-                    ("feed_offset_mm", m.feed_offset_mm),
-                ] {
+                for (label, v) in
+                    [("clearance_offset_mm", m.clearance_offset_mm), ("retract_offset_mm", m.retract_offset_mm), ("feed_offset_mm", m.feed_offset_mm)]
+                {
                     if !v.is_finite() {
                         return Err(invalid(format!("{path}.{label}: must be finite")));
                     }
@@ -5514,10 +5370,7 @@ impl ManufactureSettings {
             return Err(invalid(format!("too many templates (maximum {})", library::MAX_TEMPLATES)));
         }
         if self.library_remotes.len() > library::MAX_LIBRARY_REMOTES {
-            return Err(invalid(format!(
-                "too many library remotes (maximum {})",
-                library::MAX_LIBRARY_REMOTES
-            )));
+            return Err(invalid(format!("too many library remotes (maximum {})", library::MAX_LIBRARY_REMOTES)));
         }
         for (i, r) in self.library_remotes.iter().enumerate() {
             r.validate(&format!("library_remotes[{i}]"))?;
@@ -5551,14 +5404,10 @@ impl ManufactureSettings {
             let setup_name = &m.header().setup;
             match self.setups.get(setup_name.as_str()) {
                 None => {
-                    return Err(invalid(format!(
-                        "toolpath_modifications[{i}]: setup `{setup_name}` not found"
-                    )));
+                    return Err(invalid(format!("toolpath_modifications[{i}]: setup `{setup_name}` not found")));
                 }
                 Some(setup) if m.header().operation_index >= setup.operations.len() => {
-                    return Err(invalid(format!(
-                        "toolpath_modifications[{i}]: operation_index out of range"
-                    )));
+                    return Err(invalid(format!("toolpath_modifications[{i}]: operation_index out of range")));
                 }
                 Some(_) => {}
             }
@@ -5596,30 +5445,27 @@ impl ManufactureSettings {
         for (sname, setup) in &self.setups {
             // Warn if the referenced machine or post profile doesn't exist.
             if let Some(m) = &setup.machine
-                && !self.machines.contains_key(m.as_str()) {
-                    out.push(ValidationIssue {
-                        severity: Severity::Warning,
-                        path: format!("setups.{sname}.machine"),
-                        message: format!("machine profile `{m}` is not defined"),
-                    });
-                }
+                && !self.machines.contains_key(m.as_str())
+            {
+                out.push(ValidationIssue {
+                    severity: Severity::Warning,
+                    path: format!("setups.{sname}.machine"),
+                    message: format!("machine profile `{m}` is not defined"),
+                });
+            }
             if let Some(p) = &setup.post
-                && !self.posts.contains_key(p.as_str()) {
-                    out.push(ValidationIssue {
-                        severity: Severity::Warning,
-                        path: format!("setups.{sname}.post"),
-                        message: format!("post profile `{p}` is not defined"),
-                    });
-                }
+                && !self.posts.contains_key(p.as_str())
+            {
+                out.push(ValidationIssue {
+                    severity: Severity::Warning,
+                    path: format!("setups.{sname}.post"),
+                    message: format!("post profile `{p}` is not defined"),
+                });
+            }
             // Warn if an operation references a tool number that doesn't exist.
             let tool_numbers: std::collections::BTreeSet<u32> = setup.tools.iter().map(|t| t.number).collect();
             for (i, op) in setup.operations.iter().enumerate() {
-                if matches!(
-                    op,
-                    Operation::HoleRecognition(_)
-                        | Operation::Additive(_)
-                        | Operation::ManualInspection(_)
-                ) {
+                if matches!(op, Operation::HoleRecognition(_) | Operation::Additive(_) | Operation::ManualInspection(_)) {
                     continue;
                 }
                 if matches!(op, Operation::PartHandling(o) if o.kind != PartHandlingKind::ToolCall) {
@@ -5635,9 +5481,7 @@ impl ManufactureSettings {
             }
             // Warn if operations are defined but no tools are listed.
             let needs_tools = setup.operations.iter().any(|op| match op {
-                Operation::HoleRecognition(_)
-                | Operation::Additive(_)
-                | Operation::ManualInspection(_) => false,
+                Operation::HoleRecognition(_) | Operation::Additive(_) | Operation::ManualInspection(_) => false,
                 Operation::PartHandling(o) => o.kind == PartHandlingKind::ToolCall,
                 _ => true,
             });
@@ -5650,85 +5494,75 @@ impl ManufactureSettings {
             }
             // Check feed rates and ATC capacity against machine limits.
             if let Some(machine_name) = &setup.machine
-                && let Some(machine) = self.machines.get(machine_name.as_str()) {
-                    for (i, op) in setup.operations.iter().enumerate() {
-                        if matches!(
-                            op,
-                            Operation::HoleRecognition(_)
-                                | Operation::PartHandling(_)
-                                | Operation::Additive(_)
-                                | Operation::Inspection(_)
-                                | Operation::ManualInspection(_)
-                        ) {
-                            continue;
-                        }
-                        let f = op.feeds();
-                        if machine.max_feedrate_mmpm > 0.0 && f.feedrate > machine.max_feedrate_mmpm {
-                            out.push(ValidationIssue {
-                                severity: Severity::Warning,
-                                path: format!("setups.{sname}.operations[{i}].feeds.feedrate"),
-                                message: format!("feedrate {:.0} mm/min exceeds machine limit {:.0} mm/min", f.feedrate, machine.max_feedrate_mmpm),
-                            });
-                        }
-                        if machine.max_spindle_rpm > 0 && f.spindle_rpm > machine.max_spindle_rpm {
-                            out.push(ValidationIssue {
-                                severity: Severity::Warning,
-                                path: format!("setups.{sname}.operations[{i}].feeds.spindle_rpm"),
-                                message: format!("spindle_rpm {} exceeds machine limit {}", f.spindle_rpm, machine.max_spindle_rpm),
-                            });
-                        }
+                && let Some(machine) = self.machines.get(machine_name.as_str())
+            {
+                for (i, op) in setup.operations.iter().enumerate() {
+                    if matches!(
+                        op,
+                        Operation::HoleRecognition(_)
+                            | Operation::PartHandling(_)
+                            | Operation::Additive(_)
+                            | Operation::Inspection(_)
+                            | Operation::ManualInspection(_)
+                    ) {
+                        continue;
                     }
-                    let pockets = machine.tool_changer.pockets;
-                    if pockets > 0 {
-                        if setup.tools.len() as u32 > pockets {
+                    let f = op.feeds();
+                    if machine.max_feedrate_mmpm > 0.0 && f.feedrate > machine.max_feedrate_mmpm {
+                        out.push(ValidationIssue {
+                            severity: Severity::Warning,
+                            path: format!("setups.{sname}.operations[{i}].feeds.feedrate"),
+                            message: format!("feedrate {:.0} mm/min exceeds machine limit {:.0} mm/min", f.feedrate, machine.max_feedrate_mmpm),
+                        });
+                    }
+                    if machine.max_spindle_rpm > 0 && f.spindle_rpm > machine.max_spindle_rpm {
+                        out.push(ValidationIssue {
+                            severity: Severity::Warning,
+                            path: format!("setups.{sname}.operations[{i}].feeds.spindle_rpm"),
+                            message: format!("spindle_rpm {} exceeds machine limit {}", f.spindle_rpm, machine.max_spindle_rpm),
+                        });
+                    }
+                }
+                let pockets = machine.tool_changer.pockets;
+                if pockets > 0 {
+                    if setup.tools.len() as u32 > pockets {
+                        out.push(ValidationIssue {
+                            severity: Severity::Warning,
+                            path: format!("setups.{sname}.tools"),
+                            message: format!("{} tools exceed ATC capacity of {} pockets on `{machine_name}`", setup.tools.len(), pockets),
+                        });
+                    }
+                    for (i, tool) in setup.tools.iter().enumerate() {
+                        if tool.number > pockets {
                             out.push(ValidationIssue {
                                 severity: Severity::Warning,
-                                path: format!("setups.{sname}.tools"),
+                                path: format!("setups.{sname}.tools[{i}]"),
+                                message: format!("tool number {} is above ATC pocket count {} on `{machine_name}`", tool.number, pockets),
+                            });
+                        }
+                        if machine.tool_changer.max_tool_diameter_mm > 0.0 && tool.diameter > machine.tool_changer.max_tool_diameter_mm {
+                            out.push(ValidationIssue {
+                                severity: Severity::Warning,
+                                path: format!("setups.{sname}.tools[{i}].diameter"),
                                 message: format!(
-                                    "{} tools exceed ATC capacity of {} pockets on `{machine_name}`",
-                                    setup.tools.len(),
-                                    pockets
+                                    "tool diameter {:.3} mm exceeds ATC max {:.3} mm on `{machine_name}`",
+                                    tool.diameter, machine.tool_changer.max_tool_diameter_mm
                                 ),
                             });
                         }
-                        for (i, tool) in setup.tools.iter().enumerate() {
-                            if tool.number > pockets {
-                                out.push(ValidationIssue {
-                                    severity: Severity::Warning,
-                                    path: format!("setups.{sname}.tools[{i}]"),
-                                    message: format!(
-                                        "tool number {} is above ATC pocket count {} on `{machine_name}`",
-                                        tool.number, pockets
-                                    ),
-                                });
-                            }
-                            if machine.tool_changer.max_tool_diameter_mm > 0.0
-                                && tool.diameter > machine.tool_changer.max_tool_diameter_mm
-                            {
-                                out.push(ValidationIssue {
-                                    severity: Severity::Warning,
-                                    path: format!("setups.{sname}.tools[{i}].diameter"),
-                                    message: format!(
-                                        "tool diameter {:.3} mm exceeds ATC max {:.3} mm on `{machine_name}`",
-                                        tool.diameter, machine.tool_changer.max_tool_diameter_mm
-                                    ),
-                                });
-                            }
-                            if machine.tool_changer.max_tool_length_mm > 0.0
-                                && tool.length > machine.tool_changer.max_tool_length_mm
-                            {
-                                out.push(ValidationIssue {
-                                    severity: Severity::Warning,
-                                    path: format!("setups.{sname}.tools[{i}].length"),
-                                    message: format!(
-                                        "tool length {:.3} mm exceeds ATC max {:.3} mm on `{machine_name}`",
-                                        tool.length, machine.tool_changer.max_tool_length_mm
-                                    ),
-                                });
-                            }
+                        if machine.tool_changer.max_tool_length_mm > 0.0 && tool.length > machine.tool_changer.max_tool_length_mm {
+                            out.push(ValidationIssue {
+                                severity: Severity::Warning,
+                                path: format!("setups.{sname}.tools[{i}].length"),
+                                message: format!(
+                                    "tool length {:.3} mm exceeds ATC max {:.3} mm on `{machine_name}`",
+                                    tool.length, machine.tool_changer.max_tool_length_mm
+                                ),
+                            });
                         }
                     }
                 }
+            }
         }
         out
     }
@@ -5846,15 +5680,9 @@ mod tests {
             assert_eq!(op.display_name(), strategy.label());
             op.validate("op").unwrap();
         }
-        let bad = Operation::Turning(TurningOperation {
-            depth_mm: 0.0,
-            ..TurningOperation::with_strategy(TurningStrategy::Face)
-        });
+        let bad = Operation::Turning(TurningOperation { depth_mm: 0.0, ..TurningOperation::with_strategy(TurningStrategy::Face) });
         assert!(bad.validate("op").is_err());
-        let bad_thread = Operation::Turning(TurningOperation {
-            thread_pitch_mm: 0.0,
-            ..TurningOperation::with_strategy(TurningStrategy::Thread)
-        });
+        let bad_thread = Operation::Turning(TurningOperation { thread_pitch_mm: 0.0, ..TurningOperation::with_strategy(TurningStrategy::Thread) });
         assert!(bad_thread.validate("op").is_err());
     }
 
@@ -5888,10 +5716,7 @@ mod tests {
         let op = Operation::FabricationProfile(FabricationProfileOperation::default());
         assert_eq!(op.display_name(), "2D Profile");
         op.validate("op").unwrap();
-        let bad = Operation::FabricationProfile(FabricationProfileOperation {
-            thickness_mm: 0.0,
-            ..FabricationProfileOperation::default()
-        });
+        let bad = Operation::FabricationProfile(FabricationProfileOperation { thickness_mm: 0.0, ..FabricationProfileOperation::default() });
         assert!(bad.validate("op").is_err());
     }
 
@@ -5916,15 +5741,11 @@ mod tests {
             assert_eq!(op.display_name(), kind.label());
             op.validate("op").unwrap();
         }
-        let bad_pull = Operation::PartHandling(PartHandlingOperation {
-            pull_distance_mm: 0.0,
-            ..PartHandlingOperation::with_kind(PartHandlingKind::BarPull)
-        });
+        let bad_pull =
+            Operation::PartHandling(PartHandlingOperation { pull_distance_mm: 0.0, ..PartHandlingOperation::with_kind(PartHandlingKind::BarPull) });
         assert!(bad_pull.validate("op").is_err());
-        let bad_tool = Operation::PartHandling(PartHandlingOperation {
-            tool_number: 0,
-            ..PartHandlingOperation::with_kind(PartHandlingKind::ToolCall)
-        });
+        let bad_tool =
+            Operation::PartHandling(PartHandlingOperation { tool_number: 0, ..PartHandlingOperation::with_kind(PartHandlingKind::ToolCall) });
         assert!(bad_tool.validate("op").is_err());
     }
 
@@ -5937,10 +5758,7 @@ mod tests {
         p.file_name = "part.nc".into();
         assert_eq!(p.output_file_name(), "part.nc");
 
-        let segs = vec![
-            PathSegment::Rapid { to: [10.0, 0.0, 0.0] },
-            PathSegment::Linear { to: [20.0, 0.0, 0.0], feed: 1_000.0 },
-        ];
+        let segs = vec![PathSegment::Rapid { to: [10.0, 0.0, 0.0] }, PathSegment::Linear { to: [20.0, 0.0, 0.0], feed: 1_000.0 }];
         let t = estimate_machining_time_s(&segs, 6_000.0, 1.0, 5.0, 1);
         assert!(t > 5.0);
         assert_eq!(format_cycle_time(3661.0), "1:01:01");
@@ -5955,12 +5773,7 @@ mod tests {
         s.setups.insert("Setup1".into(), setup);
 
         let trim = ToolpathModification::Trim(TrimModification {
-            header: ToolpathModHeader {
-                name: "Trim1".into(),
-                setup: "Setup1".into(),
-                operation_index: 0,
-                notes: "keep outside".into(),
-            },
+            header: ToolpathModHeader { name: "Trim1".into(), setup: "Setup1".into(), operation_index: 0, notes: "keep outside".into() },
             trim_type: TrimType::Polygon,
             keep: TrimKeep::Outside,
             visible_only: true,
@@ -6041,10 +5854,7 @@ mod tests {
             op.validate("op").unwrap();
             assert_eq!(op.display_name(), strategy.label());
         }
-        let bad = Operation::Threed(ThreedOperation {
-            optimal_load: 0.0,
-            ..ThreedOperation::with_strategy(ThreedStrategy::AdaptiveRoughing)
-        });
+        let bad = Operation::Threed(ThreedOperation { optimal_load: 0.0, ..ThreedOperation::with_strategy(ThreedStrategy::AdaptiveRoughing) });
         assert!(bad.validate("op").is_err());
     }
 
@@ -6343,10 +6153,7 @@ mod tests {
     #[test]
     fn atc_capacity_warns_on_overflow() {
         let mut s = ManufactureSettings::default();
-        let (id, machine) = machines::preset_machines()
-            .into_iter()
-            .find(|(id, _)| *id == "Haas VF-2")
-            .expect("Haas VF-2 preset");
+        let (id, machine) = machines::preset_machines().into_iter().find(|(id, _)| *id == "Haas VF-2").expect("Haas VF-2 preset");
         s.machines.insert(id.into(), machine);
         let mut setup = MfgSetup {
             machine: Some(id.into()),

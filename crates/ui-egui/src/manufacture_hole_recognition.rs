@@ -3,9 +3,7 @@
 
 use egui::RichText;
 use serde_json::json;
-use solidcraft_manufacture::{
-    HoleAction, HoleGroup, HoleOrganizeMode, HoleRecognitionOperation, Operation,
-};
+use solidcraft_manufacture::{HoleAction, HoleGroup, HoleOrganizeMode, HoleRecognitionOperation, Operation};
 
 use crate::{SolveApp, viewport};
 
@@ -39,13 +37,8 @@ pub fn open(app: &mut SolveApp, setup_name: &str, op_index: usize) {
     app.manufacture_workspace.twod_dialog = None;
     app.manufacture_workspace.threed_dialog = None;
     app.manufacture_workspace.multiaxis_dialog = None;
-    app.manufacture_workspace.hole_rec_dialog = Some(HoleRecDialogState {
-        setup_name: setup_name.to_string(),
-        op_index,
-        draft: op,
-        tab: HoleRecTab::HoleGroups,
-        selected_group: None,
-    });
+    app.manufacture_workspace.hole_rec_dialog =
+        Some(HoleRecDialogState { setup_name: setup_name.to_string(), op_index, draft: op, tab: HoleRecTab::HoleGroups, selected_group: None });
     app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Operations;
 }
 
@@ -60,13 +53,9 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let mut draft = state.draft.clone();
     let mut tab = state.tab;
     let mut selected_group = state.selected_group;
-    let title = if draft.name.is_empty() {
-        "HOLE RECOGNITION".to_string()
-    } else {
-        format!("HOLE RECOGNITION : {}", draft.name.to_uppercase())
-    };
+    let title = if draft.name.is_empty() { "HOLE RECOGNITION".to_string() } else { format!("HOLE RECOGNITION : {}", draft.name.to_uppercase()) };
 
-    egui::Window::new(title)
+    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_hole_rec_dialog"))
         .open(&mut open)
         .collapsible(false)
@@ -74,16 +63,11 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
         .default_width(420.0)
         .show(ui.ctx(), |ui| {
             ui.horizontal(|ui| {
-                for (v, l) in [
-                    (HoleRecTab::HoleGroups, "Hole Groups"),
-                    (HoleRecTab::ToolLibraries, "Tool Libraries"),
-                    (HoleRecTab::Options, "Options"),
-                ] {
+                for (v, l) in
+                    [(HoleRecTab::HoleGroups, "Hole Groups"), (HoleRecTab::ToolLibraries, "Tool Libraries"), (HoleRecTab::Options, "Options")]
+                {
                     let sel = tab == v;
-                    if ui
-                        .selectable_label(sel, if sel { RichText::new(l).strong() } else { RichText::new(l) })
-                        .clicked()
-                    {
+                    if ui.selectable_label(sel, if sel { RichText::new(l).strong() } else { RichText::new(l) }).clicked() {
                         tab = v;
                     }
                 }
@@ -111,11 +95,10 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
         app.manufacture_workspace.hole_rec_dialog = None;
         return false;
     }
-    if commit
-        && save(app, &state.setup_name, state.op_index, draft.clone()) {
-            app.manufacture_workspace.hole_rec_dialog = None;
-            return false;
-        }
+    if commit && save(app, &state.setup_name, state.op_index, draft.clone()) {
+        app.manufacture_workspace.hole_rec_dialog = None;
+        return false;
+    }
     if let Some(d) = &mut app.manufacture_workspace.hole_rec_dialog {
         d.draft = draft;
         d.tab = tab;
@@ -152,22 +135,24 @@ fn groups_tab(ui: &mut egui::Ui, draft: &mut HoleRecognitionOperation, selected:
         ui.add_enabled(can_mod, egui::Button::new("Delete bottom segment")).clicked();
         if ui.add_enabled(can_mod, egui::Button::new("Split signature")).clicked()
             && let Some(i) = *selected
-                && let Some(g) = draft.groups.get(i).cloned() {
-                    let mut a = g.clone();
-                    let mut b = g;
-                    a.depth_mm = (a.depth_mm / 2.0).max(0.1);
-                    b.depth_mm = a.depth_mm;
-                    b.count = a.count;
-                    draft.groups[i] = a;
-                    draft.groups.insert(i + 1, b);
-                }
+            && let Some(g) = draft.groups.get(i).cloned()
+        {
+            let mut a = g.clone();
+            let mut b = g;
+            a.depth_mm = (a.depth_mm / 2.0).max(0.1);
+            b.depth_mm = a.depth_mm;
+            b.count = a.count;
+            draft.groups[i] = a;
+            draft.groups.insert(i + 1, b);
+        }
         if ui.add_enabled(can_mod, egui::Button::new("Flip hole")).clicked()
             && let Some(i) = *selected
-                && let Some(g) = draft.groups.get_mut(i) {
-                    for c in &mut g.centres {
-                        c[2] = -c[2];
-                    }
-                }
+            && let Some(g) = draft.groups.get_mut(i)
+        {
+            for c in &mut g.centres {
+                c[2] = -c[2];
+            }
+        }
     });
 
     ui.separator();
@@ -191,24 +176,22 @@ fn groups_tab(ui: &mut egui::Ui, draft: &mut HoleRecognitionOperation, selected:
             });
             ui.horizontal(|ui| {
                 ui.label("Action");
-                egui::ComboBox::from_id_salt(format!("hr_action_{i}"))
-                    .selected_text(g.action.label())
-                    .show_ui(ui, |ui| {
-                        for a in [
-                            HoleAction::SpotDrill,
-                            HoleAction::Drill,
-                            HoleAction::SpotAndDrill,
-                            HoleAction::CounterBore,
-                            HoleAction::Bore,
-                            HoleAction::Tap,
-                            HoleAction::Ream,
-                            HoleAction::Ignore,
-                        ] {
-                            if ui.selectable_label(g.action == a, a.label()).clicked() {
-                                g.action = a;
-                            }
+                egui::ComboBox::from_id_salt(format!("hr_action_{i}")).selected_text(g.action.label()).show_ui(ui, |ui| {
+                    for a in [
+                        HoleAction::SpotDrill,
+                        HoleAction::Drill,
+                        HoleAction::SpotAndDrill,
+                        HoleAction::CounterBore,
+                        HoleAction::Bore,
+                        HoleAction::Tap,
+                        HoleAction::Ream,
+                        HoleAction::Ignore,
+                    ] {
+                        if ui.selectable_label(g.action == a, a.label()).clicked() {
+                            g.action = a;
                         }
-                    });
+                    }
+                });
                 if g.action.needs_thread() {
                     ui.label("Thread");
                     ui.text_edit_singleline(&mut g.thread_type);
@@ -222,9 +205,10 @@ fn groups_tab(ui: &mut egui::Ui, draft: &mut HoleRecognitionOperation, selected:
         if *selected == Some(i) {
             *selected = None;
         } else if let Some(s) = *selected
-            && s > i {
-                *selected = Some(s - 1);
-            }
+            && s > i
+        {
+            *selected = Some(s - 1);
+        }
     }
 
     if draft.groups.is_empty() {
@@ -303,15 +287,13 @@ fn options_tab(ui: &mut egui::Ui, draft: &mut HoleRecognitionOperation) {
     ui.separator();
     ui.horizontal(|ui| {
         ui.label("Organize Operations");
-        egui::ComboBox::from_id_salt("hr_organize")
-            .selected_text(draft.organize.label())
-            .show_ui(ui, |ui| {
-                for m in [HoleOrganizeMode::MinimizeToolChanges, HoleOrganizeMode::GroupBySize] {
-                    if ui.selectable_label(draft.organize == m, m.label()).clicked() {
-                        draft.organize = m;
-                    }
+        egui::ComboBox::from_id_salt("hr_organize").selected_text(draft.organize.label()).show_ui(ui, |ui| {
+            for m in [HoleOrganizeMode::MinimizeToolChanges, HoleOrganizeMode::GroupBySize] {
+                if ui.selectable_label(draft.organize == m, m.label()).clicked() {
+                    draft.organize = m;
                 }
-            });
+            }
+        });
     });
     ui.checkbox(&mut draft.fewest_spot_drills, "Use Fewest Spot Drills Possible");
 }
@@ -360,11 +342,7 @@ pub fn paint_overlays(app: &SolveApp, ui: &egui::Ui) {
         if g.action == HoleAction::Ignore {
             continue;
         }
-        let c = if sel == Some(gi) {
-            egui::Color32::from_rgb(80, 180, 255)
-        } else {
-            color
-        };
+        let c = if sel == Some(gi) { egui::Color32::from_rgb(80, 180, 255) } else { color };
         for pt in &g.centres {
             if let Some(s) = proj.to_screen(solidcraft_engine::geom::Vec3::new(pt[0], pt[1], pt[2])) {
                 painter.circle_stroke(s, 5.0, egui::Stroke::new(1.5, c));

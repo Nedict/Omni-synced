@@ -242,36 +242,39 @@ impl CamHandle {
     /// Public adapter for external [`CamBackend`] implementations.
     pub fn adapter_set_progress(&self, phase: CamPhase, done: u32) {
         if let Ok(mut g) = self.0.lock()
-            && !g.status.progress.phase.terminal() {
-                g.status.progress.phase = phase;
-                g.status.progress.done = done;
-            }
+            && !g.status.progress.phase.terminal()
+        {
+            g.status.progress.phase = phase;
+            g.status.progress.done = done;
+        }
     }
 
     /// Mark the job completed with the given result.
     pub(crate) fn complete(&self, result: CamJobResult) {
         if let Ok(mut g) = self.0.lock()
-            && !g.status.progress.phase.terminal() {
-                let info = CamResultInfo {
-                    job: result.job,
-                    segments: result.segments.len(),
-                    has_post_output: result.post_output.is_some(),
-                    provenance: result.provenance.clone(),
-                };
-                g.status.progress.phase = CamPhase::Completed;
-                g.status.progress.done = g.status.progress.total;
-                g.status.result = Some(info);
-                g.result = Some(Arc::new(result));
-            }
+            && !g.status.progress.phase.terminal()
+        {
+            let info = CamResultInfo {
+                job: result.job,
+                segments: result.segments.len(),
+                has_post_output: result.post_output.is_some(),
+                provenance: result.provenance.clone(),
+            };
+            g.status.progress.phase = CamPhase::Completed;
+            g.status.progress.done = g.status.progress.total;
+            g.status.result = Some(info);
+            g.result = Some(Arc::new(result));
+        }
     }
 
     /// Mark the job failed.
     pub(crate) fn fail(&self, error: CamJobError) {
         if let Ok(mut g) = self.0.lock()
-            && !g.status.progress.phase.terminal() {
-                g.status.progress.phase = CamPhase::Failed;
-                g.status.error = Some(error);
-            }
+            && !g.status.progress.phase.terminal()
+        {
+            g.status.progress.phase = CamPhase::Failed;
+            g.status.error = Some(error);
+        }
     }
 }
 

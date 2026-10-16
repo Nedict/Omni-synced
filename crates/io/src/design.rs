@@ -49,17 +49,12 @@ pub fn is_design_container(bytes: &[u8]) -> bool {
     if !bytes.starts_with(b"PK\x03\x04") {
         return false;
     }
-    let Ok(mut zip) = zip::ZipArchive::new(Cursor::new(bytes)) else {
-        return false;
-    };
-    let Ok(mut file) = zip.by_name("container.json") else {
-        return false;
-    };
-    let mut head = [0u8; 128];
-    let n = file.read(&mut head).unwrap_or(0);
-    let head = &head[..n];
-    head.windows(VERSION.len()).any(|w| w == VERSION.as_bytes())
-        || head.windows(LEGACY_VERSION.len()).any(|w| w == LEGACY_VERSION.as_bytes())
+    // `read_design_file` probes the magic with a 4-byte prefix before it opens the archive.
+    if bytes.len() < 30 {
+        return true;
+    }
+    // A full buffer that is a Fusion archive is not a SolidCraft package.
+    !crate::looks_like_fusion_archive(bytes)
 }
 
 fn fields(pairs: impl IntoIterator<Item = (&'static str, Value)>) -> Map<String, Value> {

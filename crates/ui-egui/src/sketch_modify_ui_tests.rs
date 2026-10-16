@@ -318,13 +318,7 @@ fn point_to_point_move_uses_the_vector_between_the_two_picks() {
     inputs[0].items = curve_ids(&h).iter().map(|id| Sel::SketchCurve { id: id.clone() }).collect();
     inputs[1].items = vec![Sel::SketchPoint { id: at_origin.id.clone() }];
     inputs[2].items = vec![Sel::SketchPoint { id: far.id.clone() }];
-    let k = Mod::Move {
-        mode: crate::sketch_move_ui::POINT_TO_POINT,
-        x: "0 mm".into(),
-        y: "0 mm".into(),
-        angle: "0 deg".into(),
-        copy: false,
-    };
+    let k = Mod::Move { mode: crate::sketch_move_ui::POINT_TO_POINT, x: "0 mm".into(), y: "0 mm".into(), angle: "0 deg".into(), copy: false };
     let out = commands(&h.app, &k, &inputs, &serde_json::Map::new()).unwrap();
     assert_eq!(out[0].1["translate"], json!([20.0, 10.0]));
     assert!(out[0].1.get("center").is_none());

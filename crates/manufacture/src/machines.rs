@@ -7,8 +7,8 @@
 //! stacks, and anything that is not a documented open protocol or file/serial path.
 
 use crate::{
-    MachineAxes, MachineIntegration, MachineIntegrationKind, MachineProfile, ProbeCapability,
-    ProbeMacroStyle, SpindleTaper, ToolChanger, ToolChangerKind,
+    MachineAxes, MachineIntegration, MachineIntegrationKind, MachineProfile, ProbeCapability, ProbeMacroStyle, SpindleTaper, ToolChanger,
+    ToolChangerKind,
 };
 
 fn manual_er(name: &str, oem: &str, model: &str, rpm: u32, feed: f64, rapid: f64) -> MachineProfile {
@@ -18,11 +18,7 @@ fn manual_er(name: &str, oem: &str, model: &str, rpm: u32, feed: f64, rapid: f64
         model: model.into(),
         axes: MachineAxes::ThreeAxis,
         spindle_taper: SpindleTaper::ErCollet,
-        tool_changer: ToolChanger {
-            kind: ToolChangerKind::Manual,
-            pockets: 1,
-            ..ToolChanger::default()
-        },
+        tool_changer: ToolChanger { kind: ToolChangerKind::Manual, pockets: 1, ..ToolChanger::default() },
         integration: MachineIntegration::default(),
         probe: ProbeCapability::default(),
         max_spindle_rpm: rpm,
@@ -53,7 +49,9 @@ pub fn preset_machines() -> Vec<(&'static str, MachineProfile)> {
         m.integration = MachineIntegration {
             kind: MachineIntegrationKind::FileGcode,
             default_port: 0,
-            notes: "Typical 300×400 China bed on Mach3/Mach4. Post Mach3 NC file; load on the PC control. Laser head → LightBurn chinacnc-3040 profile.".into(),
+            notes:
+                "Typical 300×400 China bed on Mach3/Mach4. Post Mach3 NC file; load on the PC control. Laser head → LightBurn chinacnc-3040 profile."
+                    .into(),
             source: "china-cncrouter / ChinaCNCzone bed sizes; SolidCraft Mach3 post".into(),
         };
         out.push(("ChinaCNC 3040", m));
@@ -288,7 +286,8 @@ pub fn preset_machines() -> Vec<(&'static str, MachineProfile)> {
             integration: MachineIntegration {
                 kind: MachineIntegrationKind::Focas,
                 default_port: 8193,
-                notes: "Fanuc FOCAS Ethernet. Covers most DN Solutions / Doosan Fanuc-control mills — treat DN as this class, not a separate SDK.".into(),
+                notes: "Fanuc FOCAS Ethernet. Covers most DN Solutions / Doosan Fanuc-control mills — treat DN as this class, not a separate SDK."
+                    .into(),
                 source: "FANUC FOCAS / FASMTC MTConnect Server (FOCAS → MTConnect)".into(),
             },
             probe: ProbeCapability {

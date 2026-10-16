@@ -29,11 +29,7 @@ pub fn open(app: &mut SolveApp, setup_name: &str, op_index: usize) {
     };
     clear_other_dialogs(app);
     app.manufacture_workspace.selected_op = Some(op_index);
-    app.manufacture_workspace.additive_dialog = Some(AdditiveDialogState {
-        setup_name: setup_name.to_string(),
-        op_index,
-        draft: op,
-    });
+    app.manufacture_workspace.additive_dialog = Some(AdditiveDialogState { setup_name: setup_name.to_string(), op_index, draft: op });
     app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Operations;
     app.manufacture_workspace.cam_mode = crate::manufacture_workspace::CamMode::Additive;
 }
@@ -71,7 +67,7 @@ fn show_from_gcode(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut open = true;
     let mut commit = false;
     let mut cancel = false;
-    egui::Window::new("New Setup from G-Code")
+    crate::frame::window(ui.ctx(), "New Setup from G-Code", crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_additive_from_gcode"))
         .open(&mut open)
         .collapsible(false)
@@ -89,12 +85,7 @@ fn show_from_gcode(app: &mut SolveApp, ui: &mut egui::Ui) {
             });
             ui.label(RichText::new("G-code").strong());
             egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-                ui.add(
-                    egui::TextEdit::multiline(&mut st.gcode)
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(12)
-                        .code_editor(),
-                );
+                ui.add(egui::TextEdit::multiline(&mut st.gcode).desired_width(f32::INFINITY).desired_rows(12).code_editor());
             });
             ui.separator();
             ui.horizontal(|ui| {
@@ -146,7 +137,7 @@ fn show_op_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let mut commit = false;
     let mut cancel = false;
     let mut draft = state.draft.clone();
-    egui::Window::new(draft.kind.label())
+    crate::frame::window(ui.ctx(), draft.kind.label(), crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_additive_dialog"))
         .open(&mut open)
         .collapsible(false)
@@ -204,11 +195,10 @@ fn show_op_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
         app.manufacture_workspace.additive_dialog = None;
         return false;
     }
-    if commit
-        && save(app, &state.setup_name, state.op_index, draft.clone()) {
-            app.manufacture_workspace.additive_dialog = None;
-            return false;
-        }
+    if commit && save(app, &state.setup_name, state.op_index, draft.clone()) {
+        app.manufacture_workspace.additive_dialog = None;
+        return false;
+    }
     if let Some(d) = &mut app.manufacture_workspace.additive_dialog {
         d.draft = draft;
     }
@@ -216,18 +206,15 @@ fn show_op_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
 }
 
 pub fn run_simulate(app: &mut SolveApp, setup_name: &str) {
-    let params = if setup_name.is_empty() {
-        json!({})
-    } else {
-        json!({"setup": setup_name})
-    };
+    let params = if setup_name.is_empty() { json!({}) } else { json!({"setup": setup_name}) };
     match app.run("manufacture.additive.simulate", params) {
         Ok(v) => {
             if let Some(segs) = v.get("segments").cloned()
-                && let Ok(segments) = serde_json::from_value::<Vec<solidcraft_manufacture::PathSegment>>(segs) {
-                    app.manufacture_workspace.toolpath_segments = segments;
-                    app.manufacture_workspace.simulate_step = 0;
-                }
+                && let Ok(segments) = serde_json::from_value::<Vec<solidcraft_manufacture::PathSegment>>(segs)
+            {
+                app.manufacture_workspace.toolpath_segments = segments;
+                app.manufacture_workspace.simulate_step = 0;
+            }
             app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Simulate;
             app.manufacture_workspace.cam_mode = crate::manufacture_workspace::CamMode::Additive;
             let layers = v.get("layer_count").and_then(|n| n.as_u64()).unwrap_or(0);

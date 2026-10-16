@@ -1,5 +1,5 @@
 use super::{ExchangeCapabilities, ExchangeFileType, ExchangeImport, ExchangeProviderId};
-use crate::{Result, MAX_STEP_BYTES, step_import_feature};
+use crate::{MAX_STEP_BYTES, Result, step_import_feature};
 
 pub const FILE_TYPE: ExchangeFileType = ExchangeFileType {
     id: ExchangeProviderId::StepIges,

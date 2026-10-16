@@ -76,6 +76,12 @@ pub struct JobStore {
     inner: Mutex<HashMap<Uuid, Job>>,
 }
 
+impl Default for JobStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl JobStore {
     pub fn new() -> Self {
         Self { inner: Mutex::new(HashMap::new()) }
@@ -94,25 +100,25 @@ impl JobStore {
     /// Transition an existing job to `Running`.
     pub fn set_running(&self, id: Uuid) {
         let mut map = lock(&self.inner);
-        if let Some(job) = map.get_mut(&id) {
-            if matches!(job.phase, JobPhase::Pending) {
-                job.phase = JobPhase::Running;
-            }
+        if let Some(job) = map.get_mut(&id)
+            && matches!(job.phase, JobPhase::Pending)
+        {
+            job.phase = JobPhase::Running;
         }
     }
 
     /// Finalise a job with the result of the subprocess.
     pub fn finish(&self, id: Uuid, outcome: Result<JobResult, String>) {
         let mut map = lock(&self.inner);
-        if let Some(job) = map.get_mut(&id) {
-            // Only transition from Running (guard against a race with cancel).
-            if matches!(job.phase, JobPhase::Running) {
-                job.phase = match outcome {
-                    Ok(r) => JobPhase::Done { result: r },
-                    Err(msg) => JobPhase::Failed { message: msg },
-                };
-                job.cancel_tx = None;
-            }
+        // Only transition from Running (guard against a race with cancel).
+        if let Some(job) = map.get_mut(&id)
+            && matches!(job.phase, JobPhase::Running)
+        {
+            job.phase = match outcome {
+                Ok(r) => JobPhase::Done { result: r },
+                Err(msg) => JobPhase::Failed { message: msg },
+            };
+            job.cancel_tx = None;
         }
     }
 

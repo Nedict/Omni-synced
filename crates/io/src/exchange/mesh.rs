@@ -1,5 +1,5 @@
 use super::{ExchangeCapabilities, ExchangeFileType, ExchangeImport, ExchangeProviderId};
-use crate::{Result, MAX_3MF_BYTES, mesh_import_feature};
+use crate::{MAX_3MF_BYTES, Result, mesh_import_feature};
 
 pub const FILE_TYPE: ExchangeFileType = ExchangeFileType {
     id: ExchangeProviderId::MeshStl3mf,

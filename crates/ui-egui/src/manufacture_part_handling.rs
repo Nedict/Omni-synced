@@ -3,9 +3,7 @@
 
 use egui::RichText;
 use serde_json::json;
-use solidcraft_manufacture::{
-    BarPullMode, ChuckOpenMode, Operation, PartHandlingKind, PartHandlingOperation, Tool,
-};
+use solidcraft_manufacture::{BarPullMode, ChuckOpenMode, Operation, PartHandlingKind, PartHandlingOperation, Tool};
 
 use crate::SolveApp;
 
@@ -40,12 +38,8 @@ pub fn open(app: &mut SolveApp, setup_name: &str, op_index: usize) {
     app.manufacture_workspace.hole_rec_dialog = None;
     app.manufacture_workspace.multiaxis_dialog = None;
     app.manufacture_workspace.turning_dialog = None;
-    app.manufacture_workspace.part_handling_dialog = Some(PartHandlingDialogState {
-        setup_name: setup_name.to_string(),
-        op_index,
-        draft: op,
-        tab: PartHandlingTab::Tool,
-    });
+    app.manufacture_workspace.part_handling_dialog =
+        Some(PartHandlingDialogState { setup_name: setup_name.to_string(), op_index, draft: op, tab: PartHandlingTab::Tool });
     app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Operations;
     app.manufacture_workspace.cam_mode = crate::manufacture_workspace::CamMode::Turning;
 }
@@ -54,14 +48,7 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let Some(state) = app.manufacture_workspace.part_handling_dialog.clone() else {
         return false;
     };
-    let tools: Vec<Tool> = app
-        .session
-        .doc
-        .manufacture
-        .setups
-        .get(&state.setup_name)
-        .map(|s| s.tools.clone())
-        .unwrap_or_default();
+    let tools: Vec<Tool> = app.session.doc.manufacture.setups.get(&state.setup_name).map(|s| s.tools.clone()).unwrap_or_default();
 
     let mut open = true;
     let mut commit = false;
@@ -70,7 +57,7 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let mut tab = state.tab;
     let title = draft.kind.label().to_string();
 
-    egui::Window::new(title)
+    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_part_handling_dialog"))
         .open(&mut open)
         .collapsible(false)
@@ -78,11 +65,7 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
         .default_width(380.0)
         .show(ui.ctx(), |ui| {
             ui.horizontal(|ui| {
-                for (v, l) in [
-                    (PartHandlingTab::Tool, "Tool"),
-                    (PartHandlingTab::Geometry, "Geometry"),
-                    (PartHandlingTab::Passes, "Passes"),
-                ] {
+                for (v, l) in [(PartHandlingTab::Tool, "Tool"), (PartHandlingTab::Geometry, "Geometry"), (PartHandlingTab::Passes, "Passes")] {
                     if ui.selectable_label(tab == v, l).clicked() {
                         tab = v;
                     }
@@ -111,11 +94,10 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
         app.manufacture_workspace.part_handling_dialog = None;
         return false;
     }
-    if commit
-        && save(app, &state.setup_name, state.op_index, draft.clone()) {
-            app.manufacture_workspace.part_handling_dialog = None;
-            return false;
-        }
+    if commit && save(app, &state.setup_name, state.op_index, draft.clone()) {
+        app.manufacture_workspace.part_handling_dialog = None;
+        return false;
+    }
     if let Some(d) = &mut app.manufacture_workspace.part_handling_dialog {
         d.draft = draft;
         d.tab = tab;
@@ -136,15 +118,13 @@ fn tool_tab(ui: &mut egui::Ui, draft: &mut PartHandlingOperation, tools: &[Tool]
                     .find(|t| t.number == draft.tool_number)
                     .map(|t| t.display_name())
                     .unwrap_or_else(|| format!("T{}", draft.tool_number));
-                egui::ComboBox::from_id_salt("ph_tool")
-                    .selected_text(label)
-                    .show_ui(ui, |ui| {
-                        for t in tools {
-                            if ui.selectable_label(draft.tool_number == t.number, t.display_name()).clicked() {
-                                draft.tool_number = t.number;
-                            }
+                egui::ComboBox::from_id_salt("ph_tool").selected_text(label).show_ui(ui, |ui| {
+                    for t in tools {
+                        if ui.selectable_label(draft.tool_number == t.number, t.display_name()).clicked() {
+                            draft.tool_number = t.number;
                         }
-                    });
+                    }
+                });
             });
             ui.horizontal(|ui| {
                 ui.label("Comment");
@@ -158,12 +138,7 @@ fn tool_tab(ui: &mut egui::Ui, draft: &mut PartHandlingOperation, tools: &[Tool]
             }
             ui.horizontal(|ui| {
                 ui.label("Spindle speed");
-                ui.add(
-                    egui::DragValue::new(&mut draft.spindle_rpm)
-                        .speed(10)
-                        .suffix(" rpm")
-                        .range(0..=120_000),
-                );
+                ui.add(egui::DragValue::new(&mut draft.spindle_rpm).speed(10).suffix(" rpm").range(0..=120_000));
             });
             ui.label(RichText::new("0 rpm = leave spindle unchanged").small().weak());
             drag(ui, "Spindle orientation", &mut draft.spindle_orientation_deg, 0.1, -360.0..=360.0, " °");
@@ -190,37 +165,27 @@ fn geometry_tab(ui: &mut egui::Ui, draft: &mut PartHandlingOperation) {
             ui.label(RichText::new("0 mm typically returns the subspindle home (post-dependent).").small().weak());
             ui.separator();
             ui.label(RichText::new("Open Spindle Chucks").strong());
-            egui::ComboBox::from_id_salt("ph_chuck_open")
-                .selected_text(draft.chuck_open.label())
-                .show_ui(ui, |ui| {
-                    for m in ChuckOpenMode::ALL {
-                        if ui.selectable_label(draft.chuck_open == *m, m.label()).clicked() {
-                            draft.chuck_open = *m;
-                        }
+            egui::ComboBox::from_id_salt("ph_chuck_open").selected_text(draft.chuck_open.label()).show_ui(ui, |ui| {
+                for m in ChuckOpenMode::ALL {
+                    if ui.selectable_label(draft.chuck_open == *m, m.label()).clicked() {
+                        draft.chuck_open = *m;
                     }
-                });
+                }
+            });
         }
         PartHandlingKind::BarPull => {
             ui.label(RichText::new("Pull").strong());
             drag(ui, "Pull Distance", &mut draft.pull_distance_mm, 0.1, 0.001..=10_000.0, " mm");
             ui.separator();
             ui.label(RichText::new("Pull Mode").strong());
-            egui::ComboBox::from_id_salt("ph_pull_mode")
-                .selected_text(draft.pull_mode.label())
-                .show_ui(ui, |ui| {
-                    for m in [BarPullMode::CompensateToolpaths, BarPullMode::NewWcsOffset] {
-                        if ui.selectable_label(draft.pull_mode == m, m.label()).clicked() {
-                            draft.pull_mode = m;
-                        }
+            egui::ComboBox::from_id_salt("ph_pull_mode").selected_text(draft.pull_mode.label()).show_ui(ui, |ui| {
+                for m in [BarPullMode::CompensateToolpaths, BarPullMode::NewWcsOffset] {
+                    if ui.selectable_label(draft.pull_mode == m, m.label()).clicked() {
+                        draft.pull_mode = m;
                     }
-                });
-            ui.label(
-                RichText::new(
-                    "Compensate adds pull distance to later Z; New WCS keeps Z relative to a shifted offset.",
-                )
-                .small()
-                .weak(),
-            );
+                }
+            });
+            ui.label(RichText::new("Compensate adds pull distance to later Z; New WCS keeps Z relative to a shifted offset.").small().weak());
         }
         PartHandlingKind::ToolCall => {
             ui.label("Tool Call has no geometry — select the tool on the Tool tab.");

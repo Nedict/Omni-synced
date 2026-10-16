@@ -22,18 +22,15 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 use solidcraft_manufacture::job::CamJobId;
+use solidcraft_manufacture::library::{self, CamTemplate, CatalogEntry, LibraryKind, LibraryLocation, LibraryRemote, sample_templates};
 use solidcraft_manufacture::simulate::{Fixture, SimOptions, simulate_toolpaths};
 use solidcraft_manufacture::{
-    AdditiveKind, AdditiveOperation, AdaptiveOperation, BoreOperation, ChamferOperation, CircularOperation,
-    DrillOperation, EngraveOperation, FaceOperation, FabricationProfileOperation, HoleRecognitionOperation,
-    InspectionKind, InspectionOperation, ManualInspectionKind, ManualInspectionOperation, ManualNc,
-    ManufactureSettings, ManufacturingModel, MfgSetup, MultiAxisOperation, MultiAxisStrategy, NcProgram,
-    NestSettings, OpFolder, OpPattern, Operation, PartHandlingKind, PartHandlingOperation, PocketOperation,
-    ProfileOperation, SetupOperationType, SlotOperation, ThreadOperation, ThreedOperation, ThreedStrategy,
-    Tool, ToolKind, ToolpathModification, TraceOperation, TurningOperation, TurningStrategy,
-};
-use solidcraft_manufacture::library::{
-    self, CamTemplate, CatalogEntry, LibraryKind, LibraryLocation, LibraryRemote, sample_templates,
+    AdaptiveOperation, AdditiveKind, AdditiveOperation, BoreOperation, ChamferOperation, CircularOperation, DrillOperation, EngraveOperation,
+    FabricationProfileOperation, FaceOperation, HoleRecognitionOperation, InspectionKind, InspectionOperation, ManualInspectionKind,
+    ManualInspectionOperation, ManualNc, ManufactureSettings, ManufacturingModel, MfgSetup, MultiAxisOperation, MultiAxisStrategy, NcProgram,
+    NestSettings, OpFolder, OpPattern, Operation, PartHandlingKind, PartHandlingOperation, PocketOperation, ProfileOperation, SetupOperationType,
+    SlotOperation, ThreadOperation, ThreedOperation, ThreedStrategy, Tool, ToolKind, ToolpathModification, TraceOperation, TurningOperation,
+    TurningStrategy,
 };
 
 use super::CommandSpec;
@@ -148,7 +145,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("MANUFACTURE", "SETUP")
         .icon("offset")
         .params("UI opens Manual NC insert (comment / stop / custom)."),
-    CommandSpec::new("manufacture.nest.open", "Nest", nest_open_cmd)
+    CommandSpec::new("manufacture.nest", "Nest", nest_open_cmd)
         .noundo()
         .doc_only()
         .at("MANUFACTURE", "NEST")
@@ -601,7 +598,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("MANUFACTURE", "MANAGE")
         .icon("cylinder")
         .params("UI: Solid Holder stub (holder from solid body)."),
-    CommandSpec::new("manufacture.tools.open", "Tool Library", tools_open_cmd)
+    CommandSpec::new("manufacture.tools", "Tool Library", tools_open_cmd)
         .noundo()
         .doc_only()
         .at("MANUFACTURE", "MANAGE")
@@ -613,7 +610,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("MANUFACTURE", "MANAGE")
         .icon("cylinder")
         .params("UI: Machine Library stub."),
-    CommandSpec::new("manufacture.machines.open", "Machine", machines_open_cmd)
+    CommandSpec::new("manufacture.machines", "Machine", machines_open_cmd)
         .noundo()
         .doc_only()
         .icon("cylinder")
@@ -800,10 +797,7 @@ fn backends(s: &mut Session, params: &Value) -> Result<Value> {
             })
         })
         .collect();
-    let probe_cycles: Vec<_> = solidcraft_manufacture::probe::ProbeCycle::all()
-        .iter()
-        .map(|c| json!({"id": c.as_str()}))
-        .collect();
+    let probe_cycles: Vec<_> = solidcraft_manufacture::probe::ProbeCycle::all().iter().map(|c| json!({"id": c.as_str()})).collect();
     Ok(json!({
         "schema_version": 1,
         "backends": backends,
@@ -865,11 +859,7 @@ fn parse_library_kind(raw: &str) -> Option<LibraryKind> {
 }
 
 fn collect_catalog(s: &Session, filter: Option<LibraryKind>) -> Vec<CatalogEntry> {
-    let mut entries = library::document_catalog(
-        &s.doc.manufacture.posts,
-        &s.doc.manufacture.machines,
-        &s.doc.manufacture.templates,
-    );
+    let mut entries = library::document_catalog(&s.doc.manufacture.posts, &s.doc.manufacture.machines, &s.doc.manufacture.templates);
     entries.extend(library::builtin_catalog());
     for remote in &s.doc.manufacture.library_remotes {
         if !remote.enabled {
@@ -991,10 +981,7 @@ fn library_sync(s: &mut Session, params: &Value) -> Result<Value> {
     }
     let p: P = serde_json::from_value(params.clone()).map_err(|e| bad(cmd, e.to_string()))?;
     let mut mfg = s.doc.manufacture.clone();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let mut results = Vec::new();
     for remote in &mut mfg.library_remotes {
         if let Some(id) = &p.id
@@ -1050,11 +1037,7 @@ fn library_install(s: &mut Session, params: &Value) -> Result<Value> {
     }
     let p: P = serde_json::from_value(params.clone()).map_err(|e| bad(cmd, e.to_string()))?;
     let entries = collect_catalog(s, None);
-    let entry = entries
-        .iter()
-        .find(|e| e.id == p.entry_id)
-        .ok_or_else(|| bad(cmd, format!("unknown entry `{}`", p.entry_id)))?
-        .clone();
+    let entry = entries.iter().find(|e| e.id == p.entry_id).ok_or_else(|| bad(cmd, format!("unknown entry `{}`", p.entry_id)))?.clone();
     let mut mfg = s.doc.manufacture.clone();
     match entry.location {
         LibraryLocation::Document => {
@@ -1103,8 +1086,7 @@ fn library_install(s: &mut Session, params: &Value) -> Result<Value> {
                     mfg.machines.insert(entry.name.clone(), profile);
                 }
                 LibraryKind::Template => {
-                    let tmpl: CamTemplate =
-                        library::load_template_file(&repo, &entry.path).map_err(|e| bad(cmd, e.to_string()))?;
+                    let tmpl: CamTemplate = library::load_template_file(&repo, &entry.path).map_err(|e| bad(cmd, e.to_string()))?;
                     mfg.templates.insert(tmpl.name.clone(), tmpl);
                 }
             }
@@ -1116,11 +1098,7 @@ fn library_install(s: &mut Session, params: &Value) -> Result<Value> {
 }
 
 fn library_slug(s: &str) -> String {
-    s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_string()
+    s.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect::<String>().trim_matches('-').to_string()
 }
 
 #[derive(Deserialize)]
@@ -1266,10 +1244,7 @@ fn machine_use(s: &mut Session, params: &Value) -> Result<Value> {
         "mtconnect" => {
             let host = if p.fixture {
                 let endpoint = p.endpoint.unwrap_or_else(|| "http://127.0.0.1:8082/VF-2".into());
-                MachineHost::new(MtConnectBackend::with_fixed_xml(
-                    endpoint,
-                    solidcraft_manufacture::mtconnect::sample_haas_current_xml(),
-                ))
+                MachineHost::new(MtConnectBackend::with_fixed_xml(endpoint, solidcraft_manufacture::mtconnect::sample_haas_current_xml()))
             } else {
                 let endpoint = p
                     .endpoint
@@ -1281,10 +1256,7 @@ fn machine_use(s: &mut Session, params: &Value) -> Result<Value> {
             s.set_machine_host(Some(host));
             Ok(json!({"plugin": "mtconnect", "active": desc}))
         }
-        "focas" | "thinc" => Err(bad(
-            cmd,
-            format!("plugin `{key}` is planned (native companion) — use fake or mtconnect for now"),
-        )),
+        "focas" | "thinc" => Err(bad(cmd, format!("plugin `{key}` is planned (native companion) — use fake or mtconnect for now"))),
         other => Err(bad(cmd, format!("unknown machine plugin `{other}`"))),
     }
 }
@@ -1294,9 +1266,7 @@ fn machine_status(s: &mut Session, params: &Value) -> Result<Value> {
     if !params.as_object().is_some_and(|p| p.is_empty()) {
         return Err(bad(cmd, "expected an empty parameter object"));
     }
-    let host = s
-        .machine_host()
-        .ok_or_else(|| bad(cmd, "no machine plugin installed; run manufacture.machine.use first"))?;
+    let host = s.machine_host().ok_or_else(|| bad(cmd, "no machine plugin installed; run manufacture.machine.use first"))?;
     host.pump();
     let status = host.status().map_err(|e| bad(cmd, e.to_string()))?;
     Ok(json!({
@@ -1312,13 +1282,7 @@ fn resolve_setup_name(s: &Session, params: &Value, cmd: &str) -> Result<String> 
         ManufactureSettings::validate_name(name).map_err(|e| bad(cmd, e.to_string()))?;
         return Ok(name.to_string());
     }
-    s.doc
-        .manufacture
-        .setups
-        .keys()
-        .next()
-        .cloned()
-        .ok_or_else(|| bad(cmd, "no manufacture setup; create one with manufacture.setup.new"))
+    s.doc.manufacture.setups.keys().next().cloned().ok_or_else(|| bad(cmd, "no manufacture setup; create one with manufacture.setup.new"))
 }
 
 fn ensure_default_tool(setup: &mut MfgSetup) {
@@ -1498,10 +1462,7 @@ fn containers_add(s: &mut Session, params: &Value) -> Result<Value> {
         mfg.toolpath_modifications.push(item);
         json!({"kind": "toolpath_modification", "count": mfg.toolpath_modifications.len()})
     } else {
-        return Err(bad(
-            cmd,
-            "unknown field; expected nc_program|folder|pattern|manual_nc|manufacturing_model|toolpath_modification",
-        ));
+        return Err(bad(cmd, "unknown field; expected nc_program|folder|pattern|manual_nc|manufacturing_model|toolpath_modification"));
     };
     mfg.validate().map_err(|e| bad(cmd, e.to_string()))?;
     s.doc_mut().manufacture = mfg;
@@ -1545,12 +1506,7 @@ fn op_drill(s: &mut Session, params: &Value) -> Result<Value> {
     append_operation(s, params, "manufacture.op.drill", Operation::Drill(DrillOperation::default()))
 }
 fn op_hole_recognition(s: &mut Session, params: &Value) -> Result<Value> {
-    append_operation(
-        s,
-        params,
-        "manufacture.op.hole_recognition",
-        Operation::HoleRecognition(HoleRecognitionOperation::default()),
-    )
+    append_operation(s, params, "manufacture.op.hole_recognition", Operation::HoleRecognition(HoleRecognitionOperation::default()))
 }
 
 fn append_multiaxis(s: &mut Session, params: &Value, cmd: &str, strategy: MultiAxisStrategy) -> Result<Value> {
@@ -1758,12 +1714,7 @@ fn setup_from_gcode(s: &mut Session, params: &Value) -> Result<Value> {
             let stem = p
                 .source_path
                 .as_deref()
-                .and_then(|path| {
-                    std::path::Path::new(path)
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .map(|s| s.to_string())
-                })
+                .and_then(|path| std::path::Path::new(path).file_stem().and_then(|s| s.to_str()).map(|s| s.to_string()))
                 .filter(|s| !s.is_empty());
             stem.unwrap_or_else(|| format!("Additive{}", s.doc.manufacture.setups.len() + 1))
         }
@@ -1772,14 +1723,9 @@ fn setup_from_gcode(s: &mut Session, params: &Value) -> Result<Value> {
     if mfg.setups.contains_key(&name) {
         return Err(bad(cmd, format!("setup `{name}` already exists")));
     }
-    let mut setup = MfgSetup {
-        operation_type: SetupOperationType::Additive,
-        ..MfgSetup::default()
-    };
+    let mut setup = MfgSetup { operation_type: SetupOperationType::Additive, ..MfgSetup::default() };
     let source = p.source_path.unwrap_or_default();
-    setup
-        .operations
-        .push(Operation::Additive(AdditiveOperation::from_gcode(&source, &p.gcode)));
+    setup.operations.push(Operation::Additive(AdditiveOperation::from_gcode(&source, &p.gcode)));
     mfg.setups.insert(name.clone(), setup);
     mfg.validate().map_err(|e| bad(cmd, e.to_string()))?;
     s.doc_mut().manufacture = mfg;
@@ -1792,29 +1738,19 @@ fn setup_from_gcode(s: &mut Session, params: &Value) -> Result<Value> {
 
 fn nest_open_cmd(_s: &mut Session, params: &Value) -> Result<Value> {
     if !params.as_object().is_some_and(|p| p.is_empty()) {
-        return Err(bad("manufacture.nest.open", "expected an empty parameter object"));
+        return Err(bad("manufacture.nest", "expected an empty parameter object"));
     }
     Ok(json!({"dialog": "nest", "defaults": NestSettings::default()}))
 }
 
 fn op_fab_2d_profile(s: &mut Session, params: &Value) -> Result<Value> {
-    append_operation(
-        s,
-        params,
-        "manufacture.op.fab_2d_profile",
-        Operation::FabricationProfile(FabricationProfileOperation::default()),
-    )
+    append_operation(s, params, "manufacture.op.fab_2d_profile", Operation::FabricationProfile(FabricationProfileOperation::default()))
 }
 
 fn additive_simulate_cmd(s: &mut Session, params: &Value) -> Result<Value> {
     let cmd = "manufacture.additive.simulate";
     let name = resolve_setup_name(s, params, cmd)?;
-    let setup = s
-        .doc
-        .manufacture
-        .setups
-        .get(&name)
-        .ok_or_else(|| bad(cmd, format!("setup `{name}` not found")))?;
+    let setup = s.doc.manufacture.setups.get(&name).ok_or_else(|| bad(cmd, format!("setup `{name}` not found")))?;
     let additive = setup.operations.iter().find_map(|op| match op {
         Operation::Additive(o) => Some(o),
         _ => None,
@@ -1876,13 +1812,13 @@ fn machining_time_cmd(_s: &mut Session, params: &Value) -> Result<Value> {
 }
 fn tools_open_cmd(_s: &mut Session, params: &Value) -> Result<Value> {
     if !params.as_object().is_some_and(|p| p.is_empty()) {
-        return Err(bad("manufacture.tools.open", "expected an empty parameter object"));
+        return Err(bad("manufacture.tools", "expected an empty parameter object"));
     }
     Ok(json!({"panel": "tool_library"}))
 }
 fn machines_open_cmd(_s: &mut Session, params: &Value) -> Result<Value> {
     if !params.as_object().is_some_and(|p| p.is_empty()) {
-        return Err(bad("manufacture.machines.open", "expected an empty parameter object"));
+        return Err(bad("manufacture.machines", "expected an empty parameter object"));
     }
     Ok(json!({"panel": "setup"}))
 }
@@ -1925,18 +1861,11 @@ struct SimulateParams {
 fn simulate(s: &mut Session, params: &Value) -> Result<Value> {
     const CMD: &str = "manufacture.simulate";
 
-    let p: SimulateParams =
-        serde_json::from_value(params.clone()).map_err(|e| bad(CMD, e.to_string()))?;
+    let p: SimulateParams = serde_json::from_value(params.clone()).map_err(|e| bad(CMD, e.to_string()))?;
 
     ManufactureSettings::validate_name(&p.setup).map_err(|e| bad(CMD, e.to_string()))?;
 
-    let setup = s
-        .doc
-        .manufacture
-        .setups
-        .get(&p.setup)
-        .ok_or_else(|| bad(CMD, format!("no manufacture setup named `{}`", p.setup)))?
-        .clone();
+    let setup = s.doc.manufacture.setups.get(&p.setup).ok_or_else(|| bad(CMD, format!("no manufacture setup named `{}`", p.setup)))?.clone();
 
     if setup.tools.is_empty() {
         return Err(bad(CMD, "setup has no tools; cannot simulate toolpaths"));
@@ -1944,17 +1873,10 @@ fn simulate(s: &mut Session, params: &Value) -> Result<Value> {
 
     // Resolve tool: by number if specified, otherwise the first tool.
     let tool = match p.tool_number {
-        Some(n) => setup
-            .tools
-            .iter()
-            .find(|t| t.number == n)
-            .ok_or_else(|| bad(CMD, format!("tool number {n} not found in setup `{}`", p.setup)))?
-            .clone(),
-        None => setup
-            .tools
-            .first()
-            .ok_or_else(|| bad(CMD, "setup has no tools"))?
-            .clone(),
+        Some(n) => {
+            setup.tools.iter().find(|t| t.number == n).ok_or_else(|| bad(CMD, format!("tool number {n} not found in setup `{}`", p.setup)))?.clone()
+        }
+        None => setup.tools.first().ok_or_else(|| bad(CMD, "setup has no tools"))?.clone(),
     };
 
     // Retrieve completed job result (segments).
@@ -2042,7 +1964,7 @@ mod tests {
     fn ensure_post_presets_is_idempotent() {
         let mut s = Session::default();
         let r = s.execute("manufacture.posts.ensure_presets", &json!({})).unwrap();
-        assert_eq!(r["added"].as_array().unwrap().len(), 5);
+        assert_eq!(r["added"].as_array().unwrap().len(), solidcraft_manufacture::post::preset_posts().len());
         assert!(s.doc.manufacture.posts.contains_key("GRBL"));
         assert!(s.doc.manufacture.posts.contains_key("Haas"));
         let undo = s.undo.len();
@@ -2055,7 +1977,7 @@ mod tests {
     fn ensure_machine_presets_is_idempotent_and_lists_atc() {
         let mut s = Session::default();
         let r = s.execute("manufacture.machines.ensure_presets", &json!({})).unwrap();
-        assert_eq!(r["added"].as_array().unwrap().len(), 5);
+        assert_eq!(r["added"].as_array().unwrap().len(), solidcraft_manufacture::machines::preset_machines().len());
         assert!(s.doc.manufacture.machines.contains_key("Haas VF-2"));
         assert_eq!(s.doc.manufacture.machines["Haas VF-2"].tool_changer.pockets, 20);
         let undo = s.undo.len();
@@ -2151,30 +2073,16 @@ mod tests {
         // Ship a real post file for the example entry so install works.
         let post = solidcraft_manufacture::post::preset_posts()[0].1.clone();
         std::fs::create_dir_all(tmp.join("posts/Generic")).unwrap();
-        std::fs::write(
-            tmp.join("posts/Generic/grbl-laser.post.json"),
-            serde_json::to_vec_pretty(&post).unwrap(),
-        )
-        .unwrap();
+        std::fs::write(tmp.join("posts/Generic/grbl-laser.post.json"), serde_json::to_vec_pretty(&post).unwrap()).unwrap();
         std::fs::write(tmp.join("index.json"), serde_json::to_vec_pretty(&idx).unwrap()).unwrap();
         let mut s = Session::default();
-        s.execute(
-            "manufacture.library.add_remote",
-            &json!({"url": tmp.to_string_lossy(), "id": "test-cam", "name": "Test CAM"}),
-        )
-        .unwrap();
+        s.execute("manufacture.library.add_remote", &json!({"url": tmp.to_string_lossy(), "id": "test-cam", "name": "Test CAM"})).unwrap();
         let sync = s.execute("manufacture.library.sync", &json!({"id": "test-cam"})).unwrap();
         assert_eq!(sync["results"][0]["ok"], true);
         let list = s.execute("manufacture.library.list", &json!({"kind": "post"})).unwrap();
         let entries = list["entries"].as_array().unwrap();
         assert!(entries.iter().any(|e| e["location"] == "linked"));
-        let linked_id = entries
-            .iter()
-            .find(|e| e["location"] == "linked" && e["kind"] == "post")
-            .unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string();
+        let linked_id = entries.iter().find(|e| e["location"] == "linked" && e["kind"] == "post").unwrap()["id"].as_str().unwrap().to_string();
         s.execute("manufacture.library.install", &json!({"entry_id": linked_id})).unwrap();
         assert!(!s.doc.manufacture.posts.is_empty());
         let _ = std::fs::remove_dir_all(&tmp);
@@ -2186,11 +2094,8 @@ mod tests {
         s.execute("manufacture.setup.new", &json!({"name": "Cut1"})).unwrap();
         let r = s.execute("manufacture.op.fab_2d_profile", &json!({"setup": "Cut1"})).unwrap();
         assert_eq!(r["operations"], 1);
-        assert!(matches!(
-            &s.doc.manufacture.setups["Cut1"].operations[0],
-            solidcraft_manufacture::Operation::FabricationProfile(_)
-        ));
-        let nest = s.execute("manufacture.nest.open", &json!({})).unwrap();
+        assert!(matches!(&s.doc.manufacture.setups["Cut1"].operations[0], solidcraft_manufacture::Operation::FabricationProfile(_)));
+        let nest = s.execute("manufacture.nest", &json!({})).unwrap();
         assert_eq!(nest["dialog"], "nest");
     }
 
@@ -2208,10 +2113,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(r["setup"], "Print1");
-        assert!(matches!(
-            &s.doc.manufacture.setups["Print1"].operations[0],
-            solidcraft_manufacture::Operation::Additive(_)
-        ));
+        assert!(matches!(&s.doc.manufacture.setups["Print1"].operations[0], solidcraft_manufacture::Operation::Additive(_)));
         let sim = s.execute("manufacture.additive.simulate", &json!({"setup": "Print1"})).unwrap();
         assert!(sim["segments"].as_array().is_some_and(|a| !a.is_empty()));
 
@@ -2228,12 +2130,8 @@ mod tests {
     #[test]
     fn machine_plugin_mtconnect_fixture_no_network() {
         let mut s = Session::default();
-        let r = s
-            .execute(
-                "manufacture.machine.use",
-                &json!({"plugin": "mtconnect", "fixture": true, "endpoint": "http://127.0.0.1:8082/VF-2"}),
-            )
-            .unwrap();
+        let r =
+            s.execute("manufacture.machine.use", &json!({"plugin": "mtconnect", "fixture": true, "endpoint": "http://127.0.0.1:8082/VF-2"})).unwrap();
         assert_eq!(r["plugin"], "mtconnect");
         let st = s.execute("manufacture.machine.status", &json!({})).unwrap();
         assert_eq!(st["status"]["source"], "mtconnect");
@@ -2443,11 +2341,7 @@ mod tests {
         add_setup(&mut s);
         let st = s.execute("manufacture.start", &json!({"setup": "Setup1"})).unwrap();
         let job = st["job"].clone();
-        let r = s.execute(
-            "manufacture.simulate",
-            &json!({"job": job, "setup": "Setup1", "grid_cols": 32, "grid_rows": 32}),
-        )
-        .unwrap();
+        let r = s.execute("manufacture.simulate", &json!({"job": job, "setup": "Setup1", "grid_cols": 32, "grid_rows": 32})).unwrap();
         assert_eq!(r["grid_cols"], 32);
         assert_eq!(r["grid_rows"], 32);
         let heights = r["final_heights"].as_array().unwrap();

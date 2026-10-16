@@ -70,54 +70,24 @@ pub fn segments_from_gcode(gcode: &str) -> Vec<PathSegment> {
 }
 
 /// Generate a simple rectangular-layer fill for a generated additive toolpath.
-pub fn segments_for_generated(
-    layer_height_mm: f64,
-    layer_count: u32,
-    size_xy_mm: f64,
-    feedrate_mmpm: f64,
-    travel_mmpm: f64,
-) -> Vec<PathSegment> {
-    let lh = if layer_height_mm > 0.0 && layer_height_mm.is_finite() {
-        layer_height_mm
-    } else {
-        0.2
-    };
+pub fn segments_for_generated(layer_height_mm: f64, layer_count: u32, size_xy_mm: f64, feedrate_mmpm: f64, travel_mmpm: f64) -> Vec<PathSegment> {
+    let lh = if layer_height_mm > 0.0 && layer_height_mm.is_finite() { layer_height_mm } else { 0.2 };
     let layers = layer_count.clamp(1, 256);
-    let size = if size_xy_mm > 0.0 && size_xy_mm.is_finite() {
-        size_xy_mm
-    } else {
-        40.0
-    };
-    let feed = if feedrate_mmpm > 0.0 && feedrate_mmpm.is_finite() {
-        feedrate_mmpm
-    } else {
-        1_200.0
-    };
-    let travel = if travel_mmpm > 0.0 && travel_mmpm.is_finite() {
-        travel_mmpm
-    } else {
-        3_000.0
-    };
+    let size = if size_xy_mm > 0.0 && size_xy_mm.is_finite() { size_xy_mm } else { 40.0 };
+    let feed = if feedrate_mmpm > 0.0 && feedrate_mmpm.is_finite() { feedrate_mmpm } else { 1_200.0 };
+    let travel = if travel_mmpm > 0.0 && travel_mmpm.is_finite() { travel_mmpm } else { 3_000.0 };
     let step = (size / 8.0).max(0.5);
     let mut out = Vec::new();
     out.push(PathSegment::Rapid { to: [0.0, 0.0, lh] });
     for layer in 0..layers {
         let z = lh * f64::from(layer + 1);
-        out.push(PathSegment::Rapid {
-            to: [0.0, 0.0, z],
-        });
+        out.push(PathSegment::Rapid { to: [0.0, 0.0, z] });
         let mut y = 0.0;
         let mut flip = false;
         while y <= size + 1e-9 {
             let (x0, x1) = if flip { (size, 0.0) } else { (0.0, size) };
-            out.push(PathSegment::Linear {
-                to: [x0, y, z],
-                feed: travel,
-            });
-            out.push(PathSegment::Linear {
-                to: [x1, y, z],
-                feed,
-            });
+            out.push(PathSegment::Linear { to: [x0, y, z], feed: travel });
+            out.push(PathSegment::Linear { to: [x1, y, z], feed });
             y += step;
             flip = !flip;
             if out.len() >= MAX_SIM_SEGMENTS {

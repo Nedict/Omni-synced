@@ -3,8 +3,8 @@
 use egui::{Color32, RichText, Stroke, Vec2};
 use serde_json::json;
 use solidcraft_manufacture::{
-    CompensationType, Coolant, HeightFrom, HeightPlane, HighFeedMode, Operation, ProfileOperation, ProfileSide,
-    RampType, SidewaysCompensation, TabShape, Tool,
+    CompensationType, Coolant, HeightFrom, HeightPlane, HighFeedMode, Operation, ProfileOperation, ProfileSide, RampType, SidewaysCompensation,
+    TabShape, Tool,
 };
 
 use crate::theme::Tokens;
@@ -57,12 +57,8 @@ pub fn open(app: &mut SolveApp, setup_name: &str, op_index: usize) {
     app.manufacture_workspace.threed_dialog = None;
     app.manufacture_workspace.hole_rec_dialog = None;
     app.manufacture_workspace.multiaxis_dialog = None;
-    app.manufacture_workspace.contour_dialog = Some(ContourDialogState {
-        setup_name: setup_name.to_string(),
-        op_index,
-        draft: op,
-        tab: ContourDialogTab::Tool,
-    });
+    app.manufacture_workspace.contour_dialog =
+        Some(ContourDialogState { setup_name: setup_name.to_string(), op_index, draft: op, tab: ContourDialogTab::Tool });
     app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Operations;
 }
 
@@ -72,20 +68,9 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
         return false;
     };
 
-    let tools: Vec<Tool> = app
-        .session
-        .doc
-        .manufacture
-        .setups
-        .get(&state.setup_name)
-        .map(|s| s.tools.clone())
-        .unwrap_or_default();
+    let tools: Vec<Tool> = app.session.doc.manufacture.setups.get(&state.setup_name).map(|s| s.tools.clone()).unwrap_or_default();
 
-    let title = if state.draft.name.is_empty() {
-        "2D CONTOUR".to_string()
-    } else {
-        format!("2D CONTOUR : {}", state.draft.name.to_uppercase())
-    };
+    let title = if state.draft.name.is_empty() { "2D CONTOUR".to_string() } else { format!("2D CONTOUR : {}", state.draft.name.to_uppercase()) };
 
     let mut open = true;
     let mut commit = false;
@@ -93,7 +78,7 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let mut draft = state.draft.clone();
     let mut tab = state.tab;
 
-    egui::Window::new(title)
+    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_contour_dialog"))
         .open(&mut open)
         .collapsible(false)
@@ -109,14 +94,12 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
             });
             ui.separator();
 
-            egui::ScrollArea::vertical().max_height(440.0).show(ui, |ui| {
-                match tab {
-                    ContourDialogTab::Tool => tool_tab(ui, &mut draft, &tools),
-                    ContourDialogTab::Geometry => geometry_tab(ui, &mut draft),
-                    ContourDialogTab::Heights => heights_tab(ui, &mut draft),
-                    ContourDialogTab::Passes => passes_tab(ui, &mut draft),
-                    ContourDialogTab::Linking => linking_tab(ui, &mut draft),
-                }
+            egui::ScrollArea::vertical().max_height(440.0).show(ui, |ui| match tab {
+                ContourDialogTab::Tool => tool_tab(ui, &mut draft, &tools),
+                ContourDialogTab::Geometry => geometry_tab(ui, &mut draft),
+                ContourDialogTab::Heights => heights_tab(ui, &mut draft),
+                ContourDialogTab::Passes => passes_tab(ui, &mut draft),
+                ContourDialogTab::Linking => linking_tab(ui, &mut draft),
             });
 
             ui.separator();
@@ -158,11 +141,7 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
 
 fn tab_btn(ui: &mut egui::Ui, tab: &mut ContourDialogTab, value: ContourDialogTab, label: &str) {
     let selected = *tab == value;
-    let text = if selected {
-        RichText::new(label).strong()
-    } else {
-        RichText::new(label)
-    };
+    let text = if selected { RichText::new(label).strong() } else { RichText::new(label) };
     if ui.selectable_label(selected, text).clicked() {
         *tab = value;
     }
@@ -178,11 +157,7 @@ fn tool_tab(ui: &mut egui::Ui, draft: &mut ProfileOperation, tools: &[Tool]) {
                 "#{} - ø{:.2}mm {}",
                 t.number,
                 t.diameter,
-                if t.description.is_empty() {
-                    tool_kind_short(t.kind)
-                } else {
-                    t.description.as_str()
-                }
+                if t.description.is_empty() { tool_kind_short(t.kind) } else { t.description.as_str() }
             ),
             None => format!("#{} (missing)", draft.tool_number),
         };
@@ -204,11 +179,8 @@ fn tool_tab(ui: &mut egui::Ui, draft: &mut ProfileOperation, tools: &[Tool]) {
     let diameter = tools.iter().find(|t| t.number == draft.tool_number).map(|t| t.diameter).unwrap_or(1.7);
     let surface = std::f64::consts::PI * diameter * f64::from(draft.feeds.spindle_rpm) / 1_000.0;
     let flutes = tools.iter().find(|t| t.number == draft.tool_number).map(|t| t.flutes.max(1)).unwrap_or(2);
-    let feed_per_tooth = if draft.feeds.spindle_rpm > 0 {
-        draft.feeds.feedrate / (f64::from(draft.feeds.spindle_rpm) * f64::from(flutes))
-    } else {
-        0.0
-    };
+    let feed_per_tooth =
+        if draft.feeds.spindle_rpm > 0 { draft.feeds.feedrate / (f64::from(draft.feeds.spindle_rpm) * f64::from(flutes)) } else { 0.0 };
 
     ui.horizontal(|ui| {
         ui.label("Spindle Speed");
@@ -240,15 +212,13 @@ fn tool_tab(ui: &mut egui::Ui, draft: &mut ProfileOperation, tools: &[Tool]) {
 
     ui.horizontal(|ui| {
         ui.label("Coolant");
-        egui::ComboBox::from_id_salt("contour_coolant")
-            .selected_text(draft.coolant.label())
-            .show_ui(ui, |ui| {
-                for c in [Coolant::None, Coolant::Flood, Coolant::Mist, Coolant::Air, Coolant::ThroughSpindle] {
-                    if ui.selectable_label(draft.coolant == c, c.label()).clicked() {
-                        draft.coolant = c;
-                    }
+        egui::ComboBox::from_id_salt("contour_coolant").selected_text(draft.coolant.label()).show_ui(ui, |ui| {
+            for c in [Coolant::None, Coolant::Flood, Coolant::Mist, Coolant::Air, Coolant::ThroughSpindle] {
+                if ui.selectable_label(draft.coolant == c, c.label()).clicked() {
+                    draft.coolant = c;
                 }
-            });
+            }
+        });
     });
 }
 
@@ -259,15 +229,13 @@ fn geometry_tab(ui: &mut egui::Ui, draft: &mut ProfileOperation) {
 
     ui.horizontal(|ui| {
         ui.label("Side");
-        egui::ComboBox::from_id_salt("contour_side")
-            .selected_text(draft.side.label())
-            .show_ui(ui, |ui| {
-                for s in [ProfileSide::Outside, ProfileSide::Inside, ProfileSide::On] {
-                    if ui.selectable_label(draft.side == s, s.label()).clicked() {
-                        draft.side = s;
-                    }
+        egui::ComboBox::from_id_salt("contour_side").selected_text(draft.side.label()).show_ui(ui, |ui| {
+            for s in [ProfileSide::Outside, ProfileSide::Inside, ProfileSide::On] {
+                if ui.selectable_label(draft.side == s, s.label()).clicked() {
+                    draft.side = s;
                 }
-            });
+            }
+        });
     });
 
     ui.checkbox(&mut draft.geometry.stock_contours, "Stock Contours");
@@ -278,15 +246,13 @@ fn geometry_tab(ui: &mut egui::Ui, draft: &mut ProfileOperation) {
     if draft.geometry.tabs.enabled {
         ui.horizontal(|ui| {
             ui.label("Tab Shape");
-            egui::ComboBox::from_id_salt("contour_tab_shape")
-                .selected_text(draft.geometry.tabs.shape.label())
-                .show_ui(ui, |ui| {
-                    for s in [TabShape::Rectangular, TabShape::Triangular] {
-                        if ui.selectable_label(draft.geometry.tabs.shape == s, s.label()).clicked() {
-                            draft.geometry.tabs.shape = s;
-                        }
+            egui::ComboBox::from_id_salt("contour_tab_shape").selected_text(draft.geometry.tabs.shape.label()).show_ui(ui, |ui| {
+                for s in [TabShape::Rectangular, TabShape::Triangular] {
+                    if ui.selectable_label(draft.geometry.tabs.shape == s, s.label()).clicked() {
+                        draft.geometry.tabs.shape = s;
                     }
-                });
+                }
+            });
         });
         ui.horizontal(|ui| {
             ui.label("Tab Width");
@@ -315,9 +281,7 @@ fn geometry_tab(ui: &mut egui::Ui, draft: &mut ProfileOperation) {
 
     ui.separator();
     ui.horizontal(|ui| {
-        if ui.button("Add sample point").clicked()
-            && draft.targets.face_sample_points.len() < solidcraft_manufacture::MAX_SAMPLE_POINTS_PER_OP
-        {
+        if ui.button("Add sample point").clicked() && draft.targets.face_sample_points.len() < solidcraft_manufacture::MAX_SAMPLE_POINTS_PER_OP {
             draft.targets.face_sample_points.push([0.0, 0.0, 0.0]);
         }
         if ui.button("Clear").clicked() {
@@ -363,15 +327,13 @@ fn height_row(ui: &mut egui::Ui, label: &str, plane: &mut HeightPlane) {
         ui.label(RichText::new(label).strong());
         ui.horizontal(|ui| {
             ui.label("From");
-            egui::ComboBox::from_id_salt(format!("chf_{label}"))
-                .selected_text(plane.from.label())
-                .show_ui(ui, |ui| {
-                    for f in HEIGHT_FROM_CHOICES {
-                        if ui.selectable_label(plane.from == *f, f.label()).clicked() {
-                            plane.from = *f;
-                        }
+            egui::ComboBox::from_id_salt(format!("chf_{label}")).selected_text(plane.from.label()).show_ui(ui, |ui| {
+                for f in HEIGHT_FROM_CHOICES {
+                    if ui.selectable_label(plane.from == *f, f.label()).clicked() {
+                        plane.from = *f;
                     }
-                });
+                }
+            });
         });
         ui.horizontal(|ui| {
             ui.label("Offset");
@@ -389,28 +351,24 @@ fn passes_tab(ui: &mut egui::Ui, draft: &mut ProfileOperation) {
 
     ui.horizontal(|ui| {
         ui.label("Sideways Compensation");
-        egui::ComboBox::from_id_salt("contour_sideways")
-            .selected_text(draft.pass_opts.sideways.label())
-            .show_ui(ui, |ui| {
-                for s in [SidewaysCompensation::Left, SidewaysCompensation::Right, SidewaysCompensation::Center] {
-                    if ui.selectable_label(draft.pass_opts.sideways == s, s.label()).clicked() {
-                        draft.pass_opts.sideways = s;
-                    }
+        egui::ComboBox::from_id_salt("contour_sideways").selected_text(draft.pass_opts.sideways.label()).show_ui(ui, |ui| {
+            for s in [SidewaysCompensation::Left, SidewaysCompensation::Right, SidewaysCompensation::Center] {
+                if ui.selectable_label(draft.pass_opts.sideways == s, s.label()).clicked() {
+                    draft.pass_opts.sideways = s;
                 }
-            });
+            }
+        });
     });
 
     ui.horizontal(|ui| {
         ui.label("Compensation Type");
-        egui::ComboBox::from_id_salt("contour_comp_type")
-            .selected_text(draft.pass_opts.compensation_type.label())
-            .show_ui(ui, |ui| {
-                for c in [CompensationType::InComputer, CompensationType::InControl, CompensationType::Off] {
-                    if ui.selectable_label(draft.pass_opts.compensation_type == c, c.label()).clicked() {
-                        draft.pass_opts.compensation_type = c;
-                    }
+        egui::ComboBox::from_id_salt("contour_comp_type").selected_text(draft.pass_opts.compensation_type.label()).show_ui(ui, |ui| {
+            for c in [CompensationType::InComputer, CompensationType::InControl, CompensationType::Off] {
+                if ui.selectable_label(draft.pass_opts.compensation_type == c, c.label()).clicked() {
+                    draft.pass_opts.compensation_type = c;
                 }
-            });
+            }
+        });
     });
 
     ui.horizontal(|ui| {
@@ -444,12 +402,7 @@ fn passes_tab(ui: &mut egui::Ui, draft: &mut ProfileOperation) {
         });
         ui.horizontal(|ui| {
             ui.label("Finishing Stepdown");
-            ui.add(
-                egui::DragValue::new(&mut draft.pass_opts.finishing_stepdown_mm)
-                    .speed(0.05)
-                    .range(0.01..=10.0)
-                    .suffix(" mm"),
-            );
+            ui.add(egui::DragValue::new(&mut draft.pass_opts.finishing_stepdown_mm).speed(0.05).range(0.01..=10.0).suffix(" mm"));
         });
     }
 }
@@ -458,15 +411,13 @@ fn linking_tab(ui: &mut egui::Ui, draft: &mut ProfileOperation) {
     ui.heading("Linking");
     ui.horizontal(|ui| {
         ui.label("High Feedrate Mode");
-        egui::ComboBox::from_id_salt("contour_high_feed")
-            .selected_text(draft.linking.high_feed_mode.label())
-            .show_ui(ui, |ui| {
-                for m in [HighFeedMode::PreserveRapid, HighFeedMode::AlwaysUseHighFeed, HighFeedMode::NeverUseHighFeed] {
-                    if ui.selectable_label(draft.linking.high_feed_mode == m, m.label()).clicked() {
-                        draft.linking.high_feed_mode = m;
-                    }
+        egui::ComboBox::from_id_salt("contour_high_feed").selected_text(draft.linking.high_feed_mode.label()).show_ui(ui, |ui| {
+            for m in [HighFeedMode::PreserveRapid, HighFeedMode::AlwaysUseHighFeed, HighFeedMode::NeverUseHighFeed] {
+                if ui.selectable_label(draft.linking.high_feed_mode == m, m.label()).clicked() {
+                    draft.linking.high_feed_mode = m;
                 }
-            });
+            }
+        });
     });
     ui.checkbox(&mut draft.linking.allow_rapid_retract, "Allow Rapid Retract");
     ui.horizontal(|ui| {
@@ -506,15 +457,13 @@ fn linking_tab(ui: &mut egui::Ui, draft: &mut ProfileOperation) {
     ui.heading("Ramp");
     ui.horizontal(|ui| {
         ui.label("Ramp Type");
-        egui::ComboBox::from_id_salt("contour_ramp_type")
-            .selected_text(draft.linking.ramp_type.label())
-            .show_ui(ui, |ui| {
-                for r in [RampType::Plunge, RampType::ZigZag, RampType::Helix] {
-                    if ui.selectable_label(draft.linking.ramp_type == r, r.label()).clicked() {
-                        draft.linking.ramp_type = r;
-                    }
+        egui::ComboBox::from_id_salt("contour_ramp_type").selected_text(draft.linking.ramp_type.label()).show_ui(ui, |ui| {
+            for r in [RampType::Plunge, RampType::ZigZag, RampType::Helix] {
+                if ui.selectable_label(draft.linking.ramp_type == r, r.label()).clicked() {
+                    draft.linking.ramp_type = r;
                 }
-            });
+            }
+        });
     });
     ui.horizontal(|ui| {
         ui.label("Ramping Angle");
@@ -557,10 +506,7 @@ fn save_contour(app: &mut SolveApp, setup_name: &str, op_index: usize, draft: Pr
     }
     setup.operations[op_index] = Operation::Profile(draft);
     match serde_json::to_value(&setup.operations) {
-        Ok(ops_json) => match app.run(
-            "manufacture.settings.set",
-            json!({"name": setup_name, "set": {"operations": ops_json}}),
-        ) {
+        Ok(ops_json) => match app.run("manufacture.settings.set", json!({"name": setup_name, "set": {"operations": ops_json}})) {
             Ok(_) => {
                 app.manufacture_workspace.revision = u64::MAX;
                 app.manufacture_workspace.last_issues = app.session.doc.manufacture.issues();
@@ -689,24 +635,12 @@ pub fn paint_overlays(app: &SolveApp, ui: &egui::Ui) {
         // Height ticks
         let x = pt[0] + 3.0;
         let y = pt[1];
-        for (z, label) in [
-            (zs.clearance, "C"),
-            (zs.retract, "R"),
-            (zs.feed, "F"),
-            (zs.top, "T"),
-            (zs.bottom, "B"),
-        ] {
+        for (z, label) in [(zs.clearance, "C"), (zs.retract, "R"), (zs.feed, "F"), (zs.top, "T"), (zs.bottom, "B")] {
             let a = solidcraft_engine::geom::Vec3::new(x, y, z);
             let b = solidcraft_engine::geom::Vec3::new(x + 2.0, y, z);
             if let (Some(sa), Some(sb)) = (proj.to_screen(a), proj.to_screen(b)) {
                 painter.line_segment([sa, sb], Stroke::new(1.0, height_color));
-                painter.text(
-                    sb + Vec2::new(4.0, 0.0),
-                    egui::Align2::LEFT_CENTER,
-                    label,
-                    egui::FontId::proportional(10.0),
-                    height_color,
-                );
+                painter.text(sb + Vec2::new(4.0, 0.0), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(10.0), height_color);
             }
         }
     }

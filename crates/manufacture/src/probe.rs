@@ -144,69 +144,28 @@ pub fn emit_snippet(req: &ProbeSnippetRequest) -> Result<String, String> {
     let eol = "\n";
     let t = req.probe_tool.number;
     let mut out = String::new();
-    out.push_str(&format!(
-        "(SolidCraft probe review — {cycle}; confirm macros on machine){eol}",
-        cycle = req.cycle.as_str()
-    ));
-    out.push_str(&format!(
-        "(Style: {:?}; source: Renishaw Inspection Plus O98xx / Haas P9832-P9833){eol}",
-        req.style
-    ));
+    out.push_str(&format!("(SolidCraft probe review — {cycle}; confirm macros on machine){eol}", cycle = req.cycle.as_str()));
+    out.push_str(&format!("(Style: {:?}; source: Renishaw Inspection Plus O98xx / Haas P9832-P9833){eol}", req.style));
     out.push_str(&format!("T{t} M6{eol}"));
     out.push_str(&format!("G90 G54{eol}"));
     out.push_str(&format!("G0 X{x:.4} Y{y:.4}{eol}", x = req.x, y = req.y));
     out.push_str(&format!("G43 H{t} Z{cz:.4}{eol}", cz = req.clearance_z));
     out.push_str(&format!("G65 P9832{eol}")); // probe on
-    out.push_str(&format!(
-        "G65 P9810 Z{z:.4} F{f:.1}{eol}",
-        z = req.clearance_z.min(req.z + req.overtravel_q.max(2.0)),
-        f = req.protected_feed
-    ));
+    out.push_str(&format!("G65 P9810 Z{z:.4} F{f:.1}{eol}", z = req.clearance_z.min(req.z + req.overtravel_q.max(2.0)), f = req.protected_feed));
 
-    let s_arg = if req.work_offset_s > 0 {
-        format!(" S{}", req.work_offset_s)
-    } else {
-        String::new()
-    };
-    let q_arg = if req.overtravel_q > 0.0 {
-        format!(" Q{:.4}", req.overtravel_q)
-    } else {
-        String::new()
-    };
-    let d_arg = if req.size_d > 0.0 {
-        format!(" D{:.4}", req.size_d)
-    } else {
-        String::new()
-    };
+    let s_arg = if req.work_offset_s > 0 { format!(" S{}", req.work_offset_s) } else { String::new() };
+    let q_arg = if req.overtravel_q > 0.0 { format!(" Q{:.4}", req.overtravel_q) } else { String::new() };
+    let d_arg = if req.size_d > 0.0 { format!(" D{:.4}", req.size_d) } else { String::new() };
 
     match req.cycle {
         ProbeCycle::ProtectedMove => {
-            out.push_str(&format!(
-                "G65 P9810 X{x:.4} Y{y:.4} Z{z:.4} F{f:.1}{eol}",
-                x = req.x,
-                y = req.y,
-                z = req.z,
-                f = req.protected_feed
-            ));
+            out.push_str(&format!("G65 P9810 X{x:.4} Y{y:.4} Z{z:.4} F{f:.1}{eol}", x = req.x, y = req.y, z = req.z, f = req.protected_feed));
         }
         ProbeCycle::SingleSurface => {
-            out.push_str(&format!(
-                "G65 P{m} Z{z:.4}{q}{s}{eol}",
-                m = req.cycle.macro_number(),
-                z = req.z,
-                q = q_arg,
-                s = s_arg
-            ));
+            out.push_str(&format!("G65 P{m} Z{z:.4}{q}{s}{eol}", m = req.cycle.macro_number(), z = req.z, q = q_arg, s = s_arg));
         }
         ProbeCycle::WebPocket => {
-            out.push_str(&format!(
-                "G65 P{m} X{x:.4}{d}{q}{s}{eol}",
-                m = req.cycle.macro_number(),
-                x = req.x,
-                d = d_arg,
-                q = q_arg,
-                s = s_arg
-            ));
+            out.push_str(&format!("G65 P{m} X{x:.4}{d}{q}{s}{eol}", m = req.cycle.macro_number(), x = req.x, d = d_arg, q = q_arg, s = s_arg));
         }
         ProbeCycle::BoreBoss => {
             out.push_str(&format!(
@@ -219,14 +178,7 @@ pub fn emit_snippet(req: &ProbeSnippetRequest) -> Result<String, String> {
             ));
         }
         ProbeCycle::InternalCorner | ProbeCycle::ExternalCorner => {
-            out.push_str(&format!(
-                "G65 P{m} X{x:.4} Y{y:.4}{q}{s}{eol}",
-                m = req.cycle.macro_number(),
-                x = req.x,
-                y = req.y,
-                q = q_arg,
-                s = s_arg
-            ));
+            out.push_str(&format!("G65 P{m} X{x:.4} Y{y:.4}{q}{s}{eol}", m = req.cycle.macro_number(), x = req.x, y = req.y, q = q_arg, s = s_arg));
         }
     }
 
@@ -239,7 +191,7 @@ pub fn emit_snippet(req: &ProbeSnippetRequest) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ToolKind, Tool};
+    use crate::{Tool, ToolKind};
 
     fn probe_tool() -> Tool {
         Tool {

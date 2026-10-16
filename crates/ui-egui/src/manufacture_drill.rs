@@ -3,8 +3,7 @@
 use egui::{Color32, RichText, Stroke, Vec2};
 use serde_json::json;
 use solidcraft_manufacture::{
-    Coolant, DrillCycle, DrillOperation, DrillOrder, HeightFrom, HeightPlane, HighFeedMode, Operation, RetractionPolicy,
-    Tool,
+    Coolant, DrillCycle, DrillOperation, DrillOrder, HeightFrom, HeightPlane, HighFeedMode, Operation, RetractionPolicy, Tool,
 };
 
 use crate::theme::Tokens;
@@ -44,12 +43,8 @@ pub fn open(app: &mut SolveApp, setup_name: &str, op_index: usize) {
     app.manufacture_workspace.threed_dialog = None;
     app.manufacture_workspace.hole_rec_dialog = None;
     app.manufacture_workspace.multiaxis_dialog = None;
-    app.manufacture_workspace.drill_dialog = Some(DrillDialogState {
-        setup_name: setup_name.to_string(),
-        op_index,
-        draft: op,
-        tab: DrillDialogTab::Tool,
-    });
+    app.manufacture_workspace.drill_dialog =
+        Some(DrillDialogState { setup_name: setup_name.to_string(), op_index, draft: op, tab: DrillDialogTab::Tool });
     app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Operations;
 }
 
@@ -59,20 +54,9 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
         return false;
     };
 
-    let tools: Vec<Tool> = app
-        .session
-        .doc
-        .manufacture
-        .setups
-        .get(&state.setup_name)
-        .map(|s| s.tools.clone())
-        .unwrap_or_default();
+    let tools: Vec<Tool> = app.session.doc.manufacture.setups.get(&state.setup_name).map(|s| s.tools.clone()).unwrap_or_default();
 
-    let title = if state.draft.name.is_empty() {
-        "DRILL".to_string()
-    } else {
-        format!("DRILL : {}", state.draft.name.to_uppercase())
-    };
+    let title = if state.draft.name.is_empty() { "DRILL".to_string() } else { format!("DRILL : {}", state.draft.name.to_uppercase()) };
 
     let mut open = true;
     let mut commit = false;
@@ -80,7 +64,7 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let mut draft = state.draft.clone();
     let mut tab = state.tab;
 
-    egui::Window::new(title)
+    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_drill_dialog"))
         .open(&mut open)
         .collapsible(false)
@@ -96,14 +80,12 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
             });
             ui.separator();
 
-            egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
-                match tab {
-                    DrillDialogTab::Tool => tool_tab(ui, &mut draft, &tools),
-                    DrillDialogTab::Geometry => geometry_tab(ui, &mut draft),
-                    DrillDialogTab::Heights => heights_tab(ui, &mut draft),
-                    DrillDialogTab::Cycle => cycle_tab(ui, &mut draft),
-                    DrillDialogTab::Linking => linking_tab(ui, &mut draft),
-                }
+            egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| match tab {
+                DrillDialogTab::Tool => tool_tab(ui, &mut draft, &tools),
+                DrillDialogTab::Geometry => geometry_tab(ui, &mut draft),
+                DrillDialogTab::Heights => heights_tab(ui, &mut draft),
+                DrillDialogTab::Cycle => cycle_tab(ui, &mut draft),
+                DrillDialogTab::Linking => linking_tab(ui, &mut draft),
             });
 
             ui.separator();
@@ -146,11 +128,7 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
 
 fn tab_btn(ui: &mut egui::Ui, tab: &mut DrillDialogTab, value: DrillDialogTab, label: &str) {
     let selected = *tab == value;
-    let text = if selected {
-        RichText::new(label).strong()
-    } else {
-        RichText::new(label)
-    };
+    let text = if selected { RichText::new(label).strong() } else { RichText::new(label) };
     if ui.selectable_label(selected, text).clicked() {
         *tab = value;
     }
@@ -166,11 +144,7 @@ fn tool_tab(ui: &mut egui::Ui, draft: &mut DrillOperation, tools: &[Tool]) {
                 "#{} - ø{:.2}mm {}",
                 t.number,
                 t.diameter,
-                if t.description.is_empty() {
-                    tool_kind_short(t.kind)
-                } else {
-                    t.description.as_str()
-                }
+                if t.description.is_empty() { tool_kind_short(t.kind) } else { t.description.as_str() }
             ),
             None => format!("#{} (missing)", draft.tool_number),
         };
@@ -191,11 +165,7 @@ fn tool_tab(ui: &mut egui::Ui, draft: &mut DrillOperation, tools: &[Tool]) {
 
     let diameter = tools.iter().find(|t| t.number == draft.tool_number).map(|t| t.diameter).unwrap_or(1.7);
     let surface = std::f64::consts::PI * diameter * f64::from(draft.feeds.spindle_rpm) / 1_000.0;
-    let plunge_per_rev = if draft.feeds.spindle_rpm > 0 {
-        draft.feeds.plunge / f64::from(draft.feeds.spindle_rpm)
-    } else {
-        0.0
-    };
+    let plunge_per_rev = if draft.feeds.spindle_rpm > 0 { draft.feeds.plunge / f64::from(draft.feeds.spindle_rpm) } else { 0.0 };
 
     ui.horizontal(|ui| {
         ui.label("Spindle Speed");
@@ -219,15 +189,13 @@ fn tool_tab(ui: &mut egui::Ui, draft: &mut DrillOperation, tools: &[Tool]) {
 
     ui.horizontal(|ui| {
         ui.label("Coolant");
-        egui::ComboBox::from_id_salt("drill_coolant")
-            .selected_text(draft.coolant.label())
-            .show_ui(ui, |ui| {
-                for c in [Coolant::None, Coolant::Flood, Coolant::Mist, Coolant::Air, Coolant::ThroughSpindle] {
-                    if ui.selectable_label(draft.coolant == c, c.label()).clicked() {
-                        draft.coolant = c;
-                    }
+        egui::ComboBox::from_id_salt("drill_coolant").selected_text(draft.coolant.label()).show_ui(ui, |ui| {
+            for c in [Coolant::None, Coolant::Flood, Coolant::Mist, Coolant::Air, Coolant::ThroughSpindle] {
+                if ui.selectable_label(draft.coolant == c, c.label()).clicked() {
+                    draft.coolant = c;
                 }
-            });
+            }
+        });
     });
 }
 
@@ -242,26 +210,18 @@ fn geometry_tab(ui: &mut egui::Ui, draft: &mut DrillOperation) {
 
     ui.separator();
     ui.heading("Order");
-    egui::ComboBox::from_id_salt("drill_order")
-        .selected_text(draft.geometry.order.label())
-        .show_ui(ui, |ui| {
-            for o in [
-                DrillOrder::ShortestDistance,
-                DrillOrder::XThenY,
-                DrillOrder::YThenX,
-                DrillOrder::OrderOfSelection,
-            ] {
-                if ui.selectable_label(draft.geometry.order == o, o.label()).clicked() {
-                    draft.geometry.order = o;
-                }
+    egui::ComboBox::from_id_salt("drill_order").selected_text(draft.geometry.order.label()).show_ui(ui, |ui| {
+        for o in [DrillOrder::ShortestDistance, DrillOrder::XThenY, DrillOrder::YThenX, DrillOrder::OrderOfSelection] {
+            if ui.selectable_label(draft.geometry.order == o, o.label()).clicked() {
+                draft.geometry.order = o;
             }
-        });
+        }
+    });
     ui.checkbox(&mut draft.geometry.reverse_order, "Reverse order");
 
     ui.separator();
     ui.horizontal(|ui| {
-        if ui.button("Add hole at origin").clicked() && draft.targets.drill_points.len() < solidcraft_manufacture::MAX_DRILL_POINTS_PER_OP
-        {
+        if ui.button("Add hole at origin").clicked() && draft.targets.drill_points.len() < solidcraft_manufacture::MAX_DRILL_POINTS_PER_OP {
             draft.targets.drill_points.push([0.0, 0.0, 0.0]);
         }
         if ui.button("Clear holes").clicked() {
@@ -309,26 +269,24 @@ fn height_row(ui: &mut egui::Ui, label: &str, plane: &mut HeightPlane, with_from
         if with_from {
             ui.horizontal(|ui| {
                 ui.label("From");
-                egui::ComboBox::from_id_salt(format!("hf_{label}"))
-                    .selected_text(plane.from.label())
-                    .show_ui(ui, |ui| {
-                        for f in [
-                            HeightFrom::ClearanceHeight,
-                            HeightFrom::RetractHeight,
-                            HeightFrom::FeedHeight,
-                            HeightFrom::StockTop,
-                            HeightFrom::TopHeight,
-                            HeightFrom::HoleTop,
-                            HeightFrom::HoleBottom,
-                            HeightFrom::ModelTop,
-                            HeightFrom::ModelBottom,
-                            HeightFrom::SelectedContours,
-                        ] {
-                            if ui.selectable_label(plane.from == f, f.label()).clicked() {
-                                plane.from = f;
-                            }
+                egui::ComboBox::from_id_salt(format!("hf_{label}")).selected_text(plane.from.label()).show_ui(ui, |ui| {
+                    for f in [
+                        HeightFrom::ClearanceHeight,
+                        HeightFrom::RetractHeight,
+                        HeightFrom::FeedHeight,
+                        HeightFrom::StockTop,
+                        HeightFrom::TopHeight,
+                        HeightFrom::HoleTop,
+                        HeightFrom::HoleBottom,
+                        HeightFrom::ModelTop,
+                        HeightFrom::ModelBottom,
+                        HeightFrom::SelectedContours,
+                    ] {
+                        if ui.selectable_label(plane.from == f, f.label()).clicked() {
+                            plane.from = f;
                         }
-                    });
+                    }
+                });
             });
         }
         ui.horizontal(|ui| {
@@ -340,15 +298,13 @@ fn height_row(ui: &mut egui::Ui, label: &str, plane: &mut HeightPlane, with_from
 
 fn cycle_tab(ui: &mut egui::Ui, draft: &mut DrillOperation) {
     ui.heading("Cycle");
-    egui::ComboBox::from_id_salt("drill_cycle")
-        .selected_text(draft.cycle.label())
-        .show_ui(ui, |ui| {
-            for c in [DrillCycle::Simple, DrillCycle::Peck, DrillCycle::ChipBreak, DrillCycle::Dwell] {
-                if ui.selectable_label(draft.cycle == c, c.label()).clicked() {
-                    draft.cycle = c;
-                }
+    egui::ComboBox::from_id_salt("drill_cycle").selected_text(draft.cycle.label()).show_ui(ui, |ui| {
+        for c in [DrillCycle::Simple, DrillCycle::Peck, DrillCycle::ChipBreak, DrillCycle::Dwell] {
+            if ui.selectable_label(draft.cycle == c, c.label()).clicked() {
+                draft.cycle = c;
             }
-        });
+        }
+    });
 
     match draft.cycle {
         DrillCycle::Peck | DrillCycle::ChipBreak => {
@@ -373,42 +329,29 @@ fn linking_tab(ui: &mut egui::Ui, draft: &mut DrillOperation) {
 
     ui.horizontal(|ui| {
         ui.label("Retraction Policy");
-        egui::ComboBox::from_id_salt("drill_retract_pol")
-            .selected_text(draft.linking.retraction_policy.label())
-            .show_ui(ui, |ui| {
-                for p in [
-                    RetractionPolicy::AvoidCollisions,
-                    RetractionPolicy::FullRetract,
-                    RetractionPolicy::MinimumRetract,
-                ] {
-                    if ui.selectable_label(draft.linking.retraction_policy == p, p.label()).clicked() {
-                        draft.linking.retraction_policy = p;
-                    }
+        egui::ComboBox::from_id_salt("drill_retract_pol").selected_text(draft.linking.retraction_policy.label()).show_ui(ui, |ui| {
+            for p in [RetractionPolicy::AvoidCollisions, RetractionPolicy::FullRetract, RetractionPolicy::MinimumRetract] {
+                if ui.selectable_label(draft.linking.retraction_policy == p, p.label()).clicked() {
+                    draft.linking.retraction_policy = p;
                 }
-            });
+            }
+        });
     });
 
     ui.horizontal(|ui| {
         ui.label("High Feedrate Mode");
-        egui::ComboBox::from_id_salt("drill_high_feed")
-            .selected_text(draft.linking.high_feed_mode.label())
-            .show_ui(ui, |ui| {
-                for m in [HighFeedMode::PreserveRapid, HighFeedMode::AlwaysUseHighFeed, HighFeedMode::NeverUseHighFeed] {
-                    if ui.selectable_label(draft.linking.high_feed_mode == m, m.label()).clicked() {
-                        draft.linking.high_feed_mode = m;
-                    }
+        egui::ComboBox::from_id_salt("drill_high_feed").selected_text(draft.linking.high_feed_mode.label()).show_ui(ui, |ui| {
+            for m in [HighFeedMode::PreserveRapid, HighFeedMode::AlwaysUseHighFeed, HighFeedMode::NeverUseHighFeed] {
+                if ui.selectable_label(draft.linking.high_feed_mode == m, m.label()).clicked() {
+                    draft.linking.high_feed_mode = m;
                 }
-            });
+            }
+        });
     });
 
     ui.horizontal(|ui| {
         ui.label("Safe Distance");
-        ui.add(
-            egui::DragValue::new(&mut draft.linking.safe_distance_mm)
-                .speed(0.1)
-                .range(0.0..=100.0)
-                .suffix(" mm"),
-        );
+        ui.add(egui::DragValue::new(&mut draft.linking.safe_distance_mm).speed(0.1).range(0.0..=100.0).suffix(" mm"));
     });
 }
 
@@ -439,10 +382,7 @@ fn save_drill(app: &mut SolveApp, setup_name: &str, op_index: usize, draft: Dril
     }
     setup.operations[op_index] = Operation::Drill(draft);
     match serde_json::to_value(&setup.operations) {
-        Ok(ops_json) => match app.run(
-            "manufacture.settings.set",
-            json!({"name": setup_name, "set": {"operations": ops_json}}),
-        ) {
+        Ok(ops_json) => match app.run("manufacture.settings.set", json!({"name": setup_name, "set": {"operations": ops_json}})) {
             Ok(_) => {
                 app.manufacture_workspace.revision = u64::MAX;
                 app.manufacture_workspace.last_issues = app.session.doc.manufacture.issues();
@@ -547,24 +487,12 @@ pub fn paint_overlays(app: &SolveApp, ui: &egui::Ui) {
     if let Some(pt) = holes.first() {
         let x = pt[0] + radius_world * 3.0;
         let y = pt[1];
-        for (z, label) in [
-            (zs.clearance, "C"),
-            (zs.retract, "R"),
-            (zs.feed, "F"),
-            (zs.top, "T"),
-            (zs.bottom, "B"),
-        ] {
+        for (z, label) in [(zs.clearance, "C"), (zs.retract, "R"), (zs.feed, "F"), (zs.top, "T"), (zs.bottom, "B")] {
             let a = solidcraft_engine::geom::Vec3::new(x, y, z);
             let b = solidcraft_engine::geom::Vec3::new(x + radius_world * 2.0, y, z);
             if let (Some(sa), Some(sb)) = (proj.to_screen(a), proj.to_screen(b)) {
                 painter.line_segment([sa, sb], Stroke::new(1.0, height_color));
-                painter.text(
-                    sb + Vec2::new(4.0, 0.0),
-                    egui::Align2::LEFT_CENTER,
-                    label,
-                    egui::FontId::proportional(10.0),
-                    height_color,
-                );
+                painter.text(sb + Vec2::new(4.0, 0.0), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(10.0), height_color);
             }
         }
 
@@ -575,16 +503,9 @@ pub fn paint_overlays(app: &SolveApp, ui: &egui::Ui) {
             painter.circle_stroke(c, r, Stroke::new(1.0, Color32::from_rgb(120, 180, 255)));
         }
     }
-
 }
 
-fn screen_radius(
-    proj: &viewport::Proj,
-    x: f64,
-    y: f64,
-    z: f64,
-    radius_mm: f64,
-) -> Option<f32> {
+fn screen_radius(proj: &viewport::Proj, x: f64, y: f64, z: f64, radius_mm: f64) -> Option<f32> {
     let c = proj.to_screen(solidcraft_engine::geom::Vec3::new(x, y, z))?;
     let e = proj.to_screen(solidcraft_engine::geom::Vec3::new(x + radius_mm, y, z))?;
     Some(c.distance(e).max(3.0))

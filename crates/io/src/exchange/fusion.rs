@@ -1,7 +1,7 @@
 //! Autodesk Fusion `.f3d` / `.f3z` exchange provider (desktop only).
 
 use super::{ExchangeCapabilities, ExchangeFileType, ExchangeImport, ExchangeProviderId};
-use crate::{Result, MAX_F3D_BYTES};
+use crate::{MAX_F3D_BYTES, Result};
 
 pub const FILE_TYPE: ExchangeFileType = ExchangeFileType {
     id: ExchangeProviderId::FusionF3d,

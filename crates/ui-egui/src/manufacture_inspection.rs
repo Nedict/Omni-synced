@@ -3,8 +3,8 @@
 use egui::RichText;
 use serde_json::json;
 use solidcraft_manufacture::{
-    InspectionKind, InspectionOperation, ManualInspectionItem, ManualInspectionKind,
-    ManualInspectionOperation, ManualItemType, Operation, Tool, ToolKind,
+    InspectionKind, InspectionOperation, ManualInspectionItem, ManualInspectionKind, ManualInspectionOperation, ManualItemType, Operation, Tool,
+    ToolKind,
 };
 
 use crate::SolveApp;
@@ -41,12 +41,8 @@ pub fn open_inspection(app: &mut SolveApp, setup_name: &str, op_index: usize) {
     };
     clear_other(app);
     app.manufacture_workspace.selected_op = Some(op_index);
-    app.manufacture_workspace.inspection_dialog = Some(InspectionDialogState {
-        setup_name: setup_name.to_string(),
-        op_index,
-        draft: op,
-        tab: InspectionTab::Tool,
-    });
+    app.manufacture_workspace.inspection_dialog =
+        Some(InspectionDialogState { setup_name: setup_name.to_string(), op_index, draft: op, tab: InspectionTab::Tool });
     app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Operations;
     app.manufacture_workspace.cam_mode = crate::manufacture_workspace::CamMode::Inspection;
 }
@@ -60,11 +56,8 @@ pub fn open_manual(app: &mut SolveApp, setup_name: &str, op_index: usize) {
     };
     clear_other(app);
     app.manufacture_workspace.selected_op = Some(op_index);
-    app.manufacture_workspace.manual_inspection_dialog = Some(ManualInspectionDialogState {
-        setup_name: setup_name.to_string(),
-        op_index,
-        draft: op,
-    });
+    app.manufacture_workspace.manual_inspection_dialog =
+        Some(ManualInspectionDialogState { setup_name: setup_name.to_string(), op_index, draft: op });
     app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Operations;
     app.manufacture_workspace.cam_mode = crate::manufacture_workspace::CamMode::Inspection;
 }
@@ -93,20 +86,13 @@ fn show_inspection(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let Some(state) = app.manufacture_workspace.inspection_dialog.clone() else {
         return false;
     };
-    let tools: Vec<Tool> = app
-        .session
-        .doc
-        .manufacture
-        .setups
-        .get(&state.setup_name)
-        .map(|s| s.tools.clone())
-        .unwrap_or_default();
+    let tools: Vec<Tool> = app.session.doc.manufacture.setups.get(&state.setup_name).map(|s| s.tools.clone()).unwrap_or_default();
     let mut open = true;
     let mut commit = false;
     let mut cancel = false;
     let mut draft = state.draft.clone();
     let mut tab = state.tab;
-    egui::Window::new(draft.kind.label())
+    crate::frame::window(ui.ctx(), draft.kind.label(), crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_inspection_dialog"))
         .open(&mut open)
         .collapsible(false)
@@ -114,11 +100,7 @@ fn show_inspection(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
         .default_width(400.0)
         .show(ui.ctx(), |ui| {
             ui.horizontal(|ui| {
-                for (v, l) in [
-                    (InspectionTab::Tool, "Tool"),
-                    (InspectionTab::Geometry, "Geometry"),
-                    (InspectionTab::Passes, "Passes"),
-                ] {
+                for (v, l) in [(InspectionTab::Tool, "Tool"), (InspectionTab::Geometry, "Geometry"), (InspectionTab::Passes, "Passes")] {
                     if ui.selectable_label(tab == v, l).clicked() {
                         tab = v;
                     }
@@ -146,11 +128,10 @@ fn show_inspection(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
         app.manufacture_workspace.inspection_dialog = None;
         return false;
     }
-    if commit
-        && save_inspection(app, &state.setup_name, state.op_index, draft.clone()) {
-            app.manufacture_workspace.inspection_dialog = None;
-            return false;
-        }
+    if commit && save_inspection(app, &state.setup_name, state.op_index, draft.clone()) {
+        app.manufacture_workspace.inspection_dialog = None;
+        return false;
+    }
     if let Some(d) = &mut app.manufacture_workspace.inspection_dialog {
         d.draft = draft;
         d.tab = tab;
@@ -162,26 +143,17 @@ fn inspection_tool_tab(ui: &mut egui::Ui, draft: &mut InspectionOperation, tools
     ui.label(RichText::new(draft.kind.label()).strong());
     ui.horizontal(|ui| {
         ui.label("Probe #");
-        let label = tools
-            .iter()
-            .find(|t| t.number == draft.tool_number)
-            .map(|t| t.display_name())
-            .unwrap_or_else(|| format!("T{}", draft.tool_number));
-        egui::ComboBox::from_id_salt("insp_probe_tool")
-            .selected_text(label)
-            .show_ui(ui, |ui| {
-                let probes: Vec<_> = tools.iter().filter(|t| t.kind == ToolKind::Probe).collect();
-                let list: Vec<&Tool> = if probes.is_empty() {
-                    tools.iter().collect()
-                } else {
-                    probes
-                };
-                for t in list {
-                    if ui.selectable_label(draft.tool_number == t.number, t.display_name()).clicked() {
-                        draft.tool_number = t.number;
-                    }
+        let label =
+            tools.iter().find(|t| t.number == draft.tool_number).map(|t| t.display_name()).unwrap_or_else(|| format!("T{}", draft.tool_number));
+        egui::ComboBox::from_id_salt("insp_probe_tool").selected_text(label).show_ui(ui, |ui| {
+            let probes: Vec<_> = tools.iter().filter(|t| t.kind == ToolKind::Probe).collect();
+            let list: Vec<&Tool> = if probes.is_empty() { tools.iter().collect() } else { probes };
+            for t in list {
+                if ui.selectable_label(draft.tool_number == t.number, t.display_name()).clicked() {
+                    draft.tool_number = t.number;
                 }
-            });
+            }
+        });
     });
     ui.horizontal(|ui| {
         ui.label("Probe cycle");
@@ -238,7 +210,7 @@ fn show_manual(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let mut cancel = false;
     let mut draft = state.draft.clone();
     let title = draft.kind.label().to_string();
-    egui::Window::new(title)
+    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_manual_inspection_dialog"))
         .open(&mut open)
         .collapsible(false)
@@ -265,15 +237,13 @@ fn show_manual(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
                             remove = Some(i);
                         }
                     });
-                    egui::ComboBox::from_id_salt(("manual_type", i))
-                        .selected_text(item.item_type.label())
-                        .show_ui(ui, |ui| {
-                            for t in ManualItemType::ALL {
-                                if ui.selectable_label(item.item_type == *t, t.label()).clicked() {
-                                    item.item_type = *t;
-                                }
+                    egui::ComboBox::from_id_salt(("manual_type", i)).selected_text(item.item_type.label()).show_ui(ui, |ui| {
+                        for t in ManualItemType::ALL {
+                            if ui.selectable_label(item.item_type == *t, t.label()).clicked() {
+                                item.item_type = *t;
                             }
-                        });
+                        }
+                    });
                     if item.item_type == ManualItemType::Distance {
                         drag(ui, "Nominal", &mut item.nominal_mm, 0.01, 0.0..=10_000.0, " mm");
                         drag(ui, "Upper tol", &mut item.upper_tol_mm, 0.001, 0.0..=10.0, " mm");
@@ -304,14 +274,12 @@ fn show_manual(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
                 });
             }
             if let Some(i) = remove
-                && draft.items.len() > 1 {
-                    draft.items.remove(i);
-                }
+                && draft.items.len() > 1
+            {
+                draft.items.remove(i);
+            }
             if ui.button("Add item").clicked() {
-                draft.items.push(ManualInspectionItem {
-                    label: format!("Item {}", draft.items.len() + 1),
-                    ..Default::default()
-                });
+                draft.items.push(ManualInspectionItem { label: format!("Item {}", draft.items.len() + 1), ..Default::default() });
             }
             ui.separator();
             ui.horizontal(|ui| {
@@ -329,11 +297,10 @@ fn show_manual(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
         app.manufacture_workspace.manual_inspection_dialog = None;
         return false;
     }
-    if commit
-        && save_manual(app, &state.setup_name, state.op_index, draft.clone()) {
-            app.manufacture_workspace.manual_inspection_dialog = None;
-            return false;
-        }
+    if commit && save_manual(app, &state.setup_name, state.op_index, draft.clone()) {
+        app.manufacture_workspace.manual_inspection_dialog = None;
+        return false;
+    }
     if let Some(d) = &mut app.manufacture_workspace.manual_inspection_dialog {
         d.draft = draft;
     }

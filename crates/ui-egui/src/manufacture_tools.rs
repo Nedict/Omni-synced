@@ -4,9 +4,7 @@
 
 use egui::RichText;
 use serde_json::json;
-use solidcraft_manufacture::{
-    Coolant, CuttingPreset, NcUnit, ShaftSegment, Tool, ToolCategory, ToolHolder, ToolKind, ToolMaterial,
-};
+use solidcraft_manufacture::{Coolant, CuttingPreset, NcUnit, ShaftSegment, Tool, ToolCategory, ToolHolder, ToolKind, ToolMaterial};
 
 use crate::SolveApp;
 
@@ -24,14 +22,8 @@ pub enum EditToolTab {
 }
 
 impl EditToolTab {
-    const ALL: &'static [EditToolTab] = &[
-        EditToolTab::General,
-        EditToolTab::Cutter,
-        EditToolTab::Shaft,
-        EditToolTab::Holder,
-        EditToolTab::CuttingData,
-        EditToolTab::PostProcessor,
-    ];
+    const ALL: &'static [EditToolTab] =
+        &[EditToolTab::General, EditToolTab::Cutter, EditToolTab::Shaft, EditToolTab::Holder, EditToolTab::CuttingData, EditToolTab::PostProcessor];
 
     fn label(self) -> &'static str {
         match self {
@@ -65,12 +57,7 @@ pub struct ToolLibraryState {
 
 impl Default for ToolLibraryState {
     fn default() -> Self {
-        Self {
-            selected: None,
-            category: ToolCategory::Milling,
-            search: String::new(),
-            info_tab: true,
-        }
+        Self { selected: None, category: ToolCategory::Milling, search: String::new(), info_tab: true }
     }
 }
 
@@ -106,24 +93,12 @@ impl ManageStubKind {
 
     fn body(self) -> &'static str {
         match self {
-            ManageStubKind::FormMill => {
-                "Define a custom form-mill profile from model geometry. Coming in a later slice."
-            }
-            ManageStubKind::SolidHolder => {
-                "Create a tool holder from solid body geometry. Coming in a later slice."
-            }
-            ManageStubKind::MachineLibrary => {
-                "Browse and assign CNC machines. Use the Setup panel Machine field for now."
-            }
-            ManageStubKind::PostLibrary => {
-                "Browse post processors. Use Post Process (ACTIONS) or Setup → Post for now."
-            }
-            ManageStubKind::TemplateLibrary => {
-                "Save and reuse operation templates. Coming in a later slice."
-            }
-            ManageStubKind::TaskManager => {
-                "Background CAM generation tasks appear here. Use Generate status for now."
-            }
+            ManageStubKind::FormMill => "Define a custom form-mill profile from model geometry. Coming in a later slice.",
+            ManageStubKind::SolidHolder => "Create a tool holder from solid body geometry. Coming in a later slice.",
+            ManageStubKind::MachineLibrary => "Browse and assign CNC machines. Use the Setup panel Machine field for now.",
+            ManageStubKind::PostLibrary => "Browse post processors. Use Post Process (ACTIONS) or Setup → Post for now.",
+            ManageStubKind::TemplateLibrary => "Save and reuse operation templates. Coming in a later slice.",
+            ManageStubKind::TaskManager => "Background CAM generation tasks appear here. Use Generate status for now.",
             ManageStubKind::ExportDefaults => "Export default CAM parameters to a file. Coming soon.",
             ManageStubKind::ImportDefaults => "Import default CAM parameters from a file. Coming soon.",
             ManageStubKind::ResetDefaults => "Reset CAM defaults to factory values. Coming soon.",
@@ -140,10 +115,8 @@ pub struct ManageStubState {
 
 pub fn open_tool_library(app: &mut SolveApp) {
     crate::manufacture_workspace::ensure_setup(app);
-    app.manufacture_workspace.tool_library_dialog = Some(ToolLibraryState {
-        selected: app.manufacture_workspace.selected_tool,
-        ..Default::default()
-    });
+    app.manufacture_workspace.tool_library_dialog =
+        Some(ToolLibraryState { selected: app.manufacture_workspace.selected_tool, ..Default::default() });
     app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Tools;
     app.set_status(app.tr("manufacture.ribbon.tools").to_string(), false);
 }
@@ -152,13 +125,7 @@ pub fn open_edit_tool(app: &mut SolveApp, tool_index: Option<usize>) {
     crate::manufacture_workspace::ensure_setup(app);
     let setup_name = app.manufacture_workspace.active_setup.clone();
     let draft = if let Some(i) = tool_index {
-        app.session
-            .doc
-            .manufacture
-            .setups
-            .get(&setup_name)
-            .and_then(|s| s.tools.get(i).cloned())
-            .unwrap_or_default()
+        app.session.doc.manufacture.setups.get(&setup_name).and_then(|s| s.tools.get(i).cloned()).unwrap_or_default()
     } else {
         let next = app
             .session
@@ -168,21 +135,10 @@ pub fn open_edit_tool(app: &mut SolveApp, tool_index: Option<usize>) {
             .get(&setup_name)
             .map(|s| s.tools.iter().map(|t| t.number).max().unwrap_or(0).saturating_add(1).max(1))
             .unwrap_or(1);
-        Tool {
-            number: next,
-            length_offset: next,
-            diameter_offset: next,
-            ..Tool::default()
-        }
+        Tool { number: next, length_offset: next, diameter_offset: next, ..Tool::default() }
     };
     let selected_preset = if draft.cutting_presets.is_empty() { None } else { Some(0) };
-    app.manufacture_workspace.edit_tool_dialog = Some(EditToolState {
-        setup_name,
-        tool_index,
-        draft,
-        tab: EditToolTab::General,
-        selected_preset,
-    });
+    app.manufacture_workspace.edit_tool_dialog = Some(EditToolState { setup_name, tool_index, draft, tab: EditToolTab::General, selected_preset });
 }
 
 pub fn open_manage_stub(app: &mut SolveApp, kind: ManageStubKind) {
@@ -203,7 +159,7 @@ fn show_manage_stub(app: &mut SolveApp, ui: &mut egui::Ui) {
     };
     let mut open = true;
     let mut close = false;
-    egui::Window::new(st.kind.title())
+    crate::frame::window(ui.ctx(), st.kind.title(), crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_manage_stub"))
         .open(&mut open)
         .collapsible(false)
@@ -228,14 +184,7 @@ fn show_tool_library(app: &mut SolveApp, ui: &mut egui::Ui) {
         return;
     };
     let setup_name = app.manufacture_workspace.active_setup.clone();
-    let tools: Vec<Tool> = app
-        .session
-        .doc
-        .manufacture
-        .setups
-        .get(&setup_name)
-        .map(|s| s.tools.clone())
-        .unwrap_or_default();
+    let tools: Vec<Tool> = app.session.doc.manufacture.setups.get(&setup_name).map(|s| s.tools.clone()).unwrap_or_default();
 
     let mut open = true;
     let mut close = false;
@@ -244,7 +193,7 @@ fn show_tool_library(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut delete = false;
     let mut duplicate = false;
 
-    egui::Window::new("Tool Library")
+    crate::frame::window(ui.ctx(), "Tool Library", crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_tool_library"))
         .open(&mut open)
         .collapsible(false)
@@ -256,11 +205,7 @@ fn show_tool_library(app: &mut SolveApp, ui: &mut egui::Ui) {
                 ui.vertical(|ui| {
                     ui.set_min_width(160.0);
                     ui.label(RichText::new("Current Document").strong());
-                    ui.label(if setup_name.is_empty() {
-                        "(no setup)".into()
-                    } else {
-                        setup_name.clone()
-                    });
+                    ui.label(if setup_name.is_empty() { "(no setup)".into() } else { setup_name.clone() });
                     ui.separator();
                     ui.label("Search");
                     ui.text_edit_singleline(&mut st.search);
@@ -288,11 +233,8 @@ fn show_tool_library(app: &mut SolveApp, ui: &mut egui::Ui) {
                     });
                     ui.separator();
 
-                    let filtered: Vec<(usize, &Tool)> = tools
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, t)| matches_filter(t, st.category, &st.search))
-                        .collect();
+                    let filtered: Vec<(usize, &Tool)> =
+                        tools.iter().enumerate().filter(|(_, t)| matches_filter(t, st.category, &st.search)).collect();
 
                     egui::ScrollArea::vertical().id_salt("mfg_tl_list").max_height(240.0).show(ui, |ui| {
                         egui::Grid::new("mfg_tl_grid").striped(true).num_columns(5).show(ui, |ui| {
@@ -405,41 +347,40 @@ fn show_tool_library(app: &mut SolveApp, ui: &mut egui::Ui) {
     if add {
         open_edit_tool(app, None);
     }
-    if edit
-        && let Some(i) = st.selected {
-            open_edit_tool(app, Some(i));
-        }
+    if edit && let Some(i) = st.selected {
+        open_edit_tool(app, Some(i));
+    }
     if duplicate
         && let Some(i) = st.selected
-            && let Some(src) = tools.get(i).cloned() {
-                let mut tools = tools.clone();
-                let next = tools.iter().map(|t| t.number).max().unwrap_or(0).saturating_add(1).max(1);
-                let mut copy = src;
-                copy.number = next;
-                copy.length_offset = next;
-                copy.diameter_offset = next;
-                if !copy.description.is_empty() {
-                    copy.description = format!("{} (copy)", copy.description);
-                }
-                tools.push(copy);
-                let new_idx = tools.len() - 1;
-                if save_tools(app, &setup_name, tools) {
-                    st.selected = Some(new_idx);
-                    app.manufacture_workspace.selected_tool = Some(new_idx);
-                }
-            }
-    if delete
-        && let Some(i) = st.selected {
-            let mut tools = tools.clone();
-            if i < tools.len() {
-                tools.remove(i);
-                let next = if tools.is_empty() { None } else { Some(i.min(tools.len() - 1)) };
-                if save_tools(app, &setup_name, tools) {
-                    st.selected = next;
-                    app.manufacture_workspace.selected_tool = next;
-                }
+        && let Some(src) = tools.get(i).cloned()
+    {
+        let mut tools = tools.clone();
+        let next = tools.iter().map(|t| t.number).max().unwrap_or(0).saturating_add(1).max(1);
+        let mut copy = src;
+        copy.number = next;
+        copy.length_offset = next;
+        copy.diameter_offset = next;
+        if !copy.description.is_empty() {
+            copy.description = format!("{} (copy)", copy.description);
+        }
+        tools.push(copy);
+        let new_idx = tools.len() - 1;
+        if save_tools(app, &setup_name, tools) {
+            st.selected = Some(new_idx);
+            app.manufacture_workspace.selected_tool = Some(new_idx);
+        }
+    }
+    if delete && let Some(i) = st.selected {
+        let mut tools = tools.clone();
+        if i < tools.len() {
+            tools.remove(i);
+            let next = if tools.is_empty() { None } else { Some(i.min(tools.len() - 1)) };
+            if save_tools(app, &setup_name, tools) {
+                st.selected = next;
+                app.manufacture_workspace.selected_tool = next;
             }
         }
+    }
 
     app.manufacture_workspace.selected_tool = st.selected;
     app.manufacture_workspace.tool_library_dialog = Some(st);
@@ -474,7 +415,7 @@ fn show_edit_tool(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut cancel = false;
     let title = format!("Tool Library — {}", st.draft.display_name());
 
-    egui::Window::new(title)
+    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_edit_tool"))
         .open(&mut open)
         .collapsible(false)
@@ -529,11 +470,10 @@ fn show_edit_tool(app: &mut SolveApp, ui: &mut egui::Ui) {
         app.manufacture_workspace.edit_tool_dialog = None;
         return;
     }
-    if commit
-        && save_edit(app, &st) {
-            app.manufacture_workspace.edit_tool_dialog = None;
-            return;
-        }
+    if commit && save_edit(app, &st) {
+        app.manufacture_workspace.edit_tool_dialog = None;
+        return;
+    }
     app.manufacture_workspace.edit_tool_dialog = Some(st);
 }
 
@@ -547,27 +487,23 @@ fn tab_general(ui: &mut egui::Ui, t: &mut Tool) {
 fn tab_cutter(ui: &mut egui::Ui, t: &mut Tool) {
     ui.horizontal(|ui| {
         ui.label("Type");
-        egui::ComboBox::from_id_salt("edit_tool_kind")
-            .selected_text(t.kind.label())
-            .show_ui(ui, |ui| {
-                for k in ToolKind::ALL {
-                    if ui.selectable_label(t.kind == *k, k.label()).clicked() {
-                        t.kind = *k;
-                    }
+        egui::ComboBox::from_id_salt("edit_tool_kind").selected_text(t.kind.label()).show_ui(ui, |ui| {
+            for k in ToolKind::ALL {
+                if ui.selectable_label(t.kind == *k, k.label()).clicked() {
+                    t.kind = *k;
                 }
-            });
+            }
+        });
     });
     ui.horizontal(|ui| {
         ui.label("Unit");
-        egui::ComboBox::from_id_salt("edit_tool_unit")
-            .selected_text(t.unit.label())
-            .show_ui(ui, |ui| {
-                for u in NcUnit::ALL {
-                    if ui.selectable_label(t.unit == *u, u.label()).clicked() {
-                        t.unit = *u;
-                    }
+        egui::ComboBox::from_id_salt("edit_tool_unit").selected_text(t.unit.label()).show_ui(ui, |ui| {
+            for u in NcUnit::ALL {
+                if ui.selectable_label(t.unit == *u, u.label()).clicked() {
+                    t.unit = *u;
                 }
-            });
+            }
+        });
     });
     ui.checkbox(&mut t.clockwise, "Clockwise spindle rotation");
     ui.horizontal(|ui| {
@@ -579,15 +515,13 @@ fn tab_cutter(ui: &mut egui::Ui, t: &mut Tool) {
     });
     ui.horizontal(|ui| {
         ui.label("Material");
-        egui::ComboBox::from_id_salt("edit_tool_mat")
-            .selected_text(t.material.label())
-            .show_ui(ui, |ui| {
-                for m in ToolMaterial::ALL {
-                    if ui.selectable_label(t.material == *m, m.label()).clicked() {
-                        t.material = *m;
-                    }
+        egui::ComboBox::from_id_salt("edit_tool_mat").selected_text(t.material.label()).show_ui(ui, |ui| {
+            for m in ToolMaterial::ALL {
+                if ui.selectable_label(t.material == *m, m.label()).clicked() {
+                    t.material = *m;
                 }
-            });
+            }
+        });
     });
     ui.separator();
     ui.label(RichText::new("Geometry").strong());
@@ -609,11 +543,7 @@ fn tab_shaft(ui: &mut egui::Ui, t: &mut Tool) {
     ui.horizontal(|ui| {
         if ui.button("+ Add segment").clicked() {
             let d = if t.shaft_diameter > 0.0 { t.shaft_diameter } else { t.diameter };
-            t.shaft_segments.push(ShaftSegment {
-                height_mm: 10.0,
-                upper_diameter_mm: d,
-                lower_diameter_mm: d,
-            });
+            t.shaft_segments.push(ShaftSegment { height_mm: 10.0, upper_diameter_mm: d, lower_diameter_mm: d });
         }
         if ui.button("Clear").clicked() {
             t.shaft_segments.clear();
@@ -631,18 +561,8 @@ fn tab_shaft(ui: &mut egui::Ui, t: &mut Tool) {
         for (i, seg) in t.shaft_segments.iter_mut().enumerate() {
             ui.label(format!("{}", i + 1));
             ui.add(egui::DragValue::new(&mut seg.height_mm).speed(0.1).suffix(" mm").range(0.01..=500.0));
-            ui.add(
-                egui::DragValue::new(&mut seg.upper_diameter_mm)
-                    .speed(0.01)
-                    .suffix(" mm")
-                    .range(0.01..=500.0),
-            );
-            ui.add(
-                egui::DragValue::new(&mut seg.lower_diameter_mm)
-                    .speed(0.01)
-                    .suffix(" mm")
-                    .range(0.01..=500.0),
-            );
+            ui.add(egui::DragValue::new(&mut seg.upper_diameter_mm).speed(0.01).suffix(" mm").range(0.01..=500.0));
+            ui.add(egui::DragValue::new(&mut seg.lower_diameter_mm).speed(0.01).suffix(" mm").range(0.01..=500.0));
             if ui.small_button("✕").clicked() {
                 remove = Some(i);
             }
@@ -689,32 +609,25 @@ fn tab_cutting_data(ui: &mut egui::Ui, t: &mut Tool, selected: &mut Option<usize
     ui.horizontal(|ui| {
         if ui.button("+").on_hover_text("Add preset").clicked() {
             let n = t.cutting_presets.len() + 1;
-            t.cutting_presets.push(CuttingPreset {
-                name: format!("Preset {n}"),
-                ..CuttingPreset::default()
-            });
+            t.cutting_presets.push(CuttingPreset { name: format!("Preset {n}"), ..CuttingPreset::default() });
             *selected = Some(t.cutting_presets.len() - 1);
         }
-        if ui
-            .add_enabled(selected.is_some(), egui::Button::new("Duplicate"))
-            .clicked()
+        if ui.add_enabled(selected.is_some(), egui::Button::new("Duplicate")).clicked()
             && let Some(i) = *selected
-                && let Some(p) = t.cutting_presets.get(i).cloned() {
-                    let mut copy = p;
-                    copy.name = format!("{} (copy)", copy.name);
-                    t.cutting_presets.push(copy);
-                    *selected = Some(t.cutting_presets.len() - 1);
-                }
+            && let Some(p) = t.cutting_presets.get(i).cloned()
+        {
+            let mut copy = p;
+            copy.name = format!("{} (copy)", copy.name);
+            t.cutting_presets.push(copy);
+            *selected = Some(t.cutting_presets.len() - 1);
+        }
         if ui.add_enabled(selected.is_some(), egui::Button::new("Delete")).clicked()
             && let Some(i) = *selected
-                && i < t.cutting_presets.len() {
-                    t.cutting_presets.remove(i);
-                    *selected = if t.cutting_presets.is_empty() {
-                        None
-                    } else {
-                        Some(i.min(t.cutting_presets.len() - 1))
-                    };
-                }
+            && i < t.cutting_presets.len()
+        {
+            t.cutting_presets.remove(i);
+            *selected = if t.cutting_presets.is_empty() { None } else { Some(i.min(t.cutting_presets.len() - 1)) };
+        }
     });
 
     ui.horizontal(|ui| {
@@ -740,10 +653,7 @@ fn tab_cutting_data(ui: &mut egui::Ui, t: &mut Tool, selected: &mut Option<usize
                 return;
             }
             let surface = t.surface_speed_m_min(t.cutting_presets[i].spindle_rpm);
-            let fpt = t.feed_per_tooth(
-                t.cutting_presets[i].cutting_feedrate,
-                t.cutting_presets[i].spindle_rpm,
-            );
+            let fpt = t.feed_per_tooth(t.cutting_presets[i].cutting_feedrate, t.cutting_presets[i].spindle_rpm);
             let p = &mut t.cutting_presets[i];
             labeled_text(ui, "Name", &mut p.name);
             ui.separator();
@@ -769,10 +679,7 @@ fn tab_cutting_data(ui: &mut egui::Ui, t: &mut Tool, selected: &mut Option<usize
             ui.label(RichText::new("Vertical feedrates").strong());
             drag_mm(ui, "Plunge feedrate", &mut p.plunge_feedrate, 1.0, 0.1..=50_000.0);
             if p.spindle_rpm > 0 {
-                ui.label(format!(
-                    "Plunge feed per revolution: {:.5} mm",
-                    p.plunge_feedrate / f64::from(p.spindle_rpm)
-                ));
+                ui.label(format!("Plunge feed per revolution: {:.5} mm", p.plunge_feedrate / f64::from(p.spindle_rpm)));
             }
             ui.separator();
             ui.label(RichText::new("Passes and linking").strong());
@@ -787,15 +694,13 @@ fn tab_cutting_data(ui: &mut egui::Ui, t: &mut Tool, selected: &mut Option<usize
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label("Coolant");
-                egui::ComboBox::from_id_salt("edit_preset_coolant")
-                    .selected_text(p.coolant.label())
-                    .show_ui(ui, |ui| {
-                        for c in Coolant::ALL {
-                            if ui.selectable_label(p.coolant == *c, c.label()).clicked() {
-                                p.coolant = *c;
-                            }
+                egui::ComboBox::from_id_salt("edit_preset_coolant").selected_text(p.coolant.label()).show_ui(ui, |ui| {
+                    for c in Coolant::ALL {
+                        if ui.selectable_label(p.coolant == *c, c.label()).clicked() {
+                            p.coolant = *c;
                         }
-                    });
+                    }
+                });
             });
         });
     });
@@ -834,34 +739,24 @@ fn tool_preview(ui: &mut egui::Ui, t: &Tool) {
     let tip_y = rect.bottom() - 24.0;
     let flute_h = (t.flute_length.max(1.0) / t.length.max(1.0) * 70.0).clamp(12.0, 70.0) as f32;
     let below_h = (t.length_below_holder.max(1.0) / t.length.max(1.0) * 90.0).clamp(20.0, 100.0) as f32;
-    let flute_w =
-        (t.diameter / t.shaft_diameter.max(t.diameter).max(0.1) * 10.0).clamp(2.0, 14.0) as f32;
+    let flute_w = (t.diameter / t.shaft_diameter.max(t.diameter).max(0.1) * 10.0).clamp(2.0, 14.0) as f32;
     let shaft_w = flute_w.max(6.0) + 4.0;
     let holder_w = shaft_w + 28.0;
 
     let holder_top = tip_y - below_h - 50.0;
     let holder_bot = tip_y - below_h;
     painter.rect_filled(
-        egui::Rect::from_min_max(
-            egui::pos2(cx - holder_w * 0.5, holder_top),
-            egui::pos2(cx + holder_w * 0.5, holder_bot),
-        ),
+        egui::Rect::from_min_max(egui::pos2(cx - holder_w * 0.5, holder_top), egui::pos2(cx + holder_w * 0.5, holder_bot)),
         1.0,
         egui::Color32::from_rgb(120, 150, 180),
     );
     painter.rect_filled(
-        egui::Rect::from_min_max(
-            egui::pos2(cx - shaft_w * 0.5, holder_bot),
-            egui::pos2(cx + shaft_w * 0.5, tip_y - flute_h),
-        ),
+        egui::Rect::from_min_max(egui::pos2(cx - shaft_w * 0.5, holder_bot), egui::pos2(cx + shaft_w * 0.5, tip_y - flute_h)),
         0.0,
         egui::Color32::from_rgb(160, 165, 170),
     );
     painter.rect_filled(
-        egui::Rect::from_min_max(
-            egui::pos2(cx - flute_w * 0.5, tip_y - flute_h),
-            egui::pos2(cx + flute_w * 0.5, tip_y),
-        ),
+        egui::Rect::from_min_max(egui::pos2(cx - flute_w * 0.5, tip_y - flute_h), egui::pos2(cx + flute_w * 0.5, tip_y)),
         0.0,
         egui::Color32::from_rgb(210, 180, 60),
     );
@@ -897,14 +792,7 @@ fn drag_mm(ui: &mut egui::Ui, label: &str, value: &mut f64, speed: f64, range: s
 
 fn save_edit(app: &mut SolveApp, st: &EditToolState) -> bool {
     let setup_name = st.setup_name.clone();
-    let mut tools = app
-        .session
-        .doc
-        .manufacture
-        .setups
-        .get(&setup_name)
-        .map(|s| s.tools.clone())
-        .unwrap_or_default();
+    let mut tools = app.session.doc.manufacture.setups.get(&setup_name).map(|s| s.tools.clone()).unwrap_or_default();
     match st.tool_index {
         Some(i) if i < tools.len() => {
             tools[i] = st.draft.clone();
@@ -920,22 +808,17 @@ fn save_edit(app: &mut SolveApp, st: &EditToolState) -> bool {
 
 fn save_tools(app: &mut SolveApp, setup_name: &str, tools: Vec<Tool>) -> bool {
     match serde_json::to_value(&tools) {
-        Ok(tools_json) => {
-            match app.run(
-                "manufacture.settings.set",
-                json!({"name": setup_name, "set": {"tools": tools_json}}),
-            ) {
-                Ok(_) => {
-                    app.manufacture_workspace.revision = u64::MAX;
-                    app.manufacture_workspace.last_issues = app.session.doc.manufacture.issues();
-                    true
-                }
-                Err(e) => {
-                    app.set_status(e, true);
-                    false
-                }
+        Ok(tools_json) => match app.run("manufacture.settings.set", json!({"name": setup_name, "set": {"tools": tools_json}})) {
+            Ok(_) => {
+                app.manufacture_workspace.revision = u64::MAX;
+                app.manufacture_workspace.last_issues = app.session.doc.manufacture.issues();
+                true
             }
-        }
+            Err(e) => {
+                app.set_status(e, true);
+                false
+            }
+        },
         Err(e) => {
             app.set_status(e.to_string(), true);
             false

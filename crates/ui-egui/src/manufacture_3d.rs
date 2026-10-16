@@ -6,8 +6,8 @@
 use egui::RichText;
 use serde_json::json;
 use solidcraft_manufacture::{
-    ContourHeights, ContourLinking, ContourPasses, Coolant, HeightFrom, HeightPlane, HighFeedMode, Operation,
-    RampType, ShallowStyle, SidewaysCompensation, ThreedOperation, ThreedStrategy, Tool,
+    ContourHeights, ContourLinking, ContourPasses, Coolant, HeightFrom, HeightPlane, HighFeedMode, Operation, RampType, ShallowStyle,
+    SidewaysCompensation, ThreedOperation, ThreedStrategy, Tool,
 };
 
 use crate::{SolveApp, viewport};
@@ -54,12 +54,8 @@ pub fn open(app: &mut SolveApp, setup_name: &str, op_index: usize) {
     app.manufacture_workspace.twod_dialog = None;
     app.manufacture_workspace.hole_rec_dialog = None;
     app.manufacture_workspace.multiaxis_dialog = None;
-    app.manufacture_workspace.threed_dialog = Some(ThreedDialogState {
-        setup_name: setup_name.to_string(),
-        op_index,
-        draft: op,
-        tab: ThreedTab::Tool,
-    });
+    app.manufacture_workspace.threed_dialog =
+        Some(ThreedDialogState { setup_name: setup_name.to_string(), op_index, draft: op, tab: ThreedTab::Tool });
     app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Operations;
 }
 
@@ -67,14 +63,7 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let Some(state) = app.manufacture_workspace.threed_dialog.clone() else {
         return false;
     };
-    let tools: Vec<Tool> = app
-        .session
-        .doc
-        .manufacture
-        .setups
-        .get(&state.setup_name)
-        .map(|s| s.tools.clone())
-        .unwrap_or_default();
+    let tools: Vec<Tool> = app.session.doc.manufacture.setups.get(&state.setup_name).map(|s| s.tools.clone()).unwrap_or_default();
 
     let mut open = true;
     let mut commit = false;
@@ -83,7 +72,7 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let mut tab = state.tab;
     let title = dialog_title(&draft);
 
-    egui::Window::new(title)
+    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_3d_dialog"))
         .open(&mut open)
         .collapsible(false)
@@ -99,10 +88,7 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
                     (ThreedTab::Linking, "Linking"),
                 ] {
                     let sel = tab == v;
-                    if ui
-                        .selectable_label(sel, if sel { RichText::new(l).strong() } else { RichText::new(l) })
-                        .clicked()
-                    {
+                    if ui.selectable_label(sel, if sel { RichText::new(l).strong() } else { RichText::new(l) }).clicked() {
                         tab = v;
                     }
                 }
@@ -132,11 +118,10 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
         app.manufacture_workspace.threed_dialog = None;
         return false;
     }
-    if commit
-        && save(app, &state.setup_name, state.op_index, draft.clone()) {
-            app.manufacture_workspace.threed_dialog = None;
-            return false;
-        }
+    if commit && save(app, &state.setup_name, state.op_index, draft.clone()) {
+        app.manufacture_workspace.threed_dialog = None;
+        return false;
+    }
     if let Some(d) = &mut app.manufacture_workspace.threed_dialog {
         d.draft = draft;
         d.tab = tab;
@@ -146,21 +131,13 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
 
 fn dialog_title(draft: &ThreedOperation) -> String {
     let kind = draft.strategy.label().to_uppercase();
-    if draft.name.is_empty() || draft.name == draft.strategy.label() {
-        kind
-    } else {
-        format!("{kind} : {}", draft.name.to_uppercase())
-    }
+    if draft.name.is_empty() || draft.name == draft.strategy.label() { kind } else { format!("{kind} : {}", draft.name.to_uppercase()) }
 }
 
 fn tool_tab(ui: &mut egui::Ui, draft: &mut ThreedOperation, tools: &[Tool]) {
     ui.heading("Tool");
     let tnum = draft.tool_number;
-    let label = tools
-        .iter()
-        .find(|t| t.number == tnum)
-        .map(|t| format!("#{} ø{:.2}", t.number, t.diameter))
-        .unwrap_or_else(|| format!("#{tnum}"));
+    let label = tools.iter().find(|t| t.number == tnum).map(|t| format!("#{} ø{:.2}", t.number, t.diameter)).unwrap_or_else(|| format!("#{tnum}"));
     egui::ComboBox::from_id_salt("3d_tool").selected_text(label).show_ui(ui, |ui| {
         for t in tools {
             if ui.selectable_label(tnum == t.number, format!("#{} ø{:.2}", t.number, t.diameter)).clicked() {
@@ -201,11 +178,7 @@ fn tool_tab(ui: &mut egui::Ui, draft: &mut ThreedOperation, tools: &[Tool]) {
 fn geometry_tab(ui: &mut egui::Ui, draft: &mut ThreedOperation) {
     ui.heading("Geometry");
     ui.label(format!("Strategy: {}", draft.strategy.label()));
-    let n = if draft.targets.face_sample_points.is_empty() {
-        draft.targets.drill_points.len()
-    } else {
-        draft.targets.face_sample_points.len()
-    };
+    let n = if draft.targets.face_sample_points.is_empty() { draft.targets.drill_points.len() } else { draft.targets.face_sample_points.len() };
     ui.label(format!("{n} selection(s)"));
 
     ui.horizontal(|ui| {
@@ -233,15 +206,13 @@ fn geometry_tab(ui: &mut egui::Ui, draft: &mut ThreedOperation) {
             });
             ui.horizontal(|ui| {
                 ui.label("Shallow Style");
-                egui::ComboBox::from_id_salt("3d_shallow")
-                    .selected_text(draft.shallow_style.label())
-                    .show_ui(ui, |ui| {
-                        for s in [ShallowStyle::Parallel, ShallowStyle::Scallop] {
-                            if ui.selectable_label(draft.shallow_style == s, s.label()).clicked() {
-                                draft.shallow_style = s;
-                            }
+                egui::ComboBox::from_id_salt("3d_shallow").selected_text(draft.shallow_style.label()).show_ui(ui, |ui| {
+                    for s in [ShallowStyle::Parallel, ShallowStyle::Scallop] {
+                        if ui.selectable_label(draft.shallow_style == s, s.label()).clicked() {
+                            draft.shallow_style = s;
                         }
-                    });
+                    }
+                });
             });
             ui.checkbox(&mut draft.machine_shallow_areas, "Machine Shallow Areas");
         }
@@ -259,10 +230,9 @@ fn geometry_tab(ui: &mut egui::Ui, draft: &mut ThreedOperation) {
 
     ui.separator();
     ui.horizontal(|ui| {
-        if ui.button("Add sample point").clicked()
-            && draft.targets.face_sample_points.len() < solidcraft_manufacture::MAX_SAMPLE_POINTS_PER_OP {
-                draft.targets.face_sample_points.push([0.0, 0.0, 0.0]);
-            }
+        if ui.button("Add sample point").clicked() && draft.targets.face_sample_points.len() < solidcraft_manufacture::MAX_SAMPLE_POINTS_PER_OP {
+            draft.targets.face_sample_points.push([0.0, 0.0, 0.0]);
+        }
         if ui.button("Clear").clicked() {
             draft.targets.face_sample_points.clear();
             draft.targets.drill_points.clear();
@@ -303,15 +273,13 @@ fn height_row(ui: &mut egui::Ui, label: &str, plane: &mut HeightPlane) {
         ui.label(RichText::new(label).strong());
         ui.horizontal(|ui| {
             ui.label("From");
-            egui::ComboBox::from_id_salt(format!("3dh_{label}"))
-                .selected_text(plane.from.label())
-                .show_ui(ui, |ui| {
-                    for f in HEIGHT_FROM {
-                        if ui.selectable_label(plane.from == *f, f.label()).clicked() {
-                            plane.from = *f;
-                        }
+            egui::ComboBox::from_id_salt(format!("3dh_{label}")).selected_text(plane.from.label()).show_ui(ui, |ui| {
+                for f in HEIGHT_FROM {
+                    if ui.selectable_label(plane.from == *f, f.label()).clicked() {
+                        plane.from = *f;
                     }
-                });
+                }
+            });
         });
         ui.horizontal(|ui| {
             ui.label("Offset");
@@ -329,15 +297,13 @@ fn passes_tab(ui: &mut egui::Ui, draft: &mut ThreedOperation) {
     });
     ui.horizontal(|ui| {
         ui.label("Sideways Compensation");
-        egui::ComboBox::from_id_salt("3d_sideways")
-            .selected_text(p.sideways.label())
-            .show_ui(ui, |ui| {
-                for s in [SidewaysCompensation::Left, SidewaysCompensation::Right, SidewaysCompensation::Center] {
-                    if ui.selectable_label(p.sideways == s, s.label()).clicked() {
-                        p.sideways = s;
-                    }
+        egui::ComboBox::from_id_salt("3d_sideways").selected_text(p.sideways.label()).show_ui(ui, |ui| {
+            for s in [SidewaysCompensation::Left, SidewaysCompensation::Right, SidewaysCompensation::Center] {
+                if ui.selectable_label(p.sideways == s, s.label()).clicked() {
+                    p.sideways = s;
                 }
-            });
+            }
+        });
     });
 
     match draft.strategy {
@@ -378,15 +344,13 @@ fn passes_tab(ui: &mut egui::Ui, draft: &mut ThreedOperation) {
             });
             ui.horizontal(|ui| {
                 ui.label("Shallow Style");
-                egui::ComboBox::from_id_salt("3d_pass_shallow")
-                    .selected_text(draft.shallow_style.label())
-                    .show_ui(ui, |ui| {
-                        for s in [ShallowStyle::Parallel, ShallowStyle::Scallop] {
-                            if ui.selectable_label(draft.shallow_style == s, s.label()).clicked() {
-                                draft.shallow_style = s;
-                            }
+                egui::ComboBox::from_id_salt("3d_pass_shallow").selected_text(draft.shallow_style.label()).show_ui(ui, |ui| {
+                    for s in [ShallowStyle::Parallel, ShallowStyle::Scallop] {
+                        if ui.selectable_label(draft.shallow_style == s, s.label()).clicked() {
+                            draft.shallow_style = s;
                         }
-                    });
+                    }
+                });
             });
             match draft.shallow_style {
                 ShallowStyle::Scallop => {
@@ -474,15 +438,13 @@ fn passes_tab(ui: &mut egui::Ui, draft: &mut ThreedOperation) {
 
 fn linking_tab(ui: &mut egui::Ui, linking: &mut ContourLinking) {
     ui.heading("Linking");
-    egui::ComboBox::from_id_salt("3d_high_feed")
-        .selected_text(linking.high_feed_mode.label())
-        .show_ui(ui, |ui| {
-            for m in [HighFeedMode::PreserveRapid, HighFeedMode::AlwaysUseHighFeed, HighFeedMode::NeverUseHighFeed] {
-                if ui.selectable_label(linking.high_feed_mode == m, m.label()).clicked() {
-                    linking.high_feed_mode = m;
-                }
+    egui::ComboBox::from_id_salt("3d_high_feed").selected_text(linking.high_feed_mode.label()).show_ui(ui, |ui| {
+        for m in [HighFeedMode::PreserveRapid, HighFeedMode::AlwaysUseHighFeed, HighFeedMode::NeverUseHighFeed] {
+            if ui.selectable_label(linking.high_feed_mode == m, m.label()).clicked() {
+                linking.high_feed_mode = m;
             }
-        });
+        }
+    });
     ui.checkbox(&mut linking.keep_tool_down, "Keep Tool Down");
     ui.horizontal(|ui| {
         ui.label("Safe Distance");

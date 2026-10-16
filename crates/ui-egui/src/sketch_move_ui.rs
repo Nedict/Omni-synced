@@ -86,14 +86,16 @@ fn center_world(app: &SolveApp, d: &Dialog) -> Option<Vec3> {
         let from = d.inputs.get(1).and_then(|i| i.items.first());
         let to = d.inputs.get(2).and_then(|i| i.items.first());
         if let (Some(f), Some(t)) = (from, to)
-            && let (Some(a), Some(b)) = (sketch_modify_ui::sketch_point_pos(&app.session, f), sketch_modify_ui::sketch_point_pos(&app.session, t)) {
-                let c = entity_centroid_local(app, d)? + (b - a);
-                return Some(ss.plane.to_world(c));
-            }
+            && let (Some(a), Some(b)) = (sketch_modify_ui::sketch_point_pos(&app.session, f), sketch_modify_ui::sketch_point_pos(&app.session, t))
+        {
+            let c = entity_centroid_local(app, d)? + (b - a);
+            return Some(ss.plane.to_world(c));
+        }
         if let Some(f) = from
-            && let Some(a) = sketch_modify_ui::sketch_point_pos(&app.session, f) {
-                return Some(ss.plane.to_world(a));
-            }
+            && let Some(a) = sketch_modify_ui::sketch_point_pos(&app.session, f)
+        {
+            return Some(ss.plane.to_world(a));
+        }
         return Some(ss.plane.to_world(entity_centroid_local(app, d)?));
     }
     if let Some(Sel::SketchPoint { id }) = d.inputs.get(1).and_then(|i| i.items.first()) {
@@ -132,10 +134,11 @@ pub fn sync_p2p(app: &SolveApp, d: &mut Dialog) {
     let from = d.inputs.get(1).and_then(|i| i.items.first());
     let to = d.inputs.get(2).and_then(|i| i.items.first());
     if let (Some(f), Some(t)) = (from, to)
-        && let (Some(a), Some(b)) = (sketch_modify_ui::sketch_point_pos(&app.session, f), sketch_modify_ui::sketch_point_pos(&app.session, t)) {
-            *x = mm(b.x - a.x);
-            *y = mm(b.y - a.y);
-        }
+        && let (Some(a), Some(b)) = (sketch_modify_ui::sketch_point_pos(&app.session, f), sketch_modify_ui::sketch_point_pos(&app.session, t))
+    {
+        *x = mm(b.x - a.x);
+        *y = mm(b.y - a.y);
+    }
 }
 
 pub fn triad(app: &SolveApp, d: &Dialog) -> Option<gizmo::Triad> {

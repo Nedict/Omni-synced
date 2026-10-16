@@ -54,9 +54,7 @@ pub async fn cors_middleware(axum::extract::State(state): axum::extract::State<A
                 headers.insert(ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("Authorization, Content-Type"));
                 headers.insert(ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("86400"));
                 if requests_pna {
-                    if let Ok(v) = HeaderValue::from_str("true") {
-                        headers.insert(ALLOW_PRIVATE_NETWORK_RES, v);
-                    }
+                    headers.insert(ALLOW_PRIVATE_NETWORK_RES, HeaderValue::from_static("true"));
                 }
             }
         }

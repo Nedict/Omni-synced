@@ -52,13 +52,8 @@ fn take_snapshot(s: &Session, setup_name: &str, command: &str) -> Result<Snapsho
         settings.machines.insert(name.clone(), profile);
     }
     if let Some(name) = &setup.post {
-        let profile = s
-            .doc
-            .manufacture
-            .posts
-            .get(name)
-            .cloned()
-            .ok_or_else(|| bad(command, format!("setup references missing post profile `{name}`")))?;
+        let profile =
+            s.doc.manufacture.posts.get(name).cloned().ok_or_else(|| bad(command, format!("setup references missing post profile `{name}`")))?;
         settings.posts.insert(name.clone(), profile);
     }
     settings.validate().map_err(|e| bad(command, e.to_string()))?;
@@ -86,13 +81,7 @@ fn take_snapshot(s: &Session, setup_name: &str, command: &str) -> Result<Snapsho
     hasher.update(&step_bytes);
     let step_sha256 = format!("{:x}", hasher.finalize());
 
-    Ok(Snapshot {
-        setup_name: setup_name.to_owned(),
-        settings: Arc::new(settings),
-        step_bytes: Arc::new(step_bytes),
-        step_sha256,
-        operation_count,
-    })
+    Ok(Snapshot { setup_name: setup_name.to_owned(), settings: Arc::new(settings), step_bytes: Arc::new(step_bytes), step_sha256, operation_count })
 }
 
 // ── Preflight ─────────────────────────────────────────────────────────────────
@@ -202,22 +191,12 @@ fn gcode_bytes_from_result(s: &Session, cam_result: &CamJobResult) -> Result<Vec
         .setups
         .get(&cam_result.provenance.setup)
         .ok_or_else(|| bad("manufacture.gcode", "setup referenced by job provenance no longer exists"))?;
-    let post_name = setup
-        .post
-        .as_ref()
-        .ok_or_else(|| bad("manufacture.gcode", "setup has no post profile; assign one or use companion post output"))?;
-    let profile = s
-        .doc
-        .manufacture
-        .posts
-        .get(post_name)
-        .ok_or_else(|| bad("manufacture.gcode", format!("post profile `{post_name}` is not defined")))?;
-    let tool = setup
-        .tools
-        .first()
-        .ok_or_else(|| bad("manufacture.gcode", "setup has no tools for local posting"))?;
-    let gcode = post::post_toolpath(&cam_result.segments, profile, tool)
-        .map_err(|e| bad("manufacture.gcode", e))?;
+    let post_name =
+        setup.post.as_ref().ok_or_else(|| bad("manufacture.gcode", "setup has no post profile; assign one or use companion post output"))?;
+    let profile =
+        s.doc.manufacture.posts.get(post_name).ok_or_else(|| bad("manufacture.gcode", format!("post profile `{post_name}` is not defined")))?;
+    let tool = setup.tools.first().ok_or_else(|| bad("manufacture.gcode", "setup has no tools for local posting"))?;
+    let gcode = post::post_toolpath(&cam_result.segments, profile, tool).map_err(|e| bad("manufacture.gcode", e))?;
     Ok(gcode.into_bytes())
 }
 

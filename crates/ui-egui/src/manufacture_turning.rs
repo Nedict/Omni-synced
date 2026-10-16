@@ -3,9 +3,7 @@
 
 use egui::RichText;
 use serde_json::json;
-use solidcraft_manufacture::{
-    Coolant, HighFeedMode, Operation, Tool, TurningMode, TurningOperation, TurningSpindleRotation, TurningStrategy,
-};
+use solidcraft_manufacture::{Coolant, HighFeedMode, Operation, Tool, TurningMode, TurningOperation, TurningSpindleRotation, TurningStrategy};
 
 use crate::SolveApp;
 
@@ -42,12 +40,8 @@ pub fn open(app: &mut SolveApp, setup_name: &str, op_index: usize) {
     app.manufacture_workspace.hole_rec_dialog = None;
     app.manufacture_workspace.multiaxis_dialog = None;
     app.manufacture_workspace.part_handling_dialog = None;
-    app.manufacture_workspace.turning_dialog = Some(TurningDialogState {
-        setup_name: setup_name.to_string(),
-        op_index,
-        draft: op,
-        tab: TurningTab::Tool,
-    });
+    app.manufacture_workspace.turning_dialog =
+        Some(TurningDialogState { setup_name: setup_name.to_string(), op_index, draft: op, tab: TurningTab::Tool });
     app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Operations;
     app.manufacture_workspace.cam_mode = crate::manufacture_workspace::CamMode::Turning;
 }
@@ -56,14 +50,7 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let Some(state) = app.manufacture_workspace.turning_dialog.clone() else {
         return false;
     };
-    let tools: Vec<Tool> = app
-        .session
-        .doc
-        .manufacture
-        .setups
-        .get(&state.setup_name)
-        .map(|s| s.tools.clone())
-        .unwrap_or_default();
+    let tools: Vec<Tool> = app.session.doc.manufacture.setups.get(&state.setup_name).map(|s| s.tools.clone()).unwrap_or_default();
 
     let mut open = true;
     let mut commit = false;
@@ -72,7 +59,7 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let mut tab = state.tab;
     let title = draft.strategy.label().to_string();
 
-    egui::Window::new(title)
+    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_turning_dialog"))
         .open(&mut open)
         .collapsible(false)
@@ -117,11 +104,10 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
         app.manufacture_workspace.turning_dialog = None;
         return false;
     }
-    if commit
-        && save(app, &state.setup_name, state.op_index, draft.clone()) {
-            app.manufacture_workspace.turning_dialog = None;
-            return false;
-        }
+    if commit && save(app, &state.setup_name, state.op_index, draft.clone()) {
+        app.manufacture_workspace.turning_dialog = None;
+        return false;
+    }
     if let Some(d) = &mut app.manufacture_workspace.turning_dialog {
         d.draft = draft;
         d.tab = tab;
@@ -133,44 +119,35 @@ fn tool_tab(ui: &mut egui::Ui, draft: &mut TurningOperation, tools: &[Tool]) {
     ui.label(RichText::new(draft.strategy.label()).strong());
     ui.horizontal(|ui| {
         ui.label("Tool #");
-        let label = tools
-            .iter()
-            .find(|t| t.number == draft.tool_number)
-            .map(|t| t.display_name())
-            .unwrap_or_else(|| format!("T{}", draft.tool_number));
-        egui::ComboBox::from_id_salt("turn_tool")
-            .selected_text(label)
-            .show_ui(ui, |ui| {
-                for t in tools {
-                    if ui.selectable_label(draft.tool_number == t.number, t.display_name()).clicked() {
-                        draft.tool_number = t.number;
-                    }
+        let label =
+            tools.iter().find(|t| t.number == draft.tool_number).map(|t| t.display_name()).unwrap_or_else(|| format!("T{}", draft.tool_number));
+        egui::ComboBox::from_id_salt("turn_tool").selected_text(label).show_ui(ui, |ui| {
+            for t in tools {
+                if ui.selectable_label(draft.tool_number == t.number, t.display_name()).clicked() {
+                    draft.tool_number = t.number;
                 }
-            });
+            }
+        });
     });
     ui.horizontal(|ui| {
         ui.label("Spindle");
-        egui::ComboBox::from_id_salt("turn_spindle")
-            .selected_text(draft.spindle.label())
-            .show_ui(ui, |ui| {
-                for s in [TurningSpindleRotation::Forward, TurningSpindleRotation::Reverse] {
-                    if ui.selectable_label(draft.spindle == s, s.label()).clicked() {
-                        draft.spindle = s;
-                    }
+        egui::ComboBox::from_id_salt("turn_spindle").selected_text(draft.spindle.label()).show_ui(ui, |ui| {
+            for s in [TurningSpindleRotation::Forward, TurningSpindleRotation::Reverse] {
+                if ui.selectable_label(draft.spindle == s, s.label()).clicked() {
+                    draft.spindle = s;
                 }
-            });
+            }
+        });
     });
     ui.horizontal(|ui| {
         ui.label("Coolant");
-        egui::ComboBox::from_id_salt("turn_coolant")
-            .selected_text(draft.coolant.label())
-            .show_ui(ui, |ui| {
-                for c in Coolant::ALL {
-                    if ui.selectable_label(draft.coolant == *c, c.label()).clicked() {
-                        draft.coolant = *c;
-                    }
+        egui::ComboBox::from_id_salt("turn_coolant").selected_text(draft.coolant.label()).show_ui(ui, |ui| {
+            for c in Coolant::ALL {
+                if ui.selectable_label(draft.coolant == *c, c.label()).clicked() {
+                    draft.coolant = *c;
                 }
-            });
+            }
+        });
     });
     ui.separator();
     ui.label(RichText::new("Feeds").strong());
@@ -185,15 +162,13 @@ fn tool_tab(ui: &mut egui::Ui, draft: &mut TurningOperation, tools: &[Tool]) {
 fn geometry_tab(ui: &mut egui::Ui, draft: &mut TurningOperation) {
     ui.horizontal(|ui| {
         ui.label("Mode");
-        egui::ComboBox::from_id_salt("turn_mode")
-            .selected_text(draft.mode.label())
-            .show_ui(ui, |ui| {
-                for m in [TurningMode::Outside, TurningMode::Inside] {
-                    if ui.selectable_label(draft.mode == m, m.label()).clicked() {
-                        draft.mode = m;
-                    }
+        egui::ComboBox::from_id_salt("turn_mode").selected_text(draft.mode.label()).show_ui(ui, |ui| {
+            for m in [TurningMode::Outside, TurningMode::Inside] {
+                if ui.selectable_label(draft.mode == m, m.label()).clicked() {
+                    draft.mode = m;
                 }
-            });
+            }
+        });
     });
     ui.separator();
     ui.label(RichText::new("Z containment").strong());
@@ -245,19 +220,13 @@ fn linking_tab(ui: &mut egui::Ui, draft: &mut TurningOperation) {
     ui.checkbox(&mut draft.linking.allow_rapid_retract, "Allow rapid retract");
     ui.horizontal(|ui| {
         ui.label("High feed");
-        egui::ComboBox::from_id_salt("turn_hfeed")
-            .selected_text(draft.linking.high_feed_mode.label())
-            .show_ui(ui, |ui| {
-                for m in [
-                    HighFeedMode::PreserveRapid,
-                    HighFeedMode::AlwaysUseHighFeed,
-                    HighFeedMode::NeverUseHighFeed,
-                ] {
-                    if ui.selectable_label(draft.linking.high_feed_mode == m, m.label()).clicked() {
-                        draft.linking.high_feed_mode = m;
-                    }
+        egui::ComboBox::from_id_salt("turn_hfeed").selected_text(draft.linking.high_feed_mode.label()).show_ui(ui, |ui| {
+            for m in [HighFeedMode::PreserveRapid, HighFeedMode::AlwaysUseHighFeed, HighFeedMode::NeverUseHighFeed] {
+                if ui.selectable_label(draft.linking.high_feed_mode == m, m.label()).clicked() {
+                    draft.linking.high_feed_mode = m;
                 }
-            });
+            }
+        });
     });
 }
 

@@ -654,7 +654,14 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         } else {
             "box"
         };
-        icons::paint(&painter, Rect::from_center_size(pos2(ws.center().x, ws.top() + 24.0), vec2(26.0, 26.0)), workspace_icon, t.icon, t.icon_fill, t.accent);
+        icons::paint(
+            &painter,
+            Rect::from_center_size(pos2(ws.center().x, ws.top() + 24.0), vec2(26.0, 26.0)),
+            workspace_icon,
+            t.icon,
+            t.icon_fill,
+            t.accent,
+        );
         painter.text(
             pos2(ws.center().x - 5.0, ws.top() + 52.0),
             Align2::CENTER_CENTER,
@@ -702,11 +709,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 "FABRICATION" => Some(crate::manufacture_workspace::CamMode::Fabrication),
                 _ => None,
             };
-            let active = if let Some(mode) = mfg_mode {
-                app.manufacture_workspace.cam_mode == mode
-            } else {
-                app.ui.tab == tab
-            };
+            let active = if let Some(mode) = mfg_mode { app.manufacture_workspace.cam_mode == mode } else { app.ui.tab == tab };
             let resp = ui.interact(tr, ui.id().with(("tab", tab)), Sense::click());
             if active {
                 let c = if tab == "SKETCH" { t.sketch_accent } else { t.accent };
@@ -1720,8 +1723,7 @@ mod home_tests {
             "Export OBJ…",
             "Export URDF…",
             "Export for LightBurn…",
-        ]
-        {
+        ] {
             actions.push((
                 format!("File › {item}"),
                 Box::new(move |h| {

@@ -20,11 +20,7 @@ pub fn run(workspace: &Path, dir: Option<&Path>, per_file_secs: u64) -> Result<(
         .map_err(|e| format!("read {}: {e}", dir.display()))?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| {
-            p.extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("f3d") || e.eq_ignore_ascii_case("f3z"))
-        })
+        .filter(|p| p.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("f3d") || e.eq_ignore_ascii_case("f3z")))
         .collect();
     files.sort();
     if files.is_empty() {
@@ -42,15 +38,7 @@ pub fn run(workspace: &Path, dir: Option<&Path>, per_file_secs: u64) -> Result<(
         eprintln!("\n--- {label} ---");
         let start = Instant::now();
         let mut child = Command::new("cargo")
-            .args([
-                "test",
-                "-p",
-                "solidcraft-io",
-                "tests::fusion_open_one_file",
-                "--",
-                "--exact",
-                "--nocapture",
-            ])
+            .args(["test", "-p", "solidcraft-io", "tests::fusion_open_one_file", "--", "--exact", "--nocapture"])
             .env("F3D_ONE", path)
             .current_dir(workspace)
             .stdout(Stdio::piped())
@@ -73,8 +61,7 @@ pub fn run(workspace: &Path, dir: Option<&Path>, per_file_secs: u64) -> Result<(
             }
         };
         let Some(output) = output else { continue };
-        let combined = String::from_utf8_lossy(&output.stderr).to_string()
-            + &String::from_utf8_lossy(&output.stdout);
+        let combined = String::from_utf8_lossy(&output.stderr).to_string() + &String::from_utf8_lossy(&output.stdout);
         for line in combined.lines() {
             if line.contains("RESULT ") {
                 eprintln!("{line}");
@@ -94,13 +81,7 @@ pub fn run(workspace: &Path, dir: Option<&Path>, per_file_secs: u64) -> Result<(
         }
     }
 
-    eprintln!(
-        "\n=== summary: {} solid, {} mesh, {} failed / {} ===",
-        ok_solid,
-        ok_mesh,
-        failed,
-        ok_solid + ok_mesh + failed
-    );
+    eprintln!("\n=== summary: {} solid, {} mesh, {} failed / {} ===", ok_solid, ok_mesh, failed, ok_solid + ok_mesh + failed);
     Ok(())
 }
 

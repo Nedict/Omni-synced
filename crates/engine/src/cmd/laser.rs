@@ -14,16 +14,11 @@ use crate::params::{bad, str_};
 use crate::{EngineError, Result, Session};
 
 pub const COMMANDS: &[CommandSpec] = &[
-    CommandSpec::new("laser.profiles", "Laser Profiles", profiles)
-        .noundo()
-        .doc_only()
-        .params("{}"),
-    CommandSpec::new("laser.exportPackage", "Export LightBurn Package", export_package)
-        .noundo()
-        .params(
-            "profile?: commarker-60w-mopa; field_mm?: number; path?: stem or path without extension \
+    CommandSpec::new("laser.profiles", "Laser Profiles", profiles).noundo().doc_only().params("{}"),
+    CommandSpec::new("laser.exportPackage", "Export LightBurn Package", export_package).noundo().params(
+        "profile?: commarker-60w-mopa; field_mm?: number; path?: stem or path without extension \
 (writes .dxf .svg .laser-job.json); sketch?: name|id; polylines?: [{points:[[x,y],…], closed?, layer?}]",
-        ),
+    ),
 ];
 
 fn profiles(s: &mut Session, p: &Value) -> Result<Value> {
@@ -51,17 +46,12 @@ fn profiles(s: &mut Session, p: &Value) -> Result<Value> {
 fn export_package(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "laser.exportPackage";
     let profile_id = match str_(p, "profile") {
-        Some(raw) if !raw.trim().is_empty() => {
-            ProfileId::parse(raw).ok_or_else(|| bad(CMD, format!("unknown laser profile `{raw}`")))?
-        }
+        Some(raw) if !raw.trim().is_empty() => ProfileId::parse(raw).ok_or_else(|| bad(CMD, format!("unknown laser profile `{raw}`")))?,
         _ => ProfileId::Commarker60wMopa,
     };
     let field_mm = p.get("field_mm").and_then(Value::as_f64);
-    let polylines = if let Some(arr) = p.get("polylines").and_then(Value::as_array) {
-        parse_polylines(CMD, arr)?
-    } else {
-        sketch_polylines(s, p, CMD)?
-    };
+    let polylines =
+        if let Some(arr) = p.get("polylines").and_then(Value::as_array) { parse_polylines(CMD, arr)? } else { sketch_polylines(s, p, CMD)? };
     let pkg = build_package(profile_id, field_mm, &polylines).map_err(|e| bad(CMD, e.to_string()))?;
 
     if let Some(path) = str_(p, "path").filter(|x| !x.trim().is_empty()) {
@@ -72,8 +62,7 @@ fn export_package(s: &mut Session, p: &Value) -> Result<Value> {
         let job_path = join_path(&dir, &job_name);
         solidcraft_io::vfs::write(&dxf_path, pkg.dxf.as_bytes()).map_err(|e| EngineError::Other(format!("{dxf_path}: {e}")))?;
         solidcraft_io::vfs::write(&svg_path, pkg.svg.as_bytes()).map_err(|e| EngineError::Other(format!("{svg_path}: {e}")))?;
-        solidcraft_io::vfs::write(&job_path, pkg.job_json.as_bytes())
-            .map_err(|e| EngineError::Other(format!("{job_path}: {e}")))?;
+        solidcraft_io::vfs::write(&job_path, pkg.job_json.as_bytes()).map_err(|e| EngineError::Other(format!("{job_path}: {e}")))?;
         return Ok(json!({
             "profile": pkg.meta.profile,
             "field_mm": pkg.meta.field_mm,
@@ -96,10 +85,7 @@ fn export_package(s: &mut Session, p: &Value) -> Result<Value> {
 fn parse_polylines(cmd: &str, arr: &[Value]) -> Result<Vec<Polyline2>> {
     let mut out = Vec::with_capacity(arr.len());
     for (i, v) in arr.iter().enumerate() {
-        let points = v
-            .get("points")
-            .and_then(Value::as_array)
-            .ok_or_else(|| bad(cmd, format!("polylines[{i}].points required")))?;
+        let points = v.get("points").and_then(Value::as_array).ok_or_else(|| bad(cmd, format!("polylines[{i}].points required")))?;
         let mut pts = Vec::with_capacity(points.len());
         for (j, pt) in points.iter().enumerate() {
             let xy = pt.as_array().ok_or_else(|| bad(cmd, format!("polylines[{i}].points[{j}] must be [x,y]")))?;
@@ -113,11 +99,7 @@ fn parse_polylines(cmd: &str, arr: &[Value]) -> Result<Vec<Polyline2>> {
         out.push(Polyline2 {
             points: pts,
             closed: v.get("closed").and_then(Value::as_bool).unwrap_or(false),
-            layer: v
-                .get("layer")
-                .and_then(Value::as_str)
-                .unwrap_or("mark")
-                .to_string(),
+            layer: v.get("layer").and_then(Value::as_str).unwrap_or("mark").to_string(),
         });
     }
     Ok(out)
@@ -143,11 +125,7 @@ fn sketch_polylines(s: &Session, p: &Value, cmd: &str) -> Result<Vec<Polyline2>>
             [p.x, p.y]
         };
         match &c.kind {
-            CurveKind::Line { a, b } => out.push(Polyline2 {
-                points: vec![pt(*a), pt(*b)],
-                closed: false,
-                layer: "mark".into(),
-            }),
+            CurveKind::Line { a, b } => out.push(Polyline2 { points: vec![pt(*a), pt(*b)], closed: false, layer: "mark".into() }),
             CurveKind::Circle { c, r } => {
                 let center = sk.point(*c).unwrap_or_default();
                 let n = 64usize;
@@ -161,22 +139,14 @@ fn sketch_polylines(s: &Session, p: &Value, cmd: &str) -> Result<Vec<Polyline2>>
             CurveKind::Arc { .. } => {
                 let poly = sk.polyline(i);
                 if poly.len() >= 2 {
-                    out.push(Polyline2 {
-                        points: poly.iter().map(|p| [p.x, p.y]).collect(),
-                        closed: false,
-                        layer: "mark".into(),
-                    });
+                    out.push(Polyline2 { points: poly.iter().map(|p| [p.x, p.y]).collect(), closed: false, layer: "mark".into() });
                 }
             }
             _ => {
                 let poly = sk.polyline(i);
                 if poly.len() >= 2 {
                     let closed = poly.first().zip(poly.last()).is_some_and(|(a, b)| (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9);
-                    out.push(Polyline2 {
-                        points: poly.iter().map(|p| [p.x, p.y]).collect(),
-                        closed,
-                        layer: "mark".into(),
-                    });
+                    out.push(Polyline2 { points: poly.iter().map(|p| [p.x, p.y]).collect(), closed, layer: "mark".into() });
                 }
             }
         }
@@ -205,11 +175,7 @@ fn split_stem(path: &str) -> (String, String) {
 }
 
 fn join_path(dir: &str, name: &str) -> String {
-    if dir.is_empty() {
-        name.to_string()
-    } else {
-        format!("{dir}{name}")
-    }
+    if dir.is_empty() { name.to_string() } else { format!("{dir}{name}") }
 }
 
 #[cfg(test)]

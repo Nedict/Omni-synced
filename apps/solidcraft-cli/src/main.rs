@@ -581,9 +581,7 @@ pub(crate) fn cmd_bench_open(args: &[String]) -> Result<(), String> {
     let path = args.first().ok_or("usage: solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only]")?;
     let t = std::time::Instant::now();
     let exchange = solidcraft_engine::io::exchange::provider_for_path(path);
-    let limit = exchange
-        .map(|id| solidcraft_engine::io::exchange::provider(id).max_bytes)
-        .unwrap_or(solidcraft_engine::io::MAX_DESIGN_BYTES);
+    let limit = exchange.map(|id| solidcraft_engine::io::exchange::provider(id).max_bytes).unwrap_or(solidcraft_engine::io::MAX_DESIGN_BYTES);
     let step = exchange == Some(solidcraft_engine::io::ExchangeProviderId::StepIges);
     let bytes = solidcraft_engine::io::vfs::read(path, limit).map_err(|e| format!("{path}: {e}"))?;
     let read_ms = t.elapsed().as_secs_f64() * 1000.0;

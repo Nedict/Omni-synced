@@ -20,8 +20,7 @@ use crate::{MachineProfile, PostProfile, Result, invalid, machines, post};
 
 /// Default central SolidCraft CAM library (posts + machines + templates).
 /// Point additional remotes at vendor forks the same way Fusion links cloud libraries.
-pub const DEFAULT_CAM_LIBRARY_REMOTE: &str =
-    "https://devops.quasarke.net/wdunn001/solidcraft-cam-libraries.git";
+pub const DEFAULT_CAM_LIBRARY_REMOTE: &str = "https://devops.quasarke.net/wdunn001/solidcraft-cam-libraries.git";
 
 pub const MAX_LIBRARY_REMOTES: usize = 32;
 pub const MAX_TEMPLATES: usize = 256;
@@ -36,8 +35,7 @@ pub enum LibraryKind {
 }
 
 impl LibraryKind {
-    pub const ALL: &'static [LibraryKind] =
-        &[LibraryKind::Post, LibraryKind::Machine, LibraryKind::Template];
+    pub const ALL: &'static [LibraryKind] = &[LibraryKind::Post, LibraryKind::Machine, LibraryKind::Template];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -291,11 +289,7 @@ pub fn builtin_catalog() -> Vec<CatalogEntry> {
 }
 
 fn slug(s: &str) -> String {
-    s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_string()
+    s.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect::<String>().trim_matches('-').to_string()
 }
 
 /// Sample templates mirroring Fusion Template Library categories.
@@ -376,18 +370,12 @@ pub fn read_index(repo_dir: &Path) -> Result<CatalogIndex> {
     if bytes.len() > 8 * 1024 * 1024 {
         return Err(invalid("index.json too large (max 8 MiB)"));
     }
-    let index: CatalogIndex =
-        serde_json::from_slice(&bytes).map_err(|e| invalid(format!("index.json: {e}")))?;
+    let index: CatalogIndex = serde_json::from_slice(&bytes).map_err(|e| invalid(format!("index.json: {e}")))?;
     if index.schema_version == 0 || index.schema_version > 1 {
-        return Err(invalid(format!(
-            "unsupported catalog schema_version {}",
-            index.schema_version
-        )));
+        return Err(invalid(format!("unsupported catalog schema_version {}", index.schema_version)));
     }
     if index.entries.len() > MAX_CATALOG_ENTRIES {
-        return Err(invalid(format!(
-            "too many catalog entries (max {MAX_CATALOG_ENTRIES})"
-        )));
+        return Err(invalid(format!("too many catalog entries (max {MAX_CATALOG_ENTRIES})")));
     }
     Ok(index)
 }
@@ -414,11 +402,7 @@ pub fn catalog_from_index(remote: &LibraryRemote, index: &CatalogIndex) -> Vec<C
 
 /// Resolve the on-disk checkout for a remote (local path in-place, else cache clone).
 pub fn remote_checkout_dir(remote: &LibraryRemote) -> PathBuf {
-    if let Some(local) = local_path_from_url(&remote.url) {
-        local
-    } else {
-        remote_cache_dir(remote)
-    }
+    if let Some(local) = local_path_from_url(&remote.url) { local } else { remote_cache_dir(remote) }
 }
 
 /// Clone or fetch a remote into the cache. Returns path to checkout.
@@ -441,14 +425,7 @@ pub fn sync_remote(remote: &LibraryRemote) -> std::result::Result<PathBuf, Strin
             return Err(format!("git fetch failed ({status})"));
         }
         let status = Command::new("git")
-            .args([
-                "-C",
-                dest.to_str().unwrap_or("."),
-                "checkout",
-                "-B",
-                &remote.branch,
-                &format!("origin/{}", remote.branch),
-            ])
+            .args(["-C", dest.to_str().unwrap_or("."), "checkout", "-B", &remote.branch, &format!("origin/{}", remote.branch)])
             .status()
             .map_err(|e| format!("git checkout: {e}"))?;
         if !status.success() {
@@ -459,15 +436,7 @@ pub fn sync_remote(remote: &LibraryRemote) -> std::result::Result<PathBuf, Strin
             let _ = fs::remove_dir_all(&dest);
         }
         let status = Command::new("git")
-            .args([
-                "clone",
-                "--depth",
-                "1",
-                "--branch",
-                &remote.branch,
-                &remote.url,
-                dest.to_str().unwrap_or("."),
-            ])
+            .args(["clone", "--depth", "1", "--branch", &remote.branch, &remote.url, dest.to_str().unwrap_or(".")])
             .status()
             .map_err(|e| format!("git clone: {e} (is git on PATH?)"))?;
         if !status.success() {
@@ -510,8 +479,7 @@ pub fn load_machine_file(repo: &Path, rel: &str) -> Result<MachineProfile> {
 pub fn load_template_file(repo: &Path, rel: &str) -> Result<CamTemplate> {
     let path = repo.join(rel);
     let bytes = fs::read(&path).map_err(|e| invalid(format!("template {}: {e}", path.display())))?;
-    let t: CamTemplate =
-        serde_json::from_slice(&bytes).map_err(|e| invalid(format!("template JSON: {e}")))?;
+    let t: CamTemplate = serde_json::from_slice(&bytes).map_err(|e| invalid(format!("template JSON: {e}")))?;
     t.validate("template")?;
     Ok(t)
 }

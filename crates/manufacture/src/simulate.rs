@@ -165,12 +165,7 @@ pub struct SimResult {
 ///
 /// The function is **non-mutating with respect to all inputs** (no `&mut`, no global state)
 /// and produces identical output for identical inputs (deterministic).
-pub fn simulate_toolpaths(
-    stock: &Stock,
-    tool: &Tool,
-    segments: &[PathSegment],
-    opts: &SimOptions,
-) -> SimResult {
+pub fn simulate_toolpaths(stock: &Stock, tool: &Tool, segments: &[PathSegment], opts: &SimOptions) -> SimResult {
     // Validate options up-front; return a synthetic error result on bad input.
     if let Err(msg) = validate_options(opts) {
         return single_error_result(format!("invalid simulation options: {msg}"), opts);
@@ -179,10 +174,7 @@ pub fn simulate_toolpaths(
     let (stock_width, stock_depth, stock_height) = match stock.sim_box_extents() {
         Some(extents) => extents,
         None => {
-            return single_error_result(
-                "stock mode is not yet supported for toolpath simulation; use fixed or relative box stock",
-                opts,
-            );
+            return single_error_result("stock mode is not yet supported for toolpath simulation; use fixed or relative box stock", opts);
         }
     };
 
@@ -223,48 +215,28 @@ pub fn simulate_toolpaths(
 
     // Frame capture: decide interval (in segments) for requested frames.
     let n_segs = segments.len();
-    let frame_interval: usize = if opts.max_frames > 0 && n_segs > 0 {
-        (n_segs / opts.max_frames as usize).max(1)
-    } else {
-        usize::MAX
-    };
+    let frame_interval: usize = if opts.max_frames > 0 && n_segs > 0 { (n_segs / opts.max_frames as usize).max(1) } else { usize::MAX };
     let mut frames: Vec<SimFrame> = Vec::new();
 
     // Per-simulation deduplication set for fixture collision issues.
     // Key = (segment_index, fixture_index) to emit at most one issue per pair.
-    let mut reported_fixture: std::collections::BTreeSet<(usize, usize)> =
-        std::collections::BTreeSet::new();
+    let mut reported_fixture: std::collections::BTreeSet<(usize, usize)> = std::collections::BTreeSet::new();
     // Per-segment flags for single-emission issues.
-    let mut reported_depth_error: std::collections::BTreeSet<usize> =
-        std::collections::BTreeSet::new();
-    let mut reported_flute_error: std::collections::BTreeSet<usize> =
-        std::collections::BTreeSet::new();
-    let mut reported_rapid_surface: std::collections::BTreeSet<usize> =
-        std::collections::BTreeSet::new();
+    let mut reported_depth_error: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+    let mut reported_flute_error: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+    let mut reported_rapid_surface: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
 
     for (seg_idx, seg) in segments.iter().enumerate() {
         // Hard-validate the segment; skip invalid ones.
         if let Err(e) = seg.validate() {
-            push_issue(
-                &mut issues,
-                SimSeverity::Error,
-                seg_idx,
-                format!("invalid segment: {e}"),
-            );
+            push_issue(&mut issues, SimSeverity::Error, seg_idx, format!("invalid segment: {e}"));
             continue;
         }
 
         match seg {
             PathSegment::Rapid { to } => {
                 // ── Envelope checks ───────────────────────────────────────────
-                check_xy_envelope(
-                    *to,
-                    seg_idx,
-                    stock_width,
-                    stock_depth,
-                    opts.machine_xy_travel,
-                    &mut issues,
-                );
+                check_xy_envelope(*to, seg_idx, stock_width, stock_depth, opts.machine_xy_travel, &mut issues);
                 check_z_envelope(to[2], seg_idx, stock_floor, opts.machine_z_min, &mut issues);
 
                 // Rapid below clearance height → warning.
@@ -273,10 +245,7 @@ pub fn simulate_toolpaths(
                         &mut issues,
                         SimSeverity::Warning,
                         seg_idx,
-                        format!(
-                            "rapid moves below clearance height {:.3} mm (to Z = {:.3} mm)",
-                            opts.clearance_z, to[2]
-                        ),
+                        format!("rapid moves below clearance height {:.3} mm (to Z = {:.3} mm)", opts.clearance_z, to[2]),
                     );
                 }
 
@@ -284,55 +253,36 @@ pub fn simulate_toolpaths(
                 let (col, row) = xy_to_cell(to[0], to[1], cell_w, cell_d, grid_cols, grid_rows);
                 if in_stock_xy(to[0], to[1], stock_width, stock_depth)
                     && let Some(&cell_h) = heights.get(row * grid_cols as usize + col)
-                        && to[2] < cell_h && !reported_rapid_surface.contains(&seg_idx) {
-                            push_issue(
-                                &mut issues,
-                                SimSeverity::Error,
-                                seg_idx,
-                                format!(
-                                    "rapid collision: tip Z {:.3} mm is below stock surface \
+                    && to[2] < cell_h
+                    && !reported_rapid_surface.contains(&seg_idx)
+                {
+                    push_issue(
+                        &mut issues,
+                        SimSeverity::Error,
+                        seg_idx,
+                        format!(
+                            "rapid collision: tip Z {:.3} mm is below stock surface \
                                      {:.3} mm at ({:.3}, {:.3})",
-                                    to[2], cell_h, to[0], to[1]
-                                ),
-                            );
-                            reported_rapid_surface.insert(seg_idx);
-                        }
+                            to[2], cell_h, to[0], to[1]
+                        ),
+                    );
+                    reported_rapid_surface.insert(seg_idx);
+                }
 
                 // Fixture collision (rapid trajectory is a straight line; check endpoint).
-                check_fixture_point(
-                    *to,
-                    tool_r,
-                    &opts.fixtures,
-                    seg_idx,
-                    &mut reported_fixture,
-                    &mut issues,
-                );
+                check_fixture_point(*to, tool_r, &opts.fixtures, seg_idx, &mut reported_fixture, &mut issues);
 
                 pos = *to;
             }
 
             PathSegment::Linear { to, .. } => {
                 // ── Envelope checks at destination ────────────────────────────
-                check_xy_envelope(
-                    *to,
-                    seg_idx,
-                    stock_width,
-                    stock_depth,
-                    opts.machine_xy_travel,
-                    &mut issues,
-                );
+                check_xy_envelope(*to, seg_idx, stock_width, stock_depth, opts.machine_xy_travel, &mut issues);
                 check_z_envelope(to[2], seg_idx, stock_floor, opts.machine_z_min, &mut issues);
 
                 // Deepest Z during this segment (for depth/flute checks).
                 let min_z = pos[2].min(to[2]);
-                check_tool_depth(
-                    min_z,
-                    tool,
-                    seg_idx,
-                    &mut reported_depth_error,
-                    &mut reported_flute_error,
-                    &mut issues,
-                );
+                check_tool_depth(min_z, tool, seg_idx, &mut reported_depth_error, &mut reported_flute_error, &mut issues);
 
                 // Interpolate and apply cutter.
                 let dist = dist3(pos, *to);
@@ -353,13 +303,8 @@ pub fn simulate_toolpaths(
                 for i in 0..=n_steps {
                     let t = if n_steps == 0 { 1.0 } else { i as f64 / n_steps as f64 };
                     let p = lerp3(pos, *to, t);
-                    apply_cutter(
-                        &mut heights, p[0], p[1], p[2], tool_r, tool, grid_cols, grid_rows,
-                        cell_w, cell_d, stock_floor,
-                    );
-                    check_fixture_point(
-                        p, tool_r, &opts.fixtures, seg_idx, &mut reported_fixture, &mut issues,
-                    );
+                    apply_cutter(&mut heights, p[0], p[1], p[2], tool_r, tool, grid_cols, grid_rows, cell_w, cell_d, stock_floor);
+                    check_fixture_point(p, tool_r, &opts.fixtures, seg_idx, &mut reported_fixture, &mut issues);
                 }
 
                 if truncated {
@@ -370,25 +315,11 @@ pub fn simulate_toolpaths(
 
             PathSegment::Arc { center, to, clockwise, .. } => {
                 // ── Envelope checks at destination ────────────────────────────
-                check_xy_envelope(
-                    *to,
-                    seg_idx,
-                    stock_width,
-                    stock_depth,
-                    opts.machine_xy_travel,
-                    &mut issues,
-                );
+                check_xy_envelope(*to, seg_idx, stock_width, stock_depth, opts.machine_xy_travel, &mut issues);
                 check_z_envelope(to[2], seg_idx, stock_floor, opts.machine_z_min, &mut issues);
 
                 let min_z = pos[2].min(to[2]);
-                check_tool_depth(
-                    min_z,
-                    tool,
-                    seg_idx,
-                    &mut reported_depth_error,
-                    &mut reported_flute_error,
-                    &mut issues,
-                );
+                check_tool_depth(min_z, tool, seg_idx, &mut reported_depth_error, &mut reported_flute_error, &mut issues);
 
                 // Compute arc parameters.
                 let arc_r = {
@@ -399,35 +330,15 @@ pub fn simulate_toolpaths(
 
                 if arc_r < 1e-9 {
                     // Degenerate arc (zero radius) → apply single point at destination.
-                    apply_cutter(
-                        &mut heights,
-                        to[0],
-                        to[1],
-                        to[2],
-                        tool_r,
-                        tool,
-                        grid_cols,
-                        grid_rows,
-                        cell_w,
-                        cell_d,
-                        stock_floor,
-                    );
-                    check_fixture_point(
-                        *to,
-                        tool_r,
-                        &opts.fixtures,
-                        seg_idx,
-                        &mut reported_fixture,
-                        &mut issues,
-                    );
+                    apply_cutter(&mut heights, to[0], to[1], to[2], tool_r, tool, grid_cols, grid_rows, cell_w, cell_d, stock_floor);
+                    check_fixture_point(*to, tool_r, &opts.fixtures, seg_idx, &mut reported_fixture, &mut issues);
                 } else {
                     let angle_from = (pos[1] - center[1]).atan2(pos[0] - center[0]);
                     let angle_to_val = (to[1] - center[1]).atan2(to[0] - center[0]);
                     let sweep = arc_sweep(angle_from, angle_to_val, *clockwise);
                     let arc_len = arc_r * sweep.abs();
 
-                    let (n_steps, truncated) =
-                        steps_for_distance(arc_len, interp_step, total_steps);
+                    let (n_steps, truncated) = steps_for_distance(arc_len, interp_step, total_steps);
                     if truncated && total_steps < MAX_TOTAL_STEPS {
                         push_issue(
                             &mut issues,
@@ -447,18 +358,8 @@ pub fn simulate_toolpaths(
                         let px = center[0] + arc_r * angle.cos();
                         let py = center[1] + arc_r * angle.sin();
                         let pz = pos[2] + t * (to[2] - pos[2]);
-                        apply_cutter(
-                            &mut heights, px, py, pz, tool_r, tool, grid_cols, grid_rows,
-                            cell_w, cell_d, stock_floor,
-                        );
-                        check_fixture_point(
-                            [px, py, pz],
-                            tool_r,
-                            &opts.fixtures,
-                            seg_idx,
-                            &mut reported_fixture,
-                            &mut issues,
-                        );
+                        apply_cutter(&mut heights, px, py, pz, tool_r, tool, grid_cols, grid_rows, cell_w, cell_d, stock_floor);
+                        check_fixture_point([px, py, pz], tool_r, &opts.fixtures, seg_idx, &mut reported_fixture, &mut issues);
                     }
 
                     if truncated {
@@ -471,16 +372,9 @@ pub fn simulate_toolpaths(
         }
 
         // Capture scrubber frame if requested.
-        if opts.max_frames > 0
-            && (seg_idx + 1) % frame_interval == 0
-            && frames.len() < opts.max_frames as usize
-        {
+        if opts.max_frames > 0 && (seg_idx + 1) % frame_interval == 0 && frames.len() < opts.max_frames as usize {
             let vol = compute_removed_volume(&heights, cell_w, cell_d);
-            frames.push(SimFrame {
-                segment_index: seg_idx,
-                removed_volume_mm3: vol,
-                heights: heights.clone(),
-            });
+            frames.push(SimFrame { segment_index: seg_idx, removed_volume_mm3: vol, heights: heights.clone() });
         }
     }
 
@@ -520,11 +414,10 @@ fn validate_options(opts: &SimOptions) -> std::result::Result<(), String> {
         return Err(format!("max_frames must be ≤ {MAX_FRAMES}"));
     }
     if let Some(step) = opts.interp_step_mm
-        && (!step.is_finite() || step < MIN_INTERP_STEP_MM) {
-            return Err(format!(
-                "interp_step_mm must be ≥ {MIN_INTERP_STEP_MM:.3} and finite"
-            ));
-        }
+        && (!step.is_finite() || step < MIN_INTERP_STEP_MM)
+    {
+        return Err(format!("interp_step_mm must be ≥ {MIN_INTERP_STEP_MM:.3} and finite"));
+    }
     if opts.fixtures.len() > MAX_FIXTURES {
         return Err(format!("too many fixtures (maximum {MAX_FIXTURES})"));
     }
@@ -534,21 +427,20 @@ fn validate_options(opts: &SimOptions) -> std::result::Result<(), String> {
                 return Err(format!("fixture[{fi}] `{}`: coordinates must be finite", f.label));
             }
             if f.min[axis] >= f.max[axis] {
-                return Err(format!(
-                    "fixture[{fi}] `{}`: min[{axis}] must be < max[{axis}]",
-                    f.label
-                ));
+                return Err(format!("fixture[{fi}] `{}`: min[{axis}] must be < max[{axis}]", f.label));
             }
         }
     }
     if let Some(xy) = opts.machine_xy_travel
-        && !(xy[0] > 0.0 && xy[0].is_finite() && xy[1] > 0.0 && xy[1].is_finite()) {
-            return Err("machine_xy_travel values must be strictly positive and finite".into());
-        }
+        && !(xy[0] > 0.0 && xy[0].is_finite() && xy[1] > 0.0 && xy[1].is_finite())
+    {
+        return Err("machine_xy_travel values must be strictly positive and finite".into());
+    }
     if let Some(z_min) = opts.machine_z_min
-        && (!z_min.is_finite() || z_min > 0.0) {
-            return Err("machine_z_min must be ≤ 0 and finite".into());
-        }
+        && (!z_min.is_finite() || z_min > 0.0)
+    {
+        return Err("machine_z_min must be ≤ 0 and finite".into());
+    }
     Ok(())
 }
 
@@ -556,12 +448,7 @@ fn validate_options(opts: &SimOptions) -> std::result::Result<(), String> {
 // Issue helpers
 // ---------------------------------------------------------------------------
 
-fn push_issue(
-    issues: &mut Vec<SimIssue>,
-    severity: SimSeverity,
-    segment_index: usize,
-    message: impl Into<String>,
-) {
+fn push_issue(issues: &mut Vec<SimIssue>, severity: SimSeverity, segment_index: usize, message: impl Into<String>) {
     issues.push(SimIssue { severity, segment_index, message: message.into() });
 }
 
@@ -575,11 +462,7 @@ fn single_error_result(msg: impl Into<String>, opts: &SimOptions) -> SimResult {
         min_remaining_height_mm: 0.0,
         max_remaining_height_mm: 0.0,
         has_errors: true,
-        issues: vec![SimIssue {
-            severity: SimSeverity::Error,
-            segment_index: 0,
-            message: msg.into(),
-        }],
+        issues: vec![SimIssue { severity: SimSeverity::Error, segment_index: 0, message: msg.into() }],
         final_heights: vec![0.0_f64; (gc as usize) * (gr as usize)],
         grid_cols: gc,
         grid_rows: gr,
@@ -591,86 +474,40 @@ fn single_error_result(msg: impl Into<String>, opts: &SimOptions) -> SimResult {
 // Envelope / depth checks
 // ---------------------------------------------------------------------------
 
-fn check_xy_envelope(
-    to: [f64; 3],
-    seg_idx: usize,
-    stock_w: f64,
-    stock_d: f64,
-    machine_xy: Option<[f64; 2]>,
-    issues: &mut Vec<SimIssue>,
-) {
+fn check_xy_envelope(to: [f64; 3], seg_idx: usize, stock_w: f64, stock_d: f64, machine_xy: Option<[f64; 2]>, issues: &mut Vec<SimIssue>) {
     // Check machine travel limits (hard error).
     if let Some([x_max, y_max]) = machine_xy {
         if to[0] < 0.0 || to[0] > x_max {
-            push_issue(
-                issues,
-                SimSeverity::Error,
-                seg_idx,
-                format!(
-                    "X {:.3} mm exceeds machine travel envelope [0, {x_max:.3}]",
-                    to[0]
-                ),
-            );
+            push_issue(issues, SimSeverity::Error, seg_idx, format!("X {:.3} mm exceeds machine travel envelope [0, {x_max:.3}]", to[0]));
         }
         if to[1] < 0.0 || to[1] > y_max {
-            push_issue(
-                issues,
-                SimSeverity::Error,
-                seg_idx,
-                format!(
-                    "Y {:.3} mm exceeds machine travel envelope [0, {y_max:.3}]",
-                    to[1]
-                ),
-            );
+            push_issue(issues, SimSeverity::Error, seg_idx, format!("Y {:.3} mm exceeds machine travel envelope [0, {y_max:.3}]", to[1]));
         }
     }
     // Warn if significantly outside the stock bounds (but not a hard error unless machine limits set).
     let margin = 0.0; // tool center outside stock bounds at all → warning
-    if (to[0] < -margin
-        || to[0] > stock_w + margin
-        || to[1] < -margin
-        || to[1] > stock_d + margin)
-        && machine_xy.is_none() {
-            push_issue(
-                issues,
-                SimSeverity::Warning,
-                seg_idx,
-                format!(
-                    "move to ({:.3}, {:.3}) lies outside the stock footprint \
-                     ([0, {stock_w:.3}] × [0, {stock_d:.3}])",
-                    to[0], to[1]
-                ),
-            );
-        }
-}
-
-fn check_z_envelope(
-    z: f64,
-    seg_idx: usize,
-    stock_floor: f64,
-    machine_z_min: Option<f64>,
-    issues: &mut Vec<SimIssue>,
-) {
-    if let Some(z_min) = machine_z_min
-        && z < z_min {
-            push_issue(
-                issues,
-                SimSeverity::Error,
-                seg_idx,
-                format!(
-                    "Z {z:.3} mm exceeds machine Z travel limit ({z_min:.3} mm)"
-                ),
-            );
-        }
-    if z < stock_floor {
+    if (to[0] < -margin || to[0] > stock_w + margin || to[1] < -margin || to[1] > stock_d + margin) && machine_xy.is_none() {
         push_issue(
             issues,
             SimSeverity::Warning,
             seg_idx,
             format!(
-                "Z {z:.3} mm is below the stock floor ({stock_floor:.3} mm)"
+                "move to ({:.3}, {:.3}) lies outside the stock footprint \
+                     ([0, {stock_w:.3}] × [0, {stock_d:.3}])",
+                to[0], to[1]
             ),
         );
+    }
+}
+
+fn check_z_envelope(z: f64, seg_idx: usize, stock_floor: f64, machine_z_min: Option<f64>, issues: &mut Vec<SimIssue>) {
+    if let Some(z_min) = machine_z_min
+        && z < z_min
+    {
+        push_issue(issues, SimSeverity::Error, seg_idx, format!("Z {z:.3} mm exceeds machine Z travel limit ({z_min:.3} mm)"));
+    }
+    if z < stock_floor {
+        push_issue(issues, SimSeverity::Warning, seg_idx, format!("Z {z:.3} mm is below the stock floor ({stock_floor:.3} mm)"));
     }
 }
 
@@ -687,15 +524,7 @@ fn check_tool_depth(
     }
     let depth = -min_z; // positive depth of cut below stock top
     if depth > tool.length && !reported_tool_len.contains(&seg_idx) {
-        push_issue(
-            issues,
-            SimSeverity::Error,
-            seg_idx,
-            format!(
-                "cut depth {depth:.3} mm exceeds tool overall length {:.3} mm",
-                tool.length
-            ),
-        );
+        push_issue(issues, SimSeverity::Error, seg_idx, format!("cut depth {depth:.3} mm exceeds tool overall length {:.3} mm", tool.length));
         reported_tool_len.insert(seg_idx);
     } else if depth > tool.flute_length && !reported_flute.contains(&seg_idx) {
         push_issue(
@@ -735,10 +564,7 @@ fn check_fixture_point(
                 issues,
                 SimSeverity::Error,
                 seg_idx,
-                format!(
-                    "tool collides with fixture `{}` at ({:.3}, {:.3}, {:.3})",
-                    fixture.label, p[0], p[1], p[2]
-                ),
+                format!("tool collides with fixture `{}` at ({:.3}, {:.3}, {:.3})", fixture.label, p[0], p[1], p[2]),
             );
             reported.insert((seg_idx, fi));
         }
@@ -875,16 +701,8 @@ fn arc_sweep(angle_from: f64, angle_to: f64, clockwise: bool) -> f64 {
 
 /// Convert an XY coordinate to a (col, row) grid index, clamped to valid range.
 fn xy_to_cell(x: f64, y: f64, cell_w: f64, cell_d: f64, grid_cols: u32, grid_rows: u32) -> (usize, usize) {
-    let col = if cell_w > 0.0 {
-        ((x / cell_w).floor() as i64).clamp(0, grid_cols as i64 - 1) as usize
-    } else {
-        0
-    };
-    let row = if cell_d > 0.0 {
-        ((y / cell_d).floor() as i64).clamp(0, grid_rows as i64 - 1) as usize
-    } else {
-        0
-    };
+    let col = if cell_w > 0.0 { ((x / cell_w).floor() as i64).clamp(0, grid_cols as i64 - 1) as usize } else { 0 };
+    let row = if cell_d > 0.0 { ((y / cell_d).floor() as i64).clamp(0, grid_rows as i64 - 1) as usize } else { 0 };
     (col, row)
 }
 
@@ -919,11 +737,7 @@ fn steps_for_distance(dist: f64, step: f64, used: usize) -> (usize, bool) {
         return (0, false); // zero-length move
     }
     let ideal = ((dist / step).ceil() as usize).max(1);
-    if ideal <= budget {
-        (ideal, false)
-    } else {
-        (budget.max(1), true)
-    }
+    if ideal <= budget { (ideal, false) } else { (budget.max(1), true) }
 }
 
 // ---------------------------------------------------------------------------
@@ -937,9 +751,7 @@ fn compute_removed_volume(heights: &[f64], cell_w: f64, cell_d: f64) -> f64 {
 }
 
 fn height_range(heights: &[f64]) -> (f64, f64) {
-    heights.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &h| {
-        (lo.min(h), hi.max(h))
-    })
+    heights.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &h| (lo.min(h), hi.max(h)))
 }
 
 // ---------------------------------------------------------------------------
@@ -986,7 +798,7 @@ mod tests {
     fn straight_cut_produces_trench() {
         let segments = vec![
             PathSegment::Rapid { to: [10.0, 50.0, 5.0] },
-            PathSegment::Linear { to: [10.0, 50.0, -5.0], feed: 300.0 }, // plunge at X=10
+            PathSegment::Linear { to: [10.0, 50.0, -5.0], feed: 300.0 },  // plunge at X=10
             PathSegment::Linear { to: [90.0, 50.0, -5.0], feed: 1000.0 }, // constant-Z cut
         ];
         let tool = flat_6mm();
@@ -1014,10 +826,7 @@ mod tests {
                     continue;
                 }
                 let h = result.final_heights[row * 100 + col];
-                assert!(
-                    (h - (-5.0_f64)).abs() < 0.01,
-                    "expected -5.0 at ({cx}, {cy}), got {h}"
-                );
+                assert!((h - (-5.0_f64)).abs() < 0.01, "expected -5.0 at ({cx}, {cy}), got {h}");
                 trench_count += 1;
             }
         }
@@ -1037,8 +846,8 @@ mod tests {
         let center = [50.0_f64, 50.0, 0.0];
         let arc_to = [50.0, 70.0, -3.0];
         let segments = vec![
-            PathSegment::Rapid { to: [70.0, 50.0, 5.0] },                  // rapid above clearance
-            PathSegment::Linear { to: [70.0, 50.0, -3.0], feed: 300.0 },   // plunge to cut depth
+            PathSegment::Rapid { to: [70.0, 50.0, 5.0] },                // rapid above clearance
+            PathSegment::Linear { to: [70.0, 50.0, -3.0], feed: 300.0 }, // plunge to cut depth
             PathSegment::Arc { center, to: arc_to, feed: 500.0, clockwise: false },
         ];
         let tool = flat_6mm();
@@ -1066,7 +875,7 @@ mod tests {
         let segments_once = vec![PathSegment::Linear { to: [50.0, 50.0, -5.0], feed: 1000.0 }];
         let segments_twice = vec![
             PathSegment::Linear { to: [50.0, 50.0, -5.0], feed: 1000.0 },
-            PathSegment::Linear { to: [0.0, 0.0, 5.0], feed: 1000.0 }, // retract
+            PathSegment::Linear { to: [0.0, 0.0, 5.0], feed: 1000.0 },    // retract
             PathSegment::Linear { to: [50.0, 50.0, -5.0], feed: 1000.0 }, // same cut
         ];
         let tool = flat_6mm();
@@ -1080,10 +889,7 @@ mod tests {
         // Specifically: no cell in `twice` should have a HIGHER final height than in `once`
         // for the region that was cut in `once`.
         for (h_once, h_twice) in once.final_heights.iter().zip(twice.final_heights.iter()) {
-            assert!(
-                *h_twice <= h_once + 1e-12,
-                "monotonic violation: h_twice={h_twice} > h_once={h_once}"
-            );
+            assert!(*h_twice <= h_once + 1e-12, "monotonic violation: h_twice={h_twice} > h_once={h_once}");
         }
         // The region cut in `once` should appear cut in `twice` too.
         assert!(twice.min_remaining_height_mm <= once.min_remaining_height_mm + 1e-12);
@@ -1093,21 +899,14 @@ mod tests {
 
     #[test]
     fn move_outside_stock_xy_generates_issue() {
-        let segments =
-            vec![PathSegment::Linear { to: [200.0, 50.0, -5.0], feed: 1000.0 }];
+        let segments = vec![PathSegment::Linear { to: [200.0, 50.0, -5.0], feed: 1000.0 }];
         let result = simulate_toolpaths(&box_stock(), &flat_6mm(), &segments, &default_opts());
-        assert!(
-            result.issues.iter().any(|i| i.message.contains("outside the stock footprint")),
-            "expected out-of-bounds warning"
-        );
+        assert!(result.issues.iter().any(|i| i.message.contains("outside the stock footprint")), "expected out-of-bounds warning");
     }
 
     #[test]
     fn machine_travel_exceeded_generates_error() {
-        let opts = SimOptions {
-            machine_xy_travel: Some([80.0, 100.0]),
-            ..default_opts()
-        };
+        let opts = SimOptions { machine_xy_travel: Some([80.0, 100.0]), ..default_opts() };
         let segments = vec![PathSegment::Linear { to: [90.0, 50.0, -5.0], feed: 1000.0 }];
         let result = simulate_toolpaths(&box_stock(), &flat_6mm(), &segments, &opts);
         assert!(
@@ -1128,10 +927,7 @@ mod tests {
             PathSegment::Rapid { to: [50.0, 50.0, -1.0] },               // then rapid into material
         ];
         let result = simulate_toolpaths(&box_stock(), &flat_6mm(), &segments, &default_opts());
-        let has_rapid_issue = result.issues.iter().any(|i| {
-            i.segment_index == 1
-                && (i.message.contains("rapid") || i.message.contains("clearance"))
-        });
+        let has_rapid_issue = result.issues.iter().any(|i| i.segment_index == 1 && (i.message.contains("rapid") || i.message.contains("clearance")));
         assert!(has_rapid_issue, "expected rapid collision or clearance issue; got: {:?}", result.issues);
     }
 
@@ -1154,14 +950,8 @@ mod tests {
 
     #[test]
     fn fixture_collision_generates_error() {
-        let opts = SimOptions {
-            fixtures: vec![Fixture {
-                label: "Clamp-A".into(),
-                min: [45.0, 45.0, -10.0],
-                max: [55.0, 55.0, 5.0],
-            }],
-            ..default_opts()
-        };
+        let opts =
+            SimOptions { fixtures: vec![Fixture { label: "Clamp-A".into(), min: [45.0, 45.0, -10.0], max: [55.0, 55.0, 5.0] }], ..default_opts() };
         // Linear move through the fixture centre.
         let segments = vec![PathSegment::Linear { to: [50.0, 50.0, -3.0], feed: 500.0 }];
         let result = simulate_toolpaths(&box_stock(), &flat_6mm(), &segments, &opts);
@@ -1181,12 +971,7 @@ mod tests {
             PathSegment::Rapid { to: [0.0, 50.0, 5.0] },
             PathSegment::Linear { to: [0.0, 50.0, -4.0], feed: 300.0 },
             PathSegment::Linear { to: [100.0, 50.0, -4.0], feed: 1000.0 },
-            PathSegment::Arc {
-                center: [50.0, 50.0, 0.0],
-                to: [100.0, 50.0, -4.0],
-                feed: 500.0,
-                clockwise: false,
-            },
+            PathSegment::Arc { center: [50.0, 50.0, 0.0], to: [100.0, 50.0, -4.0], feed: 500.0, clockwise: false },
         ];
         let tool = flat_6mm();
         let stock = box_stock();
@@ -1196,10 +981,7 @@ mod tests {
         let r2 = simulate_toolpaths(&stock, &tool, &segments, &opts);
 
         assert_eq!(r1.final_heights, r2.final_heights, "heights must be identical");
-        assert_eq!(
-            r1.removed_volume_mm3, r2.removed_volume_mm3,
-            "volume must be identical"
-        );
+        assert_eq!(r1.removed_volume_mm3, r2.removed_volume_mm3, "volume must be identical");
         assert_eq!(r1.issues.len(), r2.issues.len(), "issue count must be identical");
         assert_eq!(r1.frames.len(), r2.frames.len(), "frame count must be identical");
     }
@@ -1261,13 +1043,7 @@ mod tests {
 
     #[test]
     fn too_many_fixtures_returns_error() {
-        let fixtures = (0..MAX_FIXTURES + 1)
-            .map(|i| Fixture {
-                label: format!("F{i}"),
-                min: [0.0, 0.0, -5.0],
-                max: [1.0, 1.0, 0.0],
-            })
-            .collect();
+        let fixtures = (0..MAX_FIXTURES + 1).map(|i| Fixture { label: format!("F{i}"), min: [0.0, 0.0, -5.0], max: [1.0, 1.0, 0.0] }).collect();
         let opts = SimOptions { fixtures, ..default_opts() };
         let r = simulate_toolpaths(&box_stock(), &flat_6mm(), &[], &opts);
         assert!(r.has_errors);
@@ -1285,18 +1061,13 @@ mod tests {
 
     #[test]
     fn frames_are_captured_correctly() {
-        let segs: Vec<PathSegment> = (0..8)
-            .map(|i| PathSegment::Linear { to: [i as f64 * 12.0 + 5.0, 50.0, -2.0], feed: 500.0 })
-            .collect();
+        let segs: Vec<PathSegment> = (0..8).map(|i| PathSegment::Linear { to: [i as f64 * 12.0 + 5.0, 50.0, -2.0], feed: 500.0 }).collect();
         let opts = SimOptions { max_frames: 4, ..default_opts() };
         let r = simulate_toolpaths(&box_stock(), &flat_6mm(), &segs, &opts);
         assert!(r.frames.len() <= 4, "at most 4 frames requested");
         // Frames are in segment order.
         for w in r.frames.windows(2) {
-            assert!(
-                w[0].segment_index <= w[1].segment_index,
-                "frames out of order"
-            );
+            assert!(w[0].segment_index <= w[1].segment_index, "frames out of order");
         }
     }
 

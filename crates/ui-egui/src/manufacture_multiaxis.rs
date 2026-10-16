@@ -5,9 +5,9 @@
 use egui::RichText;
 use serde_json::json;
 use solidcraft_manufacture::{
-    AdvSwarfGeometryMode, ContourHeights, ContourLinking, Coolant, HeightFrom, HeightPlane, HighFeedMode,
-    MultiAxisFinishPattern, MultiAxisMachiningType, MultiAxisOperation, MultiAxisStrategy, Operation, RampType,
-    RotaryAxisOrientation, RotaryPassStyle, SidewaysCompensation, SwarfDriveMode, Tool,
+    AdvSwarfGeometryMode, ContourHeights, ContourLinking, Coolant, HeightFrom, HeightPlane, HighFeedMode, MultiAxisFinishPattern,
+    MultiAxisMachiningType, MultiAxisOperation, MultiAxisStrategy, Operation, RampType, RotaryAxisOrientation, RotaryPassStyle, SidewaysCompensation,
+    SwarfDriveMode, Tool,
 };
 
 use crate::{SolveApp, viewport};
@@ -55,12 +55,8 @@ pub fn open(app: &mut SolveApp, setup_name: &str, op_index: usize) {
     app.manufacture_workspace.twod_dialog = None;
     app.manufacture_workspace.threed_dialog = None;
     app.manufacture_workspace.hole_rec_dialog = None;
-    app.manufacture_workspace.multiaxis_dialog = Some(MultiAxisDialogState {
-        setup_name: setup_name.to_string(),
-        op_index,
-        draft: op,
-        tab: MultiAxisTab::Tool,
-    });
+    app.manufacture_workspace.multiaxis_dialog =
+        Some(MultiAxisDialogState { setup_name: setup_name.to_string(), op_index, draft: op, tab: MultiAxisTab::Tool });
     app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Operations;
 }
 
@@ -68,14 +64,7 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let Some(state) = app.manufacture_workspace.multiaxis_dialog.clone() else {
         return false;
     };
-    let tools: Vec<Tool> = app
-        .session
-        .doc
-        .manufacture
-        .setups
-        .get(&state.setup_name)
-        .map(|s| s.tools.clone())
-        .unwrap_or_default();
+    let tools: Vec<Tool> = app.session.doc.manufacture.setups.get(&state.setup_name).map(|s| s.tools.clone()).unwrap_or_default();
 
     let mut open = true;
     let mut commit = false;
@@ -84,7 +73,7 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let mut tab = state.tab;
     let title = dialog_title(&draft);
 
-    egui::Window::new(title)
+    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_multiaxis_dialog"))
         .open(&mut open)
         .collapsible(false)
@@ -101,10 +90,7 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
                     (MultiAxisTab::Linking, "Linking"),
                 ] {
                     let sel = tab == v;
-                    if ui
-                        .selectable_label(sel, if sel { RichText::new(l).strong() } else { RichText::new(l) })
-                        .clicked()
-                    {
+                    if ui.selectable_label(sel, if sel { RichText::new(l).strong() } else { RichText::new(l) }).clicked() {
                         tab = v;
                     }
                 }
@@ -135,11 +121,10 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
         app.manufacture_workspace.multiaxis_dialog = None;
         return false;
     }
-    if commit
-        && save(app, &state.setup_name, state.op_index, draft.clone()) {
-            app.manufacture_workspace.multiaxis_dialog = None;
-            return false;
-        }
+    if commit && save(app, &state.setup_name, state.op_index, draft.clone()) {
+        app.manufacture_workspace.multiaxis_dialog = None;
+        return false;
+    }
     if let Some(d) = &mut app.manufacture_workspace.multiaxis_dialog {
         d.draft = draft;
         d.tab = tab;
@@ -149,21 +134,13 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
 
 fn dialog_title(draft: &MultiAxisOperation) -> String {
     let kind = draft.strategy.label().to_uppercase();
-    if draft.name.is_empty() || draft.name == draft.strategy.label() {
-        kind
-    } else {
-        format!("{kind} : {}", draft.name.to_uppercase())
-    }
+    if draft.name.is_empty() || draft.name == draft.strategy.label() { kind } else { format!("{kind} : {}", draft.name.to_uppercase()) }
 }
 
 fn tool_tab(ui: &mut egui::Ui, draft: &mut MultiAxisOperation, tools: &[Tool]) {
     ui.heading("Tool");
     let tnum = draft.tool_number;
-    let label = tools
-        .iter()
-        .find(|t| t.number == tnum)
-        .map(|t| format!("#{} ø{:.2}", t.number, t.diameter))
-        .unwrap_or_else(|| format!("#{tnum}"));
+    let label = tools.iter().find(|t| t.number == tnum).map(|t| format!("#{} ø{:.2}", t.number, t.diameter)).unwrap_or_else(|| format!("#{tnum}"));
     egui::ComboBox::from_id_salt("ma_tool").selected_text(label).show_ui(ui, |ui| {
         for t in tools {
             if ui.selectable_label(tnum == t.number, format!("#{} ø{:.2}", t.number, t.diameter)).clicked() {
@@ -174,10 +151,7 @@ fn tool_tab(ui: &mut egui::Ui, draft: &mut MultiAxisOperation, tools: &[Tool]) {
     if draft.strategy.is_swarf() {
         ui.label(RichText::new("Prefer flat / bull / ball / tapered mills with flute length covering the face.").weak());
     }
-    if matches!(
-        draft.strategy,
-        MultiAxisStrategy::RotaryParallel | MultiAxisStrategy::RotaryContour | MultiAxisStrategy::MultiAxisFinishing
-    ) {
+    if matches!(draft.strategy, MultiAxisStrategy::RotaryParallel | MultiAxisStrategy::RotaryContour | MultiAxisStrategy::MultiAxisFinishing) {
         ui.label(RichText::new("Ball or circle-segment tools are typical for rotary / finishing.").weak());
     }
     ui.separator();
@@ -217,20 +191,15 @@ fn geometry_tab(ui: &mut egui::Ui, draft: &mut MultiAxisOperation) {
     if draft.strategy.is_rotary() {
         ui.horizontal(|ui| {
             ui.label("Rotary Orientation");
-            egui::ComboBox::from_id_salt("ma_orient")
-                .selected_text(draft.rotary_orientation.label())
-                .show_ui(ui, |ui| {
-                    for o in [
-                        RotaryAxisOrientation::SetupX,
-                        RotaryAxisOrientation::SetupY,
-                        RotaryAxisOrientation::SetupZ,
-                        RotaryAxisOrientation::Selection,
-                    ] {
-                        if ui.selectable_label(draft.rotary_orientation == o, o.label()).clicked() {
-                            draft.rotary_orientation = o;
-                        }
+            egui::ComboBox::from_id_salt("ma_orient").selected_text(draft.rotary_orientation.label()).show_ui(ui, |ui| {
+                for o in
+                    [RotaryAxisOrientation::SetupX, RotaryAxisOrientation::SetupY, RotaryAxisOrientation::SetupZ, RotaryAxisOrientation::Selection]
+                {
+                    if ui.selectable_label(draft.rotary_orientation == o, o.label()).clicked() {
+                        draft.rotary_orientation = o;
                     }
-                });
+                }
+            });
         });
         ui.checkbox(&mut draft.set_angular_limits, "Set Angular Limits");
         if draft.set_angular_limits {
@@ -249,30 +218,26 @@ fn geometry_tab(ui: &mut egui::Ui, draft: &mut MultiAxisOperation) {
         MultiAxisStrategy::Swarf => {
             ui.horizontal(|ui| {
                 ui.label("Drive Mode");
-                egui::ComboBox::from_id_salt("ma_swarf_drive")
-                    .selected_text(draft.swarf_drive.label())
-                    .show_ui(ui, |ui| {
-                        for m in [SwarfDriveMode::Contours, SwarfDriveMode::Surfaces] {
-                            if ui.selectable_label(draft.swarf_drive == m, m.label()).clicked() {
-                                draft.swarf_drive = m;
-                            }
+                egui::ComboBox::from_id_salt("ma_swarf_drive").selected_text(draft.swarf_drive.label()).show_ui(ui, |ui| {
+                    for m in [SwarfDriveMode::Contours, SwarfDriveMode::Surfaces] {
+                        if ui.selectable_label(draft.swarf_drive == m, m.label()).clicked() {
+                            draft.swarf_drive = m;
                         }
-                    });
+                    }
+                });
             });
             ui.label(RichText::new("First contour selection sets tip direction.").weak());
         }
         MultiAxisStrategy::AdvancedSwarf => {
             ui.horizontal(|ui| {
                 ui.label("Select geometry using");
-                egui::ComboBox::from_id_salt("ma_adv_geom")
-                    .selected_text(draft.adv_geometry.label())
-                    .show_ui(ui, |ui| {
-                        for m in [AdvSwarfGeometryMode::Surfaces, AdvSwarfGeometryMode::GuideCurves] {
-                            if ui.selectable_label(draft.adv_geometry == m, m.label()).clicked() {
-                                draft.adv_geometry = m;
-                            }
+                egui::ComboBox::from_id_salt("ma_adv_geom").selected_text(draft.adv_geometry.label()).show_ui(ui, |ui| {
+                    for m in [AdvSwarfGeometryMode::Surfaces, AdvSwarfGeometryMode::GuideCurves] {
+                        if ui.selectable_label(draft.adv_geometry == m, m.label()).clicked() {
+                            draft.adv_geometry = m;
                         }
-                    });
+                    }
+                });
             });
             if draft.adv_geometry == AdvSwarfGeometryMode::GuideCurves {
                 ui.label("Select Upper and Lower Guide Curves.");
@@ -284,15 +249,13 @@ fn geometry_tab(ui: &mut egui::Ui, draft: &mut MultiAxisOperation) {
             ui.label("Select floor and wall faces for circle-segment finishing.");
             ui.horizontal(|ui| {
                 ui.label("Pattern");
-                egui::ComboBox::from_id_salt("ma_finish_pat")
-                    .selected_text(draft.finish_pattern.label())
-                    .show_ui(ui, |ui| {
-                        for p in [MultiAxisFinishPattern::Scallop, MultiAxisFinishPattern::Blend] {
-                            if ui.selectable_label(draft.finish_pattern == p, p.label()).clicked() {
-                                draft.finish_pattern = p;
-                            }
+                egui::ComboBox::from_id_salt("ma_finish_pat").selected_text(draft.finish_pattern.label()).show_ui(ui, |ui| {
+                    for p in [MultiAxisFinishPattern::Scallop, MultiAxisFinishPattern::Blend] {
+                        if ui.selectable_label(draft.finish_pattern == p, p.label()).clicked() {
+                            draft.finish_pattern = p;
                         }
-                    });
+                    }
+                });
             });
         }
         MultiAxisStrategy::MultiAxisContour | MultiAxisStrategy::MultiAxisRoughing => {
@@ -314,17 +277,12 @@ fn geometry_tab(ui: &mut egui::Ui, draft: &mut MultiAxisOperation) {
     });
 
     ui.separator();
-    let n = if draft.targets.face_sample_points.is_empty() {
-        draft.targets.drill_points.len()
-    } else {
-        draft.targets.face_sample_points.len()
-    };
+    let n = if draft.targets.face_sample_points.is_empty() { draft.targets.drill_points.len() } else { draft.targets.face_sample_points.len() };
     ui.label(format!("{n} selection(s)"));
     ui.horizontal(|ui| {
-        if ui.button("Add sample point").clicked()
-            && draft.targets.face_sample_points.len() < solidcraft_manufacture::MAX_SAMPLE_POINTS_PER_OP {
-                draft.targets.face_sample_points.push([0.0, 0.0, 0.0]);
-            }
+        if ui.button("Add sample point").clicked() && draft.targets.face_sample_points.len() < solidcraft_manufacture::MAX_SAMPLE_POINTS_PER_OP {
+            draft.targets.face_sample_points.push([0.0, 0.0, 0.0]);
+        }
         if ui.button("Clear").clicked() {
             draft.targets.face_sample_points.clear();
             draft.targets.drill_points.clear();
@@ -365,15 +323,13 @@ fn height_row(ui: &mut egui::Ui, label: &str, plane: &mut HeightPlane) {
         ui.label(RichText::new(label).strong());
         ui.horizontal(|ui| {
             ui.label("From");
-            egui::ComboBox::from_id_salt(format!("mah_{label}"))
-                .selected_text(plane.from.label())
-                .show_ui(ui, |ui| {
-                    for f in HEIGHT_FROM {
-                        if ui.selectable_label(plane.from == *f, f.label()).clicked() {
-                            plane.from = *f;
-                        }
+            egui::ComboBox::from_id_salt(format!("mah_{label}")).selected_text(plane.from.label()).show_ui(ui, |ui| {
+                for f in HEIGHT_FROM {
+                    if ui.selectable_label(plane.from == *f, f.label()).clicked() {
+                        plane.from = *f;
                     }
-                });
+                }
+            });
         });
         ui.horizontal(|ui| {
             ui.label("Offset");
@@ -390,15 +346,13 @@ fn passes_tab(ui: &mut egui::Ui, draft: &mut MultiAxisOperation) {
     });
     ui.horizontal(|ui| {
         ui.label("Sideways Compensation");
-        egui::ComboBox::from_id_salt("ma_sideways")
-            .selected_text(draft.pass_opts.sideways.label())
-            .show_ui(ui, |ui| {
-                for s in [SidewaysCompensation::Left, SidewaysCompensation::Right, SidewaysCompensation::Center] {
-                    if ui.selectable_label(draft.pass_opts.sideways == s, s.label()).clicked() {
-                        draft.pass_opts.sideways = s;
-                    }
+        egui::ComboBox::from_id_salt("ma_sideways").selected_text(draft.pass_opts.sideways.label()).show_ui(ui, |ui| {
+            for s in [SidewaysCompensation::Left, SidewaysCompensation::Right, SidewaysCompensation::Center] {
+                if ui.selectable_label(draft.pass_opts.sideways == s, s.label()).clicked() {
+                    draft.pass_opts.sideways = s;
                 }
-            });
+            }
+        });
     });
 
     match draft.strategy {
@@ -407,26 +361,19 @@ fn passes_tab(ui: &mut egui::Ui, draft: &mut MultiAxisOperation) {
             ui.heading("Rotary Passes");
             ui.horizontal(|ui| {
                 ui.label("Style");
-                egui::ComboBox::from_id_salt("ma_rotary_style")
-                    .selected_text(draft.rotary_style.label())
-                    .show_ui(ui, |ui| {
-                        for s in [RotaryPassStyle::Spiral, RotaryPassStyle::Line, RotaryPassStyle::Circular] {
-                            if ui.selectable_label(draft.rotary_style == s, s.label()).clicked() {
-                                draft.rotary_style = s;
-                            }
+                egui::ComboBox::from_id_salt("ma_rotary_style").selected_text(draft.rotary_style.label()).show_ui(ui, |ui| {
+                    for s in [RotaryPassStyle::Spiral, RotaryPassStyle::Line, RotaryPassStyle::Circular] {
+                        if ui.selectable_label(draft.rotary_style == s, s.label()).clicked() {
+                            draft.rotary_style = s;
                         }
-                    });
+                    }
+                });
             });
             match draft.rotary_style {
                 RotaryPassStyle::Line => {
                     ui.horizontal(|ui| {
                         ui.label("Stepover Angle");
-                        ui.add(
-                            egui::DragValue::new(&mut draft.stepover_angle_deg)
-                                .speed(0.1)
-                                .range(0.1..=90.0)
-                                .suffix(" deg"),
-                        );
+                        ui.add(egui::DragValue::new(&mut draft.stepover_angle_deg).speed(0.1).range(0.1..=90.0).suffix(" deg"));
                     });
                 }
                 RotaryPassStyle::Spiral | RotaryPassStyle::Circular => {
@@ -466,9 +413,7 @@ fn passes_tab(ui: &mut egui::Ui, draft: &mut MultiAxisOperation) {
                     ui.add(egui::DragValue::new(&mut draft.max_stepdown_mm).speed(0.05).range(0.05..=50.0).suffix(" mm"));
                 });
             }
-            if draft.strategy == MultiAxisStrategy::AdvancedSwarf
-                && draft.adv_geometry == AdvSwarfGeometryMode::Surfaces
-            {
+            if draft.strategy == MultiAxisStrategy::AdvancedSwarf && draft.adv_geometry == AdvSwarfGeometryMode::Surfaces {
                 ui.checkbox(&mut draft.check_for_gouges, "Check for Gouges");
             }
         }
@@ -496,15 +441,13 @@ fn passes_tab(ui: &mut egui::Ui, draft: &mut MultiAxisOperation) {
             });
             ui.horizontal(|ui| {
                 ui.label("Pattern");
-                egui::ComboBox::from_id_salt("ma_pass_finish")
-                    .selected_text(draft.finish_pattern.label())
-                    .show_ui(ui, |ui| {
-                        for p in [MultiAxisFinishPattern::Scallop, MultiAxisFinishPattern::Blend] {
-                            if ui.selectable_label(draft.finish_pattern == p, p.label()).clicked() {
-                                draft.finish_pattern = p;
-                            }
+                egui::ComboBox::from_id_salt("ma_pass_finish").selected_text(draft.finish_pattern.label()).show_ui(ui, |ui| {
+                    for p in [MultiAxisFinishPattern::Scallop, MultiAxisFinishPattern::Blend] {
+                        if ui.selectable_label(draft.finish_pattern == p, p.label()).clicked() {
+                            draft.finish_pattern = p;
                         }
-                    });
+                    }
+                });
             });
         }
     }
@@ -514,19 +457,13 @@ fn multiaxis_tab(ui: &mut egui::Ui, draft: &mut MultiAxisOperation) {
     ui.heading("Multi-Axis");
     ui.horizontal(|ui| {
         ui.label("Machining Type");
-        egui::ComboBox::from_id_salt("ma_mach_type")
-            .selected_text(draft.machining_type.label())
-            .show_ui(ui, |ui| {
-                for t in [
-                    MultiAxisMachiningType::ThreeAxis,
-                    MultiAxisMachiningType::FourAxis,
-                    MultiAxisMachiningType::FiveAxis,
-                ] {
-                    if ui.selectable_label(draft.machining_type == t, t.label()).clicked() {
-                        draft.machining_type = t;
-                    }
+        egui::ComboBox::from_id_salt("ma_mach_type").selected_text(draft.machining_type.label()).show_ui(ui, |ui| {
+            for t in [MultiAxisMachiningType::ThreeAxis, MultiAxisMachiningType::FourAxis, MultiAxisMachiningType::FiveAxis] {
+                if ui.selectable_label(draft.machining_type == t, t.label()).clicked() {
+                    draft.machining_type = t;
                 }
-            });
+            }
+        });
     });
     ui.label(RichText::new("Match machine capability (3 / 4 / simultaneous 5-axis).").weak());
 
@@ -557,15 +494,13 @@ fn multiaxis_tab(ui: &mut egui::Ui, draft: &mut MultiAxisOperation) {
 
 fn linking_tab(ui: &mut egui::Ui, linking: &mut ContourLinking) {
     ui.heading("Linking");
-    egui::ComboBox::from_id_salt("ma_high_feed")
-        .selected_text(linking.high_feed_mode.label())
-        .show_ui(ui, |ui| {
-            for m in [HighFeedMode::PreserveRapid, HighFeedMode::AlwaysUseHighFeed, HighFeedMode::NeverUseHighFeed] {
-                if ui.selectable_label(linking.high_feed_mode == m, m.label()).clicked() {
-                    linking.high_feed_mode = m;
-                }
+    egui::ComboBox::from_id_salt("ma_high_feed").selected_text(linking.high_feed_mode.label()).show_ui(ui, |ui| {
+        for m in [HighFeedMode::PreserveRapid, HighFeedMode::AlwaysUseHighFeed, HighFeedMode::NeverUseHighFeed] {
+            if ui.selectable_label(linking.high_feed_mode == m, m.label()).clicked() {
+                linking.high_feed_mode = m;
             }
-        });
+        }
+    });
     ui.checkbox(&mut linking.keep_tool_down, "Keep Tool Down");
     ui.horizontal(|ui| {
         ui.label("Safe Distance");

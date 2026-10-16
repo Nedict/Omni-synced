@@ -120,8 +120,7 @@ fn bake_component_placements_into_bodies(model: &mut Model) {
     if !model.bodies.iter().all(|b| b.transform.is_none_or(transform_is_identity)) {
         return;
     }
-    let by_id: HashMap<&str, &Occurrence> =
-        model.occurrences.iter().map(|o| (o.id.as_str(), o)).collect();
+    let by_id: HashMap<&str, &Occurrence> = model.occurrences.iter().map(|o| (o.id.as_str(), o)).collect();
     let mut memo = HashMap::new();
     let mut active = HashSet::new();
     let mut placement_by_product: HashMap<ProductDefinitionId, Transform> = HashMap::new();
@@ -173,10 +172,7 @@ fn mesh_objects_or_none(ir: &cadmpeg_ir::document::CadIr, stem: &str) -> Option<
     (!objects.is_empty()).then_some(objects)
 }
 
-fn brep_step_from_ir(
-    ir: &cadmpeg_ir::document::CadIr,
-    warnings: &mut Vec<String>,
-) -> std::result::Result<Vec<u8>, String> {
+fn brep_step_from_ir(ir: &cadmpeg_ir::document::CadIr, warnings: &mut Vec<String>) -> std::result::Result<Vec<u8>, String> {
     let plan = match StepCodec::default().plan(EncodeInput::new(ir, None), TargetRequest::Inherit) {
         Ok(plan) => plan,
         Err(e) => return Err(e.to_string()),
@@ -213,46 +209,27 @@ fn mesh_objects_from_ir(ir: &cadmpeg_ir::document::CadIr, stem: &str) -> Vec<Mes
         }
         let name = tess.id.to_string();
         let name = if name.trim().is_empty() || name.starts_with('(') {
-            if ir.model.tessellations.len() == 1 {
-                stem.to_string()
-            } else {
-                format!("{stem} ({index})")
-            }
+            if ir.model.tessellations.len() == 1 { stem.to_string() } else { format!("{stem} ({index})") }
         } else {
             name
         };
-        out.push(MeshObject {
-            name,
-            positions,
-            triangles: tris,
-            ..Default::default()
-        });
+        out.push(MeshObject { name, positions, triangles: tris, ..Default::default() });
     }
     out
 }
 
 fn decode(bytes: &[u8], file: &str) -> Result<(cadmpeg_ir::DecodeResult, Vec<String>)> {
     if bytes.len() > MAX_F3D_BYTES {
-        return Err(IoError::Invalid(format!(
-            "{file}: Fusion file too large ({} MB, limit {} MB)",
-            bytes.len() >> 20,
-            MAX_F3D_BYTES >> 20
-        )));
+        return Err(IoError::Invalid(format!("{file}: Fusion file too large ({} MB, limit {} MB)", bytes.len() >> 20, MAX_F3D_BYTES >> 20)));
     }
     if !looks_like_fusion_archive(bytes) {
         return Err(IoError::Invalid(format!("{file}: not a Fusion .f3d/.f3z archive")));
     }
     let mut input = Cursor::new(bytes);
-    let decoded = F3dCodec
-        .decode(&mut input, &f3d_decode_options())
-        .map_err(|e| IoError::Invalid(format!("{file}: Fusion decode failed: {e}")))?;
+    let decoded = F3dCodec.decode(&mut input, &f3d_decode_options()).map_err(|e| IoError::Invalid(format!("{file}: Fusion decode failed: {e}")))?;
     let report = decoded.report();
-    let mut warnings: Vec<String> = report
-        .losses
-        .iter()
-        .filter(|l| matches!(l.severity, Severity::Warning | Severity::Info))
-        .map(|l| l.message.clone())
-        .collect();
+    let mut warnings: Vec<String> =
+        report.losses.iter().filter(|l| matches!(l.severity, Severity::Warning | Severity::Info)).map(|l| l.message.clone()).collect();
     warnings.extend(report.notes.iter().cloned());
     Ok((decoded, warnings))
 }
@@ -273,9 +250,7 @@ pub fn open(bytes: &[u8], file: &str) -> Result<F3dOpen> {
             Ok(step) => return Ok(F3dOpen::Brep { step, warnings }),
             Err(step_err) => {
                 if let Some(objects) = mesh_objects_or_none(&ir, &stem) {
-                    warnings.push(format!(
-                        "Fusion B-rep did not export to STEP ({step_err}); opened cached mesh geometry from the file"
-                    ));
+                    warnings.push(format!("Fusion B-rep did not export to STEP ({step_err}); opened cached mesh geometry from the file"));
                     return Ok(F3dOpen::Mesh { objects, warnings });
                 }
                 return Err(IoError::Invalid(format!("{file}: STEP export failed: {step_err}")));
@@ -295,4 +270,3 @@ pub fn open(bytes: &[u8], file: &str) -> Result<F3dOpen> {
     }
     Err(IoError::Invalid(format!("{file}: {detail}")))
 }
-

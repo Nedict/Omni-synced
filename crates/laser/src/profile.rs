@@ -108,17 +108,7 @@ impl LaserProfile {
     }
 }
 
-fn p(
-    id: ProfileId,
-    name: &str,
-    w: f64,
-    h: f64,
-    lenses: &[f64],
-    device: &str,
-    model: &str,
-    source: &str,
-    notes: &str,
-) -> LaserProfile {
+fn p(id: ProfileId, name: &str, w: f64, h: f64, lenses: &[f64], device: &str, model: &str, source: &str, notes: &str) -> LaserProfile {
     LaserProfile {
         id,
         name: name.into(),

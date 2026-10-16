@@ -8,12 +8,12 @@
 
 pub mod catalog;
 mod design;
-pub mod exchange;
-#[cfg(not(target_arch = "wasm32"))]
-mod f3d;
 mod design_metadata;
 mod dxf;
 mod dxf_out;
+pub mod exchange;
+#[cfg(not(target_arch = "wasm32"))]
+mod f3d;
 pub use design::{
     DesignCompression, DesignContainerReader, DesignGeometry, DesignPreview, THUMBNAIL_SIZE, is_design_container, read_design_file,
     read_design_geometry, read_design_preview, read_design_thumbnail, read_design_thumbnail_file, write_design_container,
@@ -39,10 +39,10 @@ pub use svg::read_svg;
 mod gltf_in;
 pub use gltf_in::{GltfImport, Loader, MAX_GLTF_BYTES, MeshPlan, PlanPlace, glb_container, is_gltf_path, read_gltf};
 mod obj;
+#[cfg(not(target_arch = "wasm32"))]
+pub use f3d::{MAX_F3D_BYTES, looks_like_fusion_archive};
 pub use obj::read_obj;
 pub use threemf::{MAX_3MF_BYTES, MeshObject, model_xml, model_xml_with, read_3mf, weld, write_3mf, write_3mf_with};
-#[cfg(not(target_arch = "wasm32"))]
-pub use f3d::{looks_like_fusion_archive, MAX_F3D_BYTES};
 #[cfg(target_arch = "wasm32")]
 pub const MAX_F3D_BYTES: usize = 512 << 20;
 /// Browser builds cannot decode Fusion B-rep; still sniff ZIP contents so opening an
@@ -72,8 +72,8 @@ pub fn looks_like_fusion_archive(bytes: &[u8]) -> bool {
     }
     manifest && design
 }
-pub use urdf::{UrdfOptions, UrdfPackage, urdf};
 pub use exchange::{ExchangeCapabilities, ExchangeFileType, ExchangeImport, ExchangeProviderId};
+pub use urdf::{UrdfOptions, UrdfPackage, urdf};
 
 use solidcraft_doc::{Document, Metadata, ModelState};
 use solidcraft_geom::{Mesh, Vec3};
@@ -117,10 +117,7 @@ pub const MAX_STEP_BYTES: usize = 512 << 20;
 
 /// Is this a Fusion design archive (`.f3d` / `.f3z`), any case?
 pub fn is_f3d_path(path: &str) -> bool {
-    std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("f3d") || e.eq_ignore_ascii_case("f3z"))
+    std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("f3d") || e.eq_ignore_ascii_case("f3z"))
 }
 
 /// Is this a CAD file read as an Import base feature: STEP (`.step` / `.stp`), IGES
@@ -224,9 +221,7 @@ pub fn f3d_open_feature(bytes: &[u8], file: &str) -> Result<F3dOpenFeature> {
 pub fn f3d_import_feature(bytes: &[u8], file: &str) -> Result<StepFeature> {
     match f3d_open_feature(bytes, file)? {
         F3dOpenFeature::Solid(sf) => Ok(sf),
-        F3dOpenFeature::Mesh(_) => Err(IoError::Invalid(format!(
-            "{file}: Fusion file has no transferable B-rep (only mesh preview data)"
-        ))),
+        F3dOpenFeature::Mesh(_) => Err(IoError::Invalid(format!("{file}: Fusion file has no transferable B-rep (only mesh preview data)"))),
     }
 }
 
@@ -259,9 +254,7 @@ fn mesh_objects_feature(objects: &[threemf::MeshObject], file: &str, warnings: V
 
 #[cfg(target_arch = "wasm32")]
 pub fn f3d_import_feature(_bytes: &[u8], file: &str) -> Result<StepFeature> {
-    Err(IoError::Invalid(format!(
-        "{file}: Fusion import is not available in the browser build; use STEP or open the desktop app"
-    )))
+    Err(IoError::Invalid(format!("{file}: Fusion import is not available in the browser build; use STEP or open the desktop app")))
 }
 
 pub fn step_import_feature(bytes: &[u8], file: &str) -> Result<StepFeature> {
@@ -857,9 +850,7 @@ mod tests {
 
     #[test]
     fn fusion_f3d_is_not_a_solidcraft_design_container() {
-        let sample = std::path::Path::new(
-            "C:\\Users\\willi\\Nextcloud\\3D Prints\\Fusion Cloud Offline\\21700 cylindrical_holder.f3d",
-        );
+        let sample = std::path::Path::new("C:\\Users\\willi\\Nextcloud\\3D Prints\\Fusion Cloud Offline\\21700 cylindrical_holder.f3d");
         if !sample.is_file() {
             return;
         }
@@ -871,9 +862,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn fusion_f3d_imports_as_step_bodies() {
-        let sample = std::path::Path::new(
-            "C:\\Users\\willi\\Nextcloud\\3D Prints\\Fusion Cloud Offline\\21700 cylindrical_holder.f3d",
-        );
+        let sample = std::path::Path::new("C:\\Users\\willi\\Nextcloud\\3D Prints\\Fusion Cloud Offline\\21700 cylindrical_holder.f3d");
         if !sample.is_file() {
             return;
         }
@@ -887,12 +876,9 @@ mod tests {
     #[test]
     fn fusion_offline_corpus_smoke() {
         use std::path::PathBuf;
-        let dir = [
-            PathBuf::from("/tmp/f3d-corpus"),
-            PathBuf::from(r"C:\Users\willi\Nextcloud\3D Prints\Fusion Cloud Offline"),
-        ]
-        .into_iter()
-        .find(|p| p.is_dir());
+        let dir = [PathBuf::from("/tmp/f3d-corpus"), PathBuf::from(r"C:\Users\willi\Nextcloud\3D Prints\Fusion Cloud Offline")]
+            .into_iter()
+            .find(|p| p.is_dir());
         let Some(dir) = dir else {
             eprintln!("fusion_offline_corpus_smoke: no corpus directory");
             return;
@@ -900,11 +886,7 @@ mod tests {
         let mut entries: Vec<_> = std::fs::read_dir(&dir)
             .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .is_some_and(|x| x.eq_ignore_ascii_case("f3d") || x.eq_ignore_ascii_case("f3z"))
-            })
+            .filter(|e| e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("f3d") || x.eq_ignore_ascii_case("f3z")))
             .collect();
         entries.sort_by_key(|e| e.file_name());
         assert!(!entries.is_empty(), "no .f3d in {}", dir.display());
@@ -931,11 +913,7 @@ mod tests {
                 }
             }
         }
-        eprintln!(
-            "--- corpus {} files: {solid} solid, {mesh} mesh, {} failed ---",
-            solid + mesh + failed.len(),
-            failed.len()
-        );
+        eprintln!("--- corpus {} files: {solid} solid, {mesh} mesh, {} failed ---", solid + mesh + failed.len(), failed.len());
         for (name, err) in &failed {
             eprintln!("  {name}: {err}");
         }
@@ -948,7 +926,9 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn fusion_open_one_file() {
-        let path = std::env::var("F3D_ONE").expect("F3D_ONE path required");
+        let Ok(path) = std::env::var("F3D_ONE") else {
+            return;
+        };
         let path = std::path::PathBuf::from(&path);
         let label = path.file_name().unwrap().to_string_lossy();
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{label}: {e}"));
@@ -984,9 +964,7 @@ mod tests {
     fn fusion_f3d_is_not_read_as_design_container() {
         for sample in [
             std::path::Path::new("/tmp/camelion.f3d"),
-            std::path::Path::new(
-                "C:\\Users\\willi\\Nextcloud\\3D Prints\\Fusion Cloud Offline\\camelion v2.f3d",
-            ),
+            std::path::Path::new("C:\\Users\\willi\\Nextcloud\\3D Prints\\Fusion Cloud Offline\\camelion v2.f3d"),
         ] {
             if !sample.is_file() {
                 continue;

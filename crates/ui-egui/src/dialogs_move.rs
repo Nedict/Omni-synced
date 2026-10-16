@@ -224,9 +224,10 @@ pub fn params(app: &SolveApp, d: &Dialog) -> Result<Value, String> {
             let from = need_point(1, "the point to move from")?;
             let mut delta = need_point(2, "the point to move to")? - from;
             if let Some(len) = d.extra.get("p2p_len").and_then(|v| v.as_f64()).filter(|l| l.is_finite())
-                && let Some(dir) = delta.normalized() {
-                    delta = dir * len.max(0.0);
-                }
+                && let Some(dir) = delta.normalized()
+            {
+                delta = dir * len.max(0.0);
+            }
             p["translate"] = num(delta);
         }
         _ => {

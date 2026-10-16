@@ -342,8 +342,7 @@ pub fn compute(s: &Session, cmds: &[(String, Value)], colors: Colors) -> Job {
         matches!(
             command.as_str(),
             "sketch.redefine" | "sketch.mirror" | "sketch.move" | "sketch.pattern.rectangular" | "sketch.pattern.circular" | "sketch.offset"
-        )
-            || command == "construct.plane.along_path"
+        ) || command == "construct.plane.along_path"
             || params.get("command").and_then(Value::as_str) == Some("construct.plane.along_path")
     }) {
         let preview = s.preview_visible_world(cmds).map_err(|error| error.to_string())?;
@@ -470,11 +469,9 @@ fn curve_geometry_changed(old: &solidcraft_engine::doc::SolvedSketch, new: &soli
     if oc.id != nc.id {
         return true;
     }
-    oc.kind.point_ids().into_iter().any(|pi| {
-        match (old.sketch.point(pi), new.sketch.point(pi)) {
-            (Some(a), Some(b)) => a.dist(b) > 1e-9,
-            _ => true,
-        }
+    oc.kind.point_ids().into_iter().any(|pi| match (old.sketch.point(pi), new.sketch.point(pi)) {
+        (Some(a), Some(b)) => a.dist(b) > 1e-9,
+        _ => true,
     })
 }
 
@@ -586,9 +583,7 @@ pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
                     if !old_points.contains(p.id.as_str()) {
                         return Some(i);
                     }
-                    old.as_ref().and_then(|o| {
-                        o.sketch.point(i).is_some_and(|op| op.dist(p.pos) > 1e-9).then_some(i)
-                    })
+                    old.as_ref().and_then(|o| o.sketch.point(i).is_some_and(|op| op.dist(p.pos) > 1e-9).then_some(i))
                 })
                 .collect::<Vec<_>>();
             if indices.is_empty() && points.is_empty() { None } else { Some(SketchPreview { sketch: sketch.clone(), curves: indices, points }) }

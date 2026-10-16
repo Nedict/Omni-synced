@@ -3,10 +3,7 @@
 
 use egui::RichText;
 use serde_json::json;
-use solidcraft_manufacture::{
-    NcOpRef, NcProgram, NcUnit, Operation, Tool, build_setup_sheet_html, estimate_machining_time_s,
-    format_cycle_time,
-};
+use solidcraft_manufacture::{NcOpRef, NcProgram, NcUnit, Operation, Tool, build_setup_sheet_html, estimate_machining_time_s, format_cycle_time};
 
 use crate::SolveApp;
 
@@ -35,12 +32,7 @@ pub struct MachiningTimeState {
 
 impl Default for MachiningTimeState {
     fn default() -> Self {
-        Self {
-            feed_scale: 1.0,
-            rapid_mmpm: 5_000.0,
-            tool_change_s: 8.0,
-            estimated_s: None,
-        }
+        Self { feed_scale: 1.0, rapid_mmpm: 5_000.0, tool_change_s: 8.0, estimated_s: None }
     }
 }
 
@@ -66,19 +58,10 @@ pub fn open_post_process(app: &mut SolveApp) {
                 draft.post = Some(post.clone());
             }
             // Select all operations in the active setup by default.
-            draft.operation_refs = setup
-                .operations
-                .iter()
-                .enumerate()
-                .map(|(i, _)| NcOpRef { setup: active.clone(), operation_index: i })
-                .collect();
+            draft.operation_refs = setup.operations.iter().enumerate().map(|(i, _)| NcOpRef { setup: active.clone(), operation_index: i }).collect();
         }
     }
-    app.manufacture_workspace.post_dialog = Some(PostDialogState {
-        draft,
-        tab: PostDialogTab::Settings,
-        existing_index: None,
-    });
+    app.manufacture_workspace.post_dialog = Some(PostDialogState { draft, tab: PostDialogTab::Settings, existing_index: None });
     app.manufacture_workspace.tab = crate::manufacture_workspace::MfgTab::Post;
 }
 
@@ -86,52 +69,40 @@ pub fn open_machining_time(app: &mut SolveApp) {
     let mut st = MachiningTimeState::default();
     if let Some(setup_name) = non_empty(&app.manufacture_workspace.active_setup)
         && let Some(setup) = app.session.doc.manufacture.setups.get(setup_name)
-            && let Some(mname) = &setup.machine
-                && let Some(m) = app.session.doc.manufacture.machines.get(mname) {
-                    if m.rapid_feedrate_mmpm > 0.0 {
-                        st.rapid_mmpm = m.rapid_feedrate_mmpm;
-                    }
-                    if m.tool_changer.change_time_s > 0.0 {
-                        st.tool_change_s = m.tool_changer.change_time_s;
-                    }
-                }
+        && let Some(mname) = &setup.machine
+        && let Some(m) = app.session.doc.manufacture.machines.get(mname)
+    {
+        if m.rapid_feedrate_mmpm > 0.0 {
+            st.rapid_mmpm = m.rapid_feedrate_mmpm;
+        }
+        if m.tool_changer.change_time_s > 0.0 {
+            st.tool_change_s = m.tool_changer.change_time_s;
+        }
+    }
     st.estimated_s = Some(compute_cycle_time(app, &st));
     app.manufacture_workspace.machining_time_dialog = Some(st);
 }
 
 pub fn open_setup_sheet(app: &mut SolveApp) {
-    let program = app
-        .manufacture_workspace
-        .post_dialog
-        .as_ref()
-        .map(|d| d.draft.clone())
-        .unwrap_or_else(|| {
-            let mut p = NcProgram::default();
-            let active = app.manufacture_workspace.active_setup.clone();
-            if !active.is_empty() {
-                p.setup_names = vec![active];
-            }
-            p
-        });
+    let program = app.manufacture_workspace.post_dialog.as_ref().map(|d| d.draft.clone()).unwrap_or_else(|| {
+        let mut p = NcProgram::default();
+        let active = app.manufacture_workspace.active_setup.clone();
+        if !active.is_empty() {
+            p.setup_names = vec![active];
+        }
+        p
+    });
     let rows = collect_op_rows(app, &program);
     let mt = MachiningTimeState::default();
     let secs = compute_cycle_time(app, &mt);
-    let title = if app.session.doc.name.trim().is_empty() {
-        "SolidCraft".into()
-    } else {
-        app.session.doc.name.clone()
-    };
+    let title = if app.session.doc.name.trim().is_empty() { "SolidCraft".into() } else { app.session.doc.name.clone() };
     let html = build_setup_sheet_html(&title, &program, &rows, &format_cycle_time(secs));
     app.manufacture_workspace.setup_sheet_dialog = Some(SetupSheetState { html, title });
 }
 
 fn non_empty(s: &str) -> Option<&str> {
     let t = s.trim();
-    if t.is_empty() {
-        None
-    } else {
-        Some(t)
-    }
+    if t.is_empty() { None } else { Some(t) }
 }
 
 fn compute_cycle_time(app: &SolveApp, st: &MachiningTimeState) -> f64 {
@@ -206,14 +177,7 @@ fn show_post_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
     };
 
     let posts: Vec<(String, String)> = {
-        let mut v: Vec<_> = app
-            .session
-            .doc
-            .manufacture
-            .posts
-            .iter()
-            .map(|(k, p)| (k.clone(), p.name.clone()))
-            .collect();
+        let mut v: Vec<_> = app.session.doc.manufacture.posts.iter().map(|(k, p)| (k.clone(), p.name.clone())).collect();
         v.sort_by(|a, b| a.0.cmp(&b.0));
         v
     };
@@ -226,7 +190,7 @@ fn show_post_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut tab = state.tab;
     let title = format!("NC PROGRAM : {}", draft.name.to_uppercase());
 
-    egui::Window::new(title)
+    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_post_dialog"))
         .open(&mut open)
         .collapsible(false)
@@ -236,10 +200,7 @@ fn show_post_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 for (v, l) in [(PostDialogTab::Settings, "Settings"), (PostDialogTab::Operations, "Operations")] {
                     let sel = tab == v;
-                    if ui
-                        .selectable_label(sel, if sel { RichText::new(l).strong() } else { RichText::new(l) })
-                        .clicked()
-                    {
+                    if ui.selectable_label(sel, if sel { RichText::new(l).strong() } else { RichText::new(l) }).clicked() {
                         tab = v;
                     }
                 }
@@ -266,11 +227,10 @@ fn show_post_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
         app.manufacture_workspace.post_dialog = None;
         return;
     }
-    if do_post
-        && run_post(app, &draft) {
-            app.manufacture_workspace.post_dialog = None;
-            return;
-        }
+    if do_post && run_post(app, &draft) {
+        app.manufacture_workspace.post_dialog = None;
+        return;
+    }
     if let Some(d) = &mut app.manufacture_workspace.post_dialog {
         d.draft = draft;
         d.tab = tab;
@@ -286,11 +246,7 @@ fn settings_tab(ui: &mut egui::Ui, draft: &mut NcProgram, posts: &[(String, Stri
         let label = if cur.is_empty() {
             "(select post)".into()
         } else {
-            posts
-                .iter()
-                .find(|(id, _)| id == &cur)
-                .map(|(_, n)| n.clone())
-                .unwrap_or(cur.clone())
+            posts.iter().find(|(id, _)| id == &cur).map(|(_, n)| n.clone()).unwrap_or(cur.clone())
         };
         egui::ComboBox::from_id_salt("post_dlg_post").selected_text(label).show_ui(ui, |ui| {
             if ui.selectable_label(cur.is_empty(), "(select post)").clicked() {
@@ -336,15 +292,13 @@ fn settings_tab(ui: &mut egui::Ui, draft: &mut NcProgram, posts: &[(String, Stri
     });
     ui.horizontal(|ui| {
         ui.label("Unit");
-        egui::ComboBox::from_id_salt("post_unit")
-            .selected_text(draft.unit.label())
-            .show_ui(ui, |ui| {
-                for u in [NcUnit::Millimeters, NcUnit::Inches] {
-                    if ui.selectable_label(draft.unit == u, u.label()).clicked() {
-                        draft.unit = u;
-                    }
+        egui::ComboBox::from_id_salt("post_unit").selected_text(draft.unit.label()).show_ui(ui, |ui| {
+            for u in [NcUnit::Millimeters, NcUnit::Inches] {
+                if ui.selectable_label(draft.unit == u, u.label()).clicked() {
+                    draft.unit = u;
                 }
-            });
+            }
+        });
     });
     ui.checkbox(&mut draft.open_nc_in_editor, "Open NC file in editor");
 
@@ -377,10 +331,7 @@ fn settings_tab(ui: &mut egui::Ui, draft: &mut NcProgram, posts: &[(String, Stri
 
 fn operations_tab(ui: &mut egui::Ui, app: &SolveApp, draft: &mut NcProgram, setup_names: &[String]) {
     ui.heading("Operations");
-    ui.checkbox(
-        &mut draft.reorder_minimize_tool_changes,
-        "Reorder to Minimize Tool Changes",
-    );
+    ui.checkbox(&mut draft.reorder_minimize_tool_changes, "Reorder to Minimize Tool Changes");
     ui.label(RichText::new("Include setups / operations to post.").weak());
     ui.separator();
 
@@ -390,12 +341,7 @@ fn operations_tab(ui: &mut egui::Ui, app: &SolveApp, draft: &mut NcProgram, setu
             continue;
         };
         let all_selected = !setup.operations.is_empty()
-            && (0..setup.operations.len()).all(|i| {
-                draft
-                    .operation_refs
-                    .iter()
-                    .any(|r| r.setup == *sn && r.operation_index == i)
-            });
+            && (0..setup.operations.len()).all(|i| draft.operation_refs.iter().any(|r| r.setup == *sn && r.operation_index == i));
         let mut setup_on = all_selected || draft.setup_names.iter().any(|s| s == sn);
         ui.horizontal(|ui| {
             if ui.checkbox(&mut setup_on, sn).changed() {
@@ -478,12 +424,10 @@ fn run_post(app: &mut SolveApp, draft: &NcProgram) -> bool {
     // Assign post on active setup if missing so generate/post pipeline can use it.
     let active = app.manufacture_workspace.active_setup.clone();
     if !active.is_empty()
-        && let Some(post) = &draft.post {
-            let _ = app.run(
-                "manufacture.settings.set",
-                json!({"name": active, "set": {"post": post}}),
-            );
-        }
+        && let Some(post) = &draft.post
+    {
+        let _ = app.run("manufacture.settings.set", json!({"name": active, "set": {"post": post}}));
+    }
 
     // Prefer local file post from toolpath segments (GRBL / Marlin / Repetier / Mach…).
     // Companion job G-code is optional — many machines just need a file.
@@ -552,28 +496,18 @@ fn local_post_gcode(app: &SolveApp, draft: &NcProgram) -> Option<String> {
     let _ = app; // posts live on the document
     let post_id = draft.post.as_deref().or_else(|| {
         let active = app.manufacture_workspace.active_setup.as_str();
-        app.session
-            .doc
-            .manufacture
-            .setups
-            .get(active)
-            .and_then(|s| s.post.as_deref())
+        app.session.doc.manufacture.setups.get(active).and_then(|s| s.post.as_deref())
     })?;
-    let profile = app.session.doc.manufacture.posts.get(post_id).cloned().or_else(|| {
-        solidcraft_manufacture::post::preset_posts()
-            .into_iter()
-            .find(|(id, _)| *id == post_id)
-            .map(|(_, p)| p)
-    })?;
-    let active = app.manufacture_workspace.active_setup.as_str();
-    let tool = app
+    let profile = app
         .session
         .doc
         .manufacture
-        .setups
-        .get(active)
-        .and_then(|s| s.tools.first().cloned())
-        .unwrap_or_default();
+        .posts
+        .get(post_id)
+        .cloned()
+        .or_else(|| solidcraft_manufacture::post::preset_posts().into_iter().find(|(id, _)| *id == post_id).map(|(_, p)| p))?;
+    let active = app.manufacture_workspace.active_setup.as_str();
+    let tool = app.session.doc.manufacture.setups.get(active).and_then(|s| s.tools.first().cloned()).unwrap_or_default();
     solidcraft_manufacture::post::post_toolpath(segs, &profile, &tool).ok()
 }
 
@@ -583,7 +517,7 @@ fn show_machining_time(app: &mut SolveApp, ui: &mut egui::Ui) {
     };
     let mut open = true;
     let mut close = false;
-    egui::Window::new("MACHINING TIME")
+    crate::frame::window(ui.ctx(), "MACHINING TIME", crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_machining_time"))
         .open(&mut open)
         .collapsible(false)
@@ -631,7 +565,7 @@ fn show_setup_sheet(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut open = true;
     let mut close = false;
     let mut save = false;
-    egui::Window::new("SETUP SHEET")
+    crate::frame::window(ui.ctx(), "SETUP SHEET", crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_setup_sheet"))
         .open(&mut open)
         .collapsible(false)

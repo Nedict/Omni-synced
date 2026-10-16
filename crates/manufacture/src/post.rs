@@ -21,9 +21,7 @@ pub fn post_toolpath(segments: &[PathSegment], profile: &PostProfile, tool: &Too
         GcodeDialect::Mach3Mach4 => write_mach_header(&mut out, tool, eol),
         GcodeDialect::Marlin => write_marlin_header(&mut out, tool, eol),
         GcodeDialect::Repetier => write_repetier_header(&mut out, tool, eol),
-        GcodeDialect::Grbl | GcodeDialect::LinuxCnc | GcodeDialect::Generic => {
-            write_grblish_header(&mut out, tool, eol)
-        }
+        GcodeDialect::Grbl | GcodeDialect::LinuxCnc | GcodeDialect::Generic => write_grblish_header(&mut out, tool, eol),
     }
     if !profile.preamble.is_empty() {
         for line in profile.preamble.lines() {
@@ -47,10 +45,7 @@ pub fn post_toolpath(segments: &[PathSegment], profile: &PostProfile, tool: &Too
                 let code = if *clockwise { "G2" } else { "G3" };
                 let i = center[0] - pos[0];
                 let j = center[1] - pos[1];
-                out.push_str(&format!(
-                    "{code} X{:.4} Y{:.4} Z{:.4} I{:.4} J{:.4} F{:.1}{eol}",
-                    to[0], to[1], to[2], i, j, feed
-                ));
+                out.push_str(&format!("{code} X{:.4} Y{:.4} Z{:.4} I{:.4} J{:.4} F{:.1}{eol}", to[0], to[1], to[2], i, j, feed));
                 pos = *to;
             }
         }
@@ -211,12 +206,7 @@ mod tests {
         vec![
             PathSegment::Rapid { to: [0.0, 0.0, 5.0] },
             PathSegment::Linear { to: [10.0, 0.0, -1.0], feed: 800.0 },
-            PathSegment::Arc {
-                center: [10.0, 5.0, -1.0],
-                to: [10.0, 10.0, -1.0],
-                feed: 600.0,
-                clockwise: true,
-            },
+            PathSegment::Arc { center: [10.0, 5.0, -1.0], to: [10.0, 10.0, -1.0], feed: 600.0, clockwise: true },
         ]
     }
 

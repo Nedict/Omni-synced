@@ -78,11 +78,7 @@ pub struct LaserPackage {
 ///
 /// `field_mm` when set forces a **square** work area of that size (lens override).
 /// Otherwise the profile's published `bed_width_mm` × `bed_height_mm` are used.
-pub fn build_package(
-    profile_id: ProfileId,
-    field_mm: Option<f64>,
-    polylines: &[Polyline2],
-) -> Result<LaserPackage> {
+pub fn build_package(profile_id: ProfileId, field_mm: Option<f64>, polylines: &[Polyline2]) -> Result<LaserPackage> {
     let pref = profile(profile_id);
     let (width, height) = match field_mm {
         Some(f) => {
@@ -136,14 +132,7 @@ fn job_meta(pref: &LaserProfile, width: f64, height: f64, polylines: &[Polyline2
         lightburn_model: pref.lightburn_model.clone(),
         source: pref.source.clone(),
         units: "mm",
-        layers: layers
-            .into_iter()
-            .map(|(name, polylines)| LayerMeta {
-                intent: intent_for_layer(&name).as_str().into(),
-                name,
-                polylines,
-            })
-            .collect(),
+        layers: layers.into_iter().map(|(name, polylines)| LayerMeta { intent: intent_for_layer(&name).as_str().into(), name, polylines }).collect(),
         notes: pref.notes.clone(),
         generator: "solidcraft-laser",
     }
@@ -197,10 +186,7 @@ pub fn write_ascii_dxf(polylines: &[Polyline2], width_mm: f64, height_mm: f64) -
             let b = pl.points[(i + 1) % n];
             out.push_str("0\nLINE\n8\n");
             out.push_str(&pl.layer);
-            out.push_str(&format!(
-                "\n10\n{:.6}\n20\n{:.6}\n30\n0.0\n11\n{:.6}\n21\n{:.6}\n31\n0.0\n",
-                a[0], a[1], b[0], b[1]
-            ));
+            out.push_str(&format!("\n10\n{:.6}\n20\n{:.6}\n30\n0.0\n11\n{:.6}\n21\n{:.6}\n31\n0.0\n", a[0], a[1], b[0], b[1]));
         }
     }
     out.push_str("0\nENDSEC\n0\nEOF\n");
@@ -263,11 +249,7 @@ mod tests {
     use crate::profile::ProfileId;
 
     fn square() -> Vec<Polyline2> {
-        vec![Polyline2 {
-            points: vec![[-10.0, -10.0], [10.0, -10.0], [10.0, 10.0], [-10.0, 10.0]],
-            closed: true,
-            layer: "mark".into(),
-        }]
+        vec![Polyline2 { points: vec![[-10.0, -10.0], [10.0, -10.0], [10.0, 10.0], [-10.0, 10.0]], closed: true, layer: "mark".into() }]
     }
 
     #[test]

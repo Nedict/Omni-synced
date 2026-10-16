@@ -89,10 +89,7 @@ fn panel_lists_with(tab: &str, panels: &[&'static str]) -> Vec<(&'static str, Ve
         .map(|panel| {
             let (cmds, promote) = match crate::workspace::layout(tab, panel, &specs) {
                 Some(l) => l,
-                None => (
-                    specs.iter().filter(|c| c.tab == tab && c.panel == *panel).copied().collect(),
-                    crate::toolbar::promoted(tab, panel),
-                ),
+                None => (specs.iter().filter(|c| c.tab == tab && c.panel == *panel).copied().collect(), crate::toolbar::promoted(tab, panel)),
             };
             let cmds = crate::sketch_tools::also_in(tab, panel, cmds, &specs);
             (*panel, cmds, promote)
@@ -114,10 +111,7 @@ fn own(app: &mut SolveApp, tab: &str, panel: &str) -> Vec<String> {
 
 /// Where a command is a button on a tab now: its panel.
 pub fn pinned_on(app: &SolveApp, tab: &str, id: &str) -> Option<&'static str> {
-    panel_lists_for(app)
-        .into_iter()
-        .find(|(panel, cmds, n)| buttons(app, tab, panel, cmds, *n).iter().any(|c| c.id == id))
-        .map(|(p, ..)| p)
+    panel_lists_for(app).into_iter().find(|(panel, cmds, n)| buttons(app, tab, panel, cmds, *n).iter().any(|c| c.id == id)).map(|(p, ..)| p)
 }
 
 /// The panel a command belongs to on a tab (its drop-down), or the tab's first panel.

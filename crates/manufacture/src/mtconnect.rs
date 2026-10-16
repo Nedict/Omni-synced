@@ -6,9 +6,7 @@
 use std::sync::Arc;
 
 use crate::job::Availability;
-use crate::machine_host::{
-    MachineBackend, MachineBackendDescriptor, MachineError, MachineLiveStatus, MachineResult,
-};
+use crate::machine_host::{MachineBackend, MachineBackendDescriptor, MachineError, MachineLiveStatus, MachineResult};
 
 /// Minimal HTTP GET used by [`MtConnectBackend`].
 pub trait HttpGet: Send + Sync + 'static {
@@ -70,11 +68,7 @@ impl MachineBackend for MtConnectBackend {
             id: "mtconnect".into(),
             label: self.label.clone(),
             protocol: "mtconnect".into(),
-            availability: if self.is_available() {
-                Availability::Available
-            } else {
-                Availability::Unavailable
-            },
+            availability: if self.is_available() { Availability::Available } else { Availability::Unavailable },
             note: Some("Read-only MTConnect Streams (current). FOCAS/THINC are separate plugins.".into()),
             endpoint: Some(self.base_url.clone()),
         }
@@ -99,30 +93,15 @@ pub fn parse_mtconnect_current(xml: &str) -> Result<MachineLiveStatus, String> {
     if !xml.contains("MTConnect") && !xml.contains("Streams") {
         return Err("response does not look like MTConnect XML".into());
     }
-    let execution = first_element_text(xml, "Execution")
-        .or_else(|| first_element_text(xml, "execution"))
-        .unwrap_or_else(|| "UNKNOWN".into());
+    let execution = first_element_text(xml, "Execution").or_else(|| first_element_text(xml, "execution")).unwrap_or_else(|| "UNKNOWN".into());
     let program = first_element_text(xml, "Program").or_else(|| first_element_text(xml, "program"));
-    let tool_number = first_element_text(xml, "ToolNumber")
-        .or_else(|| first_element_text(xml, "tool_number"))
-        .and_then(|s| s.trim().parse().ok());
-    let spindle_rpm = first_element_text(xml, "SpindleSpeed")
-        .or_else(|| first_element_text(xml, "spindle_speed"))
-        .and_then(|s| s.trim().parse().ok());
-    let feedrate_mmpm = first_element_text(xml, "PathFeedrate")
-        .or_else(|| first_element_text(xml, "path_feedrate"))
-        .and_then(|s| s.trim().parse().ok());
+    let tool_number = first_element_text(xml, "ToolNumber").or_else(|| first_element_text(xml, "tool_number")).and_then(|s| s.trim().parse().ok());
+    let spindle_rpm =
+        first_element_text(xml, "SpindleSpeed").or_else(|| first_element_text(xml, "spindle_speed")).and_then(|s| s.trim().parse().ok());
+    let feedrate_mmpm =
+        first_element_text(xml, "PathFeedrate").or_else(|| first_element_text(xml, "path_feedrate")).and_then(|s| s.trim().parse().ok());
     let available = !matches!(execution.to_ascii_uppercase().as_str(), "UNAVAILABLE" | "UNKNOWN" | "");
-    Ok(MachineLiveStatus {
-        available,
-        execution,
-        program,
-        tool_number,
-        spindle_rpm,
-        feedrate_mmpm,
-        message: None,
-        source: "mtconnect".into(),
-    })
+    Ok(MachineLiveStatus { available, execution, program, tool_number, spindle_rpm, feedrate_mmpm, message: None, source: "mtconnect".into() })
 }
 
 /// Tiny element text extractor — enough for MTConnect sample/event payloads.
@@ -132,11 +111,7 @@ fn first_element_text(xml: &str, local: &str) -> Option<String> {
     for open in &open_candidates {
         if let Some(i) = xml.find(open.as_str()) {
             let after = i + open.len();
-            let content_start = if open.ends_with('>') {
-                after
-            } else {
-                xml[after..].find('>')? + after + 1
-            };
+            let content_start = if open.ends_with('>') { after } else { xml[after..].find('>')? + after + 1 };
             start = Some(content_start);
             break;
         }
@@ -145,11 +120,7 @@ fn first_element_text(xml: &str, local: &str) -> Option<String> {
     let close = format!("</{local}>");
     let end = xml[start..].find(&close)? + start;
     let text = xml[start..end].trim();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text.to_string())
-    }
+    if text.is_empty() { None } else { Some(text.to_string()) }
 }
 
 fn http_get_blocking(url: &str) -> Result<String, String> {
@@ -252,10 +223,7 @@ mod tests {
             let mut buf = [0u8; 1024];
             let _ = sock.read(&mut buf);
             let body = xml;
-            let resp = format!(
-                "HTTP/1.0 200 OK\r\nContent-Length: {}\r\nContent-Type: text/xml\r\n\r\n{body}",
-                body.len()
-            );
+            let resp = format!("HTTP/1.0 200 OK\r\nContent-Length: {}\r\nContent-Type: text/xml\r\n\r\n{body}", body.len());
             let _ = sock.write_all(resp.as_bytes());
         });
         let backend = MtConnectBackend::with_std(format!("http://127.0.0.1:{port}/VF-2"));

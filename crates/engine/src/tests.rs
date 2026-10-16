@@ -1420,11 +1420,7 @@ fn sustainability_insights_estimate() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10}));
     let undo = s.undo.len();
-    let r = run(
-        &mut s,
-        "inspect.sustainability",
-        json!({"process": "subtractive", "material": "Aluminum", "region": "North America"}),
-    );
+    let r = run(&mut s, "inspect.sustainability", json!({"process": "subtractive", "material": "Aluminum", "region": "North America"}));
     assert!(r["illustrative"].as_bool().unwrap_or(false));
     assert!((r["volume_mm3"].as_f64().unwrap() - 1000.0).abs() < 1e-6);
     assert!(r["co2e_kg"].as_f64().unwrap() > 0.0);

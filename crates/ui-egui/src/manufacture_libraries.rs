@@ -2,9 +2,7 @@
 
 use egui::RichText;
 use serde_json::json;
-use solidcraft_manufacture::library::{
-    CatalogEntry, LibraryLocation, LibraryRemote, DEFAULT_CAM_LIBRARY_REMOTE,
-};
+use solidcraft_manufacture::library::{CatalogEntry, DEFAULT_CAM_LIBRARY_REMOTE, LibraryLocation, LibraryRemote};
 
 use crate::SolveApp;
 
@@ -83,10 +81,8 @@ fn refresh(app: &mut SolveApp, st: &mut LibraryDialogState) {
     let _ = app.run("manufacture.library.ensure_default_remote", json!({}));
     match app.run("manufacture.library.list", json!({"kind": st.kind.api_kind()})) {
         Ok(v) => {
-            st.remotes = serde_json::from_value(v.get("remotes").cloned().unwrap_or(json!([])))
-                .unwrap_or_default();
-            st.entries = serde_json::from_value(v.get("entries").cloned().unwrap_or(json!([])))
-                .unwrap_or_default();
+            st.remotes = serde_json::from_value(v.get("remotes").cloned().unwrap_or(json!([]))).unwrap_or_default();
+            st.entries = serde_json::from_value(v.get("entries").cloned().unwrap_or(json!([]))).unwrap_or_default();
             st.status.clear();
         }
         Err(e) => st.status = e,
@@ -105,7 +101,7 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut do_install: Option<String> = None;
     let mut do_remove: Option<String> = None;
 
-    egui::Window::new(st.kind.title())
+    crate::frame::window(ui.ctx(), st.kind.title(), crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_library_dialog").with(st.kind.title()))
         .open(&mut open)
         .collapsible(false)
@@ -129,10 +125,7 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
                     ui.set_min_width(200.0);
                     ui.set_max_width(220.0);
                     ui.label(RichText::new("Sources").strong());
-                    if ui
-                        .selectable_label(st.sidebar == SidebarSel::Document, "Document")
-                        .clicked()
-                    {
+                    if ui.selectable_label(st.sidebar == SidebarSel::Document, "Document").clicked() {
                         st.sidebar = SidebarSel::Document;
                         st.selected = None;
                     }
@@ -141,23 +134,13 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
                         st.selected = None;
                     }
                     ui.label(RichText::new("Linked").small().strong());
-                    if ui
-                        .selectable_label(st.sidebar == SidebarSel::LinkedAll, "All remotes")
-                        .clicked()
-                    {
+                    if ui.selectable_label(st.sidebar == SidebarSel::LinkedAll, "All remotes").clicked() {
                         st.sidebar = SidebarSel::LinkedAll;
                         st.selected = None;
                     }
                     for (i, r) in st.remotes.iter().enumerate() {
-                        let label = if r.enabled {
-                            r.name.clone()
-                        } else {
-                            format!("{} (off)", r.name)
-                        };
-                        if ui
-                            .selectable_label(st.sidebar == SidebarSel::Remote(i), label)
-                            .clicked()
-                        {
+                        let label = if r.enabled { r.name.clone() } else { format!("{} (off)", r.name) };
+                        if ui.selectable_label(st.sidebar == SidebarSel::Remote(i), label).clicked() {
                             st.sidebar = SidebarSel::Remote(i);
                             st.selected = None;
                         }
@@ -171,11 +154,7 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
                     if ui.button("Link repository").clicked() {
                         do_add = true;
                     }
-                    ui.label(
-                        RichText::new("Central catalog holds machine-specific posts, machines, and templates.")
-                            .small()
-                            .weak(),
-                    );
+                    ui.label(RichText::new("Central catalog holds machine-specific posts, machines, and templates.").small().weak());
                 });
                 ui.separator();
                 // ── Center: list ────────────────────────────────────────────
@@ -189,10 +168,7 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
                             SidebarSel::Document => e.location == LibraryLocation::Document,
                             SidebarSel::Local => e.location == LibraryLocation::Local,
                             SidebarSel::LinkedAll => e.location == LibraryLocation::Linked,
-                            SidebarSel::Remote(i) => {
-                                e.location == LibraryLocation::Linked
-                                    && st.remotes.get(i).is_some_and(|r| r.id == e.source_id)
-                            }
+                            SidebarSel::Remote(i) => e.location == LibraryLocation::Linked && st.remotes.get(i).is_some_and(|r| r.id == e.source_id),
                         })
                         .filter(|(_, e)| {
                             if st.search.is_empty() {
@@ -214,12 +190,7 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
                     egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
                         for (idx, e) in filtered {
                             let sel = st.selected == Some(idx);
-                            let row = format!(
-                                "{}  ·  {}  ·  {}",
-                                e.name,
-                                if e.vendor.is_empty() { "—" } else { &e.vendor },
-                                e.location.label()
-                            );
+                            let row = format!("{}  ·  {}  ·  {}", e.name, if e.vendor.is_empty() { "—" } else { &e.vendor }, e.location.label());
                             if ui.selectable_label(sel, row).clicked() {
                                 st.selected = Some(idx);
                             }
@@ -232,18 +203,20 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
                     ui.horizontal(|ui| {
                         if ui.button("Install into document").clicked()
                             && let Some(i) = st.selected
-                                && let Some(e) = st.entries.get(i) {
-                                    do_install = Some(e.id.clone());
-                                }
+                            && let Some(e) = st.entries.get(i)
+                        {
+                            do_install = Some(e.id.clone());
+                        }
                         if let SidebarSel::Remote(i) = st.sidebar
-                            && let Some(r) = st.remotes.get(i) {
-                                if ui.button("Sync this remote").clicked() {
-                                    do_sync = Some(Some(r.id.clone()));
-                                }
-                                if ui.button("Unlink").clicked() {
-                                    do_remove = Some(r.id.clone());
-                                }
+                            && let Some(r) = st.remotes.get(i)
+                        {
+                            if ui.button("Sync this remote").clicked() {
+                                do_sync = Some(Some(r.id.clone()));
                             }
+                            if ui.button("Unlink").clicked() {
+                                do_remove = Some(r.id.clone());
+                            }
+                        }
                     });
                 });
                 ui.separator();
@@ -282,11 +255,7 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
                         ui.label(RichText::new("Select an entry").weak());
                     }
                     ui.separator();
-                    ui.label(
-                        RichText::new(format!("Default remote:\n{DEFAULT_CAM_LIBRARY_REMOTE}"))
-                            .small()
-                            .weak(),
-                    );
+                    ui.label(RichText::new(format!("Default remote:\n{DEFAULT_CAM_LIBRARY_REMOTE}")).small().weak());
                 });
             });
             if !st.status.is_empty() {

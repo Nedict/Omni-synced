@@ -3,14 +3,7 @@
 //! v1 ships geometry + profile metadata for operator import into LightBurn.
 //! Direct device I/O (Serial/USB/BLE providers) is out of scope here.
 
-#![deny(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::unimplemented,
-    clippy::todo,
-    clippy::unreachable
-)]
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
 pub mod package;

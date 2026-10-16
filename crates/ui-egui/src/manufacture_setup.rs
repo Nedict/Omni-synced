@@ -3,8 +3,8 @@
 use egui::RichText;
 use serde_json::json;
 use solidcraft_manufacture::{
-    BoxAxisRef, BoxPoint, ManualNc, ManualNcKind, ManufacturingModel, MfgSetup, NcProgram, OpFolder, OpPattern,
-    PatternKind, SetupOperationType, SetupPostOpts, Stock, StockOffsetMode, WcsOrientationMode, WcsOriginMode,
+    BoxAxisRef, BoxPoint, ManualNc, ManualNcKind, ManufacturingModel, MfgSetup, NcProgram, OpFolder, OpPattern, PatternKind, SetupOperationType,
+    SetupPostOpts, Stock, StockOffsetMode, WcsOrientationMode, WcsOriginMode,
 };
 
 use crate::{SolveApp, viewport};
@@ -61,18 +61,9 @@ impl MenuDialogState {
         Self {
             kind,
             nc,
-            folder: OpFolder {
-                setup: active_setup.to_string(),
-                ..Default::default()
-            },
-            pattern: OpPattern {
-                setup: active_setup.to_string(),
-                ..Default::default()
-            },
-            manual: ManualNc {
-                setup: active_setup.to_string(),
-                ..Default::default()
-            },
+            folder: OpFolder { setup: active_setup.to_string(), ..Default::default() },
+            pattern: OpPattern { setup: active_setup.to_string(), ..Default::default() },
+            manual: ManualNc { setup: active_setup.to_string(), ..Default::default() },
             mfg_model: ManufacturingModel::default(),
             probe_mode_stock: true,
             probe_offset: 1,
@@ -88,11 +79,9 @@ pub fn open_new(app: &mut SolveApp) {
     match app.manufacture_workspace.cam_mode {
         crate::manufacture_workspace::CamMode::Additive => {
             draft.operation_type = SetupOperationType::Additive;
-            draft.operations.push(solidcraft_manufacture::Operation::Additive(
-                solidcraft_manufacture::AdditiveOperation::with_kind(
-                    solidcraft_manufacture::AdditiveKind::GeneratedToolpath,
-                ),
-            ));
+            draft.operations.push(solidcraft_manufacture::Operation::Additive(solidcraft_manufacture::AdditiveOperation::with_kind(
+                solidcraft_manufacture::AdditiveKind::GeneratedToolpath,
+            )));
         }
         crate::manufacture_workspace::CamMode::Turning => {
             draft.operation_type = SetupOperationType::Turning;
@@ -102,13 +91,8 @@ pub fn open_new(app: &mut SolveApp) {
         }
         _ => {}
     }
-    app.manufacture_workspace.setup_dialog = Some(SetupDialogState {
-        existing_name: None,
-        name: format!("Setup{n}"),
-        draft,
-        tab: SetupDialogTab::Setup,
-        picking: true,
-    });
+    app.manufacture_workspace.setup_dialog =
+        Some(SetupDialogState { existing_name: None, name: format!("Setup{n}"), draft, tab: SetupDialogTab::Setup, picking: true });
     app.ui.pick_bodies = true;
     let _ = app.run("select.clear", json!({}));
     app.manufacture_workspace.menu_dialog = None;
@@ -147,20 +131,12 @@ fn show_setup_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
         return;
     };
 
-    let machines: Vec<(String, String)> = solidcraft_manufacture::machines::preset_machines()
-        .into_iter()
-        .map(|(id, m)| (id.to_string(), m.name.clone()))
-        .collect();
-    let posts: Vec<(String, String)> = solidcraft_manufacture::post::preset_posts()
-        .into_iter()
-        .map(|(id, p)| (id.to_string(), p.name.clone()))
-        .collect();
+    let machines: Vec<(String, String)> =
+        solidcraft_manufacture::machines::preset_machines().into_iter().map(|(id, m)| (id.to_string(), m.name.clone())).collect();
+    let posts: Vec<(String, String)> =
+        solidcraft_manufacture::post::preset_posts().into_iter().map(|(id, p)| (id.to_string(), p.name.clone())).collect();
 
-    let title = if state.existing_name.is_some() {
-        format!("SETUP : {}", state.name.to_uppercase())
-    } else {
-        "SETUP".to_string()
-    };
+    let title = if state.existing_name.is_some() { format!("SETUP : {}", state.name.to_uppercase()) } else { "SETUP".to_string() };
 
     let mut open = true;
     let mut commit = false;
@@ -170,7 +146,7 @@ fn show_setup_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut tab = state.tab;
     let mut picking = state.picking;
 
-    egui::Window::new(title)
+    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_setup_dialog"))
         .open(&mut open)
         .collapsible(false)
@@ -183,12 +159,10 @@ fn show_setup_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
                 tab_btn(ui, &mut tab, SetupDialogTab::PostProcess, "Post Process");
             });
             ui.separator();
-            egui::ScrollArea::vertical().max_height(460.0).show(ui, |ui| {
-                match tab {
-                    SetupDialogTab::Setup => setup_tab(ui, app, &mut name, &mut draft, &machines, state.existing_name.is_none(), &mut picking),
-                    SetupDialogTab::Stock => stock_tab(ui, &mut draft),
-                    SetupDialogTab::PostProcess => post_tab(ui, &mut draft, &posts),
-                }
+            egui::ScrollArea::vertical().max_height(460.0).show(ui, |ui| match tab {
+                SetupDialogTab::Setup => setup_tab(ui, app, &mut name, &mut draft, &machines, state.existing_name.is_none(), &mut picking),
+                SetupDialogTab::Stock => stock_tab(ui, &mut draft),
+                SetupDialogTab::PostProcess => post_tab(ui, &mut draft, &posts),
             });
             ui.separator();
             ui.horizontal(|ui| {
@@ -210,11 +184,7 @@ fn show_setup_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
         }
     }
-    if draft.model_bodies != state.draft.model_bodies
-        && matches!(
-            draft.wcs_origin_mode,
-            WcsOriginMode::StockBoxPoint | WcsOriginMode::ModelBoxPoint
-        )
+    if draft.model_bodies != state.draft.model_bodies && matches!(draft.wcs_origin_mode, WcsOriginMode::StockBoxPoint | WcsOriginMode::ModelBoxPoint)
     {
         apply_box_point_to_wcs(app, &mut draft);
     }
@@ -225,12 +195,11 @@ fn show_setup_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
         app.manufacture_workspace.setup_dialog = None;
         return;
     }
-    if commit
-        && save_setup(app, state.existing_name.as_deref(), &name, draft.clone()) {
-            app.manufacture_workspace.active_setup = name;
-            app.manufacture_workspace.setup_dialog = None;
-            return;
-        }
+    if commit && save_setup(app, state.existing_name.as_deref(), &name, draft.clone()) {
+        app.manufacture_workspace.active_setup = name;
+        app.manufacture_workspace.setup_dialog = None;
+        return;
+    }
     if let Some(d) = &mut app.manufacture_workspace.setup_dialog {
         d.draft = draft;
         d.name = name;
@@ -241,11 +210,7 @@ fn show_setup_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
 
 fn tab_btn(ui: &mut egui::Ui, tab: &mut SetupDialogTab, value: SetupDialogTab, label: &str) {
     let selected = *tab == value;
-    let text = if selected {
-        RichText::new(label).strong()
-    } else {
-        RichText::new(label)
-    };
+    let text = if selected { RichText::new(label).strong() } else { RichText::new(label) };
     if ui.selectable_label(selected, text).clicked() {
         *tab = value;
     }
@@ -272,20 +237,13 @@ fn setup_tab(
 
     ui.horizontal(|ui| {
         ui.label("Operation Type");
-        egui::ComboBox::from_id_salt("setup_op_type")
-            .selected_text(draft.operation_type.label())
-            .show_ui(ui, |ui| {
-                for t in [
-                    SetupOperationType::Milling,
-                    SetupOperationType::Turning,
-                    SetupOperationType::Cutting,
-                    SetupOperationType::Additive,
-                ] {
-                    if ui.selectable_label(draft.operation_type == t, t.label()).clicked() {
-                        draft.operation_type = t;
-                    }
+        egui::ComboBox::from_id_salt("setup_op_type").selected_text(draft.operation_type.label()).show_ui(ui, |ui| {
+            for t in [SetupOperationType::Milling, SetupOperationType::Turning, SetupOperationType::Cutting, SetupOperationType::Additive] {
+                if ui.selectable_label(draft.operation_type == t, t.label()).clicked() {
+                    draft.operation_type = t;
                 }
-            });
+            }
+        });
     });
 
     ui.horizontal(|ui| {
@@ -312,21 +270,19 @@ fn setup_tab(
     ui.heading("Work Coordinate System (WCS)");
     ui.horizontal(|ui| {
         ui.label("Orientation");
-        egui::ComboBox::from_id_salt("setup_wcs_orient")
-            .selected_text(draft.wcs_orientation.label())
-            .show_ui(ui, |ui| {
-                for m in [
-                    WcsOrientationMode::ModelOrientation,
-                    WcsOrientationMode::ZAndX,
-                    WcsOrientationMode::ZAndY,
-                    WcsOrientationMode::XAndY,
-                    WcsOrientationMode::CoordinateSystem,
-                ] {
-                    if ui.selectable_label(draft.wcs_orientation == m, m.label()).clicked() {
-                        draft.wcs_orientation = m;
-                    }
+        egui::ComboBox::from_id_salt("setup_wcs_orient").selected_text(draft.wcs_orientation.label()).show_ui(ui, |ui| {
+            for m in [
+                WcsOrientationMode::ModelOrientation,
+                WcsOrientationMode::ZAndX,
+                WcsOrientationMode::ZAndY,
+                WcsOrientationMode::XAndY,
+                WcsOrientationMode::CoordinateSystem,
+            ] {
+                if ui.selectable_label(draft.wcs_orientation == m, m.label()).clicked() {
+                    draft.wcs_orientation = m;
                 }
-            });
+            }
+        });
     });
     ui.checkbox(&mut draft.flip_z, axis_text("Flip Z Axis", 'Z'));
     ui.checkbox(&mut draft.flip_x, axis_text("Flip X Axis", 'X'));
@@ -334,27 +290,20 @@ fn setup_tab(
     let origin_before = draft.wcs_origin_mode;
     ui.horizontal(|ui| {
         ui.label("Origin");
-        egui::ComboBox::from_id_salt("setup_wcs_origin")
-            .selected_text(draft.wcs_origin_mode.label())
-            .show_ui(ui, |ui| {
-                for m in [
-                    WcsOriginMode::ModelOrigin,
-                    WcsOriginMode::SelectedPoint,
-                    WcsOriginMode::StockBoxPoint,
-                    WcsOriginMode::ModelBoxPoint,
-                ] {
-                    if ui.selectable_label(draft.wcs_origin_mode == m, m.label()).clicked() {
-                        draft.wcs_origin_mode = m;
-                    }
+        egui::ComboBox::from_id_salt("setup_wcs_origin").selected_text(draft.wcs_origin_mode.label()).show_ui(ui, |ui| {
+            for m in [WcsOriginMode::ModelOrigin, WcsOriginMode::SelectedPoint, WcsOriginMode::StockBoxPoint, WcsOriginMode::ModelBoxPoint] {
+                if ui.selectable_label(draft.wcs_origin_mode == m, m.label()).clicked() {
+                    draft.wcs_origin_mode = m;
                 }
-            });
+            }
+        });
     });
 
     if origin_before != draft.wcs_origin_mode && draft.wcs_origin_mode == WcsOriginMode::ModelOrigin {
         draft.wcs.origin = [0.0, 0.0, 0.0];
     }
-    let mut snap_box = origin_before != draft.wcs_origin_mode
-        && matches!(draft.wcs_origin_mode, WcsOriginMode::StockBoxPoint | WcsOriginMode::ModelBoxPoint);
+    let mut snap_box =
+        origin_before != draft.wcs_origin_mode && matches!(draft.wcs_origin_mode, WcsOriginMode::StockBoxPoint | WcsOriginMode::ModelBoxPoint);
     if matches!(draft.wcs_origin_mode, WcsOriginMode::StockBoxPoint | WcsOriginMode::ModelBoxPoint) {
         ui.label(RichText::new("Box Point").strong());
         snap_box |= box_axis_row(ui, "X", &mut draft.box_point.x);
@@ -433,11 +382,7 @@ fn setup_tab(
 fn triad_len(bounds: ([f64; 3], [f64; 3])) -> f64 {
     let (min, max) = bounds;
     let extent = (0..3).map(|i| (max[i] - min[i]).abs()).fold(0.0_f64, f64::max);
-    if extent < 1e-6 {
-        1.0
-    } else {
-        extent * 0.28
-    }
+    if extent < 1e-6 { 1.0 } else { extent * 0.28 }
 }
 
 /// X red, Y green, Z blue — the same colors as the viewport origin and the WCS triad.
@@ -470,15 +415,16 @@ fn selected_body_names(app: &SolveApp) -> Vec<String> {
     for sel in &app.session.selection {
         let name = match sel {
             solidcraft_engine::Sel::Body { name } => Some(name.clone()),
-            solidcraft_engine::Sel::Face { body, .. }
-            | solidcraft_engine::Sel::Edge { body, .. }
-            | solidcraft_engine::Sel::Vertex { body, .. } => Some(body.clone()),
+            solidcraft_engine::Sel::Face { body, .. } | solidcraft_engine::Sel::Edge { body, .. } | solidcraft_engine::Sel::Vertex { body, .. } => {
+                Some(body.clone())
+            }
             _ => None,
         };
         if let Some(name) = name
-            && !names.iter().any(|n| n == &name) {
-                names.push(name);
-            }
+            && !names.iter().any(|n| n == &name)
+        {
+            names.push(name);
+        }
     }
     names
 }
@@ -491,14 +437,7 @@ fn model_bounds(app: &SolveApp, names: &[String]) -> Option<([f64; 3], [f64; 3])
             box3 = box3.union(&body.mesh().bounds());
         }
     }
-    if box3.is_empty() {
-        None
-    } else {
-        Some((
-            [box3.min.x, box3.min.y, box3.min.z],
-            [box3.max.x, box3.max.y, box3.max.z],
-        ))
-    }
+    if box3.is_empty() { None } else { Some(([box3.min.x, box3.min.y, box3.min.z], [box3.max.x, box3.max.y, box3.max.z])) }
 }
 
 fn apply_box_point_to_wcs(app: &SolveApp, draft: &mut MfgSetup) {
@@ -516,11 +455,7 @@ fn apply_box_point_to_wcs(app: &SolveApp, draft: &mut MfgSetup) {
         BoxAxisRef::Center => (neg + pos) * 0.5,
         BoxAxisRef::Positive => pos,
     };
-    draft.wcs.origin = [
-        map(draft.box_point.x, min[0], max[0]),
-        map(draft.box_point.y, min[1], max[1]),
-        map(draft.box_point.z, min[2], max[2]),
-    ];
+    draft.wcs.origin = [map(draft.box_point.x, min[0], max[0]), map(draft.box_point.y, min[1], max[1]), map(draft.box_point.z, min[2], max[2])];
 }
 
 fn stock_box(draft: &MfgSetup, model: Option<([f64; 3], [f64; 3])>) -> ([f64; 3], [f64; 3]) {
@@ -553,24 +488,14 @@ fn stock_tab(ui: &mut egui::Ui, draft: &mut MfgSetup) {
             draft.stock = Stock::Box { width: 100.0, depth: 100.0, height: 25.0 };
         }
         if ui.selectable_label(matches!(draft.stock, Stock::RelativeBox { .. }), "Relative size box").clicked() {
-            draft.stock = Stock::RelativeBox {
-                mode: StockOffsetMode::SidesAndTopBottom,
-                side_offset: 2.0,
-                top_offset: 1.0,
-                bottom_offset: 0.0,
-                round_up: 0.0,
-            };
+            draft.stock =
+                Stock::RelativeBox { mode: StockOffsetMode::SidesAndTopBottom, side_offset: 2.0, top_offset: 1.0, bottom_offset: 0.0, round_up: 0.0 };
         }
         if ui.selectable_label(matches!(draft.stock, Stock::Cylinder { .. }), "Fixed size cylinder").clicked() {
             draft.stock = Stock::Cylinder { diameter: 50.0, height: 80.0 };
         }
         if ui.selectable_label(matches!(draft.stock, Stock::RelativeCylinder { .. }), "Relative size cylinder").clicked() {
-            draft.stock = Stock::RelativeCylinder {
-                radial_offset: 2.0,
-                front_offset: 1.0,
-                back_offset: 1.0,
-                round_up: 0.0,
-            };
+            draft.stock = Stock::RelativeCylinder { radial_offset: 2.0, front_offset: 1.0, back_offset: 1.0, round_up: 0.0 };
         }
         if ui.selectable_label(matches!(draft.stock, Stock::Tube { .. }), "Fixed size tube").clicked() {
             draft.stock = Stock::Tube { outer_diameter: 50.0, inner_diameter: 30.0, height: 80.0 };
@@ -787,14 +712,8 @@ fn save_setup(app: &mut SolveApp, existing: Option<&str>, name: &str, draft: Mfg
         "post_opts": post_opts,
     });
     if let Some(obj) = set.as_object_mut() {
-        obj.insert(
-            "machine".into(),
-            draft.machine.clone().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
-        );
-        obj.insert(
-            "post".into(),
-            draft.post.clone().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
-        );
+        obj.insert("machine".into(), draft.machine.clone().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null));
+        obj.insert("post".into(), draft.post.clone().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null));
     }
 
     match app.run("manufacture.settings.set", json!({"name": name, "set": set})) {
@@ -830,153 +749,136 @@ fn show_menu_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut cancel = false;
     let mut st = state.clone();
     let setup_names: Vec<String> = app.session.doc.manufacture.setups.keys().cloned().collect();
-    let posts: Vec<(String, String)> = solidcraft_manufacture::post::preset_posts()
-        .into_iter()
-        .map(|(id, p)| (id.to_string(), p.name.clone()))
-        .collect();
+    let posts: Vec<(String, String)> =
+        solidcraft_manufacture::post::preset_posts().into_iter().map(|(id, p)| (id.to_string(), p.name.clone())).collect();
 
-    egui::Window::new(title)
+    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
         .id(egui::Id::new(("mfg_setup_menu", title)))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
         .default_width(340.0)
         .show(ui.ctx(), |ui| {
-            egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
-                match st.kind {
-                    SetupMenuDialog::NcProgram => {
-                        ui.horizontal(|ui| {
-                            ui.label("Name/Number");
-                            ui.text_edit_singleline(&mut st.nc.name);
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("File Name");
-                            ui.text_edit_singleline(&mut st.nc.file_name);
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Comment");
-                            ui.text_edit_singleline(&mut st.nc.comment);
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Post");
-                            let cur = st.nc.post.clone().unwrap_or_default();
-                            let label = if cur.is_empty() { "(setup default)".into() } else { cur.clone() };
-                            egui::ComboBox::from_id_salt("nc_post").selected_text(label).show_ui(ui, |ui| {
-                                if ui.selectable_label(cur.is_empty(), "(setup default)").clicked() {
-                                    st.nc.post = None;
+            egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| match st.kind {
+                SetupMenuDialog::NcProgram => {
+                    ui.horizontal(|ui| {
+                        ui.label("Name/Number");
+                        ui.text_edit_singleline(&mut st.nc.name);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("File Name");
+                        ui.text_edit_singleline(&mut st.nc.file_name);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Comment");
+                        ui.text_edit_singleline(&mut st.nc.comment);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Post");
+                        let cur = st.nc.post.clone().unwrap_or_default();
+                        let label = if cur.is_empty() { "(setup default)".into() } else { cur.clone() };
+                        egui::ComboBox::from_id_salt("nc_post").selected_text(label).show_ui(ui, |ui| {
+                            if ui.selectable_label(cur.is_empty(), "(setup default)").clicked() {
+                                st.nc.post = None;
+                            }
+                            for (id, n) in &posts {
+                                if ui.selectable_label(cur == *id, n).clicked() {
+                                    st.nc.post = Some(id.clone());
                                 }
-                                for (id, n) in &posts {
-                                    if ui.selectable_label(cur == *id, n).clicked() {
-                                        st.nc.post = Some(id.clone());
-                                    }
-                                }
-                            });
+                            }
                         });
-                        ui.label("Setups included:");
-                        for sn in &setup_names {
-                            let mut on = st.nc.setup_names.iter().any(|s| s == sn);
-                            if ui.checkbox(&mut on, sn).changed() {
-                                if on {
-                                    st.nc.setup_names.push(sn.clone());
-                                } else {
-                                    st.nc.setup_names.retain(|s| s != sn);
-                                }
+                    });
+                    ui.label("Setups included:");
+                    for sn in &setup_names {
+                        let mut on = st.nc.setup_names.iter().any(|s| s == sn);
+                        if ui.checkbox(&mut on, sn).changed() {
+                            if on {
+                                st.nc.setup_names.push(sn.clone());
+                            } else {
+                                st.nc.setup_names.retain(|s| s != sn);
                             }
                         }
                     }
-                    SetupMenuDialog::Folder => {
-                        ui.horizontal(|ui| {
-                            ui.label("Name");
-                            ui.text_edit_singleline(&mut st.folder.name);
+                }
+                SetupMenuDialog::Folder => {
+                    ui.horizontal(|ui| {
+                        ui.label("Name");
+                        ui.text_edit_singleline(&mut st.folder.name);
+                    });
+                    setup_pick(ui, "Setup", &mut st.folder.setup, &setup_names);
+                }
+                SetupMenuDialog::Pattern => {
+                    ui.horizontal(|ui| {
+                        ui.label("Name");
+                        ui.text_edit_singleline(&mut st.pattern.name);
+                    });
+                    setup_pick(ui, "Setup", &mut st.pattern.setup, &setup_names);
+                    ui.horizontal(|ui| {
+                        ui.label("Type");
+                        egui::ComboBox::from_id_salt("pat_kind").selected_text(st.pattern.kind.label()).show_ui(ui, |ui| {
+                            for k in [PatternKind::Linear, PatternKind::Circular, PatternKind::Mirror, PatternKind::Duplication] {
+                                if ui.selectable_label(st.pattern.kind == k, k.label()).clicked() {
+                                    st.pattern.kind = k;
+                                }
+                            }
                         });
-                        setup_pick(ui, "Setup", &mut st.folder.setup, &setup_names);
-                    }
-                    SetupMenuDialog::Pattern => {
-                        ui.horizontal(|ui| {
-                            ui.label("Name");
-                            ui.text_edit_singleline(&mut st.pattern.name);
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Count");
+                        ui.add(egui::DragValue::new(&mut st.pattern.count).speed(1).range(1..=64));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Spacing");
+                        ui.add(egui::DragValue::new(&mut st.pattern.spacing_mm).speed(0.5).range(0.0..=10_000.0).suffix(" mm"));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Angle");
+                        ui.add(egui::DragValue::new(&mut st.pattern.angle_deg).speed(1.0).range(0.0..=360.0).suffix(" deg"));
+                    });
+                }
+                SetupMenuDialog::ManualNc => {
+                    ui.horizontal(|ui| {
+                        ui.label("Name");
+                        ui.text_edit_singleline(&mut st.manual.name);
+                    });
+                    setup_pick(ui, "Setup", &mut st.manual.setup, &setup_names);
+                    ui.horizontal(|ui| {
+                        ui.label("Type");
+                        egui::ComboBox::from_id_salt("manual_kind").selected_text(st.manual.kind.label()).show_ui(ui, |ui| {
+                            for k in
+                                [ManualNcKind::Comment, ManualNcKind::Stop, ManualNcKind::OptionalStop, ManualNcKind::ToolBreak, ManualNcKind::Custom]
+                            {
+                                if ui.selectable_label(st.manual.kind == k, k.label()).clicked() {
+                                    st.manual.kind = k;
+                                }
+                            }
                         });
-                        setup_pick(ui, "Setup", &mut st.pattern.setup, &setup_names);
-                        ui.horizontal(|ui| {
-                            ui.label("Type");
-                            egui::ComboBox::from_id_salt("pat_kind")
-                                .selected_text(st.pattern.kind.label())
-                                .show_ui(ui, |ui| {
-                                    for k in [
-                                        PatternKind::Linear,
-                                        PatternKind::Circular,
-                                        PatternKind::Mirror,
-                                        PatternKind::Duplication,
-                                    ] {
-                                        if ui.selectable_label(st.pattern.kind == k, k.label()).clicked() {
-                                            st.pattern.kind = k;
-                                        }
-                                    }
-                                });
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Count");
-                            ui.add(egui::DragValue::new(&mut st.pattern.count).speed(1).range(1..=64));
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Spacing");
-                            ui.add(egui::DragValue::new(&mut st.pattern.spacing_mm).speed(0.5).range(0.0..=10_000.0).suffix(" mm"));
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Angle");
-                            ui.add(egui::DragValue::new(&mut st.pattern.angle_deg).speed(1.0).range(0.0..=360.0).suffix(" deg"));
-                        });
-                    }
-                    SetupMenuDialog::ManualNc => {
-                        ui.horizontal(|ui| {
-                            ui.label("Name");
-                            ui.text_edit_singleline(&mut st.manual.name);
-                        });
-                        setup_pick(ui, "Setup", &mut st.manual.setup, &setup_names);
-                        ui.horizontal(|ui| {
-                            ui.label("Type");
-                            egui::ComboBox::from_id_salt("manual_kind")
-                                .selected_text(st.manual.kind.label())
-                                .show_ui(ui, |ui| {
-                                    for k in [
-                                        ManualNcKind::Comment,
-                                        ManualNcKind::Stop,
-                                        ManualNcKind::OptionalStop,
-                                        ManualNcKind::ToolBreak,
-                                        ManualNcKind::Custom,
-                                    ] {
-                                        if ui.selectable_label(st.manual.kind == k, k.label()).clicked() {
-                                            st.manual.kind = k;
-                                        }
-                                    }
-                                });
-                        });
-                        ui.label("Code / comment");
-                        ui.text_edit_multiline(&mut st.manual.code);
-                    }
-                    SetupMenuDialog::ProbeWcs => {
-                        ui.label("Probe WCS updates the setup work offset from a probe cycle.");
-                        ui.checkbox(&mut st.probe_mode_stock, "Probe stock surfaces (else model)");
-                        ui.horizontal(|ui| {
-                            ui.label("WCS Offset");
-                            ui.add(egui::DragValue::new(&mut st.probe_offset).speed(1).range(0..=99));
-                        });
-                        ui.small("Uses the setup probe tool when present; generates Inspection Plus-style output via manufacture.probe.snippet.");
-                    }
-                    SetupMenuDialog::InsertData => {
-                        ui.label("Import manufacturing data (tools, fixtures, templates) into this document.");
-                        ui.text_edit_multiline(&mut st.insert_note);
-                        ui.small("Paste a note or reference path; full import pipelines land with companion sync.");
-                    }
-                    SetupMenuDialog::MfgModel => {
-                        ui.horizontal(|ui| {
-                            ui.label("Name");
-                            ui.text_edit_singleline(&mut st.mfg_model.name);
-                        });
-                        ui.label("Note");
-                        ui.text_edit_multiline(&mut st.mfg_model.note);
-                        ui.small("Manufacturing models isolate stock/fixture edits from the design model.");
-                    }
+                    });
+                    ui.label("Code / comment");
+                    ui.text_edit_multiline(&mut st.manual.code);
+                }
+                SetupMenuDialog::ProbeWcs => {
+                    ui.label("Probe WCS updates the setup work offset from a probe cycle.");
+                    ui.checkbox(&mut st.probe_mode_stock, "Probe stock surfaces (else model)");
+                    ui.horizontal(|ui| {
+                        ui.label("WCS Offset");
+                        ui.add(egui::DragValue::new(&mut st.probe_offset).speed(1).range(0..=99));
+                    });
+                    ui.small("Uses the setup probe tool when present; generates Inspection Plus-style output via manufacture.probe.snippet.");
+                }
+                SetupMenuDialog::InsertData => {
+                    ui.label("Import manufacturing data (tools, fixtures, templates) into this document.");
+                    ui.text_edit_multiline(&mut st.insert_note);
+                    ui.small("Paste a note or reference path; full import pipelines land with companion sync.");
+                }
+                SetupMenuDialog::MfgModel => {
+                    ui.horizontal(|ui| {
+                        ui.label("Name");
+                        ui.text_edit_singleline(&mut st.mfg_model.name);
+                    });
+                    ui.label("Note");
+                    ui.text_edit_multiline(&mut st.mfg_model.note);
+                    ui.small("Manufacturing models isolate stock/fixture edits from the design model.");
                 }
             });
             ui.separator();
@@ -996,11 +898,10 @@ fn show_menu_dialog(app: &mut SolveApp, ui: &mut egui::Ui) {
         app.manufacture_workspace.menu_dialog = None;
         return;
     }
-    if commit
-        && save_menu(app, &st) {
-            app.manufacture_workspace.menu_dialog = None;
-            return;
-        }
+    if commit && save_menu(app, &st) {
+        app.manufacture_workspace.menu_dialog = None;
+        return;
+    }
     app.manufacture_workspace.menu_dialog = Some(st);
 }
 
@@ -1037,14 +938,7 @@ fn save_menu(app: &mut SolveApp, st: &MenuDialogState) -> bool {
             ) {
                 Ok(v) => {
                     let gcode = v.get("gcode").and_then(|s| s.as_str()).unwrap_or("");
-                    app.set_status(
-                        format!(
-                            "Probe WCS ready (offset {}): {}…",
-                            st.probe_offset,
-                            gcode.chars().take(48).collect::<String>()
-                        ),
-                        false,
-                    );
+                    app.set_status(format!("Probe WCS ready (offset {}): {}…", st.probe_offset, gcode.chars().take(48).collect::<String>()), false);
                     return true;
                 }
                 Err(e) => {
@@ -1159,9 +1053,7 @@ fn paint_setup(app: &SolveApp, ui: &egui::Ui, setup: &MfgSetup, origin_picks: bo
     for (_bp, world) in box_points(min, max) {
         let p = solidcraft_engine::geom::Vec3::new(world[0], world[1], world[2]);
         let Some(sp) = proj.to_screen(p) else { continue };
-        let active = (origin[0] - world[0]).abs() < 1e-3
-            && (origin[1] - world[1]).abs() < 1e-3
-            && (origin[2] - world[2]).abs() < 1e-3;
+        let active = (origin[0] - world[0]).abs() < 1e-3 && (origin[1] - world[1]).abs() < 1e-3 && (origin[2] - world[2]).abs() < 1e-3;
         let hot = hover.is_some_and(|h| h.distance(sp) <= 14.0);
         let color = if active {
             egui::Color32::from_rgb(80, 160, 255)
@@ -1191,21 +1083,12 @@ pub fn try_pick_origin(app: &mut SolveApp, proj: &viewport::Proj, screen: egui::
     state.draft.box_point = bp;
     state.draft.wcs.origin = world;
     state.draft.wcs_origin_mode = WcsOriginMode::StockBoxPoint;
-    app.set_status(
-        format!("WCS origin {:.2}, {:.2}, {:.2} mm", world[0], world[1], world[2]),
-        false,
-    );
+    app.set_status(format!("WCS origin {:.2}, {:.2}, {:.2} mm", world[0], world[1], world[2]), false);
     true
 }
 
 fn box_points(min: [f64; 3], max: [f64; 3]) -> Vec<(BoxPoint, [f64; 3])> {
-    let axis = |neg: f64, pos: f64| {
-        [
-            (BoxAxisRef::Negative, neg),
-            (BoxAxisRef::Center, (neg + pos) * 0.5),
-            (BoxAxisRef::Positive, pos),
-        ]
-    };
+    let axis = |neg: f64, pos: f64| [(BoxAxisRef::Negative, neg), (BoxAxisRef::Center, (neg + pos) * 0.5), (BoxAxisRef::Positive, pos)];
     let xs = axis(min[0], max[0]);
     let ys = axis(min[1], max[1]);
     let zs = axis(min[2], max[2]);

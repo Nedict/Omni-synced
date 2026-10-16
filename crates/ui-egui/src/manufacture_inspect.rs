@@ -7,15 +7,7 @@ use serde_json::json;
 use crate::SolveApp;
 
 const PROCESSES: &[&str] = &["subtractive", "additive", "injection"];
-const MATERIALS: &[&str] = &[
-    "Aluminum",
-    "Steel",
-    "Titanium",
-    "ABS Plastic",
-    "PLA",
-    "Carbon Fiber Composite",
-    "Unknown",
-];
+const MATERIALS: &[&str] = &["Aluminum", "Steel", "Titanium", "ABS Plastic", "PLA", "Carbon Fiber Composite", "Unknown"];
 const REGIONS: &[&str] = &["North America", "Europe", "China", "South America", "Other"];
 
 #[derive(Clone, Debug)]
@@ -29,13 +21,7 @@ pub struct SustainabilityState {
 
 impl Default for SustainabilityState {
     fn default() -> Self {
-        Self {
-            process: "subtractive".into(),
-            material: "Aluminum".into(),
-            region: "North America".into(),
-            body_filter: String::new(),
-            result: None,
-        }
+        Self { process: "subtractive".into(), material: "Aluminum".into(), region: "North America".into(), body_filter: String::new(), result: None }
     }
 }
 
@@ -61,12 +47,7 @@ fn run_estimate(app: &mut SolveApp, st: &SustainabilityState) -> Option<serde_js
         "region": st.region,
     });
     if !st.body_filter.trim().is_empty() {
-        let bodies: Vec<String> = st
-            .body_filter
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let bodies: Vec<String> = st.body_filter.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
         if !bodies.is_empty() {
             params["bodies"] = json!(bodies);
         }
@@ -92,7 +73,7 @@ fn show_sustainability(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut close = false;
     let mut recalc = false;
 
-    egui::Window::new("Sustainability Insights")
+    crate::frame::window(ui.ctx(), "Sustainability Insights", crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_sustainability"))
         .open(&mut open)
         .collapsible(false)
@@ -105,50 +86,40 @@ fn show_sustainability(app: &mut SolveApp, ui: &mut egui::Ui) {
 
             ui.horizontal(|ui| {
                 ui.label("Process");
-                egui::ComboBox::from_id_salt("msi_process")
-                    .selected_text(process_label(&st.process))
-                    .show_ui(ui, |ui| {
-                        for p in PROCESSES {
-                            if ui.selectable_label(st.process == *p, process_label(p)).clicked() {
-                                st.process = (*p).into();
-                                recalc = true;
-                            }
+                egui::ComboBox::from_id_salt("msi_process").selected_text(process_label(&st.process)).show_ui(ui, |ui| {
+                    for p in PROCESSES {
+                        if ui.selectable_label(st.process == *p, process_label(p)).clicked() {
+                            st.process = (*p).into();
+                            recalc = true;
                         }
-                    });
+                    }
+                });
             });
             ui.horizontal(|ui| {
                 ui.label("Material");
-                egui::ComboBox::from_id_salt("msi_material")
-                    .selected_text(&st.material)
-                    .show_ui(ui, |ui| {
-                        for m in MATERIALS {
-                            if ui.selectable_label(st.material == *m, *m).clicked() {
-                                st.material = (*m).into();
-                                recalc = true;
-                            }
+                egui::ComboBox::from_id_salt("msi_material").selected_text(&st.material).show_ui(ui, |ui| {
+                    for m in MATERIALS {
+                        if ui.selectable_label(st.material == *m, *m).clicked() {
+                            st.material = (*m).into();
+                            recalc = true;
                         }
-                    });
+                    }
+                });
             });
             ui.horizontal(|ui| {
                 ui.label("Region");
-                egui::ComboBox::from_id_salt("msi_region")
-                    .selected_text(&st.region)
-                    .show_ui(ui, |ui| {
-                        for r in REGIONS {
-                            if ui.selectable_label(st.region == *r, *r).clicked() {
-                                st.region = (*r).into();
-                                recalc = true;
-                            }
+                egui::ComboBox::from_id_salt("msi_region").selected_text(&st.region).show_ui(ui, |ui| {
+                    for r in REGIONS {
+                        if ui.selectable_label(st.region == *r, *r).clicked() {
+                            st.region = (*r).into();
+                            recalc = true;
                         }
-                    });
+                    }
+                });
             });
             ui.horizontal(|ui| {
                 ui.label("Bodies");
-                if ui
-                    .text_edit_singleline(&mut st.body_filter)
-                    .on_hover_text("Comma-separated body names; empty = all")
-                    .changed()
-                {
+                if ui.text_edit_singleline(&mut st.body_filter).on_hover_text("Comma-separated body names; empty = all").changed() {
                     recalc = true;
                 }
             });
@@ -163,10 +134,7 @@ fn show_sustainability(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let vol = r["volume_cm3"].as_f64().unwrap_or(0.0);
                 ui.label(RichText::new(format!("Estimated CO₂e: {co2:.3} kg")).strong());
                 ui.label(format!("Part volume: {vol:.2} cm³"));
-                ui.label(format!(
-                    "Intensity: {:.4} kg CO₂e / cm³",
-                    r["intensity_kg_per_cm3"].as_f64().unwrap_or(0.0)
-                ));
+                ui.label(format!("Intensity: {:.4} kg CO₂e / cm³", r["intensity_kg_per_cm3"].as_f64().unwrap_or(0.0)));
                 if let Some(note) = r["note"].as_str() {
                     ui.small(note);
                 }

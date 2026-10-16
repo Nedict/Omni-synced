@@ -4,9 +4,8 @@
 use egui::RichText;
 use serde_json::json;
 use solidcraft_manufacture::{
-    DeletePassesModification, DeletePassesSelection, EntrySketchLine, HighFeedMode, LeadsLinksModification,
-    LeadsLinksScope, MoveEntryModification, ReplaceToolModification, Tool, ToolpathModification, TrimKeep,
-    TrimModification, TrimType,
+    DeletePassesModification, DeletePassesSelection, EntrySketchLine, HighFeedMode, LeadsLinksModification, LeadsLinksScope, MoveEntryModification,
+    ReplaceToolModification, Tool, ToolpathModification, TrimKeep, TrimModification, TrimType,
 };
 
 use crate::SolveApp;
@@ -39,18 +38,10 @@ impl ModifyDialogState {
     pub fn new(kind: ModifyDialogKind, setup: &str, op_index: usize) -> Self {
         let mut draft = match kind {
             ModifyDialogKind::Trim => ToolpathModification::Trim(TrimModification::default()),
-            ModifyDialogKind::DeletePasses => {
-                ToolpathModification::DeletePasses(DeletePassesModification::default())
-            }
-            ModifyDialogKind::LeadsAndLinks => {
-                ToolpathModification::LeadsAndLinks(LeadsLinksModification::default())
-            }
-            ModifyDialogKind::ReplaceTool => {
-                ToolpathModification::ReplaceTool(ReplaceToolModification::default())
-            }
-            ModifyDialogKind::MoveEntryPositions => {
-                ToolpathModification::MoveEntryPositions(MoveEntryModification::default())
-            }
+            ModifyDialogKind::DeletePasses => ToolpathModification::DeletePasses(DeletePassesModification::default()),
+            ModifyDialogKind::LeadsAndLinks => ToolpathModification::LeadsAndLinks(LeadsLinksModification::default()),
+            ModifyDialogKind::ReplaceTool => ToolpathModification::ReplaceTool(ReplaceToolModification::default()),
+            ModifyDialogKind::MoveEntryPositions => ToolpathModification::MoveEntryPositions(MoveEntryModification::default()),
         };
         {
             let h = draft.header_mut();
@@ -74,22 +65,8 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     };
 
     let setup_name = state.draft.header().setup.clone();
-    let tools: Vec<Tool> = app
-        .session
-        .doc
-        .manufacture
-        .setups
-        .get(&setup_name)
-        .map(|s| s.tools.clone())
-        .unwrap_or_default();
-    let op_count = app
-        .session
-        .doc
-        .manufacture
-        .setups
-        .get(&setup_name)
-        .map(|s| s.operations.len())
-        .unwrap_or(0);
+    let tools: Vec<Tool> = app.session.doc.manufacture.setups.get(&setup_name).map(|s| s.tools.clone()).unwrap_or_default();
+    let op_count = app.session.doc.manufacture.setups.get(&setup_name).map(|s| s.operations.len()).unwrap_or(0);
     let setup_names: Vec<String> = app.session.doc.manufacture.setups.keys().cloned().collect();
 
     let mut open = true;
@@ -99,7 +76,7 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
     let mut leads_tab = state.leads_tab;
     let title = format!("{} : TOOLPATH", state.kind_title());
 
-    egui::Window::new(title)
+    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
         .id(egui::Id::new("mfg_modify_dialog"))
         .open(&mut open)
         .collapsible(false)
@@ -137,11 +114,10 @@ pub fn show_dialog(app: &mut SolveApp, ui: &mut egui::Ui) -> bool {
         app.manufacture_workspace.modify_dialog = None;
         return false;
     }
-    if commit
-        && save(app, draft.clone()) {
-            app.manufacture_workspace.modify_dialog = None;
-            return false;
-        }
+    if commit && save(app, draft.clone()) {
+        app.manufacture_workspace.modify_dialog = None;
+        return false;
+    }
     if let Some(d) = &mut app.manufacture_workspace.modify_dialog {
         d.draft = draft;
         d.leads_tab = leads_tab;
@@ -172,11 +148,7 @@ fn target_header(ui: &mut egui::Ui, draft: &mut ToolpathModification, setups: &[
     ui.heading("Target");
     ui.horizontal(|ui| {
         ui.label("Setup");
-        let label = if h.setup.is_empty() {
-            "(none)".into()
-        } else {
-            h.setup.clone()
-        };
+        let label = if h.setup.is_empty() { "(none)".into() } else { h.setup.clone() };
         egui::ComboBox::from_id_salt("mod_setup").selected_text(label).show_ui(ui, |ui| {
             for s in setups {
                 if ui.selectable_label(&h.setup == s, s).clicked() {
@@ -201,23 +173,19 @@ fn trim_body(ui: &mut egui::Ui, m: &mut TrimModification) {
     ui.heading("Trim");
     ui.horizontal(|ui| {
         ui.label("Trim Type");
-        egui::ComboBox::from_id_salt("mod_trim_type")
-            .selected_text(m.trim_type.label())
-            .show_ui(ui, |ui| {
-                for t in [TrimType::Polygon, TrimType::Plane, TrimType::Boundary] {
-                    if ui.selectable_label(m.trim_type == t, t.label()).clicked() {
-                        m.trim_type = t;
-                        if t == TrimType::Plane
-                            && matches!(m.keep, TrimKeep::Outside | TrimKeep::Inside | TrimKeep::Both)
-                        {
-                            m.keep = TrimKeep::Side1;
-                        }
-                        if t != TrimType::Plane && matches!(m.keep, TrimKeep::Side1 | TrimKeep::Side2) {
-                            m.keep = TrimKeep::Outside;
-                        }
+        egui::ComboBox::from_id_salt("mod_trim_type").selected_text(m.trim_type.label()).show_ui(ui, |ui| {
+            for t in [TrimType::Polygon, TrimType::Plane, TrimType::Boundary] {
+                if ui.selectable_label(m.trim_type == t, t.label()).clicked() {
+                    m.trim_type = t;
+                    if t == TrimType::Plane && matches!(m.keep, TrimKeep::Outside | TrimKeep::Inside | TrimKeep::Both) {
+                        m.keep = TrimKeep::Side1;
+                    }
+                    if t != TrimType::Plane && matches!(m.keep, TrimKeep::Side1 | TrimKeep::Side2) {
+                        m.keep = TrimKeep::Outside;
                     }
                 }
-            });
+            }
+        });
     });
     ui.horizontal(|ui| {
         ui.label("Keep");
@@ -226,25 +194,22 @@ fn trim_body(ui: &mut egui::Ui, m: &mut TrimModification) {
         } else {
             [TrimKeep::Outside, TrimKeep::Inside, TrimKeep::Both].as_slice()
         };
-        egui::ComboBox::from_id_salt("mod_trim_keep")
-            .selected_text(m.keep.label())
-            .show_ui(ui, |ui| {
-                for k in options {
-                    if ui.selectable_label(m.keep == *k, k.label()).clicked() {
-                        m.keep = *k;
-                    }
+        egui::ComboBox::from_id_salt("mod_trim_keep").selected_text(m.keep.label()).show_ui(ui, |ui| {
+            for k in options {
+                if ui.selectable_label(m.keep == *k, k.label()).clicked() {
+                    m.keep = *k;
                 }
-            });
+            }
+        });
     });
     ui.checkbox(&mut m.visible_only, "Visible Only");
     ui.label(RichText::new("Use orthographic view when placing a polygon.").weak());
 
     ui.separator();
     ui.horizontal(|ui| {
-        if ui.button("Add point").clicked()
-            && m.points.len() < solidcraft_manufacture::MAX_SAMPLE_POINTS_PER_OP {
-                m.points.push([0.0, 0.0, 0.0]);
-            }
+        if ui.button("Add point").clicked() && m.points.len() < solidcraft_manufacture::MAX_SAMPLE_POINTS_PER_OP {
+            m.points.push([0.0, 0.0, 0.0]);
+        }
         if ui.button("Clear").clicked() {
             m.points.clear();
         }
@@ -270,15 +235,13 @@ fn delete_passes_body(ui: &mut egui::Ui, m: &mut DeletePassesModification) {
     ui.heading("Delete Passes");
     ui.horizontal(|ui| {
         ui.label("Selection Type");
-        egui::ComboBox::from_id_salt("mod_del_sel")
-            .selected_text(m.selection_type.label())
-            .show_ui(ui, |ui| {
-                for s in [DeletePassesSelection::Passes, DeletePassesSelection::Segments] {
-                    if ui.selectable_label(m.selection_type == s, s.label()).clicked() {
-                        m.selection_type = s;
-                    }
+        egui::ComboBox::from_id_salt("mod_del_sel").selected_text(m.selection_type.label()).show_ui(ui, |ui| {
+            for s in [DeletePassesSelection::Passes, DeletePassesSelection::Segments] {
+                if ui.selectable_label(m.selection_type == s, s.label()).clicked() {
+                    m.selection_type = s;
                 }
-            });
+            }
+        });
     });
     ui.checkbox(&mut m.invert_selection, "Invert Selection");
     ui.label(RichText::new("Select passes/segments in the canvas (orthographic view recommended).").weak());
@@ -310,16 +273,9 @@ fn delete_passes_body(ui: &mut egui::Ui, m: &mut DeletePassesModification) {
 
 fn leads_links_body(ui: &mut egui::Ui, m: &mut LeadsLinksModification, tab: &mut LeadsTab) {
     ui.horizontal(|ui| {
-        for (v, l) in [
-            (LeadsTab::Leads, "Leads"),
-            (LeadsTab::Linking, "Linking"),
-            (LeadsTab::Heights, "Heights"),
-        ] {
+        for (v, l) in [(LeadsTab::Leads, "Leads"), (LeadsTab::Linking, "Linking"), (LeadsTab::Heights, "Heights")] {
             let sel = *tab == v;
-            if ui
-                .selectable_label(sel, if sel { RichText::new(l).strong() } else { RichText::new(l) })
-                .clicked()
-            {
+            if ui.selectable_label(sel, if sel { RichText::new(l).strong() } else { RichText::new(l) }).clicked() {
                 *tab = v;
             }
         }
@@ -327,15 +283,13 @@ fn leads_links_body(ui: &mut egui::Ui, m: &mut LeadsLinksModification, tab: &mut
     ui.separator();
     ui.horizontal(|ui| {
         ui.label("Apply to");
-        egui::ComboBox::from_id_salt("mod_ll_scope")
-            .selected_text(m.scope.label())
-            .show_ui(ui, |ui| {
-                for s in [LeadsLinksScope::AllMoves, LeadsLinksScope::SelectedMoves] {
-                    if ui.selectable_label(m.scope == s, s.label()).clicked() {
-                        m.scope = s;
-                    }
+        egui::ComboBox::from_id_salt("mod_ll_scope").selected_text(m.scope.label()).show_ui(ui, |ui| {
+            for s in [LeadsLinksScope::AllMoves, LeadsLinksScope::SelectedMoves] {
+                if ui.selectable_label(m.scope == s, s.label()).clicked() {
+                    m.scope = s;
                 }
-            });
+            }
+        });
     });
 
     match *tab {
@@ -349,24 +303,14 @@ fn leads_links_body(ui: &mut egui::Ui, m: &mut LeadsLinksModification, tab: &mut
             if m.lead_in {
                 ui.horizontal(|ui| {
                     ui.label("Lead-In Radius");
-                    ui.add(
-                        egui::DragValue::new(&mut m.lead_in_radius_mm)
-                            .speed(0.05)
-                            .range(0.0..=50.0)
-                            .suffix(" mm"),
-                    );
+                    ui.add(egui::DragValue::new(&mut m.lead_in_radius_mm).speed(0.05).range(0.0..=50.0).suffix(" mm"));
                 });
             }
             ui.checkbox(&mut m.lead_out, "Lead-Out");
             if m.lead_out {
                 ui.horizontal(|ui| {
                     ui.label("Lead-Out Radius");
-                    ui.add(
-                        egui::DragValue::new(&mut m.lead_out_radius_mm)
-                            .speed(0.05)
-                            .range(0.0..=50.0)
-                            .suffix(" mm"),
-                    );
+                    ui.add(egui::DragValue::new(&mut m.lead_out_radius_mm).speed(0.05).range(0.0..=50.0).suffix(" mm"));
                 });
             }
         }
@@ -378,19 +322,13 @@ fn leads_links_body(ui: &mut egui::Ui, m: &mut LeadsLinksModification, tab: &mut
             });
             ui.horizontal(|ui| {
                 ui.label("High Feedrate Mode");
-                egui::ComboBox::from_id_salt("mod_ll_hf")
-                    .selected_text(m.high_feed_mode.label())
-                    .show_ui(ui, |ui| {
-                        for mode in [
-                            HighFeedMode::PreserveRapid,
-                            HighFeedMode::AlwaysUseHighFeed,
-                            HighFeedMode::NeverUseHighFeed,
-                        ] {
-                            if ui.selectable_label(m.high_feed_mode == mode, mode.label()).clicked() {
-                                m.high_feed_mode = mode;
-                            }
+                egui::ComboBox::from_id_salt("mod_ll_hf").selected_text(m.high_feed_mode.label()).show_ui(ui, |ui| {
+                    for mode in [HighFeedMode::PreserveRapid, HighFeedMode::AlwaysUseHighFeed, HighFeedMode::NeverUseHighFeed] {
+                        if ui.selectable_label(m.high_feed_mode == mode, mode.label()).clicked() {
+                            m.high_feed_mode = mode;
                         }
-                    });
+                    }
+                });
             });
         }
         LeadsTab::Heights => {
@@ -414,11 +352,7 @@ fn replace_tool_body(ui: &mut egui::Ui, m: &mut ReplaceToolModification, tools: 
     ui.heading("Replace Tool");
     ui.label(RichText::new("Tip geometry should match the original; length/holder may differ.").weak());
     let tnum = m.new_tool_number;
-    let label = tools
-        .iter()
-        .find(|t| t.number == tnum)
-        .map(|t| format!("#{} ø{:.2}", t.number, t.diameter))
-        .unwrap_or_else(|| format!("#{tnum}"));
+    let label = tools.iter().find(|t| t.number == tnum).map(|t| format!("#{} ø{:.2}", t.number, t.diameter)).unwrap_or_else(|| format!("#{tnum}"));
     egui::ComboBox::from_id_salt("mod_repl_tool").selected_text(label).show_ui(ui, |ui| {
         for t in tools {
             if ui.selectable_label(tnum == t.number, format!("#{} ø{:.2}", t.number, t.diameter)).clicked() {
