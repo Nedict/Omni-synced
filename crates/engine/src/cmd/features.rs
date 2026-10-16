@@ -1821,6 +1821,10 @@ fn offset_face(s: &mut Session, p: &Value) -> Result<Value> {
 mod patterns_tests;
 
 #[cfg(test)]
+#[path = "prism_local_tests.rs"]
+mod prism_local_tests;
+
+#[cfg(test)]
 #[path = "revolve_convention_tests.rs"]
 mod revolve_convention_tests;
 
