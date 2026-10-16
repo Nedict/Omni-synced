@@ -2266,7 +2266,6 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         pan,
         primary_nav,
         mode,
-        device_moved,
     } = input;
     app.viewport.physical_scale = ui.ctx().pixels_per_point();
     let proj = projection(app, rect);
@@ -2276,8 +2275,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // Suppress hover for the whole navigation gesture, including frames between pointer
     // events. Testing delta made the highlight reappear whenever a held drag paused.
     // Resolve it before rendering so the GPU scene and screen overlays use the same hit.
-    let navigating = device_moved
-        || scroll != 0.0
+    // A 3D mouse moving the view is not such a gesture: the pointer hand is free, and hover
+    // and clicks keep picking while the other hand turns the view.
+    let navigating = scroll != 0.0
         || pinch != 1.0
         || pan != egui::Vec2::ZERO
         || middle
@@ -4415,36 +4415,47 @@ mod tests {
         }
     }
 
+    /// Two-handed use: while a 3D mouse turns the view, the pointer still preselects what is
+    /// under it in the view as it is now, and a click picks it (it neither does nothing nor
+    /// clears the selection).
     #[test]
-    fn device_navigation_skips_hover_picking_and_resumes_when_motion_stops() {
+    fn device_navigation_keeps_hover_and_click_picking() {
         use crate::space_mouse::{DeviceMotion, Motion};
         for gpu in [false, true] {
             let ctx = egui::Context::default();
-            let mut app = hover_app(gpu);
-            app.session.active_sketch = None;
+            let mut s = solidcraft_engine::Session::default();
+            s.execute("solid.box", &json!({"length": 40, "width": 30, "height": 20})).unwrap();
+            let mut app = SolveApp::new(s, crate::Services::default());
+            app.ui.show_origin = false;
+            if gpu {
+                app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess: false });
+            }
+            app.cam.target = Vec3::new(20.0, 15.0, 10.0);
             hover_frame(&mut app, &ctx, vec![]);
-            let p = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
+            // The middle of the top face.
+            let p = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::new(20.0, 15.0, 20.0)).unwrap();
             hover_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(p)]);
-            assert!(app.viewport.hover.is_some());
-            let pick = app.viewport.last_pick.as_ref().unwrap().0;
-            let before = app.cam;
+            assert!(matches!(app.viewport.hover, Some(Hit::Face { .. })), "{:?}", app.viewport.hover);
+            let turn = || Some(DeviceMotion { motion: Motion { translation: [0.0; 3], rotation: [0.0, 0.0, 0.1] }, seconds: 0.016 });
+            let mut pick = app.viewport.last_pick.as_ref().unwrap().0;
             for _ in 0..3 {
-                app.viewport.device_motion =
-                    Some(DeviceMotion { motion: Motion { translation: [0.0; 3], rotation: [0.0, 0.0, 0.1] }, seconds: 0.016 });
+                let before = app.cam;
+                app.viewport.device_motion = turn();
                 hover_frame(&mut app, &ctx, vec![]);
-                assert_ne!(app.cam, before);
-                assert!(app.viewport.device_motion.is_none());
-                assert!(app.viewport.hover.is_none(), "hover must stay off while the device moves the view");
-                assert_eq!(app.viewport.last_pick.as_ref().unwrap().0, pick, "device navigation ran picking again");
+                assert_ne!(app.cam, before, "the device turns the view");
+                assert!(matches!(app.viewport.hover, Some(Hit::Face { .. })), "hover stays on while the device moves the view");
+                let now = app.viewport.last_pick.as_ref().unwrap().0;
+                assert_ne!(now, pick, "the pick follows the turned view");
+                pick = now;
             }
-            hover_frame(&mut app, &ctx, vec![]);
-            assert!(app.viewport.hover.is_some(), "hover must return as soon as motion stops");
-            assert_ne!(app.viewport.last_pick.as_ref().unwrap().0, pick);
-            for motion in [DeviceMotion::default(), DeviceMotion { seconds: f64::NAN, ..DeviceMotion::default() }] {
-                app.viewport.device_motion = Some(motion);
-                hover_frame(&mut app, &ctx, vec![]);
-                assert!(app.viewport.hover.is_some(), "an idle device must not suppress selection feedback");
-            }
+            // A click while the device keeps turning the view selects the face under the pointer.
+            let button =
+                |pressed| egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+            app.viewport.device_motion = turn();
+            hover_frame(&mut app, &ctx, vec![button(true)]);
+            app.viewport.device_motion = turn();
+            hover_frame(&mut app, &ctx, vec![button(false)]);
+            assert!(matches!(app.session.selection.as_slice(), [Sel::Face { .. }]), "gpu {gpu}: {:?}", app.session.selection);
         }
     }
 
