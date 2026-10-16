@@ -51,10 +51,13 @@ fn halton(mut i: usize, b: usize) -> f64 {
     r
 }
 
+/// The most triangles [`mismatch`] samples (the operands' and the result's together).
+const MISMATCH_TRIANGLES: usize = 60_000;
+
 /// Fraction of sample points where `result` disagrees with `op` applied to `a` and `b`
 /// (membership by ray parity). Samples cover the overlap box densely and the union box lightly.
 fn mismatch(a: &solidcraft_geom::Mesh, b: &solidcraft_geom::Mesh, result: &solidcraft_geom::Mesh, op: BoolOp) -> Option<f64> {
-    if a.triangles.len() + b.triangles.len() + result.triangles.len() > 60_000 {
+    if a.triangles.len() + b.triangles.len() + result.triangles.len() > MISMATCH_TRIANGLES {
         return None;
     }
     let (ba, bb) = (a.bounds(), b.bounds());
@@ -606,6 +609,32 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
             && b.union_lumps().is_ok()
             && crate::coplanar::faces_touch(a, b)
     };
+    // The operands meshed for the membership test at a step that resolves the box their meshes
+    // share, made the first time a result fails the test at `tol_m`. `meeting_size` reads vertex
+    // boxes, which miss curved faces (a cylinder's vertices lie on its seam), so a curved operand
+    // meeting the other in a region much thinner than both (a box clipping a 0.5 mm sliver off a
+    // cylinder's side, #1647) is meshed at a step from their size. The operand's and the result's
+    // meshes of that sliver's round face then disagree over more of the box than the test allows,
+    // and a correct result is refused. Asked only after such a failure: results that pass at
+    // `tol_m` cost no more. `None` when no finer step is called for or the meshes are too large
+    // for the test.
+    let refined = std::cell::OnceCell::new();
+    let refine = || {
+        let (Some(ma), Some(mb)) = &meshes else { return None };
+        let (ba, bb) = (ma.bounds(), mb.bounds());
+        let s = solidcraft_geom::Aabb3 { min: ba.min.max(bb.min), max: ba.max.min(bb.max) }.size();
+        let side = s.x.min(s.y).min(s.z);
+        if !(side > 0.0) {
+            return None;
+        }
+        let tol = (side * 2e-3).max(size * 1e-5);
+        // Not much finer: the test at `tol_m` already said what this one would.
+        if !(tol < 0.5 * tol_m) {
+            return None;
+        }
+        let (fa, fb) = (a.tessellate_with(tol, true).ok()?, b.tessellate_with(tol, true).ok()?);
+        (fa.triangles.len() + fb.triangles.len() <= MISMATCH_TRIANGLES).then_some((fa, fb, tol))
+    };
     let check = |r: &Body| -> (bool, f64) {
         let Ok(mr) = r.tessellate_with(tol_m, true) else { return (false, f64::NAN) };
         let v = mr.measure().volume;
@@ -617,7 +646,12 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
             return (false, v);
         }
         let consistent = match &meshes {
-            (Some(ma), Some(mb)) => mismatch(ma, mb, &mr, op).is_none_or(|f| f < 0.004),
+            (Some(ma), Some(mb)) => mismatch(ma, mb, &mr, op).is_none_or(|f| {
+                f < 0.004
+                    || refined.get_or_init(&refine).as_ref().is_some_and(|(fa, fb, tol)| {
+                        r.tessellate_with(*tol, true).ok().and_then(|fr| mismatch(fa, fb, &fr, op)).is_some_and(|f| f < 0.004)
+                    })
+            }),
             _ => true,
         };
         (consistent, v)
