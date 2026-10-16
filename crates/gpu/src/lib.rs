@@ -21,6 +21,7 @@ use wgpu::util::DeviceExt;
 
 pub mod capture;
 mod pbr;
+pub mod pick;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod select;
 pub mod view;

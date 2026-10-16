@@ -55,6 +55,11 @@ pub struct ViewportState {
     lod_view: u64,
     /// Each body mesh's box (the mesh held, so its address stays its own), from the last state.
     mesh_bounds: std::sync::Mutex<std::collections::HashMap<usize, (std::sync::Arc<solidcraft_engine::geom::Mesh>, solidcraft_engine::geom::Aabb3)>>,
+    /// Each body mesh's picking index (made the first time a pick reaches the body), kept while
+    /// the mesh is part of the world state.
+    pub(crate) pick_index: crate::pick_index::PickIndexes,
+    /// The GPU pick buffer's scene, read-backs and requests.
+    pub(crate) pick_buffer: crate::pick_buffer::State,
     /// The last click in the view was the middle button's (for the middle double-click).
     pub(crate) middle_clicked: bool,
     /// The last pick (its key and hits): reused while nothing it depends on changed.
@@ -1003,6 +1008,7 @@ fn body_bounds(
                 })
                 .collect::<Vec<_>>(),
         );
+        app.viewport.pick_index.retain(|k| now.contains_key(&k));
         if let Ok(mut k) = app.viewport.mesh_bounds.lock() {
             *k = now;
         }
@@ -1269,7 +1275,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
             }
         }
         let m = b.mesh();
-        if let Some((t, ti)) = m.raycast(o, d) {
+        if let Some((t, ti)) = crate::pick_index::raycast(&app.viewport.pick_index.of(&m), &m, o, d) {
             let fi = m.tri_face.get(ti).copied().unwrap_or(0) as usize;
             let hit = Hit::Face { body: b.name.clone(), index: fi, point: o + d * t };
             if bestf.as_ref().is_none_or(|(bt, _)| t < *bt) {
@@ -1284,7 +1290,11 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
     // Wireframe draws no faces, so nothing hides an edge or a vertex.
     let wireframe = app.ui.visual_style == 2;
     let visible = |p: Vec3| wireframe || bestf.as_ref().is_none_or(|(t, _)| (p - o).dot(d) <= *t + slack);
-    // Vertices (edge end points) and edges.
+    // Vertices (edge end points) and edges, within 7 and 6 points of the cursor.
+    let reach = crate::pick_index::reach(proj, pos, 8.0);
+    // The edges seen near the cursor, when the GPU pick buffer has them for this view (Select
+    // Other wants hidden ones too).
+    let seen = if all { None } else { crate::pick_buffer::edges_near(app, proj, pos, &st) };
     let mut bestv = Near::new(all);
     let mut beste = Near::new(all);
     for (i, b) in st.bodies.iter().enumerate() {
@@ -1298,26 +1308,37 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
             continue;
         }
         let m = b.mesh();
-        for (ei, e) in m.edges.iter().enumerate() {
+        // Only the segments that can come near the cursor: of the edges the pick buffer sees
+        // there, else from the index. Either way in the order a scan of every edge would meet
+        // them, so ties go the same way.
+        let near = match &seen {
+            Some(seen) => seen.segments(i, &m),
+            None => crate::pick_index::segments_near(&app.viewport.pick_index.of(&m), &m, o, d, reach),
+        };
+        let mut last_edge = None;
+        for (ei, si) in near {
+            let Some(e) = m.edges.get(ei) else { continue };
             if !m.edge_pickable(ei) {
                 continue;
             }
-            for v in [e.first(), e.last()].into_iter().flatten() {
-                if let Some(sp) = proj.to_screen(*v) {
-                    let dd = sp.distance(pos);
-                    if dd < 7.0 && visible(*v) && bestv.wants(dd) {
-                        bestv.offer(dd, Hit::Vertex { body: b.name.clone(), point: *v });
+            if last_edge != Some(ei) {
+                last_edge = Some(ei);
+                for v in [e.first(), e.last()].into_iter().flatten() {
+                    if let Some(sp) = proj.to_screen(*v) {
+                        let dd = sp.distance(pos);
+                        if dd < 7.0 && visible(*v) && bestv.wants(dd) {
+                            bestv.offer(dd, Hit::Vertex { body: b.name.clone(), point: *v });
+                        }
                     }
                 }
             }
-            for w in e.windows(2) {
-                let (Some(a), Some(c)) = (proj.to_screen(w[0]), proj.to_screen(w[1])) else { continue };
-                let dd = seg_dist(pos, a, c);
-                // Visible where the cursor is: the edge's point under the cursor, not an end or
-                // the middle, which can lie deeper than the face the cursor is on.
-                if dd < 6.0 && beste.wants(dd) && visible(ray_segment_closest(o, d, w[0], w[1])) {
-                    beste.offer(dd, Hit::Edge { body: b.name.clone(), index: ei, mid: polyline_mid(e) });
-                }
+            let (Some(p0), Some(p1)) = (e.get(si), e.get(si + 1)) else { continue };
+            let (Some(a), Some(c)) = (proj.to_screen(*p0), proj.to_screen(*p1)) else { continue };
+            let dd = seg_dist(pos, a, c);
+            // Visible where the cursor is: the edge's point under the cursor, not an end or
+            // the middle, which can lie deeper than the face the cursor is on.
+            if dd < 6.0 && beste.wants(dd) && visible(ray_segment_closest(o, d, *p0, *p1)) {
+                beste.offer(dd, Hit::Edge { body: b.name.clone(), index: ei, mid: polyline_mid(e) });
             }
         }
     }
@@ -2377,6 +2398,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             },
         });
         painter.add(egui_wgpu::Callback::new_paint_callback(rect, cb));
+        crate::pick_buffer::paint(app, ui.ctx(), &painter, &proj);
     }
     analysis_legend(app, &painter, rect);
     crate::frame_rate::paint(app, ui.ctx(), &painter, rect);
