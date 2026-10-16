@@ -4023,8 +4023,10 @@ dependencies = [
 name = "solidcraft-cli"
 version = "0.13.1"
 dependencies = [
+ "image",
  "serde_json",
  "solidcraft-engine",
+ "solidcraft-gpu",
  "solidcraft-mcp",
 ]
 
@@ -4086,8 +4088,12 @@ dependencies = [
  "log",
  "naga",
  "pollster 0.4.0",
+ "serde",
+ "serde_json",
+ "solidcraft-engine",
  "solidcraft-geom",
  "solidcraft-kernel",
+ "solidcraft-render",
  "thiserror 2.0.21",
  "wgpu",
 ]
@@ -4135,6 +4141,7 @@ version = "0.13.1"
 dependencies = [
  "serde_json",
  "solidcraft-engine",
+ "solidcraft-gpu",
 ]
 
 [[package]]

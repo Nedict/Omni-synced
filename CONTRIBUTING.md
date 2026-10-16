@@ -98,8 +98,8 @@ The [README](README.md#architecture) has the layer table. The short version:
    MIT OR Apache-2.0, and its solver and blends are written from the maths. (Running an
    open-source application to get reference values for a test is fine; reading its source is
    not.) Permissive
-   dependencies are fine. Note which one you're adding and why in the PR, and run
-   `cargo xtask licences` so THIRD-PARTY-LICENSES.txt lists it (CI checks that it is current).
+   dependencies are fine. Note which one you're adding and why in the PR. THIRD-PARTY-LICENSES.txt
+   lists it once the change lands: the Generated files workflow rewrites it on `main`.
    Nightly/manual CI also scans advisories, bans and sources with cargo-deny; see
    [the local command and coverage limits](docs/book/src/dev/testing.md#dependency-advisories).
 3. **Every asset is original or openly licensed and has a row in
@@ -224,12 +224,38 @@ a conflict. `crates/doc/src/format/pending/README.md` has an example.
 files into `crates/doc/src/format/v<N>/` and fixes that number for good (see
 [docs/releasing.md](docs/releasing.md)). Never add a file to a `v<N>/` folder afterwards.
 
+## Lists many changes add to
+
+Some files gain an item in many pull requests at once. They are kept so that two changes that
+each add an item only meet when their items are neighbours, which spares everyone a conflict
+and a fresh CI run:
+
+- **Message catalogs** (`assets/locales/*.json`): one message per line, sorted by id. Add your
+  message anywhere and run `cargo xtask lists --fix`; `cargo xtask lists` (in `cargo xtask ci`
+  and the Lists workflow) fails on an unsorted catalog or an id that appears twice.
+- **`mod` lines**: one per line, in the sorted group they belong to (`cargo fmt` keeps each group
+  sorted). Add a new module into the existing group, not as a new group at the end.
+- **Languages** (`crates/ui-egui/src/i18n.rs`): one per line, English first, then by id (a test
+  checks it).
+- **Generated files**: `THIRD-PARTY-LICENSES.txt` and `docs/features.md` are rewritten on `main`
+  after each merge by the Generated files workflow (`cargo xtask licences`, `cargo xtask
+  features`). Don't regenerate or edit them in a pull request.
+- **Design format**: one file per change, never an edit to a shared number (above).
+
 ## Sending a change
 
 1. Work is tracked in [GitHub issues](https://github.com/bherbruck/solidcraft/issues), labelled
-   by area (`area:kernel`, `area:sketch`, `area:doc`, `area:ui`, `area:infra`). Before starting,
-   comment on the issue so it gets the `in progress` label and two people don't build the same
-   thing. For anything bigger than a bug fix that has no issue yet, open one first.
+   by area (`area:kernel`, `area:sketch`, `area:doc`, `area:ui`, `area:infra`). For anything
+   bigger than a bug fix that has no issue yet, open one first. **Claim the issue with a draft
+   PR** before you start, so two people don't build the same thing:
+   - Check nobody has it: `gh pr list -R bherbruck/solidcraft --state open --search "#N"`.
+   - Branch from the latest `main`, commit `git commit --allow-empty -m "claim: #N"`, push, and
+     open a **draft** PR titled `<summary> (#N)`, e.g. `Fillet: variable radius along a chain (#123)`.
+   - **The lowest-numbered open PR for an issue wins.** If yours lost, close it (or offer to help
+     on the other one).
+   - Push work in progress at least daily. A draft with no pushes for 72 hours may be taken over:
+     comment on it first, then open your own claim.
+   - Mark the PR ready for review when it is done.
 2. Branch from `main` and keep the PR to one topic.
 3. Run `cargo xtask ci` before pushing. It runs fmt, the asset, licence and layer checks,
    clippy (`-D warnings`), then the tests with the wasm build check alongside. A PR has to pass it.

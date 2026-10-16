@@ -202,8 +202,18 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
+    env:
+      # Pictures (snapshots, screenshots, ui.render, the viewport's offscreen tests) are drawn on
+      # the GPU. The runner has none: Mesa's lavapipe (software Vulkan) draws them, and a test that
+      # would skip for want of an adapter fails instead.
+      SOLIDCRAFT_GPU: software
+      SOLIDCRAFT_REQUIRE_GPU: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install a software Vulkan driver (lavapipe)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan1
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: cargo-nextest
@@ -364,7 +374,8 @@ jobs:
   # D3D12's older shader compiler (FXC, used where dxcompiler.dll is absent) is stricter than
   # DXC, Vulkan and Metal: a shader it cannot compile once crashed the app at startup. Build the
   # GPU tessellation pipeline with FXC on the runner's WARP software adapter and compare its
-  # results with the CPU.
+  # results with the CPU, and draw headless pictures with the viewport's pipelines there
+  # (crates/gpu/tests/capture.rs).
   windows-fxc:
     name: Windows D3D12 FXC shaders
     needs: changes
@@ -374,6 +385,8 @@ jobs:
     env:
       WGPU_BACKEND: dx12
       WGPU_DX12_COMPILER: fxc
+      # WARP is a software (Cpu) adapter.
+      SOLIDCRAFT_GPU: software
       SOLIDCRAFT_REQUIRE_GPU: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
