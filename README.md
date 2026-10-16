@@ -24,7 +24,7 @@
 <p align="center">
   <a href="https://solidcraft.io">Website</a> ·
   <a href="https://solidcraft.io/download">Download</a> ·
-  <a href="https://solidcraft.ai/">Try it in the browser</a> ·
+  <a href="https://solidcraft.io/app">Try it in the browser</a> ·
   <a href="https://docs.solidcraft.io/">Documentation</a> ·
   <a href="https://solidcraft.io/discord">Discord</a> ·
   <a href="https://github.com/bherbruck/solidcore">SolidCore</a>
@@ -84,7 +84,7 @@ Install details, upgrading from earlier builds and building from source are in
 [linux-arm64-rpm]: https://github.com/tangency-labs/solidcraft/releases/latest/download/solidcraft-linux-aarch64.rpm
 [linux-snap]: https://github.com/tangency-labs/solidcraft/releases/latest/download/solidcraft-linux-x86_64.snap
 [snap-store]: https://snapcraft.io/solidcraft
-[web-app]: https://solidcraft.ai/
+[web-app]: https://solidcraft.io/app
 
 **Documentation:** the [SolidCraft book](https://docs.solidcraft.io/) (user guide,
 developer guide and command reference; sources in [docs/book](docs/book)).
