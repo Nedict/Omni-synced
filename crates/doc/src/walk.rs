@@ -40,8 +40,11 @@ impl Walk for bool {}
 impl Walk for u64 {}
 impl Walk for i8 {}
 impl Walk for f64 {}
+impl Walk for usize {}
+impl Walk for u32 {}
 impl Walk for ProfileSel {}
 impl Walk for solidcraft_sketch::Sketch {}
+impl Walk for solidcraft_sketch::PatternAlignment {}
 impl Walk for solidcraft_kernel::StepNode {}
 impl Walk for crate::document::Operation {}
 impl Walk for solidcraft_kernel::Continuity {}
@@ -364,7 +367,7 @@ impl Walk for PlaneRef {
         let mut p = self;
         for _ in 0..64 {
             match p {
-                PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } => p = base,
+                PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => p = base,
                 PlaneRef::Construction { name } => return f(Ref::Feature(name)),
                 _ => return,
             }
@@ -374,7 +377,7 @@ impl Walk for PlaneRef {
         let mut p = self;
         for _ in 0..64 {
             match p {
-                PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } => p = base,
+                PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => p = base,
                 PlaneRef::Construction { name } => return f(Ref::Feature(name)),
                 _ => return,
             }

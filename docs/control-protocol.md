@@ -48,7 +48,16 @@ connections that send eight lines that are not JSON. At most 16 connections are 
 (further ones get `{"ok": false, "error": "too many connections"}`), at most 64 queued requests
 run per frame so a flood cannot starve drawing, and a request that the UI thread has not
 answered within 60 seconds (3600 seconds for `engine.batch`) is replied to with
-`{"ok": false, "error": "timeout"}`. The same 16 MiB line limit applies to the MCP server.
+`{"ok": false, "running": true, "error": "timeout: … is still running …"}`. The same 16 MiB line
+limit applies to the MCP server.
+
+A timed-out request has not failed: it is still running in the app and will still apply (a long
+fillet, say), so don't simply send it again. The connection keeps its reply (#1618). Ask for it
+with `control.pending`: `{"pending": <id>, "method": …, "done": false}` while it runs, then
+`{"pending": <id>, "method": …, "done": true, "reply": {…}}` (its own reply, once), and
+`{"pending": null}` when nothing is outstanding. Until it lands, any other request on that
+connection is refused at once with `{"ok": false, "busy": true, "error": "busy: …"}` and not
+run, so nothing is queued to apply unseen behind it.
 
 Any request's `params` may carry `allow_paths: ["/abs/folder", …]`: every file that request
 reads, writes or deletes (command paths such as `file.export`'s `path` or `doc.recovery_*`'s

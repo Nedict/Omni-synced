@@ -659,15 +659,26 @@ fn arc_tangent(s: &mut Session, p: &Value) -> Result<Value> {
     let end = req_vec2(cmd, p, "end")?;
     let (out, info) = edit(s, p, cmd, false, |sk, _| {
         let st = req_parg(sk, p, "start", cmd)?;
-        let pi = st.idx().ok_or_else(|| bad(cmd, "`start` must be the end point of a line or arc"))?;
-        let ci = match str_(p, "curve") {
-            Some(id) => sk.curve_index(id).ok_or_else(|| bad(cmd, format!("unknown curve `{id}`")))?,
-            None => sk
-                .curves
+        let picked = st.idx().ok_or_else(|| bad(cmd, "`start` must be the end point of a line or arc"))?;
+        // The picked point, then any other point at the same place: a trimmed arc's end is its own
+        // point, lying on the end of the curve that trimmed it, which is the one a click picks (#1485).
+        let at = st.pos();
+        let tol = 1e-6 * at.len().max(1.0);
+        let candidates: Vec<usize> =
+            std::iter::once(picked).chain((0..sk.points.len()).filter(|&q| q != picked && sk.point(q).is_some_and(|x| x.dist(at) <= tol))).collect();
+        let (ci, pi) = match str_(p, "curve") {
+            Some(id) => {
+                let ci = sk.curve_index(id).ok_or_else(|| bad(cmd, format!("unknown curve `{id}`")))?;
+                let pi = candidates
+                    .iter()
+                    .copied()
+                    .find(|&q| leaving_dir(sk, ci, q).is_some())
+                    .ok_or_else(|| bad(cmd, "`start` is not an end of that curve"))?;
+                (ci, pi)
+            }
+            None => candidates
                 .iter()
-                .enumerate()
-                .find(|(i, c)| !c.construction && leaving_dir(sk, *i, pi).is_some())
-                .map(|(i, _)| i)
+                .find_map(|&q| sk.curves.iter().enumerate().find(|(i, c)| !c.construction && leaving_dir(sk, *i, q).is_some()).map(|(i, _)| (i, q)))
                 .ok_or_else(|| bad(cmd, "no line or arc ends at `start`"))?,
         };
         let t = leaving_dir(sk, ci, pi).ok_or_else(|| bad(cmd, "`start` is not an end of that curve"))?;

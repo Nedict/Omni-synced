@@ -41,11 +41,11 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.pattern.rectangular", "Rectangular Pattern", pattern_rect)
         .at("SOLID", "CREATE")
         .icon("pattern_rect")
-        .params("features: [names] | bodies: [names] | components: [names]; dir1: [x,y,z]; count1; spacing1; dir2?, count2?, spacing2?"),
+        .params("features: [names] | bodies: [names] | components: [names]; dir1: [x,y,z]; count1; spacing1; dir2?, count2?, spacing2?; alignment?, alignment2?: left|center|right (default right; counts include the original); reversed?, reversed2?: bool (Flip)"),
     CommandSpec::new("solid.pattern.circular", "Circular Pattern", pattern_circ)
         .at("SOLID", "CREATE")
         .icon("pattern_circ")
-        .params("features: [names] | bodies: [names] | components: [names]; axis: X|Y|Z | {origin, dir}; count; angle? (default 360 deg)"),
+        .params("features: [names] | bodies: [names] | components: [names]; axis: X|Y|Z | {origin, dir}; count; angle? (default 360 deg; partial arcs include both ends); alignment?: left|center|right (default right; original stays fixed); reversed?: bool (Flip; selects the extra side for even centered counts)"),
     CommandSpec::new("solid.pattern.path", "Pattern on Path", pattern_path)
         .at("SOLID", "CREATE")
         .icon("pattern_rect")
@@ -1263,7 +1263,18 @@ fn pattern_rect(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(c) = &spacing2 {
         check_expr(s, c, Kind::Length, cmd, "spacing2")?;
     }
-    let pattern = solidcraft_doc::PatternKind::Rectangular { dir1: Dir(dir1), count1, spacing1, dir2: dir2.map(Dir), count2, spacing2 };
+    let pattern = solidcraft_doc::PatternKind::Rectangular {
+        dir1: Dir(dir1),
+        count1,
+        spacing1,
+        dir2: dir2.map(Dir),
+        count2,
+        spacing2,
+        alignment: super::alignment_param(p, "alignment", cmd)?,
+        alignment2: super::alignment_param(p, "alignment2", cmd)?,
+        reversed: super::reversed_param(p, "reversed", cmd)?,
+        reversed2: super::reversed_param(p, "reversed2", cmd)?,
+    };
     finish_pattern(s, p, features, pattern, bodies)
 }
 
@@ -1275,7 +1286,14 @@ fn pattern_circ(s: &mut Session, p: &Value) -> Result<Value> {
     check_expr(s, &count, Kind::Unitless, cmd, "count")?;
     let angle = expr(p, "angle").unwrap_or_else(|| "360 deg".into());
     check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
-    let pattern = solidcraft_doc::PatternKind::Circular { origin: Position(origin), axis: Dir(axis), count, angle };
+    let pattern = solidcraft_doc::PatternKind::Circular {
+        origin: Position(origin),
+        axis: Dir(axis),
+        count,
+        angle,
+        alignment: super::alignment_param(p, "alignment", cmd)?,
+        reversed: super::reversed_param(p, "reversed", cmd)?,
+    };
     finish_pattern(s, p, features, pattern, bodies)
 }
 
@@ -1973,6 +1991,10 @@ fn offset_face(s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(test)]
 #[path = "patterns_tests.rs"]
 mod patterns_tests;
+
+#[cfg(test)]
+#[path = "prism_local_tests.rs"]
+mod prism_local_tests;
 
 #[cfg(test)]
 #[path = "revolve_convention_tests.rs"]

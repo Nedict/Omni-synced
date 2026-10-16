@@ -145,6 +145,78 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             st.bodies.push(ModelBody::new(name, made, f.id));
             Ok(())
         }
+        FeatureKind::SurfaceBoundary { sketch, curves, orders, crown, samples } => {
+            let ss = sketch_in_feature_frame(
+                doc,
+                st.sketch(sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {sketch} (it must come earlier in the timeline)")))?,
+                f.component,
+            )?;
+            let boundaries = boundary_frames(&ss, curves, orders, *samples)?;
+            let body = kernel::boundary_patch(&boundaries, *crown, *samples)?;
+            let name = new_name(st, f, 0);
+            st.bodies.push(ModelBody::new(name, body, f.id));
+            Ok(())
+        }
+        FeatureKind::SurfaceMatch { body, faces, target, edges, order } => {
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            let tb = st.body(target).ok_or_else(|| DocError::Unknown(format!("body `{target}`")))?.body.clone();
+            if edges.is_empty() {
+                return Err(DocError::Invalid("a match needs a chain of the target's edges".into()));
+            }
+            // Picked by a point on the face; without picks, the body's first face.
+            let picked: Vec<solidcraft_geom::Vec3> = if faces.is_empty() {
+                let faces = mb.body.faces(mb.body.size() * 1e-2)?;
+                vec![faces.first().ok_or_else(|| DocError::Invalid(format!("`{body}` has no face to match")))?.centroid]
+            } else {
+                crate::plain(faces)
+            };
+            let made = kernel::match_surface(&mb.body, &picked, &tb, &crate::plain(edges), *order)?;
+            // A match rebuilds the face in place: the body keeps its name, and whatever meets it
+            // downstream still finds it.
+            if let Some(slot) = st.bodies.get_mut(i) {
+                *slot = ModelBody::new(mb.name, made, mb.feature);
+            }
+            Ok(())
+        }
+        FeatureKind::SurfaceFair { body, faces, strength, iterations, keep_edges, tolerance } => {
+            let tol = val(vals, tolerance, Kind::Length)?;
+            let opts = kernel::FairOptions::new(*strength, *iterations as usize, *keep_edges, tol)?;
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            // Picked by a point on the face; without picks, every face of the body.
+            let mut picked: Vec<usize> = Vec::new();
+            if faces.is_empty() {
+                picked.extend(0..mb.body.face_count());
+            } else {
+                for p in faces {
+                    let fi =
+                        crate::appearance::face_index_at(&mb, p.0).ok_or_else(|| DocError::Invalid(format!("Fair: no face of {body} at {p:?}")))?;
+                    if !picked.contains(&fi) {
+                        picked.push(fi);
+                    }
+                }
+            }
+            if picked.is_empty() {
+                return Err(DocError::Invalid("the body has no faces to fair".into()));
+            }
+            // The face keeps every edge it had: only the surface between them is faired. The
+            // energy before and after goes into the feature's warning, so the reply can say how
+            // much the face moved.
+            let (faired, report) = kernel::fair_faces(&mb.body, &picked, &opts)?;
+            *warning = Some(format!(
+                "faired {} face(s): energy {:.6} → {:.6} in {} step(s), control points moved up to {:.4} mm",
+                picked.len(),
+                report.energy_before,
+                report.energy_after,
+                report.steps,
+                report.movement
+            ));
+            if let Some(slot) = st.bodies.get_mut(i) {
+                *slot = ModelBody::new(mb.name, faired, mb.feature);
+            }
+            Ok(())
+        }
         FeatureKind::SurfaceExtrude { sketch, profiles, curves, extent } => {
             let ss = sketch_in_feature_frame(
                 doc,
@@ -347,6 +419,70 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
 fn push_sheet(st: &mut ModelState, f: &Feature, traced: crate::lineage::Traced) {
     let name = new_name(st, f, 0);
     st.bodies.push(ModelBody::traced_new(name, traced, f.id));
+}
+
+/// The boundaries `surface.boundary` builds its patch from: each picked curve's own stations in
+/// the sketch's frame, every one of them leaving the boundary square into the loop — the direction
+/// from the curve towards the middle of the loop, taken across its tangent — over the plane the
+/// curve lies in (so a chain of planar curves makes a flat patch, and a network that is not
+/// coplanar is followed as the plane through the curve's own tangent). `orders` sets how much of
+/// that plane each side repeats.
+fn boundary_frames(
+    ss: &SolvedSketch,
+    curves: &[String],
+    orders: &[solidcraft_kernel::Continuity],
+    samples: usize,
+) -> Result<Vec<solidcraft_kernel::Boundary>> {
+    use solidcraft_kernel::{Boundary, Frame};
+    // The stations along each curve, evenly in its own arclength, so every side carries the same
+    // number of frames and the patch's net is square.
+    let mut sides: Vec<Vec<solidcraft_geom::Vec3>> = Vec::with_capacity(curves.len());
+    for id in curves {
+        let ci = ss.sketch.curve_index(id).ok_or_else(|| DocError::Unknown(format!("sketch curve `{id}`")))?;
+        let pieces = ss.sketch.exact_pieces(ci);
+        if pieces.is_empty() {
+            return Err(DocError::Invalid(format!("curve `{id}` has no exact geometry to build on")));
+        }
+        let lengths: Vec<f64> = pieces.iter().map(Seg2::length).collect();
+        let total: f64 = lengths.iter().sum();
+        if !total.is_finite() || total <= 1e-9 {
+            return Err(DocError::Invalid(format!("curve `{id}` has no length")));
+        }
+        let mut pts = Vec::with_capacity(samples);
+        let (mut used, mut at) = (0.0, 0usize);
+        for k in 0..samples {
+            let want = total * k as f64 / (samples.saturating_sub(1)).max(1) as f64;
+            while at + 1 < pieces.len() && used + lengths[at] < want {
+                used += lengths[at];
+                at += 1;
+            }
+            let (Some(piece), Some(len)) = (pieces.get(at), lengths.get(at)) else { return Err(DocError::Invalid("boundary piece".into())) };
+            let t = ((want - used) / len.max(1e-12)).clamp(0.0, 1.0);
+            pts.push(ss.plane.to_world(piece.point_at(t)));
+        }
+        sides.push(pts);
+    }
+    // The middle of the loop, so every side leaves towards the inside of the patch.
+    let count = sides.iter().map(Vec::len).sum::<usize>().max(1) as f64;
+    let centre = sides.iter().flatten().fold(solidcraft_geom::Vec3::ZERO, |a, p| a + *p) * (1.0 / count);
+    let mut out = Vec::with_capacity(sides.len());
+    for (side, pts) in sides.iter().enumerate() {
+        let mut frames = Vec::with_capacity(pts.len());
+        for (i, p) in pts.iter().enumerate() {
+            // The tangent from the stations on either side, one-sided at the ends (where the side
+            // only has one neighbour).
+            let before = if i == 0 { *p } else { pts[i - 1] };
+            let after = if i + 1 == pts.len() { *p } else { pts[i + 1] };
+            let tangent = (after - before).normalized().ok_or_else(|| DocError::Invalid("a boundary curve has a stationary station".into()))?;
+            let across = centre - *p;
+            let leave = (across - tangent * across.dot(tangent))
+                .normalized()
+                .ok_or_else(|| DocError::Invalid("a boundary runs through the middle of the loop: no patch can leave it".into()))?;
+            frames.push(Frame { p: *p, leave, bend: Vec3::ZERO, bend_change: Vec3::ZERO });
+        }
+        out.push(Boundary { frames, order: orders.get(side).copied().unwrap_or(solidcraft_kernel::Continuity::G1) });
+    }
+    Ok(out)
 }
 
 /// What a surface builder sweeps: the boundary loops of the picked profiles, then the picked

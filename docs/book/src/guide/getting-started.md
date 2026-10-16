@@ -32,7 +32,8 @@ When updating from a build released under the previous product name, follow the
 The first time you open the AppImage it adds a menu entry and icons under `~/.local/share`
 (`applications/ai.storyteller.solidcraft.desktop`, `icons/hicolor`), so the desktop shows the
 right name and icon. It adds nothing if [appimaged](https://github.com/probonopd/go-appimage)
-already made an entry for the file (and removes the entry SolidCraft added before). To
+already made an entry for the file, or if a launcher such as Gear Lever or AppImageLauncher
+started it (and removes the entry SolidCraft added before). To
 turn it off for good, create an empty file `~/.local/share/solidcraft/no-desktop-integration`, or
 start the AppImage with `SOLIDCRAFT_NO_DESKTOP_INTEGRATION=1`.
 
