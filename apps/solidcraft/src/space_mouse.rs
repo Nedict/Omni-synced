@@ -486,19 +486,28 @@ mod tests {
     #[test]
     fn each_frame_hands_the_view_its_motion_through_the_drivers_mapping() {
         // The reader's latest tilt, and a profile that makes tilt roll: the frame's motion rolls.
-        let now = Instant::now();
-        let mut reading = Reading::new(now);
-        reading.axes.rotation = [0, 350, 0];
-        let mut mouse = SpaceMouse {
-            shared: Arc::new(Mutex::new(reading)),
-            last_frame: now - Duration::from_millis(20),
-            driver_mapping: DriverMapping::object_mode(),
-            mapping_checked_at: now,
-            wheel: WheelGuard::default(),
-            started: now,
-        };
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), solidcraft_ui_egui::Services::default());
         app.home.open = false;
+        let started = Instant::now();
+        let mut reading = Reading::new(started);
+        reading.axes.rotation = [0, 350, 0];
+        let mouse = SpaceMouse {
+            shared: Arc::new(Mutex::new(reading)),
+            last_frame: started - Duration::from_millis(20),
+            driver_mapping: DriverMapping::object_mode(),
+            mapping_checked_at: started,
+            wheel: WheelGuard::default(),
+            started,
+        };
+        // Axes go stale after [`STALE_AFTER`]; refresh the stamp after any slow setup so CI
+        // does not read zeros.
+        let fresh = Instant::now();
+        {
+            let Ok(mut r) = mouse.shared.lock() else { panic!("reading lock") };
+            r.axes.rotation = [0, 350, 0];
+            r.rotation_at = fresh;
+        }
+        let mut mouse = mouse;
         mouse.tick(&mut app, &Context::default());
         let DeviceMotion { motion, seconds } = app.viewport.device_motion.expect("the frame hands the page its motion");
         assert_eq!(motion, Motion { translation: [0.0; 3], rotation: [0.0, 0.0, -1.0] });
