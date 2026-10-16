@@ -1182,7 +1182,14 @@ fn offset_side(sk: &mut Sketch, cmd: &str, order: &[(usize, bool)], sources: &[(
     }
     let outputs = ids_of(sk, &made);
     if pieces.iter().all(|p| !matches!(p, Piece::Free(_))) {
-        sk.offsets.push(solidcraft_sketch::OffsetChain { sources: sources.to_vec(), outputs: outputs.clone(), distance: d, closed, topology: None });
+        sk.offsets.push(solidcraft_sketch::OffsetChain {
+            sources: sources.to_vec(),
+            outputs: outputs.clone(),
+            distance: d,
+            distance_expression: None,
+            closed,
+            topology: None,
+        });
         sk.refresh_offsets()?;
     }
     Ok(Side { distance: d, curves: outputs, constraints: cons, association: None, param: None })
@@ -1255,6 +1262,7 @@ fn offset_group(sk: &mut Sketch, ids: &[String], eligible: &std::collections::Ha
                 sources: vec![(source.clone(), true)],
                 outputs: outputs.clone(),
                 distance: r - nr,
+                distance_expression: None,
                 closed: true,
                 topology: None,
             });

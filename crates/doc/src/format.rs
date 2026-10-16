@@ -338,7 +338,7 @@ pub const LEGACY_FORMAT_PREFIX: &str = "solvecraft/";
 
 /// The version in a format string (`solidcraft/N`, or the legacy `solvecraft/N`).
 pub fn version_of(s: &str) -> Option<u32> {
-    s.strip_prefix("solidcraft/").or_else(|| s.strip_prefix(LEGACY_FORMAT_PREFIX))?.parse().ok()
+    s.strip_prefix("solidcraft/").or_else(|| s.strip_prefix(LEGACY_FORMAT_PREFIX)).or_else(|| s.strip_prefix("solidcraft-f3d-dev/"))?.parse().ok()
 }
 
 /// JSON-level upgrades up to [`HAND_WRITTEN`]: entry `i` turns format `i + 1` into `i + 2`.
@@ -374,7 +374,7 @@ const JSON_STEPS: [JsonStep; HAND_WRITTEN as usize - 1] = [
 /// such a name, by their place in the schema:
 /// - each feature's `face_names`, and fillets' and chamfers' `edge_names` (other features' edge
 ///   names are sheet metal's own);
-/// - a sketch feature's links' `face_name`;
+/// - a sketch feature's links' `face_name`, `edge_name` and `edge_circle`;
 /// - face and edge references (`PlaneRef::Face`, `GeoRef::Face`, `GeoRef::Edge`: tagged
 ///   `"type": "face"|"edge"`, picked `at` a point), wherever a feature holds one;
 /// - joint snaps on a face (`face_center`, `circle_center`), in joints and named origins;
@@ -383,7 +383,7 @@ const JSON_STEPS: [JsonStep; HAND_WRITTEN as usize - 1] = [
 /// Every feature also keeps naming the pieces it splits a body into in the kernel's shell order
 /// (`Feature::shell_piece_order`): the body names stored after it (bodies, targets, participants,
 /// materials, appearances, joints) mean the pieces in that order.
-fn v13_to_v14(v: &mut Value) -> Result<()> {
+pub(crate) fn v13_to_v14(v: &mut Value) -> Result<()> {
     if let Some(Value::Array(features)) = v.get_mut("features") {
         for f in features.iter_mut() {
             let Value::Object(o) = f else { continue };
@@ -395,7 +395,12 @@ fn v13_to_v14(v: &mut Value) -> Result<()> {
             if kind.as_deref() == Some("sketch")
                 && let Some(Value::Array(links)) = o.get_mut("sketch").and_then(|s| s.get_mut("links"))
             {
-                links.iter_mut().filter_map(|l| l.get_mut("face_name")).for_each(mark);
+                for link in links {
+                    if let Some(name) = link.get_mut("face_name") {
+                        mark(name);
+                    }
+                    mark_link_edges(link);
+                }
             }
             o.insert("shell_piece_order".into(), Value::Bool(true));
             references(f);
@@ -420,6 +425,13 @@ fn v13_to_v14(v: &mut Value) -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub(crate) fn mark_link_edges(link: &mut Value) {
+    if let Some(name) = link.get_mut("edge_name") {
+        mark(name);
+    }
+    mark_all(link.get_mut("edge_circle"));
 }
 
 /// Mark the `name` of every face or edge reference in `v` (see [`v13_to_v14`]).
@@ -556,6 +568,7 @@ pub fn read(s: &str) -> Result<Document> {
         Some(Value::String(f)) => version_of(f).ok_or_else(|| DocError::Invalid(format!("not a SolidCraft design (format `{f}`)")))?,
         Some(_) => return Err(DocError::Invalid("not a SolidCraft design (format is not a string)".into())),
     };
+    let version = crate::format_f3d::upstream_version(&v, version)?;
     let applied = take_pending(&mut v)?;
     if version == 0 {
         return Err(DocError::Invalid("not a SolidCraft design (format 0)".into()));
@@ -570,12 +583,15 @@ pub fn read(s: &str) -> Result<Document> {
     crate::config::validate_styles_json(&v)?;
     crate::face_anchor::validate_face_anchors_json(&v)?;
     validate_versioned_geometry(&v)?;
+    crate::loft::validate_sections_json(&v)?;
+    crate::extent_target::validate_json(&v)?;
     validate_emboss_targets(&v)?;
     validate_freeform_offsets(&v)?;
     validate_sketch_sizes(&v)?;
     crate::format_offsets::validate_raw(&v)?;
     let legacy_wires = validate_wires(&v, version)?;
     validate_body_transfers(&v)?;
+    crate::format_f3d::migrate(&mut v)?;
     FORMATS.upgrade(&mut v, version, applied.as_deref())?;
     let mut d: Document = serde_json::from_value(v).map_err(|e| DocError::Invalid(format!("design file: {e}")))?;
     let mut legacy_by_feature = std::collections::BTreeMap::<usize, Vec<usize>>::new();
@@ -900,6 +916,36 @@ fn validate_versioned_geometry(value: &Value) -> Result<()> {
             for link in links {
                 if link.get("auto_face").is_some_and(|marker| !marker.is_boolean()) {
                     return Err(invalid());
+                }
+                if let Some(join) = link.get("join_arcs")
+                    && (!join.is_boolean()
+                        || (join.as_bool() == Some(true)
+                            && (link.get("auto_face").and_then(Value::as_bool) != Some(true)
+                                || link.get("source").and_then(|s| s.get("type")).and_then(Value::as_str) != Some("face")
+                                || !matches!(link.get("kind").and_then(Value::as_str), None | Some("project"))
+                                || link.get("face_name").and_then(Value::as_str).is_none_or(str::is_empty)
+                                || link.get("edge_name").is_some_and(|v| !v.is_null()))))
+                {
+                    return Err(invalid());
+                }
+                if let Some(circle) = link.get("edge_circle") {
+                    let names = circle.as_array().filter(|a| a.len() <= 128).ok_or_else(invalid)?;
+                    let mut seen = std::collections::BTreeSet::new();
+                    for name in names {
+                        let name = name.as_str().filter(|s| !s.is_empty() && s.len() <= 4096).ok_or_else(invalid)?;
+                        if !seen.insert(name) {
+                            return Err(invalid());
+                        }
+                    }
+                    if !names.is_empty()
+                        && (link.get("source").and_then(|s| s.get("type")).and_then(Value::as_str) != Some("edge")
+                            || !matches!(link.get("kind").and_then(Value::as_str), None | Some("project"))
+                            || link.get("edge_name").is_some_and(|v| !v.is_null())
+                            || link.get("face_name").is_some_and(|v| !v.is_null())
+                            || link.get("auto_face").and_then(Value::as_bool) == Some(true))
+                    {
+                        return Err(invalid());
+                    }
                 }
             }
         }
@@ -1263,6 +1309,41 @@ mod tests {
     }
 
     #[test]
+    fn development_formats_migrate_edge_links_without_reinterpreting_upstream_names() {
+        use solidcraft_geom::{Vec2, Vec3};
+        use solidcraft_sketch::{LinkGeom, LinkKind, LinkSource, Sketch};
+        let mut sketch = Sketch::new();
+        sketch
+            .add_link(LinkKind::Project, LinkSource::Edge { body: "Body1".into(), at: Vec3::ZERO }, &[LinkGeom::Line(Vec2::ZERO, Vec2::new(10., 0.))])
+            .unwrap();
+        sketch.links[0].edge_name = Some("F2:start|F2:side:l1".into());
+        let mut doc = Document::new("name migration");
+        doc.add_feature(crate::FeatureKind::Sketch { plane: crate::PlaneRef::Origin { name: "XY".into() }, sketch }, None).unwrap();
+        for version in 13..=30 {
+            let mut json: Value = serde_json::from_str(&doc.to_json()).unwrap();
+            json["format"] = Value::from(format!("solidcraft-f3d-dev/{version}"));
+            let migrated = read(&json.to_string()).unwrap();
+            let crate::FeatureKind::Sketch { sketch, .. } = &migrated.features[0].kind else { panic!("sketch") };
+            assert_eq!(sketch.links[0].edge_name.as_deref(), Some(if version < 23 { "?F2:start|F2:side:l1" } else { "F2:start|F2:side:l1" }));
+            assert_eq!(migrated.features[0].shell_piece_order, version == 13 || (15..=22).contains(&version));
+            assert_eq!(read(&migrated.to_json()).unwrap(), migrated);
+        }
+    }
+
+    #[test]
+    fn upstream_formats_keep_exact_history_names_and_piece_order() {
+        for version in 14..=FORMAT {
+            let input = serde_json::json!({
+                "format": format_string(version), "name": "Upstream", "next_id": 2, "params": [],
+                "features": [{"id": 1, "name": "Box", "type": "box", "length": "10", "width": "10", "height": "10", "corner": ["0", "0", "0"], "operation": "new_body", "face_names": ["F1:top"]}]
+            });
+            let read = read(&input.to_string()).unwrap();
+            assert_eq!(read.features[0].face_names, vec!["F1:top"]);
+            assert!(!read.features[0].shell_piece_order);
+        }
+    }
+
+    #[test]
     fn version_thirteen_names_keep_their_meaning_under_the_legacy_mark() {
         let file = serde_json::json!({
             "format": "solidcraft/13",
@@ -1446,6 +1527,7 @@ mod tests {
                         through_all: false,
                         taper: Some("0 deg".into()),
                         to: Some(crate::FacePick(solidcraft_geom::Vec3::new(0.0, 0.0, 10.0))),
+                        to_plane: None,
                         to_offset: Some("offset + 1 mm".into()),
                         from: Some(crate::FacePick(solidcraft_geom::Vec3::new(0.0, 0.0, 5.0))),
                     },

@@ -1,0 +1,324 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "8 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "grip_height",
+        "expression": "5 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "round_radius",
+        "expression": "grip_height",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Base profile"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 20
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Base cylinder",
+        "body_name": "Knob"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "offset": "height",
+        "name": "Grip profile"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 20
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.rectangle.two_point",
+      "params": {
+        "p0": [
+          -3,
+          -20
+        ],
+        "p1": [
+          3,
+          20
+        ]
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "grip_height",
+        "operation": "join",
+        "targets": [
+          "Knob"
+        ],
+        "profiles": [
+          {
+            "point": [
+              0,
+              0
+            ]
+          }
+        ],
+        "name": "Grip"
+      }
+    },
+    {
+      "command": "solid.fillet",
+      "params": {
+        "edges": [
+          [
+            -3,
+            0,
+            8
+          ],
+          [
+            3,
+            0,
+            8
+          ]
+        ],
+        "radius": "round_radius",
+        "body": "Knob",
+        "tangent_chain": false,
+        "name": "Shoulder rounds"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 3298.384641887912,
+    "body_count": 1,
+    "bounds": [
+      [
+        -10,
+        -10,
+        0
+      ],
+      [
+        10,
+        10,
+        13
+      ]
+    ],
+    "bounds_tolerance_mm": 0.01,
+    "center_of_mass": [
+      0,
+      0,
+      5.467417189726373
+    ],
+    "center_of_mass_tolerance_mm": 0.002,
+    "features": [
+      "Base profile",
+      "Base cylinder",
+      "Grip profile",
+      "Grip",
+      "Shoulder rounds"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "round_radius",
+        "expression": "4 mm"
+      },
+      "volume_mm3": 3230.1376501876857,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          13
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01,
+      "center_of_mass": [
+        0,
+        0,
+        5.380525536583269
+      ],
+      "center_of_mass_tolerance_mm": 0.002
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "diameter",
+        "expression": "22 mm"
+      },
+      "volume_mm3": 3910.558247472786,
+      "body_count": 1,
+      "bounds": [
+        [
+          -11,
+          -11,
+          0
+        ],
+        [
+          11,
+          11,
+          13
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01,
+      "center_of_mass": [
+        0,
+        0,
+        5.369479805295677
+      ],
+      "center_of_mass_tolerance_mm": 0.002
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "10 mm"
+      },
+      "volume_mm3": 3926.7031726058703,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          15
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01,
+      "center_of_mass": [
+        0,
+        0,
+        6.432554637716296
+      ],
+      "center_of_mass_tolerance_mm": 0.002
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "grip_height",
+        "expression": "4 mm"
+      },
+      "volume_mm3": 3111.9627672995894,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          12
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01,
+      "center_of_mass": [
+        0,
+        0,
+        5.110167847930991
+      ],
+      "center_of_mass_tolerance_mm": 0.002
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Shoulder rounds",
+        "suppressed": true
+      },
+      "volume_mm3": 3104.148537312316,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          13
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01,
+      "center_of_mass": [
+        0,
+        0,
+        5.237274456327573
+      ],
+      "center_of_mass_tolerance_mm": 0.002
+    }
+  ]
+}

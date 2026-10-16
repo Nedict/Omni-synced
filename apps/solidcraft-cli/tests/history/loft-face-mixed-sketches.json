@@ -1,0 +1,270 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "size",
+        "expression": "10 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "40 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "base_height",
+        "expression": "10 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Lower section"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            10,
+            20
+          ]
+        },
+        "dimensions": {
+          "width": "size",
+          "height": "20 mm"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "5 mm",
+        "name": "Pedestal"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Join section"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            10,
+            20
+          ]
+        },
+        "dimensions": {
+          "width": "size",
+          "height": "20 mm"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "sketch": "Join section",
+        "distance": "base_height",
+        "operation": "join",
+        "name": "Joined pedestal",
+        "targets": [
+          "Body1"
+        ]
+      }
+    },
+    {
+      "command": "construct.plane.offset",
+      "params": {
+        "base": "YZ",
+        "offset": "height",
+        "name": "Upper plane"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "Upper plane",
+        "name": "Upper section"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            20,
+            30
+          ]
+        },
+        "dimensions": {
+          "width": "20 mm",
+          "height": "30 mm"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.loft",
+      "params": {
+        "sections": [
+          {
+            "face": [
+              10,
+              10,
+              5
+            ]
+          },
+          {
+            "sketch": "Upper section"
+          }
+        ],
+        "name": "Transition",
+        "operation": "new_body",
+        "targets": [
+          "Body1"
+        ],
+        "interpolation": "uniform"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 14000,
+    "body_count": 2,
+    "features": [
+      "Lower section",
+      "Pedestal",
+      "Join section",
+      "Joined pedestal",
+      "Upper plane",
+      "Upper section",
+      "Transition"
+    ],
+    "bounds": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        40,
+        20,
+        30
+      ]
+    ],
+    "sketches": [
+      {
+        "name": "Lower section",
+        "curves": 4,
+        "links": 0
+      },
+      {
+        "name": "Join section",
+        "curves": 4,
+        "links": 0
+      }
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "size",
+        "expression": "15 mm"
+      },
+      "volume_mm3": 13000,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          40,
+          20,
+          30
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "base_height",
+        "expression": "15 mm"
+      },
+      "volume_mm3": 16500,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          40,
+          20,
+          30
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "50 mm"
+      },
+      "volume_mm3": 18000,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          50,
+          20,
+          30
+        ]
+      ]
+    }
+  ]
+}

@@ -196,6 +196,16 @@ fn setback(r: f64, phi: f64, shape: Shape) -> f64 {
 /// supporting plane. Reject crossings and contact with any boundary after the old corner,
 /// including holes. Curved boundaries are sampled more finely than the clearance tolerance.
 pub(crate) fn extension_fits(face: &mt::Face, p: Vec3, q: Vec3, tol: f64) -> bool {
+    extension_region(face, p, q, tol, true)
+}
+
+/// A concave round adds material beyond an end face's old boundary. Its seam
+/// extension must stay outside that face without crossing another boundary.
+pub(crate) fn extension_avoids_face(face: &mt::Face, p: Vec3, q: Vec3, tol: f64) -> bool {
+    extension_region(face, p, q, tol, false)
+}
+
+fn extension_region(face: &mt::Face, p: Vec3, q: Vec3, tol: f64, expected_inside: bool) -> bool {
     use mt::{BoundedCurve, ParameterDivision1D};
     // truck requires a curve sampling tolerance of at least 1e-6. Keep the
     // boundary clearance four times larger than the chord approximation error.
@@ -248,7 +258,7 @@ pub(crate) fn extension_fits(face: &mt::Face, p: Vec3, q: Vec3, tol: f64) -> boo
             }
         }
     }
-    inside
+    inside == expected_inside
 }
 
 /// Parameters along `x + λ d` where the line meets `surf`, within `reach` of `x` (Newton on
@@ -707,9 +717,11 @@ fn blend_geometry(
             }
             // A rail that ends at the far end of its side edge uses that edge up (an earlier round's
             // end arc, when the new blend meets it exactly where that round meets the next face).
+            // Parameter seams splitting the same end surface do not prevent consumption:
+            // retain its existing far vertex so a fully consumed wall disappears too.
             let far_end = |e: &mt::Edge, q: Vec3| {
                 let f = if e.front() == v { e.back() } else { e.front() };
-                (!multi && vtx(f).dist(q) <= on_tol).then(|| f.clone())
+                ((!multi || one_surface) && vtx(f).dist(q) <= on_tol).then(|| f.clone())
             };
             let (ca, cb) = (far_end(&e1, a), far_end(&e2, b));
             ends.push(End {
@@ -1591,7 +1603,7 @@ fn curved_case(solid: &Solid, edge: &mt::Edge, curved_ends: bool) -> bool {
 
 /// Whether the two faces of `edge` meet tangentially along it (sampled at a quarter, the
 /// middle and three quarters of the edge): a seam, not a corner.
-fn tangent_faces(solid: &Solid, edge: &mt::Edge) -> bool {
+pub(crate) fn tangent_faces(solid: &Solid, edge: &mt::Edge) -> bool {
     use mt::{BoundedCurve, ParametricCurve, ParametricSurface3D, SearchParameter};
     let faces: Vec<&mt::Face> = solid.face_iter().filter(|f| f.edge_iter().any(|e| e.id() == edge.id())).take(3).collect();
     let [f1, f2] = faces[..] else { return false };
@@ -1837,6 +1849,26 @@ pub fn fillet(body: &Body, edges: &[Vec3], radius: f64) -> Result<Body> {
 
 /// [`fillet`], once the radius is known to fit.
 fn fillet_built(body: &Body, edges: &[Vec3], radius: f64) -> Result<Body> {
+    fillet_built_group(body, edges, radius)
+        .or_else(|error| disconnected_rounds(body, edges, radius).and_then(|b| closed(body, b)).map_err(|_| error))
+        .or_else(|error| {
+            if !(radius.is_finite() && radius > 1e-6 && radius < 1e6) {
+                return Err(error);
+            }
+            let retry = || -> Result<Body> {
+                let ids = edge_ids(body, &body.solid, edges)?;
+                let joined = crate::cylinder_seams::joined(body, &ids)?.ok_or_else(|| unsupported("no cylindrical junction subdivisions"))?;
+                let rounded = fillet_built_group(&joined, edges, radius)?;
+                closed(body, record::after(rounded, &joined, &record::counts(&[body])))
+            };
+            retry().map_err(|_| error)
+        })
+}
+
+fn fillet_built_group(body: &Body, edges: &[Vec3], radius: f64) -> Result<Body> {
+    if let Some(rebuilt) = crate::blend_corner::rebuild_mitre_selection(body, edges, radius)? {
+        return closed(body, rebuilt);
+    }
     // Corners the local blends refuse (an earlier round at an edge's end): radius per edge.
     blend(body, edges, radius, Shape::Round, "fillet")
         .and_then(|b| closed(body, b))
@@ -1860,6 +1892,54 @@ fn fillet_built(body: &Body, edges: &[Vec3], radius: f64) -> Result<Body> {
         .or_else(|e| blend_with(body, edges, radius, Shape::Round, "fillet", true).and_then(|b| closed(body, b)).map_err(|_| e))
         // Blends meeting at corners on curved faces: all at once.
         .or_else(|e| corners(body, edges, radius, Shape::Round, "fillet", false).and_then(|b| closed(body, b)).map_err(|e2| keep_size(e, e2)))
+}
+
+/// A corner and separate rings need different builders. Partition only the
+/// selected edges by shared topological vertices, keeping each connected corner
+/// intact. Each group goes through the ordinary builders once; no recursive
+/// regrouping or radius reduction is allowed. Carry every step's provenance back
+/// to the original operand, as for the existing loop/edge sequencing.
+fn disconnected_rounds(body: &Body, points: &[Vec3], radius: f64) -> Result<Body> {
+    if points.len() < 3 || points.len() > 1000 {
+        return Err(unsupported("no separate blend groups"));
+    }
+    let counts = record::counts(&[body]);
+    let mut cur = crate::boolean_record::healed(body)?;
+    let all = Body::unique_edges(&cur.solid);
+    let mut parent: Vec<usize> = (0..points.len()).collect();
+    let mut seen = std::collections::HashMap::new();
+    for (i, point) in points.iter().enumerate() {
+        let id = nearest_edge_id(&cur, &all, *point)?.ok_or_else(|| unsupported("a blend selection has no edge"))?;
+        let edge = all.iter().find(|e| e.id() == id).ok_or_else(|| unsupported("a blend selection has no edge"))?;
+        for vertex in [edge.front(), edge.back()] {
+            if let Some(previous) = seen.insert(vertex.id(), i) {
+                let a = crate::heal::find(&mut parent, previous);
+                let b = crate::heal::find(&mut parent, i);
+                if let Some(slot) = parent.get_mut(a.max(b)) {
+                    *slot = a.min(b);
+                }
+            }
+        }
+    }
+    let mut groups = std::collections::BTreeMap::<usize, Vec<Vec3>>::new();
+    for (i, point) in points.iter().enumerate() {
+        groups.entry(crate::heal::find(&mut parent, i)).or_default().push(*point);
+    }
+    if groups.len() < 2 || groups.values().all(|g| g.len() == 1) {
+        return Err(unsupported("no separate connected blend groups"));
+    }
+    for group in groups.values() {
+        // An earlier group must not have consumed a later group's selection.
+        // Do not let the ordinary generous picking radius jump to a new edge.
+        let tolerance = (cur.size() * 1e-5).max(1e-6);
+        for point in group {
+            if !cur.nearest_edge(*point, tolerance)?.is_some_and(|(_, distance)| distance <= tolerance) {
+                return Err(unsupported("a blend group changed a later selected edge"));
+            }
+        }
+        cur = record::after(fillet_built_group(&cur, group, radius)?, &cur, &counts);
+    }
+    Ok(cur)
 }
 
 /// The first refusal, unless only the second found the blend too large (a smaller one may fit).
@@ -2282,9 +2362,64 @@ pub enum ChamferSide {
     Angle(f64),
 }
 
+/// One independently sized chamfer selection. Points refer to the unmodified source.
+pub struct ChamferSet {
+    pub edges: Vec<Vec3>,
+    pub distance: f64,
+    pub side: Option<ChamferSide>,
+    pub flip: bool,
+}
+
+/// Apply independent groups while composing every step's history over the source.
+/// All groups are resolved before cutting; overlapping selections and consumed
+/// edges are errors, rather than silently moving a later group onto a new edge.
+pub fn chamfer_sets(body: &Body, groups: &[ChamferSet]) -> Result<Body> {
+    if groups.is_empty() || groups.len() > 64 {
+        return Err(KernelError::Invalid("select 1…64 chamfer groups".into()));
+    }
+    let tol = (body.size() * 1e-6).max(1e-5);
+    let mut seen = std::collections::BTreeSet::new();
+    for group in groups {
+        if group.edges.is_empty() || group.edges.len() > 1000 {
+            return Err(KernelError::Invalid("select 1…1000 chamfer edges".into()));
+        }
+        for point in &group.edges {
+            if !point.is_finite() {
+                return Err(KernelError::Invalid("invalid chamfer selection".into()));
+            }
+            let (index, distance) = body.nearest_edge(*point, tol)?.ok_or_else(|| KernelError::Invalid("missing chamfer edge".into()))?;
+            if distance > 2. * tol {
+                return Err(KernelError::Invalid("no edge at the chamfer selection".into()));
+            }
+            if !seen.insert(index) {
+                return Err(KernelError::Invalid("an edge belongs to more than one chamfer selection".into()));
+            }
+            if seen.len() > 1000 {
+                return Err(KernelError::Invalid("select at most 1000 chamfer edges".into()));
+            }
+        }
+    }
+    let counts = record::counts(&[body]);
+    let mut cur = crate::boolean_record::operand(body, 0, &counts);
+    for group in groups {
+        for point in &group.edges {
+            if cur.nearest_edge(*point, tol)?.is_none_or(|(_, distance)| distance > 2. * tol) {
+                return Err(KernelError::Invalid("an earlier chamfer group consumed a selected edge".into()));
+            }
+        }
+        let step = match group.side {
+            Some(side) => chamfer_sides(&cur, &group.edges, group.distance, side, group.flip)?,
+            None => chamfer(&cur, &group.edges, group.distance)?,
+        };
+        cur = record::after(step, &cur, &counts);
+    }
+    Ok(cur)
+}
+
 /// A chamfer with different setbacks on the two faces of each (straight) edge: `d1` along the
 /// first face (the one facing up most, the other with `flip`), the second side by distance or
-/// angle.
+/// angle. For a complete circular cap, side one is the planar cap (the wall with
+/// `flip`), independent of the body's world orientation.
 pub fn chamfer_sides(body: &Body, edges: &[Vec3], d1: f64, side: ChamferSide, flip: bool) -> Result<Body> {
     body.require_brep("chamfer")?;
     let ok = |x: f64| x.is_finite() && x > 1e-6 && x < 1e6;
@@ -2300,6 +2435,14 @@ pub fn chamfer_sides(body: &Body, edges: &[Vec3], d1: f64, side: ChamferSide, fl
         return Err(KernelError::Invalid("select 1…1000 edges".into()));
     }
     let size = crate::blend_fit::Size::Sides(d1, side, flip);
+    let solid = body.deep_copy();
+    let ids = edge_ids(body, &solid, edges)?;
+    if ids.len() == edges.len()
+        && let Some(result) = guard("circular chamfer", || Ok(crate::loopblend::circle_chamfer(&solid, &ids, body.size(), d1, side, flip)))?
+    {
+        let (made, rec) = result?;
+        return crate::blend_fit::accept(body, record::rebuilt(made, &[&solid], &rec)?, edges, size);
+    }
     let counts = record::counts(&[body]);
     let mut cur = crate::boolean_record::operand(body, 0, &counts);
     for (k, p) in edges.iter().enumerate() {
@@ -2557,6 +2700,61 @@ mod tests {
         }
     }
 
+    #[test]
+    fn unequal_partial_cap_chamfer_can_consume_the_entire_wall() {
+        let disk = Region2 { outer: Loop2::circle(Vec2::ZERO, 10.), holes: vec![] };
+        let strip =
+            Region2 { outer: Loop2::polygon(&[Vec2::new(-3., -20.), Vec2::new(3., -20.), Vec2::new(3., 20.), Vec2::new(-3., 20.)]), holes: vec![] };
+        let region = crate::planar_regions_boolean(&[disk], &[strip], crate::BoolOp::Intersect, 1e-8).unwrap();
+        let body = crate::extrude(&Plane::XY, &region, 0., 12.).unwrap().remove(0);
+        let scale = |z| [[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., z, 0.], [0., 0., 0., 1.]];
+        for wall in [2., 12.] {
+            let ratio = 1. / wall;
+            let scaled = crate::transform_matrix(&body, scale(ratio)).unwrap();
+            let made = crate::chamfer(&scaled, &[Vec3::new(0., 10., 12. * ratio), Vec3::new(0., -10., 12. * ratio)], 1.);
+            let made = made.unwrap();
+            let result = crate::transform_matrix(&made, scale(1. / ratio)).unwrap();
+            assert!(result.validity().is_empty());
+            let area = |r: f64| 2. * (3. * (r * r - 9.).sqrt() + r * r * (3. / r).asin());
+            let count = 2000;
+            let integral = (0..=count)
+                .map(|i| {
+                    let r = 9. + i as f64 / count as f64;
+                    let weight = if i == 0 || i == count {
+                        1.
+                    } else if i % 2 == 0 {
+                        2.
+                    } else {
+                        4.
+                    };
+                    weight * area(r)
+                })
+                .sum::<f64>()
+                / (3. * count as f64);
+            let expected = (12. - wall) * area(10.) + wall * integral;
+            let measured = result.tessellate_with(1e-4, true).unwrap().measure().volume;
+            assert!((measured - expected).abs() < 0.1, "{measured} != {expected}");
+        }
+    }
+
+    #[test]
+    fn concave_extension_stays_in_empty_region_without_crossing_its_boundary() {
+        let region = Region2 {
+            outer: Loop2::polygon(&[Vec2::ZERO, Vec2::new(10., 0.), Vec2::new(10., 10.), Vec2::new(0., 10.)]),
+            holes: vec![Loop2::polygon(&[Vec2::new(4., 4.), Vec2::new(6., 4.), Vec2::new(6., 6.), Vec2::new(4., 6.)])],
+        };
+        for plane in [Plane::XY, Plane::XZ] {
+            let face = crate::build::face(&plane, &region).unwrap();
+            let p = plane.to_world(Vec2::new(4., 4.));
+            let allows = |q| extension_avoids_face(&face, p, plane.to_world(q), 1e-6);
+            assert!(allows(Vec2::new(5., 5.)));
+            assert!(!allows(Vec2::new(5., 7.)), "cannot cross the far boundary");
+            assert!(!allows(Vec2::new(4., 5.)), "cannot overlap a boundary");
+            assert!(!allows(Vec2::new(4., 2.)), "cannot enter the old face");
+            assert!(extension_avoids_face(&face, plane.to_world(Vec2::ZERO), plane.to_world(Vec2::new(-1., -1.)), 1e-6));
+        }
+    }
+
     /// A box with a cylinder joined across one side (#556): the bottom edge of that side runs
     /// into the cylinder, which is curved where the edge ends.
     fn box_and_boss() -> Body {
@@ -2788,5 +2986,22 @@ mod tests {
             assert!((actual - removed).abs() < 1e-3 * removed, "{actual} vs {removed}");
             assert!(rounded.validity().is_empty());
         }
+    }
+}
+
+#[cfg(test)]
+mod chamfer_group_tests {
+    use super::*;
+
+    #[test]
+    fn independent_groups_retain_source_history_and_refuse_consumed_edges() {
+        let body = crate::box_solid(Vec3::ZERO, Vec3::new(20., 30., 40.)).unwrap();
+        let group = |point, distance| ChamferSet { edges: vec![point], distance, side: None, flip: false };
+        let a = group(Vec3::new(0., 0., 20.), 2.);
+        let b = group(Vec3::new(20., 30., 20.), 3.);
+        let result = chamfer_sets(&body, &[a, b]).unwrap();
+        assert!(result.history().is_some());
+        let consumed = chamfer_sets(&body, &[group(Vec3::new(0., 0., 20.), 2.), group(Vec3::new(0.5, 0., 0.), 1.)]);
+        assert!(consumed.is_err());
     }
 }

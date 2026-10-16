@@ -1,0 +1,114 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "60 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "12 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Overlapping circles"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 60,
+          "id": "left"
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.circle.center",
+      "params": {
+        "center": [
+          40,
+          0
+        ],
+        "diameter": 60,
+        "id": "right"
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Selected region",
+        "profiles": {
+          "type": "piece_boundaries",
+          "profiles": [
+            {
+              "outer": [
+                {
+                  "curve": "left",
+                  "piece": 2,
+                  "count": 2,
+                  "reversed": false
+                },
+                {
+                  "curve": "right",
+                  "piece": 2,
+                  "count": 2,
+                  "reversed": true
+                }
+              ],
+              "holes": []
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 26495.243666501457,
+    "body_count": 1,
+    "features": [
+      "Overlapping circles",
+      "Selected region"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "diameter",
+        "expression": "70 mm"
+      },
+      "volume_mm3": 35518.01577406621
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "20 mm"
+      },
+      "volume_mm3": 44158.7394441691
+    }
+  ]
+}

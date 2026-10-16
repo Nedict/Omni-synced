@@ -1,0 +1,206 @@
+{
+  "format": "solidcraft-f3d-dev/14",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "diameter",
+      "expr": "24 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "35 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "d1",
+      "expr": "diameter",
+      "unit": "mm",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Base circle",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "c1.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "c1",
+            "type": "circle",
+            "c": 1,
+            "r": 12.0,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 1
+          },
+          {
+            "id": "k2",
+            "type": "diameter",
+            "c": 0,
+            "value": 24.0,
+            "param": "d1"
+          }
+        ],
+        "counters": {
+          "c": 1,
+          "k": 2
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Source extrusion",
+      "suppressed": false,
+      "param_names": [
+        "d2"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "height",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 3,
+      "name": "Overlapping extrusion",
+      "suppressed": false,
+      "param_names": [
+        "d3"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "11",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 4,
+      "name": "Projected circle",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              -3.0597065001790537e-15,
+              -1.2238826000716215e-15
+            ],
+            "fixed": true,
+            "link": "j1"
+          }
+        ],
+        "curves": [
+          {
+            "id": "c1",
+            "type": "circle",
+            "c": 1,
+            "r": 12.0,
+            "construction": false,
+            "link": "j1"
+          }
+        ],
+        "constraints": [],
+        "links": [
+          {
+            "id": "j1",
+            "kind": "project",
+            "source": {
+              "type": "edge",
+              "body": "Body1",
+              "at": [
+                11.999999999999996,
+                -5.6801997782959345e-15,
+                35.0
+              ]
+            },
+            "edge_circle": [
+              "F2:side:c1#2|F2:top",
+              "F2:side:c1#1|F2:top"
+            ]
+          }
+        ],
+        "counters": {
+          "c": 1,
+          "j": 1,
+          "p": 1
+        }
+      }
+    },
+    {
+      "id": 5,
+      "name": "Projected extrusion",
+      "suppressed": false,
+      "param_names": [
+        "d4"
+      ],
+      "type": "extrude",
+      "sketch": 4,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "9",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    }
+  ],
+  "next_id": 6
+}

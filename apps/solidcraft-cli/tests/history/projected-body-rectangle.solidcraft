@@ -1,0 +1,417 @@
+{
+  "format": "solidcraft-f3d-dev/14",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "width",
+      "expr": "30 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "depth",
+      "expr": "20 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "35 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "d1",
+      "expr": "depth",
+      "unit": "mm",
+      "model": true
+    },
+    {
+      "name": "d2",
+      "expr": "width",
+      "unit": "mm",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Rectangle",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              30.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p3",
+            "pos": [
+              30.0,
+              20.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p4",
+            "pos": [
+              0.0,
+              20.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "l1",
+            "type": "line",
+            "a": 1,
+            "b": 2,
+            "construction": false
+          },
+          {
+            "id": "l2",
+            "type": "line",
+            "a": 2,
+            "b": 3,
+            "construction": false
+          },
+          {
+            "id": "l3",
+            "type": "line",
+            "a": 3,
+            "b": 4,
+            "construction": false
+          },
+          {
+            "id": "l4",
+            "type": "line",
+            "a": 4,
+            "b": 1,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "horizontal",
+            "l": 0
+          },
+          {
+            "id": "k2",
+            "type": "horizontal",
+            "l": 2
+          },
+          {
+            "id": "k3",
+            "type": "vertical",
+            "l": 1
+          },
+          {
+            "id": "k4",
+            "type": "vertical",
+            "l": 3
+          },
+          {
+            "id": "k5",
+            "type": "coincident",
+            "p": 0,
+            "q": 1
+          },
+          {
+            "id": "k6",
+            "type": "length",
+            "l": 1,
+            "value": 20.0,
+            "param": "d1"
+          },
+          {
+            "id": "k7",
+            "type": "length",
+            "l": 0,
+            "value": 30.0,
+            "param": "d2"
+          }
+        ],
+        "counters": {
+          "k": 7,
+          "l": 4,
+          "p": 4
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Source extrusion",
+      "suppressed": false,
+      "param_names": [
+        "d3"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "height",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 3,
+      "name": "Overlapping extrusion",
+      "suppressed": false,
+      "param_names": [
+        "d4"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "11",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 4,
+      "name": "Projected rectangle",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              30.0,
+              0.0
+            ],
+            "fixed": true,
+            "link": "j1"
+          },
+          {
+            "id": "p2",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true,
+            "link": "j1"
+          },
+          {
+            "id": "p3",
+            "pos": [
+              30.0,
+              20.0
+            ],
+            "fixed": true,
+            "link": "j2"
+          },
+          {
+            "id": "p4",
+            "pos": [
+              30.0,
+              0.0
+            ],
+            "fixed": true,
+            "link": "j2"
+          },
+          {
+            "id": "p5",
+            "pos": [
+              0.0,
+              20.0
+            ],
+            "fixed": true,
+            "link": "j3"
+          },
+          {
+            "id": "p6",
+            "pos": [
+              30.0,
+              20.0
+            ],
+            "fixed": true,
+            "link": "j3"
+          },
+          {
+            "id": "p7",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true,
+            "link": "j4"
+          },
+          {
+            "id": "p8",
+            "pos": [
+              0.0,
+              20.0
+            ],
+            "fixed": true,
+            "link": "j4"
+          }
+        ],
+        "curves": [
+          {
+            "id": "l1",
+            "type": "line",
+            "a": 1,
+            "b": 2,
+            "construction": false,
+            "link": "j1"
+          },
+          {
+            "id": "l2",
+            "type": "line",
+            "a": 3,
+            "b": 4,
+            "construction": false,
+            "link": "j2"
+          },
+          {
+            "id": "l3",
+            "type": "line",
+            "a": 5,
+            "b": 6,
+            "construction": false,
+            "link": "j3"
+          },
+          {
+            "id": "l4",
+            "type": "line",
+            "a": 7,
+            "b": 8,
+            "construction": false,
+            "link": "j4"
+          }
+        ],
+        "constraints": [],
+        "links": [
+          {
+            "id": "j1",
+            "kind": "project",
+            "source": {
+              "type": "edge",
+              "body": "Body1",
+              "at": [
+                15.0,
+                0.0,
+                35.0
+              ]
+            },
+            "edge_name": "F2:side:l1|F2:top"
+          },
+          {
+            "id": "j2",
+            "kind": "project",
+            "source": {
+              "type": "edge",
+              "body": "Body1",
+              "at": [
+                30.0,
+                10.0,
+                35.0
+              ]
+            },
+            "edge_name": "F2:side:l2|F2:top"
+          },
+          {
+            "id": "j3",
+            "kind": "project",
+            "source": {
+              "type": "edge",
+              "body": "Body1",
+              "at": [
+                15.0,
+                20.0,
+                35.0
+              ]
+            },
+            "edge_name": "F2:side:l3|F2:top"
+          },
+          {
+            "id": "j4",
+            "kind": "project",
+            "source": {
+              "type": "edge",
+              "body": "Body1",
+              "at": [
+                0.0,
+                10.0,
+                35.0
+              ]
+            },
+            "edge_name": "F2:side:l4|F2:top"
+          }
+        ],
+        "counters": {
+          "j": 4,
+          "l": 4,
+          "p": 8
+        }
+      }
+    },
+    {
+      "id": 5,
+      "name": "Projected extrusion",
+      "suppressed": false,
+      "param_names": [
+        "d5"
+      ],
+      "type": "extrude",
+      "sketch": 4,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "9",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    }
+  ],
+  "next_id": 6
+}

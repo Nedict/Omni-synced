@@ -194,6 +194,7 @@ fn convex_dependency_preflight_and_disappearing_region_are_atomic() {
         sources: vec![("unrelated".into(), true); MAX_WORK],
         outputs: Vec::new(),
         distance: 1.,
+        distance_expression: None,
         closed: false,
         topology: None,
     });

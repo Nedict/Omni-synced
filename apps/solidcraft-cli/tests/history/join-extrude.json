@@ -1,0 +1,106 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "24 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "35 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Base circle"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 24
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Base extrusion"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Tool circle"
+      }
+    },
+    {
+      "command": "sketch.circle.center",
+      "params": {
+        "center": [
+          0,
+          0
+        ],
+        "diameter": 10
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": 12,
+        "operation": "join",
+        "name": "Tool extrusion"
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 5040,
+    "body_count": 1,
+    "bounds": [
+      [
+        -12,
+        -12,
+        0
+      ],
+      [
+        12,
+        12,
+        35
+      ]
+    ],
+    "features": [
+      "Base circle",
+      "Base extrusion",
+      "Tool circle",
+      "Tool extrusion"
+    ]
+  },
+  "edits": []
+}

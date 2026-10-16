@@ -1518,12 +1518,28 @@ pub(crate) fn cap_and_close(sides: Vec<Side>, w0: &[mt::Wire], w1: &[mt::Wire], 
 /// Ruled loft through two or more planar sections (outer loops only). The sections and the
 /// same sections in reverse order give the same body.
 pub fn loft(sections: &[(Plane, Loop2)]) -> Result<Body> {
+    loft_with_parameters(sections, LoftParameters::ChordLength)
+}
+
+/// Preserve uniformly spaced section parameters for explicitly authored legacy lofts.
+pub fn loft_uniform(sections: &[(Plane, Loop2)]) -> Result<Body> {
+    loft_with_parameters(sections, LoftParameters::Uniform)
+}
+
+#[derive(Clone, Copy)]
+enum LoftParameters {
+    ChordLength,
+    Uniform,
+    CircularChord(f64),
+}
+
+fn loft_with_parameters(sections: &[(Plane, Loop2)], parameters: LoftParameters) -> Result<Body> {
     let (wires, edge_sources, reversed) = loft_wires(sections)?;
     // The wires run from the first section given, or (turned round) the last.
     // Three sections or more: one smooth surface through them all for each segment.
     if wires.len() >= 3
         && let Ok(b) = guard("loft", || {
-            let faces = smooth_loft_faces(&wires, &edge_sources, true)?;
+            let faces = smooth_loft_faces_at(&wires, &edge_sources, true, parameters)?;
             let (Some(w0), Some(w1)) = (wires.first(), wires.last()) else { return Err(KernelError::Failed("smooth loft: sections".into())) };
             cap_and_close(faces, std::slice::from_ref(w0), std::slice::from_ref(w1), reversed)
         })
@@ -1534,6 +1550,18 @@ pub fn loft(sections: &[(Plane, Loop2)]) -> Result<Body> {
         let sides = ruled_loft_faces(&wires, &edge_sources)?;
         let (Some(first), Some(last)) = (wires.first(), wires.last()) else { return Err(KernelError::Failed("loft".into())) };
         cap_and_close(sides, std::slice::from_ref(first), std::slice::from_ref(last), reversed)
+    })
+}
+
+/// Smooth interpolation through three coaxial circular sections with one chord parameter.
+pub fn loft_circular_chord(sections: &[(Plane, Loop2)]) -> Result<Body> {
+    let (wires, sources, reversed) = loft_wires(sections)?;
+    let ordered: Vec<_> = if reversed { sections.iter().rev().collect() } else { sections.iter().collect() };
+    let middle = crate::loft_chord::middle_parameter(&ordered)?;
+    guard("circular chord loft", || {
+        let faces = smooth_loft_faces_at(&wires, &sources, true, LoftParameters::CircularChord(middle))?;
+        let (Some(first), Some(last)) = (wires.first(), wires.last()) else { return Err(KernelError::Invalid("no sections".into())) };
+        cap_and_close(faces, std::slice::from_ref(first), std::slice::from_ref(last), reversed)
     })
 }
 
@@ -1564,14 +1592,16 @@ pub(crate) fn loft_wires(sections: &[(Plane, Loop2)]) -> Result<(Vec<mt::Wire>, 
     if reversed {
         ordered.reverse();
     }
-    // Orient every section counter-clockwise about the first section's normal (`Body::new`
-    // turns the solid outward), then match segment counts and starting points to the section
-    // with the most segments.
-    let n0 = ordered.first().map(|(p, _)| p.normal()).unwrap_or(Vec3::Z);
+    // Transport winding between neighbouring section planes. Comparing every plane
+    // with the first reverses a section halfway around a bend exceeding 90 degrees.
+    // Opposing coordinate frames still need opposite local winding. `Body::new`
+    // turns the completed solid outward.
+    let mut normal = ordered.first().map(|(p, _)| p.normal()).unwrap_or(Vec3::Z);
     let oriented: Vec<(Plane, NumberedLoop)> = ordered
         .iter()
         .map(|(p, l)| {
-            let ccw = p.normal().dot(n0) >= 0.0;
+            let ccw = p.normal().dot(normal) >= 0.0;
+            normal = if ccw { p.normal() } else { -p.normal() };
             (*p, l.oriented(!ccw))
         })
         .collect();
@@ -1674,6 +1704,10 @@ fn section_parameters(edges: &[Vec<mt::Edge>]) -> Vec<f64> {
 /// more, quadratic across three), neighbours sharing their seams. `closed` wires join their
 /// last edge to their first; open ones have a seam at each end.
 pub(crate) fn smooth_loft_faces(wires: &[mt::Wire], numbers: &[Vec<Vec<usize>>], closed: bool) -> Result<Vec<Side>> {
+    smooth_loft_faces_at(wires, numbers, closed, LoftParameters::ChordLength)
+}
+
+fn smooth_loft_faces_at(wires: &[mt::Wire], numbers: &[Vec<Vec<usize>>], closed: bool, parameters: LoftParameters) -> Result<Vec<Side>> {
     let fail = |m: &str| KernelError::Failed(format!("smooth loft: {m}"));
     let edges: Vec<Vec<mt::Edge>> = wires.iter().map(|w| w.edge_iter().cloned().collect()).collect();
     let n = edges.first().map(Vec::len).ok_or_else(|| fail("no sections"))?;
@@ -1687,7 +1721,12 @@ pub(crate) fn smooth_loft_faces(wires: &[mt::Wire], numbers: &[Vec<Vec<usize>>],
         }
     };
     let (Some(first), Some(last)) = (edges.first(), edges.last()) else { return Err(fail("sections")) };
-    let along = section_parameters(&edges);
+    let along = match parameters {
+        LoftParameters::CircularChord(t) if edges.len() == 3 => vec![0.0, t, 1.0],
+        LoftParameters::CircularChord(_) => return Err(fail("circular chord requires three sections")),
+        LoftParameters::Uniform => (0..edges.len()).map(|i| i as f64 / (edges.len().max(2) - 1) as f64).collect(),
+        LoftParameters::ChordLength => section_parameters(&edges),
+    };
     // Seams: through the k-th vertex of every section (an open wire's last one at the end of
     // its last edge).
     let vertex = |e: &mt::Edge, end: bool| if end { e.back().clone() } else { e.front().clone() };

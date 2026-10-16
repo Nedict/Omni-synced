@@ -1,0 +1,221 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "width",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "base_height",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "tool_height",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Target sketch"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            20,
+            20
+          ]
+        },
+        "dimensions": {
+          "width": "width"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "base_height",
+        "operation": "new_body",
+        "name": "Target",
+        "body_name": "Target"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Tool sketch"
+      }
+    },
+    {
+      "command": "sketch.rectangle.two_point",
+      "params": {
+        "p0": [
+          10,
+          0
+        ],
+        "p1": [
+          30,
+          20
+        ]
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "tool_height",
+        "operation": "new_body",
+        "name": "Tool",
+        "body_name": "Tool"
+      }
+    },
+    {
+      "command": "solid.combine",
+      "params": {
+        "target": "Target",
+        "tools": [
+          "Tool"
+        ],
+        "operation": "cut",
+        "keep_tools": false,
+        "name": "Combined blocks"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 4000,
+    "body_count": 1,
+    "bounds": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        10,
+        20,
+        20
+      ]
+    ],
+    "features": [
+      "Target sketch",
+      "Target",
+      "Tool sketch",
+      "Tool",
+      "Combined blocks"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "width",
+        "expression": "25 mm"
+      },
+      "volume_mm3": 4000,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          10,
+          20,
+          20
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "base_height",
+        "expression": "30 mm"
+      },
+      "volume_mm3": 8000,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          20,
+          30
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "tool_height",
+        "expression": "30 mm"
+      },
+      "volume_mm3": 4000,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          10,
+          20,
+          20
+        ]
+      ]
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Combined blocks",
+        "suppressed": true
+      },
+      "volume_mm3": 16000,
+      "body_count": 2,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          30,
+          20,
+          20
+        ]
+      ]
+    }
+  ]
+}

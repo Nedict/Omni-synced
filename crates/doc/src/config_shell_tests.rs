@@ -535,14 +535,12 @@ fn saved_stepped_tab_cut_piece_projection_is_lost_without_expanding_material() {
     let stem = crate::naming::strip_piece(&former);
     let current_names = crate::naming::face_names(current);
     let merged = current_names.iter().position(|name| name == stem).unwrap();
-    // The Join leaves Case's -x wall on its own support, so the wall keeps its exact box
-    // identity through the Join and the Cut: one face again, no longer the saved piece.
     assert!(
         matches!(
-            current.body.face_sources().and_then(|sources| sources.get(merged)).cloned().flatten(),
-            Some(solidcraft_kernel::FaceSource::Box { axis: 0, high: false, .. })
+            doc.strong_face_target(current, merged, at).unwrap().certificate,
+            Some(crate::config::FaceCertificate::Box { axis: 0, high: false })
         ),
-        "the merged wall carries its exact construction identity"
+        "the unchanged outer wall retains its exact box construction as a loss-only witness"
     );
     assert!(!current_names.contains(&former));
     let mut sketch = Sketch::new();

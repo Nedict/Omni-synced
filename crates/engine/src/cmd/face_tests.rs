@@ -6,7 +6,7 @@ use solidcraft_geom::Vec3;
 use std::f64::consts::PI;
 
 fn run(s: &mut Session, command: &str, params: Value) -> Value {
-    s.execute(command, &params).unwrap_or_else(|e| panic!("{command}: {e}"))
+    s.execute(command, &params).unwrap_or_else(|e| panic!("{command}({params}): {e}"))
 }
 fn check(s: &mut Session, want: f64, hole: bool, height: f64) {
     s.refresh();

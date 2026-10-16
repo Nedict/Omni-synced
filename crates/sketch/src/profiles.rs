@@ -8,6 +8,7 @@
 //! rectangle with a hole, and the disc.
 
 use std::f64::consts::TAU;
+use std::{collections::BTreeMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use solidcraft_geom::{Loop2, Region2, Seg2, Vec2};
@@ -18,6 +19,51 @@ use crate::union_find::{find, union};
 
 const MERGE_TOL: f64 = 1e-6;
 const MAX_EDGES: usize = 50_000;
+
+/// A directed analytic source piece. Numbers are one-based in source direction;
+/// circle piece one contains the positive-X seam, or starts there if it is a cut.
+/// Counts include dangling pieces.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfilePiece {
+    pub curve: String,
+    pub piece: u32,
+    pub count: u32,
+    pub reversed: bool,
+}
+
+#[derive(Clone, Debug)]
+struct CirclePartition {
+    cuts: Vec<f64>,
+    tolerance: f64,
+}
+
+impl CirclePartition {
+    // The seam-containing interval is first; an exact seam cut starts interval one.
+    fn first(&self, seam: f64) -> usize {
+        if self.cuts.is_empty() {
+            return 0;
+        }
+        let next = self.cuts.partition_point(|cut| *cut < seam);
+        let previous = next.checked_sub(1).unwrap_or(self.cuts.len() - 1);
+        // Only adjacent cyclic cuts can touch the seam. Keep remapping logarithmic
+        // when a large profile repeatedly references the same source circle.
+        [next % self.cuts.len(), previous]
+            .into_iter()
+            .filter_map(|index| {
+                let distance = (self.cuts.get(index)? - seam).abs();
+                let distance = distance.min(TAU - distance);
+                (distance <= self.tolerance).then_some((index, distance))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(index, _)| index)
+            .unwrap_or(previous)
+    }
+
+    fn number(&self, index: usize, seam: f64) -> u32 {
+        if self.cuts.is_empty() { 1 } else { ((index + self.cuts.len() - self.first(seam)) % self.cuts.len() + 1) as u32 }
+    }
+}
 
 /// A closed region usable by features, with the ids of the curves bounding it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -34,9 +80,54 @@ pub struct Profile {
     complete_outer: Option<Vec<String>>,
     #[serde(skip)]
     complete_holes: Option<Vec<Vec<String>>>,
+    #[serde(skip)]
+    piece_outer: Option<Vec<ProfilePiece>>,
+    #[serde(skip)]
+    piece_holes: Option<Vec<Vec<ProfilePiece>>>,
+    #[serde(skip)]
+    circle_partitions: Arc<BTreeMap<String, CirclePartition>>,
+    #[serde(skip)]
+    analytic_geometry: Arc<BTreeMap<ProfilePiece, Seg2>>,
 }
 
 impl Profile {
+    /// Exact source-directed graph geometry, certified during graph construction.
+    /// This transient certificate cannot be supplied by a serialized profile.
+    pub fn piece_geometry(&self, piece: &ProfilePiece) -> Option<Seg2> {
+        let key = ProfilePiece { reversed: false, ..piece.clone() };
+        let segment = *self.analytic_geometry.get(&key)?;
+        Some(if piece.reversed { segment.reversed() } else { segment })
+    }
+
+    /// Exact analytic graph pieces, including oriented holes. Uncertified or
+    /// sampled geometry never acquires this identity from serialized input.
+    pub fn piece_boundaries(&self) -> Option<(Vec<ProfilePiece>, Vec<Vec<ProfilePiece>>)> {
+        Some((self.piece_outer.clone()?, self.piece_holes.clone()?))
+    }
+
+    /// Resolve cyclic pieces in each source circle's saved local parameter frame.
+    /// Shared partitions include all graph cuts, including pruned dangling pieces.
+    pub fn piece_boundaries_with_seams(&self, seams: &BTreeMap<String, f64>) -> Option<(Vec<ProfilePiece>, Vec<Vec<ProfilePiece>>)> {
+        let (mut outer, mut holes) = self.piece_boundaries()?;
+        for boundary in std::iter::once(&mut outer).chain(&mut holes) {
+            for piece in boundary.iter_mut() {
+                let Some(seam) = seams.get(&piece.curve) else { continue };
+                if !seam.is_finite() || !(0.0..TAU).contains(seam) {
+                    return None;
+                }
+                let partition = self.circle_partitions.get(&piece.curve)?;
+                if piece.count as usize != partition.cuts.len().max(1) || piece.piece == 0 || piece.piece > piece.count {
+                    return None;
+                }
+                let index = (partition.first(0.) + piece.piece as usize - 1) % piece.count as usize;
+                piece.piece = partition.number(index, *seam);
+            }
+            boundary.sort();
+        }
+        holes.sort();
+        Some((outer, holes))
+    }
+
     /// Whole source boundaries, certified by complete graph-piece coverage. Intersections,
     /// missing spans and unknown sampled geometry cannot acquire this persistent identity.
     pub fn whole_curve_boundaries(&self) -> Option<(Vec<String>, Vec<Vec<String>>)> {
@@ -62,7 +153,8 @@ struct Edge {
     tag: Option<Piece>,
     coverage: Option<Piece>,
     /// A piece of a line, arc or circle (not one sampled from a free-form curve).
-    analytic: bool,
+    analytic: Option<ProfilePiece>,
+    exact_carrier: bool,
 }
 
 /// Do two circles lie within `tol` of each other all the way round?
@@ -82,7 +174,7 @@ fn without_overlaps(edges: &[Edge], tol: f64) -> Vec<bool> {
     // line and an arc never do, nor does a sampled piece of a free-form curve: a chord and its
     // curve bound a region, however thin.
     let same_path = |a: &Edge, b: &Edge| match (a.seg, b.seg) {
-        _ if !(a.analytic && b.analytic) => false,
+        _ if !(a.exact_carrier && b.exact_carrier) => false,
         (Seg2::Line { .. }, Seg2::Line { .. }) => true,
         (Seg2::Arc { center, radius, .. }, Seg2::Arc { center: c2, radius: r2, .. }) => {
             same_circle(center, radius, c2, r2, tol) && a.seg.mid().dist(b.seg.mid()) <= 2.0 * tol
@@ -811,8 +903,9 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
     for a in &anchors {
         node(*a);
     }
-    let mut loops: Vec<(Loop2, Vec<String>, usize, Option<Vec<String>>)> = Vec::new(); // (ccw loop, curve ids, component)
+    let mut loops: Vec<(Loop2, Vec<String>, usize, Option<Vec<String>>, Option<Vec<ProfilePiece>>)> = Vec::new(); // (ccw loop, curve ids, component)
     let mut edges: Vec<Edge> = Vec::new();
+    let mut circle_partitions = BTreeMap::new();
     for (k, (ci, sh)) in shapes.iter().enumerate() {
         let mut ts = cuts.get(k).cloned().unwrap_or_default();
         ts.sort_by(f64::total_cmp);
@@ -831,7 +924,7 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
             ts.pop();
         }
         let id = sk.curves.get(*ci).map(|c| c.id.clone()).unwrap_or_default();
-        let analytic = analytic(*ci);
+        let exact_carrier = analytic(*ci);
         let coverage = tags.get(k).copied().flatten().or_else(|| {
             sk.curves
                 .get(*ci)
@@ -839,6 +932,9 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
                 .map(|_| (*ci, 0, 0, 1))
         });
         let coverage = if ts.is_empty() { coverage } else { None };
+        let analytic = whole_graph_complete
+            && sk.curves.get(*ci).is_some_and(|c| matches!(c.kind, CurveKind::Line { .. } | CurveKind::Arc { .. } | CurveKind::Circle { .. }));
+        let part = |piece: usize, count: usize| ProfilePiece { curve: id.clone(), piece: piece as u32, count: count as u32, reversed: false };
         match *sh {
             Shape::Line { a, b } => {
                 let mut ps = vec![a];
@@ -846,18 +942,38 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
                 ps.push(b);
                 // Pieces split by other curves no longer stand for their whole piece.
                 let tag = if ts.is_empty() { tags.get(k).copied().flatten() } else { None };
-                for w in ps.windows(2) {
+                let pieces: Vec<_> = ps.windows(2).filter(|w| w[0].dist(w[1]) > MERGE_TOL).collect();
+                for (index, w) in pieces.iter().enumerate() {
                     let (p, q) = (w[0], w[1]);
                     if p.dist(q) > MERGE_TOL {
                         let (u, v) = (node(p), node(q));
-                        edges.push(Edge { seg: Seg2::Line { a: p, b: q }, u, v, id: id.clone(), tag, coverage, analytic });
+                        edges.push(Edge {
+                            seg: Seg2::Line { a: p, b: q },
+                            u,
+                            v,
+                            id: id.clone(),
+                            tag,
+                            coverage,
+                            exact_carrier,
+                            analytic: analytic.then(|| part(index + 1, pieces.len())),
+                        });
                     }
                 }
             }
             Shape::Round { c, r, start, sweep } => {
                 let full = sweep >= TAU - 1e-12;
+                let partition = CirclePartition { cuts: ts.clone(), tolerance: close };
+                if full && analytic {
+                    circle_partitions.insert(id.clone(), partition.clone());
+                }
                 if full && ts.is_empty() {
-                    loops.push((Loop2::circle(c, r), vec![id.clone()], usize::MAX - *ci, whole_graph_complete.then(|| vec![id.clone()])));
+                    loops.push((
+                        Loop2::circle(c, r),
+                        vec![id.clone()],
+                        usize::MAX - *ci,
+                        whole_graph_complete.then(|| vec![id.clone()]),
+                        analytic.then(|| vec![part(1, 1)]),
+                    ));
                     continue;
                 }
                 let mut bounds: Vec<f64> =
@@ -866,18 +982,39 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
                     let first = bounds.first().copied().unwrap_or(0.0);
                     bounds.push(first + TAU);
                 }
-                for w in bounds.windows(2) {
+                let pieces: Vec<_> = bounds.windows(2).filter(|w| (w[1] - w[0]) * r > MERGE_TOL).collect();
+                for (index, w) in pieces.iter().enumerate() {
                     let (t0, t1) = (w[0], w[1]);
                     if (t1 - t0) * r <= MERGE_TOL {
                         continue;
                     }
                     let seg = Seg2::Arc { center: c, radius: r, start: start + t0, sweep: t1 - t0 };
                     let (u, v) = (node(seg.start()), node(seg.end()));
-                    edges.push(Edge { seg, u, v, id: id.clone(), tag: None, coverage, analytic });
+                    edges.push(Edge {
+                        seg,
+                        u,
+                        v,
+                        id: id.clone(),
+                        tag: None,
+                        coverage,
+                        exact_carrier,
+                        analytic: analytic.then(|| part(if full { partition.number(index, 0.) as usize } else { index + 1 }, pieces.len())),
+                    });
                 }
             }
         }
     }
+    // Preserve analytic carriers before pruning/restoring graph edges. Share one
+    // bounded map across all faces, including isolated circles and dangling cuts.
+    let mut analytic_geometry: BTreeMap<_, _> = edges.iter().filter_map(|edge| Some((edge.analytic.clone()?, edge.seg))).collect();
+    for (boundary, _, _, _, pieces) in &loops {
+        if let (Some(pieces), Some(Seg2::Arc { center, radius, start, .. })) = (pieces, boundary.segs.first())
+            && let [piece] = pieces.as_slice()
+        {
+            analytic_geometry.insert(piece.clone(), Seg2::Arc { center: *center, radius: *radius, start: *start, sweep: TAU });
+        }
+    }
+    let analytic_geometry = Arc::new(analytic_geometry);
     let n = nodes.len();
     // One edge where pieces overlap, then prune dangling edges.
     let mut alive = without_overlaps(&edges, tol);
@@ -940,6 +1077,7 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
         let mut ids = Vec::new();
         let mut ptags: Vec<Option<(Piece, bool)>> = Vec::new();
         let mut coverage_tags = Vec::new();
+        let mut analytic_pieces = Some(Vec::new());
         let mut h = start;
         let mut ok = true;
         for _ in 0..=edges.len() * 2 {
@@ -955,9 +1093,17 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
                 ids.push(e.id.clone());
                 ptags.push(e.tag.map(|t| (t, h.is_multiple_of(2))));
                 coverage_tags.push(e.coverage.map(|t| (t, h.is_multiple_of(2))));
+                if let (Some(pieces), Some(piece)) = (&mut analytic_pieces, &e.analytic) {
+                    let mut piece = piece.clone();
+                    piece.reversed = !h.is_multiple_of(2);
+                    pieces.push(piece);
+                } else {
+                    analytic_pieces = None;
+                }
             } else {
                 ptags.push(None);
                 coverage_tags.push(None);
+                analytic_pieces = None;
             }
             let back = (-seg.end_tangent()).angle();
             let twin = h ^ 1;
@@ -1003,16 +1149,19 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
         let lp = Loop2 { segs: restore_exact(segs, &ptags, &exact) };
         if lp.signed_area() > 1e-9 {
             let c = edges.get(start / 2).map(|e| find(&mut comp, e.u)).unwrap_or(0);
-            loops.push((lp, ids, c, whole_graph_complete.then(|| complete_loop(&coverage_tags, &expected, sk)).flatten()));
+            if let Some(pieces) = &mut analytic_pieces {
+                pieces.sort();
+            }
+            loops.push((lp, ids, c, whole_graph_complete.then(|| complete_loop(&coverage_tags, &expected, sk)).flatten(), analytic_pieces));
         }
     }
 
     // Nesting: parent = smallest containing loop from another component. Bounding boxes rule
     // out most pairs before the point-in-loop test.
-    let areas: Vec<f64> = loops.iter().map(|(l, _, _, _)| l.signed_area().abs()).collect();
+    let areas: Vec<f64> = loops.iter().map(|(l, _, _, _, _)| l.signed_area().abs()).collect();
     let boxes: Vec<(Vec2, Vec2)> = loops
         .iter()
-        .map(|(l, _, _, _)| {
+        .map(|(l, _, _, _, _)| {
             l.polyline(1e-3).iter().fold((Vec2::new(f64::INFINITY, f64::INFINITY), Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY)), |(lo, hi), p| {
                 (Vec2::new(lo.x.min(p.x), lo.y.min(p.y)), Vec2::new(hi.x.max(p.x), hi.y.max(p.y)))
             })
@@ -1020,11 +1169,11 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
         .collect();
     let inside_box = |j: usize, p: Vec2| boxes.get(j).is_some_and(|(lo, hi)| p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y);
     let mut parent_of: Vec<Option<usize>> = vec![None; loops.len()];
-    for (i, (li, _, ci, _)) in loops.iter().enumerate() {
+    for (i, (li, _, ci, _, _)) in loops.iter().enumerate() {
         let probe = li.segs.first().map(Seg2::mid).unwrap_or_default();
         let ai = areas.get(i).copied().unwrap_or(0.0);
         let mut best: Option<(f64, usize)> = None;
-        for (j, (lj, _, cj, _)) in loops.iter().enumerate() {
+        for (j, (lj, _, cj, _, _)) in loops.iter().enumerate() {
             let aj = areas.get(j).copied().unwrap_or(0.0);
             if i == j || ci == cj || aj <= ai || !inside_box(j, probe) || best.is_some_and(|(ba, _)| aj >= ba) {
                 continue;
@@ -1045,13 +1194,14 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
             v.push(k);
         }
     }
+    let circle_partitions = Arc::new(circle_partitions);
     let out: Vec<Profile> = loops
         .iter()
         .enumerate()
-        .map(|(i, (l, ids, _, complete_outer))| {
+        .map(|(i, (l, ids, _, complete_outer, piece_outer))| {
             let kids: Vec<usize> = kids_of.get(i).cloned().unwrap_or_default();
-            let holes: Vec<Loop2> = kids.iter().filter_map(|k| loops.get(*k).map(|(h, _, _, _)| h.ccw().reversed())).collect();
-            let hole_curves: Vec<Vec<String>> = kids.iter().filter_map(|k| loops.get(*k).map(|(_, ids, _, _)| ids.clone())).collect();
+            let holes: Vec<Loop2> = kids.iter().filter_map(|k| loops.get(*k).map(|(h, _, _, _, _)| h.ccw().reversed())).collect();
+            let hole_curves: Vec<Vec<String>> = kids.iter().filter_map(|k| loops.get(*k).map(|(_, ids, _, _, _)| ids.clone())).collect();
             let region = Region2 { outer: l.ccw(), holes };
             let area = region.area();
             let centroid = region.centroid();
@@ -1059,7 +1209,33 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
             if let Some(holes) = &mut complete_holes {
                 holes.sort();
             }
-            Profile { region, outer_curves: ids.clone(), hole_curves, area, centroid, complete_outer: complete_outer.clone(), complete_holes }
+            let mut piece_holes = kids
+                .iter()
+                .map(|k| {
+                    let mut pieces = loops.get(*k)?.4.clone()?;
+                    for piece in &mut pieces {
+                        piece.reversed = !piece.reversed;
+                    }
+                    pieces.sort();
+                    Some(pieces)
+                })
+                .collect::<Option<Vec<_>>>();
+            if let Some(holes) = &mut piece_holes {
+                holes.sort();
+            }
+            Profile {
+                analytic_geometry: Arc::clone(&analytic_geometry),
+                circle_partitions: Arc::clone(&circle_partitions),
+                piece_outer: piece_outer.clone(),
+                piece_holes,
+                region,
+                outer_curves: ids.clone(),
+                hole_curves,
+                area,
+                centroid,
+                complete_outer: complete_outer.clone(),
+                complete_holes,
+            }
         })
         .collect();
     let index: std::collections::HashMap<&str, usize> = sk.curves.iter().enumerate().map(|(i, c)| (c.id.as_str(), i)).collect();
@@ -1281,6 +1457,85 @@ pub fn merge_regions(regions: &[Region2]) -> Vec<Region2> {
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod whole_boundary_tests {
     use super::*;
+
+    #[test]
+    fn analytic_piece_geometry_is_transient_and_preserves_directions() {
+        let mut sketch = Sketch::new();
+        sketch.add_circle(Vec2::ZERO, 30., None, Some("circle")).unwrap();
+        for divided in [false, true] {
+            if divided {
+                sketch.add_line(Vec2::new(-50., 0.), Vec2::new(50., 0.), None, None, Some("divider")).unwrap();
+            }
+            for profile in find_profiles(&sketch) {
+                let (outer, holes) = profile.piece_boundaries().unwrap();
+                assert!(holes.is_empty());
+                let roundtrip: Profile = serde_json::from_value(serde_json::to_value(&profile).unwrap()).unwrap();
+                for piece in outer {
+                    let segment = profile.piece_geometry(&piece).unwrap();
+                    let reversed = profile.piece_geometry(&ProfilePiece { reversed: !piece.reversed, ..piece.clone() }).unwrap();
+                    assert!(segment.start().dist(reversed.end()) < 1e-9);
+                    assert!(segment.end().dist(reversed.start()) < 1e-9);
+                    assert!(roundtrip.piece_geometry(&piece).is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn circle_quadrants_resolve_exact_and_rotated_seams() {
+        use std::f64::consts::PI;
+        let mut sk = Sketch::new();
+        sk.add_circle(Vec2::ZERO, 30., None, Some("circle")).unwrap();
+        sk.add_line(Vec2::new(-50., 0.), Vec2::new(50., 0.), None, None, Some("horizontal")).unwrap();
+        sk.add_line(Vec2::new(0., -50.), Vec2::new(0., 50.), None, None, Some("vertical")).unwrap();
+        let profiles = find_profiles(&sk);
+        assert_eq!(profiles.len(), 4);
+        for profile in &profiles {
+            let quadrant = match (profile.centroid.x > 0., profile.centroid.y > 0.) {
+                (true, true) => 0,
+                (false, true) => 1,
+                (false, false) => 2,
+                (true, false) => 3,
+            };
+            assert!((profile.area - 225. * PI).abs() < 1e-6);
+            for (seam, first) in [(0., 0), (1e-10, 0), (TAU - 1e-10, 0), (PI / 3., 0), (PI / 2., 1), (PI, 2), (5. * PI / 3., 3)] {
+                let (outer, holes) = profile.piece_boundaries_with_seams(&BTreeMap::from([("circle".into(), seam)])).unwrap();
+                assert!(holes.is_empty());
+                let part = outer.iter().find(|p| p.curve == "circle").unwrap();
+                assert_eq!((part.piece, part.count, part.reversed), ((quadrant + 4 - first) % 4 + 1, 4, false));
+            }
+            for seam in [-1., TAU, f64::NAN, f64::INFINITY] {
+                assert!(profile.piece_boundaries_with_seams(&BTreeMap::from([("circle".into(), seam)])).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn partial_arcs_number_from_the_rotated_start_and_include_dangling_lines() {
+        use std::f64::consts::PI;
+        for phase in [0., PI / 3., PI] {
+            let rotate = |x: f64, y: f64| Vec2::new(x * phase.cos() - y * phase.sin(), x * phase.sin() + y * phase.cos());
+            let mut sk = Sketch::new();
+            sk.add_arc(Vec2::ZERO, rotate(30., 0.), rotate(-30., 0.), [None; 3], Some("arc")).unwrap();
+            sk.add_line(rotate(-30., 0.), rotate(30., 0.), None, None, Some("chord")).unwrap();
+            sk.add_line(rotate(10., -10.), rotate(10., 40.), None, None, Some("divider")).unwrap();
+            let profiles = find_profiles(&sk);
+            assert_eq!(profiles.len(), 2);
+            for profile in profiles {
+                let right = profile.centroid.x * phase.cos() + profile.centroid.y * phase.sin() > 10.;
+                let (outer, holes) = profile.piece_boundaries().unwrap();
+                assert!(holes.is_empty());
+                let parts = outer.iter().map(|p| (p.curve.as_str(), p.piece, p.count, p.reversed)).collect::<Vec<_>>();
+                assert_eq!(
+                    parts,
+                    [("arc", if right { 1 } else { 2 }, 2, false), ("chord", if right { 2 } else { 1 }, 2, false), ("divider", 2, 3, right)]
+                );
+                let cap = (900. * (10_f64 / 30.).acos() - 10. * 800_f64.sqrt()) / 2.;
+                let expected = if right { cap } else { 450. * PI - cap };
+                assert!((profile.area - expected).abs() < 1e-6);
+            }
+        }
+    }
 
     #[test]
     fn whole_boundary_coverage_requires_every_piece_once_in_one_direction() {

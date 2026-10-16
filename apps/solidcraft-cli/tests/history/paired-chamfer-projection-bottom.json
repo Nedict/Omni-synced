@@ -1,0 +1,331 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "40 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "30 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "bevel",
+        "expression": "2 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "extension",
+        "expression": "7 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Base circle"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 40
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Cylinder",
+        "body_name": "Cylinder",
+        "operation": "new_body"
+      }
+    },
+    {
+      "command": "solid.chamfer",
+      "params": {
+        "edges": [
+          [
+            0,
+            20,
+            30
+          ],
+          [
+            0,
+            -20,
+            30
+          ],
+          [
+            0,
+            20,
+            0
+          ],
+          [
+            0,
+            -20,
+            0
+          ]
+        ],
+        "distance": "bevel",
+        "body": "Cylinder",
+        "name": "Both bevels"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": {
+          "face": [
+            0,
+            0,
+            0
+          ]
+        },
+        "project_edges": false,
+        "name": "Projected bevel"
+      }
+    },
+    {
+      "command": "sketch.project",
+      "params": {
+        "refs": [
+          {
+            "body": "Cylinder",
+            "edge": [
+              0,
+              18,
+              0
+            ]
+          },
+          {
+            "body": "Cylinder",
+            "edge": [
+              0,
+              -18,
+              0
+            ]
+          }
+        ],
+        "circle": true
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "extension",
+        "operation": "new_body",
+        "name": "Projected extrusion"
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 14113.333333333334,
+    "body_count": 2,
+    "bounds": [
+      [
+        -20,
+        -20,
+        -7
+      ],
+      [
+        20,
+        20,
+        30
+      ]
+    ],
+    "bounds_tolerance_mm": 0.01,
+    "center_of_mass": [
+      0,
+      0,
+      12.027066603684458
+    ],
+    "center_of_mass_tolerance_mm": 0.02,
+    "features": [
+      "Base circle",
+      "Cylinder",
+      "Both bevels",
+      "Projected bevel",
+      "Projected extrusion"
+    ],
+    "sketches": [
+      {
+        "name": "Projected bevel",
+        "curves": 1,
+        "links": 1
+      }
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "diameter",
+        "expression": "50 mm"
+      },
+      "volume_pi_mm3": 22258.333333333332,
+      "body_count": 2,
+      "bounds": [
+        [
+          -25,
+          -25,
+          -7
+        ],
+        [
+          25,
+          25,
+          30
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01,
+      "center_of_mass": [
+        0,
+        0,
+        11.92225383751404
+      ],
+      "center_of_mass_tolerance_mm": 0.02
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "40 mm"
+      },
+      "volume_pi_mm3": 18113.333333333336,
+      "body_count": 2,
+      "bounds": [
+        [
+          -20,
+          -20,
+          -7
+        ],
+        [
+          20,
+          20,
+          40
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01,
+      "center_of_mass": [
+        0,
+        0,
+        17.05752668384247
+      ],
+      "center_of_mass_tolerance_mm": 0.02
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "bevel",
+        "expression": "4 mm"
+      },
+      "volume_pi_mm3": 13194.666666666666,
+      "body_count": 2,
+      "bounds": [
+        [
+          -20,
+          -20,
+          -7
+        ],
+        [
+          20,
+          20,
+          30
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01,
+      "center_of_mass": [
+        0,
+        0,
+        12.4874696847211
+      ],
+      "center_of_mass_tolerance_mm": 0.02
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "extension",
+        "expression": "9 mm"
+      },
+      "volume_pi_mm3": 14761.333333333334,
+      "body_count": 2,
+      "bounds": [
+        [
+          -20,
+          -20,
+          -9
+        ],
+        [
+          20,
+          20,
+          30
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01,
+      "center_of_mass": [
+        0,
+        0,
+        11.147908951314244
+      ],
+      "center_of_mass_tolerance_mm": 0.02
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Projected extrusion",
+        "suppressed": true
+      },
+      "volume_pi_mm3": 11845.333333333334,
+      "body_count": 1,
+      "bounds": [
+        [
+          -20,
+          -20,
+          0
+        ],
+        [
+          20,
+          20,
+          30
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01,
+      "center_of_mass": [
+        0,
+        0,
+        15.0
+      ],
+      "center_of_mass_tolerance_mm": 0.02
+    }
+  ]
+}

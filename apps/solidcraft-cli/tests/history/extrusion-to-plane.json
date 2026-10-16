@@ -1,0 +1,206 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "30 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "width",
+        "expression": "10 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "offset",
+        "expression": "-5 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Base sketch"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            40,
+            30
+          ]
+        },
+        "dimensions": {
+          "width": "40 mm",
+          "height": "30 mm"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Base",
+        "body_name": "Base"
+      }
+    },
+    {
+      "command": "construct.plane.offset",
+      "params": {
+        "base": "XY",
+        "offset": "height - 10 mm",
+        "name": "Stop"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Cut sketch"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            5,
+            5
+          ],
+          "p1": [
+            15,
+            15
+          ]
+        },
+        "dimensions": {
+          "width": "width",
+          "height": "10 mm"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "to_plane": "Stop",
+        "to_offset": "offset",
+        "operation": "cut",
+        "targets": [
+          "Base"
+        ],
+        "name": "Pocket"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 34500,
+    "body_count": 1,
+    "bounds": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        40,
+        30,
+        30
+      ]
+    ],
+    "features": [
+      "Base sketch",
+      "Base",
+      "Stop",
+      "Cut sketch",
+      "Pocket"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "60 mm"
+      },
+      "volume_mm3": 67500,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          40,
+          30,
+          60
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "width",
+        "expression": "15 mm"
+      },
+      "volume_mm3": 33750,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          40,
+          30,
+          30
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "offset",
+        "expression": "-10 mm"
+      },
+      "volume_mm3": 35000,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          40,
+          30,
+          30
+        ]
+      ]
+    }
+  ]
+}

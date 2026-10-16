@@ -1,0 +1,288 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "tip_radius",
+        "expression": "1 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "wing_depth",
+        "expression": "2 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "extension",
+        "expression": "15 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "40 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "setback",
+        "expression": "2 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "second",
+        "expression": "3 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Rim profile"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 20
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Block",
+        "body_name": "Block"
+      }
+    },
+    {
+      "command": "solid.chamfer",
+      "params": {
+        "edges": [
+          [
+            0,
+            10,
+            40
+          ],
+          [
+            0,
+            -10,
+            40
+          ]
+        ],
+        "tangent_chain": false,
+        "name": "Beveled rim",
+        "distance": "setback",
+        "flip": false,
+        "distance2": "second"
+      }
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "face": [
+          0,
+          0,
+          40
+        ],
+        "body": "Block",
+        "operation": "join",
+        "distance": "extension",
+        "name": "Cap extension"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "offset": "height + extension",
+        "name": "Wing profile"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 16
+        },
+        "dimensions": {
+          "diameter": "diameter - 2 * setback"
+        }
+      }
+    },
+    {
+      "command": "sketch.rectangle.two_point",
+      "params": {
+        "p0": [
+          -1.875,
+          -25
+        ],
+        "p1": [
+          1.875,
+          25
+        ]
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "-wing_depth",
+        "operation": "join",
+        "profiles": [
+          {
+            "point": [
+              0,
+              -20
+            ]
+          }
+        ],
+        "targets": [
+          "Block"
+        ],
+        "name": "Partial wall wing"
+      }
+    },
+    {
+      "command": "solid.fillet",
+      "params": {
+        "name": "Wing tip blend",
+        "edges": [
+          [
+            0,
+            -25,
+            55
+          ],
+          [
+            0,
+            -25,
+            53
+          ]
+        ],
+        "radius": "tip_radius",
+        "body": "Block",
+        "tangent_chain": false
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 15532.814793309779,
+    "body_count": 1,
+    "bounds": [
+      [
+        -10.0,
+        -25,
+        0
+      ],
+      [
+        10.0,
+        10.0,
+        55
+      ]
+    ],
+    "bounds_tolerance_mm": 0.01,
+    "features": [
+      "Rim profile",
+      "Block",
+      "Beveled rim",
+      "Sketch1",
+      "Cap extension",
+      "Wing profile",
+      "Partial wall wing",
+      "Wing tip blend"
+    ],
+    "sketches": [
+      {
+        "name": "Sketch1",
+        "curves": 2,
+        "links": 1
+      }
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "tip_radius",
+        "expression": "0.75 mm"
+      },
+      "volume_mm3": 15533.51895558613,
+      "body_count": 1
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "42 mm"
+      },
+      "volume_mm3": 16161.133324027738,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -25,
+          0
+        ],
+        [
+          10,
+          10,
+          57
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Wing tip blend",
+        "suppressed": true
+      },
+      "volume_mm3": 15534.424307084299,
+      "body_count": 1
+    }
+  ]
+}

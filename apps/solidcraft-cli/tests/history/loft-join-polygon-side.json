@@ -1,0 +1,211 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "base_height",
+        "expression": "10 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "60 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Stepped section"
+      }
+    },
+    {
+      "command": "sketch.line",
+      "params": {
+        "points": [
+          [
+            0,
+            0
+          ],
+          [
+            40,
+            0
+          ],
+          [
+            40,
+            10
+          ],
+          [
+            30,
+            10
+          ],
+          [
+            30,
+            30
+          ],
+          [
+            10,
+            30
+          ],
+          [
+            10,
+            10
+          ],
+          [
+            0,
+            10
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        "infer": false
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "base_height",
+        "name": "Pedestal"
+      }
+    },
+    {
+      "command": "construct.plane.offset",
+      "params": {
+        "base": "YZ",
+        "offset": "height",
+        "name": "Upper plane"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "Upper plane",
+        "name": "Upper section"
+      }
+    },
+    {
+      "command": "sketch.rectangle.two_point",
+      "params": {
+        "p0": [
+          0,
+          0
+        ],
+        "p1": [
+          30,
+          40
+        ]
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.loft",
+      "params": {
+        "sections": [
+          {
+            "face": [
+              40,
+              5,
+              5
+            ]
+          },
+          {
+            "sketch": "Upper section"
+          }
+        ],
+        "name": "Transition",
+        "operation": "join",
+        "targets": [
+          "Body1"
+        ],
+        "interpolation": "uniform"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 19000,
+    "body_count": 1,
+    "features": [
+      "Stepped section",
+      "Pedestal",
+      "Upper plane",
+      "Upper section",
+      "Transition"
+    ],
+    "bounds": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        60,
+        30,
+        40
+      ]
+    ],
+    "sketches": [
+      {
+        "name": "Stepped section",
+        "curves": 8,
+        "links": 0
+      }
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "base_height",
+        "expression": "15 mm"
+      },
+      "volume_mm3": 23833.3333333333,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          60,
+          30,
+          40
+        ]
+      ],
+      "body_count": 1
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "70 mm"
+      },
+      "volume_mm3": 24500,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          70,
+          30,
+          40
+        ]
+      ],
+      "body_count": 1
+    }
+  ]
+}

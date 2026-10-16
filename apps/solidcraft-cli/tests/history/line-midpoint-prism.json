@@ -1,0 +1,273 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "width",
+        "expression": "30 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "depth",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "17 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "elevation",
+        "expression": "10 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Common line centers"
+      }
+    },
+    {
+      "command": "sketch.rectangle.two_point",
+      "params": {
+        "p0": [
+          -15,
+          10
+        ],
+        "p1": [
+          15,
+          30
+        ]
+      }
+    },
+    {
+      "command": "sketch.line",
+      "params": {
+        "points": [
+          [
+            -40,
+            10
+          ],
+          [
+            40,
+            10
+          ]
+        ],
+        "construction": true,
+        "infer": false,
+        "ids": [
+          "axis"
+        ]
+      }
+    },
+    {
+      "command": "sketch.constraint.horizontal_vertical",
+      "params": {
+        "line": "axis",
+        "mode": "horizontal"
+      }
+    },
+    {
+      "command": "sketch.dimension",
+      "params": {
+        "entities": [
+          "axis"
+        ],
+        "type": "length",
+        "value": "80 mm"
+      }
+    },
+    {
+      "command": "sketch.dimension",
+      "params": {
+        "entities": [
+          "origin",
+          "axis.start"
+        ],
+        "type": "horizontal",
+        "value": "40 mm"
+      }
+    },
+    {
+      "command": "sketch.dimension",
+      "params": {
+        "entities": [
+          "origin",
+          "axis.start"
+        ],
+        "type": "vertical",
+        "value": "elevation"
+      }
+    },
+    {
+      "command": "sketch.point",
+      "params": {
+        "point": [
+          0,
+          10
+        ],
+        "id": "middle",
+        "connect": false
+      }
+    },
+    {
+      "command": "sketch.constraint.midpoint",
+      "params": {
+        "point": "middle",
+        "line": "axis"
+      }
+    },
+    {
+      "command": "sketch.constraint.midpoint",
+      "params": {
+        "point": "middle",
+        "line": "l1"
+      }
+    },
+    {
+      "command": "sketch.dimension",
+      "params": {
+        "entities": [
+          "l1"
+        ],
+        "type": "length",
+        "value": "width"
+      }
+    },
+    {
+      "command": "sketch.dimension",
+      "params": {
+        "entities": [
+          "l2"
+        ],
+        "type": "length",
+        "value": "depth"
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Centered prism"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 10200,
+    "bounds": [
+      [
+        -15.0,
+        10,
+        0
+      ],
+      [
+        15.0,
+        30,
+        17
+      ]
+    ],
+    "body_count": 1,
+    "features": [
+      "Common line centers",
+      "Centered prism"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "width",
+        "expression": "45 mm"
+      },
+      "volume_mm3": 15300,
+      "bounds": [
+        [
+          -22.5,
+          10,
+          0
+        ],
+        [
+          22.5,
+          30,
+          17
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "depth",
+        "expression": "25 mm"
+      },
+      "volume_mm3": 12750,
+      "bounds": [
+        [
+          -15.0,
+          10,
+          0
+        ],
+        [
+          15.0,
+          35,
+          17
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "23 mm"
+      },
+      "volume_mm3": 13800,
+      "bounds": [
+        [
+          -15.0,
+          10,
+          0
+        ],
+        [
+          15.0,
+          30,
+          23
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "elevation",
+        "expression": "25 mm"
+      },
+      "volume_mm3": 10200,
+      "bounds": [
+        [
+          -15.0,
+          25,
+          0
+        ],
+        [
+          15.0,
+          45,
+          17
+        ]
+      ]
+    }
+  ]
+}

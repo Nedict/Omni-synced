@@ -354,6 +354,172 @@ annotations and exact projected curves remain deferred. See [view DXF](docs/view
   offset surfaces and pcurve-only edges are not read yet,
   and assembly components are flattened into bodies. Closed periodic faces (torus, B-spline
   bands) are split in two for meshing; measure() uses a finer tolerance for small radii.
+- Two-section native F3D lofts preserve ordered sketch profiles and certified
+  circular/rectangular extrusion-cap sections, including explicit Join targets. Source
+  dimensions, parent heights, plane dependencies and suppression remain editable.
+  Three coaxial circular sections also retain editable chord-length interpolation.
+  Nineteen original loft recipes and a rotated-plane prism extend the
+  editable-history suite to 74 files, including exact extrusion endpoints and logical
+  start/end cap identities that follow signed travel reversals.
+  Separate native body mirrors retain explicit extrusion producers and live origin
+  or offset construction planes, including multiple sources and suppression.
+  Distance-extrusion feature mirrors preserve New Body, Join and Cut operations,
+  including multiple selected features and live source dimensions. Legacy mirror
+  schemas retain explicit source/target links; consumed outputs do not suppress
+  their producing feature. Combined mirrors, face mirrors, To Object feature
+  mirrors and modified-body sources remain unsupported.
+  Finite planar Join certificates retain contributing extrusion identities for
+  editable side-face loft attachments. Native rectangular side selectors now
+  validate a closed four-edge incidence graph and resolve explicit sketch-curve
+  labels on all four sides, separate-sketch joins and whole-line polygon profiles.
+  Legacy operation maps and retired tags preserve live producer ownership.
+  Legacy loft selector prefixes, inherited tails and body-role positions now
+  retain the same four adapter face identities as an unchanged modern resave;
+  compound targets from a creating extrusion and subsequent extrusion or loft Joins
+  retain each operation and validate explicit whole-body labels and ownership. Serial
+  loft targets check prior/current operation roles. Retired target entries and the
+  rest of the adapter remain incomplete.
+  Rotated sketch bases retain live offset-plane dependencies.
+  One-sided native To Object cuts now retain verified parallel planar face and
+  construction-plane endpoints plus editable offsets. Signed cap labels resolve
+  negative extrusions correctly. Nonparallel endpoints and other composite selector
+  roles remain incomplete.
+  General multi-section interpolation, other native face recipes and the larger supplied
+  designs remain incomplete.
+- Native F3D investigation: bounded archive/index inspection via `file.inspect_f3d`
+  now has a [whole-corpus acceptance gate and external decoder evaluation](docs/f3d-reference-evaluation.md).
+  Split extrusion caps and explicitly owned composite cylinder families now resolve
+  finite fillet edges whose endpoints meet the same cylinder. Style 2's first shoulder
+  fillet rebuilds and edits after reopening; an original band-on-cylinder fixture
+  checks added volume, centroid and parameter edits. Individual ambiguous face pieces
+  remain uncertified even when their whole source family is known.
+  The 17 supplied designs still expose broad compatibility gaps; isolated feature
+  tests do not establish complete imports. Legacy two-edge point records preserve
+  their source references, and import errors identify the failing timeline record.
+  The archive/index inspection
+  validates four supplied local files without changing the current design. Layout 8
+  supports Zstandard archives and inspection of parameter expressions, values,
+  owner references, ordered timelines, names/suppression, sketch placement, circle
+  construction, selected circular profiles and coincidence/diameter relationships.
+  Twenty-five local Fusion controls cover dimension edits, reversal, renaming,
+  placement, reordering, body operations, suppression and constraint removal.
+  Twenty-nine original native SolidCraft fixtures check analytic volumes/bounds and edits.
+  `doc.open` now reconstructs verified layout-8 circle/line/arc sketches and one-sided
+  or symmetric distance extrusions as editable history, with driving parameters, fixation, taper and
+  atomic failure. Thirty local native imports check volumes/placement; original
+  synthetic records exercise reconstruction and edits in ordinary CI. Rectangular
+  profiles preserve endpoint references, horizontal/vertical constraints and driving
+  dimensions, including aligned point distances, reordered graph connections,
+  shared-curve relationships and reversed references. Centerlines retain their line
+  type and stay out of profiles; absent optional metadata decodes without losing
+  geometry. Sketch-to-sketch line/circle projections retain source links, including
+  shared vertices, and follow source edits after reopening. Native topology-operation
+  tags now expose verified feature ownership. SolidCraft edge links retain persistent
+  edge names across large edits and overlapping bodies. Verified circular cap-edge
+  projections from positive, untapered independent extrusions now import as single
+  associated circles, including when the kernel boundary uses multiple edges.
+  Rectangular cap-edge projections retain shared corners and follow the correct
+  source body through dimension edits and reopening. Unique complete finite-edge
+  correspondence verifies source curves without depending on native profile order.
+  Other body-edge projections and unresolved source schemas remain unsupported;
+  driven dimensions fail atomically. Native mm/degree feature-input
+  names now survive timeline edits with their expression dependencies. Arc endpoints,
+  major/rotated sweeps and profiles with holes retain exact curve references, with
+  independent native controls and analytic fixtures. Radius and arc-diameter dimensions,
+  parallel/perpendicular/collinear/equal/concentric/tangent relationships, point
+  alignment and point-on-curve/line-midpoint relationships retain their native bindings.
+  Offset construction planes preserve parent and sketch dependencies, including
+  chained and negative offsets. Numeric user parameters preserve expressions,
+  comments, favorites and user/model roles. Legacy parameter schemas decode all
+  411 records in the three larger supplied files; their legacy feature histories
+  now expose every ordered timeline entry and all seventeen timeline sketches, but
+  still need full reconstruction. Legacy analytic geometry now decodes all 775 points
+  and 599 curves in the supplied files, including split primary/secondary entities;
+  unresolved metadata and relationships remain explicit. Legacy constraint containers preserve
+  complete relation/dimension lists across versions 16–18. Verified point, line and circle
+  symmetry imports preserve editable relationships, including equal circle radii.
+  Symmetry axes and entity roles come from ordered references independently of
+  graph registration order, verified against all 113 supplied-file symmetries.
+  Point-to-line and parallel-line offset dimensions retain their driving parameters
+  through edits, reopening and undo; independent controls check both volume and bounds.
+  Angular dimensions preserve quadrants and clockwise/supplementary edit directions,
+  including 0°, 90° and 180° controls. Native fixed line supports and arc centers/radii leave unfixed
+  endpoints editable instead of freezing their positions; an original arc-segment
+  fixture checks endpoint edits against analytic volume and bounds.
+  Line-to-line midpoint relationships preserve independent rotation and lengths
+  through a shared editable center. Converted dimensions retain their user-parameter
+  expressions and dependencies, including validated references to deleted bindings.
+  Verified circle and closed-line offset generators preserve source and distance
+  dependencies through edits, reopening and undo. Native open offset endpoints
+  remain unsupported because they have independent extents. Legacy offset groups
+  now decode all six Gridfinity generators and its full constraint list. Multiple
+  selected regions preserve separate bodies and each region's holes through edits;
+  sixteen analytic legacy profile records match current resaves. Directed line/circle
+  pieces preserve overlapping and divided regions through source edits; rotated
+  circle seams now persist in the document, and partial arcs retain their source-start
+  numbering. Legacy Gridfinity construction planes now retain offset bindings and
+  match their current resaves, including absent internal extra-offset slots. Sixty controls cover rotated axes, exact seam cuts and four-way circle
+  splits through edits and reopening. Forty-three original
+  editable-history fixtures check analytic volumes and bounds.
+  Signed extrusion start offsets preserve expressions
+  and parameter bindings through edits, reopening and undo; zero-angle taper inputs
+  remain editable. Other feature types and native B-reps remain unsupported; see
+  [the observed format and remaining work](docs/f3d.md). HardEdgeBasin opening now
+  has a child-process performance guard ([measurements](docs/project-open-regression.md)).
+  Integration with upstream's exact kernel history preserves extrusion/loft source
+  certificates and migrates legacy projected-edge identities through format 23.
+  All 74 original saved editable examples still exercise their original format
+  migrations, analytic geometry, parameter edits, reopening and undo.
+  Native Combine Join/Cut/Intersect now preserve explicit target/tool identities,
+  tool retention and suppression for independent extrusion bodies. Six new
+  analytic block examples bring the editable-history suite to 80 designs.
+  Joined extrusion contributors and single-output body mirrors now remain editable
+  as Combine inputs, including the mirrored target and later-consumed source case.
+  Twenty-four additional analytic source-history controls bring the fixture suite
+  to 104 designs. Component transfers and ambiguous multiple mirror outputs remain
+  explicit unsupported cases.
+  Version-3 Combine helpers and empty optional metadata now match an unchanged
+  modern resave, bringing the Gridfinity timeline to 19 of 35 decoded entries;
+  complete reconstruction still requires its remaining feature schemas.
+  Constant-radius fillet records now decode across legacy/current layouts, with
+  editable single-radius extrusion-edge reconstruction. Four analytic fillet
+  models bring the suite to 108; timeline coverage is 43/49 adapter, 22/35
+  Gridfinity and 25/53 R36S. Tangent chains and other blend modes remain
+  outstanding, as do the other undecoded feature families.
+  The upstream SolidCraft rename is integrated: F3D entry points, all 108 saved
+  history fixtures and their analytic edit checks pass under the renamed crates.
+  Multiple constant-radius edge sets now remain one editable fillet, retaining
+  every radius parameter and ordered edge selection. Format 24, edit dialogs and
+  feature-pattern replay preserve those groups. Four analytic group examples
+  bring the saved suite to 112 designs.
+  Upstream container saves are integrated with F3D opening; saved-history tests
+  now preserve every baseline and edit through both JSON and container storage.
+  Constant-radius tangent-chain choices now persist per radius group and resolve
+  from exact current edge topology on regeneration and pattern replay. Native
+  tangent-enabled extrusion-edge controls import with editable radii and source
+  dimensions. Four analytic rim/group fixtures bring the saved suite to 116.
+  Eight chamfer histories now cover equal setbacks, unequal setbacks, angle
+  inputs and flipped sides through dimension edits, suppression and reopening.
+  Their analytic volume and center-of-mass checks distinguish swapped sides;
+  these bring the saved suite to 124 designs. Native chamfer decoding is pending
+  controlled record comparisons and is not implied by these SolidCraft fixtures.
+  Upstream Join attachments are integrated with finite compound-face history:
+  concave/curved single-owner faces retain their certificates, and nominal caps
+  remain editable when an extrusion extends into its Join target.
+  Chamfers now retain independent edge-group parameters and tangent-chain choices
+  in format 26, including edit dialogs and feature-pattern replay. Four analytic
+  group/rim fixtures bring the saved suite to 128 designs. Native equal-distance
+  groups now import on independent line-profile extrusion edges, preserving
+  dimensions, chain choices and suppression. Two-distance and angle groups also
+  import on orthogonal planar extrusion edges, resolving native face orientation
+  from endpoint cycles; 288 rotated/reordered controls validate the face mapping.
+  Nonorthogonal edges and mixed-orientation groups remain unsupported.
+  Two-edge construction points now reconstruct from explicit sketch-line or
+  extrusion-edge identities, retaining names and following source edits. Twelve
+  native controls cover source order, naming and extrusion height. Two original
+  point/solid fixtures bring the saved suite to 130 designs, with analytic volume
+  and point-position checks through edits, reopen and undo.
+  More source topologies and the other native feature families remain unfinished.
 - Persistent naming follows the kernel's exact face history (docs/book/src/dev/naming.md):
   references resolve by name first, follow splits and merges, and warn when the entity split,
   merged or vanished, or was found by geometry only (operations that report no history yet).
@@ -526,6 +692,110 @@ and reference-object placement remain separate work, as do loft rails and center
   Per-component properties (a part number per component) can follow with the same type.
 
 ## Document-opening performance
+
+- F3D recovery offers explicit editability/correctness preferences, skips unsupported
+  history with a persisted report, and can recover native bodies through bounded
+  desktop conversion. All 17 supplied archives recover geometry in both modes;
+  Gridfinity retains six bodies with explicit incomplete-shell warnings. Complete
+  history and source-shape fidelity remain unfinished; cold clamp display meshing
+  remains slow. See [coverage and limits](docs/f3d-reference-evaluation.md).
+  Fillet-generated face tracking now follows explicit source labels through prior
+  model states, including retired qualifiers certified by current input records,
+  touching round faces and edge chains across internal seams. Style 5 now imports
+  all fourteen features without recovery, including its retired circular-cap
+  projection and final square pocket. The pocket passes analytic removal/depth-edit
+  checks; the overall shape still differs from native-body recovery and needs
+  source-fidelity verification. Style 6 now imports all eight features, including
+  paired live-chamfer cap projections and a fillet that references a cut cap.
+  Strict corpus acceptance is 8/17. Style 7 recovers seven editable features.
+  There are 177 original saved-history recipes with analytic geometry checks;
+  complete native history remains unfinished for nine supplied designs.
+  Complete symmetric blend groups now require a bijective endpoint graph, and
+  limiting-radius shoulder rounds consume planar walls across cylinder seams.
+  Tangent continuation excludes smooth internal surface seams while preserving
+  explicit edge seeds. Style 2 still fails Fillet4's rolling-ball section at a
+  support-surface seam. Upstream's typed feature
+  fields are integrated; both recovery modes and all authored histories pass.
+  Face-only and mixed face/edge fillet records now retain separate input
+  containers and per-group parameters, including Style 2 and the adapter.
+  Regenerating live face boundaries after edits remains unfinished; those
+  features still produce explicit import warnings instead of losing selections.
+  Upstream integration now preserves explicit uniform lofts alongside default
+  chord-length lofts and transports circular winding around bends. All 130
+  authored editable histories pass again. Legacy adapter chamfer groups retain
+  their original selections and dimensions across the older record envelope;
+  complete native history reconstruction remains in progress. Legacy whole-face
+  projections retain live edge identities, and version-17 geometry accepts its
+  terminal-owner envelope. Square now passes strict import alongside Minimal.
+  Body-supported sketches preserve live certified face attachments and projected
+  lines preserve native parameter direction. Boundary-scoped native profile pieces
+  now translate to full-sketch identities only after exact source, direction and
+  analytic boundary checks. Crescent and Narrow pass import, analytic volume,
+  parameter edits and save/reopen alongside Minimal and Square.
+  Equivalent arc/line subdivisions at tangent contacts also retain the joined
+  extrusions in styles 1–4; later projection and blend reconstruction remains open.
+  Selected profile groups now resolve their atomic members and certify the merged
+  shape against the separately stored combined boundary, preserving editable
+  selections and explicit holes. Native union/lens/crescent controls and a new
+  original saved union example pass analytic volume, edits and reopening. The
+  clamp still needs persistent profile-selection remapping; its saved tracking
+  boundaries disagree with the current selected regions.
+  Saved profile boundaries now retain their filled union after internal line or
+  circle subdivisions, while explicit holes remain open. Exact source-carrier
+  coverage and graph membership certify the translation; compound hole loops
+  retain only oppositely directed shared spans. Six local native subdivision
+  controls and the original saved subdivided-lens example pass volume and edits.
+  Style 7 additionally recovers its rectangular grip extrusion; its source
+  dimensions and depth remain editable and match the analytic prism volume.
+  Native circular body/feature patterns now retain count, angle and origin-axis
+  references, including symmetric placement and certified retired instance slots.
+  Two original symmetric-pattern examples bring the saved suite to 136 histories.
+  Rectangular cap projections after one circular cut now retain five linked curves.
+  Six local top/bottom controls pass analytic volumes, parameter edits and reopening;
+  Round now recovers six editable features and two bodies. Coincident circle
+  references retain both source dependencies; later fillet/pattern/combine work remains open.
+  Rebased onto upstream `0872eb95`, preserving STEP import options alongside the F3D
+  preference. All 137 authored histories and 13 file-opening UI tests pass; strict
+  native editable-history imports remain 4/17. HardEdgeBasin open/display is 3.28 seconds.
+  Recovery opens all 17 archives in both modes, but Gridfinity still has no bodies.
+  The remaining import failures prevent opening the requested PR.
+  Fillet/chamfer selection now supports signed one-sided extrusion distances,
+  mapping negative travel caps to their persistent bottom face. Eighteen native
+  controls pass analytic volume/centroid, edits and reopening; six original signed
+  blend fixtures expand the saved suite to 143. Mixed-profile straight side spans
+  now verify their partition and every endpoint neighbor, including coincident
+  circles. Round recovers its seventh feature (Fillet1); 24 local controls and
+  two original mixed-profile examples cover the change. The saved suite contains
+  145 histories. Whole-body replacement labels now retain operation and feature
+  ownership after profile edits, including legacy layout 5. Six controlled files
+  verify volume and pattern placement through edits and reopening. Round recovers
+  its eighth feature (circular pattern), with count/source/fillet edits covered.
+  An original fillet-pattern example expands the saved suite to 146. Patterned
+  Combine tools now resolve source/instance operations, replacement aliases and
+  explicitly retired null selections. Round imports all nine features and reopens
+  as one solid; complete baseline corpus acceptance is 5/17. Ten local controls
+  and two original keep/consume examples expand the suite to 148. Stepped-prism
+  unions now find the extrusion axis after many patterned wall directions and
+  avoid cap-station splits below the sewing tolerance. Round's radius, grip
+  depth and profile-width edits pass with reopening. An original small-grip
+  Combine example expands the saved suite to 149. Eye's stale profile now follows
+  its explicit snapshot handle and identity table back to editable source curves;
+  all six features open and reopen, bringing complete baseline acceptance to 6/17.
+  Full editable acceptance remains open for the other eleven archives and
+  unverified feature edits.
+  Circular extrusion-cap fillets and equal-distance chamfers now preserve the
+  complete source-circle identity and persistent cap edges. Twenty-four native
+  controls pass volume, centroid, parameter edits and reopening; two original
+  saved examples expand the collection to 151 histories. Deleted historical
+  operation owners no longer block unrelated live selections. Compound blend
+  recipes and asymmetric circular chamfers remain unsupported; full corpus
+  acceptance remains 6/17.
+  Complete circular-cap chamfers now retain two distances or distance/angle and
+  the native primary-face orientation, including rotated and negative-travel
+  controls. The kernel preserves independent cap/wall setbacks and face history.
+  Seventy-two native controls and two original saved examples exercise the change;
+  the saved collection contains 153 histories. Style 5 reaches a later body-face
+  extrusion selection, so complete file acceptance remains unfinished.
 
 - Desktop STEP import prepares consecutive independent solids in bounded batches with up
   to eight workers, retaining serial traversal, result order and persistent source identities.

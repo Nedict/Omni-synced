@@ -15,6 +15,32 @@ fn named_box(name: &str, width: f64, height: f64) -> ModelBody {
 }
 
 #[test]
+fn missing_named_edge_does_not_repick_the_saved_position() {
+    let mut doc = Document::default();
+    let mut state = ModelState::default();
+    state.bodies.push(named_box("Source", 20., 10.));
+    let source = LinkSource::Edge { body: "Source".into(), at: Vec3::new(10., 0., 10.) };
+    let r = crate::project::resolve(&doc, &BTreeMap::new(), &state, &Plane::XY, LinkKind::Project, &source).unwrap();
+    let mut sketch = Sketch::default();
+    sketch.add_link(LinkKind::Project, source, &r.geom).unwrap();
+    sketch.links[0].edge_name = Some("F42:top|F42:side:c1".into());
+    let saved = sketch.clone();
+    let warnings = crate::project::refresh_links(&doc, &BTreeMap::new(), &state, &Plane::XY, &mut sketch);
+    assert!(!warnings.is_empty());
+    assert!(sketch.links[0].lost);
+    assert_eq!(sketch.points, saved.points);
+    assert_eq!(sketch.curves, saved.curves);
+    let id = doc.add_feature(crate::FeatureKind::Sketch { plane: crate::PlaneRef::Origin { name: "XY".into() }, sketch }, None).unwrap();
+    let mut feature = doc.feature(id).unwrap().clone();
+    feature
+        .remap_clone(&BTreeMap::from([(42, 90)]), &BTreeMap::new(), &BTreeMap::from([("Source".into(), "Copy".into())]), &BTreeMap::new())
+        .unwrap();
+    let crate::FeatureKind::Sketch { sketch, .. } = feature.kind else { panic!("sketch") };
+    assert_eq!(sketch.links[0].edge_name.as_deref(), Some("F90:top|F90:side:c1"));
+    assert!(matches!(&sketch.links[0].source,LinkSource::Edge {body,..} if body=="Copy"));
+}
+
+#[test]
 fn named_manual_projection_keeps_its_body_and_face_at_shared_boundaries() {
     let doc = Document::default();
     let mut initial = ModelState::default();

@@ -104,15 +104,30 @@ pub fn validate_styles_json(value: &Value) -> Result<()> {
 }
 
 impl Document {
+    pub(crate) fn union_certificate_producer_matches(&self, producer: u64, sources: &[super::FaceContribution]) -> bool {
+        let Some(position) = self
+            .features
+            .iter()
+            .position(|f| f.id == producer && !f.suppressed && matches!(f.kind, FeatureKind::Extrude { operation: crate::Operation::Join, .. }))
+        else {
+            return false;
+        };
+        (2..=64).contains(&sources.len())
+            && sources.iter().all(|p| {
+                p.source.union_leaf()
+                    && self.features.iter().take(position + 1).any(|f| f.id == p.producer && !f.suppressed)
+                    && self.flat_certificate_producer_matches(p.producer, &p.source)
+            })
+    }
     pub(crate) fn flat_certificate_producer_matches(&self, producer: u64, certificate: &super::FaceCertificate) -> bool {
         use super::FaceCertificate;
         let Some(feature) = self.feature(producer) else { return false };
         match (certificate, &feature.kind) {
             (FaceCertificate::Box { .. }, FeatureKind::Box { operation: crate::Operation::NewBody | crate::Operation::Join, .. }) => true,
             (FaceCertificate::CylinderCap { .. }, FeatureKind::Cylinder { operation: crate::Operation::NewBody | crate::Operation::Join, .. }) => true,
-            (FaceCertificate::ExtrudeCap { sketch, .. }, FeatureKind::Extrude { sketch: current, extent, operation: crate::Operation::NewBody | crate::Operation::Join, .. }) => sketch == current && extent.taper.is_none(),
+            (FaceCertificate::ExtrudeCap { sketch, .. }, FeatureKind::Extrude { sketch: current, extent, operation: crate::Operation::NewBody | crate::Operation::Join | crate::Operation::Cut, .. }) => sketch == current && extent.taper.as_ref().is_none_or(|angle| self.eval(angle, crate::expr::Kind::Angle).is_ok_and(|v| v == 0.)),
             (FaceCertificate::ExtrudeSide { sketch, curve }, FeatureKind::Extrude { sketch: current, extent, operation: crate::Operation::NewBody | crate::Operation::Join, .. }) => {
-                sketch == current && extent.taper.is_none()
+                sketch == current && extent.taper.as_ref().is_none_or(|angle| self.eval(angle, crate::expr::Kind::Angle).is_ok_and(|v| v == 0.))
                     && self.feature(*sketch).is_some_and(|feature| matches!(&feature.kind, FeatureKind::Sketch { sketch, .. } if sketch.curves.iter().any(|candidate| candidate.id == *curve && !candidate.construction && matches!(candidate.kind, solidcraft_sketch::CurveKind::Line { .. } | solidcraft_sketch::CurveKind::Circle { .. } | solidcraft_sketch::CurveKind::Arc { .. }))))
             }
             (FaceCertificate::Imported { .. }, FeatureKind::Import { .. }) => true,
@@ -141,12 +156,16 @@ impl Document {
                 (super::FaceCertificate::CylinderCap { high }, FeatureKind::Cylinder { operation: crate::Operation::NewBody | crate::Operation::Join, .. }) => {
                     role == super::cylinder_cap_role(*high)
                 }
-                (super::FaceCertificate::ExtrudeCap { sketch, high, outer, holes }, FeatureKind::Extrude { sketch: producer_sketch, extent, operation: crate::Operation::NewBody | crate::Operation::Join, .. }) => {
-                    sketch == producer_sketch && extent.taper.is_none()
+                (super::FaceCertificate::ExtrudeCap { sketch, high, outer, holes }, FeatureKind::Extrude { sketch: producer_sketch, extent, operation: crate::Operation::NewBody | crate::Operation::Join | crate::Operation::Cut, .. }) => {
+                    sketch == producer_sketch && extent.taper.as_ref().is_none_or(|angle| self.eval(angle, crate::expr::Kind::Angle).is_ok_and(|v| v == 0.))
                         && role == format!("cap:{}:{}", if *high { "high" } else { "low" }, super::cap_key(outer, holes))
                 }
+                (super::FaceCertificate::ExtrudeTravelCap { sketch, end, outer, holes }, FeatureKind::Extrude { sketch: producer_sketch, operation: crate::Operation::NewBody | crate::Operation::Join | crate::Operation::Cut, .. }) => {
+                    sketch == producer_sketch && self.extrusion_cap_high(target.origin_feature, *end).is_ok()
+                        && role == format!("cap:{}:{}", if *end { "end" } else { "start" }, super::cap_key(outer, holes))
+                }
                 (super::FaceCertificate::ExtrudeSide { sketch, curve }, FeatureKind::Extrude { sketch: producer_sketch, extent, operation: crate::Operation::NewBody | crate::Operation::Join, .. }) => {
-                    sketch == producer_sketch && extent.taper.is_none() && role == format!("side:{curve}")
+                    sketch == producer_sketch && extent.taper.as_ref().is_none_or(|angle| self.eval(angle, crate::expr::Kind::Angle).is_ok_and(|v| v == 0.)) && role == format!("side:{curve}")
                         && self.feature(*sketch).is_some_and(|feature| matches!(&feature.kind, FeatureKind::Sketch { sketch, .. } if sketch.curves.iter().any(|candidate| candidate.id == *curve && !candidate.construction && matches!(candidate.kind, solidcraft_sketch::CurveKind::Line { .. } | solidcraft_sketch::CurveKind::Circle { .. } | solidcraft_sketch::CurveKind::Arc { .. }))))
                 }
                 (super::FaceCertificate::Imported { .. }, FeatureKind::Import { .. }) => role.strip_prefix("face:").is_some_and(|index| index.parse::<usize>().is_ok()),
@@ -156,6 +175,8 @@ impl Document {
                         && self.flat_certificate_producer_matches(*source_producer, source)
                         && super::shell_certificate_role(source, *inner).is_ok_and(|expected| role == expected)
                 }
+                (super::FaceCertificate::PlanarUnion { sources }, _) => self.union_certificate_producer_matches(target.origin_feature, sources)
+                    && certificate.union_role().is_some_and(|expected| role == expected),
                 _ => false,
             };
             return if valid { Ok(()) } else { Err(DocError::Invalid("face certificate no longer matches its producer".into())) };
@@ -188,8 +209,21 @@ impl Document {
     /// Verify the current named pieces describe one surface, not ambiguous generated roles.
     pub fn configuration_face_indices(&self, body: &crate::ModelBody, target: &ConfigFaceTarget) -> Result<Vec<usize>> {
         self.certify_config_face(target)?;
+        if let Some(resolved) = self.resolve_travel_cap_target(target)? {
+            return self.configuration_face_indices(body, &resolved);
+        }
         if body.body.is_mesh() || body.definition_name() != target.body {
             return Err(DocError::Invalid("configured face definition does not match".into()));
+        }
+        if let Some(super::FaceCertificate::PlanarUnion { sources }) = &target.certificate {
+            let indices: Vec<_> = body.body.face_sources().into_iter().flatten().enumerate().filter_map(|(index, current)| {
+                matches!(current, Some(solidcraft_kernel::FaceSource::PlanarUnion { producer: Some(p), sources: current, .. }) if *p == target.origin_feature && current.len() == sources.len()
+                    && sources.iter().all(|part| current.iter().any(|s| super::flat_source_matches(&part.source, s, part.producer)))).then_some(index)
+            }).collect();
+            if !shell_plane_family(indices.iter().map(|index| body.body.face_plane(*index))) {
+                return Err(DocError::Unknown("planar union face certificate is missing or ambiguous".into()));
+            }
+            return Ok(indices);
         }
         if let Some(super::FaceCertificate::Lineage) = &target.certificate {
             return self.lineage_face_indices(body, &target.name);

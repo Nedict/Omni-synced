@@ -1,0 +1,399 @@
+{
+  "commands": [
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Stock outline"
+      }
+    },
+    {
+      "command": "sketch.rectangle.two_point",
+      "params": {
+        "p0": [
+          -7.5,
+          -7.5
+        ],
+        "p1": [
+          7.5,
+          7.5
+        ]
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "-10 mm",
+        "operation": "new_body",
+        "body_name": "Stock",
+        "name": "Stock"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Circular opening"
+      }
+    },
+    {
+      "command": "sketch.circle.center",
+      "params": {
+        "center": [
+          0,
+          0
+        ],
+        "radius": 3
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "-10 mm",
+        "operation": "cut",
+        "targets": [
+          "Stock"
+        ],
+        "name": "Opening"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "6 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "-12 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "edgeSize",
+        "expression": "0.1 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "copies",
+        "expression": "10",
+        "unit": ""
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Mixed profile"
+      }
+    },
+    {
+      "command": "sketch.rectangle.two_point",
+      "params": {
+        "p0": [
+          -0.48,
+          -3.5
+        ],
+        "p1": [
+          0.02,
+          -2.5
+        ]
+      }
+    },
+    {
+      "command": "sketch.constraint.fix",
+      "params": {
+        "entity": "l1",
+        "fixed": true
+      }
+    },
+    {
+      "command": "sketch.constraint.fix",
+      "params": {
+        "entity": "l2",
+        "fixed": true
+      }
+    },
+    {
+      "command": "sketch.constraint.fix",
+      "params": {
+        "entity": "l3",
+        "fixed": true
+      }
+    },
+    {
+      "command": "sketch.constraint.fix",
+      "params": {
+        "entity": "l4",
+        "fixed": true
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 6,
+          "id": "circle"
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Mixed prism",
+        "body_name": "Grip",
+        "profiles": [
+          {
+            "point": [
+              -0.25,
+              -2.7
+            ]
+          }
+        ],
+        "operation": "new_body"
+      }
+    },
+    {
+      "command": "solid.fillet",
+      "params": {
+        "edges": [
+          [
+            -0.48,
+            -2.5,
+            -6
+          ],
+          [
+            0.02,
+            -2.5,
+            -6
+          ]
+        ],
+        "body": "Grip",
+        "name": "Corner blend",
+        "radius": "edgeSize"
+      }
+    },
+    {
+      "command": "solid.pattern.circular",
+      "params": {
+        "bodies": [
+          "Grip"
+        ],
+        "axis": "Z",
+        "count": "copies",
+        "angle": "360 deg",
+        "name": "Grip pattern",
+        "body_names": [
+          "Copy1",
+          "Copy2",
+          "Copy3",
+          "Copy4",
+          "Copy5",
+          "Copy6",
+          "Copy7",
+          "Copy8",
+          "Copy9"
+        ]
+      }
+    },
+    {
+      "command": "solid.combine",
+      "params": {
+        "target": "Stock",
+        "tools": [
+          "Grip",
+          "Copy1",
+          "Copy2",
+          "Copy3",
+          "Copy4",
+          "Copy5",
+          "Copy6",
+          "Copy7",
+          "Copy8",
+          "Copy9"
+        ],
+        "operation": "join",
+        "keep_tools": false,
+        "name": "Joined grips"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 1996.0014260684125,
+    "volume_tolerance_mm3": 0.02,
+    "body_count": 1,
+    "bounds": [
+      [
+        -7.5,
+        -7.5,
+        -12
+      ],
+      [
+        7.5,
+        7.5,
+        0
+      ]
+    ],
+    "center_of_mass": [
+      0,
+      0,
+      -5.01440117452627
+    ],
+    "center_of_mass_tolerance_mm": 0.001,
+    "features": [
+      "Stock outline",
+      "Stock",
+      "Circular opening",
+      "Opening",
+      "Mixed profile",
+      "Mixed prism",
+      "Corner blend",
+      "Grip pattern",
+      "Joined grips"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "-10 mm"
+      },
+      "volume_mm3": 1991.2106319198303,
+      "volume_tolerance_mm3": 0.02,
+      "body_count": 1,
+      "bounds": [
+        [
+          -7.5,
+          -7.5,
+          -10
+        ],
+        [
+          7.5,
+          7.5,
+          0
+        ]
+      ],
+      "center_of_mass": [
+        0,
+        0,
+        -4.999999999999999
+      ],
+      "center_of_mass_tolerance_mm": 0.001
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "-14 mm"
+      },
+      "volume_mm3": 2000.7922202169948,
+      "volume_tolerance_mm3": 0.02,
+      "body_count": 1,
+      "bounds": [
+        [
+          -7.5,
+          -7.5,
+          -14
+        ],
+        [
+          7.5,
+          7.5,
+          0
+        ]
+      ],
+      "center_of_mass": [
+        0,
+        0,
+        -5.0335222805259
+      ],
+      "center_of_mass_tolerance_mm": 0.001
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "edgeSize",
+        "expression": "0.2 mm"
+      },
+      "volume_mm3": 1994.4562928448743,
+      "volume_tolerance_mm3": 0.02,
+      "body_count": 1,
+      "bounds": [
+        [
+          -7.5,
+          -7.5,
+          -12
+        ],
+        [
+          7.5,
+          7.5,
+          0
+        ]
+      ],
+      "center_of_mass": [
+        0,
+        0,
+        -5.013637617312314
+      ],
+      "center_of_mass_tolerance_mm": 0.001
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Joined grips",
+        "suppressed": true
+      },
+      "volume_mm3": 1996.0014260684125,
+      "body_count": 11,
+      "bounds": [
+        [
+          -7.5,
+          -7.5,
+          -12
+        ],
+        [
+          7.5,
+          7.5,
+          0
+        ]
+      ],
+      "center_of_mass": [
+        0,
+        0,
+        -5.01440117452627
+      ],
+      "center_of_mass_tolerance_mm": 0.001,
+      "volume_tolerance_mm3": 0.2
+    }
+  ]
+}

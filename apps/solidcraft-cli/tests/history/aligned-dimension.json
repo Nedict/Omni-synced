@@ -1,0 +1,170 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "width",
+        "expression": "30 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diagonal",
+        "expression": "50 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "10 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Diagonal rectangle"
+      }
+    },
+    {
+      "command": "sketch.rectangle.two_point",
+      "params": {
+        "p0": [
+          0,
+          0
+        ],
+        "p1": [
+          30,
+          40
+        ]
+      }
+    },
+    {
+      "command": "sketch.constraint.fix",
+      "params": {
+        "entity": "p1",
+        "fixed": true
+      }
+    },
+    {
+      "command": "sketch.dimension",
+      "params": {
+        "entities": [
+          "p1",
+          "p2"
+        ],
+        "type": "horizontal",
+        "value": "width"
+      }
+    },
+    {
+      "command": "sketch.dimension",
+      "params": {
+        "entities": [
+          "p1",
+          "p3"
+        ],
+        "type": "distance",
+        "value": "diagonal"
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Prism"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 12000,
+    "body_count": 1,
+    "bounds": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        30,
+        40,
+        10
+      ]
+    ],
+    "features": [
+      "Diagonal rectangle",
+      "Prism"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "diagonal",
+        "expression": "60 mm"
+      },
+      "volume_mm3": 15588.457268119895,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          30,
+          51.96152422706632,
+          10
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "width",
+        "expression": "40 mm"
+      },
+      "volume_mm3": 12000,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          40,
+          30,
+          10
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "20 mm"
+      },
+      "volume_mm3": 24000,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          30,
+          40,
+          20
+        ]
+      ]
+    }
+  ]
+}

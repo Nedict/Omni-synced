@@ -1,0 +1,229 @@
+{
+  "format": "solidcraft-f3d-dev/25",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "height",
+      "expr": "40 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "radius",
+      "expr": "2 mm",
+      "unit": "mm",
+      "model": false
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Rim profile",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              0.0,
+              -10.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              20.0,
+              -10.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p3",
+            "pos": [
+              20.0,
+              10.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p4",
+            "pos": [
+              0.0,
+              10.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "a1.center",
+            "pos": [
+              20.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "a2.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "l1",
+            "type": "line",
+            "a": 1,
+            "b": 2,
+            "construction": false
+          },
+          {
+            "id": "a1",
+            "type": "arc",
+            "c": 5,
+            "a": 2,
+            "b": 3,
+            "construction": false
+          },
+          {
+            "id": "l2",
+            "type": "line",
+            "a": 3,
+            "b": 4,
+            "construction": false
+          },
+          {
+            "id": "a2",
+            "type": "arc",
+            "c": 6,
+            "a": 4,
+            "b": 1,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "tangent",
+            "a": 0,
+            "b": 1
+          },
+          {
+            "id": "k2",
+            "type": "tangent",
+            "a": 2,
+            "b": 1
+          },
+          {
+            "id": "k3",
+            "type": "tangent",
+            "a": 0,
+            "b": 3
+          },
+          {
+            "id": "k4",
+            "type": "tangent",
+            "a": 2,
+            "b": 3
+          },
+          {
+            "id": "k5",
+            "type": "equal",
+            "a": 3,
+            "b": 1
+          },
+          {
+            "id": "k6",
+            "type": "coincident",
+            "p": 0,
+            "q": 6
+          }
+        ],
+        "counters": {
+          "a": 2,
+          "k": 6,
+          "l": 2,
+          "p": 4
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Block",
+      "suppressed": false,
+      "body_names": [
+        "Block"
+      ],
+      "param_names": [
+        "d1"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "height",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 3,
+      "name": "Rounded rim",
+      "suppressed": false,
+      "param_names": [
+        "d2"
+      ],
+      "edge_refs": [
+        {
+          "dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -10.000000000000002,
+            -10.000000000000002,
+            0.0
+          ],
+          "max": [
+            30.0,
+            10.0,
+            40.000000000000014
+          ]
+        }
+      ],
+      "edge_names": [
+        "F2:side:l1|F2:start"
+      ],
+      "type": "fillet",
+      "edges": [
+        [
+          10.0,
+          -10.0,
+          0.0
+        ]
+      ],
+      "radius": "radius",
+      "tangent_chain": true
+    }
+  ],
+  "next_id": 4
+}

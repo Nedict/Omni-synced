@@ -1,0 +1,118 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "24 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "35 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Base circle"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 24
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "convention": "total_distance",
+        "name": "Base extrusion",
+        "direction": "symmetric"
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 5040,
+    "body_count": 1,
+    "bounds": [
+      [
+        -12,
+        -12,
+        -17.5
+      ],
+      [
+        12,
+        12,
+        17.5
+      ]
+    ],
+    "features": [
+      "Base circle",
+      "Base extrusion"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "diameter",
+        "expression": "30 mm"
+      },
+      "volume_pi_mm3": 7875,
+      "bounds": [
+        [
+          -15,
+          -15,
+          -17.5
+        ],
+        [
+          15,
+          15,
+          17.5
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "50 mm"
+      },
+      "volume_pi_mm3": 7200,
+      "bounds": [
+        [
+          -12,
+          -12,
+          -25
+        ],
+        [
+          12,
+          12,
+          25
+        ]
+      ]
+    }
+  ]
+}

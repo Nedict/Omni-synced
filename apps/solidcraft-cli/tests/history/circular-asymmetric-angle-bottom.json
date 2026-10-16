@@ -1,0 +1,263 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "40 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "setback",
+        "expression": "2 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "second",
+        "expression": "30 deg",
+        "unit": "deg"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Rim profile"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 20
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Block",
+        "body_name": "Block"
+      }
+    },
+    {
+      "command": "solid.chamfer",
+      "params": {
+        "edges": [
+          [
+            0,
+            10,
+            0
+          ],
+          [
+            0,
+            -10,
+            0
+          ]
+        ],
+        "tangent_chain": false,
+        "name": "Beveled bottom rim",
+        "distance": "setback",
+        "flip": true,
+        "angle": "second"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 12496.611166592997,
+    "volume_tolerance_mm3": 2.513274122871835,
+    "body_count": 1,
+    "bounds": [
+      [
+        -10,
+        -10,
+        0
+      ],
+      [
+        10,
+        10,
+        40
+      ]
+    ],
+    "center_of_mass": [
+      0,
+      0,
+      20.107886627638944
+    ],
+    "center_of_mass_tolerance_mm": 0.005,
+    "features": [
+      "Rim profile",
+      "Block",
+      "Beveled bottom rim"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "setback",
+        "expression": "4 mm"
+      },
+      "volume_mm3": 12298.502930507226,
+      "volume_tolerance_mm3": 2.513274122871835,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          40
+        ]
+      ],
+      "center_of_mass": [
+        0,
+        0,
+        20.405964047437813
+      ],
+      "center_of_mass_tolerance_mm": 0.005
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "second",
+        "expression": "60 deg"
+      },
+      "volume_mm3": 12373.847431879785,
+      "volume_tolerance_mm3": 2.513274122871835,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          40
+        ]
+      ],
+      "center_of_mass": [
+        0,
+        0,
+        20.30046645487842
+      ],
+      "center_of_mass_tolerance_mm": 0.005
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "50 mm"
+      },
+      "volume_mm3": 15638.203820182789,
+      "volume_tolerance_mm3": 3.1415926535897936,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          50
+        ]
+      ],
+      "center_of_mass": [
+        0,
+        0,
+        25.108517224485816
+      ],
+      "center_of_mass_tolerance_mm": 0.005
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "diameter",
+        "expression": "30 mm"
+      },
+      "volume_mm3": 28168.298447257275,
+      "volume_tolerance_mm3": 5.654866776461628,
+      "body_count": 1,
+      "bounds": [
+        [
+          -15,
+          -15,
+          0
+        ],
+        [
+          15,
+          15,
+          40
+        ]
+      ],
+      "center_of_mass": [
+        0,
+        0,
+        20.07276097964125
+      ],
+      "center_of_mass_tolerance_mm": 0.005
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Beveled bottom rim",
+        "suppressed": true
+      },
+      "volume_mm3": 12566.370614359173,
+      "volume_tolerance_mm3": 2.513274122871835,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          40
+        ]
+      ],
+      "center_of_mass": [
+        0,
+        0,
+        20.0
+      ],
+      "center_of_mass_tolerance_mm": 0.005
+    }
+  ]
+}

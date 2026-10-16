@@ -8,6 +8,8 @@ pub struct OffsetChain {
     pub sources: Vec<(String, bool)>,
     pub outputs: Vec<String>,
     pub distance: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distance_expression: Option<String>,
     pub closed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub topology: Option<crate::offset_topology::OffsetTopology>,
@@ -154,7 +156,11 @@ impl Sketch {
                         } else {
                             return Err(bad());
                         }
-                        let _ = c;
+                        if let Some(crate::Curve { kind: CurveKind::Circle { c: center, .. }, .. }) = self.curves.get(out)
+                            && let Some(point) = self.points.get_mut(*center)
+                        {
+                            point.pos = c;
+                        }
                         continue;
                     }
                     _ => return Err(bad()),

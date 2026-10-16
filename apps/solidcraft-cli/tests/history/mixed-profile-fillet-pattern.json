@@ -1,0 +1,350 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "60 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "-40 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "edgeSize",
+        "expression": "2 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "copies",
+        "expression": "4",
+        "unit": ""
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Mixed profile"
+      }
+    },
+    {
+      "command": "sketch.rectangle.two_point",
+      "params": {
+        "p0": [
+          -5,
+          -35
+        ],
+        "p1": [
+          5,
+          -25
+        ]
+      }
+    },
+    {
+      "command": "sketch.constraint.fix",
+      "params": {
+        "entity": "l1",
+        "fixed": true
+      }
+    },
+    {
+      "command": "sketch.constraint.fix",
+      "params": {
+        "entity": "l2",
+        "fixed": true
+      }
+    },
+    {
+      "command": "sketch.constraint.fix",
+      "params": {
+        "entity": "l3",
+        "fixed": true
+      }
+    },
+    {
+      "command": "sketch.constraint.fix",
+      "params": {
+        "entity": "l4",
+        "fixed": true
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 60,
+          "id": "circle"
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Mixed prism",
+        "body_name": "Grip",
+        "profiles": {
+          "type": "piece_boundaries",
+          "profiles": [
+            {
+              "outer": [
+                {
+                  "curve": "circle",
+                  "piece": 2,
+                  "count": 2,
+                  "reversed": false
+                },
+                {
+                  "curve": "l2",
+                  "piece": 2,
+                  "count": 2,
+                  "reversed": false
+                },
+                {
+                  "curve": "l3",
+                  "piece": 1,
+                  "count": 1,
+                  "reversed": false
+                },
+                {
+                  "curve": "l4",
+                  "piece": 1,
+                  "count": 2,
+                  "reversed": false
+                }
+              ],
+              "holes": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "command": "solid.fillet",
+      "params": {
+        "edges": [
+          [
+            5,
+            -25,
+            -20
+          ],
+          [
+            -5,
+            -25,
+            -20
+          ]
+        ],
+        "body": "Grip",
+        "name": "Corner blend",
+        "radius": "edgeSize"
+      }
+    },
+    {
+      "command": "solid.pattern.circular",
+      "params": {
+        "bodies": [
+          "Grip"
+        ],
+        "axis": "Z",
+        "count": "copies",
+        "angle": "360 deg",
+        "name": "Grip pattern"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 7502.1521891824605,
+    "center_of_mass": [
+      0,
+      0,
+      -20.0
+    ],
+    "center_of_mass_tolerance_mm": 0.002,
+    "body_count": 4,
+    "bounds": [
+      [
+        -30.0,
+        -30.0,
+        -40.0
+      ],
+      [
+        30.0,
+        30.0,
+        0
+      ]
+    ],
+    "bounds_tolerance_mm": 0.01,
+    "features": [
+      "Mixed profile",
+      "Mixed prism",
+      "Corner blend",
+      "Grip pattern"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "edgeSize",
+        "expression": "1 mm"
+      },
+      "volume_mm3": 7708.16995232091,
+      "center_of_mass": [
+        0,
+        0,
+        -20.0
+      ],
+      "center_of_mass_tolerance_mm": 0.002,
+      "body_count": 4,
+      "bounds": [
+        [
+          -30.0,
+          -30.0,
+          -40.0
+        ],
+        [
+          30.0,
+          30.0,
+          0
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "-50 mm"
+      },
+      "volume_mm3": 9377.690236478074,
+      "center_of_mass": [
+        0,
+        0,
+        -25.0
+      ],
+      "center_of_mass_tolerance_mm": 0.002,
+      "body_count": 4,
+      "bounds": [
+        [
+          -30.0,
+          -30.0,
+          -50
+        ],
+        [
+          30.0,
+          30.0,
+          0
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "diameter",
+        "expression": "62 mm"
+      },
+      "volume_mm3": 9109.408809250352,
+      "center_of_mass": [
+        0,
+        0,
+        -20.0
+      ],
+      "center_of_mass_tolerance_mm": 0.002,
+      "body_count": 4,
+      "bounds": [
+        [
+          -31,
+          -31,
+          -40.0
+        ],
+        [
+          31,
+          31,
+          0
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Corner blend",
+        "suppressed": true
+      },
+      "volume_mm3": 7776.842540033726,
+      "center_of_mass": [
+        0,
+        0,
+        -20.0
+      ],
+      "center_of_mass_tolerance_mm": 0.002,
+      "body_count": 4,
+      "bounds": [
+        [
+          -30.0,
+          -30.0,
+          -40.0
+        ],
+        [
+          30.0,
+          30.0,
+          0
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01
+    },
+    {
+      "volume_mm3": 15004.304378364921,
+      "center_of_mass": [
+        0,
+        0,
+        -20.0
+      ],
+      "center_of_mass_tolerance_mm": 0.002,
+      "body_count": 8,
+      "bounds": [
+        [
+          -30.0,
+          -30.0,
+          -40.0
+        ],
+        [
+          30.0,
+          30.0,
+          0
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01,
+      "command": "parameters.change",
+      "params": {
+        "name": "copies",
+        "expression": "8"
+      }
+    }
+  ]
+}

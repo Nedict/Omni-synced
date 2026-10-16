@@ -1,0 +1,226 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "leftDiameter",
+        "expression": "60 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "rightDiameter",
+        "expression": "60 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "17 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Overlapping circles"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 60,
+          "id": "left"
+        },
+        "dimensions": {
+          "diameter": "leftDiameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            40,
+            0
+          ],
+          "diameter": 60,
+          "id": "right"
+        },
+        "dimensions": {
+          "diameter": "rightDiameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Selected region union",
+        "profiles": {
+          "type": "piece_boundaries",
+          "profiles": [
+            {
+              "outer": [
+                {
+                  "curve": "left",
+                  "piece": 1,
+                  "count": 2,
+                  "reversed": false
+                },
+                {
+                  "curve": "right",
+                  "piece": 2,
+                  "count": 2,
+                  "reversed": false
+                }
+              ],
+              "holes": []
+            },
+            {
+              "outer": [
+                {
+                  "curve": "left",
+                  "piece": 2,
+                  "count": 2,
+                  "reversed": false
+                },
+                {
+                  "curve": "right",
+                  "piece": 2,
+                  "count": 2,
+                  "reversed": true
+                }
+              ],
+              "holes": []
+            },
+            {
+              "outer": [
+                {
+                  "curve": "left",
+                  "piece": 1,
+                  "count": 2,
+                  "reversed": true
+                },
+                {
+                  "curve": "right",
+                  "piece": 1,
+                  "count": 2,
+                  "reversed": false
+                }
+              ],
+              "holes": []
+            }
+          ],
+          "circle_seams": {}
+        }
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 85601.29612746756,
+    "body_count": 1,
+    "bounds": [
+      [
+        -30,
+        -30,
+        0
+      ],
+      [
+        70,
+        30,
+        17
+      ]
+    ],
+    "features": [
+      "Overlapping circles",
+      "Selected region union"
+    ],
+    "bounds_tolerance_mm": 0.01
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "leftDiameter",
+        "expression": "70 mm"
+      },
+      "volume_mm3": 98383.55661318431,
+      "body_count": 1,
+      "bounds": [
+        [
+          -35,
+          -35,
+          0
+        ],
+        [
+          70,
+          35,
+          17
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "rightDiameter",
+        "expression": "70 mm"
+      },
+      "volume_mm3": 98383.55661318431,
+      "body_count": 1,
+      "bounds": [
+        [
+          -30,
+          -35,
+          0
+        ],
+        [
+          75,
+          35,
+          17
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "23 mm"
+      },
+      "volume_mm3": 115813.51829010318,
+      "body_count": 1,
+      "bounds": [
+        [
+          -30,
+          -30,
+          0
+        ],
+        [
+          70,
+          30,
+          23
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01
+    }
+  ]
+}

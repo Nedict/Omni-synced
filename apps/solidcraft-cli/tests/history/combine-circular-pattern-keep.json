@@ -1,0 +1,242 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "10 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "tool_diameter",
+        "expression": "6 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "sweep",
+        "expression": "360 deg",
+        "unit": "deg"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Stock circle"
+      }
+    },
+    {
+      "command": "sketch.circle.center",
+      "params": {
+        "center": [
+          0,
+          0
+        ],
+        "diameter": 80
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "operation": "new_body",
+        "name": "Stock extrusion",
+        "body_name": "Stock"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Tool circle"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            20,
+            0
+          ],
+          "diameter": 6
+        },
+        "dimensions": {
+          "diameter": "tool_diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "operation": "new_body",
+        "name": "Tool extrusion",
+        "body_name": "Tool"
+      }
+    },
+    {
+      "command": "solid.pattern.circular",
+      "params": {
+        "bodies": [
+          "Tool"
+        ],
+        "axis": "Z",
+        "count": "4",
+        "angle": "sweep",
+        "name": "Tool pattern",
+        "body_names": [
+          "Copy1",
+          "Copy2",
+          "Copy3"
+        ]
+      }
+    },
+    {
+      "command": "solid.combine",
+      "params": {
+        "target": "Stock",
+        "tools": [
+          "Tool",
+          "Copy1",
+          "Copy2",
+          "Copy3"
+        ],
+        "operation": "cut",
+        "keep_tools": true,
+        "name": "Four holes"
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 16000,
+    "body_count": 5,
+    "bounds": [
+      [
+        -40,
+        -40,
+        0
+      ],
+      [
+        40,
+        40,
+        10
+      ]
+    ],
+    "bounds_tolerance_mm": 0.02,
+    "center_of_mass": [
+      0,
+      0,
+      5.0
+    ],
+    "center_of_mass_tolerance_mm": 1e-05,
+    "features": [
+      "Stock circle",
+      "Stock extrusion",
+      "Tool circle",
+      "Tool extrusion",
+      "Tool pattern",
+      "Four holes"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "15 mm"
+      },
+      "volume_pi_mm3": 24000,
+      "body_count": 5,
+      "bounds": [
+        [
+          -40,
+          -40,
+          0
+        ],
+        [
+          40,
+          40,
+          15
+        ]
+      ],
+      "bounds_tolerance_mm": 0.02,
+      "center_of_mass": [
+        0,
+        0,
+        7.5
+      ],
+      "center_of_mass_tolerance_mm": 1e-05
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "tool_diameter",
+        "expression": "8 mm"
+      },
+      "volume_pi_mm3": 16000,
+      "body_count": 5,
+      "bounds": [
+        [
+          -40,
+          -40,
+          0
+        ],
+        [
+          40,
+          40,
+          10
+        ]
+      ],
+      "bounds_tolerance_mm": 0.02,
+      "center_of_mass": [
+        0,
+        0,
+        5.0
+      ],
+      "center_of_mass_tolerance_mm": 1e-05
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Four holes",
+        "suppressed": true
+      },
+      "volume_pi_mm3": 16360,
+      "body_count": 5,
+      "bounds": [
+        [
+          -40,
+          -40,
+          0
+        ],
+        [
+          40,
+          40,
+          10
+        ]
+      ],
+      "bounds_tolerance_mm": 0.02,
+      "center_of_mass": [
+        0,
+        0,
+        5
+      ]
+    }
+  ]
+}

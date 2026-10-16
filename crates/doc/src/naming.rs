@@ -206,6 +206,60 @@ pub fn face_name_exact(b: &ModelBody, index: usize) -> bool {
     names(b).verified(index)
 }
 
+/// All current pieces of an exact history face, including retained Boolean
+/// aliases. This resolves topology only: callers selecting a support plane or
+/// analytic carrier must separately validate that surface. Geometric fallback
+/// names never satisfy an exact lineage query.
+pub fn face_lineage_indices(body: &ModelBody, name: &str) -> Result<Vec<usize>, String> {
+    let names = names(body);
+    let piece_of = |mut current: &str| {
+        loop {
+            if current == name {
+                return true;
+            }
+            match crate::piece_names::parent_piece(current) {
+                Some(parent) => current = parent,
+                None => return false,
+            }
+        }
+    };
+    let mut indices: Vec<_> = names.faces.iter().enumerate().filter_map(|(i, face)| piece_of(face).then_some(i)).collect();
+    if indices.is_empty() {
+        indices = names.info.iter().enumerate().filter_map(|(i, info)| info.aliases.iter().any(|alias| alias == name).then_some(i)).collect();
+    }
+    if indices.is_empty() {
+        return Err(format!("face `{name}` on `{}` no longer exists", body.name));
+    }
+    if indices.iter().any(|i| !names.verified(*i)) {
+        return Err("this face's history is not exact".into());
+    }
+    Ok(indices)
+}
+
+/// Every piece with certified membership in a source face family. This does not
+/// certify individual piece numbers or select one face. Callers must use full
+/// incidence to choose an edge and separately verify any required surface.
+pub fn face_family_indices(body: &ModelBody, name: &str) -> Result<Vec<usize>, String> {
+    let names = names(body);
+    let mut indices = Vec::new();
+    for (index, info) in names.info.iter().enumerate() {
+        let certified = info.families.contains(name);
+        let candidate = certified
+            || names.faces.get(index).is_some_and(|current| crate::history_names::descends(current, name))
+            || info.aliases.iter().any(|alias| crate::history_names::descends(alias, name));
+        if candidate {
+            if !certified {
+                return Err("face family contains a piece without exact source history".into());
+            }
+            indices.push(index);
+        }
+    }
+    if indices.is_empty() {
+        return Err(format!("face family `{name}` on `{}` has no exact history", body.name));
+    }
+    Ok(indices)
+}
+
 /// A body's names, with what finding them again needs: from the history of the feature that
 /// made it where it reports one, else from geometry (unverified).
 pub(crate) fn names(b: &ModelBody) -> Arc<Names> {
@@ -579,7 +633,7 @@ fn role_name(f: &Feature, before: &ModelState, ps: &[Vec3], ns: &[Vec3], fi: usi
         FeatureKind::Sweep { .. } | FeatureKind::Loft { .. } => {
             let sk = match &f.kind {
                 FeatureKind::Sweep { sketch, .. } => Some(*sketch),
-                FeatureKind::Loft { sections, .. } => sections.first().map(|x| x.sketch),
+                FeatureKind::Loft { sections, .. } => sections.first().filter(|s| s.face.is_none()).map(|x| x.sketch),
                 _ => None,
             };
             let Some(ss) = sk.and_then(|k| before.sketch(k.0)) else { return format!("F{fid}:face:{fi}") };
@@ -913,5 +967,44 @@ mod tests {
         let inputs = [(&body, FaceIndex::new(&mesh, 3), distinct)];
         assert_eq!(vote(&points, &inputs, 1e-8, None), None);
         assert_eq!(vote(&points[..2], &inputs, 1e-8, None), None, "equal different-source votes must not pick a lexicographic winner");
+    }
+
+    #[test]
+    fn topology_lineage_resolves_pieces_and_aliases_but_never_geometric_guesses() {
+        let mut body = ModelBody::new("Input".into(), solidcraft_kernel::box_solid(Vec3::ZERO, Vec3::new(4., 1., 1.)).unwrap(), 1);
+        let labels = Arc::new(vec!["F2:side:c1#1".into(), "F2:side:c1#2".into(), "F3:top".into()]);
+        let mut exact = Names::given(labels.clone());
+        exact.info[2].aliases.push("F4:start".into());
+        body.names = NameCell::shared(Arc::new(exact));
+        assert_eq!(face_lineage_indices(&body, "F2:side:c1").unwrap(), [0, 1]);
+        assert_eq!(face_lineage_indices(&body, "F2:side:c1#2").unwrap(), [1]);
+        assert_eq!(face_lineage_indices(&body, "F4:start").unwrap(), [2]);
+        assert!(face_lineage_indices(&body, "F99:top").is_err());
+        let mut mixed = Names::given(labels);
+        mixed.info[1].verified = false;
+        body.names = NameCell::shared(Arc::new(mixed));
+        assert!(face_lineage_indices(&body, "F2:side:c1").is_err(), "an unverified piece invalidates the family, rather than silently disappearing");
+        assert_eq!(face_lineage_indices(&body, "F2:side:c1#1").unwrap(), [0]);
+    }
+
+    #[test]
+    fn whole_face_family_requires_every_piece_to_have_a_source_certificate() {
+        let mut body = ModelBody::new("Input".into(), solidcraft_kernel::box_solid(Vec3::ZERO, Vec3::new(4., 1., 1.)).unwrap(), 1);
+        let labels = Arc::new(vec!["F2:side:c1#1".into(), "F2:side:c1#2".into(), "F3:top".into()]);
+        let mut names = Names::given(labels.clone());
+        for info in &mut names.info[..2] {
+            info.verified = false;
+            info.families = std::collections::BTreeSet::from(["F2:side:c1".into()]);
+        }
+        body.names = NameCell::shared(Arc::new(names));
+        assert_eq!(face_family_indices(&body, "F2:side:c1").unwrap(), [0, 1]);
+        assert!(face_lineage_indices(&body, "F2:side:c1").is_err());
+        assert!(face_family_indices(&body, "F2:side:c1#1").is_err(), "a certified family does not certify its numbered pieces");
+        let mut mixed = Names::given(labels);
+        mixed.info[1].verified = false;
+        mixed.info[1].families.clear();
+        body.names = NameCell::shared(Arc::new(mixed));
+        assert!(face_family_indices(&body, "F2:side:c1").is_err(), "never silently discard an uncertified family member");
+        assert!(face_family_indices(&body, "F99:top").is_err());
     }
 }

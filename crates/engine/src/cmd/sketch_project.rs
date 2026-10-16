@@ -20,7 +20,7 @@ macro_rules! refs_doc {
 }
 
 pub static COMMANDS: &[CommandSpec] = &[
-    CommandSpec::new("sketch.project", "Project", project_cmd).at("SKETCH", "CREATE").icon("project").key("P").enabled(in_sketch).params(concat!(refs_doc!(), created_doc!())),
+    CommandSpec::new("sketch.project", "Project", project_cmd).at("SKETCH", "CREATE").icon("project").key("P").enabled(in_sketch).params(concat!(refs_doc!(), "; circle?: true joins selected edges of one body into one associative circular boundary", created_doc!())),
     CommandSpec::new("sketch.intersect", "Intersect", intersect_cmd).at("SKETCH", "CREATE").icon("intersect").enabled(in_sketch).params(
         concat!("refs: [{body}, {face: [x,y,z], body?}, {edge: [x,y,z], body?}, {sketch, curve}]: section curves (or points) with the sketch plane, linked", created_doc!()),
     ),
@@ -211,13 +211,48 @@ pub(super) fn refresh(s: &Session, doc: &Document, id: u64, sk: &mut Sketch) -> 
 
 /// Add a link for `src` to sketch `id` in `doc` (not stored in the session). Returns the link id.
 pub(super) fn add_link(s: &Session, doc: &Document, id: u64, sk: &mut Sketch, kind: LinkKind, src: LinkSource) -> Result<String> {
+    add_sources(s, doc, id, sk, kind, &[src], false)
+}
+
+fn add_sources(s: &Session, doc: &Document, id: u64, sk: &mut Sketch, kind: LinkKind, sources: &[LinkSource], circle: bool) -> Result<String> {
     let doc = placed_candidate(s, doc);
     let (vals, _) = doc.param_values();
     let st = s.model.state_before(id);
     // The model as the sketch's component sees it.
     let st = state_for_sketch(s, &doc, id, &st)?;
     let plane = sketch_plane(&doc, id, &st)?;
-    let r = resolve(&doc, &vals, &st, &plane, kind, &src)?;
+    let mut edge_circle = Vec::new();
+    let r = if circle {
+        if kind != LinkKind::Project || sources.is_empty() || sources.len() > 128 {
+            return Err(bad("sketch.project", "a circular projection requires 1–128 body edges"));
+        }
+        let mut group_body = None;
+        for src in sources {
+            if !matches!(src, LinkSource::Edge { .. }) {
+                return Err(bad("sketch.project", "circular projection accepts only body edges"));
+            }
+            let r = resolve(&doc, &vals, &st, &plane, kind, src)?;
+            let LinkSource::Edge { body, .. } = r.source else { return Err(bad("sketch.project", "missing circular edge source")) };
+            if group_body.as_ref().is_some_and(|previous| previous != &body) {
+                return Err(bad("sketch.project", "circular edges must belong to one body"));
+            }
+            let name = st
+                .body(&body)
+                .and_then(|b| r.edge_index.and_then(|i| solidcraft_doc::naming::edge_names(b).get(i).cloned()))
+                .ok_or_else(|| bad("sketch.project", "missing persistent circular edge identity"))?;
+            edge_circle.push(name);
+            group_body = Some(body);
+        }
+        solidcraft_doc::project::resolve_edge_circle(
+            &st,
+            &plane,
+            &group_body.ok_or_else(|| bad("sketch.project", "missing circular body"))?,
+            &edge_circle,
+        )?
+    } else {
+        let [src] = sources else { return Err(bad("sketch.project", "expected one source")) };
+        resolve(&doc, &vals, &st, &plane, kind, src)?
+    };
     let name = if let LinkSource::Face { body, at } = &r.source {
         st.body(body).and_then(|body| {
             if let Some(index) = r.face_index {
@@ -235,6 +270,7 @@ pub(super) fn add_link(s: &Session, doc: &Document, id: u64, sk: &mut Sketch, ki
     if let Some(l) = sk.links.iter_mut().find(|l| l.id == link) {
         l.face_name = name;
         l.edge_name = edge_name;
+        l.edge_circle = edge_circle;
     }
     Ok(link)
 }
@@ -260,10 +296,15 @@ fn run_links(s: &mut Session, p: &Value, cmd: &str, kind: LinkKind) -> Result<Va
     let mut sk = doc.sketch(id)?.clone();
     refresh(s, &doc, id, &mut sk);
     let mut out = Vec::new();
-    for src in sources {
-        let what = src.describe();
-        let l = add_link(s, &doc, id, &mut sk, kind, src).map_err(|e| bad(cmd, format!("{what}: {e}")))?;
+    if bool_(p, "circle").unwrap_or(false) {
+        let l = add_sources(s, &doc, id, &mut sk, kind, &sources, true)?;
         out.push(link_json(&sk, &l));
+    } else {
+        for src in sources {
+            let what = src.describe();
+            let l = add_link(s, &doc, id, &mut sk, kind, src).map_err(|e| bad(cmd, format!("{what}: {e}")))?;
+            out.push(link_json(&sk, &l));
+        }
     }
     *doc.sketch_mut(id)? = sk;
     *s.doc_mut() = doc;

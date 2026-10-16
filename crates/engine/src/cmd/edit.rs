@@ -960,7 +960,15 @@ fn input_keys(kind: &FeatureKind) -> Vec<(String, solidcraft_doc::expr::Kind)> {
                     *key = format!("fillet.control.{i}");
                 }
             }
-            solidcraft_doc::FilletStyle::Constant | solidcraft_doc::FilletStyle::Chord | solidcraft_doc::FilletStyle::Curvature => {}
+            solidcraft_doc::FilletStyle::Grouped { .. }
+            | solidcraft_doc::FilletStyle::Constant
+            | solidcraft_doc::FilletStyle::Chord
+            | solidcraft_doc::FilletStyle::Curvature => {}
+        }
+        if matches!(style, solidcraft_doc::FilletStyle::Grouped { .. }) {
+            for (index, (key, _)) in keys.iter_mut().enumerate().skip(1) {
+                *key = format!("fillet.group.{index}");
+            }
         }
     }
     keys

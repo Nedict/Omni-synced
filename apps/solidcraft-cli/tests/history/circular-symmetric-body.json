@@ -1,0 +1,226 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "6 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "10 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "copies",
+        "expression": "4",
+        "unit": ""
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "sweep",
+        "expression": "180 deg",
+        "unit": "deg"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Source circle"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            20,
+            0
+          ],
+          "diameter": 6
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Source extrusion",
+        "body_name": "Source"
+      }
+    },
+    {
+      "command": "solid.pattern.circular",
+      "params": {
+        "bodies": [
+          "Source"
+        ],
+        "axis": "Z",
+        "count": "copies",
+        "angle": "sweep",
+        "symmetric": true,
+        "name": "Symmetric copies"
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 360,
+    "body_count": 4,
+    "bounds": [
+      [
+        -12.999999999999996,
+        -20.320508075688775,
+        0
+      ],
+      [
+        23.0,
+        20.32050807568877,
+        10
+      ]
+    ],
+    "bounds_tolerance_mm": 0.02,
+    "center_of_mass": [
+      7.500000000000002,
+      -4.330127018922193,
+      5.0
+    ],
+    "center_of_mass_tolerance_mm": 1e-05,
+    "features": [
+      "Source circle",
+      "Source extrusion",
+      "Symmetric copies"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "copies",
+        "expression": "6"
+      },
+      "volume_pi_mm3": 540,
+      "body_count": 6,
+      "bounds": [
+        [
+          -9.180339887498947,
+          -22.021130325903073,
+          0
+        ],
+        [
+          23.0,
+          22.02113032590307,
+          10
+        ]
+      ],
+      "bounds_tolerance_mm": 0.02,
+      "center_of_mass": [
+        9.756836610416142,
+        -3.1701883876505126,
+        5.0
+      ],
+      "center_of_mass_tolerance_mm": 1e-05
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "sweep",
+        "expression": "-180 deg"
+      },
+      "volume_pi_mm3": 360,
+      "body_count": 4,
+      "bounds": [
+        [
+          -12.999999999999996,
+          -20.32050807568877,
+          0
+        ],
+        [
+          23.0,
+          20.320508075688775,
+          10
+        ]
+      ],
+      "bounds_tolerance_mm": 0.02,
+      "center_of_mass": [
+        7.500000000000002,
+        4.330127018922193,
+        5.0
+      ],
+      "center_of_mass_tolerance_mm": 1e-05
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "sweep",
+        "expression": "360 deg"
+      },
+      "volume_pi_mm3": 360,
+      "body_count": 4,
+      "bounds": [
+        [
+          -23.0,
+          -23.0,
+          0
+        ],
+        [
+          23.0,
+          23.0,
+          10
+        ]
+      ],
+      "bounds_tolerance_mm": 0.02,
+      "center_of_mass": [
+        3.061616997868383e-16,
+        -8.881784197001252e-16,
+        5.0
+      ],
+      "center_of_mass_tolerance_mm": 1e-05
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "17 mm"
+      },
+      "volume_pi_mm3": 612,
+      "body_count": 4,
+      "bounds": [
+        [
+          -12.999999999999996,
+          -20.320508075688775,
+          0
+        ],
+        [
+          23.0,
+          20.32050807568877,
+          17
+        ]
+      ],
+      "bounds_tolerance_mm": 0.02,
+      "center_of_mass": [
+        7.500000000000002,
+        -4.330127018922193,
+        8.5
+      ],
+      "center_of_mass_tolerance_mm": 1e-05
+    }
+  ]
+}

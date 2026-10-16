@@ -12,6 +12,13 @@ The independent versions let document migrations evolve without changing blob en
 Existing serialized document fields are retained automatically, without a second copy
 of the document schema or a deep clone of embedded payloads.
 
+Automatically projected sketch-face links may opt into `join_arcs: true`. This
+joins adjacent circular seam pieces when rebuilding that face's outline. The
+flag is valid only for an anchored face projection with a persistent face name;
+ordinary edge links cannot use it. An absent flag is false, preserving existing
+curve decomposition and saved identifiers. The document schema carries this
+behavior; no projected geometry is taken from the container's display cache.
+
 Within `document.json`:
 
 - Import features have empty `step` and a `step_blob` reference.

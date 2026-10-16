@@ -20,7 +20,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ or glTF; opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step)"),
+        .params("path: .solidcraft/.json design, .f3d archive, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf file (opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make); f3d_preference?: strict|editability|correctness (default: strict); partial F3D imports return warnings; up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -29,6 +29,9 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "INSERT")
         .icon("import")
         .params("path: .3mf, .stl, .obj, .glb or .gltf file (its meshes join the design as mesh bodies in a new component named after the file → component, component_name, occurrence; a glTF file's node tree becomes nested components held as one rigid group until component.unlock, a mesh placed again another occurrence, its materials the bodies' appearances, and its metres millimetres); name?; up?: z|y for a glTF file (default y: glTF has Y up, so the import's component is turned a quarter turn about X, Y becoming Z → stand_up: its occurrence; z: the file's axes are kept)"),
+    CommandSpec::new("file.inspect_f3d", "Inspect F3D Archive", inspect_f3d)
+        .noundo()
+        .params("path: native .f3d archive → supported index, parameter, timeline, placement, circle, profile and constraint records; does not import editable history"),
     CommandSpec::new("file.save", "Save", save)
         .icon("save")
         .key("Ctrl+S")
@@ -229,6 +232,31 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     if !solidcraft_io::is_step_path(path) && !solidcraft_io::is_gltf_path(path) && p.get("up").is_some_and(|v| !v.is_null()) {
         return Err(bad("doc.open", "`up` applies to STEP, IGES and glTF files only"));
     }
+    if solidcraft_io::f3d::is_f3d_path(path) {
+        let bytes = solidcraft_io::vfs::read(path, solidcraft_io::f3d::MAX_F3D_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+        let stem = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "Imported".into());
+        use solidcraft_io::f3d::{ImportOutcome, ImportPreference, import_f3d_with_preference};
+        let outcome = match str_(p, "f3d_preference").unwrap_or("strict") {
+            "strict" => ImportOutcome {
+                document: solidcraft_io::f3d::import_f3d(&bytes, &stem)?,
+                warnings: vec![],
+                complete_history: true,
+                representation: "editable_history",
+            },
+            "editability" => import_f3d_with_preference(&bytes, &stem, ImportPreference::Editability)?,
+            "correctness" => import_f3d_with_preference(&bytes, &stem, ImportPreference::Correctness)?,
+            _ => return Err(bad("doc.open", "f3d_preference must be strict, editability or correctness")),
+        };
+        let mut fresh = Session::new(outcome.document);
+        let errors: Vec<_> = fresh.model.results.iter().filter_map(|r| r.error.as_ref().map(|e| format!("feature {}: {e}", r.id))).collect();
+        if !errors.is_empty() {
+            return Err(bad("doc.open", format!("F3D history could not regenerate: {}", errors.join("; "))));
+        }
+        fresh.mark_unsaved();
+        let result = json!({"path":path,"features":fresh.doc.features.len(),"bodies":fresh.model.state().bodies.len(),"errors":0,"editable_history_imported":outcome.complete_history,"representation":outcome.representation,"warnings":outcome.warnings});
+        *s = fresh;
+        return Ok(result);
+    }
     if solidcraft_io::is_step_path(path) || solidcraft_io::is_mesh_path(path) {
         // A new, unsaved design holding the file's bodies.
         let stem = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "Untitled".into());
@@ -261,7 +289,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     s.replace_design(Session::new(doc));
     s.path = Some(path.to_string());
     let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
-    Ok(json!({"path": path, "features": s.doc.features.len(), "errors": errors, "name": s.doc.name}))
+    Ok(json!({"path": path, "features": s.doc.features.len(), "errors": errors, "name": s.doc.name,"warnings":s.doc.import_warnings}))
 }
 
 /// The name a design never given one by its user is shown under.
@@ -287,6 +315,124 @@ fn rename_design(s: &mut Session, from: &str, to: &str) {
             std::sync::Arc::make_mut(&mut snap.doc).name = to.to_string();
         }
     }
+}
+
+fn inspect_f3d(_: &mut Session, p: &Value) -> Result<Value> {
+    let path = path_arg(p, "file.inspect_f3d")?;
+    let bytes = solidcraft_io::vfs::read(path, solidcraft_io::f3d::MAX_F3D_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    let designs = solidcraft_io::f3d::read_f3d(&bytes)?;
+    let summaries: Vec<_> = designs
+        .iter()
+        .map(|d| {
+            let mut groups = std::collections::BTreeMap::<&str, usize>::new();
+            for class in &d.classes {
+                *groups.entry(&class.group).or_default() += class.objects.len();
+            }
+            let parameters = match d.parameters() {
+                Ok(parameters) => json!({"native_units":{"length":"cm","angle":"rad"},"records": parameters.iter().map(|p| json!({"id":p.id,"binding":p.binding,"owner":p.owner,"name":p.name,"expression":p.expression,"label":p.label,"display_unit":p.display_unit,"native_value":p.value,"comment":p.comment,"driven":p.driven,"favorite":p.favorite,"user":p.binding.is_none()})).collect::<Vec<_>>()}),
+                Err(e) => json!({"unsupported":e.to_string()}),
+            };
+            let metadata = |m: &solidcraft_io::f3d::EntityMetadata| json!({"specialized":m.specialized,"point_auxiliary":m.point_auxiliary,"point_prefix":m.point_prefix,"definition":m.definition,"relationships":m.relationships,"legacy":m.legacy});
+            let points = match d.sketch_points() {
+                Ok(points) => json!({"coordinate_frame":"sketch_local","length_unit":"cm","records":points.iter().map(|p| json!({"id":p.id,"sketch":p.sketch,"position":p.position,"fixed":p.fixed,"origin":p.origin,"linked":p.linked,"metadata":metadata(&p.metadata)})).collect::<Vec<_>>()}),
+                Err(e) => json!({"unsupported":e.to_string()}),
+            };
+            let circles = match d.sketch_circles() {
+                Ok(circles) => json!({"coordinate_frame":"sketch_local","length_unit":"cm","records":circles.iter().map(|c| json!({"id":c.id,"sketch":c.sketch,"center_point":c.center_point,"center":c.center,"normal":c.normal,"x_axis":c.x_axis,"radius":c.radius,"construction":c.construction,"reference":c.reference,"metadata":metadata(&c.metadata),"profile_id":c.profile_id})).collect::<Vec<_>>()}),
+                Err(e) => json!({"unsupported":e.to_string()}),
+            };
+            let operation_owners = match d.operation_owners() {
+                Ok(owners) => json!({"records":owners.into_iter().map(|(tag,feature)|json!({"tag":tag,"feature":feature})).collect::<Vec<_>>()}),
+                Err(e) => json!({"unsupported":e.to_string()}),
+            };
+            let timeline = match d.timeline() {
+                Ok(entries) => json!({"records":entries.into_iter().map(|entry| {
+                    let decoded=match entry.feature {
+                        Ok(f) => json!({"name":f.name,"suppressed":f.suppressed,"dependencies":f.dependencies,
+                            "sketch":match f.kind { solidcraft_io::f3d::HistoryKind::Sketch {geometry,placement} =>
+                                json!({"geometry":geometry,"matrix":placement.matrix,"owner":placement.owner,"entities":placement.entities,"projections":placement.projections,"legacy_entity_metadata":placement.legacy_entity_metadata}), _=>Value::Null}}),
+                        Err(e) => json!({"unsupported":e.to_string()}),
+                    };
+                    json!({"id":entry.id,"class":entry.class,"version":entry.version,"decoded":decoded})
+                }).collect::<Vec<_>>()}),
+                Err(e) => json!({"unsupported":e.to_string()}),
+            };
+            let offset_planes = match d.offset_planes() {
+                Ok(planes) => json!({"length_unit":"mm","records":planes.iter().map(|p|json!({"feature":p.feature,"geometry":p.geometry,"base":p.base,"distance_binding":p.distance,"extra_offset_binding":p.extra,"plane":p.plane})).collect::<Vec<_>>()}),
+                Err(e) => json!({"unsupported":e.to_string()}),
+            };
+            let history = match d.history() {
+                Ok(features) => json!({"records":features.iter().map(|f| {
+                    let kind = match &f.kind {
+                        solidcraft_io::f3d::HistoryKind::CircularPattern(p) => json!({"type":"circular_pattern","axis":p.axis,"count_binding":p.count,"angle_binding":p.angle,"symmetric":p.symmetric,"instances":p.instances,"source_container":p.source_container,"features":p.features,"target_producers":p.targets,"outputs":p.outputs}),
+                        solidcraft_io::f3d::HistoryKind::TwoEdgePoint { definition, edges, position } => json!({"type":"construction_point_two_edges","definition":definition,"edges":edges,"cached_position_mm":position}),
+                        solidcraft_io::f3d::HistoryKind::Chamfer { sets } => json!({"type":"chamfer","sets":sets.iter().map(|s| json!({"container":s.container,"distance_binding":s.distance,"distance2_binding":s.distance2,"angle_binding":s.angle,"flip":s.flip,"tangent_chain":s.tangent_chain})).collect::<Vec<_>>()}),
+                        solidcraft_io::f3d::HistoryKind::Fillet { sets } => json!({"type":"fillet","sets":sets.iter().map(|s| json!({"container":s.container,"face_container":s.face_container,"radius_binding":s.radius,"weight_binding":s.weight,"tangent_chain":s.tangent_chain})).collect::<Vec<_>>()}),
+                        solidcraft_io::f3d::HistoryKind::Sketch { geometry, placement } => json!({"type":"sketch","geometry":geometry,"transform":placement.matrix,"transform_length_unit":"cm","placement_owner":placement.owner,"entities":placement.entities}),
+                        solidcraft_io::f3d::HistoryKind::Extrude { operation, profile_containers, target_containers } => json!({"type":"extrude","operation":operation,"profile_containers":profile_containers,"target_containers":target_containers}),
+                        solidcraft_io::f3d::HistoryKind::Loft { operation, section_containers, target_containers } => json!({"type":"loft","operation":operation,"section_containers":section_containers,"target_containers":target_containers}),
+                        solidcraft_io::f3d::HistoryKind::OffsetPlane { geometry, definition, extra_offset } => json!({"type":"offset_plane","geometry":geometry,"definition":definition,"extra_offset_binding":extra_offset}),
+                        solidcraft_io::f3d::HistoryKind::Mirror { plane, source_container, output_count } => json!({"type":"mirror","plane":plane,"source_container":source_container,"output_count":output_count}),
+                        solidcraft_io::f3d::HistoryKind::MirrorFeatures { plane, sources, targets, output_count } => json!({"type":"mirror_features","plane":plane,"sources":sources,"target_producers":targets,"output_count":output_count}),
+                        solidcraft_io::f3d::HistoryKind::Combine { operation, keep_tools, operation_tag, tool_containers, target_container, consumed_handles } => json!({"type":"combine","operation":operation,"keep_tools":keep_tools,"operation_tag":operation_tag,"tool_containers":tool_containers,"target_container":target_container,"consumed_handles":consumed_handles}),
+                    };
+                    json!({"id":f.id,"name":f.name,"suppressed":f.suppressed,"dependencies":f.dependencies,"kind":kind})
+                }).collect::<Vec<_>>()}),
+                Err(e) => json!({"unsupported":e.to_string()}),
+            };
+            let lines = match d.sketch_lines() {
+                Ok(lines) => json!({"coordinate_frame":"sketch_local","length_unit":"cm","records":lines.iter().map(|l|json!({"id":l.id,"sketch":l.sketch,"start_point":l.start_point,"end_point":l.end_point,"start":l.start,"end":l.end,"fixed":l.fixed,"construction":l.construction,"centerline":l.centerline,"reference":l.reference,"metadata":metadata(&l.metadata),"profile_id":l.profile_id})).collect::<Vec<_>>()}),
+                Err(e) => json!({"unsupported":e.to_string()}),
+            };
+            let arcs = match d.sketch_arcs() {
+                Ok(arcs) => json!({"coordinate_frame":"sketch_local","length_unit":"cm","angle_unit":"rad","records":arcs.iter().map(|a| {
+                    let c=&a.circle;
+                    json!({"id":c.id,"sketch":c.sketch,"center_point":c.center_point,"start_point":a.start_point,"end_point":a.end_point,"center":c.center,"normal":c.normal,"x_axis":c.x_axis,"radius":c.radius,"start_angle":a.start_angle,"end_angle":a.end_angle,"fixed":c.fixed,"construction":c.construction,"reference":c.reference,"metadata":metadata(&c.metadata),"profile_id":c.profile_id})
+                }).collect::<Vec<_>>()}),
+                Err(e) => json!({"unsupported":e.to_string()}),
+            };
+            let profiles = match d.circle_profiles() {
+                Ok(profiles) => json!({"records":profiles.iter().map(|p|json!({"id":p.id,"feature":p.feature,"geometry":p.geometry,"circle":p.circle})).collect::<Vec<_>>()}),
+                Err(e) => json!({"unsupported":e.to_string()}),
+            };
+            let constraint_graphs = match d.sketch_constraint_graphs() {
+                Ok(graphs) => json!({"records":graphs.iter().map(|g| json!({"geometry":g.geometry,"feature":g.feature,"relations":g.relations,"dimensions":g.dimensions,"auxiliary":g.auxiliary,"support":g.support})).collect::<Vec<_>>()}),
+                Err(e) => json!({"unsupported":e.to_string()}),
+            };
+            let constraints = match d.sketch_constraints() {
+                Ok(sketches) => json!({"records":sketches.iter().map(|s|json!({"geometry":s.geometry,"feature":s.feature,"constraints":s.constraints.iter().map(|c|match c {
+                    solidcraft_io::f3d::SketchConstraint::OffsetCurves(o) => json!({"type":"offset_curves","id":o.id,"dimension":o.dimension,"binding":o.binding,"distance":o.distance,"sources":o.sources,"outputs":o.outputs}),
+                    solidcraft_io::f3d::SketchConstraint::Symmetry {id,axis,entities} => json!({"type":"symmetry","id":id,"axis":axis,"entities":entities}),
+                    solidcraft_io::f3d::SketchConstraint::Offset {id,line,entity,binding} => json!({"type":"offset_distance","id":id,"line":line,"entity":entity,"binding":binding}),
+                    solidcraft_io::f3d::SketchConstraint::Angle {id,lines,quadrants,binding,cached_radians} => json!({"type":"angle","id":id,"lines":lines,"quadrants":quadrants,"binding":binding,"radians":cached_radians}),
+                    solidcraft_io::f3d::SketchConstraint::Coincident {id,points} => json!({"type":"coincident","id":id,"points":points}),
+                    solidcraft_io::f3d::SketchConstraint::Diameter {id,circle,binding} => json!({"type":"diameter","id":id,"circle":circle,"binding":binding}),
+                    solidcraft_io::f3d::SketchConstraint::Radius {id,circle,binding} => json!({"type":"radius","id":id,"circle":circle,"binding":binding}),
+                    solidcraft_io::f3d::SketchConstraint::AlignedPoints {id,points,vertical} => json!({"type":if *vertical{"vertical_points"}else{"horizontal_points"},"id":id,"points":points}),
+                    solidcraft_io::f3d::SketchConstraint::PointCurve {id,point,curve,midpoint} => json!({"type":if *midpoint{"midpoint"}else{"point_on_curve"},"id":id,"point":point,"curve":curve}),
+                    solidcraft_io::f3d::SketchConstraint::LineMidpoints {id,lines} => json!({"type":"line_midpoints","id":id,"lines":lines}),
+                    solidcraft_io::f3d::SketchConstraint::Curves {id,curves,relation} => json!({"type":format!("{relation:?}").to_lowercase(),"id":id,"curves":curves}),
+                    solidcraft_io::f3d::SketchConstraint::Horizontal{id,line}=>json!({"type":"horizontal","id":id,"line":line}),
+                    solidcraft_io::f3d::SketchConstraint::Vertical{id,line}=>json!({"type":"vertical","id":id,"line":line}),
+                    solidcraft_io::f3d::SketchConstraint::Linear{id,points,orientation,binding}=>json!({"type":match orientation {
+                        solidcraft_io::f3d::LinearOrientation::Horizontal => "distance_x",
+                        solidcraft_io::f3d::LinearOrientation::Vertical => "distance_y",
+                        solidcraft_io::f3d::LinearOrientation::Aligned => "distance",
+                    },"id":id,"points":points,"binding":binding}),
+                }).collect::<Vec<_>>()})).collect::<Vec<_>>()}),
+                Err(e) => json!({"unsupported":e.to_string()}),
+            };
+            let sketch_profiles=match d.sketch_profiles() {
+                Ok(profiles)=>json!({"records":profiles}),
+                Err(e)=>json!({"unsupported":e.to_string()}),
+            };
+            json!({"path": d.path, "build": d.build, "layout": d.layout, "classes": d.classes.len(),
+            "objects": d.records.len(), "secondary_records": d.records.iter().filter(|r| r.secondary_offset.is_some()).count(),
+            "roots": d.roots, "object_groups": groups, "metadata_bytes": d.metadata.len(), "bulk_bytes": d.bulk.len(), "parameters":parameters,"sketch_points":points,"sketch_circles":circles,"sketch_arcs":arcs,"sketch_lines":lines,"history":history,"timeline":timeline,"offset_planes":offset_planes,"operation_owners":operation_owners,"circle_profiles":profiles,"sketch_profiles":sketch_profiles,"sketch_constraints":constraints,"constraint_graphs":constraint_graphs})
+        })
+        .collect();
+    Ok(json!({"path": path, "editable_history_imported": false, "designs": summaries,
+        "warnings": ["Inspection does not regenerate or import a document. Use doc.open for supported editable history; general history and native B-reps remain unsupported."]}))
 }
 
 fn write(s: &mut Session, path: &str, format: &str, compression: &str, preview: bool, cache: bool) -> Result<Value> {
@@ -340,7 +486,7 @@ fn write_bytes(
     solidcraft_io::write_atomic(std::path::Path::new(path), &bytes, true).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     s.path = Some(path.to_string());
     s.mark_saved();
-    Ok(json!({"path": path, "bytes": bytes.len(), "name": s.doc.name}))
+    Ok(json!({"path": path, "bytes": bytes.len(), "name": s.doc.name,"warnings":s.doc.import_warnings}))
 }
 
 impl Session {

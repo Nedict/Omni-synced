@@ -1,0 +1,115 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "lift",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "construct.plane.offset",
+      "params": {
+        "base": "XZ",
+        "offset": "lift",
+        "name": "Parent plane"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "Parent plane",
+        "name": "Round profile"
+      }
+    },
+    {
+      "command": "sketch.circle.center",
+      "params": {
+        "center": [
+          0,
+          0
+        ],
+        "diameter": 20
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "15 mm",
+        "name": "Raised cylinder"
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 1500,
+    "body_count": 1,
+    "bounds": [
+      [
+        -10,
+        20,
+        -10
+      ],
+      [
+        10,
+        35,
+        10
+      ]
+    ],
+    "features": [
+      "Parent plane",
+      "Round profile",
+      "Raised cylinder"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "lift",
+        "expression": "35 mm"
+      },
+      "volume_pi_mm3": 1500,
+      "bounds": [
+        [
+          -10,
+          35,
+          -10
+        ],
+        [
+          10,
+          50,
+          10
+        ]
+      ]
+    },
+    {
+      "command": "timeline.edit",
+      "params": {
+        "feature": 1,
+        "set": {
+          "plane": {
+            "distance": "-20 mm"
+          }
+        }
+      },
+      "volume_pi_mm3": 1500,
+      "bounds": [
+        [
+          -10,
+          -20,
+          -10
+        ],
+        [
+          10,
+          -5,
+          10
+        ]
+      ]
+    }
+  ]
+}

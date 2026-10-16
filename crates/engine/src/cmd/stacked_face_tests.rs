@@ -67,12 +67,12 @@ fn sketch_and_offset_plane_on_the_top_face_of_a_face_sketched_extrude() {
                     assert!((plane.origin.z - 20.).abs() < 1e-9 && (plane.normal().z - 1.).abs() < 1e-9, "{case}: {plane:?}");
                     s.execute("construct.plane.offset", &json!({"base": {"face": top}, "offset": 5, "name": "Above"}))
                         .unwrap_or_else(|e| panic!("{case}: {e}"));
-                    // The second extrude's flat side attaches too, also where a full-face Join
-                    // merged it with the first extrude's side (#491): that face is known by its
-                    // exact history name.
+                    // The finite-union certificate retains both contributors when
+                    // a full-face Join merges the two extrusion sides.
                     if !circle {
                         let side = if full { [40., 20., 15.] } else { [30., 20., 15.] };
-                        s.execute("sketch.create", &json!({"plane": {"face": side}, "name": "Side"})).unwrap_or_else(|e| panic!("{case} side: {e}"));
+                        let params = json!({"plane": {"face": side}, "name": "Side"});
+                        s.execute("sketch.create", &params).unwrap_or_else(|e| panic!("{case} side: {e}"));
                         assert!((healthy(&s, "Side").normal().x - 1.).abs() < 1e-9, "{case}");
                         run(&mut s, "sketch.finish", json!({}));
                     }

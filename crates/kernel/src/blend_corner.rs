@@ -24,6 +24,42 @@ use crate::blend::{plane_normal, too_large, unsupported, vtx};
 use crate::body::{Body, Solid, p3, v3};
 use crate::{KernelError, Result, guard};
 
+/// An explicit mitre and its sharp continuation request a corner that retains
+/// the earlier rounds' radii. Recognize that construction before trying a new
+/// rolling-ball strip along the mitre and its tapered endpoint.
+pub(crate) fn rebuild_mitre_selection(body: &Body, points: &[Vec3], radius: f64) -> Result<Option<Body>> {
+    if !(2..=1000).contains(&points.len()) || !(radius.is_finite() && radius > 1e-6 && radius < 1e6) || points.iter().any(|p| !p.is_finite()) {
+        return Ok(None);
+    }
+    let selected: Vec<_> = points.iter().map(|p| (*p, radius)).collect();
+    let rebuild = guard("recognise selected mitre", || {
+        let edges = Body::unique_edges(&body.solid);
+        let tolerance = (body.size() * 2e-3).max(1e-3);
+        let (mut line, mut curved) = (false, false);
+        for point in points {
+            let Some((index, distance)) = body.nearest_edge(*point, tolerance)? else { return Ok(false) };
+            let Some(edge) = edges.get(index).filter(|_| distance <= tolerance) else { return Ok(false) };
+            if matches!(edge.curve(), mt::Curve::Line(_)) {
+                line = true;
+            } else {
+                curved = true;
+            }
+        }
+        if !(line && curved) {
+            return Ok(false);
+        }
+        let rounds = rounds_at(body, &selected)?;
+        if rounds.is_empty() {
+            return Ok(false);
+        }
+        let removed: Vec<_> = rounds.iter().map(|r| r.0).collect();
+        // Only consume an explicitly selected seam between two recognized
+        // rounds, on the same smooth chain as a retained sharp selection.
+        Ok(surviving_picks(body, &selected, &removed).is_ok_and(|kept| kept.len() < selected.len()))
+    })?;
+    if rebuild { fillet_radii(body, &selected).map(Some) } else { Ok(None) }
+}
+
 /// Fillet each edge nearest a point with its own radius.
 pub fn fillet_radii(body: &Body, edges: &[(Vec3, f64)]) -> Result<Body> {
     body.require_brep("fillet")?;
@@ -1362,7 +1398,9 @@ mod tests {
             let reference = fillet_radii(&b, &together).unwrap();
             let result = fillet(&rounded, &[seam, vertical], radius).unwrap();
             assert!(result.validity().is_empty(), "{:?}", result.validity());
-            assert!((vol(&result) - vol(&reference)).abs() < 0.05, "radius {radius}");
+            let actual = vol(&result);
+            let expected = vol(&reference);
+            assert!((actual - expected).abs() < 0.05, "radius {radius}: sequential volume {actual}, simultaneous volume {expected}");
             // The old bottom radius is still 2, away from the newly rounded corner.
             assert!(!result.contains(Vec3::new(12.5, 0.5, 0.5)));
             assert!(result.contains(Vec3::new(12.5, 1.0, 1.0)));

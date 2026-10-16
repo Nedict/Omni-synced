@@ -1,0 +1,189 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "firstDiameter",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "secondDiameter",
+        "expression": "40 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "12 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Two profiles"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 20,
+          "id": "outer0"
+        },
+        "dimensions": {
+          "diameter": "firstDiameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.circle.center",
+      "params": {
+        "center": [
+          0,
+          0
+        ],
+        "diameter": 10.0,
+        "id": "inner0"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            50,
+            0
+          ],
+          "diameter": 40,
+          "id": "outer1"
+        },
+        "dimensions": {
+          "diameter": "secondDiameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.circle.center",
+      "params": {
+        "center": [
+          50,
+          0
+        ],
+        "diameter": 20.0,
+        "id": "inner1"
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Twin rings",
+        "profiles": {
+          "type": "whole_boundaries",
+          "profiles": [
+            {
+              "outer": [
+                "outer0"
+              ],
+              "holes": [
+                [
+                  "inner0"
+                ]
+              ]
+            },
+            {
+              "outer": [
+                "outer1"
+              ],
+              "holes": [
+                [
+                  "inner1"
+                ]
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 4500,
+    "body_count": 2,
+    "bounds": [
+      [
+        -10,
+        -20,
+        0
+      ],
+      [
+        70,
+        20,
+        12
+      ]
+    ],
+    "features": [
+      "Two profiles",
+      "Twin rings"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "firstDiameter",
+        "expression": "30 mm"
+      },
+      "volume_pi_mm3": 6000,
+      "bounds": [
+        [
+          -15,
+          -20,
+          0
+        ],
+        [
+          70,
+          20,
+          12
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "20 mm"
+      },
+      "volume_pi_mm3": 7500,
+      "bounds": [
+        [
+          -10,
+          -20,
+          0
+        ],
+        [
+          70,
+          20,
+          20
+        ]
+      ]
+    }
+  ]
+}

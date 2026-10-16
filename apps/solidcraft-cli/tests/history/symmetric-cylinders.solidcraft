@@ -1,0 +1,154 @@
+{
+  "format": "solidcraft-f3d-dev/14",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "diameter",
+      "expr": "20 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "30 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "d1",
+      "expr": "diameter",
+      "unit": "mm",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Symmetric circles",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "axis.start",
+            "pos": [
+              0.0,
+              -30.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "axis.end",
+            "pos": [
+              0.0,
+              30.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "left.center",
+            "pos": [
+              -30.0,
+              10.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "right.center",
+            "pos": [
+              30.0,
+              10.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "axis",
+            "type": "line",
+            "a": 1,
+            "b": 2,
+            "construction": true,
+            "fixed": true
+          },
+          {
+            "id": "left",
+            "type": "circle",
+            "c": 3,
+            "r": 10.0,
+            "construction": false
+          },
+          {
+            "id": "right",
+            "type": "circle",
+            "c": 4,
+            "r": 10.0,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "fix",
+            "p": 3
+          },
+          {
+            "id": "k2",
+            "type": "diameter",
+            "c": 1,
+            "value": 20.0,
+            "param": "d1"
+          },
+          {
+            "id": "k3",
+            "type": "symmetric",
+            "p": 3,
+            "q": 4,
+            "l": 0
+          },
+          {
+            "id": "k4",
+            "type": "equal",
+            "a": 1,
+            "b": 2
+          }
+        ],
+        "counters": {
+          "k": 4
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Symmetric cylinders",
+      "suppressed": false,
+      "param_names": [
+        "d2"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "height",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    }
+  ],
+  "next_id": 3
+}

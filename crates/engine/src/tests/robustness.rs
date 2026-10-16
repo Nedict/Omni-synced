@@ -574,3 +574,32 @@ fn seed_33_display_plan_and_measure_agree() {
         assert!((planned - measured).abs() < 2e-5 * measured, "{}: planned {planned}, measured {measured}", b.name);
     }
 }
+
+/// Pin the selections rather than choosing by an evolving edge-array index.
+/// This shell/fillet/pattern sequence succeeds on upstream c3616309.
+#[test]
+fn shell_fillet_pattern_replays_fixed_selections() {
+    let s = script(json!([
+        {"command": "sketch.create", "params": {"plane": "XY"}},
+        {"command": "sketch.line", "params": {"points": [[0, 0], [40.0, 0], [40.0, 37.5], [25.0, 37.5], [25.0, 20.0], [12.5, 20.0], [12.5, 37.5], [0, 37.5]]}},
+        {"command": "sketch.arc.three_point", "params": {"end": [0, 0], "start": [0, 37.5], "through": [-7.5, 18.75]}},
+        {"command": "sketch.finish", "params": {}},
+        {"command": "solid.extrude", "params": {"distance": 35.0}},
+        {"command": "solid.cylinder", "params": {"axis": [0.0, 0.0, 1.0], "base": [-7.499999999999981, 0.0, 25.0], "height": 25.0, "operation": "cut", "radius": 8.75}},
+        {"command": "solid.shell", "params": {"faces": [[12.5, 28.75, 17.5]], "thickness": 2.0}},
+        {"command": "solid.fillet", "params": {"edges": [[-2.602280410795756, 7.250851179380608, 35.0], [25.0, 20.0, 17.5], [32.5, 37.5, 35.0]], "radius": 1.0}},
+        {"command": "solid.cylinder", "params": {"axis": [0.0, 1.0, 0.0], "base": [40.000000000000014, 15.0, 35.000000000000014], "height": 30.0, "operation": "join", "radius": 1.25}},
+        {"command": "solid.pattern.circular", "params": {"axis": "Z", "count": 4, "features": ["Cylinder2"]}}
+    ]));
+    assert_eq!(s.model.state().bodies.len(), 1, "the patterned shells keep their body identity");
+    let baseline = s.model.state().bodies.iter().map(|b| solidcraft_kernel::measure(&b.body).unwrap().volume).sum::<f64>();
+    assert!((baseline - 16609.353673).abs() < 0.02, "upstream volume changed: {baseline}");
+    let doc = solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap();
+    let mut reopened = solidcraft_doc::Model::new();
+    reopened.evaluate(&doc);
+    assert!(reopened.results.iter().all(|r| r.error.is_none()));
+    assert_eq!(reopened.state().bodies.len(), 1);
+    let volume = reopened.state().bodies.iter().map(|b| solidcraft_kernel::measure(&b.body).unwrap().volume).sum::<f64>();
+    assert!((volume - baseline).abs() < 1e-6, "saved history changed the volume");
+    assert!(reopened.state().bodies.iter().all(|b| b.body.validity().is_empty()));
+}

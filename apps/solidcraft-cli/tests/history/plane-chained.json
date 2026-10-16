@@ -1,0 +1,124 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "lift",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "construct.plane.offset",
+      "params": {
+        "base": "XY",
+        "offset": "lift",
+        "name": "Parent plane"
+      }
+    },
+    {
+      "command": "construct.plane.offset",
+      "params": {
+        "base": "Parent plane",
+        "offset": "10 mm",
+        "name": "Child plane"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "Child plane",
+        "name": "Round profile"
+      }
+    },
+    {
+      "command": "sketch.circle.center",
+      "params": {
+        "center": [
+          0,
+          0
+        ],
+        "diameter": 20
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "15 mm",
+        "name": "Raised cylinder"
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 1500,
+    "body_count": 1,
+    "bounds": [
+      [
+        -10,
+        -10,
+        30
+      ],
+      [
+        10,
+        10,
+        45
+      ]
+    ],
+    "features": [
+      "Parent plane",
+      "Child plane",
+      "Round profile",
+      "Raised cylinder"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "lift",
+        "expression": "35 mm"
+      },
+      "volume_pi_mm3": 1500,
+      "bounds": [
+        [
+          -10,
+          -10,
+          45
+        ],
+        [
+          10,
+          10,
+          60
+        ]
+      ]
+    },
+    {
+      "command": "timeline.edit",
+      "params": {
+        "feature": 1,
+        "set": {
+          "plane": {
+            "distance": "-20 mm"
+          }
+        }
+      },
+      "volume_pi_mm3": 1500,
+      "bounds": [
+        [
+          -10,
+          -10,
+          -10
+        ],
+        [
+          10,
+          10,
+          5
+        ]
+      ]
+    }
+  ]
+}

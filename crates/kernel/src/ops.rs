@@ -361,7 +361,9 @@ fn boolean_via(a: &Body, b: &Body, op: BoolOp, whole: &dyn Fn(&Body, &Body, Bool
     }
     r = r.map(|result| result.map(|body| body.inherit_regularization_protection(a).inherit_regularization_protection(b)));
     match op {
-        BoolOp::Cut => r = r.and_then(|result| result.map(|body| body.with_preserved_boolean_planar_sources(a, b, true)).transpose()),
+        BoolOp::Cut => {
+            r = r.and_then(|result| result.map(|body| body.with_preserved_boolean_planar_sources(a, b, true)?.with_cut_cap_sources(b)).transpose())
+        }
         BoolOp::Union => r = r.and_then(|result| result.map(|body| body.with_preserved_union_planar_sources(a, b)).transpose()),
         BoolOp::Intersect => {}
     }
@@ -376,6 +378,9 @@ fn boolean_via(a: &Body, b: &Body, op: BoolOp, whole: &dyn Fn(&Body, &Body, Bool
             KernelError::Failed(m) => KernelError::Failed(format!("{m} ({})", tried.trim_start_matches("Boolean retry: "))),
             other => other,
         });
+    }
+    if op == BoolOp::Union {
+        r = r.and_then(|result| result.map(|body| body.with_union_planar_sources(a, b)).transpose());
     }
     if r.is_ok() {
         merge(diagnostics);
@@ -620,6 +625,16 @@ fn boolean_whole(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
         };
         (consistent, v)
     };
+    // A contained cylindrical tool sharing a complete circular cap is removed
+    // by stitching its reversed walls into that cap, without moving either body.
+    if op == BoolOp::Cut
+        && let Some(Ok(body)) = crate::coplanar::contained_cap_cut(a, b)
+        && body.validity().is_empty()
+        && check(&body).0
+        && crate::boolean_guard::check_retry(a, b, op, Some(&body)).is_ok()
+    {
+        return Ok(Some(body));
+    }
     // One body clear of or inside the other: no intersection needed.
     // Kept for the end when the facetings disagree with it: bodies that touch along curved
     // faces can pass through each other slightly, and often can't be intersected.

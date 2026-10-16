@@ -1,0 +1,110 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "radius",
+        "expression": "15 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "12 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Arc segment"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.arc.center_point",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "start": [
+            15,
+            0
+          ],
+          "sweep": 180,
+          "id": "arc",
+          "infer": false
+        },
+        "dimensions": {
+          "radius": "radius",
+          "sweep": "180 deg"
+        }
+      }
+    },
+    {
+      "command": "sketch.line",
+      "params": {
+        "points": [
+          "arc.end",
+          "arc.start"
+        ],
+        "id": "chord",
+        "infer": false
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Segment"
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 1350,
+    "body_count": 1,
+    "bounds": [
+      [
+        -15,
+        0,
+        0
+      ],
+      [
+        15,
+        15,
+        12
+      ]
+    ],
+    "features": [
+      "Arc segment",
+      "Segment"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "radius",
+        "expression": "20 mm"
+      },
+      "volume_pi_mm3": 2400
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "20 mm"
+      },
+      "volume_pi_mm3": 2250
+    }
+  ]
+}

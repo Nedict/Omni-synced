@@ -161,6 +161,39 @@ replace any Dock shortcut with the old name (open `SolidCraft.app`, then
 `flatpak remote-modify --user --url=https://bherbruck.github.io/solidcraft/flatpak/repo/ solvecraft`
 (use your remote's name), then `flatpak update --user`.
 
+## F3D development formats
+
+The unpublished F3D branch used format numbers 14–30 independently of upstream.
+Its known authored history fixtures use the explicit `solidcraft-f3d-dev/N` tag;
+the reader accepts tagged versions 13–30, applies their development compatibility
+rules and writes the current generated upstream format with `format_pending`.
+The F3D extension is declared in `crates/doc/src/format/pending/f3d-editable-history.rs`;
+no manual format-number increment is needed.
+
+Ordinary `solidcraft/N` files always retain upstream topology identities, piece
+ordering and loft defaults. Untagged development files cannot be distinguished
+reliably from upstream files using the same numbers. A file known to have been
+saved by the old F3D branch must be explicitly retagged before import; never
+retag an unknown future upstream file to bypass its version check. Only the
+known repository fixtures were retagged during this integration; user designs
+were not modified. Unknown development versions and future upstream versions
+are rejected.
+
+Loft interpolation is saved explicitly. Upstream files without an interpolation
+field and new loft commands use `chord_length`, preserving upstream's treatment
+of uneven section spacing. Only explicitly tagged development files without that
+field migrate to `uniform`, preserving their authored geometry. `circular_chord`
+remains the constrained three-coaxial-circle mode. Symmetric circular patterns
+are covered by the pending F3D format change; an absent flag preserves the older
+one-sided distribution, and released readers request an update rather than
+silently discard the symmetry.
+The integrated upstream extrusion convention preserves unmarked extents as
+`legacy_per_side`. New full-length F3D extrusions save `total_distance` with the
+original parameter expression, while native half-length extents explicitly keep
+`legacy_per_side`. Both conventions retain their thickness after reopening.
+Migration and save/reopen tests distinguish these cases; the uniform-volume
+expectations are independent polynomial integrals, not newly accepted output.
+
 ## Draft design containers
 
 The #303 draft used `solvecraft-container/1`. `crates/io/src/design.rs` accepts that

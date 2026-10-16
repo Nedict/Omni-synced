@@ -1,0 +1,120 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "width",
+        "expression": "30 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "depth",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "-17 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Rectangle"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            30,
+            20
+          ]
+        },
+        "dimensions": {
+          "width": "width",
+          "height": "depth"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Prism"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 10200,
+    "body_count": 1,
+    "bounds": [
+      [
+        0,
+        0,
+        -17
+      ],
+      [
+        30,
+        20,
+        0
+      ]
+    ],
+    "features": [
+      "Rectangle",
+      "Prism"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "width",
+        "expression": "45 mm"
+      },
+      "volume_mm3": 15300
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "depth",
+        "expression": "25 mm"
+      },
+      "volume_mm3": 12750
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "-23 mm"
+      },
+      "volume_mm3": 13800
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "width",
+        "expression": "depth * 2"
+      },
+      "volume_mm3": 13600
+    }
+  ]
+}

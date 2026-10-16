@@ -1,0 +1,169 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "outerDiameter",
+        "expression": "60 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "gap",
+        "expression": "5 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "12 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Offset ring"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 60,
+          "id": "outer"
+        },
+        "dimensions": {
+          "diameter": "outerDiameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.offset",
+      "params": {
+        "curves": [
+          "outer"
+        ],
+        "distance": "gap"
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Ring",
+        "profiles": {
+          "type": "whole_boundaries",
+          "profiles": [
+            {
+              "outer": [
+                "outer"
+              ],
+              "holes": [
+                [
+                  "c1"
+                ]
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 3300,
+    "body_count": 1,
+    "bounds": [
+      [
+        -30,
+        -30,
+        0
+      ],
+      [
+        30,
+        30,
+        12
+      ]
+    ],
+    "features": [
+      "Offset ring",
+      "Ring"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "gap",
+        "expression": "8 mm"
+      },
+      "volume_pi_mm3": 4992,
+      "bounds": [
+        [
+          -30,
+          -30,
+          0
+        ],
+        [
+          30,
+          30,
+          12
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "outerDiameter",
+        "expression": "80 mm"
+      },
+      "volume_pi_mm3": 4500,
+      "bounds": [
+        [
+          -40,
+          -40,
+          0
+        ],
+        [
+          40,
+          40,
+          12
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "20 mm"
+      },
+      "volume_pi_mm3": 5500,
+      "bounds": [
+        [
+          -30,
+          -30,
+          0
+        ],
+        [
+          30,
+          30,
+          20
+        ]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,194 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "width",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "40 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "radius",
+        "expression": "2 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Block profile"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            20,
+            30
+          ]
+        },
+        "dimensions": {
+          "width": "width"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "operation": "new_body",
+        "name": "Block",
+        "body_name": "Block"
+      }
+    },
+    {
+      "command": "solid.fillet",
+      "params": {
+        "edges": [
+          [
+            10,
+            0,
+            40
+          ]
+        ],
+        "radius": "radius",
+        "body": "Block",
+        "name": "Rounded edges"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 23982.831853071795,
+    "body_count": 1,
+    "bounds": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        20,
+        30,
+        40
+      ]
+    ],
+    "features": [
+      "Block profile",
+      "Block",
+      "Rounded edges"
+    ],
+    "volume_tolerance_mm3": 0.09584073464102402
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "radius",
+        "expression": "4 mm"
+      },
+      "volume_mm3": 23931.327412287184,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          30,
+          40
+        ]
+      ],
+      "volume_tolerance_mm3": 0.3533629385640779
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "50 mm"
+      },
+      "volume_mm3": 29982.831853071795,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          30,
+          50
+        ]
+      ],
+      "volume_tolerance_mm3": 0.09584073464102402
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "width",
+        "expression": "30 mm"
+      },
+      "volume_mm3": 35974.24777960769,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          30,
+          30,
+          40
+        ]
+      ],
+      "volume_tolerance_mm3": 0.13876110196153604
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Rounded edges",
+        "suppressed": true
+      },
+      "volume_mm3": 24000,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          30,
+          40
+        ]
+      ],
+      "volume_tolerance_mm3": 0.01
+    }
+  ]
+}

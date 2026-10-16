@@ -35,6 +35,9 @@ impl FaceAnchor {
         }
         if let Some(certificate) = &mut self.target.certificate {
             certificate.remap_features(features);
+            if let Some(role) = certificate.union_role() {
+                self.target.name = format!("F{}:{role}", self.target.origin_feature);
+            }
         }
         self.validate()
     }

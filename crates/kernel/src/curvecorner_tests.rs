@@ -309,3 +309,28 @@ fn corner_blends_hold_at_any_scale() {
         }
     }
 }
+
+#[test]
+fn unsupported_concave_corner_combinations_remain_refused() {
+    let stock = crate::box_solid(Vec3::ZERO, Vec3::new(20., 20., 20.)).unwrap();
+    let check = |bottom: f64, points: &[Vec3], round: bool| {
+        let tool = crate::box_solid(Vec3::new(10., 10., bottom), Vec3::new(25., 25., 25.)).unwrap();
+        let body = crate::boolean(&stock, &tool, crate::BoolOp::Cut).unwrap().unwrap();
+        let body = crate::boolean_record::healed(&body).unwrap();
+        let all = Body::unique_edges(&body.solid);
+        let ids: Vec<_> = points
+            .iter()
+            .map(|p| {
+                let (index, distance) = body.nearest_edge(*p, 1e-4).unwrap().unwrap();
+                assert!(distance < 1e-4);
+                all[index].id()
+            })
+            .collect();
+        let error = super::corner_blend(&body.solid, &ids, body.size(), 1., round).err().unwrap();
+        assert!(error.to_string().contains("concave blends meeting at a corner"), "{error}");
+    };
+    let pair = [Vec3::new(10., 10., 15.), Vec3::new(10., 15., 10.)];
+    check(10., &[pair[0], pair[1], Vec3::new(15., 10., 10.)], true);
+    check(10., &pair, false);
+    check(-5., &[Vec3::new(10., 10., 10.), Vec3::new(10., 15., 0.)], true);
+}

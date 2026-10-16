@@ -55,7 +55,7 @@ pub use offset_topology::{OffsetCreated, OffsetRole, OffsetRoleFlags, OffsetRole
 pub use pattern::{PatternAlignment, PatternInstance, SketchPattern, SketchPatternKind};
 pub use periodic::periodic_beziers;
 pub use profiles::{
-    CurvePick, Profile, distinct_curves, find_drawn_profiles, find_profiles, merge_regions, profile_at_point, profile_by_curves,
+    CurvePick, Profile, ProfilePiece, distinct_curves, find_drawn_profiles, find_profiles, merge_regions, profile_at_point, profile_by_curves,
     without_text_counters,
 };
 pub use shape::{Shape, intersections};

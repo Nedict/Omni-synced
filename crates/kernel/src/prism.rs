@@ -433,8 +433,8 @@ pub(crate) struct Index {
     vertices: std::collections::HashMap<mt::VertexID, usize>,
     /// Each vertex's point, by number.
     points: Vec<Vec3>,
-    /// Per edge (edge order): whether it is a line.
-    lines: Vec<bool>,
+    /// Edges in the same order, for whole-curve station certificates.
+    ordered_edges: Vec<mt::Edge>,
 }
 
 impl Index {
@@ -450,7 +450,6 @@ impl Index {
                 }
             }
         }
-        let lines = edges.iter().map(|e| matches!(e.curve(), mt::Curve::Line(_))).collect();
         let mut between: std::collections::HashMap<(usize, usize), Vec<usize>> = std::collections::HashMap::new();
         for (i, fs) in bounds.iter().enumerate() {
             match fs.as_slice() {
@@ -464,7 +463,7 @@ impl Index {
             .zip(bounds)
             .map(|(e, fs)| (fs, vertices.get(&e.absolute_front().id()).copied(), vertices.get(&e.absolute_back().id()).copied()))
             .collect();
-        Index { operand, edges: crate::record::edge_index(&b.solid), bounds, between, vertices, points, lines }
+        Index { operand, edges: crate::record::edge_index(&b.solid), bounds, between, vertices, points, ordered_edges: edges }
     }
 
     /// The tag of the segments read off edge `e` (as it runs in a wire) of cap face `cap`.
@@ -517,7 +516,7 @@ struct Stations {
     /// Each wall's highest level.
     tops: std::collections::HashMap<usize, f64>,
     /// Per wall, the edges across it: the other wall and the edge's lowest and highest levels.
-    /// A curve other than a line spans every level.
+    /// Uncertified curves conservatively span every level.
     cross: std::collections::HashMap<usize, Vec<(usize, f64, f64)>>,
 }
 
@@ -525,20 +524,32 @@ impl Stations {
     /// From the operand's walls (by face number, with their highest levels).
     fn new(index: &Index, tops: std::collections::HashMap<usize, f64>, d: Vec3, plane: &Plane, tol: f64) -> Stations {
         let mut cross: std::collections::HashMap<usize, Vec<(usize, f64, f64)>> = std::collections::HashMap::new();
+        let mut curve_work = 2_000_000;
         for (i, (fs, front, back)) in index.bounds.iter().enumerate() {
             let [f, g] = fs[..] else { continue };
             if f == g || !tops.contains_key(&f) || !tops.contains_key(&g) {
                 continue;
             }
             let ends = front.and_then(|v| index.points.get(v)).zip(back.and_then(|v| index.points.get(v)));
+            let curve = index.ordered_edges.get(i).map(|e| e.curve());
             let (lo, hi) = match ends {
-                Some((p, q)) if index.lines.get(i) == Some(&true) => {
+                Some((p, q)) if matches!(curve, Some(mt::Curve::Line(_))) => {
                     let run = *q - *p;
                     if (run - d * run.dot(d)).len() < tol {
                         continue; // Along the direction: between walls over two segments.
                     }
                     let (h, k) = (plane.height(*p), plane.height(*q));
                     (h.min(k), h.max(k))
+                }
+                Some((p, q)) => {
+                    let h = plane.height(*p);
+                    if (plane.height(*q) - h).abs() < tol
+                        && curve.as_ref().is_some_and(|c| crate::prism_curve::at_height(c, plane, h, tol, &mut curve_work))
+                    {
+                        (h, h)
+                    } else {
+                        (f64::NEG_INFINITY, f64::INFINITY)
+                    }
                 }
                 _ => (f64::NEG_INFINITY, f64::INFINITY),
             };
@@ -551,6 +562,40 @@ impl Stations {
     /// The edges across wall `w`.
     fn of(&self, w: usize) -> &[(usize, f64, f64)] {
         self.cross.get(&w).map_or(&[], Vec::as_slice)
+    }
+
+    /// A wall can change source face at a horizontal join with no cap there.
+    /// Include those certified stations so each slab still has one known wall.
+    /// If they exceed the existing section/work budgets, keep the cap-only
+    /// partition and its conservative unknown provenance across such joins.
+    fn add_levels(&self, levels: &mut Vec<f64>, tol: f64) {
+        let (Some(&lo), Some(&hi)) = (levels.first(), levels.last()) else { return };
+        let mut complete = levels.clone();
+        let mut work = MAX_PLANAR_PAIRS;
+        let mut walls: Vec<_> = self.cross.iter().collect();
+        walls.sort_by_key(|(wall, _)| **wall);
+        for (_, crossings) in walls {
+            for (_, a, b) in crossings {
+                if !a.is_finite() || !b.is_finite() || (b - a).abs() >= tol {
+                    continue;
+                }
+                let z = a * 0.5 + b * 0.5;
+                if z <= lo + tol || z >= hi - tol {
+                    continue;
+                }
+                let Some(left) = work.checked_sub(complete.len()) else { return };
+                work = left;
+                if complete.iter().any(|h| (h - z).abs() < tol) {
+                    continue;
+                }
+                if complete.len() >= 64 {
+                    return;
+                }
+                complete.push(z);
+            }
+        }
+        complete.sort_by(f64::total_cmp);
+        *levels = complete;
     }
 
     /// The operand's edge (in `index`) where wall `w` ends at level `z`, when it ends there in
@@ -1688,6 +1733,7 @@ fn simple_loops(lp: Loop2, tags: Vec<Tag>, near: f64) -> Vec<(Loop2, Vec<Tag>)> 
 }
 
 fn split_seg(seg: &Seg2, pts: &[Vec2], tol: f64) -> Option<Vec<Seg2>> {
+    let roundoff = tol.min(1e-9);
     let mut ts: Vec<f64> = pts
         .iter()
         .filter_map(|p| {
@@ -1698,9 +1744,10 @@ fn split_seg(seg: &Seg2, pts: &[Vec2], tol: f64) -> Option<Vec<Seg2>> {
             {
                 return None;
             }
-            // A point within `tol` of an end is that end (the sewing welds them into one): a cut
-            // there would leave a piece with no length.
-            if p.dist(seg.start()) < tol || p.dist(seg.end()) < tol {
+            // Suppress only a point indistinguishable from the existing endpoint
+            // at sewing accuracy. The Boolean search tolerance must not erase a
+            // real short segment before the sections are assembled.
+            if p.dist(seg.start()) < roundoff || p.dist(seg.end()) < roundoff {
                 return None;
             }
             let t = seg.closest_param(*p);
@@ -1711,7 +1758,14 @@ fn split_seg(seg: &Seg2, pts: &[Vec2], tol: f64) -> Option<Vec<Seg2>> {
     ts.dedup_by(|x, y| (*x - *y).abs() < 1e-9);
     let mut out = Vec::new();
     let mut t0 = 0.0;
+    let length = seg.length();
+    // Only suppress edges that sewing cannot represent (see sew's edge validation).
+    // The Boolean tolerance scales with the whole body and can be much larger;
+    // using it here erases real section stations and changes cavity topology.
     for t1 in ts.into_iter().chain(std::iter::once(1.0)) {
+        if t1 < 1. && (length * (t1 - t0) < roundoff || length * (1. - t1) < roundoff) {
+            continue;
+        }
         out.push(match *seg {
             Seg2::Line { .. } => Seg2::Line { a: seg.point_at(t0), b: seg.point_at(t1) },
             Seg2::Arc { center, radius, start, sweep } => Seg2::Arc { center, radius, start: start + sweep * t0, sweep: sweep * (t1 - t0) },
@@ -1933,11 +1987,12 @@ fn sew_connected_sections(
             ends.push(u);
         }
     }
-    // A piece of a free-form curve whose ends weld into one point (a font's curve cut a hair from
-    // its end) is no edge and has no wall: the pieces on either side meet there. (Lines and arcs
-    // are left as they were: such a piece of one fails the sewing, as before.)
-    let short = |s: &Seg2| {
-        !s.is_line_or_arc()
+    // Remove a split fragment only after both ends actually weld to the same
+    // vertex. This also covers a font curve read as an arc in one section.
+    // A complete authored line or arc is never removed here: preserve the
+    // existing refusal when its geometry cannot be represented by this weld.
+    let short = |s: &Seg2, split: bool| {
+        (split || !s.is_line_or_arc())
             && s.length() <= 2.0 * tol
             && matches!((weld(&ends, &grid, s.start()), weld(&ends, &grid, s.end())), (Some(p), Some(q)) if p == q)
     };
@@ -2015,7 +2070,7 @@ fn sew_connected_sections(
                     let pieces = split_seg(sg0, &pts, tol)?;
                     let (n, tag) = (pieces.len(), slab.tag(r, l, si));
                     for (k, sg) in pieces.into_iter().enumerate() {
-                        if short(&sg) {
+                        if short(&sg, n > 1) {
                             continue;
                         }
                         remaining = remaining.checked_sub(1)?;
@@ -2114,7 +2169,9 @@ fn sew_connected_sections(
             for lp in std::iter::once(&r.outer).chain(&r.holes) {
                 let mut segs: Vec<Seg2> = Vec::new();
                 for sg in &lp.segs {
-                    segs.extend(split_seg(sg, &pts, tol)?.into_iter().filter(|s| !short(s)));
+                    let pieces = split_seg(sg, &pts, tol)?;
+                    let split = pieces.len() > 1;
+                    segs.extend(pieces.into_iter().filter(|s| !short(s, split)));
                 }
                 let segs: Vec<Seg2> = if *up { segs } else { segs.iter().rev().map(Seg2::reversed).collect() };
                 loops.push(segs.iter().map(|sg| edge(sg, *z)).collect::<Option<Vec<_>>>()?);
@@ -2250,8 +2307,15 @@ fn directions(a: &Body, b: &Body) -> Option<Vec<Vec3>> {
     }
     let tool = normals(b);
     let capped = |d: &Vec3| tool.iter().any(|n| n.dot(*d) > 1.0 - 1e-9) && tool.iter().any(|n| n.dot(*d) < -1.0 + 1e-9);
-    let mut dirs: Vec<Vec3> = target.iter().take(8).copied().collect();
-    dirs.extend(target.iter().skip(8).filter(|d| capped(d)).take(8));
+    // Try axes compatible with every planar wall first, even when many wall
+    // directions precede the caps. Keep the general candidates too: a stepped
+    // or trimmed operand may not satisfy the stricter whole-prism criterion.
+    let mut dirs = prism_directions(a)?;
+    for &d in target.iter().take(8).chain(target.iter().skip(8).filter(|d| capped(d)).take(8)) {
+        if !dirs.iter().any(|m| m.dot(d).abs() > 1.0 - 1e-9) {
+            dirs.push(d);
+        }
+    }
     Some(dirs)
 }
 
@@ -2334,6 +2398,7 @@ fn stack_tagged(b: &Body, d: Vec3, plane: &Plane, tol: f64, index: &LazyIndex) -
         return None;
     }
     let stations = Stations::new(index.get(), walls, d, plane, tol);
+    stations.add_levels(&mut levels, tol);
     let mut current = Section::default();
     let mut stack: Vec<Prism> = Vec::new();
     let mut budget = MAX_PLANAR_PAIRS;
@@ -2372,6 +2437,42 @@ fn stack_tagged(b: &Body, d: Vec3, plane: &Plane, tol: f64, index: &LazyIndex) -
 #[cfg(test)]
 fn stack_boolean(a: &Body, b: &Body, op: BoolOp) -> Option<Result<Option<Body>>> {
     stack_indexed(a, b, op, [&LazyIndex::new(a, 0), &LazyIndex::new(b, 1)], true)
+}
+
+/// A prism's planar face normals are parallel (caps) or perpendicular (walls) to its axis.
+/// Reject incompatible wall normals before reconstructing sections: sewn bodies list walls
+/// before caps, and a patterned outline can have arbitrarily many distinct wall directions.
+/// Looking at only the first eight normals loses the actual extrusion axis in that case.
+fn prism_directions(body: &Body) -> Option<Vec<Vec3>> {
+    let mut normals = Vec::new();
+    let mut faces = MAX_PLANAR_SEGMENTS * 2;
+    for face in body.solid.face_iter() {
+        faces = faces.checked_sub(1)?;
+        if let mt::Surface::Plane(plane) = face.oriented_surface() {
+            let n = plane.normal();
+            normals.push(Vec3::new(n.x, n.y, n.z).normalized()?);
+        }
+    }
+    let mut directions: Vec<Vec3> = Vec::new();
+    let mut work = MAX_PLANAR_PAIRS;
+    for &n in &normals {
+        if directions.iter().any(|d| d.dot(n).abs() > 1. - 1e-9) {
+            continue;
+        }
+        let mut compatible = true;
+        for &m in &normals {
+            work = work.checked_sub(1)?;
+            let cosine = m.dot(n).abs();
+            if cosine > 1e-9 && cosine <= 1. - 1e-9 {
+                compatible = false;
+                break;
+            }
+        }
+        if compatible {
+            directions.push(n);
+        }
+    }
+    Some(directions)
 }
 
 /// [`prism_boolean`] of stepped prisms, the operands' indexes given. A union is taken of
@@ -2513,6 +2614,72 @@ mod planar_tests {
         Region2 { outer: Loop2::polygon(&[a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y)]), holes: vec![] }
     }
     #[test]
+    fn internal_wall_station_partition_stays_bounded_and_conservative() {
+        let mut stations = Stations {
+            tops: Default::default(),
+            cross: std::collections::HashMap::from([
+                (0, vec![(1, 3., 3.), (2, f64::NEG_INFINITY, f64::INFINITY), (3, 4., 6.), (4, f64::NAN, f64::NAN)]),
+                (1, vec![(0, 3., 3.), (5, -1., -1.), (6, 11., 11.)]),
+            ]),
+        };
+        let mut levels = vec![0., 10.];
+        stations.add_levels(&mut levels, 1e-6);
+        assert_eq!(levels, [0., 3., 10.], "only finite horizontal interior stations can certify new slabs");
+        stations.cross = std::collections::HashMap::from([(0, (1..=62).map(|i| (i, i as f64, i as f64)).collect())]);
+        let mut levels = vec![0., 100.];
+        stations.add_levels(&mut levels, 1e-6);
+        assert_eq!(levels.len(), 64);
+        stations.cross.get_mut(&0).unwrap().push((63, 63., 63.));
+        let mut levels = vec![0., 100.];
+        stations.add_levels(&mut levels, 1e-6);
+        assert_eq!(levels, [0., 100.], "over-budget provenance must keep the original cap partition");
+    }
+
+    #[test]
+    fn section_stations_do_not_create_roundoff_edges() {
+        for seg in [Seg2::Line { a: Vec2::ZERO, b: Vec2::new(0.002, 0.) }, Seg2::Arc { center: Vec2::ZERO, radius: 0.1, start: 0., sweep: 0.02 }] {
+            let stations = [5e-9, 0.5, 0.5 + 1.5e-9, 1. - 5e-9].map(|t| seg.point_at(t));
+            let pieces = split_seg(&seg, &stations, 1e-6).unwrap();
+            assert_eq!(pieces.len(), 2, "roundoff station must not add a third edge");
+            assert!(pieces.iter().all(|p| p.length() > 0.0009));
+            assert!(pieces[0].start().dist(seg.start()) < 1e-14);
+            assert!(pieces[1].end().dist(seg.end()) < 1e-14);
+            assert!(pieces[0].end().dist(pieces[1].start()) < 1e-14);
+            assert!((pieces.iter().map(Seg2::length).sum::<f64>() - seg.length()).abs() < 1e-14);
+        }
+    }
+    #[test]
+    fn section_stations_preserve_sewable_edges_below_boolean_tolerance() {
+        for seg in [Seg2::Line { a: Vec2::ZERO, b: Vec2::new(0.002, 0.) }, Seg2::Arc { center: Vec2::ZERO, radius: 0.1, start: 0., sweep: 0.02 }] {
+            let stations = [1e-3, 0.5, 0.5 + 1e-3, 1. - 1e-3].map(|t| seg.point_at(t));
+            let pieces = split_seg(&seg, &stations, 1e-5).unwrap();
+            assert_eq!(pieces.len(), 5, "real stations must remain even below the whole-body tolerance");
+            assert!(pieces.iter().all(|p| p.length() > 1e-9));
+            assert!((pieces.iter().map(Seg2::length).sum::<f64>() - seg.length()).abs() < 1e-14);
+        }
+    }
+    #[test]
+    fn unequal_height_small_filleted_grips_join_ring() {
+        let circle = Region2 { outer: Loop2::circle(Vec2::ZERO, 3.), holes: vec![] };
+        let stock_region = Region2 { outer: rectangle(Vec2::new(-7.5, -7.5), Vec2::new(7.5, 7.5)).outer, holes: vec![circle.outer.clone()] };
+        let mut stock = crate::extrude(&Plane::XY, &[stock_region], 0., -10.).unwrap().pop().unwrap();
+        let clip = rectangle(Vec2::new(-0.48, -3.5), Vec2::new(0.02, -2.5));
+        let section = boolean2d(&[circle], &[clip], BoolOp::Intersect, 1e-7).unwrap();
+        let grip = crate::extrude(&Plane::XY, &section, 0., -12.).unwrap().pop().unwrap();
+        let grip = crate::fillet(&grip, &[Vec3::new(-0.48, -2.5, -6.), Vec3::new(0.02, -2.5, -6.)], 0.1).unwrap();
+        for i in 0..10 {
+            let tool = crate::transform(&grip, Vec3::ZERO, Vec3::ZERO, Vec3::Z, std::f64::consts::TAU * i as f64 / 10.).unwrap();
+            assert!(matches!(prism_boolean(&stock, &tool, BoolOp::Union), Some(Ok(Some(_)))), "exact route declined grip {i}");
+            stock = crate::boolean(&stock, &tool, BoolOp::Union).unwrap_or_else(|e| panic!("grip {i}: {e}")).unwrap();
+            assert!(stock.validity().is_empty(), "grip {i}");
+        }
+        let primitive = |x: f64| 0.5 * (x * (9. - x * x).sqrt() + 9. * (x / 3.).asin());
+        let grip_area = -2.5 * 0.5 + primitive(0.02) - primitive(-0.48) - 2. * 0.1_f64.powi(2) * (1. - std::f64::consts::FRAC_PI_4);
+        let expected = (225. - 9. * std::f64::consts::PI) * 10. + 10. * grip_area * 12.;
+        let volume = crate::measure(&stock).unwrap().volume;
+        assert!((volume - expected).abs() < 0.02, "{volume} != {expected}");
+    }
+    #[test]
     fn simple_prism_retains_large_analytic_section_budget() {
         let count = 2050;
         let radius = 1000.;
@@ -2543,6 +2710,48 @@ mod planar_tests {
         );
         assert_eq!(stock.solid.vertex_iter().map(|v| (v.id(), v.point())).collect::<Vec<_>>(), before);
     }
+    #[test]
+    fn coincident_circular_cut_caps_retain_tool_provenance() {
+        for axis in [Vec3::Z, Vec3::Y, Vec3::new(1., 2., 3.).normalized().unwrap()] {
+            for top in [false, true] {
+                let stock = crate::cylinder(Vec3::ZERO, axis, 20., 40.).unwrap();
+                let tool = crate::cylinder(axis * if top { 35. } else { -1. }, axis, 20., 6.).unwrap();
+                let signatures = tool
+                    .face_sources()
+                    .unwrap()
+                    .iter()
+                    .map(|source| matches!(source, Some(crate::FaceSource::ExtrudeCap { .. })).then(|| (vec!["authored-circle".into()], vec![])))
+                    .collect::<Vec<_>>();
+                let tool = tool.with_extrude_cap_certificates(88, 87, &signatures).unwrap();
+                let result = crate::boolean(&stock, &tool, BoolOp::Cut).unwrap().unwrap();
+                let history = result.history().unwrap();
+                history.check(&result, &[&stock, &tool]).unwrap();
+                let caps = result
+                    .face_sources()
+                    .unwrap()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, source)| {
+                        if let Some(crate::FaceSource::CertifiedExtrudeCap { producer: 88, high, plane, .. }) = source {
+                            Some((index, *high, *plane))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(caps.len(), 1, "coincident complete cap outlines still overlap");
+                let (index, high, plane) = caps[0];
+                assert_eq!(high, !top);
+                let actual = result.planar_face(index).unwrap();
+                assert!(actual.normal().dot(plane.normal()) > 1. - 1e-9);
+                assert!(plane.normal().dot(if top { axis } else { -axis }) > 1. - 1e-9);
+                assert!(matches!(history.faces[index].origins.as_slice(), [crate::history::FaceOrigin::Face { operand: 1, .. }]));
+                let expected = std::f64::consts::PI * 400. * 35.;
+                assert!((crate::measure(&result).unwrap().volume - expected).abs() < expected * 1e-3);
+            }
+        }
+    }
+
     #[test]
     fn curved_stop_cut_constructs_fresh_current_cap_for_only_uniform_lump() {
         let cylinder = crate::cylinder(Vec3::new(25., 25., 0.), Vec3::Z, 2., 20.).unwrap();

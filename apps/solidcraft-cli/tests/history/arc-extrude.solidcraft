@@ -1,0 +1,141 @@
+{
+  "format": "solidcraft/12",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "radius",
+      "expr": "15 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "12 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "d1",
+      "expr": "radius",
+      "unit": "mm",
+      "model": true
+    },
+    {
+      "name": "d2",
+      "expr": "180 deg",
+      "unit": "deg",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Arc segment",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "arc.start",
+            "pos": [
+              15.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "arc.end",
+            "pos": [
+              -15.0,
+              1.83697019872103e-15
+            ],
+            "fixed": false
+          },
+          {
+            "id": "arc.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "arc",
+            "type": "arc",
+            "c": 3,
+            "a": 1,
+            "b": 2,
+            "construction": false
+          },
+          {
+            "id": "l1",
+            "type": "line",
+            "a": 2,
+            "b": 1,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 3
+          },
+          {
+            "id": "k2",
+            "type": "radius",
+            "c": 0,
+            "value": 15.0,
+            "param": "d1"
+          },
+          {
+            "id": "k3",
+            "type": "arc_sweep",
+            "c": 0,
+            "value": 3.141592653589793,
+            "param": "d2"
+          }
+        ],
+        "counters": {
+          "k": 3,
+          "l": 1
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Segment",
+      "suppressed": false,
+      "param_names": [
+        "d3"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "height",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    }
+  ],
+  "next_id": 3
+}

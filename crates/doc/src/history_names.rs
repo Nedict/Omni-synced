@@ -40,6 +40,9 @@ pub(crate) struct FaceInfo {
     /// Whether the name follows exact history (`false`: worked out from geometry, or a piece
     /// numbered because the faces around it did not tell it apart).
     pub verified: bool,
+    /// Exact source families, retained even if the order of this family's
+    /// individual pieces cannot be certified. Geometric names add no families.
+    pub families: BTreeSet<String>,
 }
 
 impl Names {
@@ -48,14 +51,27 @@ impl Names {
     pub(crate) fn unverified(names: Vec<String>, adjacent: &[(usize, usize)]) -> Names {
         let named = names
             .into_iter()
-            .map(|name| Named { name: crate::naming::strip_piece(&name).to_string(), aliases: Vec::new(), verified: false, origins: None })
+            .map(|name| Named {
+                name: crate::naming::strip_piece(&name).to_string(),
+                aliases: Vec::new(),
+                verified: false,
+                families: BTreeSet::new(),
+                origins: None,
+            })
             .collect();
         qualify(named, adjacent)
     }
 
     /// Names given as they are (a moved copy keeps its source's), taken as exact.
     pub(crate) fn given(names: Arc<Vec<String>>) -> Names {
-        let info = vec![FaceInfo { verified: true, ..FaceInfo::default() }; names.len()];
+        let info = names
+            .iter()
+            .map(|name| {
+                let mut families = BTreeSet::new();
+                add_family(&mut families, name);
+                FaceInfo { verified: true, families, ..FaceInfo::default() }
+            })
+            .collect();
         Names { faces: names, info }
     }
 
@@ -71,9 +87,30 @@ struct Named {
     name: String,
     aliases: Vec<String>,
     verified: bool,
+    families: BTreeSet<String>,
     /// What it came from (`None`: not known): faces with one name but different origins (an
     /// extrude's two caps both above its sketch plane) are numbered in this order.
     origins: Option<Vec<FaceOrigin>>,
+}
+
+fn add_family(families: &mut BTreeSet<String>, name: &str) {
+    let mut current = Some(name);
+    while let Some(name) = current {
+        families.insert(name.to_string());
+        current = crate::piece_names::parent_piece(name);
+    }
+}
+
+impl Named {
+    fn exact_families(&self) -> BTreeSet<String> {
+        let mut families = self.families.clone();
+        if self.verified {
+            for name in std::iter::once(&self.name).chain(&self.aliases) {
+                add_family(&mut families, name);
+            }
+        }
+        families
+    }
 }
 
 /// Names of a body (`b`, made by `o`'s feature) from its lineage; `None` when the lineage does
@@ -90,7 +127,13 @@ pub(crate) fn derive(b: &ModelBody, o: &NamingOrigin, lineage: &Lineage) -> Opti
         let geometric = crate::naming::geometric_names(b, o, named.len());
         for (slot, name) in named.iter_mut().zip(geometric) {
             if slot.is_none() {
-                *slot = Some(Named { name: crate::naming::strip_piece(&name).to_string(), aliases: Vec::new(), verified: false, origins: None });
+                *slot = Some(Named {
+                    name: crate::naming::strip_piece(&name).to_string(),
+                    aliases: Vec::new(),
+                    verified: false,
+                    families: BTreeSet::new(),
+                    origins: None,
+                });
             }
         }
     }
@@ -153,7 +196,13 @@ impl<'a> OperandNames<'a> {
     fn face(&self, face: usize, fid: u64) -> Option<Named> {
         let given = |names: &Names| {
             let info = names.info.get(face)?;
-            Some(Named { name: names.faces.get(face)?.clone(), aliases: info.aliases.clone(), verified: info.verified, origins: None })
+            Some(Named {
+                name: names.faces.get(face)?.clone(),
+                aliases: info.aliases.clone(),
+                verified: info.verified,
+                families: info.families.clone(),
+                origins: None,
+            })
         };
         match self.operand {
             Operand::Body(_) | Operand::Stage(_) => given(&self.names),
@@ -161,12 +210,14 @@ impl<'a> OperandNames<'a> {
                 name: format!("{}@F{fid}.{instance}", n.name),
                 aliases: n.aliases.iter().map(|a| format!("{a}@F{fid}.{instance}")).collect(),
                 verified: n.verified,
+                families: n.exact_families().iter().map(|name| format!("{name}@F{fid}.{instance}")).collect(),
                 origins: None,
             }),
             Operand::Inner(_) => given(&self.names).map(|n| Named {
                 name: format!("F{fid}:inner:{}", n.name),
                 aliases: Vec::new(),
                 verified: n.verified,
+                families: n.exact_families().iter().map(|name| format!("F{fid}:inner:{name}")).collect(),
                 origins: None,
             }),
             Operand::Made(roles) => {
@@ -175,13 +226,20 @@ impl<'a> OperandNames<'a> {
                     name: format!("F{fid}:{first}"),
                     aliases: rest.iter().map(|r| format!("F{fid}:{r}")).collect(),
                     verified: true,
+                    families: BTreeSet::new(),
                     origins: None,
                 })
             }
             Operand::CopiedTool { roles, feature, instance } => {
                 let named = |role: &String| format!("F{feature}:{role}@F{fid}.{instance}");
                 let (first, rest) = roles.get(face)?.split_first()?;
-                Some(Named { name: named(first), aliases: rest.iter().map(named).collect(), verified: true, origins: None })
+                Some(Named {
+                    name: named(first),
+                    aliases: rest.iter().map(named).collect(),
+                    verified: true,
+                    families: BTreeSet::new(),
+                    origins: None,
+                })
             }
         }
     }
@@ -211,11 +269,17 @@ fn from_origins(face: &FaceProv, operands: &[OperandNames], fid: u64) -> Option<
             FaceOrigin::Face { operand, face } => operands.get(operand)?.face(face, fid)?,
             FaceOrigin::Edge { operand, edge } => {
                 let (edge, verified) = operands.get(operand)?.edge(edge)?;
-                Named { name: format!("F{fid}:blend:{edge}"), aliases: Vec::new(), verified, origins: None }
+                Named { name: format!("F{fid}:blend:{edge}"), aliases: Vec::new(), verified, families: BTreeSet::new(), origins: None }
             }
             FaceOrigin::Offset { operand, face } => {
                 let source = operands.get(operand)?.face(face, fid)?;
-                Named { name: format!("F{fid}:inner:{}", source.name), aliases: Vec::new(), verified: source.verified, origins: None }
+                Named {
+                    name: format!("F{fid}:inner:{}", source.name),
+                    aliases: Vec::new(),
+                    verified: source.verified,
+                    families: source.exact_families().iter().map(|name| format!("F{fid}:inner:{name}")).collect(),
+                    origins: None,
+                }
             }
             // A profile or cap of a body made from nothing: only a built body's own roles name
             // these, and those come in as `Made` operands.
@@ -232,6 +296,7 @@ fn from_origins(face: &FaceProv, operands: &[OperandNames], fid: u64) -> Option<
 /// first (the target's before a tool's); the others become aliases.
 fn merged(names: Vec<Named>) -> Option<Named> {
     let verified = names.iter().all(|n| n.verified);
+    let families = names.iter().flat_map(Named::exact_families).collect();
     let first = names.first()?.name.clone();
     let mut common = Some(first.as_str());
     while let Some(c) = common {
@@ -249,7 +314,7 @@ fn merged(names: Vec<Named>) -> Option<Named> {
             }
         }
     }
-    Some(Named { name, aliases, verified, origins: None })
+    Some(Named { name, aliases, verified, families, origins: None })
 }
 
 /// Whether `name` is `stem` or a piece of it (at any depth).
@@ -349,7 +414,19 @@ fn qualify(named: Vec<Named>, adjacent: &[(usize, usize)]) -> Names {
             }
         }
     }
-    let info = named.into_iter().zip(bounds).zip(verified).map(|((x, bounds), verified)| FaceInfo { aliases: x.aliases, bounds, verified }).collect();
+    let info = named
+        .into_iter()
+        .zip(bounds)
+        .zip(verified)
+        .zip(&names)
+        .map(|(((x, bounds), verified), name)| {
+            let mut families = x.exact_families();
+            if verified {
+                add_family(&mut families, name);
+            }
+            FaceInfo { aliases: x.aliases, bounds, verified, families }
+        })
+        .collect();
     Names { faces: Arc::new(names), info }
 }
 

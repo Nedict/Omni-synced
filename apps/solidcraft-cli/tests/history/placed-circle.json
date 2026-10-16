@@ -1,0 +1,91 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "12 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "9 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": {
+          "origin": [
+            0,
+            0,
+            0
+          ],
+          "x_dir": [
+            1,
+            0,
+            0
+          ],
+          "y_dir": [
+            0,
+            0,
+            -1
+          ]
+        },
+        "name": "Base circle"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            7,
+            -4
+          ],
+          "diameter": 12
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Base extrusion"
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 324,
+    "body_count": 1,
+    "bounds": [
+      [
+        1,
+        0,
+        -2
+      ],
+      [
+        13,
+        9,
+        10
+      ]
+    ],
+    "features": [
+      "Base circle",
+      "Base extrusion"
+    ]
+  },
+  "edits": []
+}

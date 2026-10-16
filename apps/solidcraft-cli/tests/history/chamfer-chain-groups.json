@@ -1,0 +1,235 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "40 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "radius",
+        "expression": "2 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "bottom",
+        "expression": "3 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Rim profile"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 20
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Block",
+        "body_name": "Block"
+      }
+    },
+    {
+      "command": "solid.chamfer",
+      "params": {
+        "name": "Beveled rim",
+        "edge_sets": [
+          {
+            "edges": [
+              [
+                0,
+                10,
+                40
+              ]
+            ],
+            "distance": "radius",
+            "tangent_chain": true
+          },
+          {
+            "edges": [
+              [
+                0,
+                10,
+                0
+              ]
+            ],
+            "distance": "bottom",
+            "tangent_chain": true
+          }
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 12194.615483684382,
+    "volume_tolerance_mm3": 4.8778461934737525,
+    "body_count": 1,
+    "bounds": [
+      [
+        -10,
+        -10,
+        0
+      ],
+      [
+        10,
+        10,
+        40
+      ]
+    ],
+    "features": [
+      "Rim profile",
+      "Block",
+      "Beveled rim"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "radius",
+        "expression": "4 mm"
+      },
+      "volume_mm3": 11876.267428120616,
+      "volume_tolerance_mm3": 4.750506971248247,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          40
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "50 mm"
+      },
+      "volume_mm3": 15336.208137274174,
+      "volume_tolerance_mm3": 6.13448325490967,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          50
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "diameter",
+        "expression": "30 mm"
+      },
+      "volume_mm3": 27698.375229150006,
+      "volume_tolerance_mm3": 11.079350091660002,
+      "body_count": 1,
+      "bounds": [
+        [
+          -15,
+          -15,
+          0
+        ],
+        [
+          15,
+          15,
+          40
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "bottom",
+        "expression": "5 mm"
+      },
+      "volume_mm3": 11794.58601912728,
+      "volume_tolerance_mm3": 4.717834407650912,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          40
+        ]
+      ]
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Beveled rim",
+        "suppressed": true
+      },
+      "volume_mm3": 12566.370614359173,
+      "volume_tolerance_mm3": 5.02654824574367,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          40
+        ]
+      ]
+    }
+  ]
+}

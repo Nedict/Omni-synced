@@ -76,6 +76,9 @@ impl FeatureKind {
             ExprRole::Placement => placement.push(e.as_str()),
         });
         inputs.extend(placement);
+        if let FeatureKind::Sketch { sketch, .. } = self {
+            inputs.extend(sketch.offsets.iter().filter_map(|offset| offset.distance_expression.as_deref()));
+        }
         inputs
     }
 }
@@ -603,6 +606,14 @@ impl Document {
                 out.push(ParamUser::Feature { feature: f.id, name: f.name.clone(), input: "Position".into() });
             }
             if let FeatureKind::Sketch { sketch, .. } = &f.kind {
+                if sketch
+                    .offsets
+                    .iter()
+                    .filter_map(|offset| offset.distance_expression.as_deref())
+                    .any(|e| expr::references(e).iter().any(|r| r == name))
+                {
+                    out.push(ParamUser::Feature { feature: f.id, name: f.name.clone(), input: "Offset distance".into() });
+                }
                 for c in &sketch.constraints {
                     if c.param.as_deref() == Some(name) {
                         out.push(ParamUser::Dimension { feature: f.id, name: f.name.clone(), constraint: c.id.clone() });
@@ -685,6 +696,13 @@ impl Document {
                 }
             }
             if let FeatureKind::Sketch { sketch, .. } = &mut f.kind {
+                for e in sketch.offsets.iter_mut().filter_map(|offset| offset.distance_expression.as_mut()) {
+                    let r = expr::rename_reference(e, old, new);
+                    if r != *e {
+                        *e = r;
+                        n += 1;
+                    }
+                }
                 for c in &mut sketch.constraints {
                     if c.param.as_deref() == Some(old) {
                         c.param = Some(new.to_string());
@@ -754,6 +772,7 @@ impl Document {
             if let FeatureKind::Sketch { sketch, .. } = &f.kind {
                 names.extend(sketch.constraints.iter().filter_map(|c| c.param.clone()));
                 names.extend(sketch.text_exprs().into_iter().flat_map(|(_, e)| expr::references(e)));
+                names.extend(sketch.offsets.iter().filter_map(|offset| offset.distance_expression.as_deref()).flat_map(expr::references));
             }
             out.extend(names.into_iter().map(|n| (format!("Feature:{}", f.name), n)));
         }

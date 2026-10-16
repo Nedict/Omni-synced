@@ -203,7 +203,19 @@ impl<'a> Context<'a> {
     /// one's outline, clear of the other's, lies inside it.
     fn overlap(&self, x: &Outline, y: &Outline) -> bool {
         let within = |x: &Outline, y: &Outline| x.middles.iter().any(|m| dist_to(&y.regions, *m) > self.tol && inside(&y.regions, *m));
-        !x.walls.is_disjoint(&y.walls) || within(x, y) || within(y, x)
+        // Coincident outlines from different operands have no shared wall IDs,
+        // and all boundary samples lie on the other boundary. A candidate made
+        // from their segment middles can still prove positive-area overlap.
+        // Validate it strictly inside BOTH regions: a centroid inside a hole,
+        // outside a concave region, or on a touching boundary is no evidence.
+        let interior = |x: &Outline, y: &Outline| {
+            if x.middles.is_empty() {
+                return false;
+            }
+            let p = x.middles.iter().copied().fold(Vec2::ZERO, |sum, p| sum + p) * (1. / x.middles.len() as f64);
+            p.is_finite() && dist_to(&x.regions, p) > self.tol && dist_to(&y.regions, p) > self.tol && inside(&x.regions, p) && inside(&y.regions, p)
+        };
+        !x.walls.is_disjoint(&y.walls) || within(x, y) || within(y, x) || interior(x, y) || interior(y, x)
     }
 
     /// The operand wall a segment was read beside.
@@ -534,5 +546,78 @@ impl<'a> Context<'a> {
             origins.insert(e.id(), o);
         }
         Some((faces, origins))
+    }
+}
+
+#[cfg(test)]
+mod overlap_tests {
+    use super::*;
+    use solidcraft_geom::Loop2;
+
+    #[test]
+    fn disconnected_crescent_cut_preserves_stepped_prism_history() {
+        use crate::{boolean, extrude, join_apart, planar_regions_boolean};
+        let disk = |r| Region2 { outer: Loop2::circle(Vec2::ZERO, r), holes: vec![] };
+        let rect = |a: f64| Region2 {
+            outer: Loop2::polygon(&[Vec2::new(-a, -20.), Vec2::new(a, -20.), Vec2::new(a, 20.), Vec2::new(-a, 20.)]),
+            holes: vec![],
+        };
+        let band = planar_regions_boolean(&[disk(10.)], &[rect(3.)], BoolOp::Intersect, 1e-8).unwrap();
+        let expanded = planar_regions_boolean(&[disk(10.1)], &[rect(3.1)], BoolOp::Intersect, 1e-8).unwrap();
+        for plane in [Plane::XY, Plane::from_normal(Vec3::new(11., -7., 3.), Vec3::new(1., 2., 3.)).unwrap()] {
+            for join_start in [8., 7.75] {
+                let base = extrude(&plane, &[disk(10.)], 0., 8.).unwrap().remove(0);
+                let grip = extrude(&plane, &band, join_start, 20.).unwrap().remove(0);
+                let stock = boolean(&base, &grip, BoolOp::Union).unwrap().unwrap();
+                assert!(stock.history().is_some());
+                for radius in [8., 7.] {
+                    let crescents = planar_regions_boolean(&expanded, &[disk(radius)], BoolOp::Cut, 1e-8).unwrap();
+                    assert_eq!(crescents.len(), 2);
+                    let pieces = extrude(&plane, &crescents, 8., 20.1).unwrap();
+                    let tool = join_apart(&pieces).unwrap().unwrap();
+                    let result = boolean(&stock, &tool, BoolOp::Cut).unwrap().unwrap();
+                    let history = result.history().expect("the exact section construction must retain its face and edge origins");
+                    history.check(&result, &[&stock, &tool]).unwrap();
+                    assert!(history.faces.iter().all(|f| !f.origins.is_empty()));
+                    assert!(history.faces.iter().any(|f| f.origins.iter().any(|o| matches!(o, FaceOrigin::Face { operand: 1, .. }))));
+                    assert!(result.validity().is_empty());
+                    let strip = 2. * (3. * (radius * radius - 9.).sqrt() + radius * radius * (3. / radius).asin());
+                    let expected = std::f64::consts::PI * 100. * 8. + strip * 12.;
+                    let measured = result.tessellate_with(1e-5, true).unwrap().measure().volume;
+                    assert!((measured - expected).abs() < 0.02, "{measured} != {expected}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn coincident_outline_witness_requires_interior_of_both_regions() {
+        let body = crate::box_solid(Vec3::ZERO, Vec3::new(1., 1., 1.)).unwrap();
+        let a = Index::new(&body, 0);
+        let b = Index::new(&body, 1);
+        let context = Context::new(BoolOp::Cut, [&body, &body], [&a, &b], Plane::XY, 1e-6, None);
+        let disk = |x: f64, radius: f64| Region2 { outer: Loop2::circle(Vec2::new(x, 0.), radius), holes: vec![] };
+        let outline = |regions: &[Region2]| Outline::of(&Section::untagged(regions));
+        let first = outline(&[disk(0., 10.)]);
+        assert!(context.overlap(&first, &outline(&[disk(0., 10.)])));
+        assert!(!context.overlap(&first, &outline(&[disk(20., 10.)])), "tangent boundaries are not overlap");
+        assert!(!context.overlap(&first, &outline(&[disk(21., 10.)])), "disjoint regions");
+        let ring = Region2 { outer: Loop2::circle(Vec2::ZERO, 10.), holes: vec![Loop2::circle(Vec2::ZERO, 6.).reversed()] };
+        assert!(!context.overlap(&outline(&[ring]), &outline(&[disk(0., 5.)])), "an average inside a hole is not evidence");
+        let concave = Region2 {
+            outer: Loop2::polygon(&[
+                Vec2::new(0., 0.),
+                Vec2::new(4., 0.),
+                Vec2::new(4., 1.),
+                Vec2::new(1., 1.),
+                Vec2::new(1., 3.),
+                Vec2::new(4., 3.),
+                Vec2::new(4., 4.),
+                Vec2::new(0., 4.),
+            ]),
+            holes: vec![],
+        };
+        let pocket = Region2 { outer: Loop2::circle(Vec2::new(2.5, 2.), 0.25), holes: vec![] };
+        assert!(!context.overlap(&outline(&[concave]), &outline(&[pocket])), "an average outside a concave region is not evidence");
     }
 }

@@ -1,0 +1,165 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "14 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "middle_height",
+        "expression": "23 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Section0"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 14
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "construct.plane.offset",
+      "params": {
+        "base": "XY",
+        "offset": "middle_height",
+        "name": "Plane1"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "Plane1",
+        "name": "Section1"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 32
+        },
+        "dimensions": {
+          "diameter": "32 mm"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "construct.plane.offset",
+      "params": {
+        "base": "XY",
+        "offset": "71 mm",
+        "name": "Plane2"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "Plane2",
+        "name": "Section2"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 22
+        },
+        "dimensions": {
+          "diameter": "22 mm"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.loft",
+      "params": {
+        "sections": [
+          {
+            "sketch": "Section0"
+          },
+          {
+            "sketch": "Section1"
+          },
+          {
+            "sketch": "Section2"
+          }
+        ],
+        "name": "Transition",
+        "interpolation": "circular_chord"
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 15954.222488679663,
+    "body_count": 1,
+    "features": [
+      "Section0",
+      "Plane1",
+      "Section1",
+      "Plane2",
+      "Section2",
+      "Transition"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "diameter",
+        "expression": "18 mm"
+      },
+      "volume_pi_mm3": 15830.199064555296
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "middle_height",
+        "expression": "35 mm"
+      },
+      "volume_pi_mm3": 13698.198819505673
+    }
+  ]
+}

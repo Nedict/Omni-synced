@@ -1,0 +1,167 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "leftDiameter",
+        "expression": "60 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "rightDiameter",
+        "expression": "60 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "17 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Coincident circles"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 60,
+          "id": "left"
+        },
+        "dimensions": {
+          "diameter": "leftDiameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            40,
+            0
+          ],
+          "diameter": 60,
+          "id": "right"
+        },
+        "dimensions": {
+          "diameter": "rightDiameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 60,
+          "id": "alias"
+        },
+        "dimensions": {
+          "diameter": "leftDiameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Coincident circle lens",
+        "profiles": {
+          "type": "piece_boundaries",
+          "profiles": [
+            {
+              "outer": [
+                {
+                  "curve": "alias",
+                  "piece": 1,
+                  "count": 2,
+                  "reversed": false
+                },
+                {
+                  "curve": "left",
+                  "piece": 1,
+                  "count": 2,
+                  "reversed": false
+                },
+                {
+                  "curve": "right",
+                  "piece": 2,
+                  "count": 2,
+                  "reversed": false
+                }
+              ],
+              "holes": []
+            }
+          ],
+          "circle_seams": {}
+        }
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 10531.439072380099,
+    "body_count": 1,
+    "bounds": [
+      [
+        10,
+        -22.360679774997898,
+        0
+      ],
+      [
+        30,
+        22.360679774997898,
+        17
+      ]
+    ],
+    "bounds_tolerance_mm": 0.01,
+    "features": [
+      "Coincident circles",
+      "Coincident circle lens"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "23 mm"
+      },
+      "volume_mm3": 14248.41756851425,
+      "body_count": 1
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "leftDiameter",
+        "expression": "70 mm"
+      },
+      "volume_mm3": 15106.477997746975,
+      "body_count": 1
+    }
+  ]
+}

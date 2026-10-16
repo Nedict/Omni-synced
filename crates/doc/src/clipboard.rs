@@ -210,6 +210,19 @@ impl crate::Feature {
             _ => {}
         }
         self.kind.remap_refs(ids, names);
+        if let K::Extrude { extent, .. } = &mut self.kind
+            && let Some(plane) = &mut extent.to_plane
+        {
+            checked_plane(plane, 0)?;
+            // remap_refs already maps construction names. Exact endpoints support only
+            // construction, face, origin and custom planes, so only topology remains.
+            remap_plane(plane, ids, &BTreeMap::new(), bodies, 0)?;
+        }
+        if let K::Loft { sections, .. } = &mut self.kind {
+            for anchor in sections.iter_mut().filter_map(|s| s.face.as_mut()) {
+                anchor.remap_target(ids, bodies)?;
+            }
+        }
         for n in &mut self.body_names {
             mapped_name(n, bodies);
         }
@@ -243,6 +256,9 @@ impl crate::Feature {
                 for link in &mut sketch.links {
                     remap_link(&mut link.source, ids, names, bodies, 0);
                     for n in link.face_name.iter_mut().chain(&mut link.edge_name) {
+                        *n = remap_topology(n, ids, bodies);
+                    }
+                    for n in &mut link.edge_circle {
                         *n = remap_topology(n, ids, bodies);
                     }
                 }
@@ -319,6 +335,48 @@ fn checked_link(source: &solidcraft_sketch::LinkSource, depth: usize) -> crate::
 #[cfg(test)]
 mod clone_tests {
     use super::*;
+    #[test]
+    fn linked_edge_names_are_remapped_once_when_ids_overlap() {
+        let mut sketch = solidcraft_sketch::Sketch::new();
+        sketch.links.push(
+            serde_json::from_value(serde_json::json!({
+                "id": "edge", "source": {"type": "edge", "body": "Body1", "at": [0,0,0]},
+                "edge_name": "F1:edge", "edge_circle": ["F1:rim"]
+            }))
+            .unwrap(),
+        );
+        let mut doc = crate::Document::new("Copy");
+        doc.add_feature(FeatureKind::Sketch { plane: PlaneRef::Origin { name: "XY".into() }, sketch }, None).unwrap();
+        doc.features[0].remap_clone(&BTreeMap::from([(1, 2), (2, 3)]), &BTreeMap::new(), &BTreeMap::new(), &BTreeMap::new()).unwrap();
+        let FeatureKind::Sketch { sketch, .. } = &doc.features[0].kind else { panic!("sketch") };
+        assert_eq!(sketch.links[0].edge_name.as_deref(), Some("F2:edge"));
+        assert_eq!(sketch.links[0].edge_circle, ["F2:rim"]);
+    }
+
+    #[test]
+    fn imported_offset_parameters_follow_rename_and_prevent_deletion() {
+        let mut doc = crate::Document::new("Offset");
+        doc.add_user_param("gap", "3 mm", Some("mm"), None).unwrap();
+        let mut sketch = solidcraft_sketch::Sketch::new();
+        sketch.offsets.push(solidcraft_sketch::OffsetChain {
+            sources: vec![],
+            outputs: vec![],
+            distance: 3.,
+            distance_expression: Some("gap * 2".into()),
+            closed: true,
+            topology: None,
+        });
+        doc.add_feature(FeatureKind::Sketch { plane: PlaneRef::Origin { name: "XY".into() }, sketch }, None).unwrap();
+        assert!(doc.remove_param("gap").is_err());
+        assert!(doc.param_graph().iter().any(|(_, name)| name == "gap"));
+        assert_eq!(doc.rename_param("gap", "spacing").unwrap(), 1);
+        assert!(doc.param_users("gap").is_empty());
+        assert!(!doc.param_users("spacing").is_empty());
+        assert!(doc.param_graph().iter().any(|(_, name)| name == "spacing"));
+        assert_eq!(doc.features_using_param("spacing"), [1]);
+        assert!(doc.remove_param("spacing").is_err());
+    }
+
     #[test]
     fn imported_names_and_topology_tokens_have_separate_identity() {
         let ids = BTreeMap::from([(1, 2), (10, 20)]);

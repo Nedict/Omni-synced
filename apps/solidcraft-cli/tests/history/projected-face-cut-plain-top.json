@@ -1,0 +1,284 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "extension",
+        "expression": "-5 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "40 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Rim profile"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 20
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Block",
+        "body_name": "Block"
+      }
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "face": [
+          0,
+          0,
+          40
+        ],
+        "body": "Block",
+        "operation": "cut",
+        "distance": "extension",
+        "name": "Cap pocket"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": {
+          "face": [
+            0,
+            0,
+            35
+          ]
+        },
+        "project_edges": false,
+        "name": "Projected cap"
+      }
+    },
+    {
+      "command": "sketch.project",
+      "params": {
+        "refs": [
+          {
+            "body": "Block",
+            "edge": [
+              0,
+              10.0,
+              35
+            ]
+          },
+          {
+            "body": "Block",
+            "edge": [
+              0,
+              -10.0,
+              35
+            ]
+          }
+        ],
+        "circle": true
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": 7,
+        "name": "Projected extrusion",
+        "operation": "new_body"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 13194.68914507713,
+    "body_count": 2,
+    "bounds": [
+      [
+        -10.0,
+        -10.0,
+        0
+      ],
+      [
+        10.0,
+        10.0,
+        42
+      ]
+    ],
+    "bounds_tolerance_mm": 0.01,
+    "center_of_mass": [
+      0,
+      0,
+      21.0
+    ],
+    "center_of_mass_tolerance_mm": 0.02,
+    "features": [
+      "Rim profile",
+      "Block",
+      "Sketch1",
+      "Cap pocket",
+      "Projected cap",
+      "Projected extrusion"
+    ],
+    "sketches": [
+      {
+        "name": "Sketch1",
+        "curves": 2,
+        "links": 1
+      },
+      {
+        "name": "Projected cap",
+        "curves": 1,
+        "links": 1
+      }
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "diameter",
+        "expression": "30 mm"
+      },
+      "volume_mm3": 29688.050576423546,
+      "body_count": 2,
+      "bounds": [
+        [
+          -15.0,
+          -15.0,
+          0
+        ],
+        [
+          15.0,
+          15.0,
+          42
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01,
+      "center_of_mass": [
+        0,
+        0,
+        21.0
+      ],
+      "center_of_mass_tolerance_mm": 0.02
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "50 mm"
+      },
+      "volume_mm3": 16336.281798666925,
+      "body_count": 2,
+      "bounds": [
+        [
+          -10.0,
+          -10.0,
+          0
+        ],
+        [
+          10.0,
+          10.0,
+          52.0
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01,
+      "center_of_mass": [
+        0,
+        0,
+        26.0
+      ],
+      "center_of_mass_tolerance_mm": 0.02
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "extension",
+        "expression": "-8 mm"
+      },
+      "volume_mm3": 12252.211349000194,
+      "body_count": 2,
+      "bounds": [
+        [
+          -10.0,
+          -10.0,
+          0
+        ],
+        [
+          10.0,
+          10.0,
+          39.0
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01,
+      "center_of_mass": [
+        0,
+        0,
+        19.5
+      ],
+      "center_of_mass_tolerance_mm": 0.02
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Projected extrusion",
+        "suppressed": true
+      },
+      "volume_mm3": 10995.574287564277,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10.0,
+          -10.0,
+          0
+        ],
+        [
+          10.0,
+          10.0,
+          35
+        ]
+      ],
+      "bounds_tolerance_mm": 0.01,
+      "center_of_mass": [
+        0,
+        0,
+        17.499999999999996
+      ],
+      "center_of_mass_tolerance_mm": 0.02
+    }
+  ]
+}

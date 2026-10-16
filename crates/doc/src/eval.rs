@@ -424,6 +424,48 @@ fn append_warning(warning: &mut Option<String>, note: String) {
     });
 }
 
+/// Apply independent radius groups in one kernel operation, preserving their edge order.
+fn grouped_fillet(
+    vals: &BTreeMap<String, Value>,
+    body: &kernel::Body,
+    edges: &[Vec3],
+    radius: f64,
+    style: &crate::FilletStyle,
+    fit: crate::FilletFit,
+    tangent_chain: bool,
+) -> Result<kernel::Body> {
+    if fit != crate::FilletFit::Exact {
+        return Err(DocError::Invalid("multiple radius groups require exact fit".into()));
+    }
+    let crate::FilletStyle::Grouped { groups } = style else { return Err(DocError::Invalid("missing fillet radius groups".into())) };
+    let sizes = style.group_sizes(edges.len())?;
+    let radii = std::iter::once(Ok(radius)).chain(groups.iter().map(|g| val(vals, &g.radius, Kind::Length))).collect::<Result<Vec<_>>>()?;
+    let mut selected = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut at = 0;
+    let chains = std::iter::once(tangent_chain).chain(groups.iter().map(|g| g.tangent_chain));
+    for ((count, radius), chain) in sizes.into_iter().zip(radii).zip(chains) {
+        let seeds = edges.get(at..at + count).ok_or_else(|| DocError::Invalid("missing fillet group edges".into()))?;
+        let expanded;
+        let group = if chain {
+            expanded = kernel::tangent_edge_points(body, seeds)?;
+            expanded.as_slice()
+        } else {
+            seeds
+        };
+        for point in group {
+            let (index, _) =
+                body.nearest_edge(*point, (body.size() * 2e-3).max(1e-3))?.ok_or_else(|| DocError::Invalid("missing fillet edge".into()))?;
+            if !seen.insert(index) {
+                return Err(DocError::Invalid("an edge belongs to more than one fillet selection".into()));
+            }
+            selected.push((*point, radius));
+        }
+        at += count;
+    }
+    Ok(kernel::fillet_radii(body, &selected)?)
+}
+
 /// A length in mm, without trailing zeros.
 fn show_mm(v: f64) -> String {
     let s = format!("{v:.6}");
@@ -1351,7 +1393,7 @@ pub fn select_profiles(ss: &SolvedSketch, sel: &ProfileSel) -> Result<Vec<Region
             }
             v
         }
-        ProfileSel::Curves { .. } | ProfileSel::OffsetBoundaries { .. } | ProfileSel::WholeBoundaries { .. } => {
+        ProfileSel::Curves { .. } | ProfileSel::OffsetBoundaries { .. } | ProfileSel::WholeBoundaries { .. } | ProfileSel::PieceBoundaries { .. } => {
             crate::profile_selection_indices(ss, sel)?
                 .into_iter()
                 .map(|index| {
@@ -1597,6 +1639,7 @@ fn apply_traced(state: &mut ModelState, f: &Feature, tools: Vec<Traced>, op: Ope
                 }
                 let absorbed: std::collections::BTreeSet<String> = met.into_iter().skip(1).collect();
                 if let Some(mb) = state.bodies.iter_mut().find(|b| b.name == keep) {
+                    acc.body = acc.body.with_union_certificate(f.id)?;
                     *mb = ModelBody::traced_new(mb.name.clone(), acc, mb.feature);
                 }
                 state.bodies.retain(|b| !absorbed.contains(&b.name));
@@ -1767,9 +1810,9 @@ fn fill_void_holes(st: &ModelState, r: &Region2, op: Operation, targets: &[Strin
 /// amount, when the space they grow into is already material (join) or empty (cut). `probe`
 /// maps a sketch point to the world points where the tool would be (along the extrude, around
 /// the revolve). Loops of lines and arcs are adjusted: a line moves out, an arc keeps its centre
-/// and changes its radius (a rounded corner of a face cut whole, #1275). Arcs move only where
-/// both of their ends meet tangent neighbours that move with them; otherwise the loop is left
-/// as it is.
+/// and changes its radius (a rounded corner of a face cut whole, #1275). Tangent neighbours
+/// move together. A concave join arc can also shrink into existing material between two
+/// unchanged lines; its endpoints are the intersections with those lines.
 fn grow_profile_for_coplanar(st: &ModelState, r: &Region2, op: Operation, targets: &[String], probe: &dyn Fn(Vec2) -> Vec<Vec3>) -> Region2 {
     use solidcraft_geom::Seg2;
     if !matches!(op, Operation::Cut | Operation::Join) {
@@ -1850,7 +1893,15 @@ fn grow_profile_for_coplanar(st: &ModelState, r: &Region2, op: Operation, target
             starts.push(corner + out * g1);
             continue;
         }
-        let (Seg2::Line { a: a0, b: b0 }, Seg2::Line { a: a1, b: b1 }) = (*prev, *cur) else { return r.clone() };
+        let (Seg2::Line { a: a0, b: b0 }, Seg2::Line { a: a1, b: b1 }) = (*prev, *cur) else {
+            if op == Operation::Join
+                && let Some(point) = crate::coplanar_growth::concave_line_corner(prev, cur, g0, g1, corner)
+            {
+                starts.push(point);
+                continue;
+            }
+            return r.clone();
+        };
         let (Some(d0), Some(d1)) = ((b0 - a0).normalized(), (b1 - a1).normalized()) else { return r.clone() };
         let (p0, p1) = (a0 + Vec2::new(d0.y, -d0.x) * g0, a1 + Vec2::new(d1.y, -d1.x) * g1);
         let den = d0.cross(d1);
@@ -1866,7 +1917,22 @@ fn grow_profile_for_coplanar(st: &ModelState, r: &Region2, op: Operation, target
         let (Some(&a), Some(&b), Some(&g)) = (starts.get(i), starts.get((i + 1) % n), grow.get(i)) else { return r.clone() };
         out.push(match *seg {
             Seg2::Line { .. } => Seg2::Line { a, b },
-            Seg2::Arc { center, radius, start, sweep } => Seg2::Arc { center, radius: radius + g * sweep.signum(), start, sweep },
+            Seg2::Arc { center, radius, start, sweep } => {
+                let new_radius = radius + g * sweep.signum();
+                let radial_start = center + Vec2::from_angle(start) * new_radius;
+                let radial_end = center + Vec2::from_angle(start + sweep) * new_radius;
+                if a.dist(radial_start) < 1e-10 && b.dist(radial_end) < 1e-10 {
+                    Seg2::Arc { center, radius: radius + g * sweep.signum(), start, sweep }
+                } else {
+                    let a0 = (a - center).y.atan2((a - center).x);
+                    let a1 = (b - center).y.atan2((b - center).x);
+                    let angle = ((a1 - a0) * sweep.signum()).rem_euclid(std::f64::consts::TAU) * sweep.signum();
+                    if !angle.is_finite() || angle.abs() < 1e-9 || (angle - sweep).abs() > 0.5 {
+                        return r.clone();
+                    }
+                    Seg2::Arc { center, radius: radius + g * sweep.signum(), start: a0, sweep: angle }
+                }
+            }
             _ => return r.clone(),
         });
     }
@@ -2774,13 +2840,15 @@ fn feature_tools_with_constructor(
                 Some(p) => height_at(&tst, object_face(&tst, from_name, p.0), &ss.plane, centre, p.0),
                 None => 0.0,
             };
-            let d = match extent.to {
-                Some(p) => {
+            let target_height = extent
+                .target_height(doc, vals, f.component, st, &ss.plane)?
+                .or_else(|| extent.to.map(|p| height_at(&tst, to_face, &ss.plane, centre, p.0)));
+            let d = match target_height {
+                Some(h) => {
                     let off = match &extent.to_offset {
                         Some(e) => val(vals, e, Kind::Length)?,
                         None => 0.0,
                     };
-                    let h = height_at(&tst, to_face, &ss.plane, centre, p.0);
                     let start = from + extent.start_offset.as_deref().map(|e| val(vals, e, Kind::Length)).transpose()?.unwrap_or(0.0);
                     // Past the face by the offset, in the direction travelled.
                     let to = h + if h >= start { off } else { -off };
@@ -2792,12 +2860,14 @@ fn feature_tools_with_constructor(
                 None if extent.through_all => through_all_distance(st, &ss.plane, &crate::plain(targets))?,
                 None => val(vals, &extent.distance, Kind::Length)?,
             };
-            if let Some(tp) = &extent.taper {
-                let taper = val(vals, tp, Kind::Angle)?;
+            // A stored zero-angle parameter is an ordinary straight extrusion.
+            // Keep its editable input while allowing offsets and exact topology.
+            let taper = extent.taper.as_deref().map(|tp| val(vals, tp, Kind::Angle)).transpose()?.filter(|angle| *angle != 0.);
+            if let Some(taper) = taper {
                 if extent.distance2.is_some() || extent.start_offset.is_some() || extent.direction == crate::Direction::Symmetric {
                     return Err(DocError::Invalid("not supported yet: taper with two-sided, symmetric or offset extents".into()));
                 }
-                let sign = if extent.to.is_none() && extent.direction == crate::Direction::Negative { -1.0 } else { 1.0 };
+                let sign = if !extent.has_to() && extent.direction == crate::Direction::Negative { -1.0 } else { 1.0 };
                 let (len, sign) = if d < 0.0 { (-d, -sign) } else { (d, sign) };
                 let start_plane = ss.plane.offset(from);
                 let caps = [
@@ -2853,7 +2923,7 @@ fn feature_tools_with_constructor(
                     None => 0.0,
                 };
             // To Object gives a signed distance from the start: one side only.
-            let direction = if extent.to.is_some() { crate::Direction::Positive } else { extent.direction };
+            let direction = if extent.has_to() { crate::Direction::Positive } else { extent.direction };
             let (a, b) = extent_sides(vals, extent, d, direction)?;
             // A negative distance flips the side.
             let (mut lo, mut hi) = if a <= b { (a, b) } else { (b, a) };
@@ -2873,7 +2943,7 @@ fn feature_tools_with_constructor(
                 }
             }
             let mut tools = Vec::new();
-            let mut untrimmed = extent.to.is_none() && extent.from.is_none() && !extent.through_all;
+            let mut untrimmed = !extent.has_to() && extent.from.is_none() && !extent.through_all;
             // The footprint of each tool in the sketch: a tool lies in the prism over it.
             let mut footprints = Vec::with_capacity(regions.len());
             // Each tool's extent along the normal (they differ where one is run on into a face).
@@ -2937,9 +3007,17 @@ fn feature_tools_with_constructor(
             if untrimmed {
                 *constructor = Some(ExtrudeConstructor { plane: ss.plane, interval: (lo + off, hi + off) });
             }
-            // A Join tool's faces outlive the boolean where they stay on the result, so they are
-            // certified as a new body's are (see `Body::with_preserved_union_planar_sources`).
-            if matches!(operation, Operation::NewBody | Operation::Join) && extent.taper.is_none() {
+            // Join/Cut tools can extend into or beyond their target without
+            // moving the exposed end. Only nominal caps receive certificates;
+            // Cut walls remain uncertified because the Boolean reverses them.
+            // The constructor above still requires the whole tool untrimmed.
+            // Sheet machining validates a whole raw prism (caps and walls).
+            // Partial cap certificates would mix raw and certified families and
+            // hide its exact depth/footprint from the flat-material validator.
+            if matches!(operation, Operation::NewBody | Operation::Join | Operation::Cut)
+                && taper.is_none()
+                && !(sheet && *operation == Operation::Cut)
+            {
                 let bodies: Vec<Body> = tools.iter().map(|t| t.body.clone()).collect();
                 let cap_bindings = match thin {
                     Some(thin) => Some(crate::config::thin_extrude_cap_bindings(&thin.curves, regions.len(), &bodies)),
@@ -2955,7 +3033,7 @@ fn feature_tools_with_constructor(
                             .into_iter()
                             .flatten()
                             .map(|source| match source {
-                                Some(kernel::FaceSource::ExtrudeSide { segment, .. }) if cap_bindings.is_some() => {
+                                Some(kernel::FaceSource::ExtrudeSide { segment, .. }) if cap_bindings.is_some() && *operation != Operation::Cut => {
                                     source_curves.as_ref().and_then(|curves| curves.find(segment))
                                 }
                                 _ => None,
@@ -3113,20 +3191,25 @@ fn feature_tools_with_constructor(
             let m = crate::rigid(Vec3::ZERO, origin_w, axis_w, -start);
             regions.iter().zip(bodies).map(|(r, body)| Ok(tool(r, kernel::transform_matrix(&body, m)?, Some(&body)))).collect()
         }
-        FeatureKind::Loft { sections, .. } if sections.iter().any(|s| s.point.is_some()) => {
+        FeatureKind::Loft { sections, interpolation, .. } if sections.iter().any(|s| s.point.is_some()) => {
+            if matches!(interpolation, crate::LoftInterpolation::CircularChord) {
+                return Err(DocError::Invalid("circular chord loft cannot contain point sections".into()));
+            }
             // A profile lofted to a sketch point (an apex).
             let [a, b] = &sections[..] else { return Err(DocError::Invalid("not supported yet: a point section in a loft of more than two".into())) };
             let (prof, pt) = if a.point.is_some() { (b, a) } else { (a, b) };
-            let ss = st.sketch(prof.sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {}", prof.sketch)))?;
-            let regions = solidcraft_sketch::merge_regions(&select_profiles(ss, &prof.profiles)?);
-            let [r] = &regions[..] else { return Err(DocError::Invalid("each loft section must be one profile".into())) };
-            refuse_loft_holes(r)?;
+            let (plane, r) = prof.region(doc, st, f.component)?;
+            refuse_loft_holes(&r)?;
+            if pt.face.is_some() {
+                return Err(DocError::Invalid("face section cannot be a loft point".into()));
+            }
             let ps = st.sketch(pt.sketch.0).ok_or_else(|| DocError::Unknown(format!("sketch {}", pt.sketch)))?;
             let id = pt.point.as_deref().unwrap_or_default();
             let q = ps.sketch.points.iter().find(|p| p.id == id).ok_or_else(|| DocError::Unknown(format!("point `{id}` in {}", ps.name)))?;
-            let body = kernel::loft_to_point(&ss.plane, &r.outer, ps.plane.to_world(q.pos))?;
-            // Its sides are named by the profile's curves, its base `start`.
-            Ok(vec![crate::lineage::ProfileRoles::swept(Some(ss), Some(r)).tool(body, None)])
+            let body = kernel::loft_to_point(&plane, &r.outer, ps.plane.to_world(q.pos))?;
+            Ok(vec![
+                crate::lineage::ProfileRoles::swept(if prof.face.is_none() { st.sketch(prof.sketch.0) } else { None }, Some(&r)).tool(body, None),
+            ])
         }
         FeatureKind::Coil { base, axis, diameter, pitch, turns, section_size, section, position, start_angle, clockwise, .. } => {
             let base = &point(vals, base)?;
@@ -3167,24 +3250,28 @@ fn feature_tools_with_constructor(
             let pitch = if *clockwise { -p } else { p };
             Ok(unnamed(vec![kernel::sweep_helix(&plane, &region, *base, axis, pitch, n)?]))
         }
-        FeatureKind::Loft { sections, .. } => {
+        FeatureKind::Loft { sections, interpolation, .. } => {
             let mut secs = Vec::new();
             let mut sketches = Vec::new();
             for sec in sections {
-                let ss = st
-                    .sketch(sec.sketch.0)
-                    .ok_or_else(|| DocError::Unknown(format!("sketch {} (it must come earlier in the timeline)", sec.sketch)))?;
-                let regions = solidcraft_sketch::merge_regions(&select_profiles(ss, &sec.profiles)?);
-                let [r] = &regions[..] else { return Err(DocError::Invalid("each loft section must be one profile".into())) };
-                refuse_loft_holes(r)?;
-                secs.push((ss.plane, r.outer.clone()));
-                sketches.push(ss);
+                let (plane, region) = sec.region(doc, st, f.component)?;
+                refuse_loft_holes(&region)?;
+                secs.push((plane, region.outer));
+                if sec.face.is_none() {
+                    sketches.extend(st.sketch(sec.sketch.0));
+                }
             }
-            // Its caps are the first and last sections, its sides named by the curves they run
-            // between.
-            let body = kernel::loft(&secs)?;
-            let roles = crate::lineage::SectionRoles { sections: sketches.into_iter().zip(secs.iter().map(|(_, lp)| lp)).collect() };
-            Ok(vec![roles.tool(body)])
+            let body = match interpolation {
+                crate::LoftInterpolation::Uniform => kernel::loft_uniform(&secs)?,
+                crate::LoftInterpolation::ChordLength => kernel::loft(&secs)?,
+                crate::LoftInterpolation::CircularChord => kernel::loft_circular_chord(&secs)?,
+            };
+            if sketches.len() == secs.len() {
+                let roles = crate::lineage::SectionRoles { sections: sketches.into_iter().zip(secs.iter().map(|(_, lp)| lp)).collect() };
+                Ok(vec![roles.tool(body)])
+            } else {
+                Ok(vec![crate::lineage::ProfileRoles::swept(None, None).tool(body, None)])
+            }
         }
         FeatureKind::Sweep { sketch, profiles, path_sketch, path, orientation, twist, scale, .. } => {
             let ctl = sweep_control(vals, orientation, twist, scale)?;
@@ -3616,7 +3703,7 @@ fn pattern_transforms(doc: &Document, vals: &BTreeMap<String, Value>, st: &Model
                 out.push(m);
             }
         }
-        crate::PatternKind::Circular { origin, axis, count: c, angle, alignment, reversed } => {
+        crate::PatternKind::Circular { origin, axis, count: c, angle, alignment, reversed, symmetric } => {
             let n = count(c)?;
             let total = val(vals, angle, Kind::Angle)?;
             let full = (total.abs() - std::f64::consts::TAU).abs() < 1e-9;
@@ -3627,8 +3714,17 @@ fn pattern_transforms(doc: &Document, vals: &BTreeMap<String, Value>, st: &Model
             } else {
                 0.0
             };
-            for i in 1..n {
-                out.push(rotation(origin.0, axis.0, step * alignment.multiplier(i, *reversed)));
+            if *symmetric {
+                for i in 0..n {
+                    let offset = i as i64 - (n / 2) as i64;
+                    if offset != 0 {
+                        out.push(rotation(origin.0, axis.0, step * offset as f64));
+                    }
+                }
+            } else {
+                for i in 1..n {
+                    out.push(rotation(origin.0, axis.0, step * alignment.multiplier(i, *reversed)));
+                }
             }
         }
     }
@@ -3730,8 +3826,17 @@ fn replay(
                 let moved: Vec<Vec3> = found.iter().map(|p| crate::apply_point(m, *p)).collect();
                 let ti = blend_target(st, &None, &moved)?;
                 let Some(mb) = st.bodies.get(ti).cloned() else { continue };
+                let moved = match &src.kind {
+                    FeatureKind::Fillet { style: crate::FilletStyle::Constant, tangent_chain: true, .. } => {
+                        kernel::tangent_edge_points(&mb.body, &moved)?
+                    }
+                    _ => moved,
+                };
                 let nb = match &src.kind {
-                    FeatureKind::Chamfer { distance2, angle, flip, .. } => chamfer_with(vals, &mb.body, &moved, r, distance2, angle, *flip)?,
+                    FeatureKind::Chamfer { .. } => chamfer_with(vals, &mb.body, &moved, &src.kind)?,
+                    FeatureKind::Fillet { style: style @ crate::FilletStyle::Grouped { .. }, fit, tangent_chain, .. } => {
+                        grouped_fillet(vals, &mb.body, &moved, r, style, *fit, *tangent_chain)?
+                    }
                     // A copy is congruent to the original: the radius it was reduced to first.
                     FeatureKind::Fillet { fit, .. } => match st.fitted.get(&src.id) {
                         Some(used) => {
@@ -4085,25 +4190,43 @@ fn face_plane(st: &ModelState, picked: &Plane, at: Vec3, name: Option<&str>) -> 
     }
 }
 
-/// A chamfer, equal or by its second distance or angle.
-fn chamfer_with(
-    vals: &BTreeMap<String, Value>,
-    b: &kernel::Body,
-    edges: &[Vec3],
-    d: f64,
-    distance2: &Option<crate::Expr>,
-    angle: &Option<crate::Expr>,
-    flip: bool,
-) -> Result<kernel::Body> {
-    let side = match (distance2, angle) {
-        (Some(e), _) => Some(kernel::ChamferSide::Distance(val(vals, e, Kind::Length)?)),
-        (None, Some(e)) => Some(kernel::ChamferSide::Angle(val(vals, e, Kind::Angle)?)),
-        (None, None) => None,
+/// Resolve all groups and tangent chains against the same source body.
+fn chamfer_with(vals: &BTreeMap<String, Value>, body: &kernel::Body, edges: &[Vec3], kind: &FeatureKind) -> Result<kernel::Body> {
+    let FeatureKind::Chamfer { distance, distance2, angle, flip, tangent_chain, groups, .. } = kind else {
+        return Err(DocError::Invalid("missing chamfer parameters".into()));
     };
-    Ok(match side {
-        Some(s) => kernel::chamfer_sides(b, edges, d, s, flip)?,
-        None => kernel::chamfer(b, edges, d)?,
-    })
+    let sizes = crate::ChamferGroup::group_sizes(groups, edges.len())?;
+    let first = crate::ChamferGroup {
+        count: 0,
+        distance: distance.clone(),
+        distance2: distance2.clone(),
+        angle: angle.clone(),
+        flip: *flip,
+        tangent_chain: *tangent_chain,
+    };
+    let mut selected = Vec::new();
+    let mut at = 0;
+    for (count, group) in sizes.into_iter().zip(std::iter::once(&first).chain(groups)) {
+        let seeds = edges.get(at..at + count).ok_or_else(|| DocError::Invalid("missing chamfer group edges".into()))?;
+        let edges = if group.tangent_chain { kernel::tangent_edge_points(body, seeds)? } else { seeds.to_vec() };
+        let side = match (&group.distance2, &group.angle) {
+            (Some(_), Some(_)) => return Err(DocError::Invalid("give chamfer distance2 or angle, not both".into())),
+            (Some(e), None) => Some(kernel::ChamferSide::Distance(val(vals, e, Kind::Length)?)),
+            (None, Some(e)) => Some(kernel::ChamferSide::Angle(val(vals, e, Kind::Angle)?)),
+            (None, None) => None,
+        };
+        selected.push(kernel::ChamferSet { edges, distance: val(vals, &group.distance, Kind::Length)?, side, flip: group.flip });
+        at += count;
+    }
+    // Legacy explicit selections retain their established point-picking tolerance.
+    if groups.is_empty() && !tangent_chain {
+        let first = selected.first().ok_or_else(|| DocError::Invalid("missing chamfer selection".into()))?;
+        return Ok(match first.side {
+            Some(side) => kernel::chamfer_sides(body, &first.edges, first.distance, side, first.flip)?,
+            None => kernel::chamfer(body, &first.edges, first.distance)?,
+        });
+    }
+    Ok(kernel::chamfer_sets(body, &selected)?)
 }
 
 fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut ModelState, warning: &mut Option<String>) -> Result<()> {
@@ -4502,6 +4625,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             Ok(())
         }
         FeatureKind::Fillet { edges, radius, body, .. } | FeatureKind::Chamfer { edges, distance: radius, body, .. } => {
+            let selected_count = edges.len();
             let r = val(vals, radius, Kind::Length)?;
             let ti = blend_target(st, body, &crate::plain(edges))?;
             let Some(mb) = st.bodies.get(ti) else { return Err(DocError::Invalid("body".into())) };
@@ -4549,7 +4673,24 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             } else {
                 resolve_edges(&mb.body, &crate::plain(edges), &f.edge_refs, warning)?
             };
+            let strict_selection = matches!(
+                &f.kind,
+                FeatureKind::Fillet { style: crate::FilletStyle::Grouped { .. }, .. } | FeatureKind::Fillet { tangent_chain: true, .. }
+            ) || matches!(&f.kind, FeatureKind::Chamfer { groups, tangent_chain, .. } if !groups.is_empty() || *tangent_chain);
+            if strict_selection && edges.len() != selected_count {
+                return Err(DocError::Invalid("a selected edge disappeared from the blend selection".into()));
+            }
             st.blend_edges.insert(f.id, edges.clone());
+            let edges = match &f.kind {
+                FeatureKind::Fillet { style: crate::FilletStyle::Grouped { .. }, .. } => edges,
+                FeatureKind::Fillet { style, tangent_chain: true, .. } => {
+                    if !style.is_constant() {
+                        return Err(DocError::Invalid("persistent tangent chains require a constant radius".into()));
+                    }
+                    kernel::tangent_edge_points(&mb.body, &edges)?
+                }
+                _ => edges,
+            };
             let input = mb.traced();
             // A G2 corner is built by the corner construction alone, for a constant radius: any
             // other style (or a fitted radius) has no corner patch to repeat.
@@ -4562,6 +4703,9 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
             let (nb, from) = match &f.kind {
                 FeatureKind::Fillet { corner: crate::FilletCorner::G2, .. } => (kernel::fillet_g2_corners(&mb.body, &edges, r)?, input),
                 FeatureKind::Fillet { style: crate::FilletStyle::Curvature, .. } => (kernel::fillet_g2(&mb.body, &edges, r)?, input),
+                FeatureKind::Fillet { style: style @ crate::FilletStyle::Grouped { .. }, fit, tangent_chain, .. } => {
+                    (grouped_fillet(vals, &mb.body, &edges, r, style, *fit, *tangent_chain)?, input)
+                }
                 FeatureKind::Fillet { style: crate::FilletStyle::Chord, .. } => (kernel::fillet_chord(&mb.body, &edges, r)?, input),
                 FeatureKind::Fillet { style: crate::FilletStyle::Variable { radius2, start, mid, smooth }, .. } => {
                     let r2 = val(vals, radius2, Kind::Length)?;
@@ -4598,7 +4742,7 @@ fn eval_feature(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st:
                     }
                     (b, input)
                 }
-                FeatureKind::Chamfer { distance2, angle, flip, .. } => (chamfer_with(vals, &mb.body, &edges, r, distance2, angle, *flip)?, input),
+                FeatureKind::Chamfer { .. } => (chamfer_with(vals, &mb.body, &edges, &f.kind)?, input),
                 _ => return Err(DocError::Invalid("blend".into())),
             };
             // Keeping the input's planar certificates may join faces; their history stays over
@@ -5247,6 +5391,7 @@ mod chain_tests {
                 style: crate::FilletStyle::Constant,
                 fit: Default::default(),
                 corner: Default::default(),
+                tangent_chain: false,
             },
             None,
         )

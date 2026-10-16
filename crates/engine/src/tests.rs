@@ -2274,21 +2274,21 @@ mod naming {
         let mut legacy = Session::new(solidcraft_doc::Document::from_json(&old.to_json()).unwrap());
         assert_eq!(attached(&legacy), Some(10.));
         assert!((top(&mut legacy) - 15.).abs() < 1e-6);
-        // An upstream join that trims the certified face: the attachment stays on what is left
-        // of it and never follows the substitute roof (see face_tests for a face covered whole).
+        // Cover the entire original roof: a surviving finite patch can now
+        // retain its construction identity, but a substitute roof cannot.
         for target in [&mut s, &mut legacy] {
             run(target, "timeline.roll_to", json!({"feature": "Block"}));
             run(target, "sketch.create", json!({"plane": "XY", "name": "B"}));
-            run(target, "sketch.rectangle.two_point", json!({"p0": [8, -5], "p1": [45, 35]}));
+            run(target, "sketch.rectangle.two_point", json!({"p0": [-5, -5], "p1": [45, 35]}));
             run(target, "sketch.finish", json!({}));
             run(target, "solid.extrude", json!({"sketch": "B", "distance": 20, "operation": "join", "name": "Boss"}));
             run(target, "timeline.roll_to", json!({}));
         }
-        assert_eq!(attached(&legacy), Some(10.), "historical weak naming retains its saved geometry behavior");
-        assert!((top(&mut legacy) - 20.).abs() < 1e-6);
+        assert_eq!(attached(&legacy), Some(20.), "historical weak naming may follow the substitute roof");
+        assert!((top(&mut legacy) - 25.).abs() < 1e-6);
         let legacy_reopened = Session::new(solidcraft_doc::Document::from_json(&legacy.doc.to_json()).unwrap());
-        assert_eq!(attached(&legacy_reopened), Some(10.));
-        assert!((legacy_reopened.model.state().bodies[0].mesh().bounds().max.z - 20.).abs() < 1e-6);
+        assert_eq!(attached(&legacy_reopened), Some(20.));
+        assert!((legacy_reopened.model.state().bodies[0].mesh().bounds().max.z - 25.).abs() < 1e-6);
         let solidcraft_doc::FeatureKind::Sketch { plane: solidcraft_doc::PlaneRef::Face { anchor, .. }, .. } =
             &legacy_reopened.doc.find_feature("Top").unwrap().kind
         else {
@@ -2296,14 +2296,19 @@ mod naming {
         };
         assert!(anchor.is_none(), "opening old face references must not infer a strict attachment");
         let failed = |s: &Session, name: &str| s.model.results.iter().find(|r| r.id == s.doc.find_feature(name).unwrap().id).unwrap().error.is_some();
-        assert!(!failed(&s, "Top"));
-        assert!(!failed(&s, "Peg"));
-        assert_eq!(attached(&s), Some(10.), "the strip of Block's top left beside the boss is still that face");
+        assert!(failed(&s, "Top"));
+        assert!(failed(&s, "Peg"), "lost sketch cannot supply downstream geometry");
+        assert_eq!(attached(&s), None);
         assert!((top(&mut s) - 20.0).abs() < 1e-6, "{}", top(&mut s));
         run(&mut s, "timeline.suppress", json!({"feature":"Boss","suppressed":true}));
         assert!(!failed(&s, "Top"));
+        assert!(!failed(&s, "Peg"));
         assert_eq!(attached(&s), Some(10.));
         assert!((top(&mut s) - 15.).abs() < 1e-6);
+        run(&mut s, "edit.undo", json!({}));
+        assert!(failed(&s, "Top"));
+        assert!(failed(&s, "Peg"));
+        assert_eq!(attached(&s), None);
     }
 
     #[test]
@@ -3413,6 +3418,93 @@ fn a_pattern_of_a_reduced_fillet_rounds_each_copy_alike() {
     run(&mut s, "solid.pattern.rectangular", json!({"features": ["Post", "Round"], "dir1": [1, 0, 0], "count1": 3, "spacing1": 20}));
     let expect = 60.0 * 20.0 * 2.0 + 3.0 * (840.0 - (4.0 - PI) * 9.0 * 10.0);
     assert!(rel(volume(&mut s), expect) < 2e-4, "{} vs {expect}", volume(&mut s));
+}
+
+#[test]
+fn chamfer_groups_reject_invalid_partitions_and_overlapping_chains_atomically() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length":20,"width":30,"height":40}));
+    let saved = s.doc.to_json();
+    for params in [
+        json!({"edge_sets":[]}),
+        json!({"edge_sets":[{"edges":[[0,0,20]],"distance":2}]}),
+        json!({"edge_sets":[{"edges":[],"distance":2},{"edges":[[20,30,20]],"distance":3}]}),
+        json!({"edge_sets":[{"edges":[[0,0,20]],"distance":2},{"edges":[[0,0,20]],"distance":3}]}),
+        json!({"edge_sets":[{"edges":[[0,0,20]],"distance":2},{"edges":[[20,30,20]],"distance":3,"angle":45,"distance2":2}]}),
+        json!({"edges":[[0,0,20]],"distance":2,"tangent_chain":"yes"}),
+        json!({"edges":[[0,0,20]],"distance":2,"distance2":{}}),
+        json!({"edges":[[0,0,20]],"distance":2,"flip":1}),
+    ] {
+        assert!(s.execute("solid.chamfer", &params).is_err(), "{params}");
+        assert_eq!(s.doc.to_json(), saved);
+    }
+    run(
+        &mut s,
+        "solid.chamfer",
+        json!({"name":"Bevels","edge_sets":[
+            {"edges":[[0,0,20]],"distance":2},{"edges":[[20,30,20]],"distance":3}
+        ]}),
+    );
+    let id = s.doc.features.last().unwrap().id;
+    for count in [0, 2, usize::MAX] {
+        let mut doc = (*s.doc).clone();
+        let solidcraft_doc::FeatureKind::Chamfer { groups, .. } = &mut doc.feature_mut(id).unwrap().kind else { panic!() };
+        groups[0].count = count;
+        let rebuilt = Session::new(solidcraft_doc::Document::from_json(&doc.to_json()).unwrap());
+        assert!(rebuilt.model.result(id).unwrap().error.is_some());
+    }
+    let mut circle = Session::default();
+    run(&mut circle, "solid.cylinder", json!({"radius":10,"height":40}));
+    assert!(
+        circle
+            .execute(
+                "solid.chamfer",
+                &json!({"edge_sets":[
+                    {"edges":[[0,10,40]],"distance":2,"tangent_chain":true},
+                    {"edges":[[0,-10,40]],"distance":3,"tangent_chain":true}
+                ]})
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn chamfer_groups_keep_model_parameters_through_redefinition_and_feature_patterns() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length":20,"width":30,"height":40}));
+    run(&mut s, "solid.box", json!({"length":20,"width":30,"height":40,"corner":[40,0,0]}));
+    let id = run(
+        &mut s,
+        "solid.chamfer",
+        json!({"name":"Bevels","edge_sets":[
+            {"edges":[[0,0,20]],"distance":"2 mm","tangent_chain":true},{"edges":[[20,30,20]],"distance":"3 mm"}
+        ]}),
+    )["feature"]
+        .as_u64()
+        .unwrap();
+    let names = s.doc.feature(id).unwrap().param_names.clone();
+    assert_eq!(names.len(), 2);
+    assert_ne!(names[0], names[1]);
+    run(
+        &mut s,
+        "timeline.redefine",
+        json!({"feature":id,"command":"solid.chamfer","params":{"edge_sets":[
+            {"edges":[[0,0,20]],"distance":"2 mm","tangent_chain":true},{"edges":[[20,30,20]],"distance":"5 mm"}
+        ]}}),
+    );
+    assert_eq!(s.doc.feature(id).unwrap().param_names, names);
+    run(&mut s, "solid.pattern.rectangular", json!({"features":["Bevels"],"dir1":[1,0,0],"count1":2,"spacing1":40}));
+    let check = |s: &mut Session, d: f64| {
+        assert!(s.model.results.iter().all(|r| r.error.is_none() && r.warning.is_none()), "{:?}", s.model.results);
+        let actual = run(s, "inspect.measure", json!({}))["total"]["volume_mm3"].as_f64().unwrap();
+        assert!((actual - (48000. - 40. * (4. + d * d))).abs() < 0.01, "{actual}");
+    };
+    check(&mut s, 5.);
+    run(&mut s, "parameters.change", json!({"name":names[1],"expression":"3 mm"}));
+    check(&mut s, 3.);
+    check(&mut Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap()), 3.);
+    run(&mut s, "edit.undo", json!({}));
+    check(&mut s, 5.);
 }
 
 /// A taper on a profile of lines and an arc (#546). The D profile (back 9.2, sides 7.4, a

@@ -1,0 +1,423 @@
+{
+  "format": "solidcraft/25",
+  "format_pending": [
+    "class-a-surfaces",
+    "f3d-editable-history",
+    "feature-pattern-alignment",
+    "flipped-sketch-plane",
+    "infinite-sketch-lines",
+    "patch-continuity-and-points",
+    "placed-plane-origins",
+    "sketch-pattern-directions",
+    "split-by-sketch-line"
+  ],
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "diameter",
+      "expr": "20 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "8 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "grip_height",
+      "expr": "12 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "round_radius",
+      "expr": "1 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "d1",
+      "expr": "diameter",
+      "unit": "mm",
+      "model": true
+    },
+    {
+      "name": "d4",
+      "expr": "diameter",
+      "unit": "mm",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Base profile",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "c1.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "c1",
+            "type": "circle",
+            "c": 1,
+            "r": 10.0,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 1
+          },
+          {
+            "id": "k2",
+            "type": "diameter",
+            "c": 0,
+            "value": 20.0,
+            "param": "d1"
+          }
+        ],
+        "counters": {
+          "c": 1,
+          "k": 2
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Base cylinder",
+      "suppressed": false,
+      "body_names": [
+        "Knob"
+      ],
+      "param_names": [
+        "d2"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "height",
+        "convention": "total_distance",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 3,
+      "name": "Grip profile",
+      "suppressed": false,
+      "param_names": [
+        "d3"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "height"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "c1.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p1",
+            "pos": [
+              -3.0,
+              -20.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              3.0,
+              -20.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p3",
+            "pos": [
+              3.0,
+              20.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p4",
+            "pos": [
+              -3.0,
+              20.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "c1",
+            "type": "circle",
+            "c": 1,
+            "r": 10.0,
+            "construction": false
+          },
+          {
+            "id": "l1",
+            "type": "line",
+            "a": 2,
+            "b": 3,
+            "construction": false
+          },
+          {
+            "id": "l2",
+            "type": "line",
+            "a": 3,
+            "b": 4,
+            "construction": false
+          },
+          {
+            "id": "l3",
+            "type": "line",
+            "a": 4,
+            "b": 5,
+            "construction": false
+          },
+          {
+            "id": "l4",
+            "type": "line",
+            "a": 5,
+            "b": 2,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 1
+          },
+          {
+            "id": "k2",
+            "type": "diameter",
+            "c": 0,
+            "value": 20.0,
+            "param": "d4"
+          },
+          {
+            "id": "k3",
+            "type": "horizontal",
+            "l": 1
+          },
+          {
+            "id": "k4",
+            "type": "horizontal",
+            "l": 3
+          },
+          {
+            "id": "k5",
+            "type": "vertical",
+            "l": 2
+          },
+          {
+            "id": "k6",
+            "type": "vertical",
+            "l": 4
+          }
+        ],
+        "counters": {
+          "c": 1,
+          "k": 6,
+          "l": 4,
+          "p": 4
+        }
+      }
+    },
+    {
+      "id": 4,
+      "name": "Grip",
+      "suppressed": false,
+      "param_names": [
+        "d5"
+      ],
+      "type": "extrude",
+      "sketch": 3,
+      "profiles": {
+        "type": "curves",
+        "loops": [
+          [
+            "c1",
+            "l4",
+            "c1",
+            "l2"
+          ]
+        ]
+      },
+      "extent": {
+        "distance": "grip_height",
+        "convention": "total_distance",
+        "direction": "positive"
+      },
+      "operation": "join",
+      "targets": [
+        "Knob"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Grip corner rounds",
+      "suppressed": false,
+      "param_names": [
+        "d6"
+      ],
+      "edge_refs": [
+        {
+          "dir": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "min": [
+            -10.000000000000025,
+            -9.999999999999998,
+            0.0
+          ],
+          "max": [
+            10.000000000000012,
+            10.000000000000004,
+            20.000000000000004
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "min": [
+            -10.000000000000025,
+            -9.999999999999998,
+            0.0
+          ],
+          "max": [
+            10.000000000000012,
+            10.000000000000004,
+            20.000000000000004
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "min": [
+            -10.000000000000025,
+            -9.999999999999998,
+            0.0
+          ],
+          "max": [
+            10.000000000000012,
+            10.000000000000004,
+            20.000000000000004
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            -1.0
+          ],
+          "min": [
+            -10.000000000000025,
+            -9.999999999999998,
+            0.0
+          ],
+          "max": [
+            10.000000000000012,
+            10.000000000000004,
+            20.000000000000004
+          ]
+        }
+      ],
+      "edge_names": [
+        "F4:side:c1#2|F4:side:l4",
+        "F4:side:c1#1|F4:side:l4",
+        "F4:side:c1#2|F4:side:l2",
+        "F4:side:c1#1|F4:side:l2"
+      ],
+      "type": "fillet",
+      "edges": [
+        [
+          -3.0,
+          -9.539392014169456,
+          14.0
+        ],
+        [
+          -3.0,
+          9.539392014169456,
+          14.0
+        ],
+        [
+          3.0,
+          -9.539392014169456,
+          14.0
+        ],
+        [
+          3.0,
+          9.539392014169456,
+          14.0
+        ]
+      ],
+      "radius": "round_radius",
+      "body": "Knob"
+    }
+  ],
+  "next_id": 6
+}

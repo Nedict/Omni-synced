@@ -1,0 +1,371 @@
+{
+  "format": "solidcraft/25",
+  "format_pending": [
+    "f3d-editable-history"
+  ],
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "diameter",
+      "expr": "40 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "30 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "bevel",
+      "expr": "2 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "extension",
+      "expr": "7 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "d1",
+      "expr": "diameter",
+      "unit": "mm",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Base circle",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "c1.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "c1",
+            "type": "circle",
+            "c": 1,
+            "r": 20.0,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 1
+          },
+          {
+            "id": "k2",
+            "type": "diameter",
+            "c": 0,
+            "value": 40.0,
+            "param": "d1"
+          }
+        ],
+        "counters": {
+          "c": 1,
+          "k": 2
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Cylinder",
+      "suppressed": false,
+      "body_names": [
+        "Cylinder"
+      ],
+      "param_names": [
+        "d2"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "height",
+        "convention": "total_distance",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 3,
+      "name": "Both bevels",
+      "suppressed": false,
+      "param_names": [
+        "d3"
+      ],
+      "edge_refs": [
+        {
+          "dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -20.0,
+            -20.000000000000018,
+            0.0
+          ],
+          "max": [
+            20.0,
+            19.999999999999996,
+            30.000000000000014
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -20.0,
+            -20.000000000000018,
+            0.0
+          ],
+          "max": [
+            20.0,
+            19.999999999999996,
+            30.000000000000014
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -20.0,
+            -20.000000000000018,
+            0.0
+          ],
+          "max": [
+            20.0,
+            19.999999999999996,
+            30.000000000000014
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -20.0,
+            -20.000000000000018,
+            0.0
+          ],
+          "max": [
+            20.0,
+            19.999999999999996,
+            30.000000000000014
+          ]
+        }
+      ],
+      "edge_names": [
+        "F2:side:c1#1|F2:top",
+        "F2:side:c1#2|F2:top",
+        "F2:side:c1#1|F2:start",
+        "F2:side:c1#2|F2:start"
+      ],
+      "type": "chamfer",
+      "edges": [
+        [
+          0.0,
+          20.0,
+          30.0
+        ],
+        [
+          0.0,
+          -20.0,
+          30.0
+        ],
+        [
+          0.0,
+          20.0,
+          0.0
+        ],
+        [
+          0.0,
+          -20.0,
+          0.0
+        ]
+      ],
+      "distance": "bevel",
+      "body": "Cylinder"
+    },
+    {
+      "id": 4,
+      "name": "Projected bevel",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "face",
+        "plane": {
+          "origin": [
+            0.0,
+            0.0,
+            29.999999999999986
+          ],
+          "x_dir": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        "at": [
+          0.0,
+          0.0,
+          30.0
+        ],
+        "name": "F2:top",
+        "anchor": {
+          "target": {
+            "body": "Cylinder",
+            "origin_feature": 2,
+            "name": "F2:cap:high:7413f52a973aff7f96f4640d0279843de057931afd8c2eb678e06607c9d37214",
+            "point": [
+              0.0,
+              0.0,
+              30.0
+            ],
+            "certificate": {
+              "kind": "extrude_cap",
+              "sketch": 1,
+              "high": true,
+              "outer": [
+                "c1"
+              ],
+              "holes": []
+            }
+          },
+          "component": 0,
+          "path": [],
+          "author_path": [],
+          "coordinates": [
+            0.0,
+            0.0
+          ],
+          "x_axis": [
+            1.0,
+            0.0
+          ]
+        }
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              1.0878956445081081e-15,
+              -7.615269511556757e-15
+            ],
+            "fixed": true,
+            "link": "j1"
+          }
+        ],
+        "curves": [
+          {
+            "id": "c1",
+            "type": "circle",
+            "c": 1,
+            "r": 18.0,
+            "construction": false,
+            "link": "j1"
+          }
+        ],
+        "constraints": [],
+        "links": [
+          {
+            "id": "j1",
+            "kind": "project",
+            "source": {
+              "type": "edge",
+              "body": "Cylinder",
+              "at": [
+                -18.0,
+                1.2851403800253597e-15,
+                30.0
+              ]
+            },
+            "edge_circle": [
+              "F2:top|F3:blend:F2:side:c1#1|F2:top",
+              "F2:top|F3:blend:F2:side:c1#2|F2:top"
+            ]
+          }
+        ],
+        "counters": {
+          "c": 1,
+          "j": 1,
+          "p": 1
+        }
+      }
+    },
+    {
+      "id": 5,
+      "name": "Projected extrusion",
+      "suppressed": false,
+      "param_names": [
+        "d4"
+      ],
+      "type": "extrude",
+      "sketch": 4,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "extension",
+        "convention": "total_distance",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    }
+  ],
+  "next_id": 6
+}

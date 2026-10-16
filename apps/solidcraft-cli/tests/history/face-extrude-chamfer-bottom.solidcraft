@@ -1,0 +1,365 @@
+{
+  "format": "solidcraft-f3d-dev/30",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "extension",
+      "expr": "15 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "40 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "setback",
+      "expr": "2 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "diameter",
+      "expr": "20 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "second",
+      "expr": "3 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "d1",
+      "expr": "diameter",
+      "unit": "mm",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Rim profile",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "c1.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "c1",
+            "type": "circle",
+            "c": 1,
+            "r": 10.0,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 1
+          },
+          {
+            "id": "k2",
+            "type": "diameter",
+            "c": 0,
+            "value": 20.0,
+            "param": "d1"
+          }
+        ],
+        "counters": {
+          "c": 1,
+          "k": 2
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Block",
+      "suppressed": false,
+      "body_names": [
+        "Block"
+      ],
+      "param_names": [
+        "d2"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "height",
+        "convention": "total_distance",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 3,
+      "name": "Beveled rim",
+      "suppressed": false,
+      "param_names": [
+        "d3",
+        "d4"
+      ],
+      "edge_refs": [
+        {
+          "dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -10.0,
+            -10.000000000000009,
+            0.0
+          ],
+          "max": [
+            10.0,
+            10.0,
+            40.00000000000002
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -10.0,
+            -10.000000000000009,
+            0.0
+          ],
+          "max": [
+            10.0,
+            10.0,
+            40.00000000000002
+          ]
+        }
+      ],
+      "edge_names": [
+        "F2:side:c1#1|F2:start",
+        "F2:side:c1#2|F2:start"
+      ],
+      "type": "chamfer",
+      "edges": [
+        [
+          0.0,
+          10.0,
+          0.0
+        ],
+        [
+          0.0,
+          -10.0,
+          0.0
+        ]
+      ],
+      "distance": "setback",
+      "distance2": "second",
+      "flip": true
+    },
+    {
+      "id": 4,
+      "name": "Sketch1",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "face",
+        "plane": {
+          "origin": [
+            0.0,
+            0.0,
+            -0.0
+          ],
+          "x_dir": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            -1.0,
+            0.0
+          ]
+        },
+        "at": [
+          -1.551036443525459,
+          -3.279500301542176,
+          0.0
+        ],
+        "name": "F2:start",
+        "anchor": {
+          "target": {
+            "body": "Block",
+            "origin_feature": 2,
+            "name": "F2:cap:low:7413f52a973aff7f96f4640d0279843de057931afd8c2eb678e06607c9d37214",
+            "point": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "certificate": {
+              "kind": "extrude_cap",
+              "sketch": 1,
+              "high": false,
+              "outer": [
+                "c1"
+              ],
+              "holes": []
+            }
+          },
+          "component": 0,
+          "path": [],
+          "author_path": [],
+          "coordinates": [
+            0.0,
+            0.0
+          ],
+          "x_axis": [
+            1.0,
+            0.0
+          ]
+        }
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              -1.1600697726695504e-15,
+              4.3502616475108144e-15
+            ],
+            "fixed": true,
+            "link": "j1"
+          },
+          {
+            "id": "p2",
+            "pos": [
+              7.0,
+              4.365574568510051e-16
+            ],
+            "fixed": true,
+            "link": "j1"
+          },
+          {
+            "id": "p3",
+            "pos": [
+              -7.000000000000002,
+              2.243236091505278e-15
+            ],
+            "fixed": true,
+            "link": "j1"
+          }
+        ],
+        "curves": [
+          {
+            "id": "a1",
+            "type": "arc",
+            "c": 1,
+            "a": 2,
+            "b": 3,
+            "construction": false,
+            "link": "j1"
+          },
+          {
+            "id": "a2",
+            "type": "arc",
+            "c": 1,
+            "a": 3,
+            "b": 2,
+            "construction": false,
+            "link": "j1"
+          }
+        ],
+        "constraints": [],
+        "links": [
+          {
+            "id": "j1",
+            "kind": "project",
+            "source": {
+              "type": "face",
+              "body": "Block",
+              "at": [
+                6.958702064896758,
+                -1.1842378929335002e-15,
+                0.0
+              ]
+            },
+            "face_name": "F2:cap:low:7413f52a973aff7f96f4640d0279843de057931afd8c2eb678e06607c9d37214",
+            "auto_face": true
+          }
+        ],
+        "counters": {
+          "a": 2,
+          "j": 1,
+          "p": 3
+        }
+      }
+    },
+    {
+      "id": 5,
+      "name": "Cap extension",
+      "suppressed": false,
+      "param_names": [
+        "d5"
+      ],
+      "type": "extrude",
+      "sketch": 4,
+      "profiles": {
+        "type": "curves",
+        "loops": [
+          [
+            "a1",
+            "a2"
+          ]
+        ]
+      },
+      "extent": {
+        "distance": "extension",
+        "convention": "total_distance",
+        "direction": "positive"
+      },
+      "operation": "join",
+      "targets": [
+        "Block"
+      ]
+    }
+  ],
+  "next_id": 6
+}

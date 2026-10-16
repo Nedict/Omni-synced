@@ -1,0 +1,169 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "size",
+        "expression": "10 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "30 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Lower section"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            10,
+            20
+          ]
+        },
+        "dimensions": {
+          "width": "size",
+          "height": "20 mm"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "construct.plane.offset",
+      "params": {
+        "base": "XY",
+        "offset": "height",
+        "name": "Upper plane"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "Upper plane",
+        "name": "Upper section"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            20,
+            40
+          ]
+        },
+        "dimensions": {
+          "width": "20 mm",
+          "height": "40 mm"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.loft",
+      "params": {
+        "sections": [
+          {
+            "sketch": "Lower section"
+          },
+          {
+            "sketch": "Upper section"
+          }
+        ],
+        "name": "Transition",
+        "interpolation": "uniform"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 14000,
+    "body_count": 1,
+    "features": [
+      "Lower section",
+      "Upper plane",
+      "Upper section",
+      "Transition"
+    ],
+    "bounds": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        20,
+        40,
+        30
+      ]
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "size",
+        "expression": "15 mm"
+      },
+      "volume_mm3": 16000,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          40,
+          30
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "40 mm"
+      },
+      "volume_mm3": 18666.666666666668,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          40,
+          40
+        ]
+      ]
+    }
+  ]
+}

@@ -804,8 +804,12 @@ pub(crate) fn corner_blend_style(solid: &Solid, ids: &[mt::EdgeID], size: f64, r
             return Err(unsupported("blends ending where more than three edges meet"));
         }
         let chosen: Vec<&mt::EdgeID> = eids.iter().filter(|id| sides.contains_key(id)).collect();
-        if chosen.len() >= 2 && chosen.iter().any(|id| sides.get(*id).is_none_or(|s| s.2 > 0.0)) {
-            return Err(unsupported("concave blends meeting at a corner"));
+        let concave = chosen.iter().filter(|id| sides.get(**id).is_some_and(|s| s.2 > 0.0)).count();
+        // Two concave rounds meet by intersecting their already oriented strips,
+        // just like two convex rounds. Mixed corners and three concave strips
+        // still need a different corner construction; do not extrapolate to them.
+        if concave > 0 && (chosen.len() >= 3 || concave != chosen.len() || (!round && chosen.len() == 2)) {
+            return Err(unsupported("mixed, three-way, or chamfered concave blends meeting at a corner"));
         }
         if chosen.len() == 3 && !round {
             return Err(unsupported("three chamfers at one corner"));

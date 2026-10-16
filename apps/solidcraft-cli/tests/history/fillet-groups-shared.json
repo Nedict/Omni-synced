@@ -1,0 +1,248 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "width",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "40 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "radius1",
+        "expression": "2 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "radius2",
+        "expression": "3 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Block profile"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            20,
+            30
+          ]
+        },
+        "dimensions": {
+          "width": "width"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "operation": "new_body",
+        "name": "Block",
+        "body_name": "Block"
+      }
+    },
+    {
+      "command": "solid.fillet",
+      "params": {
+        "body": "Block",
+        "name": "Rounded edges",
+        "edge_sets": [
+          {
+            "edges": [
+              [
+                0,
+                0,
+                20
+              ],
+              [
+                0,
+                30,
+                20
+              ]
+            ],
+            "radius": "radius1"
+          },
+          {
+            "edges": [
+              [
+                20,
+                0,
+                20
+              ],
+              [
+                20,
+                30,
+                20
+              ]
+            ],
+            "radius": "radius2"
+          }
+        ]
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 23776.814089933345,
+    "volume_tolerance_mm3": 1.125929550333269,
+    "body_count": 1,
+    "bounds": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        20,
+        30,
+        40
+      ]
+    ],
+    "features": [
+      "Block profile",
+      "Block",
+      "Rounded edges"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "radius1",
+        "expression": "4 mm"
+      },
+      "volume_mm3": 23570.796326794898,
+      "volume_tolerance_mm3": 2.156018366025517,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "radius2",
+        "expression": "5 mm"
+      },
+      "volume_mm3": 23502.12373908208,
+      "volume_tolerance_mm3": 2.4993813045896,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "50 mm"
+      },
+      "volume_mm3": 29721.017612416683,
+      "volume_tolerance_mm3": 1.4049119379165862,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          30,
+          50
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "width",
+        "expression": "30 mm"
+      },
+      "volume_mm3": 35776.814089933345,
+      "volume_tolerance_mm3": 1.125929550333269,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          30,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Rounded edges",
+        "suppressed": true
+      },
+      "volume_mm3": 24000,
+      "volume_tolerance_mm3": 0.01,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          30,
+          40
+        ]
+      ]
+    }
+  ]
+}

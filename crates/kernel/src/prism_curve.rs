@@ -74,6 +74,12 @@ fn controls(c: &mt::Curve, plane: &Plane, h: f64, tol: f64) -> Option<(Vec<Vec<H
     (error < tol * 0.1).then_some((out, error))
 }
 
+/// Prove that the entire rational curve lies at one prism station. Equal endpoint
+/// heights alone do not exclude an out-of-plane bow between them.
+pub(super) fn at_height(c: &mt::Curve, plane: &Plane, height: f64, tol: f64, work: &mut usize) -> bool {
+    height.is_finite() && tol.is_finite() && tol > 0. && preflight(c, work).is_some() && controls(c, plane, height, tol).is_some()
+}
+
 fn product(a: &[f64], b: &[f64], work: &mut usize) -> Option<Vec<f64>> {
     charge(work, a.len().checked_mul(b.len())?)?;
     let (m, n) = (a.len() - 1, b.len() - 1);
@@ -409,6 +415,25 @@ mod tests {
         let a = mt::Vertex::new(c.subs(0.));
         let b = mt::Vertex::new(c.subs(1.));
         mt::Edge::new(&a, &b, c)
+    }
+
+    #[test]
+    fn station_certificate_checks_the_whole_rational_curve() {
+        let curve = |bow: f64, weight: f64| {
+            mt::Curve::NurbsCurve(mt::NurbsCurve::new(mt::BSplineCurve::new(
+                mt::KnotVec::bezier_knot(2),
+                vec![
+                    mt::Vector4::new(0., 0., 5., 1.),
+                    mt::Vector4::new(weight, weight, (5. + bow) * weight, weight),
+                    mt::Vector4::new(2., 0., 5., 1.),
+                ],
+            )))
+        };
+        assert!(at_height(&curve(0., 0.7), &Plane::XY, 5., 1e-6, &mut 2_000_000));
+        assert!(!at_height(&curve(1., 0.7), &Plane::XY, 5., 1e-6, &mut 2_000_000), "equal endpoints do not certify the interior");
+        assert!(!at_height(&curve(0., -0.7), &Plane::XY, 5., 1e-6, &mut 2_000_000));
+        assert!(!at_height(&curve(0., 0.7), &Plane::XY, 5., 1e-6, &mut 0));
+        assert!(!at_height(&curve(0., 0.7), &Plane::XY, 6., 1e-6, &mut 2_000_000));
     }
 
     #[test]

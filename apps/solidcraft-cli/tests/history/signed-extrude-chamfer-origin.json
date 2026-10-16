@@ -1,0 +1,224 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "width",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "-40 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "setback",
+        "expression": "2 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Block profile"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            20,
+            30
+          ]
+        },
+        "dimensions": {
+          "width": "width"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "operation": "new_body",
+        "name": "Block",
+        "body_name": "Block"
+      }
+    },
+    {
+      "command": "solid.chamfer",
+      "params": {
+        "edges": [
+          [
+            10,
+            0,
+            0
+          ]
+        ],
+        "distance": "setback",
+        "body": "Block",
+        "name": "Beveled edges"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 23960.0,
+    "volume_tolerance_mm3": 0.21000000000000002,
+    "center_of_mass": [
+      10.0,
+      15.023928770172509,
+      -20.032276015581523
+    ],
+    "center_of_mass_tolerance_mm": 0.0002,
+    "body_count": 1,
+    "bounds": [
+      [
+        0,
+        0,
+        -40.0
+      ],
+      [
+        20.0,
+        30,
+        0
+      ]
+    ],
+    "features": [
+      "Block profile",
+      "Block",
+      "Beveled edges"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "setback",
+        "expression": "4 mm"
+      },
+      "volume_mm3": 23840.0,
+      "volume_tolerance_mm3": 0.81,
+      "center_of_mass": [
+        10.0,
+        15.0917225950783,
+        -20.125279642058167
+      ],
+      "center_of_mass_tolerance_mm": 0.0002,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          -40.0
+        ],
+        [
+          20.0,
+          30,
+          0
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "-50 mm"
+      },
+      "volume_mm3": 29960.0,
+      "volume_tolerance_mm3": 0.21000000000000002,
+      "center_of_mass": [
+        10.0,
+        15.019136626613262,
+        -25.032487761459727
+      ],
+      "center_of_mass_tolerance_mm": 0.0002,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          -50.0
+        ],
+        [
+          20.0,
+          30,
+          0
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "width",
+        "expression": "30 mm"
+      },
+      "volume_mm3": 35940.0,
+      "volume_tolerance_mm3": 0.31,
+      "center_of_mass": [
+        15.0,
+        15.02392877017251,
+        -20.032276015581523
+      ],
+      "center_of_mass_tolerance_mm": 0.0002,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          -40.0
+        ],
+        [
+          30.0,
+          30,
+          0
+        ]
+      ]
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Beveled edges",
+        "suppressed": true
+      },
+      "volume_mm3": 24000.0,
+      "volume_tolerance_mm3": 0.01,
+      "center_of_mass": [
+        10.0,
+        15.0,
+        -20.0
+      ],
+      "center_of_mass_tolerance_mm": 0.0002,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          -40.0
+        ],
+        [
+          20.0,
+          30,
+          0
+        ]
+      ]
+    }
+  ]
+}

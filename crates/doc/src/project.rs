@@ -24,6 +24,10 @@ const MAX_CHAIN: usize = 4000;
 #[path = "project_order.rs"]
 mod order;
 
+#[path = "project_arcs.rs"]
+mod arcs;
+pub use arcs::join_face_arcs;
+
 /// A resolved link: its geometry in sketch coordinates and the (possibly moved) reference.
 #[derive(Clone, Debug)]
 pub struct Resolved {
@@ -339,6 +343,110 @@ fn resolve_named_edge(st: &ModelState, plane: &Plane, kind: LinkKind, body: &str
     Ok(Resolved { geom: merge_split_circles(geom), wires, source, moved: false, face_index: None, edge_index: Some(index) })
 }
 
+/// Resolve the actual named edge, without a second position-based selection that
+/// could choose another edge at a shared vertex or an overlapping body.
+pub fn resolve_exact_named_edge(st: &ModelState, plane: &Plane, kind: LinkKind, src: &LinkSource, name: &str) -> Result<Resolved> {
+    let LinkSource::Edge { body, .. } = src else { return Err(DocError::Invalid("edge identity requires an edge source".into())) };
+    let target = st.body(body).ok_or_else(|| lost("named projection body"))?;
+    let mesh = target.mesh();
+    if name.is_empty() || mesh.edges.len() > 2_000_000 || mesh.triangles.len() > 2_000_000 {
+        return Err(DocError::Invalid("invalid named edge projection or work limit exceeded".into()));
+    }
+    let (names, name) = match crate::naming::legacy_name(name) {
+        Some(old) => (crate::naming::legacy_edge_names(target), old),
+        None => (crate::naming::edge_names(target), name),
+    };
+    let mut matches = names.iter().enumerate().filter(|(_, candidate)| candidate.as_str() == name);
+    let index = matches.next().map(|(i, _)| i).ok_or_else(|| lost("named projection edge"))?;
+    if matches.next().is_some() {
+        return Err(DocError::Invalid("ambiguous named projection edge".into()));
+    }
+    let pts = mesh.edges.get(index).ok_or_else(|| lost("named projection edge"))?;
+    let at = pts.first().copied().ok_or_else(|| lost("empty named projection edge"))?;
+    let mut wires = Vec::new();
+    let size = pts.iter().fold(1.0_f64, |m, p| m.max(p.len()));
+    let geom = match kind {
+        LinkKind::Intersect => section_of_polyline(plane, pts),
+        LinkKind::Include if pts.iter().any(|p| plane.height(*p).abs() > size * 1e-7) => {
+            wires.push(pts.clone());
+            Vec::new()
+        }
+        _ => fit_world(plane, pts),
+    };
+    if geom.is_empty() && wires.is_empty() {
+        return Err(DocError::Invalid("named edge projects to nothing on this sketch plane".into()));
+    }
+    Ok(Resolved { geom, wires, source: LinkSource::Edge { body: body.clone(), at }, moved: false, face_index: None, edge_index: Some(index) })
+}
+
+/// Join an explicitly named closed edge chain and require a circular projection.
+/// Names determine membership; endpoint incidence determines order. A missing
+/// edge or changed shape fails instead of falling back to a nearby boundary.
+pub fn resolve_edge_circle(st: &ModelState, plane: &Plane, body: &str, selected: &[String]) -> Result<Resolved> {
+    let target = st.body(body).ok_or_else(|| lost("circular projection body"))?;
+    let mesh = target.mesh();
+    if selected.is_empty() || selected.len() > 128 || mesh.edges.len().saturating_mul(selected.len()) > 2_000_000 || mesh.triangles.len() > 2_000_000
+    {
+        return Err(DocError::Invalid("circular edge projection work limit exceeded".into()));
+    }
+    let names = crate::naming::edge_names(target);
+    let legacy = selected.iter().any(|name| crate::naming::legacy_name(name).is_some()).then(|| crate::naming::legacy_edge_names(target));
+    let mut seen = std::collections::BTreeSet::new();
+    let mut edges = Vec::new();
+    let mut points = 0_usize;
+    for name in selected {
+        let (candidates, name) = match crate::naming::legacy_name(name) {
+            Some(old) => (legacy.as_deref().unwrap_or_default(), old),
+            None => (names.as_slice(), name.as_str()),
+        };
+        if name.is_empty() {
+            return Err(DocError::Invalid("empty circular edge identity".into()));
+        }
+        let mut matching = candidates.iter().enumerate().filter(|(_, n)| n.as_str() == name);
+        let index = matching.next().map(|(i, _)| i).ok_or_else(|| lost("circular projection edge"))?;
+        if matching.next().is_some() {
+            return Err(DocError::Invalid("ambiguous circular projection edge".into()));
+        }
+        if !seen.insert(index) {
+            return Err(DocError::Invalid("duplicate circular edge identity".into()));
+        }
+        let edge = mesh.edges.get(index).filter(|p| p.len() >= 2).ok_or_else(|| lost("circular projection edge geometry"))?;
+        points = points.saturating_add(edge.len());
+        if points > 100_000 {
+            return Err(DocError::Invalid("circular projection point limit exceeded".into()));
+        }
+        edges.push(edge.clone());
+    }
+    let mut chain = edges.pop().ok_or_else(|| lost("circular projection boundary"))?;
+    let tolerance = mesh.bounds().diagonal().max(1.) * 1e-8;
+    while !edges.is_empty() {
+        let last = chain.last().copied().ok_or_else(|| lost("circular boundary endpoint"))?;
+        let mut adjoining = edges.iter().enumerate().filter_map(|(i, e)| {
+            let forward = e.first().is_some_and(|p| p.dist(last) <= tolerance);
+            let reverse = e.last().is_some_and(|p| p.dist(last) <= tolerance);
+            (forward != reverse).then_some((i, reverse))
+        });
+        let next = adjoining.next().ok_or_else(|| lost("connected circular boundary"))?;
+        if adjoining.next().is_some() {
+            return Err(DocError::Invalid("ambiguous circular boundary incidence".into()));
+        }
+        let mut edge = edges.remove(next.0);
+        if next.1 {
+            edge.reverse();
+        }
+        chain.extend(edge.into_iter().skip(1));
+    }
+    if !chain.first().zip(chain.last()).is_some_and(|(a, b)| a.dist(*b) <= tolerance) {
+        return Err(DocError::Invalid("circular boundary is no longer closed".into()));
+    }
+    let geom = fit_world(plane, &chain);
+    if !matches!(geom.as_slice(), [LinkGeom::Circle(_, _)]) {
+        return Err(DocError::Invalid("named boundary no longer projects to one circle".into()));
+    }
+    let at = chain.first().copied().ok_or_else(|| lost("circular boundary endpoint"))?;
+    Ok(Resolved { geom, wires: vec![], source: LinkSource::Edge { body: body.into(), at }, moved: false, face_index: None, edge_index: None })
+}
+
 fn resolve_named_face(st: &ModelState, plane: &Plane, kind: LinkKind, body: &str, index: usize, at: Vec3) -> Result<Resolved> {
     let target = st.body(body).ok_or_else(|| lost("named projection body"))?;
     let mesh = target.mesh();
@@ -384,6 +492,7 @@ fn certified_planar_construction(body: &crate::ModelBody, index: usize) -> bool 
                     | solidcraft_kernel::FaceSource::CylinderCap { .. }
                     | solidcraft_kernel::FaceSource::CertifiedExtrudeSide { plane: Some(_), .. }
                     | solidcraft_kernel::FaceSource::CertifiedExtrudeCap { .. }
+                    | solidcraft_kernel::FaceSource::PlanarUnion { .. }
             )
         )
     })
@@ -395,9 +504,31 @@ pub fn resolve_anchored_face(doc: &Document, st: &ModelState, plane: &Plane, kin
     resolve_face_indices(st, plane, kind, &body.name, &indices)
 }
 
+/// Resolve a live face outline with circular carriers preserved before seam
+/// removal. Existing projections keep their saved decomposition unless they
+/// explicitly opt into joined arcs.
+pub fn resolve_joined_face(doc: &Document, st: &ModelState, plane: &Plane, anchor: &crate::FaceAnchor) -> Result<Resolved> {
+    let body = st.body(&anchor.target.body).ok_or_else(|| lost("anchored projection body"))?;
+    let indices = doc.configuration_face_indices(body, &anchor.target)?;
+    let mut result = resolve_face_indices_in(st, plane, LinkKind::Project, &body.name, &indices, true)?;
+    result.geom = join_face_arcs(result.geom)?;
+    Ok(result)
+}
+
 /// Project explicitly selected current face indices, without claiming persistent provenance.
 /// Callers retaining a link must supply their own replay identity policy.
 pub fn resolve_face_indices(st: &ModelState, plane: &Plane, kind: LinkKind, body_name: &str, indices: &[usize]) -> Result<Resolved> {
+    resolve_face_indices_in(st, plane, kind, body_name, indices, false)
+}
+
+fn resolve_face_indices_in(
+    st: &ModelState,
+    plane: &Plane,
+    kind: LinkKind,
+    body_name: &str,
+    indices: &[usize],
+    preserve_circles: bool,
+) -> Result<Resolved> {
     let body = st.body(body_name).ok_or_else(|| lost("projection body"))?;
     let mesh = body.mesh();
     if mesh.triangles.len() > 2_000_000 || indices.len() > 10_000 {
@@ -425,9 +556,22 @@ pub fn resolve_face_indices(st: &ModelState, plane: &Plane, kind: LinkKind, body
         } else {
             order::family_edges(&mesh, &selected, plane)?
         };
+        if preserve_circles && mesh.edges.len().saturating_mul(edges.len()) > 2_000_000 {
+            return Err(DocError::Invalid("circular face projection work limit exceeded".into()));
+        }
         for edge in edges {
             if let Some(points) = mesh.edges.get(edge) {
-                geometry.extend(fit_world(plane, points));
+                let circular = if preserve_circles {
+                    solidcraft_kernel::guard("circular face projection", || Ok(solidcraft_kernel::edge_circle(&body.body, edge)))?
+                        .and_then(|circle| arcs::project_circle(plane, circle, points))
+                } else {
+                    None
+                };
+                if let Some(curve) = circular {
+                    geometry.push(curve);
+                } else {
+                    geometry.extend(fit_world(plane, points));
+                }
             }
         }
     }
@@ -593,7 +737,14 @@ fn refresh_links_in(
                 }
             }
         }
-        let resolved = if matches!(source, LinkSource::Text { .. }) {
+        let resolved = if !l.edge_circle.is_empty() {
+            match &source {
+                LinkSource::Edge { body, .. } if l.kind == LinkKind::Project && l.edge_name.is_none() && l.face_name.is_none() && !l.auto_face => {
+                    resolve_edge_circle(st, plane, body, &l.edge_circle)
+                }
+                _ => Err(DocError::Invalid("inconsistent circular projection source".into())),
+            }
+        } else if matches!(source, LinkSource::Text { .. }) {
             // A text needs nothing outside its sketch; one on a path follows a curve of it.
             sk.text_source_geometry(&source).map_err(DocError::from).and_then(|geom| {
                 if geom.is_empty() {
@@ -607,7 +758,9 @@ fn refresh_links_in(
                     l.face_name.as_ref() == Some(&anchor.target.name) && matches!(&l.source,LinkSource::Face {body,..} if *body==anchor.target.body)
                 })
                 .ok_or_else(|| lost("exact auto-projected attachment"))
-                .and_then(|anchor| resolve_anchored_face(doc, st, plane, l.kind, anchor))
+                .and_then(|anchor| {
+                    if l.join_arcs { resolve_joined_face(doc, st, plane, anchor) } else { resolve_anchored_face(doc, st, plane, l.kind, anchor) }
+                })
         } else if let Some((body, index, at)) = named_face {
             resolve_named_face(st, plane, l.kind, &body, index, at)
         } else if let Some((body, index, at)) = named_edge {
@@ -615,6 +768,12 @@ fn refresh_links_in(
         } else {
             resolve(doc, vals, st, plane, l.kind, &source)
         };
+        let resolved = resolved.and_then(|result| {
+            if l.join_arcs && (!l.auto_face || l.kind != LinkKind::Project || l.edge_name.is_some() || !l.edge_circle.is_empty()) {
+                return Err(DocError::Invalid("joined arcs require an anchored face projection".into()));
+            }
+            Ok(result)
+        });
         match resolved {
             Ok(r) => {
                 // An edge link saved without a name takes the name of the edge it was found

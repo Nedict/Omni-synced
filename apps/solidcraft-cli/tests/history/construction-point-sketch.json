@@ -1,0 +1,162 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "width",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "40 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Block profile"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            20,
+            30
+          ]
+        },
+        "dimensions": {
+          "width": "width"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "operation": "new_body",
+        "name": "Block",
+        "body_name": "Block"
+      }
+    },
+    {
+      "command": "construct.point.two_edges",
+      "params": {
+        "a": {
+          "sketch": "Block profile",
+          "curve": "l2"
+        },
+        "b": {
+          "sketch": "Block profile",
+          "curve": "l3"
+        },
+        "name": "Corner datum"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 24000,
+    "volume_tolerance_mm3": 0.01,
+    "body_count": 1,
+    "bounds": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        20,
+        30,
+        40
+      ]
+    ],
+    "construction_points": {
+      "Corner datum": [
+        20,
+        30,
+        0
+      ]
+    },
+    "features": [
+      "Block profile",
+      "Block",
+      "Corner datum"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "65 mm"
+      },
+      "volume_mm3": 39000,
+      "volume_tolerance_mm3": 0.01,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          30,
+          65
+        ]
+      ],
+      "construction_points": {
+        "Corner datum": [
+          20,
+          30,
+          0
+        ]
+      }
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "width",
+        "expression": "35 mm"
+      },
+      "volume_mm3": 42000,
+      "volume_tolerance_mm3": 0.01,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          35,
+          30,
+          40
+        ]
+      ],
+      "construction_points": {
+        "Corner datum": [
+          35,
+          30,
+          0
+        ]
+      }
+    }
+  ]
+}

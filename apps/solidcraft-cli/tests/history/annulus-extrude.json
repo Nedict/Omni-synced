@@ -1,0 +1,141 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "outerDiameter",
+        "expression": "60 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "innerDiameter",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "12 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Annulus"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 60,
+          "id": "outer"
+        },
+        "dimensions": {
+          "diameter": "outerDiameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 20,
+          "id": "inner"
+        },
+        "dimensions": {
+          "diameter": "innerDiameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Ring",
+        "profiles": {
+          "type": "whole_boundaries",
+          "profiles": [
+            {
+              "outer": [
+                "outer"
+              ],
+              "holes": [
+                [
+                  "inner"
+                ]
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 9600,
+    "body_count": 1,
+    "bounds": [
+      [
+        -30,
+        -30,
+        0
+      ],
+      [
+        30,
+        30,
+        12
+      ]
+    ],
+    "features": [
+      "Annulus",
+      "Ring"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "innerDiameter",
+        "expression": "30 mm"
+      },
+      "volume_pi_mm3": 8100
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "outerDiameter",
+        "expression": "70 mm"
+      },
+      "volume_pi_mm3": 13500
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "20 mm"
+      },
+      "volume_pi_mm3": 16000
+    }
+  ]
+}

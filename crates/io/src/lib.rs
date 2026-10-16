@@ -11,6 +11,7 @@ mod design;
 mod design_metadata;
 mod dxf;
 mod dxf_out;
+pub mod f3d;
 pub use design::{
     DesignCompression, DesignContainerReader, DesignGeometry, DesignPreview, THUMBNAIL_SIZE, is_design_container, read_design_file,
     read_design_geometry, read_design_preview, read_design_thumbnail, read_design_thumbnail_file, write_design_container,
@@ -865,6 +866,7 @@ mod tests {
                 style: Default::default(),
                 fit: Default::default(),
                 corner: Default::default(),
+                tangent_chain: false,
             },
             None,
         )
@@ -950,6 +952,7 @@ mod tests {
                 style: Default::default(),
                 fit: Default::default(),
                 corner: Default::default(),
+                tangent_chain: false,
             },
             None,
         )

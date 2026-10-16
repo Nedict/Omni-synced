@@ -178,19 +178,28 @@ pub(crate) fn thin_extrude_cap_bindings(curves: &[String], regions: usize, bodie
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FaceContribution {
+    pub producer: u64,
+    pub source: Box<FaceCertificate>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FaceCertificate {
     Box {
         axis: u8,
         high: bool,
     },
-    /// A cylinder primitive's cap: `high` is its `top` (the far end), else its `bottom`.
-    CylinderCap {
-        high: bool,
-    },
     ExtrudeCap {
         sketch: u64,
         high: bool,
+        outer: Vec<String>,
+        holes: Vec<Vec<String>>,
+    },
+    ExtrudeTravelCap {
+        sketch: u64,
+        end: bool,
         outer: Vec<String>,
         holes: Vec<Vec<String>>,
     },
@@ -208,6 +217,13 @@ pub enum FaceCertificate {
         source: Box<FaceCertificate>,
         inner: bool,
     },
+    PlanarUnion {
+        sources: Vec<FaceContribution>,
+    },
+    /// A cylinder primitive cap, at the base or far end.
+    CylinderCap {
+        high: bool,
+    },
     /// A flat face known by its exact history name (the target's `name`, without piece
     /// numbers): what the kernel's face history says it came from, followed through every
     /// feature since (a cut wall `F5:side:l1`, a chamfer `F7:blend:…`, a pattern copy
@@ -218,16 +234,43 @@ pub enum FaceCertificate {
 }
 
 impl FaceCertificate {
+    pub(crate) fn union_leaf(&self) -> bool {
+        matches!(self, Self::Box { .. } | Self::CylinderCap { .. } | Self::ExtrudeCap { .. } | Self::ExtrudeSide { .. })
+    }
+    /// A canonical diagnostic name independent of contribution vector order.
+    pub fn union_role(&self) -> Option<String> {
+        use sha2::{Digest, Sha256};
+        let Self::PlanarUnion { sources } = self else { return None };
+        self.validate().ok()?;
+        let mut keys = sources.iter().map(serde_json::to_vec).collect::<std::result::Result<Vec<_>, _>>().ok()?;
+        keys.sort();
+        let mut hash = Sha256::new();
+        for key in keys {
+            hash.update((key.len() as u64).to_le_bytes());
+            hash.update(key);
+        }
+        Some(format!("union:{:x}", hash.finalize()))
+    }
     pub fn remap_features(&mut self, features: &std::collections::BTreeMap<u64, u64>) {
+        if let Self::PlanarUnion { sources } = self {
+            for part in sources.iter_mut().take(64) {
+                if let Some(mapped) = features.get(&part.producer) {
+                    part.producer = *mapped;
+                }
+                if part.source.union_leaf() {
+                    part.source.remap_features(features);
+                }
+            }
+        }
         if let Self::ShellPlanar { source_producer, source, .. } = self {
             if let Some(mapped) = features.get(source_producer) {
                 *source_producer = *mapped;
             }
-            if !matches!(source.as_ref(), Self::ShellPlanar { .. }) {
+            if !matches!(source.as_ref(), Self::ShellPlanar { .. } | Self::PlanarUnion { .. } | Self::ExtrudeTravelCap { .. } | Self::Lineage) {
                 source.remap_features(features);
             }
         }
-        if let Self::ExtrudeSide { sketch, .. } | Self::ExtrudeCap { sketch, .. } = self
+        if let Self::ExtrudeSide { sketch, .. } | Self::ExtrudeCap { sketch, .. } | Self::ExtrudeTravelCap { sketch, .. } = self
             && let Some(mapped) = features.get(sketch)
         {
             *sketch = *mapped;
@@ -237,7 +280,9 @@ impl FaceCertificate {
         let valid = match self {
             Self::Box { axis, .. } => *axis <= 2,
             Self::CylinderCap { .. } => true,
-            Self::ExtrudeCap { sketch, outer, holes, .. } => *sketch != 0 && valid_signature(outer, holes),
+            Self::ExtrudeCap { sketch, outer, holes, .. } | Self::ExtrudeTravelCap { sketch, outer, holes, .. } => {
+                *sketch != 0 && valid_signature(outer, holes)
+            }
             Self::ExtrudeSide { sketch, curve } => *sketch != 0 && !curve.is_empty() && curve.len() <= 128,
             Self::Imported { payload_sha256, item, face } => {
                 *item != 0
@@ -246,7 +291,15 @@ impl FaceCertificate {
                     && payload_sha256.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
             }
             Self::ShellPlanar { source_producer, source, .. } => {
-                *source_producer != 0 && !matches!(source.as_ref(), Self::ShellPlanar { .. } | Self::Lineage) && source.validate().is_ok()
+                *source_producer != 0
+                    && !matches!(source.as_ref(), Self::ShellPlanar { .. } | Self::PlanarUnion { .. } | Self::ExtrudeTravelCap { .. } | Self::Lineage)
+                    && source.validate().is_ok()
+            }
+            Self::PlanarUnion { sources } => {
+                (2..=64).contains(&sources.len())
+                    && sources.iter().enumerate().all(|(i, p)| {
+                        p.producer != 0 && p.source.union_leaf() && p.source.validate().is_ok() && !sources.iter().take(i).any(|q| p == q)
+                    })
             }
             Self::Lineage => true,
         };
@@ -279,6 +332,13 @@ pub(crate) fn validate_certificate_json(value: &serde_json::Value) -> Result<()>
                 && fields.get("high").and_then(serde_json::Value::as_bool).is_some()
                 && valid_signature_json(fields.get("outer"), fields.get("holes"))
         }
+        Some("extrude_travel_cap") => {
+            fields.len() == 5
+                && fields.keys().all(|key| ["kind", "sketch", "end", "outer", "holes"].contains(&key.as_str()))
+                && nonzero("sketch")
+                && fields.get("end").and_then(serde_json::Value::as_bool).is_some()
+                && valid_signature_json(fields.get("outer"), fields.get("holes"))
+        }
         Some("extrude_side") => {
             fields.len() == 3
                 && fields.keys().all(|key| ["kind", "sketch", "curve"].contains(&key.as_str()))
@@ -302,10 +362,31 @@ pub(crate) fn validate_certificate_json(value: &serde_json::Value) -> Result<()>
                 && nonzero("source_producer")
                 && fields.get("inner").and_then(serde_json::Value::as_bool).is_some()
                 && fields.get("source").is_some_and(|source| {
-                    source
-                        .as_object()
-                        .is_some_and(|source| !matches!(source.get("kind").and_then(serde_json::Value::as_str), Some("shell_planar" | "lineage")))
-                        && validate_certificate_json(source).is_ok()
+                    source.as_object().is_some_and(|source| {
+                        !matches!(
+                            source.get("kind").and_then(serde_json::Value::as_str),
+                            Some("shell_planar" | "planar_union" | "extrude_travel_cap" | "lineage")
+                        )
+                    }) && validate_certificate_json(source).is_ok()
+                })
+        }
+        Some("planar_union") => {
+            fields.len() == 2
+                && fields.get("sources").and_then(serde_json::Value::as_array).is_some_and(|sources| {
+                    (2..=64).contains(&sources.len())
+                        && sources.iter().enumerate().all(|(i, part)| {
+                            if sources.iter().take(i).any(|previous| previous == part) {
+                                return false;
+                            }
+                            part.as_object().is_some_and(|p| {
+                                p.len() == 2
+                                    && p.get("producer").and_then(serde_json::Value::as_u64).is_some_and(|id| id != 0)
+                                    && p.get("source").is_some_and(|s| {
+                                        matches!(s.get("kind").and_then(serde_json::Value::as_str), Some("box" | "extrude_cap" | "extrude_side"))
+                                            && validate_certificate_json(s).is_ok()
+                                    })
+                            })
+                        })
                 })
         }
         _ => false,
@@ -325,8 +406,10 @@ pub(crate) fn shell_certificate_role(source: &FaceCertificate, inner: bool) -> R
         FaceCertificate::ExtrudeSide { curve, .. } => format!("side:{curve}"),
         FaceCertificate::ExtrudeCap { high, outer, holes, .. } => format!("cap:{}:{}", if *high { "high" } else { "low" }, cap_key(outer, holes)),
         FaceCertificate::Imported { payload_sha256, item, face } => format!("import:{payload_sha256}:{item}:{face}"),
-        FaceCertificate::ShellPlanar { .. } => return Err(DocError::Invalid("nested shell source certificates are unsupported".into())),
-        FaceCertificate::Lineage => return Err(DocError::Invalid("a shell's source needs a construction certificate".into())),
+        FaceCertificate::ShellPlanar { .. } | FaceCertificate::PlanarUnion { .. } | FaceCertificate::ExtrudeTravelCap { .. } => {
+            return Err(DocError::Invalid("nested shell source certificates are unsupported".into()));
+        }
+        FaceCertificate::Lineage => return Err(DocError::Invalid("a shell source requires a construction certificate".into())),
     };
     Ok(format!("shell:{}:{role}", if inner { "inner" } else { "outer" }))
 }
@@ -578,6 +661,7 @@ impl Document {
             | Some(solidcraft_kernel::FaceSource::CertifiedExtrudeSide { producer, .. })
             | Some(solidcraft_kernel::FaceSource::CertifiedExtrudeCap { producer, .. })
             | Some(solidcraft_kernel::FaceSource::ShellPlanar { producer: Some(producer), .. })
+            | Some(solidcraft_kernel::FaceSource::PlanarUnion { producer: Some(producer), .. })
             | Some(solidcraft_kernel::FaceSource::Box { producer: Some(producer), .. })
             | Some(solidcraft_kernel::FaceSource::CylinderCap { producer, .. }) => *producer,
             _ => name
@@ -591,6 +675,8 @@ impl Document {
             name = format!("F{origin}:side:{curve}");
         } else if let Some(FaceCertificate::ShellPlanar { source, inner, .. }) = &certificate {
             name = format!("F{origin}:{}", shell_certificate_role(source, *inner)?);
+        } else if let Some(role) = certificate.as_ref().and_then(FaceCertificate::union_role) {
+            name = format!("F{origin}:{role}");
         } else if !name.starts_with(&format!("F{origin}:")) {
             name = format!("F{origin}:face:{index}");
         }
@@ -607,6 +693,21 @@ impl Document {
         let Some(source) = body.body.face_sources().and_then(|sources| sources.get(index)).and_then(Option::as_ref) else {
             return Ok(None);
         };
+        if let solidcraft_kernel::FaceSource::PlanarUnion { producer: Some(producer), sources, .. } = source {
+            let sources = sources
+                .iter()
+                .map(|s| {
+                    let (producer, source) = flat_source_certificate(s).ok_or_else(|| DocError::Invalid("invalid union source".into()))?;
+                    Ok(FaceContribution { producer, source: Box::new(source) })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            if !self.union_certificate_producer_matches(*producer, &sources) {
+                return Err(DocError::Invalid("planar union source producer missing".into()));
+            }
+            let certificate = FaceCertificate::PlanarUnion { sources };
+            certificate.validate()?;
+            return Ok(Some(certificate));
+        }
         if let solidcraft_kernel::FaceSource::ShellPlanar { producer: Some(producer), source, inner, .. } = source {
             if !self.feature(*producer).is_some_and(|feature| matches!(feature.kind, FeatureKind::Shell { .. })) {
                 return Err(DocError::Invalid("shell source producer missing".into()));

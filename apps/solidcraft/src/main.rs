@@ -116,6 +116,8 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
                         io::DESIGN_EXT,
                         io::LEGACY_DESIGN_EXT,
                         "json",
+                        "f3d",
+                        "F3D",
                         "step",
                         "stp",
                         "STEP",
@@ -141,6 +143,7 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
                     ],
                 )
                 .add_filter("SolidCraft design (container or JSON)", &[io::DESIGN_EXT, io::LEGACY_DESIGN_EXT, "json"])
+                .add_filter("Fusion archive (supported history features)", &["f3d", "F3D"])
                 .add_filter("STEP", &["step", "stp", "STEP", "STP"])
                 .add_filter("IGES", &["igs", "iges", "IGS", "IGES"])
                 .add_filter("FreeCAD and Rhino", &["FCStd", "fcstd", "3dm", "3DM"])

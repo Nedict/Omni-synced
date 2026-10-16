@@ -1,0 +1,167 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "size",
+        "expression": "10 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "depth",
+        "expression": "5 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "construct.plane.offset",
+      "params": {
+        "base": "YZ",
+        "offset": "height",
+        "name": "Support"
+      }
+    },
+    {
+      "command": "construct.plane.at_angle",
+      "params": {
+        "base": "Support",
+        "axis": "X",
+        "angle": "-90 deg",
+        "name": "Rotated support"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "Rotated support",
+        "name": "Rectangle"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            10,
+            20
+          ]
+        },
+        "dimensions": {
+          "width": "size",
+          "height": "20 mm"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "depth",
+        "name": "Prism"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 1000,
+    "body_count": 1,
+    "features": [
+      "Support",
+      "Rotated support",
+      "Rectangle",
+      "Prism"
+    ],
+    "bounds": [
+      [
+        20,
+        0,
+        -10
+      ],
+      [
+        25,
+        20,
+        0
+      ]
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "size",
+        "expression": "15 mm"
+      },
+      "volume_mm3": 1500,
+      "bounds": [
+        [
+          20,
+          0,
+          -15
+        ],
+        [
+          25,
+          20,
+          0
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "30 mm"
+      },
+      "volume_mm3": 1000,
+      "bounds": [
+        [
+          30,
+          0,
+          -10
+        ],
+        [
+          35,
+          20,
+          0
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "depth",
+        "expression": "8 mm"
+      },
+      "volume_mm3": 1600,
+      "bounds": [
+        [
+          20,
+          0,
+          -10
+        ],
+        [
+          28,
+          20,
+          0
+        ]
+      ]
+    }
+  ]
+}

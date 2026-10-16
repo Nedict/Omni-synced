@@ -42,6 +42,7 @@ fn base_plane(source: &FaceSource, actual: &Plane) -> Option<Plane> {
         FaceSource::CertifiedExtrudeSide { plane: Some(p), .. }
         | FaceSource::CertifiedExtrudeCap { plane: p, .. }
         | FaceSource::Box { producer: Some(_), plane: p, .. }
+        | FaceSource::PlanarUnion { plane: p, .. }
         | FaceSource::CylinderCap { plane: p, .. }
         | FaceSource::ShellPlanar { producer: Some(_), plane: p, .. } => Some(*p),
         FaceSource::Imported { producer: Some(_), payload_sha256: Some(_), .. } => Some(*actual),
@@ -54,6 +55,7 @@ pub(super) fn certified_plane(source: &FaceSource) -> Option<Plane> {
         FaceSource::CertifiedExtrudeSide { plane: Some(p), .. }
         | FaceSource::CertifiedExtrudeCap { plane: p, .. }
         | FaceSource::Box { producer: Some(_), plane: p, .. }
+        | FaceSource::PlanarUnion { plane: p, .. }
         | FaceSource::CylinderCap { plane: p, .. }
         | FaceSource::ShellPlanar { producer: Some(_), plane: p, .. } => Some(*p),
         _ => None,
@@ -67,6 +69,17 @@ fn boolean_source(source: &FaceSource, constructed: bool) -> bool {
 pub(super) fn descriptor_cost(source: &FaceSource) -> Option<usize> {
     let mut cost = 256usize;
     match source {
+        FaceSource::PlanarUnion { sources, .. } => {
+            if sources.is_empty() || sources.len() > 64 {
+                return None;
+            }
+            for source in sources {
+                if !super::planar_union::is_leaf(source) {
+                    return None;
+                }
+                cost = cost.checked_add(descriptor_cost(source)?)?;
+            }
+        }
         FaceSource::CertifiedExtrudeCap { outer, holes, .. } => {
             if holes.len() > 4096 {
                 return None;
@@ -114,6 +127,45 @@ pub(super) fn descriptor_cost(source: &FaceSource) -> Option<usize> {
 }
 
 impl Body {
+    /// A Cut reverses the tool's exposed caps. Retain a cap certificate only
+    /// when exact Boolean history identifies one tool face and the current
+    /// support is precisely its opposite. No proximity or index fallback.
+    pub(crate) fn with_cut_cap_sources(mut self, tool: &Body) -> Result<Self> {
+        let Some(history) = self.history() else { return Ok(self) };
+        if history.operands != 2 || self.face_count() > 16_384 || tool.face_count() > 16_384 {
+            return Ok(self);
+        }
+        let mut sources = self.face_sources().map(<[_]>::to_vec).unwrap_or_else(|| vec![None; self.face_count()]);
+        let mut budget = 8_000_000usize;
+        guard("cut cap construction lineage", || {
+            let tool_planes: Vec<_> = tool.solid.face_iter().map(actual_plane).collect();
+            for ((face, provenance), source) in self.solid.face_iter().zip(&history.faces).zip(&mut sources) {
+                let [crate::history::FaceOrigin::Face { operand: 1, face: index }] = provenance.origins.as_slice() else { continue };
+                let Some(Some(cap @ FaceSource::CertifiedExtrudeCap { plane, .. })) = tool.face_sources().and_then(|s| s.get(*index)) else {
+                    continue;
+                };
+                let Some(actual) = actual_plane(face) else { continue };
+                if !tool_planes.get(*index).and_then(Option::as_ref).is_some_and(|actual| same_support(actual, plane)) {
+                    continue;
+                }
+                let reversed = Plane::new(plane.origin, plane.x, -plane.y).ok_or_else(|| KernelError::Invalid("invalid cut cap plane".into()))?;
+                if !same_support(&actual, &reversed) {
+                    continue;
+                }
+                let Some(cost) = descriptor_cost(cap) else { continue };
+                budget = budget.checked_sub(cost).ok_or_else(|| KernelError::Invalid("cut cap lineage budget exceeded".into()))?;
+                let mut cap = cap.clone();
+                if let FaceSource::CertifiedExtrudeCap { plane, .. } = &mut cap {
+                    *plane = actual;
+                }
+                *source = Some(cap);
+            }
+            Ok(())
+        })?;
+        self.face_sources = Some(Arc::new(sources));
+        Ok(self)
+    }
+
     /// Preserve uniquely certified unchanged planar construction supports.
     pub fn with_preserved_planar_sources(self, input: &Body) -> Result<Self> {
         self.map_planar_sources(&[input], None, None, &[], false)

@@ -1,0 +1,194 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "width",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "base_height",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "tool_height",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Target sketch"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            20,
+            20
+          ]
+        },
+        "dimensions": {
+          "width": "width"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "base_height",
+        "operation": "new_body",
+        "name": "Target",
+        "body_name": "Target"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "plane_x",
+        "expression": "15 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "construct.plane.offset",
+      "params": {
+        "base": "YZ",
+        "offset": "plane_x",
+        "name": "Mirror plane"
+      }
+    },
+    {
+      "command": "solid.mirror",
+      "params": {
+        "bodies": [
+          "Target"
+        ],
+        "plane": "Mirror plane",
+        "name": "Mirrored tool",
+        "body_name": "Tool"
+      }
+    },
+    {
+      "command": "solid.combine",
+      "params": {
+        "target": "Tool",
+        "tools": [
+          "Target"
+        ],
+        "operation": "intersect",
+        "keep_tools": true,
+        "name": "Combined blocks"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 12000,
+    "body_count": 2,
+    "bounds": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        20,
+        20,
+        20
+      ]
+    ],
+    "features": [
+      "Target sketch",
+      "Target",
+      "Mirror plane",
+      "Mirrored tool",
+      "Combined blocks"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "base_height",
+        "expression": "30 mm"
+      },
+      "volume_mm3": 18000.0,
+      "body_count": 2,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          20,
+          30
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "plane_x",
+        "expression": "17 mm"
+      },
+      "volume_mm3": 10400,
+      "body_count": 2,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          20,
+          20
+        ]
+      ]
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Combined blocks",
+        "suppressed": true
+      },
+      "volume_mm3": 16000,
+      "body_count": 2,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          30,
+          20,
+          20
+        ]
+      ]
+    }
+  ]
+}

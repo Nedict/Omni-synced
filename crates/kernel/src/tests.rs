@@ -2095,6 +2095,23 @@ fn smooth_loft_through_three_sections() {
     assert!(v > PI * 64.0 * 30.0 && v < 576.0 * 30.0, "{v}");
 }
 
+#[test]
+fn circular_loft_preserves_volume_with_opposing_section_frames() {
+    for height in [-30., 30.] {
+        for reversed_frame in [false, true] {
+            let plane = if reversed_frame { Plane::new(Vec3::ZERO, Vec3::X, -Vec3::Y).unwrap() } else { Plane::XY };
+            let sections = [(plane, Loop2::circle(Vec2::ZERO, 10.)), (Plane::XY.offset(height), Loop2::circle(Vec2::ZERO, 20.))];
+            let backwards = [sections[1].clone(), sections[0].clone()];
+            for input in [&sections, &backwards] {
+                let body = loft(input).unwrap();
+                let want = 7000. * PI;
+                let got = measure(&body).unwrap().volume;
+                assert!(rel(got, want) < 1e-3, "{height}/{reversed_frame}: {got} != {want}");
+            }
+        }
+    }
+}
+
 /// A loft from the basin's whole outline (10 up) down to a drain pad in a corner (1 up), cut
 /// from a 3 mm shell: its top edges lie on the outer walls. One order of the sections failed
 /// the cut ("shell not oriented and closed", or a panic inside the intersection), the other

@@ -1,0 +1,153 @@
+{
+  "format": "solidcraft-f3d-dev/14",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "endpoint_x",
+      "expr": "10 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "10 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "d1",
+      "expr": "30 mm",
+      "unit": "mm",
+      "model": true
+    },
+    {
+      "name": "d2",
+      "expr": "endpoint_x",
+      "unit": "mm",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Fixed arc support",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "arc.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "arc.start",
+            "pos": [
+              30.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "arc.end",
+            "pos": [
+              10.0,
+              28.2842712474619
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "arc",
+            "type": "arc",
+            "c": 1,
+            "a": 2,
+            "b": 3,
+            "construction": false
+          },
+          {
+            "id": "l1",
+            "type": "line",
+            "a": 3,
+            "b": 2,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 1
+          },
+          {
+            "id": "k2",
+            "type": "fix",
+            "p": 1
+          },
+          {
+            "id": "k3",
+            "type": "horizontal_points",
+            "p": 1,
+            "q": 2
+          },
+          {
+            "id": "k4",
+            "type": "radius",
+            "c": 0,
+            "value": 30.0,
+            "param": "d1"
+          },
+          {
+            "id": "k5",
+            "type": "distance_x",
+            "p": 1,
+            "q": 3,
+            "value": 10.0,
+            "param": "d2"
+          }
+        ],
+        "counters": {
+          "k": 5,
+          "l": 1
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Arc segment",
+      "suppressed": false,
+      "param_names": [
+        "d3"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "height",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    }
+  ],
+  "next_id": 3
+}

@@ -1,0 +1,178 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "60 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "12 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Quartered circle"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 60,
+          "id": "left"
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.line",
+      "params": {
+        "points": [
+          [
+            -50,
+            0
+          ],
+          [
+            50,
+            0
+          ]
+        ],
+        "ids": [
+          "horizontal"
+        ],
+        "infer": false,
+        "connect": false
+      }
+    },
+    {
+      "command": "sketch.line",
+      "params": {
+        "points": [
+          [
+            0,
+            -50
+          ],
+          [
+            0,
+            50
+          ]
+        ],
+        "ids": [
+          "vertical"
+        ],
+        "infer": false,
+        "connect": false
+      }
+    },
+    {
+      "command": "sketch.constraint.fix",
+      "params": {
+        "entity": "horizontal",
+        "fixed": true
+      }
+    },
+    {
+      "command": "sketch.constraint.fix",
+      "params": {
+        "entity": "vertical",
+        "fixed": true
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Selected region",
+        "profiles": {
+          "type": "piece_boundaries",
+          "profiles": [
+            {
+              "outer": [
+                {
+                  "curve": "horizontal",
+                  "piece": 3,
+                  "count": 4,
+                  "reversed": false
+                },
+                {
+                  "curve": "left",
+                  "piece": 3,
+                  "count": 4,
+                  "reversed": false
+                },
+                {
+                  "curve": "vertical",
+                  "piece": 3,
+                  "count": 4,
+                  "reversed": true
+                }
+              ],
+              "holes": []
+            }
+          ],
+          "circle_seams": {
+            "left": 3.141592653589793
+          }
+        }
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 2700,
+    "body_count": 1,
+    "features": [
+      "Quartered circle",
+      "Selected region"
+    ],
+    "bounds": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        30,
+        30,
+        12
+      ]
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "diameter",
+        "expression": "70 mm"
+      },
+      "volume_mm3": 11545.353001942489
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "20 mm"
+      },
+      "volume_mm3": 14137.16694115407
+    }
+  ]
+}

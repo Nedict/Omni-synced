@@ -632,6 +632,7 @@ impl Sketch {
             sources,
             outputs: outputs.clone(),
             distance,
+            distance_expression: None,
             closed: true,
             topology: Some(OffsetTopology { version: 1, id: association.clone(), roles }),
         });

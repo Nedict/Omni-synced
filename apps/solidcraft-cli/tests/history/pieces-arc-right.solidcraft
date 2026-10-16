@@ -1,0 +1,202 @@
+{
+  "format": "solidcraft-f3d-dev/17",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "radius",
+      "expr": "30 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "12 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "d1",
+      "expr": "radius",
+      "unit": "mm",
+      "model": true
+    },
+    {
+      "name": "d2",
+      "expr": "180 deg",
+      "unit": "deg",
+      "model": true
+    },
+    {
+      "name": "d3",
+      "expr": "60 deg",
+      "unit": "deg",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Split semicircle",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "arc.start",
+            "pos": [
+              15.000000000000004,
+              25.980762113533157
+            ],
+            "fixed": false
+          },
+          {
+            "id": "arc.end",
+            "pos": [
+              -15.000000000000014,
+              -25.980762113533153
+            ],
+            "fixed": false
+          },
+          {
+            "id": "arc.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "divider.start",
+            "pos": [
+              13.660254037844386,
+              3.6602540378443846
+            ],
+            "fixed": false
+          },
+          {
+            "id": "divider.end",
+            "pos": [
+              -29.641016151377542,
+              28.66025403784439
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "arc",
+            "type": "arc",
+            "c": 3,
+            "a": 1,
+            "b": 2,
+            "construction": false
+          },
+          {
+            "id": "chord",
+            "type": "line",
+            "a": 2,
+            "b": 1,
+            "construction": false
+          },
+          {
+            "id": "divider",
+            "type": "line",
+            "a": 4,
+            "b": 5,
+            "construction": false,
+            "fixed": true
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 3
+          },
+          {
+            "id": "k2",
+            "type": "radius",
+            "c": 0,
+            "value": 30.0,
+            "param": "d1"
+          },
+          {
+            "id": "k3",
+            "type": "arc_sweep",
+            "c": 0,
+            "value": 3.141592653589793,
+            "param": "d2"
+          },
+          {
+            "id": "k4",
+            "type": "line_angle",
+            "l": 1,
+            "value": 1.0471975511965976,
+            "param": "d3"
+          }
+        ],
+        "counters": {
+          "k": 4
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Segment",
+      "suppressed": false,
+      "param_names": [
+        "d4"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "piece_boundaries",
+        "profiles": [
+          {
+            "outer": [
+              {
+                "curve": "arc",
+                "piece": 1,
+                "count": 2,
+                "reversed": false
+              },
+              {
+                "curve": "chord",
+                "piece": 2,
+                "count": 2,
+                "reversed": false
+              },
+              {
+                "curve": "divider",
+                "piece": 2,
+                "count": 3,
+                "reversed": true
+              }
+            ],
+            "holes": []
+          }
+        ]
+      },
+      "extent": {
+        "distance": "height",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    }
+  ],
+  "next_id": 3
+}

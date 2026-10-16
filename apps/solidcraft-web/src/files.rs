@@ -155,7 +155,10 @@ async fn read_handle(h: &FileSystemFileHandle) -> Result<Vec<u8>, String> {
     blob_bytes(&file).await
 }
 
-async fn blob_bytes(b: &web_sys::Blob) -> Result<Vec<u8>, String> {
+async fn blob_bytes(b: &web_sys::File) -> Result<Vec<u8>, String> {
+    if solidcraft_engine::io::f3d::is_f3d_path(&b.name()) && b.size() > solidcraft_engine::io::f3d::MAX_F3D_BYTES as f64 {
+        return Err("F3D file too large (limit 256 MB)".into());
+    }
     let buf = JsFuture::from(b.array_buffer()).await.map_err(err)?;
     Ok(Uint8Array::new(&buf).to_vec())
 }
@@ -458,7 +461,7 @@ fn input_picker(files: &Rc<Files>, intent: Intent) {
     let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return };
     let Ok(input) = doc.create_element("input").map(|e| e.unchecked_into::<web_sys::HtmlInputElement>()) else { return };
     input.set_type("file");
-    input.set_accept(".solidcraft,.solvecraft,.json,.step,.stp,.3mf,.stl,.obj,.glb,.gltf");
+    input.set_accept(".solidcraft,.solvecraft,.json,.f3d,.step,.stp,.3mf,.stl,.obj,.glb,.gltf");
     // Attached (hidden) while it is open: some browsers ignore a click on a detached input.
     let _ = input.set_attribute("style", "display:none");
     if let Some(body) = doc.body() {

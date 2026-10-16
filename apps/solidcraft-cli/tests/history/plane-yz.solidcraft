@@ -1,0 +1,102 @@
+{
+  "format": "solidcraft-f3d-dev/17",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "lift",
+      "expr": "20 mm",
+      "unit": "mm",
+      "model": false
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Parent plane",
+      "suppressed": false,
+      "param_names": [
+        "d1"
+      ],
+      "type": "construction_plane",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "YZ"
+        },
+        "distance": "lift"
+      }
+    },
+    {
+      "id": 2,
+      "name": "Round profile",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "construction",
+        "name": "Parent plane"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "c1.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "c1",
+            "type": "circle",
+            "c": 1,
+            "r": 10.0,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 1
+          }
+        ],
+        "counters": {
+          "c": 1,
+          "k": 1
+        }
+      }
+    },
+    {
+      "id": 3,
+      "name": "Raised cylinder",
+      "suppressed": false,
+      "param_names": [
+        "d2"
+      ],
+      "type": "extrude",
+      "sketch": 2,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "15 mm",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    }
+  ],
+  "next_id": 4
+}

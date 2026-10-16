@@ -181,6 +181,40 @@ fn a_face_extrude_keeps_the_picked_body_when_faces_coincide() {
 }
 
 #[test]
+fn grouped_fillet_dialog_preserves_each_selection_and_radius_parameter() {
+    let mut app = app_with(json!([
+        {"command":"solid.box","params":{"length":20,"width":30,"height":40}},
+        {"command":"solid.fillet","params":{"edge_sets":[
+            {"edges":[[0,0,20]],"radius":"2 mm","tangent_chain":true},{"edges":[[20,30,20]],"radius":"3 mm"}
+        ]}}
+    ]));
+    let feature = app.session.doc.features.last().unwrap();
+    let id = feature.id;
+    let names = feature.param_names.clone();
+    let index = app.session.doc.feature_index(id).unwrap();
+    crate::dialogs::roll_marker(&mut app, Some(index)).unwrap();
+    let mut dialog = crate::dialogs::for_feature(&app, id, None).unwrap();
+    let Kind::GroupedFillet { radii, chains } = &mut dialog.kind else { panic!() };
+    assert_eq!(chains, &[true, false]);
+    chains[1] = true;
+    assert_eq!(radii, &["2 mm", "3 mm"]);
+    radii[1] = "5 mm".into();
+    assert_eq!(dialog.inputs.iter().map(|i| i.items.len()).collect::<Vec<_>>(), [1, 1]);
+    for (command, params) in apply_commands(&app, &dialog).unwrap() {
+        app.session.execute(&command, &params).unwrap();
+    }
+    assert_eq!(app.session.doc.feature(id).unwrap().param_names, names);
+    assert!(matches!(&app.session.doc.feature(id).unwrap().kind, solidcraft_engine::doc::FeatureKind::Fillet {
+        tangent_chain: true, style: solidcraft_engine::doc::FilletStyle::Grouped { groups }, ..
+    } if groups[0].tangent_chain));
+    // Closing the edit dialog restores the timeline after applying its command.
+    crate::dialogs::roll_marker(&mut app, None).unwrap();
+    let expected = 24000. - (1. - std::f64::consts::PI / 4.) * 29. * 40.;
+    let v = app.session.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"].as_f64().unwrap();
+    assert!((v - expected).abs() < 1.3, "{v} != {expected}");
+}
+
+#[test]
 fn path_plane_click_retains_source_and_previews_then_edits_in_place() {
     let mut h = crate::scenario::Harness::new();
     let source = h.app.run("sketch.create", json!({"plane":"XY","name":"Bridge"})).unwrap()["sketch"].as_u64().unwrap();
@@ -1283,6 +1317,66 @@ fn split_body_by_a_curved_face_sends_it_as_a_tool() {
     d.inputs[1].items = vec![side];
     let p = apply_commands(&app, &d).unwrap().remove(0).1;
     assert!(p["tool"]["point"].is_array() && p.get("plane").is_none(), "{p}");
+}
+
+#[test]
+fn tangent_fillet_edit_dialog_retains_and_can_disable_the_chain() {
+    let mut app = app_with(json!([
+        {"command":"solid.box","params":{"length":20,"width":30,"height":40}},
+        {"command":"solid.fillet","params":{"edges":[[0,0,20]],"radius":"2 mm","tangent_chain":true}}
+    ]));
+    let feature = app.session.doc.features.last().unwrap();
+    let id = feature.id;
+    let names = feature.param_names.clone();
+    let index = app.session.doc.feature_index(id).unwrap();
+    crate::dialogs::roll_marker(&mut app, Some(index)).unwrap();
+    let mut dialog = crate::dialogs::for_feature(&app, id, None).unwrap();
+    let Kind::Fillet { chain, radius, .. } = &mut dialog.kind else { panic!() };
+    assert!(*chain);
+    *chain = false;
+    *radius = "3 mm".into();
+    for (command, params) in apply_commands(&app, &dialog).unwrap() {
+        app.session.execute(&command, &params).unwrap();
+    }
+    crate::dialogs::roll_marker(&mut app, None).unwrap();
+    assert!(matches!(&app.session.doc.feature(id).unwrap().kind, solidcraft_engine::doc::FeatureKind::Fillet { tangent_chain: false, .. }));
+    assert_eq!(app.session.doc.feature(id).unwrap().param_names, names);
+    assert!(app.session.model.results.iter().all(|r| r.error.is_none()));
+}
+
+#[test]
+fn grouped_chamfer_dialog_retains_independent_modes_parameters_and_chains() {
+    let mut app = app_with(json!([
+        {"command":"solid.box","params":{"length":20,"width":30,"height":40}},
+        {"command":"solid.chamfer","params":{"edge_sets":[
+            {"edges":[[10,0,40]],"distance":"2 mm","tangent_chain":true},
+            {"edges":[[10,30,0]],"distance":"3 mm","distance2":"4 mm","flip":true}
+        ]}}
+    ]));
+    let feature = app.session.doc.features.last().unwrap();
+    let id = feature.id;
+    let names = feature.param_names.clone();
+    let index = app.session.doc.feature_index(id).unwrap();
+    crate::dialogs::roll_marker(&mut app, Some(index)).unwrap();
+    let mut dialog = crate::dialogs::for_feature(&app, id, None).unwrap();
+    let Kind::GroupedChamfer { groups } = &mut dialog.kind else { panic!() };
+    assert_eq!(groups.len(), 2);
+    assert!(groups[0].tangent_chain);
+    assert!(groups[1].flip);
+    assert_eq!(groups[1].distance2.as_deref(), Some("4 mm"));
+    groups[1].distance2 = Some("5 mm".into());
+    groups[1].tangent_chain = true;
+    assert_eq!(dialog.inputs.iter().map(|i| i.items.len()).collect::<Vec<_>>(), [1, 1]);
+    for (command, params) in apply_commands(&app, &dialog).unwrap() {
+        app.session.execute(&command, &params).unwrap();
+    }
+    assert_eq!(app.session.doc.feature(id).unwrap().param_names, names);
+    assert!(matches!(&app.session.doc.feature(id).unwrap().kind, solidcraft_engine::doc::FeatureKind::Chamfer {
+        tangent_chain:true, groups, ..
+    } if groups[0].tangent_chain && groups[0].flip && groups[0].distance2.as_deref() == Some("5 mm")));
+    crate::dialogs::roll_marker(&mut app, None).unwrap();
+    let v = app.session.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"].as_f64().unwrap();
+    assert!((v - (24000. - 40. - 150.)).abs() < 0.01, "{v}");
 }
 
 /// Runs a primitive's dialog with `sels` pre-selected and returns the new body's centroid.

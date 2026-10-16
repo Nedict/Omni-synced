@@ -9,6 +9,127 @@ use crate::issue_851_tests::planned_volume;
 use crate::{Body, BoolOp, boolean, cylinder, fillet};
 
 #[test]
+fn resampled_ball_centres_stay_on_the_near_side_of_a_cylinder() {
+    let body = cylinder(Vec3::ZERO, Vec3::Z, 1., 2.).unwrap();
+    let side = body.solid.face_iter().find(|f| project(f, Vec3::new(1., 0., 1.), None).is_some_and(|(_, n, _)| n.dot(Vec3::X) > 1. - 1e-9)).unwrap();
+    let bottom = body.solid.face_iter().find(|f| project(f, Vec3::ZERO, None).is_some_and(|(_, n, _)| n.dot(-Vec3::Z) > 1. - 1e-9)).unwrap();
+    // For a 0.75 mm inside round on a unit cylinder, the centre runs on
+    // radius 0.25 at z=0.75. Offsetting that centre another 0.75 crosses
+    // the cylinder axis and sends Newton to the opposite, valid root.
+    let section = |angle: f64| {
+        let n = Vec3::new(angle.cos(), angle.sin(), 0.);
+        let c = n * 0.25 + Vec3::Z * 0.75;
+        Section { c, q1: n + Vec3::Z * 0.75, q2: n * 0.25 }
+    };
+    for angles in [[-0.2, 0.2], [0.2, -0.2]] {
+        let guide = Guide::new(angles.into_iter().map(section).collect()).unwrap();
+        let s = guide.section_on(&[side], &[bottom], 0.5, 0.75, -1., 0., 1e-7).unwrap();
+        assert!(s.c.dist(Vec3::new(0.25, 0., 0.75)) < 1e-9, "{:?}", s.c);
+        // Nearest-parameter projection has tangential search error. Check the
+        // independent support and ball-radius equations at the solve accuracy.
+        assert!(s.q1.x > 0. && (s.q1.x * s.q1.x + s.q1.y * s.q1.y - 1.).abs() < 1e-7);
+        assert!((s.q1.z - 0.75).abs() < 1e-7 && s.q2.z.abs() < 1e-7);
+        assert!((s.q1.dist(s.c) - 0.75).abs() < 1e-7);
+        assert!((s.q2.dist(s.c) - 0.75).abs() < 1e-7);
+    }
+}
+
+#[test]
+fn supporting_strip_excludes_neighbour_sections_and_keeps_exact_contacts() {
+    let section = |y| Section { c: Vec3::new(0., y, 0.), q1: Vec3::new(1., y, 0.), q2: Vec3::new(0., y, 1.) };
+    let fit =
+        fit_strip(&[section(0.), section(1.), section(2.), section(3.)], &[section(-2.), section(-1.)], &[section(4.), section(5.)], true).unwrap();
+    let surface = bounded_strip(&fit).unwrap();
+    assert_eq!(surface.try_range_tuple(), (Some((0., 1.)), Some(fit.range)));
+    for i in 0..=12 {
+        let t = i as f64 / 12.;
+        let v = fit.range.0 + (fit.range.1 - fit.range.0) * t;
+        for j in 0..=12 {
+            let u = j as f64 / 12.;
+            let p = from_p3(surface.subs(u, v));
+            assert!((p.y - 3. * t).abs() < 1e-12);
+            assert!((p.x * p.x + p.z * p.z - 1.).abs() < 1e-12);
+            assert!(p.dist(from_p3(fit.surface.subs(u, v))) < 1e-12);
+        }
+        for (u, contact) in [0., 1.].into_iter().zip(&fit.contacts) {
+            assert!(from_p3(surface.subs(u, v)).dist(from_p3(contact.subs(v))) < 1e-12);
+        }
+    }
+}
+
+#[test]
+fn pinched_sections_require_one_contact_on_all_three_surfaces() {
+    // A zero-radius endpoint from a variable-radius law is also a point,
+    // although its centre lies at the contact rather than one radius away.
+    let endpoint = Vec3::new(2., 3., 4.);
+    for round in [false, true] {
+        let controls = section_controls(&Section { c: endpoint, q1: endpoint, q2: endpoint }, round).unwrap();
+        for control in controls {
+            assert_eq!(control, mt::Vector4::new(2., 3., 4., 1.));
+        }
+    }
+
+    let a = cylinder(Vec3::new(-5., 0., -1.), Vec3::X, 1., 10.).unwrap();
+    let b = cylinder(Vec3::new(0., -5., -1.), Vec3::Y, 1., 10.).unwrap();
+    let end = crate::box_solid(Vec3::new(-2., -2., -1.), Vec3::new(2., 2., 0.)).unwrap();
+    let tangent_face = |body: &Body| {
+        body.solid
+            .face_iter()
+            .find(|f| project(f, Vec3::ZERO, None).is_some_and(|(q, n, _)| q.len() < 1e-9 && n.dot(Vec3::Z) > 1. - 1e-9))
+            .unwrap()
+            .clone()
+    };
+    let (a, b, end) = (tangent_face(&a), tangent_face(&b), tangent_face(&end));
+    for radius in [0.1, 0.25, 0.5] {
+        for (first, second) in [(&a, &b), (&b, &a)] {
+            let section = pinched_end(&[first], &[second], &end, Vec3::ZERO, radius, -1., 1e-7).unwrap();
+            assert_eq!(section.q1, Vec3::ZERO);
+            assert_eq!(section.q2, Vec3::ZERO);
+            assert!((section.c - Vec3::new(0., 0., -radius)).len() < 1e-9);
+            let controls = section_controls(&section, true).unwrap();
+            assert!(controls.iter().all(|c| c.x == 0. && c.y == 0. && c.z == 0. && c.w == 1.));
+        }
+    }
+    assert!(pinched_end(&[&a], &[&b], &end, Vec3::new(0.1, 0., 0.), 0.25, -1., 1e-7).is_none());
+    assert!(pinched_end(&[&a], &[&b], &end, Vec3::ZERO, 2.5, -1., 1e-7).is_none());
+    assert!(pinched_end(&[], &[&b], &end, Vec3::ZERO, 0.25, -1., 1e-7).is_none());
+    for radius in [0., -1., f64::NAN, f64::INFINITY] {
+        assert!(pinched_end(&[&a], &[&b], &end, Vec3::ZERO, radius, -1., 1e-7).is_none());
+    }
+    assert!(pinched_end(&[&a], &[&b], &end, Vec3::new(f64::NAN, 0., 0.), 0.25, -1., 1e-7).is_none());
+    assert!(pinched_end(&[&a], &[&b], &end, Vec3::ZERO, 0.25, 0., 1e-7).is_none());
+    assert!(pinched_end(&[&a], &[&b], &end, Vec3::ZERO, 0.25, -1., f64::INFINITY).is_none());
+    assert!(section_controls(&Section { c: Vec3::new(1e308, 0., 0.), q1: Vec3::ZERO, q2: Vec3::ZERO }, true).is_none());
+}
+
+#[test]
+fn pinched_contacts_respect_the_given_surface_accuracy() {
+    let a = cylinder(Vec3::new(-5., 0., -1.), Vec3::X, 1., 10.).unwrap();
+    let b = cylinder(Vec3::new(0., -5., -1.), Vec3::Y, 1., 10.).unwrap();
+    let tangent = |body: &Body| {
+        body.solid.face_iter().find(|f| project(f, Vec3::ZERO, None).is_some_and(|(_, n, _)| n.dot(Vec3::Z) > 1. - 1e-9)).unwrap().clone()
+    };
+    let (a, b) = (tangent(&a), tangent(&b));
+    let accuracy = 1e-5;
+    for offset in [accuracy * 0.5, accuracy * 2.] {
+        let end = crate::box_solid(Vec3::new(-2., -2., -1.), Vec3::new(2., 2., offset)).unwrap();
+        let end = tangent(&end);
+        assert!(pinched_end(&[&a], &[&b], &end, Vec3::ZERO, 0.25, -1., 1e-7).is_none());
+        let section = pinched_end(&[&a], &[&b], &end, Vec3::ZERO, 0.25, -1., accuracy);
+        assert_eq!(section.is_some(), offset < accuracy);
+        if let Some(section) = section {
+            assert_eq!(section.q1, Vec3::ZERO);
+            assert_eq!(section.q2, Vec3::ZERO);
+            for face in [&a, &b, &end] {
+                let (q, _, _) = project(face, section.c, None).unwrap();
+                assert!(q.dist(Vec3::ZERO) < accuracy);
+                assert!((q.dist(section.c) - 0.25).abs() < accuracy);
+            }
+        }
+    }
+}
+
+#[test]
 fn issue_1303_chamfer_open_rim_after_end_chamfer() {
     use solidcraft_geom::{Loop2, Plane, Region2, Seg2, Vec2};
     let rim = Region2 {

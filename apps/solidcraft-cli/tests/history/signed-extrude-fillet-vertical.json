@@ -1,0 +1,224 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "width",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "-40 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "radius",
+        "expression": "2 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Block profile"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            20,
+            30
+          ]
+        },
+        "dimensions": {
+          "width": "width"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "operation": "new_body",
+        "name": "Block",
+        "body_name": "Block"
+      }
+    },
+    {
+      "command": "solid.fillet",
+      "params": {
+        "edges": [
+          [
+            0,
+            0,
+            -20
+          ]
+        ],
+        "radius": "radius",
+        "body": "Block",
+        "name": "Rounded edges"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 23965.66370614359,
+    "body_count": 1,
+    "bounds": [
+      [
+        0,
+        0,
+        -40.0
+      ],
+      [
+        20.0,
+        30,
+        0
+      ]
+    ],
+    "features": [
+      "Block profile",
+      "Block",
+      "Rounded edges"
+    ],
+    "volume_tolerance_mm3": 0.1816814692820414,
+    "center_of_mass": [
+      10.013687235546936,
+      15.020850878973928,
+      -20.0
+    ],
+    "center_of_mass_tolerance_mm": 0.0002
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "radius",
+        "expression": "4 mm"
+      },
+      "volume_mm3": 23862.654824574365,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          -40.0
+        ],
+        [
+          20.0,
+          30,
+          0
+        ]
+      ],
+      "volume_tolerance_mm3": 0.6967258771281656,
+      "center_of_mass": [
+        10.052414022178809,
+        15.08119229023727,
+        -20.000000000000004
+      ],
+      "center_of_mass_tolerance_mm": 0.0002
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "-50 mm"
+      },
+      "volume_mm3": 29957.079632679488,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          -50.0
+        ],
+        [
+          20.0,
+          30,
+          0
+        ]
+      ],
+      "volume_tolerance_mm3": 0.22460183660255173,
+      "center_of_mass": [
+        10.013687235546934,
+        15.020850878973928,
+        -25.0
+      ],
+      "center_of_mass_tolerance_mm": 0.0002
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "width",
+        "expression": "30 mm"
+      },
+      "volume_mm3": 35965.66370614359,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          -40.0
+        ],
+        [
+          30.0,
+          30,
+          0
+        ]
+      ],
+      "volume_tolerance_mm3": 0.1816814692820414,
+      "center_of_mass": [
+        15.01389395056211,
+        15.01389395056211,
+        -20.0
+      ],
+      "center_of_mass_tolerance_mm": 0.0002
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Rounded edges",
+        "suppressed": true
+      },
+      "volume_mm3": 24000.0,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          -40.0
+        ],
+        [
+          20.0,
+          30,
+          0
+        ]
+      ],
+      "volume_tolerance_mm3": 0.01,
+      "center_of_mass": [
+        10.0,
+        15.0,
+        -20.0
+      ],
+      "center_of_mass_tolerance_mm": 0.0002
+    }
+  ]
+}

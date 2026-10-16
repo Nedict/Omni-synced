@@ -33,6 +33,10 @@ use crate::clearance::{Clearance, Occupancy};
 use crate::history::{Change, EdgeOrigin, FaceOrigin, FaceProv, History};
 use crate::{BoolOp, KernelError, Result, guard, record};
 
+#[path = "cap_cut.rs"]
+mod cap_cut;
+pub(crate) use cap_cut::contained_cap_cut;
+
 #[derive(Clone, Copy, Debug)]
 struct PlaneFace {
     n: Vec3,
@@ -1193,6 +1197,11 @@ pub(crate) fn imprint_union(a: &Body, b: &Body, accept: &dyn Fn(&Body) -> bool) 
 /// faces): every such pair of faces goes and the shells are stitched along their edges. `None`
 /// when no such pair of faces exists.
 pub(crate) fn glue(a: &Body, b: &Body) -> Option<Result<Body>> {
+    glue_faces(a, b, false)
+}
+
+// Cut is only used after cap_cut has checked complete coaxial containment.
+fn glue_faces(a: &Body, b: &Body, cut: bool) -> Option<Result<Body>> {
     use mt::{BoundedCurve, ParametricCurve};
     let size = a.size().max(b.size());
     let tol = (size * 1e-7).max(1e-9) * 10.0;
@@ -1213,7 +1222,8 @@ pub(crate) fn glue(a: &Body, b: &Body) -> Option<Result<Body>> {
     let (mut glued_a, mut glued_b): (Vec<usize>, Vec<usize>) = (Vec::new(), Vec::new());
     for (ia, x) in &pa {
         for (ib, y) in &pb {
-            if glued_a.contains(ia) || glued_b.contains(ib) || x.n.dot(y.n) > -1.0 + 1e-9 || (x.d + y.d).abs() > tol {
+            let sign = if cut { 1. } else { -1. };
+            if glued_a.contains(ia) || glued_b.contains(ib) || x.n.dot(y.n) * sign < 1.0 - 1e-9 || (x.d - sign * y.d).abs() > tol {
                 continue;
             }
             let (Some(fa), Some(fb)) = (fa_list.get(*ia), fb_list.get(*ib)) else { continue };
@@ -1287,7 +1297,10 @@ pub(crate) fn glue(a: &Body, b: &Body) -> Option<Result<Body>> {
         let mut faces: Vec<mt::Face> = fa_list.iter().enumerate().filter(|(i, _)| !glued_a.contains(i)).map(|(_, f)| (*f).clone()).collect();
         // Every face but the glued ones is kept; an edge along a seam is an edge of both.
         let kept = |operand: usize, n: usize, skip: &[usize]| {
-            (0..n).filter(|i| !skip.contains(i)).map(move |i| record::from_face(operand, i, Change::Kept)).collect::<Vec<_>>()
+            (0..n)
+                .filter(|i| !skip.contains(i))
+                .map(move |i| record::from_face(operand, i, if cut && operand == 1 { Change::Modified } else { Change::Kept }))
+                .collect::<Vec<_>>()
         };
         let from: Vec<FaceProv> = kept(0, fa_list.len(), &glued_a).into_iter().chain(kept(1, fb_list.len(), &glued_b)).collect();
         let mut origins = record::edge_origins(&a.solid, 0);
@@ -1311,7 +1324,7 @@ pub(crate) fn glue(a: &Body, b: &Body) -> Option<Result<Body>> {
                 })
                 .collect();
             let mut nf = mt::Face::try_new(wires, f.surface()).map_err(|e| fail(&e.to_string()))?;
-            if !f.orientation() {
+            if f.orientation() == cut {
                 nf.invert();
             }
             faces.push(nf);

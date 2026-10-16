@@ -592,6 +592,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
+name = "cadmpeg-asm"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2813c4e27045a7c4fc90e6df04447a4d239d1c5cda9925bcffe245198828275d"
+dependencies = [
+ "cadmpeg-core",
+ "cadmpeg-ir",
+ "serde",
+ "serde-value",
+]
+
+[[package]]
+name = "cadmpeg-codec-f3d"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dea294039462c336c2f067fb48076d062712aed06b63752ffaff8e1c3a0e5b7"
+dependencies = [
+ "cadmpeg-asm",
+ "cadmpeg-container",
+ "cadmpeg-core",
+ "cadmpeg-ir",
+ "cadmpeg-protein",
+ "lzma-rs",
+ "memchr",
+ "roxmltree",
+ "serde",
+ "serde-value",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "zip 8.6.0",
+]
+
+[[package]]
 name = "cadmpeg-codec-freecad"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -683,6 +717,21 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "cadmpeg-protein"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6356e0859ba89925fc23dc9725f981280ab9f97a48faf91a2c980f3637d3eebf"
+dependencies = [
+ "cadmpeg-container",
+ "cadmpeg-core",
+ "cadmpeg-ir",
+ "flate2",
+ "roxmltree",
+ "serde",
+ "zip 8.6.0",
 ]
 
 [[package]]
@@ -972,6 +1021,21 @@ checksum = "5ca28b0ae3115b884660db4118d803791fd6756b6e88f39c0f3f7859060d7566"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "crc"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5eb8a2a1cd12ab0d987a5d5e825195d372001a4094a0376319d5a0ad71c1ba0d"
+dependencies = [
+ "crc-catalog",
+]
+
+[[package]]
+name = "crc-catalog"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
 
 [[package]]
 name = "crc32fast"
@@ -2380,6 +2444,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "lzma-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "297e814c836ae64db86b36cf2a557ba54368d03f6afcd7d947c266692f71115e"
+dependencies = [
+ "byteorder",
+ "crc",
+]
+
+[[package]]
 name = "matext4cgmath"
 version = "0.1.0"
 dependencies = [
@@ -3686,6 +3760,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
+name = "ruzstd"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7c1c839d570d835527c9a5e4db7cb2198683a988cb9d7293fc8674e6bd58fc8"
+dependencies = [
+ "twox-hash",
+]
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4161,11 +4244,16 @@ dependencies = [
 name = "solidcraft-io"
 version = "0.14.0"
 dependencies = [
+ "cadmpeg-asm",
+ "cadmpeg-codec-f3d",
+ "cadmpeg-codec-step",
  "cadmpeg-core",
  "cadmpeg-ir",
  "cadmpeg-registry",
+ "crc32fast",
  "gltf",
  "quick-xml",
+ "ruzstd",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4669,6 +4757,12 @@ name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
+
+[[package]]
+name = "twox-hash"
+version = "2.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86a801b3cea342a06d468c8710662aa29e5e05e4f5c0d62f00bbb7f2ad7941c2"
 
 [[package]]
 name = "type-map"

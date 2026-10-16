@@ -1,0 +1,274 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "width",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "40 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "setback",
+        "expression": "2 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "second",
+        "expression": "3 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Block profile"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            20,
+            30
+          ]
+        },
+        "dimensions": {
+          "width": "width"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "operation": "new_body",
+        "name": "Block",
+        "body_name": "Block"
+      }
+    },
+    {
+      "command": "solid.chamfer",
+      "params": {
+        "edge_sets": [
+          {
+            "edges": [
+              [
+                0,
+                0,
+                20
+              ]
+            ],
+            "distance": "setback"
+          },
+          {
+            "edges": [
+              [
+                20,
+                30,
+                20
+              ]
+            ],
+            "distance": "second"
+          }
+        ],
+        "name": "Beveled groups",
+        "body": "Block"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 23740.0,
+    "volume_tolerance_mm3": 0.01,
+    "center_of_mass": [
+      9.963212580735748,
+      14.942151081156979,
+      20.0
+    ],
+    "center_of_mass_tolerance_mm": 1e-06,
+    "body_count": 1,
+    "bounds": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        20,
+        30,
+        40
+      ]
+    ],
+    "features": [
+      "Block profile",
+      "Block",
+      "Beveled groups"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "setback",
+        "expression": "4 mm"
+      },
+      "volume_mm3": 23500.0,
+      "volume_tolerance_mm3": 0.01,
+      "center_of_mass": [
+        10.049078014184397,
+        15.078865248226949,
+        20.0
+      ],
+      "center_of_mass_tolerance_mm": 1e-06,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "second",
+        "expression": "5 mm"
+      },
+      "volume_mm3": 23420.0,
+      "volume_tolerance_mm3": 0.01,
+      "center_of_mass": [
+        9.853970964987191,
+        14.764304013663535,
+        20.0
+      ],
+      "center_of_mass_tolerance_mm": 1e-06,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "50 mm"
+      },
+      "volume_mm3": 29675.0,
+      "volume_tolerance_mm3": 0.01,
+      "center_of_mass": [
+        9.963212580735748,
+        14.942151081156977,
+        25.0
+      ],
+      "center_of_mass_tolerance_mm": 1e-06,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          30,
+          50
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "width",
+        "expression": "30 mm"
+      },
+      "volume_mm3": 35740.0,
+      "volume_tolerance_mm3": 0.01,
+      "center_of_mass": [
+        14.9615743331468,
+        14.9615743331468,
+        20.0
+      ],
+      "center_of_mass_tolerance_mm": 1e-06,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          30,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Beveled groups",
+        "suppressed": true
+      },
+      "volume_mm3": 24000,
+      "volume_tolerance_mm3": 0.01,
+      "center_of_mass": [
+        10.0,
+        15.0,
+        20.0
+      ],
+      "center_of_mass_tolerance_mm": 1e-06,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          30,
+          40
+        ]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,179 @@
+{
+  "format": "solidcraft-f3d-dev/17",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "diameter",
+      "expr": "60 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "12 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "d1",
+      "expr": "diameter",
+      "unit": "mm",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Quartered circle",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "left.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "horizontal.start",
+            "pos": [
+              -50.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "horizontal.end",
+            "pos": [
+              50.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "vertical.start",
+            "pos": [
+              0.0,
+              -50.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "vertical.end",
+            "pos": [
+              0.0,
+              50.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "left",
+            "type": "circle",
+            "c": 1,
+            "r": 30.0,
+            "construction": false
+          },
+          {
+            "id": "horizontal",
+            "type": "line",
+            "a": 2,
+            "b": 3,
+            "construction": false,
+            "fixed": true
+          },
+          {
+            "id": "vertical",
+            "type": "line",
+            "a": 4,
+            "b": 5,
+            "construction": false,
+            "fixed": true
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 1
+          },
+          {
+            "id": "k2",
+            "type": "diameter",
+            "c": 0,
+            "value": 60.0,
+            "param": "d1"
+          }
+        ],
+        "counters": {
+          "k": 2
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Selected region",
+      "suppressed": false,
+      "param_names": [
+        "d2"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "piece_boundaries",
+        "profiles": [
+          {
+            "outer": [
+              {
+                "curve": "horizontal",
+                "piece": 3,
+                "count": 4,
+                "reversed": false
+              },
+              {
+                "curve": "left",
+                "piece": 3,
+                "count": 4,
+                "reversed": false
+              },
+              {
+                "curve": "vertical",
+                "piece": 3,
+                "count": 4,
+                "reversed": true
+              }
+            ],
+            "holes": []
+          }
+        ],
+        "circle_seams": {
+          "left": 3.141592653589793
+        }
+      },
+      "extent": {
+        "distance": "height",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    }
+  ],
+  "next_id": 3
+}

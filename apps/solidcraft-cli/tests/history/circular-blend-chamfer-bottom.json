@@ -1,0 +1,225 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "40 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "radius",
+        "expression": "2 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Rim profile"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 20
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Block",
+        "body_name": "Block"
+      }
+    },
+    {
+      "command": "solid.chamfer",
+      "params": {
+        "edges": [
+          [
+            0,
+            10,
+            0
+          ],
+          [
+            0,
+            -10,
+            0
+          ]
+        ],
+        "tangent_chain": false,
+        "name": "Beveled bottom rim",
+        "distance": "radius"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 12449.084488625154,
+    "volume_tolerance_mm3": 4.372566008882119,
+    "body_count": 1,
+    "bounds": [
+      [
+        -10,
+        -10,
+        0
+      ],
+      [
+        10,
+        10,
+        40
+      ]
+    ],
+    "features": [
+      "Rim profile",
+      "Block",
+      "Beveled bottom rim"
+    ],
+    "center_of_mass": [
+      0,
+      0,
+      20.182032301480483
+    ],
+    "center_of_mass_tolerance_mm": 0.005
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "radius",
+        "expression": "4 mm"
+      },
+      "volume_mm3": 12130.73643306139,
+      "volume_tolerance_mm3": 9.147786842338604,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          40
+        ]
+      ],
+      "center_of_mass": [
+        0,
+        0,
+        20.668508287292816
+      ],
+      "center_of_mass_tolerance_mm": 0.005
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "50 mm"
+      },
+      "volume_mm3": 15590.677142214947,
+      "volume_tolerance_mm3": 5.000884539600078,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          50
+        ]
+      ],
+      "center_of_mass": [
+        0,
+        0,
+        25.18296614723267
+      ],
+      "center_of_mass_tolerance_mm": 0.005
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "diameter",
+        "expression": "30 mm"
+      },
+      "volume_mm3": 28094.21590350232,
+      "volume_tolerance_mm3": 8.456636458548848,
+      "body_count": 1,
+      "bounds": [
+        [
+          -15,
+          -15,
+          0
+        ],
+        [
+          15,
+          15,
+          40
+        ]
+      ],
+      "center_of_mass": [
+        0,
+        0,
+        20.123900402564484
+      ],
+      "center_of_mass_tolerance_mm": 0.005
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Beveled bottom rim",
+        "suppressed": true
+      },
+      "volume_mm3": 12566.370614359173,
+      "volume_tolerance_mm3": 2.613274122871835,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          40
+        ]
+      ],
+      "center_of_mass": [
+        0,
+        0,
+        20.0
+      ],
+      "center_of_mass_tolerance_mm": 0.005
+    }
+  ]
+}

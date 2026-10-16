@@ -25,11 +25,50 @@ fn plane_of(f: &mt::Face) -> Option<(Vec3, f64)> {
 /// built on the stored surface and turned like `f` (rebuilding on the turned surface can make
 /// the mesher pick the wrong side of a trim on periodic surfaces).
 pub(crate) fn absolute_face(f: &mt::Face, wires: Vec<mt::Wire>) -> Option<mt::Face> {
-    let mut nf = mt::Face::try_new(wires, f.surface()).ok()?;
+    let mut nf = match mt::Face::try_new(wires.clone(), f.surface()) {
+        Ok(face) => face,
+        Err(truck_topology::errors::Error::NotSimpleWire) if retained_seam(f.absolute_boundaries(), &wires) => {
+            mt::Face::new_unchecked(wires, f.surface())
+        }
+        _ => return None,
+    };
     if !f.orientation() {
         nf.invert();
     }
     Some(nf)
+}
+
+// A periodic face walks its seam in both directions. Rebuilding may retain that
+// existing topology, but must not introduce another repeated edge or vertex.
+fn retained_seam(old: &[mt::Wire], new: &[mt::Wire]) -> bool {
+    let repeats = |wires: &[mt::Wire]| {
+        let mut edges = HashMap::<_, Vec<bool>>::new();
+        let mut vertices = HashMap::<_, usize>::new();
+        for wire in wires {
+            if !wire.is_closed() {
+                return None;
+            }
+            for edge in wire.edge_iter() {
+                edges.entry(edge.id()).or_default().push(edge.orientation());
+                *vertices.entry(edge.front().id()).or_default() += 1;
+            }
+        }
+        let repeated: std::collections::HashSet<_> = edges.iter().filter_map(|(id, uses)| (uses.len() > 1).then_some(*id)).collect();
+        if repeated.is_empty() || repeated.iter().any(|id| edges.get(id).is_none_or(|uses| !matches!(uses.as_slice(), [a, b] if a != b))) {
+            return None;
+        }
+        let mut ends = std::collections::HashSet::new();
+        for edge in wires.iter().flat_map(|w| w.edge_iter()).filter(|e| repeated.contains(&e.id())) {
+            ends.insert(edge.front().id());
+            ends.insert(edge.back().id());
+        }
+        let doubled: std::collections::HashSet<_> = vertices.iter().filter_map(|(id, n)| (*n > 1).then_some(*id)).collect();
+        if doubled != ends || vertices.values().any(|n| *n > 2) {
+            return None;
+        }
+        Some((repeated, doubled))
+    };
+    repeats(old).zip(repeats(new)).is_some_and(|(a, b)| a == b)
 }
 
 pub(crate) fn find(p: &mut [usize], mut i: usize) -> usize {

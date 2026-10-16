@@ -1,0 +1,272 @@
+{
+  "format": "solidcraft/13",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "diameter",
+      "expr": "24 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "35 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "d1",
+      "expr": "diameter",
+      "unit": "mm",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Base circle",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "c1.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "c1",
+            "type": "circle",
+            "c": 1,
+            "r": 12.0,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 1
+          },
+          {
+            "id": "k2",
+            "type": "diameter",
+            "c": 0,
+            "value": 24.0,
+            "param": "d1"
+          }
+        ],
+        "counters": {
+          "c": 1,
+          "k": 2
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Source extrusion",
+      "suppressed": false,
+      "param_names": [
+        "d2"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "height",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 3,
+      "name": "Overlapping extrusion",
+      "suppressed": false,
+      "param_names": [
+        "d3"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "11",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 4,
+      "name": "Projected circle",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              -3.9474596431116695e-16,
+              -1.5789838572446678e-15
+            ],
+            "fixed": true,
+            "link": "j1"
+          },
+          {
+            "id": "p2",
+            "pos": [
+              12.0,
+              0.0
+            ],
+            "fixed": true,
+            "link": "j1"
+          },
+          {
+            "id": "p3",
+            "pos": [
+              -12.0,
+              8.2682228361544e-15
+            ],
+            "fixed": true,
+            "link": "j1"
+          },
+          {
+            "id": "p4",
+            "pos": [
+              -1.9737298215558347e-15,
+              -1.9737298215558347e-15
+            ],
+            "fixed": true,
+            "link": "j2"
+          },
+          {
+            "id": "p5",
+            "pos": [
+              -12.0,
+              1.4695761589768238e-15
+            ],
+            "fixed": true,
+            "link": "j2"
+          },
+          {
+            "id": "p6",
+            "pos": [
+              11.999999999999996,
+              -5.6801997782959345e-15
+            ],
+            "fixed": true,
+            "link": "j2"
+          }
+        ],
+        "curves": [
+          {
+            "id": "a1",
+            "type": "arc",
+            "c": 1,
+            "a": 2,
+            "b": 3,
+            "construction": false,
+            "link": "j1"
+          },
+          {
+            "id": "a2",
+            "type": "arc",
+            "c": 4,
+            "a": 5,
+            "b": 6,
+            "construction": false,
+            "link": "j2"
+          }
+        ],
+        "constraints": [],
+        "links": [
+          {
+            "id": "j1",
+            "kind": "project",
+            "source": {
+              "type": "edge",
+              "body": "Body1",
+              "at": [
+                0.0,
+                11.999999999999998,
+                35.0
+              ]
+            },
+            "edge_name": "F2:side:c1#2|F2:top"
+          },
+          {
+            "id": "j2",
+            "kind": "project",
+            "source": {
+              "type": "edge",
+              "body": "Body1",
+              "at": [
+                0.0,
+                -12.0,
+                35.0
+              ]
+            },
+            "edge_name": "F2:side:c1#1|F2:top"
+          }
+        ],
+        "counters": {
+          "a": 2,
+          "j": 2,
+          "p": 6
+        }
+      }
+    },
+    {
+      "id": 5,
+      "name": "Projected extrusion",
+      "suppressed": false,
+      "param_names": [
+        "d4"
+      ],
+      "type": "extrude",
+      "sketch": 4,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "9",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    }
+  ],
+  "next_id": 6
+}

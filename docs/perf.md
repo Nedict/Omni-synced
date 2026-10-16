@@ -200,6 +200,7 @@ faces), `cargo test --release -p solidcraft-gpu bench_plate -- --ignored --nocap
 Planning (edge sampling, parameter projection, triangulation) dominates; evaluation is a
 few milliseconds either way, so GPU evaluation saves little until planning is cheaper. The
 GPU timing includes upload and read-back.
+See [HardEdgeBasin regression](project-open-regression.md) for the native-design opening guard and the separate fillet comparison.
 
 ## Parallel STEP body preparation (2026-10-12)
 

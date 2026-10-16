@@ -1,0 +1,189 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "30 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "plane_height",
+        "expression": "50 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Source circle"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 20
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Source extrusion",
+        "body_name": "Source"
+      }
+    },
+    {
+      "command": "construct.plane.offset",
+      "params": {
+        "base": "XY",
+        "offset": "plane_height",
+        "name": "Mirror plane"
+      }
+    },
+    {
+      "command": "solid.mirror",
+      "params": {
+        "bodies": [
+          "Source"
+        ],
+        "plane": "Mirror plane",
+        "name": "Reflected body"
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 6000,
+    "body_count": 2,
+    "bounds": [
+      [
+        -10,
+        -10,
+        0
+      ],
+      [
+        10,
+        10,
+        100
+      ]
+    ],
+    "features": [
+      "Source circle",
+      "Source extrusion",
+      "Mirror plane",
+      "Reflected body"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "diameter",
+        "expression": "30 mm"
+      },
+      "volume_pi_mm3": 13500,
+      "body_count": 2,
+      "bounds": [
+        [
+          -15,
+          -15,
+          0
+        ],
+        [
+          15,
+          15,
+          100
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "40 mm"
+      },
+      "volume_pi_mm3": 8000,
+      "body_count": 2,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          100
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "plane_height",
+        "expression": "-20 mm"
+      },
+      "volume_pi_mm3": 6000,
+      "body_count": 2,
+      "bounds": [
+        [
+          -10,
+          -10,
+          -70
+        ],
+        [
+          10,
+          10,
+          30
+        ]
+      ]
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Reflected body",
+        "suppressed": true
+      },
+      "volume_pi_mm3": 3000,
+      "body_count": 1,
+      "bounds": [
+        [
+          -10,
+          -10,
+          0
+        ],
+        [
+          10,
+          10,
+          30
+        ]
+      ]
+    }
+  ]
+}

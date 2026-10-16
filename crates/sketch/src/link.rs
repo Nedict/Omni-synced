@@ -200,9 +200,15 @@ pub struct Link {
     /// geometry refresh. None: the edge is the one nearest the source's point.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edge_name: Option<String>,
+    /// Exact edges forming one closed circular boundary, projected as one circle.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edge_circle: Vec<String>,
     /// Automatically projected borders owned by a durable sketch face attachment.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub auto_face: bool,
+    /// Join circular seam pieces of an automatically projected face into arcs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub join_arcs: bool,
     /// The reference could not be found on the last recompute; the geometry is the last good one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub lost: bool,
@@ -608,7 +614,17 @@ impl Sketch {
             return Err(SketchError::TooLarge);
         }
         let id = self.fresh("j")?;
-        self.links.push(Link { id: id.clone(), kind, source, face_name: None, edge_name: None, auto_face: false, lost: false });
+        self.links.push(Link {
+            id: id.clone(),
+            kind,
+            source,
+            face_name: None,
+            edge_name: None,
+            edge_circle: vec![],
+            auto_face: false,
+            join_arcs: false,
+            lost: false,
+        });
         self.build_link(&id, &lay)?;
         Ok(id)
     }

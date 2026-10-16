@@ -96,6 +96,9 @@ fn source(s: &FaceSource, depth: usize) -> Result<w::FaceSource> {
         FaceSource::ShellPlanar { producer, source: s, inner, plane: p } => {
             w::FaceSource::PlanarShell { producer: *producer, source: Box::new(source(s, depth + 1)?), inner: *inner, plane: plane(*p) }
         }
+        // Version-one cache metadata has no finite-union certificate. A cache
+        // miss preserves the authoritative document; dropping contributors would not.
+        FaceSource::PlanarUnion { .. } => return Err(invalid("planar union certificates require a newer native metadata schema")),
         FaceSource::Imported { item, face, payload_sha256, producer } => {
             w::FaceSource::Imported { item: *item, face: *face, payload_sha256: payload_sha256.clone(), producer: *producer }
         }
@@ -326,6 +329,13 @@ mod tests {
             assert_eq!(value, source(&load_source(value.clone(), 0).unwrap(), 0).unwrap());
         }
         assert!(load_segment(w::Segment::Bezier { points: vec![[0., 0.]; solidcraft_geom::MAX_BEZIER_CTRL + 1] }).is_err());
+    }
+
+    #[test]
+    fn finite_union_certificate_is_a_cache_miss_instead_of_losing_contributors() {
+        let leaf = FaceSource::Box { producer: Some(1), axis: 2, high: true, plane: Plane::XY };
+        let union = FaceSource::PlanarUnion { producer: Some(2), sources: vec![leaf], plane: Plane::XY };
+        assert!(source(&union, 0).unwrap_err().to_string().contains("planar union"));
     }
 
     #[test]

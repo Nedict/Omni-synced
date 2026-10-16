@@ -1,0 +1,197 @@
+{
+  "format": "solidcraft-f3d-dev/30",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "leftDiameter",
+      "expr": "60 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "rightDiameter",
+      "expr": "60 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "17 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "d1",
+      "expr": "leftDiameter",
+      "unit": "mm",
+      "model": true
+    },
+    {
+      "name": "d2",
+      "expr": "rightDiameter",
+      "unit": "mm",
+      "model": true
+    },
+    {
+      "name": "d3",
+      "expr": "leftDiameter",
+      "unit": "mm",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Coincident circles",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "left.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "right.center",
+            "pos": [
+              40.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "alias.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "left",
+            "type": "circle",
+            "c": 1,
+            "r": 30.0,
+            "construction": false
+          },
+          {
+            "id": "right",
+            "type": "circle",
+            "c": 2,
+            "r": 30.0,
+            "construction": false
+          },
+          {
+            "id": "alias",
+            "type": "circle",
+            "c": 3,
+            "r": 30.0,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 1
+          },
+          {
+            "id": "k2",
+            "type": "diameter",
+            "c": 0,
+            "value": 60.0,
+            "param": "d1"
+          },
+          {
+            "id": "k3",
+            "type": "diameter",
+            "c": 1,
+            "value": 60.0,
+            "param": "d2"
+          },
+          {
+            "id": "k4",
+            "type": "coincident",
+            "p": 0,
+            "q": 3
+          },
+          {
+            "id": "k5",
+            "type": "diameter",
+            "c": 2,
+            "value": 60.0,
+            "param": "d3"
+          }
+        ],
+        "counters": {
+          "k": 5
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Coincident circle lens",
+      "suppressed": false,
+      "param_names": [
+        "d4"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "piece_boundaries",
+        "profiles": [
+          {
+            "outer": [
+              {
+                "curve": "alias",
+                "piece": 1,
+                "count": 2,
+                "reversed": false
+              },
+              {
+                "curve": "left",
+                "piece": 1,
+                "count": 2,
+                "reversed": false
+              },
+              {
+                "curve": "right",
+                "piece": 2,
+                "count": 2,
+                "reversed": false
+              }
+            ],
+            "holes": []
+          }
+        ]
+      },
+      "extent": {
+        "distance": "height",
+        "convention": "total_distance",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    }
+  ],
+  "next_id": 3
+}

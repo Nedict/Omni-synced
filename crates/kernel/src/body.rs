@@ -9,6 +9,8 @@ use crate::{KernelError, Result, guard};
 mod planar_regularize;
 #[path = "planar_sources.rs"]
 mod planar_sources;
+#[path = "planar_union.rs"]
+mod planar_union;
 #[path = "shell_groups.rs"]
 pub(crate) mod shell_groups;
 
@@ -135,6 +137,13 @@ pub enum FaceSource {
         inner: bool,
         plane: solidcraft_geom::Plane,
     },
+    /// Finite planar union with all contributing construction identities.
+    /// Contributions are bounded, canonical, flat leaves; never nested unions.
+    PlanarUnion {
+        producer: Option<u64>,
+        sources: Vec<FaceSource>,
+        plane: solidcraft_geom::Plane,
+    },
     Imported {
         item: u64,
         face: u64,
@@ -154,7 +163,8 @@ impl FaceSource {
             | Self::CertifiedExtrudeCap { plane, .. }
             | Self::Box { plane, .. }
             | Self::CylinderCap { plane, .. }
-            | Self::ShellPlanar { plane, .. } => Some(plane),
+            | Self::ShellPlanar { plane, .. }
+            | Self::PlanarUnion { plane, .. } => Some(plane),
             Self::Imported { .. } => None,
         }
     }
@@ -685,7 +695,8 @@ impl Body {
             | FaceSource::CertifiedExtrudeCap { plane, .. }
             | FaceSource::Box { plane, .. }
             | FaceSource::CylinderCap { plane, .. }
-            | FaceSource::ShellPlanar { plane, .. } => Some(*plane),
+            | FaceSource::ShellPlanar { plane, .. }
+            | FaceSource::PlanarUnion { plane, .. } => Some(*plane),
             FaceSource::Imported { .. } => self.planar_face(index),
         }
     }
@@ -815,14 +826,25 @@ impl Body {
         let translation = Vec3::new(m[3][0], m[3][1], m[3][2]);
         let reflected = vector(Vec3::X).dot(vector(Vec3::Y).cross(vector(Vec3::Z))) < 0.;
         let mut sources = sources.as_ref().clone();
+        let transform_plane = |plane: &mut solidcraft_geom::Plane| -> Result<()> {
+            *plane =
+                solidcraft_geom::Plane::new(vector(plane.origin) + translation, vector(plane.x), vector(plane.y) * if reflected { -1. } else { 1. })
+                    .ok_or_else(|| KernelError::Invalid("degenerate transformed face plane".into()))?;
+            Ok(())
+        };
         for source in sources.iter_mut().flatten() {
             if let Some(plane) = source.plane_mut() {
-                *plane = solidcraft_geom::Plane::new(
-                    vector(plane.origin) + translation,
-                    vector(plane.x),
-                    vector(plane.y) * if reflected { -1. } else { 1. },
-                )
-                .ok_or_else(|| KernelError::Invalid("degenerate transformed face plane".into()))?;
+                transform_plane(plane)?;
+            }
+            if let FaceSource::PlanarUnion { sources, .. } = source {
+                if sources.len() > 64 || sources.iter().any(|s| !planar_union::is_leaf(s)) {
+                    return Err(KernelError::Invalid("invalid planar union contributions".into()));
+                }
+                for source in sources {
+                    if let Some(plane) = source.plane_mut() {
+                        transform_plane(plane)?;
+                    }
+                }
             }
         }
         Ok(Some(std::sync::Arc::new(sources)))

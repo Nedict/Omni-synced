@@ -1,0 +1,172 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "24 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "35 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Base circle"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "diameter": 24
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "sketch": 1,
+        "distance": "height",
+        "name": "Source extrusion",
+        "operation": "new_body"
+      }
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "sketch": 1,
+        "distance": 11,
+        "name": "Overlapping extrusion",
+        "operation": "new_body"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Projected circle"
+      }
+    },
+    {
+      "command": "sketch.project",
+      "params": {
+        "refs": [
+          {
+            "body": "Body1",
+            "edge": [
+              0,
+              12,
+              35
+            ]
+          },
+          {
+            "body": "Body1",
+            "edge": [
+              0,
+              -12,
+              35
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": 9,
+        "name": "Projected extrusion",
+        "operation": "new_body"
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 7920,
+    "body_count": 3,
+    "bounds": [
+      [
+        -12,
+        -12,
+        0
+      ],
+      [
+        12,
+        12,
+        35
+      ]
+    ],
+    "features": [
+      "Base circle",
+      "Source extrusion",
+      "Overlapping extrusion",
+      "Projected circle",
+      "Projected extrusion"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "diameter",
+        "expression": "120 mm"
+      },
+      "volume_pi_mm3": 198000,
+      "bounds": [
+        [
+          -60,
+          -60,
+          0
+        ],
+        [
+          60,
+          60,
+          35
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "5 mm"
+      },
+      "volume_pi_mm3": 3600,
+      "bounds": [
+        [
+          -12,
+          -12,
+          0
+        ],
+        [
+          12,
+          12,
+          11
+        ]
+      ]
+    }
+  ]
+}

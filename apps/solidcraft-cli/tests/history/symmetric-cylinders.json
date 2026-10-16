@@ -1,0 +1,173 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "30 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Symmetric circles"
+      }
+    },
+    {
+      "command": "sketch.line",
+      "params": {
+        "points": [
+          [
+            0,
+            -30
+          ],
+          [
+            0,
+            30
+          ]
+        ],
+        "ids": [
+          "axis"
+        ],
+        "construction": true
+      }
+    },
+    {
+      "command": "sketch.constraint.fix",
+      "params": {
+        "entity": "axis",
+        "fixed": true
+      }
+    },
+    {
+      "command": "sketch.circle.center",
+      "params": {
+        "center": [
+          -30,
+          10
+        ],
+        "diameter": 20,
+        "id": "left"
+      }
+    },
+    {
+      "command": "sketch.circle.center",
+      "params": {
+        "center": [
+          30,
+          10
+        ],
+        "diameter": 20,
+        "id": "right"
+      }
+    },
+    {
+      "command": "sketch.constraint.fix",
+      "params": {
+        "entity": "left.center",
+        "fixed": true
+      }
+    },
+    {
+      "command": "sketch.dimension",
+      "params": {
+        "entities": [
+          "left"
+        ],
+        "type": "diameter",
+        "value": "diameter"
+      }
+    },
+    {
+      "command": "sketch.constraint.symmetry",
+      "params": {
+        "a": "left",
+        "b": "right",
+        "line": "axis"
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Symmetric cylinders"
+      }
+    }
+  ],
+  "expected": {
+    "volume_pi_mm3": 6000,
+    "body_count": 2,
+    "bounds": [
+      [
+        -40,
+        0,
+        0
+      ],
+      [
+        40,
+        20,
+        30
+      ]
+    ],
+    "features": [
+      "Symmetric circles",
+      "Symmetric cylinders"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "diameter",
+        "expression": "30 mm"
+      },
+      "volume_pi_mm3": 13500,
+      "bounds": [
+        [
+          -45,
+          -5,
+          0
+        ],
+        [
+          45,
+          25,
+          30
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "45 mm"
+      },
+      "volume_pi_mm3": 9000,
+      "bounds": [
+        [
+          -40,
+          0,
+          0
+        ],
+        [
+          40,
+          20,
+          45
+        ]
+      ]
+    }
+  ]
+}

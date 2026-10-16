@@ -1,0 +1,226 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "width",
+        "expression": "30 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "depth",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "35 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Rectangle"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            30,
+            20
+          ]
+        },
+        "dimensions": {
+          "width": "width",
+          "height": "depth"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Source extrusion",
+        "operation": "new_body"
+      }
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "sketch": 1,
+        "distance": 11,
+        "name": "Overlapping extrusion",
+        "operation": "new_body"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Projected rectangle"
+      }
+    },
+    {
+      "command": "sketch.project",
+      "params": {
+        "refs": [
+          {
+            "body": "Body1",
+            "edge": [
+              15,
+              0,
+              35
+            ]
+          },
+          {
+            "body": "Body1",
+            "edge": [
+              30,
+              10,
+              35
+            ]
+          },
+          {
+            "body": "Body1",
+            "edge": [
+              15,
+              20,
+              35
+            ]
+          },
+          {
+            "body": "Body1",
+            "edge": [
+              0,
+              10,
+              35
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": 9,
+        "name": "Projected extrusion",
+        "operation": "new_body"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 33000,
+    "body_count": 3,
+    "bounds": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        30,
+        20,
+        35
+      ]
+    ],
+    "features": [
+      "Rectangle",
+      "Source extrusion",
+      "Overlapping extrusion",
+      "Projected rectangle",
+      "Projected extrusion"
+    ],
+    "sketches": [
+      {
+        "name": "Projected rectangle",
+        "curves": 4,
+        "links": 4
+      }
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "width",
+        "expression": "90 mm"
+      },
+      "volume_mm3": 99000,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          90,
+          20,
+          35
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "depth",
+        "expression": "50 mm"
+      },
+      "volume_mm3": 82500,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          30,
+          50,
+          35
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "5 mm"
+      },
+      "volume_mm3": 15000,
+      "bounds": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          30,
+          20,
+          11
+        ]
+      ]
+    }
+  ]
+}

@@ -102,11 +102,20 @@ pub struct WholeProfileBoundary {
     pub holes: Vec<Vec<String>>,
 }
 
+/// Directed analytic source pieces of an outer boundary and each hole.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PieceProfileBoundary {
+    pub outer: Vec<solidcraft_sketch::ProfilePiece>,
+    pub holes: Vec<Vec<solidcraft_sketch::ProfilePiece>>,
+}
+
 /// Which closed profiles of a sketch a feature uses.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ProfileSel {
     /// Every profile.
+    #[default]
     All,
     /// Profiles by index in the solved sketch's profile list.
     Indices { indices: Vec<usize> },
@@ -120,6 +129,13 @@ pub enum ProfileSel {
     OffsetBoundaries { associations: Vec<String> },
     /// Exact whole source coverage, including holes; partial source curves do not match.
     WholeBoundaries { profiles: Vec<WholeProfileBoundary> },
+    /// Exact directed analytic pieces, including all holes and source split counts.
+    PieceBoundaries {
+        profiles: Vec<PieceProfileBoundary>,
+        /// Source circle parameter seams, in sketch-local radians from positive X.
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        circle_seams: std::collections::BTreeMap<String, f64>,
+    },
     /// The profile containing each sketch point.
     Points { points: Vec<Vec2> },
 }
@@ -252,6 +268,9 @@ pub struct Extent {
     /// To Object: end at the face (or vertex/point) at this point, instead of `distance`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to: Option<FacePick>,
+    /// Exact planar endpoint: a live construction plane or certified body face.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_plane: Option<Box<PlaneRef>>,
     /// Offset past the To Object face (expression; negative stops short).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[walk(length = "To offset")]
@@ -567,6 +586,10 @@ pub enum FeatureKind {
         /// (default) or a G2 patch repeating each blend up to the second order.
         #[serde(default, skip_serializing_if = "FilletCorner::is_rolling")]
         corner: FilletCorner,
+        /// Recompute smooth continuations from the selected seed edges. For grouped
+        /// radii this controls the leading group; subsequent groups own their flags.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        tangent_chain: bool,
     },
     Chamfer {
         edges: Vec<Position>,
@@ -583,6 +606,12 @@ pub enum FeatureKind {
         /// Swap which face is the first (by default the one facing up most).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         flip: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        tangent_chain: bool,
+        /// Independently sized trailing edge groups; the remaining leading edges
+        /// use the feature's primary distance, side and tangent-chain choice.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        groups: Vec<ChamferGroup>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<BodyName>,
     },
@@ -700,6 +729,8 @@ pub enum FeatureKind {
     /// Ruled loft through profiles of several sketches, in order.
     Loft {
         sections: Vec<LoftSection>,
+        #[serde(default)]
+        interpolation: LoftInterpolation,
         #[serde(default)]
         operation: Operation,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1553,6 +1584,9 @@ pub enum ExtendTo {
 pub enum FilletStyle {
     #[default]
     Constant,
+    /// The leading edges use `radius`; each additional group consumes its
+    /// ordered trailing edges and owns an independent radius expression.
+    Grouped { groups: Vec<FilletRadiusGroup> },
     /// `radius` is the chord: the width across the blend.
     Chord,
     /// G2 quintic blend of planar faces along a straight edge. `radius` sets the
@@ -1608,7 +1642,7 @@ impl FilletStyle {
     /// What the feature's `radius` is in this style (the label of its parameter).
     pub fn radius_label(&self) -> &'static str {
         match self {
-            FilletStyle::Constant => "Radius",
+            FilletStyle::Constant | FilletStyle::Grouped { .. } => "Radius",
             FilletStyle::Curvature => "Equivalent radius",
             FilletStyle::Chord => "Chord length",
             FilletStyle::Variable { .. } | FilletStyle::Spline { .. } => "Start radius",
@@ -1620,6 +1654,67 @@ impl FilletStyle {
     pub fn spline(knots: &[f64], values: Vec<f64>) -> solidcraft_kernel::RadiusSpline {
         let degree = knots.len().saturating_sub(values.len() + 1);
         solidcraft_kernel::RadiusSpline { degree, knots: knots.to_vec(), radii: values }
+    }
+
+    /// Validate the partition before assigning any radius to an edge.
+    pub fn group_sizes(&self, edge_count: usize) -> Result<Vec<usize>> {
+        let Self::Grouped { groups } = self else { return Ok(vec![edge_count]) };
+        if groups.is_empty() || groups.len() > 63 || edge_count == 0 || edge_count > 1000 {
+            return Err(DocError::Invalid("invalid fillet radius groups".into()));
+        }
+        let mut remaining = edge_count;
+        for group in groups {
+            if group.count == 0 || group.count >= remaining {
+                return Err(DocError::Invalid("fillet radius groups do not partition the selected edges".into()));
+            }
+            remaining -= group.count;
+        }
+        Ok(std::iter::once(remaining).chain(groups.iter().map(|g| g.count)).collect())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
+#[serde(deny_unknown_fields)]
+pub struct FilletRadiusGroup {
+    pub count: usize,
+    #[walk(length = "Group radius")]
+    pub radius: Expr,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tangent_chain: bool,
+}
+
+/// An additional ordered chamfer selection with independent editable parameters.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
+#[serde(deny_unknown_fields)]
+pub struct ChamferGroup {
+    pub count: usize,
+    #[walk(length = "Group distance")]
+    pub distance: Expr,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[walk(length = "Group distance 2")]
+    pub distance2: Option<Expr>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[walk(angle = "Group angle")]
+    pub angle: Option<Expr>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flip: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tangent_chain: bool,
+}
+
+impl ChamferGroup {
+    pub fn group_sizes(groups: &[Self], edge_count: usize) -> Result<Vec<usize>> {
+        if groups.len() > 63 || edge_count == 0 || edge_count > 1000 {
+            return Err(DocError::Invalid("invalid chamfer groups".into()));
+        }
+        let mut remaining = edge_count;
+        for group in groups {
+            if group.count == 0 || group.count >= remaining {
+                return Err(DocError::Invalid("chamfer groups do not partition the selected edges".into()));
+            }
+            remaining -= group.count;
+        }
+        Ok(std::iter::once(remaining).chain(groups.iter().map(|g| g.count)).collect())
     }
 }
 
@@ -1738,15 +1833,30 @@ pub struct Component {
     pub parent: u64,
 }
 
-/// One loft section: profiles of a sketch.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
+/// Saved interpolation semantics. Development formats migrate omitted fields to
+/// uniform; upstream files and new commands use chord-length section parameters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoftInterpolation {
+    Uniform,
+    #[default]
+    ChordLength,
+    /// Three coaxial circles, with a shared chord-length section parameter.
+    CircularChord,
+}
+
+/// One loft section: a sketch profile/point or an exact planar body face.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LoftSection {
+    #[serde(default)]
     pub sketch: SketchId,
-    #[walk(profiles_of = sketch, when = point.is_none())]
+    #[serde(default)]
     pub profiles: ProfileSel,
     /// A sketch point instead of a profile (the loft closes to it, as a pyramid's apex).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub point: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub face: Option<Box<crate::FaceAnchor>>,
 }
 
 /// A section of a surface loft: one chain from a sketch (one profile's boundary, or curves
@@ -1865,6 +1975,10 @@ pub enum PatternKind {
         alignment: solidcraft_sketch::PatternAlignment,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         reversed: bool,
+        /// Distribute copies on both sides of the seed. For even counts the
+        /// negative side has one extra instance; the seed remains unchanged.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        symmetric: bool,
     },
     /// Copies along a chain of sketch curves: instance k moves by path(k·spacing) − path(0),
     /// measured along the path from its start.
@@ -2223,6 +2337,9 @@ pub struct Document {
     pub metadata: crate::Metadata,
     pub params: Vec<Param>,
     pub features: Vec<Feature>,
+    /// Import limitations retained across save/reopen; never an accuracy certificate.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub import_warnings: Vec<String>,
     /// Timeline marker: features at or after this index are rolled back (not evaluated).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub marker: Option<usize>,
@@ -2438,6 +2555,7 @@ impl Document {
             metadata: Default::default(),
             params: Vec::new(),
             features: Vec::new(),
+            import_warnings: Vec::new(),
             marker: None,
             next_id: 1,
             components: Vec::new(),
@@ -3080,6 +3198,11 @@ impl Document {
 
     /// Apply parameter values to every dimension in a sketch (in place).
     pub fn apply_dimension_values(&self, vals: &std::collections::BTreeMap<String, expr::Value>, sk: &mut Sketch) -> Result<()> {
+        for offset in &mut sk.offsets {
+            if let Some(expression) = &offset.distance_expression {
+                offset.distance = Self::eval_in(vals, expression, Kind::Length)?;
+            }
+        }
         for c in &mut sk.constraints {
             if let Some(p) = &c.param {
                 let kind = if c.kind.is_angle() { Kind::Angle } else { Kind::Length };

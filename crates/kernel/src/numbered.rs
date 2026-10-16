@@ -99,7 +99,13 @@ impl NumberedLoop {
         if circle && let Some(Seg2::Arc { center, radius, .. }) = lp.segs.first().copied() {
             let mut a: Vec<f64> =
                 if angles.len() == n { angles.to_vec() } else { (0..n).map(|i| std::f64::consts::TAU * i as f64 / n as f64).collect() };
-            // Keep the given order but make them increase.
+            // Opposing section planes require opposite local winding to keep
+            // their world-space boundaries aligned. Preserve segment lineage.
+            let direction = if lp.signed_area() < 0.0 { -1.0 } else { 1.0 };
+            for angle in &mut a {
+                *angle *= direction;
+            }
+            // Unwrap in the winding direction without changing vertex order.
             for i in 1..a.len() {
                 let Some(prev) = a.get(i - 1).copied() else { continue };
                 if let Some(x) = a.get_mut(i) {
@@ -112,7 +118,7 @@ impl NumberedLoop {
                 .filter_map(|i| {
                     let s = *a.get(i)?;
                     let e = if i + 1 < n { *a.get(i + 1)? } else { a.first()? + std::f64::consts::TAU };
-                    Some(Seg2::Arc { center, radius, start: s, sweep: e - s })
+                    Some(Seg2::Arc { center, radius, start: direction * s, sweep: direction * (e - s) })
                 })
                 .collect();
             return self.resplit_circle(Loop2 { segs });

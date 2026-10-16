@@ -95,6 +95,12 @@ pub(crate) fn validate_raw(value: &Value) -> Result<()> {
         let mut point_owners = std::collections::BTreeMap::new();
         let mut sketch_roles = 0usize;
         for offset in offsets {
+            if let Some(expression) = offset.get("distance_expression").filter(|v| !v.is_null()) {
+                let expression = expression.as_str().ok_or_else(invalid)?;
+                if expression.is_empty() || expression.len() > 4096 {
+                    return Err(invalid());
+                }
+            }
             let Some(topology) = offset.get("topology").filter(|topology| !topology.is_null()) else { continue };
             if groups.len() >= 128 {
                 return Err(invalid());
@@ -179,6 +185,9 @@ pub(crate) fn validate_raw(value: &Value) -> Result<()> {
         }
     }
     fn references(value: &Value) -> Result<()> {
+        if value.get("type").and_then(Value::as_str) == Some("piece_boundaries") {
+            return crate::profile_pieces::validate_raw(value);
+        }
         if value.get("type").and_then(Value::as_str) == Some("whole_boundaries") {
             return validate_whole_reference(value);
         }
@@ -225,6 +234,10 @@ pub(crate) fn validate_typed(document: &Document) -> Result<()> {
             sketches.insert(feature.id, sketch);
         }
         for (sketch, selection) in feature.kind.profile_sels() {
+            if let ProfileSel::PieceBoundaries { profiles, circle_seams } = selection {
+                crate::profile_pieces::validate(profiles)?;
+                crate::profile_pieces::validate_seams(profiles, circle_seams)?;
+            }
             if let ProfileSel::OffsetBoundaries { associations } = selection {
                 // A deleted association or source sketch is a repairable model error,
                 // just like an ordinary missing curve reference. Keep that design loadable.
@@ -388,6 +401,7 @@ mod tests {
             sources: vec![("source".into(), true)],
             outputs: vec!["offset".into()],
             distance: 1.,
+            distance_expression: None,
             closed: true,
             topology: None,
         });
@@ -435,6 +449,7 @@ mod tests {
                             through_all: false,
                             taper: None,
                             to: None,
+                            to_plane: None,
                             to_offset: None,
                             from: None,
                         },

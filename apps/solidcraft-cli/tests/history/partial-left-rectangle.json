@@ -1,0 +1,157 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "width",
+        "expression": "60 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "12 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Divided rectangle"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            60,
+            40
+          ]
+        },
+        "dimensions": {
+          "width": "width",
+          "height": "40 mm"
+        }
+      }
+    },
+    {
+      "command": "sketch.line",
+      "params": {
+        "points": [
+          [
+            20,
+            -10
+          ],
+          [
+            20,
+            50
+          ]
+        ],
+        "ids": [
+          "divider"
+        ],
+        "infer": false,
+        "connect": false
+      }
+    },
+    {
+      "command": "sketch.constraint.fix",
+      "params": {
+        "entity": "divider",
+        "fixed": true
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Selected region",
+        "profiles": {
+          "type": "piece_boundaries",
+          "profiles": [
+            {
+              "outer": [
+                {
+                  "curve": "divider",
+                  "piece": 2,
+                  "count": 3,
+                  "reversed": false
+                },
+                {
+                  "curve": "l1",
+                  "piece": 1,
+                  "count": 2,
+                  "reversed": false
+                },
+                {
+                  "curve": "l3",
+                  "piece": 2,
+                  "count": 2,
+                  "reversed": false
+                },
+                {
+                  "curve": "l4",
+                  "piece": 1,
+                  "count": 1,
+                  "reversed": false
+                }
+              ],
+              "holes": []
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 9600,
+    "body_count": 1,
+    "features": [
+      "Divided rectangle",
+      "Selected region"
+    ],
+    "bounds": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        20,
+        40,
+        12
+      ]
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "width",
+        "expression": "80 mm"
+      },
+      "volume_mm3": 9600
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "20 mm"
+      },
+      "volume_mm3": 16000
+    }
+  ]
+}

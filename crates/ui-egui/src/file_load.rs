@@ -42,11 +42,12 @@ pub struct Request {
     /// What that caller asked of a STEP import besides its path (`up`, `names`): the command
     /// gets them as given.
     pub options: serde_json::Map<String, Value>,
+    pub preference: Option<String>,
 }
 
 impl Request {
     pub fn new(path: &str, kind: Kind) -> Self {
-        Request { path: path.into(), kind, reply: None, scope: None, options: Default::default() }
+        Request { path: path.into(), kind, reply: None, scope: None, options: Default::default(), preference: None }
     }
     fn insert(&self) -> bool {
         self.kind == Kind::Insert
@@ -59,7 +60,11 @@ impl Request {
     }
     fn command(&self) -> (&'static str, Value) {
         match &self.kind {
-            Kind::Open => ("doc.open", self.params()),
+            Kind::Open => {
+                let mut params = self.params();
+                params["f3d_preference"] = json!(self.preference.as_deref().unwrap_or("strict"));
+                ("doc.open", params)
+            }
             Kind::Insert if solidcraft_engine::io::is_mesh_path(&self.path) => ("file.insert_mesh", json!({"path": self.path})),
             Kind::Insert => ("file.insert_step", self.params()),
             Kind::Recover { id, dir } => ("doc.recover", json!({"id": id, "dir": dir})),
@@ -149,6 +154,8 @@ impl Running {
 pub struct FileLoad {
     queued: VecDeque<Request>,
     running: Option<Running>,
+    choice: Option<Request>,
+    report: Option<Vec<String>>,
     /// Tests: the next load waits before this feature until cancelled.
     #[cfg(test)]
     pub hold_at: Option<usize>,
@@ -157,7 +164,7 @@ pub struct FileLoad {
 impl FileLoad {
     /// A file operation is under way: the design waits for it.
     pub fn busy(&self) -> bool {
-        self.running.as_ref().is_some_and(|r| !r.cancelled()) || !self.queued.is_empty()
+        self.choice.is_some() || self.running.as_ref().is_some_and(|r| !r.cancelled()) || !self.queued.is_empty()
     }
     /// The running load's progress: (features rebuilt, timeline length).
     pub fn features(&self) -> Option<(usize, usize)> {
@@ -165,10 +172,12 @@ impl FileLoad {
     }
     /// Nothing running or queued (a cancelled job may still be finishing in [`Self::busy`]'s eyes).
     pub fn idle(&self) -> bool {
-        self.running.is_none() && self.queued.is_empty()
+        self.choice.is_none() && self.running.is_none() && self.queued.is_empty()
     }
     /// Stop the running operation at its next feature and drop the queued ones.
     pub fn cancel(&mut self) {
+        self.choice = None;
+        self.report = None;
         if let Some(r) = &self.running {
             r.progress.cancel();
         }
@@ -248,7 +257,17 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
         }
     };
     let options = ["up", "names"].iter().filter_map(|k| Some((k.to_string(), params?.get(*k).filter(|v| !v.is_null())?.clone()))).collect();
-    let _ = begin_request(app, Request { path: path.into(), kind, reply: Some(req.reply.clone()), scope, options });
+    let _ = begin_request(
+        app,
+        Request {
+            path: path.into(),
+            kind,
+            scope,
+            options,
+            reply: Some(req.reply.clone()),
+            preference: req.params.get("params").and_then(|p| p.get("f3d_preference")).and_then(Value::as_str).map(str::to_owned),
+        },
+    );
     None
 }
 
@@ -277,10 +296,15 @@ fn recovered(app: &mut SolveApp, request: &Request) {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn start(app: &mut SolveApp) {
-    if app.file_load.running.is_some() {
+    if app.file_load.running.is_some() || app.file_load.choice.is_some() || app.file_load.report.is_some() {
         return;
     }
     let Some(request) = app.file_load.queued.pop_front() else { return };
+    if request.kind == Kind::Open && request.reply.is_none() && request.preference.is_none() && solidcraft_engine::io::f3d::is_f3d_path(&request.path)
+    {
+        app.file_load.choice = Some(request);
+        return;
+    }
     if !request.insert() && app.docs.count() >= crate::documents::MAX_OPEN && !crate::documents::active_is_blank(app) {
         let e = "too many open designs; close a tab before opening another";
         app.set_status(e, true);
@@ -758,6 +782,9 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
                     crate::stand_up::offer(app, &request.path, &running.before, Some(&made.result));
                 }
                 let warnings = made.result.get("warnings").and_then(Value::as_array);
+                if request.reply.is_none() && !app.session.doc.import_warnings.is_empty() {
+                    app.file_load.report = Some(app.session.doc.import_warnings.clone());
+                }
                 if let Kind::Recover { .. } = request.kind {
                     recovered(app, request);
                 } else {
@@ -801,6 +828,53 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
 /// its window buttons and the window's resize edges stay live; the design underneath takes no
 /// pointer input until the file is in.
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
+    if let Some(request) = &app.file_load.choice {
+        let mut selected = None;
+        let mut cancel = false;
+        egui::Modal::new(egui::Id::new("f3d_preference")).show(ctx, |ui| {
+            ui.set_max_width(480.0);
+            ui.heading("Open Fusion archive");
+            ui.label(std::path::Path::new(&request.path).file_name().map(|p| p.to_string_lossy()).unwrap_or_default());
+            ui.label("Unsupported features will be omitted and listed in an import report. The recovered shape may be incomplete.");
+            if ui.button("Prefer editability").clicked() { selected = Some("editability"); }
+            ui.label("Rebuild supported sketches and features as editable history.");
+            if ui.button("Prefer correctness").clicked() { selected = Some("correctness"); }
+            ui.label("Try saved native bodies without feature history. If body conversion fails, recover partial history. Final shape accuracy is not guaranteed.");
+            cancel = ui.button("Cancel").clicked();
+        });
+        if let Some(preference) = selected {
+            if let Some(mut request) = app.file_load.choice.take() {
+                request.preference = Some(preference.to_owned());
+                app.file_load.queued.push_front(request);
+            }
+        } else if cancel {
+            app.file_load.choice = None;
+        }
+        return;
+    }
+    if let Some(report) = &app.file_load.report {
+        let mut close = false;
+        egui::Modal::new(egui::Id::new("f3d_import_report")).show(ctx, |ui| {
+            ui.set_max_width(650.0);
+            ui.heading("F3D import report");
+            ui.label("Opened with limitations. Review these before using the recovered model.");
+            egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
+                for warning in report {
+                    ui.label(warning);
+                    ui.separator();
+                }
+            });
+            if ui.button("Copy report").clicked() {
+                ui.ctx().copy_text(report.join("\n"));
+            }
+            close = ui.button("Continue").clicked();
+        });
+        if close {
+            app.file_load.report = None;
+        }
+        return;
+    }
+
     let Some(r) = &app.file_load.running else { return };
     let cancelled = r.cancelled();
     if cancelled && app.file_load.queued.is_empty() {
@@ -919,6 +993,56 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_and_insert_keep_step_options_alongside_f3d_preference() {
+        for kind in [Kind::Open, Kind::Insert] {
+            let mut request = Request::new("part.step", kind);
+            request.options = serde_json::from_value(json!({"up": "y", "names": "instance"})).unwrap();
+            let (command, params) = request.command();
+            assert_eq!(command, if request.insert() { "file.insert_step" } else { "doc.open" });
+            assert_eq!(params["path"], "part.step");
+            assert_eq!(params["up"], "y");
+            assert_eq!(params["names"], "instance");
+        }
+        let mut request = Request::new("part.f3d", Kind::Open);
+        request.preference = Some("editability".into());
+        let (command, params) = request.command();
+        assert_eq!(command, "doc.open");
+        assert_eq!(params, json!({"path": "part.f3d", "f3d_preference": "editability"}));
+    }
+
+    #[test]
+    fn f3d_control_keeps_preference_without_opening_a_dialog() {
+        for preference in ["strict", "editability", "correctness"] {
+            let mut app = SolveApp::new(Session::default(), Default::default());
+            let (request, _reply) = crate::control::ControlRequest::new(
+                "engine.execute",
+                json!({
+                    "command": "doc.open", "params": {"path": "missing.f3d", "f3d_preference": preference}
+                }),
+            );
+            assert!(control(&mut app, request).is_none());
+            assert!(app.file_load.choice.is_none());
+            let running = app.file_load.running.as_ref().unwrap();
+            assert_eq!(running.request.command().1["f3d_preference"], preference);
+            app.file_load.cancel();
+        }
+    }
+
+    #[test]
+    fn interactive_f3d_choice_can_be_cancelled_before_reading_the_file() {
+        let mut app = SolveApp::new(Session::default(), Default::default());
+        let old = app.session.doc.clone();
+        begin(&mut app, "missing.f3d", false);
+        assert!(app.file_load.choice.is_some());
+        assert!(app.file_load.busy());
+        assert!(!app.file_load.idle());
+        assert!(app.file_load.running.is_none());
+        app.file_load.cancel();
+        assert!(app.file_load.idle());
+        assert!(Arc::ptr_eq(&old, &app.session.doc));
+    }
 
     #[test]
     fn opening_result_and_preview_cannot_overwrite_a_newer_design() {

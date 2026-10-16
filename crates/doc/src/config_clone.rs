@@ -77,6 +77,9 @@ impl ConfigTable {
                         target.origin_feature = *origin;
                         if let Some(certificate) = &mut target.certificate {
                             certificate.remap_features(&maps.features);
+                            if let Some(role) = certificate.union_role() {
+                                target.name = format!("F{origin}:{role}");
+                            }
                         }
                         Column::FaceAppearance(target)
                     })

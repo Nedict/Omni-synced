@@ -144,7 +144,7 @@ pub fn read_json(path: &str) -> Result<Value, String> {
 /// A session from a design file, a STEP/3MF/STL file, a command script, or an oracle recipe.
 pub fn load(path: &str) -> Result<Session, String> {
     let mut s = Session::default();
-    if solidcraft_engine::io::is_step_path(path) || solidcraft_engine::io::is_mesh_path(path) {
+    if solidcraft_engine::io::is_step_path(path) || solidcraft_engine::io::is_mesh_path(path) || solidcraft_engine::io::f3d::is_f3d_path(path) {
         s.execute("doc.open", &json!({"path": path})).map_err(|e| e.to_string())?;
         return Ok(s);
     }
@@ -581,14 +581,24 @@ pub(crate) fn cmd_bench_open(args: &[String]) -> Result<(), String> {
     let path = args.first().ok_or("usage: solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only]")?;
     let t = std::time::Instant::now();
     let step = solidcraft_engine::io::is_step_path(path);
-    let limit = if step { solidcraft_engine::io::MAX_STEP_BYTES } else { solidcraft_engine::io::MAX_DESIGN_BYTES };
+    let f3d = solidcraft_engine::io::f3d::is_f3d_path(path);
+    let limit = if f3d {
+        solidcraft_engine::io::f3d::MAX_F3D_BYTES
+    } else if step {
+        solidcraft_engine::io::MAX_STEP_BYTES
+    } else {
+        solidcraft_engine::io::MAX_DESIGN_BYTES
+    };
     let bytes = solidcraft_engine::io::vfs::read(path, limit).map_err(|e| format!("{path}: {e}"))?;
     let read_ms = t.elapsed().as_secs_f64() * 1000.0;
     println!("{}", json!({"step": "read", "ms": read_ms, "bytes": bytes.len()}));
     let t = std::time::Instant::now();
     // The file as read, held until the timeline has evaluated it (as the import command does).
     let mut read = None;
-    let doc = if step {
+    let doc = if f3d {
+        let name = std::path::Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Imported".into());
+        solidcraft_engine::io::f3d::import_f3d(&bytes, &name).map_err(|e| e.to_string())?
+    } else if step {
         let imported = solidcraft_engine::io::step_import_feature(&bytes, path).map_err(|e| e.to_string())?;
         let mut doc = solidcraft_engine::doc::Document::new(&imported.name);
         doc.add_feature(imported.kind, Some(&imported.name)).map_err(|e| e.to_string())?;

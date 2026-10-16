@@ -1,0 +1,157 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "width",
+        "expression": "30 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "depth",
+        "expression": "20 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "17 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "start",
+        "expression": "height / 2",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Rectangle"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            30,
+            20
+          ]
+        },
+        "dimensions": {
+          "width": "width",
+          "height": "depth"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Offset prism",
+        "start_offset": "start"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 10200,
+    "body_count": 1,
+    "bounds": [
+      [
+        0,
+        0,
+        8.5
+      ],
+      [
+        30,
+        20,
+        25.5
+      ]
+    ],
+    "features": [
+      "Rectangle",
+      "Offset prism"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "start",
+        "expression": "-12 mm"
+      },
+      "volume_mm3": 10200,
+      "bounds": [
+        [
+          0,
+          0,
+          -12
+        ],
+        [
+          30,
+          20,
+          5
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "24 mm"
+      },
+      "volume_mm3": 14400,
+      "bounds": [
+        [
+          0,
+          0,
+          12
+        ],
+        [
+          30,
+          20,
+          36
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "width",
+        "expression": "45 mm"
+      },
+      "volume_mm3": 15300,
+      "bounds": [
+        [
+          0,
+          0,
+          8.5
+        ],
+        [
+          45,
+          20,
+          25.5
+        ]
+      ]
+    }
+  ]
+}

@@ -38,9 +38,9 @@ impl Walk for String {}
 impl Walk for std::sync::Arc<str> {}
 impl Walk for bool {}
 impl Walk for u64 {}
+impl Walk for usize {}
 impl Walk for i8 {}
 impl Walk for f64 {}
-impl Walk for usize {}
 impl Walk for u32 {}
 impl Walk for ProfileSel {}
 impl Walk for solidcraft_sketch::Sketch {}
@@ -59,6 +59,47 @@ impl Walk for crate::document::ExtendMode {}
 impl Walk for crate::document::RuledMode {}
 impl Walk for crate::document::RuledCorners {}
 impl Walk for crate::document::ExtrudeConvention {}
+impl Walk for crate::document::LoftInterpolation {}
+
+// Boxed planes are Extent's live To Object endpoint. Their own feature supplies
+// the parameters; adding inputs here would renumber existing saved dN bindings.
+impl Walk for Box<PlaneRef> {
+    fn walk_refs<'a>(&'a self, f: &mut dyn FnMut(RefItem<'a>)) {
+        self.as_ref().walk_refs(f);
+    }
+    fn walk_refs_mut<'a>(&'a mut self, f: &mut dyn FnMut(RefItemMut<'a>)) {
+        self.as_mut().walk_refs_mut(f);
+    }
+    fn walk_geometry<'a>(&'a self, f: &mut dyn FnMut(GeoItem<'a>)) {
+        self.as_ref().walk_geometry(f);
+    }
+    fn walk_geometry_mut<'a>(&'a mut self, f: &mut dyn FnMut(GeoItemMut<'a>)) {
+        self.as_mut().walk_geometry_mut(f);
+    }
+}
+
+impl Walk for crate::document::LoftSection {
+    fn walk_refs<'a>(&'a self, f: &mut dyn FnMut(RefItem<'a>)) {
+        if self.face.is_none() {
+            f(Ref::Sketch(&self.sketch));
+        }
+    }
+    fn walk_refs_mut<'a>(&'a mut self, f: &mut dyn FnMut(RefItemMut<'a>)) {
+        if self.face.is_none() {
+            f(Ref::Sketch(&mut self.sketch));
+        }
+    }
+    fn walk_geometry<'a>(&'a self, f: &mut dyn FnMut(GeoItem<'a>)) {
+        if self.face.is_none() && self.point.is_none() {
+            f(Geo::Profiles(self.sketch.0, &self.profiles));
+        }
+    }
+    fn walk_geometry_mut<'a>(&'a mut self, f: &mut dyn FnMut(GeoItemMut<'a>)) {
+        if self.face.is_none() && self.point.is_none() {
+            f(Geo::Profiles(self.sketch.0, &mut self.profiles));
+        }
+    }
+}
 
 /// A reference walks itself: a sketch, a feature or a body.
 macro_rules! reference {

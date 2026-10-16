@@ -383,6 +383,7 @@
   "cmd.file_export": "エクスポート",
   "cmd.file_insert_mesh": "メッシュを挿入",
   "cmd.file_insert_step": "STEP を挿入",
+  "cmd.file_inspect_f3d": "F3D アーカイブを解析",
   "cmd.file_save_mesh": "メッシュとして保存",
   "cmd.file_slicers": "インストール済みのスライサー",
   "cmd.inspect_accessibility": "アクセシビリティ解析",

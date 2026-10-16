@@ -1,0 +1,188 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "endpoint_x",
+        "expression": "10 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "10 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Fixed arc support"
+      }
+    },
+    {
+      "command": "sketch.arc.center_point",
+      "params": {
+        "center": [
+          0,
+          0
+        ],
+        "start": [
+          30,
+          0
+        ],
+        "end": [
+          10,
+          28.284271247461902
+        ],
+        "id": "arc",
+        "infer": false
+      }
+    },
+    {
+      "command": "sketch.constraint.fix",
+      "params": {
+        "entity": "arc.center",
+        "fixed": true
+      }
+    },
+    {
+      "command": "sketch.constraint.horizontal_vertical",
+      "params": {
+        "points": [
+          "arc.center",
+          "arc.start"
+        ],
+        "mode": "horizontal"
+      }
+    },
+    {
+      "command": "sketch.dimension",
+      "params": {
+        "entities": [
+          "arc"
+        ],
+        "type": "radius",
+        "value": "30 mm"
+      }
+    },
+    {
+      "command": "sketch.dimension",
+      "params": {
+        "entities": [
+          "arc.center",
+          "arc.end"
+        ],
+        "type": "horizontal",
+        "value": "endpoint_x"
+      }
+    },
+    {
+      "command": "sketch.line",
+      "params": {
+        "points": [
+          "arc.end",
+          "arc.start"
+        ],
+        "id": "chord",
+        "infer": false
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Arc segment"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 1296.6766909142011,
+    "bounds": [
+      [
+        10,
+        0,
+        0
+      ],
+      [
+        30,
+        28.284271247461902,
+        10
+      ]
+    ],
+    "body_count": 1,
+    "features": [
+      "Fixed arc support",
+      "Arc segment"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "endpoint_x",
+        "expression": "20 mm"
+      },
+      "volume_mm3": 430.70705130600146,
+      "bounds": [
+        [
+          20,
+          0,
+          0
+        ],
+        [
+          30,
+          22.360679774997898,
+          10
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "endpoint_x",
+        "expression": "5 mm"
+      },
+      "volume_mm3": 1878.0072767637205,
+      "bounds": [
+        [
+          5,
+          0,
+          0
+        ],
+        [
+          30,
+          29.58039891549808,
+          10
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "17 mm"
+      },
+      "volume_mm3": 2204.350374554142,
+      "bounds": [
+        [
+          10,
+          0,
+          0
+        ],
+        [
+          30,
+          28.284271247461902,
+          17
+        ]
+      ]
+    }
+  ]
+}

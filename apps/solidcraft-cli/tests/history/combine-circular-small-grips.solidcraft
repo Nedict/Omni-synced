@@ -1,0 +1,538 @@
+{
+  "format": "solidcraft-f3d-dev/30",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "diameter",
+      "expr": "6 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "-12 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "edgeSize",
+      "expr": "0.1 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "copies",
+      "expr": "10",
+      "unit": "",
+      "model": false
+    },
+    {
+      "name": "d3",
+      "expr": "diameter",
+      "unit": "mm",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Stock outline",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              -7.5,
+              -7.5
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              7.5,
+              -7.5
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p3",
+            "pos": [
+              7.5,
+              7.5
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p4",
+            "pos": [
+              -7.5,
+              7.5
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "l1",
+            "type": "line",
+            "a": 1,
+            "b": 2,
+            "construction": false
+          },
+          {
+            "id": "l2",
+            "type": "line",
+            "a": 2,
+            "b": 3,
+            "construction": false
+          },
+          {
+            "id": "l3",
+            "type": "line",
+            "a": 3,
+            "b": 4,
+            "construction": false
+          },
+          {
+            "id": "l4",
+            "type": "line",
+            "a": 4,
+            "b": 1,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "horizontal",
+            "l": 0
+          },
+          {
+            "id": "k2",
+            "type": "horizontal",
+            "l": 2
+          },
+          {
+            "id": "k3",
+            "type": "vertical",
+            "l": 1
+          },
+          {
+            "id": "k4",
+            "type": "vertical",
+            "l": 3
+          }
+        ],
+        "counters": {
+          "k": 4,
+          "l": 4,
+          "p": 4
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Stock",
+      "suppressed": false,
+      "body_names": [
+        "Stock"
+      ],
+      "param_names": [
+        "d1"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "-10 mm",
+        "convention": "total_distance",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 3,
+      "name": "Circular opening",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "c1.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "c1",
+            "type": "circle",
+            "c": 1,
+            "r": 3.0,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 1
+          }
+        ],
+        "counters": {
+          "c": 1,
+          "k": 1
+        }
+      }
+    },
+    {
+      "id": 4,
+      "name": "Opening",
+      "suppressed": false,
+      "param_names": [
+        "d2"
+      ],
+      "type": "extrude",
+      "sketch": 3,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "-10 mm",
+        "convention": "total_distance",
+        "direction": "positive"
+      },
+      "operation": "cut",
+      "targets": [
+        "Stock"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Mixed profile",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              -0.48,
+              -3.5
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              0.02,
+              -3.5
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p3",
+            "pos": [
+              0.02,
+              -2.5
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p4",
+            "pos": [
+              -0.48,
+              -2.5
+            ],
+            "fixed": false
+          },
+          {
+            "id": "circle.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "l1",
+            "type": "line",
+            "a": 1,
+            "b": 2,
+            "construction": false,
+            "fixed": true
+          },
+          {
+            "id": "l2",
+            "type": "line",
+            "a": 2,
+            "b": 3,
+            "construction": false,
+            "fixed": true
+          },
+          {
+            "id": "l3",
+            "type": "line",
+            "a": 3,
+            "b": 4,
+            "construction": false,
+            "fixed": true
+          },
+          {
+            "id": "l4",
+            "type": "line",
+            "a": 4,
+            "b": 1,
+            "construction": false,
+            "fixed": true
+          },
+          {
+            "id": "circle",
+            "type": "circle",
+            "c": 5,
+            "r": 3.0,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "horizontal",
+            "l": 0
+          },
+          {
+            "id": "k2",
+            "type": "horizontal",
+            "l": 2
+          },
+          {
+            "id": "k3",
+            "type": "vertical",
+            "l": 1
+          },
+          {
+            "id": "k4",
+            "type": "vertical",
+            "l": 3
+          },
+          {
+            "id": "k5",
+            "type": "coincident",
+            "p": 0,
+            "q": 5
+          },
+          {
+            "id": "k6",
+            "type": "diameter",
+            "c": 4,
+            "value": 6.0,
+            "param": "d3"
+          }
+        ],
+        "counters": {
+          "k": 6,
+          "l": 4,
+          "p": 4
+        }
+      }
+    },
+    {
+      "id": 6,
+      "name": "Mixed prism",
+      "suppressed": false,
+      "body_names": [
+        "Grip"
+      ],
+      "param_names": [
+        "d4"
+      ],
+      "type": "extrude",
+      "sketch": 5,
+      "profiles": {
+        "type": "indices",
+        "indices": [
+          2
+        ]
+      },
+      "extent": {
+        "distance": "height",
+        "convention": "total_distance",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 7,
+      "name": "Corner blend",
+      "suppressed": false,
+      "param_names": [
+        "d5"
+      ],
+      "edge_refs": [
+        {
+          "dir": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "min": [
+            -0.48,
+            -2.99993333331169,
+            -12.000000000003421
+          ],
+          "max": [
+            0.02,
+            -2.5,
+            0.0
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "min": [
+            -0.48,
+            -2.99993333331169,
+            -12.000000000003421
+          ],
+          "max": [
+            0.02,
+            -2.5,
+            0.0
+          ]
+        }
+      ],
+      "edge_names": [
+        "F6:side:l3|F6:side:l4",
+        "F6:side:l2|F6:side:l3"
+      ],
+      "type": "fillet",
+      "edges": [
+        [
+          -0.48,
+          -2.5,
+          -6.0
+        ],
+        [
+          0.02,
+          -2.5,
+          -6.0
+        ]
+      ],
+      "radius": "edgeSize",
+      "body": "Grip"
+    },
+    {
+      "id": 8,
+      "name": "Grip pattern",
+      "suppressed": false,
+      "body_names": [
+        "Copy1",
+        "Copy2",
+        "Copy3",
+        "Copy4",
+        "Copy5",
+        "Copy6",
+        "Copy7",
+        "Copy8",
+        "Copy9"
+      ],
+      "param_names": [
+        "d6",
+        "d7"
+      ],
+      "type": "pattern",
+      "features": [],
+      "pattern": {
+        "type": "circular",
+        "origin": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "axis": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "count": "copies",
+        "angle": "360 deg"
+      },
+      "bodies": [
+        "Grip"
+      ]
+    },
+    {
+      "id": 9,
+      "name": "Joined grips",
+      "suppressed": false,
+      "type": "combine",
+      "target": "Stock",
+      "tools": [
+        "Grip",
+        "Copy1",
+        "Copy2",
+        "Copy3",
+        "Copy4",
+        "Copy5",
+        "Copy6",
+        "Copy7",
+        "Copy8",
+        "Copy9"
+      ],
+      "operation": "join",
+      "keep_tools": false
+    }
+  ],
+  "next_id": 10
+}

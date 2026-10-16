@@ -29,6 +29,40 @@ fn new_sketch() -> Session {
     s
 }
 
+#[test]
+fn offset_distance_expressions_survive_edits_reopening_and_parameter_cleanup() {
+    for side in [false, true] {
+        let mut s = new_sketch();
+        run(&mut s, "parameters.add", json!({"name":"gap","expression":"3 mm","unit":"mm"}));
+        run(&mut s, "sketch.circle.center", json!({"center":[0,0],"radius":10,"id":"source"}));
+        let mut args = json!({"curves":["source"],"distance":"gap"});
+        if side {
+            args["side"] = json!([20, 0]);
+        }
+        let out = run(&mut s, "sketch.offset", args);
+        let output = out["curves"][0].as_str().unwrap();
+        assert!(s.execute("parameters.delete", &json!({"name":"gap"})).is_err());
+        assert!(s.doc.param_graph().iter().any(|(_, name)| name == "gap"));
+        std::sync::Arc::make_mut(&mut s.doc).rename_param("gap", "spacing").unwrap();
+        assert!(s.doc.param_users("gap").is_empty());
+        assert!(!s.doc.param_users("spacing").is_empty());
+        assert!(s.doc.param_graph().iter().any(|(_, name)| name == "spacing"));
+        run(&mut s, "parameters.change", json!({"name":"spacing","expression":"5 mm"}));
+        let verify = |s: &Session| {
+            let state = s.model.state();
+            let sk = &state.sketches[0].sketch;
+            let CurveKind::Circle { r, .. } = sk.curves[sk.curve_index(output).unwrap()].kind else { panic!("circle") };
+            assert!((r - if side { 15. } else { 5. }).abs() < 1e-7);
+        };
+        verify(&s);
+        verify(&Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap()));
+        run(&mut s, "edit.undo", json!({}));
+        let sk = sketch(&s);
+        let CurveKind::Circle { r, .. } = sk.curves[sk.curve_index(output).unwrap()].kind else { panic!("circle") };
+        assert!((r - if side { 13. } else { 7. }).abs() < 1e-7);
+    }
+}
+
 fn profiles(s: &Session) -> Vec<f64> {
     let id = s.active_sketch.unwrap();
     let mut a: Vec<f64> = s.model.state().sketch(id).unwrap().profiles.iter().map(|p| p.area).collect();

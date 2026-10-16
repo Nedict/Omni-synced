@@ -1,0 +1,155 @@
+{
+  "format": "solidcraft/12",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "outerDiameter",
+      "expr": "60 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "innerDiameter",
+      "expr": "20 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "12 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "d1",
+      "expr": "outerDiameter",
+      "unit": "mm",
+      "model": true
+    },
+    {
+      "name": "d2",
+      "expr": "innerDiameter",
+      "unit": "mm",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Annulus",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "outer.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "inner.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "outer",
+            "type": "circle",
+            "c": 1,
+            "r": 30.0,
+            "construction": false
+          },
+          {
+            "id": "inner",
+            "type": "circle",
+            "c": 2,
+            "r": 10.0,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 1
+          },
+          {
+            "id": "k2",
+            "type": "diameter",
+            "c": 0,
+            "value": 60.0,
+            "param": "d1"
+          },
+          {
+            "id": "k3",
+            "type": "coincident",
+            "p": 0,
+            "q": 2
+          },
+          {
+            "id": "k4",
+            "type": "diameter",
+            "c": 1,
+            "value": 20.0,
+            "param": "d2"
+          }
+        ],
+        "counters": {
+          "k": 4
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Ring",
+      "suppressed": false,
+      "param_names": [
+        "d3"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "whole_boundaries",
+        "profiles": [
+          {
+            "outer": [
+              "outer"
+            ],
+            "holes": [
+              [
+                "inner"
+              ]
+            ]
+          }
+        ]
+      },
+      "extent": {
+        "distance": "height",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    }
+  ],
+  "next_id": 3
+}

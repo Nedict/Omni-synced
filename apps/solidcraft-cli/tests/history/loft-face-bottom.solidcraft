@@ -1,0 +1,249 @@
+{
+  "format": "solidcraft-f3d-dev/18",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "size",
+      "expr": "20 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "-30 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "base_height",
+      "expr": "10 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "d1",
+      "expr": "size",
+      "unit": "mm",
+      "model": true
+    },
+    {
+      "name": "d5",
+      "expr": "40 mm",
+      "unit": "mm",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Lower section",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "c1.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "c1",
+            "type": "circle",
+            "c": 1,
+            "r": 10.0,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 1
+          },
+          {
+            "id": "k2",
+            "type": "diameter",
+            "c": 0,
+            "value": 20.0,
+            "param": "d1"
+          }
+        ],
+        "counters": {
+          "c": 1,
+          "k": 2
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Pedestal",
+      "suppressed": false,
+      "param_names": [
+        "d2",
+        "d3"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "base_height",
+        "direction": "positive",
+        "taper": "0 deg"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 3,
+      "name": "Upper plane",
+      "suppressed": false,
+      "param_names": [
+        "d4"
+      ],
+      "type": "construction_plane",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "height"
+      }
+    },
+    {
+      "id": 4,
+      "name": "Upper section",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "construction",
+        "name": "Upper plane"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "c1.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "c1",
+            "type": "circle",
+            "c": 1,
+            "r": 20.0,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "coincident",
+            "p": 0,
+            "q": 1
+          },
+          {
+            "id": "k2",
+            "type": "diameter",
+            "c": 0,
+            "value": 40.0,
+            "param": "d5"
+          }
+        ],
+        "counters": {
+          "c": 1,
+          "k": 2
+        }
+      }
+    },
+    {
+      "id": 5,
+      "name": "Transition",
+      "suppressed": false,
+      "type": "loft",
+      "sections": [
+        {
+          "sketch": 0,
+          "profiles": {
+            "type": "all"
+          },
+          "face": {
+            "target": {
+              "body": "Body1",
+              "origin_feature": 2,
+              "name": "F2:cap:low:7413f52a973aff7f96f4640d0279843de057931afd8c2eb678e06607c9d37214",
+              "point": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "certificate": {
+                "kind": "extrude_cap",
+                "sketch": 1,
+                "high": false,
+                "outer": [
+                  "c1"
+                ],
+                "holes": []
+              }
+            },
+            "component": 0,
+            "path": [],
+            "author_path": [],
+            "coordinates": [
+              0.0,
+              0.0
+            ],
+            "x_axis": [
+              1.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "sketch": 4,
+          "profiles": {
+            "type": "all"
+          }
+        }
+      ],
+      "operation": "new_body",
+      "targets": [
+        "Body1"
+      ]
+    }
+  ],
+  "next_id": 6
+}

@@ -20,7 +20,7 @@ fn unsupported(msg: &str) -> KernelError {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum Seg {
+pub(crate) enum Seg {
     Line {
         a: Vec3,
         b: Vec3,
@@ -57,7 +57,7 @@ impl Seg {
 }
 
 /// The exact shape of an oriented loop edge (a line, or an arc found from samples).
-fn seg_of(e: &mt::Edge, tol: f64) -> Option<Seg> {
+pub(crate) fn seg_of(e: &mt::Edge, tol: f64) -> Option<Seg> {
     use mt::{BoundedCurve, ParametricCurve};
     let (a, b) = (from_p3(e.front().point()), from_p3(e.back().point()));
     let c = e.oriented_curve();
@@ -173,7 +173,7 @@ pub(crate) fn loop_blend(solid: &Solid, edge_ids: &[mt::EdgeID], size: f64, r: f
                     continue;
                 }
                 if ids.len() == edge_ids.len() {
-                    return Some(build(solid, si, &faces, fi, wi, n, size, tol, r, round, None));
+                    return Some(build(solid, si, &faces, fi, wi, n, size, tol, r, round, None, None));
                 }
                 // A run of neighbouring edges of the loop (its ends meet unblended edges).
                 let m = ids.len();
@@ -182,8 +182,58 @@ pub(crate) fn loop_blend(solid: &Solid, edge_ids: &[mt::EdgeID], size: f64, r: f
                 if let [s0] = starts[..]
                     && (0..edge_ids.len()).all(|j| inside(s0 + j))
                 {
-                    return Some(build(solid, si, &faces, fi, wi, n, size, tol, r, round, Some((s0, edge_ids.len()))));
+                    return Some(build(solid, si, &faces, fi, wi, n, size, tol, r, round, Some((s0, edge_ids.len())), None));
                 }
+            }
+        }
+    }
+    None
+}
+
+/// Unequal setbacks on a complete circular cap. Side one is the planar cap;
+/// `flip` exchanges it with the cylindrical wall, independent of world placement.
+pub(crate) fn circle_chamfer(
+    solid: &Solid,
+    edge_ids: &[mt::EdgeID],
+    size: f64,
+    first: f64,
+    second: crate::ChamferSide,
+    flip: bool,
+) -> Option<Result<(Solid, Rebuild)>> {
+    let tol = (size * 1e-6).max(1e-7);
+    for (si, shell) in solid.boundaries().iter().enumerate() {
+        let faces: Vec<_> = shell.face_iter().collect();
+        for (fi, f) in faces.iter().enumerate() {
+            let Some(n) = plane_normal(f) else { continue };
+            for (wi, w) in f.boundaries().iter().enumerate() {
+                let edges: Vec<_> = w.edge_iter().collect();
+                if edges.len() != edge_ids.len() || !edges.iter().all(|e| edge_ids.contains(&e.id())) {
+                    continue;
+                }
+                let mut circle: Option<(Vec3, f64)> = None;
+                let mut sweep = 0.;
+                let valid = edges.iter().all(|e| {
+                    let Some(Seg::Arc { a, c, axis, angle, mid }) = seg_of(e, tol) else { return false };
+                    let radius = a.dist(c);
+                    if axis.dot(n).abs() < 1. - 1e-8 || circle.is_some_and(|(center, r)| center.dist(c) > tol || (r - radius).abs() > tol) {
+                        return false;
+                    }
+                    circle = Some((c, radius));
+                    sweep += angle;
+                    let walls: Vec<_> = faces.iter().filter(|g| !std::ptr::eq(**g, *f) && g.edge_iter().any(|x| x.id() == e.id())).collect();
+                    let [wall] = walls.as_slice() else { return false };
+                    [a, mid].iter().all(|p| face_normal(wall, *p).is_some_and(|wn| wn.dot(n).abs() < 1e-8))
+                });
+                if !valid || (sweep - std::f64::consts::TAU).abs() > 1e-7 {
+                    continue;
+                }
+                let second = match second {
+                    crate::ChamferSide::Distance(d) => d,
+                    crate::ChamferSide::Angle(a) if a < std::f64::consts::FRAC_PI_2 - 1e-9 => first * a.tan(),
+                    _ => return Some(Err(KernelError::Invalid("that chamfer angle runs past the other face".into()))),
+                };
+                let (cap, wall) = if flip { (second, first) } else { (first, second) };
+                return Some(build(solid, si, &faces, fi, wi, n, size, tol, cap, false, None, Some(wall)));
             }
         }
     }
@@ -203,6 +253,7 @@ fn build(
     r: f64,
     round: bool,
     run: Option<(usize, usize)>,
+    wall_setback: Option<f64>,
 ) -> Result<(Solid, Rebuild)> {
     let f = faces.get(fi).ok_or_else(|| KernelError::Failed("face".into()))?;
     let wire = f.boundaries().get(wi).cloned().ok_or_else(|| KernelError::Failed("loop".into()))?;
@@ -348,7 +399,7 @@ fn build(
         centres.push(p + (m + t).normalized().unwrap_or(m) * dc);
         if !mitre.get(i).copied().unwrap_or(false) {
             pa.push(p + m * sb);
-            pb.push(p + t * sb);
+            pb.push(p + t * wall_setback.unwrap_or(sb));
             continue;
         }
         // Sharp joint: the face rails meet where the two offset lines cross; the wall rails
@@ -507,7 +558,7 @@ fn build(
     };
     let wall_off = |p: Vec3, s: &Seg| {
         let i = piece_of(s);
-        frame(i, p).map(|(_, t, sb, _)| p + t * sb).unwrap_or(p)
+        frame(i, p).map(|(_, t, sb, _)| p + t * wall_setback.unwrap_or(sb)).unwrap_or(p)
     };
     let face_rails: Vec<Option<mt::Edge>> = (0..k).map(|i| rail(&va, i, &face_off)).collect();
     if face_rails.iter().zip(&collapsed).any(|(r, c)| r.is_none() && !c) {
@@ -719,4 +770,54 @@ fn build(
     }
     let solid = Solid::try_new(shells).map_err(|e| KernelError::Failed(format!("loop blend produced an invalid solid: {e}")))?;
     Ok((solid, rec))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn asymmetric_circular_caps_preserve_contacts_and_face_history() {
+        for axis in [Vec3::Z, Vec3::Y, -Vec3::Z] {
+            let body = crate::build::cylinder(Vec3::ZERO, axis, 20., 40.).unwrap();
+            for top in [false, true] {
+                let z = if top { 40. } else { 0. };
+                let mesh = body.tessellate(0.01).unwrap();
+                let picks: Vec<_> =
+                    mesh.edges.iter().filter(|e| e.len() > 2 && e.iter().all(|p| (p.dot(axis) - z).abs() < 1e-7)).map(|e| e[e.len() / 2]).collect();
+                assert_eq!(picks.len(), 2);
+                for flip in [false, true] {
+                    for side in [crate::ChamferSide::Distance(3.), crate::ChamferSide::Angle(std::f64::consts::PI / 6.)] {
+                        let second = match side {
+                            crate::ChamferSide::Distance(d) => d,
+                            crate::ChamferSide::Angle(a) => 2. * a.tan(),
+                        };
+                        let (radial, axial) = if flip { (second, 2.) } else { (2., second) };
+                        let result = crate::chamfer_sides(&body, &picks, 2., side, flip).unwrap();
+                        assert!(result.history().is_some());
+                        let mesh = result.tessellate(0.01).unwrap();
+                        let cap_radius =
+                            mesh.edges.iter().flatten().filter(|p| (p.dot(axis) - z).abs() < 1e-7).map(|p| (*p - axis * z).len()).fold(0., f64::max);
+                        assert!((cap_radius - (20. - radial)).abs() < 1e-5);
+                        let contact = z + if top { -axial } else { axial };
+                        assert!(mesh.edges.iter().any(|e| e.len() > 2
+                            && e.iter().all(|p| (p.dot(axis) - contact).abs() < 1e-5 && ((*p - axis * contact).len() - 20.).abs() < 1e-5)));
+                        let volume = crate::measure(&result).unwrap().volume;
+                        let expected = std::f64::consts::PI * (20. * 20. * 40. - radial * axial * (20. - radial / 3.));
+                        assert!((volume - expected).abs() < expected * 2e-4);
+                    }
+                }
+                assert!(crate::chamfer_sides(&body, &picks, 21., crate::ChamferSide::Distance(2.), false).is_err());
+                assert!(crate::chamfer_sides(&body, &picks, 2., crate::ChamferSide::Distance(41.), false).is_err());
+                assert!(crate::chamfer_sides(&body, &picks, 2., crate::ChamferSide::Angle(2.), false).is_err());
+                assert!(crate::chamfer_sides(&body, &picks[..1], 2., crate::ChamferSide::Distance(3.), false).is_err());
+                let mut invalid = picks.clone();
+                invalid.push(Vec3::new(1000., 1000., 1000.));
+                assert!(crate::chamfer_sides(&body, &invalid, 2., crate::ChamferSide::Distance(3.), false).is_err());
+                let mut duplicate = picks.clone();
+                duplicate.push(picks[0]);
+                assert!(crate::chamfer_sides(&body, &duplicate, 2., crate::ChamferSide::Distance(3.), false).is_err());
+            }
+        }
+    }
 }

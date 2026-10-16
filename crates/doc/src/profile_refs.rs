@@ -137,6 +137,7 @@ pub fn profile_selection_indices(ss: &SolvedSketch, selection: &ProfileSel) -> R
             associations.iter().map(|id| unique_profile(ss, &ss.sketch.offset_boundary(id)?)).collect::<Result<Vec<_>>>()?
         }
         ProfileSel::WholeBoundaries { profiles } => whole_profile_indices(ss, profiles)?,
+        ProfileSel::PieceBoundaries { profiles, circle_seams } => crate::profile_pieces::indices(ss, profiles, circle_seams)?,
         ProfileSel::Points { points } => {
             let mut indices = Vec::with_capacity(points.len());
             for point in points {
@@ -320,6 +321,7 @@ mod tests {
                         through_all: false,
                         taper: None,
                         to: None,
+                        to_plane: None,
                         to_offset: None,
                         from: None,
                     },
@@ -447,6 +449,7 @@ mod tests {
                         through_all: false,
                         taper: None,
                         to: None,
+                        to_plane: None,
                         to_offset: None,
                         from: None,
                     },

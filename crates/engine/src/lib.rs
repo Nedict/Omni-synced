@@ -992,15 +992,25 @@ mod derived_units_tests;
 #[cfg(test)]
 mod display_mesh_tests;
 #[cfg(test)]
+mod extent_target_tests;
+#[cfg(test)]
 mod extent_tests;
 #[cfg(test)]
 mod face_name_tests;
+#[cfg(test)]
+mod fillet_chain_tests;
+#[cfg(test)]
+mod fillet_groups_tests;
 #[cfg(test)]
 mod hole_face_tests;
 #[cfg(test)]
 mod hole_matrix_tests;
 #[cfg(test)]
 mod large_assembly_tests;
+#[cfg(test)]
+mod loft_face_tests;
+#[cfg(test)]
+mod loft_union_tests;
 #[cfg(test)]
 mod measure_centre_tests;
 #[cfg(test)]

@@ -1,0 +1,226 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "diameter",
+        "expression": "10 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "30 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "plane_offset",
+        "expression": "0 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Base rectangle"
+      }
+    },
+    {
+      "command": "sketch.rectangle.two_point",
+      "params": {
+        "p0": [
+          -40,
+          -30
+        ],
+        "p1": [
+          40,
+          30
+        ]
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": 20,
+        "name": "Base extrusion",
+        "body_name": "Base"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Source circle"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.circle.center",
+        "params": {
+          "center": [
+            20,
+            0
+          ],
+          "diameter": 10
+        },
+        "dimensions": {
+          "diameter": "diameter"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "operation": "join",
+        "name": "Source extrusion",
+        "targets": [
+          "Base"
+        ]
+      }
+    },
+    {
+      "command": "construct.plane.offset",
+      "params": {
+        "base": "YZ",
+        "offset": "plane_offset",
+        "name": "Mirror plane"
+      }
+    },
+    {
+      "command": "solid.mirror",
+      "params": {
+        "features": [
+          "Source extrusion"
+        ],
+        "plane": "Mirror plane",
+        "name": "Reflected feature"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 97570.7963267949,
+    "body_count": 1,
+    "bounds": [
+      [
+        -40,
+        -30,
+        0
+      ],
+      [
+        40,
+        30,
+        30
+      ]
+    ],
+    "features": [
+      "Base rectangle",
+      "Base extrusion",
+      "Source circle",
+      "Source extrusion",
+      "Mirror plane",
+      "Reflected feature"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "diameter",
+        "expression": "15 mm"
+      },
+      "volume_mm3": 99534.29173528851,
+      "body_count": 1,
+      "bounds": [
+        [
+          -40,
+          -30,
+          0
+        ],
+        [
+          40,
+          30,
+          30
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "40 mm"
+      },
+      "volume_mm3": 99141.59265358979,
+      "body_count": 1,
+      "bounds": [
+        [
+          -40,
+          -30,
+          0
+        ],
+        [
+          40,
+          30,
+          40
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "plane_offset",
+        "expression": "5 mm"
+      },
+      "volume_mm3": 97570.7963267949,
+      "body_count": 1,
+      "bounds": [
+        [
+          -40,
+          -30,
+          0
+        ],
+        [
+          40,
+          30,
+          30
+        ]
+      ]
+    },
+    {
+      "command": "timeline.suppress",
+      "params": {
+        "feature": "Reflected feature",
+        "suppressed": true
+      },
+      "volume_mm3": 96785.39816339745,
+      "body_count": 1,
+      "bounds": [
+        [
+          -40,
+          -30,
+          0
+        ],
+        [
+          40,
+          30,
+          30
+        ]
+      ]
+    }
+  ]
+}

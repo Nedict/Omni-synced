@@ -23,7 +23,30 @@ fn piece_names_parse_into_stem_and_bounding_faces() {
 }
 
 fn named(names: &[&str]) -> Vec<Named> {
-    names.iter().map(|n| Named { name: n.to_string(), aliases: Vec::new(), verified: true, origins: None }).collect()
+    names.iter().map(|n| Named { name: n.to_string(), aliases: Vec::new(), verified: true, families: BTreeSet::new(), origins: None }).collect()
+}
+
+#[test]
+fn exact_families_survive_ambiguous_pieces_but_never_certify_their_numbers() {
+    let names = qualify(named(&["F2:side:c1", "F2:side:c1", "F4:top"]), &[(0, 2), (1, 2)]);
+    for info in &names.info[..2] {
+        assert!(!info.verified);
+        assert_eq!(info.families, BTreeSet::from(["F2:side:c1".into()]));
+    }
+    let split = |index: usize| Named {
+        name: names.faces[index].clone(),
+        aliases: Vec::new(),
+        verified: false,
+        families: names.info[index].families.clone(),
+        origins: None,
+    };
+    let downstream = qualify(vec![split(0), split(0), split(1)], &[]);
+    assert!(downstream.info.iter().all(|info| info.families == names.info[0].families));
+    let joined = qualify(vec![merged(vec![split(0), split(1)]).unwrap()], &[]);
+    assert_eq!(joined.info[0].families, names.info[0].families);
+    assert!(!joined.info[0].verified);
+    let geometric = Names::unverified(vec!["F2:side:c1".into(), "F2:side:c1".into()], &[]);
+    assert!(geometric.info.iter().all(|info| info.families.is_empty()));
 }
 
 #[test]

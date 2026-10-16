@@ -1,0 +1,165 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "radius",
+        "expression": "30 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "12 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Split semicircle"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.arc.center_point",
+        "params": {
+          "center": [
+            0,
+            0
+          ],
+          "start": [
+            15.000000000000004,
+            25.980762113533157
+          ],
+          "sweep": 180,
+          "id": "arc",
+          "infer": false
+        },
+        "dimensions": {
+          "radius": "radius",
+          "sweep": "180 deg"
+        }
+      }
+    },
+    {
+      "command": "sketch.line",
+      "params": {
+        "points": [
+          "arc.end",
+          "arc.start"
+        ],
+        "infer": false,
+        "ids": [
+          "chord"
+        ]
+      }
+    },
+    {
+      "command": "sketch.dimension",
+      "params": {
+        "entities": [
+          "chord"
+        ],
+        "type": "angle",
+        "value": "60 deg"
+      }
+    },
+    {
+      "command": "sketch.line",
+      "params": {
+        "points": [
+          [
+            13.660254037844386,
+            3.6602540378443846
+          ],
+          [
+            -29.641016151377542,
+            28.66025403784439
+          ]
+        ],
+        "ids": [
+          "divider"
+        ],
+        "infer": false,
+        "connect": false
+      }
+    },
+    {
+      "command": "sketch.constraint.fix",
+      "params": {
+        "entity": "divider",
+        "fixed": true
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "height",
+        "name": "Segment",
+        "profiles": {
+          "type": "piece_boundaries",
+          "profiles": [
+            {
+              "outer": [
+                {
+                  "curve": "arc",
+                  "piece": 1,
+                  "count": 2,
+                  "reversed": false
+                },
+                {
+                  "curve": "chord",
+                  "piece": 2,
+                  "count": 2,
+                  "reversed": false
+                },
+                {
+                  "curve": "divider",
+                  "piece": 2,
+                  "count": 3,
+                  "reversed": true
+                }
+              ],
+              "holes": []
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 4950.124578792469,
+    "body_count": 1,
+    "features": [
+      "Split semicircle",
+      "Segment"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "radius",
+        "expression": "35 mm"
+      },
+      "volume_mm3": 7403.216816637732
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "20 mm"
+      },
+      "volume_mm3": 8250.207631320782
+    }
+  ]
+}

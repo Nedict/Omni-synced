@@ -383,6 +383,7 @@
   "cmd.file_export": "Export",
   "cmd.file_insert_mesh": "Insert Mesh",
   "cmd.file_insert_step": "Insert STEP",
+  "cmd.file_inspect_f3d": "Inspect F3D Archive",
   "cmd.file_save_mesh": "Save As Mesh",
   "cmd.file_slicers": "Installed Slicers",
   "cmd.inspect_accessibility": "Accessibility Analysis",

@@ -1,0 +1,293 @@
+{
+  "format": "solidcraft-f3d-dev/30",
+  "name": "Untitled",
+  "units": "mm",
+  "params": [
+    {
+      "name": "diameter",
+      "expr": "60 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "-40 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "edgeSize",
+      "expr": "2 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "d1",
+      "expr": "diameter",
+      "unit": "mm",
+      "model": true
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Mixed profile",
+      "suppressed": false,
+      "type": "sketch",
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "p1",
+            "pos": [
+              -5.0,
+              -35.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p2",
+            "pos": [
+              5.0,
+              -35.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p3",
+            "pos": [
+              5.0,
+              -25.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p4",
+            "pos": [
+              -5.0,
+              -25.0
+            ],
+            "fixed": false
+          },
+          {
+            "id": "circle.center",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "l1",
+            "type": "line",
+            "a": 1,
+            "b": 2,
+            "construction": false,
+            "fixed": true
+          },
+          {
+            "id": "l2",
+            "type": "line",
+            "a": 2,
+            "b": 3,
+            "construction": false,
+            "fixed": true
+          },
+          {
+            "id": "l3",
+            "type": "line",
+            "a": 3,
+            "b": 4,
+            "construction": false,
+            "fixed": true
+          },
+          {
+            "id": "l4",
+            "type": "line",
+            "a": 4,
+            "b": 1,
+            "construction": false,
+            "fixed": true
+          },
+          {
+            "id": "circle",
+            "type": "circle",
+            "c": 5,
+            "r": 30.0,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "horizontal",
+            "l": 0
+          },
+          {
+            "id": "k2",
+            "type": "horizontal",
+            "l": 2
+          },
+          {
+            "id": "k3",
+            "type": "vertical",
+            "l": 1
+          },
+          {
+            "id": "k4",
+            "type": "vertical",
+            "l": 3
+          },
+          {
+            "id": "k5",
+            "type": "coincident",
+            "p": 0,
+            "q": 5
+          },
+          {
+            "id": "k6",
+            "type": "diameter",
+            "c": 4,
+            "value": 60.0,
+            "param": "d1"
+          }
+        ],
+        "counters": {
+          "k": 6,
+          "l": 4,
+          "p": 4
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Mixed prism",
+      "suppressed": false,
+      "body_names": [
+        "Grip"
+      ],
+      "param_names": [
+        "d2"
+      ],
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "piece_boundaries",
+        "profiles": [
+          {
+            "outer": [
+              {
+                "curve": "circle",
+                "piece": 2,
+                "count": 2,
+                "reversed": false
+              },
+              {
+                "curve": "l2",
+                "piece": 2,
+                "count": 2,
+                "reversed": false
+              },
+              {
+                "curve": "l3",
+                "piece": 1,
+                "count": 1,
+                "reversed": false
+              },
+              {
+                "curve": "l4",
+                "piece": 1,
+                "count": 2,
+                "reversed": false
+              }
+            ],
+            "holes": []
+          }
+        ]
+      },
+      "extent": {
+        "distance": "height",
+        "convention": "total_distance",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 3,
+      "name": "Corner blend",
+      "suppressed": false,
+      "param_names": [
+        "d3"
+      ],
+      "edge_refs": [
+        {
+          "dir": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "min": [
+            -5.0,
+            -29.999999999999993,
+            -40.00000000000022
+          ],
+          "max": [
+            5.000000000000009,
+            -25.0,
+            1.7763568394002505e-14
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "min": [
+            -5.0,
+            -29.999999999999993,
+            -40.00000000000022
+          ],
+          "max": [
+            5.000000000000009,
+            -25.0,
+            1.7763568394002505e-14
+          ]
+        }
+      ],
+      "edge_names": [
+        "F2:side:l2|F2:side:l3",
+        "F2:side:l3|F2:side:l4"
+      ],
+      "type": "chamfer",
+      "edges": [
+        [
+          5.0,
+          -25.0,
+          -20.0
+        ],
+        [
+          -5.0,
+          -25.0,
+          -20.0
+        ]
+      ],
+      "distance": "edgeSize",
+      "body": "Grip"
+    }
+  ],
+  "next_id": 4
+}

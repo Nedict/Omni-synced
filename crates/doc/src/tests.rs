@@ -41,6 +41,7 @@ fn plate_doc() -> (Document, u64) {
                 through_all: false,
                 taper: None,
                 to: None,
+                to_plane: None,
                 to_offset: None,
                 from: None,
             },
@@ -114,6 +115,7 @@ fn box_fillet_cut_timeline() {
             style: Default::default(),
             fit: Default::default(),
             corner: Default::default(),
+            tangent_chain: false,
         },
         None,
     )
@@ -135,6 +137,7 @@ fn box_fillet_cut_timeline() {
                 through_all: false,
                 taper: None,
                 to: None,
+                to_plane: None,
                 to_offset: None,
                 from: None,
             },
@@ -185,6 +188,7 @@ fn errors_are_reported_not_fatal() {
             style: Default::default(),
             fit: Default::default(),
             corner: Default::default(),
+            tangent_chain: false,
         },
         None,
     )

@@ -1,0 +1,203 @@
+{
+  "commands": [
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "height",
+        "expression": "30 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "width",
+        "expression": "10 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "parameters.add",
+      "params": {
+        "name": "offset",
+        "expression": "-5 mm",
+        "unit": "mm"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Base sketch"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            0,
+            0
+          ],
+          "p1": [
+            40,
+            30
+          ]
+        },
+        "dimensions": {
+          "width": "40 mm",
+          "height": "30 mm"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "distance": "-height",
+        "name": "Base",
+        "body_name": "Base"
+      }
+    },
+    {
+      "command": "sketch.create",
+      "params": {
+        "plane": "XY",
+        "name": "Cut sketch"
+      }
+    },
+    {
+      "command": "sketch.draw.dimensioned",
+      "params": {
+        "command": "sketch.rectangle.two_point",
+        "params": {
+          "p0": [
+            5,
+            5
+          ],
+          "p1": [
+            15,
+            15
+          ]
+        },
+        "dimensions": {
+          "width": "width",
+          "height": "10 mm"
+        }
+      }
+    },
+    {
+      "command": "sketch.finish",
+      "params": {}
+    },
+    {
+      "command": "solid.extrude",
+      "params": {
+        "to_plane": {
+          "face": [
+            20,
+            15,
+            -30
+          ]
+        },
+        "to_offset": "offset",
+        "operation": "cut",
+        "targets": [
+          "Base"
+        ],
+        "name": "Pocket"
+      }
+    }
+  ],
+  "expected": {
+    "volume_mm3": 33500,
+    "body_count": 1,
+    "bounds": [
+      [
+        0,
+        0,
+        -30
+      ],
+      [
+        40,
+        30,
+        0
+      ]
+    ],
+    "features": [
+      "Base sketch",
+      "Base",
+      "Cut sketch",
+      "Pocket"
+    ]
+  },
+  "edits": [
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "height",
+        "expression": "60 mm"
+      },
+      "volume_mm3": 66500,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          -60
+        ],
+        [
+          40,
+          30,
+          0
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "width",
+        "expression": "15 mm"
+      },
+      "volume_mm3": 32250,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          -30
+        ],
+        [
+          40,
+          30,
+          0
+        ]
+      ]
+    },
+    {
+      "command": "parameters.change",
+      "params": {
+        "name": "offset",
+        "expression": "-10 mm"
+      },
+      "volume_mm3": 34000,
+      "body_count": 1,
+      "bounds": [
+        [
+          0,
+          0,
+          -30
+        ],
+        [
+          40,
+          30,
+          0
+        ]
+      ]
+    }
+  ]
+}
