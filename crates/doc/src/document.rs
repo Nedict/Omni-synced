@@ -1013,6 +1013,15 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[walk(body)]
         body: Option<String>,
+        /// The relief cut where two of this feature's bends meet at a corner of the base, in place
+        /// of the rule's: `corner_relief_shape` (notch | round | rectangular | tear) and
+        /// `corner_relief`, the size across. Either one left out follows the rule.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        corner_relief_shape: Option<String>,
+        /// Walked last, after the edges' values, so the inputs before it keep their names.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[walk(length = "Corner relief")]
+        corner_relief: Option<String>,
     },
     /// Flat hems on sheet edges.
     SheetHem {
@@ -2124,6 +2133,10 @@ pub struct Document {
     pub render: std::sync::Arc<crate::render_settings::RenderSettings>,
     #[serde(default = "default_format")]
     pub format: String,
+    /// The changes of `format` this design has while they are pending (no release has fixed
+    /// that number yet; `crate::format::pending_names`). Empty, and not saved, otherwise.
+    #[serde(default = "crate::format::pending_names", skip_serializing_if = "Vec::is_empty")]
+    pub format_pending: Vec<String>,
     pub name: String,
     #[serde(default = "default_units")]
     pub units: String,
@@ -2341,6 +2354,7 @@ impl Document {
         Document {
             render: Default::default(),
             format: default_format(),
+            format_pending: crate::format::pending_names(),
             name: name.into(),
             units: default_units(),
             metadata: Default::default(),
@@ -2792,6 +2806,7 @@ impl Document {
             }
             if let FeatureKind::Sketch { sketch, .. } = &f.kind {
                 used.extend(sketch.constraints.iter().filter_map(|c| c.param.clone()));
+                used.extend(sketch.text_exprs().into_iter().flat_map(|(_, e)| expr::references(e)));
             }
         }
         for p in &self.params {
@@ -2986,6 +3001,39 @@ impl Document {
         }
         for c in &sk.constraints {
             sk.validate(&c.kind)?;
+        }
+        Ok(())
+    }
+
+    /// Give the texts of a sketch the numbers their expressions come to (in place): a text's
+    /// height, place and angle that were typed as expressions. A text's outlines are rebuilt from
+    /// its numbers when the sketch's links are refreshed, so this comes before that. A number
+    /// typed as a number is left as it is.
+    pub fn apply_text_values(&self, vals: &std::collections::BTreeMap<String, expr::Value>, sk: &mut Sketch) -> Result<()> {
+        use crate::eval::val;
+        for link in &mut sk.links {
+            let solidcraft_sketch::LinkSource::Text { at, height, angle, exprs, .. } = &mut link.source else { continue };
+            let number = |e: &Option<String>, kind: Kind, what: &str| -> Result<Option<f64>> {
+                match e {
+                    None => Ok(None),
+                    Some(e) => val(vals, e, kind).map(Some).map_err(|error| DocError::Expr(format!("{what}: {error}"))),
+                }
+            };
+            if let Some(v) = number(&exprs.x, Kind::Length, "text X")? {
+                at.x = v;
+            }
+            if let Some(v) = number(&exprs.y, Kind::Length, "text Y")? {
+                at.y = v;
+            }
+            if let Some(v) = number(&exprs.height, Kind::Length, "text height")? {
+                *height = v;
+            }
+            if let Some(v) = number(&exprs.angle, Kind::Angle, "text angle")? {
+                *angle = v;
+            }
+            if exprs.height.is_some() && !(*height > 1e-6 && *height < 1e5) {
+                return Err(DocError::Invalid("a text's height must be positive".into()));
+            }
         }
         Ok(())
     }

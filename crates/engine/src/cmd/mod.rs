@@ -64,6 +64,7 @@ pub(crate) use sketch::author_path_for_rebind;
 pub(crate) use sketch::created as sketch_created;
 mod sketch_3d;
 mod sketch_canvas;
+pub mod sketch_clipboard;
 mod sketch_constraints;
 mod sketch_create;
 mod sketch_freeform;
@@ -73,6 +74,7 @@ mod sketch_modify;
 mod sketch_project;
 mod surface;
 mod surface_analysis;
+mod view_dxf;
 mod view_navigation;
 
 use serde::Serialize;
@@ -252,6 +254,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(delete::COMMANDS.iter());
     v.extend(edit::COMMANDS.iter());
     v.extend(clipboard::COMMANDS.iter());
+    v.extend(sketch_clipboard::COMMANDS.iter());
     v.extend(script::COMMANDS.iter());
     v.extend(parameters::COMMANDS.iter());
     v.extend(file::COMMANDS.iter());
@@ -263,6 +266,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(libraries::COMMANDS.iter());
     v.extend(section::COMMANDS.iter());
     v.extend(view_navigation::COMMANDS.iter());
+    v.extend(view_dxf::COMMANDS.iter());
     v.extend(diagnostics::COMMANDS.iter());
     v.extend(render::COMMANDS.iter());
     v
