@@ -1075,9 +1075,15 @@ impl Renderer {
             cache: None,
         });
         let depth_reset = t.depth.filter(|_| reversed).map(|format| {
-            let module = device
-                .create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("sc_depth_reset"), source: wgpu::ShaderSource::Wgsl(DEPTH_RESET_SHADER.into()) });
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("sc_depth_reset"), bind_group_layouts: &[], immediate_size: 0 });
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("sc_depth_reset"),
+                source: wgpu::ShaderSource::Wgsl(DEPTH_RESET_SHADER.into()),
+            });
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("sc_depth_reset"),
+                bind_group_layouts: &[],
+                immediate_size: 0,
+            });
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("sc_depth_reset"),
                 layout: Some(&layout),
@@ -1493,7 +1499,10 @@ impl Renderer {
                 })],
                 depth_stencil_attachment: ss.depth.as_ref().map(|view| wgpu::RenderPassDepthStencilAttachment {
                     view,
-                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(far_depth(self.target.reversed_depth())), store: wgpu::StoreOp::Discard }),
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(far_depth(self.target.reversed_depth())),
+                        store: wgpu::StoreOp::Discard,
+                    }),
                     stencil_ops: depth_format
                         .filter(|f| f.has_stencil_aspect())
                         .map(|_| wgpu::Operations { load: wgpu::LoadOp::Clear(0), store: wgpu::StoreOp::Discard }),

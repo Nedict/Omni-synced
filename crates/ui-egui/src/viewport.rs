@@ -3771,7 +3771,12 @@ mod tests {
             }
         }
         assert!(samples > 40, "{samples} points of the square on the face");
-        assert!(plain.is_empty(), "{} of {samples} points of the XY plane's square do not show over the face: {:?}", plain.len(), &plain[..plain.len().min(6)]);
+        assert!(
+            plain.is_empty(),
+            "{} of {samples} points of the XY plane's square do not show over the face: {:?}",
+            plain.len(),
+            &plain[..plain.len().min(6)]
+        );
     }
 
     #[test]

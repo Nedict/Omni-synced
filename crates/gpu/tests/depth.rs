@@ -102,7 +102,8 @@ fn at_ten_metres_a_thin_label_is_whole_and_a_washer_behind_stays_hidden() {
     let washer = ("solid.cylinder", json!({"radius": 300, "height": 3, "base": [1000, 12, 1000], "axis": "Y", "body_name": "washer"}));
     let without = session(&base);
     let with = session(&[base[0].clone(), base[1].clone(), base[2].clone(), washer]);
-    let cam = Camera { target: Vec3::new(1000.0, 5.0, 1000.0), yaw: 0.35, pitch: 0.25, roll: 0.0, distance: 10_000.0, fov: 0.6, ..Default::default() };
+    let cam =
+        Camera { target: Vec3::new(1000.0, 5.0, 1000.0), yaw: 0.35, pitch: 0.25, roll: 0.0, distance: 10_000.0, fov: 0.6, ..Default::default() };
     let (w, h) = (800, 600);
     for (mode, c) in capturers() {
         let img = picture(c, &with, &cam, w, h);
@@ -145,7 +146,12 @@ fn sheet(tilt: f64) -> Mesh {
 
 /// A front view of `mesh` with `lines`, as part of a design of `radius`, 40 mm high on 200 px.
 fn front(mesh: Mesh, lines: Vec<SceneLine>, radius: f64, fov: f64) -> (Scene, Camera) {
-    let scene = Scene { meshes: vec![SceneMesh { mesh: Arc::new(mesh), color: Rgb(160, 165, 175), face_colors: Vec::new() }], lines, radius, ..Default::default() };
+    let scene = Scene {
+        meshes: vec![SceneMesh { mesh: Arc::new(mesh), color: Rgb(160, 165, 175), face_colors: Vec::new() }],
+        lines,
+        radius,
+        ..Default::default()
+    };
     let mut cam = Camera { distance: if fov > 0.0 { 25.0 / (fov * 0.5).tan() } else { 62.5 }, fov, ..Default::default() };
     cam.set_view(StandardView::Front);
     (scene, cam)
@@ -235,4 +241,3 @@ fn an_edge_on_the_cut_face_draws_over_the_cap() {
         }
     }
 }
-
