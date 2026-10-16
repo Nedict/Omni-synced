@@ -86,11 +86,12 @@ is available. Missing or incompatible pictures use the usual thumbnail generatio
 The default `cache: false` omits the portable thumbnail too.
 The repository's `docs/design-container.md` describes limits and encoding details.
 
-Current designs use format 24, including the corner relief of an edge flange, the gear, rack and pinion and screw couplings of motion links, design properties, named render setups, opaque PBR looks, thin extrudes, sheet metal perforation fields, associative editable sketch patterns, editable associative offset-distance dimensions, the style of sketch text (bold, italic, alignment, spacing and the curve it follows), face anchors on a piece of a face by its own name, sheet metal rims and bend ends, bend edges for Convert to Sheet Metal, the tear corner relief of sheet metal rules, the names of projected edges, physical materials defined in the design, the font of sketch text, the expressions behind a sketch text's height, place and angle, sheet metal corner relief shapes, sketch face anchors on cylinder caps, sketch axis
-links, persistent
-names from exact face history, exact planar shell-face anchors, persistent analytic offset boundary roles and
-association profile references, durable sketch face anchors, periodic fit splines and versioned
-revolve conventions. It also retains recorded body transfers, explicit 3D curve coordinate
+Designs are saved in the newest format this version of SolidCraft knows (`"format": "solidcraft/N"`
+in the file). It opens designs of every older format and upgrades them as they open; a design
+from a newer version asks you to update instead of being guessed at. Development (nightly) builds
+save a format number no release reads yet.
+
+Upgrading keeps what a design meant. Designs keep recorded body transfers, explicit 3D curve coordinate
 spaces and certified face bindings, alongside semantic configuration styles, associative
 free-form offsets and cylindrical emboss selections. Older ownership maps, geometry and
 expressions retain their saved meaning. Legacy 3D curves with retained associations receive

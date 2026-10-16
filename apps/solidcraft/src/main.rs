@@ -567,6 +567,7 @@ fn main() -> eframe::Result {
                 eprintln!("SolidCraft graphics: {:?}, MSAA {}x (requested {}x)", rs.adapter.get_info().backend, rs.msaa_samples, samples);
                 solidcraft_engine::crash::phase("viewport pipelines (shader compile)");
                 app.set_wgpu(rs, DEPTH_BITS, STENCIL_BITS, rs.msaa_samples);
+                solidcraft_ui_egui::gpu::install_picture_renderer(rs);
                 // The graphics driver is loaded now; it may have put its own exception filter
                 // in front of ours.
                 #[cfg(target_os = "windows")]
