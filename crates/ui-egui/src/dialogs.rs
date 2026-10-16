@@ -137,6 +137,11 @@ pub enum Kind {
     Thread {
         designation: String,
         length: String,
+        /// The last automatic size; a different value is a manual override. Keep automatic
+        /// features automatic when applying, even though their resolved size is visible.
+        suggested: Option<String>,
+        /// The picks used for the suggestion, so an unchanged dialog does no geometry work.
+        of: Vec<Sel>,
     },
     /// A rib (one wall along open curves) or a web (a wall per curve).
     Rib {
@@ -529,9 +534,10 @@ impl Dialog {
             ),
             "solid.scale" => Dialog::new(Kind::Scale { factor: "2".into() }, vec![SelInput::new("Bodies", BODIES, true)]),
             "solid.offset_face" => Dialog::new(Kind::OffsetFaces { distance: "2 mm".into() }, vec![SelInput::new("Faces", PLANAR_FACES, true)]),
-            "solid.thread" => {
-                Dialog::new(Kind::Thread { designation: String::new(), length: String::new() }, vec![SelInput::new("Cylindrical face", FACES, false)])
-            }
+            "solid.thread" => Dialog::new(
+                Kind::Thread { designation: String::new(), length: String::new(), suggested: None, of: Vec::new() },
+                vec![SelInput::new("Cylindrical face", FACES, false)],
+            ),
             "material.assign" => Dialog::new(Kind::Material { index: 1 }, vec![SelInput::new("Bodies", BODIES, true)]),
             "inspect.section" => {
                 Dialog::new(Kind::Section { offset: "0 mm".into(), flip: false }, vec![SelInput::new("Plane", PLANES | PLANAR_FACES, false)])
@@ -700,8 +706,28 @@ impl Dialog {
         {
             inp.items = default_profiles(s);
         }
+        d.sync_thread(s);
         d.advance();
         Some(d)
+    }
+
+    /// Resolve a newly selected face without replacing an authored size or changing the
+    /// document. Clearing the face also clears a suggestion that no longer applies.
+    fn sync_thread(&mut self, s: &Session) {
+        let Kind::Thread { designation, suggested, of, .. } = &mut self.kind else { return };
+        if !designation.trim().is_empty() && suggested.as_deref() != Some(designation.as_str()) {
+            return;
+        }
+        let picks = self.inputs.first().map(|i| i.items.as_slice()).unwrap_or_default();
+        if picks == of.as_slice() {
+            return;
+        }
+        *of = picks.to_vec();
+        *suggested = picks.first().and_then(|sel| match sel {
+            Sel::Face { point, .. } => solidcraft_engine::doc::suggested_thread(&s.world_state(), *point).ok(),
+            _ => None,
+        });
+        *designation = suggested.clone().unwrap_or_default();
     }
 
     pub fn rename(feature: u64, name: &str) -> Dialog {
@@ -946,6 +972,7 @@ impl Dialog {
             self.advance();
         }
         self.error = None;
+        self.sync_thread(s);
     }
 
     /// Box selection result: replace (or add to) the active input.
@@ -976,6 +1003,7 @@ impl Dialog {
                 inp.items.push(x);
             }
         }
+        self.sync_thread(s);
     }
 }
 
@@ -1712,6 +1740,7 @@ fn input_rows_range(d: &mut Dialog, ui: &mut egui::Ui, s: &Session, range: std::
         }
         d.active = i;
     }
+    d.sync_thread(s);
 }
 
 /// Each live reference sits with the independent values it drives.
@@ -2110,6 +2139,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         return;
     }
     auto_operation(app, &mut d);
+    d.sync_thread(&app.session);
     update_measure(app, &mut d);
     update_fill_cells(app, &mut d);
     // A refused OK's error is about the inputs it ran with (#641). Once a value (in the dialog,
@@ -2750,22 +2780,23 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                         enter |= field(ui, distance);
                         ui.end_row();
                     }
-                    Kind::Thread { designation, length } => {
-                        // Fusion's order: Modeled, Full Length, then the size; a length only when not
-                        // full.
+                    Kind::Thread { designation, length, suggested, of } => {
                         row_label(ui, "Modeled");
                         extra_check(ui, &mut d.extra, "modeled");
                         ui.end_row();
                         row_label(ui, "Full Length");
                         let mut full = length.trim().is_empty();
-                        if ui.checkbox(&mut full, "").changed() {
+                        let response = ui.checkbox(&mut full, "");
+                        publish_row(&response);
+                        if response.changed() {
                             *length = if full { String::new() } else { "10 mm".into() };
                         }
                         ui.end_row();
-                        row_label(ui, "Size");
-                        let r = ui.add(egui::TextEdit::singleline(designation).hint_text(tr("fits the face, e.g. M8")));
-                        enter |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        ui.end_row();
+                        let (submitted, reset) = crate::dialogs_thread::rows(ui, designation, suggested);
+                        enter |= submitted;
+                        if reset {
+                            of.clear();
+                        }
                         if !full {
                             row_label(ui, "Length");
                             enter |= field(ui, length);
@@ -4030,10 +4061,10 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
             need(0, "planar faces")?;
             ("solid.offset_face", json!({"faces": face_points(0), "distance": distance}))
         }
-        Kind::Thread { designation, length } => {
+        Kind::Thread { designation, length, suggested, .. } => {
             need(0, "a cylindrical face")?;
             let mut p = json!({"face": face_points(0).into_iter().next().unwrap_or(Value::Null)});
-            if !designation.trim().is_empty() {
+            if !designation.trim().is_empty() && suggested.as_deref() != Some(designation.as_str()) {
                 p["designation"] = json!(designation.trim());
             }
             if !length.trim().is_empty() {
@@ -5058,10 +5089,13 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             d.kind = Kind::Thread {
                 designation: designation.clone().unwrap_or_default(),
                 length: length.as_deref().map(str::to_string).unwrap_or_default(),
+                suggested: None,
+                of: Vec::new(),
             };
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = face_sel(s, face.0).into_iter().collect();
             }
+            d.sync_thread(s);
             d
         }
         FeatureKind::BoundingSolid { bodies, margin } => {

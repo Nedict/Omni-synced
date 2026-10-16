@@ -209,6 +209,12 @@ const ISO_COARSE: [(f64, f64); 22] = [
     (56.0, 5.5),
 ];
 
+/// Nominal diameters and coarse pitches (mm) used for automatic ISO metric thread sizing.
+/// Other diameter/pitch pairs can be supplied as explicit designations.
+pub fn metric_thread_sizes() -> &'static [(f64, f64)] {
+    &ISO_COARSE
+}
+
 /// "M8" or "M8x1" → (nominal diameter, pitch).
 pub fn parse_metric_thread(s: &str) -> Option<(f64, f64)> {
     let t = s.trim().to_ascii_uppercase();
@@ -221,7 +227,7 @@ pub fn parse_metric_thread(s: &str) -> Option<(f64, f64)> {
         Some(p) => p,
         None => ISO_COARSE.iter().find(|(n, _)| (n - d).abs() < 1e-9)?.1,
     };
-    (d > 0.0 && pitch > 0.0 && pitch < d).then_some((d, pitch))
+    (d.is_finite() && pitch.is_finite() && d > 0.0 && pitch > 0.0 && pitch < d).then_some((d, pitch))
 }
 
 /// The metric thread a cylinder of this diameter takes: a shaft is the major diameter, a hole
@@ -239,6 +245,12 @@ fn format_thread(d: f64, p: f64) -> String {
     let coarse = ISO_COARSE.iter().any(|(n, q)| (n - d).abs() < 1e-9 && (q - p).abs() < 1e-9);
     let num = |x: f64| if (x - x.round()).abs() < 1e-9 { format!("{}", x.round()) } else { format!("{x}") };
     if coarse { format!("M{}", num(d)) } else { format!("M{}x{}", num(d), num(p)) }
+}
+
+/// The automatic ISO metric designation for a cylindrical face, using the same fit check as
+/// a thread feature without an explicit size. This query does not change the model.
+pub fn suggested_thread(st: &ModelState, p: Vec3) -> Result<String> {
+    thread_on(st, 0, p, None, None).map(|t| t.designation)
 }
 
 /// A cosmetic thread on the cylindrical face at `p`.

@@ -249,6 +249,8 @@ pub(crate) struct CameraInput {
     pub primary_nav: Option<NavMode>,
     /// The navigation this frame's pointer input drives.
     pub mode: Option<NavMode>,
+    /// The 3D mouse changed this page's camera this frame.
+    pub device_moved: bool,
 }
 
 /// Camera input for one frame over `rect`: the navigation preset's buttons and modifiers, Orbit
@@ -286,7 +288,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     crate::drag_snap::set_suppressed(mods.ctrl || mods.alt || mods.command);
     middle_double_click(app, ui, inside);
     // The 3D mouse's motion this frame, with what this page's camera may do.
-    device(app, rect, caps);
+    let device_moved = device(app, rect, caps);
 
     // ---- navigation ----
     let trackpad_pan = app.preferences.trackpad_pans();
@@ -504,18 +506,36 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     if app.viewport.orbit_snap.is_some() {
         ui.ctx().request_repaint();
     }
-    CameraInput { hover, scroll, mods, middle, secondary_down, primary_down, primary_pressed, delta, inside, axes, pinch, pan, primary_nav, mode }
+    CameraInput {
+        hover,
+        scroll,
+        mods,
+        middle,
+        secondary_down,
+        primary_down,
+        primary_pressed,
+        delta,
+        inside,
+        axes,
+        pinch,
+        pan,
+        primary_nav,
+        mode,
+        device_moved,
+    }
 }
 
 /// The 3D mouse's motion this frame (#1336), on a page `rect` whose camera may do `caps`: the cap
 /// pans and zooms every page, and turns the view only where the page may orbit and no sketch is
 /// being edited (a sketch keeps its view square to it). [`handle`] calls it for its page; the 3D
 /// mouse only reads the device and queues the motion ([`crate::space_mouse::navigate_frame`]).
-pub(crate) fn device(app: &mut SolveApp, rect: Rect, caps: NavCaps) {
-    let Some(queued) = app.viewport.device_motion.take() else { return };
+pub(crate) fn device(app: &mut SolveApp, rect: Rect, caps: NavCaps) -> bool {
+    let Some(queued) = app.viewport.device_motion.take() else { return false };
+    let before = app.cam;
     let turn = caps.orbit && app.session.active_sketch.is_none();
     let height = f64::from(rect.height().max(1.0));
     device_camera(&mut app.cam, queued.motion, queued.seconds, height, turn, app.preferences.zoom_reverse);
+    app.cam != before
 }
 
 /// `seconds` of 3D mouse `motion` on `cam`, in a view `height` points tall. A full deflection

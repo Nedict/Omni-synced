@@ -22,6 +22,7 @@
 </div>
 
 <p align="center">
+  <a href="https://solidcraft.io">Website</a> ·
   <a href="https://github.com/bherbruck/solidcraft/releases/latest">Download</a> ·
   <a href="https://bherbruck.github.io/solidcraft/app/">Try it in the browser</a> ·
   <a href="https://bherbruck.github.io/solidcraft/">Documentation</a> ·
