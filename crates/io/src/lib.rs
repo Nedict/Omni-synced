@@ -9,12 +9,12 @@
 
 pub mod catalog;
 mod design;
-pub mod exchange;
-#[cfg(not(target_arch = "wasm32"))]
-mod f3d;
 mod design_metadata;
 mod dxf;
 mod dxf_out;
+pub mod exchange;
+#[cfg(not(target_arch = "wasm32"))]
+mod f3d;
 pub use design::{
     DesignCompression, DesignContainerReader, DesignGeometry, DesignPreview, THUMBNAIL_SIZE, is_design_container, read_design_file,
     read_design_geometry, read_design_preview, read_design_thumbnail, read_design_thumbnail_file, write_design_container,
@@ -40,10 +40,10 @@ pub use svg::read_svg;
 mod gltf_in;
 pub use gltf_in::{GltfImport, Loader, MAX_GLTF_BYTES, MeshPlan, PlanPlace, glb_container, is_gltf_path, read_gltf};
 mod obj;
+#[cfg(not(target_arch = "wasm32"))]
+pub use f3d::{MAX_F3D_BYTES, looks_like_fusion_archive};
 pub use obj::read_obj;
 pub use threemf::{MAX_3MF_BYTES, MeshObject, model_xml, model_xml_with, read_3mf, weld, write_3mf, write_3mf_with};
-#[cfg(not(target_arch = "wasm32"))]
-pub use f3d::{looks_like_fusion_archive, MAX_F3D_BYTES};
 #[cfg(target_arch = "wasm32")]
 pub const MAX_F3D_BYTES: usize = 512 << 20;
 /// Browser builds cannot decode Fusion B-rep; still sniff ZIP contents so opening an
@@ -211,10 +211,7 @@ pub fn f3d_open_feature(bytes: &[u8], file: &str) -> Result<F3dOpenFeature> {
             let step_name = format!("{}.step", std::path::Path::new(file).file_stem().and_then(|s| s.to_str()).unwrap_or("fusion"));
             let mut sf = step_import_feature(&step, &step_name)?;
             if let solidcraft_doc::FeatureKind::Import { file: ref mut stored, .. } = sf.kind {
-                *stored = std::path::Path::new(file)
-                    .file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| file.to_string());
+                *stored = std::path::Path::new(file).file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| file.to_string());
             }
             sf.warnings.append(&mut warnings);
             Ok(F3dOpenFeature::Solid(sf))
@@ -228,9 +225,7 @@ pub fn f3d_open_feature(bytes: &[u8], file: &str) -> Result<F3dOpenFeature> {
 pub fn f3d_import_feature(bytes: &[u8], file: &str) -> Result<StepFeature> {
     match f3d_open_feature(bytes, file)? {
         F3dOpenFeature::Solid(sf) => Ok(sf),
-        F3dOpenFeature::Mesh(_) => Err(IoError::Invalid(format!(
-            "{file}: Fusion file has no transferable B-rep (only mesh preview data)"
-        ))),
+        F3dOpenFeature::Mesh(_) => Err(IoError::Invalid(format!("{file}: Fusion file has no transferable B-rep (only mesh preview data)"))),
     }
 }
 
@@ -263,9 +258,7 @@ fn mesh_objects_feature(objects: &[threemf::MeshObject], file: &str, warnings: V
 
 #[cfg(target_arch = "wasm32")]
 pub fn f3d_import_feature(_bytes: &[u8], file: &str) -> Result<StepFeature> {
-    Err(IoError::Invalid(format!(
-        "{file}: Fusion import is not available in the browser build; use STEP or open the desktop app"
-    )))
+    Err(IoError::Invalid(format!("{file}: Fusion import is not available in the browser build; use STEP or open the desktop app")))
 }
 
 /// Read STEP bytes (`file` is the source file name) into an Import base feature. The file is
@@ -1133,9 +1126,13 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn fusion_open_one_file() {
-        let Ok(path) = std::env::var("F3D_ONE") else { return; };
+        let Ok(path) = std::env::var("F3D_ONE") else {
+            return;
+        };
         let path = std::path::PathBuf::from(&path);
-        if !path.is_file() { return; }
+        if !path.is_file() {
+            return;
+        }
         let label = path.file_name().unwrap().to_string_lossy();
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{label}: {e}"));
         let file = path.to_string_lossy();

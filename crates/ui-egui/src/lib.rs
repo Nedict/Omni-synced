@@ -973,13 +973,7 @@ impl SolveApp {
     /// current design.
     pub fn insert_path(&mut self, path: &str) {
         let cmd = solidcraft_engine::io::exchange::insert_command_name(path)
-            .or_else(|| {
-                if solidcraft_engine::io::is_mesh_path(path) {
-                    Some("file.insert_mesh")
-                } else {
-                    Some("file.insert_step")
-                }
-            })
+            .or_else(|| if solidcraft_engine::io::is_mesh_path(path) { Some("file.insert_mesh") } else { Some("file.insert_step") })
             .unwrap_or("file.insert_step");
         let before: Vec<String> = self.session.world_state().bodies.iter().map(|b| b.name.clone()).collect();
         if let Ok(r) = self.run(cmd, json!({ "path": path })) {

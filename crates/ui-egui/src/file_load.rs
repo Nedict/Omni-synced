@@ -61,18 +61,9 @@ impl Request {
         match &self.kind {
             Kind::Open => ("doc.open", self.params()),
             Kind::Insert => {
-                let cmd = solidcraft_engine::io::exchange::insert_command_name(&self.path).unwrap_or_else(|| {
-                    if solidcraft_engine::io::is_mesh_path(&self.path) {
-                        "file.insert_mesh"
-                    } else {
-                        "file.insert_step"
-                    }
-                });
-                if cmd == "file.insert_mesh" {
-                    (cmd, json!({"path": self.path}))
-                } else {
-                    (cmd, self.params())
-                }
+                let cmd = solidcraft_engine::io::exchange::insert_command_name(&self.path)
+                    .unwrap_or_else(|| if solidcraft_engine::io::is_mesh_path(&self.path) { "file.insert_mesh" } else { "file.insert_step" });
+                if cmd == "file.insert_mesh" { (cmd, json!({"path": self.path})) } else { (cmd, self.params()) }
             }
             Kind::Recover { id, dir } => ("doc.recover", json!({"id": id, "dir": dir})),
         }

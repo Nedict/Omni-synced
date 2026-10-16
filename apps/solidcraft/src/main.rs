@@ -114,10 +114,7 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
             for (label, exts) in io::exchange::dialog_filters() {
                 dialog = dialog.add_filter(label, exts);
             }
-            let future = dialog
-                .add_filter("Sketch drawings (DXF, SVG)", &["dxf", "DXF", "svg", "SVG"])
-                .add_filter("All files", &["*"])
-                .pick_file();
+            let future = dialog.add_filter("Sketch drawings (DXF, SVG)", &["dxf", "DXF", "svg", "SVG"]).add_filter("All files", &["*"]).pick_file();
             Box::pin(async move { future.await.map(|p| p.path().to_string_lossy().into_owned()) })
         })),
         pick_program: Some(Box::new(move || {

@@ -4,7 +4,7 @@
 //! cadmpeg-registry feature set used by FreeCAD/Rhino).
 
 use super::{ExchangeCapabilities, ExchangeFileType, ExchangeImport, ExchangeProviderId};
-use crate::{Result, MAX_F3D_BYTES};
+use crate::{MAX_F3D_BYTES, Result};
 
 pub const FILE_TYPE: ExchangeFileType = ExchangeFileType {
     id: ExchangeProviderId::FusionF3d,

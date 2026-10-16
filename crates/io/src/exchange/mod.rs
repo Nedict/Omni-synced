@@ -6,10 +6,10 @@
 //! **Adding a format:** add a submodule with [`ExchangeFileType`] + `read`, register it in
 //! [`providers`], extend [`ExchangeProviderId`], and add an arm in [`read_bytes`].
 
-mod mesh;
-mod step;
 #[cfg(not(target_arch = "wasm32"))]
 mod fusion;
+mod mesh;
+mod step;
 
 use std::path::Path;
 
@@ -162,10 +162,7 @@ pub fn is_fusion_path(path: &str) -> bool {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        Path::new(path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("f3d") || e.eq_ignore_ascii_case("f3z"))
+        Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("f3d") || e.eq_ignore_ascii_case("f3z"))
     }
 }
 
