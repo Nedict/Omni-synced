@@ -658,7 +658,14 @@ fn capture(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<(Vec<u8>, Valu
         _ => (info.get("width").cloned().unwrap_or(Value::Null), info.get("height").cloned().unwrap_or(Value::Null)),
     };
     let bytes = png.len();
-    Ok((png, json!({"source": source, "path": keep, "width": w, "height": h, "bytes": bytes})))
+    let mut reply = json!({"source": source, "path": keep, "width": w, "height": h, "bytes": bytes});
+    // What drew a model render (gpu, gpu-software or cpu), and the warning a CPU render carries.
+    for k in ["renderer", "warning"] {
+        if let Some(v) = info.get(k).filter(|v| !v.is_null()) {
+            reply[k] = v.clone();
+        }
+    }
+    Ok((png, reply))
 }
 
 /// Standard base64 with padding (RFC 4648).

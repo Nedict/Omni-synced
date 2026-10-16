@@ -1,8 +1,8 @@
 //! File formats. Designs use JSON or versioned containers (`.solidcraft`); the authoritative
 //! document rebuilds on load and optional display caches remain provisional. Bodies export
-//! as STL (binary or ASCII), OBJ, STEP and 3MF, and assemblies as URDF ([`urdf()`]); STEP
-//! files import as a base feature (see [`step_import_feature`]), 3MF and STL files as mesh bodies
-//! (see [`mesh_import_feature`]).
+//! as STL (binary or ASCII), OBJ, STEP and 3MF, and assemblies as URDF ([`urdf()`]); STEP, IGES,
+//! FreeCAD and Rhino files import as a base feature (see [`step_import_feature`]), 3MF and
+//! STL files as mesh bodies (see [`mesh_import_feature`]).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
@@ -18,6 +18,8 @@ pub use design::{
     write_design_container_with_thumbnail,
 };
 mod legacy_dir;
+mod native_cad;
+pub use native_cad::{NATIVE_CAD_EXTS, is_native_cad_path, native_cad_to_step};
 pub mod safe_write;
 mod sketch2d;
 mod svg;
@@ -78,13 +80,14 @@ pub type Result<T> = std::result::Result<T, IoError>;
 /// Largest STEP file we read.
 pub const MAX_STEP_BYTES: usize = 512 << 20;
 
-/// Is this a CAD exchange file read as an Import base feature: STEP (`.step` / `.stp`) or IGES
-/// (`.igs` / `.iges`), any case?
+/// Is this a CAD file read as an Import base feature: STEP (`.step` / `.stp`), IGES
+/// (`.igs` / `.iges`) or a format read through cadmpeg ([`is_native_cad_path`]), any case?
 pub fn is_step_path(path: &str) -> bool {
     std::path::Path::new(path)
         .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| ["step", "stp", "igs", "iges"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+        || is_native_cad_path(path)
 }
 
 /// Is this an IGES file name (`.igs` / `.iges`, any case)?
@@ -162,11 +165,14 @@ pub fn step_import_feature_named(bytes: &[u8], file: &str, names: StepNames) -> 
     if bytes.len() > MAX_STEP_BYTES {
         return Err(IoError::Invalid(format!("STEP file too large ({} MB, limit {} MB)", bytes.len() >> 20, MAX_STEP_BYTES >> 20)));
     }
-    // STEP is 7-bit text with escapes; tolerate stray 8-bit bytes. IGES is restated as STEP
-    // (the feature keeps that STEP text).
-    let text = String::from_utf8_lossy(bytes).into_owned();
-    let (text, iges_warnings) =
-        if is_iges_path(file) { solidcraft_kernel::iges_to_step(&text).map_err(IoError::Invalid)? } else { (text, Vec::new()) };
+    // STEP is 7-bit text with escapes; tolerate stray 8-bit bytes. IGES and the cadmpeg formats
+    // are restated as STEP (the feature keeps that STEP text).
+    let (text, iges_warnings) = if is_native_cad_path(file) {
+        native_cad_to_step(bytes, file).map_err(IoError::Invalid)?
+    } else {
+        let text = String::from_utf8_lossy(bytes).into_owned();
+        if is_iges_path(file) { solidcraft_kernel::iges_to_step(&text).map_err(IoError::Invalid)? } else { (text, Vec::new()) }
+    };
     let imp = solidcraft_kernel::step_import_shared(&text)?;
     let stem = std::path::Path::new(file)
         .file_stem()

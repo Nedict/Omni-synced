@@ -20,11 +20,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solidcraft design, or a .step/.stp/.igs/.3mf/.stl/.obj/.glb/.gltf file (opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make); up?: z|y for a STEP, IGES or glTF file (see file.insert_step and file.insert_mesh); names?: solid|product|instance for a STEP or IGES file (see file.insert_step)"),
+        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ or glTF; opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
-        .params("path: .step/.stp file (its bodies join the design as an Import base feature in a new component named after the file, placed in the active component; an assembly's products become nested components, a repeated part one component with an occurrence per placement, all held as one rigid group until component.unlock → component, component_name, occurrence, subcomponents?, rigid_joints?); name? (the feature's and the component's); up?: z|y (default z: the file's axes are kept; y: the file has Y up, so the import's component is turned a quarter turn about X, Y becoming Z → stand_up: its occurrence); names?: solid|product|instance (what the bodies are named after: the solid's own name, else the product's (default); the name of the product (part) that holds the body; the name of the assembly occurrence (instance), else the product's)"),
+        .params("path: STEP, IGES, FreeCAD .FCStd or Rhino .3dm file (its bodies join the design as an Import base feature in a new component named after the file, placed in the active component; an assembly's products become nested components, a repeated part one component with an occurrence per placement, all held as one rigid group until component.unlock → component, component_name, occurrence, subcomponents?, rigid_joints?); name? (the feature's and the component's); up?: z|y (default z: the file's axes are kept; y: the file has Y up, so the import's component is turned a quarter turn about X, Y becoming Z → stand_up: its occurrence); names?: solid|product|instance (what the bodies are named after: the solid's own name, else the product's (default); the name of the product (part) that holds the body; the name of the assembly occurrence (instance), else the product's)"),
     CommandSpec::new("file.insert_mesh", "Insert Mesh", insert_mesh)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -215,7 +215,7 @@ fn insert_step(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "file.insert_step";
     let path = path_arg(p, cmd)?;
     if !solidcraft_io::is_step_path(path) {
-        return Err(bad(cmd, "only STEP files (.step, .stp) can be inserted"));
+        return Err(bad(cmd, "only STEP, IGES, FreeCAD and Rhino files (.step, .stp, .igs, .iges, .fcstd, .3dm) can be inserted"));
     }
     let options = step_options(p, cmd)?;
     add_step(s, path, str_(p, "name"), &options)
@@ -738,6 +738,8 @@ mod tests {
 
     #[test]
     fn save_and_save_as_require_explicit_native_cache_opt_in() {
+        // Thumbnails are drawn by the renderer the host installs.
+        crate::capture::install_test_renderer();
         let mut session = Session::new(Document::new("Cache opt-in"));
         session.execute("solid.box", &json!({"length":10,"width":20,"height":30})).unwrap();
         let world = session.world_state();

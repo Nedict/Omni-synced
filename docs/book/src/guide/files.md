@@ -6,6 +6,7 @@
 | `.json` (self-contained plain JSON design) | yes | yes |
 | STEP (AP203, AP214, AP242) | solids, assemblies, units, names, colours | AP242 with names, colours and the component tree |
 | IGES 5.3 | manifold solids, or trimmed surfaces sewn into solids | manifold solids with names and colours |
+| FreeCAD `.FCStd`, Rhino `.3dm` | solids, through cadmpeg (desktop app only) | |
 | 3MF, STL, OBJ | mesh bodies | yes |
 | glTF 2.0 (`.glb`, `.gltf` with its `.bin` files) | mesh bodies in the node tree's components, materials as appearances | |
 | 3MF with face tags | as 3MF | each triangle tagged with its B-rep face, exact coordinates |
@@ -13,7 +14,7 @@
 | DXF, SVG | into a sketch | sketches and flat patterns as DXF |
 | PNG, JPEG | canvases and decals | |
 
-Opening a STEP or IGES file creates a design with the file's bodies as a base feature, and
+Opening a STEP, IGES, FreeCAD or Rhino file creates a design with the file's bodies as a base feature, and
 inserting one adds them to the current design. Later features build on them. Mesh bodies render,
 measure, move and export, but solid features need B-rep bodies.
 
@@ -85,11 +86,12 @@ is available. Missing or incompatible pictures use the usual thumbnail generatio
 The default `cache: false` omits the portable thumbnail too.
 The repository's `docs/design-container.md` describes limits and encoding details.
 
-Current designs use format 21, including design properties, named render setups, opaque PBR looks, thin extrudes, sheet metal perforation fields, associative editable sketch patterns, editable associative offset-distance dimensions, the style of sketch text (bold, italic, alignment, spacing and the curve it follows), face anchors on a piece of a face by its own name, sheet metal rims and bend ends, bend edges for Convert to Sheet Metal, the tear corner relief of sheet metal rules, the names of projected edges, physical materials defined in the design, the font of sketch text, the expressions behind a sketch text's height, place and angle, sheet metal corner relief shapes, sketch face anchors on cylinder caps, sketch axis
-links, persistent
-names from exact face history, exact planar shell-face anchors, persistent analytic offset boundary roles and
-association profile references, durable sketch face anchors, periodic fit splines and versioned
-revolve conventions. It also retains recorded body transfers, explicit 3D curve coordinate
+Designs are saved in the newest format this version of SolidCraft knows (`"format": "solidcraft/N"`
+in the file). It opens designs of every older format and upgrades them as they open; a design
+from a newer version asks you to update instead of being guessed at. Development (nightly) builds
+save a format number no release reads yet.
+
+Upgrading keeps what a design meant. Designs keep recorded body transfers, explicit 3D curve coordinate
 spaces and certified face bindings, alongside semantic configuration styles, associative
 free-form offsets and cylindrical emboss selections. Older ownership maps, geometry and
 expressions retain their saved meaning. Legacy 3D curves with retained associations receive
