@@ -1675,6 +1675,7 @@ fn selection_label(s: &Session, item: &Sel) -> String {
             let p = s.active_sketch.and_then(|id| state.sketch(id)).map(|sk| sk.plane.to_local(*point)).unwrap_or_default();
             format!("({:.2}, {:.2}) mm", p.x, p.y)
         }
+        Sel::Vertex { body, point } => format!("{body} · ({:.2}, {:.2}, {:.2}) mm", point.x, point.y, point.z),
         _ => format!("{item:?}"),
     }
 }
