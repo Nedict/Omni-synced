@@ -122,6 +122,8 @@ mod surface_extend;
 mod surface_kind;
 mod surface_offset;
 mod surface_ruled;
+#[cfg(test)]
+mod surface_second_derivative_tests;
 mod surface_untrim;
 mod surfaces;
 mod sweep_path;
