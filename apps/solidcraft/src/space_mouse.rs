@@ -256,13 +256,16 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>) {
         if let Err(error) = api.refresh_devices() {
             log::warn!("3D mouse: device scan failed: {error}");
         } else if let Some((device, layout)) = api.device_list().filter(|info| is_3d_mouse(info)).find_map(|info| {
-            let device = info.open_device(&api).inspect_err(|error| {
-                // On macOS: missing Input Monitoring permission, or the 3DxWare helper holding the device.
-                // The driver having the device is the reason it cannot be opened, not a problem.
-                if !DRIVER_CONNECTED.load(Ordering::Relaxed) && !DRIVER_REGISTERED.load(Ordering::Relaxed) {
-                    log::warn!("3D mouse: cannot open the device: {error}");
-                }
-            }).ok()?;
+            let device = info
+                .open_device(&api)
+                .inspect_err(|error| {
+                    // On macOS: missing Input Monitoring permission, or the 3DxWare helper holding the device.
+                    // The driver having the device is the reason it cannot be opened, not a problem.
+                    if !DRIVER_CONNECTED.load(Ordering::Relaxed) && !DRIVER_REGISTERED.load(Ordering::Relaxed) {
+                        log::warn!("3D mouse: cannot open the device: {error}");
+                    }
+                })
+                .ok()?;
             let layout = device_layout(&device, info.vendor_id())?;
             Some((device, layout))
         }) {
@@ -369,8 +372,7 @@ fn start_driver_client(ctx: &Context, shared: &Arc<Mutex<Reading>>) {
             if let Ok(mut reading) = shared.lock() {
                 let now = Instant::now();
                 reading.axes = Axes { translation, rotation };
-                reading.translation_at = now;
-                reading.rotation_at = now;
+                reading.at = [now; 6];
                 ctx.request_repaint();
             }
         }
