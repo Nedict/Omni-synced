@@ -1,7 +1,7 @@
-//! Revolves of profiles with an edge on the axis that come back to it along a curve (#1853): a
-//! half slot about its centreline, a quarter disc and a bullet whose arc ends on the axis. Their
-//! volumes are analytic, and a half slot revolved about a centreline lying in a face of a plate,
-//! as a cut, takes what it should.
+//! Revolves of profiles with an edge on the axis that come back to it along a curve or a line
+//! (#1853): a half slot about its centreline, a quarter disc and a bullet whose arc ends on the
+//! axis, a drill point whose tip does. Their volumes are analytic, and a half slot revolved about
+//! a centreline lying in a face of a plate, as a cut, takes what it should.
 
 use solidcraft_geom::{Loop2, Plane, Region2, Seg2, Vec2, Vec3};
 use solidcraft_kernel::{BoolOp, boolean, box_solid, measure, revolve};
@@ -38,6 +38,12 @@ fn revolves_that_end_on_the_axis_along_a_curve_have_their_volume() {
             "bullet",
             region(vec![line((0.0, 0.0), (17.0, 0.0)), line((17.0, 0.0), (17.0, R)), line((17.0, R), (3.0, R)), quarter((3.0, 0.0), FRAC_PI_2)]),
             cylinder + sphere / 2.0,
+        ),
+        // A drill point: a line coming back to the axis (a full turn keeps truck's cone).
+        (
+            "drill point",
+            region(vec![line((0.0, 0.0), (20.0, 0.0)), line((20.0, 0.0), (20.0, R)), line((20.0, R), (3.0, R)), line((3.0, R), (0.0, 0.0))]),
+            PI * R * R * 17.0 + PI * R * R * 3.0 / 3.0,
         ),
     ];
     // The plane through the origin, and one moved and turned away from it.

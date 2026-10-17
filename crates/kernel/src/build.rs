@@ -417,8 +417,8 @@ fn revolved(plane: &Plane, regions: &[Region2], axis_origin: Vec2, axis_dir: Vec
             out.push(sphere_solid(plane.to_world(c), rad, [Vec3::X, Vec3::Y, Vec3::Z], &arcs)?);
             continue;
         }
-        // A full turn of a profile that comes back to the axis along a curve or a slanted line (a
-        // half slot about its centreline, a dome at the far end): truck's cone gives the faces
+        // A full turn of a profile that comes back to the axis along a curve (a half slot about
+        // its centreline, a dome at the far end): truck's cone gives the faces
         // swept from it the wrong region (their pole is at the end of their curve), and cuts with
         // such a body failed (#1853). It is built as part turns are, a third of a turn at a time.
         if angle.abs() >= std::f64::consts::TAU - 1e-9
@@ -1297,17 +1297,16 @@ fn half_disc(lp: &Loop2, axis_origin: Vec2, d: Vec2) -> Option<(Vec2, f64)> {
     (same && (total - std::f64::consts::PI).abs() < 1e-6).then_some((c, r))
 }
 
-/// Whether the loop has one edge on the axis and comes back to it along a segment that is not
-/// a radial line (the segment before the axis edge ends on the axis without being square to it).
+/// Whether the loop has one edge on the axis and comes back to it along a curve (the segment
+/// before the axis edge is not a line). A line there (a drill point) sweeps a cone, which
+/// truck's cone builds right.
 fn pole_at_end(lp: &Loop2, axis_origin: Vec2, d: Vec2) -> bool {
     let on_axis = |p: Vec2| d.cross(p - axis_origin).abs() < 1e-9;
     let n = lp.segs.len();
     let axis_segs: Vec<usize> =
         (0..n).filter(|i| lp.segs.get(*i).is_some_and(|s| matches!(s, Seg2::Line { a, b } if on_axis(*a) && on_axis(*b)))).collect();
     let [k] = axis_segs[..] else { return false };
-    lp.segs
-        .get((k + n - 1) % n)
-        .is_some_and(|s| !on_axis(s.start()) && !matches!(*s, Seg2::Line { a, b } if (b - a).normalized().is_some_and(|u| u.dot(d).abs() < 1e-9)))
+    lp.segs.get((k + n - 1) % n).is_some_and(|s| !on_axis(s.start()) && !matches!(s, Seg2::Line { .. }))
 }
 
 /// The edge from `a` to `b` along the profile segment `sg` (in `plane`), for a revolve's sweep.
