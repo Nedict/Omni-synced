@@ -375,5 +375,38 @@ fn box_intersect_splits_the_end_off_a_raked_wedge_after_its_end_rounds() {
             assert!((slice + rest - whole).abs() < 1e-6 * whole, "{slice} + {rest} vs {whole}");
             assert!((at.min.x - x0).abs() < 1e-6 && (at.max.x - 69.0).abs() < 1e-3, "slice spans x {} to {}", at.min.x, at.max.x);
         }
+
+/// #1853: half a slot drawn on a plate's top face, cut along its centreline, revolved about a
+/// construction line on that centreline as a cut. Half a turn into the plate and a full turn
+/// both failed with "no result": the revolve came out wrong where its arcs end on the axis (a
+/// fifth too much or too little), and the cut could not intersect it there. Both now take the
+/// half of the capsule below the face.
+#[test]
+fn revolve_cut_of_a_half_slot_about_its_centreline_in_the_face() {
+    let pi = std::f64::consts::PI;
+    let inside = (pi * 9.0 * 14.0 + 4.0 / 3.0 * pi * 27.0) / 2.0;
+    for angle in ["-180 deg", "360 deg"] {
+        let mut s = Session::default();
+        let steps = [
+            ("solid.box", json!({"corner": [0, 0, 0], "length": 40, "width": 20, "height": 10, "body_name": "Plate"})),
+            ("sketch.create", json!({"plane": {"origin": [0, 0, 10], "x_dir": [1, 0, 0], "y_dir": [0, 1, 0]}, "name": "Half"})),
+            ("sketch.line", json!({"points": [[10, 10], [30, 10]]})),
+            ("sketch.line", json!({"points": [[27, 13], [13, 13]]})),
+            ("sketch.arc.center_point", json!({"center": [13, 10], "start": [13, 13], "end": [10, 10]})),
+            ("sketch.arc.center_point", json!({"center": [27, 10], "start": [30, 10], "end": [27, 13]})),
+            ("sketch.line", json!({"points": [[5, 10], [35, 10]], "construction": true, "ids": ["axis"]})),
+            ("sketch.finish", json!({})),
+        ];
+        for (command, params) in steps {
+            s.execute(command, &params).unwrap_or_else(|e| panic!("{command}: {e}"));
+        }
+        let whole = volume(&s, "Plate");
+        s.execute("solid.revolve", &json!({"sketch": "Half", "axis": "axis", "angle": angle, "operation": "cut"}))
+            .unwrap_or_else(|e| panic!("revolve {angle}: {e}"));
+        let bad = s.model.state().body("Plate").map(|b| b.body.validity()).unwrap_or_default();
+        assert!(bad.is_empty(), "{angle}: {bad:?}");
+        let removed = whole - volume(&s, "Plate");
+        println!("#1853 revolve {angle}: removed {removed:.6} mm³ of the {inside:.6} below the face");
+        assert!((removed - inside).abs() < 1e-3 * inside, "{angle}: removed {removed} instead of {inside}");
     }
 }
