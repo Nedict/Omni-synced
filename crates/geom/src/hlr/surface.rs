@@ -407,15 +407,31 @@ pub(crate) fn torus_roots(w: Vec3, d: Vec3, a: Vec3, big: f64, small: f64, range
     {
         pieces = vec![[span[0], span[1].min(inner[0])], [span[0].max(inner[1]), span[1]]];
     }
+    // |g| is 1-Lipschitz along the ray: two samples whose values share a sign and add up to
+    // more than their distance cannot have a crossing between them. Other pairs are halved down
+    // to a thousandth of the tube radius, so a shallow cut through the tube (a chord shorter than
+    // the sample step) is still found.
+    let fine = 1e-3 * small;
     let mut out = Vec::new();
     for [s0, s1] in pieces.into_iter().filter(|p| p[1] > p[0]) {
         let n = ((s1 - s0) / (0.25 * small)).ceil().clamp(8., 1_000_000.) as usize;
         let at = |i: usize| s0 + (s1 - s0) * i as f64 / n as f64;
+        let mut stack: Vec<(f64, f64, f64, f64)> = Vec::new();
         let vals: Vec<f64> = (0..=n).map(|i| g(at(i))).collect();
         for i in 0..n {
-            let (Some(&ga), Some(&gb)) = (vals.get(i), vals.get(i + 1)) else { continue };
+            if let (Some(&ga), Some(&gb)) = (vals.get(i), vals.get(i + 1)) {
+                stack.push((at(i), at(i + 1), ga, gb));
+            }
+        }
+        stack.reverse();
+        let mut budget = 1_000_000usize;
+        while let Some((lo0, hi0, ga, gb)) = stack.pop() {
+            budget = budget.saturating_sub(1);
+            if budget == 0 {
+                break;
+            }
             if ga != 0. && gb != 0. && ga.signum() != gb.signum() {
-                let (mut lo, mut hi, mut glo) = (at(i), at(i + 1), ga);
+                let (mut lo, mut hi, mut glo) = (lo0, hi0, ga);
                 for _ in 0..80 {
                     let mid = 0.5 * (lo + hi);
                     let gm = g(mid);
@@ -427,19 +443,28 @@ pub(crate) fn torus_roots(w: Vec3, d: Vec3, a: Vec3, big: f64, small: f64, range
                     }
                 }
                 out.push((0.5 * (lo + hi), false));
+                continue;
             }
-            // A dip close to the tube without a crossing, away from the shell's ends: a touch.
-            if i > 0
-                && let (Some(&gp), Some(&gc), Some(&gn)) = (vals.get(i - 1), vals.get(i), vals.get(i + 1))
-                && gc > 0.
-                && gc < gp
-                && gc < gn
-                && gc < 1e-4 * small.max(1e-9 * big)
-            {
-                out.push((at(i), true));
+            if ga.abs() + gb.abs() > hi0 - lo0 {
+                continue;
             }
+            if hi0 - lo0 <= fine {
+                // Close to the tube without crossing it: a touch when it is a dip inside the shell.
+                let m = 0.5 * (lo0 + hi0);
+                let gm = g(m);
+                if gm > 0. && gm <= ga && gm <= gb && lo0 > s0 && hi0 < s1 && gm < 1e-4 * small.max(1e-9 * big) {
+                    out.push((m, true));
+                }
+                continue;
+            }
+            let m = 0.5 * (lo0 + hi0);
+            let gm = g(m);
+            stack.push((m, hi0, gm, gb));
+            stack.push((lo0, m, ga, gm));
         }
     }
+    out.sort_by(|x, y| x.0.total_cmp(&y.0));
+    out.dedup_by(|x, y| (x.0 - y.0).abs() <= fine && x.1 == y.1);
     out
 }
 
@@ -617,7 +642,7 @@ impl Rev {
                 }
                 run.clear();
             };
-            for i in 0..=n {
+            for i in 0..ss.len() {
                 let Some(&s) = ss.get(i) else { continue };
                 let inside = c(s).abs() <= 1.;
                 let prev = i.checked_sub(1).and_then(|j| ss.get(j).copied());

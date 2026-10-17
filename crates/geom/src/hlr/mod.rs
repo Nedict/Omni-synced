@@ -863,9 +863,13 @@ fn crossings(tracks: &mut [Track], ctx: &Ctx) -> Result<usize, HlrError> {
                 let q = ctx.view.screen(pa.apply(ta.c3().at(mid)));
                 let sag = |t: &Track| t.sags.iter().fold(0., |m: f64, v| m.max(*v));
                 let reach = 4. * (sag(ta) + sag(tb)) + tol;
-                tb.samples.windows(2).any(|w| match (w.first(), w.get(1)) {
-                    (Some(a), Some(b)) => point_segment(q, a.1, b.1) <= reach,
-                    _ => false,
+                // Only the other curve's chords between its two crossings (and one either side).
+                let (j0, j1) = (x.4.min(y.4).saturating_sub(1), x.4.max(y.4) + 2);
+                tb.samples.get(j0..j1.min(tb.samples.len())).is_some_and(|run| {
+                    run.windows(2).any(|w| match (w.first(), w.get(1)) {
+                        (Some(a), Some(b)) => point_segment(q, a.1, b.1) <= reach,
+                        _ => false,
+                    })
                 })
             });
             if together {

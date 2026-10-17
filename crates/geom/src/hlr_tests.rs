@@ -172,5 +172,23 @@ fn a_torus_seen_nearly_along_its_axis_keeps_its_silhouettes() {
             .unwrap();
     let d = Vec3::new(1e-4, 0., -1.).normalized().unwrap();
     let curves = s.rev_silhouette(d);
-    assert!(curves.len() >= 2, "{} silhouette curves", curves.len());
+    // Both the outer (radius about 1500) and the inner (about 500) silhouettes are there.
+    let radii: Vec<f64> = curves
+        .iter()
+        .flat_map(|(c, _)| {
+            let [t0, t1] = c.domain();
+            (0..=8).map(move |i| c.at(t0 + (t1 - t0) * i as f64 / 8.))
+        })
+        .map(|p| p.x.hypot(p.y))
+        .collect();
+    assert!(radii.iter().any(|r| *r > 1400.) && radii.iter().any(|r| *r < 600.), "{radii:?}");
+}
+
+#[test]
+fn a_shallow_cut_through_a_torus_tube_is_found() {
+    // R 20, r 5, a ray along the axis 0.01 mm inside the outer equator: a 0.63 mm chord.
+    let roots = surface::torus_roots(Vec3::new(24.99, 0., -10.), Vec3::new(0., 0., 1.), Vec3::new(0., 0., 1.), 20., 5., [0., 20.]);
+    let hits: Vec<f64> = roots.iter().filter(|(_, grazing)| !grazing).map(|(l, _)| *l).collect();
+    let half = (25f64 - 4.99f64.powi(2)).sqrt();
+    assert!(hits.len() == 2 && (hits[0] - (10. - half)).abs() < 1e-6 && (hits[1] - (10. + half)).abs() < 1e-6, "{roots:?}");
 }
