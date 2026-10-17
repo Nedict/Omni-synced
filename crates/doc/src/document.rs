@@ -2225,21 +2225,12 @@ pub struct DesignLink {
     pub feature: u64,
 }
 
-fn read_manufacturing<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<solidcraft_cam::Manufacturing, D::Error> {
-    let manufacturing = <solidcraft_cam::Manufacturing as Deserialize>::deserialize(d)?;
-    manufacturing.validate().map_err(serde::de::Error::custom)?;
-    Ok(manufacturing)
-}
-
 /// The document.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     /// Named, renderer-independent setups. Device/job state is never saved here.
     #[serde(default, skip_serializing_if = "crate::render_settings::RenderSettings::is_empty")]
     pub render: std::sync::Arc<crate::render_settings::RenderSettings>,
-    /// Manufacturing definitions; generated toolpaths remain session caches.
-    #[serde(default, deserialize_with = "read_manufacturing", skip_serializing_if = "solidcraft_cam::Manufacturing::is_empty")]
-    pub manufacturing: solidcraft_cam::Manufacturing,
     #[serde(default = "default_format")]
     pub format: String,
     /// The changes of `format` this design has while they are pending (no release has fixed
@@ -2462,7 +2453,6 @@ impl Document {
     pub fn new(name: &str) -> Self {
         Document {
             render: Default::default(),
-            manufacturing: Default::default(),
             format: default_format(),
             format_pending: crate::format::pending_names(),
             name: name.into(),

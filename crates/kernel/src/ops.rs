@@ -363,7 +363,9 @@ fn boolean_via(a: &Body, b: &Body, op: BoolOp, whole: &dyn Fn(&Body, &Body, Bool
     match op {
         BoolOp::Cut => r = r.and_then(|result| result.map(|body| body.with_preserved_boolean_planar_sources(a, b, true)).transpose()),
         BoolOp::Union => r = r.and_then(|result| result.map(|body| body.with_preserved_union_planar_sources(a, b)).transpose()),
-        BoolOp::Intersect => {}
+        // Every face of an intersection lies on one operand's face, as a union's does: the same
+        // roles carry over (#565).
+        BoolOp::Intersect => r = r.and_then(|result| result.map(|body| body.with_preserved_union_planar_sources(a, b)).transpose()),
     }
     // A retry's result is held to what the operation can do at all; one that fails is refused
     // rather than returned wrong (issue #616).
@@ -1426,15 +1428,19 @@ pub fn transform(body: &Body, translate: Vec3, origin: Vec3, axis: Vec3, angle: 
 pub fn split_by_plane(body: &Body, plane: &solidcraft_geom::Plane) -> Result<Vec<Body>> {
     let mut out = Vec::new();
     for positive in [true, false] {
-        out.extend(half_space(body, plane, positive)?);
+        out.extend(half_space(body, plane, positive)?.0);
     }
     Ok(out)
 }
 
-/// The part of a body on one side of a plane (`None` when nothing is there): its intersection
-/// with [`half_box`] (whose history it carries, over the body and the box).
-pub(crate) fn half_space(body: &Body, plane: &solidcraft_geom::Plane, positive: bool) -> Result<Option<Body>> {
-    boolean(body, &half_box(body, plane, positive)?, BoolOp::Intersect)
+/// The part of a body on one side of a plane (`None` when nothing is there), and the tool it is
+/// cut with: the part is the body's intersection with [`half_box`] (the tool), whose history it
+/// carries, over the body and the box. The box's face in the plane, the part's cut face, is its
+/// start cap on the positive side and its end cap on the negative side.
+pub fn half_space(body: &Body, plane: &solidcraft_geom::Plane, positive: bool) -> Result<(Option<Body>, Body)> {
+    // The box's own construction roles describe no face of the design: the cut face has none.
+    let tool = half_box(body, plane, positive)?.with_face_sources(None);
+    Ok((boolean(body, &tool, BoolOp::Intersect)?, tool))
 }
 
 /// A box covering everything of `body` on one side of a plane, its start cap in the plane.

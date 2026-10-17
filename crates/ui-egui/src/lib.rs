@@ -39,6 +39,7 @@ pub mod dialogs_save_mesh;
 pub mod dialogs_sheet;
 pub mod dialogs_surface;
 pub mod dialogs_sweep;
+mod dialogs_thread;
 pub mod dialogs_view_dxf;
 pub mod dim_view;
 #[cfg(test)]
@@ -68,7 +69,6 @@ pub mod install;
 pub mod issue_report;
 pub mod joint_drag;
 pub mod keymap;
-pub mod manufacturing;
 mod material_card_review;
 #[cfg(test)]
 mod measurement_ui_tests;
@@ -111,12 +111,12 @@ pub(crate) mod display_lod;
 #[cfg(test)]
 mod file_load_ui_tests;
 #[cfg(test)]
-mod file_ui_tests;
-#[cfg(test)]
 mod fillet_spline_handle_tests;
 pub(crate) mod navigation;
 pub mod palette;
 pub mod params_dialog;
+pub(crate) mod pick_buffer;
+pub(crate) mod pick_index;
 pub mod prefs;
 #[cfg(test)]
 mod preselect_tests;
@@ -257,7 +257,9 @@ impl Default for UiState {
 /// Host services injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
-    pub pick_open: Option<Box<dyn Fn() -> FilePickerFuture>>,
+    /// Ask for a file to open. The extensions are the file type the command reads, offered as
+    /// the picker's first filter (`&[]`: designs, CAD files and meshes, #1801).
+    pub pick_open: Option<Box<dyn Fn(&[&str]) -> FilePickerFuture>>,
     pub pick_save: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
     /// Open a dialog asking for a program (a slicer); `None` when the host has no such dialog.
     pub pick_program: Option<Box<dyn Fn() -> FilePickerFuture>>,
@@ -277,7 +279,6 @@ pub struct Services {
 }
 
 pub struct SolveApp {
-    pub manufacturing: manufacturing::State,
     pub session: Session,
     pub ui: UiState,
     pub cam: Camera,
@@ -427,7 +428,6 @@ impl SolveApp {
             file_picker: None,
             viewport: viewport::ViewportState::default(),
             render_workspace,
-            manufacturing: Default::default(),
             tool: None,
             dialog: None,
             params: None,
@@ -717,31 +717,6 @@ impl SolveApp {
             self.set_status(format!("{label}: {why}"), true);
             return;
         }
-        match id {
-            "file.save" => {
-                self.home.open = false;
-                return toolbar::save(self);
-            }
-            "file.save_as" => {
-                self.home.open = false;
-                return toolbar::save_as(self);
-            }
-            "doc.open" => {
-                self.pick_open(|app, path| {
-                    if let Some(path) = path {
-                        app.open_path_async(&path);
-                    }
-                });
-                return;
-            }
-            _ => {}
-        }
-        manufacturing::cancel_editor(self);
-        if id.starts_with("cam.") {
-            self.home.open = false;
-            manufacturing::start(self, id);
-            return;
-        }
         if id == "material.properties.validate" {
             self.material_card_review = Some(material_card_review::ReviewWindow::default());
             self.home.open = false;
@@ -766,8 +741,8 @@ impl SolveApp {
         dim_view::cancel();
         self.tool = None;
         self.home.open = false;
-        if matches!(id, "sketch.insert_dxf" | "sketch.insert_svg") {
-            self.pick_open_command(id, json!({}));
+        if let Some(ext) = id.strip_prefix("sketch.insert_").filter(|e| matches!(*e, "dxf" | "svg")) {
+            self.pick_open_command(id, json!({}), &[ext]);
             return;
         }
         if id == "component.insert_design" {
@@ -991,13 +966,16 @@ impl SolveApp {
         v
     }
 
-    /// Is the origin widget shown (always while picking a sketch plane)?
-    /// Origin planes and axes are drawn and pickable. Hidden ones only come back while Create
-    /// Sketch has nothing else to offer (no body shown).
+    /// Is the origin widget shown? Origin planes and axes are drawn and pickable. While Create
+    /// Sketch picks its plane the Origin is always shown, drawn through the model (a plane
+    /// inside a body stays visible), even when the browser hides it.
     pub fn origin_visible(&self) -> bool {
-        self.ui.show_origin
-            || (self.dialog.as_ref().is_some_and(|d| matches!(d.kind, dialogs::Kind::Sketch))
-                && !self.session.world_state().bodies.iter().any(|b| self.session.body_visible(&b.name)))
+        self.ui.show_origin || self.picking_sketch_plane()
+    }
+
+    /// Is Create Sketch open, waiting for its plane?
+    pub fn picking_sketch_plane(&self) -> bool {
+        self.dialog.as_ref().is_some_and(|d| matches!(d.kind, dialogs::Kind::Sketch))
     }
 
     pub fn set_status(&mut self, s: impl Into<String>, error: bool) {
@@ -1254,9 +1232,6 @@ impl SolveApp {
 
     /// Per-frame logic before layout.
     pub fn logic(&mut self, ctx: &egui::Context) {
-        manufacturing::update_exports(self, ctx);
-        #[cfg(target_arch = "wasm32")]
-        manufacturing::advance(self, ctx);
         file_picker::tick(self, ctx);
         render_workspace::sync_backend(self);
         render_workspace::tick(self, ctx);
@@ -1394,9 +1369,7 @@ impl SolveApp {
             timeline::timeline(self, ui);
         }
         palette::palette_bar(self, ui);
-        if self.ui.tab == "MILLING" {
-            manufacturing::panel(self, ui);
-        } else if self.ui.show_browser {
+        if self.ui.show_browser {
             if left_timeline {
                 browser::browser_below_timeline(self, ui);
             } else {
@@ -1418,7 +1391,6 @@ impl SolveApp {
             }
         });
         dialogs::show(self, ui.ctx());
-        manufacturing::editor(self, ui.ctx());
         issue_report::CadInput::block(self, ui, report_input);
         sketch_palette::show(self, ui.ctx());
         self.resolve_fit(ui.ctx());

@@ -76,12 +76,6 @@ Changes:
 
 ## truck-meshalgo 0.4.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/truck)
 
-CAM uses a separate `tessellation/verification.rs` path adapted from the original
-fixed-tolerance triangulator. It propagates failed projection/refinement explicitly,
-retains a physical tolerance independent of display LOD, and uses an original bounded
-boundary candidate index plus Spade bulk loading. Display meshing remains unchanged.
-The adapter is exposed only through the guarded kernel verification-mesh API.
-
 Changes:
 - `tessellation/mod.rs`, `triangulation.rs`: a separate provisional `preview_face`
   path accepts at most 4,096 already sampled boundary points and a fixed grid of
@@ -160,6 +154,15 @@ Changes:
   p11`, across that plane, at the middle). A bilinear patch equals the blend of its corners the
   division compared against, so a twisted ruled face (a loft between polylines) went out as two
   triangles per face (#1666); a flat cell such as a cone's trapezoid between rulings is not split.
+- `tessellation/triangulation.rs`: a shell's face meshes share their edges' points exactly. A
+  face's mesh puts each point at its parameters on the face's own surface, so a point of an edge
+  that lies off a surface within tolerance (an intersection-curve sample whose projection did not
+  converge, an imported edge) came out in a different place on each of the edge's faces, and the
+  exported mesh had a crack there. In display and export meshes (`Deflection::rulings`), a
+  vertex at a point of a face's boundary loops that is farther than `TOLERANCE` from the nearest
+  point of the face's edges now goes to that point, when it is within the chord tolerance
+  (`onto_edges`). Points within `TOLERANCE` stay on the surface, so exact geometry meshes as
+  before. The meshes Boolean operations intersect keep truck's points.
 
 ## matext4cgmath 0.1.0 (Apache-2.0, © RICOS Co. Ltd., https://github.com/ricosjp/matext4cgmath)
 

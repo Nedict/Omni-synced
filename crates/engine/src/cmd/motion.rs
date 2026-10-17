@@ -14,6 +14,8 @@ use super::joints::{cannot_move, effective_values, joint_id, occurrence_id, reso
 use crate::params::{bad, bool_, str_, vec3};
 use crate::{EngineError, Result, Session};
 
+#[path = "motion_analysis.rs"]
+mod analysis;
 #[path = "motion_animation.rs"]
 mod animation;
 #[path = "contact_sweep.rs"]
@@ -69,6 +71,8 @@ pub static COMMANDS: &[CommandSpec] = &[
         "; name? (default Motion TraceN) - keeps the trace as a 3D sketch spline through its points (a new sketch with 3D Sketch \
          on, in the root component, where no joint moves it; a fixed curve, it does not follow later changes) → sketch, name, curves, points"
     )),
+    CommandSpec::new("motion.plot", "Plot Motion Study", analysis::plot).noundo().params(analysis::PLOT_DOC),
+    CommandSpec::new("motion.interference", "Motion Interference", analysis::interference).noundo().params(analysis::INTERFERENCE_DOC),
     CommandSpec::new("motion.list", "List Motion Studies", list_studies).noundo(),
     CommandSpec::new("motion.delete", "Delete Motion Study", delete_study).params("study"),
     CommandSpec::new("explode.create", "Exploded View", explode_create).at("SOLID", "ASSEMBLE").icon("joint").params(
@@ -472,12 +476,15 @@ fn check(s: &mut Session, _p: &Value) -> Result<Value> {
 // ---- Motion studies ----
 
 fn study_index(s: &Session, p: &Value, cmd: &str) -> Result<usize> {
-    let key = match p.get("study") {
-        Some(Value::Number(n)) => n.to_string(),
-        Some(Value::String(x)) => x.clone(),
+    // A number is an id first, text a name first: a study may be named like another's id.
+    let (key, id_first) = match p.get("study") {
+        Some(Value::Number(n)) => (n.to_string(), true),
+        Some(Value::String(x)) => (x.clone(), false),
         _ => return Err(bad(cmd, "`study` must be an id or a name")),
     };
-    s.doc.assembly.studies.iter().position(|m| m.id.to_string() == key || m.name == key).ok_or_else(|| bad(cmd, format!("no motion study `{key}`")))
+    let studies = &s.doc.assembly.studies;
+    let (by_id, by_name) = (studies.iter().position(|m| m.id.to_string() == key), studies.iter().position(|m| m.name == key));
+    if id_first { by_id.or(by_name) } else { by_name.or(by_id) }.ok_or_else(|| bad(cmd, format!("no motion study `{key}`")))
 }
 
 fn study(s: &mut Session, p: &Value) -> Result<Value> {
@@ -688,13 +695,11 @@ const MAX_TRACE: usize = solidcraft_sketch::MAX_FIT_POINTS;
 /// The joint values a trace drives to at sample `k` of `n`.
 type Plan = Box<dyn Fn(&Session, usize, usize) -> Vec<(u64, Vec<f64>)>>;
 
-/// Where a point of an occurrence goes as a study plays or a joint is driven: its world
-/// positions, sampled on a copy (the design is not changed). Each sample is driven from the one
-/// before, so closed loops follow on their branch and contact sets stop them; the trace ends at
-/// the sample where the motion stops short. Returns the points and the answer without them.
-fn sample_trace(s: &Session, p: &Value, cmd: &str) -> Result<(Vec<Vec3>, Value)> {
-    // The placement traced: an occurrence path through nested sub-assemblies (one instance of
-    // each), or an occurrence at its first placement (none: the root).
+/// The point `p` names (`occurrence` and `point`): the occurrence path placing it and the point
+/// in that placement's frame. The occurrence is an occurrence path through nested sub-assemblies
+/// (one instance of each), or an occurrence at its first placement (none: the root). The point
+/// is a world point where the parts are placed (moves only shown are left out).
+fn traced_point(s: &Session, p: &Value, cmd: &str) -> Result<(Vec<u64>, Vec3)> {
     let path: Vec<u64> = match p.get("occurrence") {
         Some(Value::Array(ids)) if ids.len() <= 64 => {
             ids.iter().map(|v| v.as_u64().ok_or_else(|| bad(cmd, "an occurrence path lists occurrence ids"))).collect::<Result<_>>()?
@@ -710,19 +715,29 @@ fn sample_trace(s: &Session, p: &Value, cmd: &str) -> Result<(Vec<Vec3>, Value)>
     };
     let at = p.get("point").and_then(vec3).filter(|v| v.len() < 1e7).ok_or_else(|| bad(cmd, "`point` must be [x, y, z], a world point"))?;
     let mut t = s.scratch();
+    t.pending_moves.clear();
+    let local = solidcraft_doc::mat_inverse(&path_world(&t, &path, cmd)?)
+        .map(|m| solidcraft_doc::apply_point(&m, at))
+        .ok_or_else(|| bad(cmd, "the occurrence's placement is not invertible"))?;
+    Ok((path, local))
+}
+
+/// The world placement of an occurrence path (empty: the root).
+fn path_world(t: &Session, path: &[u64], cmd: &str) -> Result<Mat> {
+    if path.is_empty() { Ok(solidcraft_doc::IDENTITY) } else { t.occurrence_placement(path).map(|o| o.world).map_err(|e| bad(cmd, e.to_string())) }
+}
+
+/// Where a point of an occurrence goes as a study plays or a joint is driven: its world
+/// positions, sampled on a copy (the design is not changed). Each sample is driven from the one
+/// before, so closed loops follow on their branch and contact sets stop them; the trace ends at
+/// the sample where the motion stops short. Returns the points and the answer without them.
+fn sample_trace(s: &Session, p: &Value, cmd: &str) -> Result<(Vec<Vec3>, Value)> {
+    let (path, local) = traced_point(s, p, cmd)?;
+    let mut t = s.scratch();
     // Traced from where the parts are placed: moves only shown (an exploded view, a move not
     // captured yet) are not where the joints are solved.
     t.pending_moves.clear();
-    let world = |t: &Session| -> Result<Mat> {
-        if path.is_empty() {
-            Ok(solidcraft_doc::IDENTITY)
-        } else {
-            t.occurrence_placement(&path).map(|o| o.world).map_err(|e| bad(cmd, e.to_string()))
-        }
-    };
-    let local = solidcraft_doc::mat_inverse(&world(&t)?)
-        .map(|m| solidcraft_doc::apply_point(&m, at))
-        .ok_or_else(|| bad(cmd, "the occurrence's placement is not invertible"))?;
+    let world = |t: &Session| path_world(t, &path, cmd);
     let (default, given, plan) = motion_plan(s, p, cmd)?;
     let n = sample_count(p, default.min(MAX_TRACE), MAX_TRACE, cmd)?;
     let mut points = Vec::new();
