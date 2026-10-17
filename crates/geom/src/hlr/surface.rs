@@ -154,6 +154,48 @@ impl S3 {
         rev.ok().map(|r| S3::Rev(Box::new(r)))
     }
 
+    /// A box that contains the whole surface for certain: the control-point hull of a spline
+    /// (weights are positive), the turned profile's hull for a revolution; `None` for planes.
+    pub fn bound(&self) -> Option<(Vec3, Vec3)> {
+        let hull = |pts: &mut dyn Iterator<Item = Vec3>| {
+            pts.fold(None, |acc: Option<(Vec3, Vec3)>, p| Some(acc.map_or((p, p), |(lo, hi)| (lo.min(p), hi.max(p)))))
+        };
+        match self {
+            S3::Plane { .. } => None,
+            S3::Nurbs(n) => hull(&mut n.s.homogeneous().iter().filter_map(|h| h.project())),
+            S3::Rev(r) => {
+                // Radial distance is convex, so its maximum over the profile's hull is at a vertex.
+                let pts: Vec<Vec3> = match &r.profile {
+                    C3::Line { a, b } => vec![*a, *b],
+                    C3::Polyline(p) => p.clone(),
+                    C3::Spline { points, .. } => {
+                        points.iter().filter(|h| h[3] > 0.).map(|h| Vec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3])).collect()
+                    }
+                    C3::Arc { o, x, y, r: rad, .. } => {
+                        // The whole circle's bounding square in its plane.
+                        let m = rad[0].max(rad[1]);
+                        vec![*o + *x * m + *y * m, *o + *x * m - *y * m, *o - *x * m + *y * m, *o - *x * m - *y * m]
+                    }
+                };
+                let (mut rmax, mut h0, mut h1) = (0f64, f64::MAX, f64::MIN);
+                for p in &pts {
+                    let w = *p - r.o;
+                    let h = w.dot(r.a);
+                    rmax = rmax.max((w - r.a * h).len());
+                    h0 = h0.min(h);
+                    h1 = h1.max(h);
+                }
+                if !(h1 >= h0) {
+                    return None;
+                }
+                let (c0, c1) = (r.o + r.a * h0, r.o + r.a * h1);
+                let ext = |k: f64| rmax * (1. - k * k).max(0.).sqrt();
+                let e = Vec3::new(ext(r.a.x), ext(r.a.y), ext(r.a.z));
+                Some((c0.min(c1) - e, c0.max(c1) + e))
+            }
+        }
+    }
+
     /// Silhouette points of a revolution for direction `d`, traced along the profile: at each
     /// profile parameter the normal is perpendicular to `d` at up to two angles. Returns
     /// polylines of exact points with their chord deviation, and exact circles when `d` is the axis.
@@ -321,61 +363,81 @@ pub(crate) fn quadratic(a: f64, b: f64, c: f64) -> Vec<(f64, bool)> {
 /// Roots of the torus implicit function along a ray, by sampling and bisection; dips that
 /// touch zero without a sign change are grazing.
 pub(crate) fn torus_roots(w: Vec3, d: Vec3, a: Vec3, big: f64, small: f64, range: [f64; 2]) -> Vec<(f64, bool)> {
-    let f = |l: f64| {
+    // Signed distance from the tube: distance to the centre circle less the tube radius,
+    // computed directly (no quartic), so a thin tube on a large ring keeps its precision.
+    let g = |l: f64| {
         let p = w + d * l;
-        let s = p.dot(p) + big * big - small * small;
         let z = p.dot(a);
-        s * s - 4. * big * big * (p.dot(p) - z * z)
+        let rho = (p - a * z).len();
+        (rho - big).hypot(z) - small
     };
-    // f scales like length^4: its noise floor and tangent-dip threshold follow.
-    let size = big + small;
-    // Rounding noise of f is about 1e-16 (R + r)^4; inside a thin tube |f| reaches 4 R^2 r^2.
-    let floor = 1e-15 * size.powi(4);
-    // Steps of at most a quarter of the tube radius, so a thin tube is not stepped over.
-    let n = ((range[1] - range[0]) / (0.25 * small)).ceil().clamp(200., 100_000.) as usize;
-    let at = |i: usize| range[0] + (range[1] - range[0]) * i as f64 / n as f64;
+    // Sample only where the ray is inside the shell |z| <= r, R - r <= rho <= R + r, in steps
+    // of a quarter of the tube radius: the shell is short along any ray, so the steps are few.
+    // The shell is padded: a crossing exactly on its surface (rho = R + r at z = 0, say) must
+    // fall strictly inside a sampled piece.
+    let m = 0.5 * small + 1e-9 * big;
+    let (z0, dz) = (w.dot(a), d.dot(a));
+    let mut span = range;
+    if dz.abs() > 1e-300 {
+        let (l0, l1) = ((-small - m - z0) / dz, (small + m - z0) / dz);
+        span = [span[0].max(l0.min(l1)), span[1].min(l0.max(l1))];
+    } else if z0.abs() > small + m {
+        return Vec::new();
+    }
+    // rho^2 along the ray: |w_perp + l d_perp|^2.
+    let (wp, dp) = (w - a * z0, d - a * dz);
+    let (qa, qb, qc) = (dp.dot(dp), 2. * wp.dot(dp), wp.dot(wp));
+    let within = |r2: f64| -> Option<[f64; 2]> {
+        // Where rho^2 <= r2.
+        if qa <= 1e-300 {
+            return (qc <= r2).then_some([f64::NEG_INFINITY, f64::INFINITY]);
+        }
+        let disc = qb * qb - 4. * qa * (qc - r2);
+        (disc >= 0.).then(|| [(-qb - disc.sqrt()) / (2. * qa), (-qb + disc.sqrt()) / (2. * qa)])
+    };
+    let Some(outer) = within((big + small + m).powi(2)) else { return Vec::new() };
+    span = [span[0].max(outer[0]), span[1].min(outer[1])];
+    if !(span[1] > span[0]) {
+        return Vec::new();
+    }
+    // Remove the inside of the inner radius, leaving up to two pieces.
+    let mut pieces = vec![span];
+    if big > small + m
+        && let Some(inner) = within((big - small - m).powi(2))
+    {
+        pieces = vec![[span[0], span[1].min(inner[0])], [span[0].max(inner[1]), span[1]]];
+    }
     let mut out = Vec::new();
-    let vals: Vec<f64> = (0..=n).map(|i| f(at(i))).collect();
-    // Brackets between consecutive samples clear of the noise floor (a root may sit on a sample).
-    let mut last: Option<(usize, f64)> = None;
-    for i in 0..=n {
-        let Some(&fb) = vals.get(i) else { continue };
-        if fb.abs() <= floor {
-            // On the surface at a sample: a touch if the neighbours agree in sign.
-            if let (Some(&fp), Some(&fnx)) = (i.checked_sub(1).and_then(|j| vals.get(j)), vals.get(i + 1))
-                && fp.abs() > floor
-                && fnx.abs() > floor
-                && fp.signum() == fnx.signum()
+    for [s0, s1] in pieces.into_iter().filter(|p| p[1] > p[0]) {
+        let n = ((s1 - s0) / (0.25 * small)).ceil().clamp(8., 1_000_000.) as usize;
+        let at = |i: usize| s0 + (s1 - s0) * i as f64 / n as f64;
+        let vals: Vec<f64> = (0..=n).map(|i| g(at(i))).collect();
+        for i in 0..n {
+            let (Some(&ga), Some(&gb)) = (vals.get(i), vals.get(i + 1)) else { continue };
+            if ga != 0. && gb != 0. && ga.signum() != gb.signum() {
+                let (mut lo, mut hi, mut glo) = (at(i), at(i + 1), ga);
+                for _ in 0..80 {
+                    let mid = 0.5 * (lo + hi);
+                    let gm = g(mid);
+                    if gm.signum() == glo.signum() {
+                        lo = mid;
+                        glo = gm;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                out.push((0.5 * (lo + hi), false));
+            }
+            // A dip close to the tube without a crossing, away from the shell's ends: a touch.
+            if i > 0
+                && let (Some(&gp), Some(&gc), Some(&gn)) = (vals.get(i - 1), vals.get(i), vals.get(i + 1))
+                && gc > 0.
+                && gc < gp
+                && gc < gn
+                && gc < 1e-4 * small.max(1e-9 * big)
             {
                 out.push((at(i), true));
             }
-            continue;
-        }
-        let prev = last.replace((i, fb));
-        let Some((j, fa)) = prev else { continue };
-        if fa.signum() != fb.signum() {
-            let (mut lo, mut hi, mut flo) = (at(j), at(i), fa);
-            for _ in 0..80 {
-                let mid = 0.5 * (lo + hi);
-                let fm = f(mid);
-                if fm.signum() == flo.signum() {
-                    lo = mid;
-                    flo = fm;
-                } else {
-                    hi = mid;
-                }
-            }
-            out.push((0.5 * (lo + hi), false));
-        }
-        if i > 0
-            && let (Some(&fp), Some(&fc), Some(&fnx)) = (vals.get(i - 1), vals.get(i), vals.get(i + 1))
-            && fc.abs() < fp.abs()
-            && fc.abs() < fnx.abs()
-            && fc.signum() == fp.signum()
-            && fc.signum() == fnx.signum()
-            && fc.abs() < 1e-6 * size.powi(4)
-        {
-            out.push((at(i), true));
         }
     }
     out
@@ -492,8 +554,16 @@ impl Rev {
         let rho = (d1 * d1 + d2 * d2).sqrt();
         let phi = d2.atan2(d1);
         let n = 720usize;
-        let ss: Vec<f64> = (0..=n).map(|i| self.dom[0] + (self.dom[1] - self.dom[0]) * i as f64 / n as f64).collect();
+        let mut ss: Vec<f64> = (0..=n).map(|i| self.dom[0] + (self.dom[1] - self.dom[0]) * i as f64 / n as f64).collect();
         let mut out = Vec::new();
+        if rho > 1e-12 {
+            // The silhouette exists where |dr (a.d)| <= |dh| rho; near the axis direction those
+            // intervals shrink around the zeros of dr, which are sampled so none is stepped over.
+            let extra = self.roots(&ss, 0);
+            ss.extend(extra);
+            ss.sort_by(f64::total_cmp);
+            ss.dedup_by(|x, y| (*x - *y).abs() <= 1e-15 * (self.dom[1] - self.dom[0]));
+        }
         if rho <= 1e-12 {
             // Along the axis: circles where the profile runs parallel to the axis (dr = 0).
             for s0 in self.roots(&ss, 0) {

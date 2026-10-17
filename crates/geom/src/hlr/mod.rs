@@ -262,22 +262,13 @@ pub fn prepare(b: &Brep, opts: &Options) -> Result<Prepared, HlrError> {
             report.max_trim_chord = report.max_trim_chord.max(trim.chord_error);
             let (mut lo, mut hi) = (trim.lo, trim.hi);
             if !matches!(surface, S3::Plane { .. }) {
-                // Curved faces can bulge past their boundary: include interior chart samples.
-                if let Some((a, z)) = trim.uv_bounds() {
-                    for j in 0..=12 {
-                        for i in 0..=12 {
-                            let uv = [a[0] + (z[0] - a[0]) * i as f64 / 12., a[1] + (z[1] - a[1]) * j as f64 / 12.];
-                            if trim.contains(uv) != Some(false) {
-                                let p = surface.point(uv);
-                                if p.is_finite() {
-                                    lo = lo.min(p);
-                                    hi = hi.max(p);
-                                }
-                            }
-                        }
-                    }
+                // Curved faces can bulge past their boundary: bound them by the whole surface's
+                // guaranteed box (spline hull, turned profile), clipped to nothing tighter.
+                if let Some((blo, bhi)) = surface.bound() {
+                    lo = lo.min(blo);
+                    hi = hi.max(bhi);
                 }
-                let pad = (hi - lo).len() * 0.02;
+                let pad = (hi - lo).len() * 1e-6;
                 lo -= Vec3::new(pad, pad, pad);
                 hi += Vec3::new(pad, pad, pad);
             }

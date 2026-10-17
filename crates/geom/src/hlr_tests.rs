@@ -151,3 +151,26 @@ fn a_hair_thin_tube_on_a_kilometre_torus_stops_a_ray() {
     let hits: Vec<f64> = roots.iter().filter(|(_, grazing)| !grazing).map(|(l, _)| *l).collect();
     assert!(hits.len() == 2 && (hits[0] - 0.9).abs() < 1e-3 && (hits[1] - 1.1).abs() < 1e-3, "{roots:?}");
 }
+
+#[test]
+fn a_ray_from_the_hole_crosses_a_thin_large_torus() {
+    // R 4 m, r 0.01 mm, from the centre outward over 8 m: only the shell around the tube is sampled.
+    let roots = surface::torus_roots(Vec3::new(0., 0., 0.), Vec3::new(1., 0., 0.), Vec3::new(0., 0., 1.), 4000., 0.01, [0., 8000.]);
+    let hits: Vec<f64> = roots.iter().filter(|(_, grazing)| !grazing).map(|(l, _)| *l).collect();
+    assert!(hits.len() == 2 && (hits[0] - 3999.99).abs() < 1e-6 && (hits[1] - 4000.01).abs() < 1e-6, "{roots:?}");
+}
+
+#[test]
+fn a_torus_seen_nearly_along_its_axis_keeps_its_silhouettes() {
+    // Meridian starting off the equator and a view 1e-4 rad from the axis: the silhouette lives
+    // in narrow profile intervals around the equators, which must not fall between samples.
+    let frame = crate::brep::Frame { origin: [0.; 3], x_axis: [1., 0., 0.], y_axis: [0., 1., 0.] };
+    let tau = std::f64::consts::TAU;
+    let shift = std::f64::consts::PI / 720.;
+    let s =
+        surface::S3::new(&Surface::Torus { frame, major_radius: 1000., minor_radius: 500., longitude: [0., tau], meridian: [shift, shift + tau] })
+            .unwrap();
+    let d = Vec3::new(1e-4, 0., -1.).normalized().unwrap();
+    let curves = s.rev_silhouette(d);
+    assert!(curves.len() >= 2, "{} silhouette curves", curves.len());
+}
