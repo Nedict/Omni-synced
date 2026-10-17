@@ -55,6 +55,33 @@ driven one. A joint follows one link at most, and a coupling that would drive it
 refused. `joint.list` lists each coupling's definition under `links` with an `error` when it can't
 be worked out (the picked face is gone); the link then keeps its last ratio.
 
+**Cam** (`joint.cam {a, b, profile}`, on the **ASSEMBLE** panel) makes a follower ride a cam. The
+cam turns on a revolute joint (a); the follower is a slider (b, a translating follower such as a
+valve tappet) or a revolute joint (b, an oscillating follower such as a rocker arm). The profile
+is the cam's outline in a plane square to its axis: a closed profile of a sketch in the cam's
+component, or the cam's edges picked on its body (one click on an edge takes the closed loop it is
+on in that plane). The follower is:
+
+- a **Knife edge**: a point on the cam;
+- a **Roller** of a radius, typed or taken from the roller's round face (picking that face also
+  says where the roller is);
+- a **Flat face** square to a slider's line, such as a bucket tappet.
+
+A translating follower's line runs along its slider's axis, through its **Tip** when one is picked
+(its knife's point or its roller's centre), so a follower offset from the cam's axis rides the
+right flank. An oscillating follower needs its tip, or its roller's face, to know its arm. The
+follower rides the cam from the side it is on (**Other side** takes the other one). The follower's
+travel over a turn of the cam is worked out from the profile and kept with the link, one value a
+degree with a smooth curve between them that never overshoots its samples. It is worked out again
+whenever the design changes: change the cam's sketch, a parameter or the roller, and the follower
+follows. Like the gears, the new link leaves the follower where it is (model it touching the cam),
+and the cam is a motion link: it drives in **Drive Joints**, plays in motion studies, works in
+closed loops (a tappet can be the piston of a slider-crank) and stops at contact sets. The profile
+may also be on the grounded part, with the follower's guide on a turret that the cam joint turns.
+`joint.list` gives a cam's link `lift` (the follower's lowest and highest values and its rise)
+instead of a ratio. A profile that is not closed, a line or an arm that misses the cam somewhere,
+a follower that would jump, and axes that are not square or parallel are refused.
+
 A joint moves one component against another, so its two picks must be on different components.
 A STEP file with several parts often comes in as bodies of one component, and picks on two of
 those bodies make no joint. The Joint and As-built Joint dialogs say so under the picks and offer
@@ -138,6 +165,39 @@ are drawn by the same renderer as `solidcraft-cli snapshot`, on a copy of the de
 changed. A GIF keeps one palette for all its frames, so colours don't flicker, and stores only
 what changed from one frame to the next. Frames are capped: at most 1000, and a GIF holds at most
 2^26 pixels of frames (about 160 frames of 800 × 500).
+
+**Motion analysis.** The **Motion Study** dialog's **Study** box opens a saved study to edit, and
+by its timeline the dialog charts what the study does.
+**Plot** picks a moving joint value (a joint picked in the Browser is picked here too), or
+**Picked point** once a point is picked in the dialog's **Point** box, and **Quantity** whether to
+show its value, velocity or acceleration; the chart runs over the
+study's steps with a cursor at the step shown, and a click or a drag on it moves to that step.
+Values are in degrees and millimetres; rates are per step, or per second once **Duration** says
+how many seconds the whole study takes. A picked point charts its distance from where it
+starts, its speed and the size of its acceleration. **Check collisions** plays the study and
+lists the pairs of parts that pass through each other, with the steps where they do (a click on
+one shows the first of them); those steps are shaded on the chart. It checks the parts picked in
+**Components** (against the ones picked in **Against**, when there are any), else every
+component, or the pairs of the design's contact sets (a choice beside the button once it has any).
+
+`motion.plot {study, joints?, occurrence?, point?, samples?, duration?}` answers the same
+numbers: for each joint value its `value`, `velocity` and `acceleration` per sample (with their
+units), and for a point its `position`, `velocity` and `acceleration` vectors, `speed` and
+`acceleration_norm`. The study plays as `motion.play` places it (closed loops follow, contact sets
+stop it), each sample from the one before, on a copy: the design is not changed. Velocities and
+accelerations are finite differences between samples, central inside and one-sided at the ends,
+so they are as smooth as the samples are dense (up to 1000, one per step by default). Angles are
+unwrapped, so a joint that turns on past half a turn keeps counting.
+`motion.interference {study, occurrences?, against?, contact_sets?, samples?}` answers each
+colliding pair with its `first_step`, `last_step`, the `steps` ranges where they overlap, how
+far into each other (`depth_mm`, the most at `deepest_step`) and their shared `volume_mm3`
+there (null when it is not cheap to work out). It plays the study as `motion.play` does, but
+contact sets don't stop it, and parts are tested at the samples only: a part that passes right
+through another between two samples is missed. Parts are told apart by occurrence, as contact
+sets tell them apart: an occurrence inside a sub-assembly placed twice is one part, so its two
+copies are not checked against each other. A check takes at most 256 bodies; on a large design,
+list the `occurrences` to check (an arm, with `against` the parts it must miss). When the work
+runs out it says `truncated` and the step it `checked_to`.
 
 **Insert Design** (`component.insert_design {path, translate?}`, on the **ASSEMBLE** panel and
 in the **File** menu) adds a component linked to another saved design, so each part can live in

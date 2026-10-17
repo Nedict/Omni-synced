@@ -314,6 +314,7 @@ mod large_step_import;
 mod loft_cut;
 mod loft_ring;
 mod loft_spacing;
+mod mirror_placed;
 mod mirror_planes;
 #[cfg(not(target_arch = "wasm32"))]
 mod native_cad_import;
@@ -510,6 +511,30 @@ fn revolve_and_primitives() {
     run(&mut s, "timeline.edit", json!({"feature": "Revolve1", "set": {"angle": "180 deg"}}));
     let m = run(&mut s, "inspect.measure", json!({"bodies": ["Body1"]}));
     assert!(rel(m["total"]["volume_mm3"].as_f64().unwrap(), PI * 125.0 * 5.0 / 2.0) < 5e-4);
+}
+
+/// #726: a revolve swept each profile edge into two or three patches and left the planar ones
+/// apart, so a pick on such a face took part of it, and a sketch or an extrude there was refused
+/// ("the selected planar face no longer exists") until a later feature merged them.
+#[test]
+fn revolved_planar_faces_come_out_whole() {
+    for angle in [360, 240] {
+        let mut s = Session::default();
+        run(&mut s, "sketch.create", json!({"plane": "XZ"}));
+        run(&mut s, "sketch.line", json!({"points": [[8, 0], [30, 0], [30, -6], [18, -6], [18, -22], [8, -22]], "closed": true}));
+        run(&mut s, "sketch.finish", json!({}));
+        run(&mut s, "solid.revolve", json!({"axis": "Z", "angle": angle}));
+        // Picks at 170°, in the last patch, which 240° covers whichever way it turns.
+        let at = |r: f64, z: f64| json!([r * 170f64.to_radians().cos(), r * 170f64.to_radians().sin(), z]);
+        // The flange's top annulus (z = 6, r 18…30), well inside it.
+        let sk = run(&mut s, "sketch.create", json!({"plane": {"face": at(24.0, 6.0)}}));
+        assert_eq!(sk["attachment"], "exact_face", "{angle}°: {sk}");
+        run(&mut s, "sketch.finish", json!({}));
+        // The bottom annulus (z = 0, r 8…30).
+        let v = volume(&mut s);
+        run(&mut s, "solid.extrude", json!({"face": at(20.0, 0.0), "distance": 2, "operation": "join"}));
+        assert!(volume(&mut s) > v + 1.0, "{angle}°: the extrude added nothing");
+    }
 }
 
 /// A spherical shell (a half ring between two arcs, both radial lines on the axis) revolved on a

@@ -144,7 +144,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 ui.add(egui::TextEdit::singleline(&mut d.filter).hint_text(crate::i18n::tr_label("Filter")).desired_width(180.0));
                 ui.separator();
                 if ui.button("Import…").on_hover_text(crate::i18n::tr_label("CSV or JSON: updates existing parameters, adds new ones")).clicked() {
-                    app.pick_open_command("parameters.import", json!({}));
+                    app.pick_open_command("parameters.import", json!({}), &[]);
                 }
                 for (label, ext) in [("Export CSV…", "csv"), ("Export JSON…", "json")] {
                     if ui.button(label).clicked() {
@@ -498,16 +498,24 @@ pub(crate) fn word_before(text: &str, cursor: usize) -> (usize, String) {
 
 /// Suggestions for the word being typed.
 pub fn suggestions(ctx: &egui::Context, word: &str) -> Vec<Suggestion> {
-    if word.is_empty() || word.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+    suggestions_for(ctx, word, false)
+}
+
+pub(crate) fn suggestions_for(ctx: &egui::Context, word: &str, explicit: bool) -> Vec<Suggestion> {
+    if (!explicit && word.is_empty()) || word.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         return Vec::new();
     }
     let all = ctx.data(|d| d.get_temp::<Cache>(cache_id())).map(|c| c.all).unwrap_or_default();
     // A complete token is ready to submit, even when longer names share its prefix.
-    if all.iter().any(|s| s.text == word) {
+    if !explicit && all.iter().any(|s| s.text == word) {
         return Vec::new();
     }
     let w = word.to_ascii_lowercase();
-    all.iter().filter(|s| s.text.to_ascii_lowercase().starts_with(&w) && s.text.trim_end_matches('(') != word).take(8).cloned().collect()
+    all.iter()
+        .filter(|s| s.text.to_ascii_lowercase().starts_with(&w) && (explicit || s.text.trim_end_matches('(') != word))
+        .take(8)
+        .cloned()
+        .collect()
 }
 
 /// Offer keyboard and pointer completions under a focused expression box.

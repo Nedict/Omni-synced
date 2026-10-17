@@ -28,7 +28,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("sketch, curves: [open curve ids, in order]; thickness (across the sketch plane); depth? (default: to the next face); flip?: bool (fill to the other side)"),
     CommandSpec::new("solid.web", "Web", web)
         .at("SOLID", "CREATE")
-        .icon("rib")
+        .icon("web")
         .params("sketch, curves: [open curve ids] (one wall each); thickness; depth? (default: to the next face); flip?: bool"),
     CommandSpec::new("solid.emboss", "Emboss", emboss)
         .at("SOLID", "CREATE")
@@ -36,11 +36,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("sketch, profiles?; depth; mode?: emboss|deboss; targets?; face?: world point [x,y,z] selecting a planar or complete exterior cylindrical wall (inferred when exactly one supported tangent cylinder matches the selected profiles)"),
     CommandSpec::new("solid.replace_face", "Replace Face", replace_face)
         .at("SOLID", "MODIFY")
-        .icon("offset_face")
+        .icon("replace_face")
         .params("faces: [[x,y,z] points on planar faces, or face names from model.faces]; target: plane (XY|XZ|YZ|construction plane|{origin, normal}) | target_face: [x,y,z] on a parallel planar face; body?"),
     CommandSpec::new("solid.align", "Align", align)
         .at("SOLID", "MODIFY")
-        .icon("move")
+        .icon("align")
         .params("bodies: [names]; from: [x,y,z] | {snap: vertex|edge_mid|face_center|circle_center, at: [x,y,z]} | from_face: [x,y,z]; to: (the same) | to_face: [x,y,z] (faces also turn to meet); flip?: bool"),
     CommandSpec::new("solid.remove", "Remove", remove).at("SOLID", "MODIFY").icon("delete").params("bodies: [names] (removed from here on in the timeline)"),
 ];
@@ -161,6 +161,8 @@ fn emboss(s: &mut Session, p: &Value) -> Result<Value> {
         let at = solidcraft_doc::apply_point(&s.active_component_frame(), local);
         let state = s.world_state();
         let mut candidates = Vec::new();
+        // The nearest face off the point: (distance, body), for the error when none holds it.
+        let mut nearest: Option<(f64, &str)> = None;
         for body in &state.bodies {
             let definition = body.definition_name();
             if !targets.is_empty() && !targets.iter().any(|n| n == definition || n == &body.name) {
@@ -179,14 +181,30 @@ fn emboss(s: &mut Session, p: &Value) -> Result<Value> {
                     inside.then_some(((at - a).dot(n).abs(), *face as usize))
                 })
                 .min_by(|a, b| a.0.total_cmp(&b.0));
-            if let Some((distance, index)) = closest
-                && distance < (body.body.size() * 1e-3).max(1e-3)
-            {
-                candidates.push((body, index));
+            match closest {
+                Some((distance, index)) if distance < (body.body.size() * 1e-3).max(1e-3) => candidates.push((body, index)),
+                Some((distance, _)) if nearest.is_none_or(|(d, _)| distance < d) => nearest = Some((distance, body.name.as_str())),
+                _ => {}
             }
         }
-        if candidates.len() != 1 {
-            return Err(bad(cmd, "`face` must identify exactly one target body surface"));
+        // #392: say what is wrong with the point, not only that it picks no single face.
+        let point = format!("[{}, {}, {}]", local.x, local.y, local.z);
+        match (candidates.as_slice(), nearest) {
+            ([], Some((d, body))) => {
+                return Err(bad(
+                    cmd,
+                    format!("`face` {point} lies on no face: the nearest, on `{body}`, is {d:.3} mm away; give a point on the face"),
+                ));
+            }
+            ([], None) => return Err(bad(cmd, format!("`face` {point} lies on no face of the target bodies"))),
+            ([_], _) => {}
+            (more, _) => {
+                let names: Vec<&str> = more.iter().map(|(b, _)| b.name.as_str()).collect();
+                return Err(bad(
+                    cmd,
+                    format!("`face` {point} lies on faces of {} bodies ({}): name one in `targets`", names.len(), names.join(", ")),
+                ));
+            }
         }
         let (selected, index) = candidates.first().copied().ok_or_else(|| bad(cmd, "no target face"))?;
         let name = selected.definition_name();
