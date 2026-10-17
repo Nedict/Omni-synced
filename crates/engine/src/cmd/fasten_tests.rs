@@ -583,12 +583,14 @@ fn a_refresh_seats_a_part_again_on_a_face_that_moved_along_its_hole() {
     let fill = json!({"family": "hex_bolt_grip", "refresh": true});
     let r = run(&mut s, "parts.fasten", fill.clone());
     let o = occ(&r["placed"][0]["occurrence"]);
-    // The lower plate 1.8 thicker lifts the upper one: grip 8.8 still takes M5 × 14. The seat
-    // joint takes the end of the wall nearest its stored point, now the upper plate's bottom, so
-    // the bolt stands on the joint between the plates; the refresh seats it on the top again.
+    // The lower plate 1.8 thicker lifts the upper one: grip 8.8 still takes M5 × 14. A seat joint
+    // that takes the end of the wall nearest its stored point now takes the upper plate's bottom,
+    // and the bolt stands on the joint between the plates; the refresh seats it on the top again.
     run(&mut s, "parameters.change", json!({"name": "tl", "expression": "4.8 mm"}));
-    let r = run(&mut s, "parts.fasten", fill);
-    assert_eq!((count(&r, "placed"), count(&r, "removed"), r["kept"][0]["reseated"].as_bool()), (0, 0, Some(true)), "{r}");
+    let r = run(&mut s, "parts.fasten", fill.clone());
+    assert_eq!((count(&r, "placed"), count(&r, "removed"), count(&r, "kept")), (0, 0, 1), "{r}");
     let (lo, hi) = bbox(&s, o);
     assert!(near(hi.z, 8.8 + 3.5) && near(lo.z, 8.8 - 14.0), "{lo:?} {hi:?} {r}");
+    let r = run(&mut s, "parts.fasten", fill);
+    assert_eq!(r["kept"][0]["reseated"].as_bool(), Some(false), "seated where it belongs: {r}");
 }
