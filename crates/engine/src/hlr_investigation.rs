@@ -43,6 +43,9 @@ fn scene(s: &Session, opts: &Options) -> (Vec<Prepared>, Vec<Placement>, Vec<Val
     let mut reports = Vec::new();
     for b in world.bodies.iter().filter(|b| s.body_visible(&b.name)) {
         let brep = solidcraft_kernel::portable_body(&b.body).unwrap();
+        if let Ok(name) = std::env::var("HLR_DUMP") {
+            std::fs::write(out_dir().join(format!("{name}-{}.brep.json", defs.len())), serde_json::to_string(&brep).unwrap()).unwrap();
+        }
         let def = hlr::prepare(&brep, opts).unwrap();
         reports.push(json!({"body": b.name, "report": def.report}));
         placements.push(Placement { body: defs.len(), rotation: IDENTITY, translation: Vec3::ZERO });
@@ -198,6 +201,14 @@ fn compare(d: &Drawing, dxf: &[(bool, [f64; 2], [f64; 2])]) -> Value {
         }
         best
     };
+    // Uncertain chords of the exact drawing (uncovered: covered ones lie on visible lines).
+    let unsure: Vec<([f64; 2], [f64; 2])> = d
+        .lines
+        .iter()
+        .flat_map(|l| l.pieces.iter())
+        .filter(|p| effective(p) == Some(Visibility::Uncertain))
+        .flat_map(|p| p.points.windows(2).map(|w| (w[0], w[1])))
+        .collect();
     let tally = |from: &[(bool, [f64; 2], [f64; 2])], to: &[(bool, [f64; 2], [f64; 2])]| {
         let mut out = json!({});
         for (name, hidden) in [("visible", false), ("hidden", true)] {
@@ -214,7 +225,7 @@ fn compare(d: &Drawing, dxf: &[(bool, [f64; 2], [f64; 2])]) -> Value {
                     }
                 }
             }
-            let (mut same, mut other, mut none) = (0f64, 0f64, 0f64);
+            let (mut same, mut other, mut on_unsure, mut none) = (0f64, 0f64, 0f64, 0f64);
             let mut dev: Vec<f64> = Vec::new();
             for (q, w) in &pts {
                 let near = nearest(to, *q);
@@ -224,15 +235,18 @@ fn compare(d: &Drawing, dxf: &[(bool, [f64; 2], [f64; 2])]) -> Value {
                     dev.push(s);
                 } else if o <= TOL {
                     other += w;
+                } else if unsure.iter().any(|(a, b)| seg_dist(*q, *a, *b) <= TOL) {
+                    on_unsure += w;
                 } else {
                     none += w;
                 }
             }
             dev.sort_by(f64::total_cmp);
-            let total = (same + other + none).max(1e-300);
+            let total = (same + other + on_unsure + none).max(1e-300);
             out[name] = json!({
                 "length": length(&polys),
-                "same_class_share": same / total, "other_class_share": other / total, "unmatched_share": none / total,
+                "same_class_share": same / total, "other_class_share": other / total,
+                "on_exact_uncertain_share": on_unsure / total, "unmatched_share": none / total,
                 "matched_distance_mm": {"median": dev.get(dev.len() / 2).copied().unwrap_or(0.), "max": dev.last().copied().unwrap_or(0.)},
             });
         }

@@ -13,6 +13,19 @@ fn v(x: &Value) -> Option<Vec3> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // HLR_STACK (bytes) runs the work on a thread with that stack, to measure stack needs.
+    match std::env::var("HLR_STACK").ok().and_then(|v| v.parse::<usize>().ok()) {
+        Some(size) => std::thread::Builder::new()
+            .stack_size(size)
+            .spawn(|| run().map_err(|e| e.to_string()))?
+            .join()
+            .map_err(|_| "worker panicked")?
+            .map_err(Into::into),
+        None => run(),
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (body, scenes) = args.split_first().ok_or("usage: hlr_bench body.json scene.json...")?;
     let brep: Brep = serde_json::from_str(&std::fs::read_to_string(body)?)?;

@@ -320,7 +320,7 @@ pub(crate) fn quadratic(a: f64, b: f64, c: f64) -> Vec<(f64, bool)> {
 
 /// Roots of the torus implicit function along a ray, by sampling and bisection; dips that
 /// touch zero without a sign change are grazing.
-fn torus_roots(w: Vec3, d: Vec3, a: Vec3, big: f64, small: f64, range: [f64; 2]) -> Vec<(f64, bool)> {
+pub(crate) fn torus_roots(w: Vec3, d: Vec3, a: Vec3, big: f64, small: f64, range: [f64; 2]) -> Vec<(f64, bool)> {
     let f = |l: f64| {
         let p = w + d * l;
         let s = p.dot(p) + big * big - small * small;
@@ -330,7 +330,8 @@ fn torus_roots(w: Vec3, d: Vec3, a: Vec3, big: f64, small: f64, range: [f64; 2])
     // f scales like length^4: its noise floor and tangent-dip threshold follow.
     let size = big + small;
     let floor = 1e-9 * size.powi(4);
-    let n = 200;
+    // Steps of at most a quarter of the tube radius, so a thin tube is not stepped over.
+    let n = ((range[1] - range[0]) / (0.25 * small)).ceil().clamp(200., 100_000.) as usize;
     let at = |i: usize| range[0] + (range[1] - range[0]) * i as f64 / n as f64;
     let mut out = Vec::new();
     let vals: Vec<f64> = (0..=n).map(|i| f(at(i))).collect();

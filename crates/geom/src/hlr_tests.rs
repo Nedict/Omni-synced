@@ -126,3 +126,10 @@ fn far_apart_bodies_do_not_merge_nearby_visible_edges() {
         .count();
     assert_eq!(covered_visible, 0);
 }
+
+#[test]
+fn a_thin_torus_tube_stops_a_ray() {
+    // R 100, r 0.1: a ray across the tube meets it twice within 0.2 mm.
+    let roots = surface::torus_roots(Vec3::new(100., -50., 0.), Vec3::new(0., 1., 0.), Vec3::new(0., 0., 1.), 100., 0.1, [0., 200.]);
+    assert!(roots.iter().filter(|(_, grazing)| !grazing).count() >= 2, "{roots:?}");
+}

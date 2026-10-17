@@ -744,8 +744,16 @@ fn crossings(tracks: &mut [Track], ctx: &Ctx) -> Result<usize, HlrError> {
         (((p[0] - lo[0]) / cell[0]).floor().clamp(0., (n - 1) as f64) as usize, ((p[1] - lo[1]) / cell[1]).floor().clamp(0., (n - 1) as f64) as usize)
     };
     let mut grid: Vec<Vec<usize>> = vec![Vec::new(); n * n];
+    let mut entries = 0usize;
     for (si, s) in segs.iter().enumerate() {
+        if si % 65536 == 0 && (ctx.cancel)() {
+            return Err(HlrError::Cancelled);
+        }
         let (a, b) = (idx([s.a[0].min(s.b[0]), s.a[1].min(s.b[1])]), idx([s.a[0].max(s.b[0]), s.a[1].max(s.b[1])]));
+        entries = entries.saturating_add((b.0 - a.0 + 1).saturating_mul(b.1 - a.1 + 1));
+        if entries > 50_000_000 {
+            return Err(HlrError::Budget("crossing grid"));
+        }
         for y in a.1..=b.1 {
             for x in a.0..=b.0 {
                 if let Some(c) = grid.get_mut(y * n + x) {
@@ -822,8 +830,26 @@ fn crossings(tracks: &mut [Track], ctx: &Ctx) -> Result<usize, HlrError> {
     for (_, mut list) in by_pair {
         if list.len() > 8 {
             list.sort_by(|a, b| (a.1 as f64 + a.2).total_cmp(&(b.1 as f64 + b.2)));
-            let (Some(first), Some(last)) = (list.first().copied(), list.last().copied()) else { continue };
-            list = vec![first, last];
+            // Collapse only when the curves stay within their sag of each other between every
+            // pair of consecutive crossings (one curve seen twice); a curve that weaves across
+            // another keeps all its crossings.
+            let together = list.windows(2).all(|w| {
+                let (Some(x), Some(y)) = (w.first(), w.get(1)) else { return false };
+                let (Some(ta), Some(tb)) = (tracks.get(x.0), tracks.get(x.3)) else { return false };
+                let mid = 0.5 * (sample_param(tracks, x.0, x.1, x.2) + sample_param(tracks, y.0, y.1, y.2));
+                let Some(pa) = ctx.scene.get(ta.placement) else { return false };
+                let q = ctx.view.screen(pa.apply(ta.c3().at(mid)));
+                let sag = |t: &Track| t.sags.iter().fold(0., |m: f64, v| m.max(*v));
+                let reach = 4. * (sag(ta) + sag(tb)) + tol;
+                tb.samples.windows(2).any(|w| match (w.first(), w.get(1)) {
+                    (Some(a), Some(b)) => point_segment(q, a.1, b.1) <= reach,
+                    _ => false,
+                })
+            });
+            if together {
+                let (Some(first), Some(last)) = (list.first().copied(), list.last().copied()) else { continue };
+                list = vec![first, last];
+            }
         }
         found.extend(list);
     }
