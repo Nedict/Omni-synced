@@ -27,6 +27,7 @@ const STALE_AFTER: Duration = Duration::from_millis(150);
 static DRIVER_CONNECTED: AtomicBool = AtomicBool::new(false);
 /// Whether this app registered with the 3Dconnexion driver (macOS). The driver then has the device
 /// whether or not it has said so yet, so a failure to open it by HID is no news.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 static DRIVER_REGISTERED: AtomicBool = AtomicBool::new(false);
 
 const RETRY_AFTER: Duration = Duration::from_secs(2);
