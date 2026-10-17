@@ -88,9 +88,41 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         .show(ui, |ui| body(app, ui, left));
     crate::scenario::publish_rect("agent_chat:panel", r.response.rect);
     app.agent_chat.panel_rect = Some(r.response.rect);
+    shot_window(app, &ctx);
     let w = r.response.rect.width();
     if w.is_finite() && (MIN_WIDTH..=MAX_WIDTH).contains(&w) {
         app.preferences.agent_chat_width = w;
+    }
+}
+
+/// A message's kept picture as a texture, `None` when it can't be decoded.
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_shot(ctx: &egui::Context, shot: &super::Shot) -> Option<egui::TextureHandle> {
+    let rgba = image::load_from_memory_with_format(&shot.0, image::ImageFormat::Png).ok()?.to_rgba8();
+    let size = [usize::try_from(rgba.width()).ok()?, usize::try_from(rgba.height()).ok()?];
+    Some(ctx.load_texture("sc_agent_chat_shot", egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw()), egui::TextureOptions::LINEAR))
+}
+
+/// The picture a message went with, in a window of its own.
+fn shot_window(app: &mut SolveApp, ctx: &egui::Context) {
+    let Some(texture) = app.agent_chat.shot_view.clone() else { return };
+    let mut open = true;
+    let window = egui::Window::new(tr("ui.agent_chat_view_attached"))
+        .id(Id::new("sc_agent_chat_shot"))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(true)
+        .default_width(480.0)
+        .show(ctx, |ui| {
+            let size = texture.size_vec2();
+            let width = ui.available_width().min(size.x).max(1.0);
+            ui.add(egui::Image::new((texture.id(), vec2(width, width * size.y / size.x.max(1.0)))));
+        });
+    if let Some(window) = window {
+        crate::scenario::publish_rect("agent_chat:view_attached_window", window.response.rect);
+    }
+    if !open {
+        app.agent_chat.shot_view = None;
     }
 }
 
@@ -322,19 +354,12 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
         auth_box(app, ui);
     }
     ui.separator();
-    // The input sits at the bottom; the conversation takes the rest.
-    let input_h = 92.0;
-    let avail = (ui.available_height() - input_h).max(80.0);
-    egui::ScrollArea::vertical().id_salt("sc_agent_chat_scroll").max_height(avail).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
-        conversation(app, ui);
-    });
-    ui.separator();
+    // The input sits at the bottom of the panel and grows upwards: a long message makes its box
+    // taller up to `edit_max`, then it scrolls, and the conversation takes what is left above. It
+    // is a panel of its own at the bottom, as high as its content this frame, so the buttons under
+    // the box are always in view.
+    let edit_max = (ui.available_height() * 0.4).clamp(48.0, 160.0);
     let busy = state == State::Busy;
-    let edit = egui::TextEdit::multiline(&mut app.agent_chat.input)
-        .hint_text(tr(if busy { "ui.agent_chat_placeholder_busy" } else { "ui.agent_chat_placeholder" }))
-        .desired_rows(2)
-        .desired_width(f32::INFINITY)
-        .id_salt("sc_agent_chat_input");
     // Enter sends (queues while the agent works); Ctrl/Cmd+Enter sends now; Esc stops. They are
     // read before the field sees them so no newline is typed.
     let focused = ui.memory(|m| m.has_focus(Id::new("sc_agent_chat_input")));
@@ -343,36 +368,57 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
     } else {
         (false, false)
     };
-    let r = ui.add(edit);
-    crate::scenario::publish_rect("agent_chat:input", r.rect);
-    let enter = r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
-    if esc {
+    let (mut send_clicked, mut stop_clicked, mut enter) = (false, false, false);
+    egui::Panel::bottom(Id::new("sc_agent_chat_composer")).resizable(false).show_separator_line(false).frame(egui::Frame::NONE).show(ui, |ui| {
+        ui.separator();
+        let edit = egui::TextEdit::multiline(&mut app.agent_chat.input)
+            .hint_text(tr(if busy { "ui.agent_chat_placeholder_busy" } else { "ui.agent_chat_placeholder" }))
+            .desired_rows(2)
+            .desired_width(f32::INFINITY)
+            .id_salt("sc_agent_chat_input");
+        let r = egui::ScrollArea::vertical()
+            .id_salt("sc_agent_chat_input_scroll")
+            .max_height(edit_max)
+            .auto_shrink([false, true])
+            .show(ui, |ui| ui.add(edit))
+            .inner;
+        crate::scenario::publish_rect("agent_chat:input", r.rect);
+        enter = r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
+        ui.horizontal(|ui| {
+            let send_b = ui.button(tr(if busy { "ui.agent_chat_queue" } else { "ui.agent_chat_send" }));
+            crate::scenario::publish_handle("agent_chat:send", send_b.rect.center());
+            send_clicked = send_b.clicked();
+            stop_clicked = busy && glyph_button(ui, "stopturn", tr("ui.agent_chat_stop_turn_tip")).clicked();
+            // A picture of the view goes with the message to agents that take pictures.
+            let images = app.agent_chat.images || !state.running();
+            let attach = ui
+                .add_enabled(images, egui::Checkbox::new(&mut app.agent_chat.attach_view, tr("ui.agent_chat_attach_view")))
+                .on_hover_text(tr("ui.agent_chat_attach_view_tip"))
+                .on_disabled_hover_text(tr("ui.agent_chat_no_images"));
+            crate::scenario::publish_handle("agent_chat:attach", attach.rect.center());
+        });
+    });
+    egui::ScrollArea::vertical()
+        .id_salt("sc_agent_chat_scroll")
+        .max_height(ui.available_height())
+        .auto_shrink([false, false])
+        .stick_to_bottom(true)
+        .show(ui, |ui| {
+            conversation(app, ui);
+        });
+    if esc || stop_clicked {
         cancel(app);
     }
-    ui.horizontal(|ui| {
-        let send_b = ui.button(tr(if busy { "ui.agent_chat_queue" } else { "ui.agent_chat_send" }));
-        crate::scenario::publish_handle("agent_chat:send", send_b.rect.center());
-        if (send_b.clicked() || enter || steer) && !app.agent_chat.input.trim().is_empty() {
-            let text = std::mem::take(&mut app.agent_chat.input).trim_end_matches('\n').to_string();
-            send(app, ui.ctx(), text);
-            if steer {
-                send_now(app, ui.ctx());
-            }
-        } else if steer {
-            // Nothing typed: Ctrl+Enter sends what is already queued.
+    if (send_clicked || enter || steer) && !app.agent_chat.input.trim().is_empty() {
+        let text = std::mem::take(&mut app.agent_chat.input).trim_end_matches('\n').to_string();
+        send(app, ui.ctx(), text);
+        if steer {
             send_now(app, ui.ctx());
         }
-        if busy && glyph_button(ui, "stopturn", tr("ui.agent_chat_stop_turn_tip")).clicked() {
-            cancel(app);
-        }
-        // A picture of the view goes with the message to agents that take pictures.
-        let images = app.agent_chat.images || !state.running();
-        let attach = ui
-            .add_enabled(images, egui::Checkbox::new(&mut app.agent_chat.attach_view, tr("ui.agent_chat_attach_view")))
-            .on_hover_text(tr("ui.agent_chat_attach_view_tip"))
-            .on_disabled_hover_text(tr("ui.agent_chat_no_images"));
-        crate::scenario::publish_handle("agent_chat:attach", attach.rect.center());
-    });
+    } else if steer {
+        // Nothing typed: Ctrl+Enter sends what is already queued.
+        send_now(app, ui.ctx());
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -625,16 +671,30 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
     // Allow (true), Deny (false), Always allow (None).
     let mut approval: Option<(u64, Option<bool>)> = None;
     let mut undo: Option<usize> = None;
+    let mut show_shot: Option<super::Shot> = None;
     let current_doc = app.session.doc.clone();
     for (n, item) in app.agent_chat.items.iter().enumerate() {
         match item {
-            Item::User { text, image } => {
+            Item::User { text, image, shot } => {
                 ui.add_space(6.0);
                 egui::Frame::NONE.fill(t.accent_soft).corner_radius(6.0).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.add(egui::Label::new(RichText::new(text).color(t.text)).selectable(true).wrap());
                     if *image {
-                        ui.label(RichText::new(tr("ui.agent_chat_view_attached")).color(t.text_dim).size(11.0));
+                        let caption = RichText::new(tr("ui.agent_chat_view_attached")).size(11.0);
+                        match shot {
+                            // The picture is kept once it is taken: the caption opens it.
+                            Some(shot) => {
+                                let link = ui.add(egui::Button::new(caption.color(t.accent).underline()).frame(false));
+                                crate::scenario::publish_handle(&format!("agent_chat:view_attached:{n}"), link.rect.center());
+                                if link.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                    show_shot = Some(shot.clone());
+                                }
+                            }
+                            None => {
+                                ui.label(caption.color(t.text_dim));
+                            }
+                        }
                     }
                 });
             }
@@ -830,6 +890,9 @@ fn conversation(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     if send_queue_clicked {
         send_now(app, ui.ctx());
+    }
+    if let Some(shot) = show_shot {
+        app.agent_chat.shot_view = decode_shot(ui.ctx(), &shot);
     }
     if let Some((n, o)) = answer {
         answer_permission(app, n, o.as_deref());
