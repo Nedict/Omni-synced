@@ -3843,9 +3843,8 @@ fn project_mesh_bodies(
         tessellations_by_scope: std::collections::HashMap::new(),
     };
     for mut body in bodies {
-        let texture_table = texture_tables.remove(&body.id).ok_or_else(|| {
-            CodecError::Malformed("F3D joined mesh body has no owning texture table".into())
-        })?;
+        // Containers recovered without a complete Design join have no texture table.
+        let texture_table = texture_tables.remove(&body.id).unwrap_or_default();
         let texture_assignments = mesh_texture_assignments(
             ctx,
             body.texture_ids.as_deref(),

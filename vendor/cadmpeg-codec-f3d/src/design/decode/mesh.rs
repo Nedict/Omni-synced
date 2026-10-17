@@ -1894,7 +1894,12 @@ pub(crate) fn decode_mesh_bodies(
     ctx: &DecodeContext<'_>,
     scan: &ContainerScan,
 ) -> Result<MeshDecode, CodecError> {
-    let mut design_records = decode_mesh_design_records(ctx, scan)?;
+    // An incomplete Design mesh graph must not abort `.paramesh` recovery.
+    let mut design_records = match decode_mesh_design_records(ctx, scan) {
+        Ok(records) => records,
+        Err(error @ CodecError::ResourceLimit(_)) => return Err(error),
+        Err(_) => Vec::new(),
+    };
     let mut outcomes = Vec::new();
     for entry in scan
         .entries
@@ -1925,6 +1930,7 @@ pub(crate) fn decode_mesh_bodies(
         let Some((design_ordinal, feature_ordinal, body_ordinal)) =
             resolve_mesh_body(&design_records, base, &container.fusion_uuid)
         else {
+            // Record the incomplete join, then recover the triangle list for mesh open.
             ctx.push_vec(
                 &mut outcomes,
                 MeshContainerOutcome::Unjoined {
@@ -1933,6 +1939,31 @@ pub(crate) fn decode_mesh_bodies(
                 },
                 "f3d mesh container outcomes",
             )?;
+            let identity = MeshAffineTransform::new([
+                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ])
+            .map_err(CodecError::Malformed)?;
+            match MeshBody::from_container(ctx, &entry.name, 0, identity, container) {
+                Ok(projected) => {
+                    ctx.push_vec(
+                        &mut outcomes,
+                        MeshContainerOutcome::Joined(projected),
+                        "f3d mesh container outcomes",
+                    )?;
+                }
+                Err(error @ CodecError::ResourceLimit(_)) => return Err(error),
+                Err(error) => {
+                    ctx.push_vec(
+                        &mut outcomes,
+                        MeshContainerOutcome::Failed {
+                            entry_name: ctx
+                                .copy_retained_text(&entry.name, "f3d failed mesh entry name")?,
+                            error,
+                        },
+                        "f3d mesh container outcomes",
+                    )?;
+                }
+            }
             continue;
         };
         design_records[design_ordinal][feature_ordinal].bodies_mut()[body_ordinal]

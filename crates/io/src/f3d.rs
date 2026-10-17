@@ -234,37 +234,45 @@ pub fn open(bytes: &[u8], file: &str) -> Result<F3dOpen> {
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "Fusion".into());
     let (decoded, mut warnings) = decode(bytes, file)?;
-    let report = decoded.report();
-    if report.geometry_transferred() {
-        let (mut ir, _, _) = decoded.into_parts();
-        bake_component_placements_into_bodies(&mut ir.model);
-        match cadir_json_from_ir(&ir) {
-            Ok(cadir) => {
-                if let Err(transfer_err) = transfer_preview(&ir) {
-                    if let Some(objects) = mesh_objects_or_none(&ir, &stem) {
-                        warnings.push(format!("Fusion B-rep did not transfer ({transfer_err}); opened cached mesh geometry from the file"));
-                        return Ok(F3dOpen::Mesh { objects, warnings });
-                    }
-                    return Err(IoError::Invalid(format!("{file}: neutral transfer failed: {transfer_err}")));
-                }
-                return Ok(F3dOpen::Brep { cadir, warnings });
-            }
-            Err(cadir_err) => {
-                if let Some(objects) = mesh_objects_or_none(&ir, &stem) {
-                    warnings.push(format!("Fusion B-rep did not serialize to CadIr ({cadir_err}); opened cached mesh geometry from the file"));
-                    return Ok(F3dOpen::Mesh { objects, warnings });
-                }
-                return Err(IoError::Invalid(format!("{file}: CadIr export failed: {cadir_err}")));
-            }
-        }
-    }
-    let detail = report
+    let geometry_ok = decoded.report().geometry_transferred();
+    let detail = decoded
+        .report()
         .losses
         .iter()
         .find(|l| l.severity == Severity::Blocking || l.severity == Severity::Error)
         .map(|l| l.message.clone())
         .unwrap_or_else(|| "no solid or mesh geometry transferred".into());
-    let (ir, _, _) = decoded.into_parts();
+    let (mut ir, _, _) = decoded.into_parts();
+    if geometry_ok {
+        bake_component_placements_into_bodies(&mut ir.model);
+        let solids = match transfer_preview(&ir) {
+            Ok(imp) if !imp.bodies.is_empty() => Some(imp),
+            Ok(_) => None,
+            Err(transfer_err) => {
+                if let Some(objects) = mesh_objects_or_none(&ir, &stem) {
+                    warnings.push(format!("Fusion B-rep did not transfer ({transfer_err}); opened cached mesh geometry from the file"));
+                    return Ok(F3dOpen::Mesh { objects, warnings });
+                }
+                return Err(IoError::Invalid(format!("{file}: neutral transfer failed: {transfer_err}")));
+            }
+        };
+        if solids.is_some() {
+            match cadir_json_from_ir(&ir) {
+                Ok(cadir) => return Ok(F3dOpen::Brep { cadir, warnings }),
+                Err(cadir_err) => {
+                    if let Some(objects) = mesh_objects_or_none(&ir, &stem) {
+                        warnings.push(format!("Fusion B-rep did not serialize to CadIr ({cadir_err}); opened cached mesh geometry from the file"));
+                        return Ok(F3dOpen::Mesh { objects, warnings });
+                    }
+                    return Err(IoError::Invalid(format!("{file}: CadIr export failed: {cadir_err}")));
+                }
+            }
+        }
+        if let Some(objects) = mesh_objects_or_none(&ir, &stem) {
+            warnings.push("Fusion B-rep did not transfer; opened cached mesh geometry from the file".into());
+            return Ok(F3dOpen::Mesh { objects, warnings });
+        }
+    }
     if let Some(objects) = mesh_objects_or_none(&ir, &stem) {
         warnings.push("Fusion B-rep did not transfer; opened cached mesh geometry from the file".into());
         return Ok(F3dOpen::Mesh { objects, warnings });
