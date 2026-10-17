@@ -1769,10 +1769,16 @@ fn decode_vertices(
 /// sequence inside the vertex domain. Every value before the last is the
 /// two's-complement difference to the next corner. The final stored value does
 /// not continue the sequence.
+///
+/// When `wrap_indexed` is set (vertex stream descriptor `I: true`) and the
+/// domain does not pin one start, indices wrap with Euclidean mod `vertices`.
+/// That recovers mesh-only archives whose delta run spans more than one copy
+/// of the vertex ring.
 fn decode_triangles(
     ctx: &DecodeContext<'_>,
     stream: &[u8],
     vertices: usize,
+    wrap_indexed: bool,
 ) -> Result<Vec<[u32; 3]>, CodecError> {
     let mut view = View::over_retained(stream);
     let mut words = ctx.collection_vec(stream.len() / 4, "collect paramesh corner words")?;
@@ -1802,38 +1808,69 @@ fn decode_triangles(
         minimum = minimum.min(relative);
         maximum = maximum.max(relative);
     }
-    let last_vertex = i64::try_from(vertices)
-        .ok()
-        .and_then(|count| count.checked_sub(1))
-        .ok_or_else(|| CodecError::malformed("paramesh corner stream has no vertex domain"))?;
+    let verts_i = i64::try_from(vertices)
+        .map_err(|_| CodecError::malformed("paramesh corner stream has no vertex domain"))?;
+    if verts_i <= 0 {
+        return Err(CodecError::malformed(
+            "paramesh corner stream has no vertex domain",
+        ));
+    }
+    let last_vertex = verts_i - 1;
     let lowest_start = minimum
         .checked_neg()
         .ok_or_else(|| CodecError::malformed("paramesh corner start is out of range"))?;
     let highest_start = last_vertex
         .checked_sub(maximum)
         .ok_or_else(|| CodecError::malformed("paramesh corner start is out of range"))?;
-    if lowest_start != highest_start || lowest_start < 0 {
+    // Prefer the unique start pinned by the vertex domain. When the domain
+    // leaves a range of valid starts, treat the trailing word as the absolute
+    // final corner (terminal-delta) and recover the start from it. Indexed
+    // position streams may instead wrap the running index over the vertex ring.
+    let trailing = *words.last().expect("non-empty corner words");
+    let delta_total = deltas.iter().try_fold(0i64, |acc, delta| acc.checked_add(*delta));
+    let terminal_start = delta_total.and_then(|total| trailing.checked_sub(total));
+    let (start, wrap) = if lowest_start == highest_start && lowest_start >= 0 {
+        (lowest_start, false)
+    } else if let Some(terminal_start) = terminal_start.filter(|start| {
+        *start >= 0
+            && *start <= last_vertex
+            && *start >= lowest_start
+            && *start <= highest_start
+    }) {
+        (terminal_start, false)
+    } else if wrap_indexed {
+        (0i64, true)
+    } else {
         return Err(CodecError::malformed(
             "paramesh corner deltas do not determine one implicit starting index",
         ));
-    }
+    };
 
-    let mut current = lowest_start;
+    let mut current = start;
     let mut corners = ctx.collection_vec(values, "collect paramesh corner indices")?;
-    corners.push(
-        u32::try_from(current)
-            .map_err(|_| CodecError::malformed("paramesh corner index is out of range"))?,
-    );
-    for delta in deltas {
-        current += *delta;
-        let index = u32::try_from(current)
-            .map_err(|_| CodecError::malformed("paramesh corner index is out of range"))?;
-        if index_from_u32(index) >= vertices {
-            return Err(CodecError::malformed(
-                "paramesh corner index names no vertex",
-            ));
-        }
+    let push_corner = |corners: &mut Vec<u32>, current: i64| -> Result<(), CodecError> {
+        let index = if wrap {
+            u32::try_from(current.rem_euclid(verts_i))
+                .map_err(|_| CodecError::malformed("paramesh corner index is out of range"))?
+        } else {
+            let index = u32::try_from(current)
+                .map_err(|_| CodecError::malformed("paramesh corner index is out of range"))?;
+            if index_from_u32(index) >= vertices {
+                return Err(CodecError::malformed(
+                    "paramesh corner index names no vertex",
+                ));
+            }
+            index
+        };
         corners.push(index);
+        Ok(())
+    };
+    push_corner(&mut corners, current)?;
+    for delta in deltas {
+        current = current
+            .checked_add(*delta)
+            .ok_or_else(|| CodecError::malformed("paramesh corner delta accumulation overflows"))?;
+        push_corner(&mut corners, current)?;
     }
     let mut triangles = ctx.collection_vec(values / 3, "collect paramesh triangles")?;
     for corner in corners.chunks_exact(3) {
@@ -2305,7 +2342,12 @@ pub(crate) fn decode_mesh_container(
     let corner_stream = named(&registry.triangle_stream)
         .ok_or_else(|| CodecError::malformed("paramesh registry names no triangle stream"))?;
     require_layout(corner_stream, StreamLayout::TerminalDelta)?;
-    let triangles = decode_triangles(ctx, &corner_stream.bytes, vertices.len())?;
+    // Descriptor key `I: true` marks an indexed position stream whose corner
+    // deltas may wrap over the vertex ring when the domain does not pin a start.
+    let wrap_indexed = vertex_stream.descriptor.iter().any(|(name, value)| {
+        name == "I" && *value == StreamDescriptorValue::Boolean(true)
+    });
+    let triangles = decode_triangles(ctx, &corner_stream.bytes, vertices.len(), wrap_indexed)?;
     let corner_count = triangles
         .len()
         .checked_mul(3)
@@ -2319,8 +2361,17 @@ pub(crate) fn decode_mesh_container(
             })
         })
         .transpose()?;
-    let attribute_names = attribute_names(ctx, attribute_name_stream)?;
-    let attributes = registry_attributes(
+    // Indexed display meshes (`I: true`) sometimes carry attribute index
+    // streams whose length does not match the value-table formula. Keep the
+    // triangle mesh and drop optional channels rather than aborting the body.
+    let soft_attributes = wrap_indexed;
+    let attribute_names = match attribute_names(ctx, attribute_name_stream) {
+        Ok(names) => names,
+        Err(error @ CodecError::ResourceLimit(_)) => return Err(error),
+        Err(_) if soft_attributes => std::collections::BTreeMap::new(),
+        Err(error) => return Err(error),
+    };
+    let attributes = match registry_attributes(
         ctx,
         message,
         &name_table,
@@ -2328,18 +2379,45 @@ pub(crate) fn decode_mesh_container(
         &attribute_names,
         vertices.len(),
         corner_count,
-    )?;
-    let feature_edges = registry_feature_edges(
+    ) {
+        Ok(attributes) => attributes,
+        Err(error @ CodecError::ResourceLimit(_)) => return Err(error),
+        Err(_) if soft_attributes => Vec::new(),
+        Err(error) => return Err(error),
+    };
+    let feature_edges = match registry_feature_edges(
         ctx,
         message,
         &name_table,
         &streams,
         &triangles,
         vertices.len(),
-    )?;
-    let corner_normals = decode_corner_normals(ctx, &attributes, vertices.len(), &triangles)?;
-    let triangle_groups = registry_triangle_groups(ctx, &attributes, registry.face_group_count)?;
-    let texture_ids = registry_texture_ids(ctx, &attributes)?;
+    ) {
+        Ok(edges) => edges,
+        Err(error @ CodecError::ResourceLimit(_)) => return Err(error),
+        Err(_) if soft_attributes => Vec::new(),
+        Err(error) => return Err(error),
+    };
+    let corner_normals = match decode_corner_normals(ctx, &attributes, vertices.len(), &triangles)
+    {
+        Ok(normals) => normals,
+        Err(error @ CodecError::ResourceLimit(_)) => return Err(error),
+        Err(_) if soft_attributes => None,
+        Err(error) => return Err(error),
+    };
+    let triangle_groups = match registry_triangle_groups(ctx, &attributes, registry.face_group_count)
+    {
+        Ok(groups) => groups,
+        Err(error @ CodecError::ResourceLimit(_)) => return Err(error),
+        Err(_) if soft_attributes => Vec::new(),
+        Err(error) => return Err(error),
+    };
+    let texture_ids = match registry_texture_ids(ctx, &attributes) {
+        Ok(ids) => ids,
+        Err(error @ CodecError::ResourceLimit(_)) => return Err(error),
+        Err(_) if soft_attributes => None,
+        Err(error) => return Err(error),
+    };
     Ok(MeshContainer {
         fusion_uuid: registry.fusion_uuid,
         mesh_uuid: registry.mesh_uuid,
@@ -2704,8 +2782,16 @@ mod tests {
         crate::test_support::with_decode_context(|ctx| inflate_stream_charged(ctx, bytes))
     }
     fn decode_triangles(bytes: &[u8], vertices: usize) -> Result<Vec<[u32; 3]>, CodecError> {
+        decode_triangles_wrapping(bytes, vertices, false)
+    }
+
+    fn decode_triangles_wrapping(
+        bytes: &[u8],
+        vertices: usize,
+        wrap_indexed: bool,
+    ) -> Result<Vec<[u32; 3]>, CodecError> {
         crate::test_support::with_decode_context(|ctx| {
-            decode_triangles_charged(ctx, bytes, vertices)
+            decode_triangles_charged(ctx, bytes, vertices, wrap_indexed)
         })
     }
     fn decode_index_positions(
@@ -2914,7 +3000,7 @@ mod tests {
     fn paramesh_triangle_words_refuse_collection_limit() {
         let stream = [1i32.to_le_bytes(), 1i32.to_le_bytes(), 0i32.to_le_bytes()].concat();
         let error = with_mesh_limits(2, u64::MAX, u64::MAX, |ctx| {
-            decode_triangles_charged(ctx, &stream, 3).unwrap_err()
+            decode_triangles_charged(ctx, &stream, 3, false).unwrap_err()
         });
         assert!(matches!(error, CodecError::ResourceLimit(limit)
             if limit.operation == "collect paramesh corner words"));
@@ -2924,7 +3010,7 @@ mod tests {
     fn paramesh_triangle_corners_refuse_collection_limit() {
         let stream = [1i32.to_le_bytes(), 1i32.to_le_bytes(), 0i32.to_le_bytes()].concat();
         let error = with_mesh_limits(5, u64::MAX, u64::MAX, |ctx| {
-            decode_triangles_charged(ctx, &stream, 3).unwrap_err()
+            decode_triangles_charged(ctx, &stream, 3, false).unwrap_err()
         });
         assert!(matches!(error, CodecError::ResourceLimit(limit)
             if limit.operation == "collect paramesh corner indices"));
@@ -2934,7 +3020,7 @@ mod tests {
     fn paramesh_triangle_records_refuse_collection_limit() {
         let stream = [1i32.to_le_bytes(), 1i32.to_le_bytes(), 0i32.to_le_bytes()].concat();
         let error = with_mesh_limits(6, u64::MAX, u64::MAX, |ctx| {
-            decode_triangles_charged(ctx, &stream, 3).unwrap_err()
+            decode_triangles_charged(ctx, &stream, 3, false).unwrap_err()
         });
         assert!(matches!(error, CodecError::ResourceLimit(limit)
             if limit.operation == "collect paramesh triangles"));
@@ -3919,6 +4005,50 @@ mod tests {
                 [5, 0, 3],
             ]
         );
+    }
+
+    /// When the vertex domain leaves more than one valid start, the trailing
+    /// absolute corner resolves the run (same framing as terminal-delta channels).
+    #[test]
+    fn corner_delta_trailing_terminal_resolves_ambiguous_start() {
+        // Deltas for corners [1,2,3]: +1, +1; trailing absolute last corner = 3.
+        // With 5 vertices the bounds window is start in [0, 2], so uniqueness fails
+        // and the trailing terminal must pin start = 1.
+        let triangles = decode_triangles(
+            &[1i32, 1, 3]
+                .into_iter()
+                .flat_map(i32::to_le_bytes)
+                .collect::<Vec<_>>(),
+            5,
+        )
+        .expect("terminal-resolved corner deltas");
+        assert_eq!(triangles, [[1, 2, 3]]);
+    }
+
+    /// Indexed position streams (`I: true`) wrap the running corner index when
+    /// the delta span is larger than the vertex domain.
+    #[test]
+    fn corner_delta_wraps_over_the_vertex_ring_when_indexed() {
+        // Relative path min=-4, max=0 over 3 vertices cannot pin a start, but
+        // wrapping from 0 yields corners [0, 1, 2].
+        let triangles = decode_triangles_wrapping(
+            &[-2i32, -2, 0]
+                .into_iter()
+                .flat_map(i32::to_le_bytes)
+                .collect::<Vec<_>>(),
+            3,
+            true,
+        )
+        .expect("wrapped corner deltas");
+        assert_eq!(triangles, [[0, 1, 2]]);
+        assert!(decode_triangles(
+            &[-2i32, -2, 0]
+                .into_iter()
+                .flat_map(i32::to_le_bytes)
+                .collect::<Vec<_>>(),
+            3,
+        )
+        .is_err());
     }
 
     #[test]

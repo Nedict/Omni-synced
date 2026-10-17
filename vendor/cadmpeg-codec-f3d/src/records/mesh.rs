@@ -1292,10 +1292,17 @@ impl DesignMeshScope {
 }
 
 /// Mesh collection with its same-index nested base and complete body-reference run.
+/// Spec §3.1 prefix length, or the bridged nine-zero prefix (nested at 42).
+const MESH_COLLECTION_PREFIX_LENS: [u64; 2] = [38, 42];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DesignMeshCollection {
     record: DesignMeshRecordIdentity,
     base_class_tag: DesignClassTag,
+    /// Bytes from the collection record start to the nested CommonData base.
+    prefix_len: u64,
+    /// Optional 4-byte zero gap before the trailing owner reference.
+    owner_gap: u64,
 }
 
 impl DesignMeshCollection {
@@ -1303,20 +1310,42 @@ impl DesignMeshCollection {
         record: DesignMeshRecordIdentity,
         base_record: DesignMeshRecordIdentity,
     ) -> Result<Self, String> {
-        let prefix = u64_from_index(crate::layout::paramesh_mesh_collection_prefix::LEN);
-        let fixed_length =
-            prefix + u64_from_index(crate::layout::paramesh_mesh_collection_base_prefix::LEN) + 11;
-        let body_bytes = record.frame_length().checked_sub(fixed_length).ok_or(
+        let prefix = base_record
+            .byte_offset()
+            .checked_sub(record.byte_offset())
+            .ok_or("collection_base_record must start after collection_record")?;
+        if !MESH_COLLECTION_PREFIX_LENS.contains(&prefix) {
+            return Err(
+                "collection_base_record must use the known or bridged mesh-collection prefix".into(),
+            );
+        }
+        let base_len = u64_from_index(crate::layout::paramesh_mesh_collection_base_prefix::LEN);
+        let without_gap = prefix
+            .checked_add(base_len)
+            .and_then(|n| n.checked_add(11))
+            .ok_or("collection_record.frame_length overflow")?;
+        let body_region = record.frame_length().checked_sub(without_gap).ok_or(
             "collection_record.frame_length must contain both prefixes and the owner reference",
         )?;
-        if body_bytes % 11 != 0 || u32::try_from(body_bytes / 11).is_err() {
+        // Body refs are 11 B each; some Fusion builds insert a 4-byte zero gap
+        // before the owner reference that ends the record.
+        let (body_bytes, owner_gap) = if body_region % 11 == 0 {
+            (body_region, 0u64)
+        } else if body_region >= 4 && (body_region - 4) % 11 == 0 {
+            (body_region - 4, 4u64)
+        } else {
+            return Err(
+                "collection_record.frame_length must contain a u32-counted body-reference run"
+                    .into(),
+            );
+        };
+        if u32::try_from(body_bytes / 11).is_err() {
             return Err(
                 "collection_record.frame_length must contain a u32-counted body-reference run"
                     .into(),
             );
         }
         if base_record.record_index() != record.record_index()
-            || base_record.byte_offset() != record.byte_offset() + prefix
             || base_record.frame_length() != record.frame_length() - prefix
         {
             return Err(
@@ -1327,33 +1356,37 @@ impl DesignMeshCollection {
         Ok(Self {
             record,
             base_class_tag: base_record.class_tag,
+            prefix_len: prefix,
+            owner_gap,
         })
     }
     pub(crate) fn record(&self) -> &DesignMeshRecordIdentity {
         &self.record
     }
+    fn prefix_len(&self) -> u64 {
+        self.prefix_len
+    }
     #[cfg(test)]
     fn base_record(&self) -> DesignMeshRecordIdentity {
-        let prefix = u64_from_index(crate::layout::paramesh_mesh_collection_prefix::LEN);
         DesignMeshRecordIdentity {
             class_tag: self.base_class_tag.clone(),
             record_index: self.record.record_index,
-            byte_offset: self.record.byte_offset() + prefix,
-            frame_length: self.record.frame_length() - prefix,
+            byte_offset: self.record.byte_offset() + self.prefix_len,
+            frame_length: self.record.frame_length() - self.prefix_len,
         }
     }
     fn body_count(&self) -> u64 {
         (self.record.frame_length()
-            - u64_from_index(crate::layout::paramesh_mesh_collection_prefix::LEN)
+            - self.prefix_len
             - u64_from_index(crate::layout::paramesh_mesh_collection_base_prefix::LEN)
+            - self.owner_gap
             - 11)
             / 11
     }
     fn texture_table_reference_offset(&self) -> u64 {
-        self.record.byte_offset()
-            + u64_from_index(
-                crate::layout::paramesh_mesh_collection_prefix::TEXTURE_TABLE_REFERENCE,
-            )
+        // Texture ref is the 11-byte same-segment reference immediately before
+        // the nested CommonData base (prefix_len - 11).
+        self.record.byte_offset() + self.prefix_len - 11
     }
     fn owner_reference_offset(&self) -> u64 {
         self.record.byte_offset() + self.record.frame_length() - 11
@@ -1440,13 +1473,15 @@ impl DesignMeshFeature {
         &mut self.bodies
     }
     fn body_count_offsets(&self) -> [u64; 3] {
+        let prefix = self.collection.prefix_len();
+        // Spec count @21; bridged nine-zero prefix keeps count at 20.
+        let first_count = if prefix == 38 { 21 } else { 20 };
         [
             self.scope.record().byte_offset()
                 + u64_from_index(crate::layout::paramesh_feature_scope_prefix::BODY_COUNT),
+            self.collection.record().byte_offset() + first_count,
             self.collection.record().byte_offset()
-                + u64_from_index(crate::layout::paramesh_mesh_collection_prefix::BODY_COUNT),
-            self.collection.record().byte_offset()
-                + u64_from_index(crate::layout::paramesh_mesh_collection_prefix::LEN)
+                + prefix
                 + u64_from_index(crate::layout::paramesh_mesh_collection_base_prefix::BODY_COUNT),
         ]
     }
@@ -1457,7 +1492,7 @@ impl DesignMeshFeature {
     }
     fn collection_body_reference_offsets(&self) -> impl Iterator<Item = u64> + '_ {
         let start = self.collection.record().byte_offset()
-            + u64_from_index(crate::layout::paramesh_mesh_collection_prefix::LEN)
+            + self.collection.prefix_len()
             + u64_from_index(crate::layout::paramesh_mesh_collection_base_prefix::LEN);
         (0..self.collection.body_count()).map(move |ordinal| start + 11 * ordinal)
     }

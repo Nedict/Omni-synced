@@ -50,7 +50,7 @@ impl<'a> RecordRef<'a> {
     }
 
     fn collection_base(collection: &'a DesignMeshCollection) -> Self {
-        let prefix = u64_from_index(crate::layout::paramesh_mesh_collection_prefix::LEN);
+        let prefix = collection.prefix_len();
         Self {
             class_tag: collection.base_class_tag.as_str(),
             record_index: collection.record.record_index.get(),
