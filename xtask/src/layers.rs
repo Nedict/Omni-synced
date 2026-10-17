@@ -40,6 +40,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("manufacture", Class::Standalone),
     // Laser mark profiles + LightBurn package contracts; no workspace deps.
     ("laser", Class::Standalone),
+    // 3D mouse descriptors and reports (no workspace dependencies; the apps read the device)
+    ("space-mouse", Class::Layer(0)),
     // the derive macros (proc-macro, no workspace dependencies)
     ("derive", Class::Standalone),
     ("sketch", Class::Layer(1)),

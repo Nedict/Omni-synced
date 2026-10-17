@@ -60,6 +60,7 @@ pub mod i18n;
 mod i18n_menu_tests;
 #[cfg(test)]
 mod i18n_ui_tests;
+pub mod icon_svg;
 pub mod icons;
 pub mod inference;
 pub mod install;
@@ -274,7 +275,9 @@ impl Default for UiState {
 /// Host services injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
-    pub pick_open: Option<Box<dyn Fn() -> FilePickerFuture>>,
+    /// Ask for a file to open. The extensions are the file type the command reads, offered as
+    /// the picker's first filter (`&[]`: designs, CAD files and meshes, #1801).
+    pub pick_open: Option<Box<dyn Fn(&[&str]) -> FilePickerFuture>>,
     pub pick_save: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
     /// Open a dialog asking for a program (a slicer); `None` when the host has no such dialog.
     pub pick_program: Option<Box<dyn Fn() -> FilePickerFuture>>,
@@ -762,8 +765,8 @@ impl SolveApp {
         // Drop Manufacture floating windows before another command opens, so leftover library
         // panels do not outlive the command that opened them (and fail the width layout tests).
         manufacture_workspace::close_floating_dialogs(self);
-        if matches!(id, "sketch.insert_dxf" | "sketch.insert_svg") {
-            self.pick_open_command(id, json!({}));
+        if let Some(ext) = id.strip_prefix("sketch.insert_").filter(|e| matches!(*e, "dxf" | "svg")) {
+            self.pick_open_command(id, json!({}), &[ext]);
             return;
         }
         if id == "component.insert_design" {
@@ -1002,6 +1005,12 @@ impl SolveApp {
         self.dialog.as_ref().is_some_and(|d| matches!(d.kind, dialogs::Kind::Sketch))
     }
 
+    /// Is the view drawn in perspective? The perspective preference, except while a sketch is
+    /// open: a sketch is drawn and measured on its plane, so the view is parallel (no foreshortening).
+    pub fn perspective_view(&self) -> bool {
+        self.ui.perspective && self.session.active_sketch.is_none()
+    }
+
     pub fn set_status(&mut self, s: impl Into<String>, error: bool) {
         self.status = Some((s.into(), now_ms(), error));
     }
@@ -1103,7 +1112,7 @@ impl SolveApp {
 
     fn fitted_bounds(&self, mut cam: Camera, bounds: &solidcraft_engine::geom::Aabb3) -> Camera {
         if let Some(layout) = &self.viewport.layout {
-            return viewport_layout::fit_bounds(cam, bounds, layout, self.ui.perspective).unwrap_or(cam);
+            return viewport_layout::fit_bounds(cam, bounds, layout, self.perspective_view()).unwrap_or(cam);
         }
         let previous = cam;
         cam.fit(bounds);

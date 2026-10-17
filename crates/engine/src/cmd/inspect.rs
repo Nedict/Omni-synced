@@ -24,14 +24,14 @@ pub static COMMANDS: &[CommandSpec] = &[
              material?: name (default Aluminum); region?: label (default North America). \
              Returns volume and an illustrative cradle-to-gate CO₂e estimate (not a certified LCA).",
         ),
-    CommandSpec::new("document.inspect", "Inspect Design", inspect).noundo().params("measure?: bool (include body measurements)"),
-    CommandSpec::new("sketch.inspect", "Inspect Sketch", sketch_inspect).noundo().params("sketch?: id|name (default active)"),
-    CommandSpec::new("model.edges", "List Edges", model_edges).noundo().params("body: name"),
-    CommandSpec::new("model.faces", "List Faces", model_faces).noundo().params(
+    CommandSpec::new("document.inspect", "Inspect Design", inspect).icon("inspect").noundo().params("measure?: bool (include body measurements)"),
+    CommandSpec::new("sketch.inspect", "Inspect Sketch", sketch_inspect).icon("inspect").noundo().params("sketch?: id|name (default active)"),
+    CommandSpec::new("model.edges", "List Edges", model_edges).icon("inspect").noundo().params("body: name"),
+    CommandSpec::new("model.faces", "List Faces", model_faces).icon("inspect").noundo().params(
         "body: name → per face: index, name (what face.delete, sheet.convert `face`, solid.shell … take in place of a point), exact, area, centroid (not always on the face), \
          plane_normal, point (a point on the face that picks it), cylinder? ({origin, axis, radius} of a cylindrical face)",
     ),
-    CommandSpec::new("model.threads", "List Threads", model_threads).noundo(),
+    CommandSpec::new("model.threads", "List Threads", model_threads).icon("inspect").noundo(),
     CommandSpec::new("material.assign", "Physical Material", physical_material)
         .at("SOLID", "MODIFY")
         .icon("material")
@@ -41,17 +41,17 @@ pub static COMMANDS: &[CommandSpec] = &[
              appearance?: library name (appearance.library) | color: \"#rrggbb\" or [r, g, b] (0–255), opacity? (0–1, default 1); \
              pbr?: {metallic:0..1, roughness:0.045..1, dielectric_ior:1..3} (requires color/appearance and opacity 1); omitted/null uses legacy scalar shading. Neither appearance nor color (or color: null): clear, so the face follows its body, the body its component, the component its material",
     ),
-    CommandSpec::new("appearance.library", "Appearance Library", appearance_library)
+    CommandSpec::new("appearance.library", "Appearance Library", appearance_library).icon("library")
         .noundo()
         .params("→ the built-in appearances (name, colour, opacity)"),
-    CommandSpec::new("appearance.list", "List Appearances", appearance_list)
+    CommandSpec::new("appearance.list", "List Appearances", appearance_list).icon("list")
         .noundo()
         .params("body?: name → assigned appearances; with body, its resolved look and its faces' (face index, look)"),
-    CommandSpec::new("material.list", "List Materials", material_list)
+    CommandSpec::new("material.list", "List Materials", material_list).icon("list")
         .noundo()
         .doc_only()
         .params("→ the built-in materials, then the design's own (user: true, with their look)"),
-    CommandSpec::new("engine.commands", "List Commands", commands).noundo(),
+    CommandSpec::new("engine.commands", "List Commands", commands).icon("list").noundo(),
 ];
 
 pub fn measure_json(b: &solidcraft_doc::ModelBody) -> Value {

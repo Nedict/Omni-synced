@@ -22,3 +22,4 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 sha2 = { workspace = true }
+web-time = { workspace = true }
