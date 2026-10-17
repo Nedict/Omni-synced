@@ -21,8 +21,39 @@ Parameters are finite and bounded: metallic [0,1], perceptual roughness [0.045,1
 relative dielectric IOR [1,3]. Unknown optical fields and nonnumeric/out-of-range
 opacity refuse before changing the design. PBR requires opacity exactly one.
 IOR controls the nonmetal fraction's reflection; it does not enable refraction.
-Omitting `pbr` or supplying null in an appearance assignment selects the previous
-scalar response. Assignment replaces a look; it is not a partial parameter patch.
+Selecting a named library appearance without `color` or `pbr` uses that preset's
+complete response. Existing scalar names retain scalar shading. Supplying `pbr: null`
+explicitly selects scalar shading; a custom `color` without `pbr` is also scalar.
+Assignment replaces a look; it is not a partial parameter patch.
+
+## Original finish presets
+
+Appearance includes six additional, explicitly named PBR previews: **Steel - Satin PBR**,
+**Aluminum - Satin PBR**, **Copper - Clean PBR**, **ABS - Molded PBR**,
+**PLA - Smooth PBR** and **Wood - Oak Uniform PBR Preview**. Select one in the existing
+Appearance library, then view it in Render. The same names work with `appearance.assign`.
+They copy into the design and remain editable through the existing opaque controls.
+The 20 earlier scalar appearances keep their names and values.
+
+These are original illustrative finishes with uniform color and roughness, not measured
+optical constants or certified material grades. IOR 1.5 is illustrative. The wood preview
+has **no grain**, the PLA preset has **no printed layers**, and satin metal is isotropic:
+it does not implement directional brushing. Those details need the separately coordinated
+texture/anisotropy consumers. Density and engineering properties are never inferred from
+an appearance. Fixed direct lighting can make metals dark; these presets do not enable HDRI.
+
+`examples/material-finishes.json` creates six original spheres with generic physical
+materials and the corresponding finishes. In row order: steel, aluminum, copper;
+ABS, PLA, uniform oak preview. From the repository root:
+
+```sh
+solidcraft-cli run examples/material-finishes.json --save target/material-finishes.solidcraft
+solidcraft-cli render target/material-finishes.solidcraft --out target/material-finishes.png --width 1600 --height 1000
+```
+
+The native design requires format 21. Original data/recipe credits are in ATTRIBUTION.md;
+the demo also carries source and license notes in document metadata. Scalar v1 library
+export refuses these presets, preserving the existing no-loss contract.
 
 `material.create/edit` accept the same optional `pbr` block alongside a default
 appearance/color. A density-only edit retains the entire existing look. Visual

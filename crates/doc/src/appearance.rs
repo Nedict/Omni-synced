@@ -136,14 +136,24 @@ impl Appearances {
 mod defaults;
 pub use defaults::LIBRARY;
 
+#[path = "../../../assets/appearances/opaque_finishes.rs"]
+mod finishes;
+pub use finishes::OPAQUE_FINISHES;
+
 /// A library appearance by name (case-insensitive).
 pub fn library(name: &str) -> Option<Look> {
-    LIBRARY.iter().find(|(n, _, _)| n.eq_ignore_ascii_case(name.trim())).map(|(n, c, o)| Look {
-        name: n.to_string(),
-        color: *c,
-        opacity: *o,
-        pbr: None,
-    })
+    LIBRARY
+        .iter()
+        .find(|(n, _, _)| n.eq_ignore_ascii_case(name.trim()))
+        .map(|(n, c, o)| Look { name: n.to_string(), color: *c, opacity: *o, pbr: None })
+        .or_else(|| {
+            let (n, color, metallic, roughness) = OPAQUE_FINISHES.iter().find(|(n, ..)| n.eq_ignore_ascii_case(name.trim()))?;
+            let pbr = crate::pbr_appearance::PbrParameters::new(*metallic, *roughness, 1.5).ok()?;
+            let mut look = Look::custom(*color, 1.0);
+            look.name = (*n).into();
+            look.pbr = Some(pbr);
+            Some(look)
+        })
 }
 
 /// The look a physical material gives a body that has no appearance of its own.

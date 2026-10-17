@@ -14,6 +14,8 @@ Editable drawing code, native projects and shipped exports are collected under `
 
 | File | Author | Source | Licence |
 |---|---|---|---|
+| assets/appearances/opaque_finishes.rs | SolidCraft contributors | Original illustrative opaque finish presets; colors reuse original SolidCraft palette, roughness/metal fraction are authored previews, not measured optical data | MIT OR Apache-2.0 |
+| examples/material-finishes.json | SolidCraft contributors | Original six-specimen material/finish study; generic SolidCraft densities, no external textures or engineering dataset | MIT OR Apache-2.0 |
 | examples/render-studio.json | SolidCraft contributors | original procedural box/cylinder enclosure script for the integrated Render workspace | MIT OR Apache-2.0 |
 | examples/render-opaque-studio.json | SolidCraft contributors | original procedural sphere study varying opaque metal fraction and roughness independently; no external assets or engineering data | MIT OR Apache-2.0 |
 | crates/gpu/src/pbr.rs | SolidCraft contributors | original WGSL translation of SolidCraft's opaque surface and fixed studio reference, embedded as Rust source; no external shader code | MIT OR Apache-2.0 |

@@ -29,11 +29,11 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("appearance.assign", "Appearance", appearance).at("SOLID", "MODIFY").icon("appearance").key("A").params(
         "bodies?: [names]; faces?: [[x,y,z] on faces] (body?: which body, default the nearest); components?: [names or ids, or occurrence names]; \
              appearance?: library name (appearance.library) | color: \"#rrggbb\" or [r, g, b] (0–255), opacity? (0–1, default 1); \
-             pbr?: {metallic:0..1, roughness:0.045..1, dielectric_ior:1..3} (requires color/appearance and opacity 1); omitted/null uses legacy scalar shading. Neither appearance nor color (or color: null): clear, so the face follows its body, the body its component, the component its material",
+             pbr?: {metallic:0..1, roughness:0.045..1, dielectric_ior:1..3} (requires color/appearance and opacity 1); omitted keeps a named library preset's response; null uses scalar shading. Neither appearance nor color (or color: null): clear, so the face follows its body, the body its component, the component its material",
     ),
     CommandSpec::new("appearance.library", "Appearance Library", appearance_library)
         .noundo()
-        .params("→ the built-in appearances (name, colour, opacity)"),
+        .params("→ the built-in appearances (name, colour, opacity, optional opaque pbr)"),
     CommandSpec::new("appearance.list", "List Appearances", appearance_list)
         .noundo()
         .params("body?: name → assigned appearances; with body, its resolved look and its faces' (face index, look)"),
@@ -384,6 +384,9 @@ fn appearance(s: &mut Session, p: &Value) -> Result<Value> {
     };
     if let Some(l) = &mut look {
         attach_pbr(cmd, p, l)?;
+        if l.pbr.is_some() && (l.opacity != 1.0 || p.get("opacity").is_some_and(|o| o.as_f64().filter(|v| v.is_finite() && *v == 1.0).is_none())) {
+            return Err(bad(cmd, "opaque PBR requires numeric opacity 1"));
+        }
     } else if p.get("pbr").is_some_and(|v| !v.is_null()) {
         return Err(bad(cmd, "`pbr` requires a color or appearance"));
     }
@@ -508,6 +511,10 @@ pub(super) fn look_json(l: &solidcraft_doc::appearance::Look) -> Value {
 #[path = "pbr_appearance_tests.rs"]
 mod pbr_tests;
 
+#[cfg(test)]
+#[path = "opaque_finish_tests.rs"]
+mod opaque_finish_tests;
+
 pub(super) fn attach_pbr(cmd: &str, params: &Value, look: &mut solidcraft_doc::appearance::Look) -> Result<()> {
     let Some(value) = params.get("pbr") else { return Ok(()) };
     if value.is_null() {
@@ -534,13 +541,19 @@ pub(super) fn attach_pbr(cmd: &str, params: &Value, look: &mut solidcraft_doc::a
 }
 
 fn appearance_library(_s: &mut Session, _p: &Value) -> Result<Value> {
-    let list: Vec<Value> = solidcraft_doc::appearance::LIBRARY
+    let mut list: Vec<Value> = solidcraft_doc::appearance::LIBRARY
         .iter()
         .map(|(n, c, o)| {
             let category = n.split(" - ").next().unwrap_or(n);
             json!({"name": n, "category": category, "color": format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2]), "opacity": o})
         })
         .collect();
+    list.extend(solidcraft_doc::appearance::OPAQUE_FINISHES.iter().filter_map(|(name, ..)| {
+        let look = solidcraft_doc::appearance::library(name)?;
+        let mut value = look_json(&look);
+        value["category"] = json!(name.split(" - ").next().unwrap_or(name));
+        Some(value)
+    }));
     Ok(json!({"appearances": list}))
 }
 
