@@ -3348,7 +3348,8 @@ pub(crate) fn nearest_quarter_turn(yaw: f64) -> f64 {
 }
 
 /// Navigation bar (bottom centre).
-/// Turn the view to face the selected planar face or plane, else the active sketch.
+/// Turn the view to face the selected planar face or plane, else the active sketch; asked again
+/// while it already faces it, from the other side (#1886).
 pub fn look_at_selection(app: &mut SolveApp) {
     let target = app.session.selection.iter().find_map(|s| match s {
         Sel::Face { body, index, point } => crate::dialogs::planar_face(&app.session, body, *index).map(|(_, n)| (*point, n)),
@@ -3357,11 +3358,11 @@ pub fn look_at_selection(app: &mut SolveApp) {
     });
     match target {
         Some((p, n)) => {
-            let mut to = app.cam.looking_from(n);
+            let mut to = app.cam.looking_from(crate::dialogs::facing(app, n, true));
             to.target = p;
             app.animate_to(to);
         }
-        None => crate::dialogs::look_at_sketch(app),
+        None => crate::dialogs::look_at_sketch_again(app),
     }
 }
 
@@ -3726,6 +3727,81 @@ mod tests {
         assert!(checked >= 3, "{checked} faces seen lit");
     }
 
+    /// An origin plane lying on a body's face is tinted evenly over it (#1739: a box built at the
+    /// origin, seen from below in orthographic; the XY plane's square z-fought with the bottom
+    /// face in stripes). Faces are pushed back by their slope (`FACE_BIAS`), the planes are not.
+    /// Skipped without a GPU adapter.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn an_origin_plane_on_a_face_is_tinted_evenly() {
+        let mut s = solidcraft_engine::Session::default();
+        s.execute("solid.box", &json!({"length": 40, "width": 30, "height": 10, "corner": [0, 0, 0]})).unwrap();
+        let mut app = SolveApp::new(s, crate::Services::default());
+        app.cam = Camera {
+            target: Vec3::new(16.904, 10.024, 3.661),
+            yaw: -0.32,
+            pitch: -0.9652,
+            roll: 0.0,
+            distance: 98.557,
+            fov: 0.0,
+            ..Default::default()
+        };
+        app.ui.perspective = false;
+        const SIZE: u32 = 256;
+        let rect = Rect::from_min_size(Pos2::ZERO, vec2(SIZE as f32, SIZE as f32));
+        let mut render = |origin: bool| {
+            app.ui.show_origin = origin;
+            app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess: false });
+            let (scene, highlight) = (build_scene(&app), build_highlight(&app).merged());
+            let proj = projection(&app, rect);
+            let e = proj.cam.eye().to_f32();
+            let img = crate::gpu::render_offscreen(
+                scene,
+                Some(highlight),
+                proj.vp.to_f32(),
+                proj.cam.back().to_f32(),
+                [e[0], e[1], e[2], 0.0],
+                SIZE,
+                None,
+                [0.0; 8],
+                crate::gpu::analysis_colors(&Tokens::get().analysis),
+            );
+            (img, proj)
+        };
+        let (Some(with), proj) = render(true) else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        let (Some(without), _) = render(false) else { return };
+        app.ui.show_origin = true;
+        let xy = origin_planes(&app).into_iter().find(|(n, _, _)| *n == "XY").map(|(_, _, q)| q).unwrap();
+        let (w, h, r) = (f64::from(SIZE), f64::from(SIZE), scene_radius(&app));
+        let (mut samples, mut plain) = (0, Vec::new());
+        // Points inside the square (away from its outline), where it lies on the bottom face.
+        for i in 1..12 {
+            for j in 1..12 {
+                let (u, v) = (f64::from(i) / 12.0, f64::from(j) / 12.0);
+                let p = xy[0] + (xy[1] - xy[0]) * u + (xy[3] - xy[0]) * v;
+                if !(p.x > 0.5 && p.x < 39.5 && p.y > 0.5 && p.y < 29.5) {
+                    continue;
+                }
+                let Some((x, y, _)) = proj.cam.to_screen(p, w, h, r) else { continue };
+                let at = (y as usize * SIZE as usize + x as usize) * 4;
+                samples += 1;
+                if with.get(at..at + 4) == without.get(at..at + 4) {
+                    plain.push((x as u32, y as u32));
+                }
+            }
+        }
+        assert!(samples > 40, "{samples} points of the square on the face");
+        assert!(
+            plain.is_empty(),
+            "{} of {samples} points of the XY plane's square do not show over the face: {:?}",
+            plain.len(),
+            &plain[..plain.len().min(6)]
+        );
+    }
+
     #[test]
     fn construction_drawing_and_hover_overlays_preserve_visible_gaps() {
         fn length(shape: &Shape) -> f32 {
@@ -4033,6 +4109,40 @@ mod tests {
             app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess: false });
         }
         app
+    }
+
+    fn space(pressed: bool) -> egui::Event {
+        egui::Event::Key { key: egui::Key::Space, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::default() }
+    }
+
+    /// Holding Space is a momentary pan: the drag moves the view rather than the geometry under the
+    /// pointer, in every preset. The point is over the sketch's own point, so without Space this
+    /// drag would drag it (and the undo stack would grow).
+    #[test]
+    fn holding_space_pans_instead_of_dragging_geometry() {
+        for preset in crate::prefs::NAV_PRESETS.iter().map(|p| p.id) {
+            let ctx = egui::Context::default();
+            let mut app = hover_app(false);
+            app.preferences.nav = preset.into();
+            app.ui.show_origin = false;
+            hover_frame(&mut app, &ctx, vec![]);
+            let point = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
+            let before = app.cam;
+            let undo = app.session.undo.len();
+            let press = |pressed: bool, at: Pos2| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            };
+            hover_frame(&mut app, &ctx, vec![space(true)]);
+            hover_frame(&mut app, &ctx, vec![space(true), egui::Event::PointerMoved(point), press(true, point)]);
+            hover_frame(&mut app, &ctx, vec![space(true), egui::Event::PointerMoved(point + vec2(40.0, 25.0))]);
+            assert_ne!(app.cam, before, "{preset}: holding Space must pan the view");
+            assert_eq!(app.session.undo.len(), undo, "{preset}: holding Space must not edit the design");
+            assert!(app.viewport.point_drag.is_none(), "{preset}: holding Space must not drag geometry");
+            hover_frame(&mut app, &ctx, vec![press(false, point + vec2(40.0, 25.0)), space(false)]);
+        }
     }
 
     #[test]

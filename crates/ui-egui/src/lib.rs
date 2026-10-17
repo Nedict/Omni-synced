@@ -60,6 +60,7 @@ pub mod i18n;
 mod i18n_menu_tests;
 #[cfg(test)]
 mod i18n_ui_tests;
+pub mod icon_svg;
 pub mod icons;
 pub mod inference;
 pub mod install;
@@ -241,7 +242,9 @@ impl Default for UiState {
 /// Host services injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
-    pub pick_open: Option<Box<dyn Fn() -> FilePickerFuture>>,
+    /// Ask for a file to open. The extensions are the file type the command reads, offered as
+    /// the picker's first filter (`&[]`: designs, CAD files and meshes, #1801).
+    pub pick_open: Option<Box<dyn Fn(&[&str]) -> FilePickerFuture>>,
     pub pick_save: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
     /// Open a dialog asking for a program (a slicer); `None` when the host has no such dialog.
     pub pick_program: Option<Box<dyn Fn() -> FilePickerFuture>>,
@@ -723,8 +726,8 @@ impl SolveApp {
         dim_view::cancel();
         self.tool = None;
         self.home.open = false;
-        if matches!(id, "sketch.insert_dxf" | "sketch.insert_svg") {
-            self.pick_open_command(id, json!({}));
+        if let Some(ext) = id.strip_prefix("sketch.insert_").filter(|e| matches!(*e, "dxf" | "svg")) {
+            self.pick_open_command(id, json!({}), &[ext]);
             return;
         }
         if id == "component.insert_design" {

@@ -1,10 +1,12 @@
-//! 3Dconnexion HID navigation on Windows (through hidapi) and Linux (through hidraw). The device
-//! reader never touches the document or UI; it publishes the latest axes, and the egui thread
-//! applies them once per frame.
+//! 3Dconnexion HID navigation on Windows (through hidapi) and Linux (through spacenavd when it
+//! runs, else hidraw). The device reader never touches the document or UI; it publishes the
+//! latest axes, and the egui thread applies them once per frame.
 
 mod hid_descriptor;
 #[cfg(target_os = "linux")]
 mod hidraw;
+#[cfg(target_os = "linux")]
+mod spacenavd;
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -156,14 +158,21 @@ struct Reading {
     axes: Axes,
     translation_at: Instant,
     rotation_at: Instant,
+    /// The source says when the cap is back at rest, so a reading stays until the next one.
+    /// A HID device repeats its report while the cap is held; spacenavd sends a record only when
+    /// the values change, and a steady hold can go seconds without one.
+    held: bool,
 }
 
 impl Reading {
     fn new(now: Instant) -> Self {
-        Self { axes: Axes::default(), translation_at: now, rotation_at: now }
+        Self { axes: Axes::default(), translation_at: now, rotation_at: now, held: false }
     }
 
     fn current(self, now: Instant) -> Axes {
+        if self.held {
+            return self.axes;
+        }
         Axes {
             translation: if now.duration_since(self.translation_at) < STALE_AFTER { self.axes.translation } else { [0; 3] },
             rotation: if now.duration_since(self.rotation_at) < STALE_AFTER { self.axes.rotation } else { [0; 3] },
@@ -226,6 +235,15 @@ fn publish(ctx: &Context, shared: &Mutex<Reading>, layout: Layout, report: &[u8]
     }
 }
 
+/// Publishes the cap's position from spacenavd.
+#[cfg(target_os = "linux")]
+fn publish_held(ctx: &Context, shared: &Mutex<Reading>, axes: Axes) {
+    if let Ok(mut reading) = shared.lock() {
+        *reading = Reading { axes, held: true, ..Reading::new(Instant::now()) };
+        ctx.request_repaint();
+    }
+}
+
 /// The device is gone: stop reporting its last position.
 fn reset(ctx: &Context, shared: &Mutex<Reading>) {
     if let Ok(mut reading) = shared.lock() {
@@ -276,15 +294,21 @@ fn device_layout(device: &hidapi::HidDevice) -> Layout {
     }
 }
 
-/// Reads `/dev/hidrawN` with plain blocking reads, which end with an error when the device is
-/// unplugged. Opening needs permission: most distributions grant it to the logged-in user for
-/// devices that carry the `uaccess` udev tag, which a rule for the 3D mouse has to add.
+/// Reads the 3D mouse through spacenavd when it runs, so what `spnavcfg` sets (swapped and inverted
+/// axes, sensitivity, dead zones) applies here as in other programs. Without the daemon it reads
+/// `/dev/hidrawN` with plain blocking reads, which end with an error when the device is unplugged.
+/// Opening needs permission: most distributions grant it to the logged-in user for devices that
+/// carry the `uaccess` udev tag, which a rule for the 3D mouse has to add.
 #[cfg(target_os = "linux")]
 fn reader(ctx: Context, shared: Arc<Mutex<Reading>>) {
     use std::io::Read;
     let mut denied = None;
     loop {
-        if let Some(device) = hidraw::find() {
+        if let Some(daemon) = spacenavd::connect() {
+            log::info!("3D mouse: reading spacenavd, which applies the spnavcfg settings");
+            spacenavd::read(daemon, |axes| publish_held(&ctx, &shared, axes));
+            reset(&ctx, &shared);
+        } else if let Some(device) = hidraw::find() {
             match std::fs::File::open(&device.path) {
                 Ok(mut file) => {
                     denied = None;
@@ -408,6 +432,19 @@ mod tests {
         assert!(decode_report(&[2, 4, 0, 5, 0, 6, 0], Layout::Split, &mut reading, later));
         assert!(decode_report(&[1, 1, 0, 2, 0, 3, 0, 0, 0, 0, 0, 0, 0], Layout::Split, &mut reading, later));
         assert_eq!(reading.current(later), Axes { translation: [1, 2, 3], rotation: [4, 5, 6] });
+    }
+
+    #[test]
+    fn a_held_reading_stays_until_the_next_one_and_a_hid_reading_goes_stale() {
+        let now = Instant::now();
+        let axes = Axes { translation: [0, 200, 0], rotation: [0; 3] };
+        let later = now + STALE_AFTER * 20;
+        // spacenavd sends nothing while the values stay the same: the push lasts.
+        let held = Reading { axes, held: true, ..Reading::new(now) };
+        assert_eq!(held.current(later), axes);
+        // A HID device repeats its report: silence means the cap, or the device, is gone.
+        let hid = Reading { axes, ..Reading::new(now) };
+        assert_eq!(hid.current(later), Axes::default());
     }
 
     #[test]
