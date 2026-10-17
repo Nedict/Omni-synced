@@ -136,10 +136,8 @@ jobs:
     if: needs.changes.outputs.native == 'true'
     # Main and merge-queue runs use the self-hosted runner (warm build cache); pull requests
     # stay on GitHub's runners, and the runner itself refuses pull-request jobs.
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'self-hosted-fast' }}
+    runs-on: ubuntu-24.04
     env:
-      # Outside the checkout, so `git clean` keeps the warm build between runs.
-      CARGO_TARGET_DIR: ${{ github.event_name == 'pull_request' && 'target' || '/home/ci-runner/cargo-target/clippy' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -165,11 +163,9 @@ jobs:
     if: needs.changes.outputs.native == 'true'
     # Main and merge-queue runs use the self-hosted runner (warm build cache); pull requests
     # stay on GitHub's runners, and the runner itself refuses pull-request jobs.
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'self-hosted-fast' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      # Outside the checkout, so `git clean` keeps the warm build between runs.
-      CARGO_TARGET_DIR: ${{ github.event_name == 'pull_request' && 'target' || '/home/ci-runner/cargo-target/build-tests' }}
       CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
@@ -224,6 +220,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install a software Vulkan driver (lavapipe)
+        # Preinstalled on the self-hosted runner, which has no sudo.
+        if: runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan1
@@ -365,11 +363,9 @@ jobs:
     if: needs.changes.outputs.native == 'true'
     # Main and merge-queue runs use the self-hosted runner (warm build cache); pull requests
     # stay on GitHub's runners, and the runner itself refuses pull-request jobs.
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'self-hosted-fast' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      # Outside the checkout, so `git clean` keeps the warm build between runs.
-      CARGO_TARGET_DIR: ${{ github.event_name == 'pull_request' && 'target' || '/home/ci-runner/cargo-target/doc-tests' }}
       CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
