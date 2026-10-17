@@ -160,6 +160,7 @@ fn every_icon_draws_only_colours_a_mode_can_reach() {
 /// raise the file's count here and give the reason. Fewer is always fine. The icon sources may
 /// hold none at all.
 const ALLOWED_LITERALS: &[(&str, usize, &str)] = &[
+    ("icon_pack.rs", 1, "the white tint of a texture rasterized from the caller's colours"),
     ("navigation.rs", 1, "the navigation cube's face shading, made from a token"),
     ("canvas.rs", 3, "white rings around manipulator handles"),
     ("context_menu.rs", 1, "the radial menu's shadow"),

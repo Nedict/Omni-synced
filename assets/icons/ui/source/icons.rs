@@ -138,6 +138,9 @@ pub fn paint(p: &Painter, r: Rect, name: &str, ink: Color32, fill: Color32, acce
 
 /// [`paint`] with the colours an icon draws of its own given (`theme::IconColors`).
 pub(crate) fn paint_with(p: &Painter, r: Rect, name: &str, ink: Color32, fill: Color32, accent: Color32, ic: &crate::theme::IconColors) {
+    if crate::icon_pack::paint(p, r, name, ink, fill, accent) {
+        return;
+    }
     let ic = *ic;
     let pen = Pen { p, r, ink, fill, accent, w: (r.width() / 24.0 * 1.4).max(1.0) };
     let a = pen.accent;

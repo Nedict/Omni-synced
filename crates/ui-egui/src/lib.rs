@@ -60,6 +60,7 @@ pub mod i18n;
 mod i18n_menu_tests;
 #[cfg(test)]
 mod i18n_ui_tests;
+mod icon_pack;
 pub mod icons;
 pub mod inference;
 pub mod install;

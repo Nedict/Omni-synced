@@ -25,6 +25,7 @@ semver = { workspace = true }
 sha2 = { workspace = true }
 minisign-verify = "0.3"
 zip = { workspace = true }
+resvg = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # The offscreen viewport render test opens a device without a window.
