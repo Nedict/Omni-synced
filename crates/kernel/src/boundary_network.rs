@@ -508,6 +508,37 @@ mod tests {
         }
     }
 
+    /// A stadium: two half-circle arcs (radius 5) bulging out of the 10 × 8 rectangle between two
+    /// lines. Each arc meets its lines at 180°, so the patch is singular at its corners, and the
+    /// reference mesher's walk round the boundary used to run from such a corner onto the
+    /// surface's extrapolation past its domain (a planar spline passes through every point of its
+    /// plane there): the face measured 289 mm² for its 158.5. The vendored mesher's bounded
+    /// projection (`nearest_projection`, vendor/README.md) keeps the walk on the domain. Its area
+    /// is the stadium's, 80 + 25π, by the faces, the measuring mesh and the display mesh.
+    #[test]
+    fn a_patch_with_straight_corners_measures_its_own_area() {
+        use std::f64::consts::PI;
+        let low = Seg2::Arc { center: Vec2::new(5.0, 0.0), radius: 5.0, start: PI, sweep: PI };
+        let high = Seg2::Arc { center: Vec2::new(5.0, 8.0), radius: 5.0, start: PI, sweep: -PI };
+        let left = Seg2::Line { a: Vec2::new(0.0, 0.0), b: Vec2::new(0.0, 8.0) };
+        let right = Seg2::Line { a: Vec2::new(10.0, 0.0), b: Vec2::new(10.0, 8.0) };
+        let pl = Plane::XY.offset(3.0);
+        let body = boundary_surface(
+            &[sketch("low", pl, vec![low]), sketch("high", pl, vec![high])],
+            &[sketch("left", pl, vec![left]), sketch("right", pl, vec![right])],
+        )
+        .unwrap();
+        let want = 80.0 + 25.0 * PI;
+        // Chords of the arcs at 0.01 mm sag cut off up to (2/3)·sag·length ≈ 0.21 mm².
+        let near = |a: f64| (a - want).abs() < 0.25;
+        let faces = body.faces(0.01).unwrap();
+        assert!(faces.len() == 1 && near(faces[0].area), "faces: {faces:?}");
+        let tess = body.tessellate(0.01).unwrap().measure().area;
+        assert!(near(tess), "measuring mesh: {tess}");
+        let display = body.display_mesh(0.01).unwrap().measure().area;
+        assert!(near(display), "display mesh: {display}");
+    }
+
     /// The angle between the two faces' normals across the edge at `p`.
     fn normal_angle(a: &mt::Surface, b: &mt::Surface, p: Vec3) -> f64 {
         let n = |s: &mt::Surface| {
