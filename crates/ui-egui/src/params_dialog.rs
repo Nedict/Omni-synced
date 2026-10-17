@@ -144,7 +144,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 ui.add(egui::TextEdit::singleline(&mut d.filter).hint_text(crate::i18n::tr_label("Filter")).desired_width(180.0));
                 ui.separator();
                 if ui.button("Import…").on_hover_text(crate::i18n::tr_label("CSV or JSON: updates existing parameters, adds new ones")).clicked() {
-                    app.pick_open_command("parameters.import", json!({}));
+                    app.pick_open_command("parameters.import", json!({}), &[]);
                 }
                 for (label, ext) in [("Export CSV…", "csv"), ("Export JSON…", "json")] {
                     if ui.button(label).clicked() {
@@ -226,12 +226,30 @@ fn table(app: &mut SolveApp, ui: &mut egui::Ui, d: &mut ParamsDialog, rows: &[&R
             ui.label(RichText::new(h).color(t.text_dim).small());
         }
         ui.end_row();
-        for r in rows {
-            // Favourite star.
-            let star = if r.favorite { RichText::new("★").color(t.accent) } else { RichText::new("☆").color(t.text_dim) };
-            if ui.add(egui::Button::new(star).frame(false)).on_hover_text(crate::i18n::tr_label("Favourite")).clicked() {
-                d.error = app.run("parameters.favorite", json!({"name": r.name, "favorite": !r.favorite})).err();
-            }
+        for (i, r) in rows.iter().enumerate() {
+            ui.horizontal(|ui| {
+                // Favourite star.
+                let star = if r.favorite { RichText::new("★").color(t.accent) } else { RichText::new("☆").color(t.text_dim) };
+                if ui.add(egui::Button::new(star).frame(false)).on_hover_text(crate::i18n::tr_label("Favourite")).clicked() {
+                    d.error = app.run("parameters.favorite", json!({"name": r.name, "favorite": !r.favorite})).err();
+                }
+                // Up and down past the neighbouring user parameter (#1187), in the user table only:
+                // the favourites table lists favourites first whatever their order.
+                if salt == "user" {
+                    for (glyph, tip, neighbour, side) in
+                        [("▲", "Move up", i.checked_sub(1).and_then(|j| rows.get(j)), "before"), ("▼", "Move down", rows.get(i + 1), "after")]
+                    {
+                        let button = egui::Button::new(RichText::new(glyph).small().color(t.text_dim)).frame_when_inactive(false);
+                        let resp = ui.add_enabled(neighbour.is_some(), button).on_hover_text(crate::i18n::tr_label(tip));
+                        crate::scenario::publish_handle(&format!("param:{}:{}", side, r.name), resp.rect.center());
+                        if resp.clicked()
+                            && let Some(n) = neighbour
+                        {
+                            d.error = app.run("parameters.move", json!({"name": r.name, side: n.name})).err();
+                        }
+                    }
+                }
+            });
             // Name: double-click to rename.
             match &mut d.renaming {
                 Some((old, new)) if *old == r.name => {
@@ -480,16 +498,24 @@ pub(crate) fn word_before(text: &str, cursor: usize) -> (usize, String) {
 
 /// Suggestions for the word being typed.
 pub fn suggestions(ctx: &egui::Context, word: &str) -> Vec<Suggestion> {
-    if word.is_empty() || word.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+    suggestions_for(ctx, word, false)
+}
+
+pub(crate) fn suggestions_for(ctx: &egui::Context, word: &str, explicit: bool) -> Vec<Suggestion> {
+    if (!explicit && word.is_empty()) || word.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         return Vec::new();
     }
     let all = ctx.data(|d| d.get_temp::<Cache>(cache_id())).map(|c| c.all).unwrap_or_default();
     // A complete token is ready to submit, even when longer names share its prefix.
-    if all.iter().any(|s| s.text == word) {
+    if !explicit && all.iter().any(|s| s.text == word) {
         return Vec::new();
     }
     let w = word.to_ascii_lowercase();
-    all.iter().filter(|s| s.text.to_ascii_lowercase().starts_with(&w) && s.text.trim_end_matches('(') != word).take(8).cloned().collect()
+    all.iter()
+        .filter(|s| s.text.to_ascii_lowercase().starts_with(&w) && (explicit || s.text.trim_end_matches('(') != word))
+        .take(8)
+        .cloned()
+        .collect()
 }
 
 /// Offer keyboard and pointer completions under a focused expression box.

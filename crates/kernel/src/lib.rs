@@ -17,20 +17,30 @@ mod blend_corner;
 mod blend_fit;
 mod blend_variable;
 mod blend_vertex;
+#[cfg(test)]
+mod blend_wrong_way_tests;
 mod body;
 mod boolean_diagnostics;
 mod boolean_guard;
 mod boolean_record;
 mod bore_guard;
+mod boundary;
+mod bridge;
 mod build;
 mod clearance;
+mod coaxial_overlap;
+mod continuity;
 mod coplanar;
+mod corner_g2;
 mod curveblend;
 mod delete_face;
+#[cfg(test)]
+mod edge_polyline_tests;
 mod emboss;
 mod face_params;
 #[cfg(test)]
 mod face_source_tests;
+mod fair;
 mod fill;
 mod freeform;
 pub mod fuzz;
@@ -42,7 +52,11 @@ mod iges_out;
 #[cfg(test)]
 mod intersection_curve_tests;
 #[cfg(test)]
+mod issue_1038_tests;
+#[cfg(test)]
 mod issue_1080_tests;
+#[cfg(test)]
+mod issue_324_tests;
 #[cfg(test)]
 mod issue_616_tests;
 #[cfg(test)]
@@ -58,7 +72,9 @@ mod issue_871_tests;
 #[cfg(test)]
 mod join_between_caps_tests;
 mod lip;
+pub mod loft_blend;
 mod loopblend;
+mod matchsurf;
 mod measure;
 mod mesh_convert;
 mod meshbody;
@@ -72,7 +88,7 @@ mod outline;
 #[cfg(test)]
 mod outline_tests;
 mod par;
-pub use par::{for_each_on_threads, map_on_threads};
+pub use par::{for_each_on_threads, map_on_threads, map_with_local_pools};
 #[cfg(test)]
 mod pinch_tests;
 mod planar_faces;
@@ -83,9 +99,11 @@ mod polybool;
 mod polyhedron;
 mod prism;
 mod prism_curve;
+mod prism_local;
 mod prism_measure;
 pub mod provenance;
 mod record;
+mod seam_faces;
 mod sew;
 mod smooth_edges;
 mod spline_conv;
@@ -100,8 +118,12 @@ mod surface_ruled;
 mod surface_untrim;
 mod surfaces;
 mod sweep_path;
+#[cfg(test)]
+mod sweep_rails_tests;
 mod tangent_cylinders;
 mod tess;
+#[cfg(test)]
+mod thread_display_tests;
 #[cfg(test)]
 mod thread_tests;
 mod topo;
@@ -110,26 +132,41 @@ mod tspline;
 mod untouched_faces_tests;
 pub mod watch;
 
-pub use blend::{ChamferSide, chamfer, chamfer_sides, fillet, fillet_each, fillet_g2, fillet_max, fillet_max_each};
+pub use blend::{ChamferSide, chamfer, chamfer_sides, fillet, fillet_each, fillet_g2, fillet_g2_corners, fillet_max, fillet_max_each};
 pub use blend_corner::fillet_radii;
 pub use blend_variable::{RadiusSpline, Taper, fillet_chord, fillet_tapered, fillet_variable, fillet_variable_points, fillet_variable_spline, taper};
 pub use body::{Body, CapSignature, DISPLAY_ANGLE, EdgeInfo, FaceInfo, FacePaint, FaceSource, Paint};
 pub use boolean_diagnostics::{BooleanDiagnostics, BooleanFallback, BooleanStrategy, capture_boolean_diagnostics};
+pub use boundary::{Boundary, boundary_patch};
+pub use bridge::{Continuity, Frame, blend_between, bridge, chain, chain_closes, frames, frames_across, sample_grid};
 pub use build::{
-    PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, extrude_tapered_between, loft, revolve, sphere, sweep, torus,
+    PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, extrude_tapered_between, loft, path_polyline, revolve,
+    revolve_whole, sphere, sweep, sweep_with, torus,
 };
+pub use coaxial_overlap::{CoaxialOverlap, coaxial_overlap};
+pub use continuity::{
+    ContinuityReport, ContinuityTolerances, EdgePick, MAX_SAMPLES, MIN_SAMPLES, SeamReport, SeamVerdict, SeamWorst, pick_edges, seam_diagnostics,
+};
+pub use corner_g2::{corner_g2_patch, seam_error};
 pub use delete_face::delete_faces;
 pub use emboss::{cylinder_emboss_anchor, emboss_cylinder, emboss_cylinder_at, has_cylinder_emboss_wall, infer_cylinder_emboss};
+pub use fair::{
+    FairCurve, FairNet, FairOptions, FairReport, MAX_FAIR_ITERATIONS, MAX_FAIR_POINTS, fair_bspline_curve, fair_bspline_surface, fair_curve,
+    fair_faces, fair_net, fair_nurbs_curve, fair_nurbs_surface, fair_surface,
+};
+pub use fill::{PATCH_ANGLE_TOL_DEG, PatchReport, PatchSpec, patch_edges_crowned, patch_edges_report, patch_edges_with};
 pub use helix::{loft_to_point, sweep_helix, sweep_helix_mesh};
 pub use iges_in::{MAX_IGES_BYTES, iges_import, iges_to_step};
 pub use iges_out::iges_export_bodies;
 pub use lip::raise_band;
+pub use loft_blend::loft_blend;
+pub use matchsurf::{match_surface, seam_continuity};
 pub use measure::{BodyMeasure, measure};
 pub use mesh_convert::convert_prismatic_mesh;
 pub use meshbody::{MAX_TRIANGLES, mesh_body};
 pub use native::{decode_native_body, encode_native_body, native_preview_mesh};
 pub use offset::with_same_surface;
-pub use ops::{BoolOp, boolean, can_join_touching_faces, join_apart, split_by_plane, transform, transform_matrix, union_apart};
+pub use ops::{BoolOp, boolean, can_join_touching_faces, half_space, join_apart, split_by_plane, transform, transform_matrix, union_apart};
 pub use polybool::{faceted_boolean, planar_boolean};
 pub use polyhedron::{HalfSpace, convex_polyhedron, draft, offset_faces, shell};
 pub use prism::{PLANAR_FIT_TOL, extrude_planar_regions, planar_regions_boolean};
@@ -137,19 +174,21 @@ pub use prism_measure::certified_prism_equivalent;
 pub use sew::{EdgeSpec, FaceSpec, SurfSpec, sew, sew_touching};
 pub use splitface::{SplitTool, split_body, split_faces, split_faces_with_map};
 pub use step::step_export;
-pub use step_in::{ImportedBody, StepImport, StepNode, step_cache_alive, step_import, step_import_shared, step_orientation_errors, step_validate};
+pub use step_in::{
+    ImportedBody, StepImport, StepNode, StepReading, step_cache_alive, step_import, step_import_shared, step_orientation_errors, step_validate,
+};
 pub use step_out::{ExportBody, ExportProduct, StepHeader, step_export_bodies, step_export_products};
 pub use surface_extend::{ExtendLimit, ExtendMode, ExtendOptions, extend_surface};
-pub use surface_kind::{FaceSurface, face_surface};
+pub use surface_kind::{EdgeCircle, FaceSurface, edge_circle, face_surface};
 pub use surface_offset::offset_surface;
 pub use surface_ruled::{Ruled, RuledCorners, RuledMode, ruled_surface};
 pub use surface_untrim::{UntrimHoles, untrim};
 pub use surfaces::{
     copy_faces, extend, extrude_sheet, loft_sheet, patch_edges, patch_region, remove_faces, reverse_faces, revolve_sheet, stitch, sweep_sheet,
-    sweep_sheet_points, thicken, trim, unstitch,
+    sweep_sheet_points, sweep_sheet_points_with, sweep_sheet_with, thicken, trim, unstitch,
 };
-pub use sweep_path::sweep_path;
-pub use topo::{CylinderFace, cylinder_face_at};
+pub use sweep_path::{RailFit, SweepControl, SweepOrientation, sweep_path, sweep_path_with};
+pub use topo::{CylinderFace, cylinder_end_at, cylinder_face_at};
 pub use topo::{TopoCounts, merged_topology, seam_flags};
 pub use tspline::tspline_sheet;
 

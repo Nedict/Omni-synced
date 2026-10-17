@@ -310,6 +310,33 @@ fn offset_chain_mirror_patterns_move_scale() {
     assert!(sk.center(sk.curve_index(&cp).unwrap()).unwrap().dist(Vec2::new(-110.0, 0.0)) < 1e-7);
 }
 
+/// #1485: after a circle is trimmed between two construction lines, clicking the trimmed end
+/// picks the construction line's end lying there, not the arc's own; the tangent arc still starts
+/// from the trimmed arc, tangent to it.
+#[test]
+fn a_tangent_arc_starts_from_a_trimmed_end() {
+    let mut s = new_sketch();
+    let c = ids(&run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": 10}))["curves"])[0].clone();
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [10, 0]], "ids": ["guide_a"]}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [0, 10]], "ids": ["guide_b"]}));
+    run(&mut s, "sketch.construction", json!({"curves": ["guide_a", "guide_b"]}));
+    run(&mut s, "sketch.trim", json!({"curve": c, "at": [7.07, 7.07]}));
+    let sk = sketch(&s);
+    let picked = sk.resolve_point("guide_a.end").unwrap();
+    assert!(sk.point(picked).unwrap().dist(Vec2::new(10.0, 0.0)) < 1e-6);
+    let trimmed = sk.curves.iter().position(|cu| !cu.construction && matches!(cu.kind, CurveKind::Arc { .. })).expect("the trimmed arc");
+    let r = run(&mut s, "sketch.arc.tangent", json!({"start": "guide_a.end", "end": [14, 6]}));
+    let sk = sketch(&s);
+    let a = sk.curve_index(&ids(&r["curves"])[0]).unwrap();
+    let a_ends: Vec<usize> = sk.curves[a].kind.point_ids();
+    let t_ends: Vec<usize> = sk.curves[trimmed].kind.point_ids();
+    assert!(a_ends.iter().any(|q| t_ends.contains(q) && *q != picked), "the new arc shares the trimmed arc's own end");
+    assert!(
+        sk.constraints.iter().any(|k| matches!(k.kind, ConstraintKind::Tangent { a: x, b: y } if (x, y) == (trimmed, a) || (x, y) == (a, trimmed))),
+        "and is tangent to it"
+    );
+}
+
 #[test]
 fn new_creation_tools() {
     let mut s = new_sketch();
@@ -724,6 +751,51 @@ fn fillet_a_line_and_an_arc() {
     assert!((c.y - 2.0).abs() < 1e-6 || (c.y + 2.0).abs() < 1e-6, "{c:?}");
     let d = c.dist(Vec2::new(30.0, 0.0));
     assert!((d - 12.0).abs() < 1e-6, "{d} {c:?}");
+}
+
+#[test]
+fn fillet_a_line_and_an_arc_drawn_to_meet_at_a_point() {
+    // #1208: the arc starts at the line's end by coordinates, so the corner is two points held
+    // together by a Coincident constraint. By point and by naming the two curves.
+    for how in [json!({"point": "l1.end"}), json!({"a": "l1", "b": "a1"})] {
+        let mut s = new_sketch();
+        run(&mut s, "sketch.line", json!({"points": [[0, 0], [40, 0]], "ids": ["l1"]}));
+        run(&mut s, "sketch.arc.center_point", json!({"center": [50, 0], "start": [60, 0], "end": [40, 0], "id": "a1"}));
+        let mut p = how.clone();
+        p["radius"] = json!(3);
+        let f = run(&mut s, "sketch.fillet", p);
+        let sk = sketch(&s);
+        let ai = sk.curve_index(&ids(&f["curves"])[0]).unwrap();
+        assert!((sk.radius(ai).unwrap() - 3.0).abs() < 1e-7, "{how}");
+        // Tangent to the line (centre 3 above it) and outside the R10 arc (13 from its centre).
+        let c = sk.center(ai).unwrap();
+        let want = Vec2::new(50.0 - 160f64.sqrt(), 3.0);
+        assert!(c.dist(want) < 1e-6, "{how}: {c:?} vs {want:?}");
+        // The line now ends where the fillet touches it, and the arc where the fillet touches it.
+        let l1 = sk.curve_index("l1").unwrap();
+        let CurveKind::Line { b, .. } = sk.curves[l1].kind else { panic!("l1 is a line") };
+        assert!(sk.point(b).unwrap().dist(Vec2::new(want.x, 0.0)) < 1e-6, "{how}");
+        let a1 = sk.curve_index("a1").unwrap();
+        let on_arc = Vec2::new(50.0, 0.0) + (want - Vec2::new(50.0, 0.0)) * (10.0 / 13.0);
+        assert!(sk.curves[a1].kind.point_ids().iter().any(|i| sk.point(*i).unwrap().dist(on_arc) < 1e-6), "{how}");
+        // No coincident pair is left at the old corner (only the line's start on the origin).
+        let coincident = sk.constraints.iter().filter(|k| matches!(k.kind, ConstraintKind::Coincident { .. })).count();
+        assert_eq!(coincident, 1, "{how}");
+    }
+}
+
+#[test]
+fn chamfer_two_lines_drawn_to_meet_at_a_point() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [40, 0]], "ids": ["l1"]}));
+    run(&mut s, "sketch.line", json!({"points": [[40, 0], [40, 30]], "ids": ["l2"]}));
+    let c = run(&mut s, "sketch.chamfer.equal_distance", json!({"point": "l1.end", "distance": 5}));
+    let sk = sketch(&s);
+    let ci = sk.curve_index(&ids(&c["curves"])[0]).unwrap();
+    let CurveKind::Line { a, b } = sk.curves[ci].kind else { panic!("the chamfer is a line") };
+    let mut ends = [sk.point(a).unwrap(), sk.point(b).unwrap()];
+    ends.sort_by(|p, q| p.x.total_cmp(&q.x));
+    assert!(ends[0].dist(Vec2::new(35.0, 0.0)) < 1e-6 && ends[1].dist(Vec2::new(40.0, 5.0)) < 1e-6, "{ends:?}");
 }
 
 #[test]

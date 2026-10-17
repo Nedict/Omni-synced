@@ -99,7 +99,7 @@ fn swap_in(app: &mut SolveApp, slot: DocSlot) -> DocSlot {
     app.cancel_view_animation();
     app.viewport.orbit_snap = None;
     app.viewport.orbit_free = None;
-    app.preview = crate::preview::PreviewState::default();
+    app.preview.reset();
     app.viewport.hover = None;
     app.menu.props = None;
     crate::sketch_attachment_ui::clear(app);
@@ -180,27 +180,55 @@ pub fn adopt(app: &mut SolveApp, session: Session) {
     }
 }
 
-/// A new, empty design in its own tab.
+/// A new, empty design in its own tab. One that is already empty keeps its tab and still
+/// takes Units of new designs (#1205): a launch starts on that empty design, so returning
+/// here used to leave it in millimetres.
 pub fn new_design(app: &mut SolveApp) {
     if app.file_picker_busy() {
         return;
     }
     app.home.open = false;
     if active_is_blank(app) {
+        crate::prefs::apply_new_design(app);
         return;
     }
     if let Err(e) = open_tab(app, Session::default()) {
         app.set_status(e, true);
+    } else {
+        crate::prefs::apply_new_design(app);
     }
-    crate::prefs::apply_new_design(app);
 }
 
-/// Before opening a file: a fresh tab unless the active design is blank.
-pub fn prepare_open(app: &mut SolveApp) {
-    if !active_is_blank(app)
-        && let Err(e) = open_tab(app, Session::default())
-    {
+/// The tab strip's +: always a new tab, except over the blank design the start page covers
+/// (a launch), which New takes as [`new_design`] does.
+pub fn new_tab(app: &mut SolveApp) {
+    if app.file_picker_busy() {
+        return;
+    }
+    if app.home.open && active_is_blank(app) {
+        new_design(app);
+        return;
+    }
+    app.home.open = false;
+    if let Err(e) = open_tab(app, Session::default()) {
         app.set_status(e, true);
+    } else {
+        crate::prefs::apply_new_design(app);
+    }
+}
+
+/// Before opening a file: a fresh tab unless the active design is blank. The empty design,
+/// new or already showing, takes Units of new designs so a cancelled open is not millimetres
+/// when the preference says otherwise.
+pub fn prepare_open(app: &mut SolveApp) {
+    if active_is_blank(app) {
+        crate::prefs::apply_new_design(app);
+        return;
+    }
+    if let Err(e) = open_tab(app, Session::default()) {
+        app.set_status(e, true);
+    } else {
+        crate::prefs::apply_new_design(app);
     }
 }
 
@@ -226,6 +254,7 @@ pub fn close(app: &mut SolveApp, i: usize, force: bool) {
         app.tool = None;
         app.session.replace_design(Session::default());
         app.session.revision = rev + 1;
+        crate::prefs::apply_new_design(app);
         app.cam = Camera::default();
         app.fit_view();
         put_view(app, DocView::default());
@@ -444,7 +473,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
     // A file loading into the window keeps the tabs as they are (dragging still moves it).
     let idle = !app.file_load.busy();
     if presp.on_hover_text("New Design (Ctrl+N)").clicked() && idle {
-        new_design(app);
+        new_tab(app);
     }
     match (shut, pick) {
         _ if !idle => {}
@@ -455,7 +484,7 @@ pub fn tabs(app: &mut SolveApp, ui: &mut egui::Ui, r: Rect, x0: f32, x1: f32) {
 }
 
 /// One tab of the strip: the active tab takes the toolbar's colour and runs into it; the others
-/// sit on the application bar with a faint outline (no bottom edge) so neighbours stay apart.
+/// sit on the application bar, lighter while hovered.
 fn tab_shape(painter: &egui::Painter, t: &Tokens, r: Rect, active: bool, hovered: bool) {
     let corners = egui::CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 };
     let fill = if active {
@@ -466,11 +495,6 @@ fn tab_shape(painter: &egui::Painter, t: &Tokens, r: Rect, active: bool, hovered
         t.app_bar
     };
     painter.rect_filled(r, corners, fill);
-    if !active {
-        // Drawn past the bottom and clipped, so only the top and the sides show.
-        let outline = Rect::from_min_max(r.min, pos2(r.max.x, r.max.y + 2.0));
-        painter.with_clip_rect(r).rect_stroke(outline, corners, Stroke::new(1.0, t.app_bar_tab_edge), egui::StrokeKind::Inside);
-    }
 }
 
 /// Which tabs the strip shows in `room` points: (first, how many, tab width). Tabs shrink to
@@ -629,10 +653,9 @@ mod tests {
     }
 
     /// The tabs sit on the dark application bar in both themes: a hovered tab (the Home tab
-    /// included) keeps the bar's light text readable, and an inactive tab is outlined so
-    /// neighbouring tabs stay apart.
+    /// included) keeps the bar's light text readable, and no tab is outlined.
     #[test]
-    fn title_bar_tabs_are_outlined_and_keep_their_text_readable_on_hover() {
+    fn title_bar_tabs_keep_their_text_readable_on_hover() {
         fn luminance(c: Color32) -> f32 {
             let c = egui::Rgba::from(c);
             0.2126 * c.r() + 0.7152 * c.g() + 0.0722 * c.b()
@@ -662,11 +685,7 @@ mod tests {
                     let (hi, lo) = (luminance(t.app_bar_text).max(luminance(bg)), luminance(t.app_bar_text).min(luminance(bg)));
                     assert!((hi + 0.05) / (lo + 0.05) >= 4.5, "text on a tab (hovered: {hovered}) must stay readable: {bg:?} {t:?}");
                 }
-                let outline = rects.iter().find(|(rect, _)| rect.stroke.width > 0.0);
-                assert_eq!(outline.is_some(), !active, "only inactive tabs are outlined (active: {active})");
-                if let Some((rect, clip)) = outline {
-                    assert!(rect.rect.bottom() > r.bottom() && clip.bottom() <= r.bottom(), "the outline has no bottom edge");
-                }
+                assert!(rects.iter().all(|(rect, _)| rect.stroke.width == 0.0), "tabs have no outline (active: {active})");
             }
         }
     }
@@ -700,6 +719,21 @@ mod tests {
         assert_eq!(a.docs.active, 0);
         close(&mut a, 0, true);
         assert!(active_is_blank(&a) && a.home.open);
+    }
+
+    /// The tab strip's + opens a tab every time, an empty design's included; over the start
+    /// page's blank design (a launch) it uses that design.
+    #[test]
+    fn plus_opens_a_tab_every_time() {
+        let mut a = app();
+        a.home.open = true;
+        new_tab(&mut a);
+        assert_eq!(a.docs.count(), 1, "the launch's blank design is used");
+        assert!(!a.home.open);
+        new_tab(&mut a);
+        new_tab(&mut a);
+        assert_eq!(a.docs.count(), 3);
+        assert_eq!(a.docs.active, 2);
     }
 
     /// Quitting asks once per design with unsaved changes: Don't Save moves on (and keeps no
@@ -796,6 +830,49 @@ mod tests {
         adopt(&mut a, Session::default());
         assert_eq!(a.docs.count(), 1);
         assert!(!a.session.auto_project, "a design adopted over a blank one");
+    }
+
+    /// #1205: Units of new designs apply to the empty design a launch shows, to New while that
+    /// design is still empty, to `file.new`, and to the blank design left when the last tab closes.
+    /// A design that already has features keeps its units.
+    #[test]
+    fn new_designs_use_the_preferred_units_including_a_blank_one() {
+        let mut a = app();
+        a.preferences.default_units = "in".into();
+        assert_eq!(a.session.doc.units, "mm");
+        // What a launch with no file does after reading preferences.
+        crate::prefs::apply_new_design(&mut a);
+        assert_eq!(a.session.doc.units, "in");
+        assert!(!a.session.is_dirty());
+        assert!(active_is_blank(&a));
+        let tabs = a.docs.count();
+        new_design(&mut a);
+        assert_eq!(a.docs.count(), tabs, "New on an empty design does not open another tab");
+        assert_eq!(a.session.doc.units, "in");
+        assert!(!a.session.is_dirty());
+        // Geometry already there is left alone. New then opens a tab in the preferred units.
+        a.run("solid.box", json!({"length": 25.4, "width": 25.4, "height": 25.4})).unwrap();
+        assert_eq!(a.session.doc.units, "in");
+        a.preferences.default_units = "ft".into();
+        new_design(&mut a);
+        assert_eq!(a.docs.count(), tabs + 1);
+        assert_eq!(a.session.doc.units, "ft");
+        assert!(a.session.doc.features.is_empty());
+        assert!(!a.session.is_dirty());
+        a.run("file.new", json!({"name": "From command"})).unwrap();
+        assert_eq!(a.session.doc.units, "ft");
+        assert_eq!(a.session.doc.name, "From command");
+        assert!(!a.session.is_dirty());
+        // Closing every tab leaves a blank design in the preferred units.
+        assert_eq!(a.docs.count(), 2);
+        let active = a.docs.active;
+        close(&mut a, active, true);
+        assert_eq!(a.docs.count(), 1);
+        assert!(!a.session.doc.features.is_empty(), "the other tab still has its part");
+        close(&mut a, 0, true);
+        assert!(active_is_blank(&a));
+        assert_eq!(a.session.doc.units, "ft");
+        assert!(!a.session.is_dirty());
     }
 
     /// A design built elsewhere replaces a blank one and gets a tab otherwise.

@@ -1043,6 +1043,17 @@ impl Body {
         if let Some(m) = &self.mesh {
             return Ok(m.to_mesh());
         }
+        // A face trimmed by a helix (a modelled thread from another CAD system) turns more than
+        // once around its cylinder; truck meshes it with triangles across the solid (#1289).
+        // Such a body is meshed from its display plan, which cuts the face along a seam.
+        if guard("tessellate", || Ok(crate::tess::seam::turns_more_than_once(&self.solid))).unwrap_or(false) {
+            let turn = (angle.is_finite() && angle > 0.0)
+                .then(|| crate::tess::size::Turn { angle: angle.max(MIN_DISPLAY_ANGLE), floor: tol * DISPLAY_ANGLE_FLOOR });
+            match guard("tessellate", || crate::tess::plan(&self.solid, tol, turn)) {
+                Ok((plan, _)) => return Ok(plan.evaluate()),
+                Err(e) => log::debug!("helical faces: no display plan ({e}); meshing the reference way"),
+            }
+        }
         let deflection = if angle.is_finite() && angle > 0.0 {
             Deflection { chord: tol, angle: angle.max(MIN_DISPLAY_ANGLE), floor: tol * DISPLAY_ANGLE_FLOOR, rulings: true }
         } else {
@@ -1154,15 +1165,21 @@ impl Body {
     /// (rounds that overlap where a wall is thinner than both, #871). Boundaries that only
     /// touch (at a vertex they share, or within the size's millionth) don't count.
     pub fn crossed_face_loops(&self) -> Result<usize> {
+        Ok(self.crossed_faces()?.len())
+    }
+
+    /// The faces [`Body::crossed_face_loops`] counts, each as the mean of its boundary's
+    /// points: the same for a face an operation carried over unchanged.
+    pub fn crossed_faces(&self) -> Result<Vec<Vec3>> {
         use mt::{BoundedCurve, ParameterDivision1D};
         if self.is_mesh() {
-            return Ok(0);
+            return Ok(Vec::new());
         }
         const MAX_SEGMENTS: usize = 20_000;
         let size = self.size();
         let tol = (size * 1e-6).max(1e-9);
         let chord = (size * 1e-3).max(1e-4);
-        let mut crossed = 0;
+        let mut crossed = Vec::new();
         for f in self.solid.face_iter() {
             let mt::Surface::Plane(pl) = f.oriented_surface() else { continue };
             let o = from_p3(pl.origin());
@@ -1215,7 +1232,10 @@ impl Body {
                 loops.iter().enumerate().flat_map(|(l, segs)| segs.iter().map(move |s| (l, s))).collect();
             let bad = all.iter().enumerate().any(|(i, (_, s))| all.iter().skip(i + 1).any(|(_, t)| cross(s, t)));
             if bad {
-                crossed += 1;
+                let ends: Vec<(f64, f64)> = all.iter().map(|(_, s)| s.0).collect();
+                let k = ends.len().max(1) as f64;
+                let (su, sv) = ends.iter().fold((0.0, 0.0), |acc, p| (acc.0 + p.0, acc.1 + p.1));
+                crossed.push(o + u * (su / k) + v * (sv / k));
             }
         }
         Ok(crossed)

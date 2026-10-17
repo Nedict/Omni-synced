@@ -267,3 +267,113 @@ fn lip_swept_flush_round_a_corner_joins() {
     let volume = b.body.tessellate(1e-5).unwrap().measure().volume;
     assert!((volume - block - lip).abs() < 0.02, "{volume} expected {}", block + lip);
 }
+
+/// #1275: an Extrude Cut of a whole face of a rounded-rectangle block with a bottom chamfer. The
+/// tool's corner cylinders lay on the block's; they are grown off them now, as straight edges
+/// were, and the cut takes 5 mm off the top.
+#[test]
+fn cut_of_a_whole_face_beside_round_corners_after_a_chamfer() {
+    let s = replay(include_str!("../../../examples/regressions/cut_whole_face_after_bottom_chamfer.json"));
+    let bodies = &s.model.state().bodies;
+    assert_eq!(bodies.len(), 1);
+    let b = &bodies[0];
+    assert!(b.body.validity().is_empty(), "{:?}", b.body.validity());
+    let pi = std::f64::consts::PI;
+    let block = (40.0 * 40.0 - (4.0 - pi) * 8.0 * 8.0) * 15.0;
+    // The chamfer's 2 × 2 triangle swept along the loop (Pappus: its centroid is 2/3 mm in).
+    let chamfer = 2.0 * (4.0 * 24.0 + 2.0 * pi * (8.0 - 2.0 / 3.0));
+    let mesh = b.body.tessellate(1e-4).unwrap();
+    let volume = mesh.measure().volume;
+    assert!((volume - (block - chamfer)).abs() < 0.05, "{volume} expected {}", block - chamfer);
+    let top = mesh.bounds().max.z;
+    assert!((top - 15.0).abs() < 1e-6, "top at {top}");
+}
+
+/// The display tessellation of loft bodies joined into a bike frame plans at every display
+/// quality and every refinement step. The edge nodes on an intersection of two lofts once
+/// stepped back along the curve (the edge's fit rang where truck's parameter changes speed, and
+/// took a leader point off the curve past a vertex), so a face's boundary crossed itself and
+/// the body fell back to the reference mesher, which drew a sheet across the down tube.
+#[test]
+fn joined_loft_frames_plan_their_display_at_every_quality() {
+    use solidcraft_doc::display_quality::{DisplayQuality, MAX_REFINE};
+    for (script, name) in [
+        (include_str!("../../../examples/regressions/loft_join_bracket_hull_triangle.json"), "DT2"),
+        (include_str!("../../../examples/regressions/front_triangle_hull_triangle.json"), "FrontTriangle"),
+    ] {
+        let s = replay(script);
+        let state = s.model.state();
+        let body = &state.body(name).unwrap().body;
+        for q in DisplayQuality::ALL {
+            for k in 0..=MAX_REFINE {
+                let plan = body.display_plan_angular(q.refined_chord(body.size(), k), q.refined_angle(k));
+                assert!(plan.is_ok(), "{name} at {} + {k}: {:?}", q.id(), plan.err());
+            }
+        }
+    }
+}
+
+/// The wedge of #1617: a side profile in (y, z) extruded 138 mm along x, its back face leaning
+/// by `lean` (the tangent of its angle), with the issue's rounds. The last one runs along the
+/// outline of both ends. The issue asked for R1 with `fit: reduce`, which reduces it to 0.854 mm;
+/// that radius is asked for here directly, which builds the same body without the fit's search
+/// (about a minute).
+fn raked_wedge(lean: f64) -> Session {
+    let mut s = Session::default();
+    let top = 60.0 - 60.0 * lean;
+    let profile = [[-60.0, 0.0], [60.0, 0.0], [top, 60.0], [38.0, 60.0], [-22.0, 22.0], [-60.0, 22.0]];
+    let back = (60.0 + top) / 2.0;
+    let ends: Vec<[f64; 3]> = [-69.0, 69.0].iter().flat_map(|&x| [[x, -41.0, 22.0], [x, 8.0, 41.0], [x, (38.0 + top) / 2.0, 60.0]]).collect();
+    let steps = [
+        ("sketch.create", json!({"plane": {"origin": [0, 0, 0], "x_dir": [0, 1, 0], "y_dir": [0, 0, 1]}, "name": "Profile"})),
+        ("sketch.line", json!({"points": profile, "closed": true})),
+        ("sketch.finish", json!({})),
+        ("solid.extrude", json!({"distance": 138, "direction": "symmetric", "operation": "new", "body_name": "Wedge"})),
+        ("solid.fillet", json!({"body": "Wedge", "radius": 1.2, "edges": [[0, -60, 22]]})),
+        ("solid.fillet", json!({"body": "Wedge", "radius": 1.5, "edges": [[0, -22, 22]]})),
+        ("solid.fillet", json!({"body": "Wedge", "radius": 1.5, "edges": [[0, 38, 60]]})),
+        ("solid.fillet", json!({"body": "Wedge", "radius": 4, "edges": [[-69, -60, 12], [69, -60, 12], [-69, back, 30], [69, back, 30]]})),
+        ("solid.fillet", json!({"body": "Wedge", "radius": 0.854, "edges": ends})),
+    ];
+    for (command, params) in steps {
+        s.execute(command, &params).unwrap_or_else(|e| panic!("{command}: {e}"));
+    }
+    s
+}
+
+/// A box intersect taking the end slice x >= 55 off the wedge of #1617 failed with "no result"
+/// once its ends were rounded, when its back face leaned 10 degrees (a vertical one worked).
+/// The leaning back shortens the top edge the end round runs along to 11.4 mm. Its strip there
+/// borrowed sections from that short neighbour and folded back on itself past the joint, and
+/// the boolean could not intersect the folded faces (fixed with #1667). The slice and the
+/// rest, cut off by the same box, are sound and add up to the wedge, with the cut plane where
+/// the issue had it and moved by 0.02 mm, as it also tried.
+#[test]
+fn box_intersect_splits_the_end_off_a_raked_wedge_after_its_end_rounds() {
+    for lean in [10f64.to_radians().tan(), 0.0] {
+        let mut s = raked_wedge(lean);
+        let whole = volume(&s, "Wedge");
+        for (i, x0) in [55.0, 55.02].into_iter().enumerate() {
+            let mut piece = |op: &str| -> (f64, solidcraft_geom::Aabb3) {
+                let copy = s.execute("solid.move", &json!({"bodies": ["Wedge"], "translate": [0, 0, 0], "copy": true})).unwrap();
+                let copy = copy["created_bodies"][0].as_str().unwrap().to_string();
+                let cap = format!("Cap{i}{op}");
+                let length = 80.0 - x0;
+                let cap_box = json!({"center": [x0 + length / 2.0, 0, 40], "length": length, "width": 160, "height": 120, "operation": "new", "body_name": cap});
+                s.execute("solid.box", &cap_box).unwrap();
+                let (target, tool) = if op == "intersect" { (cap, copy) } else { (copy, cap) };
+                s.execute("solid.combine", &json!({"target": target, "tools": [tool], "operation": op}))
+                    .unwrap_or_else(|e| panic!("lean {lean}, x >= {x0}, {op}: {e}"));
+                let state = s.model.state();
+                let body = &state.body(&target).unwrap().body;
+                assert!(body.validity().is_empty(), "lean {lean}, x >= {x0}, {op}: {:?}", body.validity());
+                (solidcraft_kernel::measure(body).unwrap().volume, body.tessellate(1e-3).unwrap().bounds())
+            };
+            let (slice, at) = piece("intersect");
+            let (rest, _) = piece("cut");
+            println!("#1617 lean {lean:.4}, x >= {x0}: slice {slice:.6} + rest {rest:.6} = {:.6}, wedge {whole:.6} mm³", slice + rest);
+            assert!((slice + rest - whole).abs() < 1e-6 * whole, "{slice} + {rest} vs {whole}");
+            assert!((at.min.x - x0).abs() < 1e-6 && (at.max.x - 69.0).abs() < 1e-3, "slice spans x {} to {}", at.min.x, at.max.x);
+        }
+    }
+}

@@ -54,10 +54,10 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("fit_section")
         .enabled(in_sketch)
         .params(concat!("body: name (a mesh or solid body): its section with the sketch plane, fitted with lines and arcs, as normal (unlinked) geometry", created_doc!())),
-    CommandSpec::new("sketch.break_link", "Break Link", break_link)
+    CommandSpec::new("sketch.break_link", "Break Link", break_link).icon("sketch_break")
         .enabled(in_sketch)
         .params("link?: link id (j1) | entities?: [curve or point ids]: linked geometry becomes normal sketch geometry"),
-    CommandSpec::new("sketch.auto_project", "Auto-Project Edges on Reference", auto_project)
+    CommandSpec::new("sketch.auto_project", "Auto-Project Edges on Reference", auto_project).icon("project")
         .noundo()
         .params("value?: bool (default toggles): project a face's edges when a sketch is created on it"),
 ];
@@ -180,6 +180,9 @@ pub(super) fn refresh(s: &Session, doc: &Document, id: u64, sk: &mut Sketch) -> 
     }
     let doc = placed_candidate(s, doc);
     let (vals, _) = doc.param_values();
+    // A text's outlines are rebuilt from its numbers: the ones its expressions give come first
+    // (an expression that cannot be evaluated leaves the text as it was).
+    let _ = doc.apply_text_values(&vals, sk);
     let st = s.model.state_before(id);
     let attachment = doc.feature(id).and_then(|feature| match &feature.kind {
         solidcraft_doc::FeatureKind::Sketch { plane, .. } => super::sketch::face::anchor(plane),

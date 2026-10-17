@@ -26,8 +26,39 @@ fn place(h: &mut Harness, picks: &[[f64; 2]], at: [f64; 2]) {
 }
 fn type_value(h: &mut Harness, text: &str) {
     h.step(&json!({"key":"A","cmd":true})).unwrap();
-    h.step(&json!({"text":text})).unwrap();
+    if text.is_empty() {
+        h.step(&json!({"key":"Backspace"})).unwrap();
+    } else {
+        h.step(&json!({"text":text})).unwrap();
+    }
 }
+#[test]
+fn dimension_parameters_use_typing_and_ctrl_space_completion() {
+    for (prefix, expected) in [("wid", "width"), ("", "width"), ("d", "d1")] {
+        let mut h = line([20., 0.]);
+        h.app.run("parameters.add", json!({"name":"width","expression":"25 mm"})).unwrap();
+        if prefix == "d" {
+            h.app.run("sketch.line", json!({"points":[[0,-10],[12,-10]],"infer":false})).unwrap();
+            h.app.run("sketch.dimension", json!({"entities":["l2"],"value":12,"text_at":[6,-16]})).unwrap();
+            h.settle();
+        }
+        place(&mut h, &[[10., 0.]], [10., 6.]);
+        let baseline = h.app.session.doc.to_json();
+        type_value(&mut h, prefix);
+        if prefix.is_empty() {
+            h.step(&json!({"key":"Space","cmd":true})).unwrap();
+        }
+        assert!(h.widget(expected).is_some(), "parameter completion is available for {prefix:?}: {}", h.call("ui.inspect", json!({})));
+        h.step(&json!({"key":"Tab"})).unwrap();
+        assert!(crate::dim_view::editing(), "accepting completion does not apply the dimension");
+        assert_eq!(h.app.session.doc.to_json(), baseline);
+        h.step(&json!({"key":"Enter"})).unwrap();
+        assert!(!crate::dim_view::editing());
+        assert_eq!(h.app.session.doc.params.iter().rev().find(|p| p.model).unwrap().expr, expected);
+        crate::dim_view::cancel();
+    }
+}
+
 #[test]
 fn edge_and_endpoint_creation_commit_once_and_undo_restores_exact_design() {
     for (end, picks, at) in [
@@ -146,7 +177,8 @@ fn rectangle_side_and_fixed_origin_line_dimensions_preserve_other_constraints() 
         h.step(&json!({"key":"Enter"})).unwrap();
         let state = h.app.session.world_state();
         let solved = state.sketch(h.app.session.active_sketch.unwrap()).unwrap();
-        assert!((solved.profiles[0].area - 240.).abs() < 1e-5, "side dimensions keep rectangle width: {}", solved.profiles[0].area);
+        // The sketch's first dimension scales it (#1365): 20 × 10 becomes 24 × 12.
+        assert!((solved.profiles[0].area - 288.).abs() < 1e-5, "the first dimension scales the rectangle: {}", solved.profiles[0].area);
         assert_eq!(h.app.session.undo.len(), undo + 1);
         h.app.run("edit.undo", json!({})).unwrap();
         assert_eq!(h.app.session.doc.to_json(), baseline);
@@ -342,9 +374,11 @@ fn placing_a_two_point_dimension_picks_horizontal_vertical_or_aligned() {
         let b = sk.point(sk.resolve_point("l1.end").unwrap()).unwrap();
         let spans = spans(a, b);
         assert!((spans[measured] - 10.0).abs() < 1e-6, "placed at {at:?}: {a:?} {b:?}");
-        // A horizontal or vertical dimension leaves the other span as drawn.
+        // The sketch's first dimension scales it (#1365): the other span keeps its proportion.
         if measured < 2 {
-            assert!((spans[1 - measured] - [12.0, 16.0][1 - measured]).abs() < 1e-6, "placed at {at:?}: {a:?} {b:?}");
+            let drawn = [12.0, 16.0];
+            let other = drawn[1 - measured] * 10.0 / drawn[measured];
+            assert!((spans[1 - measured] - other).abs() < 1e-6, "placed at {at:?}: {a:?} {b:?}");
         }
     }
 }

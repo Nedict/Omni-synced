@@ -4,8 +4,9 @@
 //! The instruments are checked first: CIEDE2000 on the 34 pairs Sharma, Wu and Dalal published
 //! with their paper, Brettel on white and its own anchors.
 //!
-//! When a token edit breaks a mode here, give that token a value in the mode's table
-//! (`assets/styles/ui/palettes.rs`) that passes.
+//! When a token edit breaks a mode here, adjust its measured variant. Shared icon accents live
+//! in `assets/icons/ui/design/palette.toml`; `assets/styles/ui/palettes.rs` links those generated
+//! values to UI tokens and owns the remaining UI-only colour-vision adjustments.
 
 use std::collections::BTreeSet;
 
@@ -291,6 +292,7 @@ fn groups(t: &Tokens) -> Vec<Group> {
                 ("body_selected", t.body_selected),
                 ("hover_face_lift", lift(t.body)),
                 ("preview_add", t.preview_add),
+                ("preview_new", t.preview_new),
             ],
             &[],
         ),
@@ -373,7 +375,6 @@ const NO_MEANING: &[(&str, &str)] = &[
     ("overlay", "a chip's ground over the view"),
     ("app_bar_text", "text"),
     ("app_bar_hover", "a hovered tab, translucent white"),
-    ("app_bar_tab_edge", "an inactive tab's outline, translucent white"),
     ("timeline_marker", "the rollback marker, alone"),
     ("field", "a field's ground"),
     // Highlights: shades of the accent blue over what they mark, by design close to each other.
@@ -628,14 +629,14 @@ fn each_mode_changes_only_its_table() {
         "preview_sketch",
     ];
     let mut red_green_light = red_green_both.to_vec();
-    red_green_light.extend(["sketch_projected", "sketch_locked", "timeline_item_error"]);
+    red_green_light.extend(["sketch_projected", "sketch_locked", "timeline_item_error", "construction_geom"]);
     for (dark, mode, want) in [
         (false, ColorVision::Protan, set(&red_green_light)),
         (true, ColorVision::Protan, set(&red_green_both)),
         (false, ColorVision::Deutan, set(&red_green_light)),
         (true, ColorVision::Deutan, set(&red_green_both)),
-        (false, ColorVision::Tritan, set(&["sketch_locked", "box_crossing", "preview_sketch", "analysis.hatch"])),
-        (true, ColorVision::Tritan, set(&["sketch_locked", "box_crossing", "glyph_text", "preview_sketch", "analysis.hatch"])),
+        (false, ColorVision::Tritan, set(&["sketch_locked", "box_crossing", "construction_geom", "preview_sketch", "analysis.hatch"])),
+        (true, ColorVision::Tritan, set(&["sketch_locked", "box_crossing", "construction_geom", "glyph_text", "preview_sketch", "analysis.hatch"])),
     ] {
         let base = Tokens::themed(dark, ColorVision::Off);
         assert_eq!(changed_fields(&base, &Tokens::themed(dark, mode)), want, "{mode:?}, dark {dark}");
