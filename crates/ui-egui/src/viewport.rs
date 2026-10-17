@@ -3750,7 +3750,7 @@ mod tests {
         const SIZE: u32 = 256;
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(SIZE as f32, SIZE as f32));
         let mut render = |origin: bool| {
-            app.ui.show_origin = origin;
+            app.set_origin_shown(origin);
             app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess: false });
             let (scene, highlight) = (build_scene(&app), build_highlight(&app).merged());
             let proj = projection(&app, rect);
@@ -3773,7 +3773,7 @@ mod tests {
             return;
         };
         let (Some(without), _) = render(false) else { return };
-        app.ui.show_origin = true;
+        app.set_origin_shown(true);
         let xy = origin_planes(&app).into_iter().find(|(n, _, _)| *n == "XY").map(|(_, _, q)| q).unwrap();
         let (w, h, r) = (f64::from(SIZE), f64::from(SIZE), scene_radius(&app));
         let (mut samples, mut plain) = (0, Vec::new());
@@ -4124,7 +4124,7 @@ mod tests {
             let ctx = egui::Context::default();
             let mut app = hover_app(false);
             app.preferences.nav = preset.into();
-            app.ui.show_origin = false;
+            app.set_origin_shown(false);
             hover_frame(&mut app, &ctx, vec![]);
             let point = projection(&app, app.viewport.rect.unwrap()).to_screen(Vec3::ZERO).unwrap();
             let before = app.cam;
