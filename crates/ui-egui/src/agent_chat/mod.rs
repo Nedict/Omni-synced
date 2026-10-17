@@ -172,13 +172,28 @@ struct Held {
 /// it): requests arriving there go to the sender; the port it listens on.
 pub type ControlStarter = Box<dyn FnMut(Sender<ControlRequest>) -> Option<u16>>;
 
-/// A file still being read for the next message off the window thread (a picture decoding, a
-/// pasted picture encoding), so a large one doesn't stop the window. Its chip shows meanwhile; it
-/// keeps the id it was given when attached, so the files stay in the order they were attached in.
+/// A file not yet on the next message: a picture being read off the window thread (so a large one
+/// doesn't stop the window), or a CAD file being imported into the design. Its chip shows
+/// meanwhile; it keeps the id it was given when attached, so the files stay in the order they
+/// were attached in.
 pub(crate) struct Loading {
     pub id: u64,
     pub name: String,
-    rx: Receiver<std::result::Result<attach::Attachment, String>>,
+    what: Reading,
+}
+
+enum Reading {
+    /// A picture decoding, or a pasted one encoding: the file, or why not.
+    File(Receiver<std::result::Result<attach::Attachment, String>>),
+    /// A CAD file's import into the design: its answer, as a control reply.
+    Import(Receiver<crate::control::ControlResponse>),
+}
+
+impl Loading {
+    /// A CAD file being imported (its part lands in the design whatever the message does).
+    pub fn importing(&self) -> bool {
+        matches!(self.what, Reading::Import(_))
+    }
 }
 
 #[derive(Default)]
@@ -311,8 +326,14 @@ impl AgentChat {
             })
             .map_err(|e| trf("ui.agent_chat_file_error", &[("name", &name), ("error", &e.to_string())]))?;
         let id = self.next_file_id();
-        self.loading.push(Loading { id, name: name.clone(), rx });
+        self.loading.push(Loading { id, name: name.clone(), what: Reading::File(rx) });
         Ok(name)
+    }
+    /// A CAD file whose import was asked for: it joins the message once the import is in.
+    fn importing(&mut self, name: String, rx: Receiver<crate::control::ControlResponse>) -> String {
+        let id = self.next_file_id();
+        self.loading.push(Loading { id, name: name.clone(), what: Reading::Import(rx) });
+        name
     }
 
     pub fn state(&self) -> State {
@@ -853,8 +874,14 @@ pub fn attach_path(app: &mut SolveApp, path: &str) -> std::result::Result<String
         if !p.is_file() {
             return Err(trf("ui.agent_chat_file_not_a_file", &[("name", path)]));
         }
-        app.insert_path_async(path);
-        attach::Attachment::imported(p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string()))
+        // Imported now, as a dropped file is; it joins the message once the import is in, so the
+        // agent is told it was added only when it was. A full queue is refused at once.
+        let name = attach::name_of(p);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut request = crate::file_load::Request::new(path, crate::file_load::Kind::Insert);
+        request.reply = Some(tx);
+        crate::file_load::begin_request(app, request).map_err(|e| trf("ui.agent_chat_import_failed", &[("name", &name), ("error", &e)]))?;
+        return Ok(app.agent_chat.importing(name, rx));
     } else {
         // A picture is decoded off the window thread: a large one takes long enough to stop it.
         #[cfg(not(target_arch = "wasm32"))]
@@ -1159,24 +1186,38 @@ fn pump_tools(app: &mut SolveApp) {
 /// Files read off the window thread join the message as they are done, where their ids put them;
 /// a refused one says why.
 pub(crate) fn take_loaded(app: &mut SolveApp, ctx: &egui::Context) {
+    use std::sync::mpsc::TryRecvError;
     let chat = &mut app.agent_chat;
     let mut i = 0;
     while i < chat.loading.len() {
-        match chat.loading[i].rx.try_recv() {
-            Ok(done) => {
+        let name = chat.loading[i].name.clone();
+        let done = match &chat.loading[i].what {
+            Reading::File(rx) => match rx.try_recv() {
+                Ok(read) => Some(read),
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => Some(Err(trf("ui.agent_chat_file_error", &[("name", &name), ("error", "stopped")]))),
+            },
+            Reading::Import(rx) => match rx.try_recv() {
+                Ok(answer) if answer["ok"].as_bool() == Some(true) => Some(Ok(attach::Attachment::imported(name))),
+                Ok(answer) => {
+                    let why = answer["error"].as_str().unwrap_or_default().to_string();
+                    Some(Err(trf("ui.agent_chat_import_failed", &[("name", &name), ("error", &why)])))
+                }
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => Some(Err(trf("ui.agent_chat_import_failed", &[("name", &name), ("error", "stopped")]))),
+            },
+        };
+        match done {
+            None => i += 1,
+            Some(read) => {
                 let l = chat.loading.remove(i);
-                match done {
+                match read {
                     Ok(file) => {
                         chat.place(l.id, file);
                     }
                     Err(e) => chat.notice(e, true),
                 }
             }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                let l = chat.loading.remove(i);
-                chat.notice(trf("ui.agent_chat_file_error", &[("name", &l.name), ("error", "stopped")]), true);
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => i += 1,
         }
     }
     if !chat.loading.is_empty() {

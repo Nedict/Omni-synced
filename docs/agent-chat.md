@@ -71,7 +71,10 @@ sketch, a brief, a part to fit around.
   go in the message's text, whole as far as the message's 100,000-character cap allows: past it
   a file is cut (and says how much is missing) or named only.
 - **CAD files** (STEP, IGES, FreeCAD, Rhino, STL, 3MF, OBJ, glTF) are imported into the design
-  at once, as components of their own, and the message tells the agent they were added.
+  at once, as components of their own. A file joins the message once its import is in (its chip
+  shows a spinner meanwhile, and **Send** waits), and the message tells the agent it was added; a
+  failed import says why and the agent is told nothing of it. Taking a part's chip off the message
+  leaves the part in the design (Undo removes it).
 - Every file is named in the message, and listed under it in the conversation. A file that
   can't be attached says why.
 

@@ -946,7 +946,7 @@ fn attachment_chips(app: &mut SolveApp, ui: &mut egui::Ui) {
                         remove = Some(i);
                     }
                 } else if let Some(l) = chat.loading.get(i - read)
-                    && loading_chip(ui, &l.name, i - read, w)
+                    && loading_chip(ui, &l.name, l.importing(), i - read, w)
                 {
                     stop = Some(i - read);
                 }
@@ -966,9 +966,16 @@ fn attachment_chips(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
 }
 
-/// The chip of a file still being read: a spinner, the name, and a × that takes it off.
+/// What a chip's × says: an imported part stays in the design when it comes off the message.
 #[cfg(not(target_arch = "wasm32"))]
-fn loading_chip(ui: &mut egui::Ui, name: &str, i: usize, w: f32) -> bool {
+pub(super) fn remove_tip(f: &attach::Attachment) -> &'static str {
+    tr(if matches!(f.content, attach::Content::Imported) { "ui.agent_chat_remove_imported" } else { "ui.agent_chat_remove_file" })
+}
+
+/// The chip of a file still being read or imported: a spinner, the name, and a × that takes it
+/// off (an import goes on: its part lands in the design).
+#[cfg(not(target_arch = "wasm32"))]
+fn loading_chip(ui: &mut egui::Ui, name: &str, importing: bool, i: usize, w: f32) -> bool {
     let t = Tokens::get();
     let mut clicked = false;
     let r = egui::Frame::NONE.fill(t.toolbar).stroke(Stroke::new(1.0, t.border)).corner_radius(6.0).inner_margin(egui::Margin::symmetric(4, 3)).show(
@@ -978,7 +985,8 @@ fn loading_chip(ui: &mut egui::Ui, name: &str, i: usize, w: f32) -> bool {
             ui.set_width(inner);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
-                let mark = ui.add(egui::Spinner::new().size(16.0)).on_hover_text(tr("ui.agent_chat_file_loading")).rect.width();
+                let doing = tr(if importing { "ui.agent_chat_file_importing" } else { "ui.agent_chat_file_loading" });
+                let mark = ui.add(egui::Spinner::new().size(16.0)).on_hover_text(doing).rect.width();
                 let name_w = (inner - mark - 18.0 - 8.0).max(8.0);
                 ui.allocate_ui(vec2(name_w, 20.0), |ui| {
                     ui.set_width(name_w);
@@ -992,7 +1000,7 @@ fn loading_chip(ui: &mut egui::Ui, name: &str, i: usize, w: f32) -> bool {
                 ui.painter().line_segment([c + vec2(-3.5, -3.5), c + vec2(3.5, 3.5)], s);
                 ui.painter().line_segment([c + vec2(-3.5, 3.5), c + vec2(3.5, -3.5)], s);
                 crate::scenario::publish_handle(&format!("agent_chat:file_loading_remove:{i}"), c);
-                clicked = x.on_hover_text(tr("ui.agent_chat_remove_file")).clicked();
+                clicked = x.on_hover_text(tr(if importing { "ui.agent_chat_remove_imported" } else { "ui.agent_chat_remove_file" })).clicked();
             });
         },
     );
@@ -1039,7 +1047,7 @@ fn chip(ui: &mut egui::Ui, thumbs: &mut std::collections::HashMap<u64, egui::Tex
                 ui.painter().line_segment([c + vec2(-3.5, -3.5), c + vec2(3.5, 3.5)], s);
                 ui.painter().line_segment([c + vec2(-3.5, 3.5), c + vec2(3.5, -3.5)], s);
                 crate::scenario::publish_handle(&format!("agent_chat:file_remove:{i}"), c);
-                clicked = x.on_hover_text(tr("ui.agent_chat_remove_file")).clicked();
+                clicked = x.on_hover_text(remove_tip(f)).clicked();
             });
         },
     );

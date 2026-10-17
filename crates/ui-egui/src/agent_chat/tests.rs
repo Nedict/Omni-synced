@@ -1127,6 +1127,81 @@ fn drop_files(h: &mut crate::scenario::Harness, at: egui::Pos2, files: &[std::pa
     h.drop_files(at, files.iter().map(|p| Arc::new(DroppedPath(p.clone())) as egui::DroppedFileHandle).collect());
 }
 
+/// A tetrahedron, as a small ASCII STL.
+const TETRA_STL: &str = "solid t
+facet normal 0 0 -1
+ outer loop
+  vertex 0 0 0
+  vertex 0 10 0
+  vertex 10 0 0
+ endloop
+endfacet
+facet normal 0 -1 0
+ outer loop
+  vertex 0 0 0
+  vertex 10 0 0
+  vertex 0 0 10
+ endloop
+endfacet
+facet normal -1 0 0
+ outer loop
+  vertex 0 0 0
+  vertex 0 0 10
+  vertex 0 10 0
+ endloop
+endfacet
+facet normal 1 1 1
+ outer loop
+  vertex 10 0 0
+  vertex 0 10 0
+  vertex 0 0 10
+ endloop
+endfacet
+endsolid t
+";
+
+/// Review of #1744: a CAD file's import wasn't waited on, so a failed or queued-out import still
+/// told the agent "I added x to the design". The file joins the message once its import is in;
+/// a failed import says why and the agent is told nothing of it.
+#[test]
+fn a_cad_file_joins_the_message_once_its_import_is_in() {
+    let d = attachable("cad");
+    std::fs::write(d.join("block.stl"), TETRA_STL).unwrap();
+    std::fs::write(d.join("broken.stl"), [0u8, 1, 2]).unwrap();
+    let mut h = narrow_chat();
+    let script = Script::default();
+    h.app.agent_chat.backend = Some(Box::new(script.clone()));
+    h.app.agent_chat.state = Some(State::Ready);
+    h.frames(2);
+    attach_path(&mut h.app, &at(&d, "block.stl")).unwrap();
+    assert_eq!(status(&h.app)["loading"], json!(["block.stl"]), "importing, not yet on the message");
+    assert_eq!(status(&h.app)["attachments"], json!([]));
+    settle_chat(&mut h);
+    assert_eq!(status(&h.app)["attachments"], json!(["block.stl"]), "in, and on the message");
+    h.call("ui.agent_chat", json!({"attach": at(&d, "broken.stl")}));
+    settle_chat(&mut h);
+    assert!(
+        h.app.agent_chat.items.iter().any(|i| matches!(i, Item::Notice { text, error: true } if text.starts_with("broken.stl:"))),
+        "a failed import says why"
+    );
+    assert_eq!(status(&h.app)["attachments"], json!(["block.stl"]), "and is not on the message");
+    h.call("ui.agent_chat", json!({"send": "fit around this"}));
+    h.frames(2);
+    let text = text_of(&script.prompts()[0]);
+    assert!(text.contains("`block.stl` to the design") && !text.contains("broken.stl"), "{text}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Review of #1744: taking an imported part's chip off leaves the part in the design, and its ×
+/// says so; any other file's × just takes it off.
+#[test]
+fn an_imported_parts_chip_says_the_part_stays() {
+    assert_eq!(panel::remove_tip(&attach::Attachment::imported("motor.step".into())), tr("ui.agent_chat_remove_imported"));
+    assert!(tr("ui.agent_chat_remove_imported").contains("stays in the design"));
+    let picture = attach::from_rgba("a.png".into(), 2, 2, &[9; 16]).unwrap();
+    assert_eq!(panel::remove_tip(&picture), tr("ui.agent_chat_remove_file"));
+}
+
 /// Files dropped on the chat attach to the next message, and the app doesn't open them as well
 /// (while they are dragged over it, the chat says so); dropped on the 3D view they are not the
 /// chat's (the app handles them as before), nor when the chat is closed.
