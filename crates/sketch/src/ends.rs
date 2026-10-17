@@ -175,14 +175,38 @@ pub fn loose_ends(sk: &Sketch) -> EndReport {
             }
         }
     }
+    // Free ends that touch each other are one place, however many meet there: each is tied to
+    // the place's first end, which is tied to what it touches outside the place (if anything).
+    let index: std::collections::HashMap<usize, usize> = free.iter().enumerate().map(|(k, f)| (f.0, k)).collect();
+    let mut place: Vec<usize> = (0..free.len()).collect();
+    for (k, t) in touch.iter().enumerate() {
+        if let Some(EndTouch::Point(q)) = t
+            && let Some(&j) = index.get(q)
+        {
+            union(&mut place, k, j);
+        }
+    }
+    let mut first: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for (k, f) in free.iter().enumerate() {
+        let root = find(&mut place, k);
+        let e = first.entry(root).or_insert(f.0);
+        *e = (*e).min(f.0);
+    }
     let mut report = EndReport::default();
     for (k, &(p, curve, _)) in free.iter().enumerate() {
-        match touch.get(k).copied().flatten() {
-            None => report.open.push(p),
-            // A pair of untied ends is one place: report it once.
-            Some(EndTouch::Point(q)) if q < p && free.iter().any(|f| f.0 == q) => {}
-            Some(touches) => report.untied.push(UntiedEnd { point: p, curve, touches }),
-        }
+        let Some(t) = touch.get(k).copied().flatten() else {
+            report.open.push(p);
+            continue;
+        };
+        let root = find(&mut place, k);
+        let anchor = first.get(&root).copied().unwrap_or(p);
+        let touches = match t {
+            _ if anchor != p => EndTouch::Point(anchor),
+            // The place's first end: tied to what it touches outside the place.
+            EndTouch::Point(q) if index.contains_key(&q) => continue,
+            t => t,
+        };
+        report.untied.push(UntiedEnd { point: p, curve, touches });
     }
     report.open.sort_unstable();
     report.open.dedup();

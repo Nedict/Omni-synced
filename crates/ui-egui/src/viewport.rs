@@ -3174,8 +3174,8 @@ fn overlays(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
 }
 
 /// Where a profile can fail: a ring round each open end (it touches no other curve) and a
-/// diamond round each untied one (it touches another curve only by position). Shape and colour
-/// both tell them apart.
+/// diamond round each untied one (it touches another curve only by position), told apart by
+/// shape. Both are warnings, not errors: an open sketch (a sweep path, an axis) is valid.
 fn loose_end_markers(
     sk: &solidcraft_engine::sketch::Sketch,
     ends: &solidcraft_engine::sketch::EndReport,
@@ -3186,7 +3186,7 @@ fn loose_end_markers(
 ) {
     let screen = |i: usize| sk.point(i).and_then(|p| proj.to_screen(plane.to_world(p)));
     for sp in ends.open.iter().filter_map(|&i| screen(i)) {
-        painter.circle_stroke(sp, 7.0, Stroke::new(1.8, t.error));
+        painter.circle_stroke(sp, 7.0, Stroke::new(1.8, t.warning));
     }
     for sp in ends.untied.iter().filter_map(|u| screen(u.point)) {
         let r = 7.5;

@@ -548,7 +548,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         // Where a profile can fail (the viewport rings and diamonds them).
         if open_ends > 0 {
             let text = crate::i18n::format("sketch.open_ends", &[("count", &open_ends.to_string())]);
-            ui.label(RichText::new(text).color(t.error)).on_hover_text(app.tr("ui.open_ends_tip"));
+            ui.label(RichText::new(text).color(t.warning)).on_hover_text(app.tr("ui.open_ends_tip"));
         }
         if untied_ends > 0 {
             ui.horizontal(|ui| {

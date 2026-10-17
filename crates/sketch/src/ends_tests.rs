@@ -104,3 +104,23 @@ fn a_lone_line_has_two_open_ends() {
     let (a, b) = sk.curves[l].kind.ends().unwrap();
     assert_eq!(loose_ends(&sk).open, vec![a.min(b), a.max(b)]);
 }
+
+#[test]
+fn three_ends_meeting_by_position_are_one_place_tied_at_once() {
+    let mut sk = Sketch::new();
+    for to in [v(0.0, 0.0), v(20.0, 0.0), v(10.0, 10.0)] {
+        sk.add_line(to, v(10.0, 0.0), None, None, None).unwrap();
+    }
+    let r = loose_ends(&sk);
+    // Two of the three need tying, both to the third.
+    assert_eq!(r.untied.len(), 2, "{r:?}");
+    let anchor = match r.untied[0].touches {
+        EndTouch::Point(q) => q,
+        EndTouch::Curve(_) => usize::MAX,
+    };
+    assert!(r.untied.iter().all(|u| u.touches == EndTouch::Point(anchor) && u.point != anchor), "{r:?}");
+    for u in &r.untied {
+        sk.add_constraint(ConstraintKind::Coincident { p: u.point, q: anchor }, None).unwrap();
+    }
+    assert!(loose_ends(&sk).untied.is_empty(), "{:?}", loose_ends(&sk));
+}
