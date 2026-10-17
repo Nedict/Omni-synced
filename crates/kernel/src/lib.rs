@@ -85,7 +85,7 @@ mod outline;
 #[cfg(test)]
 mod outline_tests;
 mod par;
-pub use par::{for_each_on_threads, map_on_threads};
+pub use par::{for_each_on_threads, map_on_threads, map_with_local_pools};
 #[cfg(test)]
 mod pinch_tests;
 mod planar_faces;
@@ -134,8 +134,8 @@ pub use boolean_diagnostics::{BooleanDiagnostics, BooleanFallback, BooleanStrate
 pub use boundary::{Boundary, boundary_patch};
 pub use bridge::{Continuity, Frame, blend_between, bridge, chain, chain_closes, frames, frames_across, sample_grid};
 pub use build::{
-    PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, extrude_tapered_between, loft, revolve, sphere, sweep,
-    sweep_with, torus,
+    PathSeg, box_solid, canonical_revolve_axis, cylinder, extrude, extrude_tapered, extrude_tapered_between, loft, revolve, revolve_whole, sphere,
+    sweep, sweep_with, torus,
 };
 pub use continuity::{
     ContinuityReport, ContinuityTolerances, EdgePick, MAX_SAMPLES, MIN_SAMPLES, SeamReport, SeamVerdict, SeamWorst, pick_edges, seam_diagnostics,
@@ -159,7 +159,7 @@ pub use mesh_convert::convert_prismatic_mesh;
 pub use meshbody::{MAX_TRIANGLES, mesh_body};
 pub use native::{decode_native_body, encode_native_body, native_preview_mesh};
 pub use offset::with_same_surface;
-pub use ops::{BoolOp, boolean, can_join_touching_faces, join_apart, split_by_plane, transform, transform_matrix, union_apart};
+pub use ops::{BoolOp, boolean, can_join_touching_faces, half_space, join_apart, split_by_plane, transform, transform_matrix, union_apart};
 pub use polybool::{faceted_boolean, planar_boolean};
 pub use polyhedron::{HalfSpace, convex_polyhedron, draft, offset_faces, shell};
 pub use prism::{PLANAR_FIT_TOL, extrude_planar_regions, planar_regions_boolean};

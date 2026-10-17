@@ -1463,10 +1463,10 @@ pub(super) fn apply_in_order(sk: &mut Sketch, rep: &SolveReport, first: &[Ent], 
     if !second_locked {
         ordered(first, second);
     }
-    if !first_locked {
-        for f in first {
-            ordered(&[second], *f);
-        }
+    // Each first entity that can move may (a free symmetry line between two fixed lines, #1796),
+    // even when another of them can't.
+    for f in first.iter().filter(|f| !ent_locked(sk, rep, **f)) {
+        ordered(&[second], *f);
     }
     const TEMP: &str = "__keep_size";
     for (h, extra) in tries {

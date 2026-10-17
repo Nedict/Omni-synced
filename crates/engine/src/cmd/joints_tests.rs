@@ -1445,3 +1445,10 @@ fn hostile_trace_params_are_refused() {
 
 #[path = "joints_coupling_tests.rs"]
 mod coupling;
+
+#[path = "joints_cam_tests.rs"]
+mod cam;
+
+// Plots and interference of motion studies, on the four-bar and slider-crank above.
+#[path = "motion_analysis_tests.rs"]
+mod motion_analysis;
