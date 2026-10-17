@@ -57,6 +57,8 @@ mod issue_1038_tests;
 #[cfg(test)]
 mod issue_1080_tests;
 #[cfg(test)]
+mod issue_1510_tests;
+#[cfg(test)]
 mod issue_1648_tests;
 #[cfg(test)]
 mod issue_324_tests;
@@ -104,6 +106,7 @@ mod prism;
 mod prism_curve;
 mod prism_local;
 mod prism_measure;
+pub mod profile;
 pub mod provenance;
 mod record;
 mod seam_faces;
