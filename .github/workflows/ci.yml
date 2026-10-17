@@ -137,7 +137,6 @@ jobs:
     # Main and merge-queue runs use the self-hosted runner (warm build cache); pull requests
     # stay on GitHub's runners, and the runner itself refuses pull-request jobs.
     runs-on: ubuntu-24.04
-    env:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
