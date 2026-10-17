@@ -172,6 +172,15 @@ struct Held {
 /// it): requests arriving there go to the sender; the port it listens on.
 pub type ControlStarter = Box<dyn FnMut(Sender<ControlRequest>) -> Option<u16>>;
 
+/// A file still being read for the next message off the window thread (a picture decoding, a
+/// pasted picture encoding), so a large one doesn't stop the window. Its chip shows meanwhile; it
+/// keeps the id it was given when attached, so the files stay in the order they were attached in.
+pub(crate) struct Loading {
+    pub id: u64,
+    pub name: String,
+    rx: Receiver<std::result::Result<attach::Attachment, String>>,
+}
+
 #[derive(Default)]
 pub struct AgentChat {
     /// The panel is shown (View menu, the application bar's chat button, Ctrl+Shift+A).
@@ -216,6 +225,8 @@ pub struct AgentChat {
     thumbs: std::collections::HashMap<u64, egui::TextureHandle>,
     /// The last id given to a file added to a message.
     last_file_id: u64,
+    /// Files still being read for the next message.
+    pub(crate) loading: Vec<Loading>,
     /// Where the chat was drawn last frame (the panel, or its folded strip), for drops; `None`
     /// when it isn't drawn.
     pub(crate) drop_rect: Option<egui::Rect>,
@@ -263,12 +274,45 @@ impl Drop for AgentChat {
 
 impl AgentChat {
     /// Put a file on the next message with an id of its own; its name back.
-    fn add_file(&mut self, mut file: attach::Attachment) -> String {
+    fn add_file(&mut self, file: attach::Attachment) -> String {
+        let id = self.next_file_id();
+        self.place(id, file)
+    }
+    fn next_file_id(&mut self) -> u64 {
         self.last_file_id += 1;
-        file.id = self.last_file_id;
+        self.last_file_id
+    }
+    /// A file goes where its id says: the order the files were attached in.
+    fn place(&mut self, id: u64, mut file: attach::Attachment) -> String {
+        file.id = id;
         let name = file.name.clone();
-        self.attachments.push(file);
+        let at = self.attachments.partition_point(|f| f.id < id);
+        self.attachments.insert(at, file);
         name
+    }
+    /// Files on the next message, read or still being read.
+    fn files(&self) -> usize {
+        self.attachments.len() + self.loading.len()
+    }
+    /// Read a file for the next message on a worker thread, in the window's language.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load(
+        &mut self,
+        name: String,
+        job: impl FnOnce() -> std::result::Result<attach::Attachment, String> + Send + 'static,
+    ) -> std::result::Result<String, String> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let language = crate::i18n::language();
+        std::thread::Builder::new()
+            .name("chat-file".into())
+            .spawn(move || {
+                let _language = crate::i18n::scope(language);
+                let _ = tx.send(job());
+            })
+            .map_err(|e| trf("ui.agent_chat_file_error", &[("name", &name), ("error", &e.to_string())]))?;
+        let id = self.next_file_id();
+        self.loading.push(Loading { id, name: name.clone(), rx });
+        Ok(name)
     }
 
     pub fn state(&self) -> State {
@@ -598,6 +642,14 @@ const INTERRUPT_NOTE: &str = "[The user interrupted your previous step.]";
 /// Send what the user typed: now if the agent is ready, queued behind the running message if it
 /// is working, else once it is ready (starting it if needed).
 pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: String) {
+    // A message waits for its files: the words go back in the box until they are read.
+    if !app.agent_chat.loading.is_empty() {
+        if app.agent_chat.input.trim().is_empty() {
+            app.agent_chat.input = text;
+        }
+        app.agent_chat.notice(tr("ui.agent_chat_files_loading"), false);
+        return;
+    }
     let text: String = text.chars().take(MAX_PROMPT).collect();
     // Files alone make a message.
     if text.trim().is_empty() && app.agent_chat.attachments.is_empty() {
@@ -702,6 +754,7 @@ pub fn new_chat(app: &mut SolveApp) {
     chat.items.clear();
     chat.pending.clear();
     chat.attachments.clear();
+    chat.loading.clear();
     chat.pending_edit = None;
     chat.queued = None;
     chat.last = None;
@@ -720,7 +773,7 @@ pub fn new_chat(app: &mut SolveApp) {
 
 /// Whether New chat would throw something away that the user may want (so it asks first).
 pub fn new_chat_needs_confirm(app: &SolveApp) -> bool {
-    app.agent_chat.state() == State::Busy || !app.agent_chat.pending.is_empty() || !app.agent_chat.attachments.is_empty()
+    app.agent_chat.state() == State::Busy || !app.agent_chat.pending.is_empty() || app.agent_chat.files() > 0
 }
 
 /// Take a queued message out of the queue.
@@ -792,7 +845,7 @@ fn start_turn_with(app: &mut SolveApp, text: String, image: bool, files: Vec<att
 /// Add a file to the next message. A picture or text file is read and kept (see [`attach`]); a CAD
 /// file is imported into the design at once, as its own component, and the message says so.
 pub fn attach_path(app: &mut SolveApp, path: &str) -> std::result::Result<String, String> {
-    if app.agent_chat.attachments.len() >= attach::MAX_FILES {
+    if app.agent_chat.files() >= attach::MAX_FILES {
         return Err(trf("ui.agent_chat_files_max", &[("max", &attach::MAX_FILES.to_string())]));
     }
     let p = std::path::Path::new(path);
@@ -803,6 +856,16 @@ pub fn attach_path(app: &mut SolveApp, path: &str) -> std::result::Result<String
         app.insert_path_async(path);
         attach::Attachment::imported(p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string()))
     } else {
+        // A picture is decoded off the window thread: a large one takes long enough to stop it.
+        #[cfg(not(target_arch = "wasm32"))]
+        if attach::kind(p) == attach::Kind::Picture {
+            // A missing file is said at once; reading and decoding wait for the worker.
+            if !p.is_file() {
+                return Err(trf("ui.agent_chat_file_not_a_file", &[("name", &attach::name_of(p))]));
+            }
+            let path = p.to_path_buf();
+            return app.agent_chat.load(attach::name_of(p), move || attach::read(&path));
+        }
         attach::read(p)?
     };
     Ok(app.agent_chat.add_file(file))
@@ -810,13 +873,24 @@ pub fn attach_path(app: &mut SolveApp, path: &str) -> std::result::Result<String
 
 /// Add a picture from the clipboard (RGBA rows, as the system gives them) to the next message.
 pub fn attach_rgba(app: &mut SolveApp, width: usize, height: usize, rgba: &[u8]) -> std::result::Result<String, String> {
-    if app.agent_chat.attachments.len() >= attach::MAX_FILES {
+    if app.agent_chat.files() >= attach::MAX_FILES {
         return Err(trf("ui.agent_chat_files_max", &[("max", &attach::MAX_FILES.to_string())]));
     }
     let n = app.agent_chat.pasted + 1;
-    let file = attach::from_rgba(format!("pasted picture {n}.png"), width, height, rgba)?;
+    let name = format!("pasted picture {n}.png");
     app.agent_chat.pasted = n;
-    Ok(app.agent_chat.add_file(file))
+    // Encoded off the window thread, as a decoded picture is.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let rgba = rgba.to_vec();
+        let named = name.clone();
+        app.agent_chat.load(name, move || attach::from_rgba(named, width, height, &rgba))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let file = attach::from_rgba(name, width, height, rgba)?;
+        Ok(app.agent_chat.add_file(file))
+    }
 }
 
 /// Attach the picture on the clipboard, if it holds one.
@@ -1082,6 +1156,34 @@ fn pump_tools(app: &mut SolveApp) {
 }
 
 /// Read what the agent sent since the last frame, its tool requests, and the agent search.
+/// Files read off the window thread join the message as they are done, where their ids put them;
+/// a refused one says why.
+pub(crate) fn take_loaded(app: &mut SolveApp, ctx: &egui::Context) {
+    let chat = &mut app.agent_chat;
+    let mut i = 0;
+    while i < chat.loading.len() {
+        match chat.loading[i].rx.try_recv() {
+            Ok(done) => {
+                let l = chat.loading.remove(i);
+                match done {
+                    Ok(file) => {
+                        chat.place(l.id, file);
+                    }
+                    Err(e) => chat.notice(e, true),
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                let l = chat.loading.remove(i);
+                chat.notice(trf("ui.agent_chat_file_error", &[("name", &l.name), ("error", "stopped")]), true);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => i += 1,
+        }
+    }
+    if !chat.loading.is_empty() {
+        ctx.request_repaint_after(std::time::Duration::from_millis(50));
+    }
+}
+
 pub fn poll(app: &mut SolveApp, ctx: &egui::Context) {
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(rx) = &app.agent_chat.detecting
@@ -1098,6 +1200,7 @@ pub fn poll(app: &mut SolveApp, ctx: &egui::Context) {
         }
         return;
     }
+    take_loaded(app, ctx);
     let events = app.agent_chat.backend.as_mut().map(|b| b.poll()).unwrap_or_default();
     for e in events {
         let ready = matches!(e, Event::Ready { .. });
@@ -1378,6 +1481,7 @@ pub fn status(app: &SolveApp) -> Value {
         "waiting": c.waiting(),
         "pending": c.pending.iter().map(|p| json!({"text": p.text, "image": p.image, "files": p.files.iter().map(|f| f.name.clone()).collect::<Vec<_>>()})).collect::<Vec<_>>(),
         "attachments": c.attachments.iter().map(|f| f.name.clone()).collect::<Vec<_>>(),
+        "loading": c.loading.iter().map(|f| f.name.clone()).collect::<Vec<_>>(),
         "stopped": c.stopped,
         "turn": c.turn.as_ref().map(|t| json!({"changes": t.changes, "requests": t.requests})),
         "detection": detection,

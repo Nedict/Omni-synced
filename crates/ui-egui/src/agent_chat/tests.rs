@@ -781,6 +781,26 @@ fn at(d: &std::path::Path, f: &str) -> String {
     d.join(f).to_string_lossy().to_string()
 }
 
+/// Wait for the files read off the window thread to join the message.
+fn settle_files(app: &mut SolveApp, ctx: &egui::Context) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !app.agent_chat.loading.is_empty() && std::time::Instant::now() < deadline {
+        take_loaded(app, ctx);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    take_loaded(app, ctx);
+}
+
+/// The same with the whole app running frames.
+fn settle_chat(h: &mut crate::scenario::Harness) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !h.app.agent_chat.loading.is_empty() && std::time::Instant::now() < deadline {
+        h.frames(1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    h.frames(2);
+}
+
 fn text_of(parts: &[PromptPart]) -> String {
     parts.iter().filter_map(|p| if let PromptPart::Text(t) = p { Some(t.clone()) } else { None }).collect()
 }
@@ -798,6 +818,7 @@ fn a_message_carries_its_files() {
     app.agent_chat.images = true;
     control(&mut app, &ctx, &json!({"attach": at(&d, "target.png")})).unwrap();
     control(&mut app, &ctx, &json!({"attach": at(&d, "brief.md")})).unwrap();
+    settle_files(&mut app, &ctx);
     assert_eq!(status(&app)["attachments"], json!(["target.png", "brief.md"]));
     assert!(control(&mut app, &ctx, &json!({"attach": at(&d, "missing.png")})).is_err());
     send(&mut app, &ctx, "make the case like this".into());
@@ -809,6 +830,39 @@ fn a_message_carries_its_files() {
     assert_eq!(sent[0].iter().filter(|p| matches!(p, PromptPart::Image { mime, .. } if mime == "image/png")).count(), 1);
     assert!(app.agent_chat.attachments.is_empty(), "the files went with the message");
     assert_eq!(status(&app)["items"][0]["files"], json!(["target.png", "brief.md"]));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// Review of #1744: a picture was decoded on the window thread, so a large one froze the window.
+/// It is read off it now: the message waits for it (Send waits too), the files keep the order they
+/// were attached in, and a refused picture says why later, in the app's language.
+#[test]
+fn pictures_are_read_off_the_window_thread() {
+    let d = attachable("worker");
+    std::fs::write(d.join("fake.png"), b"not a picture at all").unwrap();
+    let (mut app, script, ctx) = app_with_script();
+    app.agent_chat.images = true;
+    control(&mut app, &ctx, &json!({"attach": at(&d, "target.png")})).unwrap();
+    control(&mut app, &ctx, &json!({"attach": at(&d, "brief.md")})).unwrap();
+    assert_eq!(status(&app)["loading"], json!(["target.png"]), "the picture is still being read");
+    send(&mut app, &ctx, "like this".into());
+    assert!(script.prompts().is_empty(), "Send waits for the files");
+    assert_eq!(app.agent_chat.input, "like this", "and keeps the words");
+    settle_files(&mut app, &ctx);
+    assert_eq!(status(&app)["attachments"], json!(["target.png", "brief.md"]), "in the order they were attached");
+    let words = std::mem::take(&mut app.agent_chat.input);
+    send(&mut app, &ctx, words);
+    assert_eq!(script.prompts().len(), 1);
+    {
+        let _ja = crate::i18n::scope("ja");
+        control(&mut app, &ctx, &json!({"attach": at(&d, "fake.png")})).unwrap();
+    }
+    settle_files(&mut app, &ctx);
+    assert!(
+        matches!(app.agent_chat.items.last(), Some(Item::Notice { text, error: true }) if text == "fake.png: 読み込めない画像です"),
+        "a refused picture says why, in the language it was attached in"
+    );
+    assert!(app.agent_chat.attachments.is_empty());
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -839,6 +893,7 @@ fn files_wait_with_their_message_and_pictures_skip_an_agent_that_takes_none() {
     let (mut app, script, ctx) = app_with_script();
     app.agent_chat.state = Some(State::Starting);
     attach_path(&mut app, &at(&d, "target.png")).unwrap();
+    settle_files(&mut app, &ctx);
     send(&mut app, &ctx, "  ".into());
     assert!(script.prompts().is_empty(), "not sent before the agent is ready");
     assert_eq!(status(&app)["items"][0]["user"], "", "no words, just the file");
@@ -878,6 +933,7 @@ fn a_queued_message_keeps_its_files_through_stop_and_sends_them() {
     app.agent_chat.images = true;
     send(&mut app, &ctx, "make a box".into());
     attach_path(&mut app, &at(&d, "target.png")).unwrap();
+    settle_files(&mut app, &ctx);
     send(&mut app, &ctx, "like this".into());
     attach_path(&mut app, &at(&d, "brief.md")).unwrap();
     send(&mut app, &ctx, String::new());
@@ -969,7 +1025,7 @@ fn attached_files_show_as_chips_that_can_be_taken_off_and_sent_alone() {
     h.frames(2);
     h.call("ui.agent_chat", json!({"attach": at(&d, "target.png")}));
     h.call("ui.agent_chat", json!({"attach": at(&d, "brief.md")}));
-    h.frames(3);
+    settle_chat(&mut h);
     assert!(handle_at("agent_chat:file:0").is_some() && handle_at("agent_chat:file:1").is_some(), "a chip per file");
     assert_inside_the_panel(2);
     let x = handle_at("agent_chat:file_remove:0").expect("a × on the chip");
@@ -995,7 +1051,7 @@ fn each_file_has_its_own_id_and_thumbnail() {
     h.frames(2);
     h.call("ui.agent_chat", json!({"attach": at(&d, "target.png")}));
     h.call("ui.agent_chat", json!({"attach": at(&d, "green.png")}));
-    h.frames(3);
+    settle_chat(&mut h);
     let first: Vec<u64> = h.app.agent_chat.attachments.iter().map(|f| f.id).collect();
     assert!(first.len() == 2 && first[0] != first[1], "{first:?}");
     let mut cached: Vec<u64> = h.app.agent_chat.thumbs.keys().copied().collect();
@@ -1003,7 +1059,7 @@ fn each_file_has_its_own_id_and_thumbnail() {
     assert_eq!(cached, first, "a thumbnail per file, by its id");
     h.call("ui.agent_chat", json!({"remove_file": 0}));
     h.call("ui.agent_chat", json!({"attach": at(&d, "target.png")}));
-    h.frames(3);
+    settle_chat(&mut h);
     let now: Vec<u64> = h.app.agent_chat.attachments.iter().map(|f| f.id).collect();
     assert!(!now.contains(&first[0]), "a removed file's id is not used again: {now:?}");
     let mut cached: Vec<u64> = h.app.agent_chat.thumbs.keys().copied().collect();
@@ -1045,7 +1101,12 @@ fn the_plus_button_attaches_a_chosen_file_or_a_pasted_picture() {
     }
     assert!(!exts.iter().any(|e| e == "solidcraft"));
     attach_rgba(&mut h.app, 4, 3, &[200; 48]).unwrap();
-    assert!(attach_rgba(&mut h.app, 4, 3, &[200; 47]).is_err(), "not a picture");
+    attach_rgba(&mut h.app, 4, 3, &[200; 47]).unwrap();
+    settle_chat(&mut h);
+    assert!(
+        h.app.agent_chat.items.iter().any(|i| matches!(i, Item::Notice { text, error: true } if text.starts_with("pasted picture 2.png:"))),
+        "not a picture: it says so once it has been read"
+    );
     assert_eq!(status(&h.app)["attachments"], json!(["brief.md", "pasted picture 1.png"]));
     let _ = std::fs::remove_dir_all(&d);
 }
@@ -1084,6 +1145,7 @@ fn files_dropped_on_the_chat_attach_and_the_app_does_not_open_them() {
     h.drag_files(egui::pos2(300.0, 500.0), hovered(), Vec::new());
     assert!(rect_of("agent_chat:drop_hint").is_none(), "no hint over the 3D view");
     drop_files(&mut h, panel.center(), &[d.join("target.png"), d.join("brief.md")]);
+    settle_chat(&mut h);
     assert_eq!(status(&h.app)["attachments"], json!(["target.png", "brief.md"]));
     assert!(!h.app.file_load.busy(), "the app doesn't open them as well");
     drop_files(&mut h, egui::pos2(300.0, 500.0), &[d.join("brief.md")]);
@@ -1115,7 +1177,7 @@ fn chips_and_a_long_message_wrap_inside_a_narrow_chat() {
         h.call("ui.agent_chat", json!({"attach": at(&d, "target.png")}));
     }
     h.app.agent_chat.input = "a separate design next to the robot body, the main version, with these measures for the second one".into();
-    h.frames(3);
+    settle_chat(&mut h);
     assert_inside_the_panel(6);
     let (first, second) = (handle_at("agent_chat:file:0").unwrap(), handle_at("agent_chat:file:1").unwrap());
     assert!(second.y > first.y + 10.0, "at 280 px the second chip goes on the next row: {first:?} {second:?}");

@@ -59,7 +59,8 @@ sketch, a brief, a part to fit around.
   so. The window gives no position while something is dragged, so the drop is the chat's when the
   pointer was last seen over the chat; **+** always works.
 - The files show as chips above the text box: a picture's thumbnail, the name, and × to take the
-  file off. **Send** sends files with no text.
+  file off. A picture is read off the window thread, so a large one never stops the window: its
+  chip shows a spinner meanwhile, and **Send** waits for it. **Send** sends files with no text.
 - **Pictures** (PNG, JPEG, GIF, WebP) go to the agent as they are when they are at most 2048 px
   on the long side and 3.75 MB (a picture's base64 then stays under 5 MB, so eight still fit in a
   prompt). Otherwise they are scaled down to 2048 px and re-encoded: as PNG when that fits, as

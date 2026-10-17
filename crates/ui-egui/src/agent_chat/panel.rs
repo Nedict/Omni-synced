@@ -361,7 +361,7 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui.separator();
     // The input sits at the bottom (with a row per line of file chips); the conversation takes
     // the rest.
-    let input_h = 92.0 + chip_rows(app.agent_chat.attachments.len(), ui.available_width(), ui.spacing().item_spacing.x) as f32 * 32.0;
+    let input_h = 92.0 + chip_rows(app.agent_chat.files(), ui.available_width(), ui.spacing().item_spacing.x) as f32 * 32.0;
     let avail = (ui.available_height() - input_h).max(80.0);
     egui::ScrollArea::vertical().id_salt("sc_agent_chat_scroll").max_height(avail).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
         conversation(app, ui);
@@ -390,11 +390,17 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     ui.horizontal(|ui| {
         add_menu(app, ui);
-        let send_b = ui.button(tr(if busy { "ui.agent_chat_queue" } else { "ui.agent_chat_send" }));
+        // A message waits for files still being read.
+        let reading = !app.agent_chat.loading.is_empty();
+        let send_b = ui
+            .add_enabled(!reading, egui::Button::new(tr(if busy { "ui.agent_chat_queue" } else { "ui.agent_chat_send" })))
+            .on_disabled_hover_text(tr("ui.agent_chat_files_loading"));
         crate::scenario::publish_handle("agent_chat:send", send_b.rect.center());
         // Files alone make a message.
         let something = !app.agent_chat.input.trim().is_empty() || !app.agent_chat.attachments.is_empty();
-        if (send_b.clicked() || enter || steer) && something {
+        if reading {
+            // Enter waits with the button.
+        } else if (send_b.clicked() || enter || steer) && something {
             let text = std::mem::take(&mut app.agent_chat.input).trim_end_matches('\n').to_string();
             send(app, ui.ctx(), text);
             if steer {
@@ -921,22 +927,28 @@ fn attachment_chips(app: &mut SolveApp, ui: &mut egui::Ui) {
     // Thumbnails of files no longer on the message are let go.
     let keep: Vec<u64> = chat.attachments.iter().filter(|f| f.thumb.is_some()).map(|f| f.id).collect();
     chat.thumbs.retain(|k, _| keep.contains(k));
-    if chat.attachments.is_empty() {
+    if chat.files() == 0 {
         return;
     }
     let gap = ui.spacing().item_spacing.x;
     let avail = ui.available_width().max(1.0);
     let w = CHIP_W.min(avail);
     let per_row = (((avail + gap) / (w + gap)).floor() as usize).max(1);
-    let mut remove = None;
-    let indices: Vec<usize> = (0..chat.attachments.len()).collect();
+    let (mut remove, mut stop) = (None, None);
+    // The files read, then those still being read (each takes its place once it is done).
+    let read = chat.attachments.len();
+    let indices: Vec<usize> = (0..chat.files()).collect();
     for row in indices.chunks(per_row) {
         ui.horizontal(|ui| {
             for &i in row {
-                if let Some(f) = chat.attachments.get(i)
-                    && chip(ui, &mut chat.thumbs, f, i, w)
+                if let Some(f) = chat.attachments.get(i) {
+                    if chip(ui, &mut chat.thumbs, f, i, w) {
+                        remove = Some(i);
+                    }
+                } else if let Some(l) = chat.loading.get(i - read)
+                    && loading_chip(ui, &l.name, i - read, w)
                 {
-                    remove = Some(i);
+                    stop = Some(i - read);
                 }
             }
         });
@@ -946,6 +958,46 @@ fn attachment_chips(app: &mut SolveApp, ui: &mut egui::Ui) {
     {
         chat.attachments.remove(i);
     }
+    // Taken off while it is read: its reader's answer is dropped with it.
+    if let Some(i) = stop
+        && i < chat.loading.len()
+    {
+        chat.loading.remove(i);
+    }
+}
+
+/// The chip of a file still being read: a spinner, the name, and a × that takes it off.
+#[cfg(not(target_arch = "wasm32"))]
+fn loading_chip(ui: &mut egui::Ui, name: &str, i: usize, w: f32) -> bool {
+    let t = Tokens::get();
+    let mut clicked = false;
+    let r = egui::Frame::NONE.fill(t.toolbar).stroke(Stroke::new(1.0, t.border)).corner_radius(6.0).inner_margin(egui::Margin::symmetric(4, 3)).show(
+        ui,
+        |ui| {
+            let inner = (w - 10.0).max(40.0);
+            ui.set_width(inner);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let mark = ui.add(egui::Spinner::new().size(16.0)).on_hover_text(tr("ui.agent_chat_file_loading")).rect.width();
+                let name_w = (inner - mark - 18.0 - 8.0).max(8.0);
+                ui.allocate_ui(vec2(name_w, 20.0), |ui| {
+                    ui.set_width(name_w);
+                    ui.add(egui::Label::new(RichText::new(name).size(11.5).color(t.text_dim)).truncate())
+                })
+                .inner
+                .on_hover_text(name);
+                let (r, x) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::click());
+                let c = r.center();
+                let s = Stroke::new(1.3, if x.hovered() { t.text } else { t.text_dim });
+                ui.painter().line_segment([c + vec2(-3.5, -3.5), c + vec2(3.5, 3.5)], s);
+                ui.painter().line_segment([c + vec2(-3.5, 3.5), c + vec2(3.5, -3.5)], s);
+                crate::scenario::publish_handle(&format!("agent_chat:file_loading_remove:{i}"), c);
+                clicked = x.on_hover_text(tr("ui.agent_chat_remove_file")).clicked();
+            });
+        },
+    );
+    crate::scenario::publish_handle(&format!("agent_chat:file_loading:{i}"), r.response.rect.center());
+    clicked
 }
 
 /// One file chip, `w` wide in all; true when its × was clicked.
