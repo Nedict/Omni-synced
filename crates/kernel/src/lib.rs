@@ -133,6 +133,7 @@ mod thread_display_tests;
 #[cfg(test)]
 mod thread_tests;
 mod topo;
+mod touching_walls;
 mod tspline;
 #[cfg(test)]
 mod untouched_faces_tests;
