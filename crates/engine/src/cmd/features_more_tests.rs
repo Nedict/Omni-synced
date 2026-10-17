@@ -78,6 +78,28 @@ fn rib_with_a_depth_and_web() {
 }
 
 #[test]
+fn rib_along_the_sketch_normal_reaches_the_body() {
+    // A 20 x 20 x 10 box; a line along X on a sketch 10 in front of it (y = -10), whose plane
+    // the box does not cross, so only a rib along the sketch normal can reach it.
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 10, "corner": [0, 0, 0]}));
+    run(&mut s, "sketch.create", json!({"plane": {"origin": [0, -10, 0], "x_dir": [1, 0, 0], "y_dir": [0, 0, 1]}, "name": "Front"}));
+    run(&mut s, "sketch.line", json!({"points": [[2, 5], [18, 5]], "ids": ["l1"]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let e = s.execute("solid.rib", &json!({"sketch": "Front", "curves": ["l1"], "thickness": 2}));
+    assert!(e.is_err_and(|e| e.to_string().contains("do not face a body")));
+    run(&mut s, "solid.rib", json!({"sketch": "Front", "curves": ["l1"], "thickness": 2, "direction": "normal"}));
+    // 16 long, 2 thick, 10 from the sketch to the box.
+    assert!(rel(volume(&mut s), 4000.0 + 320.0) < 1e-6, "{}", volume(&mut s));
+    assert_eq!(measure(&mut s)["body_count"], 1);
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "solid.rib", json!({"sketch": "Front", "curves": ["l1"], "thickness": 2, "direction": "normal", "depth": 4}));
+    assert!(rel(volume(&mut s), 4000.0 + 128.0) < 1e-6, "{}", volume(&mut s));
+    let e = s.execute("solid.rib", &json!({"sketch": "Front", "curves": ["l1"], "thickness": 2, "direction": "sideways"}));
+    assert!(e.is_err_and(|e| e.to_string().contains("unknown direction")));
+}
+
+#[test]
 fn emboss_and_deboss_on_a_face() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 10}));
@@ -1250,4 +1272,30 @@ fn a_line_of_text_cut_again_deeper_is_one_exact_boolean() {
     // Cut again 2 mm deep: one more millimetre of the letters.
     let again = cut(&mut s, 2.0);
     assert!(rel(again, first) < 1e-3, "{first} {again}");
+}
+
+/// Text cut through a large plate (2 m) is decided in 2D in one exact boolean, as it is in a
+/// small one. The 2D route's tolerances grow with the part: a font's curve that is merely near a
+/// circle was read as an arc ending a micron off the next curve, so the letter's outline did not
+/// close, and where the curves of a 3 come close the arrangement left a sliver that closed up to
+/// nothing. The cut went to the B-rep boolean instead, which took tens of seconds and moved the
+/// tool to find a result at all.
+#[test]
+fn text_cut_through_a_large_plate_is_one_exact_boolean() {
+    let taken = |w: f64, h: f64, at: [f64; 2]| {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length":w,"width":h,"height":1.5,"corner":[0,0,0]}));
+        let before = volume(&mut s);
+        run(&mut s, "sketch.create", json!({"plane":"XY","offset":1.5}));
+        run(&mut s, "sketch.text", json!({"text":"PART-23","at":at,"height":7}));
+        run(&mut s, "sketch.finish", json!({}));
+        let id = run(&mut s, "solid.extrude", json!({"distance":-2,"operation":"cut"}))["feature"].as_u64().unwrap();
+        let r = s.model.result(id).unwrap();
+        assert!(r.error.is_none() && r.boolean_diagnostics.events.is_empty(), "{w} x {h}: {r:?}");
+        before - volume(&mut s)
+    };
+    let (small, large) = (taken(200.0, 120.0, [60.0, 40.0]), taken(2000.0, 1200.0, [860.0, 125.0]));
+    // The letters right through the plate, their counters left as pieces of their own: the same
+    // material in either plate (measured on meshes, which are coarser on the larger one).
+    assert!(small > 10.0 && rel(large, small) < 5e-2, "{small} {large}");
 }

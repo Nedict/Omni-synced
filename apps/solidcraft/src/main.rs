@@ -117,9 +117,15 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
     let open_parent = parent.clone();
     let program_parent = parent.clone();
     Services {
-        pick_open: Some(Box::new(move || {
-            let future = open_parent
-                .clone()
+        pick_open: Some(Box::new(move |first: &[&str]| {
+            // The file type the command reads comes first, so the picker opens on it (#1801).
+            let mut dialog = open_parent.clone();
+            if !first.is_empty() {
+                let label = first.iter().map(|e| e.to_uppercase()).collect::<Vec<_>>().join(", ");
+                let both: Vec<String> = first.iter().flat_map(|e| [e.to_lowercase(), e.to_uppercase()]).collect();
+                dialog = dialog.add_filter(label, &both);
+            }
+            let future = dialog
                 .add_filter(
                     "Designs, CAD files and meshes",
                     &[
@@ -416,6 +422,10 @@ fn msaa() -> u16 {
 const CUSTOM_TITLEBAR: bool = !cfg!(target_os = "macos");
 
 const DEPTH_BITS: u8 = 24;
+/// A 32-bit float depth buffer, drawn with reversed depth (1 near, 0 far) so its precision follows
+/// the distance from the eye (#1434). Only where every adapter offers it with a stencil
+/// ([`startup::float_depth_everywhere`]); else [`DEPTH_BITS`]. Not in safe mode.
+const FLOAT_DEPTH_BITS: u8 = 32;
 /// The section cap marks where it shows in the stencil.
 const STENCIL_BITS: u8 = 8;
 const MSAA: u16 = 4;
@@ -497,6 +507,8 @@ fn main() -> eframe::Result {
         notes.push("Safe mode: default settings (yours are kept for the next normal start), no recovery offer, software rendering.".into());
     }
     let samples = if safe_mode { MSAA } else { msaa() };
+    let wgpu_options = wgpu_options(cpu_renderer, if safe_mode { None } else { backend_preference() }.as_deref());
+    let depth_bits = if !safe_mode && startup::float_depth_everywhere(&wgpu_options) { FLOAT_DEPTH_BITS } else { DEPTH_BITS };
     // Crashes leave a report in the crash folder (solidcraft_engine::crash, docs/crash-reports.md).
     let crashed = solidcraft_engine::crash::default_dir()
         .map(|dir| {
@@ -516,7 +528,7 @@ fn main() -> eframe::Result {
     solidcraft_engine::crash::phase("window");
     let options = eframe::NativeOptions {
         viewport: app_viewport()?,
-        depth_buffer: DEPTH_BITS,
+        depth_buffer: depth_bits,
         stencil_buffer: STENCIL_BITS,
         multisampling: samples,
         // Kept with the other settings, not in a folder named after the app id. Safe mode reads
@@ -529,7 +541,7 @@ fn main() -> eframe::Result {
             settings.as_ref().map(|d| d.join("app.ron"))
         },
         persist_window: !safe_mode,
-        wgpu_options: wgpu_options(cpu_renderer, if safe_mode { None } else { backend_preference() }.as_deref()),
+        wgpu_options,
         ..Default::default()
     };
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -579,7 +591,7 @@ fn main() -> eframe::Result {
             if let Some(rs) = &cc.wgpu_render_state {
                 eprintln!("SolidCraft graphics: {:?}, MSAA {}x (requested {}x)", rs.adapter.get_info().backend, rs.msaa_samples, samples);
                 solidcraft_engine::crash::phase("viewport pipelines (shader compile)");
-                app.set_wgpu(rs, DEPTH_BITS, STENCIL_BITS, rs.msaa_samples);
+                app.set_wgpu(rs, depth_bits, STENCIL_BITS, rs.msaa_samples);
                 solidcraft_ui_egui::gpu::install_picture_renderer(rs);
                 // The graphics driver is loaded now; it may have put its own exception filter
                 // in front of ours.
@@ -685,6 +697,13 @@ fn wgpu_options(cpu: bool, preference: Option<&str>) -> eframe::egui_wgpu::WgpuC
         if cpu {
             setup.native_adapter_selector = Some(std::sync::Arc::new(startup::pick_cpu_adapter));
         }
+        // A float depth buffer with a stencil, wherever the adapter has it (see `FLOAT_DEPTH_BITS`).
+        let base = setup.device_descriptor.clone();
+        setup.device_descriptor = std::sync::Arc::new(move |adapter| {
+            let mut d = base(adapter);
+            d.required_features |= adapter.features() & startup::FLOAT_DEPTH_STENCIL;
+            d
+        });
     }
     options
 }
