@@ -649,9 +649,11 @@ fn flatten<'a>(
             format!("3MF: missing object {id} in model part `{part}`")
         })
     })?;
-    *total = total.saturating_add(o.triangles.len());
+    // Every placement costs at least one unit of the budget, so objects that only place other
+    // objects cannot fan out (hundreds of components per level, nested) into endless visits.
+    *total = total.saturating_add(o.triangles.len().max(1));
     if *total > MAX_ELEMENTS {
-        return bad("too many triangles after placing components");
+        return bad("too many triangles or placements after placing components");
     }
     let n = o.positions.len();
     // One object can be placed by thousands of build items and components, and each placement
@@ -1044,6 +1046,23 @@ pub(crate) mod tests {
         assert_eq!(objs.len(), 10_000);
         // Only the three vertices the one triangle reaches are copied per placement.
         assert!(objs.iter().all(|o| o.positions.len() == 3 && o.triangles.len() == 1), "{:?}", objs.first().map(|o| o.positions.len()));
+        assert!(t.elapsed() < std::time::Duration::from_secs(30), "took {:?}", t.elapsed());
+    }
+
+    /// Objects that only place other objects count toward the budget too: six levels of 300
+    /// components over an empty object (300^6 placements, and no triangles to count) stop at the
+    /// budget instead of running for days.
+    #[test]
+    fn nested_fan_out_of_empty_objects_is_bounded() {
+        let t = std::time::Instant::now();
+        let components = |child: u32| (0..300).map(|_| format!(r#"<component objectid="{child}"/>"#)).collect::<String>();
+        let mut objects = r#"<object id="1" type="model"/>"#.to_string();
+        for id in 2..=7 {
+            objects += &format!(r#"<object id="{id}" type="model"><components>{}</components></object>"#, components(id - 1));
+        }
+        let model = format!(r#"<model unit="millimeter" {PRODUCTION}><resources>{objects}</resources><build><item objectid="7"/></build></model>"#);
+        let err = read_3mf(&package(&model, None)).unwrap_err().to_string();
+        assert!(err.contains("placements"), "{err}");
         assert!(t.elapsed() < std::time::Duration::from_secs(30), "took {:?}", t.elapsed());
     }
 
