@@ -305,6 +305,18 @@ pub fn canonical_revolve_axis(plane: &Plane, region: &Region2, axis_origin: Vec2
 /// Revolve each region about the sketch axis by `angle` radians.
 /// This legacy API preserves its historical sweep sign behavior.
 pub fn revolve(plane: &Plane, regions: &[Region2], axis_origin: Vec2, axis_dir: Vec2, angle: f64) -> Result<Vec<Body>> {
+    revolved(plane, regions, axis_origin, axis_dir, angle, false)
+}
+
+/// [`revolve`] for bodies that are final (new bodies, not a boolean's tools): a partial turn's
+/// planar faces come out whole too, as a full turn's always do (#726). A tool is left as swept:
+/// healed, its planar faces meet a target exactly where they are tangent to it, and the
+/// boolean leaves pieces there that touch. The boolean heals its own result anyway.
+pub fn revolve_whole(plane: &Plane, regions: &[Region2], axis_origin: Vec2, axis_dir: Vec2, angle: f64) -> Result<Vec<Body>> {
+    revolved(plane, regions, axis_origin, axis_dir, angle, true)
+}
+
+fn revolved(plane: &Plane, regions: &[Region2], axis_origin: Vec2, axis_dir: Vec2, angle: f64, whole: bool) -> Result<Vec<Body>> {
     let angle = finite(angle, "angle")?;
     if angle.abs() < 1e-6 {
         return Err(KernelError::Invalid("revolve angle is zero".into()));
@@ -447,9 +459,44 @@ pub fn revolve(plane: &Plane, regions: &[Region2], axis_origin: Vec2, axis_dir: 
         let closed = angle.abs() >= std::f64::consts::TAU;
         let history = guard("revolve history", || Ok(record::swept_face(&solid, &f, &seeds(&profile), closed)))?;
         let solid = if shift.len() > 0.0 { builder::translated(&solid, v3(shift)) } else { solid };
+        let (solid, history) = if closed || whole { turned_whole(solid, history) } else { (solid, history) };
         out.push(record::attach(Body::new(solid)?, &[], history, Default::default())?);
     }
     Ok(out)
+}
+
+/// A revolved solid with its planar faces whole (#726): the sweep turns each profile edge into
+/// two or three patches, the planar ones on revolved surfaces, which stayed apart until a later
+/// feature healed the body, so a pick on one took part of the face. Healed as booleans heal
+/// their results, each face is still generated, from the profile edges of the patches merged
+/// into it. The solid as it was when healing fails or can't be followed.
+fn turned_whole(solid: Solid, faces: Option<Vec<FaceProv>>) -> (Solid, Option<Vec<FaceProv>>) {
+    let Some(given) = faces.as_ref() else { return (solid, faces) };
+    let Ok(size) = Body::new(solid.clone()).map(|b| b.size()) else { return (solid, faces) };
+    let healed = guard("heal revolve", || {
+        let (healed, map) = crate::heal::heal_traced(solid.clone(), size, &[]);
+        let failed = || KernelError::Failed("heal revolve".into());
+        if !crate::boolean_record::edges_evaluate(&healed) {
+            return Err(failed());
+        }
+        let carried = map
+            .ok_or_else(failed)?
+            .faces
+            .iter()
+            .map(|under| {
+                let mut origins: Vec<_> = under.iter().map(|i| given.get(*i).map(|f| f.origins.clone())).collect::<Option<Vec<_>>>()?.concat();
+                origins.sort();
+                origins.dedup();
+                Some(FaceProv { origins, change: crate::history::Change::Generated })
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(failed)?;
+        Ok((healed, carried))
+    });
+    match healed {
+        Ok((healed, carried)) => (healed, Some(carried)),
+        Err(_) => (solid, faces),
+    }
 }
 
 /// Axis-aligned box between two corners.
@@ -1788,7 +1835,7 @@ pub(crate) fn rotate_about(p: Vec3, center: Vec3, k: Vec3, angle: f64) -> Vec3 {
 
 /// The path as a polyline: its first point, then each segment's points (arcs within 0.01 mm of
 /// their chords).
-pub(crate) fn path_polyline(path: &[PathSeg]) -> Result<Vec<Vec3>> {
+pub fn path_polyline(path: &[PathSeg]) -> Result<Vec<Vec3>> {
     let first = match path.first() {
         Some(PathSeg::Line { a, .. } | PathSeg::Arc { a, .. }) => *a,
         None => return Err(KernelError::Invalid("the path needs 1…1000 segments".into())),
@@ -2016,6 +2063,15 @@ pub fn sphere_patches_rotated(center: Vec3, radius: f64, rot: [Vec3; 3]) -> Resu
 
 /// [`sphere_patches_rotated`], every patch swept from profile segments `arcs`.
 fn sphere_solid(center: Vec3, radius: f64, rot: [Vec3; 3], arcs: &[usize]) -> Result<Body> {
+    guard("sphere", || {
+        let shell: mt::Shell = sphere_patch_faces(center, radius, rot)?.into();
+        let solid = Solid::try_new(vec![shell]).map_err(|e| KernelError::Failed(format!("sphere: {e}")))?;
+        record::attach(Body::new(solid)?, &[], Some(vec![record::profile(arcs); 6]), Default::default())
+    })
+}
+
+/// The six outward patch faces of [`sphere_patches_rotated`]; truck calls, so callers guard them.
+pub(crate) fn sphere_patch_faces(center: Vec3, radius: f64, rot: [Vec3; 3]) -> Result<Vec<mt::Face>> {
     let radius = finite(radius, "radius")?;
     let turn = |v: Vec3| rot[0] * v.x + rot[1] * v.y + rot[2] * v.z;
     if radius <= 1e-6 || !center.is_finite() {
@@ -2033,50 +2089,46 @@ fn sphere_solid(center: Vec3, radius: f64, rot: [Vec3; 3], arcs: &[usize]) -> Re
         (Vec3::Z, Vec3::X, [[-1.0, -1.0, 1.0], [1.0, -1.0, 1.0], [1.0, 1.0, 1.0], [-1.0, 1.0, 1.0]]),
         (-Vec3::Z, Vec3::X, [[-1.0, 1.0, -1.0], [1.0, 1.0, -1.0], [1.0, -1.0, -1.0], [-1.0, -1.0, -1.0]]),
     ];
-    guard("sphere", || {
-        let key = |s: [f64; 3]| ((s[0] > 0.0) as usize) | (((s[1] > 0.0) as usize) << 1) | (((s[2] > 0.0) as usize) << 2);
-        let mut verts: std::collections::HashMap<usize, mt::Vertex> = std::collections::HashMap::new();
-        let mut vert = |s: [f64; 3]| verts.entry(key(s)).or_insert_with(|| builder::vertex(p3(corner(s[0], s[1], s[2])))).clone();
-        let mut edges: std::collections::HashMap<(usize, usize), mt::Edge> = std::collections::HashMap::new();
-        let mut out: Vec<mt::Face> = Vec::new();
-        for (dir, axis, cs) in faces {
-            let (dir, axis) = (turn(dir), turn(axis));
-            let mut wire: Vec<mt::Edge> = Vec::new();
-            for i in 0..4 {
-                let (a, b) = (cs[i], cs[(i + 1) % 4]);
-                let (ka, kb) = (key(a), key(b));
-                let e = match edges.get(&(ka.min(kb), ka.max(kb))) {
-                    Some(e) => e.clone(),
-                    None => {
-                        let (lo, hi) = if ka < kb { (a, b) } else { (b, a) };
-                        let (va, vb) = (vert(lo), vert(hi));
-                        let mid = (corner(lo[0], lo[1], lo[2]) + corner(hi[0], hi[1], hi[2])) * 0.5 - center;
-                        let transit = center + mid.normalized().unwrap_or(dir) * radius;
-                        let e = builder::circle_arc(&va, &vb, p3(transit));
-                        edges.insert((ka.min(kb), ka.max(kb)), e.clone());
-                        e
-                    }
-                };
-                wire.push(if ka < kb { e } else { e.inverse() });
-            }
-            // The meridian runs pole to pole through the side away from the patch.
-            let (np, sp, back) = (center + axis * radius, center - axis * radius, center - dir * radius);
-            let meridian = builder::circle_arc(&builder::vertex(p3(np)), &builder::vertex(p3(sp)), p3(back));
-            let mut surface =
-                mt::Surface::RevolutedCurve(mt::Processor::new(mt::RevolutedCurve::by_revolution(meridian.oriented_curve(), p3(center), v3(axis))));
-            // Outward normal at the patch centre.
-            let probe = p3(center + dir * radius);
-            use mt::{ParametricSurface3D, SearchParameter};
-            if let Some((u, v)) = surface.search_parameter(probe, mt::SPHint2D::None, 100) {
-                let n = surface.normal(u, v);
-                if mt::InnerSpace::dot(n, v3(dir)) < 0.0 {
-                    mt::Invertible::invert(&mut surface);
+    let key = |s: [f64; 3]| ((s[0] > 0.0) as usize) | (((s[1] > 0.0) as usize) << 1) | (((s[2] > 0.0) as usize) << 2);
+    let mut verts: std::collections::HashMap<usize, mt::Vertex> = std::collections::HashMap::new();
+    let mut vert = |s: [f64; 3]| verts.entry(key(s)).or_insert_with(|| builder::vertex(p3(corner(s[0], s[1], s[2])))).clone();
+    let mut edges: std::collections::HashMap<(usize, usize), mt::Edge> = std::collections::HashMap::new();
+    let mut out: Vec<mt::Face> = Vec::new();
+    for (dir, axis, cs) in faces {
+        let (dir, axis) = (turn(dir), turn(axis));
+        let mut wire: Vec<mt::Edge> = Vec::new();
+        for i in 0..4 {
+            let (a, b) = (cs[i], cs[(i + 1) % 4]);
+            let (ka, kb) = (key(a), key(b));
+            let e = match edges.get(&(ka.min(kb), ka.max(kb))) {
+                Some(e) => e.clone(),
+                None => {
+                    let (lo, hi) = if ka < kb { (a, b) } else { (b, a) };
+                    let (va, vb) = (vert(lo), vert(hi));
+                    let mid = (corner(lo[0], lo[1], lo[2]) + corner(hi[0], hi[1], hi[2])) * 0.5 - center;
+                    let transit = center + mid.normalized().unwrap_or(dir) * radius;
+                    let e = builder::circle_arc(&va, &vb, p3(transit));
+                    edges.insert((ka.min(kb), ka.max(kb)), e.clone());
+                    e
                 }
-            }
-            out.push(mt::Face::new(vec![wire.into()], surface));
+            };
+            wire.push(if ka < kb { e } else { e.inverse() });
         }
-        let shell: mt::Shell = out.into();
-        let solid = Solid::try_new(vec![shell]).map_err(|e| KernelError::Failed(format!("sphere: {e}")))?;
-        record::attach(Body::new(solid)?, &[], Some(vec![record::profile(arcs); 6]), Default::default())
-    })
+        // The meridian runs pole to pole through the side away from the patch.
+        let (np, sp, back) = (center + axis * radius, center - axis * radius, center - dir * radius);
+        let meridian = builder::circle_arc(&builder::vertex(p3(np)), &builder::vertex(p3(sp)), p3(back));
+        let mut surface =
+            mt::Surface::RevolutedCurve(mt::Processor::new(mt::RevolutedCurve::by_revolution(meridian.oriented_curve(), p3(center), v3(axis))));
+        // Outward normal at the patch centre.
+        let probe = p3(center + dir * radius);
+        use mt::{ParametricSurface3D, SearchParameter};
+        if let Some((u, v)) = surface.search_parameter(probe, mt::SPHint2D::None, 100) {
+            let n = surface.normal(u, v);
+            if mt::InnerSpace::dot(n, v3(dir)) < 0.0 {
+                mt::Invertible::invert(&mut surface);
+            }
+        }
+        out.push(mt::Face::new(vec![wire.into()], surface));
+    }
+    Ok(out)
 }

@@ -1559,7 +1559,6 @@ fn a_sketch_on_the_rim_a_shell_leaves() {
 }
 
 #[test]
-#[ignore = "fails until #565 is fixed"]
 fn sketches_after_split_body_and_intersect() {
     reproduces(
         None,

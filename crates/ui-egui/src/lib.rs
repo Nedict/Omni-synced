@@ -36,6 +36,7 @@ pub mod dialogs_save_mesh;
 pub mod dialogs_sheet;
 pub mod dialogs_surface;
 pub mod dialogs_sweep;
+mod dialogs_thread;
 pub mod dialogs_view_dxf;
 pub mod dim_view;
 #[cfg(test)]
@@ -59,6 +60,7 @@ pub mod i18n;
 mod i18n_menu_tests;
 #[cfg(test)]
 mod i18n_ui_tests;
+pub mod icon_svg;
 pub mod icons;
 pub mod inference;
 pub mod install;
@@ -111,6 +113,8 @@ mod fillet_spline_handle_tests;
 pub(crate) mod navigation;
 pub mod palette;
 pub mod params_dialog;
+pub(crate) mod pick_buffer;
+pub(crate) mod pick_index;
 pub mod prefs;
 #[cfg(test)]
 mod preselect_tests;
@@ -251,7 +255,9 @@ impl Default for UiState {
 /// Host services injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
-    pub pick_open: Option<Box<dyn Fn() -> FilePickerFuture>>,
+    /// Ask for a file to open. The extensions are the file type the command reads, offered as
+    /// the picker's first filter (`&[]`: designs, CAD files and meshes, #1801).
+    pub pick_open: Option<Box<dyn Fn(&[&str]) -> FilePickerFuture>>,
     pub pick_save: Option<Box<dyn Fn(&str, &[&str]) -> FilePickerFuture>>,
     /// Open a dialog asking for a program (a slicer); `None` when the host has no such dialog.
     pub pick_program: Option<Box<dyn Fn() -> FilePickerFuture>>,
@@ -733,8 +739,8 @@ impl SolveApp {
         dim_view::cancel();
         self.tool = None;
         self.home.open = false;
-        if matches!(id, "sketch.insert_dxf" | "sketch.insert_svg") {
-            self.pick_open_command(id, json!({}));
+        if let Some(ext) = id.strip_prefix("sketch.insert_").filter(|e| matches!(*e, "dxf" | "svg")) {
+            self.pick_open_command(id, json!({}), &[ext]);
             return;
         }
         if id == "component.insert_design" {
@@ -958,13 +964,22 @@ impl SolveApp {
         v
     }
 
-    /// Is the origin widget shown (always while picking a sketch plane)?
-    /// Origin planes and axes are drawn and pickable. Hidden ones only come back while Create
-    /// Sketch has nothing else to offer (no body shown).
+    /// Is the origin widget shown? Origin planes and axes are drawn and pickable. While Create
+    /// Sketch picks its plane the Origin is always shown, drawn through the model (a plane
+    /// inside a body stays visible), even when the browser hides it.
     pub fn origin_visible(&self) -> bool {
-        self.ui.show_origin
-            || (self.dialog.as_ref().is_some_and(|d| matches!(d.kind, dialogs::Kind::Sketch))
-                && !self.session.world_state().bodies.iter().any(|b| self.session.body_visible(&b.name)))
+        self.ui.show_origin || self.picking_sketch_plane()
+    }
+
+    /// Is Create Sketch open, waiting for its plane?
+    pub fn picking_sketch_plane(&self) -> bool {
+        self.dialog.as_ref().is_some_and(|d| matches!(d.kind, dialogs::Kind::Sketch))
+    }
+
+    /// Is the view drawn in perspective? The perspective preference, except while a sketch is
+    /// open: a sketch is drawn and measured on its plane, so the view is parallel (no foreshortening).
+    pub fn perspective_view(&self) -> bool {
+        self.ui.perspective && self.session.active_sketch.is_none()
     }
 
     pub fn set_status(&mut self, s: impl Into<String>, error: bool) {
@@ -1068,7 +1083,7 @@ impl SolveApp {
 
     fn fitted_bounds(&self, mut cam: Camera, bounds: &solidcraft_engine::geom::Aabb3) -> Camera {
         if let Some(layout) = &self.viewport.layout {
-            return viewport_layout::fit_bounds(cam, bounds, layout, self.ui.perspective).unwrap_or(cam);
+            return viewport_layout::fit_bounds(cam, bounds, layout, self.perspective_view()).unwrap_or(cam);
         }
         let previous = cam;
         cam.fit(bounds);

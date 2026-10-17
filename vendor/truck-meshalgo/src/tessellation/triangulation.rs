@@ -389,7 +389,14 @@ fn shell_create_polygon<S: PreMeshableSurface>(
         .collect::<Option<Vec<_>>>();
     let polygon: Option<PolygonMesh> = (|| {
         let boundary = PolyBoundary::new(preboundary?, &surface, tol);
-        Some(trimming_tessellation(surface, &boundary, tol, cap))
+        let mut mesh = trimming_tessellation(surface, &boundary, tol, cap);
+        // Display and export meshes only, as the ruling grid lines: the meshes Boolean
+        // operations intersect keep truck's points.
+        if tol.rulings {
+            let points: Vec<Point3> = wires.iter().flat_map(Wire::edge_iter).flat_map(|e| e.curve().0).collect();
+            onto_edges(&mut mesh, &boundary, &points, tol.chord);
+        }
+        Some(mesh)
     })();
     // SolidCraft: faces with seam edges (a loop running along an edge both ways, as STEP
     // writes cylinders) are valid here; `debug_new` asserts simple loops in debug builds.
@@ -398,6 +405,42 @@ fn shell_create_polygon<S: PreMeshableSurface>(
         new_face.invert();
     }
     new_face
+}
+
+/// SolidCraft: a face's mesh puts every point where its own surface passes the point's
+/// parameters, and a boundary point's parameters are those its edge point projects to. An edge
+/// that lies on a surface only within tolerance (a sample of an intersection curve whose
+/// projection did not converge, an imported edge) then puts the point it shares with the next
+/// face in a different place on each face, and the shell's mesh cracks there. Each vertex at a
+/// point of the boundary loops (the same parameters, as the triangulation got them) that is
+/// farther than `TOLERANCE` from the nearest point of the face's edges goes to that point, when
+/// it is within `tol`, so the faces of an edge have the very same points along it. Within
+/// `TOLERANCE` the points are already the same, and a face keeps them on its surface: grid
+/// points can lie on a boundary between its points (the ruling lines of a plane), and moving
+/// only the boundary points would bend the boundary there.
+fn onto_edges(mesh: &mut PolygonMesh, boundary: &PolyBoundary, points: &[Point3], tol: f64) {
+    let key = |x: f64, y: f64| [spade_round(x).to_bits(), spade_round(y).to_bits()];
+    let loops: rustc_hash::FxHashSet<[u64; 2]> = boundary.0.iter().flatten().map(|p| key(p.x, p.y)).collect();
+    let on_loops: Vec<bool> = mesh.uv_coords().iter().map(|uv| loops.contains(&key(uv.x, uv.y))).collect();
+    let cell = |p: Point3| [p.x, p.y, p.z].map(|x| (x / tol).floor() as i64);
+    let mut grid: HashMap<[i64; 3], Vec<Point3>> = HashMap::default();
+    points.iter().for_each(|p| grid.entry(cell(*p)).or_default().push(*p));
+    for (p, _) in mesh.positions_mut().iter_mut().zip(on_loops).filter(|(_, on)| *on) {
+        let c = cell(*p);
+        let mut best = (tol * tol, None);
+        for d in (0..27).map(|k| [k % 3 - 1, k / 3 % 3 - 1, k / 9 - 1]) {
+            let near = [c[0].saturating_add(d[0]), c[1].saturating_add(d[1]), c[2].saturating_add(d[2])];
+            for q in grid.get(&near).into_iter().flatten() {
+                let d2 = q.distance2(*p);
+                if d2 <= best.0 {
+                    best = (d2, Some(*q));
+                }
+            }
+        }
+        if let Some(q) = best.1.filter(|_| best.0 > TOLERANCE2) {
+            *p = q;
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -860,6 +903,8 @@ fn insert_surface(
         let (u, v) = balanced_grid(&surface, u, v, cap);
         let v = with_ruling_vertices(v, polyline, 1, tol.rulings && v_ruled, u.len(), cap);
         let u = with_ruling_vertices(u, polyline, 0, tol.rulings && u_ruled, v.len(), cap);
+        let v = with_boundary_lines(v, polyline, 1, tol.rulings && v_ruled && !u_ruled, u.len(), cap);
+        let u = with_boundary_lines(u, polyline, 0, tol.rulings && u_ruled && !v_ruled, v.len(), cap);
         (u, v)
     };
     let insert_res: Vec<Vec<Option<_>>> = udiv
@@ -1131,6 +1176,46 @@ fn with_ruling_vertices(div: Vec<f64>, polyline: &PolyBoundary, axis: usize, rul
             }
         }
     }
+    if extra.is_empty() || (div.len() + extra.len()).saturating_mul(other) > cap {
+        return div;
+    }
+    let mut out = div;
+    out.extend(extra);
+    out.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    out
+}
+
+/// SolidCraft: `div` (the grid along coordinate `axis`, 0 for u and 1 for v) with a line through
+/// every point of the face's boundary that lies inside the face along that axis: the points of a
+/// hole cut into a cylinder or a cone, or of a trim that crosses its rulings (an oblique plane
+/// through a cone's narrow chamfer). A ruled direction gets few lines (one cell along a cone's
+/// short side), and a boundary point between them has no grid point beside it: the triangulation
+/// joins it to the far ends of the face, many degrees round, and those triangles cut through the
+/// surface (a cone face with a small hole meshed several mm² too large, and the boolean that made
+/// it was refused for its volume). Only a direction that needs no division of its own (`ruled`)
+/// while the other does gets them (a plane, ruled both ways, maps to its uv space without
+/// stretching and needs none), only for a few such points (corners standing into the face, at
+/// most [`MAX_BOUNDARY_LINES`]), and while the grid stays within `cap`.
+/// SolidCraft: most boundary points inside a ruled face that get grid lines through them.
+const MAX_BOUNDARY_LINES: usize = 16;
+
+fn with_boundary_lines(div: Vec<f64>, polyline: &PolyBoundary, axis: usize, ruled: bool, other: usize, cap: usize) -> Vec<f64> {
+    let (Some(&first), Some(&last)) = (div.first(), div.last()) else { return div };
+    let span = last - first;
+    if !ruled || !(span.is_finite() && span > 0.0) {
+        return div;
+    }
+    // Lines closer than this to another add nothing but slivers.
+    let apart = span * 1e-3;
+    let mut at: Vec<f64> = polyline.0.iter().flatten().map(|p| p[axis]).filter(|t| t.is_finite() && *t > first + apart && *t < last - apart).collect();
+    at.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    at.dedup_by(|a, b| (*a - *b).abs() <= apart);
+    // Many: a boundary curve running through the face, which the triangulation already follows
+    // with short triangles (a cylinder cut by another); lines along it only crowd it.
+    if at.len() > MAX_BOUNDARY_LINES {
+        return div;
+    }
+    let extra: Vec<f64> = at.into_iter().filter(|t| div.iter().all(|d| (d - t).abs() > apart)).collect();
     if extra.is_empty() || (div.len() + extra.len()).saturating_mul(other) > cap {
         return div;
     }
