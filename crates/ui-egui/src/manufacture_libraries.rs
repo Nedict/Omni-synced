@@ -101,13 +101,17 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut do_install: Option<String> = None;
     let mut do_remove: Option<String> = None;
 
-    let max_h = (ui.ctx().content_rect().height() - 48.0).max(200.0);
+    // Stay inside the harness screen (1000 px tall) and under WINDOW_WIDE_MAX_W: a centred
+    // 480-tall window still clipped the top once content grew, and the column mins pushed past 760.
+    let screen = ui.ctx().content_rect();
+    let max_h = (screen.height() - 96.0).max(200.0);
     crate::frame::window(ui.ctx(), st.kind.title(), crate::frame::Width::Wide)
         .id(egui::Id::new("mfg_library_dialog").with(st.kind.title()))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
-        .default_size([740.0, 480.0])
+        .constrain(true)
+        .default_size([700.0, 400.0])
         .max_height(max_h)
         .show(ui.ctx(), |ui| {
             ui.horizontal(|ui| {
@@ -124,8 +128,8 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.horizontal_top(|ui| {
                 // ── Left: sources ───────────────────────────────────────────
                 ui.vertical(|ui| {
-                    ui.set_min_width(140.0);
-                    ui.set_max_width(160.0);
+                    ui.set_min_width(120.0);
+                    ui.set_max_width(140.0);
                     ui.label(RichText::new("Sources").strong());
                     if ui.selectable_label(st.sidebar == SidebarSel::Document, "Document").clicked() {
                         st.sidebar = SidebarSel::Document;
@@ -161,8 +165,8 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
                 ui.separator();
                 // ── Center: list ────────────────────────────────────────────
                 ui.vertical(|ui| {
-                    ui.set_min_width(320.0);
-                    ui.set_max_width(400.0);
+                    ui.set_min_width(280.0);
+                    ui.set_max_width(360.0);
                     let filtered: Vec<(usize, &CatalogEntry)> = st
                         .entries
                         .iter()
@@ -190,7 +194,7 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
                         })
                         .collect();
                     ui.label(format!("{} items", filtered.len()));
-                    egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                    egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
                         for (idx, e) in filtered {
                             let sel = st.selected == Some(idx);
                             let row = format!("{}  ·  {}  ·  {}", e.name, if e.vendor.is_empty() { "—" } else { &e.vendor }, e.location.label());
@@ -225,8 +229,8 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
                 ui.separator();
                 // ── Right: filters / info ───────────────────────────────────
                 ui.vertical(|ui| {
-                    ui.set_min_width(140.0);
-                    ui.set_max_width(160.0);
+                    ui.set_min_width(120.0);
+                    ui.set_max_width(140.0);
                     ui.label(RichText::new("Filters").strong());
                     ui.label("Capability");
                     for cap in ["", "milling", "turning", "additive", "fabrication", "inspection", "holes"] {

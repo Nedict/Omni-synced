@@ -193,13 +193,15 @@ fn show_tool_library(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut delete = false;
     let mut duplicate = false;
 
-    let max_h = (ui.ctx().content_rect().height() - 48.0).max(200.0);
+    let screen = ui.ctx().content_rect();
+    let max_h = (screen.height() - 96.0).max(200.0);
     crate::frame::window(ui.ctx(), "Tool Library", crate::frame::Width::Wide)
         .id(egui::Id::new("mfg_tool_library"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
-        .default_size([740.0, 480.0])
+        .constrain(true)
+        .default_size([700.0, 400.0])
         .max_height(max_h)
         .show(ui.ctx(), |ui| {
             ui.horizontal(|ui| {
@@ -420,13 +422,15 @@ fn show_edit_tool(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut cancel = false;
     let title = format!("Tool Library — {}", st.draft.display_name());
 
-    let max_h = (ui.ctx().content_rect().height() - 48.0).max(200.0);
+    let screen = ui.ctx().content_rect();
+    let max_h = (screen.height() - 96.0).max(200.0);
     crate::frame::window(ui.ctx(), title, crate::frame::Width::Wide)
         .id(egui::Id::new("mfg_edit_tool"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
-        .default_size([720.0, 480.0])
+        .constrain(true)
+        .default_size([700.0, 400.0])
         .max_height(max_h)
         .show(ui.ctx(), |ui| {
             ui.horizontal(|ui| {
