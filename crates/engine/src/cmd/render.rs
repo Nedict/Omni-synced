@@ -14,7 +14,7 @@ mod jobs;
 
 pub static COMMANDS: &[CommandSpec] = &[
 CommandSpec::new("render.preflight", "Check Render Request", jobs::preflight).noundo().doc_only()
-    .params("setup?: saved name OR settings?: full RenderSetup; transparent_background?: false; replace?: false. Validates the installed image host and bounded captured product scene without starting work. Stale geometry is rejected. See docs/render-jobs.md"),
+    .params("setup?: saved name OR settings?: full RenderSetup; integrator?: raster (default) or raytrace; raytrace?: bounded runtime lights/exposure_ev/shadows/reflections/anisotropic_faces options, only with raytrace; environment?: {path: scoped HDR, rotation_radians: 0, intensity: 1, samples: 16}; explicit sRGB/D65 HDR primaries required. Opaque CPU preview with selected mirror/rough-specular reflections and certified planar anisotropy. HDR with rough reflections or anisotropy requires fully metallic selected bodies and all effective faces; unsupported combinations refuse. No MIS, GI or glass/refraction. transparent_background?: false; replace?: false. Optional CPU raytracing requires a raytrace-cpu build and native host, checked before scene capture. Stale geometry is rejected. See docs/render-jobs.md"),
 CommandSpec::new("render.start", "Render Image", jobs::start).noundo().doc_only().at("RENDER", "IMAGE").icon("box")
     .params("Same request as render.preflight. Captures an immutable product scene and queues a bounded image job. Returns its session-scoped job identity, captured scene_generation and progress. Does not change the design. See docs/render-jobs.md"),
 CommandSpec::new("render.status", "Render Progress", jobs::status).noundo().doc_only()

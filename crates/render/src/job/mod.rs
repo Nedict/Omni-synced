@@ -11,8 +11,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{BackendId, Camera, ExecutorId};
 
+pub(crate) mod encoding;
 mod host;
-mod image;
+pub(crate) mod image;
+#[cfg(test)]
+mod rt2_tests;
 pub use host::{CpuHost, HostKind, JobHandle, JobStatus, RenderFrame};
 pub use image::{Admission, ImageTask, TaskPoll, admit};
 
@@ -104,10 +107,290 @@ impl CancelToken {
     }
 }
 
+/// Per-request execution choice, independent of viewport graphics presets.
+/// Keep both variants parseable in builds without optional raytracing, so those
+/// builds return an explicit capability error before capturing model geometry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Integrator {
+    #[default]
+    Raster,
+    Raytrace,
+}
+
+/// Explicit scene-reflection transport, separate from opaque roughness bounds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReflectionMode {
+    Mirror,
+    RoughSpecular,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReflectionBody {
+    pub body: String,
+    pub mode: ReflectionMode,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ReflectionOptions {
+    #[serde(deserialize_with = "bounded_reflection_bodies")]
+    pub bodies: Vec<ReflectionBody>,
+    pub max_bounces: u8,
+    pub samples: u8,
+}
+impl Default for ReflectionOptions {
+    fn default() -> Self {
+        Self { bodies: Vec::new(), max_bounces: 2, samples: 4 }
+    }
+}
+fn bounded_reflection_bodies<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Vec<ReflectionBody>, D::Error> {
+    struct Bodies;
+    impl<'de> serde::de::Visitor<'de> for Bodies {
+        type Value = Vec<ReflectionBody>;
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("at most64 reflection body overrides")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error> {
+            let mut values = Vec::new();
+            while let Some(value) = seq.next_element()? {
+                if values.len() == 64 {
+                    return Err(serde::de::Error::custom("at most64 reflection bodies"));
+                }
+                values.push(value);
+            }
+            Ok(values)
+        }
+    }
+    d.deserialize_seq(Bodies)
+}
+impl ReflectionOptions {
+    pub fn validate(&self) -> Result<()> {
+        if !(1..=8).contains(&self.max_bounces) || !(1..=64).contains(&self.samples) || self.bodies.len() > 64 || self.bodies.capacity() > 64 {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "reflection bounds: 1..8 bounces, 1..64 samples, at most64 body slots"));
+        }
+        for (index, body) in self.bodies.iter().enumerate() {
+            if body.body.is_empty()
+                || body.body.len() > 128
+                || body.body.capacity() > 128
+                || self.bodies.iter().take(index).any(|other| other.body == body.body)
+            {
+                return Err(JobError::new(ErrorCode::InvalidRequest, "reflection body names must be unique, nonempty and bounded to128 bytes"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Linear-light runtime inputs. These are never design settings or GPU presets.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DirectionalLightOptions {
+    pub direction: [f64; 3],
+    pub color: [f64; 3],
+    pub intensity: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LightingPreset {
+    Neutral,
+    WarmCool,
+    KeyRim,
+}
+
+/// Explicit visual rotation about a certified planar face's outward normal.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnisotropicOrientation {
+    #[default]
+    Zero,
+    QuarterTurn,
+}
+
+/// Runtime-only captured planar face selector; no persistent naming is invented.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnisotropicFaceOptions {
+    pub body_index: usize,
+    #[serde(deserialize_with = "bounded_anisotropic_body_name")]
+    pub body_name: String,
+    pub face: u32,
+    pub tangent: [f64; 3],
+    pub orientation: AnisotropicOrientation,
+    pub roughness_x: f64,
+    pub roughness_y: f64,
+}
+
+fn bounded_anisotropic_body_name<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
+    struct Name;
+    impl serde::de::Visitor<'_> for Name {
+        type Value = String;
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("captured body name of 1..1024 bytes")
+        }
+        fn visit_str<E: serde::de::Error>(self, value: &str) -> std::result::Result<String, E> {
+            if value.is_empty() || value.len() > 1024 {
+                return Err(E::custom("captured body name of 1..1024 bytes required"));
+            }
+            let mut name = String::new();
+            name.try_reserve_exact(value.len()).map_err(E::custom)?;
+            name.push_str(value);
+            Ok(name)
+        }
+    }
+    d.deserialize_str(Name)
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RaytraceOptions {
+    pub reflections: Option<ReflectionOptions>,
+    pub anisotropic_faces: [Option<AnisotropicFaceOptions>; 2],
+    pub preset: Option<LightingPreset>,
+    #[serde(deserialize_with = "bounded_lights", skip_serializing_if = "Option::is_none")]
+    pub lights: Option<Vec<DirectionalLightOptions>>,
+    pub exposure_ev: f64,
+    pub shadows: bool,
+}
+
+impl Default for RaytraceOptions {
+    fn default() -> Self {
+        Self { anisotropic_faces: [None, None], reflections: None, preset: None, lights: None, exposure_ev: 0.0, shadows: true }
+    }
+}
+
+fn bounded_lights<'de, D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Option<Vec<DirectionalLightOptions>>, D::Error> {
+    struct Lights;
+    impl<'de> serde::de::Visitor<'de> for Lights {
+        type Value = Vec<DirectionalLightOptions>;
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("at most eight directional lights")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut sequence: A) -> std::result::Result<Self::Value, A::Error> {
+            let mut lights = Vec::new();
+            while let Some(light) = sequence.next_element()? {
+                if lights.len() == 8 {
+                    return Err(serde::de::Error::custom("at most eight directional lights"));
+                }
+                lights.push(light);
+            }
+            Ok(lights)
+        }
+    }
+    deserializer.deserialize_seq(Lights).map(Some)
+}
+
+impl RaytraceOptions {
+    /// One capacity calculation shared by host and engine preflight.
+    pub fn retained_bytes(&self) -> Result<u64> {
+        self.validate()?;
+        let limit = || JobError::new(ErrorCode::LimitExceeded, "raytrace request capacity overflow");
+        let mut bytes = self
+            .lights
+            .as_ref()
+            .map_or(Some(0), |l| (l.capacity() as u64).checked_mul(std::mem::size_of::<DirectionalLightOptions>() as u64))
+            .ok_or_else(limit)?;
+        if let Some(reflections) = &self.reflections {
+            let slots = (reflections.bodies.capacity() as u64).checked_mul(std::mem::size_of::<ReflectionBody>() as u64).ok_or_else(limit)?;
+            bytes = bytes.checked_add(slots).ok_or_else(limit)?;
+            for body in &reflections.bodies {
+                bytes = bytes.checked_add(body.body.capacity() as u64).ok_or_else(limit)?;
+            }
+        }
+        for target in self.anisotropic_faces.iter().flatten() {
+            bytes = bytes.checked_add(target.body_name.capacity() as u64).ok_or_else(limit)?;
+        }
+        Ok(bytes)
+    }
+    /// No environment NEE on selected reflectors; rough transport must be purely metallic.
+    /// Rejecting every nonmetallic effective face prevents silently dropping its diffuse HDR.
+    pub fn validate_environment_reflections(&self, scene: &crate::ProductScene) -> Result<()> {
+        self.validate()?;
+        if let Some(reflections) = &self.reflections {
+            for selector in &reflections.bodies {
+                let mut bodies = scene.meshes.iter().filter(|b| b.name == selector.body);
+                let body = bodies.next().ok_or_else(|| JobError::new(ErrorCode::InvalidRequest, "environment reflection body missing"))?;
+                if bodies.next().is_some() {
+                    return Err(JobError::new(ErrorCode::InvalidRequest, "ambiguous environment reflection body"));
+                }
+                if selector.mode == ReflectionMode::RoughSpecular
+                    && (body.surface.is_none_or(|s| s.metallic() != 1.0) || body.faces.iter().any(|f| f.surface.is_none_or(|s| s.metallic() != 1.0)))
+                {
+                    return Err(JobError::new(
+                        ErrorCode::InvalidRequest,
+                        "HDR rough reflection requires fully metallic body and face surfaces; diffuse/specular partition is not supported",
+                    ));
+                }
+            }
+        }
+        for target in self.anisotropic_faces.iter().flatten() {
+            let mode = self.reflections.as_ref().and_then(|r| r.bodies.iter().find(|b| b.body == target.body_name).map(|b| b.mode));
+            if mode != Some(ReflectionMode::RoughSpecular) {
+                return Err(JobError::new(
+                    ErrorCode::InvalidRequest,
+                    "HDR anisotropy requires a selected fully metallic rough reflector; anisotropic HDR direct lighting is not supported",
+                ));
+            }
+        }
+        Ok(())
+    }
+    pub fn validate(&self) -> Result<()> {
+        if let Some(reflections) = &self.reflections {
+            reflections.validate()?;
+        }
+        for (i, target) in self.anisotropic_faces.iter().enumerate().filter_map(|(i, target)| target.as_ref().map(|target| (i, target))) {
+            if target.body_name.is_empty()
+                || target.body_name.len() > 1024
+                || target.body_name.capacity() > 1024
+                || !target.tangent.iter().all(|v| v.is_finite())
+                || !target.tangent.iter().any(|v| *v != 0.0)
+                || ![target.roughness_x, target.roughness_y].into_iter().all(|v| v.is_finite() && (crate::surface::MIN_ROUGHNESS..=1.0).contains(&v))
+            {
+                return Err(JobError::new(ErrorCode::InvalidRequest, "invalid bounded anisotropic planar face options"));
+            }
+            if self.anisotropic_faces.iter().skip(i + 1).flatten().any(|other| target.body_index == other.body_index && target.face == other.face) {
+                return Err(JobError::new(ErrorCode::InvalidRequest, "duplicate anisotropic captured face"));
+            }
+        }
+        if self.reflections.as_ref().is_some_and(|r| {
+            r.bodies.iter().any(|b| b.mode == ReflectionMode::Mirror && self.anisotropic_faces.iter().flatten().any(|t| t.body_name == b.body))
+        }) {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "delta mirror cannot have anisotropic rough axes"));
+        }
+        if self.preset.is_some() && self.lights.is_some() {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "choose either a lighting preset or custom lights"));
+        }
+        if !self.exposure_ev.is_finite() || !(-16.0..=16.0).contains(&self.exposure_ev) {
+            return Err(JobError::new(ErrorCode::InvalidRequest, "raytrace exposure_ev must be finite and within -16..16"));
+        }
+        if let Some(lights) = &self.lights {
+            if lights.len() > 8 || lights.capacity() > 8 {
+                return Err(JobError::new(ErrorCode::InvalidRequest, "at most eight directional lights"));
+            }
+            for light in lights {
+                let direction_valid = light.direction.iter().all(|n| n.is_finite()) && light.direction.iter().any(|n| *n != 0.0);
+                if !direction_valid
+                    || !light.color.iter().all(|n| n.is_finite() && (0.0..=1.0).contains(n))
+                    || !light.intensity.is_finite()
+                    || !(0.0..=64.0).contains(&light.intensity)
+                {
+                    return Err(JobError::new(ErrorCode::InvalidRequest, "invalid bounded directional light"));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Fully resolved input; no mutable session, topology graph or GPU resources.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImageRequest {
+    #[serde(default)]
+    pub integrator: Integrator,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raytrace: Option<RaytraceOptions>,
     pub camera: Camera,
     pub width: u32,
     pub height: u32,
@@ -137,4 +420,27 @@ pub struct FrameInfo {
     pub height: u32,
     pub encoding: ColourEncoding,
     pub alpha: AlphaConvention,
+}
+#[cfg(test)]
+mod runtime_request_roundtrip_tests {
+    use super::*;
+    #[test]
+    fn default_preset_and_empty_lights_requests_roundtrip_without_invalid_null_sequence() {
+        for options in [
+            RaytraceOptions::default(),
+            RaytraceOptions { preset: Some(LightingPreset::Neutral), ..Default::default() },
+            RaytraceOptions { lights: Some(Vec::new()), ..Default::default() },
+        ] {
+            let value = serde_json::to_value(&options).unwrap();
+            if options.lights.is_none() {
+                assert!(value.get("lights").is_none());
+            } else {
+                assert_eq!(value.get("lights").unwrap(), &serde_json::json!([]));
+            }
+            let decoded: RaytraceOptions = serde_json::from_value(value).unwrap();
+            assert_eq!(decoded, options);
+            assert!(decoded.validate().is_ok());
+        }
+        assert_eq!(serde_json::from_value::<RaytraceOptions>(serde_json::json!({})).unwrap(), RaytraceOptions::default());
+    }
 }
