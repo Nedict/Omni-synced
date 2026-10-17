@@ -120,6 +120,17 @@ Editable drawing code, native projects and shipped exports are collected under `
 
 | docs/book/src/og.png | SolidCraft contributors | copy of assets/branding/web/source/og.png staged by cargo xtask book (gitignored) | MIT OR Apache-2.0 |
 
+## Mathematical references for original GGX visible-normal sampling
+
+The source-only VNDF proposal in `crates/render/src/anisotropic_surface.rs` and
+`crates/render/src/raytrace/reflection.rs` is original Rust from public equations:
+Heitz, JCGT 7(4), 2018, <https://jcgt.org/published/0007/04/01/> (paper CC BY-ND
+3.0), and Dupuy/Benyoub, 2023, <https://arxiv.org/abs/2306.05044> (arXiv paper
+CC BY 4.0). No paper prose, figures or code listing is copied; no dependency or
+external artwork is added. Original implementation: MIT OR Apache-2.0.
+See `docs/render-vndf-prototype.md` for derivation, control/production boundaries
+and pending validation. These references do not qualify an unexecuted prototype.
+
 ## Code adapted from sibling projects
 
 | SolidCraft file | Adapted from | Licence |
