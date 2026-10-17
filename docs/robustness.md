@@ -43,13 +43,13 @@ its steps, how it ended (ok, or the kind and the start of the error it was refus
 for the design it left the bodies' total volume and area (within a relative 1e-6) and their
 face, edge and shell counts (exact). `tests::robustness_goldens` fails on any change, better or
 worse, so a kernel change shows every seed it moves. Pull requests that touch `crates/kernel`
-run every 8th seed (`sample_0` … `sample_3`, about two minutes); pushes to `main` and the
-nightly run them all (`all_0` … `all_3`).
+run every 8th seed; pushes to `main` and the nightly run them all. Each seed is its own test
+(`seed_00` … `seed_95`), so the CI shards and their cores share them out.
 
 To record an intended change, give the reason:
 
 ```
-ROBUSTNESS_GOLDENS_BLESS="why it changed" cargo test --profile ci -p solidcraft-engine --lib robustness_goldens::all
+ROBUSTNESS_GOLDENS_BLESS="why it changed" cargo test --profile ci -p solidcraft-engine --lib robustness_goldens::seed_
 ```
 
 The changed seeds and the reason are added to the file's `notes`; say why in the pull request too.
@@ -76,8 +76,14 @@ fails, or leaves a sliver face (narrower than 1/200 of the part), it is tried th
 other way too: one way can push a face into a curved face it only touched (a cut
 whose end lies tangent to a round side) and leave a sliver of it, where the other
 way parts them (#897, #827).
-Exact planar and piecewise fallbacks report zero displacement. The existing
-volume and spatial acceptance checks still apply to all results.
+Exact planar and piecewise fallbacks report zero displacement. When a conical
+cutter meets a body with earlier conical faces (pointed bores copied in a pattern),
+two finer, unshifted passes are tried first, at 1e-5 and 1e-6 of their size (never
+below 1e-6 mm). A coarse first cut can leave tiny junctions that later copies cannot
+intersect, so refining only the failing copy is too late. Every candidate must pass
+the volume, membership and spatial checks; a rejected candidate continues to the
+next tolerance, then the ordinary routes. The existing acceptance checks still
+apply to all results.
 
 Where the bodies meet along faces that curve, no exact route applies: the
 polygon fallback takes planar faces only, and the operation used to be refused
@@ -86,11 +92,9 @@ the faceted fallback with the tolerance they were faceted to. It is asked last,
 after every exact route has failed, so a result any of them gives is kept as it
 was; the faceted boolean must first agree with its complementary operation (a
 join and an intersection add up to the operands), and its result is then held
-to the same acceptance checks as every other retry's. It is warned about: the
-result is flat where the faces curve.
-
-The command that adds a feature carries the same `warning` in its reply, so a
-script or an agent sees such a retry without asking the timeline.
+to the same acceptance checks as every other retry's. Bodies that come to more
+facets than the route combines quickly keep the error they had. It is warned
+about: the result is flat where the faces curve.
 
 A join or a cut that needed any retry is then held to what it can do at all
 (`crates/kernel/src/boolean_guard.rs`, #616): the result is closed, a join
