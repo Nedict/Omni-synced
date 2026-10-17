@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use serde::Serialize;
-use solidcraft_geom::{Mesh, Vec3};
+use solidcraft_geom::{Mesh, MinByFinite, Vec3};
 
 use crate::Result;
 use crate::body::{Body, from_p3};
@@ -647,15 +647,15 @@ pub fn cylinder_face_at(b: &Body, p: Vec3) -> Option<CylinderFace> {
     let size = b.size();
     let mesh = b.tessellate((size * 1e-3).max(1e-3)).ok()?;
     // The face of the triangle nearest the point.
-    let mut best: Option<(f64, u32)> = None;
-    for (t, f) in mesh.triangles.iter().zip(&mesh.tri_face) {
-        let Some([a, bb, c]) = mesh.tri(t) else { continue };
-        let d = ((a + bb + c) / 3.0).dist(p).min(a.dist(p)).min(bb.dist(p)).min(c.dist(p));
-        if best.is_none_or(|(bd, _)| d < bd) {
-            best = Some((d, *f));
-        }
-    }
-    let (d, face) = best?;
+    let (d, face) = mesh
+        .triangles
+        .iter()
+        .zip(&mesh.tri_face)
+        .filter_map(|(t, f)| {
+            let [a, bb, c] = mesh.tri(t)?;
+            Some((((a + bb + c) / 3.0).dist(p).min(a.dist(p)).min(bb.dist(p)).min(c.dist(p)), *f))
+        })
+        .min_by_finite(|&(d, _)| d)?;
     if d > size * 0.05 {
         return None;
     }
