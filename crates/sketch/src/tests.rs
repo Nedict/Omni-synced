@@ -1004,3 +1004,22 @@ fn profiles_line_passing_next_to_a_junction_splits_the_loop() {
         assert!((got - want).abs() < 1e-3, "{areas:?} against {want}");
     }
 }
+
+/// A line ending 2e-5 from a corner, next to a crossing there: the corner, where the side of the
+/// square meets the long line, stays a cut of the long line, and the square stays a profile.
+#[test]
+fn profiles_crossing_next_to_a_corner_keeps_the_corner() {
+    let mut sk = Sketch::new();
+    let (a, b) = (sk.add_point(v(1.0, 0.0), None).unwrap(), sk.add_point(v(2.0, 0.0), None).unwrap());
+    let (c, d) = (sk.add_point(v(2.0, 1.0), None).unwrap(), sk.add_point(v(1.0, 1.0), None).unwrap());
+    // The square's base is part of a longer line, which its sides end on.
+    sk.add_line(v(0.0, 0.0), v(3.0, 0.0), None, None, None).unwrap();
+    for (p, q) in [(b, c), (c, d), (d, a)] {
+        sk.add_line_pts(p, q, None).unwrap();
+    }
+    // A line hanging across the long one, 2e-5 from the square's corner (1, 0).
+    sk.add_line(v(1.0 - 2e-5, -0.5), v(1.0 - 2e-5, 0.5), None, None, None).unwrap();
+    let areas: Vec<f64> = find_profiles(&sk).iter().map(|p| p.area).collect();
+    assert_eq!(areas.len(), 1, "{areas:?}");
+    assert!(areas.iter().all(|x| (x - 1.0).abs() < 1e-9), "{areas:?}");
+}
