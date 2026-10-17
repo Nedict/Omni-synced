@@ -752,14 +752,18 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
                 for p in pts {
                     let on_x = x.param_on(p, tol).or_else(|| end_param(x, p, tol));
                     let on_y = y.param_on(p, tol).or_else(|| end_param(y, p, tol));
-                    // Crossings at (or next to) curve ends are already cuts.
+                    // Crossings at (or next to) curve ends are already cuts, where the end lies on
+                    // both curves. An end next to the crossing that lies on one of them only (a
+                    // junction of two curves that a line passes 3e-5 from) cut neither, and the
+                    // line would cross the loop without meeting it (#755).
+                    let on = |sh: &Shape, e: Vec2| sh.param_on(e, tol).is_some() || end_param(sh, e, tol).is_some();
                     let near_end = || {
                         let (cx, cy) = grid.cell(p);
                         (-1..=1).any(|dx| {
                             (-1..=1).any(|dy| {
-                                end_cells
-                                    .get(&(cx + dx, cy + dy))
-                                    .is_some_and(|v| v.iter().any(|k| ends.get(*k).is_some_and(|e| e.dist(p) < tol * 100.0)))
+                                end_cells.get(&(cx + dx, cy + dy)).is_some_and(|v| {
+                                    v.iter().any(|k| ends.get(*k).is_some_and(|e| e.dist(p) < tol * 100.0 && on(x, *e) && on(y, *e)))
+                                })
                             })
                         })
                     };

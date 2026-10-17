@@ -967,3 +967,40 @@ fn a_degree_nine_control_spline_stays_exact_and_closes_a_profile_exactly() {
     high.push(sk.add_point(v(21.0, -2.0), None).unwrap());
     assert!(sk.add_curve(CurveKind::Spline { pts: high, control: true, degree: 10, periodic: false }, None).is_err());
 }
+
+/// #755: a line drawn through a junction of a loop, but 2e-5 off it, still splits the loop. The
+/// junction lies on the loop's two curves only, so it cuts neither of them where the line
+/// crosses, and that crossing, next to the junction, was taken for one already cut there: the
+/// line crossed the loop without meeting it, and the sketch had no profiles at all.
+#[test]
+fn profiles_line_passing_next_to_a_junction_splits_the_loop() {
+    let o = v(0.0, 0.0);
+    let at = |r: f64, a: f64| v(r * a.cos(), r * a.sin());
+    // A slot: half circles of radius 1 round (0, 0) and (-5, 0), joined by the lines y = 1 and
+    // y = -1, which meet the arcs tangentially at (0, 1) and (0, -1).
+    let mut sk = Sketch::new();
+    let right = sk.add_arc(o, v(0.0, -1.0), v(0.0, 1.0), [None; 3], None).unwrap();
+    let left = sk.add_arc(v(-5.0, 0.0), v(-5.0, 1.0), v(-5.0, -1.0), [None; 3], None).unwrap();
+    let ends = |i: usize| match sk.curves[i].kind {
+        CurveKind::Arc { a, b, .. } => (a, b),
+        _ => panic!("an arc"),
+    };
+    let ((r0, r1), (l0, l1)) = (ends(right), ends(left));
+    sk.add_line_pts(r1, l0, None).unwrap();
+    sk.add_line_pts(l1, r0, None).unwrap();
+    // Lines from (0, 0) through the junctions to an arc of radius 2. The upper one is turned by
+    // 2e-5 rad, so it passes 2e-5 from (0, 1) and crosses the line y = 1 next to it.
+    let d = 2e-5;
+    let (top, bottom) = (at(2.0, FRAC_PI_2 + d), v(0.0, -2.0));
+    sk.add_line(o, top, None, None, None).unwrap();
+    sk.add_line(o, bottom, None, None, None).unwrap();
+    sk.add_arc(o, bottom, top, [None; 3], None).unwrap();
+    let mut areas: Vec<f64> = find_profiles(&sk).iter().map(|p| p.area).collect();
+    areas.sort_by(f64::total_cmp);
+    // The right half disc, the band round it out to radius 2, and the rest of the slot.
+    let want = [FRAC_PI_2, FRAC_PI_2 * (4.0 - 1.0), 10.0 + FRAC_PI_2];
+    assert_eq!(areas.len(), 3, "{areas:?}");
+    for (got, want) in areas.iter().zip(want) {
+        assert!((got - want).abs() < 1e-3, "{areas:?} against {want}");
+    }
+}
