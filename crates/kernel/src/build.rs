@@ -1562,6 +1562,15 @@ pub(crate) fn cap_and_close(sides: Vec<Side>, w0: &[mt::Wire], w1: &[mt::Wire], 
     Err(KernelError::Failed(format!("closing the shell: {last}")))
 }
 
+/// A sweep whose walls already close, including separate shells around profile holes.
+pub(crate) fn close_sweep(sides: Vec<Side>) -> Result<Body> {
+    let sources: std::collections::HashMap<_, _> = sides.iter().map(|(f, p)| (f.id(), p.clone())).collect();
+    let shell: mt::Shell = sides.into_iter().map(|(f, _)| f).collect();
+    let solid = Solid::try_new(shell.connected_components()).map_err(|e| KernelError::Failed(format!("closing the sweep: {e}")))?;
+    let history = solid.face_iter().map(|f| sources.get(&f.id()).cloned().flatten()).collect();
+    record::attach(Body::new(solid)?, &[], history, Default::default())
+}
+
 /// Ruled loft through two or more planar sections (outer loops only). The sections and the
 /// same sections in reverse order give the same body.
 pub fn loft(sections: &[(Plane, Loop2)]) -> Result<Body> {
@@ -1881,6 +1890,25 @@ pub fn sweep(plane: &Plane, region: &Region2, path: &[PathSeg]) -> Result<Body> 
     if corner {
         return crate::sweep_path::sweep_path(plane, region, &path_polyline(path)?);
     }
+    let points = path_polyline(path)?;
+    if crate::sweep_path::closed_path(&points) {
+        // Sketch circles have two half arcs. Sweep the whole turn in one operation so truck
+        // shares the closing edges itself. Other closed paths use stations with shared ends.
+        if let Some((center, axis, angle)) = full_circle(path) {
+            return guard("closed sweep", || {
+                let profile = region_wires(plane, &oriented(region)?)?;
+                let mut sides = Vec::new();
+                for p in &profile {
+                    let shell: mt::Shell = builder::rsweep(&p.wire, p3(center), v3(axis), mt::Rad(angle));
+                    let numbers = seeds(std::slice::from_ref(p));
+                    let prov = record::columns(shell.face_iter(), &numbers, None, record::Column::ToEnd, &[]);
+                    sides.extend(shell.face_iter().enumerate().map(|(i, f)| (f.clone(), prov.as_ref().and_then(|p| p.get(i)).cloned().flatten())));
+                }
+                close_sweep(sides)
+            });
+        }
+        return crate::sweep_path::sweep_path(plane, region, &points);
+    }
     // The outer loop and each hole, swept along the path; the ends are capped with holes.
     let profile = region_wires(plane, &oriented(region)?)?;
     let starts = wires_of(&profile);
@@ -1925,6 +1953,23 @@ pub fn sweep(plane: &Plane, region: &Region2, path: &[PathSeg]) -> Result<Body> 
         };
         cap_and_close(sides, &starts, &ends, false)
     })
+}
+
+/// A connected, single turn about one centre and axis, possibly split into sketch arcs.
+fn full_circle(path: &[PathSeg]) -> Option<(Vec3, Vec3, f64)> {
+    let PathSeg::Arc { a: first, center, axis, .. } = *path.first()? else { return None };
+    let axis = axis.normalized()?;
+    let mut end = first;
+    let mut total = 0.0;
+    for seg in path {
+        let PathSeg::Arc { a, center: c, axis: k, angle } = *seg else { return None };
+        if a.dist(end) > 1e-7 || c.dist(center) > 1e-7 || k.normalized()?.dist(axis) > 1e-9 || !angle.is_finite() {
+            return None;
+        }
+        total += angle;
+        end = rotate_about(a, c, axis, angle);
+    }
+    ((total.abs() - std::f64::consts::TAU).abs() < 1e-9).then_some((center, axis, total))
 }
 
 /// Cox–de Boor basis values N_{j,3}(u) for all j.
@@ -2063,6 +2108,15 @@ pub fn sphere_patches_rotated(center: Vec3, radius: f64, rot: [Vec3; 3]) -> Resu
 
 /// [`sphere_patches_rotated`], every patch swept from profile segments `arcs`.
 fn sphere_solid(center: Vec3, radius: f64, rot: [Vec3; 3], arcs: &[usize]) -> Result<Body> {
+    guard("sphere", || {
+        let shell: mt::Shell = sphere_patch_faces(center, radius, rot)?.into();
+        let solid = Solid::try_new(vec![shell]).map_err(|e| KernelError::Failed(format!("sphere: {e}")))?;
+        record::attach(Body::new(solid)?, &[], Some(vec![record::profile(arcs); 6]), Default::default())
+    })
+}
+
+/// The six outward patch faces of [`sphere_patches_rotated`]; truck calls, so callers guard them.
+pub(crate) fn sphere_patch_faces(center: Vec3, radius: f64, rot: [Vec3; 3]) -> Result<Vec<mt::Face>> {
     let radius = finite(radius, "radius")?;
     let turn = |v: Vec3| rot[0] * v.x + rot[1] * v.y + rot[2] * v.z;
     if radius <= 1e-6 || !center.is_finite() {
@@ -2080,50 +2134,46 @@ fn sphere_solid(center: Vec3, radius: f64, rot: [Vec3; 3], arcs: &[usize]) -> Re
         (Vec3::Z, Vec3::X, [[-1.0, -1.0, 1.0], [1.0, -1.0, 1.0], [1.0, 1.0, 1.0], [-1.0, 1.0, 1.0]]),
         (-Vec3::Z, Vec3::X, [[-1.0, 1.0, -1.0], [1.0, 1.0, -1.0], [1.0, -1.0, -1.0], [-1.0, -1.0, -1.0]]),
     ];
-    guard("sphere", || {
-        let key = |s: [f64; 3]| ((s[0] > 0.0) as usize) | (((s[1] > 0.0) as usize) << 1) | (((s[2] > 0.0) as usize) << 2);
-        let mut verts: std::collections::HashMap<usize, mt::Vertex> = std::collections::HashMap::new();
-        let mut vert = |s: [f64; 3]| verts.entry(key(s)).or_insert_with(|| builder::vertex(p3(corner(s[0], s[1], s[2])))).clone();
-        let mut edges: std::collections::HashMap<(usize, usize), mt::Edge> = std::collections::HashMap::new();
-        let mut out: Vec<mt::Face> = Vec::new();
-        for (dir, axis, cs) in faces {
-            let (dir, axis) = (turn(dir), turn(axis));
-            let mut wire: Vec<mt::Edge> = Vec::new();
-            for i in 0..4 {
-                let (a, b) = (cs[i], cs[(i + 1) % 4]);
-                let (ka, kb) = (key(a), key(b));
-                let e = match edges.get(&(ka.min(kb), ka.max(kb))) {
-                    Some(e) => e.clone(),
-                    None => {
-                        let (lo, hi) = if ka < kb { (a, b) } else { (b, a) };
-                        let (va, vb) = (vert(lo), vert(hi));
-                        let mid = (corner(lo[0], lo[1], lo[2]) + corner(hi[0], hi[1], hi[2])) * 0.5 - center;
-                        let transit = center + mid.normalized().unwrap_or(dir) * radius;
-                        let e = builder::circle_arc(&va, &vb, p3(transit));
-                        edges.insert((ka.min(kb), ka.max(kb)), e.clone());
-                        e
-                    }
-                };
-                wire.push(if ka < kb { e } else { e.inverse() });
-            }
-            // The meridian runs pole to pole through the side away from the patch.
-            let (np, sp, back) = (center + axis * radius, center - axis * radius, center - dir * radius);
-            let meridian = builder::circle_arc(&builder::vertex(p3(np)), &builder::vertex(p3(sp)), p3(back));
-            let mut surface =
-                mt::Surface::RevolutedCurve(mt::Processor::new(mt::RevolutedCurve::by_revolution(meridian.oriented_curve(), p3(center), v3(axis))));
-            // Outward normal at the patch centre.
-            let probe = p3(center + dir * radius);
-            use mt::{ParametricSurface3D, SearchParameter};
-            if let Some((u, v)) = surface.search_parameter(probe, mt::SPHint2D::None, 100) {
-                let n = surface.normal(u, v);
-                if mt::InnerSpace::dot(n, v3(dir)) < 0.0 {
-                    mt::Invertible::invert(&mut surface);
+    let key = |s: [f64; 3]| ((s[0] > 0.0) as usize) | (((s[1] > 0.0) as usize) << 1) | (((s[2] > 0.0) as usize) << 2);
+    let mut verts: std::collections::HashMap<usize, mt::Vertex> = std::collections::HashMap::new();
+    let mut vert = |s: [f64; 3]| verts.entry(key(s)).or_insert_with(|| builder::vertex(p3(corner(s[0], s[1], s[2])))).clone();
+    let mut edges: std::collections::HashMap<(usize, usize), mt::Edge> = std::collections::HashMap::new();
+    let mut out: Vec<mt::Face> = Vec::new();
+    for (dir, axis, cs) in faces {
+        let (dir, axis) = (turn(dir), turn(axis));
+        let mut wire: Vec<mt::Edge> = Vec::new();
+        for i in 0..4 {
+            let (a, b) = (cs[i], cs[(i + 1) % 4]);
+            let (ka, kb) = (key(a), key(b));
+            let e = match edges.get(&(ka.min(kb), ka.max(kb))) {
+                Some(e) => e.clone(),
+                None => {
+                    let (lo, hi) = if ka < kb { (a, b) } else { (b, a) };
+                    let (va, vb) = (vert(lo), vert(hi));
+                    let mid = (corner(lo[0], lo[1], lo[2]) + corner(hi[0], hi[1], hi[2])) * 0.5 - center;
+                    let transit = center + mid.normalized().unwrap_or(dir) * radius;
+                    let e = builder::circle_arc(&va, &vb, p3(transit));
+                    edges.insert((ka.min(kb), ka.max(kb)), e.clone());
+                    e
                 }
-            }
-            out.push(mt::Face::new(vec![wire.into()], surface));
+            };
+            wire.push(if ka < kb { e } else { e.inverse() });
         }
-        let shell: mt::Shell = out.into();
-        let solid = Solid::try_new(vec![shell]).map_err(|e| KernelError::Failed(format!("sphere: {e}")))?;
-        record::attach(Body::new(solid)?, &[], Some(vec![record::profile(arcs); 6]), Default::default())
-    })
+        // The meridian runs pole to pole through the side away from the patch.
+        let (np, sp, back) = (center + axis * radius, center - axis * radius, center - dir * radius);
+        let meridian = builder::circle_arc(&builder::vertex(p3(np)), &builder::vertex(p3(sp)), p3(back));
+        let mut surface =
+            mt::Surface::RevolutedCurve(mt::Processor::new(mt::RevolutedCurve::by_revolution(meridian.oriented_curve(), p3(center), v3(axis))));
+        // Outward normal at the patch centre.
+        let probe = p3(center + dir * radius);
+        use mt::{ParametricSurface3D, SearchParameter};
+        if let Some((u, v)) = surface.search_parameter(probe, mt::SPHint2D::None, 100) {
+            let n = surface.normal(u, v);
+            if mt::InnerSpace::dot(n, v3(dir)) < 0.0 {
+                mt::Invertible::invert(&mut surface);
+            }
+        }
+        out.push(mt::Face::new(vec![wire.into()], surface));
+    }
+    Ok(out)
 }
