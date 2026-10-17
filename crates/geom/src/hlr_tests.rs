@@ -77,3 +77,15 @@ fn a_box_in_front_hides_the_middle_of_an_edge() {
     assert!((got[1].0[0] - 0.25).abs() < 1e-12 && (got[1].0[1] - 0.75).abs() < 1e-12, "{got:?}");
     assert_eq!((got[0].1, got[2].1), (Visibility::Visible, Visibility::Visible));
 }
+
+#[test]
+fn quadratic_roots_with_no_linear_term() {
+    // A ray from inside a sphere, square to the radius at its start (b = 0): both roots.
+    let mut roots = surface::quadratic(1., 0., -100.);
+    roots.sort_by(|a, b| a.0.total_cmp(&b.0));
+    assert_eq!(roots.len(), 2, "{roots:?}");
+    assert!((roots[0].0 + 10.).abs() < 1e-12 && (roots[1].0 - 10.).abs() < 1e-12, "{roots:?}");
+    let mut roots = surface::quadratic(1., -0., -100.);
+    roots.sort_by(|a, b| a.0.total_cmp(&b.0));
+    assert!((roots[0].0 + 10.).abs() < 1e-12 && (roots[1].0 - 10.).abs() < 1e-12, "{roots:?}");
+}

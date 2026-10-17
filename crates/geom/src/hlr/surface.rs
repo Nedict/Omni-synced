@@ -301,7 +301,7 @@ impl S3 {
 }
 
 /// Real roots of `a x^2 + b x + c`, a double root flagged as grazing.
-fn quadratic(a: f64, b: f64, c: f64) -> Vec<(f64, bool)> {
+pub(crate) fn quadratic(a: f64, b: f64, c: f64) -> Vec<(f64, bool)> {
     let scale = b * b + (a * c).abs();
     if a.abs() <= 1e-14 * (1. + b.abs()) {
         return if b.abs() > 1e-300 { vec![(-c / b, false)] } else { Vec::new() };

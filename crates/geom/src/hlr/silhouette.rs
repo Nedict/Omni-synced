@@ -100,7 +100,14 @@ pub(crate) fn inside_ranges(c: &C3, s: &S3, trim: &Trim) -> Vec<[f64; 2]> {
         *hint = uv;
         uv.and_then(|uv| trim.contains(uv)).unwrap_or(false)
     };
-    let ts: Vec<f64> = (0..=n).map(|i| t0 + (t1 - t0) * i as f64 / n as f64).collect();
+    // Uniform samples, plus the parameters nearest to the face's boundary points: an in-face
+    // interval is bounded by boundary crossings, so a narrow one between two uniform samples
+    // still gets samples on both of its sides.
+    let mut ts: Vec<f64> = (0..=n).map(|i| t0 + (t1 - t0) * i as f64 / n as f64).collect();
+    ts.extend(trim.chords.iter().step_by(8).filter_map(|(q, _)| closest_param(c, *q)));
+    ts.retain(|t| *t >= t0 && *t <= t1);
+    ts.sort_by(f64::total_cmp);
+    ts.dedup_by(|a, b| (*a - *b).abs() <= 1e-12 * (t1 - t0));
     let mut hints = Vec::with_capacity(ts.len());
     let states: Vec<bool> = ts
         .iter()
@@ -142,6 +149,28 @@ pub(crate) fn inside_ranges(c: &C3, s: &S3, trim: &Trim) -> Vec<[f64; 2]> {
     }
     out.retain(|r| r[1] - r[0] > 1e-12 * (t1 - t0));
     out
+}
+
+/// The parameter of the point of `c` nearest to `p` (lines and arcs exactly, polylines at a
+/// vertex), when `p` projects inside the curve's domain.
+fn closest_param(c: &C3, p: Vec3) -> Option<f64> {
+    match c {
+        C3::Line { a, b } => {
+            let e = *b - *a;
+            let l2 = e.len2();
+            (l2 > 0.).then(|| ((p - *a).dot(e) / l2).clamp(0., 1.))
+        }
+        C3::Arc { o, x, y, r, range } => {
+            let w = p - *o;
+            let t = (w.dot(*y) / r[1]).atan2(w.dot(*x) / r[0]);
+            // The turn of t that falls in the range, if any.
+            let k = ((range[0] - t) / TAU).ceil();
+            let t = t + k * TAU;
+            (t <= range[1]).then_some(t)
+        }
+        C3::Polyline(pts) => pts.iter().enumerate().min_by(|(_, a), (_, b)| a.dist(p).total_cmp(&b.dist(p))).map(|(i, _)| i as f64),
+        C3::Spline { .. } => None,
+    }
 }
 
 /// Zero set of `normal . d` on a chart grid over the face's chart box.

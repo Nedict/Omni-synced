@@ -6,7 +6,7 @@
 
 mod curve;
 mod silhouette;
-mod surface;
+pub(crate) mod surface;
 mod trim;
 
 use serde::Serialize;
@@ -232,7 +232,8 @@ pub fn prepare(b: &Brep, opts: &Options) -> Result<Prepared, HlrError> {
                         (0..=64).map(move |i| c.at(t0 + (t1 - t0) * i as f64 / 64.))
                     });
                     let (lo, hi) = along.fold((f64::MAX, f64::MIN), |(lo, hi), q| ((q - p).dot(a).min(lo), (q - p).dot(a).max(hi)));
-                    let pad = 1e-6 * (1. + (hi - lo).abs());
+                    // Generous: the chart only has to contain the face; the trim bounds it exactly.
+                    let pad = 0.01 * (hi - lo).abs() + 1e-6;
                     h = [lo - pad, hi + pad];
                 }
                 let toward = match analytic {

@@ -159,25 +159,6 @@ fn seg_dist(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
     ((a[0] + t * ex - p[0]).powi(2) + (a[1] + t * ey - p[1]).powi(2)).sqrt()
 }
 
-/// Points every `step` along polylines.
-fn densify(polys: &[Vec<[f64; 2]>], step: f64) -> Vec<[f64; 2]> {
-    let mut out = Vec::new();
-    for p in polys {
-        for w in p.windows(2) {
-            let l = ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt();
-            let n = (l / step).ceil().max(1.) as usize;
-            for k in 0..n {
-                let f = k as f64 / n as f64;
-                out.push([w[0][0] + (w[1][0] - w[0][0]) * f, w[0][1] + (w[1][1] - w[0][1]) * f]);
-            }
-        }
-        if let Some(last) = p.last() {
-            out.push(*last);
-        }
-    }
-    out
-}
-
 fn length(polys: &[Vec<[f64; 2]>]) -> f64 {
     polys.iter().flat_map(|p| p.windows(2)).map(|w| ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt()).sum()
 }
@@ -221,32 +202,62 @@ fn compare(d: &Drawing, dxf: &[(bool, [f64; 2], [f64; 2])]) -> Value {
         let mut out = json!({});
         for (name, hidden) in [("visible", false), ("hidden", true)] {
             let polys: Vec<Vec<[f64; 2]>> = from.iter().filter(|s| s.0 == hidden).map(|s| vec![s.1, s.2]).collect();
-            let pts = densify(&polys, STEP);
-            let (mut same, mut other, mut none) = (0usize, 0usize, 0usize);
+            // Midpoints of pieces at most STEP long, each weighted by its length.
+            let mut pts: Vec<([f64; 2], f64)> = Vec::new();
+            for p in &polys {
+                for w in p.windows(2) {
+                    let l = (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]);
+                    let n = (l / STEP).ceil().max(1.) as usize;
+                    for k in 0..n {
+                        let f = (k as f64 + 0.5) / n as f64;
+                        pts.push(([w[0][0] + (w[1][0] - w[0][0]) * f, w[0][1] + (w[1][1] - w[0][1]) * f], l / n as f64));
+                    }
+                }
+            }
+            let (mut same, mut other, mut none) = (0f64, 0f64, 0f64);
             let mut dev: Vec<f64> = Vec::new();
-            for q in &pts {
+            for (q, w) in &pts {
                 let near = nearest(to, *q);
                 let (s, o) = (near[usize::from(hidden)], near[usize::from(!hidden)]);
                 if s <= TOL {
-                    same += 1;
+                    same += w;
                     dev.push(s);
                 } else if o <= TOL {
-                    other += 1;
+                    other += w;
                 } else {
-                    none += 1;
+                    none += w;
                 }
             }
             dev.sort_by(f64::total_cmp);
-            let total = pts.len().max(1) as f64;
+            let total = (same + other + none).max(1e-300);
             out[name] = json!({
                 "length": length(&polys),
-                "same_class_share": same as f64 / total, "other_class_share": other as f64 / total, "unmatched_share": none as f64 / total,
+                "same_class_share": same / total, "other_class_share": other / total, "unmatched_share": none / total,
                 "matched_distance_mm": {"median": dev.get(dev.len() / 2).copied().unwrap_or(0.), "max": dev.last().copied().unwrap_or(0.)},
             });
         }
         out
     };
-    json!({"exact_vs_dxf": tally(&ours, dxf), "dxf_vs_exact": tally(dxf, &ours), "exact_uncertain_length": uncertain_len})
+    // Every classified piece, drawn or not: covered hidden pieces lie under visible lines, where
+    // the DXF also draws its hidden lines, so classification is compared against these.
+    let classified: Vec<(bool, [f64; 2], [f64; 2])> = d
+        .lines
+        .iter()
+        .flat_map(|l| l.pieces.iter())
+        .filter_map(|p| match p.visibility {
+            Visibility::Visible => Some((false, p)),
+            Visibility::Hidden => Some((true, p)),
+            Visibility::Uncertain if p.covered => Some((true, p)),
+            Visibility::Uncertain => None,
+        })
+        .flat_map(|(h, p)| p.points.windows(2).map(move |w| (h, w[0], w[1])))
+        .collect();
+    json!({
+        "exact_vs_dxf": tally(&ours, dxf),
+        "dxf_vs_exact_drawn": tally(dxf, &ours),
+        "dxf_vs_exact_classified": tally(dxf, &classified),
+        "exact_uncertain_length": uncertain_len,
+    })
 }
 
 struct ViewCase {
@@ -459,7 +470,62 @@ fn fixtures() {
         json!({"cut_hole_max_radius_error": max_of(ring.iter().copied()), "points": ring.len()})
     }));
 
+    // A spline face the recogniser does not know: the rounded top edge of a cylinder.
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius": 10, "height": 30}));
+    run(&mut s, "solid.fillet", json!({"edges": [[10, 0, 30]], "radius": 3}));
+    all.push(study("roundcyl", &mut s, &[ViewCase { name: "side", yaw: 0., pitch: 0. }, ViewCase { name: "iso", yaw: 0.6, pitch: 0.5 }], &|_, _| {
+        json!({})
+    }));
+
+    // Freeform faces: a loft from a circle R15 at z = 0 to a 20 x 10 rectangle at z = 30.
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": {"origin": [0, 0, 0], "x_dir": [1, 0, 0], "y_dir": [0, 1, 0]}, "name": "Low"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": 15}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "sketch.create", json!({"plane": {"origin": [0, 0, 30], "x_dir": [1, 0, 0], "y_dir": [0, 1, 0]}, "name": "High"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-10, -5], "p1": [10, 5]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.loft", json!({"sections": [{"sketch": "Low"}, {"sketch": "High"}]}));
+    all.push(study("loft", &mut s, &[ViewCase { name: "side", yaw: 0., pitch: 0. }, ViewCase { name: "iso", yaw: 0.6, pitch: 0.5 }], &|_, _| {
+        json!({})
+    }));
+
     std::fs::write(out_dir().join("fixtures.json"), serde_json::to_string_pretty(&all).unwrap()).unwrap();
+}
+
+#[test]
+#[ignore = "investigation: the same part far from the origin"]
+fn far_from_origin() {
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius": 10, "height": 30, "body_name": "C"}));
+    run(&mut s, "solid.cylinder", json!({"radius": 3, "height": 40, "base": [0, -20, 15], "axis": "Y", "operation": "cut", "targets": ["C"]}));
+    let opts = Options::default();
+    let (defs, _, _, _) = scene(&s, &opts);
+    let (_, view) = camera(0.6, 0.5);
+    let at = |t: Vec3| hlr::hidden_lines(&defs, &[Placement { body: 0, rotation: IDENTITY, translation: t }], &view, &opts, &never).unwrap();
+    let base = at(Vec3::ZERO);
+    let mut rows = Vec::new();
+    for t in [Vec3::new(1e3, 2e3, -3e3), Vec3::new(1e5, 2e5, -3e5), Vec3::new(1e7, 2e7, -3e7)] {
+        let d = at(t);
+        let shift = view.screen(t);
+        let states =
+            |d: &Drawing| -> Vec<(Visibility, bool)> { d.lines.iter().flat_map(|l| l.pieces.iter().map(|p| (p.visibility, p.covered))).collect() };
+        let same_states = states(&base) == states(&d);
+        // Largest move of a piece end once the placement's own shift is removed.
+        let mut moved = 0f64;
+        for (a, b) in base.lines.iter().flat_map(|l| l.pieces.iter()).zip(d.lines.iter().flat_map(|l| l.pieces.iter())) {
+            for (p, q) in [(a.points.first(), b.points.first()), (a.points.last(), b.points.last())] {
+                if let (Some(p), Some(q)) = (p, q) {
+                    moved = moved.max((q[0] - shift[0] - p[0]).hypot(q[1] - shift[1] - p[1]));
+                }
+            }
+        }
+        let row = json!({"translation": [t.x, t.y, t.z], "pieces": [base.stats.pieces, d.stats.pieces], "same_states": same_states, "max_end_move_mm": moved, "uncertain": d.stats.uncertain_uncovered});
+        println!("{row}");
+        rows.push(row);
+    }
+    std::fs::write(out_dir().join("far.json"), serde_json::to_string_pretty(&rows).unwrap()).unwrap();
 }
 
 #[test]
