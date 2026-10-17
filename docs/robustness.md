@@ -57,8 +57,8 @@ The changed seeds and the reason are added to the file's `notes`; say why in the
 ## Successful Boolean retries
 
 When an accepted Boolean result needs a retry that can make it differ from the
-exact one (a tool nudge, or the unverified shortcut), the feature shows a
-warning in the timeline. Every other retry works on temporary geometry or
+exact one (a tool nudge, the faceted fallback, or the unverified shortcut), the
+feature shows a warning in the timeline. Every other retry works on temporary geometry or
 tolerances and leaves the exact result, so it is recorded but not warned about.
 `timeline.inspect` and `doc.inspect` expose every retry in the feature's
 `boolean_diagnostics`, including the strategy and the applied translation,
@@ -78,6 +78,16 @@ whose end lies tangent to a round side) and leave a sliver of it, where the othe
 way parts them (#897, #827).
 Exact planar and piecewise fallbacks report zero displacement. The existing
 volume and spatial acceptance checks still apply to all results.
+
+Where the bodies meet along faces that curve, no exact route applies: the
+polygon fallback takes planar faces only, and the operation used to be refused
+(#1865). Both bodies are then faceted and the polygons combined, reported as
+the faceted fallback with the tolerance they were faceted to. It is asked last,
+after every exact route has failed, so a result any of them gives is kept as it
+was; the faceted boolean must first agree with its complementary operation (a
+join and an intersection add up to the operands), and its result is then held
+to the same acceptance checks as every other retry's. It is warned about: the
+result is flat where the faces curve.
 
 The command that adds a feature carries the same `warning` in its reply, so a
 script or an agent sees such a retry without asking the timeline.
