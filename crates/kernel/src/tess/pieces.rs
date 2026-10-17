@@ -255,8 +255,8 @@ pub(crate) fn cut(
     }
     let area = |ring: &[u32]| -> Option<f64> {
         let mut s = 0.0;
-        for k in 0..ring.len() {
-            let (a, b) = (pos(*ring.get(k)?)?, pos(*ring.get((k + 1) % ring.len())?)?);
+        for (&a, &b) in ring.iter().zip(ring.iter().cycle().skip(1)) {
+            let (a, b) = (pos(a)?, pos(b)?);
             s += a[0] * b[1] - b[0] * a[1];
         }
         Some(0.5 * s)
@@ -275,8 +275,8 @@ pub(crate) fn cut(
         let p = pos(*h.first()?)?;
         let contains = |ring: &[u32]| {
             let mut odd = false;
-            for k in 0..ring.len() {
-                let (Some(a), Some(b)) = (ring.get(k).and_then(|x| pos(*x)), ring.get((k + 1) % ring.len()).and_then(|x| pos(*x))) else { continue };
+            for (&a, &b) in ring.iter().zip(ring.iter().cycle().skip(1)) {
+                let (Some(a), Some(b)) = (pos(a), pos(b)) else { continue };
                 if (a[1] > p[1]) != (b[1] > p[1]) && p[0] < a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]) {
                     odd = !odd;
                 }

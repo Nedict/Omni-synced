@@ -126,8 +126,7 @@ fn in_quad(p: Pos2, q: &[Pos2]) -> bool {
         return false;
     }
     let mut sign = 0.0f32;
-    for i in 0..q.len() {
-        let (a, b) = (q[i], q[(i + 1) % q.len()]);
+    for (&a, &b) in q.iter().zip(q.iter().cycle().skip(1)) {
         let c = (b - a).x * (p - a).y - (b - a).y * (p - a).x;
         if c.abs() < 1e-6 {
             continue;

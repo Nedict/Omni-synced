@@ -1913,10 +1913,8 @@ impl SheetBody {
         let mut segs: Vec<(Vec2, Vec2)> = Vec::new();
         let mut add = |l: &Loop2| {
             let pts = l.polyline(1e-3);
-            for k in 0..pts.len() {
-                if let (Some(&a), Some(&b)) = (pts.get(k), pts.get((k + 1) % pts.len())) {
-                    segs.push((a, b));
-                }
+            for (&a, &b) in pts.iter().zip(pts.iter().cycle().skip(1)) {
+                segs.push((a, b));
             }
         };
         for r in &regions {
@@ -3390,11 +3388,11 @@ impl SheetBody {
         // What stays: the panel short of the zone plus the zone pieces (and what hangs from
         // them) that don't fold.
         let mut keep = vec![clip(pts, n * s0, n * -1.0)];
-        for i in 0..strips.len() {
+        for (i, strip) in strips.iter().enumerate() {
             if chosen.contains(&i) {
                 continue;
             }
-            keep.extend(strips.get(i).cloned());
+            keep.push(strip.clone());
             keep.extend(hangs.get(i).into_iter().flatten().filter_map(|&k| beyond.get(k).cloned()));
         }
         let fixed = match merge_loops(&keep, &mut work)?.as_slice() {
@@ -3417,8 +3415,7 @@ impl SheetBody {
         }
         // Flanges already on this panel: those beyond a folding tab move with it.
         let mut moves = Vec::new();
-        for k in 0..self.flanges.len() {
-            let Some(f) = self.flanges.get(k) else { continue };
+        for (k, f) in self.flanges.iter().enumerate() {
             if f.parent != panel {
                 continue;
             }

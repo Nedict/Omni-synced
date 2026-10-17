@@ -711,8 +711,7 @@ fn find_profiles_bounded(sk: &Sketch, max_edges: usize) -> Vec<Profile> {
     let mut anchors: Vec<Vec2> = Vec::new();
     if shapes.len() <= 50_000 {
         let mut whole: Vec<bool> = shapes.iter().map(|(_, s)| s.is_full()).collect();
-        for i in 0..shapes.len() {
-            let Some((ci, x)) = shapes.get(i) else { continue };
+        for (i, (ci, x)) in shapes.iter().enumerate() {
             if carrier.get(i) != Some(&i) || !analytic(*ci) {
                 continue;
             }

@@ -205,8 +205,8 @@ pub(crate) fn cut_grid(
             let centre = [0.5 * (lu.at.get(i0)? + lu.at.get(i1)?), 0.5 * (lv.at.get(j0)? + lv.at.get(j1)?)];
             let m = u32::try_from(n + extra.len()).ok()?;
             extra.push(centre);
-            for k in 0..poly.len() {
-                tris.push([m, *poly.get(k)?, *poly.get((k + 1) % poly.len())?]);
+            for (&a, &b) in poly.iter().zip(poly.iter().cycle().skip(1)) {
+                tris.push([m, a, b]);
             }
         }
         for k in 0..poly.len() {
