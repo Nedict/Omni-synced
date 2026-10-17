@@ -166,6 +166,39 @@ changed. A GIF keeps one palette for all its frames, so colours don't flicker, a
 what changed from one frame to the next. Frames are capped: at most 1000, and a GIF holds at most
 2^26 pixels of frames (about 160 frames of 800 × 500).
 
+**Motion analysis.** The **Motion Study** dialog's **Study** box opens a saved study to edit, and
+by its timeline the dialog charts what the study does.
+**Plot** picks a moving joint value (a joint picked in the Browser is picked here too), or
+**Picked point** once a point is picked in the dialog's **Point** box, and **Quantity** whether to
+show its value, velocity or acceleration; the chart runs over the
+study's steps with a cursor at the step shown, and a click or a drag on it moves to that step.
+Values are in degrees and millimetres; rates are per step, or per second once **Duration** says
+how many seconds the whole study takes. A picked point charts its distance from where it
+starts, its speed and the size of its acceleration. **Check collisions** plays the study and
+lists the pairs of parts that pass through each other, with the steps where they do (a click on
+one shows the first of them); those steps are shaded on the chart. It checks the parts picked in
+**Components** (against the ones picked in **Against**, when there are any), else every
+component, or the pairs of the design's contact sets (a choice beside the button once it has any).
+
+`motion.plot {study, joints?, occurrence?, point?, samples?, duration?}` answers the same
+numbers: for each joint value its `value`, `velocity` and `acceleration` per sample (with their
+units), and for a point its `position`, `velocity` and `acceleration` vectors, `speed` and
+`acceleration_norm`. The study plays as `motion.play` places it (closed loops follow, contact sets
+stop it), each sample from the one before, on a copy: the design is not changed. Velocities and
+accelerations are finite differences between samples, central inside and one-sided at the ends,
+so they are as smooth as the samples are dense (up to 1000, one per step by default). Angles are
+unwrapped, so a joint that turns on past half a turn keeps counting.
+`motion.interference {study, occurrences?, against?, contact_sets?, samples?}` answers each
+colliding pair with its `first_step`, `last_step`, the `steps` ranges where they overlap, how
+far into each other (`depth_mm`, the most at `deepest_step`) and their shared `volume_mm3`
+there (null when it is not cheap to work out). It plays the study as `motion.play` does, but
+contact sets don't stop it, and parts are tested at the samples only: a part that passes right
+through another between two samples is missed. Parts are told apart by occurrence, as contact
+sets tell them apart: an occurrence inside a sub-assembly placed twice is one part, so its two
+copies are not checked against each other. A check takes at most 256 bodies; on a large design,
+list the `occurrences` to check (an arm, with `against` the parts it must miss). When the work
+runs out it says `truncated` and the step it `checked_to`.
+
 **Insert Design** (`component.insert_design {path, translate?}`, on the **ASSEMBLE** panel and
 in the **File** menu) adds a component linked to another saved design, so each part can live in
 its own document. A STEP or mesh file picked there is inserted as **Insert STEP** or **Insert

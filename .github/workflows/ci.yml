@@ -12,6 +12,8 @@ name: CI
 
 on:
   pull_request:
+  # The merge queue: each queued group runs the full suite before it lands on main.
+  merge_group:
   push:
     branches: [main]
   schedule:
@@ -132,7 +134,12 @@ jobs:
     name: Native Linux Clippy
     needs: changes
     if: needs.changes.outputs.native == 'true'
-    runs-on: ubuntu-24.04
+    # Main and merge-queue runs use the self-hosted runner (warm build cache); pull requests
+    # stay on GitHub's runners, and the runner itself refuses pull-request jobs.
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'self-hosted-fast' }}
+    env:
+      # Outside the checkout, so `git clean` keeps the warm build between runs.
+      CARGO_TARGET_DIR: ${{ github.event_name == 'pull_request' && 'target' || '/home/ci-runner/cargo-target/clippy' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -156,9 +163,13 @@ jobs:
     name: Build tests
     needs: changes
     if: needs.changes.outputs.native == 'true'
-    runs-on: ubuntu-24.04
+    # Main and merge-queue runs use the self-hosted runner (warm build cache); pull requests
+    # stay on GitHub's runners, and the runner itself refuses pull-request jobs.
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'self-hosted-fast' }}
     timeout-minutes: 45
     env:
+      # Outside the checkout, so `git clean` keeps the warm build between runs.
+      CARGO_TARGET_DIR: ${{ github.event_name == 'pull_request' && 'target' || '/home/ci-runner/cargo-target/build-tests' }}
       CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
@@ -352,9 +363,13 @@ jobs:
     name: Doc tests
     needs: changes
     if: needs.changes.outputs.native == 'true'
-    runs-on: ubuntu-24.04
+    # Main and merge-queue runs use the self-hosted runner (warm build cache); pull requests
+    # stay on GitHub's runners, and the runner itself refuses pull-request jobs.
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04' || 'self-hosted-fast' }}
     timeout-minutes: 45
     env:
+      # Outside the checkout, so `git clean` keeps the warm build between runs.
+      CARGO_TARGET_DIR: ${{ github.event_name == 'pull_request' && 'target' || '/home/ci-runner/cargo-target/doc-tests' }}
       CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"

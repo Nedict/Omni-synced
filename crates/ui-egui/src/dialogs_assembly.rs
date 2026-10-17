@@ -23,13 +23,13 @@ use crate::viewport::Proj;
 
 #[path = "dialogs_trace.rs"]
 mod trace;
-pub use trace::TraceForm;
+pub use trace::{TraceForm, picked_point};
 
 /// Joint types in the order the Type box lists them (command names).
 pub const TYPES: [&str; 7] = ["rigid", "revolute", "slider", "cylindrical", "pin_slot", "planar", "ball"];
 const TYPE_LABELS: [&str; 7] = ["Rigid", "Revolute", "Slider", "Cylindrical", "Pin-slot", "Planar", "Ball"];
 /// What a joint origin input accepts (snaps on faces, edges and vertices).
-const SNAPS: u16 = FACES | EDGES | VERTICES;
+pub const SNAPS: u16 = FACES | EDGES | VERTICES;
 /// Commands whose effect is where occurrences sit (previewed on the placed model).
 const MOVES: [&str; 12] = [
     "joint.create",
@@ -265,7 +265,7 @@ fn current_values(s: &Session, index: usize) -> Vec<String> {
 }
 
 /// A value with its unit, without trailing zeros ("12 mm", "37.5 deg").
-fn num(v: f64, unit: &str) -> String {
+pub(crate) fn num(v: f64, unit: &str) -> String {
     let s = format!("{v:.4}");
     let s = s.trim_end_matches('0').trim_end_matches('.');
     format!("{} {unit}", if s == "-0" { "0" } else { s })
@@ -780,7 +780,7 @@ fn sel_items(inputs: &[SelInput], i: usize) -> &[Sel] {
 }
 
 /// The body a pick is on.
-fn body_of(sel: &Sel) -> Option<&str> {
+pub(crate) fn body_of(sel: &Sel) -> Option<&str> {
     match sel {
         Sel::Face { body, .. } | Sel::Edge { body, .. } | Sel::Vertex { body, .. } => Some(body),
         Sel::Body { name } => Some(name),

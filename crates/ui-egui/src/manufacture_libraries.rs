@@ -101,16 +101,18 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut do_install: Option<String> = None;
     let mut do_remove: Option<String> = None;
 
-    crate::frame::window(ui.ctx(), st.kind.title(), crate::frame::Width::Normal)
+    let max_h = (ui.ctx().content_rect().height() - 48.0).max(200.0);
+    crate::frame::window(ui.ctx(), st.kind.title(), crate::frame::Width::Wide)
         .id(egui::Id::new("mfg_library_dialog").with(st.kind.title()))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
-        .default_size([920.0, 520.0])
+        .default_size([740.0, 480.0])
+        .max_height(max_h)
         .show(ui.ctx(), |ui| {
             ui.horizontal(|ui| {
                 ui.label("Search");
-                ui.add(egui::TextEdit::singleline(&mut st.search).desired_width(220.0));
+                ui.add(egui::TextEdit::singleline(&mut st.search).desired_width(180.0));
                 if ui.button("Refresh").clicked() {
                     do_refresh = true;
                 }
@@ -122,8 +124,8 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui.horizontal_top(|ui| {
                 // ── Left: sources ───────────────────────────────────────────
                 ui.vertical(|ui| {
-                    ui.set_min_width(200.0);
-                    ui.set_max_width(220.0);
+                    ui.set_min_width(140.0);
+                    ui.set_max_width(160.0);
                     ui.label(RichText::new("Sources").strong());
                     if ui.selectable_label(st.sidebar == SidebarSel::Document, "Document").clicked() {
                         st.sidebar = SidebarSel::Document;
@@ -149,8 +151,8 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
                     ui.separator();
                     ui.label(RichText::new("Add remote").strong());
                     ui.label("Git URL or local folder");
-                    ui.add(egui::TextEdit::singleline(&mut st.remote_url).desired_width(190.0));
-                    ui.add(egui::TextEdit::singleline(&mut st.remote_name).desired_width(190.0));
+                    ui.add(egui::TextEdit::singleline(&mut st.remote_url).desired_width(140.0));
+                    ui.add(egui::TextEdit::singleline(&mut st.remote_name).desired_width(140.0));
                     if ui.button("Link repository").clicked() {
                         do_add = true;
                     }
@@ -159,7 +161,8 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
                 ui.separator();
                 // ── Center: list ────────────────────────────────────────────
                 ui.vertical(|ui| {
-                    ui.set_min_width(420.0);
+                    ui.set_min_width(320.0);
+                    ui.set_max_width(400.0);
                     let filtered: Vec<(usize, &CatalogEntry)> = st
                         .entries
                         .iter()
@@ -222,7 +225,8 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
                 ui.separator();
                 // ── Right: filters / info ───────────────────────────────────
                 ui.vertical(|ui| {
-                    ui.set_min_width(200.0);
+                    ui.set_min_width(140.0);
+                    ui.set_max_width(160.0);
                     ui.label(RichText::new("Filters").strong());
                     ui.label("Capability");
                     for cap in ["", "milling", "turning", "additive", "fabrication", "inspection", "holes"] {

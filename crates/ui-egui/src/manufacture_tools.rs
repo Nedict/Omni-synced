@@ -193,17 +193,20 @@ fn show_tool_library(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut delete = false;
     let mut duplicate = false;
 
-    crate::frame::window(ui.ctx(), "Tool Library", crate::frame::Width::Normal)
+    let max_h = (ui.ctx().content_rect().height() - 48.0).max(200.0);
+    crate::frame::window(ui.ctx(), "Tool Library", crate::frame::Width::Wide)
         .id(egui::Id::new("mfg_tool_library"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
-        .default_size([820.0, 520.0])
+        .default_size([740.0, 480.0])
+        .max_height(max_h)
         .show(ui.ctx(), |ui| {
             ui.horizontal(|ui| {
                 // Left: library tree + search
                 ui.vertical(|ui| {
-                    ui.set_min_width(160.0);
+                    ui.set_min_width(120.0);
+                    ui.set_max_width(140.0);
                     ui.label(RichText::new("Current Document").strong());
                     ui.label(if setup_name.is_empty() { "(no setup)".into() } else { setup_name.clone() });
                     ui.separator();
@@ -215,7 +218,8 @@ fn show_tool_library(app: &mut SolveApp, ui: &mut egui::Ui) {
 
                 // Center: tool table + cutting data
                 ui.vertical(|ui| {
-                    ui.set_min_width(420.0);
+                    ui.set_min_width(320.0);
+                    ui.set_max_width(400.0);
                     ui.horizontal(|ui| {
                         if ui.button("+ Add").clicked() {
                             add = true;
@@ -236,7 +240,7 @@ fn show_tool_library(app: &mut SolveApp, ui: &mut egui::Ui) {
                     let filtered: Vec<(usize, &Tool)> =
                         tools.iter().enumerate().filter(|(_, t)| matches_filter(t, st.category, &st.search)).collect();
 
-                    egui::ScrollArea::vertical().id_salt("mfg_tl_list").max_height(240.0).show(ui, |ui| {
+                    egui::ScrollArea::both().id_salt("mfg_tl_list").max_height(240.0).show(ui, |ui| {
                         egui::Grid::new("mfg_tl_grid").striped(true).num_columns(5).show(ui, |ui| {
                             ui.strong("Name");
                             ui.strong("Diameter");
@@ -292,7 +296,8 @@ fn show_tool_library(app: &mut SolveApp, ui: &mut egui::Ui) {
 
                 // Right: Filters / Info
                 ui.vertical(|ui| {
-                    ui.set_min_width(180.0);
+                    ui.set_min_width(140.0);
+                    ui.set_max_width(160.0);
                     ui.horizontal(|ui| {
                         if ui.selectable_label(!st.info_tab, "Filters").clicked() {
                             st.info_tab = false;
@@ -415,12 +420,14 @@ fn show_edit_tool(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut cancel = false;
     let title = format!("Tool Library — {}", st.draft.display_name());
 
-    crate::frame::window(ui.ctx(), title, crate::frame::Width::Normal)
+    let max_h = (ui.ctx().content_rect().height() - 48.0).max(200.0);
+    crate::frame::window(ui.ctx(), title, crate::frame::Width::Wide)
         .id(egui::Id::new("mfg_edit_tool"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
-        .default_size([720.0, 520.0])
+        .default_size([720.0, 480.0])
+        .max_height(max_h)
         .show(ui.ctx(), |ui| {
             ui.horizontal(|ui| {
                 for tab in EditToolTab::ALL {

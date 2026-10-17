@@ -3167,6 +3167,9 @@ fn feature_tools_with_constructor(
             {
                 return build_curved(&regions, -axis_w, tb);
             }
+            // A new body is final: its planar faces come out whole. A boolean's tool is not
+            // healed (the boolean heals its result).
+            let revolve = if operation == Operation::NewBody { kernel::revolve_whole } else { kernel::revolve };
             if *convention == crate::RevolveConvention::SketchNormal {
                 let mut out = Vec::new();
                 for (region, region_extent) in regions.iter().zip(&region_extents) {
@@ -3175,7 +3178,7 @@ fn feature_tools_with_constructor(
                         out.extend(build_curved(std::slice::from_ref(region), rotation_axis, tb)?);
                         continue;
                     }
-                    let bodies = kernel::revolve(&ss.plane, std::slice::from_ref(region), o, d, region_extent.sweep)?;
+                    let bodies = revolve(&ss.plane, std::slice::from_ref(region), o, d, region_extent.sweep)?;
                     let m = crate::rigid(Vec3::ZERO, origin_w, rotation_axis, region_extent.start);
                     for body in bodies {
                         out.push(if region_extent.start.abs() < 1e-12 {
@@ -3187,7 +3190,7 @@ fn feature_tools_with_constructor(
                 }
                 return Ok(out);
             }
-            let bodies = kernel::revolve(&ss.plane, &regions, o, d, ang)?;
+            let bodies = revolve(&ss.plane, &regions, o, d, ang)?;
             if start.abs() < 1e-12 {
                 return Ok(regions.iter().zip(bodies).map(|(r, body)| tool(r, body, None)).collect());
             }

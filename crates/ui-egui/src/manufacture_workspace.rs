@@ -284,6 +284,37 @@ pub fn enter(app: &mut SolveApp) {
     apply_companion_backend(app);
 }
 
+/// Close floating Manufacture dialogs so a later command (or the layout width tests) is not left
+/// with an oversized Tool Library / Machine Library window still on screen.
+pub fn close_floating_dialogs(app: &mut SolveApp) {
+    let s = &mut app.manufacture_workspace;
+    s.drill_dialog = None;
+    s.contour_dialog = None;
+    s.setup_dialog = None;
+    s.menu_dialog = None;
+    s.twod_dialog = None;
+    s.threed_dialog = None;
+    s.hole_rec_dialog = None;
+    s.multiaxis_dialog = None;
+    s.modify_dialog = None;
+    s.post_dialog = None;
+    s.machining_time_dialog = None;
+    s.setup_sheet_dialog = None;
+    s.tool_library_dialog = None;
+    s.edit_tool_dialog = None;
+    s.manage_stub_dialog = None;
+    s.sustainability_dialog = None;
+    s.turning_dialog = None;
+    s.part_handling_dialog = None;
+    s.additive_dialog = None;
+    s.from_gcode_dialog = None;
+    s.inspection_dialog = None;
+    s.manual_inspection_dialog = None;
+    s.fabrication_dialog = None;
+    s.nest_dialog = None;
+    s.library_dialog = None;
+}
+
 /// Ribbon / palette hook for Manufacture commands. Returns `false` when the click was handled
 /// here (do not fall through to a bare engine `run` with empty params).
 pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {

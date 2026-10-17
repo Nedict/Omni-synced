@@ -18,6 +18,8 @@ use crate::theme::Tokens;
 
 #[path = "configuration_rules_ui.rs"]
 mod configuration_rules_ui;
+#[path = "dialogs_motion_plot.rs"]
+pub mod plot;
 
 /// One keyed value of a motion study: a joint's value (index) at steps.
 #[derive(Clone, Debug, PartialEq)]
@@ -38,7 +40,7 @@ pub enum Mo {
     },
     MotionStudy {
         name: String,
-        /// Editing this study (its name).
+        /// Editing this study (its id).
         study: Option<String>,
         steps: String,
         tracks: Vec<Track>,
@@ -52,6 +54,8 @@ pub enum Mo {
         shown: Option<(u64, u64)>,
         saved: Option<BTreeMap<u64, Mat>>,
         error: Option<String>,
+        /// The chart and the collision check by the timeline.
+        analysis: Box<plot::Analysis>,
     },
     Explode {
         name: String,
@@ -114,8 +118,14 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
                 shown: None,
                 saved: None,
                 error: None,
+                analysis: Box::default(),
             },
-            vec![],
+            // A point to plot, and the parts to check for collisions (each optional).
+            vec![
+                SelInput::new("Point", crate::dialogs_assembly::SNAPS, false),
+                SelInput::new("Components", BODIES, true),
+                SelInput::new("Against", BODIES, true),
+            ],
         ),
         "explode.create" => (Mo::Explode { name: n("Exploded View", "explode.list"), scale: 1.0, shown: None, saved: None, error: None }, vec![]),
         "config.table" | "config.configure" => (Mo::Configurations { new_row: String::new(), error: None, rule_editor: Default::default() }, vec![]),
@@ -193,6 +203,57 @@ fn transport(ui: &mut egui::Ui, what: Transport, tip: &str) -> egui::Response {
     resp.on_hover_text(tip)
 }
 
+/// Study `key` as the Motion Study dialog edits it: (id, name, steps, keys as tracks with values
+/// in degrees and mm). `key` is an id first when `id_first`, else a name first (as
+/// `motion.study` reads a number and text). The dialog keys whole steps of its timeline, so a
+/// study keyed between them or off it (made by a command) is refused rather than changed.
+pub fn study_tracks(s: &Session, key: &str, id_first: bool) -> Result<(u64, String, String, Vec<Track>), String> {
+    let studies = &s.doc.assembly.studies;
+    let (by_id, by_name) = (studies.iter().find(|m| m.id.to_string() == key), studies.iter().find(|m| m.name == key));
+    let m = if id_first { by_id.or(by_name) } else { by_name.or(by_id) }.ok_or_else(|| format!("no motion study `{key}`"))?;
+    let last = f64::from(m.steps);
+    if m.keys.iter().flat_map(|k| &k.points).any(|(st, _)| st.fract() != 0.0 || !(0.0..=last).contains(st)) {
+        return Err(format!("{} has keys between whole steps or off its timeline, which this dialog can't keep: edit it with motion.study", m.name));
+    }
+    let tracks = m
+        .keys
+        .iter()
+        .filter_map(|k| {
+            let joint = s.doc.assembly.joints.iter().position(|j| j.id == k.joint)?;
+            let angle = s.doc.assembly.joints.get(joint)?.kind.is_angle(k.index);
+            let value = |v: f64| {
+                let (x, unit) = if angle { (v.to_degrees(), "deg") } else { (v, "mm") };
+                // Short where that keeps the value; else all its digits, so OK keeps the key.
+                let short = crate::dialogs_assembly::num(x, unit);
+                let kept = short.split(' ').next().and_then(|n| n.parse::<f64>().ok()).is_some_and(|y| (y - x).abs() <= 1e-9 * x.abs().max(1.0));
+                if kept { short } else { format!("{x} {unit}") }
+            };
+            let points = k.points.iter().map(|(st, v)| (st.round().clamp(0.0, f64::from(m.steps)) as u32, value(*v))).collect();
+            Some(Track { joint, index: k.index, points })
+        })
+        .collect();
+    Ok((m.id, m.name.clone(), m.steps.to_string(), tracks))
+}
+
+/// What the Motion Study dialog opens on when the control channel's `ui.start` passes `params`:
+/// `study` (an id or a name), opened to edit.
+pub fn preset(s: &Session, k: &mut Mo, p: &Value) -> Result<(), String> {
+    let Mo::MotionStudy { name, study, steps, tracks, shown, .. } = k else { return Err("not a Motion Study dialog".into()) };
+    let o = p.as_object().ok_or("`params` must be an object")?;
+    if let Some(key) = o.keys().find(|k| k.as_str() != "study") {
+        return Err(format!("unknown param `{key}` (Motion Study takes study)"));
+    }
+    let (key, id_first) = match o.get("study") {
+        Some(Value::Number(n)) => (n.to_string(), true),
+        Some(Value::String(x)) => (x.clone(), false),
+        Some(_) => return Err("`study` must be an id or a name".into()),
+        None => return Ok(()),
+    };
+    let (id, n, st, t) = study_tracks(s, &key, id_first)?;
+    (*study, *name, *steps, *tracks, *shown) = (Some(id.to_string()), n, st, t, None);
+    Ok(())
+}
+
 /// The study command's parameters.
 pub fn study_params(s: &Session, name: &str, study: Option<&str>, steps: &str, tracks: &[Track]) -> Result<Value, String> {
     let steps: u32 = steps.trim().parse().map_err(|_| "steps must be a whole number".to_string())?;
@@ -208,8 +269,9 @@ pub fn study_params(s: &Session, name: &str, study: Option<&str>, steps: &str, t
         return Err("add a key for a joint first".into());
     }
     let mut p = json!({"name": name, "steps": steps, "keys": keys});
+    // The id as a number: a study may be named like another's id.
     if let Some(st) = study {
-        p["study"] = json!(st);
+        p["study"] = st.parse::<u64>().map_or_else(|_| json!(st), |id| json!(id));
     }
     Ok(p)
 }
@@ -320,9 +382,8 @@ fn moved(before: &Session, after: &Session) -> BTreeMap<u64, Mat> {
 /// The study's pose at `step`, computed on a scratch copy.
 fn study_pose(app: &SolveApp, params: &Value, step: u32) -> Result<BTreeMap<u64, Mat>, String> {
     let mut sc = app.session.scratch();
-    let name = params["study"].as_str().or(params["name"].as_str()).unwrap_or_default().to_string();
-    sc.execute("motion.study", params).map_err(|e| e.to_string())?;
-    sc.execute("motion.play", &json!({"study": name, "step": step})).map_err(|e| e.to_string())?;
+    let id = scratch_study(&mut sc, params)?;
+    sc.execute("motion.play", &json!({"study": id, "step": step})).map_err(|e| e.to_string())?;
     Ok(moved(&app.session, &sc))
 }
 
@@ -352,6 +413,12 @@ fn export_animation(app: &mut SolveApp, params: Value, name: &str) {
             Err(e) => app.set_status(e.to_string(), true),
         }
     });
+}
+
+/// Makes (or edits) the study on a scratch copy, as OK would: its id there (a name may be
+/// another study's too).
+pub fn scratch_study(sc: &mut Session, params: &Value) -> Result<Value, String> {
+    Ok(sc.execute("motion.study", params).map_err(|e| e.to_string())?["study"].clone())
 }
 
 /// The explosion at `scale`, computed on a scratch copy.
@@ -432,7 +499,27 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: &mut [Sel
                 ui.end_row();
             }
         }
-        Mo::MotionStudy { name, study, steps, tracks, step, playing, looping, speed, shown, saved, error } => {
+        Mo::MotionStudy { name, study, steps, tracks, step, playing, looping, speed, shown, saved, error, analysis } => {
+            // An existing study opens to edit (and to chart); New makes another from these keys.
+            // By id: two studies may share a name.
+            let studies: Vec<(String, String)> = app.session.doc.assembly.studies.iter().map(|m| (m.id.to_string(), m.name.clone())).collect();
+            if !studies.is_empty() {
+                let labels: Vec<&str> = std::iter::once("New study").chain(studies.iter().map(|(_, n)| n.as_str())).collect();
+                let was = study.as_ref().and_then(|id| studies.iter().position(|(x, _)| x == id)).map_or(0, |i| i + 1);
+                let mut pick = was;
+                row_label(ui, "Study");
+                combo(ui, "ms_study", &labels, &mut pick);
+                ui.end_row();
+                if pick != was {
+                    match pick.checked_sub(1).and_then(|i| studies.get(i)).map(|(id, _)| study_tracks(&app.session, id, true)) {
+                        Some(Ok((id, n, st, t))) => {
+                            (*study, *name, *steps, *tracks, *shown, *playing) = (Some(id.to_string()), n, st, t, None, false)
+                        }
+                        Some(Err(e)) => app.set_status(e, true),
+                        None => *study = None,
+                    }
+                }
+            }
             row_label(ui, "Name");
             ui.text_edit_singleline(name);
             ui.end_row();
@@ -497,6 +584,9 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Mo, inputs: &mut [Sel
                 (*step, *playing) = advance(*step, dt * fps, total, *looping);
                 ui.ctx().request_repaint();
             }
+            // The chart and the collision check, by the timeline.
+            let study_now = study_params(&app.session, name, study.as_deref(), steps, tracks);
+            plot::rows(app, ui, analysis, &study_now, step, playing, total, inputs);
             // Tracks: a row per keyed joint value, its keys on a strip under the steps.
             let now = step.round() as u32;
             let mut remove: Option<usize> = None;
@@ -1043,6 +1133,7 @@ mod tests {
                     shown: None,
                     saved,
                     error: None,
+                    analysis: Box::default(),
                 }
             } else {
                 Mo::Explode { name: "E".into(), scale: 1.0, shown: None, saved, error: None }

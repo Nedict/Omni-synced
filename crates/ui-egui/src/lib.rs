@@ -759,6 +759,9 @@ impl SolveApp {
         dim_view::cancel();
         self.tool = None;
         self.home.open = false;
+        // Drop Manufacture floating windows before another command opens, so leftover library
+        // panels do not outlive the command that opened them (and fail the width layout tests).
+        manufacture_workspace::close_floating_dialogs(self);
         if matches!(id, "sketch.insert_dxf" | "sketch.insert_svg") {
             self.pick_open_command(id, json!({}));
             return;
