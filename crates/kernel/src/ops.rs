@@ -1528,32 +1528,46 @@ pub fn split_by_plane(body: &Body, plane: &solidcraft_geom::Plane) -> Result<Vec
 pub fn half_space(body: &Body, plane: &solidcraft_geom::Plane, positive: bool) -> Result<(Option<Body>, Body)> {
     // The box's own construction roles describe no face of the design: the cut face has none.
     let tool = half_box(body, plane, positive)?.with_face_sources(None);
-    // Faces of the body lying in the plane coincide with the box's cap, which the boolean can
-    // only take by nudging the box, by a share of its own size: the cut face moved off the
-    // plane, a different way for each part, and the parts lost the slab between (#1510).
-    // Moved off the plane to the side the box leaves out, they change nothing of the part.
-    if let Some(moved) = off_plane(body, plane, positive) {
-        // The part's history over [body, box], through the moved body (its faces are the body's).
-        let hb = recorded::placed(recorded::through(&moved, 0, recorded::kept(body, 0, 1).as_ref()), 0, 2);
-        let ht = recorded::placed(recorded::kept(&tool, 0, 1), 1, 2);
-        let counts = record::counts(&[body, &tool]);
-        let part = boolean(&moved, &tool, BoolOp::Intersect)?.map(|r| {
-            let h = recorded::of_pair(&r, &hb, &ht);
-            r.with_checked_history(h, &counts)
-        });
-        return Ok((part, tool));
+    let (part, report) = capture_boolean_diagnostics(|| boolean(body, &tool, BoolOp::Intersect));
+    // Faces of the body lying in the plane coincide with the box's cap, which the boolean may
+    // only take by nudging the box, by a share of its own size: the cut face then moves off the
+    // plane, a different way for each part, and the parts lose the slab between (#1510). Moved
+    // off the plane to the side the box leaves out, those faces change nothing of the part, and
+    // the cap meets no face. Asked only when the boolean failed or nudged the box: a part made
+    // without, its faces' names included, stays as it is.
+    let nudged = report.events.iter().any(|e| e.strategy == BooleanStrategy::ToolNudge);
+    if (part.is_err() || nudged)
+        && let Some(moved) = off_plane(body, plane, positive)
+    {
+        let (exact, moved_report) = capture_boolean_diagnostics(|| boolean(&moved, &tool, BoolOp::Intersect));
+        if let Ok(exact) = exact {
+            merge(moved_report);
+            // The part's history over [body, box], through the moved body (its faces are the body's).
+            let hb = recorded::placed(recorded::through(&moved, 0, recorded::kept(body, 0, 1).as_ref()), 0, 2);
+            let ht = recorded::placed(recorded::kept(&tool, 0, 1), 1, 2);
+            let counts = record::counts(&[body, &tool]);
+            let exact = exact.map(|r| {
+                let h = recorded::of_pair(&r, &hb, &ht);
+                r.with_checked_history(h, &counts)
+            });
+            return Ok((exact, tool));
+        }
     }
-    Ok((boolean(body, &tool, BoolOp::Intersect)?, tool))
+    merge(report);
+    Ok((part?, tool))
 }
 
 /// `body` with its planar faces lying in `plane` moved off it, a thousandth of the body's size,
 /// to the side a split's part on the `positive` side leaves out. `None` when no face lies there
 /// or moving them doesn't give a sound body.
-fn off_plane(body: &Body, plane: &solidcraft_geom::Plane, positive: bool) -> Option<Body> {
+pub(crate) fn off_plane(body: &Body, plane: &solidcraft_geom::Plane, positive: bool) -> Option<Body> {
     let m = plane.normal().normalized()?;
     let keep = if positive { m } else { -m };
     let size = body.size();
     let tol = (size * 1e-7).max(1e-9);
+    // Lying in the plane means in it, not within the boolean's tolerance of it: a face that close
+    // but off it bounds a real sliver, which moving the face would take or add.
+    let exact = (size * 1e-9).max(1e-12);
     let delta = size * 1e-3;
     let mut out: Option<Body> = None;
     for n in [keep, -keep] {
@@ -1578,7 +1592,7 @@ fn off_plane(body: &Body, plane: &solidcraft_geom::Plane, positive: bool) -> Opt
         // Its vertices and points along its edges (a disc has one vertex).
         let lies = |f: &mt::Face| {
             use mt::{BoundedCurve, ParametricCurve};
-            let on = |p: mt::Point3| (n.dot(from_p3(p)) - d).abs() < tol;
+            let on = |p: mt::Point3| (n.dot(from_p3(p)) - d).abs() < exact;
             f.vertex_iter().all(|v| on(v.point()))
                 && f.edge_iter().all(|e| {
                     let c = e.curve();
