@@ -984,6 +984,36 @@ fn attached_files_show_as_chips_that_can_be_taken_off_and_sent_alone() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// Review of #1744: chips' thumbnails were cached by the picture's address, so a new picture at a
+/// freed address could show an old one. Each file has an id of its own, never reused, and the
+/// cache follows the files on the message.
+#[test]
+fn each_file_has_its_own_id_and_thumbnail() {
+    let d = attachable("ids");
+    image::RgbaImage::from_pixel(20, 20, image::Rgba([10, 200, 10, 255])).save(d.join("green.png")).unwrap();
+    let mut h = narrow_chat();
+    h.frames(2);
+    h.call("ui.agent_chat", json!({"attach": at(&d, "target.png")}));
+    h.call("ui.agent_chat", json!({"attach": at(&d, "green.png")}));
+    h.frames(3);
+    let first: Vec<u64> = h.app.agent_chat.attachments.iter().map(|f| f.id).collect();
+    assert!(first.len() == 2 && first[0] != first[1], "{first:?}");
+    let mut cached: Vec<u64> = h.app.agent_chat.thumbs.keys().copied().collect();
+    cached.sort_unstable();
+    assert_eq!(cached, first, "a thumbnail per file, by its id");
+    h.call("ui.agent_chat", json!({"remove_file": 0}));
+    h.call("ui.agent_chat", json!({"attach": at(&d, "target.png")}));
+    h.frames(3);
+    let now: Vec<u64> = h.app.agent_chat.attachments.iter().map(|f| f.id).collect();
+    assert!(!now.contains(&first[0]), "a removed file's id is not used again: {now:?}");
+    let mut cached: Vec<u64> = h.app.agent_chat.thumbs.keys().copied().collect();
+    cached.sort_unstable();
+    let mut want = now.clone();
+    want.sort_unstable();
+    assert_eq!(cached, want, "the cache follows the files on the message");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 /// The + button: "Choose a file…" asks the app's file picker for the types that can be attached
 /// (not the design types Open shows) and attaches what it answers; "Paste a picture" attaches
 /// the clipboard's picture (here given as RGBA, as the system does).

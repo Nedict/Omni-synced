@@ -919,7 +919,7 @@ fn chip_rows(n: usize, avail: f32, gap: f32) -> usize {
 fn attachment_chips(app: &mut SolveApp, ui: &mut egui::Ui) {
     let chat = &mut app.agent_chat;
     // Thumbnails of files no longer on the message are let go.
-    let keep: Vec<usize> = chat.attachments.iter().filter_map(|f| f.thumb.as_ref().map(|t| Arc::as_ptr(t) as usize)).collect();
+    let keep: Vec<u64> = chat.attachments.iter().filter(|f| f.thumb.is_some()).map(|f| f.id).collect();
     chat.thumbs.retain(|k, _| keep.contains(k));
     if chat.attachments.is_empty() {
         return;
@@ -950,7 +950,7 @@ fn attachment_chips(app: &mut SolveApp, ui: &mut egui::Ui) {
 
 /// One file chip, `w` wide in all; true when its × was clicked.
 #[cfg(not(target_arch = "wasm32"))]
-fn chip(ui: &mut egui::Ui, thumbs: &mut std::collections::HashMap<usize, egui::TextureHandle>, f: &attach::Attachment, i: usize, w: f32) -> bool {
+fn chip(ui: &mut egui::Ui, thumbs: &mut std::collections::HashMap<u64, egui::TextureHandle>, f: &attach::Attachment, i: usize, w: f32) -> bool {
     let t = Tokens::get();
     let mut clicked = false;
     let r = egui::Frame::NONE.fill(t.toolbar).stroke(Stroke::new(1.0, t.border)).corner_radius(6.0).inner_margin(egui::Margin::symmetric(4, 3)).show(
@@ -963,8 +963,8 @@ fn chip(ui: &mut egui::Ui, thumbs: &mut std::collections::HashMap<usize, egui::T
                 let mark = match &f.thumb {
                     Some(img) => {
                         let tex = thumbs
-                            .entry(Arc::as_ptr(img) as usize)
-                            .or_insert_with(|| ui.ctx().load_texture(format!("sc_attach_{i}"), (**img).clone(), egui::TextureOptions::LINEAR));
+                            .entry(f.id)
+                            .or_insert_with(|| ui.ctx().load_texture(format!("sc_attach_{}", f.id), (**img).clone(), egui::TextureOptions::LINEAR));
                         let size = tex.size_vec2();
                         ui.image((tex.id(), size * (22.0 / size.x.max(size.y).max(1.0)))).rect.width()
                     }

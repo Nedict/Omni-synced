@@ -213,7 +213,9 @@ pub struct AgentChat {
     /// Pictures pasted so far, to name the next one.
     pasted: usize,
     /// The chips' thumbnails, by the picture they show.
-    thumbs: std::collections::HashMap<usize, egui::TextureHandle>,
+    thumbs: std::collections::HashMap<u64, egui::TextureHandle>,
+    /// The last id given to a file added to a message.
+    last_file_id: u64,
     /// Where the chat was drawn last frame (the panel, or its folded strip), for drops; `None`
     /// when it isn't drawn.
     pub(crate) drop_rect: Option<egui::Rect>,
@@ -260,6 +262,15 @@ impl Drop for AgentChat {
 }
 
 impl AgentChat {
+    /// Put a file on the next message with an id of its own; its name back.
+    fn add_file(&mut self, mut file: attach::Attachment) -> String {
+        self.last_file_id += 1;
+        file.id = self.last_file_id;
+        let name = file.name.clone();
+        self.attachments.push(file);
+        name
+    }
+
     pub fn state(&self) -> State {
         self.state.unwrap_or(State::Off)
     }
@@ -794,9 +805,7 @@ pub fn attach_path(app: &mut SolveApp, path: &str) -> std::result::Result<String
     } else {
         attach::read(p)?
     };
-    let name = file.name.clone();
-    app.agent_chat.attachments.push(file);
-    Ok(name)
+    Ok(app.agent_chat.add_file(file))
 }
 
 /// Add a picture from the clipboard (RGBA rows, as the system gives them) to the next message.
@@ -807,9 +816,7 @@ pub fn attach_rgba(app: &mut SolveApp, width: usize, height: usize, rgba: &[u8])
     let n = app.agent_chat.pasted + 1;
     let file = attach::from_rgba(format!("pasted picture {n}.png"), width, height, rgba)?;
     app.agent_chat.pasted = n;
-    let name = file.name.clone();
-    app.agent_chat.attachments.push(file);
-    Ok(name)
+    Ok(app.agent_chat.add_file(file))
 }
 
 /// Attach the picture on the clipboard, if it holds one.

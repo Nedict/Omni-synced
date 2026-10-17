@@ -75,6 +75,9 @@ pub enum Content {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Attachment {
+    /// Its own on the message, never reused (set when it is added there; 0 until then): the
+    /// chip's thumbnail is kept by it.
+    pub id: u64,
     pub name: String,
     pub content: Content,
     /// A small copy of a picture for its chip.
@@ -83,7 +86,7 @@ pub struct Attachment {
 
 impl Attachment {
     pub fn imported(name: String) -> Self {
-        Attachment { name, content: Content::Imported, thumb: None }
+        Attachment { id: 0, name, content: Content::Imported, thumb: None }
     }
     pub fn is_picture(&self) -> bool {
         matches!(self.content, Content::Picture { .. })
@@ -115,7 +118,7 @@ pub fn read(path: &Path) -> Result<Attachment, String> {
             }
             let bytes = std::fs::read(path).map_err(|e| format!("{name}: {e}"))?;
             let text = String::from_utf8(bytes).map_err(|_| format!("{name}: not UTF-8 text"))?;
-            Ok(Attachment { name, content: Content::Text(Arc::new(text)), thumb: None })
+            Ok(Attachment { id: 0, name, content: Content::Text(Arc::new(text)), thumb: None })
         }
         Kind::Cad => Err(format!("{name}: a CAD file is imported into the design, not read")),
         Kind::Other if matches!(path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(), Some("heic" | "heif")) => {
@@ -160,6 +163,7 @@ fn picture_within(name: String, bytes: &[u8], limit: usize) -> Result<Attachment
     {
         let thumb = thumbnail(&img);
         return Ok(Attachment {
+            id: 0,
             name,
             content: Content::Picture { mime, bytes: Arc::new(bytes.to_vec()), size: [img.width(), img.height()] },
             thumb,
@@ -197,7 +201,12 @@ fn encoded(name: String, img: image::DynamicImage, limit: usize) -> Result<Attac
         }
         if let Some((mime, bytes)) = sent {
             let thumb = thumbnail(&img);
-            return Ok(Attachment { name, content: Content::Picture { mime, bytes: Arc::new(bytes), size: [img.width(), img.height()] }, thumb });
+            return Ok(Attachment {
+                id: 0,
+                name,
+                content: Content::Picture { mime, bytes: Arc::new(bytes), size: [img.width(), img.height()] },
+                thumb,
+            });
         }
         if img.width().max(img.height()) <= MIN_SIDE {
             return Err(format!("{name}: too large to send, even scaled down"));
@@ -424,7 +433,7 @@ mod tests {
     /// fit is cut and says so, and a file past it is named only.
     #[test]
     fn attached_text_is_kept_within_the_prompt_budget() {
-        let file = |n: &str, len: usize| Attachment { name: n.into(), content: Content::Text(Arc::new("x".repeat(len))), thumb: None };
+        let file = |n: &str, len: usize| Attachment { id: 0, name: n.into(), content: Content::Text(Arc::new("x".repeat(len))), thumb: None };
         let files = vec![file("a.md", 600), file("b.md", 600), file("c.md", 600)];
         let n = note(&files, true, 1000);
         assert!(n.contains("`a.md`") && n.contains("`b.md`") && n.contains("`c.md`"), "every file is named: {n}");
@@ -437,7 +446,7 @@ mod tests {
     #[test]
     fn the_message_names_its_files_and_carries_the_pictures() {
         let pic = from_rgba("target.png".into(), 2, 2, &[9; 16]).unwrap();
-        let text = Attachment { name: "brief.md".into(), content: Content::Text(Arc::new("wall 2 mm\n".into())), thumb: None };
+        let text = Attachment { id: 0, name: "brief.md".into(), content: Content::Text(Arc::new("wall 2 mm\n".into())), thumb: None };
         let part = Attachment::imported("motor.step".into());
         let files = vec![pic, text, part];
         let n = note(&files, true, usize::MAX);
