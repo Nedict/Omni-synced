@@ -23,6 +23,9 @@ use solidcraft_ui_egui::space_mouse::{Axes, AxisRule, DriverMapping, WheelGuard,
 const STALE_AFTER: Duration = Duration::from_millis(150);
 const RETRY_AFTER: Duration = Duration::from_secs(2);
 const MAX_PROFILE_BYTES: u64 = 1024 * 1024;
+/// Room for one input report: the 4096 bytes `solidcraft_space_mouse` places fields in, plus the
+/// report id. A smaller buffer would cut a longer report short, and a cut report is dropped whole.
+const REPORT_BUFFER_BYTES: usize = 4096 + 1;
 
 /// The mapping used when no 3DxWare profile is found: what the driver applies by default in
 /// object mode. On Linux there is no 3DxWare (#1172); on Windows 3DxWare has no profile for
@@ -156,8 +159,9 @@ fn load_driver_mapping() -> Option<DriverMapping> {
 #[derive(Clone, Copy)]
 struct Reading {
     axes: Axes,
-    translation_at: Instant,
-    rotation_at: Instant,
+    /// When each of X, Y, Z, Rx, Ry and Rz last arrived. Each ages on its own: a device may send
+    /// translation and rotation in separate reports, or spread even one group over several.
+    at: [Instant; 6],
     /// The source says when the cap is back at rest, so a reading stays until the next one.
     /// A HID device repeats its report while the cap is held; spacenavd sends a record only when
     /// the values change, and a steady hold can go seconds without one.
@@ -166,17 +170,19 @@ struct Reading {
 
 impl Reading {
     fn new(now: Instant) -> Self {
-        Self { axes: Axes::default(), translation_at: now, rotation_at: now, held: false }
+        Self { axes: Axes::default(), at: [now; 6], held: false }
     }
 
     fn current(self, now: Instant) -> Axes {
-        if self.held {
-            return self.axes;
+        let mut axes = self.axes;
+        if !self.held {
+            for (value, at) in axes.translation.iter_mut().chain(axes.rotation.iter_mut()).zip(self.at) {
+                if now.duration_since(at) >= STALE_AFTER {
+                    *value = 0;
+                }
+            }
         }
-        Axes {
-            translation: if now.duration_since(self.translation_at) < STALE_AFTER { self.axes.translation } else { [0; 3] },
-            rotation: if now.duration_since(self.rotation_at) < STALE_AFTER { self.axes.rotation } else { [0; 3] },
-        }
+        axes
     }
 }
 
@@ -187,18 +193,17 @@ fn is_3d_mouse(info: &DeviceInfo) -> bool {
     info.usage_page() == 0x01 && info.usage() == 0x08
 }
 
-/// Takes the axes an input report carries, as the device's descriptor laid them out. Translation
-/// and rotation may come in separate reports (3Dconnexion's wired devices) or one (its wireless
-/// ones and most homemade devices); each group keeps its own age.
+/// Takes the axes an input report carries, as the device's descriptor laid them out, and leaves
+/// the others as they were: translation and rotation may come in separate reports (3Dconnexion's
+/// wired devices) or one (its wireless ones and most homemade devices).
 fn decode_report(report: &[u8], layout: Layout, reading: &mut Reading, now: Instant) -> bool {
     let Some(decoded) = layout.decode(report) else { return false };
-    if let Some(translation) = decoded.translation {
-        reading.axes.translation = translation;
-        reading.translation_at = now;
-    }
-    if let Some(rotation) = decoded.rotation {
-        reading.axes.rotation = rotation;
-        reading.rotation_at = now;
+    let values = reading.axes.translation.iter_mut().chain(reading.axes.rotation.iter_mut());
+    for ((value, at), new) in values.zip(reading.at.iter_mut()).zip(decoded.axes) {
+        if let Some(new) = new {
+            *value = new;
+            *at = now;
+        }
     }
     true
 }
@@ -238,9 +243,12 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>) {
     loop {
         if let Err(error) = api.refresh_devices() {
             log::warn!("3D mouse: device scan failed: {error}");
-        } else if let Some(device) = api.device_list().find(|info| is_3d_mouse(info)).and_then(|info| info.open_device(&api).ok()) {
-            let layout = device_layout(&device);
-            let mut report = [0_u8; 64];
+        } else if let Some((device, layout)) = api.device_list().filter(|info| is_3d_mouse(info)).find_map(|info| {
+            let device = info.open_device(&api).ok()?;
+            let layout = device_layout(&device, info.vendor_id())?;
+            Some((device, layout))
+        }) {
+            let mut report = [0_u8; REPORT_BUFFER_BYTES];
             loop {
                 match device.read_timeout(&mut report, 100) {
                     Ok(0) => {}
@@ -257,17 +265,28 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>) {
     }
 }
 
-/// How the device packs its axes, from its report descriptor; 3Dconnexion's layout if the
-/// descriptor cannot be read.
+/// How the device packs its axes, from its report descriptor, or None when it isn't one to read:
+/// a controller whose descriptor names no motion axis. Without a descriptor to go on (it can't be
+/// read, or it's empty), a 3Dconnexion device (Logitech's id for the old SpaceNavigator,
+/// 3Dconnexion's own for the rest) gets 3Dconnexion's layout, and any other device is left alone
+/// rather than guessed at.
 #[cfg(target_os = "windows")]
-fn device_layout(device: &hidapi::HidDevice) -> Layout {
+fn device_layout(device: &hidapi::HidDevice, vendor_id: u16) -> Option<Layout> {
     let mut descriptor = [0_u8; hidapi::MAX_REPORT_DESCRIPTOR_SIZE];
-    match device.get_report_descriptor(&mut descriptor) {
-        Ok(size) => solidcraft_space_mouse::Descriptor::parse(descriptor.get(..size).unwrap_or_default()).layout(),
-        Err(error) => {
-            log::info!("3D mouse: no report descriptor, assuming separate translation and rotation reports: {error}");
-            Layout::default()
-        }
+    let read = device.get_report_descriptor(&mut descriptor);
+    if let Ok(size @ 1..) = read {
+        return solidcraft_space_mouse::Descriptor::parse(descriptor.get(..size).unwrap_or_default()).layout();
+    }
+    let why = match read {
+        Err(error) => error.to_string(),
+        Ok(_) => "it is empty".to_string(),
+    };
+    if matches!(vendor_id, 0x046d | 0x256f) {
+        log::info!("3D mouse: no report descriptor ({why}), assuming separate translation and rotation reports");
+        Some(Layout::default())
+    } else {
+        log::debug!("3D mouse: skipping a multi-axis controller without a report descriptor ({why})");
+        None
     }
 }
 
@@ -290,7 +309,7 @@ fn reader(ctx: Context, shared: Arc<Mutex<Reading>>) {
                 Ok(mut file) => {
                     denied = None;
                     log::info!("3D mouse: reading {}", device.path.display());
-                    let mut report = [0_u8; 64];
+                    let mut report = [0_u8; REPORT_BUFFER_BYTES];
                     loop {
                         match file.read(&mut report) {
                             Ok(0) => break,
@@ -395,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn each_group_keeps_its_own_age_so_stale_motion_stops() {
+    fn each_axis_keeps_its_own_age_so_stale_motion_stops() {
         // Report layouts are tested in solidcraft-space-mouse; here, what the reader keeps.
         let now = Instant::now();
         let mut reading = Reading::new(now);
@@ -414,10 +433,56 @@ mod tests {
             0x05, 0x01, 0x09, 0x08, 0xA1, 0x01, 0x85, 0x01, 0x16, 0xA2, 0xFE, 0x26, 0x5E, 0x01, 0x75, 0x10, 0x95, 0x06, 0x19, 0x30, 0x29, 0x35, 0x81,
             0x02, 0xC0,
         ])
-        .layout();
+        .layout()
+        .expect("six axes declared");
         let mut both = Reading::new(now);
         assert!(decode_report(&[1, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0], combined, &mut both, now));
         assert_eq!(both.current(now), Axes { translation: [1, 2, 3], rotation: [4, 5, 6] });
+    }
+
+    #[test]
+    fn a_group_spread_over_reports_keeps_the_axes_it_already_has() {
+        // X in report 1, Y in report 2 (16-bit, -350..350): X arriving mustn't zero Y, and Y
+        // arriving mustn't zero X.
+        let split_x_y = solidcraft_space_mouse::Descriptor::parse(&[
+            0x05, 0x01, 0x09, 0x08, 0xA1, 0x01, 0x16, 0xA2, 0xFE, 0x26, 0x5E, 0x01, 0x75, 0x10, 0x95, 0x01, // 1 x 16 bit, -350..350
+            0x85, 0x01, 0x09, 0x30, 0x81, 0x02, // report 1: X
+            0x85, 0x02, 0x09, 0x31, 0x81, 0x02, // report 2: Y
+            0xC0,
+        ])
+        .layout()
+        .expect("X and Y declared");
+        let now = Instant::now();
+        let mut reading = Reading::new(now);
+        assert!(decode_report(&[1, 100, 0], split_x_y, &mut reading, now));
+        assert!(decode_report(&[2, 200, 0], split_x_y, &mut reading, now));
+        assert_eq!(reading.current(now).translation, [100, 200, 0]);
+        // Then only X keeps coming: Y goes stale on its own.
+        let later = now + STALE_AFTER + Duration::from_millis(1);
+        assert!(decode_report(&[1, 50, 0], split_x_y, &mut reading, later));
+        assert_eq!(reading.current(later).translation, [50, 0, 0]);
+    }
+
+    #[test]
+    fn only_the_axis_itself_keeps_it_alive() {
+        // 3Dconnexion's split layout, plus buttons in report 3 (one byte of bits).
+        let mut layout = Layout::default();
+        layout.buttons[0] =
+            Some(solidcraft_space_mouse::Field { report_id: 3, bit_offset: 0, bits: 1, logical_min: 0, logical_max: 1, relative: false });
+        let now = Instant::now();
+        let mut reading = Reading::new(now);
+        assert!(decode_report(&[1, 100, 0, 0, 0, 0, 0], layout, &mut reading, now));
+        // Just before the timeout X is still there; at exactly the timeout it's stale.
+        assert_eq!(reading.current(now + STALE_AFTER - Duration::from_millis(1)).translation, [100, 0, 0]);
+        assert_eq!(reading.current(now + STALE_AFTER).translation, [0; 3]);
+        // Button reports and reports with an id the layout doesn't know keep coming, but neither
+        // refreshes X: it goes stale on time all the same.
+        for step in 1..=10 {
+            let at = now + STALE_AFTER * step / 10;
+            assert!(decode_report(&[3, 1], layout, &mut reading, at));
+            assert!(!decode_report(&[0x17, 80], layout, &mut reading, at));
+        }
+        assert_eq!(reading.current(now + STALE_AFTER).translation, [0; 3]);
     }
 
     #[test]
