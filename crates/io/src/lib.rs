@@ -11,9 +11,6 @@ mod design;
 mod design_metadata;
 mod dxf;
 mod dxf_out;
-pub mod exchange;
-#[cfg(not(target_arch = "wasm32"))]
-mod f3d;
 pub use design::{
     DesignCompression, DesignContainerReader, DesignGeometry, DesignPreview, THUMBNAIL_SIZE, is_design_container, read_design_file,
     read_design_geometry, read_design_preview, read_design_thumbnail, read_design_thumbnail_file, write_design_container,
@@ -41,40 +38,8 @@ pub use svg::read_svg;
 mod gltf_in;
 pub use gltf_in::{GltfImport, Loader, MAX_GLTF_BYTES, MeshPlan, PlanPlace, glb_container, is_gltf_path, read_gltf};
 mod obj;
-#[cfg(not(target_arch = "wasm32"))]
-pub use f3d::{MAX_F3D_BYTES, looks_like_fusion_archive};
 pub use obj::read_obj;
 pub use threemf::{MAX_3MF_BYTES, MeshObject, model_xml, model_xml_with, read_3mf, weld, write_3mf, write_3mf_with};
-#[cfg(target_arch = "wasm32")]
-pub const MAX_F3D_BYTES: usize = 512 << 20;
-/// Browser builds cannot decode Fusion B-rep; still sniff ZIP contents so opening an
-/// `.f3d`/`.f3z` as a native design fails with [`fusion_design_refusal`] instead of a
-/// cryptic container/JSON error.
-#[cfg(target_arch = "wasm32")]
-pub fn looks_like_fusion_archive(bytes: &[u8]) -> bool {
-    use std::io::Cursor;
-    if !bytes.starts_with(b"PK\x03\x04") {
-        return false;
-    }
-    let Ok(zip) = zip::ZipArchive::new(Cursor::new(bytes)) else {
-        return false;
-    };
-    let mut manifest = false;
-    let mut design = false;
-    for name in zip.file_names() {
-        if name == "Manifest.dat" || name.ends_with("/Manifest.dat") {
-            manifest = true;
-        }
-        if name.contains("FusionDesignSegmentType") || name.contains("Breps.BlobParts") {
-            design = true;
-        }
-        if manifest && design {
-            return true;
-        }
-    }
-    manifest && design
-}
-pub use exchange::{ExchangeCapabilities, ExchangeFileType, ExchangeImport, ExchangeProviderId};
 pub use urdf::{UrdfOptions, UrdfPackage, urdf};
 
 use solidcraft_doc::{Document, Metadata, ModelState};
@@ -100,7 +65,7 @@ pub const MAX_DESIGN_BYTES: usize = 256 << 20;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IoError {
-    #[error("unsupported format `{0}` (use stl, obj, step, f3d, 3mf, urdf or solidcraft)")]
+    #[error("unsupported format `{0}` (use stl, obj, step, 3mf, urdf or solidcraft)")]
     Format(String),
     #[error("nothing to export: the design has no bodies")]
     Empty,
@@ -116,11 +81,6 @@ pub type Result<T> = std::result::Result<T, IoError>;
 
 /// Largest STEP file we read.
 pub const MAX_STEP_BYTES: usize = 512 << 20;
-
-/// Is this a Fusion design archive (`.f3d` / `.f3z`), any case?
-pub fn is_f3d_path(path: &str) -> bool {
-    std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("f3d") || e.eq_ignore_ascii_case("f3z"))
-}
 
 /// Is this a CAD file read as an Import base feature: STEP (`.step` / `.stp`), IGES
 /// (`.igs` / `.iges`) or a format read through cadmpeg ([`is_native_cad_path`]), any case?
@@ -198,67 +158,6 @@ pub struct StepFeature {
 
 /// Read STEP bytes (`file` is the source file name) into an Import base feature. The file is
 /// read once here to fail early and collect names; the feature holds the STEP text.
-/// Solid B-rep or mesh bodies from a Fusion file.
-#[cfg(not(target_arch = "wasm32"))]
-pub enum F3dOpenFeature {
-    Solid(StepFeature),
-    Mesh(MeshFeature),
-}
-
-/// Open a Fusion `.f3d` / `.f3z` (B-rep Import feature, or mesh bodies when B-rep is unavailable).
-#[cfg(not(target_arch = "wasm32"))]
-pub fn f3d_open_feature(bytes: &[u8], file: &str) -> Result<F3dOpenFeature> {
-    match f3d::open(bytes, file)? {
-        f3d::F3dOpen::Brep { step, mut warnings } => {
-            let mut sf = step_import_feature(&step, file)?;
-            sf.warnings.append(&mut warnings);
-            Ok(F3dOpenFeature::Solid(sf))
-        }
-        f3d::F3dOpen::Mesh { objects, warnings } => Ok(F3dOpenFeature::Mesh(mesh_objects_feature(&objects, file, warnings)?)),
-    }
-}
-
-/// Read a Fusion `.f3d` / `.f3z` as an Import base feature (B-rep only; use [`f3d_open_feature`] to allow mesh fallback).
-#[cfg(not(target_arch = "wasm32"))]
-pub fn f3d_import_feature(bytes: &[u8], file: &str) -> Result<StepFeature> {
-    match f3d_open_feature(bytes, file)? {
-        F3dOpenFeature::Solid(sf) => Ok(sf),
-        F3dOpenFeature::Mesh(_) => Err(IoError::Invalid(format!("{file}: Fusion file has no transferable B-rep (only mesh preview data)"))),
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn mesh_objects_feature(objects: &[threemf::MeshObject], file: &str, warnings: Vec<String>) -> Result<MeshFeature> {
-    let path = std::path::Path::new(file);
-    let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "Fusion".into());
-    let mut meshes = Vec::with_capacity(objects.len());
-    for o in objects {
-        solidcraft_kernel::mesh_body(&o.positions, &o.triangles).map_err(|e| IoError::Invalid(format!("mesh `{}`: {e}", o.name)))?;
-        meshes.push(solidcraft_doc::MeshData {
-            name: o.name.clone(),
-            positions: o.positions.iter().flat_map(|p| [p.x, p.y, p.z]).collect(),
-            triangles: o.triangles.iter().flatten().copied().collect(),
-            color: o.color,
-        });
-    }
-    let name = match objects {
-        [only] if !only.name.trim().is_empty() => only.name.clone(),
-        _ => stem,
-    };
-    let file_name = path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| file.to_string());
-    Ok(MeshFeature {
-        name,
-        body_names: objects.iter().map(|o| o.name.clone()).collect(),
-        kind: solidcraft_doc::FeatureKind::MeshImport { file: file_name, meshes },
-        warnings,
-    })
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn f3d_import_feature(_bytes: &[u8], file: &str) -> Result<StepFeature> {
-    Err(IoError::Invalid(format!("{file}: Fusion import is not available in the browser build; use STEP or open the desktop app")))
-}
-
 pub fn step_import_feature(bytes: &[u8], file: &str) -> Result<StepFeature> {
     step_import_feature_named(bytes, file, StepNames::default())
 }
@@ -625,20 +524,10 @@ pub fn step_assembly(doc: &Document, local: &ModelState, name: &str) -> Result<V
     Ok(solidcraft_kernel::step_export_products(&products, 0, &step_header(format!("{name}.step"), &doc.metadata))?.into_bytes())
 }
 
-/// Shown when a Fusion archive is opened as a native design (browser or older callers).
-pub(crate) fn fusion_design_refusal() -> IoError {
-    IoError::Invalid(
-        "Fusion .f3d/.f3z is not a SolidCraft design file; on desktop, File → Open loads its solid bodies into a new design (Fusion history is not editable). In the browser, export STEP from Fusion.".into(),
-    )
-}
-
 /// Read a design file's bytes.
 pub fn read_design(bytes: &[u8]) -> Result<Document> {
     if bytes.len() > MAX_DESIGN_BYTES {
         return Err(IoError::Invalid("design file too large".into()));
-    }
-    if let Some(err) = exchange::refuse_native_design(bytes) {
-        return Err(err);
     }
     if is_design_container(bytes) {
         return design::read(bytes);
@@ -858,145 +747,6 @@ mod tests {
         let plain = String::from_utf8(export(&m.state(), &[], Format::Step, "t").unwrap()).unwrap();
         assert!(plain.contains("FILE_DESCRIPTION(('SolidCraft model'),'2;1');\nFILE_NAME('t.step','',(''),(''),"));
         assert!(!model_xml(export(&m.state(), &[], Format::ThreeMf, "t").unwrap()).contains("Title"));
-    }
-
-    #[test]
-    fn fusion_f3d_is_not_a_solidcraft_design_container() {
-        let sample = std::env::var_os("F3D_SAMPLE")
-            .map(std::path::PathBuf::from)
-            .or_else(|| Some(std::path::PathBuf::from("/tmp/f3d-corpus/sample.f3d")))
-            .filter(|p| p.is_file());
-        let Some(sample) = sample else {
-            return;
-        };
-        let bytes = std::fs::read(&sample).unwrap();
-        assert!(looks_like_fusion_archive(&bytes));
-        assert!(!is_design_container(&bytes), "Fusion archive ZIP must not parse as .solidcraft");
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn fusion_f3d_imports_as_step_bodies() {
-        let sample = std::env::var_os("F3D_SAMPLE")
-            .map(std::path::PathBuf::from)
-            .or_else(|| Some(std::path::PathBuf::from("/tmp/f3d-corpus/sample.f3d")))
-            .filter(|p| p.is_file());
-        let Some(sample) = sample else {
-            return;
-        };
-        let bytes = std::fs::read(&sample).unwrap();
-        let sf = f3d_import_feature(&bytes, sample.to_str().unwrap()).expect("import sample f3d");
-        assert!(!sf.body_names.is_empty(), "expected at least one body");
-    }
-
-    /// Every `.f3d` under `F3D_CORPUS` or `/tmp/f3d-corpus` on the build host.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn fusion_offline_corpus_smoke() {
-        use std::path::PathBuf;
-        let dir = std::env::var_os("F3D_CORPUS")
-            .map(PathBuf::from)
-            .into_iter()
-            .chain(std::iter::once(PathBuf::from("/tmp/f3d-corpus")))
-            .find(|p| p.is_dir());
-        let Some(dir) = dir else {
-            eprintln!("fusion_offline_corpus_smoke: no corpus directory");
-            return;
-        };
-        let mut entries: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("f3d") || x.eq_ignore_ascii_case("f3z")))
-            .collect();
-        entries.sort_by_key(|e| e.file_name());
-        assert!(!entries.is_empty(), "no .f3d in {}", dir.display());
-        let mut solid = 0usize;
-        let mut mesh = 0usize;
-        let mut failed: Vec<(String, String)> = Vec::new();
-        for entry in entries {
-            let path = entry.path();
-            let label = path.file_name().unwrap().to_string_lossy().into_owned();
-            let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{label}: {e}"));
-            let file = path.to_string_lossy();
-            match f3d_open_feature(&bytes, &file) {
-                Ok(F3dOpenFeature::Solid(sf)) => {
-                    solid += 1;
-                    eprintln!("OK  solid  {label}  ({} bodies)", sf.body_names.len());
-                }
-                Ok(F3dOpenFeature::Mesh(mf)) => {
-                    mesh += 1;
-                    eprintln!("OK  mesh   {label}  ({} meshes)", mf.body_names.len());
-                }
-                Err(e) => {
-                    eprintln!("FAIL       {label}: {e}");
-                    failed.push((label, e.to_string()));
-                }
-            }
-        }
-        eprintln!("--- corpus {} files: {solid} solid, {mesh} mesh, {} failed ---", solid + mesh + failed.len(), failed.len());
-        for (name, err) in &failed {
-            eprintln!("  {name}: {err}");
-        }
-        if std::env::var("F3D_CORPUS_STRICT").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true")) {
-            assert!(failed.is_empty(), "{} file(s) still fail open", failed.len());
-        }
-    }
-
-    /// Open one file; set `F3D_ONE` to a full path (used by corpus shell loops with per-file timeout).
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn fusion_open_one_file() {
-        let Ok(path) = std::env::var("F3D_ONE") else {
-            return;
-        };
-        let path = std::path::PathBuf::from(&path);
-        let label = path.file_name().unwrap().to_string_lossy();
-        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{label}: {e}"));
-        let file = path.to_string_lossy();
-        match f3d_open_feature(&bytes, &file) {
-            Ok(F3dOpenFeature::Solid(sf)) => {
-                eprintln!("RESULT OK solid {label} bodies={}", sf.body_names.len());
-            }
-            Ok(F3dOpenFeature::Mesh(mf)) => {
-                eprintln!("RESULT OK mesh {label} meshes={}", mf.body_names.len());
-            }
-            Err(e) => {
-                eprintln!("RESULT FAIL {label}: {e}");
-            }
-        }
-    }
-
-    #[test]
-    fn fusion_f3d_open_on_server() {
-        let holder = std::path::Path::new("/tmp/holder.f3d");
-        if holder.is_file() {
-            let bytes = std::fs::read(holder).unwrap();
-            let opened = f3d_open_feature(&bytes, holder.to_str().unwrap()).expect("open holder f3d");
-            let bodies = match opened {
-                F3dOpenFeature::Solid(sf) => sf.body_names,
-                F3dOpenFeature::Mesh(mf) => mf.body_names,
-            };
-            assert!(!bodies.is_empty(), "holder bodies");
-        }
-    }
-
-    #[test]
-    fn fusion_f3d_is_not_read_as_design_container() {
-        let sample = std::env::var_os("F3D_SAMPLE")
-            .map(std::path::PathBuf::from)
-            .into_iter()
-            .chain([
-                std::path::PathBuf::from("/tmp/f3d-corpus/sample.f3d"),
-                std::path::PathBuf::from("/tmp/holder.f3d"),
-            ])
-            .find(|p| p.is_file());
-        let Some(sample) = sample else {
-            return;
-        };
-        let bytes = std::fs::read(&sample).unwrap();
-        let err = read_design(&bytes).unwrap_err().to_string();
-        assert!(err.contains("Fusion"), "{err}");
-        assert!(!err.contains("duplicate or invalid"), "{err}");
     }
 
     #[test]

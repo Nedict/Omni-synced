@@ -30,5 +30,3 @@ rustix = { version = "1", default-features = false, features = ["std", "fs"] }
 cadmpeg-core = { workspace = true }
 cadmpeg-ir = { workspace = true }
 cadmpeg-registry = { workspace = true }
-cadmpeg-codec-f3d = "0.6.1"
-cadmpeg-codec-step = "0.6.1"

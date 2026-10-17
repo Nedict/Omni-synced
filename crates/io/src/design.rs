@@ -42,19 +42,9 @@ fn invalid(message: impl std::fmt::Display) -> IoError {
     IoError::Invalid(format!("design container: {message}"))
 }
 
-/// Detect a SolidCraft design package (ZIP with our `container.json` marker).
-///
-/// Fusion `.f3d` archives are ZIP files too; they must not be treated as design containers.
+/// Detect the package signature independently of the file name.
 pub fn is_design_container(bytes: &[u8]) -> bool {
-    if !bytes.starts_with(b"PK\x03\x04") {
-        return false;
-    }
-    // `read_design_file` probes the magic with a 4-byte prefix before it opens the archive.
-    if bytes.len() < 30 {
-        return true;
-    }
-    // A full buffer that is a Fusion archive is not a SolidCraft package.
-    !crate::looks_like_fusion_archive(bytes)
+    bytes.starts_with(b"PK\x03\x04")
 }
 
 fn fields(pairs: impl IntoIterator<Item = (&'static str, Value)>) -> Map<String, Value> {
@@ -521,9 +511,6 @@ pub(super) fn read(bytes: &[u8]) -> Result<Document> {
 /// authoritative blob hydration. Desktop keeps one seekable file handle instead
 /// of buffering the complete archive. JSON continues through the normal migrations.
 pub fn read_design_file(path: &str, notify: Option<impl FnOnce(DesignPreview)>) -> Result<Document> {
-    if crate::is_f3d_path(path) {
-        return Err(crate::fusion_design_refusal());
-    }
     #[cfg(not(target_arch = "wasm32"))]
     let mut source = {
         crate::vfs::check(path).map_err(invalid)?;
@@ -552,10 +539,6 @@ pub fn read_design_file(path: &str, notify: Option<impl FnOnce(DesignPreview)>) 
         source.read_exact(&mut prefix).map_err(invalid)?;
     }
     source.seek(SeekFrom::Start(0)).map_err(invalid)?;
-    #[cfg(target_arch = "wasm32")]
-    if crate::looks_like_fusion_archive(source.get_ref()) {
-        return Err(crate::fusion_design_refusal());
-    }
     if is_design_container(&prefix) {
         let mut reader = DesignContainerReader::new(source)?;
         if let Some(notify) = notify
