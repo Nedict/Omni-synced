@@ -5964,6 +5964,8 @@ mod grid_plane_tests {
         app.finish_sketch();
         assert!(app.ui.perspective, "the preference is left alone");
         assert!(projection(&app, rect).cam.fov > 0.0);
+    }
+
     /// Create Sketch shows the Origin even when the browser hides it, and draws its planes
     /// through the model so a plane inside a body can be seen and picked; closing it restores
     /// the hidden, depth-tested Origin.
