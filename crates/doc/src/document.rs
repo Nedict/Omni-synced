@@ -1767,8 +1767,11 @@ fn is_g0(g: &Continuity) -> bool {
 /// The continuity a blend repeats by default: the tangent plane on both sides.
 /// The stations a boundary patch carries by default.
 fn boundary_samples() -> usize {
-    25
+    BOUNDARY_SAMPLES
 }
+
+/// The stations a boundary patch carries when a design does not say.
+pub const BOUNDARY_SAMPLES: usize = 25;
 
 fn blend_orders() -> [Continuity; 2] {
     [Continuity::G1, Continuity::G1]

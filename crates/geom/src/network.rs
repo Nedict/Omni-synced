@@ -167,6 +167,8 @@ struct Track<'a> {
     flipped: bool,
     /// A side collapsed to a point ([`PointCurve`]).
     point: bool,
+    /// The finite-difference step of [`Track::ders`]: a quarter of the smallest table cell.
+    step: f64,
     condition: Option<(Continuity, Box<dyn CrossFace + 'a>)>,
 }
 
@@ -196,7 +198,8 @@ impl<'a> Track<'a> {
             if condition.as_ref().is_some_and(|(g, _)| *g != Continuity::G0) {
                 return invalid(format!("{label} is a point: a continuity condition needs a curve"));
             }
-            return Ok(Track { label, curve, s: t.clone(), t, pts, length: 0.0, flipped: false, point, condition: None });
+            let step = step(&t);
+            return Ok(Track { label, curve, s: t.clone(), t, pts, length: 0.0, flipped: false, point, step, condition: None });
         }
         if !(acc > 1e-9 && acc.is_finite()) {
             return invalid(format!("{label} has no length"));
@@ -205,7 +208,8 @@ impl<'a> Track<'a> {
             *x /= acc;
         }
         let condition = condition.filter(|(g, _)| *g != Continuity::G0);
-        Ok(Track { label, curve, s, t, pts, length: acc, flipped: false, point, condition })
+        let step = step(&s);
+        Ok(Track { label, curve, s, t, pts, length: acc, flipped: false, point, step, condition })
     }
 
     fn continuity(&self) -> Continuity {
@@ -229,8 +233,7 @@ impl<'a> Track<'a> {
     /// The first two derivatives by `s` at `s` (one-sided at the ends), by finite differences
     /// within one table cell.
     fn ders(&mut self, s: f64) -> SplineResult<(Vec3, Vec3)> {
-        let cell = self.s.windows(2).map(|w| w[1] - w[0]).filter(|d| *d > 0.0).fold(f64::INFINITY, f64::min);
-        let h = (cell / 4.0).min(1e-3);
+        let h = self.step;
         if s - 2.0 * h < 0.0 {
             let f: Vec<Vec3> = (0..4).map(|k| self.point(s + k as f64 * h)).collect::<SplineResult<_>>()?;
             Ok(((f[0] * -3.0 + f[1] * 4.0 - f[2]) / (2.0 * h), (f[0] * 2.0 - f[1] * 5.0 + f[2] * 4.0 - f[3]) / (h * h)))
@@ -242,6 +245,13 @@ impl<'a> Track<'a> {
             Ok(((c - a) / (2.0 * h), (a - b * 2.0 + c) / (h * h)))
         }
     }
+}
+
+/// The finite-difference step along a table of parameters: a quarter of its smallest cell, at
+/// most 1e-3.
+fn step(s: &[f64]) -> f64 {
+    let cell = s.windows(2).map(|w| w[1] - w[0]).filter(|d| *d > 0.0).fold(f64::INFINITY, f64::min);
+    (cell / 4.0).min(1e-3)
 }
 
 /// Where two curves cross: the arc-length positions on each and the mid-point between them.
@@ -839,7 +849,8 @@ pub fn network_surface(u: Vec<NetworkCurve>, v: Vec<NetworkCurve>, tol: Toleranc
             let Some(mut cond) = slot.take() else { continue };
             let mut diffs: [Vec<f64>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
             for (&xj, at) in ubar.iter().zip(&cond.at) {
-                let natural = cond.natural(&mut us, &up, xj)?;
+                let frame = end_frame(&mut us, &up, cond.curve, xj)?;
+                let natural = cond.natural(&mut us, &up, &frame, xj)?;
                 for (k, d) in diffs.iter_mut().enumerate() {
                     d.push(at[k] - natural[k]);
                 }
@@ -862,7 +873,6 @@ pub fn network_surface(u: Vec<NetworkCurve>, v: Vec<NetworkCurve>, tol: Toleranc
         base_u.extend(au.knots());
     }
     let base_u = sorted_breaks(base_u);
-    let tol_fit = tol.fit;
     let (u_space, u_ctrl) = {
         let us_cell = std::cell::RefCell::new(&mut us);
         let up_ref = &up;
@@ -877,7 +887,7 @@ pub fn network_surface(u: Vec<NetworkCurve>, v: Vec<NetworkCurve>, tol: Toleranc
                     up_ref[i].point(&mut tracks[i], t)
                 }),
                 ders: [Vec::new(), Vec::new()],
-                tol: tol_fit,
+                tol: tol.fit,
             });
         }
         for cond in ends.iter().flatten() {
@@ -959,7 +969,7 @@ pub fn network_surface(u: Vec<NetworkCurve>, v: Vec<NetworkCurve>, tol: Toleranc
                     vp_ref[j].point(&mut tracks[j], t)
                 }),
                 ders,
-                tol: tol_fit,
+                tol: tol.fit,
             });
         }
         fit_direction(&base_v, end_order, &mut targets)?
@@ -1026,9 +1036,8 @@ impl EndCondition {
     /// The natural `[a, c, kb, kt]` at `x`: the tangent as long as the step to the neighbouring
     /// curve, outward from the face (into it at the far end), sheared along the curve as that
     /// step is; no tangential second derivative.
-    fn natural(&self, us: &mut [Track], up: &[Placement], x: f64) -> SplineResult<[f64; 4]> {
+    fn natural(&self, us: &mut [Track], up: &[Placement], frame: &Frame, x: f64) -> SplineResult<[f64; 4]> {
         let Some((k, gap)) = self.neighbour else { return Ok([0.0; 4]) };
-        let frame = end_frame(us, up, self.curve, x)?;
         let p = up.get(self.curve).ok_or_else(|| SplineError::Invalid("curve".into()))?.point(track(us, self.curve)?, x)?;
         let q = up.get(k).ok_or_else(|| SplineError::Invalid("curve".into()))?.point(track(us, k)?, x)?;
         let step = if self.end == 0 { q - p } else { p - q };
@@ -1039,8 +1048,14 @@ impl EndCondition {
 
     /// The first and second v-derivatives of the surface along this boundary at `x`.
     fn derivatives(&self, us: &mut [Track], up: &[Placement], across_u: Option<&Across>, x: f64) -> SplineResult<(Vec3, Vec3)> {
-        let natural = self.natural(us, up, x)?;
-        let mut v = natural;
+        self.derivatives_framed(us, up, across_u, x).map(|(d1, d2, _)| (d1, d2))
+    }
+
+    /// [`EndCondition::derivatives`] with the face's frame there (projecting onto the face is
+    /// the costly part: it is done once).
+    fn derivatives_framed(&self, us: &mut [Track], up: &[Placement], across_u: Option<&Across>, x: f64) -> SplineResult<(Vec3, Vec3, Frame)> {
+        let frame = end_frame(us, up, self.curve, x)?;
+        let mut v = self.natural(us, up, &frame, x)?;
         if let Some(au) = across_u {
             for (k, c) in self.corr.iter().enumerate() {
                 if let Some(c) = c {
@@ -1049,10 +1064,9 @@ impl EndCondition {
             }
         }
         let [a, c, kb, kt] = v;
-        let frame = end_frame(us, up, self.curve, x)?;
         let d1 = frame.b * a + frame.t * c;
         let d2 = frame.n * frame.second(a, c) + frame.b * kb + frame.t * kt;
-        Ok((d1, d2))
+        Ok((d1, d2, frame))
     }
 
     /// Typical sizes of the first and second derivatives along the boundary (for fitting
@@ -1061,8 +1075,7 @@ impl EndCondition {
         let mut big = [0.0f64; 2];
         for k in 0..=32 {
             let x = k as f64 / 32.0;
-            let (d1, d2) = self.derivatives(us, up, across_u, x)?;
-            let frame = end_frame(us, up, self.curve, x)?;
+            let (d1, d2, frame) = self.derivatives_framed(us, up, across_u, x)?;
             let out = d1.dot(frame.b) * if self.end == 0 { 1.0 } else { -1.0 };
             if !(out > 0.0) {
                 let label = us.get(self.curve).map(|t| t.label.clone()).unwrap_or_default();

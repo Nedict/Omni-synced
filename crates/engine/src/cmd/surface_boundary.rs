@@ -14,7 +14,7 @@ use crate::params::{bad, str_, string_list, vec3};
 use crate::{Result, Session};
 
 /// The stations a boundary carries by default (the patch's resolution along the loop).
-const DEFAULT_SAMPLES: usize = 25;
+const DEFAULT_SAMPLES: usize = solidcraft_doc::BOUNDARY_SAMPLES;
 /// The fewest stations a patch can hold the widest continuity pair with: a G3 side needs four rows
 /// at each of two opposite sides, so eight.
 const MIN_SAMPLES: usize = 8;
@@ -22,10 +22,9 @@ const MIN_SAMPLES: usize = 8;
 const MAX_SAMPLES: usize = 512;
 /// The most curves one direction of a network may list (the kernel's own cap).
 const MAX_NETWORK_CURVES: usize = solidcraft_geom::network::MAX_NETWORK_CURVES;
-/// The most sketch curves one network curve may chain.
-const MAX_CHAIN: usize = 1000;
-/// The most points picking one chain of edges.
-const MAX_PICKS: usize = 10_000;
+/// The most sketch curves one network curve may chain, and points picking one chain of edges
+/// (the kernel's own caps).
+use solidcraft_kernel::{MAX_CHAIN_CURVES as MAX_CHAIN, MAX_EDGE_PICKS as MAX_PICKS};
 
 pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("surface.boundary", "Boundary Surface", boundary)
     .at("SURFACE", "CREATE")
@@ -131,13 +130,10 @@ fn network(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad(cmd, format!("`{key}` belongs to a loop of sketch curves: a network gives each curve its own continuity")));
         }
     }
-    let operation = match str_(p, "operation") {
-        None => Operation::NewBody,
-        Some(o) => match Operation::parse(o) {
-            Some(op @ (Operation::NewBody | Operation::Join)) => op,
-            _ => return Err(bad(cmd, "`operation` must be new or join")),
-        },
-    };
+    let operation = super::features::operation(p, cmd)?;
+    if !matches!(operation, Operation::NewBody | Operation::Join) {
+        return Err(bad(cmd, "`operation` must be new or join"));
+    }
     // The sketch a bare curve id belongs to, found only when one is used.
     let mut default_sketch: Option<u64> = None;
     let u = network_curves(s, p, "u", &mut default_sketch)?;

@@ -32,7 +32,9 @@ pub const FIT_TOLERANCE: f64 = 1e-4;
 /// Most points of a 3D sketch curve a boundary surface follows (longer ones are resampled).
 const MAX_WIRE_POINTS: usize = 400;
 /// Most points picking the edges of one curve.
-const MAX_PICKS: usize = 10_000;
+pub const MAX_EDGE_PICKS: usize = 10_000;
+/// Most sketch curves one curve of a boundary surface chains.
+pub const MAX_CHAIN_CURVES: usize = 1000;
 
 /// The network's continuity for a curve's: G3 is refused (a network holds up to G2).
 fn net_order(c: &BoundaryCurve) -> Result<network::Continuity> {
@@ -90,8 +92,8 @@ pub fn boundary_surface(u: &[BoundaryCurve], v: &[BoundaryCurve]) -> Result<Body
                     (Box::new(PointCurve(*p)), None)
                 }
                 CurveSource::Edges { body, at } => {
-                    if at.is_empty() || at.len() > MAX_PICKS || at.iter().any(|p| !p.is_finite()) {
-                        return Err(KernelError::Invalid(format!("{}: pick 1 to {MAX_PICKS} points on its edges", c.label)));
+                    if at.is_empty() || at.len() > MAX_EDGE_PICKS || at.iter().any(|p| !p.is_finite()) {
+                        return Err(KernelError::Invalid(format!("{}: pick 1 to {MAX_EDGE_PICKS} points on its edges", c.label)));
                     }
                     let (chain, closed) = crate::surfaces::picked_chain(body, at)?;
                     if closed {
@@ -117,7 +119,8 @@ pub fn boundary_surface(u: &[BoundaryCurve], v: &[BoundaryCurve]) -> Result<Body
         let nv: Vec<NetworkCurve> = v.iter().map(&mut to_net).collect::<Result<_>>()?;
         let surface = network::network_surface(nu, nv, Tolerances { cross: CROSS_TOLERANCE, fit: FIT_TOLERANCE }).map_err(|e| match e {
             SplineError::Unsupported(m) => KernelError::Invalid(format!("not supported yet: {m}")),
-            SplineError::Invalid(m) | SplineError::TooLarge(m) => KernelError::Invalid(m),
+            SplineError::TooLarge(m) => KernelError::TooLarge(m),
+            SplineError::Invalid(m) => KernelError::Invalid(m),
         })?;
         let face = face_of(&surface, &corners)?;
         let mut rec = Rebuild::default();
@@ -149,7 +152,7 @@ struct SketchChain {
 
 impl SketchChain {
     fn new(label: &str, plane: &Plane, segs: &[Seg2]) -> Result<SketchChain> {
-        if segs.is_empty() || segs.len() > 1000 {
+        if segs.is_empty() || segs.len() > MAX_CHAIN_CURVES {
             return Err(KernelError::Invalid(format!("{label} has no curves, or too many")));
         }
         if segs.windows(2).any(|w| w[0].end().dist(w[1].start()) > 1e-6) {
@@ -451,11 +454,10 @@ fn side_edges(mut curve: mt::BSplineCurve<mt::Point3>, a: &mt::Vertex, b: &mt::V
     // Cut from the far end back, so the earlier parameters stay on the part kept.
     let mut tails = Vec::with_capacity(cuts.len());
     for &t in cuts.iter().rev() {
-        let tail = curve.cut(t);
-        tails.push((t, tail));
+        tails.push(curve.cut(t));
     }
     let mut pieces = vec![curve];
-    pieces.extend(tails.into_iter().rev().map(|(_, c)| c));
+    pieces.extend(tails.into_iter().rev());
     let count = pieces.len();
     for (k, piece) in pieces.into_iter().enumerate() {
         let to = if k + 1 == count { b.clone() } else { mt::Vertex::new(piece.subs(piece.range_tuple().1)) };

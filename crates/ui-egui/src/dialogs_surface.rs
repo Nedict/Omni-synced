@@ -418,7 +418,7 @@ fn chains(app: &SolveApp, picks: &[Sel]) -> Result<Vec<Chain>, String> {
     let meet = |a: &[Vec3; 2], b: &[Vec3; 2]| a.iter().any(|p| b.iter().any(|q| p.dist(*q) <= 1e-6 * (1.0 + p.len())));
     // Union the picks that meet, keeping the first pick of each chain in front.
     let mut group: Vec<usize> = (0..parts.len()).collect();
-    fn root(group: &mut [usize], mut i: usize) -> usize {
+    fn root(group: &[usize], mut i: usize) -> usize {
         while let Some(&g) = group.get(i) {
             if g == i {
                 break;
@@ -431,7 +431,7 @@ fn chains(app: &SolveApp, picks: &[Sel]) -> Result<Vec<Chain>, String> {
         for j in 0..i {
             let (Some((ci, ei)), Some((cj, ej))) = (parts.get(i), parts.get(j)) else { continue };
             if same_source(ci, cj) && meet(ei, ej) {
-                let (ri, rj) = (root(&mut group, i), root(&mut group, j));
+                let (ri, rj) = (root(&group, i), root(&group, j));
                 if let Some(g) = group.get_mut(ri.max(rj)) {
                     *g = ri.min(rj);
                 }
@@ -440,7 +440,7 @@ fn chains(app: &SolveApp, picks: &[Sel]) -> Result<Vec<Chain>, String> {
     }
     let mut out: Vec<(usize, Chain)> = Vec::new();
     for (i, (part, _)) in parts.into_iter().enumerate() {
-        let r = root(&mut group, i);
+        let r = root(&group, i);
         match out.iter_mut().find(|(k, _)| *k == r) {
             Some((_, Chain::Sketch { ids, .. })) => {
                 if let Chain::Sketch { ids: more, .. } = part {
@@ -532,7 +532,7 @@ pub fn commands(app: &SolveApp, k: &Surf, inputs: &[SelInput], extra: &Map<Strin
                 picks.iter().filter_map(|x| if let Sel::SketchCurve { id } = x { Some(id.clone()) } else { None }).collect();
             // Two to four sketch curves of one sketch and nothing across: the loop patch.
             let looped = across.is_empty() && !*join && sketch_ids.len() == picks.len() && (2..=4).contains(&picks.len());
-            match crate::dialogs::curves_sketch(app, &sketch_ids, None).filter(|_| looped) {
+            match looped.then(|| crate::dialogs::curves_sketch(app, &sketch_ids, None)).flatten() {
                 Some(sk) => {
                     let mut p = json!({"sketch": sk, "curves": sketch_ids});
                     // Orders that differ from side to side (kept from the feature) stand as they are.
@@ -796,7 +796,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind, frame: &Mat) -> Option<(K
             if *crown != 0.0 {
                 extra.insert("crown".into(), json!(crown));
             }
-            if *samples != 25 {
+            if *samples != solidcraft_engine::doc::BOUNDARY_SAMPLES {
                 extra.insert("samples".into(), json!(samples));
             }
             if index.is_none() || orders.iter().any(|o| *o != first) {
