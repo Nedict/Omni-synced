@@ -13,7 +13,6 @@ use solidcraft_ui_egui::SolveApp;
 use solidcraft_ui_egui::space_mouse::{View, WheelGuard, navigate_camera_frame, view};
 
 const DRIVER: &str = "/Library/Frameworks/3DconnexionNavlib.framework/3DconnexionNavlib";
-const RETRY: Duration = Duration::from_secs(2);
 
 /// Native row-vector camera-to-world matrix: right/up/back/eye rows, with translation in the
 /// last row. Keep NlCreate's default layout; column_vectors would require transposing all values.
@@ -214,9 +213,7 @@ impl State {
         match (name, value) {
             ("view.affine", Value::Matrix(m)) => {
                 if camera_from_native(self.camera, m, self.area, self.eye_depth).is_none() {
-                    if std::env::var_os("SOLIDCRAFT_3D_MOUSE_TRACE").is_some() {
-                        eprintln!("3D mouse: rejected affine {m:?}");
-                    }
+                    log::trace!("3D mouse: rejected affine {m:?}");
                     return false;
                 }
                 self.matrix = m;
@@ -279,9 +276,9 @@ fn available_commands() -> Vec<(&'static str, &'static str)> {
 pub struct SpaceMouse {
     shared: Arc<Mutex<State>>,
     connection: Option<ffi::Connection>,
-    checked: Option<Instant>,
+    initialized: bool,
+    fallback: Option<super::space_mouse::SpaceMouse>,
     focused: bool,
-    error: Option<String>,
     sketch_bank: Option<bool>,
     wheel: WheelGuard,
     started: Instant,
@@ -292,9 +289,9 @@ impl SpaceMouse {
         Self {
             shared: Arc::new(Mutex::new(State::new(ctx.clone()))),
             connection: None,
-            checked: None,
+            initialized: false,
+            fallback: None,
             focused: false,
-            error: None,
             sketch_bank: None,
             wheel: WheelGuard::default(),
             started: Instant::now(),
@@ -302,6 +299,10 @@ impl SpaceMouse {
     }
 
     pub fn raw_input_hook(&mut self, enabled: bool, raw: &mut egui::RawInput) {
+        if let Some(fallback) = &mut self.fallback {
+            fallback.raw_input_hook(enabled, raw);
+            return;
+        }
         let moving = self.shared.lock().map(|s| s.moving && s.enabled).unwrap_or(false);
         if enabled {
             self.wheel.filter(moving, self.started.elapsed().as_secs_f64(), &mut raw.events);
@@ -309,6 +310,13 @@ impl SpaceMouse {
     }
 
     pub fn tick(&mut self, app: &mut SolveApp, ctx: &egui::Context) {
+        app.viewport.space_mouse_driver_settings = self.connection.is_some();
+        if let Some(fallback) = &mut self.fallback {
+            if !app.file_picker_busy() {
+                fallback.tick(app, ctx);
+            }
+            return;
+        }
         let v = view(app, ctx);
         let (pending, commands, interrupted, up_axis) = match self.shared.lock() {
             Ok(mut state) => {
@@ -343,25 +351,26 @@ impl SpaceMouse {
                 }
             }
         }
-        if self.connection.is_none() && self.checked.is_none_or(|at| at.elapsed() >= RETRY) {
-            self.checked = Some(Instant::now());
-            // An absent driver is ordinary: SolidCraft also runs on machines without a SpaceMouse.
+        // Probe once at startup. Installing/replacing a driver takes effect on the next launch;
+        // Macs without Navlib must not schedule periodic UI repaints or framework-path checks.
+        if !self.initialized {
+            self.initialized = true;
             if std::path::Path::new(DRIVER).exists() {
                 match ffi::Connection::open(DRIVER, Arc::clone(&self.shared), &available_commands()) {
                     Ok(connection) => {
-                        eprintln!("3D mouse: connected to the macOS 3DxWare Navigation Library");
+                        log::info!("3D mouse: connected to the macOS 3DxWare Navigation Library");
                         self.connection = Some(connection);
-                        self.error = None;
                         self.sketch_bank = None;
                         self.focused = !v.enabled;
+                        app.viewport.space_mouse_driver_settings = true;
                     }
-                    Err(error) => {
-                        if self.error.as_ref() != Some(&error) {
-                            eprintln!("3D mouse: {error}");
-                            self.error = Some(error);
-                        }
-                    }
+                    Err(error) => log::warn!("3D mouse: {error}"),
                 }
+            }
+            if self.connection.is_none() {
+                // Retain the driver-client/HID backend from #1815, but never register both
+                // native clients at once or apply the same cap motion twice.
+                self.fallback = Some(super::space_mouse::SpaceMouse::start(ctx));
             }
         }
         if let Some(connection) = &self.connection
@@ -383,8 +392,8 @@ impl SpaceMouse {
                 connection.up_axis(coordinates, front);
             }
         }
-        if self.shared.lock().map(|s| s.moving && s.enabled).unwrap_or(false) || self.connection.is_none() {
-            ctx.request_repaint_after(if self.connection.is_none() { RETRY } else { Duration::from_millis(16) });
+        if self.shared.lock().map(|s| s.moving && s.enabled).unwrap_or(false) {
+            ctx.request_repaint_after(Duration::from_millis(16));
         }
     }
 }

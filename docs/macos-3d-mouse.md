@@ -2,14 +2,15 @@
 
 SolidCraft dynamically loads the **Navigation Library** from the user's installed 3DxWare:
 `/Library/Frameworks/3DconnexionNavlib.framework/3DconnexionNavlib`. It does not ship a driver or
-require an SDK to build. Without 3DxWare, ordinary pointer navigation continues to work.
+require an SDK to build. When Navlib is unavailable, the existing 3DconnexionClient/HID backend
+handles the cap instead. Only one backend registers for input, avoiding duplicate motion.
 
 ## Setup
 
 1. Install [3DxWare for macOS](https://3dconnexion.com/us/drivers/) and connect the SpaceMouse.
 2. Launch SolidCraft and open a design. Leave **Preferences › Navigation › 3D mouse** enabled.
 3. Select SolidCraft in **3Dconnexion Settings**. Choose **Object** for cap movements that move
-   the model, as in Fusion's Object mode. Adjust sensitivity, axis directions, navigation mode,
+   the model. Adjust sensitivity, axis directions, navigation mode,
    rotation center and horizon lock in that application profile.
 4. Assign SolidCraft commands, including Fit, Home and standard views, to SpaceMouse Enterprise
    buttons or radial menus. Assignments use stable SolidCraft command identifiers. Driver-owned
@@ -31,9 +32,11 @@ queued motion and commands. Flat-pattern pages do not currently expose this 3D c
 
 The integration exports command text and identifiers. It does not provide command artwork or
 custom-view save/recall bindings for the Enterprise display. Availability of specific navigation
-modes and device features depends on the installed driver. Fusion-equivalent behavior should be
-confirmed with the physical device; using the same driver does not establish complete parity.
-The intended interaction follows [3Dconnexion's public Fusion navigation documentation](https://3dconnexion.com/us/applications/autodesk-fusion-360/learn-more/).
+modes and device features depends on the installed driver.
+
+SolidCraft checks for Navlib once at startup; installing or replacing the driver requires an app
+restart. Without Navlib, Preferences keeps the existing speed and per-axis controls for the
+fallback backend. With Navlib connected, Preferences points to 3Dconnexion Settings instead.
 
 ## Implementation and verification
 
@@ -54,8 +57,7 @@ For a physical smoke test, launch a sample design, confirm the log says it conne
 Object/Target modes, selected-item rotation center, horizon and rotation locks, Fit/standard view
 buttons and an assigned modelling command. Enter a sketch and confirm rotation stays locked.
 Switch to another app, disable navigation and unplug/reconnect the mouse; there should be no
-stale movement or repeated button command on return. No Fusion automation or extracted data is
-used by these tests.
+stale movement or repeated button command on return.
 
 ### Local verification, 2026-10-17
 
@@ -68,10 +70,13 @@ The initial zoom-only behavior came from selecting
 at the default matrix convention: right/up/back/eye rows, translation in the final row. The
 incorrect combination generated projective transforms that the camera validator rejected.
 
-The macOS build, eight native integration unit tests and thirteen shared SpaceMouse tests pass.
+The macOS build, nine Navlib integration unit tests and thirteen shared SpaceMouse tests pass.
+The native tests include a regression check that an unavailable Navlib connection does not
+schedule periodic UI wakeups. Ten existing driver-client/HID tests also pass.
 An independent C ABI probe against the installed headers confirms the value/accessor/options/
 command-node sizes. Formatting and asset/icon/list/layer checks pass. The full CI gate stops on
 existing Rust 1.95 Clippy findings in `geom/fill_general.rs`, `ui-egui/canvas.rs`, `dialogs.rs`,
 `issue_report.rs` and `sketch_tools.rs`. Scoped Clippy passes with only those two existing lint
 classes (`nonminimal_bool`, `collapsible_match`) allowed; no new lint allowances are in source.
-The verification included upstream `e347f820`.
+The review verification included upstream `487aa64e`, including its macOS driver-client/HID
+backend. The Preferences note has English, German, Japanese, Korean and Chinese catalog entries.

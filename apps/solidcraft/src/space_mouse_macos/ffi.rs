@@ -217,9 +217,9 @@ impl Connection {
         // through the call; command tree storage is owned by self for the connection's lifetime.
         let result = unsafe { (self.write)(self.handle, name.as_ptr(), &value) };
         if result != 0 {
-            eprintln!("3D mouse: writing {} failed ({result:#x})", name.to_string_lossy());
-        } else if std::env::var_os("SOLIDCRAFT_3D_MOUSE_TRACE").is_some() {
-            eprintln!("3D mouse: wrote {}", name.to_string_lossy());
+            log::warn!("3D mouse: writing {} failed ({result:#x})", name.to_string_lossy());
+        } else {
+            log::trace!("3D mouse: wrote {}", name.to_string_lossy());
         }
     }
 
@@ -278,9 +278,7 @@ extern "C" fn get_property(_parameter: u64, name: *const c_char, out: *mut Nativ
             let Some(shared) = shared() else { return UNSUPPORTED };
             let Ok(state) = shared.lock() else { return UNSUPPORTED };
             let Some(value) = state.get(name) else {
-                if std::env::var_os("SOLIDCRAFT_3D_MOUSE_TRACE").is_some() {
-                    eprintln!("3D mouse: unsupported get {name}");
-                }
+                log::trace!("3D mouse: unsupported get {name}");
                 return UNSUPPORTED;
             };
             let native = match value {
@@ -332,9 +330,7 @@ extern "C" fn set_property(_parameter: u64, name: *const c_char, input: *const N
             let Some(shared) = shared() else { return UNSUPPORTED };
             let Ok(mut state) = shared.lock() else { return UNSUPPORTED };
             let accepted = state.set(name, value);
-            if std::env::var_os("SOLIDCRAFT_3D_MOUSE_TRACE").is_some() {
-                eprintln!("3D mouse: set {name}, accepted={accepted}");
-            }
+            log::trace!("3D mouse: set {name}, accepted={accepted}");
             if accepted { 0 } else { UNSUPPORTED }
         }
     })

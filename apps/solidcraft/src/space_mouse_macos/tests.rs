@@ -16,6 +16,23 @@ fn state() -> State {
 }
 
 #[test]
+fn an_unavailable_native_driver_does_not_schedule_idle_ui_wakeups() {
+    let ctx = egui::Context::default();
+    let mut app = SolveApp::new(solidcraft_engine::Session::default(), solidcraft_ui_egui::Services::default());
+    let mut mouse = SpaceMouse::start(&ctx);
+    // Model a completed probe with no native connection. Do not register a real device reader
+    // in a unit test; its event-driven wakeups belong to the existing fallback backend.
+    mouse.initialized = true;
+    for _ in 0..4 {
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| mouse.tick(&mut app, ui.ctx()));
+        if ctx.cumulative_frame_nr() > 2 {
+            assert!(output.viewport_output[&egui::ViewportId::ROOT].repaint_delay > Duration::from_secs(2));
+        }
+    }
+    assert!(!app.viewport.space_mouse_driver_settings);
+}
+
+#[test]
 fn driver_camera_roundtrips_roll_projection_and_both_up_axes() {
     for up in [UpAxis::Y, UpAxis::Z] {
         for fov in [0.0, 0.8] {

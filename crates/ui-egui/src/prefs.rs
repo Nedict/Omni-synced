@@ -1221,10 +1221,9 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.label(crate::i18n::tr_label("3D mouse"));
             ui.checkbox(&mut app.preferences.space_mouse_enabled, crate::i18n::tr_label("Navigate with SpaceNavigator / SpaceMouse"));
             ui.end_row();
-            #[cfg(target_os = "macos")]
-            note(ui, crate::i18n::tr_label("Use 3Dconnexion Settings for navigation speed, axes, modes and button assignments."));
-            #[cfg(not(target_os = "macos"))]
-            {
+            if app.viewport.space_mouse_driver_settings {
+                note(ui, crate::i18n::tr("ui.space_mouse_driver_settings"));
+            } else {
                 ui.label(crate::i18n::tr_label("3D mouse speed"));
                 ui.add_enabled(
                     app.preferences.space_mouse_enabled,
@@ -1493,7 +1492,6 @@ pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::
 /// Fold a setting an older release kept in its own field into the one this version reads.
 /// `orbit_cursor` (`true` = the point under the cursor) became `orbit_around`.
 /// The cap's physical axes, in the order of `Prefs::space_mouse_reverse`.
-#[cfg(not(target_os = "macos"))]
 const SPACE_MOUSE_AXES: [&str; 6] = ["Push left / right", "Push forward / back", "Lift / press", "Tilt forward / back", "Tilt left / right", "Twist"];
 
 pub fn migrate(mut p: Prefs) -> Prefs {

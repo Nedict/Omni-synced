@@ -72,7 +72,11 @@ impl eframe::App for App {
             self.solve.open_path_async(&f);
         }
         self.solve.logic(ctx);
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        if !self.solve.file_picker_busy() {
+            self.space_mouse.tick(&mut self.solve, ctx);
+        }
+        #[cfg(target_os = "macos")]
         self.space_mouse.tick(&mut self.solve, ctx);
         if self.solve.quit_requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);

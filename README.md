@@ -264,12 +264,11 @@ lays them out: translation and rotation in separate reports (3Dconnexion's wired
 in one (its wireless ones and most homemade devices), after the buttons, or narrower than 16 bits.
 Each axis is scaled from the range the descriptor declares.
 
-On macOS SolidCraft talks to the 3Dconnexion driver (3DxWare) when it is installed, through the
-driver's client API (`crates/threedx-client`; the framework is loaded at run time, never bundled).
-The driver keeps the device to itself, and sends it only to a program it can identify: SolidCraft
-as an `.app` (the packaged app). Without the driver, or with its helper not running, SolidCraft reads the device through IOKit like on Windows.
-
-SolidCraft does not follow 3DxWare's profile on macOS. Its default is 3DxWare's object mode.
+On macOS, if Navlib is unavailable, SolidCraft retains its existing 3DconnexionClient/HID
+backend (`crates/threedx-client`). Launch the packaged `.app` so the driver can identify it.
+Without the driver, it reads the device through IOKit. These fallback paths use the speed and
+axis controls in Preferences; the Navlib backend uses 3Dconnexion Settings. Navlib is checked
+once at startup, so restart SolidCraft after installing or replacing the driver.
 
 In the browser: `cd apps/solidcraft-web && trunk build --release --public-url ./` (WebGPU, or
 WebGL2 with `?webgl`; `?sample` opens the sample part).
