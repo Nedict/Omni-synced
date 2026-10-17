@@ -375,6 +375,8 @@ fn box_intersect_splits_the_end_off_a_raked_wedge_after_its_end_rounds() {
             assert!((slice + rest - whole).abs() < 1e-6 * whole, "{slice} + {rest} vs {whole}");
             assert!((at.min.x - x0).abs() < 1e-6 && (at.max.x - 69.0).abs() < 1e-3, "slice spans x {} to {}", at.min.x, at.max.x);
         }
+    }
+}
 
 /// #1853: half a slot drawn on a plate's top face, cut along its centreline, revolved about a
 /// construction line on that centreline as a cut. Half a turn into the plate and a full turn
