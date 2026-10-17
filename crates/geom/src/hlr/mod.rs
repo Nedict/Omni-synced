@@ -611,7 +611,34 @@ pub fn hidden_lines(defs: &[Prepared], scene: &[Placement], view: &View, opts: &
             }
         }
         params.push(t.range[1]);
-        let samples: Vec<(f64, [f64; 2])> = params.into_iter().map(|x| (x, view.screen(p.apply(c.at(x))))).collect();
+        let screen = |x: f64| view.screen(p.apply(c.at(x)));
+        let mut samples: Vec<(f64, [f64; 2])> = params.into_iter().map(|x| (x, screen(x))).collect();
+        // Halve chords of exact curves until their sag on screen is within the target, so
+        // chords stand for the curve closely enough for coincidence and crossing tests.
+        if !matches!(c, C3::Line { .. } | C3::Polyline(_)) {
+            let target = 1e-7 * scale.max(1.);
+            for _ in 0..12 {
+                let mut next = Vec::with_capacity(samples.len() * 2);
+                let mut split = false;
+                for w in samples.windows(2) {
+                    let (Some(a), Some(b)) = (w.first(), w.get(1)) else { continue };
+                    next.push(*a);
+                    let m = 0.5 * (a.0 + b.0);
+                    let q = screen(m);
+                    if point_segment(q, a.1, b.1) > target && next.len() < 1 << 16 {
+                        next.push((m, q));
+                        split = true;
+                    }
+                }
+                if let Some(last) = samples.last() {
+                    next.push(*last);
+                }
+                samples = next;
+                if !split {
+                    break;
+                }
+            }
+        }
         // Chord sag on screen: exact for lines, measured at the middle for curves; a sampled
         // silhouette's chords stand for the true curve to within its measured deviation.
         // A fitted source record stands for the true curve to within its bound.
@@ -749,7 +776,8 @@ fn crossings(tracks: &mut [Track], ctx: &Ctx) -> Result<usize, HlrError> {
         if si % 65536 == 0 && (ctx.cancel)() {
             return Err(HlrError::Cancelled);
         }
-        let (a, b) = (idx([s.a[0].min(s.b[0]), s.a[1].min(s.b[1])]), idx([s.a[0].max(s.b[0]), s.a[1].max(s.b[1])]));
+        let g = s.sag + 1e-9 * ctx.scale;
+        let (a, b) = (idx([s.a[0].min(s.b[0]) - g, s.a[1].min(s.b[1]) - g]), idx([s.a[0].max(s.b[0]) + g, s.a[1].max(s.b[1]) + g]));
         entries = entries.saturating_add((b.0 - a.0 + 1).saturating_mul(b.1 - a.1 + 1));
         if entries > 50_000_000 {
             return Err(HlrError::Budget("crossing grid"));
@@ -976,7 +1004,9 @@ fn cover(lines: &mut [Line], tol: f64, step: f64) {
                 covered = covered
                     && (0..=k).all(|j| {
                         let f = j as f64 / k as f64;
-                        let slack = if j == 0 || j == k { 0. } else { p.sag };
+                        // The piece's own representation error (chord sag, fitted bound) applies
+                        // to every point it is checked at.
+                        let slack = p.sag;
                         near((li, pi), p.visibility, [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f], slack)
                     });
                 if !covered {
@@ -984,7 +1014,7 @@ fn cover(lines: &mut [Line], tol: f64, step: f64) {
                 }
             }
             if let [q] = p.points.as_slice() {
-                covered = near((li, pi), p.visibility, *q, 0.);
+                covered = near((li, pi), p.visibility, *q, p.sag);
             }
             p.covered = covered;
         }

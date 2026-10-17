@@ -329,16 +329,32 @@ pub(crate) fn torus_roots(w: Vec3, d: Vec3, a: Vec3, big: f64, small: f64, range
     };
     // f scales like length^4: its noise floor and tangent-dip threshold follow.
     let size = big + small;
-    let floor = 1e-9 * size.powi(4);
+    // Rounding noise of f is about 1e-16 (R + r)^4; inside a thin tube |f| reaches 4 R^2 r^2.
+    let floor = 1e-13 * size.powi(4);
     // Steps of at most a quarter of the tube radius, so a thin tube is not stepped over.
     let n = ((range[1] - range[0]) / (0.25 * small)).ceil().clamp(200., 100_000.) as usize;
     let at = |i: usize| range[0] + (range[1] - range[0]) * i as f64 / n as f64;
     let mut out = Vec::new();
     let vals: Vec<f64> = (0..=n).map(|i| f(at(i))).collect();
-    for i in 0..n {
-        let (Some(&fa), Some(&fb)) = (vals.get(i), vals.get(i + 1)) else { continue };
-        if fa.abs() > floor && fb.abs() > floor && fa.signum() != fb.signum() {
-            let (mut lo, mut hi, mut flo) = (at(i), at(i + 1), fa);
+    // Brackets between consecutive samples clear of the noise floor (a root may sit on a sample).
+    let mut last: Option<(usize, f64)> = None;
+    for i in 0..=n {
+        let Some(&fb) = vals.get(i) else { continue };
+        if fb.abs() <= floor {
+            // On the surface at a sample: a touch if the neighbours agree in sign.
+            if let (Some(&fp), Some(&fnx)) = (i.checked_sub(1).and_then(|j| vals.get(j)), vals.get(i + 1))
+                && fp.abs() > floor
+                && fnx.abs() > floor
+                && fp.signum() == fnx.signum()
+            {
+                out.push((at(i), true));
+            }
+            continue;
+        }
+        let prev = last.replace((i, fb));
+        let Some((j, fa)) = prev else { continue };
+        if fa.signum() != fb.signum() {
+            let (mut lo, mut hi, mut flo) = (at(j), at(i), fa);
             for _ in 0..80 {
                 let mid = 0.5 * (lo + hi);
                 let fm = f(mid);

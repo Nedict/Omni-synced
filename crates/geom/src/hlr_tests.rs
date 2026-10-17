@@ -133,3 +133,13 @@ fn a_thin_torus_tube_stops_a_ray() {
     let roots = surface::torus_roots(Vec3::new(100., -50., 0.), Vec3::new(0., 1., 0.), Vec3::new(0., 0., 1.), 100., 0.1, [0., 200.]);
     assert!(roots.iter().filter(|(_, grazing)| !grazing).count() >= 2, "{roots:?}");
 }
+
+#[test]
+fn a_thin_tube_on_a_huge_torus_stops_a_ray() {
+    // R 100 m, r 1 mm: inside the tube the implicit function stays far below a size^4 floor.
+    // A radial ray from 5 mm inside the centre circle crosses the tube at 4 and 6 mm.
+    let roots = surface::torus_roots(Vec3::new(100_000. - 5., 0., 0.), Vec3::new(1., 0., 0.), Vec3::new(0., 0., 1.), 100_000., 1., [0., 10.]);
+    let hits: Vec<f64> = roots.iter().filter(|(_, grazing)| !grazing).map(|(l, _)| *l).collect();
+    // The implicit form cancels terms of 4e20 here: the roots are good to about 1e-6 mm.
+    assert!(hits.len() == 2 && (hits[0] - 4.).abs() < 1e-5 && (hits[1] - 6.).abs() < 1e-5, "{roots:?}");
+}
