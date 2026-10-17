@@ -1528,7 +1528,52 @@ pub fn split_by_plane(body: &Body, plane: &solidcraft_geom::Plane) -> Result<Vec
 pub fn half_space(body: &Body, plane: &solidcraft_geom::Plane, positive: bool) -> Result<(Option<Body>, Body)> {
     // The box's own construction roles describe no face of the design: the cut face has none.
     let tool = half_box(body, plane, positive)?.with_face_sources(None);
+    // Faces of the body lying in the plane coincide with the box's cap, which the boolean can
+    // only take by nudging the box, by a share of its own size: the cut face moved off the
+    // plane, a different way for each part, and the parts lost the slab between (#1510).
+    // Moved off the plane to the side the box leaves out, they change nothing of the part.
+    if let Some(moved) = off_plane(body, plane, positive) {
+        // The part's history over [body, box], through the moved body (its faces are the body's).
+        let hb = recorded::placed(recorded::through(&moved, 0, recorded::kept(body, 0, 1).as_ref()), 0, 2);
+        let ht = recorded::placed(recorded::kept(&tool, 0, 1), 1, 2);
+        let counts = record::counts(&[body, &tool]);
+        let part = boolean(&moved, &tool, BoolOp::Intersect)?.map(|r| {
+            let h = recorded::of_pair(&r, &hb, &ht);
+            r.with_checked_history(h, &counts)
+        });
+        return Ok((part, tool));
+    }
     Ok((boolean(body, &tool, BoolOp::Intersect)?, tool))
+}
+
+/// `body` with its planar faces lying in `plane` moved off it, a thousandth of the body's size,
+/// to the side a split's part on the `positive` side leaves out. `None` when no face lies there
+/// or moving them doesn't give a sound body.
+fn off_plane(body: &Body, plane: &solidcraft_geom::Plane, positive: bool) -> Option<Body> {
+    let m = plane.normal().normalized()?;
+    let keep = if positive { m } else { -m };
+    let size = body.size();
+    let tol = (size * 1e-7).max(1e-9);
+    let delta = size * 1e-3;
+    let mut out: Option<Body> = None;
+    for n in [keep, -keep] {
+        let d = n.dot(plane.origin);
+        let lies = body.solid.face_iter().any(|f| match f.oriented_surface() {
+            mt::Surface::Plane(p) => {
+                let q = p.normal();
+                Vec3::new(q.x, q.y, q.z).normalized().is_some_and(|q| q.dot(n) > 1.0 - 1e-9) && (n.dot(from_p3(p.origin())) - d).abs() < tol
+            }
+            _ => false,
+        });
+        if !lies {
+            continue;
+        }
+        // Along -keep: inwards for a face facing the kept side, outwards for one facing away.
+        let shift = if n.dot(keep) > 0.0 { -delta } else { delta };
+        let cur = out.as_ref().unwrap_or(body);
+        out = Some(crate::coplanar::push_faces(cur, n, d, shift).ok().filter(|b| b.validity().is_empty())?);
+    }
+    out
 }
 
 /// A box covering everything of `body` on one side of a plane, its start cap in the plane.
