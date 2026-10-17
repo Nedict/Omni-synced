@@ -12,8 +12,9 @@ use crate::params::{bad, string_list, vec3};
 use crate::{Result, Session};
 
 pub static COMMANDS: &[CommandSpec] = &[
-    CommandSpec::new("timeline.copy", "Copy Features", copy).noundo().params("features: [ids or names] (in timeline order on paste)"),
+    CommandSpec::new("timeline.copy", "Copy Features", copy).icon("copy").noundo().params("features: [ids or names] (in timeline order on paste)"),
     CommandSpec::new("timeline.paste", "Paste Features", paste)
+        .icon("paste")
         .params("translate?: [x,y,z] (moves the copies' geometry); the copies go at the marker"),
 ];
 
@@ -45,7 +46,7 @@ fn explicit_planes(p: &mut PlaneRef) {
                 *p = PlaneRef::Custom { plane };
             }
         }
-        PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } => explicit_planes(base),
+        PlaneRef::Offset { base, .. } | PlaneRef::AtAngle { base, .. } | PlaneRef::Flipped { base, .. } => explicit_planes(base),
         _ => {}
     }
 }
